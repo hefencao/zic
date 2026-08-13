@@ -647,7 +647,7 @@ void main() {
     expect(session.artifact.hasOpenWriter, isFalse);
   });
 
-  test('structural ANMF credit cannot suspend below playable prefix floor',
+  test('structural ANMF credit parks only after playable prefix floor',
       () async {
     final trace = MemoryTraceSink();
     final bytes = _flowAnimatedWebp(<int>[48, 48, 384 * 1024]);
@@ -675,32 +675,30 @@ void main() {
       cancel: token,
     );
 
-    await _waitForFlowAction(trace, 'pseudo-paused', targetFrames: 2);
-    final paused = trace.events.lastWhere(
+    await _waitForFlowAction(trace, 'pseudo-parked', targetFrames: 2);
+    final parked = trace.events.lastWhere(
       (event) =>
           event.kind == TraceEventKind.artifactSource &&
           event.payload['stage'] == 'transport-flow-control' &&
-          event.payload['action'] == 'pseudo-paused',
+          event.payload['action'] == 'pseudo-parked',
     );
-    expect(paused.payload['completedFrames'] as int, greaterThanOrEqualTo(2));
+    expect(parked.payload['completedFrames'] as int, greaterThanOrEqualTo(2));
     expect(
-      paused.payload['committedLength'] as int,
+      parked.payload['committedLength'] as int,
       greaterThanOrEqualTo(remoteWebpDecodePrefixQuantumBytes),
-      reason: 'ANMF count alone must not authorize an unplayable suspension',
+      reason: 'ANMF count alone must not authorize an unplayable park',
     );
-    expect(
-      paused.payload['playablePrefixFloorBytes'],
-      remoteWebpDecodePrefixQuantumBytes,
-    );
-    await expectLater(
-      run.timeout(const Duration(seconds: 2)),
-      throwsA(isA<DownloadFlowSuspended>()),
-    );
+    expect(parked.payload['responseRetained'], isTrue);
+    expect(parked.payload['responseReadPermitHeld'], isFalse);
+    expect(session.activeRun, isTrue);
+
+    token.updateFlowTargetFrames(0);
+    final result = await run.timeout(const Duration(seconds: 2));
+    expect(result.state, DownloadState.promoted);
+    expect(transport.openCount, 1);
   });
 
-
-  test('adjacent consumer-paced flow retains one response across foreground promotion',
-      () async {
+  test('consumer-paced flow parks and resumes the same response', () async {
     final trace = MemoryTraceSink();
     final bytes = _flowAnimatedWebp(List<int>.filled(24, 48));
     final session = DownloadSession(
@@ -709,14 +707,14 @@ void main() {
           sourceId: 'source',
           comicId: 'comic',
           chapterId: 'chapter',
-          pageId: 'warm-adjacent-flow',
+          pageId: 'parked-flow',
         ),
         sourceRevision: 'r1',
-        canonicalUri: Uri.parse('runtime://warm-adjacent.webp'),
+        canonicalUri: Uri.parse('runtime://parked-flow.webp'),
       ),
       artifact: Artifact(
-        partialPath: '${temp.path}/partial/warm-adjacent.webp',
-        finalPath: '${temp.path}/cache/warm-adjacent.webp',
+        partialPath: '${temp.path}/partial/parked-flow.webp',
+        finalPath: '${temp.path}/cache/parked-flow.webp',
       ),
       clock: FakeMonoClock(),
       traceSink: trace,
@@ -728,45 +726,34 @@ void main() {
       firstFrameRequiredSourceLength: 0,
     );
     final transport = _ConsumerPacedBodyTransport(bytes, chunkSize: 31);
-    final token = CancelToken(
-      flowTargetFrames: 1,
-      retainFlowResponse: true,
-    );
+    final token = CancelToken(flowTargetFrames: 1);
     final run = DownloadJob(transport: transport, session: session).run(
       cancel: token,
     );
 
-    await _waitForFlowAction(trace, 'pseudo-retained', targetFrames: 1);
+    await _waitForFlowAction(trace, 'pseudo-parked', targetFrames: 1);
     expect(transport.openCount, 1);
     expect(session.activeRun, isTrue);
-    expect(
-      trace.events.any(
-        (event) =>
-            event.kind == TraceEventKind.artifactSource &&
-            event.payload['stage'] == 'transport-flow-control' &&
-            event.payload['action'] == 'pseudo-suspended',
-      ),
-      isFalse,
-    );
+    expect(session.networkFlowSatisfiedFrames, greaterThanOrEqualTo(1));
 
     token.updateFlowTargetFrames(0);
     final result = await run.timeout(const Duration(seconds: 2));
     expect(result.state, DownloadState.promoted);
     expect(transport.openCount, 1,
-        reason: 'next/previous to foreground must reuse the same response');
+        reason: 'flow credit release must resume the original response');
     expect(
       trace.events.any(
         (event) =>
             event.kind == TraceEventKind.artifactSource &&
             event.payload['stage'] == 'transport-flow-control' &&
-            event.payload['action'] == 'pseudo-resumed',
+            event.payload['action'] == 'pseudo-resumed' &&
+            event.payload['responseRetained'] == true,
       ),
       isTrue,
     );
   });
 
-  test(
-      'non-range consumer-paced flow keeps admitted response across outer-to-foreground promotion',
+  test('parked response frees NetLane read slot and later reuses same stream',
       () async {
     final trace = MemoryTraceSink();
     final bytes = _flowAnimatedWebp(List<int>.filled(24, 48));
@@ -776,14 +763,101 @@ void main() {
           sourceId: 'source',
           comicId: 'comic',
           chapterId: 'chapter',
-          pageId: 'nonrange-flow-retained',
+          pageId: 'lane-response-parking',
         ),
         sourceRevision: 'r1',
-        canonicalUri: Uri.parse('runtime://nonrange-flow.webp'),
+        canonicalUri: Uri.parse('runtime://lane-response-parking.webp'),
       ),
       artifact: Artifact(
-        partialPath: '${temp.path}/partial/nonrange-flow.webp',
-        finalPath: '${temp.path}/cache/nonrange-flow.webp',
+        partialPath: '${temp.path}/partial/lane-response-parking.webp',
+        finalPath: '${temp.path}/cache/lane-response-parking.webp',
+      ),
+      clock: FakeMonoClock(),
+      traceSink: trace,
+    );
+    session.observePlayablePrefixEvidence(
+      decodedPrefixFrames: 1,
+      sourceLength: 1,
+      firstPlayablePrefixBytes: 1,
+      firstFrameRequiredSourceLength: 0,
+    );
+    final transport = _ConsumerPacedBodyTransport(bytes, chunkSize: 31);
+    final lane = NetLane(maxActive: 1, maxParkedResponses: 2);
+    late CancelToken firstToken;
+    late Future<DownloadSnapshot> firstRun;
+    final firstStarted = Completer<void>();
+    final secondStarted = Completer<void>();
+    final secondRelease = Completer<void>();
+
+    lane.submitRanked(
+      key: 'first-response',
+      priority: 800,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      flowTargetFrames: 1,
+      task: (token) async {
+        firstToken = token;
+        firstStarted.complete();
+        firstRun = DownloadJob(transport: transport, session: session).run(
+          cancel: token,
+        );
+        await firstRun;
+      },
+    );
+    await firstStarted.future;
+    await _waitForFlowAction(trace, 'pseudo-parked', targetFrames: 1);
+    expect(lane.active, 0,
+        reason: 'parked response must release the bounded read permit');
+    expect(lane.running, 1);
+    expect(lane.parkedResponses, 1);
+    expect(transport.openCount, 1);
+
+    lane.submitRanked(
+      key: 'second-response',
+      priority: 780,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (_) async {
+        secondStarted.complete();
+        await secondRelease.future;
+      },
+    );
+    await secondStarted.future;
+    expect(lane.active, 1);
+    expect(lane.running, 2);
+
+    lane.updateFlowTargetFrames('first-response', 0);
+    await Future<void>.delayed(Duration.zero);
+    expect(lane.responseReadPermitHeldOf('first-response'), isFalse,
+        reason: 'resume waits for a permit without reopening the response');
+    expect(transport.openCount, 1);
+
+    secondRelease.complete();
+    final result = await firstRun.timeout(const Duration(seconds: 2));
+    expect(result.state, DownloadState.promoted);
+    expect(firstToken.cancelled, isFalse);
+    expect(transport.openCount, 1);
+    await lane.idle();
+  });
+
+  test('range capability no longer changes flow-credit response lifetime',
+      () async {
+    final trace = MemoryTraceSink();
+    final bytes = _flowAnimatedWebp(List<int>.filled(24, 48));
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'range-independent-parking',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('runtime://range-independent.webp'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/range-independent.webp',
+        finalPath: '${temp.path}/cache/range-independent.webp',
       ),
       clock: FakeMonoClock(),
       traceSink: trace,
@@ -797,14 +871,14 @@ void main() {
     final transport = _ConsumerPacedBodyTransport(
       bytes,
       chunkSize: 31,
-      rangeSupported: false,
+      rangeSupported: true,
     );
     final token = CancelToken(flowTargetFrames: 3);
     final run = DownloadJob(transport: transport, session: session).run(
       cancel: token,
     );
 
-    await _waitForFlowAction(trace, 'pseudo-retained', targetFrames: 3);
+    await _waitForFlowAction(trace, 'pseudo-parked', targetFrames: 3);
     expect(transport.openCount, 1);
     expect(session.activeRun, isTrue);
     expect(
@@ -812,51 +886,21 @@ void main() {
         (event) =>
             event.kind == TraceEventKind.artifactSource &&
             event.payload['stage'] == 'transport-flow-control' &&
-            event.payload['action'] == 'pseudo-retained' &&
-            event.payload['responseRangeSupported'] == false &&
-            event.payload['retentionReason'] == 'range-resume-unproven',
+            event.payload['action'] == 'pseudo-parked' &&
+            event.payload['responseRangeSupported'] == true &&
+            event.payload['retentionReason'] == 'bounded-flow-credit' &&
+            event.payload['responseRetained'] == true,
       ),
       isTrue,
     );
-    expect(
-      trace.events.any(
-        (event) =>
-            event.kind == TraceEventKind.artifactSource &&
-            event.payload['stage'] == 'transport-flow-control' &&
-            event.payload['action'] == 'pseudo-suspended',
-      ),
-      isFalse,
-    );
-    expect(
-      trace.events.any(
-        (event) =>
-            event.kind == TraceEventKind.artifactSource &&
-            event.payload['stage'] == 'transport-flow-control' &&
-            event.payload['action'] == 'pseudo-yielded',
-      ),
-      isFalse,
-      reason: 'slot reclaim is scheduler-owned, not a DownloadJob flow action',
-    );
 
-    // next2/near -> foreground is a metadata migration on the same physical
-    // task. A non-range response must not be closed just because its earlier
-    // positive frame credit was satisfied.
     token.updateFlowTargetFrames(0);
     final result = await run.timeout(const Duration(seconds: 2));
     expect(result.state, DownloadState.promoted);
     expect(transport.openCount, 1);
-    expect(
-      trace.events.any(
-        (event) =>
-            event.kind == TraceEventKind.artifactSource &&
-            event.payload['stage'] == 'transport-flow-control' &&
-            event.payload['action'] == 'pseudo-resumed',
-      ),
-      isTrue,
-    );
   });
 
-  test('consumer-paced frame credit suspends partial instead of draining forever',
+  test('consumer-paced frame credit parks instead of ending the attempt',
       () async {
     final trace = MemoryTraceSink();
     final bytes = _flowAnimatedWebp(<int>[48, 48, 48]);
@@ -886,46 +930,25 @@ void main() {
     );
     final transport = _ConsumerPacedBodyTransport(bytes, chunkSize: 17);
     final token = CancelToken(flowTargetFrames: 1);
-    final firstRun = DownloadJob(transport: transport, session: session).run(
+    final run = DownloadJob(transport: transport, session: session).run(
       cancel: token,
     );
 
-    await _waitForFlowAction(trace, 'pseudo-paused', targetFrames: 1);
-    await expectLater(
-      firstRun.timeout(const Duration(seconds: 2)),
-      throwsA(isA<DownloadFlowSuspended>()),
-    );
+    await _waitForFlowAction(trace, 'pseudo-parked', targetFrames: 1);
     expect(transport.openCount, 1);
-    expect(session.state, DownloadState.idle);
-    final suspendedLength = session.committedLength;
-    expect(suspendedLength, greaterThan(0));
-    expect(
-      trace.events.any(
-        (event) =>
-            event.kind == TraceEventKind.artifactSource &&
-            event.payload['stage'] == 'transport-flow-control' &&
-            event.payload['action'] == 'pseudo-suspended' &&
-            event.payload['mode'] == 'consumerPacing',
-      ),
-      isTrue,
-    );
-    expect(
-      trace.events.any(
-        (event) =>
-            event.kind == TraceEventKind.artifactSource &&
-            event.payload['stage'] == 'transport-flow-control' &&
-            event.payload['action'] == 'pseudo-drain',
-      ),
-      isFalse,
-    );
+    expect(session.activeRun, isTrue);
+    final parkedLength = session.committedLength;
+    expect(parkedLength, greaterThan(0));
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    expect(session.activeRun, isTrue,
+        reason: 'parking must not end the physical DownloadJob attempt');
 
-    final result = await DownloadJob(
-      transport: transport,
-      session: session,
-    ).run(cancel: CancelToken()).timeout(const Duration(seconds: 2));
+    token.updateFlowTargetFrames(0);
+    final result = await run.timeout(const Duration(seconds: 2));
     expect(result.state, DownloadState.promoted);
-    expect(transport.openCount, 2);
-    expect(session.committedLength, greaterThanOrEqualTo(suspendedLength));
+    expect(transport.openCount, 1,
+        reason: 'resume must not open a second response');
+    expect(session.committedLength, greaterThanOrEqualTo(parkedLength));
     expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
   });
 

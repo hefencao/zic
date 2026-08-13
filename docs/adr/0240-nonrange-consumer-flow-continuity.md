@@ -1,4 +1,5 @@
 # ADR 0240：无可靠 Range resume 的 consumer-paced response 连续性
+> dev.268：ADR 0246 supersede Range/non-Range分叉的flow-credit response lifetime；Range只影响真实eviction后的resume。
 
 状态：Accepted
 

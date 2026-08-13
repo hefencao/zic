@@ -22,21 +22,6 @@ final class DownloadCatchupDeferred implements Exception {
 }
 
 
-/// A source-backed transport that cannot promise upstream stream backpressure
-/// has satisfied its current speculative frame credit. This is a policy
-/// suspension, not a network/decode failure: committed partial bytes remain
-/// authoritative and a later higher frame target may resume with a new
-/// transport attempt from that partial.
-final class DownloadFlowSuspended implements Exception {
-  const DownloadFlowSuspended({
-    required this.targetFrames,
-    required this.completedFrames,
-  });
-
-  final int targetFrames;
-  final int completedFrames;
-}
-
 final class DownloadJob {
   const DownloadJob({
     required this.transport,
@@ -363,10 +348,10 @@ final class DownloadJob {
 
     session.beginNetworkAttemptProgress(response.rangeStart);
     var networkCursor = response.rangeStart;
-    final _WebpNetworkFlowGate? flowGate =
+    final _ResponseReadGate? flowGate =
         response.flowControl != ByteResponseFlowControl.none &&
                 response.bodyAuthority == ByteResponseBodyAuthority.source
-            ? _WebpNetworkFlowGate(
+            ? _ResponseReadGate(
                 session: session,
                 cancel: cancel,
                 capability: response.flowControl,
@@ -538,7 +523,9 @@ final class DownloadJob {
     try {
       while (true) {
         if (flowGate != null &&
-            (flowGate.needsArtifactSynchronization || flowGate.blocked)) {
+            (flowGate.needsArtifactSynchronization ||
+                flowGate.blocked ||
+                flowGate.demandPaused)) {
           await flushPending();
         }
         final available = await _moveNext(
@@ -575,18 +562,6 @@ final class DownloadJob {
         expectedChecksum: expectedChecksum,
       );
       await session.promote();
-    } on DownloadFlowSuspended {
-      // Unsupported upstream pause cannot honestly preserve both the response
-      // connection and a hard speculative byte/frame cap. Freeze the
-      // authoritative partial without marking failure; TransferOwner keeps the
-      // flow target satisfied until policy raises it, at which point a new
-      // attempt resumes from this exact partial.
-      await flushPending();
-      await iterator.cancel();
-      if (session.hasWriter) {
-        await session.pause(writer);
-      }
-      rethrow;
     } catch (error) {
       // Preserve bytes already delivered by the transport so resume semantics
       // remain independent of the transport's arbitrary chunk size.
@@ -625,7 +600,7 @@ final class DownloadJob {
     required int preservedLength,
     required void Function(int duplicateBytes) onDuplicateBytes,
     CancelToken? cancel,
-    _WebpNetworkFlowGate? flowGate,
+    _ResponseReadGate? flowGate,
     int Function()? networkCursor,
   }) async {
     final expectedLength = preservedLength - probeStart;
@@ -698,7 +673,7 @@ final class DownloadJob {
     required int? expectedTotalLength,
     required void Function(int duplicateBytes) onDuplicateBytes,
     CancelToken? cancel,
-    _WebpNetworkFlowGate? flowGate,
+    _ResponseReadGate? flowGate,
     int Function()? networkCursor,
   }) async {
     if (preservedLength <= 0) {
@@ -791,7 +766,7 @@ final class DownloadJob {
   Future<bool> _moveNext(
     StreamIterator<List<int>> iterator,
     CancelToken? cancel, {
-    _WebpNetworkFlowGate? flowGate,
+    _ResponseReadGate? flowGate,
     int networkCursor = 0,
   }) async {
     if (flowGate != null) {
@@ -870,8 +845,8 @@ final class DownloadJob {
   }
 }
 
-final class _WebpNetworkFlowGate {
-  _WebpNetworkFlowGate({
+final class _ResponseReadGate {
+  _ResponseReadGate({
     required this.session,
     required this.cancel,
     required this.capability,
@@ -887,10 +862,11 @@ final class _WebpNetworkFlowGate {
   WebpFramePrefixTracker? _tracker;
   bool _initializing = false;
   bool _paused = false;
-  bool _warmRetentionAnnounced = false;
 
   bool get needsArtifactSynchronization =>
       (cancel?.flowTargetFrames ?? 0) > 0 && _tracker == null;
+
+  bool get demandPaused => cancel != null && !cancel!.demanded;
 
   /// Structural ANMF credit only. The caller uses this to flush pending bytes
   /// so decoder-visible ingress catches up before [waitBeforeRead] evaluates
@@ -937,116 +913,98 @@ final class _WebpNetworkFlowGate {
 
   Future<void> waitBeforeRead({required int networkCursor}) async {
     final control = cancel;
-    if (control == null || control.flowTargetFrames <= 0) return;
-    // Resume/probe/full-body catch-up bytes only re-establish the already
-    // authoritative physical partial. Frame credit must never pause the
-    // network before that boundary, otherwise a restarted attempt can deadlock
-    // behind its own existing frames.
-    if (networkCursor < _authoritativeCatchupFloor) return;
-    await _ensureInitialized();
-    final tracker = _tracker;
-    if (tracker == null || tracker.unsupported || !_shouldBlock()) return;
-    if (!_paused) {
-      _paused = true;
-      session.recordFlowControl(
-        action: capability == ByteResponseFlowControl.streamBackpressure
-            ? 'paused'
-            : 'pseudo-paused',
-        mode: capability.name,
-        targetFrames: control.flowTargetFrames,
-        completedFrames: tracker.completedFrames,
-        networkCursor: networkCursor,
-        playablePrefixFloorBytes: _playablePrefixFloorBytes,
-        responseRangeSupported: rangeSupported,
-      );
-    }
-    if (capability == ByteResponseFlowControl.consumerPacing) {
-      final creditGranted = await control.waitForFlowCreditOrTimeout(
-        tracker.completedFrames,
-        _flowEvidencePollInterval,
-      );
-      if (!creditGranted && _shouldBlock()) {
-        var preserveResponse = !rangeSupported;
-        if (control.retainFlowResponse) {
-          preserveResponse = true;
+    if (control == null) return;
+
+    while (true) {
+      control.throwIfCancelled();
+      final demandParked = !control.demanded;
+      var flowParked = false;
+      WebpFramePrefixTracker? tracker;
+      if (!demandParked && control.flowTargetFrames > 0 &&
+          networkCursor >= _authoritativeCatchupFloor) {
+        await _ensureInitialized();
+        tracker = _tracker;
+        flowParked = tracker != null &&
+            !tracker.unsupported &&
+            _shouldBlock();
+      }
+      if (!demandParked && !flowParked) {
+        if (_paused) {
+          await control.acquireResponseReadPermit();
+          _paused = false;
+          session.recordFlowControl(
+            action: capability == ByteResponseFlowControl.streamBackpressure
+                ? 'resumed'
+                : 'pseudo-resumed',
+            mode: capability.name,
+            targetFrames: control.flowTargetFrames,
+            completedFrames: tracker?.completedFrames ??
+                session.networkFlowSatisfiedFrames,
+            networkCursor: networkCursor,
+            playablePrefixFloorBytes: _playablePrefixFloorBytes,
+            responseRangeSupported: rangeSupported,
+            responseRetained: true,
+            responseReadPermitHeld: true,
+            demanded: control.demanded,
+          );
         }
-        if (preserveResponse) {
-          // Immediate previous/next demand explicitly asks to keep the live
-          // response warm. A response that does not positively advertise
-          // byte-range resume must also stay on the admitted physical task:
-          // closing it here turns the authoritative 3/7 partial into a known
-          // full-body prefix replay on the next role promotion. This restores
-          // the older non-resumable active-transfer invariant without adding a
-          // connection or changing the 5/3/2/1 body-credit target. Real NetLane
-          // preemption/cancellation remains the only authority allowed to end
-          // such an admitted response under pressure.
-          //
-          // consumerPacing still cannot claim upstream byte backpressure, so
-          // retain at the existing bounded pace (at most one body chunk per
-          // evidence interval) rather than silently draining the full body.
-          if (!_warmRetentionAnnounced) {
-            _warmRetentionAnnounced = true;
-            session.recordFlowControl(
-              action: 'pseudo-retained',
-              mode: capability.name,
-              targetFrames: control.flowTargetFrames,
-              completedFrames: tracker.completedFrames,
-              networkCursor: networkCursor,
-              playablePrefixFloorBytes: _playablePrefixFloorBytes,
-              responseRangeSupported: rangeSupported,
-              retentionReason: control.retainFlowResponse
-                  ? 'adjacent-demand'
-                  : 'range-resume-unproven',
-            );
-          }
-          return;
-        }
-        // Consumer pacing cannot promise that leaving this StreamIterator idle
-        // actually stops upstream network I/O. A positively range-resumable,
-        // non-adjacent speculative response can therefore release the response
-        // once both structural frame credit and decoder-owned playable-prefix
-        // credit are satisfied; its authoritative partial can resume without
-        // replaying the prefix.
+        return;
+      }
+
+      tracker ??= _tracker;
+      final completedFrames = tracker?.completedFrames ??
+          session.networkFlowSatisfiedFrames;
+      if (flowParked && completedFrames > 0) {
+        session.observeNetworkFlowFrameProof(
+          completedFrames: completedFrames,
+          committedLengthAtProof: session.committedLength,
+        );
+      }
+      if (!_paused) {
+        _paused = true;
         session.recordFlowControl(
-          action: 'pseudo-suspended',
+          action: capability == ByteResponseFlowControl.streamBackpressure
+              ? 'paused'
+              : 'pseudo-paused',
           mode: capability.name,
           targetFrames: control.flowTargetFrames,
-          completedFrames: tracker.completedFrames,
+          completedFrames: completedFrames,
           networkCursor: networkCursor,
           playablePrefixFloorBytes: _playablePrefixFloorBytes,
           responseRangeSupported: rangeSupported,
+          retentionReason: demandParked
+              ? 'no-consumer-demand'
+              : 'bounded-flow-credit',
+          responseRetained: true,
+          responseReadPermitHeld: true,
+          demanded: control.demanded,
         );
-        throw DownloadFlowSuspended(
+        control.releaseResponseReadPermit();
+        session.recordFlowControl(
+          action: capability == ByteResponseFlowControl.streamBackpressure
+              ? 'response-parked'
+              : 'pseudo-parked',
+          mode: capability.name,
           targetFrames: control.flowTargetFrames,
-          completedFrames: tracker.completedFrames,
+          completedFrames: completedFrames,
+          networkCursor: networkCursor,
+          playablePrefixFloorBytes: _playablePrefixFloorBytes,
+          responseRangeSupported: rangeSupported,
+          retentionReason: demandParked
+              ? 'no-consumer-demand'
+              : 'bounded-flow-credit',
+          responseRetained: true,
+          responseReadPermitHeld: false,
+          demanded: control.demanded,
         );
       }
-    } else {
-      // A stream-backpressure response can stay parked on the same connection.
-      // Poll only the control/evidence condition; no body chunk is consumed.
-      // This lets a decoder need-more-data observation raise the physical
-      // playable-prefix floor without inventing a second wake authority.
-      while (_shouldBlock()) {
-        await control.waitForFlowCreditOrTimeout(
-          tracker.completedFrames,
-          _flowEvidencePollInterval,
-        );
-      }
-    }
-    if (_paused) {
-      _paused = false;
-      _warmRetentionAnnounced = false;
-      session.recordFlowControl(
-        action: capability == ByteResponseFlowControl.streamBackpressure
-            ? 'resumed'
-            : 'pseudo-resumed',
-        mode: capability.name,
-        targetFrames: control.flowTargetFrames,
-        completedFrames: tracker.completedFrames,
-        networkCursor: networkCursor,
-        playablePrefixFloorBytes: _playablePrefixFloorBytes,
-        responseRangeSupported: rangeSupported,
-      );
+
+      // The StreamIterator stays alive and no body read is requested here.
+      // NetLane has released only the bounded body-read permit; the physical
+      // response/task remains owned by this DownloadJob. Control/evidence
+      // changes are polled because decoder need-more-data can strengthen the
+      // playable-prefix floor without a second scheduler owner.
+      await control.waitForControlChangeOrTimeout(_flowEvidencePollInterval);
     }
   }
 

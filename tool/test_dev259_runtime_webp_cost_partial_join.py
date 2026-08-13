@@ -89,12 +89,20 @@ require(
 
 # Far-partial network need remains TransferOwner-owned. target0 is unlimited;
 # positive target uses the existing generation-aware proof + playable floor.
-require(
-    'packages/sessions/lib/src/download_transfer_owner.dart',
-    'targetFrames <= 0',
-    'proof.completedFrames >= targetFrames',
-    'session.committedLength >= playableFloor',
-)
+if int(m.group(1)) >= 268:
+    require(
+        'packages/sessions/lib/src/download_transfer_owner.dart',
+        'targetFrames <= 0',
+        'session.networkFlowSatisfiedFrames >= targetFrames',
+        'session.committedLength >= playableFloor',
+    )
+else:
+    require(
+        'packages/sessions/lib/src/download_transfer_owner.dart',
+        'targetFrames <= 0',
+        'proof.completedFrames >= targetFrames',
+        'session.committedLength >= playableFloor',
+    )
 
 require(
     'packages/pipeline/test/animated_prefetch_policy_test.dart',
@@ -122,11 +130,18 @@ require(
     'runtime WebP cost evidence',
     'physical partial availability、Reader-local source visibility与network admission必须保持三个独立事实',
 )
-require(
-    'docs/SPEC.md',
-    'runtime ingress sniff到`ContentKind.webp` MUST可作为纯transport-cost evidence',
-    'physical partial availability、network need与Reader-local decode availability MUST保持独立',
-)
+if int(m.group(1)) >= 268:
+    require(
+        'docs/SPEC.md',
+        'runtime ingress sniff到`ContentKind.webp` MAY作为transport-cost evidence',
+        'physical partial availability、network need与Reader-local decode availability MUST保持独立',
+    )
+else:
+    require(
+        'docs/SPEC.md',
+        'runtime ingress sniff到`ContentKind.webp` MUST可作为纯transport-cost evidence',
+        'physical partial availability、network need与Reader-local decode availability MUST保持独立',
+    )
 require('tool/check.sh', 'test_dev259_runtime_webp_cost_partial_join.py')
 
 # This round must not change the stable window/frame/network limits.

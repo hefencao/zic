@@ -49,23 +49,38 @@ require(
     "'firstPlayablePrefixBytes': _firstPlayablePrefixBytes",
     "'firstFrameRequiredPrefixBytes': _firstFrameRequiredPrefixBytes",
 )
-require(
-    'packages/sessions/lib/src/download_job.dart',
-    'int get _playablePrefixFloorBytes',
-    'webpDecodePrefixQuantumBytesFor(session.id)',
-    'if (!control.flowBlockedAt(tracker.completedFrames)) return false;',
-    'return session.committedLength >= _playablePrefixFloorBytes;',
-    'if (!creditGranted && _shouldBlock())',
-    'while (_shouldBlock())',
-)
+if int(m.group(1)) >= 268:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        'int get _playablePrefixFloorBytes',
+        'webpDecodePrefixQuantumBytesFor(session.id)',
+        'if (!control.flowBlockedAt(tracker.completedFrames)) return false;',
+        'return session.committedLength >= _playablePrefixFloorBytes;',
+        'flowParked = tracker != null',
+        '_shouldBlock();',
+        'releaseResponseReadPermit',
+    )
+else:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        'int get _playablePrefixFloorBytes',
+        'webpDecodePrefixQuantumBytesFor(session.id)',
+        'if (!control.flowBlockedAt(tracker.completedFrames)) return false;',
+        'return session.committedLength >= _playablePrefixFloorBytes;',
+        'if (!creditGranted && _shouldBlock())',
+        'while (_shouldBlock())',
+    )
 require(
     'packages/sessions/lib/src/download_transfer_owner.dart',
     'void _observeDecodePrefixEvidence(',
     'session.observePlayablePrefixEvidence(',
     'session.committedLength >= playableFloor',
     'void observeDecodePrefixEvidence(',
-    "'playablePrefixFloorBytes': session.playableFlowPrefixFloorBytes(",
 )
+if int(m.group(1)) >= 268:
+    require('packages/sessions/lib/src/download_session.dart', 'playableFlowPrefixFloorBytes(', 'networkFlowSatisfiedFrames')
+else:
+    require('packages/sessions/lib/src/download_transfer_owner.dart', "'playablePrefixFloorBytes': session.playableFlowPrefixFloorBytes(")
 require(
     'packages/sessions/lib/src/live_coordinator.dart',
     'final sourceBinding = _sourceWatches[id.download];',
@@ -85,11 +100,19 @@ reject(
     'requiredSourceLength',
 )
 
-require(
-    'packages/sessions/test/download_job_test.dart',
-    'structural ANMF credit cannot suspend below playable prefix floor',
-    "paused.payload['playablePrefixFloorBytes']",
-)
+if int(m.group(1)) >= 268:
+    require(
+        'packages/sessions/test/download_job_test.dart',
+        'structural ANMF credit parks only after playable prefix floor',
+        "parked.payload['completedFrames']",
+        "parked.payload['responseRetained']",
+    )
+else:
+    require(
+        'packages/sessions/test/download_job_test.dart',
+        'structural ANMF credit cannot suspend below playable prefix floor',
+        "paused.payload['playablePrefixFloorBytes']",
+    )
 require(
     'packages/sessions/test/download_transfer_owner_test.dart',
     'decoder prefix floor invalidates an insufficient structural flow proof',
@@ -110,7 +133,10 @@ for path in (
         raise SystemExit(f'missing dev.258 governance file: {path}')
 
 require('docs/ARCHITECTURE.md', 'ANMF encoded结构进度', 'decoder playable-prefix floor')
-require('docs/SPEC.md', 'MUST仅视为完整ANMF encoded结构计数', 'playablePrefixFloor')
+if int(m.group(1)) >= 268:
+    require('docs/SPEC.md', 'ANMF structural count', 'playable-prefix floor')
+else:
+    require('docs/SPEC.md', 'MUST仅视为完整ANMF encoded结构计数', 'playablePrefixFloor')
 require('tool/check.sh', 'test_dev258_decoder_playable_prefix_flow_authority.py')
 
 # This round is evidence-ownership only. Stable scheduling/window policy stays put.

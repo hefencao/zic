@@ -1,3 +1,10 @@
+## 0.31.0-dev.268：live response parking 与 body-read permit 解耦
+
+- 14:54 dev.267 真机 Trace 证明 `demanded=false` 的 active task 虽不再因 3/7 detach 直接取消，但随后 normal capacity 的 `inactive-reclaim` 仍通过同一个 `CancelToken` 销毁 rhttp response；同时 Range-capable 页的 `pseudo-suspended` 仍会在窗口内主动 `iterator.cancel()`。因此 dev.260–267 的 `pseudo-retained / pseudo-suspended / inactive-reclaim` 仍把“保留response”和“占5路读取额度”绑定在同一 NetLane active slot。
+- 重构 NetLane 资源模型：`active` 只表示持有 body-read permit 的任务；`running` 表示仍存活的 physical task/response；达到 flow credit 或暂时失去 consumer demand 的 DownloadJob 释放 read permit 但保留同一 `StreamIterator` 与 response，恢复时同一 task 重新竞争 read permit，不创建第二个 transport attempt。Reader 默认 parked-response 上限10；超过该有界池才允许显式 `parked-response-eviction`。
+- 删除 production `DownloadFlowSuspended`、`pseudo-suspended`、`pseudo-retained`、`retainFlowResponse` 与 dev.267 `inactive-reclaim`。physical structural frame proof 回归 `DownloadSession` generation owner；Range 能力只决定真正 response eviction 后如何恢复，不再决定达到水位时是否主动关闭 response。
+- normal5 + current reserved1 现在是 **body-read permit** 上限，而不是 live response 数量上限。parked response 不申请下一块 body；HTTP/1.1 socket/native buffering 风险由 parked-response 有界池控制，不允许无界保留。
+
 ## 0.31.0-dev.267：working set 与 physical transfer lifetime 解耦重构
 
 - 13:50 dev.266真机Trace再次证明dev.264–266仍在错误层次补偿：current 99→98仅反向一页，policy即从readDirection=+1切到-1，并在同revision连续detach page102–106五个download claim。调方向阈值只能推迟批量detach，无法解决“working-set变化为何能决定已admit physical transfer生死”的所有权错误。

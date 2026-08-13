@@ -75,7 +75,6 @@ void main() {
       priority: 2,
       task: (token) async {
         expect(token.flowTargetFrames, 0);
-        expect(token.retainFlowResponse, isFalse);
         values.add('new');
       },
     );
@@ -113,7 +112,6 @@ void main() {
       priority: 3,
       task: (token) async {
         expect(token.flowTargetFrames, 0);
-        expect(token.retainFlowResponse, isFalse);
         values.add('latest-follow');
       },
     );
@@ -1128,18 +1126,13 @@ void _dev123NetLaneTests() {
     );
     final token = await started.future;
     expect(token.flowTargetFrames, 1);
-    expect(token.retainFlowResponse, isFalse);
 
-    expect(lane.updateRetainFlowResponse('animated', true), isTrue);
-    expect(token.retainFlowResponse, isTrue);
     expect(lane.updateFlowTargetFrames('animated', 5), isTrue);
     expect(token.flowTargetFrames, 5);
     expect(lane.active, 1);
 
     expect(lane.updateFlowTargetFrames('animated', 0), isTrue);
     expect(token.flowTargetFrames, 0);
-    expect(lane.updateRetainFlowResponse('animated', false), isTrue);
-    expect(token.retainFlowResponse, isFalse);
     expect(lane.active, 1);
 
     release.complete();
@@ -1211,45 +1204,110 @@ void _dev123NetLaneTests() {
     expect(incomingStarted, isTrue);
   });
 
-  test('capacity pressure reclaims only an inactive admitted physical task', () async {
-    final lane = NetLane(maxActive: 1);
-    final incumbentStarted = Completer<CancelToken>();
-    final incomingStarted = Completer<void>();
+  test('parked response releases read permit without cancelling physical task',
+      () async {
+    final lane = NetLane(maxActive: 1, maxParkedResponses: 2);
+    final firstStarted = Completer<CancelToken>();
+    final firstRelease = Completer<void>();
+    final secondStarted = Completer<void>();
+    final secondRelease = Completer<void>();
 
     lane.submitRanked(
-      key: 'inactive-incumbent',
-      priority: 820,
-      demanded: true,
+      key: 'first',
+      priority: 800,
+      bucket: 'remote:a',
+      bucketLimit: 1,
       task: (token) async {
-        incumbentStarted.complete(token);
-        await token.whenCancelled;
+        firstStarted.complete(token);
+        await Future.any<void>(<Future<void>>[
+          firstRelease.future,
+          token.whenCancelled,
+        ]);
       },
     );
-    final incumbent = await incumbentStarted.future;
-
-    // Working-set detachment changes scheduler demand state but is not itself
-    // a cancellation command. With no blocked work the physical task stays up.
-    expect(lane.updatePriority('inactive-incumbent', 0), isTrue);
-    expect(lane.updateDemanded('inactive-incumbent', false), isTrue);
+    final first = await firstStarted.future;
+    first.releaseResponseReadPermit();
     await Future<void>.delayed(Duration.zero);
-    expect(incumbent.cancelled, isFalse);
+    expect(first.cancelled, isFalse);
+    expect(lane.active, 0);
+    expect(lane.running, 1);
+    expect(lane.parkedResponses, 1);
+    expect(lane.responseReadPermitHeldOf('first'), isFalse);
 
     lane.submitRanked(
-      key: 'new-demand',
+      key: 'second',
       priority: 780,
-      demanded: true,
+      bucket: 'remote:a',
+      bucketLimit: 1,
       task: (_) async {
-        incomingStarted.complete();
+        secondStarted.complete();
+        await secondRelease.future;
       },
     );
-    await incumbent.whenCancelled;
-    expect(incumbent.preemptionSnapshot?.reason, 'inactive-reclaim');
-    expect(incumbent.preemptionSnapshot?.incomingPriority, 780);
-    await incomingStarted.future;
+    await secondStarted.future;
+    expect(lane.active, 1);
+    expect(lane.running, 2);
+
+    var resumed = false;
+    final reacquire = first.acquireResponseReadPermit().then((_) {
+      resumed = true;
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(resumed, isFalse);
+    expect(first.cancelled, isFalse);
+
+    secondRelease.complete();
+    await reacquire.timeout(const Duration(seconds: 1));
+    expect(first.cancelled, isFalse);
+    expect(lane.active, 1);
+    expect(lane.responseReadPermitHeldOf('first'), isTrue);
+
+    firstRelease.complete();
     await lane.idle();
   });
 
-  test('reattaching demand protects the same admitted task from normal reclaim', () async {
+  test('parked response pool evicts explicitly only after its bound is exceeded',
+      () async {
+    final lane = NetLane(maxActive: 1, maxParkedResponses: 1);
+    final firstStarted = Completer<CancelToken>();
+    final secondStarted = Completer<CancelToken>();
+
+    lane.submitRanked(
+      key: 'first-parked',
+      priority: 700,
+      demanded: false,
+      task: (token) async {
+        firstStarted.complete(token);
+        await token.whenCancelled;
+      },
+    );
+    // demanded=false pending is not admitted; attach, start, then detach.
+    lane.updateDemanded('first-parked', true);
+    final first = await firstStarted.future;
+    lane.updateDemanded('first-parked', false);
+    first.releaseResponseReadPermit();
+
+    lane.submitRanked(
+      key: 'second-parked',
+      priority: 800,
+      task: (token) async {
+        secondStarted.complete(token);
+        await token.whenCancelled;
+      },
+    );
+    final second = await secondStarted.future;
+    second.releaseResponseReadPermit();
+
+    await first.whenCancelled.timeout(const Duration(seconds: 1));
+    expect(first.preemptionSnapshot?.reason, 'parked-response-eviction');
+    expect(second.cancelled, isFalse);
+    expect(lane.parkedResponses, lessThanOrEqualTo(1));
+
+    second.cancel();
+    await lane.idle();
+  });
+
+  test('reattaching demand keeps the same admitted task identity', () async {
     final lane = NetLane(maxActive: 1);
     final incumbentStarted = Completer<CancelToken>();
     final incumbentRelease = Completer<void>();

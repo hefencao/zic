@@ -25,6 +25,19 @@ m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
 if m is None or int(m.group(1)) < 260:
     raise SystemExit('App build must be >=260')
 require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
+build = int(m.group(1))
+if build >= 268:
+    require('packages/sessions/lib/src/net_lane.dart', 'releaseResponseReadPermit', 'acquireResponseReadPermit', 'maxParkedResponses')
+    require('packages/sessions/lib/src/download_job.dart', ": 'pseudo-parked'", ": 'pseudo-resumed'", 'responseRetained: true')
+    for path in ('packages/pipeline/lib/src/demand.dart', 'packages/sessions/lib/src/net_lane.dart', 'packages/sessions/lib/src/download_job.dart'):
+        reject(path, 'retainFlowResponse', 'pseudo-retained', 'pseudo-suspended')
+    require('packages/sessions/test/download_job_test.dart', 'consumer-paced flow parks and resumes the same response')
+    require('docs/adr/0239-adjacent-warm-response-bounded-flow-retention.md', 'dev.268', 'ADR 0246 supersede')
+    require('docs/adr/0246-live-response-parking-body-read-permit-separation.md', 'live response', 'body-read permit')
+    require('packages/pipeline/lib/src/animated_prefetch_policy.dart', 'if (readDistance == 1) return 5;', 'if (readDistance == 2) return 3;', 'if (readDistance == -1) return 2;')
+    require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart', 'reservedHighPrioritySlots: 1')
+    print('PASS: dev.260 adjacent continuity preserved; retainFlowResponse superseded by dev.268 live response parking')
+    raise SystemExit(0)
 
 # Role policy owns warm-response intent; it is not inferred from partial size,
 # frame proof or transport capability.

@@ -76,6 +76,7 @@ void main() {
       expect(plan.decodes, hasLength(4), reason: scheme);
       expect(plan.uploads, hasLength(1), reason: scheme);
       expect(profile.networkConcurrency, 5, reason: scheme);
+      expect(profile.parkedResponseCapacity, 10, reason: scheme);
       expect(profile.localSourceConcurrency, 2, reason: scheme);
       expect(profile.remoteSourceConcurrency, 5, reason: scheme);
       expect(profile.decodeConcurrency, 3, reason: scheme);

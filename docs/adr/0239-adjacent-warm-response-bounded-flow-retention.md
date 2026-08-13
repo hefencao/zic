@@ -1,4 +1,5 @@
 # ADR 0239：相邻页 warm response 与 bounded flow credit 分离
+> dev.268：ADR 0246 supersede `retainFlowResponse/pseudo-retained` 实现；相邻页“不得因水位主动重开response”的目标由统一response parking满足。
 
 状态：Accepted
 

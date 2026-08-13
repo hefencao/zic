@@ -38,12 +38,21 @@ require(
     'sealed expected length confirmation is idempotent',
     'reserveExpectedLengthCalls',
 )
-require(
-    'packages/sessions/lib/src/download_job.dart',
-    '_authoritativeCatchupFloor = session.committedLength',
-    'if (networkCursor < _authoritativeCatchupFloor) return;',
-    'waitForFlowCreditOrTimeout',
-)
+if build >= 268:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        '_authoritativeCatchupFloor = session.committedLength',
+        'networkCursor >= _authoritativeCatchupFloor',
+        'waitForControlChangeOrTimeout',
+        'releaseResponseReadPermit',
+    )
+else:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        '_authoritativeCatchupFloor = session.committedLength',
+        'if (networkCursor < _authoritativeCatchupFloor) return;',
+        'waitForFlowCreditOrTimeout',
+    )
 if build >= 258:
     require(
         'packages/sessions/lib/src/download_job.dart',
@@ -54,7 +63,15 @@ else:
         'packages/sessions/lib/src/download_job.dart',
         '_consumerPacingInterval = Duration(milliseconds: 100)',
     )
-if build >= 254:
+if build >= 268:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        ": 'pseudo-parked'",
+        'responseRetained: true',
+        'responseReadPermitHeld: false',
+    )
+    reject('packages/sessions/lib/src/download_job.dart', 'DownloadFlowSuspended', "action: 'pseudo-suspended'", "action: 'pseudo-drain'")
+elif build >= 254:
     require(
         'packages/sessions/lib/src/download_job.dart',
         "action: 'pseudo-suspended'",
@@ -63,10 +80,10 @@ if build >= 254:
     reject('packages/sessions/lib/src/download_job.dart', "action: 'pseudo-drain'")
 else:
     require('packages/sessions/lib/src/download_job.dart', "action: 'pseudo-drain'")
-require(
-    'packages/sessions/lib/src/net_lane.dart',
-    'waitForFlowCreditOrTimeout',
-)
+if build >= 268:
+    require('packages/sessions/lib/src/net_lane.dart', 'releaseResponseReadPermit', 'acquireResponseReadPermit')
+else:
+    require('packages/sessions/lib/src/net_lane.dart', 'waitForFlowCreditOrTimeout')
 require(
     'packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart',
     'flowControl: ByteResponseFlowControl.consumerPacing',
@@ -84,7 +101,13 @@ require(
     'frame credit never pauses before an existing partial catch-up boundary',
     '_FullBodyFlowTransport',
 )
-if build >= 254:
+if build >= 268:
+    require(
+        'packages/sessions/test/download_job_test.dart',
+        'frame credit never pauses before an existing partial catch-up boundary',
+        "'pseudo-parked'",
+    )
+elif build >= 254:
     require(
         'packages/sessions/test/download_job_test.dart',
         "'pseudo-suspended'",
@@ -106,7 +129,10 @@ for path in (
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.252 governance file: {path}')
-if build >= 254:
+if build >= 268:
+    require('docs/ARCHITECTURE.md', 'park不再结束transport attempt', 'body-read permit')
+    require('docs/SPEC.md', 'authoritative partial边界', 'park')
+elif build >= 254:
     require('docs/ARCHITECTURE.md', 'authoritative partial边界', 'pseudo-suspended')
     require('docs/SPEC.md', 'authoritative partial边界', 'pseudo-suspended')
 else:

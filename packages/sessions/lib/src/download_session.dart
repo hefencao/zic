@@ -162,6 +162,8 @@ final class DownloadSession {
   int _firstPlayablePrefixBytes = 0;
   int _firstFrameRequiredPrefixBytes = 0;
   int _decodedPrefixFrames = 0;
+  int _networkFlowSatisfiedFrames = 0;
+  int _networkFlowProofLength = 0;
 
   List<int> _prefix = <int>[];
   int _pendingCommitTraceBytes = 0;
@@ -216,6 +218,8 @@ final class DownloadSession {
   int get firstPlayablePrefixBytes => _firstPlayablePrefixBytes;
   int get firstFrameRequiredPrefixBytes => _firstFrameRequiredPrefixBytes;
   int get decodedPrefixFrames => _decodedPrefixFrames;
+  int get networkFlowSatisfiedFrames => _networkFlowSatisfiedFrames;
+  int get networkFlowProofLength => _networkFlowProofLength;
 
   /// Minimum authoritative prefix that may be treated as first-frame ready by
   /// transport flow control. Decoder success is strongest; before success, a
@@ -877,6 +881,25 @@ final class DownloadSession {
     return true;
   }
 
+  /// Records the strongest structural frame proof reached by the live
+  /// physical response for this generation. The proof is a physical-prefix
+  /// fact, not a Reader policy target, and remains valid while the append-only
+  /// partial keeps at least [committedLengthAtProof] bytes.
+  void observeNetworkFlowFrameProof({
+    required int completedFrames,
+    required int committedLengthAtProof,
+  }) {
+    if (completedFrames <= 0 || committedLengthAtProof <= 0) return;
+    if (completedFrames < _networkFlowSatisfiedFrames) return;
+    if (completedFrames == _networkFlowSatisfiedFrames &&
+        committedLengthAtProof >= _networkFlowProofLength &&
+        _networkFlowProofLength > 0) {
+      return;
+    }
+    _networkFlowSatisfiedFrames = completedFrames;
+    _networkFlowProofLength = committedLengthAtProof;
+  }
+
   void recordFlowControl({
     required String action,
     String? mode,
@@ -886,6 +909,9 @@ final class DownloadSession {
     int? playablePrefixFloorBytes,
     bool? responseRangeSupported,
     String? retentionReason,
+    bool? responseRetained,
+    bool? responseReadPermitHeld,
+    bool? demanded,
   }) {
     _emit(
       TraceEventKind.artifactSource,
@@ -907,6 +933,10 @@ final class DownloadSession {
         if (responseRangeSupported != null)
           'responseRangeSupported': responseRangeSupported,
         if (retentionReason != null) 'retentionReason': retentionReason,
+        if (responseRetained != null) 'responseRetained': responseRetained,
+        if (responseReadPermitHeld != null)
+          'responseReadPermitHeld': responseReadPermitHeld,
+        if (demanded != null) 'demanded': demanded,
       },
     );
   }
@@ -1018,6 +1048,8 @@ final class DownloadSession {
     _firstPlayablePrefixBytes = 0;
     _firstFrameRequiredPrefixBytes = 0;
     _decodedPrefixFrames = 0;
+    _networkFlowSatisfiedFrames = 0;
+    _networkFlowProofLength = 0;
   }
 
   Future<void> dispose() async {

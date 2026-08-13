@@ -44,12 +44,21 @@ require(
 )
 require('packages/pipeline/lib/src/demand.dart', 'flowTargetFrames')
 require('packages/sessions/lib/src/download_transfer_owner.dart', 'flowTargetFrames', 'net.updateFlowTargetFrames')
-require(
-    'packages/sessions/lib/src/net_lane.dart',
-    'flowTargetFrames',
-    'waitForFlowCredit',
-    'updateFlowTargetFrames',
-)
+if build >= 268:
+    require(
+        'packages/sessions/lib/src/net_lane.dart',
+        'flowTargetFrames',
+        'updateFlowTargetFrames',
+        'releaseResponseReadPermit',
+        'acquireResponseReadPermit',
+    )
+else:
+    require(
+        'packages/sessions/lib/src/net_lane.dart',
+        'flowTargetFrames',
+        'waitForFlowCredit',
+        'updateFlowTargetFrames',
+    )
 reject(
     'packages/sessions/lib/src/net_lane.dart',
     'speculativeActiveBytes',
@@ -126,7 +135,11 @@ for path in (
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.249 governance file: {path}')
-require('docs/ARCHITECTURE.md', 'DownloadDemand窗口', 'frame credit', 'streamBackpressure')
-require('docs/SPEC.md', 'network-demand window：前 7 / 后 3', 'frame credit', 'streamBackpressure')
+if build >= 268:
+    require('docs/ARCHITECTURE.md', 'DownloadDemand窗口', 'frame credit', 'body-read permit')
+    require('docs/SPEC.md', 'network-demand window：前 7 / 后 3', 'frame credit', 'body-read permit')
+else:
+    require('docs/ARCHITECTURE.md', 'DownloadDemand窗口', 'frame credit', 'streamBackpressure')
+    require('docs/SPEC.md', 'network-demand window：前 7 / 后 3', 'frame credit', 'streamBackpressure')
 require('tool/check.sh', 'test_dev249_animated_frame_flow_backpressure.py')
 print('dev.249 animated WebP frame-flow backpressure: OK')

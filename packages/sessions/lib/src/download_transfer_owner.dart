@@ -29,7 +29,6 @@ final class TransferDemand {
     required this.priority,
     required this.reason,
     this.flowTargetFrames = 0,
-    this.retainFlowResponse = false,
     this.expectedChecksum,
     this.completionIntent = TransferCompletionIntent.opportunistic,
   })  : assert(priority >= 0),
@@ -38,7 +37,6 @@ final class TransferDemand {
   final int priority;
   final String reason;
   final int flowTargetFrames;
-  final bool retainFlowResponse;
   final String? expectedChecksum;
   final TransferCompletionIntent completionIntent;
 
@@ -48,7 +46,6 @@ final class TransferDemand {
       priority == other.priority &&
       reason == other.reason &&
       flowTargetFrames == other.flowTargetFrames &&
-      retainFlowResponse == other.retainFlowResponse &&
       expectedChecksum == other.expectedChecksum &&
       completionIntent == other.completionIntent;
 
@@ -57,7 +54,6 @@ final class TransferDemand {
         priority,
         reason,
         flowTargetFrames,
-        retainFlowResponse,
         expectedChecksum,
         completionIntent,
       );
@@ -99,8 +95,6 @@ final class DownloadTransferOwner {
   final Set<DownloadId> _downloadRetryPending = <DownloadId>{};
   final Set<DownloadId> _downloadTerminalFailures = <DownloadId>{};
   final Map<DownloadId, int> _downloadDeferredAtLength = <DownloadId, int>{};
-  final Map<DownloadId, _FlowFrameProof> _downloadFlowFrameProofs =
-      <DownloadId, _FlowFrameProof>{};
   // The physical session owns bytes/writer state, while the source provider is
   // only a lease for one currently executing NetLane task. A later preferred
   // exact claim may revoke this lease without replacing the physical session.
@@ -339,7 +333,6 @@ final class DownloadTransferOwner {
     _downloadRetryPending.clear();
     _downloadTerminalFailures.clear();
     _downloadDeferredAtLength.clear();
-    _downloadFlowFrameProofs.clear();
     _activeProviderLeases.clear();
     for (final entry in _sessionListeners.entries) {
       registry.find(entry.key)?.removeSnapshotListener(entry.value);
@@ -427,7 +420,6 @@ final class DownloadTransferOwner {
           priority: selected.demand.priority,
           reason: selected.demand.reason,
           flowTargetFrames: selected.demand.flowTargetFrames,
-          retainFlowResponse: selected.demand.retainFlowResponse,
           expectedChecksum: leftChecksum ?? rightChecksum,
           completionIntent: required
               ? TransferCompletionIntent.required
@@ -563,8 +555,9 @@ final class DownloadTransferOwner {
     } else if (taskKey != null && taskIsActive) {
       // Working-set membership and physical transport lifetime are separate.
       // Losing the final Reader/other consumer claim never cancels an already
-      // admitted task. It becomes rank-zero inactive physical work; NetLane may
-      // reclaim it only if a genuinely demanded task is blocked by capacity.
+      // admitted task. It becomes rank-zero inactive physical work. DownloadJob
+      // parks the same live response at its next safe body-read boundary and
+      // releases only the bounded NetLane read permit.
       net.updateDemanded(taskKey, false);
       _migrateDownloadPriority(
         id,
@@ -675,11 +668,9 @@ final class DownloadTransferOwner {
                   priority: session.effectivePriority,
                   preservedLength: session.committedLength,
                 );
-        final flowProof = _downloadFlowFrameProofs[id];
         final preferred = _preferredClaim(id);
         final flowSatisfiedForCurrentClaims = preferred != null &&
             _flowProofSatisfies(
-              flowProof,
               preferred.demand.flowTargetFrames,
               session,
             );
@@ -701,19 +692,18 @@ final class DownloadTransferOwner {
   }
 
   bool _flowProofSatisfies(
-    _FlowFrameProof? proof,
     int targetFrames,
     DownloadSession session,
   ) {
-    if (proof == null || targetFrames <= 0 || !identical(proof.session, session)) {
+    if (targetFrames <= 0 || session.networkFlowSatisfiedFrames <= 0) {
       return false;
     }
     final playableFloor = session.playableFlowPrefixFloorBytes(
       unresolvedFloorBytes: webpDecodePrefixQuantumBytesFor(session.id),
     );
-    return session.committedLength >= proof.committedLength &&
+    return session.committedLength >= session.networkFlowProofLength &&
         session.committedLength >= playableFloor &&
-        proof.completedFrames >= targetFrames;
+        session.networkFlowSatisfiedFrames >= targetFrames;
   }
 
   void _observeDecodePrefixEvidence(
@@ -732,9 +722,7 @@ final class DownloadTransferOwner {
     if (!changed || !session.demanded) return;
     final claim = _preferredClaim(session.id);
     if (claim == null) return;
-    final proof = _downloadFlowFrameProofs[session.id];
     if (!_flowProofSatisfies(
-      proof,
       claim.demand.flowTargetFrames,
       session,
     )) {
@@ -746,14 +734,6 @@ final class DownloadTransferOwner {
     final claim = _preferredClaim(id);
     if (claim == null || !session.demanded) return;
     final effectivePriority = session.effectivePriority;
-    final flowProof = _downloadFlowFrameProofs[id];
-    if (_flowProofSatisfies(
-      flowProof,
-      claim.demand.flowTargetFrames,
-      session,
-    )) {
-      return;
-    }
     final existingTaskKey = _networkTaskKeys[id];
     if (existingTaskKey != null) {
       // A DownloadId has one physical task identity while that task is queued
@@ -774,6 +754,12 @@ final class DownloadTransferOwner {
       if (_networkTaskKeys[id] == existingTaskKey) {
         _networkTaskKeys.remove(id);
       }
+    }
+    if (_flowProofSatisfies(
+      claim.demand.flowTargetFrames,
+      session,
+    )) {
+      return;
     }
     if (_disposed ||
         session.state == DownloadState.promoted ||
@@ -799,7 +785,6 @@ final class DownloadTransferOwner {
       bucket: claim.consumer.downloadBucketFor(claim.exactId),
       bucketLimit: claim.consumer.downloadBucketLimitFor(claim.exactId),
       flowTargetFrames: claim.demand.flowTargetFrames,
-      retainFlowResponse: claim.demand.retainFlowResponse,
       demanded: true,
       task: (token) => _runDownload(id, session, taskKey, token),
     );
@@ -874,13 +859,15 @@ final class DownloadTransferOwner {
           'bucket': bucket,
           'bucketLimit': bucketLimit,
           'globalActive': net.active,
+          'globalRunning': net.running,
+          'globalParkedResponses': net.parkedResponses,
           'globalLimit': net.maxActive,
+          'globalParkedLimit': net.maxParkedResponses,
           'handoffActive': net.handoffActive,
           'effectivePriority': net.priorityOf(taskKey),
           'demanded': net.demandedOf(taskKey),
           'bucketActive': net.activeForBucket(bucket),
           'flowTargetFrames': claim.demand.flowTargetFrames,
-          'retainFlowResponse': claim.demand.retainFlowResponse,
           'committedLength': session.committedLength,
           'physicalOwner': true,
           'providerScope': provider.scopeId,
@@ -913,44 +900,6 @@ final class DownloadTransferOwner {
           _downloadRetryPending.remove(id);
           _downloadTerminalFailures.remove(id);
           _downloadDeferredAtLength.remove(id);
-          return;
-        } on DownloadFlowSuspended catch (suspension) {
-          final priorProof = _downloadFlowFrameProofs[id];
-          final candidateProof = _FlowFrameProof(
-            session: session,
-            completedFrames: suspension.completedFrames,
-            committedLength: session.committedLength,
-          );
-          final proof = priorProof == null ||
-                  !identical(priorProof.session, session) ||
-                  candidateProof.completedFrames > priorProof.completedFrames ||
-                  (candidateProof.completedFrames == priorProof.completedFrames &&
-                      candidateProof.committedLength < priorProof.committedLength)
-              ? candidateProof
-              : priorProof;
-          _downloadFlowFrameProofs[id] = proof;
-          _record(
-            claim,
-            kind: TraceEventKind.artifactSource,
-            id: id,
-            payload: <String, Object?>{
-              'stage': 'transport-flow-control',
-              'action': 'flow-satisfied',
-              'mode': 'consumerPacing',
-              'targetFrames': suspension.targetFrames,
-              'completedFrames': suspension.completedFrames,
-              'satisfiedThroughFrames': proof.completedFrames,
-              'committedLength': session.committedLength,
-              'decodedPrefixFrames': session.decodedPrefixFrames,
-              'firstPlayablePrefixBytes': session.firstPlayablePrefixBytes,
-              'firstFrameRequiredPrefixBytes':
-                  session.firstFrameRequiredPrefixBytes,
-              'playablePrefixFloorBytes': session.playableFlowPrefixFloorBytes(
-                unresolvedFloorBytes: webpDecodePrefixQuantumBytesFor(session.id),
-              ),
-              'playablePrefixProven': session.firstPlayablePrefixBytes > 0,
-            },
-          );
           return;
         } on DownloadCatchupDeferred {
           final remainingPriority =
@@ -1103,23 +1052,11 @@ final class DownloadTransferOwner {
       final prior = _progressLengths[id] ?? 0;
       if (snapshot.committedLength != prior) {
         _progressLengths[id] = snapshot.committedLength;
-        final flowProof = _downloadFlowFrameProofs[id];
-        // Physical partials are append-only in the normal path. Growth keeps
-        // every previously proven frame valid; only a real truncation/reset
-        // can invalidate that prefix proof.
-        if (flowProof != null &&
-            snapshot.committedLength < flowProof.committedLength) {
-          _downloadFlowFrameProofs.remove(id);
-        }
       }
       if (snapshot.committedLength > prior) {
         _downloadRetryRounds.remove(id);
         _downloadRetryPending.remove(id);
         _downloadTerminalFailures.remove(id);
-      }
-      if (snapshot.state == DownloadState.promoted ||
-          snapshot.state == DownloadState.disposed) {
-        _downloadFlowFrameProofs.remove(id);
       }
     }
     _sessionListeners[id] = listener;
@@ -1128,12 +1065,6 @@ final class DownloadTransferOwner {
 
   void _retireDownloadTracking(DownloadId id, DownloadSession? session) {
     _downloadRetryRounds.remove(id);
-    if (session == null ||
-        session.state == DownloadState.promoted ||
-        session.state == DownloadState.disposed ||
-        session.committedLength == 0) {
-      _downloadFlowFrameProofs.remove(id);
-    }
     _downloadRetryPending.remove(id);
     _downloadTerminalFailures.remove(id);
     final deferredAtLength = _downloadDeferredAtLength[id];
@@ -1154,10 +1085,6 @@ final class DownloadTransferOwner {
     final claim = _preferredClaim(id);
     if (claim != null) {
       net.updateFlowTargetFrames(taskKey, claim.demand.flowTargetFrames);
-      net.updateRetainFlowResponse(
-        taskKey,
-        claim.demand.retainFlowResponse,
-      );
     }
     final oldPriority = net.priorityOf(taskKey);
     final active = net.isActive(taskKey);
@@ -1341,28 +1268,6 @@ final class DownloadTransferConsumer {
 
   Future<void> dispose() => owner._disposeConsumer(this);
 }
-
-final class _FlowFrameProof {
-  const _FlowFrameProof({
-    required this.session,
-    required this.completedFrames,
-    required this.committedLength,
-  });
-
-  /// Physical generation that produced this proof. DownloadId equality alone
-  /// is not enough if a retired session is replaced by a new session object.
-  final DownloadSession session;
-
-  /// Lower bound on complete animation frames already encoded in this
-  /// authoritative physical partial. This is content evidence, not a record of
-  /// the policy target that happened to stop the prior transport attempt.
-  final int completedFrames;
-
-  /// Prefix length at which [completedFrames] was proven. A longer append-only
-  /// partial preserves the proof; a shorter partial invalidates it.
-  final int committedLength;
-}
-
 
 final class _ActiveProviderLease {
   const _ActiveProviderLease({

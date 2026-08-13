@@ -54,5 +54,8 @@ require('tool/check.sh', 'test_dev263_decode_upload_generation_coherence.py')
 
 # Frozen reader/network policy must remain intact.
 require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart', 'reservedHighPrioritySlots: 1')
-require('packages/sessions/lib/src/download_job.dart', "'range-resume-unproven'")
+if int(m.group(1)) >= 268:
+    require('packages/sessions/lib/src/download_job.dart', ": 'pseudo-parked'", 'responseRetained: true')
+else:
+    require('packages/sessions/lib/src/download_job.dart', "'range-resume-unproven'")
 print('dev.263 decode/upload generation coherence: OK')

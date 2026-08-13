@@ -1,4 +1,5 @@
 # ADR 0245：Reader working set 与 physical transfer lifetime 必须分离
+> dev.268：ADR 0246 supersede本ADR的normal `inactive-reclaim`子句；working-set/physical-task lifetime分离原则继续有效，inactive live response改为park并释放body-read permit。
 
 - Status: Accepted
 - Date: 2026-08-13

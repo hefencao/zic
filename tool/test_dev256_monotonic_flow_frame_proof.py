@@ -32,26 +32,44 @@ require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
 build = int(m.group(1))
 
 owner = 'packages/sessions/lib/src/download_transfer_owner.dart'
-require(
-    owner,
-    'final Map<DownloadId, _FlowFrameProof> _downloadFlowFrameProofs',
-    'final class _FlowFrameProof',
-    'final DownloadSession session;',
-    'final int completedFrames;',
-    'final int committedLength;',
-    '_flowProofSatisfies(',
-    '!identical(proof.session, session)',
-    'session.committedLength >= proof.committedLength',
-    'proof.completedFrames >= targetFrames',
-    "'satisfiedThroughFrames': proof.completedFrames",
-    'snapshot.committedLength < flowProof.committedLength',
-)
-reject(
-    owner,
-    'final Map<DownloadId, _FlowSuspension> _downloadFlowSuspensions',
-    'flowSuspension.targetFrames == claim.demand.flowTargetFrames',
-    'preferredAfterUpdate.demand.flowTargetFrames != suspended.targetFrames',
-)
+if build >= 268:
+    require(
+        'packages/sessions/lib/src/download_session.dart',
+        'int _networkFlowSatisfiedFrames = 0;',
+        'int _networkFlowProofLength = 0;',
+        'void observeNetworkFlowFrameProof({',
+        'int get networkFlowSatisfiedFrames => _networkFlowSatisfiedFrames;',
+        'int get networkFlowProofLength => _networkFlowProofLength;',
+    )
+    require(
+        owner,
+        '_flowProofSatisfies(',
+        'session.networkFlowSatisfiedFrames >= targetFrames',
+        'session.networkFlowProofLength',
+        'session.committedLength >= playableFloor',
+    )
+    reject(owner, 'final Map<DownloadId, _FlowFrameProof> _downloadFlowFrameProofs', 'final class _FlowFrameProof')
+else:
+    require(
+        owner,
+        'final Map<DownloadId, _FlowFrameProof> _downloadFlowFrameProofs',
+        'final class _FlowFrameProof',
+        'final DownloadSession session;',
+        'final int completedFrames;',
+        'final int committedLength;',
+        '_flowProofSatisfies(',
+        '!identical(proof.session, session)',
+        'session.committedLength >= proof.committedLength',
+        'proof.completedFrames >= targetFrames',
+        "'satisfiedThroughFrames': proof.completedFrames",
+        'snapshot.committedLength < flowProof.committedLength',
+    )
+    reject(
+        owner,
+        'final Map<DownloadId, _FlowSuspension> _downloadFlowSuspensions',
+        'flowSuspension.targetFrames == claim.demand.flowTargetFrames',
+        'preferredAfterUpdate.demand.flowTargetFrames != suspended.targetFrames',
+    )
 
 require(
     'packages/sessions/test/download_transfer_owner_test.dart',
@@ -69,7 +87,10 @@ for path in (
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.256 governance file: {path}')
 
-if build >= 258:
+if build >= 268:
+    require('docs/ARCHITECTURE.md', 'physical frame proof由DownloadSession generation owner保存', 'playable-prefix floor')
+    require('docs/SPEC.md', 'physical structural frame proof MUST由DownloadSession generation owner保存', 'playable floor')
+elif build >= 258:
     require(
         'docs/ARCHITECTURE.md',
         'frame proof',

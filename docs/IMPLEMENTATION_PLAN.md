@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：dev.267真机优先验证working-set/physical-lifetime分离：99→98第一次反向`readDirection`必须保持原值，最多滑动一个3/7边界；任意`demandDetached`后若physical task已active且没有真实slot pressure，应继续同task且不得出现`downloadPreempted`。只有新的`demanded=true` pending因normal/bucket容量阻塞时，才允许对`demanded=false` active记录`preemptionReason=inactive-reclaim`；重新进入窗口且尚未被回收时必须复用同一task key。不得恢复dev.264 flow-yield、dev.265 near flag或通过扩大窗口/连接/grace掩盖。
+- P0：dev.268真机验证live response parking：任一`pseudo-parked/response-parked`后必须保持`responseRetained=true / responseReadPermitHeld=false`，同identity重新需要body时应先同task `pseudo-resumed`且中间不得有第二次`downloadStarted`。普通3/7 detach或normal pending pressure不得产生`inactive-reclaim`；只有parked池>10才允许`preemptionReason=parked-response-eviction`。同时核对`globalActive<=5(+current handoff)`而`globalRunning/globalParkedResponses`可独立变化。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

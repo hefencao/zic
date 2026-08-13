@@ -113,7 +113,10 @@ for path in (
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.248 governance file: {path}')
-if build >= 249:
+if build >= 268:
+    require('docs/ARCHITECTURE.md', 'frame credit', 'body-read permit')
+    require('docs/SPEC.md', 'frame credit', 'body-read permit')
+elif build >= 249:
     require('docs/ARCHITECTURE.md', 'frame credit', 'streamBackpressure')
     require('docs/SPEC.md', 'frame credit', 'streamBackpressure')
 else:

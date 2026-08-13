@@ -11,12 +11,16 @@ final class CancelToken implements PriorityObservableTaskControl {
   CancelToken({
     int priority = 0,
     int flowTargetFrames = 0,
-    bool retainFlowResponse = false,
+    bool demanded = true,
+    Future<void> Function()? acquireResponseReadPermit,
+    void Function()? releaseResponseReadPermit,
     MonoClock clock = const SystemClock(),
   })  : assert(flowTargetFrames >= 0),
         _priority = priority,
         _flowTargetFrames = flowTargetFrames,
-        _retainFlowResponse = retainFlowResponse,
+        _demanded = demanded,
+        _acquireResponseReadPermit = acquireResponseReadPermit,
+        _releaseResponseReadPermit = releaseResponseReadPermit,
         _clock = clock,
         _activatedAtMicros = clock.nowMicros();
 
@@ -25,7 +29,9 @@ final class CancelToken implements PriorityObservableTaskControl {
   bool _cancelled = false;
   int _priority;
   int _flowTargetFrames;
-  bool _retainFlowResponse;
+  bool _demanded;
+  final Future<void> Function()? _acquireResponseReadPermit;
+  final void Function()? _releaseResponseReadPermit;
   Completer<void>? _flowChanged;
   int? _restartCostStartedAtMicros;
   int _restartCostBytes = 0;
@@ -43,38 +49,10 @@ final class CancelToken implements PriorityObservableTaskControl {
   @override
   Stream<int> get priorityChanges => _priorityChanges.stream;
   int get flowTargetFrames => _flowTargetFrames;
-  bool get retainFlowResponse => _retainFlowResponse;
+  bool get demanded => _demanded;
 
   bool flowBlockedAt(int completedFrames) =>
       _flowTargetFrames > 0 && completedFrames >= _flowTargetFrames;
-
-  Future<void> waitForFlowCredit(int completedFrames) async {
-    while (!_cancelled && flowBlockedAt(completedFrames)) {
-      final wake = _flowChanged ??= Completer<void>();
-      if (!flowBlockedAt(completedFrames) || _cancelled) break;
-      await Future.any<void>(<Future<void>>[wake.future, whenCancelled]);
-    }
-    throwIfCancelled();
-  }
-
-  /// Waits for a flow-credit change but allows consumer-paced transports to
-  /// drain one bounded chunk periodically. Returns true when credit changed
-  /// enough to resume normal reading, false when only the pacing interval
-  /// elapsed. No dangling error future is left behind after the timeout.
-  Future<bool> waitForFlowCreditOrTimeout(
-    int completedFrames,
-    Duration timeout,
-  ) async {
-    if (!flowBlockedAt(completedFrames)) return true;
-    final wake = _flowChanged ??= Completer<void>();
-    await Future.any<void>(<Future<void>>[
-      wake.future,
-      whenCancelled,
-      Future<void>.delayed(timeout),
-    ]);
-    throwIfCancelled();
-    return !flowBlockedAt(completedFrames);
-  }
 
   void updateFlowTargetFrames(int frames) {
     assert(frames >= 0);
@@ -83,10 +61,34 @@ final class CancelToken implements PriorityObservableTaskControl {
     _wakeFlowWaiters();
   }
 
-  void updateRetainFlowResponse(bool retain) {
-    if (_retainFlowResponse == retain) return;
-    _retainFlowResponse = retain;
+  void updateDemanded(bool demanded) {
+    if (_demanded == demanded) return;
+    _demanded = demanded;
     _wakeFlowWaiters();
+  }
+
+  Future<void> waitForControlChangeOrTimeout(Duration timeout) async {
+    final wake = _flowChanged ??= Completer<void>();
+    await Future.any<void>(<Future<void>>[
+      wake.future,
+      whenCancelled,
+      Future<void>.delayed(timeout),
+    ]);
+    throwIfCancelled();
+  }
+
+  void releaseResponseReadPermit() {
+    _releaseResponseReadPermit?.call();
+  }
+
+  Future<void> acquireResponseReadPermit() async {
+    final acquire = _acquireResponseReadPermit;
+    if (acquire == null) return;
+    await Future.any<void>(<Future<void>>[
+      acquire(),
+      whenCancelled,
+    ]);
+    throwIfCancelled();
   }
 
   void _wakeFlowWaiters() {
@@ -241,6 +243,7 @@ final class NetLane implements TaskLane {
     int highPriorityThreshold = 1000,
     int preemptionThreshold = 40,
     Duration preemptionCandidateGrace = Duration.zero,
+    int maxParkedResponses = 10,
     MonoClock clock = const SystemClock(),
     LaneError? onError,
   }) : _core = _Lane(
@@ -249,6 +252,7 @@ final class NetLane implements TaskLane {
           highPriorityThreshold: highPriorityThreshold,
           preemptionThreshold: preemptionThreshold,
           preemptionCandidateGrace: preemptionCandidateGrace,
+          maxParkedResponses: maxParkedResponses,
           clock: clock,
           onError: onError,
         );
@@ -261,6 +265,9 @@ final class NetLane implements TaskLane {
   int get queued => _core.queued;
   @override
   int get active => _core.active;
+  int get running => _core.running;
+  int get parkedResponses => _core.parkedResponses;
+  int get maxParkedResponses => _core.maxParkedResponses;
   @override
   bool get isIdle => _core.isIdle;
   @override
@@ -274,7 +281,6 @@ final class NetLane implements TaskLane {
     required int bucketLimit,
     bool preemptible = true,
     int flowTargetFrames = 0,
-    bool retainFlowResponse = false,
     bool demanded = true,
     required LaneTask task,
   }) =>
@@ -285,7 +291,6 @@ final class NetLane implements TaskLane {
         bucketLimit: bucketLimit,
         preemptible: preemptible,
         flowTargetFrames: flowTargetFrames,
-        retainFlowResponse: retainFlowResponse,
         demanded: demanded,
         task: task,
       );
@@ -307,12 +312,11 @@ final class NetLane implements TaskLane {
       _core.updatePriority(key, priority);
   bool updateFlowTargetFrames(String key, int frames) =>
       _core.updateFlowTargetFrames(key, frames);
-  bool updateRetainFlowResponse(String key, bool retain) =>
-      _core.updateRetainFlowResponse(key, retain);
   bool updateDemanded(String key, bool demanded) =>
       _core.updateDemanded(key, demanded);
   bool? demandedOf(String key) => _core.demandedOf(key);
-
+  bool? responseReadPermitHeldOf(String key) =>
+      _core.responseReadPermitHeldOf(key);
 
   @override
   bool replace({required String key, required int priority, required LaneTask task}) =>
@@ -458,14 +462,17 @@ final class _Lane {
     this.highPriorityThreshold = 1 << 30,
     this.preemptionThreshold = 1 << 30,
     this.preemptionCandidateGrace = Duration.zero,
+    this.maxParkedResponses = 10,
     this.clock = const SystemClock(),
     this.onError,
   })  : assert(maxActive > 0),
         assert(reservedHighPrioritySlots >= 0),
         assert(preemptionThreshold >= 0),
-        assert(!preemptionCandidateGrace.isNegative);
+        assert(!preemptionCandidateGrace.isNegative),
+        assert(maxParkedResponses >= 0);
 
   final int maxActive;
+  final int maxParkedResponses;
   final int reservedHighPrioritySlots;
   final int highPriorityThreshold;
   final int preemptionThreshold;
@@ -480,9 +487,14 @@ final class _Lane {
   Timer? _preemptionWake;
   int? _preemptionWakeAtMicros;
   int _seq = 0;
+  int _receivingActive = 0;
+  int _parkSeq = 0;
 
   int get queued => _pending.length;
-  int get active => _active.length;
+  int get active => _receivingActive;
+  int get running => _active.length;
+  int get parkedResponses =>
+      _active.values.where((task) => !task.responseReadPermitHeld).length;
   int get handoffActive {
     var excess = math.max(0, active - maxActive);
     final limits = <String, int>{};
@@ -526,7 +538,6 @@ final class _Lane {
     int? bucketLimit,
     bool preemptible = true,
     int flowTargetFrames = 0,
-    bool retainFlowResponse = false,
     bool demanded = true,
     required LaneTask task,
   }) {
@@ -537,10 +548,9 @@ final class _Lane {
       activeTask
         ..preemptible = preemptible
         ..flowTargetFrames = flowTargetFrames
-        ..retainFlowResponse = retainFlowResponse
         ..demanded = demanded;
       activeTask.token.updateFlowTargetFrames(flowTargetFrames);
-      activeTask.token.updateRetainFlowResponse(retainFlowResponse);
+      activeTask.token.updateDemanded(demanded);
       if (increased) _pump();
       return false;
     }
@@ -553,7 +563,6 @@ final class _Lane {
         ..bucketLimit = bucketLimit
         ..preemptible = preemptible
         ..flowTargetFrames = flowTargetFrames
-        ..retainFlowResponse = retainFlowResponse
         ..demanded = demanded
         ..task = task;
       if (increased) _pump();
@@ -566,7 +575,6 @@ final class _Lane {
       bucketLimit: bucketLimit,
       preemptible: preemptible,
       flowTargetFrames: flowTargetFrames,
-      retainFlowResponse: retainFlowResponse,
       demanded: demanded,
       task: task,
     );
@@ -580,9 +588,8 @@ final class _Lane {
     if (activeTask != null) {
       final previous = activeTask.priority;
       _updateActivePriority(activeTask, priority);
-      // A decrease can make an inactive physical task reclaimable, while an
-      // increase can change admission/preemption order. Both are scheduler
-      // state changes and must re-run the lane policy.
+      // Priority changes affect both queued admission and parked-response
+      // resume order, so every real change re-runs the lane policy.
       if (previous != priority) _pump();
       return true;
     }
@@ -608,27 +615,15 @@ final class _Lane {
     return true;
   }
 
-  bool updateRetainFlowResponse(String key, bool retain) {
-    final activeTask = _active[key];
-    if (activeTask != null) {
-      activeTask.retainFlowResponse = retain;
-      activeTask.token.updateRetainFlowResponse(retain);
-      return true;
-    }
-    final pending = _pending[key];
-    if (pending == null) return false;
-    pending.retainFlowResponse = retain;
-    return true;
-  }
-
   bool updateDemanded(String key, bool demanded) {
     final activeTask = _active[key];
     if (activeTask != null) {
       if (activeTask.demanded == demanded) return true;
       activeTask.demanded = demanded;
-      // Losing demand can make an admitted physical task reclaimable; gaining
-      // demand makes it protected again. Neither transition is a cancellation
-      // command, but both materially change scheduler eligibility.
+      activeTask.token.updateDemanded(demanded);
+      // Losing demand changes whether the live response should keep a body-read
+      // permit. Neither transition is a cancellation command; DownloadJob
+      // parks/resumes the same response at its next safe read boundary.
       _pump();
       return true;
     }
@@ -642,7 +637,8 @@ final class _Lane {
 
   bool? demandedOf(String key) =>
       _active[key]?.demanded ?? _pending[key]?.demanded;
-
+  bool? responseReadPermitHeldOf(String key) =>
+      _active[key]?.responseReadPermitHeld;
 
   void _updatePendingPriority(_Pending pending, int priority) {
     final previous = pending.priority;
@@ -670,7 +666,6 @@ final class _Lane {
     int? bucketLimit,
     bool preemptible = true,
     int flowTargetFrames = 0,
-    bool retainFlowResponse = false,
     bool demanded = true,
     required LaneTask task,
   }) {
@@ -683,7 +678,6 @@ final class _Lane {
       bucketLimit: bucketLimit,
       preemptible: preemptible,
       flowTargetFrames: flowTargetFrames,
-      retainFlowResponse: retainFlowResponse,
       demanded: demanded,
       task: task,
       highPrioritySinceMicros:
@@ -777,54 +771,99 @@ final class _Lane {
   }
 
   void _pump() {
-    while (_pending.isNotEmpty) {
-      final running = _active.length;
+    while (true) {
       final handoffCapacity = maxActive + reservedHighPrioritySlots;
-      final eligible = _pending.values.where((pending) {
+      final pendingEligible = _pending.values.where((pending) {
         if (_active.containsKey(pending.key) || !pending.demanded) return false;
         final highPriority = pending.priority >= highPriorityThreshold;
         final handoff = highPriority && _needsHandoff(pending);
         if (!handoff &&
-            (running >= maxActive ||
+            (_receivingActive >= maxActive ||
                 !_bucketAvailable(pending, handoff: false))) {
           return false;
         }
         if (handoff &&
-            (reservedHighPrioritySlots <= 0 || running >= handoffCapacity)) {
+            (reservedHighPrioritySlots <= 0 ||
+                _receivingActive >= handoffCapacity)) {
           return false;
         }
         return _bucketAvailable(pending, handoff: handoff);
       }).toList(growable: false);
-      if (eligible.isEmpty) {
-        final blocked = _highestBlockedDemandedPending();
-        if (blocked != null && _reclaimInactiveRunningFor(blocked)) {
-          break;
+      final resumeEligible = _active.entries.where((entry) {
+        final task = entry.value;
+        if (!task.resumeRequested ||
+            task.responseReadPermitHeld ||
+            task.token.cancelled) {
+          return false;
         }
+        final highPriority = task.priority >= highPriorityThreshold;
+        final handoff = highPriority && _activeNeedsHandoff(task);
+        if (!handoff &&
+            (_receivingActive >= maxActive ||
+                !_activeBucketAvailable(task, handoff: false))) {
+          return false;
+        }
+        if (handoff &&
+            (reservedHighPrioritySlots <= 0 ||
+                _receivingActive >= handoffCapacity)) {
+          return false;
+        }
+        return _activeBucketAvailable(task, handoff: handoff);
+      }).toList(growable: false);
+
+      _Pending? nextPending;
+      if (pendingEligible.isNotEmpty) {
+        nextPending = pendingEligible.reduce((a, b) {
+          final priority = b.priority.compareTo(a.priority);
+          if (priority != 0) return priority > 0 ? b : a;
+          return a.seq <= b.seq ? a : b;
+        });
+      }
+      MapEntry<String, _ActiveTask>? nextResume;
+      if (resumeEligible.isNotEmpty) {
+        nextResume = resumeEligible.reduce((a, b) {
+          final priority = b.value.priority.compareTo(a.value.priority);
+          if (priority != 0) return priority > 0 ? b : a;
+          return a.value.resumeSeq <= b.value.resumeSeq ? a : b;
+        });
+      }
+
+      if (nextPending == null && nextResume == null) {
         final blockedHighPriority = _highestBlockedHighPriorityPending();
         if (blockedHighPriority != null) {
-          // The reserved current headroom is admission capacity, not a
-          // mandatory cancellation slot. Only once normal + reserved capacity
-          // is genuinely saturated may another blocked current ask the lowest
-          // effective-rank demanded task to unwind.
           if (!_preemptLowestRunningFor(blockedHighPriority)) {
             _schedulePreemptionCandidateWake(blockedHighPriority);
+          }
+        } else {
+          final blockedResume = _highestBlockedHighPriorityResume();
+          if (blockedResume != null) {
+            _preemptLowestRunningForResume(blockedResume);
           }
         }
         break;
       }
-      final next = eligible.reduce((a, b) {
-        final priority = b.priority.compareTo(a.priority);
-        if (priority != 0) {
-          return priority > 0 ? b : a;
-        }
-        return a.seq <= b.seq ? a : b;
-      });
-      final handoff = _needsHandoff(next);
+
+      final resumeWins = nextResume != null &&
+          (nextPending == null ||
+              nextResume.value.priority > nextPending.priority ||
+              (nextResume.value.priority == nextPending.priority &&
+                  nextResume.value.resumeSeq <= nextPending.seq));
+      if (resumeWins) {
+        _grantResponseReadPermit(nextResume!.key, nextResume.value);
+        continue;
+      }
+
+      final next = nextPending!;
       _pending.remove(next.key);
-      final token = CancelToken(
+      late CancelToken token;
+      token = CancelToken(
         priority: next.priority,
         flowTargetFrames: next.flowTargetFrames,
-        retainFlowResponse: next.retainFlowResponse,
+        demanded: next.demanded,
+        acquireResponseReadPermit: () =>
+            _acquireResponseReadPermit(next.key, token),
+        releaseResponseReadPermit: () =>
+            _releaseResponseReadPermit(next.key, token),
         clock: clock,
       );
       _active[next.key] = _ActiveTask(
@@ -834,13 +873,11 @@ final class _Lane {
         priority: next.priority,
         preemptible: next.preemptible,
         flowTargetFrames: next.flowTargetFrames,
-        retainFlowResponse: next.retainFlowResponse,
         demanded: next.demanded,
+        responseReadPermitHeld: true,
+        resumeSeq: _seq++,
       );
-      final bucket = next.bucket;
-      if (bucket != null) {
-        _activeByBucket[bucket] = (_activeByBucket[bucket] ?? 0) + 1;
-      }
+      _incrementResponseReadPermit(next.bucket);
       unawaited(
         Future<void>.sync(() => next.task(token)).catchError(
           (Object error, StackTrace stack) {
@@ -848,22 +885,148 @@ final class _Lane {
           },
         ).whenComplete(() {
           final removed = _active.remove(next.key);
-          removed?.token.dispose();
-          final removedBucket = removed?.bucket;
-          if (removedBucket != null) {
-            final remaining = (_activeByBucket[removedBucket] ?? 1) - 1;
-            if (remaining <= 0) {
-              _activeByBucket.remove(removedBucket);
-            } else {
-              _activeByBucket[removedBucket] = remaining;
+          if (removed != null) {
+            final waiter = removed.resumeCompleter;
+            if (waiter != null && !waiter.isCompleted) waiter.complete();
+            if (removed.responseReadPermitHeld) {
+              _decrementResponseReadPermit(removed.bucket);
             }
+            removed.token.dispose();
           }
+          _enforceParkedResponseBound();
           _pump();
           _notifyIdle();
         }),
       );
     }
     _notifyIdle();
+  }
+
+  void _incrementResponseReadPermit(String? bucket) {
+    _receivingActive += 1;
+    if (bucket != null) {
+      _activeByBucket[bucket] = (_activeByBucket[bucket] ?? 0) + 1;
+    }
+  }
+
+  void _decrementResponseReadPermit(String? bucket) {
+    _receivingActive = math.max(0, _receivingActive - 1);
+    if (bucket == null) return;
+    final remaining = (_activeByBucket[bucket] ?? 1) - 1;
+    if (remaining <= 0) {
+      _activeByBucket.remove(bucket);
+    } else {
+      _activeByBucket[bucket] = remaining;
+    }
+  }
+
+  void _releaseResponseReadPermit(String key, CancelToken token) {
+    final task = _active[key];
+    if (task == null || !identical(task.token, token) ||
+        !task.responseReadPermitHeld || token.cancelled) {
+      return;
+    }
+    task
+      ..responseReadPermitHeld = false
+      ..resumeRequested = false
+      ..parkedSeq = _parkSeq++;
+    final waiter = task.resumeCompleter;
+    task.resumeCompleter = null;
+    if (waiter != null && !waiter.isCompleted) waiter.complete();
+    _decrementResponseReadPermit(task.bucket);
+    _enforceParkedResponseBound(excludeKey: key);
+    _pump();
+  }
+
+  Future<void> _acquireResponseReadPermit(
+    String key,
+    CancelToken token,
+  ) async {
+    final task = _active[key];
+    if (task == null || !identical(task.token, token)) {
+      token.throwIfCancelled();
+      return;
+    }
+    if (task.responseReadPermitHeld) return;
+    task
+      ..resumeRequested = true
+      ..resumeSeq = _seq++;
+    final waiter = task.resumeCompleter ??= Completer<void>();
+    _pump();
+    await Future.any<void>(<Future<void>>[
+      waiter.future,
+      token.whenCancelled,
+    ]);
+    token.throwIfCancelled();
+  }
+
+  void _grantResponseReadPermit(String key, _ActiveTask task) {
+    if (task.responseReadPermitHeld || !task.resumeRequested ||
+        task.token.cancelled || _active[key] != task) {
+      return;
+    }
+    task
+      ..responseReadPermitHeld = true
+      ..resumeRequested = false;
+    _incrementResponseReadPermit(task.bucket);
+    final waiter = task.resumeCompleter;
+    task.resumeCompleter = null;
+    if (waiter != null && !waiter.isCompleted) waiter.complete();
+  }
+
+  void _enforceParkedResponseBound({String? excludeKey}) {
+    while (parkedResponses > maxParkedResponses) {
+      MapEntry<String, _ActiveTask>? victim;
+      for (final entry in _active.entries) {
+        final task = entry.value;
+        if (entry.key == excludeKey || task.responseReadPermitHeld ||
+            task.token.cancelled) {
+          continue;
+        }
+        if (victim == null || _parkedVictimBefore(task, victim.value)) {
+          victim = entry;
+        }
+      }
+      // If the newly parked task itself is the only possible victim, evict it
+      // rather than violating the configured live-response bound.
+      victim ??= excludeKey == null
+          ? null
+          : (_active[excludeKey] == null
+              ? null
+              : MapEntry<String, _ActiveTask>(
+                  excludeKey, _active[excludeKey]!));
+      if (victim == null || victim.value.responseReadPermitHeld) return;
+      final task = victim.value;
+      final rank = _policyRank(task, basePriority: task.priority);
+      task.token.cancelForPreemption(
+        TaskPreemptionSnapshot(
+          incomingPriority: 0,
+          basePriority: task.priority,
+          retentionPriority: rank.effectivePriority,
+          retentionBonus: rank.retentionBonus,
+          restartCostElapsedMicros: rank.restartCostElapsedMicros,
+          restartCostBytes: rank.restartCostBytes,
+          incomingWaitMicros: 0,
+          reason: 'parked-response-eviction',
+        ),
+      );
+      return;
+    }
+  }
+
+  bool _parkedVictimBefore(_ActiveTask a, _ActiveTask b) {
+    if (a.demanded != b.demanded) return !a.demanded;
+    if (a.resumeRequested != b.resumeRequested) return !a.resumeRequested;
+    if (a.priority != b.priority) return a.priority < b.priority;
+    return a.parkedSeq < b.parkedSeq;
+  }
+
+  bool _activeBucketAvailable(_ActiveTask task, {required bool handoff}) {
+    final bucket = task.bucket;
+    final limit = task.bucketLimit;
+    if (bucket == null || limit == null) return true;
+    final allowance = handoff ? 1 : 0;
+    return (_activeByBucket[bucket] ?? 0) < limit + allowance;
   }
 
   bool get _hasPreemptionInFlight => _active.values.any(
@@ -904,59 +1067,6 @@ final class _Lane {
     );
   }
 
-  _Pending? _highestBlockedDemandedPending() {
-    _Pending? highest;
-    for (final pending in _pending.values) {
-      if (_active.containsKey(pending.key) || !pending.demanded) continue;
-      if (!_needsHandoff(pending)) continue;
-      if (highest == null ||
-          pending.priority > highest.priority ||
-          (pending.priority == highest.priority &&
-              pending.seq < highest.seq)) {
-        highest = pending;
-      }
-    }
-    return highest;
-  }
-
-  bool _reclaimInactiveRunningFor(_Pending incoming) {
-    if (_hasPreemptionInFlight) return false;
-    final incomingBucket = incoming.bucket;
-    final incomingBucketLimit = incoming.bucketLimit;
-    final bucketFull = incomingBucket != null &&
-        incomingBucketLimit != null &&
-        (_activeByBucket[incomingBucket] ?? 0) >= incomingBucketLimit;
-    _ActiveTask? lowest;
-    var lowestRetentionPriority = 1 << 30;
-    for (final task in _active.values) {
-      if (task.demanded || !task.preemptible || task.token.cancelled) continue;
-      if (bucketFull && task.bucket != incomingBucket) continue;
-      final rank = _policyRank(task, basePriority: task.priority);
-      if (!incomingOutranks(incoming.priority, rank)) continue;
-      if (lowest == null || rank.effectivePriority < lowestRetentionPriority) {
-        lowest = task;
-        lowestRetentionPriority = rank.effectivePriority;
-      }
-    }
-    if (lowest == null) return false;
-    final elapsed = lowest.token.restartCostElapsedMicros;
-    final bytes = lowest.token.restartCostBytes;
-    final bonus = lowestRetentionPriority - lowest.priority;
-    lowest.token.cancelForPreemption(
-      TaskPreemptionSnapshot(
-        incomingPriority: incoming.priority,
-        basePriority: lowest.priority,
-        retentionPriority: lowestRetentionPriority,
-        retentionBonus: bonus,
-        restartCostElapsedMicros: elapsed,
-        restartCostBytes: bytes,
-        incomingWaitMicros: 0,
-        reason: 'inactive-reclaim',
-      ),
-    );
-    return true;
-  }
-
   _Pending? _highestBlockedHighPriorityPending() {
     _Pending? highest;
     for (final pending in _pending.values) {
@@ -976,12 +1086,81 @@ final class _Lane {
   }
 
   bool _needsHandoff(_Pending pending) {
-    if (_active.length >= maxActive) return true;
+    if (_receivingActive >= maxActive) return true;
     final bucket = pending.bucket;
     final limit = pending.bucketLimit;
     return bucket != null &&
         limit != null &&
         (_activeByBucket[bucket] ?? 0) >= limit;
+  }
+
+  bool _activeNeedsHandoff(_ActiveTask task) {
+    if (_receivingActive >= maxActive) return true;
+    final bucket = task.bucket;
+    final limit = task.bucketLimit;
+    return bucket != null &&
+        limit != null &&
+        (_activeByBucket[bucket] ?? 0) >= limit;
+  }
+
+  MapEntry<String, _ActiveTask>? _highestBlockedHighPriorityResume() {
+    MapEntry<String, _ActiveTask>? highest;
+    for (final entry in _active.entries) {
+      final task = entry.value;
+      if (!task.resumeRequested || task.responseReadPermitHeld ||
+          task.token.cancelled || task.priority < highPriorityThreshold ||
+          !_activeNeedsHandoff(task)) {
+        continue;
+      }
+      if (highest == null || task.priority > highest.value.priority ||
+          (task.priority == highest.value.priority &&
+              task.resumeSeq < highest.value.resumeSeq)) {
+        highest = entry;
+      }
+    }
+    return highest;
+  }
+
+  bool _preemptLowestRunningForResume(
+    MapEntry<String, _ActiveTask> incoming,
+  ) {
+    if (_hasPreemptionInFlight) return false;
+    final incomingTask = incoming.value;
+    final incomingBucket = incomingTask.bucket;
+    final incomingBucketLimit = incomingTask.bucketLimit;
+    final bucketFull = incomingBucket != null &&
+        incomingBucketLimit != null &&
+        (_activeByBucket[incomingBucket] ?? 0) >= incomingBucketLimit;
+    _ActiveTask? lowest;
+    var lowestRetentionPriority = 1 << 30;
+    for (final task in _active.values) {
+      if (!task.responseReadPermitHeld || identical(task, incomingTask) ||
+          !task.preemptible || task.token.cancelled) continue;
+      if (bucketFull && task.bucket != incomingBucket) continue;
+      final rank = _policyRank(task, basePriority: task.priority);
+      if (!incomingOutranks(incomingTask.priority, rank)) continue;
+      if (lowest == null || rank.effectivePriority < lowestRetentionPriority) {
+        lowest = task;
+        lowestRetentionPriority = rank.effectivePriority;
+      }
+    }
+    if (lowest == null) return false;
+    final elapsed = lowest.token.restartCostElapsedMicros;
+    final bytes = lowest.token.restartCostBytes;
+    final bonus = lowestRetentionPriority - lowest.priority;
+    lowest.token.cancelForPreemption(
+      TaskPreemptionSnapshot(
+        incomingPriority: incomingTask.priority,
+        basePriority: lowest.priority,
+        retentionPriority: lowestRetentionPriority,
+        retentionBonus: bonus,
+        restartCostElapsedMicros: elapsed,
+        restartCostBytes: bytes,
+        incomingWaitMicros: 0,
+        reason: 'high-priority',
+      ),
+    );
+    return true;
   }
 
   bool _preemptLowestRunningFor(_Pending incoming) {
@@ -996,7 +1175,8 @@ final class _Lane {
     _ActiveTask? lowest;
     var lowestRetentionPriority = 1 << 30;
     for (final task in _active.values) {
-      if (!task.preemptible || task.token.cancelled) continue;
+      if (!task.responseReadPermitHeld || !task.preemptible ||
+          task.token.cancelled) continue;
       if (bucketFull && task.bucket != incomingBucket) continue;
       final rank = _policyRank(task, basePriority: task.priority);
       if (!incomingOutranks(incoming.priority, rank)) continue;
@@ -1117,7 +1297,6 @@ final class _Pending {
     required this.bucketLimit,
     required this.preemptible,
     required this.flowTargetFrames,
-    required this.retainFlowResponse,
     required this.demanded,
     required this.task,
     required this.highPrioritySinceMicros,
@@ -1130,7 +1309,6 @@ final class _Pending {
   int? bucketLimit;
   bool preemptible;
   int flowTargetFrames;
-  bool retainFlowResponse;
   bool demanded;
   LaneTask task;
   int? highPrioritySinceMicros;
@@ -1144,8 +1322,9 @@ final class _ActiveTask {
     required this.priority,
     required this.preemptible,
     required this.flowTargetFrames,
-    required this.retainFlowResponse,
     required this.demanded,
+    required this.responseReadPermitHeld,
+    required this.resumeSeq,
   });
 
   final CancelToken token;
@@ -1154,8 +1333,12 @@ final class _ActiveTask {
   int priority;
   bool preemptible;
   int flowTargetFrames;
-  bool retainFlowResponse;
   bool demanded;
+  bool responseReadPermitHeld;
+  bool resumeRequested = false;
+  int resumeSeq;
+  int parkedSeq = 0;
+  Completer<void>? resumeCompleter;
 }
 
 final class _KeyIdleWaiter {

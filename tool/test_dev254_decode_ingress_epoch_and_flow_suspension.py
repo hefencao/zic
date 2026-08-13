@@ -52,16 +52,18 @@ require(
     'decode generation follows Reader ingress rather than physical session epoch',
 )
 
-require(
-    'packages/sessions/lib/src/download_job.dart',
-    'final class DownloadFlowSuspended',
-    "action: 'pseudo-suspended'",
-    'await session.pause(writer);',
-    'throw DownloadFlowSuspended(',
-)
-reject('packages/sessions/lib/src/download_job.dart', "action: 'pseudo-drain'")
 build = int(m.group(1))
-if build < 256:
+if build >= 268:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        'final class _ResponseReadGate',
+        ": 'pseudo-parked'",
+        'releaseResponseReadPermit',
+        'acquireResponseReadPermit',
+        'responseRetained: true',
+    )
+    reject('packages/sessions/lib/src/download_job.dart', 'DownloadFlowSuspended', "action: 'pseudo-suspended'")
+elif build < 256:
     require(
         'packages/sessions/lib/src/download_transfer_owner.dart',
         'final Map<DownloadId, _FlowSuspension> _downloadFlowSuspensions',
@@ -74,7 +76,7 @@ if build < 256:
         'packages/sessions/test/download_transfer_owner_test.dart',
         'consumer-paced flow suspension stays quiescent until frame target changes',
     )
-else:
+elif build < 268:
     require(
         'packages/sessions/lib/src/download_transfer_owner.dart',
         'final Map<DownloadId, _FlowFrameProof> _downloadFlowFrameProofs',
@@ -91,10 +93,10 @@ else:
         'packages/sessions/test/download_transfer_owner_test.dart',
         'consumer-paced flow suspension stays quiescent until unmet target arrives',
     )
-require(
-    'packages/sessions/test/download_job_test.dart',
-    'consumer-paced frame credit suspends partial instead of draining forever',
-)
+if build >= 268:
+    require('packages/sessions/test/download_job_test.dart', 'consumer-paced frame credit parks instead of ending the attempt')
+else:
+    require('packages/sessions/test/download_job_test.dart', 'consumer-paced frame credit suspends partial instead of draining forever')
 
 reject(
     'packages/sessions/lib/src/net_lane.dart',
@@ -111,7 +113,11 @@ for path in (
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.254 governance file: {path}')
 
-require('docs/ARCHITECTURE.md', 'pseudo-suspended', 'Reader-local ingress projection')
-require('docs/SPEC.md', 'pseudo-suspended', 'generation authority MUST唯一来自当前Reader-local ingress projection')
+if build >= 268:
+    require('docs/ARCHITECTURE.md', 'park', 'Reader-local ingress projection')
+    require('docs/SPEC.md', 'park', 'generation authority MUST唯一来自当前Reader-local ingress projection')
+else:
+    require('docs/ARCHITECTURE.md', 'pseudo-suspended', 'Reader-local ingress projection')
+    require('docs/SPEC.md', 'pseudo-suspended', 'generation authority MUST唯一来自当前Reader-local ingress projection')
 require('tool/check.sh', 'test_dev254_decode_ingress_epoch_and_flow_suspension.py')
 print('dev.254 decode ingress epoch + bounded flow suspension: OK')

@@ -153,6 +153,8 @@ final class PipelineReaderSessionFactory {
             pageDownloadLane ??
             NetLane(
               maxActive: ReaderPipelineProfile.stable.networkConcurrency,
+              maxParkedResponses:
+                  ReaderPipelineProfile.stable.parkedResponseCapacity,
               reservedHighPrioritySlots: 1,
               highPriorityThreshold: 1000,
               preemptionThreshold: 40,

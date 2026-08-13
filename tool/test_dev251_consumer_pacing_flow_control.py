@@ -59,7 +59,18 @@ require(
     ": 'pseudo-resumed'",
     'mode: capability.name',
 )
-if build >= 254:
+if build >= 268:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        "action: capability == ByteResponseFlowControl.streamBackpressure",
+        ": 'pseudo-parked'",
+        '_authoritativeCatchupFloor',
+        'waitForControlChangeOrTimeout',
+        'releaseResponseReadPermit',
+        'acquireResponseReadPermit',
+    )
+    reject('packages/sessions/lib/src/download_job.dart', 'DownloadFlowSuspended', "action: 'pseudo-suspended'")
+elif build >= 254:
     require(
         'packages/sessions/lib/src/download_job.dart',
         "action: 'pseudo-suspended'",
@@ -75,7 +86,16 @@ elif build >= 252:
         '_authoritativeCatchupFloor',
         'waitForFlowCreditOrTimeout',
     )
-if build >= 254:
+if build >= 268:
+    require(
+        'packages/sessions/test/download_job_test.dart',
+        'consumer-paced flow parks and resumes the same response',
+        'consumer-paced frame credit parks instead of ending the attempt',
+        'flowControl: ByteResponseFlowControl.consumerPacing',
+        "'pseudo-parked'",
+        "'pseudo-resumed'",
+    )
+elif build >= 254:
     require(
         'packages/sessions/test/download_job_test.dart',
         'consumer-paced frame credit suspends partial instead of draining forever',
@@ -106,7 +126,10 @@ for path in (
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.251 governance file: {path}')
-if build >= 254:
+if build >= 268:
+    require('docs/ARCHITECTURE.md', 'consumerPacing', 'parked response')
+    require('docs/SPEC.md', 'consumerPacing', 'parked-response')
+elif build >= 254:
     require('docs/ARCHITECTURE.md', 'consumerPacing', 'pseudo-suspended')
     require('docs/SPEC.md', 'consumerPacing', 'pseudo-suspended')
 elif build >= 252:
