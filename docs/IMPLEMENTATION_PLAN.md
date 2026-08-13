@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：以dev.263真机复测11:13同类page97/page98：发生`physical-generation-changed`时应记录`invalidatedUploads>=1`与对应`invalidatedDecodes>=1`（存在retained session时）；随后新generation decode产帧后必须重新出现`frameUploaded/framePresented/firstFrameReady`，不得继续`uploadStarted→waitingFrame`空转。若仍打不开，先核对新UploadSession是否绑定当前DecodeSession generation及presentation claim生命周期，不回退到重新下载、加holder水位或UI key补丁。dev.262的non-range flow复测同时继续。
+- P0：以dev.264真机复测11:45同方向连续翻页：previous2/previous3等真正前进方向的3/7 normal demand应在成为current前获得`downloadStarted`，不得再出现page275/page274/page272/page271/page270这种几乎只到current才启动的整方向饥饿。normal槽被`range-resume-unproven` outer hold占满时，应出现`pseudo-yielded / retentionReason=netlane-unsatisfied-demand / yieldToPriority=<pending priority>`，随后pending拿到真实slot；该过程不得产生新的normal-priority`downloadPreempted`。immediate next/previous的`retainFlowResponse=true`应继续保原response且不可被normal pressure yield。并继续复测dev.263 physical-generation rebind后新UploadSession能重新产出`frameUploaded/firstFrameReady`。冻结3/7、5/3/2/1、decode2/1、holder7/5/3/2、NetLane5+1。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环
@@ -10,7 +10,7 @@
 - dev.190 后首次本地 Flutter/Dart 构建仍需确认 `runtime_source_adapter.dart` 不再出现 `onTiming` named-parameter 半迁移；若还有 runtime source adapter 编译错误，先检查私有函数类型/constructor 注入的一致性，不把 resource-plan diagnostics 扩到通用 browse/details invoke。
 - 复测 dev.186 Venera nested pressure：外层 previous 660→780 到 `downloadStarted` 应继续维持毫秒级；若其随后被单 invocation request-plan gate挡住，780可请求取消至少低40分的 active controlled invocation，但必须等旧 JavaScript `finished(requestId)` 后才开始，`maxActive`始终1。
 - 使用plan/cache/host-open字段继续确认连接阶段；持续传输阶段新增`sourceHostHttpVersion/sourceHostRemoteIpHash/sourceRhttpProgress*/sourceRhttpBody*`与现有`sourceRead` bytes/chunks/gap。只有设备证据同时证明并发active streams损害current且底层pause能真实形成网络backpressure，才考虑NetLane-owned transfer pressure；不得建立Reader bandwidth scheduler。
-- 同时复测短时N→N+1→N与跨session跳页：already-admitted task离开demand只降rank0，normal neighbor不得主动cancel；new current先借reserved槽。reserved也满时先保持pending，只有candidate稳定100ms且没有已有preemption in-flight才允许统一rank选择一个victim；若仍出现波浪重置，必须由单次`downloadPreempted`、consumer-bound dispose或真实failure明确归因，不得恢复normal pressure floor或victim-side demotion特判。
+- 同时复测短时N→N+1→N与跨session跳页：already-admitted task离开demand只降rank0，normal neighbor不得主动cancel尚未满足body work；但已满足positive flow credit、non-adjacent且no-Range的optional continuity hold可在真实pending normal demand无slot时协作`pseudo-yielded`，且不得记录`downloadPreempted`或提前释放permit。new current先借reserved槽。reserved也满时先保持pending，只有candidate稳定100ms且没有已有preemption in-flight才允许统一rank选择一个victim；若仍出现波浪重置，必须由单次`downloadPreempted`、consumer-bound dispose或真实failure明确归因，不得恢复normal pressure floor或victim-side demotion特判。
 
 ## P0：Current 首帧 policy/execution 真机闭环
 

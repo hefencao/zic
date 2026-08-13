@@ -1,3 +1,10 @@
+## 0.31.0-dev.264：non-Range continuity hold 的 NetLane 槽公平性
+
+- 11:45 dev.263 真机 Trace确认单向预下载失败不是3/7 demand缺失，而是dev.262引入的 non-Range response continuity 在body target已满足后仍长期占normal NetLane slot；逻辑previous2/previous3虽持续有660/640 demand，却会被另一侧已满足的no-Range hold饿死。
+- `CancelToken`新增只属于NetLane调度的flow-retention状态：仅“non-adjacent + no-Range + body credit已满足”的continuity hold标记为yieldable；immediate next/previous显式warm retention、current以及尚未满足body credit的receiving均不可被normal pressure触碰。
+- normal demand无slot时，NetLane最多请求一个yieldable hold协作`pseudo-yielded`；原task真实退出后才释放permit。该路径不调用cancel/preemption，partial/proof沿既有`DownloadFlowSuspended`闭包保留；Trace记录`yieldToPriority`。
+- 不改previous3/next7、5/3/2/1、decode2/1、holder7/5/3/2、normal5+current reserved1，也不恢复dev.245之前的normal destructive preemption。
+
 ## 0.31.0-dev.263：physical-generation rebind 的 Decode/Upload 依赖闭包
 
 - 11:13 dev.262 真机 Trace确认“部分图片打不开”不是网络或decode不足：page98/page97分别在25.192s/25.872s发生`physical-generation-changed`；page97新DecodeSession随后已在31.409s解到depth=7且source完整sealed，但同identity反复`uploadStarted`后始终没有`frameUploaded/firstFrameReady`。

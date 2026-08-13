@@ -739,6 +739,8 @@ void main() {
     await _waitForFlowAction(trace, 'pseudo-retained', targetFrames: 1);
     expect(transport.openCount, 1);
     expect(session.activeRun, isTrue);
+    expect(token.flowRetentionYieldable, isFalse,
+        reason: 'explicit adjacent warm retention is not normal-slot yieldable');
     expect(
       trace.events.any(
         (event) =>
@@ -807,6 +809,8 @@ void main() {
     await _waitForFlowAction(trace, 'pseudo-retained', targetFrames: 3);
     expect(transport.openCount, 1);
     expect(session.activeRun, isTrue);
+    expect(token.flowRetentionYieldable, isTrue,
+        reason: 'non-adjacent non-range continuity is optional once credit is met');
     expect(
       trace.events.any(
         (event) =>
@@ -843,6 +847,79 @@ void main() {
             event.payload['action'] == 'pseudo-resumed',
       ),
       isTrue,
+    );
+  });
+
+  test(
+      'non-range retained flow cooperatively yields when NetLane requests a normal slot',
+      () async {
+    final trace = MemoryTraceSink();
+    final bytes = _flowAnimatedWebp(List<int>.filled(24, 48));
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'nonrange-flow-yield',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('runtime://nonrange-flow-yield.webp'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/nonrange-flow-yield.webp',
+        finalPath: '${temp.path}/cache/nonrange-flow-yield.webp',
+      ),
+      clock: FakeMonoClock(),
+      traceSink: trace,
+    );
+    session.observePlayablePrefixEvidence(
+      decodedPrefixFrames: 1,
+      sourceLength: 1,
+      firstPlayablePrefixBytes: 1,
+      firstFrameRequiredSourceLength: 0,
+    );
+    final transport = _ConsumerPacedBodyTransport(
+      bytes,
+      chunkSize: 31,
+      rangeSupported: false,
+    );
+    final token = CancelToken(flowTargetFrames: 3);
+    final run = DownloadJob(transport: transport, session: session).run(
+      cancel: token,
+    );
+
+    await _waitForFlowAction(trace, 'pseudo-retained', targetFrames: 3);
+    expect(token.flowRetentionYieldable, isTrue);
+    expect(token.requestFlowYield(640), isTrue);
+    await expectLater(
+      run,
+      throwsA(isA<DownloadFlowSuspended>()),
+    );
+
+    expect(token.cancelled, isFalse);
+    expect(session.committedLength, greaterThan(0));
+    expect(transport.openCount, 1);
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'transport-flow-control' &&
+            event.payload['action'] == 'pseudo-yielded' &&
+            event.payload['retentionReason'] ==
+                'netlane-unsatisfied-demand' &&
+            event.payload['yieldToPriority'] == 640,
+      ),
+      isTrue,
+    );
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'transport-flow-control' &&
+            event.payload['action'] == 'pseudo-suspended',
+      ),
+      isFalse,
     );
   });
 

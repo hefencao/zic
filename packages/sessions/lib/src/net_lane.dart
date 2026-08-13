@@ -13,19 +13,24 @@ final class CancelToken implements PriorityObservableTaskControl {
     int flowTargetFrames = 0,
     bool retainFlowResponse = false,
     MonoClock clock = const SystemClock(),
+    void Function()? onSchedulingStateChanged,
   })  : assert(flowTargetFrames >= 0),
         _priority = priority,
         _flowTargetFrames = flowTargetFrames,
         _retainFlowResponse = retainFlowResponse,
         _clock = clock,
+        _onSchedulingStateChanged = onSchedulingStateChanged,
         _activatedAtMicros = clock.nowMicros();
 
   final MonoClock _clock;
+  final void Function()? _onSchedulingStateChanged;
   final int _activatedAtMicros;
   bool _cancelled = false;
   int _priority;
   int _flowTargetFrames;
   bool _retainFlowResponse;
+  bool _flowRetentionYieldable = false;
+  int? _flowYieldRequestedByPriority;
   Completer<void>? _flowChanged;
   int? _restartCostStartedAtMicros;
   int _restartCostBytes = 0;
@@ -44,6 +49,8 @@ final class CancelToken implements PriorityObservableTaskControl {
   Stream<int> get priorityChanges => _priorityChanges.stream;
   int get flowTargetFrames => _flowTargetFrames;
   bool get retainFlowResponse => _retainFlowResponse;
+  bool get flowRetentionYieldable => _flowRetentionYieldable;
+  int? get flowYieldRequestedByPriority => _flowYieldRequestedByPriority;
 
   bool flowBlockedAt(int completedFrames) =>
       _flowTargetFrames > 0 && completedFrames >= _flowTargetFrames;
@@ -80,13 +87,58 @@ final class CancelToken implements PriorityObservableTaskControl {
     assert(frames >= 0);
     if (_flowTargetFrames == frames) return;
     _flowTargetFrames = frames;
+    // Any target migration invalidates the scheduler's prior statement that
+    // this body is only an optional continuity hold. DownloadJob owns the
+    // structural/playable proof and will mark it yieldable again on its next
+    // flow evaluation if the new target is already satisfied.
+    clearFlowRetention();
+    if (frames <= 0) return;
     _wakeFlowWaiters();
   }
 
   void updateRetainFlowResponse(bool retain) {
     if (_retainFlowResponse == retain) return;
     _retainFlowResponse = retain;
+    if (retain && _flowRetentionYieldable) {
+      _flowRetentionYieldable = false;
+      _flowYieldRequestedByPriority = null;
+    }
     _wakeFlowWaiters();
+  }
+
+  /// Reports that this task has already satisfied its bounded body credit and
+  /// is retaining the admitted response only for continuity. A non-adjacent
+  /// non-range hold may be marked [yieldable], allowing NetLane to reclaim the
+  /// slot cooperatively when another demanded normal task has never received a
+  /// slot. This is not cancellation and does not let normal work preempt an
+  /// actively unsatisfied transfer.
+  void markFlowRetention({required bool yieldable}) {
+    if (_cancelled) return;
+    final changed = _flowRetentionYieldable != yieldable;
+    _flowRetentionYieldable = yieldable;
+    if (!yieldable) {
+      _flowYieldRequestedByPriority = null;
+    }
+    if (changed && yieldable) {
+      _onSchedulingStateChanged?.call();
+    }
+  }
+
+  void clearFlowRetention() {
+    final changed = _flowRetentionYieldable ||
+        _flowYieldRequestedByPriority != null;
+    _flowRetentionYieldable = false;
+    _flowYieldRequestedByPriority = null;
+    if (changed) _wakeFlowWaiters();
+  }
+
+  bool requestFlowYield(int incomingPriority) {
+    if (_cancelled || !_flowRetentionYieldable) return false;
+    final prior = _flowYieldRequestedByPriority;
+    if (prior != null && prior >= incomingPriority) return false;
+    _flowYieldRequestedByPriority = incomingPriority;
+    _wakeFlowWaiters();
+    return true;
   }
 
   void _wakeFlowWaiters() {
@@ -757,6 +809,11 @@ final class _Lane {
         return _bucketAvailable(pending, handoff: handoff);
       }).toList(growable: false);
       if (eligible.isEmpty) {
+        final blockedNormal = _highestBlockedNormalPending();
+        if (blockedNormal != null &&
+            _requestYieldableFlowRetentionFor(blockedNormal)) {
+          break;
+        }
         final blockedHighPriority = _highestBlockedHighPriorityPending();
         if (blockedHighPriority != null) {
           // The reserved current headroom is admission capacity, not a
@@ -783,6 +840,7 @@ final class _Lane {
         flowTargetFrames: next.flowTargetFrames,
         retainFlowResponse: next.retainFlowResponse,
         clock: clock,
+        onSchedulingStateChanged: _pump,
       );
       _active[next.key] = _ActiveTask(
         token: token,
@@ -858,6 +916,51 @@ final class _Lane {
         _pump();
       },
     );
+  }
+
+  _Pending? _highestBlockedNormalPending() {
+    _Pending? highest;
+    for (final pending in _pending.values) {
+      if (_active.containsKey(pending.key) ||
+          pending.priority <= 0 ||
+          pending.priority >= highPriorityThreshold) {
+        continue;
+      }
+      if (highest == null ||
+          pending.priority > highest.priority ||
+          (pending.priority == highest.priority &&
+              pending.seq < highest.seq)) {
+        highest = pending;
+      }
+    }
+    return highest;
+  }
+
+  bool get _hasFlowYieldInFlight => _active.values.any(
+        (task) => task.token.flowYieldRequestedByPriority != null,
+      );
+
+  bool _requestYieldableFlowRetentionFor(_Pending incoming) {
+    if (_hasFlowYieldInFlight) return false;
+    final incomingBucket = incoming.bucket;
+    final incomingBucketLimit = incoming.bucketLimit;
+    final bucketFull = incomingBucket != null &&
+        incomingBucketLimit != null &&
+        (_activeByBucket[incomingBucket] ?? 0) >= incomingBucketLimit;
+    _ActiveTask? candidate;
+    for (final task in _active.values) {
+      if (!task.preemptible ||
+          task.token.cancelled ||
+          !task.token.flowRetentionYieldable) {
+        continue;
+      }
+      if (bucketFull && task.bucket != incomingBucket) continue;
+      if (candidate == null || task.priority < candidate.priority) {
+        candidate = task;
+      }
+    }
+    if (candidate == null) return false;
+    return candidate.token.requestFlowYield(incoming.priority);
   }
 
   _Pending? _highestBlockedHighPriorityPending() {

@@ -937,15 +937,31 @@ final class _WebpNetworkFlowGate {
 
   Future<void> waitBeforeRead({required int networkCursor}) async {
     final control = cancel;
-    if (control == null || control.flowTargetFrames <= 0) return;
+    if (control == null) return;
+    if (control.flowTargetFrames <= 0) {
+      control.clearFlowRetention();
+      return;
+    }
     // Resume/probe/full-body catch-up bytes only re-establish the already
     // authoritative physical partial. Frame credit must never pause the
     // network before that boundary, otherwise a restarted attempt can deadlock
     // behind its own existing frames.
+    if (networkCursor < _authoritativeCatchupFloor) {
+      control.clearFlowRetention();
+    }
+    // Keep the dev.252 authoritative-catchup control-flow contract explicit:
+    // frame credit still cannot stop a transport before the old partial floor.
     if (networkCursor < _authoritativeCatchupFloor) return;
     await _ensureInitialized();
     final tracker = _tracker;
-    if (tracker == null || tracker.unsupported || !_shouldBlock()) return;
+    if (tracker == null || tracker.unsupported || !_shouldBlock()) {
+      // A continuity hold is yieldable only while the current physical body
+      // proof really satisfies this demand. Decoder-owned playable-prefix
+      // evidence or the target may advance between pacing polls; withdraw any
+      // stale yield request before reading the newly required body bytes.
+      control.clearFlowRetention();
+      return;
+    }
     if (!_paused) {
       _paused = true;
       session.recordFlowControl(
@@ -966,20 +982,41 @@ final class _WebpNetworkFlowGate {
         _flowEvidencePollInterval,
       );
       if (!creditGranted && _shouldBlock()) {
+        final requestedByPriority = control.flowYieldRequestedByPriority;
+        if (requestedByPriority != null &&
+            control.flowRetentionYieldable) {
+          session.recordFlowControl(
+            action: 'pseudo-yielded',
+            mode: capability.name,
+            targetFrames: control.flowTargetFrames,
+            completedFrames: tracker.completedFrames,
+            networkCursor: networkCursor,
+            playablePrefixFloorBytes: _playablePrefixFloorBytes,
+            responseRangeSupported: rangeSupported,
+            retentionReason: 'netlane-unsatisfied-demand',
+            yieldToPriority: requestedByPriority,
+          );
+          throw DownloadFlowSuspended(
+            targetFrames: control.flowTargetFrames,
+            completedFrames: tracker.completedFrames,
+          );
+        }
         var preserveResponse = !rangeSupported;
         if (control.retainFlowResponse) {
           preserveResponse = true;
         }
         if (preserveResponse) {
+          control.markFlowRetention(
+            yieldable: !control.retainFlowResponse && !rangeSupported,
+          );
           // Immediate previous/next demand explicitly asks to keep the live
           // response warm. A response that does not positively advertise
-          // byte-range resume must also stay on the admitted physical task:
-          // closing it here turns the authoritative 3/7 partial into a known
-          // full-body prefix replay on the next role promotion. This restores
-          // the older non-resumable active-transfer invariant without adding a
-          // connection or changing the 5/3/2/1 body-credit target. Real NetLane
-          // preemption/cancellation remains the only authority allowed to end
-          // such an admitted response under pressure.
+          // byte-range resume also stays on the admitted physical task while
+          // NetLane has spare capacity: closing it here turns the authoritative
+          // 3/7 partial into a known full-body prefix replay on the next role
+          // promotion. Once this hold is non-adjacent, however, it is optional
+          // continuity rather than unsatisfied body work; NetLane may ask it to
+          // yield cooperatively when another demanded normal task is starved.
           //
           // consumerPacing still cannot claim upstream byte backpressure, so
           // retain at the existing bounded pace (at most one body chunk per
@@ -1007,6 +1044,7 @@ final class _WebpNetworkFlowGate {
         // once both structural frame credit and decoder-owned playable-prefix
         // credit are satisfied; its authoritative partial can resume without
         // replaying the prefix.
+        control.clearFlowRetention();
         session.recordFlowControl(
           action: 'pseudo-suspended',
           mode: capability.name,
@@ -1034,6 +1072,7 @@ final class _WebpNetworkFlowGate {
       }
     }
     if (_paused) {
+      control.clearFlowRetention();
       _paused = false;
       _warmRetentionAnnounced = false;
       session.recordFlowControl(
