@@ -33,8 +33,10 @@ final class _IngressProjectionEntry {
 ///
 /// This keeps physical transfer ownership independent from demand reconciliation
 /// and ensures decode/upload can be reconciled even while the local source is
-/// still catching up. The projection's source listener becomes the wake edge
-/// when the replay reaches an authoritative committed boundary.
+/// still catching up. For nonresident WebP hot partials the projection may publish a decoder-usable
+/// prefix before full catch-up; its source listener then becomes the wake edge
+/// while the same native source continues suffix replay toward the authoritative
+/// committed boundary.
 final class DownloadIngressProjectionRegistry {
   DownloadIngressProjectionRegistry({
     required this.sources,

@@ -8,6 +8,7 @@ import 'package:transport/transport.dart';
 
 import 'download_ingress_projection.dart';
 import 'source_progress.dart';
+import 'webp_decode_prefix_hints.dart';
 
 enum DownloadState { idle, queued, receiving, sealed, promoted, failed, disposed }
 
@@ -1136,6 +1137,66 @@ final class DownloadSession {
 
     projection.beginSynchronizedReplay();
     try {
+      // A new Reader must not wait for a multi-megabyte physical WebP partial
+      // to be copied in full before it can decode frame 0. Replay only the
+      // decoder-owned first-playable/required prefix (or the shared unresolved
+      // quantum), publish that Reader-local source, then keep catching up the
+      // remaining authoritative suffix in this same synchronized join.
+      //
+      // The projection is still excluded from physical live fan-out until the
+      // full committed boundary is stable. Physical growth during catch-up is
+      // detected by the existing revision loop, so early source publication
+      // does not invent a second byte owner or lose appended suffixes.
+      if (!_residentBodyBacked &&
+          _contentKind == ContentKind.webp &&
+          committedLength > 0) {
+        while (true) {
+          _requireNotDisposed();
+          final epoch = _epoch;
+          final targetLength = committedLength;
+          final publishFloor = playableFlowPrefixFloorBytes(
+            unresolvedFloorBytes: webpDecodePrefixQuantumBytesFor(id),
+          );
+          final publishLength = publishFloor < targetLength
+              ? publishFloor
+              : targetLength;
+          final totalLength = _totalLength;
+          projection.expectLength(totalLength);
+          final before = projection.snapshot;
+          await projection.rebuild(
+            epoch: epoch,
+            chunks: artifact.readChunks(endExclusive: publishLength),
+            sealed: (_state == DownloadState.sealed ||
+                    _state == DownloadState.promoted) &&
+                publishLength == targetLength,
+          );
+          // Growth preserves the prefix. Reset/replacement does not. If the
+          // physical epoch changed or truncated below the replayed prefix, retry
+          // against the new generation before exposing any source.
+          if (_epoch != epoch || committedLength < publishLength) {
+            continue;
+          }
+          projection.publishSynchronizedReplayPrefix();
+          _traceIngressProjection(
+            projection.scopeId,
+            before,
+            projection.snapshot,
+          );
+          _emit(
+            TraceEventKind.artifactSource,
+            <String, Object?>{
+              'stage': 'reader-ingress-late-join',
+              'action': 'playable-prefix-published',
+              'publishLength': publishLength,
+              'physicalCommittedLength': committedLength,
+              'firstPlayablePrefixBytes': _firstPlayablePrefixBytes,
+              'firstFrameRequiredPrefixBytes':
+                  _firstFrameRequiredPrefixBytes,
+            },
+          );
+          break;
+        }
+      }
       while (true) {
         _requireNotDisposed();
         final revision = _ingressProjectionRevision;
@@ -1148,11 +1209,12 @@ final class DownloadSession {
         final before = projection.snapshot;
         final current = projection.snapshot;
 
-        // A late projection is unpublished while replay is in flight. Build it
-        // once, then catch up same-epoch growth by appending only the newly
-        // committed artifact suffix. Rebuilding from byte zero on every moving
-        // boundary would dispose a native source that decode may already have
-        // observed and also turns streaming catch-up into quadratic local I/O.
+        // Build once, then catch up same-epoch growth by appending only the
+        // newly committed artifact suffix. WebP late joins may already have
+        // published a decoder-usable prefix above; the suffix must stay on that
+        // same native source. Rebuilding from byte zero on every moving boundary
+        // would dispose a source decode may already have observed and also turns
+        // streaming catch-up into quadratic local I/O.
         final canAppendSuffix = !_residentBodyBacked &&
             current.epoch == epoch &&
             current.length > 0 &&
@@ -1206,17 +1268,18 @@ final class DownloadSession {
 
         // No await after the state check: later physical mutations see this
         // projection in the live fan-out before they can append/reset/seal it.
-        // Publish the source only after the fan-out edge exists, so decode can
-        // never bind to an intermediate replay source.
+        // A WebP source may already be published at a decoder-usable prefix;
+        // joining fan-out here closes the catch-up phase without changing byte
+        // ownership or replacing that source.
         _ingressProjections[projection.scopeId] = projection;
         projection.finishSynchronizedReplay();
         _notifySnapshot();
         return;
       }
     } catch (error) {
-      // A failed late replay is surfaced by the Reader-local registry. Keeping
-      // the source unpublished prevents a half-replayed native source from
-      // becoming decode authority while that failure is projected.
+      // A failed late replay is surfaced by the Reader-local registry. A WebP
+      // prefix may already have been published; the registry projects failure
+      // onto that same Reader-local source rather than silently replacing it.
       rethrow;
     }
   }

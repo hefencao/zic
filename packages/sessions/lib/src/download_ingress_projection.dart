@@ -49,13 +49,19 @@ final class DownloadIngressProjection {
     _synchronizedReplayPending = true;
   }
 
-  /// Publishes the replayed source only after the physical committed boundary
-  /// has been verified and this projection has joined the live fan-out.
-  void finishSynchronizedReplay() {
+  /// Publishes the replayed source. A late-join caller may invoke this after a
+  /// decoder-usable prefix is locally replayed, then continue same-source
+  /// suffix catch-up before joining the physical live fan-out. The physical
+  /// owner remains responsible for proving a stable boundary before fan-out.
+  void publishSynchronizedReplayPrefix() {
     if (!_synchronizedReplayPending) return;
     final before = snapshot;
     _synchronizedReplayPending = false;
     _notify(before, snapshot);
+  }
+
+  void finishSynchronizedReplay() {
+    publishSynchronizedReplayPrefix();
   }
 
   void addSourceListener(

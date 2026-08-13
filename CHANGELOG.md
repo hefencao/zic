@@ -1,3 +1,9 @@
+## 0.31.0-dev.259：runtime WebP cost 与 Reader partial playable join 解耦
+
+- 08:03真机Trace纠正dev.258的主因判断：59/59次`policyDecision`均`animatedFlowActive=false`且3/7全部`flowTargetFrames=0`，整场没有`mediaClassified`。opaque `venera-resource:`没有manifest WebP hint，而runtime animation classification又等待`AnimationInfo.complete`，形成“未分类→不限流→前5页占满normal network→远端无连接→更难完成分类”的循环。跳页后旧窗口receiving task还以rank0 retained-background占槽，新current才用reserved slot/preemption开连接。
+- physical/Reader ingress一旦实际sniff到`ContentKind.webp`，现仅把该事实投影为Pipeline transport-cost evidence并立即启用既有5/3/2/1 bounded body flow；它不等于`animated=true`，DecodeSession的authoritative static/animated classification仍优先并可恢复静态full 3/7。3/7、frame target与NetLane 5+1均不改。
+- 新Reader late-join已有nonresident WebP partial时，不再先本地重放整个committed partial才发布decode source；先按同一decoder prefix contract重放并发布最小playable/required/unresolved prefix，让current立即开始decode，再在同一Reader-local native source上追平剩余authoritative suffix，稳定后才加入physical live fan-out。physical partial availability、network need与Reader-local decode availability因此不再互相替代。
+
 ## 0.31.0-dev.258：decoder playable-prefix 与 transport structural frame 解耦
 
 - 05:29真机Trace确认前几轮partial/cancel/generation/proof修复均成立，但暴露真正的相邻页预下载根因：`WebpFramePrefixTracker.completedFrames`只统计完整ANMF结构块，却被直接当成“可播放帧”授权suspension。page206在205,860 bytes时因`completedFrames=2`被`flow-satisfied(target=2)`停止，而DecodeSession已明确frame0仍需262,144 bytes；切成current后必须重开response/full-body catch-up，首帧仍约2.45s。对照page207在245,760 bytes已真实解出前2帧，切页首帧约112ms。

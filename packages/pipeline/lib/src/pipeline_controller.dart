@@ -53,6 +53,7 @@ final class PipelineController {
   int? _lastCurrentIndex;
   ReaderObs? _lastObservation;
   final Map<int, bool> _runtimeAnimatedPages = <int, bool>{};
+  final Set<int> _runtimeWebpCostPages = <int>{};
   int _animatedFlowStage = 0;
 
   int get revision => _revision;
@@ -77,6 +78,35 @@ final class PipelineController {
     _currentIndex = observation.currentIndex;
     _lastObservation = observation;
     _replan(observation, force: false);
+  }
+
+
+  /// Records runtime encoded-content cost without promoting it to animation
+  /// truth. Opaque plugin URIs (for example `venera-resource:`) cannot carry a
+  /// useful extension/content-kind hint in the manifest, while the physical
+  /// ingress can sniff WebP after only a small prefix. That fact is sufficient
+  /// to enable conservative animated-WebP body flow; authoritative static vs
+  /// animated classification remains decoder-owned and wins in
+  /// [_animatedFlowActiveFor].
+  bool observeWebpTransportCost({
+    required int pageIndex,
+    required bool webp,
+  }) {
+    if (pageIndex < 0 || pageIndex >= chapter.pages.length) return false;
+    final before = _animatedFlowActiveFor(pageIndex);
+    final changed = webp
+        ? _runtimeWebpCostPages.add(pageIndex)
+        : _runtimeWebpCostPages.remove(pageIndex);
+    if (!changed) return false;
+    if (pageIndex == _currentIndex &&
+        before != _animatedFlowActiveFor(pageIndex)) {
+      _animatedFlowStage = 0;
+    }
+    final observation = _lastObservation;
+    if (observation != null) {
+      _replan(observation, force: true);
+    }
+    return true;
   }
 
   bool classifyPage({required int pageIndex, required bool animated}) {
@@ -127,16 +157,22 @@ final class PipelineController {
     if (runtime != null) return runtime;
     final page = chapter.pages[pageIndex];
     if (page.animatedHint) return true;
-    // URI/content-kind WebP is only a conservative network-cost hint here; it
-    // is not promoted to runtime animation truth. An actual static decode
-    // immediately restores the full static-oriented 3/7 admission window.
+    // Manifest hints are conservative transport-cost evidence only.
     if (page.contentKindHint == ContentKindHint.webp ||
         page.uri.path.toLowerCase().endsWith('.webp')) {
       return true;
     }
-    // Once this Reader has proved an animated page, unresolved neighbors are
-    // conservatively treated as expensive until their own decode says static.
-    return _runtimeAnimatedPages.values.any((animated) => animated);
+    // Runtime sniffing closes the opaque-URI gap without claiming animation
+    // truth. If this exact current page has been observed as WebP, use the
+    // bounded body-flow policy until decoder classification says otherwise.
+    if (_runtimeWebpCostPages.contains(pageIndex)) return true;
+    // Once an animated page is authoritative, unresolved neighbors are
+    // conservatively expensive. A runtime WebP observation provides the same
+    // cost hint while the decoder is still working toward authoritative media
+    // classification. Two authoritative static pages retain the existing
+    // unresolved-static escape hatch.
+    if (_runtimeAnimatedPages.values.any((animated) => animated)) return true;
+    return !_assumeUnresolvedStatic && _runtimeWebpCostPages.isNotEmpty;
   }
 
   bool get _assumeUnresolvedStatic {
@@ -209,6 +245,7 @@ final class PipelineController {
           'runtimeStaticPages': _runtimeAnimatedPages.values
               .where((animated) => !animated)
               .length,
+          'runtimeWebpCostPages': _runtimeWebpCostPages.length,
           'assumeUnresolvedStatic': _assumeUnresolvedStatic,
           'animatedFlowActive': animatedFlow.active,
           'animatedFlowStage': animatedFlow.expansionStage,

@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：真机验证dev.258 decoder-playable-prefix closure：正target的`flow-satisfied`必须同时满足ANMF structural frame count与`committedLength>=playablePrefixFloorBytes`；重点复测05:29 page206类样本，decoder已报告`firstFrameRequiredPrefixBytes=262144`时不得在205860 bytes suspend，若floor后来升高旧proof必须从同partial自动继续；相邻预下载页切入current的首帧应接近page207的已playable-prefix路径。source-plan/runtime秒级冷启动作为独立次级问题继续观测，本轮冻结3/7、5/3/2/1、NetLane、provider与connection count。
+- P0：真机验证dev.259连接/admission闭包：opaque `venera-resource:`首个WebP sniff后，后续`policyDecision`应从全0切换到既有5/3/2/1正target，远端已有partial只有在positive target的frame proof+playable floor已满足时才无需network；跳页不应再因旧窗口5条unlimited retained body把新窗口远端长期饿死。Reader重入已有WebP partial时应先出现`reader-ingress-late-join/playable-prefix-published`并尽快首帧，再后台追平physical committed boundary。冻结3/7、NetLane5+1与authoritative static/animated decoder ownership。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

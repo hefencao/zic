@@ -265,6 +265,51 @@ void main() {
     expect(session.snapshot.ingressProjectionCount, 0);
   });
 
+
+  test('late WebP Reader publishes a playable prefix before full partial catch-up',
+      () async {
+    await session.dispose();
+    session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/late-playable.webp',
+        finalPath: '${temp.path}/cache/late-playable.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    await session.restore();
+    final writer = session.acquireWriter();
+    final body = <int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.filled(2 * 1024 * 1024, 1),
+    ];
+    await session.append(writer, 0, body);
+
+    final projection = DownloadIngressProjection(
+      scopeId: 'reader-playable-prefix',
+      ingress: Ingress(
+        factory: _TestSourceFactory(),
+        maxBytes: 4 * 1024 * 1024,
+      ),
+    );
+    final ready = Completer<IngressSnap>();
+    projection.addSourceListener((snapshot) {
+      if (snapshot.sourceReady && !ready.isCompleted) ready.complete(snapshot);
+    });
+
+    final join = session.attachSynchronizedIngressProjection(projection);
+    final firstReady = await ready.future;
+    expect(firstReady.sourceReady, isTrue);
+    expect(firstReady.length, greaterThan(0));
+    expect(firstReady.length, lessThan(body.length));
+    expect(firstReady.length, remoteWebpDecodePrefixQuantumBytes);
+
+    await join;
+    expect(projection.snapshot.length, body.length);
+    expect(projection.snapshot.sourceReady, isTrue);
+    expect(session.snapshot.ingressProjectionCount, 1);
+  });
+
   test('Reader ingress registry replaces a retired same-id session generation',
       () async {
     final clock = FakeMonoClock();

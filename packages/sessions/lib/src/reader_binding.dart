@@ -75,6 +75,17 @@ final class ReaderBinding {
     return pipeline.classifyPage(pageIndex: pageIndex, animated: animated);
   }
 
+  bool observeWebpTransportCost({
+    required int pageIndex,
+    required bool webp,
+  }) {
+    if (_detached) return false;
+    return pipeline.observeWebpTransportCost(
+      pageIndex: pageIndex,
+      webp: webp,
+    );
+  }
+
   bool observeDecodeWaterline({
     required int planRevision,
     required String stage,

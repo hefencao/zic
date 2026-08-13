@@ -170,6 +170,64 @@ void main() {
       isFalse,
     );
   });
+  test('runtime WebP cost activates bounded flow for opaque plugin URIs', () {
+    final manifest = ChapterManifest(
+      sourceId: 'source',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'chapter',
+        sequence: 1,
+        pageCount: 30,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        30,
+        (index) => PageAsset(
+          pageId: 'p$index',
+          chapterId: 'chapter',
+          index: index,
+          uri: Uri.parse('venera-resource:opaque-$index'),
+        ),
+      ),
+      readingDirection: ReadingDirection.ltr,
+    );
+    PipelineDelta? latest;
+    final controller = PipelineController(
+      chapter: manifest,
+      decodeTarget: DecodeTarget(physicalWidth: 1080, physicalHeight: 1920),
+      clock: _TestClock(),
+      windowResolver: resolver,
+      policy: const HeuristicPolicy(decodeWarmPages: true),
+      guard: const PolicyGuard(maxDownloadDemands: 11),
+      onUpdate: (update) => latest = update,
+    );
+
+    controller.accept(observation(12));
+    expect(
+      latest!.plan.downloads.values.every((demand) => demand.flowTargetFrames == 0),
+      isTrue,
+    );
+
+    expect(
+      controller.observeWebpTransportCost(pageIndex: 12, webp: true),
+      isTrue,
+    );
+    expect(
+      latest!.plan.downloads.values.where((demand) => demand.flowTargetFrames > 0),
+      isNotEmpty,
+    );
+
+    // Decoder truth remains authoritative: a static classification restores
+    // unlimited flow for this current WebP page/window.
+    expect(controller.classifyPage(pageIndex: 12, animated: false), isTrue);
+    expect(
+      latest!.plan.downloads.values.every((demand) => demand.flowTargetFrames == 0),
+      isTrue,
+    );
+  });
+
 }
 
 final class _TestClock implements MonoClock {

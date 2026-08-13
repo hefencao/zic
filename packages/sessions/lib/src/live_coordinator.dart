@@ -37,6 +37,7 @@ typedef UploadWork = Future<void> Function(
 typedef Sleep = Future<void> Function(Duration delay);
 typedef DownloadPrepare = Future<void> Function(DownloadSession session);
 typedef DownloadObserve = void Function(DownloadSession session);
+typedef SourceKindObserve = void Function(DownloadId id, ContentKind kind);
 typedef DecodeRefillObserve = void Function(
   DecodeRefillDecision decision,
   int demandRevision,
@@ -74,6 +75,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     this.refillPolicy = const StagedDecodeRefillPolicy(),
     DownloadPrepare? prepareDownload,
     DownloadObserve? onDownloadObserved,
+    this.onSourceKindObserved,
     this.onDecodeRefillObserved,
     DownloadTransferConsumer? downloadTransfer,
     NetLane? net,
@@ -147,6 +149,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final FrameBudgeter? budgets;
   final StagedDecodeRefillPolicy refillPolicy;
   final DownloadObserve? onDownloadObserved;
+  final SourceKindObserve? onSourceKindObserved;
   final DecodeRefillObserve? onDecodeRefillObserved;
   late final DownloadTransferConsumer _downloadTransfer;
   DownloadTransferOwner? _ownedDownloadTransferOwner;
@@ -166,6 +169,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final Set<DownloadId> _sourceRebindWakes = <DownloadId>{};
   final Map<DownloadId, int> _sourceRevisions = <DownloadId, int>{};
   final Map<DownloadId, int> _sourceWakeLengths = <DownloadId, int>{};
+  final Map<DownloadId, ContentKind> _sourceKinds = <DownloadId, ContentKind>{};
   final Map<DecodeId, int> _decodeSourceRevisions = <DecodeId, int>{};
   final Map<DecodeId, int> _decodeRecoveryAttempts = <DecodeId, int>{};
   final Set<DecodeId> _decodeRecoveryPending = <DecodeId>{};
@@ -337,6 +341,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   ) {
     for (final id in diff.removed) {
       _downloads.remove(id);
+      _clearSourceKind(id);
     }
     final observed = <MapEntry<DownloadId, DownloadDemand>>[
       ...diff.added.entries,
@@ -368,6 +373,16 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }
   }
 
+  void _clearSourceKind(DownloadId id) {
+    final removed = _sourceKinds.remove(id);
+    if (removed == null) return;
+    try {
+      onSourceKindObserved?.call(id, ContentKind.unknown);
+    } on Object {
+      // Cost observers cannot break source/decode ownership.
+    }
+  }
+
   void _watchSource(
     String sessionId,
     DownloadId id,
@@ -388,6 +403,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       existing.projection.removeSourceListener(existing.listener);
       _sourceRevisions.remove(id);
       _sourceWakeLengths.remove(id);
+      _clearSourceKind(id);
       for (final decodeId in _decodeSourceRevisions.keys
           .where((decodeId) => decodeId.download == id)
           .toList(growable: false)) {
@@ -418,6 +434,19 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }
 
     void listener(IngressSnap snapshot) {
+      // Encoded content kind is a Reader/runtime transport-cost fact, not
+      // animation truth. Publish only actual sniff transitions; opaque plugin
+      // URIs otherwise leave the Pipeline unable to activate bounded WebP body
+      // flow until a full animation classification arrives.
+      final priorKind = _sourceKinds[id];
+      if (priorKind != snapshot.kind) {
+        _sourceKinds[id] = snapshot.kind;
+        try {
+          onSourceKindObserved?.call(id, snapshot.kind);
+        } on Object {
+          // Cost observers cannot break source/decode ownership.
+        }
+      }
       // Physical retry/terminal state is owned by DownloadTransferOwner. This
       // Reader-local listener only projects source growth into decode wakeups.
       _sourceRevisions[id] = snapshot.revision;

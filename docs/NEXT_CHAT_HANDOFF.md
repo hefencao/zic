@@ -1,6 +1,6 @@
-# dev.258 后续交接
+# dev.259 后续交接
+- dev.259：08:03 Trace显示不是“预下载partial不足以解码”，而是opaque Venera WebP整场没有激活动画/昂贵WebP flow：59/59 policy `animatedFlowActive=false`、所有3/7 target=0、无`mediaClassified`；normal5路被最先unlimited body占满，跳页后current才通过reserved/preemption真正连接。现runtime WebP sniff只作为transport-cost evidence提前启用5/3/2/1，不冒充animation truth。另收口Reader重入已有nonresident WebP partial：先按decoder prefix contract重放/发布最小可播放prefix，再在同source追平剩余physical partial后加入live fan-out。较远端“是否还需下载”仍唯一属于TransferOwner：target0=unlimited必需继续，positive target仅在同generation frame proof+playable floor满足时跳过network。
 - dev.258：05:29 Trace推翻“partial/cancel/proof仍是主根因”的假设：page206在205,860 bytes被ANMF `completedFrames=2`误判target2已满足，但decoder frame0已要求262,144 bytes，切current后重开/full-body catch-up导致首帧约2.45s；page207在245,760 bytes已真实解出2帧，切页约112ms。现ANMF只保留encoded structural语义；DecodeSession唯一输出`decodedPrefixFrames/firstPlayablePrefixBytes/firstFrameRequiredSourceLength`，经当前source-watch generation投影到physical DownloadSession。任意positive flow target只有结构frame和decoder playable-prefix floor同时满足才可suspend，后续need-more-data抬高floor可自动失效旧proof并从同partial继续。source-plan冷启动作为次级独立问题，3/7、5/3/2/1、NetLane/provider冻结。
-`dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`
 2. 本文件

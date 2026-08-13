@@ -68,8 +68,12 @@ require(
     'live coordinator regression must preserve cross-session rank handoff',
 )
 
-require('unpublished' in arch and '同一SourceEpoch' in arch,
-        'Architecture must freeze atomic late-replay publication/catch-up ownership')
+if build >= 259:
+    require('最小可播放前缀' in arch and '同一Reader-local native source' in arch,
+            'Architecture must freeze progressive playable-prefix publication with same-source catch-up')
+else:
+    require('unpublished' in arch and '同一SourceEpoch' in arch,
+            'Architecture must freeze atomic late-replay publication/catch-up ownership')
 require('active/admitted' in spec and 'rank 0' in spec,
         'SPEC must freeze logical-detach versus active-task rank ownership')
 for path in (

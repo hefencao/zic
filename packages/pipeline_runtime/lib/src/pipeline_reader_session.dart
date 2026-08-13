@@ -536,6 +536,7 @@ final class PipelineReaderSession {
       budgets: _frameBudgets,
       downloadTransfer: _downloadTransfer,
       onDownloadObserved: _observeDownloadSession,
+      onSourceKindObserved: _handleSourceKindObserved,
       onDecodeRefillObserved: _handleDecodeRefillObserved,
       net: pageDownloadLane,
       downloadBucketFor: _profile.downloadBucket,
@@ -1350,6 +1351,40 @@ final class PipelineReaderSession {
 
   void _observeDownloadSession(DownloadSession session) {
     _ingresses.attach(session);
+  }
+
+  void _handleSourceKindObserved(DownloadId id, ContentKind kind) {
+    scheduleMicrotask(() {
+      if (_disposed) return;
+      final pageIndex = chapter.pages.indexWhere(
+        (page) => page.pageId == id.content.pageId,
+      );
+      if (pageIndex < 0) return;
+      final changed = _binding?.observeWebpTransportCost(
+            pageIndex: pageIndex,
+            webp: kind == ContentKind.webp,
+          ) ??
+          false;
+      if (!changed) return;
+      trace.record(
+        traceEvent(
+          clock: clock,
+          sessionId: sessionId,
+          kind: TraceEventKind.artifactSource,
+          identityHash: id.key,
+          revision: revision,
+          payload: <String, Object?>{
+            'stage': 'runtime-transport-cost',
+            'action': kind == ContentKind.webp
+                ? 'webp-observed'
+                : 'webp-cleared',
+            'pageIndex': pageIndex,
+            'contentKind': kind.name,
+          },
+        ),
+      );
+      artifactReadScheduler.refresh();
+    });
   }
 
   void _handleDecodeRefillObserved(
