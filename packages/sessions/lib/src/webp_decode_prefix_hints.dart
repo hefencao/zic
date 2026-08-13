@@ -5,6 +5,13 @@ import 'package:domain/domain.dart';
 const int localWebpDecodePrefixQuantumBytes = 1024 * 1024;
 const int remoteWebpDecodePrefixQuantumBytes = 256 * 1024;
 
+int webpDecodePrefixQuantumBytesFor(DownloadId id) {
+  final scheme = id.canonicalUri.scheme.toLowerCase();
+  return scheme == 'file' || scheme == 'content' || scheme == 'asset'
+      ? localWebpDecodePrefixQuantumBytes
+      : remoteWebpDecodePrefixQuantumBytes;
+}
+
 /// Composition-level minimum-prefix hints for incremental WebP frame decode.
 ///
 /// The hint is keyed by immutable page identity and frame index. A partial
@@ -33,7 +40,7 @@ final class WebpDecodePrefixHints {
     required int frameIndex,
     required int sourceLength,
   }) {
-    final quantum = _quantumFor(id);
+    final quantum = webpDecodePrefixQuantumBytesFor(id);
     final next = _alignUp(sourceLength + 1, quantum);
     final key = _PrefixHintKey(id, frameIndex);
     final prior = _hints.remove(key);
@@ -62,13 +69,6 @@ final class WebpDecodePrefixHints {
       successfulBytes: successful,
     );
     _trim();
-  }
-
-  int _quantumFor(DownloadId id) {
-    final scheme = id.canonicalUri.scheme.toLowerCase();
-    return scheme == 'file' || scheme == 'content' || scheme == 'asset'
-        ? localWebpDecodePrefixQuantumBytes
-        : remoteWebpDecodePrefixQuantumBytes;
   }
 
   int _alignUp(int value, int quantum) =>

@@ -8,6 +8,7 @@ import 'package:transport/transport.dart';
 import 'download_session.dart';
 import 'net_lane.dart';
 import 'source_progress.dart';
+import 'webp_decode_prefix_hints.dart';
 import 'webp_frame_prefix_tracker.dart';
 
 const int _validatorlessResumeProbeBytes = 64 * 1024;
@@ -879,7 +880,7 @@ final class _WebpNetworkFlowGate {
   final CancelToken? cancel;
   final ByteResponseFlowControl capability;
   final int _authoritativeCatchupFloor;
-  static const Duration _consumerPacingInterval = Duration(milliseconds: 100);
+  static const Duration _flowEvidencePollInterval = Duration(milliseconds: 100);
   WebpFramePrefixTracker? _tracker;
   bool _initializing = false;
   bool _paused = false;
@@ -887,6 +888,9 @@ final class _WebpNetworkFlowGate {
   bool get needsArtifactSynchronization =>
       (cancel?.flowTargetFrames ?? 0) > 0 && _tracker == null;
 
+  /// Structural ANMF credit only. The caller uses this to flush pending bytes
+  /// so decoder-visible ingress catches up before [waitBeforeRead] evaluates
+  /// the separate playable-prefix floor.
   bool get blocked {
     final control = cancel;
     final tracker = _tracker;
@@ -894,6 +898,21 @@ final class _WebpNetworkFlowGate {
         tracker != null &&
         !tracker.unsupported &&
         control.flowBlockedAt(tracker.completedFrames);
+  }
+
+  int get _playablePrefixFloorBytes => session.playableFlowPrefixFloorBytes(
+        unresolvedFloorBytes: webpDecodePrefixQuantumBytesFor(session.id),
+      );
+
+  bool _shouldBlock() {
+    final control = cancel;
+    final tracker = _tracker;
+    if (control == null || tracker == null || tracker.unsupported) return false;
+    if (!control.flowBlockedAt(tracker.completedFrames)) return false;
+    // ANMF boundaries only prove encoded structure. Speculative flow may stop
+    // only after the authoritative partial also reaches the decoder-owned
+    // first-playable/need-more-data floor for this physical generation.
+    return session.committedLength >= _playablePrefixFloorBytes;
   }
 
   Future<void> _ensureInitialized() async {
@@ -922,8 +941,7 @@ final class _WebpNetworkFlowGate {
     if (networkCursor < _authoritativeCatchupFloor) return;
     await _ensureInitialized();
     final tracker = _tracker;
-    if (tracker == null || tracker.unsupported) return;
-    if (!control.flowBlockedAt(tracker.completedFrames)) return;
+    if (tracker == null || tracker.unsupported || !_shouldBlock()) return;
     if (!_paused) {
       _paused = true;
       session.recordFlowControl(
@@ -934,25 +952,27 @@ final class _WebpNetworkFlowGate {
         targetFrames: control.flowTargetFrames,
         completedFrames: tracker.completedFrames,
         networkCursor: networkCursor,
+        playablePrefixFloorBytes: _playablePrefixFloorBytes,
       );
     }
     if (capability == ByteResponseFlowControl.consumerPacing) {
       final creditGranted = await control.waitForFlowCreditOrTimeout(
         tracker.completedFrames,
-        _consumerPacingInterval,
+        _flowEvidencePollInterval,
       );
-      if (!creditGranted) {
+      if (!creditGranted && _shouldBlock()) {
         // Consumer pacing cannot promise that leaving this StreamIterator idle
-        // actually stops upstream network I/O. Continuing to drain one chunk
-        // forever violates the frame-watermark contract (target=1 eventually
-        // downloaded dozens of frames on device). Suspend this attempt
-        // cleanly instead; the authoritative partial remains reusable.
+        // actually stops upstream network I/O. Suspend this attempt only after
+        // both structural frame credit and decoder-owned playable-prefix credit
+        // are satisfied. A later decoder requirement can invalidate the proof
+        // and make the transfer owner resume from the same partial.
         session.recordFlowControl(
           action: 'pseudo-suspended',
           mode: capability.name,
           targetFrames: control.flowTargetFrames,
           completedFrames: tracker.completedFrames,
           networkCursor: networkCursor,
+          playablePrefixFloorBytes: _playablePrefixFloorBytes,
         );
         throw DownloadFlowSuspended(
           targetFrames: control.flowTargetFrames,
@@ -960,7 +980,16 @@ final class _WebpNetworkFlowGate {
         );
       }
     } else {
-      await control.waitForFlowCredit(tracker.completedFrames);
+      // A stream-backpressure response can stay parked on the same connection.
+      // Poll only the control/evidence condition; no body chunk is consumed.
+      // This lets a decoder need-more-data observation raise the physical
+      // playable-prefix floor without inventing a second wake authority.
+      while (_shouldBlock()) {
+        await control.waitForFlowCreditOrTimeout(
+          tracker.completedFrames,
+          _flowEvidencePollInterval,
+        );
+      }
     }
     if (_paused) {
       _paused = false;
@@ -972,6 +1001,7 @@ final class _WebpNetworkFlowGate {
         targetFrames: control.flowTargetFrames,
         completedFrames: tracker.completedFrames,
         networkCursor: networkCursor,
+        playablePrefixFloorBytes: _playablePrefixFloorBytes,
       );
     }
   }

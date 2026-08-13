@@ -154,6 +154,14 @@ final class DownloadSession {
   bool _residentBodyBacked = false;
   ByteResponseBodyAuthority? _residentBodyAuthority;
   Failure? _failure;
+
+  // Decoder-owned playable-prefix evidence projected onto this physical
+  // generation. Transport ANMF framing is only structural progress and must
+  // not independently authorize speculative suspension before this floor.
+  int _firstPlayablePrefixBytes = 0;
+  int _firstFrameRequiredPrefixBytes = 0;
+  int _decodedPrefixFrames = 0;
+
   List<int> _prefix = <int>[];
   int _pendingCommitTraceBytes = 0;
   int _pendingCommitTraceChunks = 0;
@@ -204,6 +212,20 @@ final class DownloadSession {
   bool get networkAttemptActive => _networkAttemptActive;
   int get networkCursorLength => _networkCursorLength;
   ContentKind get contentKind => _contentKind;
+  int get firstPlayablePrefixBytes => _firstPlayablePrefixBytes;
+  int get firstFrameRequiredPrefixBytes => _firstFrameRequiredPrefixBytes;
+  int get decodedPrefixFrames => _decodedPrefixFrames;
+
+  /// Minimum authoritative prefix that may be treated as first-frame ready by
+  /// transport flow control. Decoder success is strongest; before success, a
+  /// decoder need-more-data lower bound raises the unresolved fallback.
+  int playableFlowPrefixFloorBytes({required int unresolvedFloorBytes}) {
+    if (_firstPlayablePrefixBytes > 0) return _firstPlayablePrefixBytes;
+    return _firstFrameRequiredPrefixBytes > unresolvedFloorBytes
+        ? _firstFrameRequiredPrefixBytes
+        : unresolvedFloorBytes;
+  }
+
   bool get hasWriter => _writer != null;
   bool get demanded => _legacyDemanded || _demandPriorities.isNotEmpty;
   int get demandCount => _demandPriorities.length + (_legacyDemanded ? 1 : 0);
@@ -811,12 +833,56 @@ final class DownloadSession {
     _notifySnapshot();
   }
 
+  /// Projects decoder evidence onto the current physical encoded prefix.
+  ///
+  /// Returns true only when the physical playable-prefix fact strengthened.
+  /// Policy targets, Reader roles and transport framing never write this fact.
+  bool observePlayablePrefixEvidence({
+    required int decodedPrefixFrames,
+    required int sourceLength,
+    required int firstPlayablePrefixBytes,
+    required int firstFrameRequiredSourceLength,
+  }) {
+    _requireNotDisposed();
+    var changed = false;
+    if (decodedPrefixFrames > _decodedPrefixFrames) {
+      _decodedPrefixFrames = decodedPrefixFrames;
+      changed = true;
+    }
+    if (firstPlayablePrefixBytes > 0 &&
+        (_firstPlayablePrefixBytes == 0 ||
+            firstPlayablePrefixBytes < _firstPlayablePrefixBytes)) {
+      _firstPlayablePrefixBytes = firstPlayablePrefixBytes;
+      changed = true;
+    }
+    if (_firstPlayablePrefixBytes == 0 &&
+        firstFrameRequiredSourceLength > _firstFrameRequiredPrefixBytes) {
+      _firstFrameRequiredPrefixBytes = firstFrameRequiredSourceLength;
+      changed = true;
+    }
+    if (!changed) return false;
+    _emit(
+      TraceEventKind.artifactSource,
+      <String, Object?>{
+        'stage': 'decode-playable-prefix',
+        'action': 'evidence-updated',
+        'decodedPrefixFrames': _decodedPrefixFrames,
+        'sourceLength': sourceLength,
+        'firstPlayablePrefixBytes': _firstPlayablePrefixBytes,
+        'firstFrameRequiredPrefixBytes': _firstFrameRequiredPrefixBytes,
+        'committedLength': committedLength,
+      },
+    );
+    return true;
+  }
+
   void recordFlowControl({
     required String action,
     String? mode,
     required int targetFrames,
     required int completedFrames,
     required int networkCursor,
+    int? playablePrefixFloorBytes,
   }) {
     _emit(
       TraceEventKind.artifactSource,
@@ -828,6 +894,13 @@ final class DownloadSession {
         'completedFrames': completedFrames,
         'networkCursor': networkCursor,
         'committedLength': committedLength,
+        'decodedPrefixFrames': _decodedPrefixFrames,
+        'firstPlayablePrefixBytes': _firstPlayablePrefixBytes,
+        'firstFrameRequiredPrefixBytes': _firstFrameRequiredPrefixBytes,
+        if (playablePrefixFloorBytes != null)
+          'playablePrefixFloorBytes': playablePrefixFloorBytes,
+        if (playablePrefixFloorBytes != null)
+          'playablePrefixProven': _firstPlayablePrefixBytes > 0,
       },
     );
   }
@@ -889,6 +962,7 @@ final class DownloadSession {
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
     _failure = null;
+    _resetPlayablePrefixEvidence();
     await _restartArtifact();
     _state = DownloadState.idle;
     await index?.remove(id.key);
@@ -925,12 +999,19 @@ final class DownloadSession {
     _residentBodyAuthority = null;
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
+    _resetPlayablePrefixEvidence();
     await index?.remove(id.key);
     _emit(
       TraceEventKind.downloadState,
       <String, Object?>{'state': _state.name, 'evictedBytes': released},
     );
     return released;
+  }
+
+  void _resetPlayablePrefixEvidence() {
+    _firstPlayablePrefixBytes = 0;
+    _firstFrameRequiredPrefixBytes = 0;
+    _decodedPrefixFrames = 0;
   }
 
   Future<void> dispose() async {

@@ -704,6 +704,13 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                   }
                 : null,
           );
+          final sourceBinding = _sourceWatches[id.download];
+          if (sourceBinding != null) {
+            _downloadTransfer.observeDecodePrefixEvidence(
+              sourceBinding.session,
+              after,
+            );
+          }
         }
         if (after != null &&
             (after.state == DecodeState.failed || after.failure != null)) {

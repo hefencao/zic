@@ -1,3 +1,9 @@
+## 0.31.0-dev.258：decoder playable-prefix 与 transport structural frame 解耦
+
+- 05:29真机Trace确认前几轮partial/cancel/generation/proof修复均成立，但暴露真正的相邻页预下载根因：`WebpFramePrefixTracker.completedFrames`只统计完整ANMF结构块，却被直接当成“可播放帧”授权suspension。page206在205,860 bytes时因`completedFrames=2`被`flow-satisfied(target=2)`停止，而DecodeSession已明确frame0仍需262,144 bytes；切成current后必须重开response/full-body catch-up，首帧仍约2.45s。对照page207在245,760 bytes已真实解出前2帧，切页首帧约112ms。
+- DecodeSession现在只输出decoder-owned prefix evidence：`decodedPrefixFrames / firstPlayablePrefixBytes / firstFrameRequiredSourceLength`；LiveCoordinator通过当前generation-aware source watch把只读evidence投影给physical DownloadSession，DecodeSession不重新持有physical/network owner。
+- DownloadJob继续用ANMF计数表达encoded structural credit，但只有“structural target满足 + authoritative partial达到decoder playable-prefix floor”才允许pause/pseudo-suspend。unresolved floor复用`WebpDecodePrefixHints`唯一quantum contract；decoder后续need-more-data抬高floor时旧flow proof自动失效并从同partial继续。3/7、5/3/2/1、NetLane 5+1、provider与source-plan策略均不改。
+
 ## 0.31.0-dev.257：local completion 与 provider transport admission 解耦
 
 - 04:58真机Trace确认dev.256 frame-prefix proof闭包成立：`downloadPreempted/Failure(cancelled)/download failure`继续为0，31次`downloadStarted`中不存在“已有proof N却以正target<=N重开”的样本。

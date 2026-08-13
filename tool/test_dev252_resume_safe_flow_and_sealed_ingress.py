@@ -42,9 +42,18 @@ require(
     'packages/sessions/lib/src/download_job.dart',
     '_authoritativeCatchupFloor = session.committedLength',
     'if (networkCursor < _authoritativeCatchupFloor) return;',
-    '_consumerPacingInterval = Duration(milliseconds: 100)',
     'waitForFlowCreditOrTimeout',
 )
+if build >= 258:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        '_flowEvidencePollInterval = Duration(milliseconds: 100)',
+    )
+else:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        '_consumerPacingInterval = Duration(milliseconds: 100)',
+    )
 if build >= 254:
     require(
         'packages/sessions/lib/src/download_job.dart',

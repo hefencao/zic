@@ -527,6 +527,12 @@ void main() {
       clock: FakeMonoClock(),
       traceSink: trace,
     );
+    session.observePlayablePrefixEvidence(
+      decodedPrefixFrames: 1,
+      sourceLength: 1,
+      firstPlayablePrefixBytes: 1,
+      firstFrameRequiredSourceLength: 0,
+    );
     final transport = _FlowBodyTransport(bytes, chunkSize: 17);
     final token = CancelToken(flowTargetFrames: 1);
     final run = DownloadJob(transport: transport, session: session).run(
@@ -584,6 +590,12 @@ void main() {
     await session.append(writer, 0, bytes.sublist(0, prefixLength));
     await session.pause(writer);
 
+    session.observePlayablePrefixEvidence(
+      decodedPrefixFrames: 1,
+      sourceLength: 1,
+      firstPlayablePrefixBytes: 1,
+      firstFrameRequiredSourceLength: 0,
+    );
     final transport = _FullBodyFlowTransport(bytes, chunkSize: 17);
     final token = CancelToken(flowTargetFrames: 1);
     final run = DownloadJob(
@@ -635,6 +647,57 @@ void main() {
     expect(session.artifact.hasOpenWriter, isFalse);
   });
 
+  test('structural ANMF credit cannot suspend below playable prefix floor',
+      () async {
+    final trace = MemoryTraceSink();
+    final bytes = _flowAnimatedWebp(<int>[48, 48, 384 * 1024]);
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'playable-flow-floor',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('runtime://playable-floor.webp'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/playable-floor.webp',
+        finalPath: '${temp.path}/cache/playable-floor.webp',
+      ),
+      clock: FakeMonoClock(),
+      traceSink: trace,
+    );
+    final transport = _ConsumerPacedBodyTransport(bytes, chunkSize: 16 * 1024);
+    final token = CancelToken(flowTargetFrames: 2);
+    final run = DownloadJob(transport: transport, session: session).run(
+      cancel: token,
+    );
+
+    await _waitForFlowAction(trace, 'pseudo-paused', targetFrames: 2);
+    final paused = trace.events.lastWhere(
+      (event) =>
+          event.kind == TraceEventKind.artifactSource &&
+          event.payload['stage'] == 'transport-flow-control' &&
+          event.payload['action'] == 'pseudo-paused',
+    );
+    expect(paused.payload['completedFrames'] as int, greaterThanOrEqualTo(2));
+    expect(
+      paused.payload['committedLength'] as int,
+      greaterThanOrEqualTo(remoteWebpDecodePrefixQuantumBytes),
+      reason: 'ANMF count alone must not authorize an unplayable suspension',
+    );
+    expect(
+      paused.payload['playablePrefixFloorBytes'],
+      remoteWebpDecodePrefixQuantumBytes,
+    );
+    await expectLater(
+      run.timeout(const Duration(seconds: 2)),
+      throwsA(isA<DownloadFlowSuspended>()),
+    );
+  });
+
   test('consumer-paced frame credit suspends partial instead of draining forever',
       () async {
     final trace = MemoryTraceSink();
@@ -656,6 +719,12 @@ void main() {
       ),
       clock: FakeMonoClock(),
       traceSink: trace,
+    );
+    session.observePlayablePrefixEvidence(
+      decodedPrefixFrames: 1,
+      sourceLength: 1,
+      firstPlayablePrefixBytes: 1,
+      firstFrameRequiredSourceLength: 0,
     );
     final transport = _ConsumerPacedBodyTransport(bytes, chunkSize: 17);
     final token = CancelToken(flowTargetFrames: 1);

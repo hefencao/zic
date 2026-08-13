@@ -4,12 +4,14 @@ import 'package:domain/domain.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
+import 'decode_session.dart';
 import 'download_job.dart';
 import 'download_registry.dart';
 import 'download_session.dart';
 import 'net_lane.dart';
 import 'retry_policy.dart';
 import 'transfer_rank_policy.dart';
+import 'webp_decode_prefix_hints.dart';
 
 typedef TransferTransportPick = Transport Function(Uri uri);
 typedef TransferRetainedTransportPick = Transport? Function(Uri uri);
@@ -698,8 +700,38 @@ final class DownloadTransferOwner {
     if (proof == null || targetFrames <= 0 || !identical(proof.session, session)) {
       return false;
     }
+    final playableFloor = session.playableFlowPrefixFloorBytes(
+      unresolvedFloorBytes: webpDecodePrefixQuantumBytesFor(session.id),
+    );
     return session.committedLength >= proof.committedLength &&
+        session.committedLength >= playableFloor &&
         proof.completedFrames >= targetFrames;
+  }
+
+  void _observeDecodePrefixEvidence(
+    DownloadSession session,
+    DecodeSnapshot snapshot,
+  ) {
+    if (_disposed || session.state == DownloadState.disposed) return;
+    if (!identical(registry.findExact(session.id), session)) return;
+    final changed = session.observePlayablePrefixEvidence(
+      decodedPrefixFrames: snapshot.decodedPrefixFrames,
+      sourceLength: snapshot.sourceLength,
+      firstPlayablePrefixBytes: snapshot.firstPlayablePrefixBytes,
+      firstFrameRequiredSourceLength:
+          snapshot.firstFrameRequiredSourceLength,
+    );
+    if (!changed || !session.demanded) return;
+    final claim = _preferredClaim(session.id);
+    if (claim == null) return;
+    final proof = _downloadFlowFrameProofs[session.id];
+    if (!_flowProofSatisfies(
+      proof,
+      claim.demand.flowTargetFrames,
+      session,
+    )) {
+      _ensureDownloadTask(session.id, session);
+    }
   }
 
   void _ensureDownloadTask(DownloadId id, DownloadSession session) {
@@ -896,6 +928,14 @@ final class DownloadTransferOwner {
               'completedFrames': suspension.completedFrames,
               'satisfiedThroughFrames': proof.completedFrames,
               'committedLength': session.committedLength,
+              'decodedPrefixFrames': session.decodedPrefixFrames,
+              'firstPlayablePrefixBytes': session.firstPlayablePrefixBytes,
+              'firstFrameRequiredPrefixBytes':
+                  session.firstFrameRequiredPrefixBytes,
+              'playablePrefixFloorBytes': session.playableFlowPrefixFloorBytes(
+                unresolvedFloorBytes: webpDecodePrefixQuantumBytesFor(session.id),
+              ),
+              'playablePrefixProven': session.firstPlayablePrefixBytes > 0,
             },
           );
           return;
@@ -1266,6 +1306,15 @@ final class DownloadTransferConsumer {
     Map<DownloadId, TransferDemand> desired,
   ) =>
       owner._replaceDemands(this, sessionId, revision, desired);
+
+  /// Projects decoder-owned playable-prefix evidence to the exact physical
+  /// session currently watched by this Reader. This does not grant the Reader
+  /// transfer ownership or permission to schedule outside existing demands.
+  void observeDecodePrefixEvidence(
+    DownloadSession session,
+    DecodeSnapshot snapshot,
+  ) =>
+      owner._observeDecodePrefixEvidence(session, snapshot);
 
   void refreshScheduling() => owner._refreshScheduling(this);
 

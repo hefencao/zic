@@ -23,6 +23,9 @@ final class DecodeSnapshot {
     required this.sourceLength,
     required this.sourceSealed,
     required this.requiredSourceLength,
+    this.decodedPrefixFrames = 0,
+    this.firstPlayablePrefixBytes = 0,
+    this.firstFrameRequiredSourceLength = 0,
     this.failure,
   });
 
@@ -37,6 +40,22 @@ final class DecodeSnapshot {
   final int sourceLength;
   final bool sourceSealed;
   final int requiredSourceLength;
+
+  /// Number of leading animation frames the decoder has actually produced
+  /// from the current unsealed ingress generation. This is decoder evidence,
+  /// not the transport's structural ANMF count.
+  final int decodedPrefixFrames;
+
+  /// Smallest encoded prefix from which frame zero has actually decoded.
+  /// Zero means the current ingress generation has not proven a playable
+  /// first frame yet.
+  final int firstPlayablePrefixBytes;
+
+  /// Decoder-derived lower bound for the next frame-zero attempt while no
+  /// first frame has succeeded yet. This is allowed to raise physical flow
+  /// credit; transport framing must never override it.
+  final int firstFrameRequiredSourceLength;
+
   final Failure? failure;
 }
 
@@ -126,6 +145,8 @@ final class DecodeSession {
   int _cursorCreateMicros = 0;
   int _nextFrameHintIndex = 0;
   int _requiredSourceLength = 0;
+  int _firstPlayablePrefixBytes = 0;
+  int _firstFrameRequiredSourceLength = 0;
   AnimationInfo? _reportedAnimation;
   int _maxDecodedPrefixFrames = 0;
   int _partialPrefixCycle = 0;
@@ -180,6 +201,9 @@ final class DecodeSession {
       sourceLength: source?.length ?? 0,
       sourceSealed: source?.sealed ?? false,
       requiredSourceLength: _requiredSourceLength,
+      decodedPrefixFrames: _maxDecodedPrefixFrames,
+      firstPlayablePrefixBytes: _firstPlayablePrefixBytes,
+      firstFrameRequiredSourceLength: _firstFrameRequiredSourceLength,
       failure: _failure,
     );
   }
@@ -282,6 +306,10 @@ final class DecodeSession {
       if (hinted > _requiredSourceLength) {
         _requiredSourceLength = hinted;
       }
+      if (_nextFrameHintIndex == 0 &&
+          _requiredSourceLength > _firstFrameRequiredSourceLength) {
+        _firstFrameRequiredSourceLength = _requiredSourceLength;
+      }
       if (_requiredSourceLength > 0 && source.length < _requiredSourceLength) {
         _waitingSourceSinceMicros ??= clock.nowMicros();
         _setState(DecodeState.waitingSource);
@@ -366,6 +394,10 @@ final class DecodeSession {
                 frameIndex: _nextFrameHintIndex,
                 sourceLength: source.length,
               );
+              if (_nextFrameHintIndex == 0 &&
+                  _requiredSourceLength > _firstFrameRequiredSourceLength) {
+                _firstFrameRequiredSourceLength = _requiredSourceLength;
+              }
               _emit(
                 TraceEventKind.retryScheduled,
                 <String, Object?>{
@@ -412,6 +444,12 @@ final class DecodeSession {
                 frameIndex: frame.index,
                 sourceLength: source.length,
               );
+            }
+            if (!source.sealed && frame.index == 0 && source.length > 0) {
+              if (_firstPlayablePrefixBytes == 0 ||
+                  source.length < _firstPlayablePrefixBytes) {
+                _firstPlayablePrefixBytes = source.length;
+              }
             }
             _nextFrameHintIndex = frame.index + 1;
             _requiredSourceLength = 0;
@@ -537,6 +575,10 @@ final class DecodeSession {
       frameIndex: _nextFrameHintIndex,
       sourceLength: source.length,
     );
+    if (_nextFrameHintIndex == 0 &&
+        _requiredSourceLength > _firstFrameRequiredSourceLength) {
+      _firstFrameRequiredSourceLength = _requiredSourceLength;
+    }
     _failure = null;
     _emit(
       TraceEventKind.retryScheduled,
@@ -665,6 +707,8 @@ final class DecodeSession {
     _holder = null;
     _nextFrameHintIndex = 0;
     _requiredSourceLength = 0;
+    _firstPlayablePrefixBytes = 0;
+    _firstFrameRequiredSourceLength = 0;
     _reportedAnimation = null;
     _frameTimings.clear();
     _cursorCreateMicros = 0;

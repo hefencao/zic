@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:domain/domain.dart';
+import 'package:media/media.dart';
 import 'package:sessions/sessions.dart';
 import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
@@ -370,6 +371,12 @@ void main() {
 
     final id = _id('flow-suspension');
     final bytes = _ownerAnimatedWebp(<int>[48, 48, 48]);
+    registry.get(id).observePlayablePrefixEvidence(
+      decodedPrefixFrames: 1,
+      sourceLength: 1,
+      firstPlayablePrefixBytes: 1,
+      firstFrameRequiredSourceLength: 0,
+    );
     final transport = _FlowSuspendingTransport(bytes, chunkSize: 17);
     final consumer = owner.attachConsumer(
       scopeId: 'reader-flow',
@@ -427,6 +434,12 @@ void main() {
 
     final id = _id('flow-frame-proof');
     final bytes = _ownerAnimatedWebp(List<int>.filled(8, 48));
+    registry.get(id).observePlayablePrefixEvidence(
+      decodedPrefixFrames: 1,
+      sourceLength: 1,
+      firstPlayablePrefixBytes: 1,
+      firstFrameRequiredSourceLength: 0,
+    );
     final transport = _FlowSuspendingTransport(bytes, chunkSize: 220);
     final consumer = owner.attachConsumer(
       scopeId: 'reader-flow-proof',
@@ -488,6 +501,80 @@ void main() {
     expect(registry.get(id).state, DownloadState.promoted);
     expect(transport.opens, 3,
         reason: 'foreground unlimited must not be satisfied by a bounded proof');
+  });
+
+  test('decoder prefix floor invalidates an insufficient structural flow proof',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_playable_flow_floor_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('playable-flow-floor');
+    final bytes = _ownerAnimatedWebp(<int>[48, 48, 768 * 1024]);
+    final transport = _FlowSuspendingTransport(bytes, chunkSize: 64 * 1024);
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-playable-flow-floor',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+
+    consumer.replaceDemands(
+      'reader-playable-flow-floor',
+      1,
+      _desired(id, priority: 700, flowTargetFrames: 2),
+    );
+    await consumer.idle().timeout(const Duration(seconds: 2));
+    final session = registry.get(id);
+    final firstSuspendedLength = session.committedLength;
+    expect(firstSuspendedLength, greaterThanOrEqualTo(256 * 1024));
+    expect(firstSuspendedLength, lessThan(512 * 1024));
+    expect(transport.opens, 1);
+
+    consumer.observeDecodePrefixEvidence(
+      session,
+      DecodeSnapshot(
+        id: DecodeId(
+          download: id,
+          physicalWidth: 1,
+          physicalHeight: 1,
+          pixelFormat: PixelFormat.rgba8888,
+          renderer: RendererKind.androidTexture,
+        ),
+        state: DecodeState.waitingSource,
+        epoch: const SourceEpoch(0),
+        depth: 0,
+        bytes: 0,
+        revision: 1,
+        animation: const AnimationInfo.unknown(),
+        cycle: 0,
+        sourceLength: firstSuspendedLength,
+        sourceSealed: false,
+        requiredSourceLength: 512 * 1024,
+        decodedPrefixFrames: 0,
+        firstPlayablePrefixBytes: 0,
+        firstFrameRequiredSourceLength: 512 * 1024,
+      ),
+    );
+    await consumer.idle().timeout(const Duration(seconds: 2));
+
+    expect(transport.opens, 2,
+        reason: 'decoder need-more-data must invalidate the old flow proof');
+    expect(session.committedLength, greaterThanOrEqualTo(512 * 1024));
   });
 
   test('transfer checksum constraints aggregate across consumers atomically',

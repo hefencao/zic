@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：真机验证dev.257 local-completion admission closure：若physical prepare从session artifact/cold handoff恢复到`DownloadState.promoted`或完整partial可本地seal/promote，必须出现`transfer-admission/local-completion-short-circuit`，且该generation不得出现`downloadStarted/provider transport`；`downloadStarted`只表示真正进入provider transport attempt。继续观察source request-plan/open长尾，但冻结3/7、5/3/2/1、NetLane、frame-prefix proof与partial validity；若仍有无效`downloadStarted`，先区分local complete与真实provider open，不用rank/window补偿。
+- P0：真机验证dev.258 decoder-playable-prefix closure：正target的`flow-satisfied`必须同时满足ANMF structural frame count与`committedLength>=playablePrefixFloorBytes`；重点复测05:29 page206类样本，decoder已报告`firstFrameRequiredPrefixBytes=262144`时不得在205860 bytes suspend，若floor后来升高旧proof必须从同partial自动继续；相邻预下载页切入current的首帧应接近page207的已playable-prefix路径。source-plan/runtime秒级冷启动作为独立次级问题继续观测，本轮冻结3/7、5/3/2/1、NetLane、provider与connection count。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

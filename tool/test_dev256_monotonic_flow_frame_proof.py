@@ -29,6 +29,7 @@ m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
 if m is None or int(m.group(1)) < 256:
     raise SystemExit('App build must be >=256')
 require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
+build = int(m.group(1))
 
 owner = 'packages/sessions/lib/src/download_transfer_owner.dart'
 require(
@@ -68,8 +69,28 @@ for path in (
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.256 governance file: {path}')
 
-require('docs/ARCHITECTURE.md', 'frame-prefix proof', 'role target降低/等价或短暂无demand不得重开')
-require('docs/SPEC.md', 'frame-prefix proof', 'role target降低/等价及短暂无demand MUST NOT令其重开')
+if build >= 258:
+    require(
+        'docs/ARCHITECTURE.md',
+        'frame proof',
+        '未来正target还必须同时满足当前playable floor',
+    )
+    require(
+        'docs/SPEC.md',
+        '旧flow proof低于floor',
+        'role/target变化',
+    )
+else:
+    require(
+        'docs/ARCHITECTURE.md',
+        'frame-prefix proof',
+        'role target降低/等价或短暂无demand不得重开',
+    )
+    require(
+        'docs/SPEC.md',
+        'frame-prefix proof',
+        'role target降低/等价及短暂无demand MUST NOT令其重开',
+    )
 require('tool/check.sh', 'test_dev256_monotonic_flow_frame_proof.py')
 
 # This round is intentionally flow-memory only: do not hide reopen churn by

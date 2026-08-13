@@ -599,6 +599,72 @@ void main() {
     expect(restored.validators.isEmpty, isTrue);
     expect(restored.totalLength, isNull);
   });
+
+  test('playable-prefix evidence strengthens within one physical generation',
+      () async {
+    const unresolvedFloor = 256 * 1024;
+    expect(
+      session.playableFlowPrefixFloorBytes(
+        unresolvedFloorBytes: unresolvedFloor,
+      ),
+      unresolvedFloor,
+    );
+
+    expect(
+      session.observePlayablePrefixEvidence(
+        decodedPrefixFrames: 0,
+        sourceLength: 128 * 1024,
+        firstPlayablePrefixBytes: 0,
+        firstFrameRequiredSourceLength: 512 * 1024,
+      ),
+      isTrue,
+    );
+    expect(session.firstFrameRequiredPrefixBytes, 512 * 1024);
+    expect(
+      session.playableFlowPrefixFloorBytes(
+        unresolvedFloorBytes: unresolvedFloor,
+      ),
+      512 * 1024,
+    );
+
+    expect(
+      session.observePlayablePrefixEvidence(
+        decodedPrefixFrames: 1,
+        sourceLength: 384 * 1024,
+        firstPlayablePrefixBytes: 384 * 1024,
+        firstFrameRequiredSourceLength: 0,
+      ),
+      isTrue,
+    );
+    expect(session.decodedPrefixFrames, 1);
+    expect(session.firstPlayablePrefixBytes, 384 * 1024);
+    expect(
+      session.playableFlowPrefixFloorBytes(
+        unresolvedFloorBytes: unresolvedFloor,
+      ),
+      384 * 1024,
+    );
+
+    // A later need-more-data observation for another frame cannot make the
+    // already proven first playable prefix less valid.
+    session.observePlayablePrefixEvidence(
+      decodedPrefixFrames: 1,
+      sourceLength: 640 * 1024,
+      firstPlayablePrefixBytes: 384 * 1024,
+      firstFrameRequiredSourceLength: 768 * 1024,
+    );
+    expect(
+      session.playableFlowPrefixFloorBytes(
+        unresolvedFloorBytes: unresolvedFloor,
+      ),
+      384 * 1024,
+    );
+
+    await session.reset();
+    expect(session.firstPlayablePrefixBytes, 0);
+    expect(session.firstFrameRequiredPrefixBytes, 0);
+    expect(session.decodedPrefixFrames, 0);
+  });
 }
 
 DownloadId _id() => DownloadId(
