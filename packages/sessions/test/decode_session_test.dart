@@ -34,7 +34,6 @@ void main() {
     final factory = _CursorFactory();
     final session = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: factory,
       clock: _Clock(),
@@ -94,6 +93,62 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('decode generation follows Reader ingress rather than physical session epoch',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'decode_ingress_epoch_authority_test_',
+    );
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.reset(const SourceEpoch(1));
+    ingress.append(
+      epoch: const SourceEpoch(1),
+      offset: 0,
+      bytes: 'RIFF....WEBPprojection'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+    );
+    expect(download.epoch, const SourceEpoch(0),
+        reason: 'physical generation intentionally differs from Reader ingress');
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}:generation-authority',
+      ingress: ingress,
+    );
+    final factory = _CursorFactory();
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      ingress: projection,
+      cursors: factory,
+      clock: _Clock(),
+    );
+
+    final result = await decode.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 1,
+        reason: 'projection-generation',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+
+    expect(result.state, DecodeState.ready);
+    expect(result.epoch, const SourceEpoch(1));
+    expect(result.failure, isNull);
+    expect(factory.created, 1);
+
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('rebinds when ingress replaces encoded source inside the same epoch',
       () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -121,7 +176,6 @@ void main() {
     final factory = _CursorFactory();
     final session = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: factory,
       clock: _Clock(),
@@ -199,7 +253,6 @@ void main() {
     final factory = _PromotableCursorFactory();
     final session = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: factory,
       clock: _Clock(),
@@ -260,7 +313,6 @@ void main() {
     final hints = WebpDecodePrefixHints();
     final session = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: factory,
       clock: _Clock(),
@@ -340,7 +392,6 @@ void main() {
     final factory = _CursorFactory();
     final session = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: factory,
       clock: _Clock(),
@@ -392,7 +443,6 @@ void main() {
     final cursors = _CursorFactory();
     final decode = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: cursors,
       clock: _Clock(),
@@ -443,7 +493,6 @@ void main() {
     final factory = _DelayedCursorFactory();
     final session = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: factory,
       clock: _Clock(),
@@ -505,7 +554,6 @@ void main() {
     final cursors = _CursorFactory();
     final decode = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: cursors,
       clock: _Clock(),
@@ -558,7 +606,6 @@ void main() {
     final cursors = _PartialPrefixCursorFactory(frameCount: 30);
     final decode = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: cursors,
       clock: _Clock(),
@@ -628,7 +675,6 @@ void main() {
     final loops = _LoopCursorFactory(frameCount: 2, loopCount: 0);
     final decode = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: loops,
       clock: _Clock(),
@@ -705,7 +751,6 @@ void main() {
     final cursors = _LoopCursorFactory(frameCount: 1, loopCount: 1);
     final decode = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: cursors,
       clock: _Clock(),
@@ -771,7 +816,6 @@ void main() {
       final hints = WebpDecodePrefixHints();
       final decode = DecodeSession(
         id: _decodeId(download.id),
-        download: download,
         ingress: projection,
         cursors: cursors,
         clock: _Clock(),
@@ -843,7 +887,6 @@ void main() {
     final cursors = _CursorFactory();
     final decode = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: cursors,
       clock: _Clock(),
@@ -910,7 +953,6 @@ void main() {
     download.attachIngressProjection(projection);
     final decode = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: _LoopCursorFactory(frameCount: 1, loopCount: 1),
       clock: _Clock(),
@@ -978,7 +1020,6 @@ void main() {
     final cursors = _TransientCursorFactory();
     final decode = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: cursors,
       clock: _Clock(),
@@ -1042,7 +1083,6 @@ void main() {
     download.attachIngressProjection(projection);
     final decode = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: const _ThrowingCursorFactory(),
       clock: _Clock(),
@@ -1123,7 +1163,6 @@ void main() {
     final cursors = _GrowingPrefixFailureCursorFactory(minimumBytes: 256 * 1024);
     final decode = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: cursors,
       clock: _Clock(),
@@ -1190,7 +1229,6 @@ void main() {
     download.attachIngressProjection(projection);
     final decode = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: const _StepCursorFactory(CursorStep.needMoreData()),
       clock: _Clock(),
@@ -1239,7 +1277,6 @@ void main() {
     download.attachIngressProjection(projection);
     final decode = DecodeSession(
       id: _decodeId(download.id),
-      download: download,
       ingress: projection,
       cursors: const _StepCursorFactory(CursorStep.end()),
       clock: _Clock(),

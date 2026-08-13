@@ -197,6 +197,62 @@ void main() {
     expect(registry.get(id).state, DownloadState.promoted);
   });
 
+  test('consumer-paced flow suspension stays quiescent until frame target changes',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_flow_suspension_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('flow-suspension');
+    final bytes = _ownerAnimatedWebp(<int>[48, 48, 48]);
+    final transport = _FlowSuspendingTransport(bytes, chunkSize: 17);
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-flow',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+
+    consumer.replaceDemands(
+      'reader-flow',
+      1,
+      _desired(id, priority: 700, flowTargetFrames: 1),
+    );
+    await consumer.idle().timeout(const Duration(seconds: 2));
+    final suspended = registry.get(id);
+    expect(suspended.state, DownloadState.idle);
+    expect(suspended.committedLength, greaterThan(0));
+    expect(transport.opens, 1);
+
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    expect(transport.opens, 1,
+        reason: 'satisfied speculative credit must not reopen itself');
+
+    consumer.replaceDemands(
+      'reader-flow',
+      2,
+      _desired(id, priority: 1000, flowTargetFrames: 0),
+    );
+    await consumer.idle().timeout(const Duration(seconds: 2));
+    expect(registry.get(id).state, DownloadState.promoted);
+    expect(transport.opens, 2,
+        reason: 'raising flow credit resumes from the preserved partial');
+  });
+
   test('transfer checksum constraints aggregate across consumers atomically',
       () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_checksum_');
@@ -987,11 +1043,13 @@ DownloadId _id(String pageId) => DownloadId(
 Map<DownloadId, TransferDemand> _desired(
   DownloadId id, {
   required int priority,
+  int flowTargetFrames = 0,
 }) =>
     <DownloadId, TransferDemand>{
       id: TransferDemand(
         priority: priority,
         reason: 'test',
+        flowTargetFrames: flowTargetFrames,
       ),
     };
 
@@ -1190,6 +1248,66 @@ final class _RetainedGateControlledTransport implements ControlledTransport {
     yield suffix;
   }
 }
+
+
+final class _FlowSuspendingTransport implements Transport {
+  _FlowSuspendingTransport(this.bytes, {required this.chunkSize});
+
+  final List<int> bytes;
+  final int chunkSize;
+  int opens = 0;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    opens++;
+    final start = range?.start ?? 0;
+    Stream<List<int>> body() async* {
+      for (var offset = start; offset < bytes.length; offset += chunkSize) {
+        final end = (offset + chunkSize).clamp(0, bytes.length).toInt();
+        yield bytes.sublist(offset, end);
+      }
+    }
+
+    return ByteResponse(
+      bytes: body(),
+      statusCode: start == 0 ? HttpStatus.ok : HttpStatus.partialContent,
+      rangeStart: start,
+      totalLength: bytes.length,
+      rangeSupported: true,
+      flowControl: ByteResponseFlowControl.consumerPacing,
+      validators: const Validators(etag: 'flow-suspension-v1'),
+    );
+  }
+}
+
+List<int> _ownerAnimatedWebp(List<int> payloadSizes) {
+  final chunks = <int>[];
+  for (final size in payloadSizes) {
+    chunks
+      ..addAll('ANMF'.codeUnits)
+      ..addAll(_ownerU32(size))
+      ..addAll(List<int>.generate(size, (index) => (index * 13) & 0xff));
+    if (size.isOdd) chunks.add(0);
+  }
+  return <int>[
+    ...'RIFF'.codeUnits,
+    ..._ownerU32(4 + chunks.length),
+    ...'WEBP'.codeUnits,
+    ...chunks,
+  ];
+}
+
+List<int> _ownerU32(int value) => <int>[
+      value & 0xff,
+      (value >> 8) & 0xff,
+      (value >> 16) & 0xff,
+      (value >> 24) & 0xff,
+    ];
+
 
 final class _BlockedControlledTransport implements ControlledTransport {
   final Completer<void> opened = Completer<void>();

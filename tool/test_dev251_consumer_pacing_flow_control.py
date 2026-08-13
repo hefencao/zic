@@ -59,20 +59,38 @@ require(
     ": 'pseudo-resumed'",
     'mode: capability.name',
 )
-if build >= 252:
+if build >= 254:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        "action: 'pseudo-suspended'",
+        'DownloadFlowSuspended',
+        '_authoritativeCatchupFloor',
+        'waitForFlowCreditOrTimeout',
+    )
+    reject('packages/sessions/lib/src/download_job.dart', "action: 'pseudo-drain'")
+elif build >= 252:
     require(
         'packages/sessions/lib/src/download_job.dart',
         "action: 'pseudo-drain'",
         '_authoritativeCatchupFloor',
         'waitForFlowCreditOrTimeout',
     )
-require(
-    'packages/sessions/test/download_job_test.dart',
-    'consumer-paced frame credit pseudo-pauses without reopen',
-    'flowControl: ByteResponseFlowControl.consumerPacing',
-    "'pseudo-paused'",
-    "'pseudo-resumed'",
-)
+if build >= 254:
+    require(
+        'packages/sessions/test/download_job_test.dart',
+        'consumer-paced frame credit suspends partial instead of draining forever',
+        'flowControl: ByteResponseFlowControl.consumerPacing',
+        "'pseudo-paused'",
+        "'pseudo-suspended'",
+    )
+else:
+    require(
+        'packages/sessions/test/download_job_test.dart',
+        'consumer-paced frame credit pseudo-pauses without reopen',
+        'flowControl: ByteResponseFlowControl.consumerPacing',
+        "'pseudo-paused'",
+        "'pseudo-resumed'",
+    )
 # This round deliberately does not half-implement retained paused connections;
 # correct slot release requires a separate resume-permit arbiter.
 reject(
@@ -88,7 +106,10 @@ for path in (
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.251 governance file: {path}')
-if build >= 252:
+if build >= 254:
+    require('docs/ARCHITECTURE.md', 'consumerPacing', 'pseudo-suspended')
+    require('docs/SPEC.md', 'consumerPacing', 'pseudo-suspended')
+elif build >= 252:
     require('docs/ARCHITECTURE.md', 'consumerPacing', 'pseudo-drain')
     require('docs/SPEC.md', 'consumerPacing', 'pseudo-drain')
 else:

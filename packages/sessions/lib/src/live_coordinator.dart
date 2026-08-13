@@ -705,12 +705,18 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                 : null,
           );
         }
+        if (after != null &&
+            (after.state == DecodeState.failed || after.failure != null)) {
+          throw after.failure ??
+              const Failure(
+                code: ErrorCode.decode,
+                message: 'decode fill returned a failed snapshot',
+              );
+        }
         if (sourceRevision >= 0) {
           _decodeSourceRevisions[id] = sourceRevision;
         }
-        if (after != null &&
-            after.state != DecodeState.failed &&
-            after.failure == null) {
+        if (after != null) {
           _decodeRecoveryAttempts.remove(id);
           _decodeRecoveryPending.remove(id);
           final completedPreparedDepth =

@@ -1,5 +1,5 @@
-# dev.253 后续交接
-- dev.253：01:44 Trace中没有task/source failure，但page81 new physical已完整`sourceReady/promoted`仍永久`waitingSource`。根因是LiveCoordinator source listener按logical id缓存却实际绑定旧physical projection；旧owner退休/alias清理后同logical exact重建physical时未换绑。现source watch显式记录physical session/projection generation，换代时解绑旧listener、失效旧DecodeSession/source-consumption并在本轮reconcile后重新wake；Ingress registry也禁止same-id新DownloadSession复用旧Reader-local ingress/source。3/7、frame credit、consumer pacing、NetLane不改。
+# dev.254 后续交接
+- dev.254：02:27 Trace中page335等出现“physical download继续增长/最终promote，但DecodeSession提前silent failed”；同时consumerPacing target=1的远端taskcompletedFrames中位38、最大122，证明pseudo-drain违背帧水位。现DecodeSession只以Reader-local ingress/source epoch作为generation authority，physical session generation由source-watch/ingress registry投影；returned failed snapshot统一进入failure闭包。unsupported pause在100ms内未升水位则`pseudo-suspended`并pause writer，TransferOwner按frame target保持quiescent，只有target提高/current才从partial恢复。3/7、5/3/2/1、NetLane 5+1不改。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`

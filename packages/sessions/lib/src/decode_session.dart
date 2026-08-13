@@ -4,7 +4,6 @@ import 'package:pipeline/pipeline.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'download_ingress_projection.dart';
-import 'download_session.dart';
 import 'frame_holder.dart';
 import 'net_lane.dart';
 import 'webp_decode_prefix_hints.dart';
@@ -89,7 +88,6 @@ final class DecodedFrameTiming {
 final class DecodeSession {
   DecodeSession({
     required this.id,
-    required this.download,
     required this.ingress,
     required this.cursors,
     required this.clock,
@@ -101,7 +99,6 @@ final class DecodeSession {
   }) : prefixHints = prefixHints ?? WebpDecodePrefixHints();
 
   final DecodeId id;
-  final DownloadSession download;
   final DownloadIngressProjection ingress;
   final CursorFactory cursors;
   final MonoClock clock;
@@ -211,27 +208,44 @@ final class DecodeSession {
       );
     }
     _revision = revision;
-    final ingressSnapshot = ingress.snapshot;
+    var ingressSnapshot = ingress.snapshot;
     final ingressFailure = ingressSnapshot.failure;
     if (ingressFailure != null) {
       _setFailure(ingressFailure);
-      return snapshot;
+      throw ingressFailure;
     }
-    final source = ingress.source;
+    _failure = null;
+    var source = ingress.source;
     if (source == null) {
       _waitingSourceSinceMicros ??= clock.nowMicros();
       _setState(DecodeState.waitingSource);
       return snapshot;
     }
 
-    final epoch = download.epoch;
+    // Decode consumes the Reader-local ingress projection, so that projection
+    // is the only source-generation authority. The physical DownloadSession
+    // may be re-aliased/recreated independently; its generation is projected
+    // into this ingress by DownloadIngressProjectionRegistry/LiveCoordinator.
+    // Re-read once if a projection update raced the snapshot/source reads.
+    var epoch = ingressSnapshot.epoch;
     if (source.epoch != epoch.value) {
-      _setFailure(
-        Failure(
-          code: ErrorCode.staleEpoch,
-          message: 'source epoch ${source.epoch} does not match ${epoch.value}',
-        ),
+      ingressSnapshot = ingress.snapshot;
+      source = ingress.source;
+      epoch = ingressSnapshot.epoch;
+    }
+    if (source == null || source.epoch != epoch.value) {
+      _releaseBinding();
+      _waitingSourceSinceMicros ??= clock.nowMicros();
+      _emit(
+        TraceEventKind.retryScheduled,
+        <String, Object?>{
+          'stage': 'decode-ingress-generation-change',
+          'projectionEpoch': epoch.value,
+          'sourceEpoch': source?.epoch,
+          'waitForSourceRevision': true,
+        },
       );
+      _setState(DecodeState.waitingSource);
       return snapshot;
     }
 
@@ -296,7 +310,7 @@ final class DecodeSession {
           laneQueueMicros < 0 ? 0 : laneQueueMicros;
       while (holder.depth < targetDepth) {
         cancel.throwIfCancelled();
-        epoch.requireMatch(download.epoch);
+        _requireIngressEpoch(epoch);
         if (_revision != revision) {
           throw const Failure(
             code: ErrorCode.cancelled,
@@ -314,10 +328,12 @@ final class DecodeSession {
             : await frames.decodeNext();
         final decodedAtMicros = clock.nowMicros();
         final decodeMicros = decodedAtMicros - decodeStartedAt;
-        if (cancel.cancelled || download.epoch != epoch || _revision != revision) {
+        if (cancel.cancelled ||
+            ingress.snapshot.epoch != epoch ||
+            _revision != revision) {
           step.frame?.dispose();
           cancel.throwIfCancelled();
-          epoch.requireMatch(download.epoch);
+          _requireIngressEpoch(epoch);
           throw const Failure(
             code: ErrorCode.cancelled,
             message: 'decode demand was superseded',
@@ -689,6 +705,17 @@ final class DecodeSession {
         payload: payload,
       ),
     );
+  }
+
+  void _requireIngressEpoch(SourceEpoch expected) {
+    final current = ingress.snapshot.epoch;
+    if (current != expected) {
+      throw Failure(
+        code: ErrorCode.cancelled,
+        message:
+            'decode ingress generation changed from ${expected.value} to ${current.value}',
+      );
+    }
   }
 
   void _requireOpen() {

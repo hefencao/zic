@@ -25,6 +25,7 @@ m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
 if m is None or int(m.group(1)) < 252:
     raise SystemExit('App build must be >=252')
 require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
+build = int(m.group(1))
 
 require(
     'packages/media/lib/src/ingress.dart',
@@ -42,9 +43,17 @@ require(
     '_authoritativeCatchupFloor = session.committedLength',
     'if (networkCursor < _authoritativeCatchupFloor) return;',
     '_consumerPacingInterval = Duration(milliseconds: 100)',
-    "action: 'pseudo-drain'",
     'waitForFlowCreditOrTimeout',
 )
+if build >= 254:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        "action: 'pseudo-suspended'",
+        'DownloadFlowSuspended',
+    )
+    reject('packages/sessions/lib/src/download_job.dart', "action: 'pseudo-drain'")
+else:
+    require('packages/sessions/lib/src/download_job.dart', "action: 'pseudo-drain'")
 require(
     'packages/sessions/lib/src/net_lane.dart',
     'waitForFlowCreditOrTimeout',
@@ -64,9 +73,16 @@ require(
 require(
     'packages/sessions/test/download_job_test.dart',
     'frame credit never pauses before an existing partial catch-up boundary',
-    "'pseudo-drain'",
     '_FullBodyFlowTransport',
 )
+if build >= 254:
+    require(
+        'packages/sessions/test/download_job_test.dart',
+        "'pseudo-suspended'",
+        'DownloadFlowSuspended',
+    )
+else:
+    require('packages/sessions/test/download_job_test.dart', "'pseudo-drain'")
 # Scope guard: this round must not introduce a partial paused-pool scheduler.
 reject(
     'packages/sessions/lib/src/net_lane.dart',
@@ -81,7 +97,11 @@ for path in (
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.252 governance file: {path}')
-require('docs/ARCHITECTURE.md', 'authoritative partial边界', 'pseudo-drain')
-require('docs/SPEC.md', 'authoritative partial边界', 'pseudo-drain')
+if build >= 254:
+    require('docs/ARCHITECTURE.md', 'authoritative partial边界', 'pseudo-suspended')
+    require('docs/SPEC.md', 'authoritative partial边界', 'pseudo-suspended')
+else:
+    require('docs/ARCHITECTURE.md', 'authoritative partial边界', 'pseudo-drain')
+    require('docs/SPEC.md', 'authoritative partial边界', 'pseudo-drain')
 require('tool/check.sh', 'test_dev252_resume_safe_flow_and_sealed_ingress.py')
 print('dev.252 resume-safe flow + sealed ingress: OK')

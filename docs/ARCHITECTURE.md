@@ -218,7 +218,7 @@ n>1, m>1, p>1, c>4, n>2, c>6, n>3, m>2, n>4（current bootstrap 已覆盖 c>2）
 
 阈值仍是严格水位，实际 batch 可自然越过。current/source 尚未建立浅水位时不得让 speculative neighbor 绕行 refill；真实 transition 只在 current 暂时无 source 资格时可取一帧，防止拖动目标黑屏。
 
-静态页一帧即满足，但静态证据只能降低**既有 decode 前2/后1窗口**内页面的成本，不能把 encoded 7/3 的 near/far 扩大成 decode/upload 窗口；真实进入 viewport 的纵向静态页可作为可见输出例外，回收仍由 `FrameBudgeter` 权威执行。encoded previous3/next7同时是逻辑/retention与DownloadDemand窗口，动画不得再缩成2/4。动画/未决WebP只附加task-local response-body frame credit：current/可见transition无限流，next/next2/previous为5/3/2完整ANMF帧，其余远端先1帧；既有decode水位只把对应外层credit升到2帧。frame gate必须先越过attempt启动时已有的authoritative partial边界，禁止用旧partial的completedFrames阻塞resume/probe/full-body catch-up。`streamBackpressure`仅用于确认可安全暂停upstream的transport；rhttp direct与其它不能证明长暂停安全的source使用`consumerPacing`，blocked时每100ms放行一个chunk并记录`pseudo-drain`，credit提升原地全速resume。sealed Reader-local source的expected length只允许同长度幂等确认，不得reserve-after-seal。artifact-cache/resident不进入该flow gate；network仍5+current-reserved1。
+静态页一帧即满足，但静态证据只能降低**既有 decode 前2/后1窗口**内页面的成本，不能把 encoded 7/3 的 near/far 扩大成 decode/upload 窗口；真实进入 viewport 的纵向静态页可作为可见输出例外，回收仍由 `FrameBudgeter` 权威执行。encoded previous3/next7同时是逻辑/retention与DownloadDemand窗口，动画不得再缩成2/4。动画/未决WebP只附加task-local response-body frame credit：current/可见transition无限流，next/next2/previous为5/3/2完整ANMF帧，其余远端先1帧；既有decode水位只把对应外层credit升到2帧。frame gate必须先越过attempt启动时已有的authoritative partial边界，禁止用旧partial的completedFrames阻塞resume/probe/full-body catch-up。`streamBackpressure`仅用于确认可安全暂停upstream的transport；rhttp direct与其它不能证明长暂停安全的source使用`consumerPacing`，blocked后仅等待最多100ms的同-response credit提升，仍blocked则`pseudo-suspended`并正常pause writer/保留partial；TransferOwner把该frame target视为已满足而不得自重开，只有credit提高/current unlimited后才从partial重新启动attempt。sealed Reader-local source的expected length只允许同长度幂等确认，不得reserve-after-seal。artifact-cache/resident不进入该flow gate；network仍5+current-reserved1。
 
 ## 7. 下载、partial 与 source ingress
 
@@ -258,7 +258,7 @@ transport / artifact stream
 - 缺少 successor 时保持当前 output，等待 producer 通知，不进入 startup-buffer，也不阻塞其他页面 decode；
 - playback 使用最近 deadline 的 one-shot wake；静态零时长帧不启动 timer；
 - finite animation 到 EOF 保留最后一帧；
-- metadata 未完成且 source 增长时允许刷新 demux；未封缄 `needMoreData` 等待 source revision，不用定时销毁 cursor；source revision 是 Reader-local projection 的状态事实，只有实际 decode fill 或 DecodeSession 已证明无需 fill 后才能记为 consumed，current-bootstrap 暂时门控邻页不得吞掉其 pending source wake； `SourceEpoch`只标识下载内容世代，不唯一标识Reader-local encoded source handle；projection在同epoch内rebuild并替换`EncodedSource`实例时，DecodeSession必须释放旧cursor/holder并重新绑定当前source，cursor复用必须同时满足epoch与source实例identity一致；
+- metadata 未完成且 source 增长时允许刷新 demux；未封缄 `needMoreData` 等待 source revision，不用定时销毁 cursor；source revision 是 Reader-local projection 的状态事实，只有实际 decode fill 或 DecodeSession 已证明无需 fill 后才能记为 consumed，current-bootstrap 暂时门控邻页不得吞掉其 pending source wake； `SourceEpoch`的decode authority只属于Reader-local ingress projection，不得再由DecodeSession同时读取physical DownloadSession epoch形成第二generation owner；projection在同epoch内rebuild并替换`EncodedSource`实例时，DecodeSession必须释放旧cursor/holder并重新绑定当前source，异步decode期间projection epoch变化属于生命周期cancel而非内容failure，cursor复用必须同时满足projection epoch与source实例identity一致；
 - target canvas 使用 contain 和 `height / width`，不裁切、不使用负位移或页面重叠掩盖接缝。
 
 ## 9. Upload 与 Android texture

@@ -607,7 +607,8 @@ void main() {
     expect(transport.openCount, 1);
   });
 
-  test('consumer-paced frame credit pseudo-pauses without reopen', () async {
+  test('consumer-paced frame credit suspends partial instead of draining forever',
+      () async {
     final trace = MemoryTraceSink();
     final bytes = _flowAnimatedWebp(<int>[48, 48, 48]);
     final session = DownloadSession(
@@ -630,36 +631,47 @@ void main() {
     );
     final transport = _ConsumerPacedBodyTransport(bytes, chunkSize: 17);
     final token = CancelToken(flowTargetFrames: 1);
-    final run = DownloadJob(transport: transport, session: session).run(
+    final firstRun = DownloadJob(transport: transport, session: session).run(
       cancel: token,
     );
 
     await _waitForFlowAction(trace, 'pseudo-paused', targetFrames: 1);
+    await expectLater(
+      firstRun.timeout(const Duration(seconds: 2)),
+      throwsA(isA<DownloadFlowSuspended>()),
+    );
     expect(transport.openCount, 1);
-    expect(session.state, DownloadState.receiving);
-    final pausedLength = session.committedLength;
-    await _waitForFlowAction(trace, 'pseudo-drain', targetFrames: 1);
-    for (var attempt = 0; attempt < 100 && session.committedLength <= pausedLength; attempt++) {
-      await Future<void>.delayed(const Duration(milliseconds: 2));
-    }
-    expect(session.committedLength, greaterThan(pausedLength));
-    expect(transport.openCount, 1);
-
-    token.updateFlowTargetFrames(0);
-    final result = await run.timeout(const Duration(seconds: 2));
-    expect(result.state, DownloadState.promoted);
-    expect(transport.openCount, 1);
-    expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
+    expect(session.state, DownloadState.idle);
+    final suspendedLength = session.committedLength;
+    expect(suspendedLength, greaterThan(0));
     expect(
       trace.events.any(
         (event) =>
             event.kind == TraceEventKind.artifactSource &&
             event.payload['stage'] == 'transport-flow-control' &&
-            event.payload['action'] == 'pseudo-resumed' &&
+            event.payload['action'] == 'pseudo-suspended' &&
             event.payload['mode'] == 'consumerPacing',
       ),
       isTrue,
     );
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'transport-flow-control' &&
+            event.payload['action'] == 'pseudo-drain',
+      ),
+      isFalse,
+    );
+
+    final result = await DownloadJob(
+      transport: transport,
+      session: session,
+    ).run(cancel: CancelToken()).timeout(const Duration(seconds: 2));
+    expect(result.state, DownloadState.promoted);
+    expect(transport.openCount, 2);
+    expect(session.committedLength, greaterThanOrEqualTo(suspendedLength));
+    expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
   });
 
 }

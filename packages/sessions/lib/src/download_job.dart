@@ -20,6 +20,22 @@ final class DownloadCatchupDeferred implements Exception {
   final int preservedLength;
 }
 
+
+/// A source-backed transport that cannot promise upstream stream backpressure
+/// has satisfied its current speculative frame credit. This is a policy
+/// suspension, not a network/decode failure: committed partial bytes remain
+/// authoritative and a later higher frame target may resume with a new
+/// transport attempt from that partial.
+final class DownloadFlowSuspended implements Exception {
+  const DownloadFlowSuspended({
+    required this.targetFrames,
+    required this.completedFrames,
+  });
+
+  final int targetFrames;
+  final int completedFrames;
+}
+
 final class DownloadJob {
   const DownloadJob({
     required this.transport,
@@ -547,6 +563,18 @@ final class DownloadJob {
         expectedChecksum: expectedChecksum,
       );
       await session.promote();
+    } on DownloadFlowSuspended {
+      // Unsupported upstream pause cannot honestly preserve both the response
+      // connection and a hard speculative byte/frame cap. Freeze the
+      // authoritative partial without marking failure; TransferOwner keeps the
+      // flow target satisfied until policy raises it, at which point a new
+      // attempt resumes from this exact partial.
+      await flushPending();
+      await iterator.cancel();
+      if (session.hasWriter) {
+        await session.pause(writer);
+      }
+      rethrow;
     } catch (error) {
       // Preserve bytes already delivered by the transport so resume semantics
       // remain independent of the transport's arbitrary chunk size.
@@ -890,17 +918,22 @@ final class _WebpNetworkFlowGate {
         _consumerPacingInterval,
       );
       if (!creditGranted) {
-        // Pseudo pause cannot promise upstream backpressure. Drain exactly one
-        // downstream chunk per pacing interval to keep a single response alive
-        // without turning unsupported pause into cancel/reopen churn.
+        // Consumer pacing cannot promise that leaving this StreamIterator idle
+        // actually stops upstream network I/O. Continuing to drain one chunk
+        // forever violates the frame-watermark contract (target=1 eventually
+        // downloaded dozens of frames on device). Suspend this attempt
+        // cleanly instead; the authoritative partial remains reusable.
         session.recordFlowControl(
-          action: 'pseudo-drain',
+          action: 'pseudo-suspended',
           mode: capability.name,
           targetFrames: control.flowTargetFrames,
           completedFrames: tracker.completedFrames,
           networkCursor: networkCursor,
         );
-        return;
+        throw DownloadFlowSuspended(
+          targetFrames: control.flowTargetFrames,
+          completedFrames: tracker.completedFrames,
+        );
       }
     } else {
       await control.waitForFlowCredit(tracker.completedFrames);

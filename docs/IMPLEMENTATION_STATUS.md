@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.253` / App `0.31.0+253`。
+- 当前版本：`0.31.0-dev.254` / App `0.31.0+254`。
+- dev.254：02:27 Trace中仍无task/source failure，但有2次DecodeSession silent failed；page335 current后physical partial从约8.36MiB继续到15.1MiB并seal/promote，decode却提前failed。现删除DecodeSession对physical DownloadSession.epoch的第二generation authority，只以Reader-local ingress/source epoch绑定cursor，generation变化机械cancel/rebind；LiveCoordinator不再把returned failed snapshot静默记为source revision已消费。同时consumerPacing不再无限pseudo-drain：100ms未升水位即pseudo-suspend response并正常pause writer，TransferOwner把该frame target记为已满足，只有target提高/current才从authoritative partial恢复。3/7、5/3/2/1、NetLane 5+1不改。
 - dev.253：01:44 Trace中`taskFailed/sourceDisabled=0`，但page81的new physical source已从artifact cache完整获得18,699,622 bytes并promoted，DecodeSession仍从77.92s起永久`waitingSource`且两次current均无first frame。唯一命中“verified alias旧physical→旧owner退休→同logical exact新physical owner”的logical identity正是该页。现LiveCoordinator source watch从logical-id布尔缓存收为logical→physical session/projection/listener binding；generation变化机械解绑旧listener、失效旧decode source consumption/session，并在reconcile完成后从新projection重新wake。Ingress registry对same-id新DownloadSession也替换Reader-local ingress/source generation。
 - dev.252：sealed ingress幂等长度确认、resume catch-up floor与rhttp consumer pacing继续保留；3/7、水位、NetLane与partial owner不变。
 - dev.251：引入transport-owned `consumerPacing`三态capability与pseudo trace；其“无限consumer hold”等待语义已由dev.252改为bounded paced drain，runtime fallback/LoaderTransport仍使用该capability。

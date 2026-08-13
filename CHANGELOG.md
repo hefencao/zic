@@ -1,3 +1,10 @@
+## 0.31.0-dev.254：decode ingress epoch ownership 与 bounded flow suspension
+
+- 02:27真机Trace中`taskFailed/sourceDisabled=0`但仍出现2次silent `DecodeState.failed`；page335成为current后physical download已从约8.36MiB原地`pseudo-resumed`并快速增长到15.1MiB、最终seal/promote，DecodeSession却在source继续演化期间直接failed且upload随之failed。根因是DecodeSession同时读取physical `DownloadSession.epoch`与Reader-local ingress/source epoch，generation authority重复；preflight返回failed snapshot又会被LiveCoordinator当成已消费source revision。
+- DecodeSession不再持有physical DownloadSession：decode epoch只取当前`DownloadIngressProjection.snapshot.epoch`，异步decode期间generation变化作为生命周期cancel而不是内容failure；projection/source读取竞态先重读一次，仍不一致则等待新source revision。LiveCoordinator禁止静默消费returned failed snapshot，统一进入现有decode failure/recovery诊断。
+- 同一Trace的`consumerPacing`有1800次`pseudo-drain`；target=1时completedFrames中位38、最大122，证明“每100ms放行一个chunk”最终会把远端动画慢慢下载完。unsupported pause现在只保留100ms同-response升水位机会；仍blocked则`pseudo-suspended`，正常pause writer并保留authoritative partial，TransferOwner把当前frame target记为已满足且不自动重开。只有flow target提高/current=0时才从partial启动新attempt。真实`streamBackpressure`不变。
+- 3/7、5/3/2/1 frame credit、NetLane 5+1、provider/partial/progress ownership均不改。
+
 ## 0.31.0-dev.253：logical source watch physical-generation rebinding
 
 - 01:44真机Trace中`taskFailed/sourceDisabled`均为0，但page81两次current分别约3.26s/至少5s始终`firstFrameReady=false`。其new physical session已从artifact cache完整获得18,699,622 bytes并`sourceReady/promoted`，对应DecodeSession却从77.92s起一直`waitingSource`；同一logical download此前曾verified-alias到旧physical owner，旧owner完成并退休后alias被机械清理，随后该logical exact创建新physical owner。

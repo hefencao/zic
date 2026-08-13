@@ -93,6 +93,8 @@ final class DownloadTransferOwner {
   final Set<DownloadId> _downloadRetryPending = <DownloadId>{};
   final Set<DownloadId> _downloadTerminalFailures = <DownloadId>{};
   final Map<DownloadId, int> _downloadDeferredAtLength = <DownloadId, int>{};
+  final Map<DownloadId, _FlowSuspension> _downloadFlowSuspensions =
+      <DownloadId, _FlowSuspension>{};
   // The physical session owns bytes/writer state, while the source provider is
   // only a lease for one currently executing NetLane task. A later preferred
   // exact claim may revoke this lease without replacing the physical session.
@@ -331,6 +333,7 @@ final class DownloadTransferOwner {
     _downloadRetryPending.clear();
     _downloadTerminalFailures.clear();
     _downloadDeferredAtLength.clear();
+    _downloadFlowSuspensions.clear();
     _activeProviderLeases.clear();
     for (final entry in _sessionListeners.entries) {
       registry.find(entry.key)?.removeSnapshotListener(entry.value);
@@ -496,6 +499,15 @@ final class DownloadTransferOwner {
       existing.revision = revision;
       existing.lease.updatePriority(demand.priority);
     }
+    final suspended = _downloadFlowSuspensions[id];
+    final preferredAfterUpdate = _preferredClaim(id);
+    if (suspended != null &&
+        (preferredAfterUpdate == null ||
+            preferredAfterUpdate.demand.flowTargetFrames !=
+                suspended.targetFrames ||
+            session.committedLength != suspended.committedLength)) {
+      _downloadFlowSuspensions.remove(id);
+    }
     if (!session.activeRun) {
       _downloadRetryRounds.remove(id);
       _downloadRetryPending.remove(id);
@@ -657,10 +669,17 @@ final class DownloadTransferOwner {
                   priority: session.effectivePriority,
                   preservedLength: session.committedLength,
                 );
+        final flowSuspension = _downloadFlowSuspensions[id];
+        final preferred = _preferredClaim(id);
+        final flowSatisfiedForCurrentClaims = flowSuspension != null &&
+            preferred != null &&
+            flowSuspension.targetFrames == preferred.demand.flowTargetFrames &&
+            flowSuspension.committedLength == session.committedLength;
         if (_networkTaskKeys.containsKey(id) ||
             _downloadRetryPending.contains(id) ||
             (session.demanded &&
                 !deferredForCurrentClaims &&
+                !flowSatisfiedForCurrentClaims &&
                 session.state != DownloadState.promoted &&
                 session.state != DownloadState.failed &&
                 session.state != DownloadState.disposed &&
@@ -677,6 +696,16 @@ final class DownloadTransferOwner {
     final claim = _preferredClaim(id);
     if (claim == null || !session.demanded) return;
     final effectivePriority = session.effectivePriority;
+    final flowSuspension = _downloadFlowSuspensions[id];
+    if (flowSuspension != null) {
+      final stillSatisfied =
+          flowSuspension.targetFrames == claim.demand.flowTargetFrames &&
+              flowSuspension.committedLength == session.committedLength;
+      if (stillSatisfied) {
+        return;
+      }
+      _downloadFlowSuspensions.remove(id);
+    }
     final existingTaskKey = _networkTaskKeys[id];
     if (existingTaskKey != null) {
       // A DownloadId has one physical task identity while that task is queued
@@ -806,6 +835,26 @@ final class DownloadTransferOwner {
           _downloadRetryPending.remove(id);
           _downloadTerminalFailures.remove(id);
           _downloadDeferredAtLength.remove(id);
+          return;
+        } on DownloadFlowSuspended catch (suspension) {
+          _downloadFlowSuspensions[id] = _FlowSuspension(
+            targetFrames: suspension.targetFrames,
+            completedFrames: suspension.completedFrames,
+            committedLength: session.committedLength,
+          );
+          _record(
+            claim,
+            kind: TraceEventKind.artifactSource,
+            id: id,
+            payload: <String, Object?>{
+              'stage': 'transport-flow-control',
+              'action': 'flow-satisfied',
+              'mode': 'consumerPacing',
+              'targetFrames': suspension.targetFrames,
+              'completedFrames': suspension.completedFrames,
+              'committedLength': session.committedLength,
+            },
+          );
           return;
         } on DownloadCatchupDeferred {
           final remainingPriority =
@@ -954,6 +1003,11 @@ final class DownloadTransferOwner {
       final prior = _progressLengths[id] ?? 0;
       if (snapshot.committedLength > prior) {
         _progressLengths[id] = snapshot.committedLength;
+        final suspension = _downloadFlowSuspensions[id];
+        if (suspension != null &&
+            suspension.committedLength != snapshot.committedLength) {
+          _downloadFlowSuspensions.remove(id);
+        }
         _downloadRetryRounds.remove(id);
         _downloadRetryPending.remove(id);
         _downloadTerminalFailures.remove(id);
@@ -965,6 +1019,9 @@ final class DownloadTransferOwner {
 
   void _retireDownloadTracking(DownloadId id, DownloadSession? session) {
     _downloadRetryRounds.remove(id);
+    if (session == null || !session.demanded) {
+      _downloadFlowSuspensions.remove(id);
+    }
     _downloadRetryPending.remove(id);
     _downloadTerminalFailures.remove(id);
     final deferredAtLength = _downloadDeferredAtLength[id];
@@ -1158,6 +1215,19 @@ final class DownloadTransferConsumer {
 
   Future<void> dispose() => owner._disposeConsumer(this);
 }
+
+final class _FlowSuspension {
+  const _FlowSuspension({
+    required this.targetFrames,
+    required this.completedFrames,
+    required this.committedLength,
+  });
+
+  final int targetFrames;
+  final int completedFrames;
+  final int committedLength;
+}
+
 
 final class _ActiveProviderLease {
   const _ActiveProviderLease({

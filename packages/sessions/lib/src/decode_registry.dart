@@ -47,7 +47,6 @@ final class DecodeRegistry {
       final ingress = ingresses.get(download);
       return DecodeSession(
         id: id,
-        download: download,
         ingress: ingress,
         cursors: cursors,
         clock: clock,
