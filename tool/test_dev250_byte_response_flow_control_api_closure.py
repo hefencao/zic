@@ -44,9 +44,18 @@ if "import 'package:transport/" in bridge:
 for path in (
     'packages/transport/lib/src/io_transport.dart',
     'packages/downloads/lib/src/source_resource_transport.dart',
-    'packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart',
 ):
     require(path, 'ByteResponseFlowControl.streamBackpressure')
+if build >= 252:
+    require(
+        'packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart',
+        'ByteResponseFlowControl.consumerPacing',
+    )
+else:
+    require(
+        'packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart',
+        'ByteResponseFlowControl.streamBackpressure',
+    )
 for path in (
     'packages/downloads/lib/src/artifact_cache_transport.dart',
     'packages/downloads/lib/src/source_resource_transport.dart',

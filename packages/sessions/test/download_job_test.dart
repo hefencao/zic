@@ -561,6 +561,52 @@ void main() {
   });
 
 
+  test('frame credit never pauses before an existing partial catch-up boundary', () async {
+    final trace = MemoryTraceSink();
+    final bytes = _flowAnimatedWebp(<int>[48, 48, 48]);
+    final prefixLength = 12 + (4 + 4 + 48) * 2;
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source', comicId: 'comic', chapterId: 'chapter', pageId: 'flow-catchup',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://example.test/flow-catchup.webp'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/flow-catchup.webp',
+        finalPath: '${temp.path}/cache/flow-catchup.webp',
+      ),
+      clock: FakeMonoClock(),
+      traceSink: trace,
+    );
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, bytes.sublist(0, prefixLength));
+    await session.pause(writer);
+
+    final transport = _FullBodyFlowTransport(bytes, chunkSize: 17);
+    final token = CancelToken(flowTargetFrames: 1);
+    final run = DownloadJob(
+      transport: transport,
+      session: session,
+      allowFullBodyCatchup: (_) => true,
+    ).run(cancel: token);
+
+    await _waitForFlowAction(trace, 'paused', targetFrames: 1);
+    final paused = trace.events.lastWhere(
+      (event) => event.kind == TraceEventKind.artifactSource &&
+          event.payload['stage'] == 'transport-flow-control' &&
+          event.payload['action'] == 'paused',
+    );
+    expect(paused.payload['networkCursor'] as int, greaterThanOrEqualTo(prefixLength));
+    expect(transport.openCount, 1);
+
+    token.updateFlowTargetFrames(0);
+    final result = await run.timeout(const Duration(seconds: 2));
+    expect(result.state, DownloadState.promoted);
+    expect(transport.openCount, 1);
+  });
+
   test('consumer-paced frame credit pseudo-pauses without reopen', () async {
     final trace = MemoryTraceSink();
     final bytes = _flowAnimatedWebp(<int>[48, 48, 48]);
@@ -591,6 +637,13 @@ void main() {
     await _waitForFlowAction(trace, 'pseudo-paused', targetFrames: 1);
     expect(transport.openCount, 1);
     expect(session.state, DownloadState.receiving);
+    final pausedLength = session.committedLength;
+    await _waitForFlowAction(trace, 'pseudo-drain', targetFrames: 1);
+    for (var attempt = 0; attempt < 100 && session.committedLength <= pausedLength; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+    }
+    expect(session.committedLength, greaterThan(pausedLength));
+    expect(transport.openCount, 1);
 
     token.updateFlowTargetFrames(0);
     final result = await run.timeout(const Duration(seconds: 2));
@@ -689,6 +742,38 @@ List<int> _flowU32(int value) => <int>[
       (value >> 24) & 0xff,
     ];
 
+
+final class _FullBodyFlowTransport implements Transport {
+  _FullBodyFlowTransport(this.bytes, {required this.chunkSize});
+
+  final List<int> bytes;
+  final int chunkSize;
+  int openCount = 0;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    openCount++;
+    Stream<List<int>> body() async* {
+      for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+        final end = (offset + chunkSize).clamp(0, bytes.length).toInt();
+        yield bytes.sublist(offset, end);
+      }
+    }
+    return ByteResponse(
+      bytes: body(),
+      statusCode: HttpStatus.ok,
+      rangeStart: 0,
+      totalLength: bytes.length,
+      rangeSupported: false,
+      flowControl: ByteResponseFlowControl.streamBackpressure,
+      validators: const Validators(etag: 'full-flow-v1'),
+    );
+  }
+}
 
 final class _ConsumerPacedBodyTransport implements Transport {
   _ConsumerPacedBodyTransport(this.bytes, {required this.chunkSize});

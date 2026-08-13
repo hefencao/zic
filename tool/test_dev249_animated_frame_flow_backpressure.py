@@ -96,7 +96,10 @@ else:
     )
 require('packages/transport/lib/src/io_transport.dart', 'ByteResponseFlowControl.streamBackpressure')
 require('packages/downloads/lib/src/source_resource_transport.dart', 'ByteResponseFlowControl.streamBackpressure')
-require('packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart', 'ByteResponseFlowControl.streamBackpressure')
+if build >= 252:
+    require('packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart', 'ByteResponseFlowControl.consumerPacing')
+else:
+    require('packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart', 'ByteResponseFlowControl.streamBackpressure')
 reject(
     'apps/app/lib/app_preferences.dart',
     '_animatedWebpPrefetchBudgetMiB',

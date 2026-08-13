@@ -129,7 +129,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 
 默认资源策略：
 
-- encoded逻辑/retention与network-demand window：前 7 / 后 3；animated/未决WebP MUST同样保留完整3/7 demand，不得再以2/4 eligibility或estimated whole-body budget裁页。动画流量 MAY附加physical-task frame credit：current/可见transition为unlimited，next/next2/previous默认5/3/2个完整ANMF帧，其余3/7远端默认1帧；decode staged waterline `c>4/n>2/c>6/n>3` MAY把对应外层credit提高到2帧。response达到credit后的行为 MUST由typed `ByteResponseFlowControl`决定：`streamBackpressure` MAY暂停请求下一body chunk并传播真实上游pause；`consumerPacing` MAY对已知可安全分块消费的source body做consumer-side伪pause，但 MUST在Trace中标明pseudo语义且不得宣称节省已materialize的上游字节。两者都 MUST保留同一task/response/writer/partial并在credit提升后原地resume；static/non-WebP、artifact-cache/resident MUST NOT为表象一致性被该flow gate阻塞；
+- encoded逻辑/retention与network-demand window：前 7 / 后 3；animated/未决WebP MUST同样保留完整3/7 demand。动画流量 MAY附加physical-task frame credit：current/可见transition unlimited，next/next2/previous默认5/3/2个完整ANMF帧，其余3/7远端默认1帧，既有decode staged waterline MAY把对应外层credit提高到2帧。response达到credit后的行为 MUST由typed `ByteResponseFlowControl`决定：`streamBackpressure`仅在transport确认长暂停可安全传播到upstream时使用；`consumerPacing`不得无限hold unsupported stream，blocked期间 MUST以bounded interval低速drain同一response并用`pseudo-paused/pseudo-drain/pseudo-resumed`明确语义。任一resume/probe/full-body attempt在其启动时authoritative partial边界前 MUST绕过frame credit，旧partial帧数不得自锁catch-up。sealed ingress接收与实际长度相同的expected length MUST幂等成功且不得调用native reserve；不一致 MUST报corruption但不得disable原本可用source。static/non-WebP、artifact-cache/resident MUST NOT被该flow gate阻塞；
 - 深度 decode 角色：前 2 / 后 1；
 - 动态 holder 最大水位为 current/next/next2/previous：7 / 5 / 3 / 2；
 - upload primary：current、transition；上一 current可通过独立 retained-output overlay获得 `last` upload demand，且不得改变其相对 download/decode role；

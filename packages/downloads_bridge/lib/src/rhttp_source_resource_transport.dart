@@ -157,7 +157,7 @@ final class RhttpSourceResourceDirectTransport
                   ?.toLowerCase()
                   .contains('bytes') ==
               true,
-      flowControl: ByteResponseFlowControl.streamBackpressure,
+      flowControl: ByteResponseFlowControl.consumerPacing,
       diagnostics: <String, Object?>{
         'sourceHostHttpVersion': _httpVersionName(response.version),
         if (response.remoteIp != null && response.remoteIp!.isNotEmpty)

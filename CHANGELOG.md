@@ -1,3 +1,9 @@
+## 0.31.0-dev.252：sealed ingress幂等确认与resume-safe flow pacing
+
+- 23:17真机Trace出现1次`sourceDisabled`：late Reader replay已seal native WebP后再次`expectLength`触发`reserve expected length`，native返回sealed并把Reader-local source禁用。`Ingress.expectLength`现把sealed+同长度视为幂等确认；长度不一致直接报artifact corruption，但不得再调用native reserve/disable可用source。
+- 同一Trace的预下载resume暴露frame-credit自锁：已有partial已含多帧时，新network attempt从0/overlap追赶旧partial，却直接用authoritative completedFrames判断credit，出现`networkCursor < committedLength`仍pause。`DownloadJob`现冻结attempt起点的authoritative catch-up floor，probe/full-body replay在追到该边界前不受frame credit阻断，越过旧partial后才按远端帧水位限流。
+- 两次`Bad state: StreamSink is bound to a stream`都发生在rhttp direct长时间hard pause→resume后。rhttp capability降为`consumerPacing`；伪pause不再无限停止消费，而是每100ms只放行一个chunk并记录`pseudo-drain`，credit提升立即原地全速resume。Dart HttpClient direct继续使用真实`streamBackpressure`。3/7、5/3/2/1水位、NetLane 5+1、partial/progress/provider lifetime均不改。
+
 ## 0.31.0-dev.251：unsupported transport consumer-pacing伪pause收口
 
 - 16:42真机Trace中3/7 frame credit已产生35次真实`paused`/22次`resumed`，说明direct HttpClient/rhttp backpressure主路径成立；limited但未pause的远端候选主要是persistent artifact-cache本地读取，不应为了视觉一致性阻塞。新增typed `ByteResponseFlowControl.consumerPacing`，只给已知可安全分块消费但不能承诺上游网络pause的source body使用。

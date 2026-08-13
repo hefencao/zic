@@ -65,6 +65,20 @@ final class Ingress {
         message: 'encoded source expected length $length exceeds $maxBytes',
       );
     }
+    // Expected-length reservation is a pre-seal capacity hint. Late Reader
+    // projections can learn the authoritative total after their replay has
+    // already sealed the native source; repeating the same length must be an
+    // idempotent confirmation rather than a native reserve-after-seal call.
+    if (_sealed) {
+      if (length != _length) {
+        throw Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'sealed ingress length $_length differs from expected $length',
+        );
+      }
+      _expectedLength = length;
+      return;
+    }
     _expectedLength = length;
     final source = _source;
     if (source is ExpectedLengthEncodedSource) {

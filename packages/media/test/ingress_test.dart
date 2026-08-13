@@ -28,6 +28,36 @@ void main() {
     expect(ingress.snapshot.sealed, isTrue);
   });
 
+  test('sealed expected length confirmation is idempotent', () {
+    final factory = _Factory();
+    final ingress = Ingress(factory: factory, maxBytes: 1024);
+    const epoch = SourceEpoch(0);
+    final bytes = 'RIFF....WEBPpayload'.codeUnits;
+
+    ingress.expectLength(bytes.length);
+    ingress.append(epoch: epoch, offset: 0, bytes: bytes);
+    ingress.seal(epoch);
+
+    final source = factory.created.single;
+    expect(source.reserveExpectedLengthCalls, 1);
+    ingress.expectLength(bytes.length);
+    expect(source.reserveExpectedLengthCalls, 1);
+    expect(ingress.snapshot.sourceReady, isTrue);
+    expect(ingress.snapshot.failure, isNull);
+
+    expect(
+      () => ingress.expectLength(bytes.length + 1),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.artifactCorruption,
+        ),
+      ),
+    );
+    expect(ingress.snapshot.sourceReady, isTrue);
+  });
+
   test('source revision advances for every growth and seal event', () {
     final ingress = Ingress(factory: _Factory(), maxBytes: 1024);
     const epoch = SourceEpoch(0);
@@ -170,7 +200,7 @@ final class _Factory implements SourceFactory {
   }
 }
 
-final class _Source implements EncodedSource {
+final class _Source implements EncodedSource, ExpectedLengthEncodedSource {
   _Source({required this.epoch, required this.maxBytes});
 
   @override
@@ -178,6 +208,7 @@ final class _Source implements EncodedSource {
   final int maxBytes;
   final List<int> bytes = <int>[];
   bool disposed = false;
+  int reserveExpectedLengthCalls = 0;
 
   @override
   int get length => bytes.length;
@@ -187,6 +218,18 @@ final class _Source implements EncodedSource {
 
   @override
   SourceKind get kind => bytes.length >= 12 ? SourceKind.webp : SourceKind.unknown;
+
+  @override
+  SourceStatus reserveExpectedLength({
+    required int epoch,
+    required int length,
+  }) {
+    if (epoch != this.epoch) return SourceStatus.staleEpoch;
+    if (sealed) return SourceStatus.sealed;
+    if (length > maxBytes) return SourceStatus.budget;
+    reserveExpectedLengthCalls++;
+    return SourceStatus.ok;
+  }
 
   @override
   SourceStatus append({

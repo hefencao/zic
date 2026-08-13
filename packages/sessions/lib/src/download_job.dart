@@ -821,11 +821,13 @@ final class _WebpNetworkFlowGate {
     required this.session,
     required this.cancel,
     required this.capability,
-  });
+  }) : _authoritativeCatchupFloor = session.committedLength;
 
   final DownloadSession session;
   final CancelToken? cancel;
   final ByteResponseFlowControl capability;
+  final int _authoritativeCatchupFloor;
+  static const Duration _consumerPacingInterval = Duration(milliseconds: 100);
   WebpFramePrefixTracker? _tracker;
   bool _initializing = false;
   bool _paused = false;
@@ -861,6 +863,11 @@ final class _WebpNetworkFlowGate {
   Future<void> waitBeforeRead({required int networkCursor}) async {
     final control = cancel;
     if (control == null || control.flowTargetFrames <= 0) return;
+    // Resume/probe/full-body catch-up bytes only re-establish the already
+    // authoritative physical partial. Frame credit must never pause the
+    // network before that boundary, otherwise a restarted attempt can deadlock
+    // behind its own existing frames.
+    if (networkCursor < _authoritativeCatchupFloor) return;
     await _ensureInitialized();
     final tracker = _tracker;
     if (tracker == null || tracker.unsupported) return;
@@ -877,7 +884,27 @@ final class _WebpNetworkFlowGate {
         networkCursor: networkCursor,
       );
     }
-    await control.waitForFlowCredit(tracker.completedFrames);
+    if (capability == ByteResponseFlowControl.consumerPacing) {
+      final creditGranted = await control.waitForFlowCreditOrTimeout(
+        tracker.completedFrames,
+        _consumerPacingInterval,
+      );
+      if (!creditGranted) {
+        // Pseudo pause cannot promise upstream backpressure. Drain exactly one
+        // downstream chunk per pacing interval to keep a single response alive
+        // without turning unsupported pause into cancel/reopen churn.
+        session.recordFlowControl(
+          action: 'pseudo-drain',
+          mode: capability.name,
+          targetFrames: control.flowTargetFrames,
+          completedFrames: tracker.completedFrames,
+          networkCursor: networkCursor,
+        );
+        return;
+      }
+    } else {
+      await control.waitForFlowCredit(tracker.completedFrames);
+    }
     if (_paused) {
       _paused = false;
       session.recordFlowControl(

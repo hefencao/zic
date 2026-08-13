@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：真机优先验证dev.251 typed flow control：3/7与5/3/2/1帧credit不变；direct HttpClient/rhttp应继续出现`paused/resumed`，runtime fallback/LoaderTransport若命中动画credit应出现`pseudo-paused/pseudo-resumed`且同一task/response不reopen。artifact-cache/resident不得被伪pause。继续统计paused task是否长期占满5个body slot；若仍导致current preempt，下一轮必须独立设计paused-connection pool + resume permit arbitration，不能只把paused task从active计数里排除。
+- P0：真机验证dev.252 source/flow收口：`sourceDisabled(native source ... sealed during reserve expected length)`应归零；已有partial的resume/probe/full-body catch-up不得在`networkCursor < attemptAuthoritativeCatchupFloor`时记录pause；rhttp direct应记录`mode=consumerPacing`，blocked后出现bounded `pseudo-drain`并在变current/提credit时同一task原地`pseudo-resumed`，不应再复现长hard-pause后的`StreamSink is bound to a stream`。3/7、5/3/2/1水位、NetLane 5+1与partial/progress均保持不变。paused-connection pool仍独立，不与本轮混改。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

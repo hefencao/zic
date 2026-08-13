@@ -25,6 +25,7 @@ m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
 if m is None or int(m.group(1)) < 251:
     raise SystemExit('App build must be >=251')
 require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
+build = int(m.group(1))
 
 require(
     'packages/transport/lib/src/transport.dart',
@@ -42,6 +43,11 @@ require(
     'packages/transport/lib/src/loader_transport.dart',
     'flowControl: ByteResponseFlowControl.consumerPacing',
 )
+if build >= 252:
+    require(
+        'packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart',
+        'flowControl: ByteResponseFlowControl.consumerPacing',
+    )
 require(
     'packages/sessions/lib/src/download_job.dart',
     'response.flowControl != ByteResponseFlowControl.none',
@@ -53,6 +59,13 @@ require(
     ": 'pseudo-resumed'",
     'mode: capability.name',
 )
+if build >= 252:
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        "action: 'pseudo-drain'",
+        '_authoritativeCatchupFloor',
+        'waitForFlowCreditOrTimeout',
+    )
 require(
     'packages/sessions/test/download_job_test.dart',
     'consumer-paced frame credit pseudo-pauses without reopen',
@@ -75,7 +88,11 @@ for path in (
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.251 governance file: {path}')
-require('docs/ARCHITECTURE.md', 'consumerPacing', '伪pause')
-require('docs/SPEC.md', 'consumerPacing', 'pseudo')
+if build >= 252:
+    require('docs/ARCHITECTURE.md', 'consumerPacing', 'pseudo-drain')
+    require('docs/SPEC.md', 'consumerPacing', 'pseudo-drain')
+else:
+    require('docs/ARCHITECTURE.md', 'consumerPacing', '伪pause')
+    require('docs/SPEC.md', 'consumerPacing', 'pseudo')
 require('tool/check.sh', 'test_dev251_consumer_pacing_flow_control.py')
 print('dev.251 consumer-paced flow-control fallback: OK')

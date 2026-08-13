@@ -53,6 +53,25 @@ final class CancelToken implements PriorityObservableTaskControl {
     throwIfCancelled();
   }
 
+  /// Waits for a flow-credit change but allows consumer-paced transports to
+  /// drain one bounded chunk periodically. Returns true when credit changed
+  /// enough to resume normal reading, false when only the pacing interval
+  /// elapsed. No dangling error future is left behind after the timeout.
+  Future<bool> waitForFlowCreditOrTimeout(
+    int completedFrames,
+    Duration timeout,
+  ) async {
+    if (!flowBlockedAt(completedFrames)) return true;
+    final wake = _flowChanged ??= Completer<void>();
+    await Future.any<void>(<Future<void>>[
+      wake.future,
+      whenCancelled,
+      Future<void>.delayed(timeout),
+    ]);
+    throwIfCancelled();
+    return !flowBlockedAt(completedFrames);
+  }
+
   void updateFlowTargetFrames(int frames) {
     assert(frames >= 0);
     if (_flowTargetFrames == frames) return;

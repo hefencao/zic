@@ -218,7 +218,7 @@ n>1, m>1, p>1, c>4, n>2, c>6, n>3, m>2, n>4（current bootstrap 已覆盖 c>2）
 
 阈值仍是严格水位，实际 batch 可自然越过。current/source 尚未建立浅水位时不得让 speculative neighbor 绕行 refill；真实 transition 只在 current 暂时无 source 资格时可取一帧，防止拖动目标黑屏。
 
-静态页一帧即满足，但静态证据只能降低**既有 decode 前2/后1窗口**内页面的成本，不能把 encoded 7/3 的 near/far 扩大成 decode/upload 窗口；真实进入 viewport 的纵向静态页可作为可见输出例外，回收仍由 `FrameBudgeter` 权威执行。encoded previous3/next7同时是逻辑/retention与DownloadDemand窗口，动画不得再缩成2/4。动画/未决WebP只附加task-local response-body frame credit：current/可见transition无限流，next/next2/previous为5/3/2完整ANMF帧，其余远端先1帧；既有decode水位`c>4`、`n>2`、`c>6`、`n>3`只把对应外层credit升到2帧。`DownloadJob`只按typed `ByteResponseFlowControl`消费同一frame credit：`streamBackpressure`停止请求下一chunk并真实传播上游pause；`consumerPacing`只对已知可安全分块消费但不能承诺上游pause的source body做consumer-side伪pause，Trace必须区分二者；两者都保留同一NetLane task、response、writer与partial并在credit提升后原地resume。artifact-cache/resident不得为了表象一致性被伪pause；network仍5+current-reserved1，本轮不提高paused连接上限。
+静态页一帧即满足，但静态证据只能降低**既有 decode 前2/后1窗口**内页面的成本，不能把 encoded 7/3 的 near/far 扩大成 decode/upload 窗口；真实进入 viewport 的纵向静态页可作为可见输出例外，回收仍由 `FrameBudgeter` 权威执行。encoded previous3/next7同时是逻辑/retention与DownloadDemand窗口，动画不得再缩成2/4。动画/未决WebP只附加task-local response-body frame credit：current/可见transition无限流，next/next2/previous为5/3/2完整ANMF帧，其余远端先1帧；既有decode水位只把对应外层credit升到2帧。frame gate必须先越过attempt启动时已有的authoritative partial边界，禁止用旧partial的completedFrames阻塞resume/probe/full-body catch-up。`streamBackpressure`仅用于确认可安全暂停upstream的transport；rhttp direct与其它不能证明长暂停安全的source使用`consumerPacing`，blocked时每100ms放行一个chunk并记录`pseudo-drain`，credit提升原地全速resume。sealed Reader-local source的expected length只允许同长度幂等确认，不得reserve-after-seal。artifact-cache/resident不进入该flow gate；network仍5+current-reserved1。
 
 ## 7. 下载、partial 与 source ingress
 
