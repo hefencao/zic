@@ -76,27 +76,41 @@ final class DownloadJob {
     return session.snapshot;
   }
 
+  static Future<bool> completeWithoutTransport({
+    required DownloadSession session,
+    String? expectedChecksum,
+  }) async {
+    if (session.state == DownloadState.promoted) return true;
+    if (session.committedLength <= 0 ||
+        session.totalLength != session.committedLength) {
+      return false;
+    }
+    final writer = session.acquireWriter();
+    await session.seal(
+      writer,
+      expectedLength: session.totalLength,
+      expectedChecksum: expectedChecksum,
+    );
+    await session.promote();
+    return true;
+  }
+
   Future<void> _run({
     String? expectedChecksum,
     CancelToken? cancel,
   }) async {
     cancel?.throwIfCancelled();
-    if (session.state == DownloadState.promoted) {
+    if (await completeWithoutTransport(
+      session: session,
+      expectedChecksum: expectedChecksum,
+    )) {
       return;
     }
     await session.restore();
-    if (session.state == DownloadState.promoted) {
-      return;
-    }
-    if (session.committedLength > 0 &&
-        session.totalLength == session.committedLength) {
-      final writer = session.acquireWriter();
-      await session.seal(
-        writer,
-        expectedLength: session.totalLength,
-        expectedChecksum: expectedChecksum,
-      );
-      await session.promote();
+    if (await completeWithoutTransport(
+      session: session,
+      expectedChecksum: expectedChecksum,
+    )) {
       return;
     }
 

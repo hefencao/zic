@@ -772,31 +772,56 @@ final class DownloadTransferOwner {
     // explicitly retired/replaced. Never let a stale lane entry begin a
     // second run against the authoritative DownloadSession.
     if (_networkTaskKeys[id] != taskKey) return;
-    final claim = _preferredClaim(id);
+    var claim = _preferredClaim(id);
     if (claim == null) return;
-    final provider = claim.consumer;
-    final sourceId = claim.exactId;
-    final retainedTransport =
-        provider.retainedTransportFor?.call(sourceId.canonicalUri);
-    final taskTransport =
-        retainedTransport ?? provider.transportFor(sourceId.canonicalUri);
-    final providerLease = _ActiveProviderLease(
-      taskKey: taskKey,
-      scopeId: provider.scopeId,
-      exactId: sourceId,
-      claimSequence: claim.sequence,
-      admittedPriority: claim.demand.priority,
-      transportRetainedBeyondConsumer: retainedTransport != null,
-    );
-    _activeProviderLeases[id] = providerLease;
+    _ActiveProviderLease? providerLease;
     try {
-      final bucket = provider.downloadBucketFor(sourceId);
-      final bucketLimit = provider.downloadBucketLimitFor(sourceId);
       final prepare = prepareDownload;
       if (prepare != null && session.committedLength == 0) {
         await prepare(session);
         token.throwIfCancelled();
       }
+      final preparedClaim = _preferredClaim(id);
+      if (preparedClaim != null) claim = preparedClaim;
+      if (await DownloadJob.completeWithoutTransport(
+        session: session,
+        expectedChecksum: _expectedChecksum(id),
+      )) {
+        _record(
+          claim,
+          kind: TraceEventKind.artifactSource,
+          id: id,
+          payload: <String, Object?>{
+            'stage': 'transfer-admission',
+            'action': 'local-completion-short-circuit',
+            'state': session.state.name,
+            'committedLength': session.committedLength,
+            'physicalOwner': true,
+          },
+        );
+        return;
+      }
+      token.throwIfCancelled();
+      final currentClaim = _preferredClaim(id);
+      if (currentClaim == null || !session.demanded) return;
+      claim = currentClaim;
+      final provider = claim.consumer;
+      final sourceId = claim.exactId;
+      final retainedTransport =
+          provider.retainedTransportFor?.call(sourceId.canonicalUri);
+      final taskTransport =
+          retainedTransport ?? provider.transportFor(sourceId.canonicalUri);
+      providerLease = _ActiveProviderLease(
+        taskKey: taskKey,
+        scopeId: provider.scopeId,
+        exactId: sourceId,
+        claimSequence: claim.sequence,
+        admittedPriority: claim.demand.priority,
+        transportRetainedBeyondConsumer: retainedTransport != null,
+      );
+      _activeProviderLeases[id] = providerLease;
+      final bucket = provider.downloadBucketFor(sourceId);
+      final bucketLimit = provider.downloadBucketLimitFor(sourceId);
       _record(
         claim,
         kind: TraceEventKind.downloadStarted,
@@ -953,7 +978,8 @@ final class DownloadTransferOwner {
         }
       }
     } finally {
-      if (_activeProviderLeases[id]?.taskKey == taskKey) {
+      if (providerLease != null &&
+          _activeProviderLeases[id]?.taskKey == taskKey) {
         _activeProviderLeases.remove(id);
       }
       if (_networkTaskKeys[id] == taskKey) {

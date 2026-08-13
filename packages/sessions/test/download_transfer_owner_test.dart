@@ -70,6 +70,74 @@ void main() {
     expect(registry.sessions, hasLength(1));
   });
 
+  test('prepared local completion bypasses provider transport admission', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_local_completion_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final bytes = _ownerAnimatedWebp(<int>[64, 64, 64]);
+    final trace = MemoryTraceSink();
+    var transportLookups = 0;
+    final transport = _CountingBytesTransport(bytes);
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      prepareDownload: (session) async {
+        await session.bindResponse(
+          validators: const Validators(),
+          totalLength: bytes.length,
+        );
+        final writer = session.acquireWriter();
+        await session.append(writer, 0, bytes);
+        await session.seal(writer, expectedLength: bytes.length);
+        await session.promote();
+      },
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('local-completion');
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-local-completion',
+      transportFor: (_) {
+        transportLookups++;
+        return transport;
+      },
+      traceSink: trace,
+    );
+
+    consumer.replaceDemands(
+      'reader-local-completion',
+      1,
+      _desired(id, priority: 780, flowTargetFrames: 1),
+    );
+    await consumer.idle();
+
+    expect(registry.get(id).state, DownloadState.promoted);
+    expect(transportLookups, 0);
+    expect(transport.opens, 0);
+    expect(
+      trace.events.where((event) => event.kind == TraceEventKind.downloadStarted),
+      isEmpty,
+    );
+    final shortCircuit = trace.events.lastWhere(
+      (event) =>
+          event.kind == TraceEventKind.artifactSource &&
+          event.payload['stage'] == 'transfer-admission' &&
+          event.payload['action'] == 'local-completion-short-circuit',
+    );
+    expect(shortCircuit.payload['state'], DownloadState.promoted.name);
+    expect(shortCircuit.payload['committedLength'], bytes.length);
+  });
+
   test('detached active pre-open work drops to rank zero and yields by NetLane policy',
       () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_preopen_rank_');

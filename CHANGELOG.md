@@ -1,3 +1,9 @@
+## 0.31.0-dev.257：local completion 与 provider transport admission 解耦
+
+- 04:58真机Trace确认dev.256 frame-prefix proof闭包成立：`downloadPreempted/Failure(cancelled)/download failure`继续为0，31次`downloadStarted`中不存在“已有proof N却以正target<=N重开”的样本。
+- 但有3个physical identity已经完成`artifactPromoted`，后续新physical generation在local prepare恢复完整artifact后仍记录`downloadStarted`；三次开始时`committedLength`分别为16,005,312 / 13,452,574 / 9,775,218 bytes，且之后均无`sourceRead/bytesCommitted/receiving`，证明只是本地完成恢复误进入provider admission/telemetry。
+- 抽取`DownloadJob.completeWithoutTransport`作为唯一local-completion primitive；`DownloadTransferOwner`在`prepareDownload`之后先调用该primitive，若session已promoted或完整partial可本地seal/promote，则记录`transfer-admission/local-completion-short-circuit`并返回，provider transport lookup/lease与`downloadStarted`均不得发生。provider claim也在prepare后重新解析，避免local prepare期间consumer换代后捕获旧provider。3/7、frame credit、NetLane与partial/source/decode不改。
+
 ## 0.31.0-dev.256：physical frame-prefix proof 与 flow target 解耦
 
 - 04:31真机Trace中`downloadPreempted=0`、`Failure(cancelled)=0`、download/decode/source failure均为0，dev.255的attempt/partial生命周期闭包成立；剩余预下载浪费来自consumer-paced flow suspension仍按“精确target”记忆。

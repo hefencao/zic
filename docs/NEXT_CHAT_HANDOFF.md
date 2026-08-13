@@ -1,5 +1,5 @@
-# dev.256 后续交接
-- dev.256：04:31 Trace中preempt/cancelled failure/下载解码source failure均归零；剩余问题是flow-satisfied仍按精确1/2/3/5 target记忆，44次正target start中22次其实已有足够completedFrames。现TransferOwner只保留与physical DownloadSession generation绑定的frame-prefix proof（completedFrames+prefix length），正target<=proof直接满足，target=0或高于proof才resume；proof跨role target变化和短暂无demand保留，partial回退/换generation/promotion/dispose才失效。3/7、5/3/2/1、NetLane不改。
+# dev.257 后续交接
+- dev.257：04:58 Trace确认dev.256 frame-prefix proof成立：31次`downloadStarted`无proof可满足的重复正target，preempt/cancelled/download failure继续为0。剩余3次start均是此前已promoted identity在新physical generation local prepare恢复完整artifact后仍进入provider admission，之后没有任何真实source/network消费。现`DownloadJob.completeWithoutTransport`成为唯一local completion primitive；TransferOwner在prepare后先短路并记录`transfer-admission/local-completion-short-circuit`，provider transport lookup/lease与`downloadStarted`只发生在仍需真实network时；prepare后重新解析当前claim/provider。3/7、5/3/2/1、NetLane、proof与partial/source/decode不改。
 `dev.193` 与 `dev.194` 仍是已否决续传实验线；dev.195从dev.192重做playable-partial authority，dev.196修复validatorless Range/rhttp中段206，dev.197压缩Trace，dev.198恢复endpoint观测，dev.199引入full-body成本admission；dev.200只修defer跨demand遗忘与very-large partial的820过宽问题，不改变DownloadJob/播放/NetLane。
 ## 必读
 1. `AGENTS.md`
