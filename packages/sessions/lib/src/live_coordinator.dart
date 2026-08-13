@@ -359,6 +359,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             priority: entry.value.priority,
             reason: entry.value.reason,
             flowTargetFrames: entry.value.flowTargetFrames,
+            retainFlowResponse: entry.value.retainFlowResponse,
           ),
       },
     );

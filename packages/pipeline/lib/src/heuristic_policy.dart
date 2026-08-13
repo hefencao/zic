@@ -82,6 +82,8 @@ final class HeuristicPolicy {
           reason: 'heuristic:${role.name}',
           expirationRevision: revision + 1,
           flowTargetFrames: downloadFlow?.targetFramesFor(entry.key) ?? 0,
+          retainFlowResponse:
+              role == PageRole.next || role == PageRole.previous,
         );
         keep.add(ResourceId.download(download));
       }

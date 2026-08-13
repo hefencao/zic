@@ -1,3 +1,10 @@
+## 0.31.0-dev.260：相邻页 warm response 与 bounded flow 解耦
+
+- 09:00 真机 Trace确认 dev.259 已激活5/3/2/1，但暴露 dev.254 consumerPacing suspension 的直接回归：page99 作为 next1 在491,520 bytes/target5于8.840s主动 `pseudo-suspended`，约99ms后成为current，8.944s即从同一partial重新 `downloadStarted`。这不是5路NetLane挤掉连接，而是bounded flow满足后主动关闭了最可能马上切入的相邻response。
+- `DownloadDemand/TransferDemand/NetLane CancelToken`新增单一 `retainFlowResponse` policy bit，只对 immediate `next/previous` 为true；current/transition仍target0 unlimited，next2/near/far仍在水位满足后真正suspend。
+- `consumerPacing`达到frame/playable credit后，warm adjacent response进入 `pseudo-retained`：保持同一response/task并最多每100ms放行一个chunk；角色升为current/transition时同token target0直接 `pseudo-resumed`，不得产生第二次 `downloadStarted`。角色远离时retain bit原地撤销，下一次blocked立即 `pseudo-suspended`并只保留partial。
+- 3/7、5/3/2/1、NetLane normal5+current reserved1、physical partial/frame proof/playable floor、provider/source/decode ownership均不改变；partial retention仍独立于连接数。
+
 ## 0.31.0-dev.259：runtime WebP cost 与 Reader partial playable join 解耦
 
 - 08:03真机Trace纠正dev.258的主因判断：59/59次`policyDecision`均`animatedFlowActive=false`且3/7全部`flowTargetFrames=0`，整场没有`mediaClassified`。opaque `venera-resource:`没有manifest WebP hint，而runtime animation classification又等待`AnimationInfo.complete`，形成“未分类→不限流→前5页占满normal network→远端无连接→更难完成分类”的循环。跳页后旧窗口receiving task还以rank0 retained-background占槽，新current才用reserved slot/preemption开连接。

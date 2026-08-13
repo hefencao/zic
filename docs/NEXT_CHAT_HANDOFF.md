@@ -1,4 +1,5 @@
-# dev.259 后续交接
+# dev.260 后续交接
+- dev.260：09:00 Trace抓到相邻页connection churn的直接根因：page99 next1在target5/491,520 bytes于8.840s被consumerPacing主动`pseudo-suspended`，约99ms后变current，8.944s即从同partial重新`downloadStarted`；不是NetLane 5路挤掉，而是dev.254把“水位满足”错误等同“关闭response”。现只对immediate next/previous设置`retainFlowResponse`：达到bounded credit后同一consumer-paced response进入`pseudo-retained`并最多每100ms放行一chunk，升current/transition时同token target0原地恢复；远离成next2/near/far才真正suspend。连接上限仍5+1，partial retention仍覆盖3/7且与连接数独立。
 - dev.259：08:03 Trace显示不是“预下载partial不足以解码”，而是opaque Venera WebP整场没有激活动画/昂贵WebP flow：59/59 policy `animatedFlowActive=false`、所有3/7 target=0、无`mediaClassified`；normal5路被最先unlimited body占满，跳页后current才通过reserved/preemption真正连接。现runtime WebP sniff只作为transport-cost evidence提前启用5/3/2/1，不冒充animation truth。另收口Reader重入已有nonresident WebP partial：先按decoder prefix contract重放/发布最小可播放prefix，再在同source追平剩余physical partial后加入live fan-out。较远端“是否还需下载”仍唯一属于TransferOwner：target0=unlimited必需继续，positive target仅在同generation frame proof+playable floor满足时跳过network。
 - dev.258：05:29 Trace推翻“partial/cancel/proof仍是主根因”的假设：page206在205,860 bytes被ANMF `completedFrames=2`误判target2已满足，但decoder frame0已要求262,144 bytes，切current后重开/full-body catch-up导致首帧约2.45s；page207在245,760 bytes已真实解出2帧，切页约112ms。现ANMF只保留encoded structural语义；DecodeSession唯一输出`decodedPrefixFrames/firstPlayablePrefixBytes/firstFrameRequiredSourceLength`，经当前source-watch generation投影到physical DownloadSession。任意positive flow target只有结构frame和decoder playable-prefix floor同时满足才可suspend，后续need-more-data抬高floor可自动失效旧proof并从同partial继续。source-plan冷启动作为次级独立问题，3/7、5/3/2/1、NetLane/provider冻结。
 ## 必读
@@ -63,7 +64,6 @@
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`。
 - production rhttp direct在普通release默认记录每response一次的HTTP version、匿名remote-IP hash与receive-progress-enabled标记；高频`onReceiveProgress`仅non-product或显式`ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=1`诊断构建启用。该观测不得反馈给NetLane/Reader/retry/cache/framing。
 ## 下一步真机优先验证
-- dev.249后重点验证：动画scrolling/idle的`policyDecision.downloads`应重新保持11；远端task应出现`stage=transport-flow-control/action=paused`且`completedFrames>=targetFrames`，随后同一session/attempt因水位或变current出现`resumed`，期间不应产生对应cancel/reopen。static/runtime fallback不得因无ANMF或无stream-backpressure capability被假暂停。继续观察dev.246 `incomingWaitMicros>=100000`/single-flight；若5个paused连接长期占满normal slot导致近端排队，再单独评估bounded paused-connection pool，不与本轮流控混改。
 - 07:51 dev.198 trace已确认Range成功路径仍正确，但full-body fallback重复重新放大到约19.2MiB/123.2MiB（15.6%），多数发生在760/780/800背景角色；dev.199只阻止这类低优先级大partial从0反复重读。820/900/1000、小partial和合法206必须保持原行为，不把defer扩展成通用restart-cost scheduler。
 - 首先复测快速前后翻页：dev.185外层previous admission应继续保持毫秒级；dev.189应确认780↔900不再导致plan取消，只有waiter真正晋升current=1000时才触发动态pressure，并确认旧JS未`finished(requestId)`前新plan绝不并发进入。无真实pressure时`receivingRetained=true` priority0仍应短时复用。
 - 真机首要复测 current 首帧稳定性：观察 policyDecision 的 staticWarmDecodes/uploads 是否收敛到稳定decode角色/真实可见页，current浅水位期间是否停止 speculative neighbor refill，以及decode/upload current handoff是否避免后台长任务阻塞。

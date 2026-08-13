@@ -29,6 +29,7 @@ final class TransferDemand {
     required this.priority,
     required this.reason,
     this.flowTargetFrames = 0,
+    this.retainFlowResponse = false,
     this.expectedChecksum,
     this.completionIntent = TransferCompletionIntent.opportunistic,
   })  : assert(priority >= 0),
@@ -37,6 +38,7 @@ final class TransferDemand {
   final int priority;
   final String reason;
   final int flowTargetFrames;
+  final bool retainFlowResponse;
   final String? expectedChecksum;
   final TransferCompletionIntent completionIntent;
 
@@ -46,6 +48,7 @@ final class TransferDemand {
       priority == other.priority &&
       reason == other.reason &&
       flowTargetFrames == other.flowTargetFrames &&
+      retainFlowResponse == other.retainFlowResponse &&
       expectedChecksum == other.expectedChecksum &&
       completionIntent == other.completionIntent;
 
@@ -54,6 +57,7 @@ final class TransferDemand {
         priority,
         reason,
         flowTargetFrames,
+        retainFlowResponse,
         expectedChecksum,
         completionIntent,
       );
@@ -423,6 +427,7 @@ final class DownloadTransferOwner {
           priority: selected.demand.priority,
           reason: selected.demand.reason,
           flowTargetFrames: selected.demand.flowTargetFrames,
+          retainFlowResponse: selected.demand.retainFlowResponse,
           expectedChecksum: leftChecksum ?? rightChecksum,
           completionIntent: required
               ? TransferCompletionIntent.required
@@ -790,6 +795,7 @@ final class DownloadTransferOwner {
       bucket: claim.consumer.downloadBucketFor(claim.exactId),
       bucketLimit: claim.consumer.downloadBucketLimitFor(claim.exactId),
       flowTargetFrames: claim.demand.flowTargetFrames,
+      retainFlowResponse: claim.demand.retainFlowResponse,
       task: (token) => _runDownload(id, session, taskKey, token),
     );
   }
@@ -868,6 +874,7 @@ final class DownloadTransferOwner {
           'effectivePriority': net.priorityOf(taskKey),
           'bucketActive': net.activeForBucket(bucket),
           'flowTargetFrames': claim.demand.flowTargetFrames,
+          'retainFlowResponse': claim.demand.retainFlowResponse,
           'committedLength': session.committedLength,
           'physicalOwner': true,
           'providerScope': provider.scopeId,
@@ -1140,6 +1147,10 @@ final class DownloadTransferOwner {
     final claim = _preferredClaim(id);
     if (claim != null) {
       net.updateFlowTargetFrames(taskKey, claim.demand.flowTargetFrames);
+      net.updateRetainFlowResponse(
+        taskKey,
+        claim.demand.retainFlowResponse,
+      );
     }
     final oldPriority = net.priorityOf(taskKey);
     final active = net.isActive(taskKey);

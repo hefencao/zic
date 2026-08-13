@@ -884,6 +884,7 @@ final class _WebpNetworkFlowGate {
   WebpFramePrefixTracker? _tracker;
   bool _initializing = false;
   bool _paused = false;
+  bool _warmRetentionAnnounced = false;
 
   bool get needsArtifactSynchronization =>
       (cancel?.flowTargetFrames ?? 0) > 0 && _tracker == null;
@@ -961,11 +962,30 @@ final class _WebpNetworkFlowGate {
         _flowEvidencePollInterval,
       );
       if (!creditGranted && _shouldBlock()) {
+        if (control.retainFlowResponse) {
+          // Adjacent previous/next pages are the most likely next foreground
+          // target. Keep their single consumer-paced response bound and allow
+          // at most one body chunk per evidence interval. This preserves the
+          // response without pretending that unsupported upstream pause saves
+          // network bytes. Once the role moves farther away, the same token is
+          // updated and the next blocked turn falls through to suspension.
+          if (!_warmRetentionAnnounced) {
+            _warmRetentionAnnounced = true;
+            session.recordFlowControl(
+              action: 'pseudo-retained',
+              mode: capability.name,
+              targetFrames: control.flowTargetFrames,
+              completedFrames: tracker.completedFrames,
+              networkCursor: networkCursor,
+              playablePrefixFloorBytes: _playablePrefixFloorBytes,
+            );
+          }
+          return;
+        }
         // Consumer pacing cannot promise that leaving this StreamIterator idle
-        // actually stops upstream network I/O. Suspend this attempt only after
-        // both structural frame credit and decoder-owned playable-prefix credit
-        // are satisfied. A later decoder requirement can invalidate the proof
-        // and make the transfer owner resume from the same partial.
+        // actually stops upstream network I/O. Non-adjacent speculative work
+        // therefore releases the response once both structural frame credit
+        // and decoder-owned playable-prefix credit are satisfied.
         session.recordFlowControl(
           action: 'pseudo-suspended',
           mode: capability.name,
@@ -993,6 +1013,7 @@ final class _WebpNetworkFlowGate {
     }
     if (_paused) {
       _paused = false;
+      _warmRetentionAnnounced = false;
       session.recordFlowControl(
         action: capability == ByteResponseFlowControl.streamBackpressure
             ? 'resumed'

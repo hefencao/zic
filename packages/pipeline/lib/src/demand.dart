@@ -9,6 +9,7 @@ final class DownloadDemand {
     required this.reason,
     required this.expirationRevision,
     this.flowTargetFrames = 0,
+    this.retainFlowResponse = false,
     this.decisionId,
   }) : assert(flowTargetFrames >= 0);
 
@@ -22,6 +23,11 @@ final class DownloadDemand {
   /// unlimited. This is scheduling metadata, not animation truth.
   final int flowTargetFrames;
 
+  /// Keep the same consumer-paced response warm after bounded frame credit is
+  /// reached. This is only for immediately adjacent roles that are likely to
+  /// become foreground next; it does not change the frame target itself.
+  final bool retainFlowResponse;
+
   final String? decisionId;
 
   @override
@@ -33,6 +39,7 @@ final class DownloadDemand {
           reason == other.reason &&
           expirationRevision == other.expirationRevision &&
           flowTargetFrames == other.flowTargetFrames &&
+          retainFlowResponse == other.retainFlowResponse &&
           decisionId == other.decisionId;
 
   @override
@@ -42,6 +49,7 @@ final class DownloadDemand {
         reason,
         expirationRevision,
         flowTargetFrames,
+        retainFlowResponse,
         decisionId,
       );
 }

@@ -233,4 +233,37 @@ void main() {
 final class _TestClock implements MonoClock {
   @override
   int nowMicros() => 1;
+  test('only immediate adjacent download roles retain consumer-paced responses',
+      () {
+    final manifest = chapter();
+    final obs = observation(12);
+    final window = resolver.resolve(manifest, obs);
+    final flow = const AnimatedPrefetchPolicy().plan(
+      chapter: manifest,
+      observation: obs,
+      window: window,
+      active: true,
+      expansionStage: 0,
+    );
+    final plan = const HeuristicPolicy().createPlan(
+      revision: 1,
+      chapter: manifest,
+      observation: obs,
+      window: window,
+      decodeTarget: DecodeTarget(physicalWidth: 1080, physicalHeight: 1920),
+      downloadFlow: flow,
+    );
+
+    DownloadDemand demandFor(int index) => plan.downloads.entries
+        .singleWhere((entry) => entry.key.content.pageId == 'p$index')
+        .value;
+
+    expect(demandFor(13).retainFlowResponse, isTrue);
+    expect(demandFor(11).retainFlowResponse, isTrue);
+    expect(demandFor(14).retainFlowResponse, isFalse);
+    expect(demandFor(15).retainFlowResponse, isFalse);
+    expect(demandFor(12).retainFlowResponse, isFalse);
+  });
+
+
 }

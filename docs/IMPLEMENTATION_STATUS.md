@@ -2,7 +2,8 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.259` / App `0.31.0+259`。
+- 当前版本：`0.31.0-dev.260` / App `0.31.0+260`。
+- dev.260：09:00 Trace确认“只隔一页就重新下载”不是5路连接淘汰：page99作为next1在target5/491,520 bytes达到水位后被consumerPacing主动`pseudo-suspended`，约99ms后变current即重新`downloadStarted`。现把body水位与response保留分离：immediate next/previous设置`retainFlowResponse`，水位满足后同response进入低速`pseudo-retained`，升foreground时同token原地resume；远离才suspend。partial retention、3/7、5/3/2/1、NetLane5+1不变。
 - dev.259：08:03 Trace确认主问题发生在连接/admission而非playable-prefix不足：59/59次policy均`animatedFlowActive=false`、3/7 target全0且无`mediaClassified`，前5个unlimited task占满normal5路，跳页后新current才通过reserved/preemption开连接。现runtime ingress sniff到WebP即只投影transport-cost evidence，提前启用既有5/3/2/1；authoritative static/animated仍由decoder覆盖。新Reader late-join已有nonresident WebP partial时先发布decoder所需最小prefix，再同source后台追平剩余partial，避免“physical进度已有但Reader-local source尚不可见”。
 - dev.258：05:29 Trace终于定位相邻预下载“已有partial仍像没预下载”的主根因：network `WebpFramePrefixTracker`把完整ANMF结构块误当可播放帧。page206在205,860 bytes已有2个ANMF即被target2 `flow-satisfied`，但DecodeSession frame0已明确仍需262,144 bytes，切current后只能重开+full-body catch-up，首帧约2.45s；对照page207在245,760 bytes已实际解出2帧，切入约112ms。现DecodeSession输出playable-prefix evidence，经generation-aware source watch投影到physical DownloadSession；flow suspension必须同时满足结构frame credit和decoder playable floor，decoder后续提高floor会自动使旧proof失效并从同partial继续。source-plan慢仍作为独立次级问题；3/7、5/3/2/1、NetLane/provider不改。
 - dev.257：04:58 Trace中dev.256 proof已闭环：31次`downloadStarted`没有任何已有proof可满足的正target重开，且preempt/cancelled/download failure均为0；剩余3次`downloadStarted`发生在对应identity此前已promoted、新physical generation经local prepare恢复完整artifact之后，随后无`sourceRead/bytesCommitted/receiving`，属于本地完成误进入provider admission。现抽取`DownloadJob.completeWithoutTransport`并由TransferOwner在prepare之后、provider transport lookup/lease与`downloadStarted`之前统一短路；prepare期间claim变化后重新解析当前provider。窗口、水位、NetLane、partial/source/decode不改。

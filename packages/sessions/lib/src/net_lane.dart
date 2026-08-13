@@ -11,10 +11,12 @@ final class CancelToken implements PriorityObservableTaskControl {
   CancelToken({
     int priority = 0,
     int flowTargetFrames = 0,
+    bool retainFlowResponse = false,
     MonoClock clock = const SystemClock(),
   })  : assert(flowTargetFrames >= 0),
         _priority = priority,
         _flowTargetFrames = flowTargetFrames,
+        _retainFlowResponse = retainFlowResponse,
         _clock = clock,
         _activatedAtMicros = clock.nowMicros();
 
@@ -23,6 +25,7 @@ final class CancelToken implements PriorityObservableTaskControl {
   bool _cancelled = false;
   int _priority;
   int _flowTargetFrames;
+  bool _retainFlowResponse;
   Completer<void>? _flowChanged;
   int? _restartCostStartedAtMicros;
   int _restartCostBytes = 0;
@@ -40,6 +43,7 @@ final class CancelToken implements PriorityObservableTaskControl {
   @override
   Stream<int> get priorityChanges => _priorityChanges.stream;
   int get flowTargetFrames => _flowTargetFrames;
+  bool get retainFlowResponse => _retainFlowResponse;
 
   bool flowBlockedAt(int completedFrames) =>
       _flowTargetFrames > 0 && completedFrames >= _flowTargetFrames;
@@ -76,6 +80,16 @@ final class CancelToken implements PriorityObservableTaskControl {
     assert(frames >= 0);
     if (_flowTargetFrames == frames) return;
     _flowTargetFrames = frames;
+    _wakeFlowWaiters();
+  }
+
+  void updateRetainFlowResponse(bool retain) {
+    if (_retainFlowResponse == retain) return;
+    _retainFlowResponse = retain;
+    _wakeFlowWaiters();
+  }
+
+  void _wakeFlowWaiters() {
     final wake = _flowChanged;
     _flowChanged = null;
     if (wake != null && !wake.isCompleted) wake.complete();
@@ -258,6 +272,7 @@ final class NetLane implements TaskLane {
     required int bucketLimit,
     bool preemptible = true,
     int flowTargetFrames = 0,
+    bool retainFlowResponse = false,
     required LaneTask task,
   }) =>
       _core.submit(
@@ -267,6 +282,7 @@ final class NetLane implements TaskLane {
         bucketLimit: bucketLimit,
         preemptible: preemptible,
         flowTargetFrames: flowTargetFrames,
+        retainFlowResponse: retainFlowResponse,
         task: task,
       );
 
@@ -287,6 +303,8 @@ final class NetLane implements TaskLane {
       _core.updatePriority(key, priority);
   bool updateFlowTargetFrames(String key, int frames) =>
       _core.updateFlowTargetFrames(key, frames);
+  bool updateRetainFlowResponse(String key, bool retain) =>
+      _core.updateRetainFlowResponse(key, retain);
 
 
   @override
@@ -501,6 +519,7 @@ final class _Lane {
     int? bucketLimit,
     bool preemptible = true,
     int flowTargetFrames = 0,
+    bool retainFlowResponse = false,
     required LaneTask task,
   }) {
     assert(flowTargetFrames >= 0);
@@ -509,8 +528,10 @@ final class _Lane {
       final increased = _updateActivePriority(activeTask, priority);
       activeTask
         ..preemptible = preemptible
-        ..flowTargetFrames = flowTargetFrames;
+        ..flowTargetFrames = flowTargetFrames
+        ..retainFlowResponse = retainFlowResponse;
       activeTask.token.updateFlowTargetFrames(flowTargetFrames);
+      activeTask.token.updateRetainFlowResponse(retainFlowResponse);
       if (increased) _pump();
       return false;
     }
@@ -523,6 +544,7 @@ final class _Lane {
         ..bucketLimit = bucketLimit
         ..preemptible = preemptible
         ..flowTargetFrames = flowTargetFrames
+        ..retainFlowResponse = retainFlowResponse
         ..task = task;
       if (increased) _pump();
       return false;
@@ -535,6 +557,7 @@ final class _Lane {
       bucketLimit: bucketLimit,
       preemptible: preemptible,
       flowTargetFrames: flowTargetFrames,
+      retainFlowResponse: retainFlowResponse,
       task: task,
       highPrioritySinceMicros:
           priority >= highPriorityThreshold ? clock.nowMicros() : null,
@@ -570,6 +593,19 @@ final class _Lane {
     final pending = _pending[key];
     if (pending == null) return false;
     pending.flowTargetFrames = frames;
+    return true;
+  }
+
+  bool updateRetainFlowResponse(String key, bool retain) {
+    final activeTask = _active[key];
+    if (activeTask != null) {
+      activeTask.retainFlowResponse = retain;
+      activeTask.token.updateRetainFlowResponse(retain);
+      return true;
+    }
+    final pending = _pending[key];
+    if (pending == null) return false;
+    pending.retainFlowResponse = retain;
     return true;
   }
 
@@ -732,6 +768,7 @@ final class _Lane {
       final token = CancelToken(
         priority: next.priority,
         flowTargetFrames: next.flowTargetFrames,
+        retainFlowResponse: next.retainFlowResponse,
         clock: clock,
       );
       _active[next.key] = _ActiveTask(
@@ -741,6 +778,7 @@ final class _Lane {
         priority: next.priority,
         preemptible: next.preemptible,
         flowTargetFrames: next.flowTargetFrames,
+        retainFlowResponse: next.retainFlowResponse,
       );
       final bucket = next.bucket;
       if (bucket != null) {
@@ -968,6 +1006,7 @@ final class _Pending {
     required this.bucketLimit,
     required this.preemptible,
     required this.flowTargetFrames,
+    required this.retainFlowResponse,
     required this.task,
     required this.highPrioritySinceMicros,
   });
@@ -979,6 +1018,7 @@ final class _Pending {
   int? bucketLimit;
   bool preemptible;
   int flowTargetFrames;
+  bool retainFlowResponse;
   LaneTask task;
   int? highPrioritySinceMicros;
 }
@@ -991,6 +1031,7 @@ final class _ActiveTask {
     required this.priority,
     required this.preemptible,
     required this.flowTargetFrames,
+    required this.retainFlowResponse,
   });
 
   final CancelToken token;
@@ -999,6 +1040,7 @@ final class _ActiveTask {
   int priority;
   bool preemptible;
   int flowTargetFrames;
+  bool retainFlowResponse;
 }
 
 final class _KeyIdleWaiter {

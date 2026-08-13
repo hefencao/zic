@@ -1120,13 +1120,18 @@ void _dev123NetLaneTests() {
     );
     final token = await started.future;
     expect(token.flowTargetFrames, 1);
+    expect(token.retainFlowResponse, isFalse);
 
+    expect(lane.updateRetainFlowResponse('animated', true), isTrue);
+    expect(token.retainFlowResponse, isTrue);
     expect(lane.updateFlowTargetFrames('animated', 5), isTrue);
     expect(token.flowTargetFrames, 5);
     expect(lane.active, 1);
 
     expect(lane.updateFlowTargetFrames('animated', 0), isTrue);
     expect(token.flowTargetFrames, 0);
+    expect(lane.updateRetainFlowResponse('animated', false), isTrue);
+    expect(token.retainFlowResponse, isFalse);
     expect(lane.active, 1);
 
     release.complete();

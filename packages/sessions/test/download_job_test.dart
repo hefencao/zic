@@ -698,6 +698,73 @@ void main() {
     );
   });
 
+
+  test('adjacent consumer-paced flow retains one response across foreground promotion',
+      () async {
+    final trace = MemoryTraceSink();
+    final bytes = _flowAnimatedWebp(List<int>.filled(24, 48));
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'warm-adjacent-flow',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('runtime://warm-adjacent.webp'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/warm-adjacent.webp',
+        finalPath: '${temp.path}/cache/warm-adjacent.webp',
+      ),
+      clock: FakeMonoClock(),
+      traceSink: trace,
+    );
+    session.observePlayablePrefixEvidence(
+      decodedPrefixFrames: 1,
+      sourceLength: 1,
+      firstPlayablePrefixBytes: 1,
+      firstFrameRequiredSourceLength: 0,
+    );
+    final transport = _ConsumerPacedBodyTransport(bytes, chunkSize: 31);
+    final token = CancelToken(
+      flowTargetFrames: 1,
+      retainFlowResponse: true,
+    );
+    final run = DownloadJob(transport: transport, session: session).run(
+      cancel: token,
+    );
+
+    await _waitForFlowAction(trace, 'pseudo-retained', targetFrames: 1);
+    expect(transport.openCount, 1);
+    expect(session.activeRun, isTrue);
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'transport-flow-control' &&
+            event.payload['action'] == 'pseudo-suspended',
+      ),
+      isFalse,
+    );
+
+    token.updateFlowTargetFrames(0);
+    final result = await run.timeout(const Duration(seconds: 2));
+    expect(result.state, DownloadState.promoted);
+    expect(transport.openCount, 1,
+        reason: 'next/previous to foreground must reuse the same response');
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'transport-flow-control' &&
+            event.payload['action'] == 'pseudo-resumed',
+      ),
+      isTrue,
+    );
+  });
+
   test('consumer-paced frame credit suspends partial instead of draining forever',
       () async {
     final trace = MemoryTraceSink();
