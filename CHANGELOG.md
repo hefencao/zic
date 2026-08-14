@@ -1,3 +1,9 @@
+## 0.31.0-dev.273：durable partial read owner 解耦
+
+- 03:33 dev.272 Trace中58次network local prepare均为`committedLength=0` miss，中位约87ms/最大约125ms；origin均有4个verified-equivalent candidates。
+- `PersistentDownloadArtifactStore.openPartialDownload`改为SQLite index/file直接authority，cold partial hit/miss不再materialize synthetic durable-store `DownloadSession`；resume metadata仅提供validators/length加速证据，明确wrong owner才使record失效。
+- partial write mutation、dev.272 pre-NetLane local prepare与共享`ArtifactCacheReadScheduler`保持；无local bytes trace改为`local-hydration-miss`。3/7、5/3/2/1、5+1与current不变。
+
 ## 0.31.0-dev.271：transport/source lease 与 body-read permit 解耦
 
 - 01:26 dev.270真机Trace确认连接阶段回归：source-loader open中位约1.60s/P90约3.42s，origin request-plan中位约1.02s；同时`globalRunning`达到17–20且观测origin均为HTTP/1.1。dev.268把normal5只保留为body-read permit后，parked live response虽不读body却仍占真实source/socket，实际transport并发绕过5路。

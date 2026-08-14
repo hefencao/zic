@@ -35,7 +35,7 @@ require(
     "'action': 'local-hydration-failed-network-fallback'",
     "'action': completedLocally",
     "? 'local-completion-short-circuit'",
-    ": 'local-hydration-ready'",
+    "? 'local-hydration-ready'",
     '_localPreparations.containsKey(physicalId)',
 )
 ensure_start = owner.index('void _ensureDownloadTask(')
@@ -96,8 +96,8 @@ for path in (
     req((ROOT / path).is_file(), f'missing dev.272 governance file: {path}')
 require('docs/ARCHITECTURE.md', 'physical local prepare', '在任何NetLane task/transport lease/provider lookup之前启动')
 require('docs/SPEC.md', '该local prepare MUST在NetLane transport/source admission之前')
-require('docs/IMPLEMENTATION_STATUS.md', '0.31.0-dev.272', '2.40s/3.09s')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.272', 'physical generation single-flight')
+require('docs/IMPLEMENTATION_STATUS.md', 'dev.272', '2.40s/3.09s')
+require('docs/NEXT_CHAT_HANDOFF.md', 'dev.272', 'pre-NetLane physical local prepare')
 require('CHANGELOG.md', '0.31.0-dev.272', 'NetLane transport admission前移')
 require('tool/check.sh', 'test_dev272_local_partial_pre_network_hydration.py')
 

@@ -68,7 +68,11 @@ for token in (
 ):
     require(owner, token, 'resident replay exact provider scope')
 require(partial, 'session.resumeValidatorsFor(session.id.canonicalUri)', 'cold partial physical validator scope')
-require(chapter, 'session.resumeValidatorsFor(id.canonicalUri)', 'persistent exact partial validator scope')
+if int(build.group(1)) >= 273:
+    require(chapter, 'validatorRequestUri != id.canonicalUri', 'persistent indexed partial validator scope')
+    require(chapter, '_readIndexedPartialResumeState(record.path, id)', 'persistent indexed partial resume authority')
+else:
+    require(chapter, 'session.resumeValidatorsFor(id.canonicalUri)', 'persistent exact partial validator scope')
 for token in (
     'session.resumeValidatorsFor(uri)',
     'session.resumeValidatorsFor(asset.uri)',

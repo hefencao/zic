@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:typed_data';
@@ -750,19 +751,50 @@ final class PersistentDownloadArtifactStore
   @override
   Future<PartialDownloadEntry?> openPartialDownload(DownloadId id) async {
     _requireOpen();
-    final session = _registry.get(id);
-    if (session.activeRun || session.hasWriter) return null;
-    await session.restore(verifyPromotedChecksum: false);
-    if (session.state == DownloadState.promoted ||
-        session.artifact.committedLength <= 0) {
+    if (_artifactWrites.containsKey(id)) return null;
+    final active = _registry.find(id);
+    if (active != null && (active.activeRun || active.hasWriter)) return null;
+
+    // Durable partial lookup is an index/file concern. Do not materialize a
+    // synthetic DownloadSession merely to discover whether cold bytes exist.
+    // The composition physical session remains the only Reader transfer owner.
+    final record = await _index.get(id.key);
+    if (record == null ||
+        record.state != CacheState.partial ||
+        record.id != id ||
+        record.bytes <= 0) {
       return null;
     }
-    final length = session.artifact.committedLength;
+    final file = File(record.path);
+    if (!await file.exists()) {
+      await _index.remove(id.key);
+      return null;
+    }
+    final length = await file.length();
+    if (length <= 0 || length != record.bytes) {
+      await _index.remove(id.key);
+      return null;
+    }
+
+    final resume = await _readIndexedPartialResumeState(record.path, id);
+    if (resume.explicitDifferentOwner) {
+      await _index.remove(id.key);
+      return null;
+    }
+    final touchedUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+    unawaited(_index.touch(id.key, touchedUs).then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    ));
     return PartialDownloadEntry(
       length: length,
-      validators: session.resumeValidatorsFor(id.canonicalUri),
-      totalLength: session.totalLength,
-      open: ({required int start}) => session.artifact.readChunks(start: start),
+      validators: resume.validators,
+      totalLength: resume.totalLength,
+      open: ({required int start}) => _readIndexedChunks(
+        record.path,
+        length: length,
+        start: start,
+      ),
     );
   }
 
@@ -1601,6 +1633,85 @@ final class PersistentChapterDownloadService
     if (_closed) {
       throw StateError('chapter download service is closed');
     }
+  }
+}
+
+final class _IndexedPartialResumeState {
+  const _IndexedPartialResumeState({
+    this.validators = const Validators(),
+    this.totalLength,
+    this.explicitDifferentOwner = false,
+  });
+
+  final Validators validators;
+  final int? totalLength;
+  final bool explicitDifferentOwner;
+}
+
+Future<_IndexedPartialResumeState> _readIndexedPartialResumeState(
+  String partialPath,
+  DownloadId id,
+) async {
+  final file = File('$partialPath.meta');
+  if (!await file.exists()) return const _IndexedPartialResumeState();
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(await file.readAsString());
+  } on Object {
+    // Resume metadata is acceleration evidence, not authority over the
+    // committed media prefix. Preserve indexed bytes and fall back to
+    // validatorless continuation when metadata is malformed.
+    return const _IndexedPartialResumeState();
+  }
+  if (decoded is! Map) return const _IndexedPartialResumeState();
+  final meta = Map<String, Object?>.from(decoded);
+
+  var matches = meta['downloadKey'] == id.key;
+  var explicitDifferentOwner = false;
+  final key = meta['downloadKey'];
+  if (key is String && key != id.key) {
+    explicitDifferentOwner = true;
+  }
+  final rawDownload = meta['download'];
+  if (!matches && rawDownload is Map) {
+    try {
+      final metadataId = DownloadId.fromJson(
+        Map<String, Object?>.from(rawDownload),
+      );
+      matches = metadataId == id;
+      explicitDifferentOwner = metadataId != id;
+    } on Object {
+      // Malformed identity metadata is not proof that the indexed media bytes
+      // belong to another object. Keep the prefix but drop resume knowledge.
+    }
+  }
+  if (explicitDifferentOwner) {
+    return const _IndexedPartialResumeState(explicitDifferentOwner: true);
+  }
+  if (!matches) return const _IndexedPartialResumeState();
+
+  final rawValidators = meta['validators'];
+  final rawLength = meta['totalLength'];
+  if (rawValidators is! Map || (rawLength != null && rawLength is! int)) {
+    return const _IndexedPartialResumeState();
+  }
+  try {
+    var validators = Validators.fromJson(
+      Map<String, Object?>.from(rawValidators),
+    );
+    final rawValidatorRequestUri = meta['validatorRequestUri'];
+    final validatorRequestUri = rawValidatorRequestUri is String
+        ? Uri.tryParse(rawValidatorRequestUri)
+        : null;
+    if (validators.isNotEmpty && validatorRequestUri != id.canonicalUri) {
+      validators = const Validators();
+    }
+    return _IndexedPartialResumeState(
+      validators: validators,
+      totalLength: rawLength as int?,
+    );
+  } on Object {
+    return const _IndexedPartialResumeState();
   }
 }
 

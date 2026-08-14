@@ -152,15 +152,34 @@ void main() {
         await PersistentChapterDownloadService.open(directory.path);
     addTearDown(reopened.close);
     expect(await reopened.openArtifactStream(id), isNull);
+    expect(reopened.materializedSessionCount, 0);
     final partial = await reopened.openPartialDownload(id);
     expect(partial, isNotNull);
     expect(partial!.length, bytes.lengthInBytes);
     expect(partial.validators.etag, '"partial-v1"');
     expect(partial.totalLength, 2048);
+    expect(reopened.materializedSessionCount, 0);
     expect(
       await partial.open(start: 0).expand((chunk) => chunk).toList(),
       bytes,
     );
+    expect(reopened.materializedSessionCount, 0);
+  });
+
+  test('cold partial misses do not materialize durable DownloadSessions',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-reader-partial-miss-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(service.close);
+
+    for (var index = 0; index < 12; index++) {
+      final id = _readerArtifactId('missing-partial-$index');
+      expect(await service.openPartialDownload(id), isNull);
+    }
+    expect(service.materializedSessionCount, 0);
   });
 
   test('persistent artifact store survives Reader service reopen', () async {

@@ -1,6 +1,6 @@
-# dev.272 后续交接
-- dev.272：02:01 dev.271 Trace证明cold partial hydration仍错误等待NetLane：page194/page203已有durable partial却约2.40s/3.09s后才restore。现`DownloadTransferOwner`在任何network task之前按physical generation single-flight执行local prepare；同步3/7 planning不等磁盘，prepare prefix可先进入Reader-local ingress；cold partial与artifact replay共用composition `ArtifactCacheReadScheduler`，prepare完成后仍需网络才提交NetLane；local hydration失败只单次降级provider fallback。
-- dev.271 transport/source lease与body-read permit解耦、dev.270 current preemption与retention eviction事务拆分继续冻结（normal稳态`globalTransportLeases<=5`、current handoff最多6）：后台retention回收记录`downloadEvicted`，不得占用current `downloadPreempted`事务。dev.272不改连接数、窗口、水位或current priority。
+# dev.273 后续交接
+- dev.273：03:33 dev.272 Trace中58次network local prepare全为`committedLength=0` miss，中位约87ms/最大约125ms，43次origin均有4个verified-equivalent candidates。根因是durable partial read/existence API用`_registry.get()+DownloadSession.restore()` materialize synthetic store session。现read path改为SQLite index/file authority，hit/miss不创建store session；无local bytes明确记录`local-hydration-miss`。
+- dev.272 pre-NetLane physical local prepare、共享`ArtifactCacheReadScheduler`、dev.271 transport/source lease与body-read permit、dev.270 current preemption/retention eviction事务拆分继续冻结：normal稳态`globalTransportLeases<=5`、current handoff最多6；后台retention回收记录`downloadEvicted`且不得占current抢占事务。partial write mutation仍可用store session/writer，read lookup不得反向拥有session lifecycle。
 - 冻结 previous3/next7、5/3/2/1、decode2/1、holder7/5/3/2、normal5+current reserved1；不得通过扩大连接数、缩窗口或预解析整章掩盖source/open owner问题。
 ## 必读
 1. `AGENTS.md`
@@ -9,8 +9,8 @@
 4. `docs/SPEC.md`
 5. `docs/IMPLEMENTATION_PLAN.md`
 6. `docs/IMPLEMENTATION_STATUS.md`
-7. `docs/adr/0250-local-partial-hydration-before-network-admission.md`、`docs/adr/0249-transport-lease-body-read-permit-separation.md`
-8. `docs/audits/dev272-local-partial-hydration-admission-root-cause-audit.md`、`docs/audits/dev271-transport-lease-source-open-latency-audit.md`
+7. `docs/adr/0251-indexed-durable-partial-read-authority.md`、`docs/adr/0250-local-partial-hydration-before-network-admission.md`
+8. `docs/audits/dev273-durable-partial-read-owner-audit.md`、`docs/audits/dev272-local-partial-hydration-admission-root-cause-audit.md`
 9. `docs/adr/0122-current-reader-pipeline-authority-consolidation.md`
 8. `docs/adr/0118-unified-version-stable-cache-identities-and-verified-artifact-reuse.md`
 9. `docs/adr/0140-cloudflare-browser-session-history-and-plugin-persistence.md`

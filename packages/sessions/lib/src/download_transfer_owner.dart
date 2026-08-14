@@ -929,7 +929,9 @@ final class DownloadTransferOwner {
         'stage': 'physical-local-prepare',
         'action': completedLocally
             ? 'local-completion-short-circuit'
-            : 'local-hydration-ready',
+            : session.committedLength > 0
+                ? 'local-hydration-ready'
+                : 'local-hydration-miss',
         'state': session.state.name,
         'committedLength': session.committedLength,
         'demanded': session.demanded,
