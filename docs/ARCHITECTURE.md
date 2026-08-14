@@ -63,7 +63,7 @@ encoded source、cursor、frame、output、renderer 和只读 timing capability�
 
 ### `sessions`
 
-`DownloadSession`、`DecodeSession`、`UploadSession`、registry、claim/lease、frame holder、playback timer、Net/Decode/Upload lane 和 `LiveCoordinator`。它是可变媒体状态的权威所有者。Reader ingress registry的lookup必须按DownloadSession对象identity保持physical-generation aware；same DownloadId的新physical session不得复用旧projection/native source。synchronized late join只有Reader-local projection自身追平稳定physical epoch/length/sealed且无failure后才能加入live fan-out。UploadSession dispose是generation retirement barrier：旧generation即使仍有pending prepare也必须立即退休其uploader slot，old async tail不得延迟release到replacement generation；普通detach/reset仍可使用既有deferred release。
+`DownloadSession`、`DecodeSession`、`UploadSession`、registry、claim/lease、frame holder、playback timer、Net/Decode/Upload lane 和 `LiveCoordinator`。它是可变媒体状态的权威所有者。Reader ingress registry的lookup必须按DownloadSession对象identity保持physical-generation aware；same DownloadId的新physical session不得复用旧projection/native source。synchronized late join只有Reader-local projection自身追平稳定physical epoch/length/sealed且无failure后才能加入live fan-out。UploadSession dispose是generation retirement barrier：旧generation即使仍有pending prepare也必须立即退休其uploader slot，old async tail不得延迟release到replacement generation；普通detach/reset仍可使用既有deferred release。 UploadRegistry拥有UploadSession→DecodeSession concrete-generation binding不变量：logical DecodeId复用时，registry get/prepare必须先与DecodeRegistry当前session做object-identity校验；不一致时只能退休旧UploadSession并创建replacement，禁止让UploadSession原地跨代换绑或继续读取retired holder。
 
 ### `pipeline`
 

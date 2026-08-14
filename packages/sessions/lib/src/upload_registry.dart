@@ -86,24 +86,39 @@ final class UploadRegistry {
   }
 
   UploadSession get(DecodeId id) {
-    return _sessions.putIfAbsent(id, () {
-      final session = UploadSession(
-        id: id,
-        decode: decodes.get(id),
-        uploader: uploader,
-        clock: clock,
-        traceSink: traceSink,
-        sessionId: 'upload:${id.key.hashCode}',
-      )..setPlayback(
-          paused: _playbackPaused,
-          speed: _playbackSpeed,
-        );
-      session.addSnapshotListener(
-        (snapshot) => _notify(id, snapshot),
-        fireImmediately: false,
+    final decode = decodes.get(id);
+    final existing = _sessions[id];
+    if (existing != null) {
+      if (identical(existing.decode, decode)) {
+        return existing;
+      }
+      // DecodeId is a logical identity; DecodeRegistry may replace the concrete
+      // DecodeSession when its physical/source generation changes. UploadSession
+      // intentionally binds one DecodeSession for life, so the registry that
+      // owns UploadSession lifetime must retire a stale binding before reusing
+      // the same logical DecodeId. Do not let callers observe or prepare against
+      // a holder owned by a retired decode generation.
+      _sessions.remove(id);
+      existing.dispose();
+    }
+
+    final session = UploadSession(
+      id: id,
+      decode: decode,
+      uploader: uploader,
+      clock: clock,
+      traceSink: traceSink,
+      sessionId: 'upload:${id.key.hashCode}',
+    )..setPlayback(
+        paused: _playbackPaused,
+        speed: _playbackSpeed,
       );
-      return session;
-    });
+    session.addSnapshotListener(
+      (snapshot) => _notify(id, snapshot),
+      fireImmediately: false,
+    );
+    _sessions[id] = session;
+    return session;
   }
 
   Future<UploadSnapshot> prepare(

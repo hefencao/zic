@@ -1695,6 +1695,76 @@ void main() {
     expect(generationRebind.payload['invalidatedDecodes'], 1);
   });
 
+  test(
+      'upload registry replaces a stale concrete decode generation binding',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'upload_registry_decode_generation_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'generation',
+        pageId: 'upload-registry',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/generation.webp'),
+    );
+    final decodeId = DecodeId(
+      download: id,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final clock = _Clock();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'upload-registry-generation',
+    );
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      ingresses: ingresses,
+      cursors: _StaticCursorFactory(),
+      clock: clock,
+    );
+    final uploads = UploadRegistry(
+      decodes: decodes,
+      uploader: _TestUploader(),
+      clock: clock,
+    );
+    addTearDown(() async {
+      uploads.dispose();
+      decodes.dispose();
+      ingresses.dispose();
+      sources.dispose();
+      await downloads.dispose();
+    });
+
+    final firstDecode = decodes.get(decodeId);
+    final firstUpload = uploads.get(decodeId);
+    expect(firstUpload.decode, same(firstDecode));
+
+    expect(decodes.invalidateForDownload(id), 1);
+    final replacementDecode = decodes.get(decodeId);
+    expect(replacementDecode, isNot(same(firstDecode)));
+
+    final replacementUpload = uploads.get(decodeId);
+    expect(replacementUpload, isNot(same(firstUpload)));
+    expect(firstUpload.state, UploadState.disposed);
+    expect(replacementUpload.decode, same(replacementDecode));
+  });
+
   test('role promotion reaches an already active cursor decode request',
       () async {
     final temp = await Directory.systemTemp.createTemp(

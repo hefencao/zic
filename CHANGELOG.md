@@ -1,3 +1,9 @@
+## 0.31.0-dev.278：Reader re-entry UploadRegistry decode-generation binding 闭合
+
+- 08:31 真机 Trace 再次稳定复现本地图片回访失败：第一次进入约208ms得到首帧；第二次进入发生`physical-generation-changed`且`invalidatedUploads=1 / invalidatedDecodes=1`，artifact重新提供5,906,374 bytes，replacement decode最终达到depth=7，但upload始终停留`waitingFrame`，没有进入`uploading/frameUploaded`；第三次进入重复同型失败。因此dev.277的old uploader delayed-release不是剩余主因，阻塞发生在platform upload之前。
+- `UploadRegistry.get()`现在把“logical DecodeId相同”和“concrete DecodeSession generation相同”分开：每次取得当前DecodeRegistry session并校验缓存UploadSession绑定对象；若对象identity不同，先dispose旧UploadSession，再创建绑定当前DecodeSession的replacement。UploadSession自身仍禁止跨代动态换绑，`LiveCoordinator`既有upload→decode invalidation顺序保持。
+- 新增回归覆盖DecodeRegistry独立替换concrete generation后UploadRegistry必须退休旧binding；不修改previous3/next7、5/3/2/1、decode2/1、holder7/5/3/2、normal5+current reserved1、Venera或缓存容量。
+
 ## 0.31.0-dev.277：Reader re-entry / ingress generation 生命周期闭合
 
 - 07:54 Trace确认本地图片第二次进入Reader时artifact完整且decode depth已到7，但新generation反复`uploadStarted`无`frameUploaded`；根因是旧UploadSession pending prepare可在dispose后延迟`release(DecodeId)`，跨代退休新generation uploader slot。generation dispose现立即release并禁止old async tail二次release，ordinary detach deferred-release保持。
