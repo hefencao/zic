@@ -742,6 +742,81 @@ void main() {
     },
   );
 
+  testWidgets(
+    'vertical previous drag does not invent a hidden higher-index target',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'vertical-target-comic',
+        chapter: const Chapter(
+          chapterId: 'vertical-target-chapter',
+          comicId: 'vertical-target-comic',
+          title: 'vertical target',
+          sequence: 0,
+          pageCount: 5,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          5,
+          (index) => PageAsset(
+            pageId: 'vertical-target-$index',
+            chapterId: 'vertical-target-chapter',
+            index: index,
+            uri: Uri.parse('asset:///vertical-target-$index.png'),
+            width: 1000,
+            height: 3000,
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final controller = ReaderController(
+        sessionId: 'reader-vertical-target-test',
+        chapter: chapter,
+        onObservation: observations.add,
+        clock: FakeClock(),
+        initialPage: 2,
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ReaderView(
+            controller: controller,
+            clock: FakeClock(),
+            pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+              key: ValueKey<String>('vertical-target:${asset.pageId}'),
+              color: Colors.black,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      observations.clear();
+      final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      await gesture.moveBy(const Offset(0, 80));
+      await tester.pump();
+
+      final previousSamples = observations.where(
+        (observation) =>
+            observation.velocity < 0 &&
+            observation.visibleCoverages.length == 1,
+      );
+      expect(previousSamples, isNotEmpty);
+      expect(
+        previousSamples.every((observation) => observation.targetCoverage == null),
+        isTrue,
+        reason:
+            'vertical page-internal fraction must not be interpreted as a hidden PageView target in the opposite direction',
+      );
+
+      await gesture.up();
+      await tester.pump();
+    },
+  );
+
   test('page request validates chapter bounds', () {
     final chapter = ChapterManifest(
       sourceId: 'source',

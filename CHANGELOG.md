@@ -1,3 +1,9 @@
+## 0.31.0-dev.283 - Vertical visible-target authority
+
+- 14:52 dev.282 device Trace exposed a direction-asymmetric Reader observation bug: while scrolling toward previous pages, 22 samples had `velocity < 0` and only the current page visible but still reported `targetIndex=current+1`; the corresponding next-direction pattern appeared 10 times. `ReaderVerticalGeometry.positionAt()` reports `index + page-local fraction`, not PageView interpolation, so the generic floor/ceil target fallback systematically biased hidden targets toward higher indexes.
+- Vertical observations now disable logical-position target inference. Their target is owned only by real viewport coverage: an actually visible outgoing page may remain transition-owned, an actually visible incoming page may become transition, and a viewport containing only current reports no target. Horizontal/PageView inference is unchanged.
+- dev.280/281 geometry correction and dev.282 resident texture reuse remain intact because the new Trace confirms their intended behavior; no prefetch window, waterline, texture, NetLane, Venera or cache-capacity change is made.
+
 ## 0.31.0-dev.282 - Retained Android texture resident presentation
 
 - 14:02 dev.281 真机Trace确认slow-release geometry错页已经闭合、vertical active `staticWarmUploads=0`真实生效；剩余ballistic抖动包含retained静态OutputFrame的重复platform present，presentation ordinal 1–3仍可产生约15–37ms Surface blit/channel round-trip。

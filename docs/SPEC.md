@@ -107,7 +107,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 ### 2.2 翻页
 
 - stable ownership midpoint 默认为 50%。
-- 横向目标页覆盖率达到 0.15，纵向目标页真实进入视口时，MUST 建立 transition demand。
+- 横向目标页覆盖率达到 0.15，纵向目标页真实进入视口时，MUST 建立 transition demand。纵向 `targetCoverage` MUST 只来自真实可见的非 current page；只有 current 可见时 MUST 为 null，MUST NOT 从 `logicalPosition` 的 page-local fraction 通过 floor/ceil 虚构隐藏 target。仍在 viewport 内的 outgoing page MAY 继续作为 transition，直到其真实离屏。
 - current 浅水位 bootstrap MUST 优先：动态 current holder depth < 3 时，speculative next/next2/previous 不得启动新的 decode refill；静态 current 一帧即满足。若 current 暂时在等待 source，真实已进入 viewport 的 transition MAY 独立取得一帧，避免拖动目标黑屏。
 - current bootstrap 建立后才恢复 next/next2/previous staged refill；transition 不得用深水位抢占 current 的基础播放水位。
 - midpoint 后新 stable page MUST 成为 current；旧 current 的已上传 output MAY 作为独立 retained/last presentation 保留并暂停播放，但该 retention MUST NOT占用或跳过相对 previous/next slot。相邻旧 current仍 MUST按 offset -1/+1参与 encoded/decode window；大跳后若已离开7/3窗口则 retention不得单独制造 download/decode demand。

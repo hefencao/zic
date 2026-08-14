@@ -881,6 +881,7 @@ final class _ReaderViewState extends State<ReaderView> {
       position.logicalPosition,
       velocity,
       stableIndex: position.index,
+      inferTargetFromLogicalPosition: false,
       currentCoverageOverride: Coverage(
         pageIndex: position.index,
         assetKey: widget.controller.chapter.pages[position.index].assetKey,
@@ -984,6 +985,7 @@ final class _ReaderViewState extends State<ReaderView> {
     double logicalPosition,
     double velocity, {
     int? stableIndex,
+    bool inferTargetFromLogicalPosition = true,
     Coverage? currentCoverageOverride,
     Coverage? targetCoverageOverride,
     List<Coverage>? visibleCoveragesOverride,
@@ -1000,7 +1002,9 @@ final class _ReaderViewState extends State<ReaderView> {
 
     var targetCoverage = targetCoverageOverride;
     int? targetIndex = targetCoverage?.pageIndex;
-    if (targetCoverage == null && distance > 0.001) {
+    if (targetCoverage == null &&
+        inferTargetFromLogicalPosition &&
+        distance > 0.001) {
       targetIndex = logicalPosition > boundedStable
           ? logicalPosition.ceil()
           : logicalPosition.floor();
