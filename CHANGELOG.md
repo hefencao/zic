@@ -1,3 +1,9 @@
+## 0.31.0-dev.279：sealed Reader generation continuity + lifecycle partial checkpoint
+
+- 09:37 dev.278 Trace确认本地二次进入存在退化：page5首次约304ms，二次/三次约366/357ms，但更关键的是每次re-entry都对约11个same-exact本地source触发`physical-generation-changed`，current及热邻页decode/upload被机械失效重建。dev.277把不同DownloadSession object无条件等同Reader encoded generation过宽。现仅对`sealed + sourceReady + no failure`且无pending synchronized attachment的same-exact projection保留Reader encoded generation；mutable/incomplete source仍严格换代。old same-id teardown增加concrete identity guard。
+- 同一Trace冷启动已恢复`persistentMappings=5`却对current/邻页全部`local-hydration-miss committedLength=0`，current约6.14s后重新从origin得到首帧。根因是未达到32-session/256MiB retention压力的hot partial仅在ephemeral workspace，进程退出不保证异步final dispose完成。composition runtime新增`checkpointPartials()`；App paused/detached只发lifecycle signal，durable写入仍由`PartialDownloadHandoff`拥有，close会join正在进行的checkpoint。
+- 不改NetLane、Venera、缓存容量、previous3/next7、body5/3/2/1、decode2/1、holder7/5/3/2或normal5+current reserved1。
+
 ## 0.31.0-dev.278：Reader re-entry UploadRegistry decode-generation binding 闭合
 
 - 08:31 真机 Trace 再次稳定复现本地图片回访失败：第一次进入约208ms得到首帧；第二次进入发生`physical-generation-changed`且`invalidatedUploads=1 / invalidatedDecodes=1`，artifact重新提供5,906,374 bytes，replacement decode最终达到depth=7，但upload始终停留`waitingFrame`，没有进入`uploading/frameUploaded`；第三次进入重复同型失败。因此dev.277的old uploader delayed-release不是剩余主因，阻塞发生在platform upload之前。

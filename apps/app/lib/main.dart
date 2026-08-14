@@ -46,7 +46,8 @@ final class _BootstrapApp extends StatefulWidget {
   State<_BootstrapApp> createState() => _BootstrapAppState();
 }
 
-final class _BootstrapAppState extends State<_BootstrapApp> {
+final class _BootstrapAppState extends State<_BootstrapApp>
+    with WidgetsBindingObserver {
   late final AppPreferencesController _preferences;
   late final DebugTraceLog _debugTrace;
   late final HomeStartupTelemetry _startupTelemetry;
@@ -56,6 +57,7 @@ final class _BootstrapAppState extends State<_BootstrapApp> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _preferences = AppPreferencesController();
     _debugTrace = DebugTraceLog();
     _preferences.addListener(_syncDebugTrace);
@@ -90,8 +92,17 @@ final class _BootstrapAppState extends State<_BootstrapApp> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(_services?.checkpointTransferPartials());
+    }
+  }
+
+  @override
   void dispose() {
     _disposed = true;
+    WidgetsBinding.instance.removeObserver(this);
     _preferences.removeListener(_syncDebugTrace);
     final services = _services;
     if (services != null) {
@@ -143,14 +154,38 @@ final class _AppServices {
   final ExternalPluginController? externalPlugins;
   final String? storageRoot;
   bool _closed = false;
+  Future<void>? _partialCheckpoint;
+
+  Future<void> checkpointTransferPartials() {
+    final composition = downloadComposition;
+    if (composition == null || _closed) return Future<void>.value();
+    final running = _partialCheckpoint;
+    if (running != null) return running;
+    late final Future<void> checkpoint;
+    checkpoint = composition.transferRuntime
+        .checkpointPartials(reason: 'app-lifecycle-checkpoint')
+        .whenComplete(() {
+      if (identical(_partialCheckpoint, checkpoint)) {
+        _partialCheckpoint = null;
+      }
+    });
+    _partialCheckpoint = checkpoint;
+    return checkpoint;
+  }
 
   Future<void> close() async {
     if (_closed) {
       return;
     }
-    _closed = true;
     Object? firstError;
     StackTrace? firstStackTrace;
+    try {
+      await checkpointTransferPartials();
+    } on Object catch (error, stackTrace) {
+      firstError ??= error;
+      firstStackTrace ??= stackTrace;
+    }
+    _closed = true;
     try {
       await defaultLocalMediaPipelineFactory.disposeRetainedSessions();
     } on Object catch (error, stackTrace) {

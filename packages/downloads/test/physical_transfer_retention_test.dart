@@ -97,6 +97,48 @@ void main() {
     expect(runtime.registry.sessions, hasLength(1));
   });
 
+  test('process lifecycle checkpoint persists hot partial without retiring owner',
+      () async {
+    final backend = _RetentionStore();
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: backend,
+      net: NetLane(maxActive: 1),
+      maxIdlePartialSessions: 32,
+      maxIdlePartialBytes: 256 * 1024 * 1024,
+    );
+    addTearDown(runtime.dispose);
+    final id = _id('lifecycle-checkpoint');
+    final session = runtime.registry.get(id);
+    await session.bindResponse(totalLength: 8);
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[9, 8, 7, 6, 5]);
+
+    // A process lifecycle checkpoint must be safe while the physical writer is
+    // still receiving. It snapshots only the committed prefix and must not
+    // pause, retire, or replace the hot owner.
+    await runtime.checkpointPartials(reason: 'app-lifecycle-checkpoint');
+
+    expect(
+      backend.partials[id]?.bytes,
+      orderedEquals(<int>[9, 8, 7, 6, 5]),
+    );
+    expect(runtime.registry.findExact(id), same(session));
+    expect(session.state, DownloadState.receiving);
+    expect(session.hasWriter, isTrue);
+
+    await session.append(writer, 5, <int>[4, 3, 2]);
+    await runtime.checkpointPartials(reason: 'app-lifecycle-checkpoint');
+    expect(
+      backend.partials[id]?.bytes,
+      orderedEquals(<int>[9, 8, 7, 6, 5, 4, 3, 2]),
+    );
+    expect(runtime.registry.findExact(id), same(session));
+    expect(session.state, DownloadState.receiving);
+    expect(session.hasWriter, isTrue);
+    await session.pause(writer);
+  });
+
   test('promoted retirement preserves equivalence-only durable ownership',
       () async {
     final root = await Directory.systemTemp.createTemp('equivalent-retention-');

@@ -1,16 +1,16 @@
-# dev.278 后续交接
+# dev.279 后续交接
+- dev.279：09:37 dev.278 Trace确认两条独立问题。① 本地page5首次约304ms，二/三次约366/357ms；每次re-entry约11个same-exact source都仅因DownloadSession object重建触发`physical-generation-changed`，热decode/upload被批量失效。sealed/sourceReady/no-failure且无pending late attachment的Reader projection现跨transient same-id physical recreation保留，Trace应为`sealed-source-generation-preserved`且invalidated=0；unfinished generation仍按dev.277严格换代。② 冷启动已恢复`persistentMappings=5`但相关页均`local-hydration-miss committedLength=0`，current约6.14s才从origin首帧；composition runtime现于App paused/detached请求`PartialDownloadHandoff` durable checkpoint，hot owner不退休，close join checkpoint。
 - dev.278：08:31 dev.277 Trace中本地page0第一次约208ms首帧；第二、第三次进入均重新获得完整5,906,374-byte artifact且current DecodeRegistry达到depth=7，但UploadSession持续`waitingFrame`、没有`uploading/frameUploaded`。dev.278把concrete-generation一致性收回UploadRegistry：每次`get/prepare`先取得当前DecodeSession，若缓存UploadSession绑定对象不同则先dispose旧generation再创建replacement；UploadSession自身仍一生只绑定一个DecodeSession，不允许动态跨代偷换。dev.277的Artifact promotion read path、generation-aware ingress attach、synchronized replay closure与generation dispose immediate uploader retirement继续冻结。
 - dev.276 Venera current handoff、dev.275 host resolver cache、dev.274 local→network rank、dev.273 indexed durable partial read、dev.272 pre-NetLane local prepare、dev.271 transport lease/body-read permit、dev.270 current preemption/retention eviction继续冻结：Venera JS仍`maxConcurrentInvocations=1`，normal稳态`globalTransportLeases<=5`、current handoff最多6，后台retention只记录`downloadEvicted`。
-- 冻结 previous3/next7、5/3/2/1、decode2/1、holder7/5/3/2、normal5+current reserved1。下一份Trace先复测本地同一动画首次进入→退出→第二次进入，replacement必须重新`uploading→frameUploaded→framePresented→firstFrameReady`；若decode depth>0而upload仍`waitingFrame`，直接比较UploadRegistry current binding与DecodeRegistry concrete session generation，不回改下载/NetLane/cache。网络partial继续只验证dev.277闭包。
+- 冻结 previous3/next7、5/3/2/1、decode2/1、holder7/5/3/2、normal5+current reserved1。下一份Trace先复测本地同一动画首次进入→退出→第二次进入：same-exact sealed source应`sealed-source-generation-preserved`且invalidated=0，并继续`uploading→frameUploaded→framePresented→firstFrameReady`；若仍发生`physical-generation-changed`，先判断projection是否真实换代。再复测网络partial在App paused/detached→冷启动后是否durable restore；若仍全部`committedLength=0`，先查checkpoint lifecycle/完成证据，不回改NetLane/cache。
 ## 必读
-1. `AGENTS.md`
-2. 本文件
+1. `AGENTS.md`；2. 本文件
 3. `docs/ARCHITECTURE.md`
 4. `docs/SPEC.md`
 5. `docs/IMPLEMENTATION_PLAN.md`
 6. `docs/IMPLEMENTATION_STATUS.md`
-7. `docs/adr/0256-upload-registry-decode-generation-binding.md`、`docs/adr/0255-reader-generation-ingress-and-uploader-retirement.md`、`docs/adr/0254-venera-current-handoff-active-priority.md`、`docs/adr/0241-decode-upload-generation-coherence.md`、`docs/adr/0232-logical-source-watch-physical-generation-binding.md`
-8. `docs/audits/dev278-reader-reentry-upload-generation-audit.md`、`docs/audits/dev277-reader-reentry-ingress-generation-audit.md`、`docs/audits/dev276-venera-current-handoff-gate-audit.md`、`docs/audits/dev263-decode-upload-generation-rebind-audit.md`
+7. `docs/adr/0258-app-lifecycle-durable-partial-checkpoint.md`、`docs/adr/0257-sealed-reader-encoded-generation-continuity.md`、`docs/adr/0256-upload-registry-decode-generation-binding.md`、`docs/adr/0255-reader-generation-ingress-and-uploader-retirement.md`、`docs/adr/0254-venera-current-handoff-active-priority.md`、`docs/adr/0241-decode-upload-generation-coherence.md`、`docs/adr/0232-logical-source-watch-physical-generation-binding.md`
+8. `docs/audits/dev279-local-reentry-cold-partial-regression-audit.md`、`docs/audits/dev278-reader-reentry-upload-generation-audit.md`、`docs/audits/dev277-reader-reentry-ingress-generation-audit.md`、`docs/audits/dev276-venera-current-handoff-gate-audit.md`、`docs/audits/dev263-decode-upload-generation-rebind-audit.md`
 9. `docs/adr/0122-current-reader-pipeline-authority-consolidation.md`
 8. `docs/adr/0118-unified-version-stable-cache-identities-and-verified-artifact-reuse.md`
 9. `docs/adr/0140-cloudflare-browser-session-history-and-plugin-persistence.md`

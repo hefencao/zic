@@ -17,7 +17,7 @@ final class _IngressProjectionEntry {
     required this.projection,
   });
 
-  final DownloadSession session;
+  DownloadSession session;
   final DownloadIngressProjection projection;
   Future<void>? attachment;
   bool active = true;
@@ -59,13 +59,32 @@ final class DownloadIngressProjectionRegistry {
       return existing.projection;
     }
     if (existing != null) {
+      // A new physical DownloadSession with the same DownloadId is a new
+      // physical object generation. dev.279 only preserves the Reader encoded
+      // generation under the sealed immutable exception below.
+      final snapshot = existing.projection.snapshot;
+      if (existing.attachment == null &&
+          snapshot.sealed &&
+          snapshot.sourceReady &&
+          snapshot.failure == null) {
+        // The physical transfer object changed, but this Reader already owns a
+        // complete immutable encoded generation for the same exact DownloadId.
+        // Retiring that source would turn a hot Reader re-entry into disk replay
+        // + decode/upload regeneration even though the encoded bytes did not
+        // change. Physical generation and encoded-source generation are not the
+        // same concept once the Reader-local source is sealed.
+        existing.session.detachIngressProjection(existing.projection.scopeId);
+        existing.session = session;
+        existing.attachment = null;
+        return existing.projection;
+      }
       existing.active = false;
       existing.session.detachIngressProjection(existing.projection.scopeId);
       existing.projection.detach();
       _entries.remove(session.id);
-      // A new physical DownloadSession with the same DownloadId is a new
-      // physical generation. Its Reader-local native source must not inherit
-      // the retired session's ingress/source instance or revision timeline.
+      // An incomplete/failed Reader-local source is still physical-generation
+      // bound. A replacement physical session must receive a fresh ingress and
+      // revision timeline rather than inheriting a mutable prefix.
       sources.remove(session.id);
     }
 
@@ -142,8 +161,9 @@ final class DownloadIngressProjectionRegistry {
       _entries[id]?.attachment ?? Future<void>.value();
 
   void detach(DownloadSession session) {
-    final entry = _entries.remove(session.id);
-    if (entry == null) return;
+    final entry = _entries[session.id];
+    if (entry == null || !identical(entry.session, session)) return;
+    _entries.remove(session.id);
     entry.active = false;
     session.detachIngressProjection(entry.projection.scopeId);
     entry.projection.detach();

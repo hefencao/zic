@@ -377,6 +377,56 @@ void main() {
     await downloads.dispose();
   });
 
+  test('Reader ingress registry preserves sealed same-id encoded generation',
+      () async {
+    final clock = FakeMonoClock();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/sealed-generation-cache'),
+      clock: clock,
+    );
+    final id = _id();
+    final firstSession = downloads.get(id);
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-sealed-generation',
+    );
+    final firstProjection = ingresses.get(firstSession);
+    final body = <int>[...'RIFF....WEBPsealed-generation'.codeUnits];
+    await firstSession.bindResponse(totalLength: body.length);
+    final writer = firstSession.acquireWriter();
+    await firstSession.append(writer, 0, body);
+    await firstSession.seal(writer, expectedLength: body.length);
+    expect(firstProjection.snapshot.sealed, isTrue);
+    expect(firstProjection.snapshot.sourceReady, isTrue);
+
+    final retired = downloads.takeIdlePhysical(id);
+    expect(retired, same(firstSession));
+    final secondSession = downloads.get(id);
+    expect(identical(secondSession, firstSession), isFalse);
+    final secondProjection = ingresses.get(secondSession);
+
+    expect(secondProjection, same(firstProjection));
+    expect(secondProjection.snapshot.length, body.length);
+    expect(secondProjection.snapshot.sealed, isTrue);
+    expect(secondProjection.snapshot.failure, isNull);
+    expect(firstSession.snapshot.ingressProjectionCount, 0);
+    expect(secondSession.snapshot.ingressProjectionCount, 0);
+
+    // A late teardown from the retired same-id physical object must not remove
+    // the preserved Reader encoded-generation entry now owned by secondSession.
+    ingresses.detach(firstSession);
+    expect(ingresses.find(id), same(secondProjection));
+
+    ingresses.dispose();
+    sources.dispose();
+    await retired!.dispose();
+    await downloads.dispose();
+  });
+
   test('late Reader projection stays unpublished until replay is authoritative',
       () async {
     final bytes = <int>[...'RIFF....WEBP'.codeUnits, 1, 2, 3, 4, 5, 6];

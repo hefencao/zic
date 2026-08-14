@@ -297,6 +297,30 @@ final class CompositionDownloadTransferRuntime {
     }
   }
 
+  Future<void> checkpointPartials({
+    String reason = 'process-lifecycle-checkpoint',
+  }) async {
+    final handoff = partialDownloadHandoff;
+    if (handoff == null || _disposed) return;
+    final candidates = registry.sessions
+        .where((session) =>
+            session.state != DownloadState.promoted &&
+            session.state != DownloadState.disposed &&
+            !session.residentBodyBacked &&
+            session.artifact.committedLength > 0)
+        .toList(growable: false)
+      ..sort((left, right) {
+        final priority =
+            right.effectivePriority.compareTo(left.effectivePriority);
+        if (priority != 0) return priority;
+        return right.artifact.committedLength
+            .compareTo(left.artifact.committedLength);
+      });
+    for (final session in candidates) {
+      await handoff.persist(session, reason: reason);
+    }
+  }
+
   Future<void> dispose() async {
     if (_disposed) return;
     if (hasConsumers) {

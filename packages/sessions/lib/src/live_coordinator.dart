@@ -53,7 +53,7 @@ final class _SourceWatchBinding {
     required this.listener,
   });
 
-  final DownloadSession session;
+  DownloadSession session;
   final DownloadIngressProjection projection;
   final SourceListener listener;
 }
@@ -393,9 +393,28 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       return;
     }
     final existing = _sourceWatches[id];
-    if (existing != null &&
-        identical(existing.session, session) &&
-        identical(existing.projection, projection)) {
+    if (existing != null && identical(existing.projection, projection)) {
+      if (!identical(existing.session, session)) {
+        final previousSession = existing.session;
+        existing.session = session;
+        traceSink.record(
+          traceEvent(
+            clock: clock,
+            sessionId: sessionId,
+            kind: TraceEventKind.artifactSource,
+            identityHash: id.key,
+            revision: _revision,
+            payload: <String, Object?>{
+              'stage': 'reader-source-watch-rebind',
+              'action': 'sealed-source-generation-preserved',
+              'fromPhysicalSession': previousSession.sessionId,
+              'toPhysicalSession': session.sessionId,
+              'invalidatedUploads': 0,
+              'invalidatedDecodes': 0,
+            },
+          ),
+        );
+      }
       return;
     }
 
