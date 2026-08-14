@@ -789,6 +789,88 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('dispose retires a pending generation uploader slot immediately', () async {
+    final temp = await Directory.systemTemp.createTemp('upload_dispose_generation_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
+      ingress: ingress,
+    );
+    download.attachIngressProjection(projection);
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      ingress: projection,
+      cursors: _CursorFactory(),
+      clock: _Clock(),
+    );
+    await decode.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 1,
+        reason: 'dispose-generation',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    final uploader = _ControlledUploader();
+    final upload = UploadSession(
+      id: decode.id,
+      decode: decode,
+      uploader: uploader,
+      clock: _Clock(),
+    );
+
+    final preparing = upload.prepare(
+      demand: const UploadDemand(
+        role: PageRole.current,
+        priority: 1000,
+        reason: 'dispose-generation',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    await uploader.started.future;
+
+    // Generation replacement can construct a new UploadSession with this same
+    // logical DecodeId immediately after dispose(). The old session must retire
+    // its uploader slot now, not when this pending prepare eventually unwinds.
+    upload.dispose();
+    expect(uploader.released, <DecodeId>[decode.id]);
+    expect(upload.state, UploadState.disposed);
+
+    uploader.complete();
+    await expectLater(
+      preparing,
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.cancelled,
+      )),
+    );
+    expect(uploader.released, <DecodeId>[decode.id]);
+    expect(uploader.output?.disposed, isTrue);
+
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('superseded uploads serialize one platform slot per decode identity',
       () async {
     final temp = await Directory.systemTemp.createTemp('upload_serial_test_');

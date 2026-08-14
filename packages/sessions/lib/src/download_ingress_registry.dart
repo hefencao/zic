@@ -134,8 +134,7 @@ final class DownloadIngressProjectionRegistry {
     return projection;
   }
 
-  DownloadIngressProjection get(DownloadSession session) =>
-      _entries[session.id]?.projection ?? attach(session);
+  DownloadIngressProjection get(DownloadSession session) => attach(session);
 
   DownloadIngressProjection? find(DownloadId id) => _entries[id]?.projection;
 

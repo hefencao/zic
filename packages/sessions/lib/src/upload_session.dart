@@ -960,7 +960,14 @@ final class UploadSession {
     _revision++;
     _retainedWithoutDemand = false;
     _retireCurrent();
-    _requestUploaderRelease();
+    // Dispose is a generation boundary. A pending old-generation prepare may
+    // unwind after UploadRegistry has already created a replacement session
+    // with the same logical DecodeId. Retire this uploader slot now; the
+    // FrameUploader contract keeps existing OutputFrame claims alive and an
+    // in-flight upload observes the retired slot. Never let an old async tail
+    // call release(id) later and retire the replacement generation's slot.
+    _releaseUploaderWhenIdle = false;
+    uploader.release(id);
     _state = UploadState.disposed;
     _notifySnapshot();
     _listeners.clear();

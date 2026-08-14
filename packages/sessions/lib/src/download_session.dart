@@ -1317,12 +1317,27 @@ final class DownloadSession {
 
         final stillSealed = _state == DownloadState.sealed ||
             _state == DownloadState.promoted;
-        if (_ingressProjectionRevision != revision ||
-            _epoch != epoch ||
-            committedLength != targetLength ||
-            _totalLength != totalLength ||
-            stillSealed != sealed) {
+        final physicalBoundaryChanged =
+            _ingressProjectionRevision != revision ||
+                _epoch != epoch ||
+                committedLength != targetLength ||
+                _totalLength != totalLength ||
+                stillSealed != sealed;
+        if (physicalBoundaryChanged) {
           continue;
+        }
+
+        final replayed = projection.snapshot;
+        final projectionCaughtUp = replayed.epoch == epoch &&
+            replayed.length == targetLength &&
+            replayed.sealed == sealed &&
+            replayed.failure == null;
+        if (!projectionCaughtUp) {
+          throw Failure(
+            code: ErrorCode.source,
+            message:
+                'Reader ingress projection did not reach the authoritative physical boundary',
+          );
         }
 
         // No await after the state check: later physical mutations see this

@@ -1,3 +1,9 @@
+## 0.31.0-dev.277：Reader re-entry / ingress generation 生命周期闭合
+
+- 07:54 Trace确认本地图片第二次进入Reader时artifact完整且decode depth已到7，但新generation反复`uploadStarted`无`frameUploaded`；根因是旧UploadSession pending prepare可在dispose后延迟`release(DecodeId)`，跨代退休新generation uploader slot。generation dispose现立即release并禁止old async tail二次release，ordinary detach deferred-release保持。
+- `DownloadIngressProjectionRegistry.get(session)`修为generation-aware attach；same DownloadId的新DownloadSession不得继承旧Reader-local source。synchronized replay只有projection自身epoch/length/sealed/failure与稳定physical boundary一致后才能加入live fan-out。
+- Artifact partial→final promotion的rename窗口由storage owner内部隐藏：readBytes/readChunks/readPrefix按preferred/alternate路径直接open同一authoritative data file，避免rename后state切换前被Reader误判为0字节。previous3/next7、5/3/2/1、5+1与Venera策略不变。
+
 ## 0.31.0-dev.276：Venera current handoff gate priority 闭环
 
 - 05:37 dev.275 Trace中resolver warm态仍稳定为3 cache hit+1 page-specific origin，但`sourcePlanGateWaitMicros`中位约669ms、最坏约3.89s；cold current仍会被单Venera invocation context中的旧viewport工作阻塞。

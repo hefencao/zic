@@ -130,6 +130,28 @@ void main() {
   });
 
 
+  test('readers survive the sealed-to-promoted rename window', () async {
+    final artifact = createArtifact();
+    final bytes = List<int>.generate(256 * 1024 + 17, (index) => index & 0xff);
+    await artifact.restore();
+    await artifact.append(0, bytes);
+    await artifact.seal(expectedLength: bytes.length);
+
+    // Model the owner-internal promotion window after the data-file rename but
+    // before ArtifactState advances to promoted. Reader code must not observe
+    // this as an empty artifact.
+    await File(artifact.finalPath).parent.create(recursive: true);
+    await File(artifact.partialPath).rename(artifact.finalPath);
+
+    expect(await artifact.readPrefix(12), bytes.sublist(0, 12));
+    expect(await artifact.readBytes(), bytes);
+    final replayed = <int>[];
+    await for (final chunk in artifact.readChunks()) {
+      replayed.addAll(chunk);
+    }
+    expect(replayed, bytes);
+  });
+
   test('readChunks defaults to 256 KiB', () async {
     final artifact = createArtifact();
     final bytes = List<int>.filled(256 * 1024 * 2 + 7, 11);

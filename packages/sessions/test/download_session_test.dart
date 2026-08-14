@@ -310,6 +310,38 @@ void main() {
     expect(session.snapshot.ingressProjectionCount, 1);
   });
 
+  test('late Reader replay survives artifact promotion path handoff', () async {
+    final writer = session.acquireWriter();
+    final body = <int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.filled(512 * 1024, 7),
+    ];
+    await session.append(writer, 0, body);
+    await session.seal(writer, expectedLength: body.length);
+
+    // Promotion owns the rename. Reproduce the small interval where the data
+    // already lives at finalPath while DownloadSession/Artifact still report a
+    // sealed generation. Synchronized replay must see the same authoritative
+    // bytes instead of a zero-length source.
+    await File(session.artifact.finalPath).parent.create(recursive: true);
+    await File(session.artifact.partialPath).rename(session.artifact.finalPath);
+
+    final projection = DownloadIngressProjection(
+      scopeId: 'reader-promotion-window',
+      ingress: Ingress(
+        factory: _TestSourceFactory(),
+        maxBytes: 1024 * 1024,
+      ),
+    );
+    await session.attachSynchronizedIngressProjection(projection);
+
+    expect(projection.snapshot.length, body.length);
+    expect(projection.snapshot.sourceReady, isTrue);
+    expect(projection.snapshot.sealed, isTrue);
+    expect(projection.snapshot.failure, isNull);
+    expect(session.snapshot.ingressProjectionCount, 1);
+  });
+
   test('Reader ingress registry replaces a retired same-id session generation',
       () async {
     final clock = FakeMonoClock();

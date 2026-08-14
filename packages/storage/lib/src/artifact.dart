@@ -237,14 +237,16 @@ final class Artifact {
   Future<Uint8List> readBytes() async {
     _requireNotDisposed();
     await flush();
-    final path = _state == ArtifactState.promoted ? finalPath : partialPath;
-    final file = File(path);
-    if (!await file.exists()) return Uint8List(0);
-    final length = await file.length();
-    if (length > 1024 * 1024) {
-      return Isolate.run(() => File(path).readAsBytesSync());
+    final reader = await _openReadableDataFile();
+    if (reader == null) return Uint8List(0);
+    try {
+      final length = await reader.length();
+      if (length == 0) return Uint8List(0);
+      await reader.setPosition(0);
+      return await reader.read(length);
+    } finally {
+      await reader.close();
     }
-    return file.readAsBytes();
   }
 
   Stream<List<int>> readChunks({
@@ -260,26 +262,18 @@ final class Artifact {
       throw RangeError('invalid artifact range $start..$endExclusive');
     }
     await flush();
-    final path = _state == ArtifactState.promoted ? finalPath : partialPath;
-    final file = File(path);
-    if (!await file.exists()) {
-      return;
-    }
-    final length = await file.length();
-    if (start >= length) {
-      return;
-    }
-    final limit = (endExclusive ?? length).clamp(start, length).toInt();
-    final reader = await file.open();
+    final reader = await _openReadableDataFile();
+    if (reader == null) return;
     try {
+      final length = await reader.length();
+      if (start >= length) return;
+      final limit = (endExclusive ?? length).clamp(start, length).toInt();
       await reader.setPosition(start);
       var offset = start;
       while (offset < limit) {
         final readSize = (limit - offset).clamp(1, chunkSize).toInt();
         final chunk = await reader.read(readSize);
-        if (chunk.isEmpty) {
-          break;
-        }
+        if (chunk.isEmpty) break;
         offset += chunk.length;
         yield chunk;
       }
@@ -290,24 +284,44 @@ final class Artifact {
 
   Future<List<int>> readPrefix([int maxBytes = 12]) async {
     _requireNotDisposed();
-    if (maxBytes <= 0) {
-      return const <int>[];
-    }
-    final path = _state == ArtifactState.promoted ? finalPath : partialPath;
-    final file = File(path);
-    if (!await file.exists()) {
-      return const <int>[];
-    }
-    final length = await file.length();
-    if (length == 0) {
-      return const <int>[];
-    }
-    final reader = await file.open();
+    if (maxBytes <= 0) return const <int>[];
+    final reader = await _openReadableDataFile();
+    if (reader == null) return const <int>[];
     try {
+      final length = await reader.length();
+      if (length == 0) return const <int>[];
+      await reader.setPosition(0);
       return await reader.read(length < maxBytes ? length : maxBytes);
     } finally {
       await reader.close();
     }
+  }
+
+  /// Opens the authoritative encoded file while this Artifact owns a
+  /// partial-to-final promotion.
+  ///
+  /// The filesystem rename and the in-memory [ArtifactState] transition are
+  /// not one atomic operation. Opening the preferred path and then falling
+  /// back to the alternate path keeps that owner-internal transition from
+  /// leaking as an artificial zero-byte source. Returning an open file handle
+  /// also removes the exists()-then-open TOCTOU window: once opened, a rename
+  /// does not invalidate the Reader's handle.
+  Future<RandomAccessFile?> _openReadableDataFile() async {
+    _requireNotDisposed();
+    final preferred =
+        _state == ArtifactState.promoted ? finalPath : partialPath;
+    final alternate =
+        _state == ArtifactState.promoted ? partialPath : finalPath;
+    for (final path in <String>[preferred, alternate]) {
+      try {
+        return await File(path).open(mode: FileMode.read);
+      } on FileSystemException {
+        // Promotion may have renamed the file between state observation and
+        // open. The alternate path belongs to the same Artifact owner and is
+        // therefore the only legal fallback.
+      }
+    }
+    return null;
   }
 
   Future<Map<String, Object?>?> readMeta() async {
