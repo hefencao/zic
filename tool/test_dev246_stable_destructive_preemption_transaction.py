@@ -33,7 +33,7 @@ require(
     'highPrioritySinceMicros',
     '_preemptionCandidateReady(_Pending pending)',
     '_schedulePreemptionCandidateWake(blockedHighPriority);',
-    '_hasPreemptionInFlight',
+    '_hasBodyPermitPreemptionInFlight' if int(m.group(1)) >= 270 else '_hasPreemptionInFlight',
     'task.token.cancelled && task.token.preemptionSnapshot != null',
     'required this.incomingWaitMicros',
 )

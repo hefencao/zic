@@ -1,3 +1,9 @@
+## 0.31.0-dev.270：current body-read preemption 与 inactive retention eviction 事务解耦
+
+- 00:22 dev.269 真机 Trace 中 11 次 `downloadPreempted` 全为 `inactive-response-retention-eviction`，真正 `high-priority` current preemption 为 0。源码审计确认 inactive parked response 淘汰仍复用 `cancelForPreemption/TaskPreemptionSnapshot`，导致不占 read permit 的后台 response eviction 也占用 `_hasPreemptionInFlight`，可阻塞 current 对 body-read permit 的抢占。
+- 新增独立 `TaskRetentionEvictionSnapshot/cancelForRetentionEviction`；current body-read preemption 与 inactive response eviction 各自 single-flight，后台 eviction 不再阻塞 current。blocked live-current response reacquire 优先于新 high-priority pending 的破坏性 admission。
+- Trace 将 retention eviction 从 `downloadPreempted` 拆为 `downloadEvicted`；`downloadPreempted` 重新只表示真实 scheduler priority preemption。previous3/next7、5/3/2/1、normal5+current reserved1、restart-cost victim rank 均未改变。
+
 ## 0.31.0-dev.269：demanded parking / inactive response retention / artifact read owner 解耦
 
 - 23:32 dev.268 真机 Trace 中40次 park→resume 均保持同 response，但17次 `parked-response-eviction` 有9次 victim 仍 `demanded=true`。根因是 dev.268 用一个 `maxParkedResponses=10` 同时管理“仍有consumer的flow pause”和“无consumer的inactive retention”，把已经解耦的body-read permit再次通过全局parked上限耦合回response lifetime。

@@ -941,6 +941,27 @@ final class DownloadTransferOwner {
                     'partialState': session.state.name,
                   },
                 );
+              } else {
+                final eviction = token.retentionEvictionSnapshot;
+                if (eviction != null) {
+                  _record(
+                    claim,
+                    kind: TraceEventKind.downloadEvicted,
+                    id: id,
+                    payload: <String, Object?>{
+                      'basePriority': eviction.basePriority,
+                      'retentionPriority': eviction.retentionPriority,
+                      'retentionBonus': eviction.retentionBonus,
+                      'restartCostElapsedMicros':
+                          eviction.restartCostElapsedMicros,
+                      'restartCostBytes': eviction.restartCostBytes,
+                      'evictionReason': eviction.reason,
+                      'committedLength': session.committedLength,
+                      'partialPreserved': session.committedLength > 0,
+                      'partialState': session.state.name,
+                    },
+                  );
+                }
               }
               return;
             }

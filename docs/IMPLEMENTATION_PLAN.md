@@ -1,5 +1,6 @@
+
 # zic Implementation Plan
-- P0：dev.269真机验证 owner 解耦：`demanded=true` 的 flow-paused response 可出现 `pseudo-parked/response-parked`，但不得出现 `inactive-response-retention-eviction`；只有 `demanded=false` 且保留live response的 task 才计入 `globalInactiveParkedResponses`。persistent artifact body出现 `transport-read-permit/released/durable-artifact-local-body` 后应立即释放remote NetLane read permit，而其 `sourceRead` 继续由 `ArtifactCacheReadScheduler` 完成。重点核对同identity再需要body时无第二次`downloadStarted`；另独立统计重复persistent artifact session-copy，不用提高session/response缓存数量掩盖。
+- P0：真机验证 current body-read 抢占与 inactive response retention 淘汰已解耦：`downloadPreempted`只允许表示priority/body-read preemption，后台 retention destruction只记录`downloadEvicted`；一个正在退出的inactive response不得阻塞current live response reacquire。继续验证`demanded=true` flow-paused response不成为retention victim、artifact-cache durable body释放remote NetLane permit，并独立统计重复persistent artifact session-copy，不用提高session/response缓存数量掩盖。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环
@@ -154,24 +155,19 @@
 - 确认 used texture 仍重新创建，idle resource retention 不跨 Reader 复用 SurfaceProducer。
 - 验证 TTL、source revision变化和第二章节淘汰后的完整 dispose。
 ## P0：Flutter/Android 工具链闭环
-
 - dev.228后真机验证改为直接统计`verified-transfer-acquire-alias`的join/rejection及physical state；不得再期待`verified-equivalent-promotion-takeover`。若同一强等价页仍出现独立重复physical owner，先区分“alias前已各自创建”“ambiguous existing owners”“proof尚未恢复”三类，再决定是否扩展TransferKey coverage，不恢复artifact promotion observer。
 - dev.211真机验证：冷启动Reader继续不得等待source-version resolver；已有mapping时应先出现`version-artifact-equivalence-restored`。让相关版本在另一Reader仍存活时继续promote新artifact，旧版后续未启动页应出现`verifiedEquivalentReuse=true`并直接走artifact cache，不要求退出重进再次扫描。E-Hentai旧版confirmed successor的`!`继续验证。partial保持durable inactive边界，并在续传trace看到validatorless overlap验证而非继承旧ETag。
 - 纵向静态图片持续上下拖动时，异步页面比例收敛不得再触发anchor `jumpTo`造成短距离回拉；旋转、真实viewport/DPR变化、vertical stitch切换与显式跳页仍需验证位置连续。
 - 真机优先验证 dev.206 ownership：快速退出/重进同chapter应直接复用retained PipelineReaderSession，不出现partial durable store/restore；只有session真实evict/dispose后新session才出现`session-partial-handoff` restored且`downloadStarted.committedLength>0`。已有partial动画重入必须从frame0立即播放，约30帧循环继续只属于DecodeSession。Venera cold resolver应不再出现Kotlin HttpURLConnection owner，并验证requestId cancel、Cookie/manual redirect与resolver rhttp复用。
 - 运行 Rust/Android target 与 JNI symbol验证，确认 APK 中 native build identity正确。
-
 ## P1：漫画源、过滤与详情预览设备闭环
-
 - 真机验证 Mihon Popular/Latest 与 Venera 多 explore/category section 的顺序、分页和 section identity。
 - 验证浮动搜索历史持久化；展开状态下系统返回、面板上下拖动和内容列表滚动均先收起搜索并释放焦点。
 - 使用真实 Mihon 扩展验证 `getFilterList()` 中 CheckBox、TriState、Select 与 Group 子项的标签、默认值和回传值；未支持的自定义 Filter 不得阻塞普通浏览。
 - 验证漫画源 cache-first/background-refresh 与数据未变化时列表、封面不闪烁；下拉达到阈值后保留现有内容执行强制来源刷新。
 - 在窄屏、常见竖屏、宽屏与极端横纵比预览上确认完整行尽量占满可用宽度、折叠/展开第一行一致、完整行铺满媒体宽度、稀疏末行面积不超过参考完整行 2.4 倍、每行数量规则和屏幕高度 90% 上限同时成立。
 - 制造 source Future失败、decoder错误和离屏未绘制三种状态，确认 presentation都稳定失败而不自动重启；随后显式刷新来源，确认由统一 gateway重新加载且不会清空其它封面缓存。
-
 ## P1：首页与缓存身份
-
 - 设备验证本轮 primary projection 到第一封面请求的时序，并确认 native prewarm、整本队列 restore、外部插件 activation 不再位于 Home 首帧关键路径。
 - 设备验证首页多封面快慢混合时的渐进显示：确认 `homeCoverFirstFrame` 按封面独立推进，不被 durable response 串行写入或其它慢封面形成全局等待。
 - 验证封面 URL/token 变化仍命中 stable cover key，verified artifact equivalence不会污染无证据页面。

@@ -89,7 +89,7 @@ else:
         require(
             'packages/sessions/lib/src/net_lane.dart',
             '_schedulePreemptionCandidateWake(blockedHighPriority);',
-            '_hasPreemptionInFlight',
+            '_hasBodyPermitPreemptionInFlight' if build >= 270 else '_hasPreemptionInFlight',
         )
         require(
             'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',

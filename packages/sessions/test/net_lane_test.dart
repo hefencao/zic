@@ -1340,7 +1340,7 @@ void _dev123NetLaneTests() {
 
     await first.whenCancelled.timeout(const Duration(seconds: 1));
     expect(
-      first.preemptionSnapshot?.reason,
+      first.retentionEvictionSnapshot?.reason,
       'inactive-response-retention-eviction',
     );
     expect(second.cancelled, isFalse);
@@ -1348,6 +1348,104 @@ void _dev123NetLaneTests() {
     expect(lane.inactiveParkedResponses, lessThanOrEqualTo(1));
 
     second.cancel();
+    await lane.idle();
+  });
+
+  test(
+      'inactive retention eviction never blocks current read-permit preemption',
+      () async {
+    final lane = NetLane(
+      maxActive: 1,
+      maxInactiveParkedResponses: 0,
+      reservedHighPrioritySlots: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+    );
+    final evictionStarted = Completer<CancelToken>();
+    final evictionCancelled = Completer<void>();
+    final evictionExit = Completer<void>();
+
+    lane.submitRanked(
+      key: 'inactive-retention',
+      priority: 0,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (token) async {
+        evictionStarted.complete(token);
+        await token.whenCancelled;
+        evictionCancelled.complete();
+        await evictionExit.future;
+      },
+    );
+    final inactive = await evictionStarted.future;
+    lane.updateDemanded('inactive-retention', false);
+    inactive.releaseResponseReadPermit();
+    await evictionCancelled.future.timeout(const Duration(seconds: 1));
+    expect(inactive.preemptionSnapshot, isNull);
+    expect(
+      inactive.retentionEvictionSnapshot?.reason,
+      'inactive-response-retention-eviction',
+    );
+
+    final parkedStarted = Completer<CancelToken>();
+    lane.submitRanked(
+      key: 'parked-current',
+      priority: 900,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (token) async {
+        parkedStarted.complete(token);
+        await token.whenCancelled;
+      },
+    );
+    final parked = await parkedStarted.future;
+    parked.releaseResponseReadPermit();
+
+    final lowStarted = Completer<CancelToken>();
+    final lowCancelled = Completer<void>();
+    lane.submitRanked(
+      key: 'low-receiving',
+      priority: 680,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (token) async {
+        lowStarted.complete(token);
+        await token.whenCancelled;
+        lowCancelled.complete();
+      },
+    );
+    final low = await lowStarted.future;
+
+    final handoffStarted = Completer<void>();
+    final handoffRelease = Completer<void>();
+    lane.submitRanked(
+      key: 'current-handoff',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (_) async {
+        handoffStarted.complete();
+        await handoffRelease.future;
+      },
+    );
+    await handoffStarted.future;
+    expect(lane.active, 2);
+
+    lane.updatePriority('parked-current', 1000);
+    final reacquired = parked.acquireResponseReadPermit();
+
+    await lowCancelled.future.timeout(const Duration(seconds: 1));
+    await reacquired.timeout(const Duration(seconds: 1));
+    expect(low.preemptionSnapshot?.reason, 'high-priority');
+    expect(parked.cancelled, isFalse);
+    expect(lane.responseReadPermitHeldOf('parked-current'), isTrue);
+    // Retention eviction is deliberately still unwinding here. It must not
+    // serialize or suppress the current body-read preemption transaction.
+    expect(evictionExit.isCompleted, isFalse);
+
+    parked.cancel();
+    handoffRelease.complete();
+    evictionExit.complete();
     await lane.idle();
   });
 

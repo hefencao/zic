@@ -1,7 +1,7 @@
-# dev.269 后续交接
+# dev.270 后续交接
+- dev.270：00:22 dev.269 Trace 中11次`downloadPreempted`全是inactive retention eviction，真实`high-priority`抢占为0；根因是后台inactive response淘汰复用`TaskPreemptionSnapshot/_hasPreemptionInFlight`，导致不占read permit的eviction也能锁死current body-read抢占。现拆为`TaskRetentionEvictionSnapshot/cancelForRetentionEviction`并记录`downloadEvicted`；current live-response reacquire优先于blocked high-priority pending destructive admission。normal5+reserved1和3/7、5/3/2/1不变。下一Trace先看`downloadPreempted=high-priority`与`downloadEvicted`是否独立。
 - dev.269：23:32 dev.268真机Trace中40次park→resume均保持同response，但17次`parked-response-eviction`有9次victim仍`demanded=true`；persistent artifact 9–18MiB body又同时受ArtifactCacheReadScheduler与remote NetLane permit约束。现demanded flow parking不再计入inactive retention，只有`demanded=false` live response受`maxInactiveParkedResponses`并可`inactive-response-retention-eviction`；Reader profile删除response容量owner。artifact-cache durable body确认authority即`releaseResponseReadPermit(responseRetained:false)`，本地body只归ArtifactCacheReadScheduler。下一Trace先核对`globalDemandedParkedResponses/globalInactiveParkedResponses`和`transport-read-permit`，不要再用3/7/Range/距离解释retention。
 - dev.268：14:54 dev.267真机Trace证明response lifetime仍绑定NetLane active slot：`pseudo-retained`最终会被normal `inactive-reclaim` cancel，Range-capable flow还会`pseudo-suspended`主动cancel iterator。现已改为两层资源：NetLane `active`=body-read permit，`running/parkedResponses`=live task/response；DownloadJob flow/demand park只释放permit并保持同一response，恢复同task重新申请permit。删除`retainFlowResponse/DownloadFlowSuspended/inactive-reclaim`生产路径；Reader parked池上限10，超限才`parked-response-eviction`。下一Trace优先核对`pseudo-parked→pseudo-resumed`之间无第二次`downloadStarted`，并确认normal pending不再销毁parked response。
-- dev.267：13:50 dev.266真机Trace证明99→98仅一页反向就切`readDirection=-1`并连续detach page102–106；dev.264–266属于在错误层补偿。现从dev.263网络基线重做working-set/physical-transfer lifetime分离：queued无claim可撤销；already-admitted active最后claim消失只降rank0并标记NetLane `demanded=false`，3/7 detach本身不cancel；只有新的demanded pending被真实normal/bucket容量堵塞时才可`inactive-reclaim`一个demanded=false active，仍有claim的task不可被normal reclaim。dev.264 flow-yield/dev.265 near flag废弃；方向为纯Pipeline状态，连续两次committed反向才确认，scrub/jump不学习且方向不拥有transport lifetime。dev.262 no-Range continuity、dev.263 Decode→Upload generation闭包保留。下一Trace先核对`readDirection + demandDetached + task demanded state + preemptionReason`，不要再按next2/previous3补例外。
 ## 必读
 1. `AGENTS.md`
 2. 本文件
@@ -9,8 +9,8 @@
 4. `docs/SPEC.md`
 5. `docs/IMPLEMENTATION_PLAN.md`
 6. `docs/IMPLEMENTATION_STATUS.md`
-7. `docs/adr/0247-demanded-parking-inactive-retention-separation.md`
-8. `docs/audits/dev269-parking-retention-owner-decoupling-audit.md`
+7. `docs/adr/0248-current-read-permit-preemption-retention-eviction-separation.md`、`docs/adr/0247-demanded-parking-inactive-retention-separation.md`
+8. `docs/audits/dev270-current-preemption-authority-audit.md`、`docs/audits/dev269-parking-retention-owner-decoupling-audit.md`
 9. `docs/adr/0122-current-reader-pipeline-authority-consolidation.md`
 8. `docs/adr/0118-unified-version-stable-cache-identities-and-verified-artifact-reuse.md`
 9. `docs/adr/0140-cloudflare-browser-session-history-and-plugin-persistence.md`

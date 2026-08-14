@@ -31,6 +31,7 @@ enum TraceEventKind {
   downloadStarted,
   downloadPriorityChanged,
   downloadPreempted,
+  downloadEvicted,
   bytesCommitted,
   artifactSealed,
   artifactPromoted,

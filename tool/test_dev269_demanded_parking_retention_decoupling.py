@@ -37,11 +37,24 @@ require(
     'task.responseRetainedWhilePermitReleased',
     'task.demanded ||',
     "reason: 'inactive-response-retention-eviction'",
-    'if (_hasPreemptionInFlight) return;',
+    'if (_hasBodyPermitPreemptionInFlight || _hasRetentionEvictionInFlight)' if int(m.group(1)) >= 270 else 'if (_hasPreemptionInFlight) return;',
     'void releaseResponseReadPermit({bool responseRetained = true})',
     '!task.demanded ||',
 )
 reject(net, 'maxParkedResponses', "reason: 'parked-response-eviction'")
+
+if int(m.group(1)) >= 270:
+    require(
+        net,
+        'cancelForRetentionEviction',
+        'TaskRetentionEvictionSnapshot',
+        '_hasRetentionEvictionInFlight',
+    )
+    require(
+        'packages/sessions/lib/src/download_transfer_owner.dart',
+        'TraceEventKind.downloadEvicted',
+        'retentionEvictionSnapshot',
+    )
 
 require(
     'packages/sessions/lib/src/download_job.dart',

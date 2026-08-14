@@ -61,7 +61,7 @@ else:
         lane,
         'Duration preemptionCandidateGrace = Duration.zero',
         '_preemptionCandidateReady(_Pending pending)',
-        '_hasPreemptionInFlight',
+        '_hasBodyPermitPreemptionInFlight' if build >= 270 else '_hasPreemptionInFlight',
         '_schedulePreemptionCandidateWake(blockedHighPriority);',
         'required this.highPrioritySinceMicros',
         'required this.incomingWaitMicros',

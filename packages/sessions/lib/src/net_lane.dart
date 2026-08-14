@@ -36,6 +36,7 @@ final class CancelToken implements PriorityObservableTaskControl {
   int? _restartCostStartedAtMicros;
   int _restartCostBytes = 0;
   TaskPreemptionSnapshot? _preemptionSnapshot;
+  TaskRetentionEvictionSnapshot? _retentionEvictionSnapshot;
   final Completer<void> _cancelledSignal = Completer<void>();
   final StreamController<int> _priorityChanges =
       StreamController<int>.broadcast(sync: true);
@@ -105,6 +106,8 @@ final class CancelToken implements PriorityObservableTaskControl {
 
   int get restartCostBytes => _restartCostBytes;
   TaskPreemptionSnapshot? get preemptionSnapshot => _preemptionSnapshot;
+  TaskRetentionEvictionSnapshot? get retentionEvictionSnapshot =>
+      _retentionEvictionSnapshot;
 
   void beginRestartCost() {
     _restartCostStartedAtMicros ??= _activatedAtMicros;
@@ -118,6 +121,12 @@ final class CancelToken implements PriorityObservableTaskControl {
   void cancelForPreemption(TaskPreemptionSnapshot snapshot) {
     if (_cancelled) return;
     _preemptionSnapshot = snapshot;
+    cancel();
+  }
+
+  void cancelForRetentionEviction(TaskRetentionEvictionSnapshot snapshot) {
+    if (_cancelled) return;
+    _retentionEvictionSnapshot = snapshot;
     cancel();
   }
 
@@ -182,6 +191,25 @@ final class TaskPreemptionSnapshot {
   final String reason;
 }
 
+
+
+final class TaskRetentionEvictionSnapshot {
+  const TaskRetentionEvictionSnapshot({
+    required this.basePriority,
+    required this.retentionPriority,
+    required this.retentionBonus,
+    required this.restartCostElapsedMicros,
+    required this.restartCostBytes,
+    this.reason = 'inactive-response-retention-eviction',
+  });
+
+  final int basePriority;
+  final int retentionPriority;
+  final int retentionBonus;
+  final int restartCostElapsedMicros;
+  final int restartCostBytes;
+  final String reason;
+}
 
 /// Scheduler-owned effective rank for one active network task.
 ///
@@ -848,15 +876,20 @@ final class _Lane {
       }
 
       if (nextPending == null && nextResume == null) {
+        // A live current response that only needs its body-read permit back is
+        // the cheapest authoritative high-priority request. Resolve that
+        // before considering destructive admission of a new high-priority
+        // task; response retention and current read-permit authority must not
+        // compete through a second scheduler policy.
+        final blockedResume = _highestBlockedHighPriorityResume();
+        if (blockedResume != null &&
+            _preemptLowestRunningForResume(blockedResume)) {
+          break;
+        }
         final blockedHighPriority = _highestBlockedHighPriorityPending();
         if (blockedHighPriority != null) {
           if (!_preemptLowestRunningFor(blockedHighPriority)) {
             _schedulePreemptionCandidateWake(blockedHighPriority);
-          }
-        } else {
-          final blockedResume = _highestBlockedHighPriorityResume();
-          if (blockedResume != null) {
-            _preemptLowestRunningForResume(blockedResume);
           }
         }
         break;
@@ -1005,7 +1038,13 @@ final class _Lane {
   }
 
   void _enforceInactiveParkedResponseBound() {
-    if (_hasPreemptionInFlight) return;
+    // Retention cleanup owns live-response capacity, not body-read capacity.
+    // A current body-read preemption has authority over this background
+    // cleanup, while an already-running retention eviction is tracked by its
+    // own single-flight transaction and never blocks current preemption.
+    if (_hasBodyPermitPreemptionInFlight || _hasRetentionEvictionInFlight) {
+      return;
+    }
     while (inactiveParkedResponses > maxInactiveParkedResponses) {
       MapEntry<String, _ActiveTask>? victim;
       for (final entry in _active.entries) {
@@ -1024,15 +1063,13 @@ final class _Lane {
       if (victim == null) return;
       final task = victim.value;
       final rank = _policyRank(task, basePriority: task.priority);
-      task.token.cancelForPreemption(
-        TaskPreemptionSnapshot(
-          incomingPriority: 0,
+      task.token.cancelForRetentionEviction(
+        TaskRetentionEvictionSnapshot(
           basePriority: task.priority,
           retentionPriority: rank.effectivePriority,
           retentionBonus: rank.retentionBonus,
           restartCostElapsedMicros: rank.restartCostElapsedMicros,
           restartCostBytes: rank.restartCostBytes,
-          incomingWaitMicros: 0,
           reason: 'inactive-response-retention-eviction',
         ),
       );
@@ -1054,9 +1091,14 @@ final class _Lane {
     return (_activeByBucket[bucket] ?? 0) < limit + allowance;
   }
 
-  bool get _hasPreemptionInFlight => _active.values.any(
+  bool get _hasBodyPermitPreemptionInFlight => _active.values.any(
         (task) =>
             task.token.cancelled && task.token.preemptionSnapshot != null,
+      );
+
+  bool get _hasRetentionEvictionInFlight => _active.values.any(
+        (task) => task.token.cancelled &&
+            task.token.retentionEvictionSnapshot != null,
       );
 
   int _preemptionCandidateAgeMicros(_Pending pending) {
@@ -1149,7 +1191,7 @@ final class _Lane {
   bool _preemptLowestRunningForResume(
     MapEntry<String, _ActiveTask> incoming,
   ) {
-    if (_hasPreemptionInFlight) return false;
+    if (_hasBodyPermitPreemptionInFlight) return false;
     final incomingTask = incoming.value;
     final incomingBucket = incomingTask.bucket;
     final incomingBucketLimit = incomingTask.bucketLimit;
@@ -1189,7 +1231,8 @@ final class _Lane {
   }
 
   bool _preemptLowestRunningFor(_Pending incoming) {
-    if (_hasPreemptionInFlight || !_preemptionCandidateReady(incoming)) {
+    if (_hasBodyPermitPreemptionInFlight ||
+        !_preemptionCandidateReady(incoming)) {
       return false;
     }
     final incomingBucket = incoming.bucket;
