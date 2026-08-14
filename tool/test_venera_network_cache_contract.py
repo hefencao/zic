@@ -15,9 +15,11 @@ def main() -> int:
     required = (
         'val cacheTime = rawHeaders.veneraControlHeader("cache-time")',
         'name.lowercase(Locale.US) !in VENERA_NETWORK_CONTROL_HEADERS',
-        'private val networkCache = VeneraHttpCache()',
+        'private val networkCache: VeneraHttpCacheStore',
+        'private val networkCacheNamespace: VeneraHttpCacheNamespace',
         'networkCache.lookup(',
-        'networkCache.store(cacheUrl, headers, result)',
+        'networkCache.store(',
+        'namespace = networkCacheNamespace',
         'cacheHeaders.put("venera-cache", "true")',
         'sourcePlanBridgeNetworkCacheHits',
         'sourcePlanBridgeNetworkOriginCalls',
@@ -33,7 +35,7 @@ def main() -> int:
         return 0
 
     response = re.search(
-        r'private data class VeneraHttpResponse\(.*?\n\}\n',
+        r'internal data class VeneraHttpResponse\(.*?\n\}\n',
         source,
         re.S,
     )
@@ -75,21 +77,23 @@ private fun encodeWireValue(value: Any?): Any? = value
             + constants.group(0)
             + '''
 fun main() {
-    val cache = VeneraHttpCache()
+    val cache = VeneraHttpCacheStore()
     val headers = linkedMapOf("Cookie" to "nw=1; session=a", "Accept-Encoding" to "gzip")
     val response = VeneraHttpResponse(200, JSONObject().put("content-type", "text/html"), "cached".encodeToByteArray())
-    cache.store("https://fixture/gallery", headers, response, nowNanos = 1_000L)
-    check(cache.lookup("https://fixture/gallery", headers, "long", nowNanos = 1_000L + 60L * 60L * 1_000_000_000L) != null)
-    check(cache.lookup("https://fixture/gallery", headers + ("Cookie" to "nw=1; session=b"), "long", nowNanos = 2_000L) == null)
+    cache.store(VeneraHttpCacheNamespace("plugin", "v1", "source-a"), "https://fixture/gallery", headers, response, nowNanos = 1_000L)
+    check(cache.lookup(VeneraHttpCacheNamespace("plugin", "v1", "source-a"), "https://fixture/gallery", headers, "long", nowNanos = 1_000L + 60L * 60L * 1_000_000_000L) != null)
+    check(cache.lookup(VeneraHttpCacheNamespace("plugin", "v1", "source-a"), "https://fixture/gallery", headers + ("Cookie" to "nw=1; session=b"), "long", nowNanos = 2_000L) == null)
+    check(cache.lookup(VeneraHttpCacheNamespace("plugin", "v1", "source-b"), "https://fixture/gallery", headers, "long", nowNanos = 2_000L) == null)
+    check(cache.lookup(VeneraHttpCacheNamespace("plugin", "v2", "source-a"), "https://fixture/gallery", headers, "long", nowNanos = 2_000L) == null)
     check(veneraCacheHeadersMatch(mapOf("Authorization" to "a", "Cookie" to "c"), mapOf("Authorization" to "b", "Cookie" to "c")))
     check(!veneraCacheHeadersMatch(mapOf("Cookie" to "a"), mapOf("Cookie" to "b")))
-    cache.store("https://fixture/short", headers, response, nowNanos = 10_000L)
-    check(cache.lookup("https://fixture/short", headers, null, nowNanos = 10_000L + 4L * 1_000_000_000L) != null)
-    check(cache.lookup("https://fixture/short", headers, null, nowNanos = 10_000L + 6L * 1_000_000_000L) == null)
-    cache.store("https://fixture/no", headers, response, nowNanos = 20_000L)
-    check(cache.lookup("https://fixture/no", headers, "no", nowNanos = 21_000L) == null)
-    check(cache.lookup("https://fixture/no", headers, "long", nowNanos = 22_000L) == null)
-    println("Venera source-requested network cache: OK")
+    cache.store(VeneraHttpCacheNamespace("plugin", "v1", "source-a"), "https://fixture/short", headers, response, nowNanos = 10_000L)
+    check(cache.lookup(VeneraHttpCacheNamespace("plugin", "v1", "source-a"), "https://fixture/short", headers, null, nowNanos = 10_000L + 4L * 1_000_000_000L) != null)
+    check(cache.lookup(VeneraHttpCacheNamespace("plugin", "v1", "source-a"), "https://fixture/short", headers, null, nowNanos = 10_000L + 6L * 1_000_000_000L) == null)
+    cache.store(VeneraHttpCacheNamespace("plugin", "v1", "source-a"), "https://fixture/no", headers, response, nowNanos = 20_000L)
+    check(cache.lookup(VeneraHttpCacheNamespace("plugin", "v1", "source-a"), "https://fixture/no", headers, "no", nowNanos = 21_000L) == null)
+    check(cache.lookup(VeneraHttpCacheNamespace("plugin", "v1", "source-a"), "https://fixture/no", headers, "long", nowNanos = 22_000L) == null)
+    println("Venera shared source-requested network cache: OK")
 }
 ''', encoding='utf-8')
         jar = work / 'cache.jar'

@@ -185,6 +185,7 @@ internal class VeneraRuntimeDriver private constructor(
             payloadLength: Long,
             payloadSha256: String,
             resolverHttp: VeneraResolverHttpTransport,
+            networkCache: VeneraHttpCacheStore,
             callback: (Result<VeneraRuntimeDriver>) -> Unit,
         ) {
             check(Looper.myLooper() == Looper.getMainLooper())
@@ -223,6 +224,12 @@ internal class VeneraRuntimeDriver private constructor(
                     maxResponseBytes = maxResponseBytes,
                     defaultUserAgent = webView.settings.userAgentString.orEmpty(),
                     resolverHttp = resolverHttp,
+                    networkCache = networkCache,
+                    networkCacheNamespace = VeneraHttpCacheNamespace(
+                        pluginId = pluginId,
+                        pluginVersion = pluginVersion,
+                        sourceKey = sourceKey,
+                    ),
                 )
                 webView.addJavascriptInterface(bridge, BRIDGE_NAME)
                 VeneraActivation(
@@ -363,6 +370,8 @@ private class VeneraNativeBridge(
     private val maxResponseBytes: Int,
     private val defaultUserAgent: String,
     private val resolverHttp: VeneraResolverHttpTransport,
+    private val networkCache: VeneraHttpCacheStore,
+    private val networkCacheNamespace: VeneraHttpCacheNamespace,
 ) : Closeable {
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences(
@@ -373,7 +382,6 @@ private class VeneraNativeBridge(
     private val nextImageKey = AtomicInteger(1)
     private val nativeBytes = LinkedHashMap<String, ByteArray>()
     private val cookieManager = CookieManager.getInstance()
-    private val networkCache = VeneraHttpCache()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
     @Volatile var resultSink: ((String, JSONObject) -> Unit)? = null
     @Volatile var finishedSink: ((String) -> Unit)? = null
@@ -545,6 +553,7 @@ private class VeneraNativeBridge(
             if (cacheEligible && redirectCount == 0) {
                 cacheRequestHeaders = LinkedHashMap(requestHeaders)
                 networkCache.lookup(
+                    namespace = networkCacheNamespace,
                     url = cacheUrl,
                     requestHeaders = requestHeaders,
                     cacheTime = cacheTime,
@@ -567,7 +576,12 @@ private class VeneraNativeBridge(
             ) {
                 if (cacheEligible) {
                     cacheRequestHeaders?.let { headers ->
-                        networkCache.store(cacheUrl, headers, result)
+                        networkCache.store(
+                            namespace = networkCacheNamespace,
+                            url = cacheUrl,
+                            requestHeaders = headers,
+                            response = result,
+                        )
                     }
                 }
                 return result
@@ -1012,7 +1026,6 @@ private class VeneraNativeBridge(
         finishedSink = null
         cancelled.clear()
         synchronized(nativeBytes) { nativeBytes.clear() }
-        networkCache.clear()
         releaseImages()
     }
 }
@@ -1094,7 +1107,7 @@ internal fun mergeVeneraCookieHeaders(
     .joinToString("; ")
     .takeIf(String::isNotEmpty)
 
-private data class VeneraHttpResponse(
+internal data class VeneraHttpResponse(
     val status: Int,
     val headers: JSONObject,
     val body: ByteArray,
@@ -1140,23 +1153,36 @@ private data class VeneraHttpCacheEntry(
     val size: Int,
 )
 
-private class VeneraHttpCache {
-    private val entries = LinkedHashMap<String, VeneraHttpCacheEntry>()
+internal data class VeneraHttpCacheNamespace(
+    val pluginId: String,
+    val pluginVersion: String,
+    val sourceKey: String,
+)
+
+private data class VeneraHttpCacheKey(
+    val namespace: VeneraHttpCacheNamespace,
+    val url: String,
+)
+
+internal class VeneraHttpCacheStore {
+    private val entries = LinkedHashMap<VeneraHttpCacheKey, VeneraHttpCacheEntry>()
     private var size = 0
 
     @Synchronized
     fun lookup(
+        namespace: VeneraHttpCacheNamespace,
         url: String,
         requestHeaders: Map<String, String>,
         cacheTime: String?,
         nowNanos: Long = System.nanoTime(),
     ): VeneraHttpResponse? {
-        val entry = entries[url] ?: return null
+        val key = VeneraHttpCacheKey(namespace, url)
+        val entry = entries[key] ?: return null
         if (!veneraCacheHeadersMatch(requestHeaders, entry.requestHeaders)) {
             return null
         }
         if (cacheTime.equals("no", ignoreCase = true)) {
-            remove(url)
+            remove(key)
             return null
         }
         val age = nowNanos - entry.storedAtNanos
@@ -1166,11 +1192,14 @@ private class VeneraHttpCache {
             age in 0 until VENERA_NETWORK_SHORT_CACHE_NANOS
         }
         if (!fresh) return null
+        entries.remove(key)
+        entries[key] = entry
         return entry.response.withVeneraCacheHit()
     }
 
     @Synchronized
     fun store(
+        namespace: VeneraHttpCacheNamespace,
         url: String,
         requestHeaders: Map<String, String>,
         response: VeneraHttpResponse,
@@ -1182,14 +1211,15 @@ private class VeneraHttpCache {
         ) {
             return
         }
-        remove(url)
+        val key = VeneraHttpCacheKey(namespace, url)
+        remove(key)
         while (entries.isNotEmpty() &&
             size + response.body.size > VENERA_NETWORK_MAX_CACHE_BYTES
         ) {
             remove(entries.keys.first())
         }
         if (response.body.size > VENERA_NETWORK_MAX_CACHE_BYTES) return
-        entries[url] = VeneraHttpCacheEntry(
+        entries[key] = VeneraHttpCacheEntry(
             requestHeaders = LinkedHashMap(requestHeaders),
             response = response.copy(
                 headers = JSONObject(response.headers.toString()),
@@ -1207,8 +1237,8 @@ private class VeneraHttpCache {
         size = 0
     }
 
-    private fun remove(url: String) {
-        entries.remove(url)?.let { size -= it.size }
+    private fun remove(key: VeneraHttpCacheKey) {
+        entries.remove(key)?.let { size -= it.size }
     }
 }
 

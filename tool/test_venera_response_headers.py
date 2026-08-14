@@ -11,7 +11,7 @@ source = (
     / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt'
 ).read_text()
 match = re.search(
-    r'(private data class VeneraHttpResponse\(.*?\n\}\n\nprivate fun veneraResponse\(.*?\n\})\n\nprivate fun JSONObject',
+    r'((?:private|internal) data class VeneraHttpResponse\(.*?\n\}\n\nprivate fun veneraResponse\(.*?\n\})\n\nprivate fun JSONObject',
     source,
     re.S,
 )

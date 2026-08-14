@@ -1,3 +1,9 @@
+## 0.31.0-dev.275：Venera resolver network cache owner 收口
+
+- 04:42 Trace确认dev.274 current/local→network rank已闭合；request-plan cache hit近乎零成本，而cold miss仍有明显长尾，初始current可出现4/4 bridge resolver origin，warm后多数为3 hit+1 page-specific origin。
+- source-requested `cache-time`从单`VeneraNativeBridge`私有cache迁到`NativeExternalPluginDriverHost`唯一`VeneraHttpCacheStore`；按`pluginId/pluginVersion/sourceKey`分区，bridge replacement不再机械清空long cache，host最终close统一清理。
+- 保留10MiB/1MiB边界、Cookie/request-header identity、约5秒/6小时TTL及Venera JS单invocation；不预解析整章、不增加runtime并发、不修改partial/NetLane/current参数。
+
 ## 0.31.0-dev.274：编译闭包与 local→network priority continuity
 
 - 修复dev.273 `Validators.isNotEmpty`编译错误：按transport真实契约使用`Validators.canResume`判断是否存在可续传validator。

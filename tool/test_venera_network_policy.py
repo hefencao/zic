@@ -32,10 +32,10 @@ def main() -> int:
         'normalizeVeneraAcceptEncoding',
     )
     merge_cookies = extract(
-        r'internal fun mergeVeneraCookieHeaders\(.*?\n\nprivate data class',
+        r'internal fun mergeVeneraCookieHeaders\(.*?\n(?=\n(?:private|internal) data class)',
         source,
         'mergeVeneraCookieHeaders',
-    ).removesuffix('\n\nprivate data class')
+    )
     kotlin = f'''package dev.zic.pluginhost
 
 import java.util.Locale

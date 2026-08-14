@@ -4,16 +4,20 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VENERA = (ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt').read_text(encoding='utf-8')
+HOST = (ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/NativeExternalPluginDriverHost.kt').read_text(encoding='utf-8')
 CHANGELOG = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
 ADR = ROOT / 'docs/adr/0174-venera-source-requested-network-cache.md'
 AUDIT = ROOT / 'docs/audits/dev191-venera-network-cache-root-cause-audit.md'
 
 for token in (
-    'private val networkCache = VeneraHttpCache()',
+    'internal class VeneraHttpCacheStore',
+    'private val networkCache: VeneraHttpCacheStore',
+    'private val networkCacheNamespace: VeneraHttpCacheNamespace',
     'val cacheTime = rawHeaders.veneraControlHeader("cache-time")',
     'VENERA_NETWORK_CONTROL_HEADERS',
     'networkCache.lookup(',
-    'networkCache.store(cacheUrl, headers, result)',
+    'networkCache.store(',
+    'namespace = networkCacheNamespace',
     'VENERA_NETWORK_LONG_CACHE_NANOS = 6L * 60L * 60L * 1_000_000_000L',
     'VENERA_NETWORK_MAX_CACHE_BYTES = 10 * 1024 * 1024',
     'VENERA_NETWORK_MAX_CACHE_ENTRY_BYTES = 1024 * 1024',
@@ -29,8 +33,14 @@ header_body = VENERA.split('private fun veneraRequestHeaders(', 1)[1].split('int
 if 'name.lowercase(Locale.US) !in VENERA_NETWORK_CONTROL_HEADERS' not in header_body:
     raise SystemExit('Venera control headers are still forwarded to origin')
 
-# Runtime cache must stay inside plugin bridge; page/artifact owners must not grow
-# a second cache or read its diagnostics as policy.
+# Runtime cache remains plugin-runtime-network state, now hosted above individual
+# bridge instances; page/artifact owners must not grow a second cache or read its
+# diagnostics as policy.
+for token in ('private val veneraNetworkCache = VeneraHttpCacheStore()', 'networkCache = veneraNetworkCache', 'veneraNetworkCache.clear()'):
+    if token not in HOST:
+        raise SystemExit(f'dev.191 shared Venera Network cache owner missing: {token}')
+if 'private val networkCache = VeneraHttpCache()' in VENERA:
+    raise SystemExit('obsolete per-bridge Venera Network cache owner returned')
 for relative in ('packages/sessions/lib', 'packages/pipeline_runtime/lib', 'apps/app/lib'):
     for path in (ROOT / relative).rglob('*.dart'):
         body = path.read_text(encoding='utf-8')

@@ -34,6 +34,7 @@ internal class NativeExternalPluginDriverHost(
     private val context: Context,
     private val veneraResolverHttp: VeneraResolverHttpTransport,
 ) : Closeable {
+    private val veneraNetworkCache = VeneraHttpCacheStore()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val worker: ExecutorService = Executors.newCachedThreadPool { runnable ->
         Thread(runnable, "zic-native-plugin-driver").apply { isDaemon = true }
@@ -116,6 +117,7 @@ internal class NativeExternalPluginDriverHost(
                         payloadLength = payloadLength,
                         payloadSha256 = payloadSha256,
                         resolverHttp = veneraResolverHttp,
+                        networkCache = veneraNetworkCache,
                     ) { driverResult ->
                         driverResult.fold(
                             onSuccess = { driver ->
@@ -220,6 +222,7 @@ internal class NativeExternalPluginDriverHost(
         val values = drivers.values.toList()
         drivers.clear()
         values.forEach { runCatching { it.close() } }
+        veneraNetworkCache.clear()
         veneraResolverHttp.close()
         worker.shutdownNow()
     }

@@ -1,7 +1,7 @@
-# dev.274 后续交接
-- dev.274：修复dev.273本地编译错误：`Validators`真实契约只有`isEmpty/canResume`，validator URI scope现用`Validators.canResume`。04:00 Trace另证明dev.272 pre-NetLane local prepare把priority ordering泄漏给异步完成时序：current=1000虽最先demand，却在820/760/740之后才`downloadStarted`。现local prepare完成只进入physical-owner local→network admission arbiter；lower ready work不得越过仍在prepare的higher demanded priority，随后才交给唯一NetLane。
-- dev.273 indexed durable partial read、dev.272 pre-NetLane local prepare/共享`ArtifactCacheReadScheduler`、dev.271 transport/source lease与body-read permit、dev.270 current preemption/retention eviction事务拆分继续冻结：normal稳态`globalTransportLeases<=5`、current handoff最多6；后台retention回收记录`downloadEvicted`且不得占current抢占事务。Venera JS仍`maxConcurrentInvocations=1`，不得以扩大runtime并发掩盖request-plan冷启动。
-- 冻结 previous3/next7、5/3/2/1、decode2/1、holder7/5/3/2、normal5+current reserved1；不得通过扩大连接数、缩窗口或预解析整章掩盖source/open owner问题。
+# dev.275 后续交接
+- dev.275：04:42 Trace确认dev.274 local→network rank连续性已闭合，priority1000 current第一个`downloadStarted`；剩余cold tail集中在Venera request-plan/runtime/host-open。source-requested `cache-time: long`此前错误绑定单`VeneraNativeBridge`并随bridge close清空，现迁到`NativeExternalPluginDriverHost`唯一`VeneraHttpCacheStore`，按plugin/version/source分区，同namespace bridge replacement继续复用；host最终close才清理。
+- dev.274 compile/local→network priority、dev.273 indexed durable partial read、dev.272 pre-NetLane local prepare/共享`ArtifactCacheReadScheduler`、dev.271 transport/source lease与body-read permit、dev.270 current preemption/retention eviction继续冻结：normal稳态`globalTransportLeases<=5`、current handoff最多6，后台retention只记录`downloadEvicted`且不得占current抢占事务。Venera JS仍`maxConcurrentInvocations=1`；不得用扩大runtime并发、整章预解析或回改partial/NetLane掩盖cold source owner。
+- 冻结 previous3/next7、5/3/2/1、decode2/1、holder7/5/3/2、normal5+current reserved1；下一份Trace先验证同plugin/version/source bridge replacement后long resolver cache仍命中，再分别看page-specific runtime invocation与host-open。
 ## 必读
 1. `AGENTS.md`
 2. 本文件
@@ -9,8 +9,8 @@
 4. `docs/SPEC.md`
 5. `docs/IMPLEMENTATION_PLAN.md`
 6. `docs/IMPLEMENTATION_STATUS.md`
-7. `docs/adr/0251-indexed-durable-partial-read-authority.md`、`docs/adr/0250-local-partial-hydration-before-network-admission.md`
-8. `docs/audits/dev273-durable-partial-read-owner-audit.md`、`docs/audits/dev272-local-partial-hydration-admission-root-cause-audit.md`
+7. `docs/adr/0253-venera-resolver-network-cache-owner.md`、`docs/adr/0252-local-prepare-network-priority-continuity.md`、`docs/adr/0251-indexed-durable-partial-read-authority.md`
+8. `docs/audits/dev275-venera-resolver-cache-lifetime-audit.md`、`docs/audits/dev274-compile-and-local-admission-priority-audit.md`、`docs/audits/dev273-durable-partial-read-owner-audit.md`
 9. `docs/adr/0122-current-reader-pipeline-authority-consolidation.md`
 8. `docs/adr/0118-unified-version-stable-cache-identities-and-verified-artifact-reuse.md`
 9. `docs/adr/0140-cloudflare-browser-session-history-and-plugin-persistence.md`

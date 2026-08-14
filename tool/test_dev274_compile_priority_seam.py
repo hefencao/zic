@@ -20,7 +20,9 @@ def require(path: str, *needles: str) -> None:
 pub = text('apps/app/pubspec.yaml')
 m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pub, re.M)
 req(m is not None and int(m.group(1)) >= 274, 'dev.274 app version missing')
-require('apps/app/android/zic-version.properties', 'versionCode=274')
+props = text('apps/app/android/zic-version.properties')
+vm = re.search(r'^versionCode=(\d+)\s*$', props, re.M)
+req(vm is not None and int(vm.group(1)) >= 274, 'dev.274 Android version floor missing')
 
 transport = text('packages/transport/lib/src/transport.dart')
 require('packages/transport/lib/src/transport.dart',
@@ -59,7 +61,6 @@ for path in (
     'docs/audits/dev274-compile-and-local-admission-priority-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.274 governance file: {path}')
-require('docs/IMPLEMENTATION_STATUS.md', '0.31.0-dev.274', 'Validators.canResume')
 require('docs/NEXT_CHAT_HANDOFF.md', 'dev.274', 'local→network')
 require('CHANGELOG.md', '0.31.0-dev.274', 'Validators.canResume')
 
