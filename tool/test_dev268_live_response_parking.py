@@ -27,6 +27,31 @@ m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pub, re.M)
 req(m is not None and int(m.group(1)) >= 268, 'App build must be >=268')
 require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
 
+if int(m.group(1)) >= 271:
+    require(
+        'packages/sessions/lib/src/net_lane.dart',
+        'int get transportLeases => _core.transportLeases;',
+        'bool transportLeaseHeld;',
+        'Future<void> acquireResponseReadPermit()',
+        'void releaseResponseReadPermit({bool responseRetained = true})',
+        "reason: 'inactive-transport-lease-reclaim'",
+    )
+    reject(
+        'packages/sessions/lib/src/net_lane.dart',
+        'maxInactiveParkedResponses',
+        'maxParkedResponses',
+        "reason: 'parked-response-eviction'",
+    )
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        'await control.acquireResponseReadPermit();',
+        'control.releaseResponseReadPermit();',
+        'The StreamIterator stays alive and no body read is requested here.',
+    )
+    require('docs/adr/0249-transport-lease-body-read-permit-separation.md', 'transport/source lease', 'body-read permit')
+    print('PASS: dev.268 live-response parking preserved under dev.271 transport-lease ownership')
+    raise SystemExit(0)
+
 if int(m.group(1)) >= 269:
     require(
         'packages/sessions/lib/src/net_lane.dart',

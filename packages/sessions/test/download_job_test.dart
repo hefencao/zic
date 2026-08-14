@@ -753,7 +753,7 @@ void main() {
     );
   });
 
-  test('parked response frees NetLane read slot and later reuses same stream',
+  test('parked response frees read permit while retaining same transport stream',
       () async {
     final trace = MemoryTraceSink();
     final bytes = _flowAnimatedWebp(List<int>.filled(24, 48));
@@ -782,12 +782,10 @@ void main() {
       firstFrameRequiredSourceLength: 0,
     );
     final transport = _ConsumerPacedBodyTransport(bytes, chunkSize: 31);
-    final lane = NetLane(maxActive: 1, maxInactiveParkedResponses: 2);
+    final lane = NetLane(maxActive: 1);
     late CancelToken firstToken;
     late Future<DownloadSnapshot> firstRun;
     final firstStarted = Completer<void>();
-    final secondStarted = Completer<void>();
-    final secondRelease = Completer<void>();
 
     lane.submitRanked(
       key: 'first-response',
@@ -807,36 +805,18 @@ void main() {
     await firstStarted.future;
     await _waitForFlowAction(trace, 'pseudo-parked', targetFrames: 1);
     expect(lane.active, 0,
-        reason: 'parked response must release the bounded read permit');
+        reason: 'parked response releases only the bounded read permit');
+    expect(lane.transportLeases, 1,
+        reason: 'the same live HTTP/source response remains admitted');
     expect(lane.running, 1);
-    expect(lane.readPermitReleasedTasks, 1);
     expect(transport.openCount, 1);
-
-    lane.submitRanked(
-      key: 'second-response',
-      priority: 780,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      task: (_) async {
-        secondStarted.complete();
-        await secondRelease.future;
-      },
-    );
-    await secondStarted.future;
-    expect(lane.active, 1);
-    expect(lane.running, 2);
 
     lane.updateFlowTargetFrames('first-response', 0);
-    await Future<void>.delayed(Duration.zero);
-    expect(lane.responseReadPermitHeldOf('first-response'), isFalse,
-        reason: 'resume waits for a permit without reopening the response');
-    expect(transport.openCount, 1);
-
-    secondRelease.complete();
     final result = await firstRun.timeout(const Duration(seconds: 2));
     expect(result.state, DownloadState.promoted);
     expect(firstToken.cancelled, isFalse);
-    expect(transport.openCount, 1);
+    expect(transport.openCount, 1,
+        reason: 'resume must continue the original response, not reopen it');
     await lane.idle();
   });
 
@@ -889,6 +869,8 @@ void main() {
     }
     expect(lane.active, 0,
         reason: 'artifact-cache body must release the network read permit');
+    expect(lane.transportLeases, 0,
+        reason: 'durable local body must also release the source transport lease');
     expect(lane.running, 1);
     expect(
       trace.events.any(

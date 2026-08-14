@@ -1,3 +1,9 @@
+## 0.31.0-dev.271：transport/source lease 与 body-read permit 解耦
+
+- 01:26 dev.270真机Trace确认连接阶段回归：source-loader open中位约1.60s/P90约3.42s，origin request-plan中位约1.02s；同时`globalRunning`达到17–20且观测origin均为HTTP/1.1。dev.268把normal5只保留为body-read permit后，parked live response虽不读body却仍占真实source/socket，实际transport并发绕过5路。
+- NetLane新增独立`transportLeases`资源：live source response park只释放body-read permit而继续占transport lease；durable artifact local body同时释放两者。normal5+current reserved1同时界定transport/source lease与body-read permit，`globalRunning`仅表示physical task数。
+- 删除独立`maxInactiveParkedResponses`容量owner。新的normal transport pressure只可typed回收`demanded=false` inactive parked lease（`inactive-transport-lease-reclaim`）；仍有demand的parked response不成为normal victim。current 1000、reserved1、restart-cost rank、3/7、5/3/2/1均不变。
+
 ## 0.31.0-dev.270：current body-read preemption 与 inactive retention eviction 事务解耦
 
 - 00:22 dev.269 真机 Trace 中 11 次 `downloadPreempted` 全为 `inactive-response-retention-eviction`，真正 `high-priority` current preemption 为 0。源码审计确认 inactive parked response 淘汰仍复用 `cancelForPreemption/TaskPreemptionSnapshot`，导致不占 read permit 的后台 response eviction 也占用 `_hasPreemptionInFlight`，可阻塞 current 对 body-read permit 的抢占。

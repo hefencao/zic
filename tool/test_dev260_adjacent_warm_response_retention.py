@@ -31,8 +31,8 @@ if build >= 269:
         'packages/sessions/lib/src/net_lane.dart',
         'releaseResponseReadPermit',
         'acquireResponseReadPermit',
-        'maxInactiveParkedResponses',
         'demandedParkedResponses',
+        'transportLeases' if build >= 271 else 'maxInactiveParkedResponses',
     )
     require('packages/sessions/lib/src/download_job.dart', ": 'pseudo-parked'", ": 'pseudo-resumed'", 'responseRetained: true')
     for path in ('packages/pipeline/lib/src/demand.dart', 'packages/sessions/lib/src/net_lane.dart', 'packages/sessions/lib/src/download_job.dart'):

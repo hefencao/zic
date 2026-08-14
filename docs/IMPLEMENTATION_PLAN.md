@@ -1,5 +1,5 @@
 
-# zic Implementation Plan
+- P0：真机验证transport/source lease与body-read permit已解耦：normal steady state `globalTransportLeases<=5`、current handoff最多6；parked live response不得释放transport lease，durable artifact local body必须释放两者。比较`sourceRequestPlanMicros/sourcePlanGateWaitMicros/sourceHostOpenMicros`相对dev.270是否回落；若仍慢，分别下钻Venera单invocation gate与host open，不扩大连接数或缩3/7。
 - P0：真机验证 current body-read 抢占与 inactive response retention 淘汰已解耦：`downloadPreempted`只允许表示priority/body-read preemption，后台 retention destruction只记录`downloadEvicted`；一个正在退出的inactive response不得阻塞current live response reacquire。继续验证`demanded=true` flow-paused response不成为retention victim、artifact-cache durable body释放remote NetLane permit，并独立统计重复persistent artifact session-copy，不用提高session/response缓存数量掩盖。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。

@@ -200,7 +200,7 @@ final class TaskRetentionEvictionSnapshot {
     required this.retentionBonus,
     required this.restartCostElapsedMicros,
     required this.restartCostBytes,
-    this.reason = 'inactive-response-retention-eviction',
+    this.reason = 'inactive-transport-lease-reclaim',
   });
 
   final int basePriority;
@@ -271,7 +271,6 @@ final class NetLane implements TaskLane {
     int highPriorityThreshold = 1000,
     int preemptionThreshold = 40,
     Duration preemptionCandidateGrace = Duration.zero,
-    int maxInactiveParkedResponses = 10,
     MonoClock clock = const SystemClock(),
     LaneError? onError,
   }) : _core = _Lane(
@@ -280,7 +279,6 @@ final class NetLane implements TaskLane {
           highPriorityThreshold: highPriorityThreshold,
           preemptionThreshold: preemptionThreshold,
           preemptionCandidateGrace: preemptionCandidateGrace,
-          maxInactiveParkedResponses: maxInactiveParkedResponses,
           clock: clock,
           onError: onError,
         );
@@ -297,7 +295,6 @@ final class NetLane implements TaskLane {
   int get readPermitReleasedTasks => _core.readPermitReleasedTasks;
   int get demandedParkedResponses => _core.demandedParkedResponses;
   int get inactiveParkedResponses => _core.inactiveParkedResponses;
-  int get maxInactiveParkedResponses => _core.maxInactiveParkedResponses;
   @override
   bool get isIdle => _core.isIdle;
   @override
@@ -328,6 +325,9 @@ final class NetLane implements TaskLane {
   Future<void> idleKeys(Iterable<String> keys) => _core.idleKeys(keys);
 
   int activeForBucket(String bucket) => _core.activeForBucket(bucket);
+  int get transportLeases => _core.transportLeases;
+  int transportLeasesForBucket(String bucket) =>
+      _core.transportLeasesForBucket(bucket);
   int get handoffActive => _core.handoffActive;
   int? priorityOf(String key) => _core.priorityOf(key);
   bool isActive(String key) => _core.isActive(key);
@@ -347,6 +347,8 @@ final class NetLane implements TaskLane {
   bool? demandedOf(String key) => _core.demandedOf(key);
   bool? responseReadPermitHeldOf(String key) =>
       _core.responseReadPermitHeldOf(key);
+  bool? transportLeaseHeldOf(String key) =>
+      _core.transportLeaseHeldOf(key);
 
   @override
   bool replace({required String key, required int priority, required LaneTask task}) =>
@@ -492,17 +494,14 @@ final class _Lane {
     this.highPriorityThreshold = 1 << 30,
     this.preemptionThreshold = 1 << 30,
     this.preemptionCandidateGrace = Duration.zero,
-    this.maxInactiveParkedResponses = 10,
     this.clock = const SystemClock(),
     this.onError,
   })  : assert(maxActive > 0),
         assert(reservedHighPrioritySlots >= 0),
         assert(preemptionThreshold >= 0),
-        assert(!preemptionCandidateGrace.isNegative),
-        assert(maxInactiveParkedResponses >= 0);
+        assert(!preemptionCandidateGrace.isNegative);
 
   final int maxActive;
-  final int maxInactiveParkedResponses;
   final int reservedHighPrioritySlots;
   final int highPriorityThreshold;
   final int preemptionThreshold;
@@ -512,17 +511,20 @@ final class _Lane {
   final Map<String, _Pending> _pending = <String, _Pending>{};
   final Map<String, _ActiveTask> _active = <String, _ActiveTask>{};
   final Map<String, int> _activeByBucket = <String, int>{};
+  final Map<String, int> _transportLeasesByBucket = <String, int>{};
   final List<Completer<void>> _idleWaiters = <Completer<void>>[];
   final List<_KeyIdleWaiter> _keyIdleWaiters = <_KeyIdleWaiter>[];
   Timer? _preemptionWake;
   int? _preemptionWakeAtMicros;
   int _seq = 0;
   int _receivingActive = 0;
+  int _transportLeasesActive = 0;
   int _parkSeq = 0;
 
   int get queued => _pending.length;
   int get active => _receivingActive;
   int get running => _active.length;
+  int get transportLeases => _transportLeasesActive;
   int get readPermitReleasedTasks =>
       _active.values.where((task) => !task.responseReadPermitHeld).length;
   int get demandedParkedResponses => _active.values
@@ -538,7 +540,10 @@ final class _Lane {
           !task.demanded)
       .length;
   int get handoffActive {
-    var excess = math.max(0, active - maxActive);
+    var excess = math.max(
+      math.max(0, active - maxActive),
+      math.max(0, transportLeases - maxActive),
+    );
     final limits = <String, int>{};
     for (final task in _active.values) {
       final bucket = task.bucket;
@@ -550,6 +555,13 @@ final class _Lane {
         excess,
         math.max(0, (_activeByBucket[entry.key] ?? 0) - entry.value),
       );
+      excess = math.max(
+        excess,
+        math.max(
+          0,
+          (_transportLeasesByBucket[entry.key] ?? 0) - entry.value,
+        ),
+      );
     }
     return excess;
   }
@@ -557,6 +569,8 @@ final class _Lane {
   bool get isIdle => _pending.isEmpty && _active.isEmpty;
 
   int activeForBucket(String bucket) => _activeByBucket[bucket] ?? 0;
+  int transportLeasesForBucket(String bucket) =>
+      _transportLeasesByBucket[bucket] ?? 0;
   bool isActive(String key) => _active.containsKey(key);
   int? priorityOf(String key) =>
       _active[key]?.priority ?? _pending[key]?.priority;
@@ -663,13 +677,9 @@ final class _Lane {
       if (activeTask.demanded == demanded) return true;
       activeTask.demanded = demanded;
       activeTask.token.updateDemanded(demanded);
-      // Demand membership and response retention are independent. A demanded
-      // flow-paused response is required live work and never consumes the
-      // inactive-retention budget. Only an already parked response that loses
-      // its final consumer becomes eligible for bounded inactive retention.
-      if (!demanded && !activeTask.responseReadPermitHeld) {
-        _enforceInactiveParkedResponseBound();
-      }
+      // Demand membership does not own transport lifetime. An inactive
+      // retained response keeps its transport lease until real lease pressure
+      // needs that bounded network resource.
       _pump();
       return true;
     }
@@ -685,6 +695,8 @@ final class _Lane {
       _active[key]?.demanded ?? _pending[key]?.demanded;
   bool? responseReadPermitHeldOf(String key) =>
       _active[key]?.responseReadPermitHeld;
+  bool? transportLeaseHeldOf(String key) =>
+      _active[key]?.transportLeaseHeld;
 
   void _updatePendingPriority(_Pending pending, int priority) {
     final previous = pending.priority;
@@ -808,12 +820,28 @@ final class _Lane {
   bool _containsAny(Set<String> keys) =>
       keys.any((key) => _pending.containsKey(key) || _active.containsKey(key));
 
-  bool _bucketAvailable(_Pending pending, {required bool handoff}) {
+  bool _pendingBucketAvailable(
+    _Pending pending, {
+    required bool handoff,
+  }) {
     final bucket = pending.bucket;
     final limit = pending.bucketLimit;
     if (bucket == null || limit == null) return true;
     final allowance = handoff ? 1 : 0;
-    return (_activeByBucket[bucket] ?? 0) < limit + allowance;
+    return (_activeByBucket[bucket] ?? 0) < limit + allowance &&
+        (_transportLeasesByBucket[bucket] ?? 0) < limit + allowance;
+  }
+
+  bool _transportLeaseAvailableForPending(
+    _Pending pending, {
+    required bool handoff,
+  }) {
+    final allowance = handoff ? reservedHighPrioritySlots : 0;
+    if (_transportLeasesActive >= maxActive + allowance) return false;
+    final bucket = pending.bucket;
+    final limit = pending.bucketLimit;
+    if (bucket == null || limit == null) return true;
+    return (_transportLeasesByBucket[bucket] ?? 0) < limit + allowance;
   }
 
   void _pump() {
@@ -825,15 +853,21 @@ final class _Lane {
         final handoff = highPriority && _needsHandoff(pending);
         if (!handoff &&
             (_receivingActive >= maxActive ||
-                !_bucketAvailable(pending, handoff: false))) {
+                _transportLeasesActive >= maxActive ||
+                !_pendingBucketAvailable(pending, handoff: false))) {
           return false;
         }
         if (handoff &&
             (reservedHighPrioritySlots <= 0 ||
-                _receivingActive >= handoffCapacity)) {
+                _receivingActive >= handoffCapacity ||
+                _transportLeasesActive >= handoffCapacity)) {
           return false;
         }
-        return _bucketAvailable(pending, handoff: handoff);
+        return _pendingBucketAvailable(pending, handoff: handoff) &&
+            _transportLeaseAvailableForPending(
+              pending,
+              handoff: handoff,
+            );
       }).toList(growable: false);
       final resumeEligible = _active.entries.where((entry) {
         final task = entry.value;
@@ -886,6 +920,9 @@ final class _Lane {
             _preemptLowestRunningForResume(blockedResume)) {
           break;
         }
+        if (_reclaimInactiveTransportLeaseForDemand()) {
+          break;
+        }
         final blockedHighPriority = _highestBlockedHighPriorityPending();
         if (blockedHighPriority != null) {
           if (!_preemptLowestRunningFor(blockedHighPriority)) {
@@ -930,10 +967,12 @@ final class _Lane {
         preemptible: next.preemptible,
         flowTargetFrames: next.flowTargetFrames,
         demanded: next.demanded,
+        transportLeaseHeld: true,
         responseReadPermitHeld: true,
         responseRetainedWhilePermitReleased: false,
         resumeSeq: _seq++,
       );
+      _incrementTransportLease(next.bucket);
       _incrementResponseReadPermit(next.bucket);
       unawaited(
         Future<void>.sync(() => next.task(token)).catchError(
@@ -948,9 +987,11 @@ final class _Lane {
             if (removed.responseReadPermitHeld) {
               _decrementResponseReadPermit(removed.bucket);
             }
+            if (removed.transportLeaseHeld) {
+              _decrementTransportLease(removed.bucket);
+            }
             removed.token.dispose();
           }
-          _enforceInactiveParkedResponseBound();
           _pump();
           _notifyIdle();
         }),
@@ -977,6 +1018,25 @@ final class _Lane {
     }
   }
 
+  void _incrementTransportLease(String? bucket) {
+    _transportLeasesActive += 1;
+    if (bucket != null) {
+      _transportLeasesByBucket[bucket] =
+          (_transportLeasesByBucket[bucket] ?? 0) + 1;
+    }
+  }
+
+  void _decrementTransportLease(String? bucket) {
+    _transportLeasesActive = math.max(0, _transportLeasesActive - 1);
+    if (bucket == null) return;
+    final remaining = (_transportLeasesByBucket[bucket] ?? 1) - 1;
+    if (remaining <= 0) {
+      _transportLeasesByBucket.remove(bucket);
+    } else {
+      _transportLeasesByBucket[bucket] = remaining;
+    }
+  }
+
   void _releaseResponseReadPermit(
     String key,
     CancelToken token, {
@@ -996,7 +1056,10 @@ final class _Lane {
     task.resumeCompleter = null;
     if (waiter != null && !waiter.isCompleted) waiter.complete();
     _decrementResponseReadPermit(task.bucket);
-    _enforceInactiveParkedResponseBound();
+    if (!responseRetained && task.transportLeaseHeld) {
+      task.transportLeaseHeld = false;
+      _decrementTransportLease(task.bucket);
+    }
     _pump();
   }
 
@@ -1023,8 +1086,9 @@ final class _Lane {
   }
 
   void _grantResponseReadPermit(String key, _ActiveTask task) {
-    if (task.responseReadPermitHeld || !task.resumeRequested ||
-        !task.demanded || task.token.cancelled || _active[key] != task) {
+    if (task.responseReadPermitHeld || !task.transportLeaseHeld ||
+        !task.resumeRequested || !task.demanded || task.token.cancelled ||
+        _active[key] != task) {
       return;
     }
     task
@@ -1037,44 +1101,61 @@ final class _Lane {
     if (waiter != null && !waiter.isCompleted) waiter.complete();
   }
 
-  void _enforceInactiveParkedResponseBound() {
-    // Retention cleanup owns live-response capacity, not body-read capacity.
-    // A current body-read preemption has authority over this background
-    // cleanup, while an already-running retention eviction is tracked by its
-    // own single-flight transaction and never blocks current preemption.
+  bool _reclaimInactiveTransportLeaseForDemand() {
     if (_hasBodyPermitPreemptionInFlight || _hasRetentionEvictionInFlight) {
-      return;
+      return false;
     }
-    while (inactiveParkedResponses > maxInactiveParkedResponses) {
-      MapEntry<String, _ActiveTask>? victim;
-      for (final entry in _active.entries) {
-        final task = entry.value;
-        if (task.responseReadPermitHeld ||
-            !task.responseRetainedWhilePermitReleased ||
-            task.demanded ||
-            task.token.cancelled) {
-          continue;
-        }
-        if (victim == null ||
-            _inactiveParkedVictimBefore(task, victim.value)) {
-          victim = entry;
-        }
+    _Pending? incoming;
+    for (final pending in _pending.values) {
+      if (!pending.demanded ||
+          _active.containsKey(pending.key) ||
+          _transportLeaseAvailableForPending(pending, handoff: false)) {
+        continue;
       }
-      if (victim == null) return;
-      final task = victim.value;
-      final rank = _policyRank(task, basePriority: task.priority);
-      task.token.cancelForRetentionEviction(
-        TaskRetentionEvictionSnapshot(
-          basePriority: task.priority,
-          retentionPriority: rank.effectivePriority,
-          retentionBonus: rank.retentionBonus,
-          restartCostElapsedMicros: rank.restartCostElapsedMicros,
-          restartCostBytes: rank.restartCostBytes,
-          reason: 'inactive-response-retention-eviction',
-        ),
-      );
-      return;
+      if (incoming == null ||
+          pending.priority > incoming.priority ||
+          (pending.priority == incoming.priority &&
+              pending.seq < incoming.seq)) {
+        incoming = pending;
+      }
     }
+    if (incoming == null) return false;
+
+    final bucket = incoming.bucket;
+    final limit = incoming.bucketLimit;
+    final bucketFull = bucket != null &&
+        limit != null &&
+        (_transportLeasesByBucket[bucket] ?? 0) >= limit;
+    MapEntry<String, _ActiveTask>? victim;
+    for (final entry in _active.entries) {
+      final task = entry.value;
+      if (!task.transportLeaseHeld ||
+          task.responseReadPermitHeld ||
+          !task.responseRetainedWhilePermitReleased ||
+          task.demanded ||
+          task.token.cancelled) {
+        continue;
+      }
+      if (bucketFull && task.bucket != bucket) continue;
+      if (victim == null ||
+          _inactiveParkedVictimBefore(task, victim.value)) {
+        victim = entry;
+      }
+    }
+    if (victim == null) return false;
+    final task = victim.value;
+    final rank = _policyRank(task, basePriority: task.priority);
+    task.token.cancelForRetentionEviction(
+      TaskRetentionEvictionSnapshot(
+        basePriority: task.priority,
+        retentionPriority: rank.effectivePriority,
+        retentionBonus: rank.retentionBonus,
+        restartCostElapsedMicros: rank.restartCostElapsedMicros,
+        restartCostBytes: rank.restartCostBytes,
+        reason: 'inactive-transport-lease-reclaim',
+      ),
+    );
+    return true;
   }
 
   bool _inactiveParkedVictimBefore(_ActiveTask a, _ActiveTask b) {
@@ -1153,12 +1234,15 @@ final class _Lane {
   }
 
   bool _needsHandoff(_Pending pending) {
-    if (_receivingActive >= maxActive) return true;
+    if (_receivingActive >= maxActive ||
+        _transportLeasesActive >= maxActive) {
+      return true;
+    }
     final bucket = pending.bucket;
     final limit = pending.bucketLimit;
-    return bucket != null &&
-        limit != null &&
-        (_activeByBucket[bucket] ?? 0) >= limit;
+    if (bucket == null || limit == null) return false;
+    return (_activeByBucket[bucket] ?? 0) >= limit ||
+        (_transportLeasesByBucket[bucket] ?? 0) >= limit;
   }
 
   bool _activeNeedsHandoff(_ActiveTask task) {
@@ -1237,15 +1321,26 @@ final class _Lane {
     }
     final incomingBucket = incoming.bucket;
     final incomingBucketLimit = incoming.bucketLimit;
-    final bucketFull = incomingBucket != null &&
+    final readBucketFull = incomingBucket != null &&
         incomingBucketLimit != null &&
         (_activeByBucket[incomingBucket] ?? 0) >= incomingBucketLimit;
+    final transportBucketFull = incomingBucket != null &&
+        incomingBucketLimit != null &&
+        (_transportLeasesByBucket[incomingBucket] ?? 0) >=
+            incomingBucketLimit;
+    final readFull = _receivingActive >= maxActive || readBucketFull;
+    final transportFull =
+        _transportLeasesActive >= maxActive || transportBucketFull;
     _ActiveTask? lowest;
     var lowestRetentionPriority = 1 << 30;
     for (final task in _active.values) {
-      if (!task.responseReadPermitHeld || !task.preemptible ||
-          task.token.cancelled) continue;
-      if (bucketFull && task.bucket != incomingBucket) continue;
+      if (!task.preemptible || task.token.cancelled) continue;
+      if (readFull && !task.responseReadPermitHeld) continue;
+      if (transportFull && !task.transportLeaseHeld) continue;
+      if ((readBucketFull || transportBucketFull) &&
+          task.bucket != incomingBucket) {
+        continue;
+      }
       final rank = _policyRank(task, basePriority: task.priority);
       if (!incomingOutranks(incoming.priority, rank)) continue;
       if (lowest == null || rank.effectivePriority < lowestRetentionPriority) {
@@ -1391,6 +1486,7 @@ final class _ActiveTask {
     required this.preemptible,
     required this.flowTargetFrames,
     required this.demanded,
+    required this.transportLeaseHeld,
     required this.responseReadPermitHeld,
     required this.responseRetainedWhilePermitReleased,
     required this.resumeSeq,
@@ -1403,6 +1499,7 @@ final class _ActiveTask {
   bool preemptible;
   int flowTargetFrames;
   bool demanded;
+  bool transportLeaseHeld;
   bool responseReadPermitHeld;
   bool responseRetainedWhilePermitReleased;
   bool resumeRequested = false;

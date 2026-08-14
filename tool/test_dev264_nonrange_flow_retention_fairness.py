@@ -16,7 +16,8 @@ for stale in ('flowRetentionYieldable','requestFlowYield','_requestYieldableFlow
     req(stale not in net,f'superseded slot-reclaim residue: {stale}')
 req("action: 'pseudo-yielded'" not in job,'dev.264 DownloadJob pseudo-yield path must be removed')
 if build >= 269:
-    for token in ('int get running => _core.running;','int get demandedParkedResponses => _core.demandedParkedResponses;','int get inactiveParkedResponses => _core.inactiveParkedResponses;','releaseResponseReadPermit','acquireResponseReadPermit',"reason: 'inactive-response-retention-eviction'"):
+    replacement_reason = ("reason: 'inactive-transport-lease-reclaim'" if build >= 271 else "reason: 'inactive-response-retention-eviction'")
+    for token in ('int get running => _core.running;','int get demandedParkedResponses => _core.demandedParkedResponses;','int get inactiveParkedResponses => _core.inactiveParkedResponses;','releaseResponseReadPermit','acquireResponseReadPermit',replacement_reason):
         req(token in net,f'dev.269 response parking replacement missing: {token}')
     req("reason: 'parked-response-eviction'" not in net,'dev.268 mixed parked-pool eviction must be superseded')
 else:

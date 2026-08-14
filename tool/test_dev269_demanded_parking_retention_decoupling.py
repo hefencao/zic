@@ -28,6 +28,31 @@ req(m is not None and int(m.group(1)) >= 269, 'App build must be >=269')
 require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
 
 net = 'packages/sessions/lib/src/net_lane.dart'
+if int(m.group(1)) >= 271:
+    require(
+        net,
+        'int get demandedParkedResponses => _core.demandedParkedResponses;',
+        'int get inactiveParkedResponses => _core.inactiveParkedResponses;',
+        'int get transportLeases => _core.transportLeases;',
+        'bool transportLeaseHeld;',
+        "reason: 'inactive-transport-lease-reclaim'",
+        'void releaseResponseReadPermit({bool responseRetained = true})',
+    )
+    reject(net, 'maxInactiveParkedResponses', 'maxParkedResponses')
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        'cancel?.releaseResponseReadPermit(responseRetained: false);',
+        "reason: 'durable-artifact-local-body'",
+        'ByteResponseBodyAuthority.artifactCache',
+    )
+    require(
+        'packages/sessions/lib/src/download_transfer_owner.dart',
+        "'globalTransportLeases': net.transportLeases",
+        "'bucketTransportLeases': net.transportLeasesForBucket(bucket)",
+    )
+    require('docs/adr/0249-transport-lease-body-read-permit-separation.md', 'inactive', 'artifact')
+    print('PASS: dev.269 demand/artifact decoupling preserved under dev.271 transport leases')
+    raise SystemExit(0)
 require(
     net,
     'int maxInactiveParkedResponses = 10',

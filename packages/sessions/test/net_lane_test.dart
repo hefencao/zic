@@ -1204,13 +1204,12 @@ void _dev123NetLaneTests() {
     expect(incomingStarted, isTrue);
   });
 
-  test('parked response releases read permit without cancelling physical task',
+  test('parked response releases read permit but retains transport lease',
       () async {
-    final lane = NetLane(maxActive: 1, maxInactiveParkedResponses: 2);
+    final lane = NetLane(maxActive: 1);
     final firstStarted = Completer<CancelToken>();
     final firstRelease = Completer<void>();
-    final secondStarted = Completer<void>();
-    final secondRelease = Completer<void>();
+    var secondStarted = false;
 
     lane.submitRanked(
       key: 'first',
@@ -1228,13 +1227,16 @@ void _dev123NetLaneTests() {
     final first = await firstStarted.future;
     first.releaseResponseReadPermit();
     await Future<void>.delayed(Duration.zero);
+
     expect(first.cancelled, isFalse);
-    expect(lane.active, 0);
+    expect(lane.active, 0,
+        reason: 'parking releases only the body-read permit');
+    expect(lane.transportLeases, 1,
+        reason: 'the live source response still owns its transport lease');
+    expect(lane.transportLeasesForBucket('remote:a'), 1);
     expect(lane.running, 1);
-    expect(lane.readPermitReleasedTasks, 1);
-    expect(lane.demandedParkedResponses, 1);
-    expect(lane.inactiveParkedResponses, 0);
     expect(lane.responseReadPermitHeldOf('first'), isFalse);
+    expect(lane.transportLeaseHeldOf('first'), isTrue);
 
     lane.submitRanked(
       key: 'second',
@@ -1242,41 +1244,32 @@ void _dev123NetLaneTests() {
       bucket: 'remote:a',
       bucketLimit: 1,
       task: (_) async {
-        secondStarted.complete();
-        await secondRelease.future;
+        secondStarted = true;
       },
     );
-    await secondStarted.future;
-    expect(lane.active, 1);
-    expect(lane.running, 2);
-
-    var resumed = false;
-    final reacquire = first.acquireResponseReadPermit().then((_) {
-      resumed = true;
-    });
     await Future<void>.delayed(Duration.zero);
-    expect(resumed, isFalse);
-    expect(first.cancelled, isFalse);
-
-    secondRelease.complete();
-    await reacquire.timeout(const Duration(seconds: 1));
-    expect(first.cancelled, isFalse);
-    expect(lane.active, 1);
-    expect(lane.responseReadPermitHeldOf('first'), isTrue);
+    await Future<void>.delayed(Duration.zero);
+    expect(secondStarted, isFalse,
+        reason: 'a parked HTTP response is not a free transport connection');
+    expect(first.cancelled, isFalse,
+        reason: 'normal demand cannot evict a still-demanded parked response');
 
     firstRelease.complete();
     await lane.idle();
+    expect(secondStarted, isTrue);
   });
 
-  test('demanded flow-paused responses do not consume inactive retention',
-      () async {
-    final lane = NetLane(maxActive: 1, maxInactiveParkedResponses: 1);
+  test('demanded parked responses remain bounded by transport leases', () async {
+    final lane = NetLane(maxActive: 2);
     final firstStarted = Completer<CancelToken>();
     final secondStarted = Completer<CancelToken>();
+    var thirdStarted = false;
 
     lane.submitRanked(
       key: 'first-demanded-parked',
       priority: 700,
+      bucket: 'remote:a',
+      bucketLimit: 2,
       task: (token) async {
         firstStarted.complete(token);
         await token.whenCancelled;
@@ -1288,6 +1281,8 @@ void _dev123NetLaneTests() {
     lane.submitRanked(
       key: 'second-demanded-parked',
       priority: 800,
+      bucket: 'remote:a',
+      bucketLimit: 2,
       task: (token) async {
         secondStarted.complete(token);
         await token.whenCancelled;
@@ -1297,72 +1292,87 @@ void _dev123NetLaneTests() {
     second.releaseResponseReadPermit();
     await Future<void>.delayed(Duration.zero);
 
+    expect(lane.active, 0);
+    expect(lane.transportLeases, 2);
+    expect(lane.demandedParkedResponses, 2);
     expect(first.cancelled, isFalse);
     expect(second.cancelled, isFalse);
-    expect(lane.demandedParkedResponses, 2);
-    expect(lane.inactiveParkedResponses, 0);
-    expect(lane.readPermitReleasedTasks, 2);
+
+    lane.submitRanked(
+      key: 'third-demanded',
+      priority: 680,
+      bucket: 'remote:a',
+      bucketLimit: 2,
+      task: (_) async {
+        thirdStarted = true;
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(thirdStarted, isFalse);
+    expect(first.cancelled, isFalse);
+    expect(second.cancelled, isFalse);
 
     first.cancel();
     second.cancel();
     await lane.idle();
+    expect(thirdStarted, isTrue);
   });
 
-  test('inactive parked response retention evicts only inactive victims',
-      () async {
-    final lane = NetLane(maxActive: 1, maxInactiveParkedResponses: 1);
-    final firstStarted = Completer<CancelToken>();
-    final secondStarted = Completer<CancelToken>();
+  test('transport pressure reclaims only inactive parked response', () async {
+    final lane = NetLane(maxActive: 1);
+    final inactiveStarted = Completer<CancelToken>();
+    final incomingStarted = Completer<void>();
+    final incomingRelease = Completer<void>();
 
     lane.submitRanked(
-      key: 'first-inactive',
+      key: 'inactive-parked',
       priority: 700,
+      bucket: 'remote:a',
+      bucketLimit: 1,
       task: (token) async {
-        firstStarted.complete(token);
+        inactiveStarted.complete(token);
         await token.whenCancelled;
       },
     );
-    final first = await firstStarted.future;
-    lane.updateDemanded('first-inactive', false);
-    first.releaseResponseReadPermit();
+    final inactive = await inactiveStarted.future;
+    lane.updateDemanded('inactive-parked', false);
+    inactive.releaseResponseReadPermit();
 
     lane.submitRanked(
-      key: 'second-inactive',
+      key: 'incoming-demanded',
       priority: 800,
-      task: (token) async {
-        secondStarted.complete(token);
-        await token.whenCancelled;
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (_) async {
+        incomingStarted.complete();
+        await incomingRelease.future;
       },
     );
-    final second = await secondStarted.future;
-    lane.updateDemanded('second-inactive', false);
-    second.releaseResponseReadPermit();
 
-    await first.whenCancelled.timeout(const Duration(seconds: 1));
+    await inactive.whenCancelled.timeout(const Duration(seconds: 1));
+    expect(inactive.preemptionSnapshot, isNull);
     expect(
-      first.retentionEvictionSnapshot?.reason,
-      'inactive-response-retention-eviction',
+      inactive.retentionEvictionSnapshot?.reason,
+      'inactive-transport-lease-reclaim',
     );
-    expect(second.cancelled, isFalse);
-    expect(lane.demandedParkedResponses, 0);
-    expect(lane.inactiveParkedResponses, lessThanOrEqualTo(1));
+    await incomingStarted.future.timeout(const Duration(seconds: 1));
+    expect(lane.transportLeases, 1);
 
-    second.cancel();
+    incomingRelease.complete();
     await lane.idle();
   });
 
-  test(
-      'inactive retention eviction never blocks current read-permit preemption',
+  test('inactive transport eviction never blocks current reserved handoff',
       () async {
     final lane = NetLane(
       maxActive: 1,
-      maxInactiveParkedResponses: 0,
       reservedHighPrioritySlots: 1,
       highPriorityThreshold: 1000,
       preemptionThreshold: 40,
     );
-    final evictionStarted = Completer<CancelToken>();
-    final evictionCancelled = Completer<void>();
+    final inactiveStarted = Completer<CancelToken>();
+    final evictionObserved = Completer<void>();
     final evictionExit = Completer<void>();
 
     lane.submitRanked(
@@ -1371,80 +1381,55 @@ void _dev123NetLaneTests() {
       bucket: 'remote:a',
       bucketLimit: 1,
       task: (token) async {
-        evictionStarted.complete(token);
+        inactiveStarted.complete(token);
         await token.whenCancelled;
-        evictionCancelled.complete();
+        evictionObserved.complete();
         await evictionExit.future;
       },
     );
-    final inactive = await evictionStarted.future;
+    final inactive = await inactiveStarted.future;
     lane.updateDemanded('inactive-retention', false);
     inactive.releaseResponseReadPermit();
-    await evictionCancelled.future.timeout(const Duration(seconds: 1));
+
+    // Normal pressure starts an inactive transport-lease eviction, but that
+    // physical task deliberately remains alive so the eviction transaction is
+    // still in flight.
+    final normalStarted = Completer<void>();
+    lane.submitRanked(
+      key: 'normal-waiter',
+      priority: 780,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (_) async {
+        normalStarted.complete();
+      },
+    );
+    await evictionObserved.future.timeout(const Duration(seconds: 1));
     expect(inactive.preemptionSnapshot, isNull);
     expect(
       inactive.retentionEvictionSnapshot?.reason,
-      'inactive-response-retention-eviction',
+      'inactive-transport-lease-reclaim',
     );
+    expect(normalStarted.isCompleted, isFalse);
 
-    final parkedStarted = Completer<CancelToken>();
-    lane.submitRanked(
-      key: 'parked-current',
-      priority: 900,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      task: (token) async {
-        parkedStarted.complete(token);
-        await token.whenCancelled;
-      },
-    );
-    final parked = await parkedStarted.future;
-    parked.releaseResponseReadPermit();
-
-    final lowStarted = Completer<CancelToken>();
-    final lowCancelled = Completer<void>();
-    lane.submitRanked(
-      key: 'low-receiving',
-      priority: 680,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      task: (token) async {
-        lowStarted.complete(token);
-        await token.whenCancelled;
-        lowCancelled.complete();
-      },
-    );
-    final low = await lowStarted.future;
-
-    final handoffStarted = Completer<void>();
-    final handoffRelease = Completer<void>();
+    final currentStarted = Completer<void>();
+    final currentRelease = Completer<void>();
     lane.submitRanked(
       key: 'current-handoff',
       priority: 1000,
       bucket: 'remote:a',
       bucketLimit: 1,
       task: (_) async {
-        handoffStarted.complete();
-        await handoffRelease.future;
+        currentStarted.complete();
+        await currentRelease.future;
       },
     );
-    await handoffStarted.future;
-    expect(lane.active, 2);
+    await currentStarted.future.timeout(const Duration(seconds: 1));
+    expect(lane.transportLeases, 2,
+        reason: 'current may use the reserved sixth-style transport handoff');
+    expect(lane.handoffActive, 1);
 
-    lane.updatePriority('parked-current', 1000);
-    final reacquired = parked.acquireResponseReadPermit();
-
-    await lowCancelled.future.timeout(const Duration(seconds: 1));
-    await reacquired.timeout(const Duration(seconds: 1));
-    expect(low.preemptionSnapshot?.reason, 'high-priority');
-    expect(parked.cancelled, isFalse);
-    expect(lane.responseReadPermitHeldOf('parked-current'), isTrue);
-    // Retention eviction is deliberately still unwinding here. It must not
-    // serialize or suppress the current body-read preemption transaction.
-    expect(evictionExit.isCompleted, isFalse);
-
-    parked.cancel();
-    handoffRelease.complete();
+    currentRelease.complete();
     evictionExit.complete();
     await lane.idle();
   });
