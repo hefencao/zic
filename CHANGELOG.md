@@ -1,3 +1,9 @@
+## 0.31.0-dev.284 - Vertical composition cache-boundary retention
+
+- 15:33 dev.283 Trace将固定位置双向抖动定位到ListView cache-edge page-host churn：page18/19在page10/11附近出现0.25~1.88s的短命mount/dispose，且均未形成first frame；dev.283 hidden-target违规已为0。
+- 保留nominal纵向page-host current±7 keepAlive，但新组成host在Reader current尚未离其mount point超过2页时继续AutomaticKeepAlive，避免sliver layout先于ScrollNotification current更新造成的边界反复销毁/重建；不是timer grace，也不移动cacheExtent。
+- `pageHostMounted/pageHostDisposed`增加`compositionGuardActive`，便于设备直接确认guard吸收cache边缘churn；Pipeline 3/7、decode/upload、geometry/anchor和texture resident reuse均不变。
+
 ## 0.31.0-dev.283 - Vertical visible-target authority
 
 - 14:52 dev.282 device Trace exposed a direction-asymmetric Reader observation bug: while scrolling toward previous pages, 22 samples had `velocity < 0` and only the current page visible but still reported `targetIndex=current+1`; the corresponding next-direction pattern appeared 10 times. `ReaderVerticalGeometry.positionAt()` reports `index + page-local fraction`, not PageView interpolation, so the generic floor/ceil target fallback systematically biased hidden targets toward higher indexes.

@@ -157,6 +157,60 @@ void main() {
     expect(counting.reads, readsAfterSnapshot);
   });
 
+  test('composition mount guard absorbs local cache-boundary reversals', () {
+    expect(
+      readerVerticalCompositionShouldKeepAlive(
+        pageIndex: 18,
+        currentIndex: 10,
+        mountedAtCurrentIndex: 10,
+      ),
+      isTrue,
+    );
+    expect(
+      readerVerticalCompositionShouldKeepAlive(
+        pageIndex: 18,
+        currentIndex: 9,
+        mountedAtCurrentIndex: 10,
+      ),
+      isTrue,
+    );
+    expect(
+      readerVerticalCompositionShouldKeepAlive(
+        pageIndex: 18,
+        currentIndex: 8,
+        mountedAtCurrentIndex: 10,
+      ),
+      isTrue,
+    );
+    expect(
+      readerVerticalCompositionShouldKeepAlive(
+        pageIndex: 18,
+        currentIndex: 7,
+        mountedAtCurrentIndex: 10,
+      ),
+      isFalse,
+    );
+  });
+
+  test('nominal vertical composition window remains seven pages', () {
+    expect(
+      readerVerticalCompositionShouldKeepAlive(
+        pageIndex: 18,
+        currentIndex: 11,
+        mountedAtCurrentIndex: 0,
+      ),
+      isTrue,
+    );
+    expect(
+      readerVerticalCompositionShouldKeepAlive(
+        pageIndex: 19,
+        currentIndex: 11,
+        mountedAtCurrentIndex: 0,
+      ),
+      isFalse,
+    );
+  });
+
   test('visible coverage reports adjacent pages before center handoff', () {
     final geometry = ReaderVerticalGeometry(
       pages: pages,

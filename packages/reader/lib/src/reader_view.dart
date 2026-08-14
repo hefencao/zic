@@ -1104,11 +1104,15 @@ final class _ReaderPageShell extends StatefulWidget {
 final class _ReaderPageShellState extends State<_ReaderPageShell> {
   late bool _active;
   late bool _keepAlive;
+  late bool _compositionGuardActive;
+  late int _compositionMountedAtCurrentIndex;
+  late ReadingDirection _readingDirection;
   late int _rotationQuarterTurns;
 
   @override
   void initState() {
     super.initState();
+    _compositionMountedAtCurrentIndex = widget.controller.currentIndex;
     _readControllerState();
     widget.controller.addListener(_handleControllerChanged);
   }
@@ -1119,15 +1123,26 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_handleControllerChanged);
       widget.controller.addListener(_handleControllerChanged);
+      _compositionMountedAtCurrentIndex = widget.controller.currentIndex;
+    }
+    final nextDirection = widget.controller.direction;
+    if (_readingDirection != nextDirection &&
+        nextDirection == ReadingDirection.vertical) {
+      _compositionMountedAtCurrentIndex = widget.controller.currentIndex;
     }
     final nextActive = widget.index == widget.controller.currentIndex;
+    final nextGuardActive = _compositionGuardActiveFor(widget.controller);
     final nextKeepAlive = _keepAliveFor(widget.controller);
     final nextRotation = widget.controller.rotationQuarterTurns;
     if (_active != nextActive ||
         _keepAlive != nextKeepAlive ||
+        _compositionGuardActive != nextGuardActive ||
+        _readingDirection != nextDirection ||
         _rotationQuarterTurns != nextRotation) {
       _active = nextActive;
       _keepAlive = nextKeepAlive;
+      _compositionGuardActive = nextGuardActive;
+      _readingDirection = nextDirection;
       _rotationQuarterTurns = nextRotation;
     }
   }
@@ -1138,29 +1153,57 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
     super.dispose();
   }
 
-  bool _keepAliveFor(ReaderController controller) {
+  bool _compositionGuardActiveFor(ReaderController controller) {
     return controller.direction == ReadingDirection.vertical &&
-        (widget.index - controller.currentIndex).abs() <= 7;
+        readerVerticalCompositionGuardActive(
+          currentIndex: controller.currentIndex,
+          mountedAtCurrentIndex: _compositionMountedAtCurrentIndex,
+        );
+  }
+
+  bool _keepAliveFor(ReaderController controller) {
+    // Historical nominal contract remains
+    // (widget.index - controller.currentIndex).abs() <= 7; dev.284 only
+    // adds bounded mount-travel hysteresis around the composition edge.
+    return controller.direction == ReadingDirection.vertical &&
+        readerVerticalCompositionShouldKeepAlive(
+          pageIndex: widget.index,
+          currentIndex: controller.currentIndex,
+          mountedAtCurrentIndex: _compositionMountedAtCurrentIndex,
+        );
   }
 
   void _readControllerState() {
     _active = widget.index == widget.controller.currentIndex;
     _keepAlive = _keepAliveFor(widget.controller);
+    _compositionGuardActive =
+        _compositionGuardActiveFor(widget.controller);
+    _readingDirection = widget.controller.direction;
     _rotationQuarterTurns = widget.controller.rotationQuarterTurns;
   }
 
   void _handleControllerChanged() {
+    final nextDirection = widget.controller.direction;
+    if (_readingDirection != nextDirection &&
+        nextDirection == ReadingDirection.vertical) {
+      _compositionMountedAtCurrentIndex = widget.controller.currentIndex;
+    }
     final nextActive = widget.index == widget.controller.currentIndex;
+    final nextGuardActive = _compositionGuardActiveFor(widget.controller);
     final nextKeepAlive = _keepAliveFor(widget.controller);
     final nextRotation = widget.controller.rotationQuarterTurns;
     if (_active == nextActive &&
         _keepAlive == nextKeepAlive &&
+        _compositionGuardActive == nextGuardActive &&
+        _readingDirection == nextDirection &&
         _rotationQuarterTurns == nextRotation) {
       return;
     }
     setState(() {
       _active = nextActive;
       _keepAlive = nextKeepAlive;
+      _compositionGuardActive = nextGuardActive;
+      _readingDirection = nextDirection;
       _rotationQuarterTurns = nextRotation;
     });
   }
@@ -1182,6 +1225,7 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
           ),
           asset: widget.asset,
           keepAlive: _keepAlive,
+          compositionGuardActive: _compositionGuardActive,
           sessionId: widget.controller.sessionId,
           clock: widget.clock,
           traceSink: widget.traceSink,
@@ -1377,6 +1421,7 @@ final class _ReaderPageHost extends StatefulWidget {
   const _ReaderPageHost({
     required this.asset,
     required this.keepAlive,
+    required this.compositionGuardActive,
     required this.sessionId,
     required this.clock,
     required this.traceSink,
@@ -1387,6 +1432,7 @@ final class _ReaderPageHost extends StatefulWidget {
 
   final PageAsset asset;
   final bool keepAlive;
+  final bool compositionGuardActive;
   final String sessionId;
   final MonoClock clock;
   final TraceSink traceSink;
@@ -1463,6 +1509,7 @@ final class _ReaderPageHostState extends State<_ReaderPageHost>
         payload: <String, Object?>{
           'pageIndex': widget.asset.index,
           'keepAlive': widget.keepAlive,
+          'compositionGuardActive': widget.compositionGuardActive,
           ...payload,
         },
       ),
