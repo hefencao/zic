@@ -1,3 +1,9 @@
+## 0.31.0-dev.280：纵向滚动稳定 geometry snapshot
+
+- 12:24 dev.279 Trace复核通过上一阶段：本地same-exact re-entry记录13次`sealed-source-generation-preserved`且invalidated upload/decode均为0；冷启动网络Reader已出现18次`local-hydration-ready committedLength>0`，current page234约328ms首帧，page139从262,800-byte durable prefix起步约125ms首帧。dev.279 generation/partial阶段暂时收口。
+- 纵向滑动抖动并非dev.207 ratio-driven主动anchor `jumpTo`复发：Trace logicalPosition在连续scroll段总体单调。剩余竞态是异步`pageAspectRatios`在drag/ballistic期间立即重算`ReaderVerticalGeometry`与`ListView.itemExtentBuilder`，使sliver item extent在active scroll中改变并触发布局/scroll correction。
+- ReaderView新增scroll-stable `_verticalLayoutRatios` snapshot：dragging/scrolling/settling/scrubbing期间ratio latest-wins暂存，ScrollEnd真正idle后一次性提交，并只在该idle commit边界使用top-pixel anchor补偿真实extent变化。viewport/DPR/stitch/显式navigation既有语义不变；不改Pipeline、FrameBudget、NetLane、Venera、partial或generation生命周期。
+
 ## 0.31.0-dev.279：sealed Reader generation continuity + lifecycle partial checkpoint
 
 - 09:37 dev.278 Trace确认本地二次进入存在退化：page5首次约304ms，二次/三次约366/357ms，但更关键的是每次re-entry都对约11个same-exact本地source触发`physical-generation-changed`，current及热邻页decode/upload被机械失效重建。dev.277把不同DownloadSession object无条件等同Reader encoded generation过宽。现仅对`sealed + sourceReady + no failure`且无pending synchronized attachment的same-exact projection保留Reader encoded generation；mutable/incomplete source仍严格换代。old same-id teardown增加concrete identity guard。

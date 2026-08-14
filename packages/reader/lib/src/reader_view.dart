@@ -71,6 +71,9 @@ final class _ReaderViewState extends State<ReaderView> {
   bool _commandScheduled = false;
   bool _verticalInitialOffsetApplied = false;
   late List<Widget> _pageSlots;
+  late Map<String, double> _verticalLayoutRatios;
+  Map<String, double>? _pendingVerticalLayoutRatios;
+  bool _verticalRatioCommitScheduled = false;
   ReaderVerticalGeometry? _cachedVerticalGeometry;
   Map<String, double>? _cachedVerticalRatios;
   Size? _cachedVerticalViewport;
@@ -91,6 +94,7 @@ final class _ReaderViewState extends State<ReaderView> {
     _lastDirection = widget.controller.direction;
     _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
     _pageSlots = _createPageSlots();
+    _verticalLayoutRatios = widget.pageAspectRatios;
     widget.controller.addListener(_handleControllerCommand);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -121,6 +125,9 @@ final class _ReaderViewState extends State<ReaderView> {
       _lastDirection = widget.controller.direction;
       _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
       _pageSlots = _createPageSlots();
+      _verticalLayoutRatios = widget.pageAspectRatios;
+      _pendingVerticalLayoutRatios = null;
+      _verticalRatioCommitScheduled = false;
       _resetVerticalCompositionCache();
       _scheduleSyncToCurrentPage();
     } else if ((oldWidget.pageBuilder == null) !=
@@ -129,11 +136,35 @@ final class _ReaderViewState extends State<ReaderView> {
         oldWidget.clock != widget.clock) {
       _pageSlots = _createPageSlots();
     }
+    final stitchChanged = oldWidget.verticalStitch != widget.verticalStitch;
+    final ratiosChanged =
+        !identical(oldWidget.pageAspectRatios, widget.pageAspectRatios);
     if (oldWidget.verticalStitch != widget.verticalStitch) {
       _preserveVerticalAnchor(
-        oldRatios: oldWidget.pageAspectRatios,
+        oldRatios: _verticalLayoutRatios,
         oldStitch: oldWidget.verticalStitch,
       );
+    }
+    if (ratiosChanged) {
+      if (widget.controller.direction != ReadingDirection.vertical) {
+        _verticalLayoutRatios = widget.pageAspectRatios;
+        _pendingVerticalLayoutRatios = null;
+        _invalidateVerticalGeometryCache();
+      } else if (_verticalScrollActive) {
+        // Sliver item extents must remain immutable for one drag/ballistic
+        // scroll. Measured geometry is committed once the viewport is idle.
+        _pendingVerticalLayoutRatios = widget.pageAspectRatios;
+      } else {
+        if (!stitchChanged) {
+          _preserveVerticalAnchor(
+            oldRatios: _verticalLayoutRatios,
+            oldStitch: widget.verticalStitch,
+          );
+        }
+        _verticalLayoutRatios = widget.pageAspectRatios;
+        _pendingVerticalLayoutRatios = null;
+        _invalidateVerticalGeometryCache();
+      }
     }
   }
 
@@ -159,7 +190,7 @@ final class _ReaderViewState extends State<ReaderView> {
             if (widget.controller.direction == ReadingDirection.vertical &&
                 _viewport != Size.zero) {
               _preserveVerticalAnchor(
-                oldRatios: widget.pageAspectRatios,
+                oldRatios: _verticalLayoutRatios,
                 oldStitch: widget.verticalStitch,
                 oldDevicePixelRatio: previous,
               );
@@ -176,7 +207,7 @@ final class _ReaderViewState extends State<ReaderView> {
             if (widget.controller.direction == ReadingDirection.vertical &&
                 previousViewport != Size.zero) {
               _preserveVerticalAnchor(
-                oldRatios: widget.pageAspectRatios,
+                oldRatios: _verticalLayoutRatios,
                 oldStitch: widget.verticalStitch,
                 oldViewport: previousViewport,
               );
@@ -292,13 +323,68 @@ final class _ReaderViewState extends State<ReaderView> {
     }, growable: false);
   }
 
-  void _resetVerticalCompositionCache() {
+  bool get _verticalScrollActive {
+    if (_verticalController.hasClients &&
+        _verticalController.position.isScrollingNotifier.value) {
+      return true;
+    }
+    return _interaction == Interaction.dragging ||
+        _interaction == Interaction.scrolling ||
+        _interaction == Interaction.settling ||
+        _interaction == Interaction.scrubbing;
+  }
+
+  void _invalidateVerticalGeometryCache() {
     _cachedVerticalGeometry = null;
     _cachedVerticalRatios = null;
     _cachedVerticalViewport = null;
     _cachedVerticalStitch = null;
     _cachedVerticalRotation = null;
     _cachedVerticalDevicePixelRatio = null;
+  }
+
+  void _schedulePendingVerticalRatioCommit() {
+    if (_verticalRatioCommitScheduled ||
+        _pendingVerticalLayoutRatios == null ||
+        widget.controller.direction != ReadingDirection.vertical) {
+      return;
+    }
+    _verticalRatioCommitScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _verticalRatioCommitScheduled = false;
+      if (!mounted ||
+          widget.controller.direction != ReadingDirection.vertical) {
+        return;
+      }
+      if (_verticalScrollActive) {
+        // ScrollEnd and isScrollingNotifier can settle on adjacent frames.
+        // Once the interaction is otherwise idle, retry the commit on the
+        // next frame instead of leaving the latest measured ratios pending.
+        if (_interaction == Interaction.idle &&
+            _pendingVerticalLayoutRatios != null) {
+          _schedulePendingVerticalRatioCommit();
+        }
+        return;
+      }
+      final pending = _pendingVerticalLayoutRatios;
+      if (pending == null || identical(pending, _verticalLayoutRatios)) {
+        _pendingVerticalLayoutRatios = null;
+        return;
+      }
+      _preserveVerticalAnchor(
+        oldRatios: _verticalLayoutRatios,
+        oldStitch: widget.verticalStitch,
+      );
+      setState(() {
+        _verticalLayoutRatios = pending;
+        _pendingVerticalLayoutRatios = null;
+        _invalidateVerticalGeometryCache();
+      });
+    });
+  }
+
+  void _resetVerticalCompositionCache() {
+    _invalidateVerticalGeometryCache();
     _verticalCacheScreens = 2;
     _verticalWarmupScheduled = false;
   }
@@ -331,7 +417,7 @@ final class _ReaderViewState extends State<ReaderView> {
     Size? viewport,
     double? devicePixelRatio,
   }) {
-    final effectiveRatios = ratios ?? widget.pageAspectRatios;
+    final effectiveRatios = ratios ?? _verticalLayoutRatios;
     final effectiveViewport = viewport ?? _viewport;
     final effectiveStitch = stitch ?? widget.verticalStitch;
     final effectiveRotation = widget.controller.rotationQuarterTurns;
@@ -471,8 +557,13 @@ final class _ReaderViewState extends State<ReaderView> {
       _resetVerticalCompositionCache();
       rebuildLayout = true;
       if (controller.direction == ReadingDirection.vertical) {
+        _verticalLayoutRatios = widget.pageAspectRatios;
+        _pendingVerticalLayoutRatios = null;
         _verticalInitialOffsetApplied = false;
         _prepareVerticalControllerForCurrentPage();
+      } else {
+        _verticalLayoutRatios = widget.pageAspectRatios;
+        _pendingVerticalLayoutRatios = null;
       }
       _scheduleSyncToCurrentPage();
     }
@@ -495,6 +586,7 @@ final class _ReaderViewState extends State<ReaderView> {
             _verticalController.hasClients &&
             _verticalController.position.hasContentDimensions) {
           _emitFromVerticalMetrics(_verticalController.position);
+          _schedulePendingVerticalRatioCommit();
         } else {
           _emitObservation(
             controller.currentIndex.toDouble(),
@@ -667,6 +759,9 @@ final class _ReaderViewState extends State<ReaderView> {
           ? Interaction.scrubbing
           : Interaction.idle;
       _emitFromVerticalMetrics(notification.metrics);
+      if (_interaction == Interaction.idle) {
+        _schedulePendingVerticalRatioCommit();
+      }
     }
     return false;
   }

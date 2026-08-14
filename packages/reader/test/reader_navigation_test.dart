@@ -635,6 +635,96 @@ void main() {
     },
   );
 
+
+  testWidgets(
+    'vertical measured ratios stay frozen until active scrolling is idle',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'vertical-geometry-snapshot-comic',
+        chapter: const Chapter(
+          chapterId: 'vertical-geometry-snapshot-chapter',
+          comicId: 'vertical-geometry-snapshot-comic',
+          title: 'vertical geometry snapshot',
+          sequence: 0,
+          pageCount: 3,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          3,
+          (index) => PageAsset(
+            pageId: 'vertical-snapshot-$index',
+            chapterId: 'vertical-geometry-snapshot-chapter',
+            index: index,
+            uri: Uri.parse('asset:///vertical-snapshot-$index.png'),
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final controller = ReaderController(
+        sessionId: 'reader-vertical-geometry-snapshot-test',
+        chapter: chapter,
+        onObservation: (_) {},
+        clock: FakeClock(),
+      );
+      addTearDown(controller.dispose);
+      final ratios = ValueNotifier<Map<String, double>>(
+        const <String, double>{},
+      );
+      addTearDown(ratios.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ValueListenableBuilder<Map<String, double>>(
+            valueListenable: ratios,
+            builder: (context, value, _) => ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              pageAspectRatios: value,
+              pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+                key: ValueKey<String>('vertical-snapshot:${asset.pageId}'),
+                color: Colors.black,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final list = find.byKey(
+        const ValueKey<String>('reader-vertical-list'),
+      );
+      final firstPage = find.byKey(
+        const ValueKey<String>('reader-vertical-page:0'),
+      );
+      final initialHeight = tester.getSize(firstPage).height;
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      await gesture.moveBy(const Offset(0, -48));
+      await tester.pump();
+
+      ratios.value = <String, double>{
+        chapter.pages.first.assetKey: 3.0,
+      };
+      await tester.pump();
+
+      expect(
+        tester.getSize(firstPage).height,
+        initialHeight,
+        reason:
+            'async measured geometry must not mutate sliver extents mid-scroll',
+      );
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.getSize(firstPage).height,
+        greaterThan(initialHeight),
+        reason: 'the latest measured geometry must commit once scrolling is idle',
+      );
+    },
+  );
+
   test('page request validates chapter bounds', () {
     final chapter = ChapterManifest(
       sourceId: 'source',

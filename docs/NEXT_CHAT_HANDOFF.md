@@ -1,16 +1,17 @@
-# dev.279 后续交接
+# dev.280 后续交接
+- dev.280：12:24 dev.279 Trace先完成上一阶段复核：本地re-entry共13次`sealed-source-generation-preserved`且invalidated upload/decode均为0；冷启动网络Reader已有18次`local-hydration-ready committedLength>0`，page234约328ms首帧，page139从262,800-byte durable prefix起步约125ms首帧，因此dev.279 generation/partial阶段暂时收口。纵向滑动抖动的logicalPosition没有对应反向显式jump，源码定位为异步`pageAspectRatios`在drag/ballistic期间立即重算`ReaderVerticalGeometry`/`itemExtentBuilder`，让sliver extent在active scroll中变化。ReaderView现冻结scroll-stable `_verticalLayoutRatios` snapshot，active scroll期间ratio只latest-wins暂存，真正idle后一次性commit并以提交前top-pixel anchor补偿该次extent变化；不恢复dev.207每次ratio更新主动`jumpTo`。
 - dev.279：09:37 dev.278 Trace确认两条独立问题。① 本地page5首次约304ms，二/三次约366/357ms；每次re-entry约11个same-exact source都仅因DownloadSession object重建触发`physical-generation-changed`，热decode/upload被批量失效。sealed/sourceReady/no-failure且无pending late attachment的Reader projection现跨transient same-id physical recreation保留，Trace应为`sealed-source-generation-preserved`且invalidated=0；unfinished generation仍按dev.277严格换代。② 冷启动已恢复`persistentMappings=5`但相关页均`local-hydration-miss committedLength=0`，current约6.14s才从origin首帧；composition runtime现于App paused/detached请求`PartialDownloadHandoff` durable checkpoint，hot owner不退休，close join checkpoint。
-- dev.278：08:31 dev.277 Trace中本地page0第一次约208ms首帧；第二、第三次进入均重新获得完整5,906,374-byte artifact且current DecodeRegistry达到depth=7，但UploadSession持续`waitingFrame`、没有`uploading/frameUploaded`。dev.278把concrete-generation一致性收回UploadRegistry：每次`get/prepare`先取得当前DecodeSession，若缓存UploadSession绑定对象不同则先dispose旧generation再创建replacement；UploadSession自身仍一生只绑定一个DecodeSession，不允许动态跨代偷换。dev.277的Artifact promotion read path、generation-aware ingress attach、synchronized replay closure与generation dispose immediate uploader retirement继续冻结。
+- dev.278：08:31 dev.277 Trace中本地page0第一次约208ms首帧；第二、第三次进入均重新获得完整5,906,374-byte artifact且current DecodeRegistry达到depth=7，但UploadSession持续`waitingFrame`、没有`uploading/frameUploaded`。dev.278把concrete-generation一致性收回UploadRegistry：每次`get/prepare`先取得当前DecodeSession，若缓存UploadSession绑定对象不同则先dispose旧generation再创建replacement；UploadSession自身仍一生只绑定一个DecodeSession，不允许动态跨代偷换。dev.277的Artifact promotion read path、generation-aware ingress attach、synchronized replay closure与generation dispose immediate uploader retirement继续冻结。 replacement generation的冻结成功链仍为`uploading→frameUploaded→framePresented→firstFrameReady`。
 - dev.276 Venera current handoff、dev.275 host resolver cache、dev.274 local→network rank、dev.273 indexed durable partial read、dev.272 pre-NetLane local prepare、dev.271 transport lease/body-read permit、dev.270 current preemption/retention eviction继续冻结：Venera JS仍`maxConcurrentInvocations=1`，normal稳态`globalTransportLeases<=5`、current handoff最多6，后台retention只记录`downloadEvicted`。
-- 冻结 previous3/next7、5/3/2/1、decode2/1、holder7/5/3/2、normal5+current reserved1。下一份Trace先复测本地同一动画首次进入→退出→第二次进入：same-exact sealed source应`sealed-source-generation-preserved`且invalidated=0，并继续`uploading→frameUploaded→framePresented→firstFrameReady`；若仍发生`physical-generation-changed`，先判断projection是否真实换代。再复测网络partial在App paused/detached→冷启动后是否durable restore；若仍全部`committedLength=0`，先查checkpoint lifecycle/完成证据，不回改NetLane/cache。
+- 冻结 previous3/next7、5/3/2/1、decode2/1、holder7/5/3/2、normal5+current reserved1。下一份Trace优先复测竖排持续drag→ballistic：异步尺寸到达期间active viewport不得因ratio更新抖动；若仍抖动，先增加vertical geometry snapshot/idle-commit与Flutter ScrollMetrics correction观测，确认是extent mutation、sliver correction还是paint/texture问题，不先调physics/cache extent/Pipeline。dev.279本地re-entry与cold partial已在12:24样本闭合；除非新Trace重新出现`physical-generation-changed`误失效或cold `committedLength=0`，否则不重开generation/partial实验树。
 ## 必读
 1. `AGENTS.md`；2. 本文件
 3. `docs/ARCHITECTURE.md`
 4. `docs/SPEC.md`
 5. `docs/IMPLEMENTATION_PLAN.md`
 6. `docs/IMPLEMENTATION_STATUS.md`
-7. `docs/adr/0258-app-lifecycle-durable-partial-checkpoint.md`、`docs/adr/0257-sealed-reader-encoded-generation-continuity.md`、`docs/adr/0256-upload-registry-decode-generation-binding.md`、`docs/adr/0255-reader-generation-ingress-and-uploader-retirement.md`、`docs/adr/0254-venera-current-handoff-active-priority.md`、`docs/adr/0241-decode-upload-generation-coherence.md`、`docs/adr/0232-logical-source-watch-physical-generation-binding.md`
-8. `docs/audits/dev279-local-reentry-cold-partial-regression-audit.md`、`docs/audits/dev278-reader-reentry-upload-generation-audit.md`、`docs/audits/dev277-reader-reentry-ingress-generation-audit.md`、`docs/audits/dev276-venera-current-handoff-gate-audit.md`、`docs/audits/dev263-decode-upload-generation-rebind-audit.md`
+7. `docs/adr/0259-scroll-stable-vertical-geometry-snapshot.md`、`docs/adr/0258-app-lifecycle-durable-partial-checkpoint.md`、`docs/adr/0257-sealed-reader-encoded-generation-continuity.md`、`docs/adr/0256-upload-registry-decode-generation-binding.md`、`docs/adr/0255-reader-generation-ingress-and-uploader-retirement.md`、`docs/adr/0254-venera-current-handoff-active-priority.md`、`docs/adr/0241-decode-upload-generation-coherence.md`、`docs/adr/0232-logical-source-watch-physical-generation-binding.md`
+8. `docs/audits/dev280-vertical-scroll-geometry-jitter-audit.md`、`docs/audits/dev279-local-reentry-cold-partial-regression-audit.md`、`docs/audits/dev278-reader-reentry-upload-generation-audit.md`、`docs/audits/dev277-reader-reentry-ingress-generation-audit.md`、`docs/audits/dev276-venera-current-handoff-gate-audit.md`、`docs/audits/dev263-decode-upload-generation-rebind-audit.md`
 9. `docs/adr/0122-current-reader-pipeline-authority-consolidation.md`
 8. `docs/adr/0118-unified-version-stable-cache-identities-and-verified-artifact-reuse.md`
 9. `docs/adr/0140-cloudflare-browser-session-history-and-plugin-persistence.md`
@@ -75,6 +76,4 @@
 - 不在 App/Reader新增 transport、正文缓存、frame/session owner。
 - 不恢复 synthetic Mihon chapter、标题/URL启发式目录去重，也不反转回 explicit chapterList-first；不得并行/重复调用两套章节API。
 - 不恢复 presentation封面 retry/watchdog/evict/Future join。
-- 正式 ZIP 不含 `.zic-workspace.json`。Patch命令：
-```bash
-git apply --index "$(python3 tool/workspace_config.py patch_dir --absolute)/<patch-file>"
+- 正式 ZIP 不含 `.zic-workspace.json`。Patch命令：`git apply --index "$(python3 tool/workspace_config.py patch_dir --absolute)/<patch-file>"`

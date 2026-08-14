@@ -195,7 +195,7 @@ Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor �
 - 页面热字节 MUST 有界；默认可为 10 项/256 MiB。App/Reader 不得创建第二套图片 byte LRU。
 - artifact reuse MUST 有 checksum、来源 page key、内容 hash 或用户确认/来源确认关系上的强对应证据；标题、URL token 或相同页码不足以证明等价。已确认同源版本 MAY 在不迁移实体的情况下注册有界 verified-equivalence：opaque locator必须先经既有 source request-plan owner解析，首/中/末强媒体identity证明稳定offset并持久化mapping；mapping验证时间 MUST 以严格 String timestamp解码，非法类型/时间必须拒绝。source版本发现 MAY 每次入口异步刷新，但最近已验证且仍在有界freshness窗口内的mapping SHOULD跳过重复page-identity验证。equivalence MUST 是lookup fallback而非storage redirect：请求自己的exact DownloadId先查，miss后才查直接确认相关版本；登记时不要求source artifact已存在，因此迟到promote MAY被后续demand复用。ArtifactCacheManager MUST NOT持有directed hard alias/rekey；equivalence不得改变exact写入identity、不得复制字节或移动durable library state。普通Reader promotion若direct verified-equivalent durable artifact已存在且长度一致 SHOULD复用该artifact而不materialize第二份exact durable body；只有显式required-completion语义 MAY要求exact durable materialization。相关版本full artifact迟到promote时，已独立存在的physical session MUST保持原owner与当前claim语义；后续新的exact demand仍可在acquire时依据direct verified proof加入已有physical authority。显式迁移 MUST只登记verified equivalence proof，不得恢复hard alias/rekey。
 - cache hit 不得共享 playback timer、cursor 或 decode identity。
-- 纵向 Reader 的异步 `pageAspectRatios` 更新 MUST NOT触发 post-frame anchor `jumpTo` 修正用户滚动；真实 viewport/DPR/stitch变化与显式导航仍 MAY保留/恢复anchor。
+- 纵向 Reader 的异步 `pageAspectRatios` 更新 MUST NOT在dragging/scrolling/settling/scrubbing期间改变当前 `ReaderVerticalGeometry` / `itemExtentBuilder`；一次连续用户滚动 MUST使用同一份scroll-stable geometry snapshot，期间到达的ratio只允许latest-wins暂存。真正idle后 MAY一次性提交最新ratio，并且只允许以提交前top-pixel anchor补偿这一次真实extent变化；MUST NOT恢复dev.207已删除的“每次ratio更新立即post-frame `jumpTo`”循环。真实 viewport/DPR/stitch变化与显式导航仍 MAY保留/恢复anchor。
 
 ## 10. 插件与来源
 
