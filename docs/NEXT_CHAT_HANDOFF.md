@@ -1,6 +1,6 @@
-# dev.271 后续交接
-- dev.271：01:26 dev.270 Trace中source-loader open中位约1.60s/P90约3.42s、origin request-plan中位约1.02s，`globalRunning`达到17–20且origin均为HTTP/1.1。根因是dev.268后normal5只约束body-read permit，parked live response不再消耗network capacity。现NetLane同时拥有transport/source lease与body-read permit：park只释放后者，durable artifact local body释放两者；删除`maxInactiveParkedResponses`，只有真实transport lease pressure才可`inactive-transport-lease-reclaim`无consumer parked response。下一Trace先看`globalTransportLeases<=5`（current handoff<=6）以及request-plan/host-open延迟。
-- dev.270：current priority/body-read preemption 与 inactive retention eviction 已拆为独立事务；后台`downloadEvicted`不得占用`TaskPreemptionSnapshot`，此约束继续有效。
+# dev.272 后续交接
+- dev.272：02:01 dev.271 Trace证明cold partial hydration仍错误等待NetLane：page194/page203已有durable partial却约2.40s/3.09s后才restore。现`DownloadTransferOwner`在任何network task之前按physical generation single-flight执行local prepare；同步3/7 planning不等磁盘，prepare prefix可先进入Reader-local ingress；cold partial与artifact replay共用composition `ArtifactCacheReadScheduler`，prepare完成后仍需网络才提交NetLane；local hydration失败只单次降级provider fallback。
+- dev.271 transport/source lease与body-read permit解耦、dev.270 current preemption与retention eviction事务拆分继续冻结（normal稳态`globalTransportLeases<=5`、current handoff最多6）：后台retention回收记录`downloadEvicted`，不得占用current `downloadPreempted`事务。dev.272不改连接数、窗口、水位或current priority。
 - 冻结 previous3/next7、5/3/2/1、decode2/1、holder7/5/3/2、normal5+current reserved1；不得通过扩大连接数、缩窗口或预解析整章掩盖source/open owner问题。
 ## 必读
 1. `AGENTS.md`
@@ -9,8 +9,8 @@
 4. `docs/SPEC.md`
 5. `docs/IMPLEMENTATION_PLAN.md`
 6. `docs/IMPLEMENTATION_STATUS.md`
-7. `docs/adr/0249-transport-lease-body-read-permit-separation.md`、`docs/adr/0248-current-read-permit-preemption-retention-eviction-separation.md`
-8. `docs/audits/dev271-transport-lease-source-open-latency-audit.md`、`docs/audits/dev270-current-preemption-authority-audit.md`
+7. `docs/adr/0250-local-partial-hydration-before-network-admission.md`、`docs/adr/0249-transport-lease-body-read-permit-separation.md`
+8. `docs/audits/dev272-local-partial-hydration-admission-root-cause-audit.md`、`docs/audits/dev271-transport-lease-source-open-latency-audit.md`
 9. `docs/adr/0122-current-reader-pipeline-authority-consolidation.md`
 8. `docs/adr/0118-unified-version-stable-cache-identities-and-verified-artifact-reuse.md`
 9. `docs/adr/0140-cloudflare-browser-session-history-and-plugin-persistence.md`

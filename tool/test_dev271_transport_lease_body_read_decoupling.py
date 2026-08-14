@@ -92,7 +92,7 @@ for path in (
     req((ROOT / path).is_file(), f'missing dev.271 governance file: {path}')
 require('docs/ARCHITECTURE.md', 'transport/source `transportLeases`', 'inactive-transport-lease-reclaim')
 require('docs/SPEC.md', 'transport/source lease', 'inactive-transport-lease-reclaim')
-require('docs/IMPLEMENTATION_STATUS.md', '0.31.0-dev.271', 'globalRunning')
+require('docs/IMPLEMENTATION_STATUS.md', 'dev.271', 'globalRunning')
 require('docs/NEXT_CHAT_HANDOFF.md', 'dev.271', 'globalTransportLeases<=5')
 require('CHANGELOG.md', '0.31.0-dev.271', 'transport/source lease')
 require('tool/check.sh', 'test_dev271_transport_lease_body_read_decoupling.py')

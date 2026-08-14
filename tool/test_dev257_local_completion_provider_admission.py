@@ -39,9 +39,7 @@ require(
 owner = 'packages/sessions/lib/src/download_transfer_owner.dart'
 require(
     owner,
-    'final preparedClaim = _preferredClaim(id);',
     'if (await DownloadJob.completeWithoutTransport(',
-    "'stage': 'transfer-admission'",
     "'action': 'local-completion-short-circuit'",
     'final currentClaim = _preferredClaim(id);',
     'final retainedTransport =',
@@ -49,9 +47,14 @@ require(
     'kind: TraceEventKind.downloadStarted,',
 )
 text = read(owner)
-short = text.index("'action': 'local-completion-short-circuit'")
-provider = text.index('provider.retainedTransportFor?.call(sourceId.canonicalUri)', short)
-started = text.index('kind: TraceEventKind.downloadStarted,', provider)
+# dev.272 supersedes the original dev.257 placement: local prepare/completion now
+# runs before NetLane admission. The fallback check inside _runDownload remains
+# before provider lookup, preserving the dev.257 behavior for hot/local-complete
+# sessions that did not pass through cold preparation.
+run = text[text.index('Future<void> _runDownload('):]
+short = run.index("'action': 'local-completion-short-circuit'")
+provider = run.index('provider.retainedTransportFor?.call(sourceId.canonicalUri)', short)
+started = run.index('kind: TraceEventKind.downloadStarted,', provider)
 if not short < provider < started:
     raise SystemExit('local completion must precede provider lookup and downloadStarted')
 
@@ -71,7 +74,7 @@ for path in (
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.257 governance file: {path}')
 
-require('docs/ARCHITECTURE.md', '本地artifact/partial authority', '`downloadStarted`只描述真实provider transport attempt')
+require('docs/ARCHITECTURE.md', 'cold partial/artifact hydration', '`downloadStarted`只描述真实provider transport attempt')
 require('docs/SPEC.md', 'MUST NOT把local completion记为network start', '`downloadStarted` MUST只在仍需要真实provider transport attempt时记录')
 require('tool/check.sh', 'test_dev257_local_completion_provider_admission.py')
 

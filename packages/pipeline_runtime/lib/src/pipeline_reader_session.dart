@@ -318,13 +318,15 @@ final class PipelineReaderSessionFactory {
           artifactCacheManager: artifactCacheManager,
           partialDownloadStore: partialDownloadStore,
           net: pageDownloadLane,
+          localReadScheduler: artifactReadScheduler,
         );
+    final localReadScheduler = transferRuntime.localReadScheduler;
     return PipelineReaderSession._(
       chapter: chapter,
       mediaRuntimeFactory: mediaRuntimeFactory,
       sessionId: sessionId,
       artifactCacheManager: artifactCacheManager,
-      artifactReadScheduler: artifactReadScheduler,
+      artifactReadScheduler: localReadScheduler,
       pageDownloadLane: pageDownloadLane,
       decodePrefixHints: decodePrefixHints,
       loaderSources: loaderSources,

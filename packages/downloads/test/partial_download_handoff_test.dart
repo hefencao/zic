@@ -159,9 +159,54 @@ void main() {
     expect(backend.partial.containsKey(newId), isFalse);
     expect(backend.partial.containsKey(oldId), isTrue);
   });
+  test('cold partial hydration uses the shared persistent read scheduler', () async {
+    final root = await Directory.systemTemp.createTemp('partial-read-scheduler-');
+    addTearDown(() async => root.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'scheduler',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/scheduler.webp'),
+    );
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 2);
+    var activeWhileReading = 0;
+    final backend = _PartialStore(
+      onRead: () => activeWhileReading = scheduler.activeCount,
+    );
+    final bytes = Uint8List.fromList(List<int>.generate(4096, (i) => i & 0xff));
+    backend.partial[id] = _StoredPartial(
+      bytes: bytes,
+      validators: const Validators(),
+      totalLength: bytes.lengthInBytes + 1024,
+    );
+    final handoff = PartialDownloadHandoff(
+      store: backend,
+      readScheduler: scheduler,
+    );
+    final registry = DownloadRegistry(
+      layout: CacheLayout(root.path),
+      clock: SystemClock(),
+    );
+    addTearDown(registry.dispose);
+
+    final session = registry.get(id);
+    await handoff.restoreInto(session);
+
+    expect(activeWhileReading, 1);
+    expect(scheduler.activeCount, 0);
+    expect(session.committedLength, bytes.lengthInBytes);
+  });
+
 }
 
 final class _PartialStore implements PartialDownloadStore {
+  _PartialStore({this.onRead});
+
+  final void Function()? onRead;
   final Map<DownloadId, _StoredPartial> partial =
       <DownloadId, _StoredPartial>{};
 
@@ -174,6 +219,7 @@ final class _PartialStore implements PartialDownloadStore {
       validators: stored.validators,
       totalLength: stored.totalLength,
       open: ({required int start}) async* {
+        onRead?.call();
         yield Uint8List.sublistView(stored.bytes, start);
       },
     );

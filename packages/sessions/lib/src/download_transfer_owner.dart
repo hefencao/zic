@@ -91,6 +91,14 @@ final class DownloadTransferOwner {
   final Map<DownloadId, Map<String, _TransferClaim>> _claims =
       <DownloadId, Map<String, _TransferClaim>>{};
   final Map<DownloadId, String> _networkTaskKeys = <DownloadId, String>{};
+  // Local physical-session hydration is intentionally outside NetLane. Cold
+  // partial/artifact restore is local I/O and may publish Reader-local ingress
+  // before a source/network transport lease is available. One physical session
+  // generation performs this initialization at most once.
+  final Map<DownloadId, Future<void>> _localPreparations =
+      <DownloadId, Future<void>>{};
+  final Map<DownloadId, DownloadSession> _locallyPreparedSessions =
+      <DownloadId, DownloadSession>{};
   final Map<DownloadId, int> _downloadRetryRounds = <DownloadId, int>{};
   final Set<DownloadId> _downloadRetryPending = <DownloadId>{};
   final Set<DownloadId> _downloadTerminalFailures = <DownloadId>{};
@@ -151,7 +159,8 @@ final class DownloadTransferOwner {
         (_claims[physicalId]?.isNotEmpty ?? false) ||
         session.demanded ||
         session.activeRun ||
-        session.hasWriter) {
+        session.hasWriter ||
+        _localPreparations.containsKey(physicalId)) {
       return false;
     }
     final taskKey = _networkTaskKeys[physicalId];
@@ -170,6 +179,8 @@ final class DownloadTransferOwner {
       session.removeSnapshotListener(listener);
     }
     _progressLengths.remove(physicalId);
+    _localPreparations.remove(physicalId);
+    _locallyPreparedSessions.remove(physicalId);
     _retireDownloadTracking(physicalId, session);
     await session.dispose();
     return true;
@@ -319,6 +330,7 @@ final class DownloadTransferOwner {
     if (_disposed) return;
     _disposed = true;
     final keys = _networkTaskKeys.values.toList(growable: false);
+    final preparations = _localPreparations.values.toList(growable: false);
     for (final consumer in _consumers.toList(growable: false)) {
       _detachClaims(consumer, consumerDisposing: true);
       consumer._disposed = true;
@@ -327,8 +339,13 @@ final class DownloadTransferOwner {
     for (final key in keys) {
       net.cancel(key);
     }
-    await net.idleKeys(keys);
+    await Future.wait<void>(<Future<void>>[
+      net.idleKeys(keys),
+      ...preparations,
+    ]);
     _networkTaskKeys.clear();
+    _localPreparations.clear();
+    _locallyPreparedSessions.clear();
     _downloadRetryRounds.clear();
     _downloadRetryPending.clear();
     _downloadTerminalFailures.clear();
@@ -653,10 +670,19 @@ final class DownloadTransferOwner {
           keys.add(key);
         }
       }
+      final waits = <Future<void>>[];
       if (keys.isNotEmpty) {
-        await net.idleKeys(keys);
+        waits.add(net.idleKeys(keys));
       }
-      await Future<void>.delayed(Duration.zero);
+      for (final id in ids) {
+        final preparation = _localPreparations[id];
+        if (preparation != null) waits.add(preparation);
+      }
+      if (waits.isNotEmpty) {
+        await Future.wait<void>(waits);
+      } else {
+        await Future<void>.delayed(Duration.zero);
+      }
       var pending = false;
       for (final id in ids) {
         final session = registry.find(id);
@@ -761,6 +787,7 @@ final class DownloadTransferOwner {
     )) {
       return;
     }
+    if (_localPreparations.containsKey(id)) return;
     if (_disposed ||
         session.state == DownloadState.promoted ||
         session.state == DownloadState.disposed ||
@@ -777,6 +804,13 @@ final class DownloadTransferOwner {
         (_downloadRetryRounds[id] ?? 0) > _maxDownloadRetryRounds) {
       return;
     }
+    final prepare = prepareDownload;
+    if (prepare != null &&
+        session.committedLength == 0 &&
+        !identical(_locallyPreparedSessions[id], session)) {
+      _startLocalPreparation(id, session, prepare);
+      return;
+    }
     final taskKey = 'transfer:${++_taskSequence}:${id.key}';
     _networkTaskKeys[id] = taskKey;
     net.submitRanked(
@@ -787,6 +821,123 @@ final class DownloadTransferOwner {
       flowTargetFrames: claim.demand.flowTargetFrames,
       demanded: true,
       task: (token) => _runDownload(id, session, taskKey, token),
+    );
+  }
+
+  void _startLocalPreparation(
+    DownloadId id,
+    DownloadSession session,
+    TransferPrepare prepare,
+  ) {
+    if (_localPreparations.containsKey(id)) return;
+    final initialClaim = _preferredClaim(id);
+    final startedAtMicros = clock.nowMicros();
+    late final Future<void> tracked;
+    tracked = _runLocalPreparation(
+      id,
+      session,
+      prepare,
+      initialClaim: initialClaim,
+      startedAtMicros: startedAtMicros,
+    ).whenComplete(() {
+      if (identical(_localPreparations[id], tracked)) {
+        _localPreparations.remove(id);
+      }
+      if (_disposed ||
+          !identical(registry.findExact(id), session) ||
+          !session.demanded) {
+        return;
+      }
+      scheduleMicrotask(() {
+        if (!_disposed &&
+            identical(registry.findExact(id), session) &&
+            session.demanded) {
+          _ensureDownloadTask(id, session);
+        }
+      });
+    });
+    _localPreparations[id] = tracked;
+  }
+
+  Future<void> _runLocalPreparation(
+    DownloadId id,
+    DownloadSession session,
+    TransferPrepare prepare, {
+    required _TransferClaim? initialClaim,
+    required int startedAtMicros,
+  }) async {
+    Object? prepareError;
+    try {
+      await prepare(session);
+    } on Object catch (error) {
+      // Durable local state is an acceleration/fallback input, not network
+      // admission authority. If local hydration fails, keep the authoritative
+      // physical session and allow the normal provider path to recover it.
+      prepareError = error;
+    }
+
+    if (!identical(registry.findExact(id), session)) return;
+    _locallyPreparedSessions[id] = session;
+    final claim = _preferredClaim(id) ?? initialClaim;
+    if (prepareError != null) {
+      _record(
+        claim,
+        kind: TraceEventKind.artifactSource,
+        id: id,
+        payload: <String, Object?>{
+          'stage': 'physical-local-prepare',
+          'action': 'local-hydration-failed-network-fallback',
+          'error': '$prepareError',
+          'committedLength': session.committedLength,
+          'demanded': session.demanded,
+          'prepareMicros':
+              (clock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
+        },
+      );
+      return;
+    }
+
+    var completedLocally = false;
+    try {
+      completedLocally = await DownloadJob.completeWithoutTransport(
+        session: session,
+        expectedChecksum: _expectedChecksum(id),
+      );
+    } on Object catch (error) {
+      _record(
+        claim,
+        kind: TraceEventKind.artifactSource,
+        id: id,
+        payload: <String, Object?>{
+          'stage': 'physical-local-prepare',
+          'action': 'local-completion-failed-network-fallback',
+          'error': '$error',
+          'committedLength': session.committedLength,
+          'demanded': session.demanded,
+          'prepareMicros':
+              (clock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
+        },
+      );
+      return;
+    }
+
+    _record(
+      claim,
+      kind: TraceEventKind.artifactSource,
+      id: id,
+      payload: <String, Object?>{
+        'stage': 'physical-local-prepare',
+        'action': completedLocally
+            ? 'local-completion-short-circuit'
+            : 'local-hydration-ready',
+        'state': session.state.name,
+        'committedLength': session.committedLength,
+        'demanded': session.demanded,
+        'prepareMicros':
+            (clock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
+        'networkAdmissionRequired': !completedLocally && session.demanded,
+        'physicalOwner': true,
+      },
     );
   }
 
@@ -804,13 +955,6 @@ final class DownloadTransferOwner {
     if (claim == null) return;
     _ActiveProviderLease? providerLease;
     try {
-      final prepare = prepareDownload;
-      if (prepare != null && session.committedLength == 0) {
-        await prepare(session);
-        token.throwIfCancelled();
-      }
-      final preparedClaim = _preferredClaim(id);
-      if (preparedClaim != null) claim = preparedClaim;
       if (await DownloadJob.completeWithoutTransport(
         session: session,
         expectedChecksum: _expectedChecksum(id),

@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:domain/domain.dart';
 import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
+import 'artifact_cache_read_scheduler.dart';
 import 'partial_download_store.dart';
 
 typedef PartialDownloadHandoffError = void Function(
@@ -22,6 +25,7 @@ final class PartialDownloadHandoff {
     this.onError,
     this.equivalentCandidates,
     this.clock,
+    this.readScheduler,
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'partial-download-handoff',
   });
@@ -30,6 +34,7 @@ final class PartialDownloadHandoff {
   final PartialDownloadHandoffError? onError;
   final PartialEquivalentCandidates? equivalentCandidates;
   final MonoClock? clock;
+  final ArtifactCacheReadScheduler? readScheduler;
   final TraceSink traceSink;
   final String sessionId;
   final Map<DownloadSession, Future<bool>> _stores =
@@ -56,11 +61,12 @@ final class PartialDownloadHandoff {
     final writer = session.acquireWriter();
     var offset = 0;
     try {
-      await for (final chunk in entry.open(start: 0)) {
-        if (chunk.isEmpty) continue;
-        await session.append(writer, offset, chunk);
-        offset += chunk.length;
-      }
+      offset = await _restoreEntry(
+        session,
+        writer,
+        entry,
+        priority: () => session.effectivePriority,
+      );
       if (offset != entry.length) {
         throw StateError(
           'durable partial length changed while restoring ${session.id.key}: '
@@ -80,6 +86,45 @@ final class PartialDownloadHandoff {
       equivalent: candidate.equivalent,
       equivalentCandidatesChecked: candidate.candidatesChecked,
     );
+  }
+
+
+  Future<int> _restoreEntry(
+    DownloadSession session,
+    WriterLease writer,
+    PartialDownloadEntry entry, {
+    required int Function() priority,
+  }) async {
+    final scheduler = readScheduler;
+    if (scheduler == null) {
+      var offset = 0;
+      await for (final chunk in entry.open(start: 0)) {
+        if (chunk.isEmpty) continue;
+        await session.append(writer, offset, chunk);
+        offset += chunk.length;
+      }
+      return offset;
+    }
+
+    final iterator = StreamIterator<List<int>>(entry.open(start: 0));
+    var offset = 0;
+    try {
+      while (true) {
+        final lease = await scheduler.acquire(priority: priority);
+        try {
+          if (!await iterator.moveNext()) break;
+          final chunk = iterator.current;
+          if (chunk.isEmpty) continue;
+          await session.append(writer, offset, chunk);
+          offset += chunk.length;
+        } finally {
+          lease.release();
+        }
+      }
+    } finally {
+      await iterator.cancel();
+    }
+    return offset;
   }
 
 

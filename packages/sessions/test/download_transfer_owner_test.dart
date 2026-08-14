@@ -139,6 +139,138 @@ void main() {
     expect(shortCircuit.payload['committedLength'], bytes.length);
   });
 
+  test('cold local prepare hydrates physical partial before NetLane admission', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_local_prepare_before_lane_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final net = NetLane(maxActive: 1);
+    final blockerStarted = Completer<void>();
+    final blockerRelease = Completer<void>();
+    net.submitRanked(
+      key: 'network-blocker',
+      priority: 900,
+      bucket: 'source:test',
+      bucketLimit: 1,
+      task: (_) async {
+        blockerStarted.complete();
+        await blockerRelease.future;
+      },
+    );
+    await blockerStarted.future;
+
+    final partial = <int>[...'RIFF....WEBP'.codeUnits, ...List<int>.filled(4096, 7)];
+    final prepareDone = Completer<void>();
+    var prepareCalls = 0;
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: net,
+      prepareDownload: (session) async {
+        prepareCalls++;
+        await session.bindResponse(
+          validators: const Validators(),
+          totalLength: partial.length + 4096,
+        );
+        final writer = session.acquireWriter();
+        await session.append(writer, 0, partial);
+        await session.pause(writer);
+        prepareDone.complete();
+      },
+    );
+    addTearDown(() async {
+      if (!blockerRelease.isCompleted) blockerRelease.complete();
+      await owner.dispose();
+      await net.idle();
+      await registry.dispose();
+    });
+
+    final id = _id('cold-partial-before-lane');
+    final transport = _CountingBytesTransport(
+      <int>[...partial, ...List<int>.filled(4096, 8)],
+    );
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-cold-partial-before-lane',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+
+    consumer.replaceDemands(
+      'reader-cold-partial-before-lane',
+      1,
+      _desired(id, priority: 700),
+    );
+    await prepareDone.future;
+
+    final session = registry.get(id);
+    expect(prepareCalls, 1);
+    expect(session.committedLength, partial.length);
+    expect(session.state, DownloadState.idle);
+    expect(transport.opens, 0);
+    // The only NetLane slot is still held by unrelated network work. Local
+    // hydration therefore cannot have depended on source/network admission.
+    expect(net.active, 1);
+
+    consumer.replaceDemands(
+      'reader-cold-partial-before-lane',
+      2,
+      const <DownloadId, TransferDemand>{},
+    );
+    blockerRelease.complete();
+    await net.idle();
+    expect(transport.opens, 0);
+  });
+
+  test('failed local prepare falls back to provider once without prepare loop', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_local_prepare_fallback_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    var prepareCalls = 0;
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      prepareDownload: (_) async {
+        prepareCalls++;
+        throw StateError('simulated durable partial read failure');
+      },
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('local-prepare-network-fallback');
+    final transport = _CountingBytesTransport('RIFF....WEBPfallback'.codeUnits);
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-local-prepare-network-fallback',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+
+    consumer.replaceDemands(
+      'reader-local-prepare-network-fallback',
+      1,
+      _desired(id, priority: 1000),
+    );
+    await consumer.idle();
+
+    expect(prepareCalls, 1);
+    expect(transport.opens, 1);
+    expect(registry.get(id).state, DownloadState.promoted);
+  });
+
   test('detached active physical work becomes inactive and is reclaimed only under pressure',
       () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_preopen_rank_');

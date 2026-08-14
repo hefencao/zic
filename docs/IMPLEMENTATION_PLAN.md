@@ -1,4 +1,5 @@
 
+- P0：真机验证dev.272 cold partial hydration已从NetLane前移：已有durable partial的`session-partial-handoff/restored`与`sourceReady`不得等待transport lease；同一physical generation重复revision只prepare一次；cold partial与artifact replay共用`ArtifactCacheReadScheduler`，current priority能在chunk边界抢先。若local hydration后仍需network，再单独统计NetLane/source open等待。
 - P0：真机验证transport/source lease与body-read permit已解耦：normal steady state `globalTransportLeases<=5`、current handoff最多6；parked live response不得释放transport lease，durable artifact local body必须释放两者。比较`sourceRequestPlanMicros/sourcePlanGateWaitMicros/sourceHostOpenMicros`相对dev.270是否回落；若仍慢，分别下钻Venera单invocation gate与host open，不扩大连接数或缩3/7。
 - P0：真机验证 current body-read 抢占与 inactive response retention 淘汰已解耦：`downloadPreempted`只允许表示priority/body-read preemption，后台 retention destruction只记录`downloadEvicted`；一个正在退出的inactive response不得阻塞current live response reacquire。继续验证`demanded=true` flow-paused response不成为retention victim、artifact-cache durable body释放remote NetLane permit，并独立统计重复persistent artifact session-copy，不用提高session/response缓存数量掩盖。
 ## P0：Image Transfer ownership 正式迁移

@@ -4,6 +4,11 @@
 - NetLane新增独立`transportLeases`资源：live source response park只释放body-read permit而继续占transport lease；durable artifact local body同时释放两者。normal5+current reserved1同时界定transport/source lease与body-read permit，`globalRunning`仅表示physical task数。
 - 删除独立`maxInactiveParkedResponses`容量owner。新的normal transport pressure只可typed回收`demanded=false` inactive parked lease（`inactive-transport-lease-reclaim`）；仍有demand的parked response不成为normal victim。current 1000、reserved1、restart-cost rank、3/7、5/3/2/1均不变。
 
+## 0.31.0-dev.272
+
+- 将cold partial/artifact local physical prepare从NetLane transport admission前移：`DownloadTransferOwner`按physical session generation single-flight hydrate，Reader-local ingress可在网络lease可用前消费prefix；cold partial durable read复用既有`ArtifactCacheReadScheduler`分块/动态priority调度，prepare完成且仍需provider时才创建NetLane task。
+- local prepare失败不再把durable acceleration变成network blocker：每个physical generation只尝试一次local hydration，失败记录后降级provider fallback；同步demand planning、3/7、5/3/2/1、normal5+current reserved1均不变。
+
 ## 0.31.0-dev.270：current body-read preemption 与 inactive retention eviction 事务解耦
 
 - 00:22 dev.269 真机 Trace 中 11 次 `downloadPreempted` 全为 `inactive-response-retention-eviction`，真正 `high-priority` current preemption 为 0。源码审计确认 inactive parked response 淘汰仍复用 `cancelForPreemption/TaskPreemptionSnapshot`，导致不占 read permit 的后台 response eviction 也占用 `_hasPreemptionInFlight`，可阻塞 current 对 body-read permit 的抢占。

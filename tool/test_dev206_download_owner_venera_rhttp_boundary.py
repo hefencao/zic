@@ -34,7 +34,7 @@ for forbidden in ('PartialDownload', 'openPartial', 'storePartial', 'invalidateP
 for marker in ('abstract interface class PartialDownloadStore', 'final class PartialDownloadEntry'):
     if marker not in partial_store:
         raise SystemExit(f'Download-owned cold partial store missing: {marker}')
-for marker in ('final class PartialDownloadHandoff', 'restoreInto(DownloadSession session)', 'drain(Iterable<DownloadSession> sessions)'):
+for marker in ('final class PartialDownloadHandoff', 'Future<void> restoreInto(', 'DownloadSession session,', 'drain(Iterable<DownloadSession> sessions)'):
     if marker not in handoff:
         raise SystemExit(f'partial handoff contract missing: {marker}')
 for marker in ('PersistentDownloadArtifactStore', 'PartialDownloadStore', 'openPartialDownload', 'storePartialDownload'):

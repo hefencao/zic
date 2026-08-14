@@ -7,6 +7,7 @@ import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
 import 'artifact_cache_manager.dart';
+import 'artifact_cache_read_scheduler.dart';
 import 'partial_download_handoff.dart';
 import 'partial_download_store.dart';
 import 'physical_transfer_retention.dart';
@@ -24,9 +25,12 @@ final class CompositionDownloadTransferRuntime {
     required this.artifactCacheManager,
     required this.partialDownloadStore,
     required this.net,
+    ArtifactCacheReadScheduler? localReadScheduler,
     this.maxIdlePartialSessions = 32,
     this.maxIdlePartialBytes = 256 * 1024 * 1024,
-  })  : clock = const SystemClock(),
+  })  : localReadScheduler =
+            localReadScheduler ?? ArtifactCacheReadScheduler(),
+        clock = const SystemClock(),
         traceHub = _CompositionTransferTraceHub(),
         workspace = EphemeralCacheWorkspace.readerSession(
           'composition-transfer-${++_sequence}',
@@ -54,6 +58,7 @@ final class CompositionDownloadTransferRuntime {
         equivalentCandidates: cache?.directEquivalents,
         onError: (error, stackTrace) {},
         clock: clock,
+        readScheduler: localReadScheduler,
         traceSink: traceHub,
         sessionId: 'composition-transfer-owner',
       );
@@ -91,6 +96,7 @@ final class CompositionDownloadTransferRuntime {
   final ArtifactCacheManager? artifactCacheManager;
   final PartialDownloadStore? partialDownloadStore;
   final NetLane net;
+  final ArtifactCacheReadScheduler localReadScheduler;
   final int maxIdlePartialSessions;
   final int maxIdlePartialBytes;
   final MonoClock clock;
@@ -315,11 +321,13 @@ final class CompositionDownloadTransferRuntimePool {
     required ArtifactCacheManager? artifactCacheManager,
     required PartialDownloadStore? partialDownloadStore,
     required NetLane net,
+    ArtifactCacheReadScheduler? localReadScheduler,
   }) {
     final key = _CompositionTransferRuntimeKey(
       artifactCacheManager: artifactCacheManager,
       partialDownloadStore: partialDownloadStore,
       net: net,
+      localReadScheduler: localReadScheduler,
     );
     return _entries.putIfAbsent(
       key,
@@ -327,6 +335,7 @@ final class CompositionDownloadTransferRuntimePool {
         artifactCacheManager: artifactCacheManager,
         partialDownloadStore: partialDownloadStore,
         net: net,
+        localReadScheduler: localReadScheduler,
       ),
     );
   }
@@ -363,24 +372,28 @@ final class _CompositionTransferRuntimeKey {
     required this.artifactCacheManager,
     required this.partialDownloadStore,
     required this.net,
+    required this.localReadScheduler,
   });
 
   final ArtifactCacheManager? artifactCacheManager;
   final PartialDownloadStore? partialDownloadStore;
   final NetLane net;
+  final ArtifactCacheReadScheduler? localReadScheduler;
 
   @override
   bool operator ==(Object other) =>
       other is _CompositionTransferRuntimeKey &&
       identical(artifactCacheManager, other.artifactCacheManager) &&
       identical(partialDownloadStore, other.partialDownloadStore) &&
-      identical(net, other.net);
+      identical(net, other.net) &&
+      identical(localReadScheduler, other.localReadScheduler);
 
   @override
   int get hashCode => Object.hash(
         identityHashCode(artifactCacheManager),
         identityHashCode(partialDownloadStore),
         identityHashCode(net),
+        identityHashCode(localReadScheduler),
       );
 }
 
