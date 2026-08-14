@@ -1703,7 +1703,7 @@ Future<_IndexedPartialResumeState> _readIndexedPartialResumeState(
     final validatorRequestUri = rawValidatorRequestUri is String
         ? Uri.tryParse(rawValidatorRequestUri)
         : null;
-    if (validators.isNotEmpty && validatorRequestUri != id.canonicalUri) {
+    if (validators.canResume && validatorRequestUri != id.canonicalUri) {
       validators = const Validators();
     }
     return _IndexedPartialResumeState(

@@ -20,7 +20,9 @@ def require(path: str, *needles: str) -> None:
 pub = text('apps/app/pubspec.yaml')
 m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pub, re.M)
 req(m is not None and int(m.group(1)) >= 273, 'dev.273 app version missing')
-require('apps/app/android/zic-version.properties', 'versionCode=273')
+props = text('apps/app/android/zic-version.properties')
+vm = re.search(r'^versionCode=(\d+)\s*$', props, re.M)
+req(vm is not None and int(vm.group(1)) >= 273, 'dev.273 Android version missing')
 
 chapter = text('packages/downloads/lib/src/chapter_downloads.dart')
 start = chapter.index('Future<PartialDownloadEntry?> openPartialDownload(DownloadId id) async')
@@ -76,8 +78,8 @@ for path in (
     req((ROOT / path).is_file(), f'missing dev.273 governance file: {path}')
 require('docs/ARCHITECTURE.md', 'persistent index/file直接裁决', '不得为读取或存在性探测materialize durable-store `DownloadSession`')
 require('docs/SPEC.md', 'durable partial existence/read MUST由persistent index/file authority直接解析')
-require('docs/IMPLEMENTATION_STATUS.md', '0.31.0-dev.273', '约87ms')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.273', 'local-hydration-miss')
+require('docs/IMPLEMENTATION_STATUS.md', 'dev.273', '约87ms')
+require('docs/NEXT_CHAT_HANDOFF.md', 'dev.273', 'indexed durable partial read')
 require('CHANGELOG.md', '0.31.0-dev.273', 'durable partial read owner')
 
 # Frozen policy/resource boundaries remain unchanged.

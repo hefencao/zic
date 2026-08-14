@@ -1,6 +1,6 @@
-# dev.273 后续交接
-- dev.273：03:33 dev.272 Trace中58次network local prepare全为`committedLength=0` miss，中位约87ms/最大约125ms，43次origin均有4个verified-equivalent candidates。根因是durable partial read/existence API用`_registry.get()+DownloadSession.restore()` materialize synthetic store session。现read path改为SQLite index/file authority，hit/miss不创建store session；无local bytes明确记录`local-hydration-miss`。
-- dev.272 pre-NetLane physical local prepare、共享`ArtifactCacheReadScheduler`、dev.271 transport/source lease与body-read permit、dev.270 current preemption/retention eviction事务拆分继续冻结：normal稳态`globalTransportLeases<=5`、current handoff最多6；后台retention回收记录`downloadEvicted`且不得占current抢占事务。partial write mutation仍可用store session/writer，read lookup不得反向拥有session lifecycle。
+# dev.274 后续交接
+- dev.274：修复dev.273本地编译错误：`Validators`真实契约只有`isEmpty/canResume`，validator URI scope现用`Validators.canResume`。04:00 Trace另证明dev.272 pre-NetLane local prepare把priority ordering泄漏给异步完成时序：current=1000虽最先demand，却在820/760/740之后才`downloadStarted`。现local prepare完成只进入physical-owner local→network admission arbiter；lower ready work不得越过仍在prepare的higher demanded priority，随后才交给唯一NetLane。
+- dev.273 indexed durable partial read、dev.272 pre-NetLane local prepare/共享`ArtifactCacheReadScheduler`、dev.271 transport/source lease与body-read permit、dev.270 current preemption/retention eviction事务拆分继续冻结：normal稳态`globalTransportLeases<=5`、current handoff最多6；后台retention回收记录`downloadEvicted`且不得占current抢占事务。Venera JS仍`maxConcurrentInvocations=1`，不得以扩大runtime并发掩盖request-plan冷启动。
 - 冻结 previous3/next7、5/3/2/1、decode2/1、holder7/5/3/2、normal5+current reserved1；不得通过扩大连接数、缩窗口或预解析整章掩盖source/open owner问题。
 ## 必读
 1. `AGENTS.md`

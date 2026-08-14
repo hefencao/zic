@@ -226,6 +226,77 @@ void main() {
     expect(transport.opens, 0);
   });
 
+  test('post-local network admission preserves higher demand priority', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_local_prepare_priority_barrier_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final high = _id('prepare-priority-current');
+    final low = _id('prepare-priority-prefetch');
+    final highRelease = Completer<void>();
+    final lowRelease = Completer<void>();
+    final highPrepared = Completer<void>();
+    final lowPrepared = Completer<void>();
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 2),
+      prepareDownload: (session) async {
+        if (session.id == high) {
+          await highRelease.future;
+          highPrepared.complete();
+        } else if (session.id == low) {
+          await lowRelease.future;
+          lowPrepared.complete();
+        }
+      },
+    );
+    addTearDown(() async {
+      if (!highRelease.isCompleted) highRelease.complete();
+      if (!lowRelease.isCompleted) lowRelease.complete();
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final openOrder = <Uri>[];
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-prepare-priority',
+      transportFor: (uri) {
+        openOrder.add(uri);
+        return _CountingBytesTransport('RIFF....WEBPpriority'.codeUnits);
+      },
+      traceSink: const NoopTraceSink(),
+    );
+    consumer.replaceDemands(
+      'reader-prepare-priority',
+      1,
+      <DownloadId, TransferDemand>{
+        high: const TransferDemand(priority: 1000, reason: 'current'),
+        low: const TransferDemand(priority: 820, reason: 'next'),
+      },
+    );
+
+    // The lower-priority local miss completes first. It must not manufacture
+    // an earlier source/runtime admission while current is still in the same
+    // physical-owner pre-admission phase.
+    lowRelease.complete();
+    await lowPrepared.future;
+    await Future<void>.delayed(Duration.zero);
+    expect(openOrder, isEmpty);
+
+    highRelease.complete();
+    await highPrepared.future;
+    await consumer.idle();
+    expect(openOrder, hasLength(2));
+    expect(openOrder.first, high.canonicalUri);
+    expect(openOrder.last, low.canonicalUri);
+  });
+
   test('failed local prepare falls back to provider once without prepare loop', () async {
     final temp = await Directory.systemTemp.createTemp(
       'transfer_owner_local_prepare_fallback_',

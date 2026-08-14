@@ -1,3 +1,9 @@
+## 0.31.0-dev.274：编译闭包与 local→network priority continuity
+
+- 修复dev.273 `Validators.isNotEmpty`编译错误：按transport真实契约使用`Validators.canResume`判断是否存在可续传validator。
+- 04:00 Trace确认pre-NetLane local prepare把network task创建顺序泄漏给local I/O完成时序：current=1000最先demand却第四个`downloadStarted`。local prepare完成现进入composition physical-owner admission arbiter；lower ready work在higher demanded local prepare结束前不得越过，随后仍由NetLane唯一负责容量/preemption。
+- 不改变Venera JS单invocation、previous3/next7、5/3/2/1、decode2/1、holder7/5/3/2、normal5+current reserved1。
+
 ## 0.31.0-dev.273：durable partial read owner 解耦
 
 - 03:33 dev.272 Trace中58次network local prepare均为`committedLength=0` miss，中位约87ms/最大约125ms；origin均有4个verified-equivalent candidates。

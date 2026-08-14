@@ -99,6 +99,15 @@ final class DownloadTransferOwner {
       <DownloadId, Future<void>>{};
   final Map<DownloadId, DownloadSession> _locallyPreparedSessions =
       <DownloadId, DownloadSession>{};
+  // Local preparation may finish out of demand-priority order. Network/source
+  // admission must not inherit that completion order: a lower-priority item
+  // that finished its local phase waits while a higher-priority demanded
+  // physical session is still in the same pre-admission phase. NetLane remains
+  // the only network-capacity scheduler; this map only preserves rank across
+  // the asynchronous local->network ownership seam.
+  final Map<DownloadId, DownloadSession> _preparedNetworkAdmissions =
+      <DownloadId, DownloadSession>{};
+  final Set<DownloadId> _preparedAdmissionDeferrals = <DownloadId>{};
   final Map<DownloadId, int> _downloadRetryRounds = <DownloadId, int>{};
   final Set<DownloadId> _downloadRetryPending = <DownloadId>{};
   final Set<DownloadId> _downloadTerminalFailures = <DownloadId>{};
@@ -181,6 +190,8 @@ final class DownloadTransferOwner {
     _progressLengths.remove(physicalId);
     _localPreparations.remove(physicalId);
     _locallyPreparedSessions.remove(physicalId);
+    _preparedNetworkAdmissions.remove(physicalId);
+    _preparedAdmissionDeferrals.remove(physicalId);
     _retireDownloadTracking(physicalId, session);
     await session.dispose();
     return true;
@@ -346,6 +357,8 @@ final class DownloadTransferOwner {
     _networkTaskKeys.clear();
     _localPreparations.clear();
     _locallyPreparedSessions.clear();
+    _preparedNetworkAdmissions.clear();
+    _preparedAdmissionDeferrals.clear();
     _downloadRetryRounds.clear();
     _downloadRetryPending.clear();
     _downloadTerminalFailures.clear();
@@ -398,6 +411,7 @@ final class DownloadTransferOwner {
     for (final physicalId in toSchedule) {
       _ensureDownloadTask(physicalId, registry.get(physicalId));
     }
+    _drainPreparedNetworkAdmissions();
   }
 
   Map<DownloadId, _ConsumerPhysicalDemand> _normalizeDemands(
@@ -589,6 +603,11 @@ final class DownloadTransferOwner {
       _networkTaskKeys.remove(id);
       _retireDownloadTracking(id, session);
     }
+    if (session == null || !session.demanded) {
+      _preparedNetworkAdmissions.remove(id);
+      _preparedAdmissionDeferrals.remove(id);
+    }
+    _drainPreparedNetworkAdmissions();
   }
 
   Future<void> _disposeConsumer(DownloadTransferConsumer consumer) async {
@@ -658,6 +677,7 @@ final class DownloadTransferOwner {
         _ensureDownloadTask(id, session);
       }
     }
+    _drainPreparedNetworkAdmissions();
   }
 
   Future<void> _idleFor(DownloadTransferConsumer consumer) async {
@@ -785,6 +805,12 @@ final class DownloadTransferOwner {
       claim.demand.flowTargetFrames,
       session,
     )) {
+      _preparedNetworkAdmissions.remove(id);
+      _preparedAdmissionDeferrals.remove(id);
+      return;
+    }
+    if (identical(_preparedNetworkAdmissions[id], session)) {
+      _drainPreparedNetworkAdmissions();
       return;
     }
     if (_localPreparations.containsKey(id)) return;
@@ -843,20 +869,77 @@ final class DownloadTransferOwner {
       if (identical(_localPreparations[id], tracked)) {
         _localPreparations.remove(id);
       }
-      if (_disposed ||
-          !identical(registry.findExact(id), session) ||
-          !session.demanded) {
-        return;
+      if (!_disposed &&
+          identical(registry.findExact(id), session) &&
+          session.demanded) {
+        _preparedNetworkAdmissions[id] = session;
+      } else {
+        _preparedNetworkAdmissions.remove(id);
+        _preparedAdmissionDeferrals.remove(id);
       }
-      scheduleMicrotask(() {
-        if (!_disposed &&
-            identical(registry.findExact(id), session) &&
-            session.demanded) {
-          _ensureDownloadTask(id, session);
-        }
-      });
+      _drainPreparedNetworkAdmissions();
     });
     _localPreparations[id] = tracked;
+  }
+
+  void _drainPreparedNetworkAdmissions() {
+    if (_disposed || _preparedNetworkAdmissions.isEmpty) return;
+    while (true) {
+      final candidates = _preparedNetworkAdmissions.entries
+          .where((entry) =>
+              identical(registry.findExact(entry.key), entry.value) &&
+              entry.value.demanded)
+          .toList(growable: false)
+        ..sort((left, right) {
+          final priority = right.value.effectivePriority
+              .compareTo(left.value.effectivePriority);
+          if (priority != 0) return priority;
+          final leftSequence = _preferredClaim(left.key)?.sequence ?? (1 << 62);
+          final rightSequence =
+              _preferredClaim(right.key)?.sequence ?? (1 << 62);
+          return leftSequence.compareTo(rightSequence);
+        });
+      if (candidates.isEmpty) {
+        _preparedNetworkAdmissions.removeWhere((id, session) =>
+            !identical(registry.findExact(id), session) || !session.demanded);
+        return;
+      }
+      final candidate = candidates.first;
+      final priority = candidate.value.effectivePriority;
+      DownloadId? blockerId;
+      var blockerPriority = -1;
+      for (final entry in _localPreparations.entries) {
+        final blockingSession = registry.findExact(entry.key);
+        if (blockingSession == null || !blockingSession.demanded) {
+          continue;
+        }
+        final blockingPriority = blockingSession.effectivePriority;
+        if (blockingPriority > priority && blockingPriority > blockerPriority) {
+          blockerId = entry.key;
+          blockerPriority = blockingPriority;
+        }
+      }
+      if (blockerId != null) {
+        if (_preparedAdmissionDeferrals.add(candidate.key)) {
+          _record(
+            _preferredClaim(candidate.key),
+            kind: TraceEventKind.artifactSource,
+            id: candidate.key,
+            payload: <String, Object?>{
+              'stage': 'post-local-network-admission',
+              'action': 'deferred-by-higher-local-priority',
+              'effectivePriority': priority,
+              'blockingPriority': blockerPriority,
+              'physicalOwner': true,
+            },
+          );
+        }
+        return;
+      }
+      _preparedNetworkAdmissions.remove(candidate.key);
+      _preparedAdmissionDeferrals.remove(candidate.key);
+      _ensureDownloadTask(candidate.key, candidate.value);
+    }
   }
 
   Future<void> _runLocalPreparation(
