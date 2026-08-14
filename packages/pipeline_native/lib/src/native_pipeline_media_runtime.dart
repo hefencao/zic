@@ -504,6 +504,7 @@ final class _AndroidTextureOutputFrame
     try {
       final sample = await lease.present(
         NativeTextureFrameOwner(frame),
+        residentKey: this,
         context: TextureTelemetryContext(
           sessionId: sessionId,
           decodeIdentity: id.key,
@@ -527,6 +528,7 @@ final class _AndroidTextureOutputFrame
         fallbackDecodeMicros: 0,
         deadlineMissMicros: sample.deadlineMissMicros,
         path: FramePresentationPath.platform,
+        platformResidentReuse: sample.residentReuse,
       );
     } on Object {
       final failedPlatformRoundTripMicros = platformAttempt.elapsedMicroseconds;
@@ -825,6 +827,7 @@ void _recordTextureTelemetry(
         'deadlineMissMicros': event.deadlineMissMicros,
         'roundTripMicros': event.roundTripMicros,
         'bridgeMicros': event.bridgeMicros,
+        if (event.residentReuse) 'residentReuse': true,
         if (event.context.leaseReused != null)
           'textureLeaseReused': event.context.leaseReused,
       },

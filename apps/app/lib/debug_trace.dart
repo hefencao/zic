@@ -248,7 +248,8 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
       TraceEventKind.framePipelineTiming =>
         '${event.payload['traceReason']}|${event.payload['dominantStage']}|'
             '${event.payload['role']}|${event.payload['decodedRole']}|'
-            '${event.payload['uploadRole']}',
+            '${event.payload['uploadRole']}|'
+            '${event.payload['platformResidentReuse']}',
       TraceEventKind.decodeRefill =>
         '${event.payload['role']}|${event.payload['stage']}|'
             '${event.payload['sourceWake']}',

@@ -115,6 +115,58 @@ void main() {
     expect(calls.last.arguments, containsPair('frameBytes', 64));
   });
 
+  test('resident output identity skips a redundant platform blit', () async {
+    final ownership = _Ownership();
+    final events = <TextureTelemetry>[];
+    final presenter = AndroidTexturePresenter(
+      channel: channel,
+      telemetrySink: events.add,
+    );
+    final lease = await presenter.create(width: 4, height: 4);
+    final frame = _FakeFrame(ownership: ownership);
+    final residentKey = Object();
+
+    final first = await lease.present(frame, residentKey: residentKey);
+    final repeated = await lease.present(frame, residentKey: residentKey);
+
+    expect(first.residentReuse, isFalse);
+    expect(repeated.residentReuse, isTrue);
+    expect(repeated.uploadMicros, 0);
+    expect(repeated.blitMicros, 0);
+    expect(repeated.scheduleMicros, 0);
+    expect(repeated.roundTripMicros, 0);
+    expect(repeated.inFlightBytes, 0);
+    expect(ownership.retains, 1);
+    expect(ownership.releases, 1);
+    expect(calls.map((call) => call.method), <String>['create', 'present']);
+    expect(events, hasLength(2));
+    expect((events.last as TexturePresentTelemetry).residentReuse, isTrue);
+  });
+
+  test('different output or resize invalidates resident identity', () async {
+    final ownership = _Ownership();
+    final presenter = AndroidTexturePresenter(channel: channel);
+    final lease = await presenter.create(width: 4, height: 4);
+    final frame = _FakeFrame(ownership: ownership);
+    final firstKey = Object();
+    final secondKey = Object();
+
+    await lease.present(frame, residentKey: firstKey);
+    await lease.present(frame, residentKey: secondKey);
+    await lease.present(frame, residentKey: secondKey);
+    await lease.resize(width: 8, height: 8);
+    final resized = _FakeFrame(ownership: ownership, width: 8, height: 8);
+    final afterResize = await lease.present(resized, residentKey: secondKey);
+
+    expect(afterResize.residentReuse, isFalse);
+    expect(
+      calls.map((call) => call.method),
+      <String>['create', 'present', 'present', 'resize', 'present'],
+    );
+    expect(ownership.retains, 3);
+    expect(ownership.releases, 3);
+  });
+
   test('platform failure releases retained owner and emits fallback', () async {
     final ownership = _Ownership();
     final events = <TextureTelemetry>[];

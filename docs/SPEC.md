@@ -5,7 +5,7 @@
 
 ## 1. 产品范围
 
-zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静态图片、Animated WebP、partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及本地 Debug Trace 导出。 纵向Reader的异步尺寸更新 MUST 在active scroll期间冻结geometry snapshot；idle采用新geometry时 MUST 以layout-time correction原子维持top-pixel连续，不能暴露“新extent+旧pixels”的中间scroll observation。vertical drag/ballistic期间 MAY 暂缓非可见next2 texture upload，但 MUST 保留next2 decode与current/transition/visible/immediate-next需求。
+zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静态图片、Animated WebP、partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及本地 Debug Trace 导出。 纵向Reader的异步尺寸更新 MUST 在active scroll期间冻结geometry snapshot；idle采用新geometry时 MUST 以layout-time correction原子维持top-pixel连续，不能暴露“新extent+旧pixels”的中间scroll observation。vertical drag/ballistic期间 MAY 暂缓非可见next2 texture upload，但 MUST 保留next2 decode与current/transition/visible/immediate-next需求。 Android texture的UploadDemand只准备/持有output，真正RGBA Surface copy发生在presentation；同一lease已resident的具体OutputFrame再次present必须零copy复用并记录`platformResident`，不得重复platform blit/schedule。frame identity变化、resize/release使该复用失效；SurfaceProducer重建仍由platform redraw负责。
 
 项目不承诺 DRM 绕过、通用视频播放、社交功能或模型直接操作底层资源生命周期。
 

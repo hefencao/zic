@@ -40,6 +40,7 @@ final class FramePresentationTiming {
     required this.fallbackDecodeMicros,
     required this.deadlineMissMicros,
     required this.path,
+    this.platformResidentReuse = false,
   });
 
   final int channelRoundTripMicros;
@@ -57,6 +58,7 @@ final class FramePresentationTiming {
   final int fallbackDecodeMicros;
   final int deadlineMissMicros;
   final FramePresentationPath path;
+  final bool platformResidentReuse;
 }
 
 /// Optional read-only timing from the last platform presentation call.

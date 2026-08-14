@@ -1,3 +1,9 @@
+## 0.31.0-dev.282 - Retained Android texture resident presentation
+
+- 14:02 dev.281 真机Trace确认slow-release geometry错页已经闭合、vertical active `staticWarmUploads=0`真实生效；剩余ballistic抖动包含retained静态OutputFrame的重复platform present，presentation ordinal 1–3仍可产生约15–37ms Surface blit/channel round-trip。
+- Android texture lease现在按具体OutputFrame对象identity记录当前SurfaceProducer resident frame；同一resident frame重复present直接返回`platformResidentReuse=true`零copy telemetry，不再再次retain/blit/schedule。不同OutputFrame、resize、release或更新的async presentation revision会使resident identity失效；较旧async tail不得覆盖较新的resident owner。
+- SurfaceProducer cleanup/recreate仍由既有Kotlin `onSurfaceAvailable -> redraw()`持有，Reader/Pipeline不接管platform surface生命周期；dev.281的hidden next2 active-scroll upload deferral、decode window与geometry correction继续冻结。
+
 ## 0.31.0-dev.281：纵向 idle layout correction + active next2 texture deferral
 
 - 修复dev.279遗留Dart编译错误：`_SourceWatchBinding.session`为mutable generation pointer，constructor不得继续`const`；新增gate直接禁止该非法组合。

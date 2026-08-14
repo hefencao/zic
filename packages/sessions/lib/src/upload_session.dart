@@ -768,6 +768,7 @@ final class UploadSession {
         'channelDispatchMicros': platform?.channelDispatchMicros ?? 0,
         'fallbackDecodeMicros': platform?.fallbackDecodeMicros ?? 0,
         'presentationPath': platform?.path.name ?? 'unknown',
+        'platformResidentReuse': platform?.platformResidentReuse ?? false,
         'deadlineMissMicros': platform?.deadlineMissMicros ?? 0,
         'decodedToPresentMicros': decodedToPresentMicros,
         'endToEndMicros': endToEndMicros,

@@ -56,6 +56,7 @@ final class TexturePresentTelemetry extends TextureTelemetry {
     required this.resultDispatchMicros,
     required this.deadlineMissMicros,
     required this.roundTripMicros,
+    this.residentReuse = false,
   });
 
   final int frameIndex;
@@ -74,6 +75,7 @@ final class TexturePresentTelemetry extends TextureTelemetry {
   final int resultDispatchMicros;
   final int deadlineMissMicros;
   final int roundTripMicros;
+  final bool residentReuse;
 
   int get bridgeMicros =>
       (roundTripMicros - queueMicros - uploadMicros - resultDispatchMicros)
@@ -291,6 +293,8 @@ final class AndroidTextureLease {
   int width;
   int height;
   bool _released = false;
+  Object? _residentKey;
+  int _presentationRevision = 0;
 
   bool get released => _released;
 
@@ -299,6 +303,8 @@ final class AndroidTextureLease {
     if (this.width == width && this.height == height) {
       return;
     }
+    _presentationRevision++;
+    _residentKey = null;
     await _presenter._resize(this, width: width, height: height);
     this.width = width;
     this.height = height;
@@ -308,14 +314,66 @@ final class AndroidTextureLease {
     TextureFrameOwner frame, {
     int? deadlineAfterMicros,
     TextureTelemetryContext context = const TextureTelemetryContext(),
-  }) {
+    Object? residentKey,
+  }) async {
     _requireActive();
-    return _presenter._present(
+    if (deadlineAfterMicros != null && deadlineAfterMicros < 0) {
+      throw ArgumentError.value(
+        deadlineAfterMicros,
+        'deadlineAfterMicros',
+        'must be non-negative',
+      );
+    }
+    if (frame.width != width || frame.height != height) {
+      throw StateError(
+        'frame ${frame.width}x${frame.height} does not match '
+        'texture ${width}x$height',
+      );
+    }
+    if (residentKey != null && identical(_residentKey, residentKey)) {
+      final sample = TexturePresentTelemetry(
+        textureId: textureId,
+        timestamp: DateTime.now(),
+        context: context,
+        frameIndex: frame.index,
+        frameBytes: frame.byteLength,
+        textureBytes: width * height * 4,
+        inFlightBytes: 0,
+        queueMicros: 0,
+        uploadMicros: 0,
+        retainMicros: 0,
+        blitMicros: 0,
+        surfaceReconfigureCount: 0,
+        scheduleMicros: 0,
+        scheduleQueueMicros: 0,
+        scheduleCallMicros: 0,
+        replaceMicros: 0,
+        resultDispatchMicros: 0,
+        deadlineMissMicros: 0,
+        roundTripMicros: 0,
+        residentReuse: true,
+      );
+      _presenter._emit(sample);
+      return sample;
+    }
+    // A different output can replace the native SurfaceProducer resident
+    // frame while sharing this lease. Clear the key before crossing the
+    // asynchronous platform boundary so a failed replacement can never make
+    // an older Dart identity look resident. Only the newest in-flight present
+    // may publish resident identity; an older async tail must not overwrite a
+    // later replacement.
+    final presentationRevision = ++_presentationRevision;
+    _residentKey = null;
+    final sample = await _presenter._present(
       this,
       frame,
       deadlineAfterMicros: deadlineAfterMicros,
       context: context,
     );
+    if (!_released && presentationRevision == _presentationRevision) {
+      _residentKey = residentKey;
+    }
+    return sample;
   }
 
   Future<void> redraw() {
@@ -328,6 +386,8 @@ final class AndroidTextureLease {
       return;
     }
     _released = true;
+    _presentationRevision++;
+    _residentKey = null;
     await _presenter._release(this);
   }
 
