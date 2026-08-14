@@ -14,6 +14,45 @@ typedef ReaderPageBuilder = Widget? Function(
   VoidCallback reportFirstFrame,
 );
 
+
+final class _ReaderVerticalScrollPhysics extends ClampingScrollPhysics {
+  const _ReaderVerticalScrollPhysics({
+    required this.geometryCorrectionTarget,
+    super.parent,
+  });
+
+  final double? Function() geometryCorrectionTarget;
+
+  @override
+  _ReaderVerticalScrollPhysics applyTo(ScrollPhysics? ancestor) {
+    return _ReaderVerticalScrollPhysics(
+      geometryCorrectionTarget: geometryCorrectionTarget,
+      parent: buildParent(ancestor),
+    );
+  }
+
+  @override
+  double adjustPositionForNewDimensions({
+    required ScrollMetrics oldPosition,
+    required ScrollMetrics newPosition,
+    required bool isScrolling,
+    required double velocity,
+  }) {
+    final target = geometryCorrectionTarget();
+    if (!isScrolling && target != null) {
+      return target
+          .clamp(newPosition.minScrollExtent, newPosition.maxScrollExtent)
+          .toDouble();
+    }
+    return super.adjustPositionForNewDimensions(
+      oldPosition: oldPosition,
+      newPosition: newPosition,
+      isScrolling: isScrolling,
+      velocity: velocity,
+    );
+  }
+}
+
 final class ReaderView extends StatefulWidget {
   const ReaderView({
     required this.controller,
@@ -54,6 +93,7 @@ final class ReaderView extends StatefulWidget {
 final class _ReaderViewState extends State<ReaderView> {
   late PageController _pageController;
   late ScrollController _verticalController;
+  late final _ReaderVerticalScrollPhysics _verticalScrollPhysics;
   double _lastLogicalPosition = 0;
   int _lastMicros = 0;
   Interaction _interaction = Interaction.idle;
@@ -74,6 +114,8 @@ final class _ReaderViewState extends State<ReaderView> {
   late Map<String, double> _verticalLayoutRatios;
   Map<String, double>? _pendingVerticalLayoutRatios;
   bool _verticalRatioCommitScheduled = false;
+  double? _pendingVerticalGeometryCorrection;
+  bool _verticalGeometryCorrectionClearScheduled = false;
   ReaderVerticalGeometry? _cachedVerticalGeometry;
   Map<String, double>? _cachedVerticalRatios;
   Size? _cachedVerticalViewport;
@@ -88,6 +130,9 @@ final class _ReaderViewState extends State<ReaderView> {
     super.initState();
     _pageController = PageController(initialPage: widget.controller.currentIndex);
     _verticalController = ScrollController();
+    _verticalScrollPhysics = _ReaderVerticalScrollPhysics(
+      geometryCorrectionTarget: () => _pendingVerticalGeometryCorrection,
+    );
     _lastLogicalPosition = widget.controller.currentIndex.toDouble();
     _lastMicros = widget.clock.nowMicros();
     _handledNavigationRevision = widget.controller.navigationRevision;
@@ -128,6 +173,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _verticalLayoutRatios = widget.pageAspectRatios;
       _pendingVerticalLayoutRatios = null;
       _verticalRatioCommitScheduled = false;
+      _pendingVerticalGeometryCorrection = null;
       _resetVerticalCompositionCache();
       _scheduleSyncToCurrentPage();
     } else if ((oldWidget.pageBuilder == null) !=
@@ -159,6 +205,7 @@ final class _ReaderViewState extends State<ReaderView> {
           _preserveVerticalAnchor(
             oldRatios: _verticalLayoutRatios,
             oldStitch: widget.verticalStitch,
+            nextRatios: widget.pageAspectRatios,
           );
         }
         _verticalLayoutRatios = widget.pageAspectRatios;
@@ -228,7 +275,7 @@ final class _ReaderViewState extends State<ReaderView> {
                 ? pageCount
                 : (pageCount == 0 ? 0 : pageCount * 2 - 1);
             final physics = _zoomedPage == null
-                ? const ClampingScrollPhysics()
+                ? _verticalScrollPhysics
                 : const NeverScrollableScrollPhysics();
             _scheduleVerticalCompositionWarmup();
             final cacheExtent = _viewport.height > 0
@@ -374,12 +421,25 @@ final class _ReaderViewState extends State<ReaderView> {
       _preserveVerticalAnchor(
         oldRatios: _verticalLayoutRatios,
         oldStitch: widget.verticalStitch,
+        nextRatios: pending,
       );
       setState(() {
         _verticalLayoutRatios = pending;
         _pendingVerticalLayoutRatios = null;
         _invalidateVerticalGeometryCache();
       });
+    });
+  }
+
+  void _scheduleVerticalGeometryCorrectionClear() {
+    if (_verticalGeometryCorrectionClearScheduled) return;
+    _verticalGeometryCorrectionClearScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _verticalGeometryCorrectionClearScheduled = false;
+      if (!mounted) return;
+      // Keep the target alive through every layout pass of the geometry-change
+      // frame. ScrollPosition may rerun layout after correctPixels().
+      _pendingVerticalGeometryCorrection = null;
     });
   }
 
@@ -480,6 +540,7 @@ final class _ReaderViewState extends State<ReaderView> {
     required bool oldStitch,
     Size? oldViewport,
     double? oldDevicePixelRatio,
+    Map<String, double>? nextRatios,
   }) {
     if (widget.controller.direction != ReadingDirection.vertical ||
         !_verticalController.hasClients ||
@@ -495,6 +556,12 @@ final class _ReaderViewState extends State<ReaderView> {
       viewport: oldViewport,
       devicePixelRatio: oldDevicePixelRatio,
     ).anchorForTop(_verticalController.position.pixels);
+    if (nextRatios != null) {
+      final nextGeometry = _verticalGeometry(ratios: nextRatios);
+      _pendingVerticalGeometryCorrection = nextGeometry.restoreTop(anchor);
+      _scheduleVerticalGeometryCorrectionClear();
+      return;
+    }
     _pendingVerticalAnchor = (index: anchor.index, offset: anchor.offset);
     _scheduleVerticalAnchorRestore();
   }
@@ -742,6 +809,7 @@ final class _ReaderViewState extends State<ReaderView> {
     if (notification.depth != 0) return false;
     if (notification is ScrollStartNotification) {
       _pendingVerticalAnchor = null;
+      _pendingVerticalGeometryCorrection = null;
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
           : notification.dragDetails == null

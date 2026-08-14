@@ -657,15 +657,19 @@ void main() {
             chapterId: 'vertical-geometry-snapshot-chapter',
             index: index,
             uri: Uri.parse('asset:///vertical-snapshot-$index.png'),
+            width: 1000,
+            height: 1000,
           ),
         ),
         readingDirection: ReadingDirection.vertical,
       );
+      final observations = <ReaderObs>[];
       final controller = ReaderController(
         sessionId: 'reader-vertical-geometry-snapshot-test',
         chapter: chapter,
-        onObservation: (_) {},
+        onObservation: observations.add,
         clock: FakeClock(),
+        initialPage: 1,
       );
       addTearDown(controller.dispose);
       final ratios = ValueNotifier<Map<String, double>>(
@@ -699,7 +703,7 @@ void main() {
       );
       final initialHeight = tester.getSize(firstPage).height;
       final gesture = await tester.startGesture(tester.getCenter(list));
-      await gesture.moveBy(const Offset(0, -48));
+      await gesture.moveBy(const Offset(0, -24));
       await tester.pump();
 
       ratios.value = <String, double>{
@@ -714,6 +718,7 @@ void main() {
             'async measured geometry must not mutate sliver extents mid-scroll',
       );
 
+      observations.clear();
       await gesture.up();
       await tester.pumpAndSettle();
 
@@ -721,6 +726,18 @@ void main() {
         tester.getSize(firstPage).height,
         greaterThan(initialHeight),
         reason: 'the latest measured geometry must commit once scrolling is idle',
+      );
+      expect(
+        observations.where((observation) => observation.stableIndex == 0),
+        isEmpty,
+        reason:
+            'idle geometry correction must not expose the new extents at the old pixels before anchor correction',
+      );
+      expect(
+        controller.currentIndex,
+        1,
+        reason:
+            'an async ratio commit above the viewport must preserve the visible page identity',
       );
     },
   );

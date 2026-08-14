@@ -117,7 +117,12 @@ final class HeuristicPolicy {
 
       final primaryUpload = role == PageRole.current ||
           role == PageRole.transition;
-      if (primaryUpload || staticWarm) {
+      final deferVerticalNext2Upload =
+          observation.direction == ReadingDirection.vertical &&
+              !visibleStatic &&
+              role == PageRole.next2 &&
+              _verticalPresentationActive(observation.interaction);
+      if ((primaryUpload || staticWarm) && !deferVerticalNext2Upload) {
         uploads[decode] = UploadDemand(
           role: role,
           priority: primaryUpload
@@ -188,6 +193,15 @@ final class HeuristicPolicy {
       keep: keep,
     );
   }
+
+  bool _verticalPresentationActive(Interaction interaction) => switch (interaction) {
+        Interaction.dragging ||
+        Interaction.scrolling ||
+        Interaction.settling => true,
+        Interaction.idle ||
+        Interaction.scrubbing ||
+        Interaction.jumping => false,
+      };
 
   Set<int> _staticWarmPages({
     required ChapterManifest chapter,

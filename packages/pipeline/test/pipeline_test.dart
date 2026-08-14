@@ -578,6 +578,117 @@ final class _FakeClock implements MonoClock {
     );
   });
 
+  test(
+    'vertical active scroll keeps next2 decode warm but defers its hidden static upload',
+    () {
+      final staticChapter = ChapterManifest(
+        sourceId: 'local',
+        comicId: 'vertical-active-static-comic',
+        chapter: const Chapter(
+          chapterId: 'vertical-active-static-chapter',
+          comicId: 'vertical-active-static-comic',
+          title: 'Vertical Active Static',
+          sequence: 1,
+          pageCount: 12,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          12,
+          (index) => PageAsset(
+            pageId: 'va$index',
+            chapterId: 'vertical-active-static-chapter',
+            index: index,
+            uri: Uri.parse('asset:///va$index.png'),
+            contentKindHint: ContentKindHint.png,
+            animatedHint: false,
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+
+      ReaderObs verticalObservation(Interaction interaction) => ReaderObs(
+            sessionId: 'vertical-active-static',
+            currentIndex: 5,
+            stableIndex: 5,
+            interaction: interaction,
+            logicalPosition: 5.2,
+            velocity: interaction == Interaction.idle ? 0 : 2.5,
+            currentCoverage: Coverage(
+              pageIndex: 5,
+              assetKey: staticChapter.pages[5].assetKey,
+              fraction: 0.8,
+            ),
+            visibleCoverages: <Coverage>[
+              Coverage(
+                pageIndex: 5,
+                assetKey: staticChapter.pages[5].assetKey,
+                fraction: 0.8,
+              ),
+              Coverage(
+                pageIndex: 6,
+                assetKey: staticChapter.pages[6].assetKey,
+                fraction: 0.2,
+              ),
+            ],
+            direction: ReadingDirection.vertical,
+            timestamp: DateTime.utc(2026, 8, 14),
+            monotonicMicros: 1,
+          );
+
+      final active = verticalObservation(Interaction.scrolling);
+      final resolver = const RoleResolver(
+        forwardEncodedPages: 7,
+        backwardEncodedPages: 3,
+        forwardDecodePages: 2,
+        backwardDecodePages: 1,
+        nearRadius: 0,
+      );
+      final policy = const HeuristicPolicy(
+        decodeWarmPages: true,
+        staticOutputBudgetBytes: 32 * 1024 * 1024,
+      );
+      final target = DecodeTarget(physicalWidth: 1000, physicalHeight: 1000);
+      final activePlan = policy.createPlan(
+        revision: 1,
+        chapter: staticChapter,
+        observation: active,
+        window: resolver.resolve(staticChapter, active),
+        decodeTarget: target,
+      );
+
+      expect(
+        activePlan.decodes.values.where((demand) => demand.role == PageRole.next2),
+        isNotEmpty,
+        reason: 'active vertical scrolling must keep next2 decode warm',
+      );
+      expect(
+        activePlan.uploads.values.where((demand) => demand.role == PageRole.next2),
+        isEmpty,
+        reason:
+            'a hidden next2 static texture must not blit while vertical presentation is active',
+      );
+      expect(
+        activePlan.uploads.values.where((demand) => demand.role == PageRole.next),
+        isNotEmpty,
+        reason: 'the immediate next page remains warm',
+      );
+
+      final idle = verticalObservation(Interaction.idle);
+      final idlePlan = policy.createPlan(
+        revision: 2,
+        chapter: staticChapter,
+        observation: idle,
+        window: resolver.resolve(staticChapter, idle),
+        decodeTarget: target,
+      );
+      expect(
+        idlePlan.uploads.values.where((demand) => demand.role == PageRole.next2),
+        isNotEmpty,
+        reason: 'next2 texture warming resumes once the vertical viewport is idle',
+      );
+    },
+  );
+
   test('runtime static WebP evidence enables one-frame chapter warming', () {
     final webpChapter = ChapterManifest(
       sourceId: 'venera:fixture',

@@ -1,3 +1,9 @@
+## 0.31.0-dev.281：纵向 idle layout correction + active next2 texture deferral
+
+- 修复dev.279遗留Dart编译错误：`_SourceWatchBinding.session`为mutable generation pointer，constructor不得继续`const`；新增gate直接禁止该非法组合。
+- 13:14 dev.280 Trace确认慢拖松手的抖/错图来自idle ratio commit两阶段窗口：10.432s page18进入idle后约6.7ms无反向用户输入却变成page17。ratio提交现把top-pixel target交给纵向ScrollPhysics，以layout-time correction在新content dimensions建立的同一次layout中通过ScrollPosition correction原子修正offset，不再随后`jumpTo`制造scroll notification。
+- 同一Trace的快速ballistic logicalPosition保持单调，但15.502s/15.906s两个非可见`next2` static startup texture分别出现约15.2ms/21.9ms platform upload。vertical dragging/scrolling/settling期间仅defer非可见next2静态UploadDemand；next2 decode、immediate next、current/transition和真实可见页保持。idle后next2 texture warming恢复。
+
 ## 0.31.0-dev.280：纵向滚动稳定 geometry snapshot
 
 - 12:24 dev.279 Trace复核通过上一阶段：本地same-exact re-entry记录13次`sealed-source-generation-preserved`且invalidated upload/decode均为0；冷启动网络Reader已出现18次`local-hydration-ready committedLength>0`，current page234约328ms首帧，page139从262,800-byte durable prefix起步约125ms首帧。dev.279 generation/partial阶段暂时收口。

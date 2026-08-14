@@ -47,7 +47,7 @@ Future<void> _defaultSleep(Duration delay) => Future<void>.delayed(delay);
 
 
 final class _SourceWatchBinding {
-  const _SourceWatchBinding({
+  _SourceWatchBinding({
     required this.session,
     required this.projection,
     required this.listener,
