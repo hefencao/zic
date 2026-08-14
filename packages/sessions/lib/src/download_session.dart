@@ -941,6 +941,28 @@ final class DownloadSession {
     );
   }
 
+  void recordTransportReadPermit({
+    required String action,
+    required String reason,
+    bool? responseReadPermitHeld,
+    bool? demanded,
+    String? bodyAuthority,
+  }) {
+    _emit(
+      TraceEventKind.artifactSource,
+      <String, Object?>{
+        'stage': 'transport-read-permit',
+        'action': action,
+        'reason': reason,
+        if (responseReadPermitHeld != null)
+          'responseReadPermitHeld': responseReadPermitHeld,
+        if (demanded != null) 'demanded': demanded,
+        if (bodyAuthority != null) 'bodyAuthority': bodyAuthority,
+        'committedLength': committedLength,
+      },
+    );
+  }
+
   void recordResume({
     required bool restarted,
     String? strategy,

@@ -126,7 +126,10 @@ for path in (
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.251 governance file: {path}')
-if build >= 268:
+if build >= 269:
+    require('docs/ARCHITECTURE.md', 'consumerPacing', 'inactive response retention')
+    require('docs/SPEC.md', 'consumerPacing', 'inactive response retention')
+elif build >= 268:
     require('docs/ARCHITECTURE.md', 'consumerPacing', 'parked response')
     require('docs/SPEC.md', 'consumerPacing', 'parked-response')
 elif build >= 254:

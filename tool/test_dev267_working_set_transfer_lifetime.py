@@ -20,8 +20,13 @@ remove=owner[owner.index('  void _removeClaim('):owner.index('  Future<void> _di
 req('net.cancel(taskKey)' not in remove,'logical _removeClaim must not cancel active task')
 for stale in ('inactive-reclaim','_reclaimInactiveRunningFor','flowRetentionYieldable','requestFlowYield','pseudo-yielded','protectFlowRetentionFromNormalYield'):
     req(stale not in net and stale not in read('packages/sessions/lib/src/download_job.dart'),f'superseded scheduler patch remains: {stale}')
-for token in ('int get running => _core.running;','int get parkedResponses => _core.parkedResponses;','releaseResponseReadPermit','acquireResponseReadPermit'):
-    req(token in net,f'dev.268 response-lifetime owner missing: {token}')
+response_tokens = (
+    ('int get running => _core.running;', 'int get demandedParkedResponses => _core.demandedParkedResponses;', 'int get inactiveParkedResponses => _core.inactiveParkedResponses;', 'releaseResponseReadPermit', 'acquireResponseReadPermit')
+    if int(m.group(1)) >= 269
+    else ('int get running => _core.running;', 'int get parkedResponses => _core.parkedResponses;', 'releaseResponseReadPermit', 'acquireResponseReadPermit')
+)
+for token in response_tokens:
+    req(token in net,f'live response-lifetime owner missing: {token}')
 pred=read('packages/pipeline/lib/src/browsing_direction_predictor.dart')
 req('_candidateCount >= 2' in pred and '_history' not in pred and 'nowMicros' not in pred,'direction must remain working-set-only two-move confirmation')
 req('working-set turn out and back reuses the same active physical task' in read('packages/sessions/test/download_transfer_owner_test.dart'),'TransferOwner turn-out/back identity regression missing')

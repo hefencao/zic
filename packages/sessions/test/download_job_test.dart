@@ -782,7 +782,7 @@ void main() {
       firstFrameRequiredSourceLength: 0,
     );
     final transport = _ConsumerPacedBodyTransport(bytes, chunkSize: 31);
-    final lane = NetLane(maxActive: 1, maxParkedResponses: 2);
+    final lane = NetLane(maxActive: 1, maxInactiveParkedResponses: 2);
     late CancelToken firstToken;
     late Future<DownloadSnapshot> firstRun;
     final firstStarted = Completer<void>();
@@ -809,7 +809,7 @@ void main() {
     expect(lane.active, 0,
         reason: 'parked response must release the bounded read permit');
     expect(lane.running, 1);
-    expect(lane.parkedResponses, 1);
+    expect(lane.readPermitReleasedTasks, 1);
     expect(transport.openCount, 1);
 
     lane.submitRanked(
@@ -837,6 +837,88 @@ void main() {
     expect(result.state, DownloadState.promoted);
     expect(firstToken.cancelled, isFalse);
     expect(transport.openCount, 1);
+    await lane.idle();
+  });
+
+  test('durable artifact body uses artifact scheduler instead of NetLane permit',
+      () async {
+    final trace = MemoryTraceSink();
+    final bytes = _flowAnimatedWebp(<int>[24, 24]);
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'durable-artifact-local-body',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('runtime://durable-artifact-local-body.webp'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/durable-artifact-local-body.webp',
+        finalPath: '${temp.path}/cache/durable-artifact-local-body.webp',
+      ),
+      clock: FakeMonoClock(),
+      traceSink: trace,
+    );
+    final transport = _BlockingDurableArtifactTransport(bytes);
+    final lane = NetLane(maxActive: 1);
+    final firstStarted = Completer<void>();
+    final secondStarted = Completer<void>();
+    final secondRelease = Completer<void>();
+    late Future<DownloadSnapshot> firstRun;
+
+    lane.submitRanked(
+      key: 'artifact-body',
+      priority: 760,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (token) async {
+        firstStarted.complete();
+        firstRun = DownloadJob(transport: transport, session: session).run(
+          cancel: token,
+        );
+        await firstRun;
+      },
+    );
+    await firstStarted.future;
+    await transport.opened.future;
+    for (var attempt = 0; attempt < 100 && lane.active != 0; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(lane.active, 0,
+        reason: 'artifact-cache body must release the network read permit');
+    expect(lane.running, 1);
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'transport-read-permit' &&
+            event.payload['reason'] == 'durable-artifact-local-body' &&
+            event.payload['responseReadPermitHeld'] == false,
+      ),
+      isTrue,
+    );
+
+    lane.submitRanked(
+      key: 'network-peer',
+      priority: 740,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (_) async {
+        secondStarted.complete();
+        await secondRelease.future;
+      },
+    );
+    await secondStarted.future.timeout(const Duration(seconds: 1));
+    expect(lane.active, 1);
+    expect(lane.running, 2);
+
+    secondRelease.complete();
+    transport.releaseBody.complete();
+    final result = await firstRun.timeout(const Duration(seconds: 2));
+    expect(result.state, DownloadState.promoted);
     await lane.idle();
   });
 
@@ -1100,6 +1182,40 @@ final class _ConsumerPacedBodyTransport implements Transport {
       rangeSupported: rangeSupported,
       flowControl: ByteResponseFlowControl.consumerPacing,
       validators: const Validators(etag: 'pseudo-flow-v1'),
+    );
+  }
+}
+
+final class _BlockingDurableArtifactTransport implements Transport {
+  _BlockingDurableArtifactTransport(this.bytes);
+
+  final List<int> bytes;
+  final Completer<void> opened = Completer<void>();
+  final Completer<void> releaseBody = Completer<void>();
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    if (!opened.isCompleted) opened.complete();
+    Stream<List<int>> body() async* {
+      final split = bytes.length.clamp(1, 16).toInt();
+      yield bytes.sublist(0, split);
+      await releaseBody.future;
+      if (split < bytes.length) yield bytes.sublist(split);
+    }
+
+    return ByteResponse(
+      bytes: body(),
+      statusCode: HttpStatus.ok,
+      rangeStart: 0,
+      totalLength: bytes.length,
+      rangeSupported: true,
+      disposition: ByteResponseDisposition.durableImmutable,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      validators: const Validators(etag: 'artifact-cache-v1'),
     );
   }
 }

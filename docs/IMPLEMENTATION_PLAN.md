@@ -1,5 +1,5 @@
 # zic Implementation Plan
-- P0：dev.268真机验证live response parking：任一`pseudo-parked/response-parked`后必须保持`responseRetained=true / responseReadPermitHeld=false`，同identity重新需要body时应先同task `pseudo-resumed`且中间不得有第二次`downloadStarted`。普通3/7 detach或normal pending pressure不得产生`inactive-reclaim`；只有parked池>10才允许`preemptionReason=parked-response-eviction`。同时核对`globalActive<=5(+current handoff)`而`globalRunning/globalParkedResponses`可独立变化。
+- P0：dev.269真机验证 owner 解耦：`demanded=true` 的 flow-paused response 可出现 `pseudo-parked/response-parked`，但不得出现 `inactive-response-retention-eviction`；只有 `demanded=false` 且保留live response的 task 才计入 `globalInactiveParkedResponses`。persistent artifact body出现 `transport-read-permit/released/durable-artifact-local-body` 后应立即释放remote NetLane read permit，而其 `sourceRead` 继续由 `ArtifactCacheReadScheduler` 完成。重点核对同identity再需要body时无第二次`downloadStarted`；另独立统计重复persistent artifact session-copy，不用提高session/response缓存数量掩盖。
 ## P0：Image Transfer ownership 正式迁移
 - 后续真机验证chapter B与Reader A共享physical transfer时`stored-required-exact-alias`出现、B exact durable可读而A不会仅因B命令新增副本；继续观察`rejected-ambiguous-existing-owners`与proof晚恢复，不恢复hard alias或late takeover。
 ## P0：Partial authority 单调性真机闭环

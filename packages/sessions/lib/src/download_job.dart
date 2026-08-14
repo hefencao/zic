@@ -362,6 +362,20 @@ final class DownloadJob {
     if (start == 0 &&
         response.disposition == ByteResponseDisposition.durableImmutable &&
         response.totalLength != null) {
+      // A durable artifact-cache body is local replay, not network/source body
+      // traffic. Once response authority is known, release NetLane's network
+      // body-read permit before consuming the local stream; the existing
+      // ArtifactCacheReadScheduler remains the sole body-bandwidth owner.
+      if (response.bodyAuthority == ByteResponseBodyAuthority.artifactCache) {
+        cancel?.releaseResponseReadPermit(responseRetained: false);
+        session.recordTransportReadPermit(
+          action: 'released',
+          reason: 'durable-artifact-local-body',
+          responseReadPermitHeld: false,
+          demanded: cancel?.demanded,
+          bodyAuthority: response.bodyAuthority.name,
+        );
+      }
       session.beginResidentImmutableIngress(
         validators: response.validators,
         totalLength: response.totalLength!,

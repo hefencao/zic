@@ -1,3 +1,10 @@
+## 0.31.0-dev.269：demanded parking / inactive response retention / artifact read owner 解耦
+
+- 23:32 dev.268 真机 Trace 中40次 park→resume 均保持同 response，但17次 `parked-response-eviction` 有9次 victim 仍 `demanded=true`。根因是 dev.268 用一个 `maxParkedResponses=10` 同时管理“仍有consumer的flow pause”和“无consumer的inactive retention”，把已经解耦的body-read permit再次通过全局parked上限耦合回response lifetime。
+- NetLane 现在只对 `demanded=false` 且确实保留live network response的 parked task实施 `maxInactiveParkedResponses`；demanded flow-paused response不消耗inactive retention预算，也绝不是retention eviction victim。Reader profile删除`parkedResponseCapacity`，3/7不再拥有socket/response容量策略。
+- `releaseResponseReadPermit(responseRetained: ...)` 显式区分“保留live response的pause”与“task继续但已切换到非network body”。durable artifact-cache body确认authority后以`responseRetained=false`释放NetLane permit，本地9–18MiB replay只受既有`ArtifactCacheReadScheduler`调度，不再双重占remote NetLane 5路。
+- Trace拆分 `globalReadPermitReleasedTasks / globalDemandedParkedResponses / globalInactiveParkedResponses / globalInactiveParkedLimit`；真实inactive淘汰改名`inactive-response-retention-eviction`。不提高parked数量、不增加Reader距离/Range例外。
+
 ## 0.31.0-dev.268：live response parking 与 body-read permit 解耦
 
 - 14:54 dev.267 真机 Trace 证明 `demanded=false` 的 active task 虽不再因 3/7 detach 直接取消，但随后 normal capacity 的 `inactive-reclaim` 仍通过同一个 `CancelToken` 销毁 rhttp response；同时 Range-capable 页的 `pseudo-suspended` 仍会在窗口内主动 `iterator.cancel()`。因此 dev.260–267 的 `pseudo-retained / pseudo-suspended / inactive-reclaim` 仍把“保留response”和“占5路读取额度”绑定在同一 NetLane active slot。

@@ -15,7 +15,12 @@ job=read('packages/sessions/lib/src/download_job.dart')
 for stale in ('flowRetentionYieldable','requestFlowYield','_requestYieldableFlowRetentionFor','inactive-reclaim','_reclaimInactiveRunningFor'):
     req(stale not in net,f'superseded slot-reclaim residue: {stale}')
 req("action: 'pseudo-yielded'" not in job,'dev.264 DownloadJob pseudo-yield path must be removed')
-for token in ('int get running => _core.running;','int get parkedResponses => _core.parkedResponses;','releaseResponseReadPermit','acquireResponseReadPermit',"reason: 'parked-response-eviction'"):
-    req(token in net,f'dev.268 response parking replacement missing: {token}')
-req(": 'pseudo-parked'" in job and 'responseRetained: true' in job,'dev.268 DownloadJob parking replacement missing')
-print('PASS: dev.264 starvation evidence preserved; slot-yield/reclaim patches superseded by dev.268 response parking')
+if build >= 269:
+    for token in ('int get running => _core.running;','int get demandedParkedResponses => _core.demandedParkedResponses;','int get inactiveParkedResponses => _core.inactiveParkedResponses;','releaseResponseReadPermit','acquireResponseReadPermit',"reason: 'inactive-response-retention-eviction'"):
+        req(token in net,f'dev.269 response parking replacement missing: {token}')
+    req("reason: 'parked-response-eviction'" not in net,'dev.268 mixed parked-pool eviction must be superseded')
+else:
+    for token in ('int get running => _core.running;','int get parkedResponses => _core.parkedResponses;','releaseResponseReadPermit','acquireResponseReadPermit',"reason: 'parked-response-eviction'"):
+        req(token in net,f'dev.268 response parking replacement missing: {token}')
+req(": 'pseudo-parked'" in job and 'responseRetained: true' in job,'DownloadJob parking replacement missing')
+print('PASS: dev.264 starvation evidence preserved; slot-yield/reclaim patches superseded by live response parking')

@@ -27,6 +27,36 @@ m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pub, re.M)
 req(m is not None and int(m.group(1)) >= 268, 'App build must be >=268')
 require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
 
+if int(m.group(1)) >= 269:
+    require(
+        'packages/sessions/lib/src/net_lane.dart',
+        'int maxInactiveParkedResponses = 10',
+        'int get running => _core.running;',
+        'int get demandedParkedResponses => _core.demandedParkedResponses;',
+        'int get inactiveParkedResponses => _core.inactiveParkedResponses;',
+        'Future<void> acquireResponseReadPermit()',
+        'void releaseResponseReadPermit({bool responseRetained = true})',
+        "reason: 'inactive-response-retention-eviction'",
+    )
+    reject(
+        'packages/sessions/lib/src/net_lane.dart',
+        'maxParkedResponses',
+        "reason: 'parked-response-eviction'",
+    )
+    require(
+        'packages/sessions/lib/src/download_job.dart',
+        'final class _ResponseReadGate',
+        'await control.acquireResponseReadPermit();',
+        'control.releaseResponseReadPermit();',
+        'responseRetained: true',
+        'The StreamIterator stays alive and no body read is requested here.',
+    )
+    require('packages/sessions/test/download_job_test.dart', 'parked response frees NetLane read slot and later reuses same stream')
+    require('docs/adr/0246-live-response-parking-body-read-permit-separation.md', 'live response', 'body-read permit')
+    require('docs/adr/0247-demanded-parking-inactive-retention-separation.md', 'demanded', 'inactive')
+    print('PASS: dev.268 live-response parking preserved; dev.269 narrows retention eviction to inactive responses')
+    raise SystemExit(0)
+
 net_path = 'packages/sessions/lib/src/net_lane.dart'
 job_path = 'packages/sessions/lib/src/download_job.dart'
 session_path = 'packages/sessions/lib/src/download_session.dart'

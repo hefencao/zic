@@ -1,5 +1,6 @@
 # ADR 0246：live response parking 与 body-read permit 必须分离
 
+> dev.269 / ADR 0247 supersede 本文“所有 parked response 共用 Reader=10 上限”的实现：demanded flow pause 不属于 inactive retention；仅 `demanded=false` live response 受 NetLane composition retention cap。
 - Status: Accepted
 - Date: 2026-08-13
 

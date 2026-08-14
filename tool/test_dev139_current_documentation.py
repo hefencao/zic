@@ -119,7 +119,12 @@ for token in (
     "一个 idle 章节会话最多两分钟",
 ):
     require(spec, token, "Spec")
-if spec_build >= 268:
+if spec_build >= 269:
+    require(spec, "encoded逻辑/retention与network-demand window：前 7 / 后 3", "Spec")
+    require(spec, "body-read permit", "Spec")
+    require(spec, "inactive-response-retention-eviction", "Spec")
+    require(spec, "ArtifactCacheReadScheduler", "Spec")
+elif spec_build >= 268:
     require(spec, "encoded逻辑/retention与network-demand window：前 7 / 后 3", "Spec")
     require(spec, "body-read permit", "Spec")
     require(spec, "parked-response-eviction", "Spec")

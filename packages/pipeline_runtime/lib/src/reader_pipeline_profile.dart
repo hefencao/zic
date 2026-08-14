@@ -14,7 +14,6 @@ final class ReaderPipelineProfile {
     required this.policy,
     required this.retry,
     required this.networkConcurrency,
-    required this.parkedResponseCapacity,
     required this.localSourceConcurrency,
     required this.remoteSourceConcurrency,
     required this.decodeConcurrency,
@@ -39,7 +38,6 @@ final class ReaderPipelineProfile {
     policy: HeuristicPolicy(decodeWarmPages: true),
     retry: RetryPolicy(),
     networkConcurrency: 5,
-    parkedResponseCapacity: 10,
     localSourceConcurrency: 2,
     remoteSourceConcurrency: 5,
     decodeConcurrency: 3,
@@ -52,13 +50,6 @@ final class ReaderPipelineProfile {
   final RetryPolicy retry;
   /// Process-composition maximum across every active Reader page transfer.
   final int networkConcurrency;
-
-  /// Maximum live source responses that may stay parked after releasing a
-  /// body-read permit. The stable 3/7 working set has ten speculative pages;
-  /// bounding parking to ten prevents a turn from growing an unbounded HTTP/1
-  /// response/socket set while allowing the current logical window to retain
-  /// its established responses.
-  final int parkedResponseCapacity;
 
   /// Per-source caps. Local SAF/file reads use two slots to avoid saturating
   /// one storage provider with large sequential copies; remote sources keep

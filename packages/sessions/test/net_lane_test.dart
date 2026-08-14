@@ -1206,7 +1206,7 @@ void _dev123NetLaneTests() {
 
   test('parked response releases read permit without cancelling physical task',
       () async {
-    final lane = NetLane(maxActive: 1, maxParkedResponses: 2);
+    final lane = NetLane(maxActive: 1, maxInactiveParkedResponses: 2);
     final firstStarted = Completer<CancelToken>();
     final firstRelease = Completer<void>();
     final secondStarted = Completer<void>();
@@ -1231,7 +1231,9 @@ void _dev123NetLaneTests() {
     expect(first.cancelled, isFalse);
     expect(lane.active, 0);
     expect(lane.running, 1);
-    expect(lane.parkedResponses, 1);
+    expect(lane.readPermitReleasedTasks, 1);
+    expect(lane.demandedParkedResponses, 1);
+    expect(lane.inactiveParkedResponses, 0);
     expect(lane.responseReadPermitHeldOf('first'), isFalse);
 
     lane.submitRanked(
@@ -1266,29 +1268,25 @@ void _dev123NetLaneTests() {
     await lane.idle();
   });
 
-  test('parked response pool evicts explicitly only after its bound is exceeded',
+  test('demanded flow-paused responses do not consume inactive retention',
       () async {
-    final lane = NetLane(maxActive: 1, maxParkedResponses: 1);
+    final lane = NetLane(maxActive: 1, maxInactiveParkedResponses: 1);
     final firstStarted = Completer<CancelToken>();
     final secondStarted = Completer<CancelToken>();
 
     lane.submitRanked(
-      key: 'first-parked',
+      key: 'first-demanded-parked',
       priority: 700,
-      demanded: false,
       task: (token) async {
         firstStarted.complete(token);
         await token.whenCancelled;
       },
     );
-    // demanded=false pending is not admitted; attach, start, then detach.
-    lane.updateDemanded('first-parked', true);
     final first = await firstStarted.future;
-    lane.updateDemanded('first-parked', false);
     first.releaseResponseReadPermit();
 
     lane.submitRanked(
-      key: 'second-parked',
+      key: 'second-demanded-parked',
       priority: 800,
       task: (token) async {
         secondStarted.complete(token);
@@ -1297,11 +1295,57 @@ void _dev123NetLaneTests() {
     );
     final second = await secondStarted.future;
     second.releaseResponseReadPermit();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(first.cancelled, isFalse);
+    expect(second.cancelled, isFalse);
+    expect(lane.demandedParkedResponses, 2);
+    expect(lane.inactiveParkedResponses, 0);
+    expect(lane.readPermitReleasedTasks, 2);
+
+    first.cancel();
+    second.cancel();
+    await lane.idle();
+  });
+
+  test('inactive parked response retention evicts only inactive victims',
+      () async {
+    final lane = NetLane(maxActive: 1, maxInactiveParkedResponses: 1);
+    final firstStarted = Completer<CancelToken>();
+    final secondStarted = Completer<CancelToken>();
+
+    lane.submitRanked(
+      key: 'first-inactive',
+      priority: 700,
+      task: (token) async {
+        firstStarted.complete(token);
+        await token.whenCancelled;
+      },
+    );
+    final first = await firstStarted.future;
+    lane.updateDemanded('first-inactive', false);
+    first.releaseResponseReadPermit();
+
+    lane.submitRanked(
+      key: 'second-inactive',
+      priority: 800,
+      task: (token) async {
+        secondStarted.complete(token);
+        await token.whenCancelled;
+      },
+    );
+    final second = await secondStarted.future;
+    lane.updateDemanded('second-inactive', false);
+    second.releaseResponseReadPermit();
 
     await first.whenCancelled.timeout(const Duration(seconds: 1));
-    expect(first.preemptionSnapshot?.reason, 'parked-response-eviction');
+    expect(
+      first.preemptionSnapshot?.reason,
+      'inactive-response-retention-eviction',
+    );
     expect(second.cancelled, isFalse);
-    expect(lane.parkedResponses, lessThanOrEqualTo(1));
+    expect(lane.demandedParkedResponses, 0);
+    expect(lane.inactiveParkedResponses, lessThanOrEqualTo(1));
 
     second.cancel();
     await lane.idle();
