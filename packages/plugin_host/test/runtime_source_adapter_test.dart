@@ -758,6 +758,76 @@ void main() {
   });
 
   test(
+      'active Venera current handoff re-evaluates preemption when the old current demotes',
+      () async {
+    final connection = _PriorityResolveConnection(releaseOnCancel: false);
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source =
+        session.sources.single as ControlledResolvableComicResourceSource;
+    final oldCurrentControl = _MutableTaskControl(priority: 1000);
+    final newCurrentControl = _MutableTaskControl(priority: 1000);
+
+    final oldCurrent = source.resolveResourceControlled(
+      Uri.parse('venera-resource:old-current'),
+      control: oldCurrentControl,
+    );
+    await connection.firstStarted.future;
+    final newCurrent = source.resolveResourceControlled(
+      Uri.parse('venera-resource:new-current'),
+      control: newCurrentControl,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      connection.cancelledRequestIds,
+      isEmpty,
+      reason: 'two current-class requests do not preempt until the viewport '
+          'commits the old current demotion',
+    );
+
+    oldCurrentControl.updatePriority(820);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(connection.cancelledRequestIds, hasLength(1));
+    expect(
+      connection.startedUris,
+      <String>['venera-resource:old-current'],
+      reason: 'demotion requests cancellation but the single Venera context '
+          'must remain occupied until the old invocation physically exits',
+    );
+    expect(connection.maxActive, 1);
+
+    connection.finishFirst();
+    await expectLater(
+      oldCurrent,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect(
+      (await newCurrent).uri,
+      Uri.parse('https://cdn.invalid/new-current'),
+    );
+    expect(
+      connection.startedUris,
+      <String>[
+        'venera-resource:old-current',
+        'venera-resource:new-current',
+      ],
+    );
+    expect(connection.maxActive, 1);
+  });
+
+  test(
       'active Venera demotion does not turn viewport jitter into plan preemption',
       () async {
     final connection = _PriorityResolveConnection(releaseOnCancel: false);

@@ -1,3 +1,9 @@
+## 0.31.0-dev.276：Venera current handoff gate priority 闭环
+
+- 05:37 dev.275 Trace中resolver warm态仍稳定为3 cache hit+1 page-specific origin，但`sourcePlanGateWaitMicros`中位约669ms、最坏约3.89s；cold current仍会被单Venera invocation context中的旧viewport工作阻塞。
+- runtime gate此前只在waiter入队/升priority时重做preemption；active invocation从current=1000降级后不会重新比较已等待的新current。现监听active `PriorityObservableTaskControl`，仅在active跨出current阈值且已有current-class waiter时，重用既有40-point规则请求取消旧invocation。
+- 保持`maxConcurrentInvocations=1`、single physical permit、dev.275 host resolver cache、NetLane 5+1、3/7与5/3/2/1不变；普通820→700/previous780 viewport jitter仍不触发破坏性plan preemption。
+
 ## 0.31.0-dev.275：Venera resolver network cache owner 收口
 
 - 04:42 Trace确认dev.274 current/local→network rank已闭合；request-plan cache hit近乎零成本，而cold miss仍有明显长尾，初始current可出现4/4 bridge resolver origin，warm后多数为3 hit+1 page-specific origin。

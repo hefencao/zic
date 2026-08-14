@@ -78,7 +78,8 @@ def main() -> None:
     )
     require(
         "packages/pipeline_runtime/lib/src/pipeline_reader_session.dart",
-        "readerPipelineProfileFor(chapter)",
+        "_profile = readerPipelineProfileFor(",
+        "chapter,",
         "retry: _profile.retry",
         "net: pageDownloadLane",
         "downloadBucketFor: _profile.downloadBucket",
@@ -97,7 +98,7 @@ def main() -> None:
     require(
         "packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart",
         "static const stable = ReaderPipelineProfile(",
-        "return ReaderPipelineProfile.stable",
+        "ReaderPipelineProfile.stable;",
         "forwardEncodedPages: 7",
         "backwardEncodedPages: 3",
         "PolicyGuard(maxDownloadDemands: 11)",

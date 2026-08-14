@@ -1109,7 +1109,16 @@ final class _RuntimeActiveInvocation {
 
   final TaskControl control;
   final Future<void> Function()? onPreempt;
+  StreamSubscription<int>? prioritySubscription;
   bool preemptRequested = false;
+
+  void disposePrioritySubscription() {
+    final subscription = prioritySubscription;
+    prioritySubscription = null;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
+    }
+  }
 }
 
 final class _RuntimeInvocationGate {
@@ -1211,6 +1220,29 @@ final class _RuntimeInvocationGate {
             : null;
     if (activeInvocation != null) {
       _controlledActive = activeInvocation;
+      final taskControl = control;
+      if (taskControl is PriorityObservableTaskControl) {
+        var observedPriority = taskControl.priority;
+        activeInvocation.prioritySubscription =
+            taskControl.priorityChanges.listen((priority) {
+          if (!identical(_controlledActive, activeInvocation) ||
+              activeInvocation.preemptRequested) {
+            observedPriority = priority;
+            return;
+          }
+          final crossedCurrentThresholdDown =
+              observedPriority >= dynamicPreemptionPriorityThreshold &&
+                  priority < dynamicPreemptionPriorityThreshold;
+          observedPriority = priority;
+          if (!crossedCurrentThresholdDown) return;
+          final waiter = _highestPriorityWaiter();
+          if (waiter == null ||
+              waiter.priority < dynamicPreemptionPriorityThreshold) {
+            return;
+          }
+          _maybePreemptControlledActive(waiter.control);
+        });
+      }
     }
     late final Future<T> operation;
     try {
@@ -1264,8 +1296,11 @@ final class _RuntimeInvocationGate {
   }
 
   void _release(_RuntimeActiveInvocation? activeInvocation) {
-    if (activeInvocation != null && identical(_controlledActive, activeInvocation)) {
-      _controlledActive = null;
+    if (activeInvocation != null) {
+      activeInvocation.disposePrioritySubscription();
+      if (identical(_controlledActive, activeInvocation)) {
+        _controlledActive = null;
+      }
     }
     if (!_closing) {
       final waiter = _takeHighestPriorityWaiter();
