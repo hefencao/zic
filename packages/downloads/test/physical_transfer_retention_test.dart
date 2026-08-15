@@ -234,6 +234,42 @@ void main() {
     expect(runtime.registry.sessions, hasLength(2));
   });
 
+  test('resident replay binds runtime service to one physical generation',
+      () async {
+    final backend = _RetentionStore();
+    final cache = ArtifactCacheManager(backend: backend);
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: cache,
+      partialDownloadStore: backend,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(runtime.dispose);
+    final id = _id('resident-replay-binding');
+    final session = runtime.registry.get(id);
+    final bytes = Uint8List.fromList(
+      List<int>.generate(128, (index) => index & 0xff),
+    );
+    session.beginResidentImmutableIngress(
+      validators: const Validators(),
+      totalLength: bytes.lengthInBytes,
+    );
+    session.appendResidentImmutableIngress(0, bytes);
+    session.sealResidentImmutableIngress();
+    await cache.storePromotedArtifact(id: id, bytes: bytes);
+
+    final replaySource = runtime.residentReplaySource(
+      priorityFor: (_) => 1000,
+    );
+    final prefix = await session.readSourcePrefix(
+      96,
+      residentReplayChunks: (endExclusive) =>
+          replaySource(session, endExclusive),
+    );
+
+    expect(prefix, orderedEquals(bytes.sublist(0, 96)));
+    expect(session.artifact.committedLength, 0);
+  });
+
   test('retiring physical owner removes acquire-time aliases to that session',
       () async {
     final root = await Directory.systemTemp.createTemp('alias-retention-');

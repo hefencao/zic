@@ -16,6 +16,7 @@ def require(path, *markers):
 pub = text("apps/app/pubspec.yaml")
 m = re.search(r"^version:\s+0\.31\.0\+(\d+)\s*$", pub, re.M)
 req(m is not None and int(m.group(1)) >= 291, "dev.291 app version missing")
+version = int(m.group(1))
 
 require(
     "packages/sessions/lib/src/download_session.dart",
@@ -29,8 +30,19 @@ require(
 require(
     "packages/pipeline_runtime/lib/src/pipeline_page_stream.dart",
     "return session.readSourcePrefix(",
-    "residentReplaySource: _residentReplaySource,",
 )
+if version >= 292:
+    require(
+        "packages/pipeline_runtime/lib/src/pipeline_page_stream.dart",
+        "DownloadResidentReplaySource? residentReplaySource",
+        "residentReplayChunks: replaySource == null",
+        "replaySource(session, endExclusive)",
+    )
+else:
+    require(
+        "packages/pipeline_runtime/lib/src/pipeline_page_stream.dart",
+        "residentReplaySource: _residentReplaySource,",
+    )
 stream = text("packages/pipeline_runtime/lib/src/pipeline_page_stream.dart")
 req("session.artifact.readPrefix" not in stream,
     "PipelinePageStream must not read source metadata from resident session Artifact")
@@ -52,6 +64,7 @@ require(
     "expect(session.readIngressPrefix(prefix.length), prefix);",
     "resident source prefix uses external body authority beyond metadata",
     "final prefix = await session.readSourcePrefix(96,",
+    "residentReplayChunks: (endExclusive) async",
 )
 for path in (
     "docs/adr/0270-physical-ingress-source-metadata-authority.md",

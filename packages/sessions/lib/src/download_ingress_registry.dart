@@ -6,11 +6,6 @@ import 'package:media/media.dart';
 import 'download_ingress_projection.dart';
 import 'download_session.dart';
 
-typedef ResidentIngressReplaySource = Future<Stream<List<int>>> Function(
-  DownloadSession session,
-  int endExclusive,
-);
-
 final class _IngressProjectionEntry {
   _IngressProjectionEntry({
     required this.session,
@@ -46,7 +41,7 @@ final class DownloadIngressProjectionRegistry {
 
   final SourcePool sources;
   final String scopePrefix;
-  final ResidentIngressReplaySource? residentReplaySource;
+  final DownloadResidentReplaySource? residentReplaySource;
   final Map<DownloadId, _IngressProjectionEntry> _entries =
       <DownloadId, _IngressProjectionEntry>{};
 

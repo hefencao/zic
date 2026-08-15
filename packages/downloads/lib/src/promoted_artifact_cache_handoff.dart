@@ -13,11 +13,6 @@ typedef ArtifactCacheHandoffError = void Function(
   StackTrace stackTrace,
 );
 
-typedef ResidentArtifactReplaySource = Future<Stream<List<int>>> Function(
-  DownloadSession session,
-  int endExclusive,
-);
-
 typedef RequiredArtifactTargets = Iterable<DownloadId> Function(
   DownloadSession session,
 );
@@ -43,7 +38,7 @@ final class PromotedArtifactCacheHandoff {
   final MonoClock? clock;
   final TraceSink traceSink;
   final String sessionId;
-  final ResidentArtifactReplaySource? residentReplaySource;
+  final DownloadResidentReplaySource? residentReplaySource;
   final RequiredArtifactTargets? requiredExactTargets;
   final Map<DownloadSession, DownloadSnapshotListener> _listeners =
       <DownloadSession, DownloadSnapshotListener>{};

@@ -73,11 +73,15 @@ if int(build.group(1)) >= 273:
     require(chapter, '_readIndexedPartialResumeState(record.path, id)', 'persistent indexed partial resume authority')
 else:
     require(chapter, 'session.resumeValidatorsFor(id.canonicalUri)', 'persistent exact partial validator scope')
-for token in (
-    'session.resumeValidatorsFor(uri)',
-    'session.resumeValidatorsFor(asset.uri)',
-):
-    require(pipeline, token, 'immutable replay provider scope')
+if int(build.group(1)) >= 292:
+    require(pipeline, 'session.resumeValidatorsFor(asset.uri)', 'direct immutable presentation provider scope')
+    forbid(pipeline, '_openResidentReplaySource(', 'Pipeline-private resident replay provider scope')
+else:
+    for token in (
+        'session.resumeValidatorsFor(uri)',
+        'session.resumeValidatorsFor(asset.uri)',
+    ):
+        require(pipeline, token, 'immutable replay provider scope')
 
 # No raw DownloadSession validator may be used as a production transport validator.
 for rel in (

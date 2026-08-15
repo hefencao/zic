@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
@@ -270,6 +271,96 @@ final class CompositionDownloadTransferRuntime {
 
   Future<Uint8List> readArtifact(Artifact artifact) =>
       workspace.readArtifact(artifact);
+
+  /// Returns the composition-owned resident-body replay service for one
+  /// consumer. Storage/source backend selection stays here; consumers supply
+  /// only a dynamic priority projection for the shared local-read scheduler.
+  DownloadResidentReplaySource residentReplaySource({
+    required int Function(DownloadId id) priorityFor,
+  }) =>
+      (session, endExclusive) => _openResidentReplay(
+            session,
+            endExclusive,
+            priority: () => priorityFor(session.id),
+          );
+
+  Future<Stream<List<int>>> _openResidentReplay(
+    DownloadSession session,
+    int endExclusive, {
+    required int Function() priority,
+  }) async {
+    if (_disposed) {
+      throw StateError('composition transfer runtime is disposed');
+    }
+    if (!identical(registry.find(session.id), session)) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'resident replay requires the current physical session',
+      );
+    }
+    if (endExclusive <= 0 || endExclusive > session.committedLength) {
+      throw Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'invalid resident replay boundary $endExclusive/'
+            '${session.committedLength}',
+      );
+    }
+
+    final cache = artifactCacheManager;
+    if (cache != null) {
+      final lookup = await cache.lookup(session.id);
+      if (lookup != null) {
+        final expectedTotal = session.totalLength;
+        if ((expectedTotal == null || lookup.entry.length == expectedTotal) &&
+            lookup.entry.length >= endExclusive) {
+          return _scheduledResidentReplay(
+            lookup.entry.open(
+              start: 0,
+              endExclusive: endExclusive,
+            ),
+            priority: priority,
+          );
+        }
+      }
+    }
+
+    final scheme = session.id.canonicalUri.scheme.toLowerCase();
+    if (scheme != 'file' && scheme != 'content' && scheme != 'asset') {
+      throw Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'resident encoded-byte replay authority is unavailable for '
+            '${session.id.key}',
+      );
+    }
+    final chunks = await owner.openResidentReplay(
+      session.id,
+      endExclusive: endExclusive,
+    );
+    return _scheduledResidentReplay(chunks, priority: priority);
+  }
+
+  Stream<List<int>> _scheduledResidentReplay(
+    Stream<List<int>> chunks, {
+    required int Function() priority,
+  }) async* {
+    final iterator = StreamIterator<List<int>>(chunks);
+    try {
+      while (true) {
+        final lease = await localReadScheduler.acquire(priority: priority);
+        final bool hasChunk;
+        try {
+          hasChunk = await iterator.moveNext();
+        } finally {
+          lease.release();
+        }
+        if (!hasChunk) break;
+        final chunk = iterator.current;
+        if (chunk.isNotEmpty) yield chunk;
+      }
+    } finally {
+      await iterator.cancel();
+    }
+  }
 
   Future<void> settlePhysicalRetention() async {
     await _physicalTransferRetention?.settle();

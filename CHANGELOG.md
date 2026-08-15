@@ -1,3 +1,9 @@
+## 0.31.0-dev.292 - Resident replay service binding boundary
+
+- Fix the dev.291 local Dart compile failures caused by mixing the unbound `(DownloadSession, endExclusive)` resident replay service with the already-bound `(endExclusive)` physical-generation capability; DownloadSession now consumes only the bound callback and PipelinePageStream binds exactly once to its currently resolved physical session.
+- Consolidate the canonical replay callback types in sessions and remove duplicate registry/downloads typedefs. Move artifact-cache/local immutable resident replay backend selection out of PipelineReaderSession into CompositionDownloadTransferRuntime; Pipeline now supplies only dynamic local-read priority.
+- Preserve dev.291 physical-ingress source metadata/sourceCanvas authority and all Reader/decode/NetLane/texture/retention windows. The next local Dart/Flutter build remains authoritative for compiler closure.
+
 ## 0.31.0-dev.291 - Physical ingress source metadata authority
 
 - 03:30 dev.290 device Trace shows all 12 `pageDimensionsResolved` events still use `basis=decodedRaster / source=decode-raster-fallback`; source-canvas resolution never hits despite future-page geometry commonly being prepared well before current, so do not widen decode previous1/next2.

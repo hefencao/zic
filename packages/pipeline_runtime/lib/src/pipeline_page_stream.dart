@@ -52,13 +52,13 @@ final class PipelinePageStream {
   PipelinePageStream.forDownload(
     this.identity, {
     required DownloadSession? Function() resolvePhysical,
-    DownloadIngressReplayChunks? residentReplaySource,
+    DownloadResidentReplaySource? residentReplaySource,
   })  : _resolvePhysical = resolvePhysical,
         _residentReplaySource = residentReplaySource;
 
   final DownloadId identity;
   final DownloadSession? Function() _resolvePhysical;
-  final DownloadIngressReplayChunks? _residentReplaySource;
+  final DownloadResidentReplaySource? _residentReplaySource;
   DownloadSession? _session;
   final Set<PipelinePageStreamListener> _listeners =
       <PipelinePageStreamListener>{};
@@ -87,9 +87,16 @@ final class PipelinePageStream {
   Future<Uint8List> readPrefix(int maxBytes) async {
     final session = _session;
     if (session == null || maxBytes <= 0) return Uint8List(0);
+    // This stream can rebind to a replacement physical generation. Keep the
+    // cross-owner replay service unbound until the current session is known,
+    // then pass DownloadSession only a generation-bound `(end) => chunks`
+    // capability.
+    final replaySource = _residentReplaySource;
     return session.readSourcePrefix(
       maxBytes,
-      residentReplaySource: _residentReplaySource,
+      residentReplayChunks: replaySource == null
+          ? null
+          : (endExclusive) => replaySource(session, endExclusive),
     );
   }
 

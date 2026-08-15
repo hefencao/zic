@@ -445,7 +445,7 @@ void main() {
     final ingresses = DownloadIngressProjectionRegistry(
       sources: sources,
       scopePrefix: 'reader-staged',
-      residentReplaySource: (_, __) async => controller.stream,
+      residentReplayChunks: (_) async => controller.stream,
     );
 
     final projection = ingresses.get(session);
@@ -506,8 +506,7 @@ void main() {
     session.sealResidentImmutableIngress();
 
     final prefix = await session.readSourcePrefix(96,
-        residentReplaySource: (physical, endExclusive) async {
-      expect(physical, same(session));
+        residentReplayChunks: (endExclusive) async {
       return Stream<List<int>>.value(bytes.sublist(0, endExclusive));
     });
 
@@ -537,7 +536,7 @@ void main() {
       sources: sources,
       scopePrefix: 'reader-resident',
       residentReplaySource: (physical, endExclusive) async {
-        expect(identical(physical, session), isTrue);
+        expect(physical, same(session));
         return Stream<List<int>>.value(bytes.sublist(0, endExclusive));
       },
     );

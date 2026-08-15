@@ -16,13 +16,25 @@ const int _sourceMetadataPrefixLength = 64;
 
 typedef DownloadSnapshotListener = void Function(DownloadSnapshot snapshot);
 
-/// Supplies the authoritative encoded-byte prefix for a late Reader projection.
+/// Resident-body replay capability already bound to one physical generation.
 ///
 /// Physical DownloadSession owns transfer state, but promoted resident-cache
 /// sessions intentionally do not duplicate immutable cache bytes into the
-/// session artifact. Their late-join replay must therefore be provided by the
-/// durable artifact owner rather than inferred from [Artifact].
-typedef DownloadIngressReplayChunks = Future<Stream<List<int>>> Function(
+/// session artifact. Prefix reads and late Reader joins therefore receive this
+/// bound capability instead of inferring resident bytes from [Artifact].
+typedef DownloadResidentReplayChunks = Future<Stream<List<int>>> Function(
+  int endExclusive,
+);
+
+/// Composition/runtime resident-body replay service before it is bound to one
+/// concrete physical DownloadSession generation.
+///
+/// Cross-owner services may receive the session explicitly. Once the call
+/// enters a concrete DownloadSession, callers must bind this service into a
+/// [DownloadResidentReplayChunks] capability so session methods never accept
+/// themselves again as a callback argument.
+typedef DownloadResidentReplaySource = Future<Stream<List<int>>> Function(
+  DownloadSession session,
   int endExclusive,
 );
 
@@ -1141,7 +1153,7 @@ final class DownloadSession {
   /// session Artifact only for ordinary artifact-backed generations.
   Future<Uint8List> readSourcePrefix(
     int maxBytes, {
-    DownloadIngressReplayChunks? residentReplaySource,
+    DownloadResidentReplayChunks? residentReplayChunks,
   }) async {
     if (maxBytes <= 0 || committedLength <= 0) return Uint8List(0);
     final end = maxBytes < committedLength ? maxBytes : committedLength;
@@ -1151,11 +1163,11 @@ final class DownloadSession {
     if (!_residentBodyBacked) {
       return Uint8List.fromList(await artifact.readPrefix(end));
     }
-    final replay = residentReplaySource;
+    final replay = residentReplayChunks;
     if (replay == null) {
       return readIngressPrefix(end);
     }
-    final chunks = await replay(this, end);
+    final chunks = await replay(end);
     final builder = BytesBuilder(copy: false);
     var remaining = end;
     await for (final rawChunk in chunks) {
@@ -1287,7 +1299,7 @@ final class DownloadSession {
   /// chunk between the verified boundary and attachment on the Dart isolate.
   Future<void> attachSynchronizedIngressProjection(
     DownloadIngressProjection projection, {
-    DownloadIngressReplayChunks? residentReplayChunks,
+    DownloadResidentReplayChunks? residentReplayChunks,
   }) async {
     _requireNotDisposed();
     final existing = _ingressProjections[projection.scopeId];
