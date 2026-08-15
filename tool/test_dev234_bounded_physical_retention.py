@@ -87,7 +87,8 @@ for token in (
 require(promoted, 'Future<bool> settleAutomatic(DownloadSession session)', 'ordinary promoted settle barrier')
 
 for token in (
-    'promoted idle physical session retires after automatic durable handoff',
+    'promoted idle physical session stays hot inside bounded retention',
+    'promoted pressure retires only the oldest durable hot session',
     'promoted hot body remains when immutable handoff is unavailable',
     'idle partial retention keeps recent hot prefixes and cold-stores victim',
     'promoted retirement preserves equivalence-only durable ownership',

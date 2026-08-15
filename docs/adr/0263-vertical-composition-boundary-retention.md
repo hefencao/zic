@@ -1,8 +1,10 @@
 # ADR 0263：纵向 composition cache 边界滞回
 
-状态：Accepted
+状态：Superseded
 
 接受版本：dev.284。
+
+由 dev.285 / ADR 0264 取代：16:22 dev.284 真机 Trace 证明该 guard 确实消除了原先 page18/page19 的短命 composition churn，但固定区域画面抖动仍存在，因此该行为已从 production 回滚。保留本文仅作为被设备否证的历史实验记录。
 
 ## 背景
 

@@ -26,6 +26,7 @@ final class CompositionDownloadTransferRuntime {
     required this.partialDownloadStore,
     required this.net,
     ArtifactCacheReadScheduler? localReadScheduler,
+    this.maxIdlePromotedSessions = 8,
     this.maxIdlePartialSessions = 32,
     this.maxIdlePartialBytes = 256 * 1024 * 1024,
   })  : localReadScheduler =
@@ -86,6 +87,7 @@ final class CompositionDownloadTransferRuntime {
       traceSink: traceHub,
       artifactHandoff: artifactCacheHandoff,
       partialHandoff: partialDownloadHandoff,
+      maxIdlePromotedSessions: maxIdlePromotedSessions,
       maxIdlePartialSessions: maxIdlePartialSessions,
       maxIdlePartialBytes: maxIdlePartialBytes,
     );
@@ -97,6 +99,7 @@ final class CompositionDownloadTransferRuntime {
   final PartialDownloadStore? partialDownloadStore;
   final NetLane net;
   final ArtifactCacheReadScheduler localReadScheduler;
+  final int maxIdlePromotedSessions;
   final int maxIdlePartialSessions;
   final int maxIdlePartialBytes;
   final MonoClock clock;

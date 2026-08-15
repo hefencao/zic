@@ -4,34 +4,6 @@ import 'package:domain/domain.dart';
 
 const double readerVerticalPageGap = 8;
 
-// UI composition retention is deliberately distinct from Pipeline demand.
-// The nominal page radius matches the historic Reader host keep-alive window,
-// while the mount-travel guard prevents a sliver cache-edge child from being
-// destroyed again when ScrollNotification updates currentIndex one layout
-// later. It is page-travel based rather than timer/grace based, so a local
-// back-and-forth gesture cannot churn the same heavy page host.
-const int readerVerticalCompositionKeepAliveRadius = 7;
-const int readerVerticalCompositionMountTravelGuardPages = 2;
-
-bool readerVerticalCompositionGuardActive({
-  required int currentIndex,
-  required int mountedAtCurrentIndex,
-}) =>
-    (currentIndex - mountedAtCurrentIndex).abs() <=
-    readerVerticalCompositionMountTravelGuardPages;
-
-bool readerVerticalCompositionShouldKeepAlive({
-  required int pageIndex,
-  required int currentIndex,
-  required int mountedAtCurrentIndex,
-}) =>
-    (pageIndex - currentIndex).abs() <=
-        readerVerticalCompositionKeepAliveRadius ||
-    readerVerticalCompositionGuardActive(
-      currentIndex: currentIndex,
-      mountedAtCurrentIndex: mountedAtCurrentIndex,
-    );
-
 final class ReaderVerticalAnchor {
   const ReaderVerticalAnchor({required this.index, required this.offset});
 

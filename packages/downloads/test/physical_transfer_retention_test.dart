@@ -9,7 +9,7 @@ import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
-  test('promoted idle physical session retires after automatic durable handoff',
+  test('promoted idle physical session stays hot inside bounded retention',
       () async {
     final root = await Directory.systemTemp.createTemp('physical-retention-');
     addTearDown(() => root.delete(recursive: true));
@@ -19,6 +19,7 @@ void main() {
       artifactCacheManager: cache,
       partialDownloadStore: backend,
       net: NetLane(maxActive: 1),
+      maxIdlePromotedSessions: 1,
       maxIdlePartialSessions: 4,
       maxIdlePartialBytes: 1024,
     );
@@ -34,9 +35,48 @@ void main() {
     await session.promote();
     await runtime.settlePhysicalRetention();
 
-    expect(backend.artifacts[id], orderedEquals(bytes));
-    expect(runtime.registry.findExact(id), isNull);
-    expect(runtime.registry.sessions, isEmpty);
+    expect(runtime.registry.findExact(id), same(session));
+    expect(runtime.registry.get(id), same(session));
+    expect(runtime.registry.sessions, hasLength(1));
+  });
+
+  test('promoted pressure retires only the oldest durable hot session',
+      () async {
+    final root = await Directory.systemTemp.createTemp('promoted-pressure-');
+    addTearDown(() => root.delete(recursive: true));
+    final backend = _RetentionStore();
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: backend,
+      net: NetLane(maxActive: 1),
+      maxIdlePromotedSessions: 1,
+    );
+    addTearDown(runtime.dispose);
+    final firstId = _id('promoted-first');
+    final secondId = _id('promoted-second');
+    final first = runtime.registry.get(firstId);
+    final firstBytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
+    await first.bindResponse(totalLength: firstBytes.lengthInBytes);
+    final firstWriter = first.acquireWriter();
+    await first.append(firstWriter, 0, firstBytes);
+    await first.seal(firstWriter, expectedLength: firstBytes.lengthInBytes);
+    await first.promote();
+    await runtime.settlePhysicalRetention();
+    expect(runtime.registry.findExact(firstId), same(first));
+
+    final second = runtime.registry.get(secondId);
+    final secondBytes = Uint8List.fromList(<int>[5, 6, 7, 8]);
+    await second.bindResponse(totalLength: secondBytes.lengthInBytes);
+    final secondWriter = second.acquireWriter();
+    await second.append(secondWriter, 0, secondBytes);
+    await second.seal(secondWriter, expectedLength: secondBytes.lengthInBytes);
+    await second.promote();
+    await runtime.settlePhysicalRetention();
+
+    expect(backend.artifacts[firstId], orderedEquals(firstBytes));
+    expect(runtime.registry.findExact(firstId), isNull);
+    expect(runtime.registry.findExact(secondId), same(second));
+    expect(runtime.registry.sessions, hasLength(1));
   });
 
   test('promoted hot body remains when immutable handoff is unavailable',
@@ -45,6 +85,7 @@ void main() {
       artifactCacheManager: null,
       partialDownloadStore: null,
       net: NetLane(maxActive: 1),
+      maxIdlePromotedSessions: 0,
     );
     addTearDown(runtime.dispose);
     final id = _id('promoted-without-handoff');
@@ -154,6 +195,7 @@ void main() {
       artifactCacheManager: cache,
       partialDownloadStore: backend,
       net: NetLane(maxActive: 1),
+      maxIdlePromotedSessions: 0,
     );
     addTearDown(runtime.dispose);
     final session = runtime.registry.get(newId);

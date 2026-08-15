@@ -1,3 +1,10 @@
+## 0.31.0-dev.285 - Bounded hot promoted physical retention
+
+- 16:22 dev.284 device Trace falsified the page-host composition-boundary hypothesis: the new composition guard removed the prior page18/page19 short mount/dispose churn, but the fixed-region jitter remained. Roll back the dev.284 mount-travel keep-alive behavior and mark ADR 0263 superseded.
+- The same Trace shows 84 `retired-promoted-resident` events in ~41.7s, including repeated five-session retirement bursts at window boundaries. Reversing across those boundaries recreates the same promoted physical pages from persistent artifacts through `artifact-cache-stream` / `consumer=session-copy`, matching the repeated full session-copy risk already recorded by the dev.269 audit.
+- `PhysicalTransferRetention` now keeps a composition-owned LRU tail of at most 8 idle promoted immutable physical sessions. Only pressure victims retire, after the existing ordinary artifact handoff succeeds; unfinished partial retention remains the separate 32-session / 256 MiB policy. This retains physical/source-generation authority, not Reader demand, NetLane response capacity or a second artifact-body cache.
+- Retention Trace keeps the historical `retired-promoted-resident` / `retired-promoted-durable` actions and adds `reason=hot-promoted-retention-pressure`, `maxIdlePromotedSessions` and `retainedIdlePromotedSessions`.
+
 ## 0.31.0-dev.284 - Vertical composition cache-boundary retention
 
 - 15:33 dev.283 Trace将固定位置双向抖动定位到ListView cache-edge page-host churn：page18/19在page10/11附近出现0.25~1.88s的短命mount/dispose，且均未形成first frame；dev.283 hidden-target违规已为0。

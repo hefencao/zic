@@ -9,11 +9,14 @@ import 'promoted_artifact_cache_handoff.dart';
 /// Bounded hot-session retention for the composition-owned physical transfer
 /// registry.
 ///
-/// Logical consumers never choose eviction. Fully promoted immutable bodies
-/// first settle through [PromotedArtifactCacheHandoff]; unfinished prefixes are
-/// moved through [PartialDownloadHandoff] only when this hot registry is under
-/// retention pressure. [DownloadTransferOwner] remains the sole scheduler and
-/// performs the final mechanical session retirement.
+/// Logical consumers never choose eviction. Recently idle promoted immutable
+/// sessions remain in a small composition-owned LRU so nearby reverse traversal
+/// can reuse the same physical/source generation instead of rebuilding it from
+/// the durable artifact. Promoted pressure victims first settle through
+/// [PromotedArtifactCacheHandoff]; unfinished prefixes move through
+/// [PartialDownloadHandoff] only under their separate hot-partial pressure.
+/// [DownloadTransferOwner] remains the sole scheduler and performs the final
+/// mechanical session retirement.
 final class PhysicalTransferRetention {
   PhysicalTransferRetention({
     required this.registry,
@@ -23,9 +26,11 @@ final class PhysicalTransferRetention {
     this.artifactHandoff,
     this.partialHandoff,
     this.sessionId = 'composition-transfer-owner',
+    this.maxIdlePromotedSessions = 8,
     this.maxIdlePartialSessions = 32,
     this.maxIdlePartialBytes = 256 * 1024 * 1024,
-  })  : assert(maxIdlePartialSessions >= 0),
+  })  : assert(maxIdlePromotedSessions >= 0),
+        assert(maxIdlePartialSessions >= 0),
         assert(maxIdlePartialBytes >= 0);
 
   final DownloadRegistry registry;
@@ -35,6 +40,7 @@ final class PhysicalTransferRetention {
   final PromotedArtifactCacheHandoff? artifactHandoff;
   final PartialDownloadHandoff? partialHandoff;
   final String sessionId;
+  final int maxIdlePromotedSessions;
   final int maxIdlePartialSessions;
   final int maxIdlePartialBytes;
 
@@ -96,37 +102,58 @@ final class PhysicalTransferRetention {
   Future<void> _runMaintenance() async {
     while (_dirty && !_disposed) {
       _dirty = false;
-      await _retireIdlePromoted();
+      await _trimIdlePromoted();
       await _trimIdlePartials();
     }
   }
 
-  Future<void> _retireIdlePromoted() async {
-    final candidates = registry.sessions
-        .where((session) =>
-            session.state == DownloadState.promoted && _isIdle(session.snapshot))
-        .toList(growable: false)
-      ..sort(_compareOldestFirst);
-    for (final session in candidates) {
-      if (_disposed || !_isIdle(session.snapshot)) continue;
-      final handoff = artifactHandoff;
-      if (handoff == null || !await handoff.settleAutomatic(session)) {
-        continue;
-      }
-      if (!_isIdle(session.snapshot)) continue;
-      final bytes = session.committedLength;
-      final residentBodyBacked = session.residentBodyBacked;
-      if (await owner.retireIdlePhysical(session.id)) {
+  Future<void> _trimIdlePromoted() async {
+    while (!_disposed) {
+      final candidates = registry.sessions
+          .where((session) =>
+              session.state == DownloadState.promoted &&
+              _isIdle(session.snapshot))
+          .toList(growable: false)
+        ..sort(_compareOldestFirst);
+      if (candidates.length <= maxIdlePromotedSessions) return;
+
+      // Promoted immutable sessions are cheap physical/source-generation
+      // authorities compared with re-reading the durable body into a fresh
+      // physical generation on every nearby reverse traversal. Retain a small
+      // composition-owned LRU tail and retire only pressure victims. The
+      // durable handoff remains the mandatory barrier before retirement.
+      var retired = false;
+      for (final session in candidates) {
+        if (_disposed) return;
+        if (session.state != DownloadState.promoted ||
+            !_isIdle(session.snapshot)) {
+          continue;
+        }
+        final handoff = artifactHandoff;
+        if (handoff == null || !await handoff.settleAutomatic(session)) {
+          continue;
+        }
+        if (session.state != DownloadState.promoted ||
+            !_isIdle(session.snapshot)) {
+          continue;
+        }
+        final bytes = session.committedLength;
+        final residentBodyBacked = session.residentBodyBacked;
+        if (!await owner.retireIdlePhysical(session.id)) continue;
         _forget(session);
-        handoff?.unobserve(session);
+        handoff.unobserve(session);
         _recordRetirement(
           session,
           action: residentBodyBacked
               ? 'retired-promoted-resident'
               : 'retired-promoted-durable',
           bytes: bytes,
+          reason: 'hot-promoted-retention-pressure',
         );
+        retired = true;
+        break;
       }
+      if (!retired) return;
     }
   }
 
@@ -167,6 +194,7 @@ final class PhysicalTransferRetention {
         victim,
         action: bytes > 0 ? 'retired-partial' : 'retired-empty',
         bytes: bytes,
+        reason: 'hot-partial-retention-pressure',
       );
     }
   }
@@ -190,10 +218,14 @@ final class PhysicalTransferRetention {
     DownloadSession session, {
     required String action,
     required int bytes,
+    required String reason,
   }) {
     try {
       final idle = registry.sessions
           .where((candidate) => _isIdle(candidate.snapshot))
+          .toList(growable: false);
+      final idlePromoted = idle
+          .where((candidate) => candidate.state == DownloadState.promoted)
           .toList(growable: false);
       final idlePartials = idle
           .where((candidate) => candidate.state != DownloadState.promoted)
@@ -208,7 +240,10 @@ final class PhysicalTransferRetention {
             'source': 'composition-physical-retention',
             'consumer': 'hot-transfer-registry',
             'action': action,
+            'reason': reason,
             'bytes': bytes,
+            'maxIdlePromotedSessions': maxIdlePromotedSessions,
+            'retainedIdlePromotedSessions': idlePromoted.length,
             'retainedIdleSessions': idle.length,
             'retainedIdlePartialBytes': idlePartials.fold<int>(
               0,
