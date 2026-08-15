@@ -1,3 +1,9 @@
+## 0.31.0-dev.298 - Static presentation lifetime across upload-demand gaps
+
+- The 10:01 dev.297 device Trace falsifies the subpixel/pixel-snap magnitude hypothesis: the visible jitter is much larger than 1-2px while actual vertical page layout remains stable. Roll back dev.297 `PhysicalPixelAlignedPresentation`, the external-texture marker, and the <=0.5px bounded-fill behavior; retain dev.296 physical sourceCanvas aspect authority.
+- After initial static presentation, the same frame 0 is repeatedly presented again as `platformResidentReuse=true` when a page re-enters transition/upload demand (for example one identity presents 10 times). `PipelinePageOutputStream._present()` already skips the same identity/frame unless its projection was rebound; the existing `_bind(null)` cleared the UI surface, so upload eligibility was incorrectly controlling presentation lifetime and could replace an already visible page with the loading indicator before zero-copy reattachment.
+- Decouple those lifetimes: an authoritative static surface may survive a temporary upload-demand gap only while the same `DecodeId` remains in the existing decode plan and the page still has a presentation listener. No upload/present work is created by retention; leaving the decode window, changing identity/generation, disposing output, or losing the last listener releases the projection. Encoded 3/7, decode 2/1, NetLane, upload policy, host keepAlive and physical texture retention remain unchanged.
+
 ## 0.31.0-dev.297 - Stitched external-texture physical-pixel alignment
 
 - The 09:30 dev.296 device Trace keeps the already-frozen owners stable: 8/8 dimensions resolve from physical sourceCanvas, all 418 actual page-layout samples keep zero extent delta and identity scale/shear with one constant residual, and all 92 active vertical policy decisions keep `staticWarmUploads=0`. 19/24 platform presentations are zero-copy resident reuse.

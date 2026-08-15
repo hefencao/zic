@@ -75,60 +75,6 @@ void main() {
     expect(sourceBox.height, 400);
   });
 
-  testWidgets(
-      'continuous fitWidth closes only nearest-physical-pixel rounding residual',
-      (tester) async {
-    const childKey = ValueKey<String>('rounded-media-child');
-    await tester.pumpWidget(
-      MaterialApp(
-        home: MediaQuery(
-          data: const MediaQueryData(devicePixelRatio: 2.5),
-          child: Center(
-            child: SizedBox(
-              width: 200,
-              height: 406.4,
-              child: MediaAspectViewport(
-                dimensions: const Size(960, 1950),
-                fit: BoxFit.fitWidth,
-                builder: (_) => const SizedBox.expand(key: childKey),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-
-    expect(
-      find.descendant(
-        of: find.byKey(mediaAspectViewportKey),
-        matching: find.byType(FittedBox),
-      ),
-      findsNothing,
-    );
-    expect(
-      tester.getRect(find.byKey(mediaAspectViewportKey)).size,
-      const Size(200, 406.4),
-    );
-    expect(tester.getRect(find.byKey(childKey)).size, const Size(200, 406.4));
-  });
-
-  test('physical pixel snap correction rounds paint offset only', () {
-    expect(
-      physicalPixelSnapCorrection(
-        globalLogicalOffset: 10.1,
-        devicePixelRatio: 2.5,
-      ),
-      closeTo(-0.1, 1e-9),
-    );
-    expect(
-      physicalPixelSnapCorrection(
-        globalLogicalOffset: 10.3,
-        devicePixelRatio: 2.5,
-      ),
-      closeTo(0.1, 1e-9),
-    );
-  });
-
   testWidgets('unknown intrinsic size keeps requested fit instead of filling',
       (tester) async {
     const fitKey = ValueKey<String>('unresolved-media-fit');

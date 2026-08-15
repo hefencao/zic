@@ -40,13 +40,6 @@ abstract interface class PipelineOutputProjector {
   PipelinePageSurface project(OutputFrame frame);
 }
 
-/// Marker for a page surface backed by a platform external texture layer.
-///
-/// Presentation may use this read-only capability to apply compositor-specific
-/// paint alignment without exposing the texture id or moving texture ownership
-/// out of the platform adapter.
-abstract interface class PipelineExternalTextureSurface {}
-
 /// Read-only visual surface consumed by Reader Presentation.
 ///
 /// The Pipeline output claim owns the underlying frame lifetime. Calling

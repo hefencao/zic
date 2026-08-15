@@ -65,6 +65,7 @@ final class PipelinePageOutputStream {
 
   PipelinePageOutputSnapshot _snapshot;
   DecodeId? _identity;
+  DecodeId? _surfaceIdentity;
   PresentClaim? _claim;
   DecodeId? _presentingIdentity;
   int? _presentingFrameIndex;
@@ -87,11 +88,27 @@ final class PipelinePageOutputStream {
 
   void removeListener(PipelinePageOutputListener listener) {
     _listeners.remove(listener);
+    if (!_disposed && _listeners.isEmpty && _identity == null) {
+      _clearProjection(PipelinePageOutputState.idle);
+    }
   }
 
-  void _bind(DecodeId? identity) {
+  bool get _hasAuthoritativeStaticProjection =>
+      _snapshot.hasSurface &&
+      (_snapshot.duration?.inMicroseconds ?? -1) <= 0 &&
+      _snapshot.animation.complete &&
+      _snapshot.animation.frameCount <= 1 &&
+      _surfaceIdentity != null;
+
+  void _bind(
+    DecodeId? identity, {
+    DecodeId? retainedStaticIdentity,
+  }) {
     _requireOpen();
     if (_identity == identity) {
+      if (identity == null) {
+        _retainOrClearDetachedStaticProjection(retainedStaticIdentity);
+      }
       return;
     }
     _identity = identity;
@@ -100,21 +117,13 @@ final class PipelinePageOutputStream {
     _presentingFrameIndex = null;
     _presentationPending = false;
     if (identity == null) {
-      final prior = _takeClaim();
-      _publish(
-        PipelinePageOutputSnapshot(
-          state: PipelinePageOutputState.idle,
-          surface: null,
-          frameIndex: null,
-          duration: null,
-          animation: const AnimationInfo.unknown(),
-          replacing: false,
-          failure: null,
-        ),
-      );
-      _releaseAfterVisualSwap(prior);
+      _retainOrClearDetachedStaticProjection(retainedStaticIdentity);
       return;
     }
+
+    final alreadyProjected = _surfaceIdentity == identity &&
+        _hasAuthoritativeStaticProjection &&
+        _listeners.isNotEmpty;
     final prior = _snapshot;
     _publish(
       PipelinePageOutputSnapshot(
@@ -125,7 +134,7 @@ final class PipelinePageOutputStream {
         frameIndex: prior.frameIndex,
         duration: prior.duration,
         animation: prior.animation,
-        replacing: prior.hasSurface,
+        replacing: prior.hasSurface && !alreadyProjected,
         failure: null,
       ),
     );
@@ -133,6 +142,66 @@ final class PipelinePageOutputStream {
     if (upload != null) {
       _accept(identity, upload);
     }
+  }
+
+  void _retainOrClearDetachedStaticProjection(
+    DecodeId? retainedStaticIdentity,
+  ) {
+    final mayRetain = _listeners.isNotEmpty &&
+        retainedStaticIdentity != null &&
+        _surfaceIdentity == retainedStaticIdentity &&
+        _hasAuthoritativeStaticProjection;
+    if (mayRetain) {
+      if (_snapshot.replacing ||
+          _snapshot.state != PipelinePageOutputState.ready) {
+        _publish(
+          PipelinePageOutputSnapshot(
+            state: PipelinePageOutputState.ready,
+            surface: _snapshot.surface,
+            frameIndex: _snapshot.frameIndex,
+            duration: _snapshot.duration,
+            animation: _snapshot.animation,
+            replacing: false,
+            failure: _snapshot.failure,
+          ),
+        );
+      }
+      return;
+    }
+    _clearProjection(PipelinePageOutputState.idle);
+  }
+
+  void _clearProjection(PipelinePageOutputState state) {
+    if (!_snapshot.hasSurface && _claim == null && _surfaceIdentity == null) {
+      if (_snapshot.state != state) {
+        _publish(
+          PipelinePageOutputSnapshot(
+            state: state,
+            surface: null,
+            frameIndex: null,
+            duration: null,
+            animation: const AnimationInfo.unknown(),
+            replacing: false,
+            failure: null,
+          ),
+        );
+      }
+      return;
+    }
+    final prior = _takeClaim();
+    _surfaceIdentity = null;
+    _publish(
+      PipelinePageOutputSnapshot(
+        state: state,
+        surface: null,
+        frameIndex: null,
+        duration: null,
+        animation: const AnimationInfo.unknown(),
+        replacing: false,
+        failure: null,
+      ),
+    );
+    _releaseAfterVisualSwap(prior);
   }
 
   void _accept(DecodeId identity, UploadSnapshot upload) {
@@ -212,6 +281,7 @@ final class PipelinePageOutputStream {
           );
         }
       case UploadState.disposed:
+        _surfaceIdentity = null;
         final prior = _takeClaim();
         _publish(
           PipelinePageOutputSnapshot(
@@ -261,6 +331,7 @@ final class PipelinePageOutputStream {
           const AnimationInfo.unknown();
       final prior = _claim;
       _claim = claim;
+      _surfaceIdentity = identity;
       _publish(
         PipelinePageOutputSnapshot(
           state: PipelinePageOutputState.ready,
@@ -358,6 +429,7 @@ final class PipelinePageOutputStream {
     _presentingIdentity = null;
     _presentingFrameIndex = null;
     _presentationPending = false;
+    _surfaceIdentity = null;
     _releaseClaim();
     for (final claim in _deferredClaims.toList(growable: false)) {
       claim.release();

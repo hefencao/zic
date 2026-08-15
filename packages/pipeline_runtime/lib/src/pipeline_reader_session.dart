@@ -933,7 +933,12 @@ final class PipelineReaderSession {
         frameScheduler: _media.frameScheduler,
       ),
     );
-    output._bind(_activeUploadIdentity(id));
+    final uploadIdentity = _activeUploadIdentity(id);
+    output._bind(
+      uploadIdentity,
+      retainedStaticIdentity:
+          uploadIdentity == null ? _activeDecodeIdentity(id) : null,
+    );
     return output;
   }
 
@@ -1591,6 +1596,19 @@ final class PipelineReaderSession {
     return null;
   }
 
+  DecodeId? _activeDecodeIdentity(DownloadId download) {
+    final decodes = _binding?.pipeline.currentPlan.decodes;
+    if (decodes == null) {
+      return null;
+    }
+    for (final id in decodes.keys) {
+      if (id.download == download) {
+        return id;
+      }
+    }
+    return null;
+  }
+
   void _syncPageStreams() {
     for (final stream in _pageStreams.values) {
       stream.refreshBinding();
@@ -1599,7 +1617,12 @@ final class PipelineReaderSession {
 
   void _syncPageOutputs() {
     for (final output in _pageOutputs.values) {
-      output._bind(_activeUploadIdentity(output.download));
+      final uploadIdentity = _activeUploadIdentity(output.download);
+      output._bind(
+        uploadIdentity,
+        retainedStaticIdentity:
+            uploadIdentity == null ? _activeDecodeIdentity(output.download) : null,
+      );
     }
   }
 
