@@ -1,3 +1,10 @@
+## 0.31.0-dev.303 - Download trace / snapshot publication boundary
+
+- 12:56 dev.302 device Trace falsifies the assumption that repeated lane pumping was the dominant legal-revision cost: the common 1-added/10-changed/1-removed page-boundary reconcile still has a roughly 10.213ms median, 12.03ms p90 and 13.079ms max, essentially unchanged from dev.301 despite `atomicLaneBatch=true`.
+- Root cause is a hidden `DownloadSession._emit()` side effect. dev.302 changed priority-only demand migration to avoid an explicit `_notifySnapshot()`, but `_emit()` itself still unconditionally published a full `DownloadSnapshot`; new-scope/detach paths could therefore publish twice. Pure flow-control/read-permit/resume/source diagnostic events also woke PageStream/progress/retention observers.
+- Split diagnostics from authoritative projection: `_recordTrace()` never publishes snapshots. State/content/demand-count boundaries publish exactly once via explicit `_notifySnapshot()`; priority-only scheduling migration and diagnostic-only transport/source events publish zero snapshots. `bytesCommitted` keeps bounded progress publication at the existing source-progress quantum.
+- Keep dev.302 lane batching and all Reader resource/presentation policy unchanged. Existing `pipelineReconcileTiming` remains the device falsification signal; no new visual or resource workaround is added.
+
 ## 0.31.0-dev.302 - Atomic lane reconcile transaction
 
 - 12:21 dev.301 device Trace confirms the dev.301 semantic-no-op revision cascade is mechanically gone, yet pronounced vertical jitter remains as missed-vsync: 43 frame intervals exceed 30ms overall and 37 occur during active vertical interaction. 28/37 active long gaps fall within 100ms after a real `policyDecision`.

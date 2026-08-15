@@ -643,15 +643,39 @@ void main() {
   test('priority-only demand migration does not rebroadcast media snapshot', () {
     final snapshots = <DownloadSnapshot>[];
     session.addSnapshotListener(snapshots.add);
+    expect(snapshots, hasLength(1));
+
     final lease = session.attachDemand(scopeId: 'reader', priority: 700);
-    final afterAttach = snapshots.length;
+    expect(snapshots, hasLength(2));
 
     lease.updatePriority(1000);
 
     expect(session.effectivePriority, 1000);
-    expect(snapshots.length, afterAttach);
+    expect(snapshots, hasLength(2));
     lease.detach();
-    expect(snapshots.length, afterAttach + 1);
+    expect(snapshots, hasLength(3));
+  });
+
+  test('diagnostic transport trace does not publish media snapshot', () {
+    final snapshots = <DownloadSnapshot>[];
+    session.addSnapshotListener(snapshots.add);
+    expect(snapshots, hasLength(1));
+
+    session.recordFlowControl(
+      action: 'paused',
+      targetFrames: 1,
+      completedFrames: 1,
+      networkCursor: 4096,
+      demanded: true,
+    );
+    session.recordTransportReadPermit(
+      action: 'released',
+      reason: 'diagnostic-only',
+      demanded: true,
+    );
+    session.recordResume(restarted: false, strategy: 'diagnostic-only');
+
+    expect(snapshots, hasLength(1));
   });
 
   test(

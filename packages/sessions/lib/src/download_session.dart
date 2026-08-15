@@ -499,7 +499,11 @@ final class DownloadSession {
     _requireState(<DownloadState>{DownloadState.idle, DownloadState.failed});
     _networkStartLength = committedLength;
     _state = DownloadState.queued;
-    _emit(TraceEventKind.downloadState, <String, Object?>{'state': _state.name});
+    _recordTrace(
+      TraceEventKind.downloadState,
+      <String, Object?>{'state': _state.name},
+    );
+    _notifySnapshot();
   }
 
   Future<void> bindResponse({
@@ -567,7 +571,7 @@ final class DownloadSession {
     _resetIngressProjections(_epoch);
     _expectIngressLength(totalLength);
     _state = DownloadState.receiving;
-    _emit(
+    _recordTrace(
       TraceEventKind.downloadState,
       <String, Object?>{
         'state': _state.name,
@@ -578,6 +582,7 @@ final class DownloadSession {
         if (residentSource != null) 'residentSource': residentSource,
       },
     );
+    _notifySnapshot();
   }
 
   void appendResidentImmutableIngress(int offset, List<int> bytes) {
@@ -635,7 +640,7 @@ final class DownloadSession {
     }
     _state = DownloadState.promoted;
     _flushCommittedTrace();
-    _emit(TraceEventKind.artifactPromoted, <String, Object?>{
+    _recordTrace(TraceEventKind.artifactPromoted, <String, Object?>{
       'length': committedLength,
       'cacheResident': true,
       'residentBodyBacked': true,
@@ -643,6 +648,7 @@ final class DownloadSession {
         'residentBodyAuthority': residentBodyAuthority!.name,
       if (residentSource != null) 'residentSource': residentSource,
     });
+    _notifySnapshot();
     return snapshot;
   }
 
@@ -670,7 +676,11 @@ final class DownloadSession {
     _writer = lease;
     _state = DownloadState.receiving;
     _failure = null;
-    _emit(TraceEventKind.downloadState, <String, Object?>{'state': _state.name});
+    _recordTrace(
+      TraceEventKind.downloadState,
+      <String, Object?>{'state': _state.name},
+    );
+    _notifySnapshot();
     return lease;
   }
 
@@ -711,7 +721,7 @@ final class DownloadSession {
     _state = DownloadState.sealed;
     _contentKind = sniffContent(_prefix, finalChunk: true);
     _flushCommittedTrace();
-    _emit(
+    _recordTrace(
       TraceEventKind.artifactSealed,
       <String, Object?>{
         'length': sealed.committedLength,
@@ -719,6 +729,7 @@ final class DownloadSession {
         'kind': _contentKind.name,
       },
     );
+    _notifySnapshot();
     await _syncCache(CacheState.partial);
     return snapshot;
   }
@@ -728,13 +739,14 @@ final class DownloadSession {
     _ingressProjectionRevision++;
     final promoted = await artifact.promote();
     _state = DownloadState.promoted;
-    _emit(
+    _recordTrace(
       TraceEventKind.artifactPromoted,
       <String, Object?>{
         'path': promoted.finalPath,
         'length': promoted.committedLength,
       },
     );
+    _notifySnapshot();
     await _syncCache(CacheState.ready);
     return snapshot;
   }
@@ -780,10 +792,11 @@ final class DownloadSession {
           : Failure(code: ErrorCode.network, message: '$error', cause: error);
     }
     _flushCommittedTrace();
-    _emit(
+    _recordTrace(
       TraceEventKind.downloadState,
       <String, Object?>{'state': _state.name, 'error': '$_failure'},
     );
+    _notifySnapshot();
     await _syncCache(CacheState.partial);
   }
 
@@ -817,7 +830,7 @@ final class DownloadSession {
     final previous = _demandPriorities[scopeId];
     if (previous == priority) return;
     _demandPriorities[scopeId] = priority;
-    _emit(
+    _recordTrace(
       TraceEventKind.demandApplied,
       <String, Object?>{
         'lane': 'download',
@@ -841,7 +854,7 @@ final class DownloadSession {
   void _detachDemand(String scopeId) {
     if (_demandPriorities.remove(scopeId) == null) return;
     _flushCommittedTrace();
-    _emit(
+    _recordTrace(
       TraceEventKind.demandDetached,
       <String, Object?>{
         'lane': 'download',
@@ -860,7 +873,7 @@ final class DownloadSession {
     _flushCommittedTrace();
     _state = DownloadState.idle;
     _failure = null;
-    _emit(
+    _recordTrace(
       TraceEventKind.downloadState,
       <String, Object?>{
         'state': _state.name,
@@ -900,7 +913,7 @@ final class DownloadSession {
       changed = true;
     }
     if (!changed) return false;
-    _emit(
+    _recordTrace(
       TraceEventKind.artifactSource,
       <String, Object?>{
         'stage': 'decode-playable-prefix',
@@ -947,7 +960,7 @@ final class DownloadSession {
     bool? responseReadPermitHeld,
     bool? demanded,
   }) {
-    _emit(
+    _recordTrace(
       TraceEventKind.artifactSource,
       <String, Object?>{
         'stage': 'transport-flow-control',
@@ -982,7 +995,7 @@ final class DownloadSession {
     bool? demanded,
     String? bodyAuthority,
   }) {
-    _emit(
+    _recordTrace(
       TraceEventKind.artifactSource,
       <String, Object?>{
         'stage': 'transport-read-permit',
@@ -1003,7 +1016,7 @@ final class DownloadSession {
     bool playablePrefixPreserved = false,
     Map<String, Object?> diagnostics = const <String, Object?>{},
   }) {
-    _emit(
+    _recordTrace(
       restarted
           ? TraceEventKind.resumeRestarted
           : TraceEventKind.resumeAccepted,
@@ -1021,7 +1034,7 @@ final class DownloadSession {
     if (!_legacyDemanded) return;
     _flushCommittedTrace();
     _legacyDemanded = false;
-    _emit(
+    _recordTrace(
       TraceEventKind.demandDetached,
       <String, Object?>{
         'lane': 'download',
@@ -1060,10 +1073,11 @@ final class DownloadSession {
     await _restartArtifact();
     _state = DownloadState.idle;
     await index?.remove(id.key);
-    _emit(
+    _recordTrace(
       TraceEventKind.downloadState,
       <String, Object?>{'state': _state.name, 'reset': true},
     );
+    _notifySnapshot();
   }
 
   Future<int> evict() async {
@@ -1097,10 +1111,11 @@ final class DownloadSession {
     _sourceCanvasHeight = null;
     _resetPlayablePrefixEvidence();
     await index?.remove(id.key);
-    _emit(
+    _recordTrace(
       TraceEventKind.downloadState,
       <String, Object?>{'state': _state.name, 'evictedBytes': released},
     );
+    _notifySnapshot();
     return released;
   }
 
@@ -1242,6 +1257,7 @@ final class DownloadSession {
     _pendingCommitTraceChunks++;
     if (_pendingCommitTraceBytes >= sourceProgressQuantumBytes) {
       _flushCommittedTrace();
+      _notifySnapshot();
     }
   }
 
@@ -1249,7 +1265,7 @@ final class DownloadSession {
     if (_pendingCommitTraceBytes == 0) {
       return;
     }
-    _emit(
+    _recordTrace(
       TraceEventKind.bytesCommitted,
       <String, Object?>{
         'bytes': _pendingCommitTraceBytes,
@@ -1367,7 +1383,7 @@ final class DownloadSession {
             before,
             projection.snapshot,
           );
-          _emit(
+          _recordTrace(
             TraceEventKind.artifactSource,
             <String, Object?>{
               'stage': 'reader-ingress-late-join',
@@ -1556,7 +1572,7 @@ final class DownloadSession {
   ) {
     final sourceBecameReady = !before.sourceReady && after.sourceReady;
     if (sourceBecameReady) {
-      _emit(
+      _recordTrace(
         TraceEventKind.sourceReady,
         <String, Object?>{
           'kind': after.kind.name,
@@ -1566,7 +1582,7 @@ final class DownloadSession {
       );
     }
     if (before.failure == null && after.failure != null) {
-      _emit(
+      _recordTrace(
         TraceEventKind.sourceDisabled,
         <String, Object?>{
           'kind': after.kind.name,
@@ -1645,14 +1661,14 @@ final class DownloadSession {
     try {
       _epoch.requireMatch(lease.epoch);
     } on Failure {
-      _emit(
+      _recordTrace(
         TraceEventKind.staleWorkRejected,
         <String, Object?>{'writerId': lease.id},
       );
       rethrow;
     }
     if (!identical(_writer, lease)) {
-      _emit(
+      _recordTrace(
         TraceEventKind.writerRejected,
         <String, Object?>{'writerId': lease.id},
       );
@@ -1682,7 +1698,9 @@ final class DownloadSession {
     }
   }
 
-  void _emit(TraceEventKind kind, Map<String, Object?> payload) {
+  /// Diagnostics only. Snapshot publication is an independent lifecycle edge
+  /// and must be explicit at the state mutation that owns it.
+  void _recordTrace(TraceEventKind kind, Map<String, Object?> payload) {
     traceSink.record(
       traceEvent(
         clock: clock,
@@ -1693,7 +1711,6 @@ final class DownloadSession {
         payload: payload,
       ),
     );
-    _notifySnapshot();
   }
 
   void _notifySnapshot() {

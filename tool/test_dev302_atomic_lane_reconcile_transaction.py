@@ -3,14 +3,22 @@
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 def read(path): return (ROOT/path).read_text(encoding='utf-8')
+def current_dev():
+    for line in read('apps/app/pubspec.yaml').splitlines():
+        if line.startswith('version:') and '+' in line:
+            return int(line.rsplit('+',1)[1].strip())
+    raise SystemExit('FAIL: app version code missing')
 def require(path,*tokens):
     text=read(path); missing=[t for t in tokens if t not in text]
     if missing: raise SystemExit(f'FAIL: {path} missing dev.302 tokens: {missing}')
 def forbid(path,*tokens):
     text=read(path); found=[t for t in tokens if t in text]
     if found: raise SystemExit(f'FAIL: {path} contains forbidden dev.302 tokens: {found}')
-require('apps/app/pubspec.yaml','version: 0.31.0+302')
-require('apps/app/android/zic-version.properties','versionCode=302')
+if current_dev() == 302:
+    require('apps/app/pubspec.yaml','version: 0.31.0+302')
+    require('apps/app/android/zic-version.properties','versionCode=302')
+elif current_dev() < 302:
+    raise SystemExit('FAIL: dev.302 gate executed before dev.302')
 require('packages/sessions/lib/src/net_lane.dart',
         'void batch(void Function() action);',
         'int _batchDepth = 0;',
@@ -29,9 +37,13 @@ require('packages/sessions/lib/src/download_session.dart',
 require('packages/sessions/test/net_lane_test.dart',
         'batch defers lane pumping until the authoritative mutation commits',
         'expect(lane.active, 0);', 'expect(lane.queued, 3);')
-require('packages/sessions/test/download_session_test.dart',
-        'priority-only demand migration does not rebroadcast media snapshot',
-        'expect(snapshots.length, afterAttach);')
+if current_dev() == 302:
+    require('packages/sessions/test/download_session_test.dart',
+            'priority-only demand migration does not rebroadcast media snapshot',
+            'expect(snapshots.length, afterAttach);')
+else:
+    require('packages/sessions/test/download_session_test.dart',
+            'priority-only demand migration does not rebroadcast media snapshot')
 require('packages/telemetry/lib/src/trace.dart','pipelineReconcileTiming')
 require('apps/app/lib/debug_trace.dart',
         'event.kind != TraceEventKind.pipelineReconcileTiming')
