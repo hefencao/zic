@@ -430,6 +430,31 @@ void main() {
     expect(updates, hasLength(1));
   });
 
+  test('demand diff separates liveness revision from scheduling identity', () {
+    final obs = observation();
+    final window = const RoleResolver().resolve(chapter, obs);
+    const policy = HeuristicPolicy();
+    final target = DecodeTarget(physicalWidth: 1080, physicalHeight: 1920);
+    final first = policy.createPlan(
+      revision: 1,
+      chapter: chapter,
+      observation: obs,
+      window: window,
+      decodeTarget: target,
+    );
+    final refreshed = policy.createPlan(
+      revision: 2,
+      chapter: chapter,
+      observation: obs,
+      window: window,
+      decodeTarget: target,
+    );
+
+    expect(first.downloads.values.first.expirationRevision, 2);
+    expect(refreshed.downloads.values.first.expirationRevision, 3);
+    expect(DemandDiff.between(first, refreshed).isEmpty, isTrue);
+  });
+
   test('demand diff detaches resources that leave the window', () {
     final firstWindow = const RoleResolver().resolve(chapter, observation());
     final policy = const HeuristicPolicy();

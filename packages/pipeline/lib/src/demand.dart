@@ -24,6 +24,16 @@ final class DownloadDemand {
 
   final String? decisionId;
 
+  /// Scheduling identity excludes [expirationRevision]. Expiration is liveness
+  /// metadata refreshed by a new accepted plan; it must never turn an otherwise
+  /// unchanged resource request into scheduler work.
+  bool sameSchedulingAs(DownloadDemand other) =>
+      role == other.role &&
+      priority == other.priority &&
+      reason == other.reason &&
+      flowTargetFrames == other.flowTargetFrames &&
+      decisionId == other.decisionId;
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -63,6 +73,14 @@ final class DecodeDemand {
   final int expirationRevision;
   final String? decisionId;
 
+  /// Scheduling identity excludes [expirationRevision]; see [DownloadDemand].
+  bool sameSchedulingAs(DecodeDemand other) =>
+      role == other.role &&
+      priority == other.priority &&
+      targetWatermark == other.targetWatermark &&
+      reason == other.reason &&
+      decisionId == other.decisionId;
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -99,6 +117,13 @@ final class UploadDemand {
   final String reason;
   final int expirationRevision;
   final String? decisionId;
+
+  /// Scheduling identity excludes [expirationRevision]; see [DownloadDemand].
+  bool sameSchedulingAs(UploadDemand other) =>
+      role == other.role &&
+      priority == other.priority &&
+      reason == other.reason &&
+      decisionId == other.decisionId;
 
   @override
   bool operator ==(Object other) =>
@@ -169,9 +194,21 @@ final class DemandDiff {
 
   factory DemandDiff.between(DemandPlan previous, DemandPlan next) {
     return DemandDiff(
-      downloads: _diffMaps(previous.downloads, next.downloads),
-      decodes: _diffMaps(previous.decodes, next.decodes),
-      uploads: _diffMaps(previous.uploads, next.uploads),
+      downloads: _diffMaps(
+        previous.downloads,
+        next.downloads,
+        sameScheduling: (a, b) => a.sameSchedulingAs(b),
+      ),
+      decodes: _diffMaps(
+        previous.decodes,
+        next.decodes,
+        sameScheduling: (a, b) => a.sameSchedulingAs(b),
+      ),
+      uploads: _diffMaps(
+        previous.uploads,
+        next.uploads,
+        sameScheduling: (a, b) => a.sameSchedulingAs(b),
+      ),
       keepAdded: next.keep.difference(previous.keep),
       keepRemoved: previous.keep.difference(next.keep),
     );
@@ -191,7 +228,11 @@ final class DemandDiff {
       keepRemoved.isEmpty;
 }
 
-MapDiff<K, V> _diffMaps<K, V>(Map<K, V> previous, Map<K, V> next) {
+MapDiff<K, V> _diffMaps<K, V>(
+  Map<K, V> previous,
+  Map<K, V> next, {
+  required bool Function(V previous, V next) sameScheduling,
+}) {
   final added = <K, V>{};
   final changed = <K, V>{};
   final removed = <K>{};
@@ -199,8 +240,11 @@ MapDiff<K, V> _diffMaps<K, V>(Map<K, V> previous, Map<K, V> next) {
   for (final entry in next.entries) {
     if (!previous.containsKey(entry.key)) {
       added[entry.key] = entry.value;
-    } else if (previous[entry.key] != entry.value) {
-      changed[entry.key] = entry.value;
+    } else {
+      final before = previous[entry.key] as V;
+      if (!sameScheduling(before, entry.value)) {
+        changed[entry.key] = entry.value;
+      }
     }
   }
   for (final key in previous.keys) {

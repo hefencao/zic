@@ -77,9 +77,20 @@ final class FakeCoordinator implements Coordinator, PlaybackCoordinator {
       identity: (value) => value.key,
       lane: 'upload',
     );
+    // Refresh expiration/liveness metadata for semantically unchanged
+    // demands without emitting demandApplied or manufacturing scheduler work.
+    _downloads
+      ..clear()
+      ..addAll(update.plan.downloads);
+    _decodes
+      ..clear()
+      ..addAll(update.plan.decodes);
+    _uploads
+      ..clear()
+      ..addAll(update.plan.uploads);
     _keep
-      ..removeAll(update.diff.keepRemoved)
-      ..addAll(update.diff.keepAdded);
+      ..clear()
+      ..addAll(update.plan.keep);
   }
 
   void _applyMapDiff<K, V>({

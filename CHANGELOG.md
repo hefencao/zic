@@ -1,3 +1,10 @@
+## 0.31.0-dev.301 - Semantic demand revision boundary
+
+- 11:43 dev.300 device Trace finally exposes a frame-cadence root cause at the scheduling boundary: Flutter misses repeated 2-4 vsync intervals while build/raster are usually only a few milliseconds. During the same scroll windows, offscreen WebP sniff/classification evidence produces forced policy revisions whose 11/4/2 resource plan is semantically unchanged, yet expiration-only revision churn re-emits all decode/upload demands on the UI isolate.
+- Separate scheduling identity from liveness metadata. `DemandDiff` ignores `expirationRevision`, `LiveCoordinator` refreshes surviving demand expiration in-place without cancel/submit/follow, and download transfer reconciliation is skipped when the download scheduling diff is empty.
+- `PipelineController` now builds a candidate plan before committing revision; runtime evidence that leaves roles/resources/priorities/watermarks/flow/keep unchanged does not advance revision, emit `policyDecision`, or enter coordinator reconcile. Keep actual media evidence for future decisions.
+- Correct FrameTiming observability: Flutter batches historical timings, so Reader no longer stamps callback-time scroll/current/interaction onto every frame. Trace keeps engine timing plus batch monotonic anchors for honest timeline reconstruction.
+
 ## 0.31.0-dev.300 - Reader frame timing adapter boundary
 
 - Fix the dev.299 local Flutter compile failure where `ReaderView` referenced `FramePhase.vsyncStart` without owning/importing the dart:ui timing API. Do not patch this by importing engine enums into the Reader widget.

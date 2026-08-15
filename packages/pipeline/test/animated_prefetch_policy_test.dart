@@ -170,6 +170,63 @@ void main() {
       isFalse,
     );
   });
+  test('offscreen runtime evidence does not promote a semantic no-op revision', () {
+    final manifest = ChapterManifest(
+      sourceId: 'source',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'chapter',
+        sequence: 1,
+        pageCount: 30,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        30,
+        (index) => PageAsset(
+          pageId: 'p$index',
+          chapterId: 'chapter',
+          index: index,
+          uri: Uri.parse('venera-resource:opaque-$index'),
+        ),
+      ),
+      readingDirection: ReadingDirection.ltr,
+    );
+    final updates = <PipelineDelta>[];
+    final controller = PipelineController(
+      chapter: manifest,
+      decodeTarget: DecodeTarget(physicalWidth: 1080, physicalHeight: 1920),
+      clock: _TestClock(),
+      windowResolver: resolver,
+      policy: const HeuristicPolicy(decodeWarmPages: true),
+      guard: const PolicyGuard(maxDownloadDemands: 11),
+      onUpdate: updates.add,
+    );
+
+    controller.accept(observation(12));
+    expect(controller.classifyPage(pageIndex: 12, animated: false), isTrue);
+    expect(controller.classifyPage(pageIndex: 13, animated: false), isTrue);
+    final revision = controller.revision;
+    final updateCount = updates.length;
+
+    // With the unresolved-static escape hatch already authoritative, a WebP
+    // sniff on an offscreen page changes evidence only. The 11/4/2 plan is
+    // identical and must not manufacture a new scheduling revision.
+    expect(
+      controller.observeWebpTransportCost(pageIndex: 18, webp: true),
+      isTrue,
+    );
+    expect(controller.revision, revision);
+    expect(updates, hasLength(updateCount));
+
+    // A third static classification is likewise diagnostic-only when it does
+    // not alter roles, priorities, watermarks, flow credits or keep sets.
+    expect(controller.classifyPage(pageIndex: 18, animated: false), isTrue);
+    expect(controller.revision, revision);
+    expect(updates, hasLength(updateCount));
+  });
+
   test('runtime WebP cost activates bounded flow for opaque plugin URIs', () {
     final manifest = ChapterManifest(
       sourceId: 'source',

@@ -7,8 +7,11 @@ pipeline = (ROOT / 'packages/pipeline/lib/src/pipeline_controller.dart').read_te
     encoding='utf-8'
 )
 for token in (
-    '_sameRoles(_previousRoles, window.roles) &&',
-    '_previousRetainedIndex == window.retainedIndex',
+    'final windowChanged =',
+    '!_sameRoles(_previousRoles, window.roles)',
+    '_previousRetainedIndex != window.retainedIndex',
+    'if (!force && !_decodeTargetDirty && !windowChanged)',
+    'if (!windowChanged && !_decodeTargetDirty && diff.isEmpty)',
     '_previousRoles = Map<int, PageRole>.unmodifiable(window.roles)',
     '_previousRetainedIndex = window.retainedIndex',
     'bool _sameRoles(Map<int, PageRole>? previous, Map<int, PageRole> next)',

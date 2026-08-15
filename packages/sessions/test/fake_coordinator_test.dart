@@ -69,4 +69,68 @@ void main() {
       hasLength(1),
     );
   });
+  test('fake coordinator refreshes liveness without demandApplied churn', () {
+    final clock = _Clock();
+    final traces = MemoryTraceSink();
+    final coordinator = FakeCoordinator(clock: clock, traceSink: traces);
+    const content = ContentId(
+      sourceId: 's',
+      comicId: 'c',
+      chapterId: 'ch',
+      pageId: 'p',
+    );
+    final download = DownloadId(
+      content: content,
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('assets/p.png'),
+    );
+    DemandPlan plan(int revision) => DemandPlan(
+          revision: revision,
+          downloads: <DownloadId, DownloadDemand>{
+            download: DownloadDemand(
+              role: PageRole.current,
+              priority: 1000,
+              reason: 'test',
+              expirationRevision: revision + 1,
+            ),
+          },
+          decodes: const <DecodeId, DecodeDemand>{},
+          uploads: const <DecodeId, UploadDemand>{},
+          keep: <ResourceId>{ResourceId.download(download)},
+        );
+
+    final first = plan(1);
+    coordinator.reconcile(
+      'session',
+      PipelineDelta(
+        plan: first,
+        diff: DemandDiff.between(DemandPlan.empty(), first),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    final appliedBefore = traces.events
+        .where((event) => event.kind == TraceEventKind.demandApplied)
+        .length;
+
+    final refreshed = plan(2);
+    final diff = DemandDiff.between(first, refreshed);
+    expect(diff.isEmpty, isTrue);
+    coordinator.reconcile(
+      'session',
+      PipelineDelta(
+        plan: refreshed,
+        diff: diff,
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+
+    expect(coordinator.downloads[download]!.expirationRevision, 3);
+    expect(
+      traces.events
+          .where((event) => event.kind == TraceEventKind.demandApplied)
+          .length,
+      appliedBefore,
+    );
+  });
+
 }

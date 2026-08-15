@@ -872,25 +872,20 @@ final class _ReaderViewState extends State<ReaderView> {
   }
 
   void _handleFrameTimings(List<ReaderFrameTimingSample> timings) {
-    if (!mounted || widget.controller.direction != ReadingDirection.vertical) {
+    if (!mounted ||
+        timings.isEmpty ||
+        widget.controller.direction != ReadingDirection.vertical) {
       return;
     }
-    final position =
-        _verticalController.hasClients ? _verticalController.position : null;
-    final scrollPixels = position?.pixels;
-    final viewportDimension = position?.viewportDimension;
-    final currentIndex = position != null &&
-            position.hasContentDimensions &&
-            viewportDimension != null &&
-            viewportDimension > 0
-        ? _verticalGeometry()
-            .positionAt(
-              pixels: scrollPixels ?? 0,
-              viewportDimension: viewportDimension,
-            )
-            .index
-        : widget.controller.currentIndex;
-    for (final timing in timings) {
+    // Flutter delivers FrameTiming in batches. Reader state sampled here is
+    // the callback-time state, not the historical state of every frame in the
+    // batch, so attaching scroll/current/interaction to each sample invents a
+    // false per-frame correlation. Preserve engine timing plus enough batch
+    // anchors for offline monotonic alignment instead.
+    final callbackMonotonicMicros = widget.clock.nowMicros();
+    final batchLastVsyncStartMicros = timings.last.vsyncStartMicros;
+    for (var index = 0; index < timings.length; index++) {
+      final timing = timings[index];
       widget.traceSink.record(
         traceEvent(
           clock: widget.clock,
@@ -905,12 +900,10 @@ final class _ReaderViewState extends State<ReaderView> {
             'vsyncStartMicros': timing.vsyncStartMicros,
             if (timing.frameIntervalMicros != null)
               'frameIntervalMicros': timing.frameIntervalMicros,
-            if (scrollPixels != null) 'scrollPixels': scrollPixels,
-            if (viewportDimension != null)
-              'viewportDimension': viewportDimension,
-            'currentIndex': currentIndex,
-            'interaction': _interaction.name,
-            'scrollActive': _verticalScrollActive,
+            'timingBatchIndex': index,
+            'timingBatchSize': timings.length,
+            'timingBatchCallbackMonotonicMicros': callbackMonotonicMicros,
+            'timingBatchLastVsyncStartMicros': batchLastVsyncStartMicros,
             'stitched': widget.verticalStitch,
           },
         ),

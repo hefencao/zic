@@ -220,8 +220,34 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _reconcileDownloads(sessionId, update.diff.downloads);
     _reconcileDecodes(sessionId, update.diff.decodes);
     _reconcileUploads(sessionId, update.diff.uploads);
+    _refreshDemandLiveness(update.plan);
     _flushSourceRebindWakes(sessionId);
     _enforceBudget(sessionId);
+  }
+
+  /// Plan revision is liveness metadata, not scheduler identity. Semantic
+  /// diffs above perform the only cancel/submit/follow work; afterwards every
+  /// surviving demand receives the new expiration revision in-place so active
+  /// tasks remain live without being re-enqueued merely because time advanced.
+  void _refreshDemandLiveness(DemandPlan plan) {
+    _downloads
+      ..clear()
+      ..addAll(plan.downloads);
+    _decodes
+      ..clear()
+      ..addAll(plan.decodes);
+    _uploads
+      ..clear()
+      ..addAll(plan.uploads);
+    // Revision-scoped policy feedback must observe the accepted plan revision
+    // even when the underlying task was not resubmitted. These maps are
+    // metadata clocks, not task-generation identities.
+    for (final id in plan.decodes.keys) {
+      _decodeDemandRevisions[id] = _revision;
+    }
+    for (final id in plan.uploads.keys) {
+      _uploadDemandRevisions[id] = _revision;
+    }
   }
 
   Future<void> idle() async {
@@ -339,6 +365,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     String sessionId,
     MapDiff<DownloadId, DownloadDemand> diff,
   ) {
+    if (diff.isEmpty) return;
     for (final id in diff.removed) {
       _downloads.remove(id);
       _clearSourceKind(id);
@@ -789,7 +816,10 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           if (refill != null &&
               after.depth + completedPreparedDepth >= refill.targetWatermark) {
             try {
-              onDecodeRefillObserved?.call(refill, demandRevision);
+              onDecodeRefillObserved?.call(
+                refill,
+                _decodeDemandRevisions[id] ?? demandRevision,
+              );
             } on Object {
               // Read-only policy observers cannot break decode execution.
             }
