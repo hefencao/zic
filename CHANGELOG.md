@@ -1,3 +1,9 @@
+## 0.31.0-dev.294 - Vertical jitter actual-layout observability
+
+- Correct the dev.293 handoff premise using the authoritative device outcome: the vertical media scale/aspect defect is closed after dev.293; the remaining reproduced problem is fixed-region/scroll jitter. Keep the dev.293 `FittedBox(fitWidth)` boundary and freeze sourceCanvas, resident replay, previous3/next7, decode previous1/next2, NetLane and promoted-retention policy.
+- Add low-frequency `pageLayoutSnapshot` telemetry for real visible vertical RenderBoxes. Scroll start/end are sampled explicitly and active scroll is capped to roughly 10 Hz; each sample correlates page identity/role/interaction with expected geometry, actual constraints/size/paint/global rect and transform so the next device Trace can distinguish Sliver layout movement from a stable box with downstream texture/compositor jitter.
+- The probe is observation-only: it does not alter item extent, anchor, target selection, texture presentation, upload/decode/download admission or cache/retention. If actual boxes remain stable while jitter reproduces, the next layer is current/transition output projection and external-texture/SurfaceProducer compositor timing, not another geometry or media-aspect workaround.
+
 ## 0.31.0-dev.293 - Vertical media aspect independence
 
 - 05:01 dev.292 device Trace closes the predecode/source-metadata hypothesis for the reproduced scale defect: pages 18-22 resolve `physical-ingress-source-canvas` roughly 0.9-5.5 seconds before first current, and source-canvas vs decoded-raster aspect error is only about 0.00-0.03%, yet active-scroll scale remains abnormal. Keep previous1/next2 decode and previous3/next7 encoded windows frozen.

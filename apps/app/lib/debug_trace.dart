@@ -21,6 +21,7 @@ TraceHighlightLevel traceHighlightLevel(TraceEvent event) =>
       TraceEventKind.readerObservation ||
       TraceEventKind.pageTransition ||
       TraceEventKind.pageCurrent ||
+      TraceEventKind.pageLayoutSnapshot ||
       TraceEventKind.decodeDemand ||
       TraceEventKind.uploadDemand ||
       TraceEventKind.sourceRead ||
@@ -69,6 +70,7 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
       <TraceEventKind>{
     TraceEventKind.readerObservation,
     TraceEventKind.pageTransition,
+    TraceEventKind.pageLayoutSnapshot,
     TraceEventKind.bytesCommitted,
     TraceEventKind.decodeStarted,
     TraceEventKind.decodeState,
@@ -136,6 +138,29 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     'velocity',
     'currentCoverage',
     'targetCoverage',
+    'visibleFraction',
+    'scrollPixels',
+    'viewportDimension',
+    'expectedStart',
+    'expectedExtent',
+    'renderWidth',
+    'renderHeight',
+    'extentDeltaPx',
+    'layoutResidualPx',
+    'paintLeft',
+    'paintTop',
+    'paintRight',
+    'paintBottom',
+    'globalLeft',
+    'globalTop',
+    'globalRight',
+    'globalBottom',
+    'transformM00',
+    'transformM01',
+    'transformM10',
+    'transformM11',
+    'transformTx',
+    'transformTy',
   };
 
   final int maxEvents;
@@ -245,6 +270,9 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
       TraceEventKind.pageTransition =>
         '${event.payload['currentIndex']}|${event.payload['targetIndex']}|'
             '${event.payload['interaction']}',
+      TraceEventKind.pageLayoutSnapshot =>
+        '${event.payload['pageIndex']}|${event.payload['role']}|'
+            '${event.payload['interaction']}',
       TraceEventKind.framePipelineTiming =>
         '${event.payload['traceReason']}|${event.payload['dominantStage']}|'
             '${event.payload['role']}|${event.payload['decodedRole']}|'
@@ -266,7 +294,8 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
         TraceEventKind.framePipelineTiming ||
         TraceEventKind.playbackFrameDue => _exportFrameWindowMicros,
         TraceEventKind.readerObservation ||
-        TraceEventKind.pageTransition => _exportScrollWindowMicros,
+        TraceEventKind.pageTransition ||
+        TraceEventKind.pageLayoutSnapshot => _exportScrollWindowMicros,
         _ => _exportDefaultWindowMicros,
       };
 

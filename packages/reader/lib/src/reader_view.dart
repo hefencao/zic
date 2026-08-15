@@ -102,6 +102,8 @@ final class _ReaderViewState extends State<ReaderView> {
   int? _lastReportedVerticalPage;
   int _lastVerticalTravelDirection = 0;
   int? _lastVerticalVisibleMaxIndex;
+  late List<GlobalKey> _verticalPageLayoutKeys;
+  int _lastVerticalLayoutSnapshotMicros = -1000000;
   Size _viewport = Size.zero;
   double _devicePixelRatio = 1;
   late ReadingDirection _lastDirection;
@@ -140,6 +142,7 @@ final class _ReaderViewState extends State<ReaderView> {
     _lastDirection = widget.controller.direction;
     _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
     _lastVerticalVisibleMaxIndex = widget.controller.currentIndex;
+    _verticalPageLayoutKeys = _createVerticalPageLayoutKeys();
     _pageSlots = _createPageSlots();
     _verticalLayoutRatios = widget.pageAspectRatios;
     widget.controller.addListener(_handleControllerCommand);
@@ -170,6 +173,8 @@ final class _ReaderViewState extends State<ReaderView> {
       _zoomedPage = null;
       _lastReportedVerticalPage = null;
       _lastVerticalVisibleMaxIndex = widget.controller.currentIndex;
+      _verticalPageLayoutKeys = _createVerticalPageLayoutKeys();
+      _lastVerticalLayoutSnapshotMicros = -1000000;
       _lastDirection = widget.controller.direction;
       _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
       _pageSlots = _createPageSlots();
@@ -323,12 +328,15 @@ final class _ReaderViewState extends State<ReaderView> {
                 return SizedBox(
                   key: ValueKey<String>('reader-vertical-page:$pageIndex'),
                   height: geometry.extentAt(pageIndex),
-                  // Exact stitched extents already constrain the page. Avoid
-                  // independent hard-clip edges during ordinary scrolling;
-                  // zoom still clips to its page so it cannot cover siblings.
-                  child: stitched && _zoomedPage == null
-                      ? page
-                      : ClipRect(child: page),
+                  child: SizedBox.expand(
+                    key: _verticalPageLayoutKeys[pageIndex],
+                    // Exact stitched extents already constrain the page. Avoid
+                    // independent hard-clip edges during ordinary scrolling;
+                    // zoom still clips to its page so it cannot cover siblings.
+                    child: stitched && _zoomedPage == null
+                        ? page
+                        : ClipRect(child: page),
+                  ),
                 );
               },
             );
@@ -356,6 +364,12 @@ final class _ReaderViewState extends State<ReaderView> {
   }
 
   Widget _buildPage(int index) => _pageSlots[index];
+
+  List<GlobalKey> _createVerticalPageLayoutKeys() => List<GlobalKey>.generate(
+        widget.controller.chapter.pages.length,
+        (index) => GlobalKey(debugLabel: 'reader-vertical-layout:$index'),
+        growable: false,
+      );
 
   List<Widget> _createPageSlots() {
     final chapter = widget.controller.chapter;
@@ -871,7 +885,7 @@ final class _ReaderViewState extends State<ReaderView> {
           : notification.dragDetails == null
               ? Interaction.scrolling
               : Interaction.dragging;
-      _emitFromVerticalMetrics(notification.metrics);
+      _emitFromVerticalMetrics(notification.metrics, forceLayoutSnapshot: true);
     } else if (notification is ScrollUpdateNotification) {
       _pendingVerticalAnchor = null;
       _interaction = widget.controller.pageScrubbing
@@ -882,7 +896,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
           : Interaction.idle;
-      _emitFromVerticalMetrics(notification.metrics);
+      _emitFromVerticalMetrics(notification.metrics, forceLayoutSnapshot: true);
       if (_interaction == Interaction.idle) {
         _schedulePendingVerticalRatioCommit();
       }
@@ -898,7 +912,10 @@ final class _ReaderViewState extends State<ReaderView> {
     _emitObservation(logicalPosition, velocity);
   }
 
-  void _emitFromVerticalMetrics(ScrollMetrics metrics) {
+  void _emitFromVerticalMetrics(
+    ScrollMetrics metrics, {
+    bool forceLayoutSnapshot = false,
+  }) {
     final geometry = _verticalGeometry();
     final position = geometry.positionAt(
       pixels: metrics.pixels,
@@ -952,10 +969,124 @@ final class _ReaderViewState extends State<ReaderView> {
       targetCoverageOverride: target,
       visibleCoveragesOverride: visibleCoverages,
     );
+    _scheduleVerticalLayoutSnapshot(
+      geometry: geometry,
+      metrics: metrics,
+      currentIndex: position.index,
+      targetIndex: target?.pageIndex,
+      visible: visible,
+      force: forceLayoutSnapshot,
+    );
     if (_lastReportedVerticalPage != position.index) {
       _lastReportedVerticalPage = position.index;
       _recordPageCurrent(position.index);
     }
+  }
+
+  void _scheduleVerticalLayoutSnapshot({
+    required ReaderVerticalGeometry geometry,
+    required ScrollMetrics metrics,
+    required int currentIndex,
+    required int? targetIndex,
+    required List<({int index, double fraction})> visible,
+    bool force = false,
+  }) {
+    final now = widget.clock.nowMicros();
+    if (!force && now - _lastVerticalLayoutSnapshotMicros < 100000) {
+      return;
+    }
+    _lastVerticalLayoutSnapshotMicros = now;
+    final pixels = metrics.pixels;
+    final viewportDimension = metrics.viewportDimension;
+    final interaction = _interaction;
+    final revision = widget.demandRevision?.call();
+    final controller = widget.controller;
+    final pages = controller.chapter.pages;
+    final samples = visible.take(8).toList(growable: false);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          widget.controller != controller ||
+          controller.direction != ReadingDirection.vertical) {
+        return;
+      }
+      for (final sample in samples) {
+        final pageIndex = sample.index;
+        if (pageIndex < 0 || pageIndex >= _verticalPageLayoutKeys.length) {
+          continue;
+        }
+        final context = _verticalPageLayoutKeys[pageIndex].currentContext;
+        final renderObject = context?.findRenderObject();
+        if (renderObject is! RenderBox ||
+            !renderObject.attached ||
+            !renderObject.hasSize) {
+          continue;
+        }
+        final constraints = renderObject.constraints;
+        final paintBounds = renderObject.paintBounds;
+        final transform = renderObject.getTransformTo(null).storage;
+        final globalOrigin = renderObject.localToGlobal(Offset.zero);
+        final globalBottomRight = renderObject.localToGlobal(
+          Offset(renderObject.size.width, renderObject.size.height),
+        );
+        final expected = geometry.boundsAt(pageIndex);
+        final expectedExtent = geometry.extentAt(pageIndex);
+        final role = pageIndex == currentIndex
+            ? 'current'
+            : pageIndex == targetIndex
+                ? 'transition'
+                : 'visible';
+        widget.traceSink.record(
+          traceEvent(
+            clock: widget.clock,
+            sessionId: controller.sessionId,
+            kind: TraceEventKind.pageLayoutSnapshot,
+            identityHash: pages[pageIndex].assetKey,
+            revision: revision,
+            payload: <String, Object?>{
+              'pageIndex': pageIndex,
+              'role': role,
+              'interaction': interaction.name,
+              'visibleFraction': sample.fraction,
+              'currentIndex': currentIndex,
+              if (targetIndex != null) 'targetIndex': targetIndex,
+              'scrollPixels': pixels,
+              'viewportDimension': viewportDimension,
+              'expectedStart': expected.start,
+              'expectedExtent': expectedExtent,
+              'renderWidth': renderObject.size.width,
+              'renderHeight': renderObject.size.height,
+              'extentDeltaPx': renderObject.size.height - expectedExtent,
+              // For an unchanged Sliver placement this cancels ordinary scroll
+              // movement: globalTop = viewportTop + expectedStart - pixels.
+              // Any wobble in the residual points at layout/transform rather
+              // than the expected change in scroll position itself.
+              'layoutResidualPx':
+                  globalOrigin.dy + pixels - expected.start,
+              'minWidth': constraints.minWidth,
+              'maxWidth': constraints.maxWidth,
+              'minHeight': constraints.minHeight,
+              'maxHeight': constraints.maxHeight,
+              'paintLeft': paintBounds.left,
+              'paintTop': paintBounds.top,
+              'paintRight': paintBounds.right,
+              'paintBottom': paintBounds.bottom,
+              'globalLeft': globalOrigin.dx,
+              'globalTop': globalOrigin.dy,
+              'globalRight': globalBottomRight.dx,
+              'globalBottom': globalBottomRight.dy,
+              'transformM00': transform[0],
+              'transformM01': transform[1],
+              'transformM10': transform[4],
+              'transformM11': transform[5],
+              'transformTx': transform[12],
+              'transformTy': transform[13],
+              'devicePixelRatio': _devicePixelRatio,
+              'stitched': widget.verticalStitch,
+            },
+          ),
+        );
+      }
+    });
   }
 
   Coverage? _verticalTargetCoverage(

@@ -55,6 +55,7 @@ enum TraceEventKind {
   mediaClassified,
   pageDimensionsResolved,
   pageGeometryPrepared,
+  pageLayoutSnapshot,
   uploadState,
   frameUploaded,
   lastFrameKept,
