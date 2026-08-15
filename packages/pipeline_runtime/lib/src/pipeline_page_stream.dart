@@ -34,6 +34,8 @@ final class PipelinePageStreamSnapshot {
     required this.committedLength,
     required this.totalLength,
     required this.kind,
+    required this.sourceCanvasWidth,
+    required this.sourceCanvasHeight,
     required this.failure,
   });
 
@@ -41,6 +43,14 @@ final class PipelinePageStreamSnapshot {
   final int committedLength;
   final int? totalLength;
   final PipelinePageContentKind? kind;
+
+  /// Encoded-media canvas dimensions owned by the bound physical generation.
+  ///
+  /// Presentation may use these dimensions as source-aspect authority, but it
+  /// must not infer them from the decoded raster because native scaling can
+  /// round width/height independently by a few physical pixels.
+  final int? sourceCanvasWidth;
+  final int? sourceCanvasHeight;
   final Failure? failure;
 }
 
@@ -68,6 +78,8 @@ final class PipelinePageStream {
     committedLength: 0,
     totalLength: null,
     kind: null,
+    sourceCanvasWidth: null,
+    sourceCanvasHeight: null,
     failure: null,
   );
 
@@ -167,6 +179,8 @@ final class PipelinePageStream {
         committedLength: snapshot.committedLength,
         totalLength: snapshot.totalLength,
         kind: _contentKind(snapshot.contentKind),
+        sourceCanvasWidth: snapshot.sourceCanvasWidth,
+        sourceCanvasHeight: snapshot.sourceCanvasHeight,
         failure: snapshot.failure,
       );
 }

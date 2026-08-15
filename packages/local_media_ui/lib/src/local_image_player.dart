@@ -148,6 +148,21 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   void _attachPageStreaming(PipelinePageStream stream) {
     void listener(PipelinePageStreamSnapshot snapshot) {
       if (!mounted) return;
+      final sourceCanvasWidth = snapshot.sourceCanvasWidth;
+      final sourceCanvasHeight = snapshot.sourceCanvasHeight;
+      if (sourceCanvasWidth != null &&
+          sourceCanvasHeight != null &&
+          sourceCanvasWidth > 0 &&
+          sourceCanvasHeight > 0) {
+        // Reader geometry and media presentation must consume the same encoded
+        // source-aspect authority. The decoded raster may be a rounded native
+        // scale target and is only a pixel carrier, not a second aspect owner.
+        _reportDimensions(
+          sourceCanvasWidth,
+          sourceCanvasHeight,
+          authoritative: true,
+        );
+      }
       final kind = snapshot.kind;
       if (kind == PipelinePageContentKind.webp) {
         if (_detectedFormat != LocalImageFormat.webp) {

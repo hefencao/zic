@@ -1,3 +1,9 @@
+## 0.31.0-dev.296 - Source-canvas presentation aspect authority
+
+- The 08:43 dev.295 device Trace closes the previous hidden-static-upload and Sliver-layout hypotheses: all 89 active vertical policy decisions keep `staticWarmUploads=0`; all 320 `pageLayoutSnapshot` events keep `extentDeltaPx=0`, identity 2x2 transform and a constant corrected layout residual.
+- A smaller presentation-only dual authority remains visible in the same Trace: Reader item geometry uses physical source canvas, while LocalImagePlayer previously used decoded-raster dimensions. Page14 is source 960x1950 versus decoded 952x1936, about 0.116% aspect difference or 2.55 physical pixels of fitWidth height at 1080px width.
+- Project physical `sourceCanvasWidth/sourceCanvasHeight` through `PipelinePageStreamSnapshot` and make them authoritative for LocalImagePlayer presentation aspect. Decoded raster remains only the pixel carrier. Do not change Reader geometry, fitWidth, encoded 3/7, decode 2/1, NetLane, texture resident reuse or retention.
+
 ## 0.31.0-dev.295 - Vertical active hidden-static upload deferral
 
 - Fresh dev.294 device Trace separates the remaining fixed-region/scroll jitter from Sliver item geometry: all 333 `pageLayoutSnapshot` events keep actual render extent equal to expected extent (`extentDeltaPx=0`) and the sampled 2x2 transform remains identity. The dev.294 residual probe itself captured pre-frame scroll pixels and is corrected to compare the post-frame RenderBox against live scroll pixels.

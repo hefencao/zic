@@ -19,8 +19,16 @@ def forbid(path: str, *tokens: str) -> None:
     if found:
         raise SystemExit(f'FAIL: {path} contains superseded dev.295 tokens: {found}')
 
-require('apps/app/pubspec.yaml', 'version: 0.31.0+295')
-require('apps/app/android/zic-version.properties', 'versionCode=295')
+import re
+pubspec = read('apps/app/pubspec.yaml')
+props = read('apps/app/android/zic-version.properties')
+dev_match = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
+android_match = re.search(r'^versionCode=(\d+)\s*$', props, re.M)
+if dev_match is None or int(dev_match.group(1)) < 295:
+    raise SystemExit('FAIL: dev.295+ app version missing')
+if android_match is None or int(android_match.group(1)) < 295:
+    raise SystemExit('FAIL: dev.295+ Android version missing')
+current_dev = int(dev_match.group(1))
 require(
     'packages/pipeline/lib/src/heuristic_policy.dart',
     'final deferHiddenVerticalStaticUpload =',
@@ -66,6 +74,14 @@ require(
     '14.809ms',
     '`deferHiddenVerticalStaticUpload`',
 )
-require('docs/NEXT_CHAT_HANDOFF.md', '# dev.295 后续交接', 'hidden speculative static')
+if current_dev == 295:
+    require('docs/NEXT_CHAT_HANDOFF.md', '# dev.295 后续交接', 'hidden speculative static')
+else:
+    require(
+        'docs/NEXT_CHAT_HANDOFF.md',
+        f'# dev.{current_dev} 后续交接',
+        'dev.295目标已正面闭合',
+        'staticWarmUploads=0',
+    )
 forbid('packages/reader/lib/src/reader_view.dart', 'presentationExtentAt(')
 print('dev.295 vertical active visible-static upload boundary: OK')
