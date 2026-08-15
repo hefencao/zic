@@ -1,17 +1,23 @@
 part of 'pipeline_reader_session.dart';
 
+enum PipelinePageDimensionBasis { sourceCanvas, decodedRaster }
+
 final class PipelinePageDimensions {
   const PipelinePageDimensions({
     required this.pageIndex,
     required this.assetKey,
     required this.width,
     required this.height,
+    required this.basis,
   });
 
   final int pageIndex;
   final String assetKey;
   final int width;
   final int height;
+  final PipelinePageDimensionBasis basis;
+
+  bool get isSourceCanvas => basis == PipelinePageDimensionBasis.sourceCanvas;
 }
 
 typedef PipelinePageDimensionsListener = void Function(
@@ -64,9 +70,15 @@ final class _PipelinePageDimensionsPublisher
     _requireOpen();
     final prior = _snapshot[dimensions.assetKey];
     if (prior != null &&
+        prior.basis == PipelinePageDimensionBasis.sourceCanvas &&
+        dimensions.basis == PipelinePageDimensionBasis.decodedRaster) {
+      return false;
+    }
+    if (prior != null &&
         prior.pageIndex == dimensions.pageIndex &&
         prior.width == dimensions.width &&
-        prior.height == dimensions.height) {
+        prior.height == dimensions.height &&
+        prior.basis == dimensions.basis) {
       return false;
     }
     _snapshot = Map<String, PipelinePageDimensions>.unmodifiable(

@@ -74,8 +74,9 @@ WebpInfo parseWebpInfo(Uint8List bytes) {
 
 
 /// Reads canvas metadata from an available WebP prefix without requiring the
-/// complete RIFF payload. Returns null until the first image/header chunk is
-/// fully available.
+/// complete RIFF payload or the complete compressed image chunk. VP8/VP8L
+/// canvas dimensions live in the first few bytes of the image chunk, so a
+/// large declared chunk must not delay geometry until the whole image arrives.
 WebpInfo? parseWebpPrefixInfo(Uint8List bytes) {
   if (bytes.length < 20 ||
       ascii.decode(bytes.sublist(0, 4), allowInvalid: true) != 'RIFF' ||
@@ -92,8 +93,8 @@ WebpInfo? parseWebpPrefixInfo(Uint8List bytes) {
     final length = data.getUint32(offset + 4, Endian.little);
     final dataOffset = offset + 8;
     final dataEnd = dataOffset + length;
-    if (dataEnd > bytes.length) return null;
     if (tag == 'VP8X' && length >= 10) {
+      if (dataOffset + 10 > bytes.length) return null;
       return _checked(
         1 + bytes[dataOffset + 4] +
             (bytes[dataOffset + 5] << 8) +
@@ -104,6 +105,7 @@ WebpInfo? parseWebpPrefixInfo(Uint8List bytes) {
       );
     }
     if (tag == 'VP8 ' && length >= 10) {
+      if (dataOffset + 10 > bytes.length) return null;
       if (bytes[dataOffset + 3] != 0x9d ||
           bytes[dataOffset + 4] != 0x01 ||
           bytes[dataOffset + 5] != 0x2a) {
@@ -115,6 +117,7 @@ WebpInfo? parseWebpPrefixInfo(Uint8List bytes) {
       );
     }
     if (tag == 'VP8L' && length >= 5) {
+      if (dataOffset + 5 > bytes.length) return null;
       if (bytes[dataOffset] != 0x2f) {
         throw const FormatException('invalid VP8L frame header');
       }
@@ -127,6 +130,10 @@ WebpInfo? parseWebpPrefixInfo(Uint8List bytes) {
         1 + (b2 >> 6) + (b3 << 2) + ((b4 & 0x0f) << 10),
       );
     }
+    // Unknown chunks cannot be skipped until their complete payload is
+    // available. Known canvas-bearing chunks above only need their fixed
+    // header bytes, not the whole compressed image payload.
+    if (dataEnd > bytes.length) return null;
     offset = dataEnd + (length.isOdd ? 1 : 0);
   }
   return null;

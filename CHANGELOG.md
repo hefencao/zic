@@ -1,3 +1,10 @@
+## 0.31.0-dev.290 - Source-canvas geometry authority
+
+- 02:30 dev.289 device Trace falsifies predecode-window insufficiency for the reproduced scale defect: imminent page dimensions/geometry are already prepared roughly 0.4–3 seconds before visibility/current, so keep previous1/next2 decode and previous3/next7 encoded windows frozen.
+- Refine dev.287 dimension semantics: decoded frame width/height describe the aligned/downsampled presentation raster, not final page geometry. Pipeline now prefers PageAsset/source WebP canvas metadata and marks dimensions as `sourceCanvas`; decoded raster is provisional fallback only and cannot overwrite source authority.
+- Fix `parseWebpPrefixInfo()` so VP8/VP8L/VP8X canvas headers can be read before the declared compressed image chunk is complete. `LocalImagePlayer` no longer leaks non-authoritative output-surface raster dimensions into Reader geometry.
+- Keep dev.289 Pipeline frame/notifier boundaries and all Reader/NetLane/decode/upload/texture/retention policy windows unchanged.
+
 ## 0.31.0-dev.289 - Pipeline frame scheduler boundary
 
 - Fix the dev.288 local Dart compile failure where the `pipeline_page_output.dart` part still referenced `WidgetsBinding` after its parent session library stopped importing Flutter widgets; treat it as a hidden framework-owner leak rather than adding another parent import.

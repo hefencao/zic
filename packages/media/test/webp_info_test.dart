@@ -52,6 +52,27 @@ void main() {
     expect(webpPrefixDeclaresAnimation(prefix), isTrue);
   });
 
+
+  test('reads VP8 canvas before the declared image chunk is complete', () {
+    final prefix = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, // RIFF
+      0xf4, 0x03, 0x00, 0x00, // declared RIFF payload is much larger
+      0x57, 0x45, 0x42, 0x50, // WEBP
+      0x56, 0x50, 0x38, 0x20, // VP8
+      0xe8, 0x03, 0x00, 0x00, // 1000-byte compressed image chunk
+      0x00, 0x00, 0x00,
+      0x9d, 0x01, 0x2a,
+      0x80, 0x02, // width = 640
+      0xb0, 0x04, // height = 1200
+    ]);
+
+    final info = parseWebpPrefixInfo(prefix);
+
+    expect(info, isNotNull);
+    expect(info!.width, 640);
+    expect(info.height, 1200);
+  });
+
   test('incomplete WebP signature waits for more metadata', () {
     final prefix = Uint8List.fromList(<int>[
       0x52, 0x49, 0x46, 0x46,

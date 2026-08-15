@@ -391,7 +391,12 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     } else {
       commit();
     }
-    if (!changed) {
+    // Surface/output dimensions describe the decoded presentation raster, not
+    // the source canvas. Keep them local for rendering, but only source/header
+    // metadata may escape through the geometry callback. An authoritative
+    // upgrade is reported even when it has the same numeric size as a prior
+    // provisional raster.
+    if (!authoritative) {
       return;
     }
     try {

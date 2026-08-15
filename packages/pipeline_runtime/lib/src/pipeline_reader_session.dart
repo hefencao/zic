@@ -1421,39 +1421,98 @@ final class PipelineReaderSession {
   }
 
   void _handleFrameDecoded(DecodeId id, DecodeSnapshot snapshot) {
-    final width = snapshot.decodedWidth;
-    final height = snapshot.decodedHeight;
-    if (width == null || height == null || width <= 0 || height <= 0) return;
-    scheduleMicrotask(() {
-      if (_disposed) return;
-      final pageIndex = _pageIndexByPageId[id.download.content.pageId];
-      if (pageIndex == null) return;
-      final asset = chapter.pages[pageIndex];
-      final changed = _pageDimensions.publish(
-        PipelinePageDimensions(
-          pageIndex: pageIndex,
-          assetKey: asset.assetKey,
-          width: width,
-          height: height,
-        ),
-      );
-      if (!changed) return;
-      trace.record(
-        traceEvent(
-          clock: clock,
-          sessionId: sessionId,
-          kind: TraceEventKind.pageDimensionsResolved,
-          identityHash: id.download.key,
-          revision: revision,
-          payload: <String, Object?>{
-            'pageIndex': pageIndex,
-            'width': width,
-            'height': height,
-            'source': 'decode-frame',
-          },
-        ),
-      );
-    });
+    final decodedWidth = snapshot.decodedWidth;
+    final decodedHeight = snapshot.decodedHeight;
+    if (decodedWidth == null ||
+        decodedHeight == null ||
+        decodedWidth <= 0 ||
+        decodedHeight <= 0) {
+      return;
+    }
+    unawaited(
+      _resolveAndPublishPageDimensions(
+        id,
+        decodedWidth: decodedWidth,
+        decodedHeight: decodedHeight,
+      ),
+    );
+  }
+
+  Future<void> _resolveAndPublishPageDimensions(
+    DecodeId id, {
+    required int decodedWidth,
+    required int decodedHeight,
+  }) async {
+    if (_disposed) return;
+    final pageIndex = _pageIndexByPageId[id.download.content.pageId];
+    if (pageIndex == null) return;
+    final asset = chapter.pages[pageIndex];
+
+    var width = decodedWidth;
+    var height = decodedHeight;
+    var basis = PipelinePageDimensionBasis.decodedRaster;
+    var source = 'decode-raster-fallback';
+
+    final sourceWidth = asset.width;
+    final sourceHeight = asset.height;
+    if (sourceWidth != null &&
+        sourceHeight != null &&
+        sourceWidth > 0 &&
+        sourceHeight > 0) {
+      width = sourceWidth;
+      height = sourceHeight;
+      basis = PipelinePageDimensionBasis.sourceCanvas;
+      source = 'manifest-source-canvas';
+    } else {
+      final download = _downloads.find(id.download);
+      if (download != null) {
+        try {
+          final prefix = Uint8List.fromList(
+            await download.artifact.readPrefix(64),
+          );
+          if (_disposed) return;
+          final info = parseWebpPrefixInfo(prefix);
+          if (info != null) {
+            width = info.width;
+            height = info.height;
+            basis = PipelinePageDimensionBasis.sourceCanvas;
+            source = 'webp-prefix-source-canvas';
+          }
+        } on Object {
+          // A decoded raster is still a useful provisional ratio. Exact source
+          // canvas metadata can upgrade it later through the same feed.
+        }
+      }
+    }
+    if (_disposed) return;
+    final changed = _pageDimensions.publish(
+      PipelinePageDimensions(
+        pageIndex: pageIndex,
+        assetKey: asset.assetKey,
+        width: width,
+        height: height,
+        basis: basis,
+      ),
+    );
+    if (!changed) return;
+    trace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.pageDimensionsResolved,
+        identityHash: id.download.key,
+        revision: revision,
+        payload: <String, Object?>{
+          'pageIndex': pageIndex,
+          'width': width,
+          'height': height,
+          'basis': basis.name,
+          'source': source,
+          'decodedWidth': decodedWidth,
+          'decodedHeight': decodedHeight,
+        },
+      ),
+    );
   }
 
   void _handleAnimationResolved(DecodeId id, AnimationInfo animation) {

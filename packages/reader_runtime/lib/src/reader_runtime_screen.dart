@@ -167,6 +167,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   final Map<String, bool> _playbackCapabilities = <String, bool>{};
   late final ValueNotifier<Map<String, double>> _pageAspectRatios;
   final Map<String, double> _pendingPageAspectRatios = <String, double>{};
+  final Map<String, PipelinePageDimensionBasis> _pageAspectBases =
+      <String, PipelinePageDimensionBasis>{};
   bool _pageAspectRatioUpdateScheduled = false;
   late bool _favorite;
   late bool _controlsVisible;
@@ -514,21 +516,50 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     if (pageIndex < 0 || pageIndex >= widget.chapter.pages.length) return;
     final asset = widget.chapter.pages[pageIndex];
     if (asset.assetKey != dimensions.assetKey) return;
-    _reportPageDimensions(asset, dimensions.width, dimensions.height);
+    _reportPageDimensions(
+      asset,
+      dimensions.width,
+      dimensions.height,
+      basis: dimensions.basis,
+    );
   }
 
-  void _reportPageDimensions(PageAsset asset, int width, int height) {
+  void _reportPageDimensions(
+    PageAsset asset,
+    int width,
+    int height, {
+    PipelinePageDimensionBasis basis = PipelinePageDimensionBasis.sourceCanvas,
+  }) {
     if (width <= 0 || height <= 0) return;
+    final assetKey = asset.assetKey;
+    final priorBasis = _pageAspectBases[assetKey];
+    if (priorBasis == PipelinePageDimensionBasis.sourceCanvas &&
+        basis == PipelinePageDimensionBasis.decodedRaster) {
+      return;
+    }
+
+    final sourceWidth = asset.width;
+    final sourceHeight = asset.height;
+    final hasIntrinsicSource = sourceWidth != null &&
+        sourceHeight != null &&
+        sourceWidth > 0 &&
+        sourceHeight > 0;
+    if (basis == PipelinePageDimensionBasis.decodedRaster &&
+        hasIntrinsicSource) {
+      return;
+    }
+
     _applyAdaptiveProfile(
       _adaptiveClassifier.observeDimensions(asset, width, height),
     );
     final ratio = height / width;
-    final sourceWidth = asset.width;
-    final sourceHeight = asset.height;
-    if (sourceWidth != null &&
-        sourceHeight != null &&
-        sourceWidth > 0 &&
-        sourceHeight > 0) {
+    if (basis == PipelinePageDimensionBasis.sourceCanvas) {
+      _pageAspectBases[assetKey] = basis;
+    } else {
+      _pageAspectBases.putIfAbsent(assetKey, () => basis);
+    }
+
+    if (hasIntrinsicSource && basis == PipelinePageDimensionBasis.sourceCanvas) {
       final intrinsicRatio = sourceHeight / sourceWidth;
       final relativeDifference =
           (intrinsicRatio - ratio).abs() / intrinsicRatio;
@@ -536,10 +567,10 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
         return;
       }
     }
-    final prior = _pendingPageAspectRatios[asset.assetKey] ??
-        _pageAspectRatios.value[asset.assetKey];
+    final prior = _pendingPageAspectRatios[assetKey] ??
+        _pageAspectRatios.value[assetKey];
     if (prior != null && (prior - ratio).abs() < 0.001) return;
-    _pendingPageAspectRatios[asset.assetKey] = ratio;
+    _pendingPageAspectRatios[assetKey] = ratio;
     if (_pageAspectRatioUpdateScheduled) return;
     _pageAspectRatioUpdateScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
