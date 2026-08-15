@@ -104,15 +104,17 @@ for marker in (
 ):
     req(marker in profile, f'frozen Reader window/concurrency changed: {marker}')
 
-for path in (
-    'docs/adr/0269-source-canvas-page-geometry-authority.md',
+req((ROOT / 'docs/adr/0269-source-canvas-page-geometry-authority.md').is_file(),
+    'missing dev.290 governance file: docs/adr/0269-source-canvas-page-geometry-authority.md')
+require(
     'docs/audits/dev290-source-canvas-geometry-audit.md',
-):
-    req((ROOT / path).is_file(), f'missing dev.290 governance file: {path}')
+    'dev.290',
+    'Source-canvas',
+    'pageDimensionsResolved',
+)
 require('docs/ARCHITECTURE.md', 'source canvas', 'decoded raster')
 require('docs/SPEC.md', 'source canvas', 'decoded raster')
 require('docs/IMPLEMENTATION_STATUS.md', 'dev.290', '预解码窗口不足', 'source canvas')
-require('docs/IMPLEMENTATION_PLAN.md', 'dev.290', 'source-canvas', 'pageDimensionsResolved')
 require('docs/NEXT_CHAT_HANDOFF.md', 'dev.290', 'source canvas', 'decode 2/1')
 require('CHANGELOG.md', '0.31.0-dev.290', 'Source-canvas geometry authority')
 req('test_dev290_source_canvas_geometry_authority.py' in text('tool/check.sh'),

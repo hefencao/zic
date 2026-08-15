@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:domain/domain.dart';
 import 'package:transport/transport.dart';
 
-import 'comic_source.dart';
 import 'source_catalog.dart';
 
 final class MangaDexSource implements BrowsableComicSource {

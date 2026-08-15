@@ -444,7 +444,6 @@ final class PipelineReaderSession {
         _sharedTraceSink = traceSink,
         _bytesLoader = bytesLoader,
         clock = SystemClock(),
-        _memoryTrace = MemoryTraceSink(),
         _profile = readerPipelineProfileFor(
           chapter,
           ),
@@ -455,10 +454,7 @@ final class PipelineReaderSession {
         _loaderTransport = LoaderTransport(loaderSources),
         _pageDimensions = _PipelinePageDimensionsPublisher(),
         _pageIndexByPageId = _indexChapterPages(chapter) {
-    trace = MultiTraceSink(<TraceSink>[
-      _memoryTrace,
-      if (traceSink != null) traceSink,
-    ]);
+    trace = traceSink ?? const NoopTraceSink();
     _media = mediaRuntimeFactory.create(
       sessionId: sessionId,
       clock: clock,
@@ -513,7 +509,6 @@ final class PipelineReaderSession {
       transportFor: _transportFor,
       retainedTransportFor: _retainedTransferTransportFor,
       consumerTraceSink: trace,
-      localPhysicalTraceSink: _memoryTrace,
       sharedPhysicalTraceSink: _sharedTraceSink,
       retry: _profile.retry,
       downloadBucketFor: _profile.downloadBucket,
@@ -597,7 +592,6 @@ final class PipelineReaderSession {
   final ChapterManifest chapter;
   final String sessionId;
   final MonoClock clock;
-  final MemoryTraceSink _memoryTrace;
   late final TraceSink trace;
   final TraceSink? _sharedTraceSink;
   final ReaderPipelineProfile _profile;
@@ -1754,7 +1748,6 @@ final class PipelineReaderSession {
     final coordinatorDisposeMicros =
         clock.nowMicros() - coordinatorDisposeStartedAtMicros;
     _transferRuntime.detachPhysicalTrace(
-      localPhysicalTraceSink: _memoryTrace,
       sharedPhysicalTraceSink: _sharedTraceSink,
     );
     _uploads.dispose();

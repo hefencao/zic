@@ -36,7 +36,9 @@ forbid(
 require(
     "packages/pipeline/lib/src/pipeline_controller.dart",
     "_lastCurrentIndex",
-    "_lastCurrentIndex = _currentIndex",
+    "final previousIndex = _currentIndex;",
+    "_lastCurrentIndex = previousIndex;",
+    "_currentIndex = observation.currentIndex;",
     "previousCurrentIndex: _lastCurrentIndex",
 )
 require(

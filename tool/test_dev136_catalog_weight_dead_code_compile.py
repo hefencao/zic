@@ -51,7 +51,7 @@ for token in (
 
 for token in (
     "Future<void> _runCommit(DownloadSession session) async",
-    "await _commit(session)",
+    "await _commitTarget(session, session.id)",
     "_commits.remove(id)",
 ):
     require(handoff, token, "artifact handoff task")

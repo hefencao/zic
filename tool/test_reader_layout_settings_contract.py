@@ -63,7 +63,7 @@ def main() -> None:
         "BoxFit.fitWidth",
         "mediaFit",
         "required this.pipeline",
-        "_pipeline.accept",
+        "_pipeline.enqueueObservation",
         "_pipeline.pageStream(asset)",
     )
     require(
@@ -79,7 +79,7 @@ def main() -> None:
         "decodeConcurrency: 3",
         "uploadConcurrency: 2",
         "static const stable",
-        "return ReaderPipelineProfile.stable",
+        "ReaderPipelineProfile.stable;",
     )
     reject(
         "packages/reader/lib/src/reader_view.dart",

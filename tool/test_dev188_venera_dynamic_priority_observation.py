@@ -24,7 +24,8 @@ require(
     "final class CancelToken implements PriorityObservableTaskControl",
     "StreamController<int>.broadcast(sync: true)",
     "_priorityChanges.add(priority)",
-    "removed?.token.dispose();",
+    "if (removed != null) {",
+    "removed.token.dispose();",
 )
 require(
     "packages/plugin_host/lib/src/runtime_source_adapter.dart",

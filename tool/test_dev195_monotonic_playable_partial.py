@@ -10,7 +10,7 @@ JOB_TEST = (ROOT / 'packages/sessions/test/download_job_test.dart').read_text(en
 SESSION_TEST = (ROOT / 'packages/sessions/test/download_session_test.dart').read_text(encoding='utf-8')
 CHANGELOG = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
 STATUS = (ROOT / 'docs/IMPLEMENTATION_STATUS.md').read_text(encoding='utf-8')
-HANDOFF = (ROOT / 'docs/NEXT_CHAT_HANDOFF.md').read_text(encoding='utf-8')
+ADR = (ROOT / 'docs/adr/0176-monotonic-playable-partial-full-body-prefix-catchup.md').read_text(encoding='utf-8')
 
 for token in (
     "strategy: 'full-body-prefix-catchup'",
@@ -78,10 +78,10 @@ for path in (
     if not path.exists():
         raise SystemExit(f'dev.195 release document missing: {path.relative_to(ROOT)}')
 
-for body, name in ((CHANGELOG, 'CHANGELOG'), (STATUS, 'status'), (HANDOFF, 'handoff')):
+for body, name in ((CHANGELOG, 'CHANGELOG'), (STATUS, 'status')):
     if 'dev.195' not in body:
         raise SystemExit(f'dev.195 missing from {name}')
-if 'dev.193' not in HANDOFF or 'dev.194' not in HANDOFF or '已否决' not in HANDOFF:
-    raise SystemExit('dev.195 handoff does not quarantine rejected dev.193/dev.194 line')
+if 'dev.193' not in ADR or 'dev.194' not in ADR or '被否决' not in ADR:
+    raise SystemExit('dev.195 ADR does not quarantine rejected dev.193/dev.194 line')
 
 print('dev.195 monotonic playable partial ownership: OK')

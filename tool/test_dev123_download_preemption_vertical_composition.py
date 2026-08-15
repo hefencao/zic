@@ -59,7 +59,7 @@ for token in (
 for token in (
     "'demand-role'",
     "_migrateDownloadPriority(",
-    "reason: 'retained-background'",
+    "reason: 'inactive-physical-retention'",
     "TraceEventKind.downloadPriorityChanged",
     "'handoffActive': net.handoffActive",
     "'effectivePriority': net.priorityOf(taskKey)",

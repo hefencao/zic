@@ -282,6 +282,44 @@ void main() {
     expect(log.exportDroppedCount, 0);
   });
 
+  test('debug trace forgets coalescing buckets when their event is evicted', () {
+    final log = DebugTraceLog(maxEvents: 1, maxExportEvents: 2);
+    addTearDown(log.dispose);
+    TraceEvent observation(int micros) => TraceEvent(
+          monotonicMicros: micros,
+          sessionId: 'reader-ring',
+          kind: TraceEventKind.readerObservation,
+          payload: const <String, Object?>{
+            'currentIndex': 1,
+            'targetIndex': 2,
+            'interaction': 'scrolling',
+          },
+        );
+
+    log.record(observation(0));
+    for (var index = 1; index <= 2; index++) {
+      log.record(
+        TraceEvent(
+          monotonicMicros: index,
+          sessionId: 'reader-ring',
+          kind: TraceEventKind.downloadState,
+          payload: <String, Object?>{'index': index},
+        ),
+      );
+    }
+    log.record(observation(100000));
+
+    expect(log.exportCoalescedCount, 0);
+    expect(log.exportDroppedCount, 2);
+    expect(
+      log.exportEvents.map((event) => event.kind),
+      <TraceEventKind>[
+        TraceEventKind.downloadState,
+        TraceEventKind.readerObservation,
+      ],
+    );
+  });
+
   testWidgets('debug trace copy uses the diagnostic export ring', (tester) async {
     final log = DebugTraceLog(maxEvents: 1, maxExportEvents: 10);
     addTearDown(log.dispose);
@@ -609,6 +647,25 @@ void main() {
     expect(notifiedDuringBuild, isFalse);
     expect(notifications, 1);
     expect(find.text('1'), findsOneWidget);
+  });
+
+  testWidgets('debug trace without a viewer does not request a Flutter frame',
+      (tester) async {
+    final log = DebugTraceLog(maxEvents: 4);
+    addTearDown(log.dispose);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    expect(tester.binding.hasScheduledFrame, isFalse);
+
+    log.record(
+      TraceEvent(
+        monotonicMicros: 1,
+        sessionId: 'headless-trace',
+        kind: TraceEventKind.downloadState,
+      ),
+    );
+
+    expect(tester.binding.hasScheduledFrame, isFalse);
   });
 
   test('debug trace coalesces lifecycle bursts but preserves failures', () {

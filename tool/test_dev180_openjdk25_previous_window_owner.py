@@ -22,7 +22,12 @@ def forbid(text: str, token: str, label: str) -> None:
 # Flutter 3.44 pins test_api 0.7.11 in the user-validated toolchain. Keep the
 # direct test constraint broad enough for that SDK resolver instead of forcing
 # the newer test_api required by test ^1.31.2.
-for pubspec in ROOT.rglob('pubspec.yaml'):
+workspace_pubspecs = (
+    list(ROOT.glob('pubspec.yaml')) +
+    list(ROOT.glob('apps/*/pubspec.yaml')) +
+    list(ROOT.glob('packages/*/pubspec.yaml'))
+)
+for pubspec in workspace_pubspecs:
     text = pubspec.read_text(encoding='utf-8')
     forbid(text, 'test: ^1.31.2', f'{pubspec.relative_to(ROOT)} incompatible test constraint')
     if re.search(r'^\s+test:\s*\^', text, re.M):
@@ -81,7 +86,7 @@ for token in (
 controller = read('packages/pipeline/lib/src/pipeline_controller.dart')
 for token in (
     'int? _previousRetainedIndex;',
-    '_previousRetainedIndex == window.retainedIndex',
+    '_previousRetainedIndex != window.retainedIndex;',
     "'retainedIndex': window.retainedIndex",
 ):
     require(controller, token, 'retained output replan identity')

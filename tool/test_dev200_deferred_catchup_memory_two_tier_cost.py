@@ -12,7 +12,6 @@ TEST = (ROOT / 'packages/sessions/test/live_coordinator_test.dart').read_text(en
 ARCH = (ROOT / 'docs/ARCHITECTURE.md').read_text(encoding='utf-8')
 SPEC = (ROOT / 'docs/SPEC.md').read_text(encoding='utf-8')
 STATUS = (ROOT / 'docs/IMPLEMENTATION_STATUS.md').read_text(encoding='utf-8')
-HANDOFF = (ROOT / 'docs/NEXT_CHAT_HANDOFF.md').read_text(encoding='utf-8')
 CHANGELOG = (ROOT / 'CHANGELOG.md').read_text(encoding='utf-8')
 
 pubspec = (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8')
@@ -101,7 +100,7 @@ for body, name in ((ARCH, 'architecture'), (SPEC, 'spec')):
         if token not in normalized:
             raise SystemExit(f'dev.200 stable contract missing from {name}: {token}')
 
-for body, name in ((STATUS, 'status'), (HANDOFF, 'handoff'), (CHANGELOG, 'changelog')):
+for body, name in ((STATUS, 'status'), (CHANGELOG, 'changelog')):
     if 'dev.200' not in body:
         raise SystemExit(f'dev.200 missing from {name}')
 

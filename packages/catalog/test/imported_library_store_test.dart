@@ -384,6 +384,35 @@ void main() {
     expect(await store.listSourcePreferences(), <ComicSourcePreference>[preference]);
     await store.close();
   });
+
+  test('memory migration diagnostics retain acknowledged records', () async {
+    final issue = LibraryMigrationIssue(
+      issueId: 7,
+      schemaFrom: 4,
+      entityKind: 'comic_preference',
+      legacyKey: 'legacy-comic',
+      resolvedSourceId: 'source-a',
+      details: const <String, Object?>{'reason': 'ambiguous owner'},
+      createdAt: DateTime.utc(2026, 7, 29),
+    );
+    final store = MemoryImportedLibraryStore(
+      migrationIssues: <LibraryMigrationIssue>[issue],
+    );
+    await store.open();
+    addTearDown(store.close);
+
+    expect((await store.listMigrationIssues()).single.issueId, 7);
+    final acknowledgedAt = DateTime.utc(2026, 7, 29, 1);
+    await store.acknowledgeMigrationIssues(
+      const <int>[7],
+      acknowledgedAt: acknowledgedAt,
+    );
+
+    expect(await store.listMigrationIssues(), isEmpty);
+    final retained = await store.listMigrationIssues(includeAcknowledged: true);
+    expect(retained.single.acknowledgedAt, acknowledgedAt);
+    expect(retained.single.details, issue.details);
+  });
 }
 
 ImportedChapterRecord _chapter({required int pageCount}) {
@@ -424,35 +453,6 @@ ImportedChapterRecord _remoteChapter({required List<String> urls}) {
         ),
     ],
   );
-  test('memory migration diagnostics retain acknowledged records', () async {
-    final issue = LibraryMigrationIssue(
-      issueId: 7,
-      schemaFrom: 4,
-      entityKind: 'comic_preference',
-      legacyKey: 'legacy-comic',
-      resolvedSourceId: 'source-a',
-      details: const <String, Object?>{'reason': 'ambiguous owner'},
-      createdAt: DateTime.utc(2026, 7, 29),
-    );
-    final store = MemoryImportedLibraryStore(
-      migrationIssues: <LibraryMigrationIssue>[issue],
-    );
-    await store.open();
-    addTearDown(store.close);
-
-    expect((await store.listMigrationIssues()).single.issueId, 7);
-    final acknowledgedAt = DateTime.utc(2026, 7, 29, 1);
-    await store.acknowledgeMigrationIssues(
-      const <int>[7],
-      acknowledgedAt: acknowledgedAt,
-    );
-
-    expect(await store.listMigrationIssues(), isEmpty);
-    final retained = await store.listMigrationIssues(includeAcknowledged: true);
-    expect(retained.single.acknowledgedAt, acknowledgedAt);
-    expect(retained.single.details, issue.details);
-  });
-
 }
 
 

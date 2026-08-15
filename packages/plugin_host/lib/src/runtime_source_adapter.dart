@@ -132,6 +132,7 @@ final class ExternalPluginRuntimeSession
               plugin.format == ExternalComicPluginFormat.veneraJavaScript
                   ? 1000
                   : 1 << 30,
+          preemptionThreshold: 40,
         ) {
     limits.validate();
     final descriptors = connection.sources;

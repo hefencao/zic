@@ -13,7 +13,7 @@ SPEC = (ROOT / 'docs/SPEC.md').read_text()
 STATUS = (ROOT / 'docs/IMPLEMENTATION_STATUS.md').read_text()
 HANDOFF = (ROOT / 'docs/NEXT_CHAT_HANDOFF.md').read_text()
 
-block = NET[NET.index('int _retentionPriority('):NET.index('void _notifyIdle()', NET.index('int _retentionPriority('))]
+block = NET[NET.index('NetPolicyRank _policyRank('):NET.index('void _notifyIdle()', NET.index('NetPolicyRank _policyRank('))]
 for marker in (
     'timeScaleMicros = 5 * 1000 * 1000',
     'byteScale = 4 * 1024 * 1024',

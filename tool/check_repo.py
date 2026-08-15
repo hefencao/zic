@@ -1189,6 +1189,7 @@ def check_compile_regressions() -> None:
     asset_transport = asset_transport_path.read_text(encoding='utf-8')
     for required in (
         'final class AssetBundleTransport',
+        'factory AssetBundleTransport.root() => AssetBundleTransport(rootBundle)',
         'rangeSupported: true',
         'validators.matches(currentValidators)',
     ):
@@ -1204,7 +1205,7 @@ def check_compile_regressions() -> None:
         'LiveCoordinator(',
         'addSnapshotListener(acceptSnapshot',
         '_binding?.detach(',
-        'AssetBundleTransport(rootBundle)',
+        'AssetBundleTransport.root()',
         'LoaderTransport(loaderSources)',
         '_downloads = _transferRuntime.registry;',
         '_transferRuntime.readArtifact(',
@@ -1780,7 +1781,7 @@ def check_compile_regressions() -> None:
         'final class _ComicDetailsScaffold',
         'final class _ComicDetailsHeader',
         'final class _ComicChapterList',
-        'RefreshIndicator(',
+        'AppPullToRefresh(',
         'AlwaysScrollableScrollPhysics',
         'comicDetailsReadKey(',
         'comicDetailsDownloadKey(',
@@ -2297,7 +2298,8 @@ def check_compile_regressions() -> None:
         'required this.coverIdentity',
         'StableArtworkImage(',
         'sourceVersionViewIdentity(',
-        "label: Text(sameSource ? '搜索同源版本' : '搜索同名作品')",
+        "label: const Text('已确认同源版本')",
+        "label: const Text('搜索同名作品')",
         "throw StateError('目标漫画源返回了不匹配的漫画或章节身份')",
         "throw StateError('目标漫画源返回了不匹配的章节详情身份')",
         "label: '漫画源'",
@@ -2321,7 +2323,8 @@ def check_compile_regressions() -> None:
     for required in (
         "label: '杂项'",
         'MiscPage(',
-        'ComicSourceResourceGateway(sourceForId: _sourceForId)',
+        'ComicSourceResourceGateway(',
+        'sourceForId: _sourceForId,',
         '_sourceResources.bindTo(_chapterDownloads)',
         'downloads is ConfigurableChapterResourceAccess',
         'configurable.setChapterResourceAccess(chapterResourceAccess)',

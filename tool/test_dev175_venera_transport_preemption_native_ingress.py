@@ -33,8 +33,10 @@ for token in (
     'final class CancelToken implements PriorityObservableTaskControl',
     'int priority = 0,',
     'void updatePriority(int priority)',
-    'activeTask.token.updatePriority(priority);',
-    'final token = CancelToken(',
+    'bool _updateActivePriority(_ActiveTask task, int priority)',
+    'task.token.updatePriority(priority);',
+    'late CancelToken token;',
+    'token = CancelToken(',
     'priority: next.priority',
 ):
     require(lane, token, 'lane-owned mutable task priority')

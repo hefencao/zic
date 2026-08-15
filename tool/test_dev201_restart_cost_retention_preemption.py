@@ -24,7 +24,9 @@ required_net = (
     'timeScaleMicros = 5 * 1000 * 1000',
     'byteScale = 4 * 1024 * 1024',
     'math.exp(',
-    'incoming.priority - retentionPriority < preemptionThreshold',
+    'NetPolicyRank _policyRank(',
+    'incomingPriority - incumbent.effectivePriority >= preemptionThreshold',
+    'if (!incomingOutranks(incoming.priority, rank)) continue;',
     'highPriorityThreshold - preemptionThreshold',
     'cancelForPreemption',
 )
@@ -48,7 +50,7 @@ for marker in (
     if marker not in JOB:
         raise SystemExit(f'dev.201 DownloadJob cost fact missing: {marker}')
 
-retention_block = NET[NET.index('int _retentionPriority('):NET.index('void _notifyIdle()', NET.index('int _retentionPriority('))]
+retention_block = NET[NET.index('NetPolicyRank _policyRank('):NET.index('void _notifyIdle()', NET.index('NetPolicyRank _policyRank('))]
 for forbidden in (
     'sourceHostRemoteIpHash',
     'sourceRhttp',

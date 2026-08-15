@@ -45,15 +45,16 @@ require(
     'observation.visibleCoverages.length == 1',
     'observation.targetCoverage == null',
 )
-for path in (
-    'docs/adr/0262-vertical-visible-target-authority.md',
+req((ROOT / 'docs/adr/0262-vertical-visible-target-authority.md').is_file(),
+    'missing dev.283 governance file: docs/adr/0262-vertical-visible-target-authority.md')
+require(
     'docs/audits/dev283-vertical-target-directionality-audit.md',
-):
-    req((ROOT / path).is_file(), f'missing dev.283 governance file: {path}')
+    'visibleIndexes',
+    'target=current+1',
+)
 require('docs/ARCHITECTURE.md', 'targetCoverage', 'page-local fraction', '真实 viewport')
 require('docs/SPEC.md', 'targetCoverage', 'MUST 为 null', 'floor/ceil')
 require('docs/IMPLEMENTATION_STATUS.md', 'dev.283', '22次', 'current+1')
-require('docs/IMPLEMENTATION_PLAN.md', 'dev.283', 'visibleIndexes', 'targetIndex')
 require('docs/NEXT_CHAT_HANDOFF.md', 'dev.283', 'hidden target', 'platformResidentReuse')
 require('CHANGELOG.md', '0.31.0-dev.283', 'Vertical visible-target authority')
 

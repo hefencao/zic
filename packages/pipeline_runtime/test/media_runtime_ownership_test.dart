@@ -6,6 +6,7 @@ import 'package:downloads/downloads.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media/media.dart';
+import 'package:pipeline/pipeline.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
 import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';

@@ -84,15 +84,17 @@ require(
     "residentReplayChunks: (endExclusive) =>",
     "replaySource(session, endExclusive)",
 )
-for path in (
-    "docs/adr/0271-resident-replay-service-binding-boundary.md",
+req((ROOT / "docs/adr/0271-resident-replay-service-binding-boundary.md").is_file(),
+    "missing dev.292 governance file: docs/adr/0271-resident-replay-service-binding-boundary.md")
+require(
     "docs/audits/dev292-resident-replay-binding-boundary-audit.md",
-):
-    req((ROOT / path).is_file(), f"missing dev.292 governance file: {path}")
+    "dev.292",
+    "Function(DownloadSession,int)",
+    "DownloadResidentReplayChunks",
+)
 require("docs/ARCHITECTURE.md", "DownloadResidentReplaySource", "DownloadResidentReplayChunks")
 require("docs/SPEC.md", "DownloadResidentReplaySource", "CompositionDownloadTransferRuntime")
 require("docs/IMPLEMENTATION_STATUS.md", "dev.292", "replay(this,end)")
-require("docs/IMPLEMENTATION_PLAN.md", "dev.292", "Function(DownloadSession,int)")
 require("docs/NEXT_CHAT_HANDOFF.md", "dev.292", "DownloadResidentReplayChunks")
 require("CHANGELOG.md", "0.31.0-dev.292", "Resident replay service binding boundary")
 req("test_dev292_resident_replay_binding_boundary.py" in text("tool/check.sh"),

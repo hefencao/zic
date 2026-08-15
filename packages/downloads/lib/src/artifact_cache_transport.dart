@@ -826,8 +826,8 @@ ByteResponse? _streamedCachedResponse({
   if (range != null && !canServeRange) {
     return null;
   }
-  final start = canServeRange ? range!.start : 0;
-  final requestedEnd = canServeRange ? range!.end : null;
+  final start = canServeRange ? range.start : 0;
+  final requestedEnd = canServeRange ? range.end : null;
   final endExclusive = requestedEnd == null
       ? entry.length
       : (requestedEnd + 1).clamp(start, entry.length).toInt();
@@ -868,8 +868,8 @@ ByteResponse? _cachedResponse({
   if (range != null && !canServeRange) {
     return null;
   }
-  final start = canServeRange ? range!.start : 0;
-  final requestedEnd = canServeRange ? range!.end : null;
+  final start = canServeRange ? range.start : 0;
+  final requestedEnd = canServeRange ? range.end : null;
   final endExclusive = requestedEnd == null
       ? bytes.lengthInBytes
       : (requestedEnd + 1).clamp(start, bytes.lengthInBytes).toInt();

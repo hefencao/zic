@@ -20,7 +20,12 @@ def forbid(text: str, token: str, label: str) -> None:
 
 
 # Modern stable Flutter/Dart floor across the workspace.
-for pubspec in ROOT.rglob('pubspec.yaml'):
+workspace_pubspecs = (
+    list(ROOT.glob('pubspec.yaml')) +
+    list(ROOT.glob('apps/*/pubspec.yaml')) +
+    list(ROOT.glob('packages/*/pubspec.yaml'))
+)
+for pubspec in workspace_pubspecs:
     text = pubspec.read_text(encoding='utf-8')
     if "sdk: '>=3.12.0 <4.0.0'" not in text:
         raise SystemExit(f'{pubspec.relative_to(ROOT)} does not require Dart >=3.12')

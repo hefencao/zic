@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:test/test.dart';
-import 'package:transport/transport.dart';
 
 void main() {
   test('E-Hentai version URLs reuse only matching unique image keys', () async {
@@ -417,29 +416,6 @@ final class _Backend implements ArtifactCacheBackend {
 
   @override
   Future<void> invalidateArtifact(DownloadId id) async {
-    values.remove(id);
-  }
-}
-
-final class _PartialStore implements PartialDownloadStore {
-  _PartialStore(this.values);
-
-  final Map<DownloadId, PartialDownloadEntry> values;
-
-  @override
-  Future<PartialDownloadEntry?> openPartialDownload(DownloadId id) async =>
-      values[id];
-
-  @override
-  Future<void> storePartialDownload({
-    required DownloadId id,
-    required PartialDownloadEntry entry,
-  }) async {
-    values[id] = entry;
-  }
-
-  @override
-  Future<void> invalidatePartialDownload(DownloadId id) async {
     values.remove(id);
   }
 }

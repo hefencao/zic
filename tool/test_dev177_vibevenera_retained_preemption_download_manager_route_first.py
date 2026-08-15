@@ -22,7 +22,9 @@ physical_owner = (transfer_owner_path.read_text(encoding='utf-8')
 build_match = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 build = int(build_match.group(1)) if build_match is not None else 0
 retention_tokens = [
-    "reason: 'retained-background'",
+    ("reason: 'inactive-physical-retention'"
+     if build >= 267 else
+     "reason: 'retained-background'"),
     'net.cancelQueued(taskKey);',
     '_migrateDownloadPriority(',
 ]
@@ -31,10 +33,16 @@ if build < 243:
         'final receiving = session?.state == DownloadState.receiving;',
         'net.cancel(taskKey);',
     ))
-else:
+elif build < 267:
     retention_tokens.extend((
         'taskKey != null && taskIsActive',
         'Logical demand detachment never decides whether already-admitted work',
+    ))
+else:
+    retention_tokens.extend((
+        'taskKey != null && taskIsActive',
+        'Working-set membership and physical transport lifetime are separate',
+        'net.updateDemanded(taskKey, false);',
     ))
 for token in retention_tokens:
     require(physical_owner, token, 'VibeVenera logical-detach retention')

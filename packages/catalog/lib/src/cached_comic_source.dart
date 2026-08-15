@@ -348,7 +348,7 @@ final class CachedBrowsableComicSource
   Uri? resolveComicWebUri(String comicId) {
     final Object candidate = source;
     if (candidate is! ComicWebUriSource) return descriptor.website;
-    final webSource = candidate as ComicWebUriSource;
+    final webSource = candidate;
     return webSource.resolveComicWebUri(comicId);
   }
 
@@ -356,7 +356,7 @@ final class CachedBrowsableComicSource
   String canonicalComicIdentity(String comicId) {
     final Object candidate = source;
     if (candidate is! CanonicalComicIdentitySource) return comicId;
-    final identitySource = candidate as CanonicalComicIdentitySource;
+    final identitySource = candidate;
     return identitySource.canonicalComicIdentity(comicId);
   }
 
@@ -366,7 +366,7 @@ final class CachedBrowsableComicSource
     if (candidate is! ComicWebViewRequestSource) {
       return ComicWebViewRequest(url: url);
     }
-    final requestSource = candidate as ComicWebViewRequestSource;
+    final requestSource = candidate;
     return requestSource.webViewRequest(url);
   }
 
@@ -374,7 +374,7 @@ final class CachedBrowsableComicSource
   bool get supportsComicVersions {
     final Object candidate = source;
     if (candidate is! ComicVersionSource) return false;
-    final versionSource = candidate as ComicVersionSource;
+    final versionSource = candidate;
     return versionSource.supportsComicVersions;
   }
 
@@ -386,7 +386,7 @@ final class CachedBrowsableComicSource
         const <SourceComicVersion>[],
       );
     }
-    final versionSource = candidate as ComicVersionSource;
+    final versionSource = candidate;
     if (!versionSource.supportsComicVersions) {
       return Future<List<SourceComicVersion>>.value(
         const <SourceComicVersion>[],
@@ -399,7 +399,7 @@ final class CachedBrowsableComicSource
   bool get supportsComicPreview {
     final Object candidate = source;
     if (candidate is! ComicPreviewSource) return false;
-    final previewSource = candidate as ComicPreviewSource;
+    final previewSource = candidate;
     return previewSource.supportsComicPreview;
   }
 
@@ -414,7 +414,7 @@ final class CachedBrowsableComicSource
         ComicPreviewPage(items: const <ComicPreviewAsset>[]),
       );
     }
-    final previewSource = candidate as ComicPreviewSource;
+    final previewSource = candidate;
     if (!previewSource.supportsComicPreview) {
       return Future<ComicPreviewPage>.value(
         ComicPreviewPage(items: const <ComicPreviewAsset>[]),
@@ -430,7 +430,7 @@ final class CachedBrowsableComicSource
   bool get supportsComicComments {
     final Object candidate = source;
     if (candidate is! ComicCommentSource) return false;
-    final commentSource = candidate as ComicCommentSource;
+    final commentSource = candidate;
     return commentSource.supportsComicComments;
   }
 
@@ -451,7 +451,7 @@ final class CachedBrowsableComicSource
         ),
       );
     }
-    final commentSource = candidate as ComicCommentSource;
+    final commentSource = candidate;
     if (!commentSource.supportsComicComments) {
       return Future<ComicCommentPage>.value(
         ComicCommentPage(

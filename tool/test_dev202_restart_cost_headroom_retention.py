@@ -14,7 +14,7 @@ ANDROID = (ROOT / 'apps/app/android/zic-version.properties').read_text()
 
 build_match = re.search(r'version:\s*0\.31\.0\+(\d+)', PUBSPEC)
 build = int(build_match.group(1)) if build_match else 0
-block = NET[NET.index('int _retentionPriority('):NET.index('void _notifyIdle()', NET.index('int _retentionPriority('))]
+block = NET[NET.index('NetPolicyRank _policyRank('):NET.index('void _notifyIdle()', NET.index('NetPolicyRank _policyRank('))]
 if build <= 202:
     for marker in (
         'timeScaleMicros = 5 * 1000 * 1000',

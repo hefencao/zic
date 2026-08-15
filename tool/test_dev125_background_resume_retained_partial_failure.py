@@ -22,7 +22,7 @@ cursor = read("packages/bridge/lib/src/native_cursor.dart")
 coordinator = read("packages/sessions/lib/src/live_coordinator.dart")
 analyzer = read("tool/analyze_frame_pipeline_trace.py")
 workspace = read("tool/workspace_config.py")
-agents = read("AGENTS.md")
+delivery = read("docs/AI_ITERATION_PROMPT.md")
 gitignore = read(".gitignore")
 check = read("tool/check.sh")
 
@@ -73,7 +73,7 @@ for token in (
     "must not be included in release ZIPs or generated patches",
     "ZIC_PATCH_DIR",
 ):
-    require(agents, token, "release delivery rules")
+    require(delivery, token, "release delivery rules")
 require(check, "test_dev125_background_resume_retained_partial_failure.py", "repository check")
 if "PageRole.visible" in read("packages/pipeline/lib/src/role_window.dart"):
     raise SystemExit("dev.125 must not restore visible-page demand")

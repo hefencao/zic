@@ -1,3 +1,4 @@
+import 'dart:collection';
 import 'dart:convert';
 
 import 'clock.dart';
@@ -123,13 +124,21 @@ final class NoopTraceSink implements TraceSink {
 }
 
 final class MemoryTraceSink implements TraceSink {
-  final List<TraceEvent> _events = <TraceEvent>[];
+  MemoryTraceSink({this.maxEvents})
+      : assert(maxEvents == null || maxEvents > 0);
+
+  final int? maxEvents;
+  final ListQueue<TraceEvent> _events = ListQueue<TraceEvent>();
 
   List<TraceEvent> get events => List<TraceEvent>.unmodifiable(_events);
 
   @override
   void record(TraceEvent event) {
-    _events.add(event);
+    _events.addLast(event);
+    final limit = maxEvents;
+    if (limit != null && _events.length > limit) {
+      _events.removeFirst();
+    }
   }
 
   void clear() => _events.clear();
@@ -204,26 +213,41 @@ Object? _sanitizeTraceValue(Object? value) => switch (value) {
     };
 
 String _sanitizeTraceString(String value) {
-  var sanitized = value.replaceAllMapped(
-    RegExp(r'venera-resource:(?://[^|\s"}]+|[A-Za-z0-9_-]{24,})'),
-    (match) => _traceOpaqueSummary('venera-resource', match.group(0)!),
-  );
-  sanitized = sanitized.replaceAllMapped(
-    RegExp(r'venera:(comic|chapter):[A-Za-z0-9_-]{24,}'),
-    (match) => _traceOpaqueSummary(
-      'venera:${match.group(1)}',
-      match.group(0)!,
-    ),
-  );
-  sanitized = sanitized.replaceAllMapped(
-    RegExp(r'mihon:(manga|chapter|resource):[A-Za-z0-9_-]{24,}'),
-    (match) => _traceOpaqueSummary(
-      'mihon:${match.group(1)}',
-      match.group(0)!,
-    ),
-  );
+  var sanitized = value;
+  if (sanitized.contains('venera')) {
+    sanitized = sanitized.replaceAllMapped(
+      _veneraResourceTracePattern,
+      (match) => _traceOpaqueSummary('venera-resource', match.group(0)!),
+    );
+    sanitized = sanitized.replaceAllMapped(
+      _veneraEntityTracePattern,
+      (match) => _traceOpaqueSummary(
+        'venera:${match.group(1)}',
+        match.group(0)!,
+      ),
+    );
+  }
+  if (sanitized.contains('mihon:')) {
+    sanitized = sanitized.replaceAllMapped(
+      _mihonEntityTracePattern,
+      (match) => _traceOpaqueSummary(
+        'mihon:${match.group(1)}',
+        match.group(0)!,
+      ),
+    );
+  }
   return sanitized;
 }
+
+final RegExp _veneraResourceTracePattern = RegExp(
+  r'venera-resource:(?://[^|\s"}]+|[A-Za-z0-9_-]{24,})',
+);
+final RegExp _veneraEntityTracePattern = RegExp(
+  r'venera:(comic|chapter):[A-Za-z0-9_-]{24,}',
+);
+final RegExp _mihonEntityTracePattern = RegExp(
+  r'mihon:(manga|chapter|resource):[A-Za-z0-9_-]{24,}',
+);
 
 String _traceOpaqueSummary(String kind, String value) =>
     '$kind:<${_traceHash(value)},${value.length}>';

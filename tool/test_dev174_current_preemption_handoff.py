@@ -32,17 +32,18 @@ for token in (
 ):
     require(lane, token, 'saturated handoff preemption owner')
 
-# The handoff slot stays bounded: blocked current may request another victim to
-# unwind, but cannot be promoted to active until a real task has left the lane.
+# The handoff slot stays bounded across both body-read permits and retained
+# transport leases. A parked response may release the former without exiting,
+# so pending admission must guard both physical resources independently.
 require(
     lane,
-    'if (handoff &&\n            (reservedHighPrioritySlots <= 0 || running >= handoffCapacity)) {\n          return false;',
+    'if (handoff &&\n            (reservedHighPrioritySlots <= 0 ||\n                _receivingActive >= handoffCapacity ||\n                _transportLeasesActive >= handoffCapacity)) {\n          return false;',
     'bounded max+reserved admission',
 )
 require(
     lane,
     ').whenComplete(() {\n          final removed = _active.remove(next.key);',
-    'real active permit released only on task completion',
+    'physical task identity released only on task completion',
 )
 
 test = read('packages/sessions/test/net_lane_test.dart')

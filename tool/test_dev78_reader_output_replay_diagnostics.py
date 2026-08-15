@@ -77,7 +77,7 @@ for token in (
 for token in (
     'bool _restartCursorWhenHolderEmpty = false;',
     '_restartCursorWhenHolderEmpty = true;',
-    'if (_restartCursorWhenHolderEmpty)',
+    'if (_restartCursorWhenHolderEmpty && (_holder?.depth ?? 0) == 0)',
     '_releaseBinding();',
 ):
     require(decode_session, token, 'decode replay lifecycle')
@@ -96,10 +96,11 @@ for token in ('await _markChapterReadForNavigation(current)',):
 
 for token in (
     'this.maxExportEvents = 10000',
-    'final List<TraceEvent> _exportEvents',
+    'final ListQueue<_TraceExportEntry> _exportEvents',
     'List<TraceEvent> get exportEvents',
     'int get exportDroppedCount',
-    '_exportEvents.add(event);',
+    '_exportEvents.addLast(entry);',
+    '_exportEvents.removeFirst();',
 ):
     require(trace_log, token, 'bounded raw trace export ring')
 for token in (

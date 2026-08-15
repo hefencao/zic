@@ -1,3 +1,10 @@
+## 0.31.0-dev.304 - Constant-time diagnostic trace hot path
+
+- After dev.301–303 removed semantic revision churn, repeated lane pumping and hidden snapshot broadcasts, the reported vertical scroll drops still remain while recorded Flutter build/raster time is usually low. The remaining legal page-boundary path synchronously emits many demand/observation events on the UI isolate, so diagnostic processing itself is now treated as frame-budgeted work rather than free instrumentation.
+- Make locator sanitization cheap for ordinary events: Venera/Mihon regular expressions are compiled once and skipped unless a string contains the relevant scheme marker. Preserve all existing opaque-locator redaction behavior.
+- Replace Debug Trace's shifting 500/10000-entry lists with O(1) bounded queues and live export-bucket entries; evict stale bucket keys, merge only numeric fields present in the incoming event, and do not request a Flutter frame when no trace viewer is listening. Export ordering, semantic buckets, error/lifecycle retention and min/max summaries remain unchanged.
+- Remove PipelineReaderSession's unconsumed, unbounded private MemoryTraceSink copy while keeping the ref-counted shared physical trace and explicit App sink. MemoryTraceSink itself now supports optional O(1) bounded retention. Also fix the existing Pipeline runtime ownership test's missing direct `pipeline` import instead of widening production exports.
+
 ## 0.31.0-dev.303 - Download trace / snapshot publication boundary
 
 - 12:56 dev.302 device Trace falsifies the assumption that repeated lane pumping was the dominant legal-revision cost: the common 1-added/10-changed/1-removed page-boundary reconcile still has a roughly 10.213ms median, 12.03ms p90 and 13.079ms max, essentially unchanged from dev.301 despite `atomicLaneBatch=true`.

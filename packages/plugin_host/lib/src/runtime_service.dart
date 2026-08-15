@@ -2,7 +2,6 @@ import 'dart:math';
 
 import 'package:catalog/catalog.dart';
 
-import 'plugin_contract.dart';
 import 'runtime_activation.dart';
 
 /// Stable platform/service operation names shared by the host bridge and the

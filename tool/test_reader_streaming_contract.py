@@ -75,7 +75,12 @@ for token in ('pageProgressUnits', 'final class _ChapterProgressPublisher', 'ses
 for token in ('snapshot.receivedBytes == 0', 'snapshot.fraction'):
     if token not in DOWNLOAD_UI:
         raise SystemExit(f'Download UI progress contract missing: {token}')
-for token in ('_sanitizeTraceString', '_traceOpaqueSummary', "RegExp(r'venera:(comic|chapter):"):
+for token in (
+    '_sanitizeTraceString',
+    '_traceOpaqueSummary',
+    '_veneraEntityTracePattern = RegExp(',
+    "r'venera:(comic|chapter):[A-Za-z0-9_-]{24,}'",
+):
     if token not in TRACE:
         raise SystemExit(f'Trace locator redaction contract missing: {token}')
 for token in ('StreamIterator<List<int>>', 'cancel.whenCancelled', 'await iterator.cancel()'):

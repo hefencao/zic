@@ -109,6 +109,14 @@ def main() -> None:
     )
     require(
         "packages/downloads/lib/src/chapter_downloads.dart",
+        "Future<Uint8List> readPromoted(DownloadId id) async",
+        "final entry = await openArtifactStream(id);",
+        "if (readAll != null) return readAll();",
+        "return builder.takeBytes();",
+        "return artifactStore.readPromoted(id);",
+    )
+    reject(
+        "packages/downloads/lib/src/chapter_downloads.dart",
         "artifact.restore(verifyPromotedChecksum: false)",
         "return artifact.readBytes();",
     )

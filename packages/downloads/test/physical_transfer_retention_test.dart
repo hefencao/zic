@@ -5,6 +5,7 @@ import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:sessions/sessions.dart';
 import 'package:storage/storage.dart';
+import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
@@ -28,7 +29,10 @@ void main() {
     final session = runtime.registry.get(id);
     final bytes = Uint8List.fromList(<int>[1, 2, 3, 4, 5, 6]);
 
-    await session.bindResponse(totalLength: bytes.lengthInBytes);
+    await session.bindResponse(
+      validators: const Validators(),
+      totalLength: bytes.lengthInBytes,
+    );
     final writer = session.acquireWriter();
     await session.append(writer, 0, bytes);
     await session.seal(writer, expectedLength: bytes.lengthInBytes);
@@ -56,7 +60,10 @@ void main() {
     final secondId = _id('promoted-second');
     final first = runtime.registry.get(firstId);
     final firstBytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
-    await first.bindResponse(totalLength: firstBytes.lengthInBytes);
+    await first.bindResponse(
+      validators: const Validators(),
+      totalLength: firstBytes.lengthInBytes,
+    );
     final firstWriter = first.acquireWriter();
     await first.append(firstWriter, 0, firstBytes);
     await first.seal(firstWriter, expectedLength: firstBytes.lengthInBytes);
@@ -66,7 +73,10 @@ void main() {
 
     final second = runtime.registry.get(secondId);
     final secondBytes = Uint8List.fromList(<int>[5, 6, 7, 8]);
-    await second.bindResponse(totalLength: secondBytes.lengthInBytes);
+    await second.bindResponse(
+      validators: const Validators(),
+      totalLength: secondBytes.lengthInBytes,
+    );
     final secondWriter = second.acquireWriter();
     await second.append(secondWriter, 0, secondBytes);
     await second.seal(secondWriter, expectedLength: secondBytes.lengthInBytes);
@@ -92,7 +102,10 @@ void main() {
     final session = runtime.registry.get(id);
     final bytes = Uint8List.fromList(<int>[7, 7, 7, 7]);
 
-    await session.bindResponse(totalLength: bytes.lengthInBytes);
+    await session.bindResponse(
+      validators: const Validators(),
+      totalLength: bytes.lengthInBytes,
+    );
     final writer = session.acquireWriter();
     await session.append(writer, 0, bytes);
     await session.seal(writer, expectedLength: bytes.lengthInBytes);
@@ -151,7 +164,10 @@ void main() {
     addTearDown(runtime.dispose);
     final id = _id('lifecycle-checkpoint');
     final session = runtime.registry.get(id);
-    await session.bindResponse(totalLength: 8);
+    await session.bindResponse(
+      validators: const Validators(),
+      totalLength: 8,
+    );
     final writer = session.acquireWriter();
     await session.append(writer, 0, <int>[9, 8, 7, 6, 5]);
 
@@ -200,7 +216,10 @@ void main() {
     addTearDown(runtime.dispose);
     final session = runtime.registry.get(newId);
 
-    await session.bindResponse(totalLength: bytes.lengthInBytes);
+    await session.bindResponse(
+      validators: const Validators(),
+      totalLength: bytes.lengthInBytes,
+    );
     final writer = session.acquireWriter();
     await session.append(writer, 0, bytes);
     await session.seal(writer, expectedLength: bytes.lengthInBytes);

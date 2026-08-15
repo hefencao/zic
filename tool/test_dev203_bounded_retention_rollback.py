@@ -12,7 +12,7 @@ HANDOFF = (ROOT / 'docs/NEXT_CHAT_HANDOFF.md').read_text()
 PUBSPEC = (ROOT / 'apps/app/pubspec.yaml').read_text()
 ANDROID = (ROOT / 'apps/app/android/zic-version.properties').read_text()
 
-block = NET[NET.index('int _retentionPriority('):NET.index('void _notifyIdle()', NET.index('int _retentionPriority('))]
+block = NET[NET.index('NetPolicyRank _policyRank('):NET.index('void _notifyIdle()', NET.index('NetPolicyRank _policyRank('))]
 if int(re.search(r'version:\s*0\.31\.0\+(\d+)', PUBSPEC).group(1)) <= 203:
     for marker in (
         'timeScaleMicros = 5 * 1000 * 1000',

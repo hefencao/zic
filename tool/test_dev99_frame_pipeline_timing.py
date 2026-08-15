@@ -98,8 +98,8 @@ debug_trace = read('apps/app/lib/debug_trace.dart')
 export_set = debug_trace.split(
     'static const Set<TraceEventKind> _exportCoalescibleKinds', 1
 )[1].split('};', 1)[0]
-if 'TraceEventKind.framePipelineTiming' in export_set:
-    raise SystemExit('FAIL: exact startup frame timing was made export-coalescible')
+if 'TraceEventKind.framePipelineTiming' not in export_set:
+    raise SystemExit('FAIL: semantic frame timing export compaction is missing')
 
 require(
     'packages/downloads/lib/src/artifact_cache_store.dart',
@@ -127,7 +127,7 @@ require(
 )
 require(
     'apps/app/test/misc_settings_test.dart',
-    'frame pipeline timing remains exact in export',
+    'frame pipeline timing export folds only matching semantic buckets',
     'notifiedDuringBuild',
 )
 require(

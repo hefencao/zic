@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:telemetry/telemetry.dart';
@@ -167,10 +169,11 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
 
   final int maxEvents;
   final int maxExportEvents;
-  final List<TraceEvent> _events = <TraceEvent>[];
-  final List<TraceEvent> _exportEvents = <TraceEvent>[];
-  final Map<String, int> _exportBucketIndexes = <String, int>{};
-  int _exportBaseIndex = 0;
+  final ListQueue<TraceEvent> _events = ListQueue<TraceEvent>();
+  final ListQueue<_TraceExportEntry> _exportEvents =
+      ListQueue<_TraceExportEntry>();
+  final Map<String, _TraceExportEntry> _exportBuckets =
+      <String, _TraceExportEntry>{};
   bool _enabled;
   bool _disposed = false;
   bool _notificationScheduled = false;
@@ -186,12 +189,12 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
   int get exportDroppedCount => _exportDroppedCount;
   List<TraceEvent> get events => List<TraceEvent>.unmodifiable(_events);
   List<TraceEvent> get exportEvents {
-    final ordered = List<TraceEvent>.of(_exportEvents)
+    final ordered = _exportEvents.map((entry) => entry.event).toList()
       ..sort((a, b) => a.monotonicMicros.compareTo(b.monotonicMicros));
     return List<TraceEvent>.unmodifiable(ordered);
   }
   Set<String> get sessionIds => Set<String>.unmodifiable(
-        _exportEvents.map((event) => event.sessionId),
+        _exportEvents.map((entry) => entry.event.sessionId),
       );
 
   set enabled(bool value) {
@@ -209,20 +212,13 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     } else {
       _appendExport(event);
     }
-    final exportOverflow = _exportEvents.length - maxExportEvents;
-    if (exportOverflow > 0) {
-      _exportEvents.removeRange(0, exportOverflow);
-      _exportBaseIndex += exportOverflow;
-      _exportDroppedCount += exportOverflow;
-    }
     if (_tryCoalesce(event)) {
       _coalescedCount++;
     } else {
-      _events.add(event);
+      _events.addLast(event);
     }
-    final overflow = _events.length - maxEvents;
-    if (overflow > 0) {
-      _events.removeRange(0, overflow);
+    if (_events.length > maxEvents) {
+      _events.removeFirst();
     }
     // FrameTiming is emitted after a rendered frame. Scheduling another UI
     // frame just to notify the trace viewer would make the diagnostic feed
@@ -235,11 +231,20 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
   }
 
   void _appendExport(TraceEvent event) {
-    _exportEvents.add(event);
     final key = _exportBucketKey(event);
+    final entry = _TraceExportEntry(event: event, bucketKey: key);
+    _exportEvents.addLast(entry);
     if (key != null) {
-      _exportBucketIndexes[key] =
-          _exportBaseIndex + _exportEvents.length - 1;
+      _exportBuckets[key] = entry;
+    }
+    if (_exportEvents.length > maxExportEvents) {
+      final removed = _exportEvents.removeFirst();
+      final removedKey = removed.bucketKey;
+      if (removedKey != null &&
+          identical(_exportBuckets[removedKey], removed)) {
+        _exportBuckets.remove(removedKey);
+      }
+      _exportDroppedCount++;
     }
   }
 
@@ -248,15 +253,9 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     if (key == null) {
       return false;
     }
-    final logicalIndex = _exportBucketIndexes[key];
-    if (logicalIndex == null || logicalIndex < _exportBaseIndex) {
-      return false;
-    }
-    final index = logicalIndex - _exportBaseIndex;
-    if (index < 0 || index >= _exportEvents.length) {
-      return false;
-    }
-    final prior = _exportEvents[index];
+    final entry = _exportBuckets[key];
+    if (entry == null) return false;
+    final prior = entry.event;
     final recordedFirst = prior.payload['firstMonotonicMicros'];
     final firstMonotonicMicros =
         recordedFirst is int ? recordedFirst : prior.monotonicMicros;
@@ -264,7 +263,7 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
         _exportWindowMicros(event.kind)) {
       return false;
     }
-    _exportEvents[index] = _mergeExport(prior, event);
+    entry.event = _mergeExport(prior, event);
     return true;
   }
 
@@ -337,25 +336,28 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     if (eventPosition != null) {
       payload['lastLogicalPosition'] = eventPosition;
     }
-    for (final field in _exportRangeFields) {
-      final latest = event.payload[field];
+    for (final entry in event.payload.entries) {
+      final field = entry.key;
+      final latest = entry.value;
+      if (latest is! num || !_exportRangeFields.contains(field)) {
+        continue;
+      }
       final previous = prior.payload[field];
       final label = '${field[0].toUpperCase()}${field.substring(1)}';
       final priorMin = prior.payload['min$label'];
       final priorMax = prior.payload['max$label'];
-      final minCandidate =
-          priorMin is num ? priorMin : previous is num ? previous : null;
-      final maxCandidate =
-          priorMax is num ? priorMax : previous is num ? previous : null;
-      final values = <num>[];
-      if (minCandidate != null) values.add(minCandidate);
-      if (maxCandidate != null) values.add(maxCandidate);
-      if (latest is num) values.add(latest);
-      if (values.isEmpty) {
-        continue;
-      }
-      payload['min$label'] = values.reduce(_minNumber);
-      payload['max$label'] = values.reduce(_maxNumber);
+      final minimum = priorMin is num
+          ? _minNumber(priorMin, latest)
+          : previous is num
+              ? _minNumber(previous, latest)
+              : latest;
+      final maximum = priorMax is num
+          ? _maxNumber(priorMax, latest)
+          : previous is num
+              ? _maxNumber(previous, latest)
+              : latest;
+      payload['min$label'] = minimum;
+      payload['max$label'] = maximum;
     }
     return TraceEvent(
       monotonicMicros: event.monotonicMicros,
@@ -390,7 +392,8 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     final lastPage = event.payload['pageIndex'] ??
         prior.payload['lastPageIndex'] ??
         prior.payload['pageIndex'];
-    _events[_events.length - 1] = TraceEvent(
+    _events.removeLast();
+    _events.addLast(TraceEvent(
       monotonicMicros: event.monotonicMicros,
       sessionId: event.sessionId,
       kind: event.kind,
@@ -403,7 +406,7 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
         if (firstPage != null) 'firstPageIndex': firstPage,
         if (lastPage != null) 'lastPageIndex': lastPage,
       },
-    );
+    ));
     return true;
   }
 
@@ -414,8 +417,7 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     }
     _events.clear();
     _exportEvents.clear();
-    _exportBucketIndexes.clear();
-    _exportBaseIndex = 0;
+    _exportBuckets.clear();
     _recordedCount = 0;
     _coalescedCount = 0;
     _exportCoalescedCount = 0;
@@ -424,7 +426,7 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
   }
 
   void _scheduleNotification() {
-    if (_disposed || _notificationScheduled) return;
+    if (_disposed || _notificationScheduled || !hasListeners) return;
     _notificationScheduled = true;
     final binding = SchedulerBinding.instance;
     binding.addPostFrameCallback((_) {
@@ -439,4 +441,11 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     _disposed = true;
     super.dispose();
   }
+}
+
+final class _TraceExportEntry {
+  _TraceExportEntry({required this.event, required this.bucketKey});
+
+  TraceEvent event;
+  final String? bucketKey;
 }

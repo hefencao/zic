@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
-import 'package:transport/transport.dart';
 
 const int promotedArtifactReadChunkBytes = 1024 * 1024;
 

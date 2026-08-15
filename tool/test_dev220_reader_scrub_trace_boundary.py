@@ -80,10 +80,11 @@ for token in (
     require(transfer_runtime, token, 'physical trace composition ownership')
 for token in (
     'consumerTraceSink: trace,',
-    'localPhysicalTraceSink: _memoryTrace,',
     'sharedPhysicalTraceSink: _sharedTraceSink,',
+    'trace = traceSink ?? const NoopTraceSink();',
 ):
     require(pipe, token, 'Reader physical trace projection')
+forbid(pipe, '_memoryTrace', 'unconsumed per-Reader physical trace copy')
 forbid(transfer_runtime, 'final Set<TraceSink> _sinks', 'unrefcounted physical trace fan-out')
 require(media_test, 'shared physical trace sink emits each demand once across Readers', 'cross-Reader trace fan-out regression')
 require(media_test, "expect(physicalDemandCount('reader:trace-reader-a'), 1);", 'Reader A trace de-dup assertion')

@@ -19,6 +19,7 @@ guard = read("packages/pipeline/lib/src/policy_guard.dart")
 refill = read("packages/sessions/lib/src/decode_refill_policy.dart")
 decode = read("packages/sessions/lib/src/decode_session.dart")
 coordinator = read("packages/sessions/lib/src/live_coordinator.dart")
+transfer_owner = read("packages/sessions/lib/src/download_transfer_owner.dart")
 screen = read("packages/reader_runtime/lib/src/reader_runtime_screen.dart")
 reader = read("packages/reader/lib/src/reader_view.dart")
 decode_test = read("packages/sessions/test/decode_session_test.dart")
@@ -47,12 +48,14 @@ for token in (
 for token in (
     "net.cancelQueued(taskKey)",
     "session.state == DownloadState.promoted",
-    "session?.state == DownloadState.receiving",
-    "net.cancel(taskKey)",
+    "net.updateDemanded(taskKey, false);",
+    "reason: 'inactive-physical-retention'",
+    "net.cancel(key);",
+    "net.idleKeys(keys)",
     "_downloadRetryPending.contains(id)",
     "'stage': 'download-recovery'",
 ):
-    require(coordinator, token, "retained and deduplicated download ownership")
+    require(transfer_owner, token, "retained and deduplicated download ownership")
 for token in (
     "ValueNotifier<Map<String, double>> _pageAspectRatios",
     "relativeDifference < 0.01",

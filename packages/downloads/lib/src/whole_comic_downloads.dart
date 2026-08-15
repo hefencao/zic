@@ -49,8 +49,7 @@ final class WholeComicQueuePolicy {
 
   factory WholeComicQueuePolicy.fromJson(Map<String, Object?> json) {
     final rawConcurrency = json['concurrency'];
-    final concurrency =
-        rawConcurrency is int ? rawConcurrency.clamp(1, 4) as int : 1;
+    final concurrency = rawConcurrency is int ? rawConcurrency.clamp(1, 4) : 1;
     return WholeComicQueuePolicy(
       concurrency: concurrency,
       network: _enumByName(

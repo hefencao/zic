@@ -33,15 +33,23 @@ assert '_encodedImageInFlight' not in cache
 assert 'Future<EncodedResourceSource> _resolveEncodedImage' not in cache
 
 download = text('packages/sessions/lib/src/download_session.dart')
-assert '(after.sourceReady || after.failure != null)' in download
-assert 'before.length != after.length' in download
-assert 'bool fireImmediately = true' in download
-assert '_traceIngress(before, targetIngress.snapshot);' in download
+ingress_projection = text(
+    'packages/sessions/lib/src/download_ingress_projection.dart'
+)
+assert '(current.sourceReady || current.failure != null)' in ingress_projection
+assert 'before.length != after.length' in ingress_projection
+assert 'before.sourceReady != after.sourceReady' in ingress_projection
+assert 'before.failure != after.failure' in ingress_projection
+assert 'bool fireImmediately = true' in ingress_projection
+assert (
+    '_traceIngressProjection(projection.scopeId, before, projection.snapshot);'
+    in download
+)
 
 decode = text('packages/sessions/lib/src/decode_session.dart')
 assert "message: 'frame decode failed'" in decode
 assert '_setFailure(failure);' in decode
-assert 'final ingressFailure = ingressSnapshot?.failure;' in decode
+assert 'final ingressFailure = ingressSnapshot.failure;' in decode
 assert '_setFailure(ingressFailure);' in decode
 
 upload = text('packages/sessions/lib/src/upload_session.dart')

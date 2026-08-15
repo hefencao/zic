@@ -1,5 +1,4 @@
 import 'package:domain/domain.dart';
-import 'package:transport/transport.dart';
 
 import 'artifact_cache_manager.dart';
 import 'reader_page_identity.dart';

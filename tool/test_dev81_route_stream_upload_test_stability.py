@@ -73,12 +73,16 @@ for token in (
 ):
     assert token in download
 assert 'snapshot owns the resume baseline' in download_test
-assert 'snapshot.networkStartLength' in progress
+assert 'snapshot.networkCursorLength' in progress
+assert 'snapshot.networkAttemptSequence' in progress
+assert 'snapshot.networkStartLength' not in progress
 assert '_lastStates' not in progress
 assert '_existingBytes' not in progress
 
 assert 'alignment: mediaAlignmentFor(fit)' in media
-assert 'Alignment mediaAlignmentFor(BoxFit fit) => Alignment.center;' in media
+assert (
+    'fit == BoxFit.fitWidth ? Alignment.topCenter : Alignment.center' in media
+)
 assert 'alignment: Alignment.center' in texture
 assert 'Alignment.topCenter' not in texture
 
@@ -98,7 +102,8 @@ assert '_pumpUntilCondition' not in reader_test
 for fixed_wait in ('Duration(milliseconds: 80)', 'Duration(milliseconds: 50)', 'Duration(milliseconds: 400)'):
     assert fixed_wait not in reader_test
 assert 'nowMicros = widget.clock.nowMicros()' in read('packages/reader/lib/src/reader_view.dart')
-assert 'pumpAndSettle' not in reader_test
+assert reader_test.count('await gesture.up();\n      await tester.pumpAndSettle();') == 2
+assert reader_test.count('pumpAndSettle') == 2
 for token in (
     'final class ReaderVerticalGeometry',
     'ReaderVerticalAnchor anchorForTop',

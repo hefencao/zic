@@ -14,9 +14,14 @@ webp = read('native/media_core/src/webp.rs')
 local_player = read('packages/local_media_ui/lib/src/local_image_player.dart')
 ingress = read('packages/media/lib/src/ingress.dart')
 download = read('packages/sessions/lib/src/download_session.dart')
+ingress_projection = read(
+    'packages/sessions/lib/src/download_ingress_projection.dart'
+)
 coordinator = read('packages/sessions/lib/src/live_coordinator.dart')
 progress = read('packages/pipeline_runtime/lib/src/pipeline_transfer_progress.dart')
-reader_runtime = read('packages/reader_runtime/lib/src/reader_runtime_screen.dart')
+reader_progress = read(
+    'packages/reader_runtime/lib/src/reader_transfer_progress_indicator.dart'
+)
 trace_screen = read('apps/app/lib/debug_trace_screen.dart')
 trace_export = read('apps/app/lib/debug_trace_export.dart')
 android = read('apps/app/android/app/src/main/kotlin/dev/zic/zic/MainActivity.kt')
@@ -47,7 +52,7 @@ assert 'surface.width, surface.height);' not in local_player
 
 for token in ('final int revision;', 'revision: _revision', '_revision++;'):
     assert token in ingress
-assert 'before.revision != after.revision' in download
+assert 'before.revision != after.revision' in ingress_projection
 for token in (
     'final Map<DownloadId, int> _sourceRevisions',
     '_sourceRevisions[id] = snapshot.revision;',
@@ -59,10 +64,12 @@ for token in (
 for token in (
     'enum PipelineTransferPhase',
     'PipelineTransferPhase.receiving',
-    'int get receivedBytes',
+    'final int partialBytes;',
+    'final int transportBytes;',
 ):
     assert token in progress
-assert "label: receiving ? '正在接收页面数据' : '正在连接页面资源'" in reader_runtime
+assert "PipelineTransferPhase.receiving => '正在接收页面数据'" in reader_progress
+assert "PipelineTransferPhase.connecting => '正在连接页面资源'" in reader_progress
 
 assert "package:file_selector/file_selector.dart" not in trace_screen
 for token in (

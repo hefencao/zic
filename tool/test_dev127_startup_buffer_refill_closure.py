@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 read = lambda path: (ROOT / path).read_text(encoding="utf-8")
 coordinator = read("packages/sessions/lib/src/live_coordinator.dart")
-agents = read("AGENTS.md")
+delivery = read("docs/AI_ITERATION_PROMPT.md")
 
 for forbidden in (
     "sameStartupCurrent",
@@ -23,6 +23,6 @@ for required in (
 ):
     if required not in coordinator:
         raise SystemExit(f"source/refill wake closure missing: {required}")
-if '"$(python3 tool/workspace_config.py patch_dir --absolute)/<patch-file>"' not in agents:
+if '"$(python3 tool/workspace_config.py patch_dir --absolute)/<patch-file>"' not in delivery:
     raise SystemExit("patch command policy missing")
 print("dev.127 source-wake closure after startup-gate removal: OK")

@@ -21,6 +21,9 @@ def forbid(source: str, token: str, label: str) -> None:
 session = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 stream = read('packages/pipeline_runtime/lib/src/pipeline_page_stream.dart')
 output = read('packages/pipeline_runtime/lib/src/pipeline_page_output.dart')
+frame_scheduler = read(
+    'packages/pipeline_runtime/lib/src/pipeline_frame_scheduler.dart'
+)
 capability = read('packages/pipeline_runtime/lib/src/pipeline_media_runtime.dart')
 native = read('packages/pipeline_native/lib/src/native_pipeline_media_runtime.dart')
 media_barrel = read('packages/local_media_ui/lib/local_media_ui.dart')
@@ -47,8 +50,14 @@ for token in (
 for token in ("package:bridge/bridge.dart", "package:texture_bridge/texture_bridge.dart"):
     forbid(session, token, 'core platform dependency')
 
-for token in ('final class PipelinePageOutputStream', '_uploads.claimPresent(', '_outputs.project(', 'PipelinePageSurface?', '_releaseAfterVisualSwap(', '_deferredClaims', 'WidgetsBinding.instance.addPostFrameCallback', 'WidgetsBinding.instance.scheduleFrame'):
+for token in ('final class PipelinePageOutputStream', '_uploads.claimPresent(', '_outputs.project(', 'PipelinePageSurface?', '_releaseAfterVisualSwap(', '_deferredClaims', '_frameScheduler.afterFrame(', '_frameScheduler.requestFrame()'):
     require(output, token, 'read-only output projection')
+for token in ('WidgetsBinding', 'SchedulerBinding'):
+    forbid(output, token, 'Pipeline frame scheduler boundary')
+for token in ('abstract interface class PipelineFrameScheduler', 'void afterFrame(', 'void requestFrame();'):
+    require(frame_scheduler, token, 'Pipeline frame scheduler contract')
+for token in ('implements PipelineFrameScheduler', 'SchedulerBinding.instance.addPostFrameCallback', 'SchedulerBinding.instance.scheduleFrame'):
+    require(native, token, 'native frame scheduler adapter')
 for token in ('final EncodedSource', 'EncodedSource? get source', 'source: _session.ingress?.source'):
     forbid(stream, token, 'mutable encoded source projection')
 for token in ('textureId', 'handleAddress', 'Pointer<'):

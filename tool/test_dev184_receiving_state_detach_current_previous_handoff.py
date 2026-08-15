@@ -43,13 +43,28 @@ if build < 243:
         'net.cancel(taskKey);',
         'net.cancelQueued(taskKey);',
     )
-else:
+elif build < 267:
     require(
         physical_owner_path,
         'final taskIsActive = taskKey != null && net.isActive(taskKey);',
         'taskKey != null && taskIsActive',
         "reason: 'retained-background'",
         'Logical demand detachment never decides whether already-admitted work',
+        'net.cancelQueued(taskKey);',
+    )
+    reject(
+        physical_owner_path,
+        'final receiving = session?.state == DownloadState.receiving;',
+        'A pre-open run is not worth retaining',
+    )
+else:
+    require(
+        physical_owner_path,
+        'final taskIsActive = taskKey != null && net.isActive(taskKey);',
+        'taskKey != null && taskIsActive',
+        "reason: 'inactive-physical-retention'",
+        'Working-set membership and physical transport lifetime are separate',
+        'net.updateDemanded(taskKey, false);',
         'net.cancelQueued(taskKey);',
     )
     reject(

@@ -94,6 +94,27 @@ void main() {
     expect(first.toJsonLine(), isNot(contains(identity)));
   });
 
+  test('bounded memory trace evicts oldest events in constant-size order', () {
+    final sink = MemoryTraceSink(maxEvents: 2);
+    for (var index = 0; index < 3; index++) {
+      sink.record(
+        TraceEvent(
+          monotonicMicros: index,
+          sessionId: 'bounded-memory',
+          kind: TraceEventKind.downloadState,
+          payload: <String, Object?>{'index': index},
+        ),
+      );
+    }
+
+    expect(
+      sink.events.map((event) => event.payload['index']),
+      <int>[1, 2],
+    );
+    sink.clear();
+    expect(sink.events, isEmpty);
+  });
+
   test('SystemClock instances share one process monotonic epoch', () {
     const first = SystemClock();
     while (first.nowMicros() < 1000) {}

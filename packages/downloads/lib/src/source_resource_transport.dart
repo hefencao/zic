@@ -572,9 +572,10 @@ final class _SourceResourceTransport implements ControlledTransport {
     final canRange = range != null &&
         range.start <= bytes.length &&
         (validators == null || validators.isEmpty || validators.matches(current));
-    final start = canRange ? range!.start : 0;
-    final end = canRange && range!.end != null
-        ? (range.end! + 1).clamp(start, bytes.length).toInt()
+    final start = canRange ? range.start : 0;
+    final requestedEnd = canRange ? range.end : null;
+    final end = requestedEnd != null
+        ? (requestedEnd + 1).clamp(start, bytes.length).toInt()
         : bytes.length;
     return ByteResponse(
       bytes: _chunkRuntimeBytes(Uint8List.sublistView(bytes, start, end)),

@@ -1241,8 +1241,7 @@ final class PersistentChapterDownloadService
             if (failure is Failure) throw failure;
             throw Failure(
               code: ErrorCode.network,
-              message: failure?.toString() ??
-                  'physical transfer did not promote ${id.key}',
+              message: 'physical transfer did not promote ${id.key}',
             );
           }
           await transferRuntime.persistPromoted(id);

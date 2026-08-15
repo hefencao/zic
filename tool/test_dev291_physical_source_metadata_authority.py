@@ -66,15 +66,17 @@ require(
     "final prefix = await session.readSourcePrefix(96,",
     "residentReplayChunks: (endExclusive) async",
 )
-for path in (
-    "docs/adr/0270-physical-ingress-source-metadata-authority.md",
+req((ROOT / "docs/adr/0270-physical-ingress-source-metadata-authority.md").is_file(),
+    "missing dev.291 governance file: docs/adr/0270-physical-ingress-source-metadata-authority.md")
+require(
     "docs/audits/dev291-source-metadata-owner-and-scale-audit.md",
-):
-    req((ROOT / path).is_file(), f"missing dev.291 governance file: {path}")
+    "dev.291",
+    "sourceCanvas",
+    "layout",
+)
 require("docs/ARCHITECTURE.md", "generation-local source-metadata prefix", "sourceCanvasWidth")
 require("docs/SPEC.md", "generation-local source-metadata prefix", "physical-ingress-source-canvas")
 require("docs/IMPLEMENTATION_STATUS.md", "dev.291", "residentBodyBacked", "source metadata")
-require("docs/IMPLEMENTATION_PLAN.md", "dev.291", "sourceCanvas", "layout")
 require("docs/NEXT_CHAT_HANDOFF.md", "dev.291", "physical ingress", "sourceCanvas")
 require("CHANGELOG.md", "0.31.0-dev.291", "Physical ingress source metadata authority")
 req("test_dev291_physical_source_metadata_authority.py" in text("tool/check.sh"),

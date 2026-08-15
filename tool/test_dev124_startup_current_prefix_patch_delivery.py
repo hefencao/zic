@@ -22,7 +22,7 @@ coordinator = read("packages/sessions/lib/src/live_coordinator.dart")
 profile = read("packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart")
 ownership_test = read("packages/pipeline_runtime/test/media_runtime_ownership_test.dart")
 analyzer = read("tool/analyze_frame_pipeline_trace.py")
-agents = read("AGENTS.md")
+delivery = read("docs/AI_ITERATION_PROMPT.md")
 check = read("tool/check.sh")
 
 for token in (
@@ -67,7 +67,7 @@ for token in (
     "Resolve `patch_dir` from `ZIC_PATCH_DIR` or the local `.zic-workspace.json`",
     "must not be included in release ZIPs or generated patches",
 ):
-    require(agents, token, "release delivery rules")
+    require(delivery, token, "release delivery rules")
 require(check, "test_dev124_startup_current_prefix_patch_delivery.py", "repository check")
 
 environment_patch_dir = "../dev124-test-patches"

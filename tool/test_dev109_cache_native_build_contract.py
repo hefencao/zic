@@ -48,7 +48,9 @@ forbid(
 )
 for deleted in (
     "packages/downloads/lib/src/promoted_artifact_byte_cache.dart",
+    "packages/downloads/lib/src/promoted_artifact_read_pool.dart",
     "packages/downloads/test/promoted_artifact_byte_cache_test.dart",
+    "packages/downloads/test/promoted_artifact_read_pool_test.dart",
 ):
     if (ROOT / deleted).exists():
         raise SystemExit(f"FAIL: obsolete cache layer remains: {deleted}")

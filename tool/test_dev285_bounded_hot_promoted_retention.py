@@ -74,15 +74,16 @@ require(
     'maxIdlePromotedSessions: 0',
 )
 
-for path in (
-    'docs/adr/0264-bounded-hot-promoted-physical-retention.md',
+req((ROOT / 'docs/adr/0264-bounded-hot-promoted-physical-retention.md').is_file(),
+    'missing dev.285 governance file: docs/adr/0264-bounded-hot-promoted-physical-retention.md')
+require(
     'docs/audits/dev285-fixed-region-promoted-physical-retention-audit.md',
-):
-    req((ROOT / path).is_file(), f'missing dev.285 governance file: {path}')
+    'dev.285',
+    'hot-promoted-retention-pressure',
+)
 require('docs/ARCHITECTURE.md', '8-session LRU hot tail', 'ordinary handoff')
 require('docs/SPEC.md', '默认最多8个', 'promoted hot budget')
 require('docs/IMPLEMENTATION_STATUS.md', 'dev.285', '84次', 'session-copy')
-require('docs/IMPLEMENTATION_PLAN.md', 'dev.285', 'hot-promoted-retention-pressure')
 require('docs/NEXT_CHAT_HANDOFF.md', 'dev.285', '84次', '最多8个')
 require('CHANGELOG.md', '0.31.0-dev.285', 'Bounded hot promoted physical retention')
 
