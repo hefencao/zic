@@ -3,6 +3,8 @@ import 'package:flutter/widgets.dart';
 import 'package:media/media.dart';
 import 'package:telemetry/telemetry.dart';
 
+import 'pipeline_frame_scheduler.dart';
+
 /// One atomically configured platform media runtime for a Reader session.
 ///
 /// The upper composition layer supplies the factory. `pipeline_runtime` owns
@@ -24,6 +26,7 @@ abstract interface class PipelineMediaRuntime {
   CursorFactory get cursors;
   FrameUploader get uploader;
   PipelineOutputProjector get outputs;
+  PipelineFrameScheduler get frameScheduler;
   RendererKind get renderer;
 
   Future<void> close();

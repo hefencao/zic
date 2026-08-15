@@ -12,6 +12,7 @@ import 'package:transport/transport.dart';
 
 import 'asset_bundle_transport.dart';
 import 'media_load_token.dart';
+import 'pipeline_frame_scheduler.dart';
 import 'pipeline_media_runtime.dart';
 import 'pipeline_page_stream.dart';
 import 'pipeline_transfer_progress.dart';
@@ -452,7 +453,6 @@ final class PipelineReaderSession {
           http: HttpTransport(userAgentProvider: userAgentProvider),
         ),
         _loaderTransport = LoaderTransport(loaderSources),
-        transferProgress = PipelineTransferProgressPublisher(),
         _pageDimensions = _PipelinePageDimensionsPublisher(),
         _pageIndexByPageId = _indexChapterPages(chapter) {
     trace = MultiTraceSink(<TraceSink>[
@@ -463,6 +463,9 @@ final class PipelineReaderSession {
       sessionId: sessionId,
       clock: clock,
       traceSink: trace,
+    );
+    transferProgress = PipelineTransferProgressPublisher(
+      frameScheduler: _media.frameScheduler,
     );
     final identities = chapter.pages
         .map(
@@ -620,7 +623,7 @@ final class PipelineReaderSession {
   Timer? _playbackTicker;
   int? _playbackWakeAtMicros;
   bool _playbackPaused = false;
-  final PipelineTransferProgressPublisher transferProgress;
+  late final PipelineTransferProgressPublisher transferProgress;
   final _PipelinePageDimensionsPublisher _pageDimensions;
   final Map<String, int> _pageIndexByPageId;
   PipelinePageDimensionsFeed get pageDimensions => _pageDimensions;
@@ -922,6 +925,7 @@ final class PipelineReaderSession {
         uploads: _uploads,
         decodes: _decodes,
         outputs: _media.outputs,
+        frameScheduler: _media.frameScheduler,
       ),
     );
     output._bind(_activeUploadIdentity(id));

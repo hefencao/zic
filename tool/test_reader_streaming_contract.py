@@ -27,7 +27,7 @@ for token in (
     '_pipeline.loadBytes(asset, token)',
     '_pipeline.pageStream(asset)',
     '_pipeline.pageOutput(asset)',
-    'PipelineTransferProgress',
+    'ReaderTransferProgressFeedIndicator(',
 ):
     if token not in RUNTIME:
         raise SystemExit(f'Reader projection contract missing: {token}')
@@ -43,7 +43,7 @@ for token in (
     'LiveCoordinator(', 'SourcePool(', 'DecodeRegistry(',
     'UploadRegistry(', 'FrameBudgeter(', 'ReaderBinding(',
     'PipelinePageStream.forDownload', '_syncPageStreams();', 'PipelinePageOutputStream._(',
-    'PipelineTransferProgressPublisher()', 'transferProgress.select(',
+    'PipelineTransferProgressPublisher(', 'transferProgress.select(',
 ):
     if token not in PIPELINE_RUNTIME:
         raise SystemExit(f'Pipeline runtime ownership contract missing: {token}')
@@ -64,7 +64,7 @@ for forbidden in ('final EncodedSource', 'EncodedSource? get source', ' get sour
 for token in ('final class PipelinePageOutputStream', 'PipelinePageSurface?', '_uploads.claimPresent(', '_outputs.project('):
     if token not in PAGE_OUTPUT:
         raise SystemExit(f'Pipeline page-output projection missing: {token}')
-for token in ('final class PipelineTransferProgressPublisher', 'snapshot.state == DownloadState.promoted', 'partialBytes: snapshot.committedLength', 'transportBytes: snapshot.networkCursorLength', 'totalBytes: snapshot.totalLength', 'addPostFrameCallback'):
+for token in ('final class PipelineTransferProgressPublisher', 'final class PipelineTransferProgressFeed', 'snapshot.state == DownloadState.promoted', 'partialBytes: snapshot.committedLength', 'transportBytes: snapshot.networkCursorLength', 'totalBytes: snapshot.totalLength', '_frameScheduler.afterFrame(() {'):
     if token not in PROGRESS:
         raise SystemExit(f'Pipeline progress publisher contract missing: {token}')
 if 'snapshot.committedLength > 0' in PROGRESS:

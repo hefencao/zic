@@ -873,14 +873,10 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                     ],
                   ),
                 ),
-                ValueListenableBuilder<PipelineTransferProgress>(
-                  valueListenable: _pipeline.transferProgress.notifier,
-                  builder: (context, progress, _) =>
-                      ReaderTransferProgressIndicator(
-                    progress: progress,
-                    networkKey: readerNetworkProgressKey,
-                    partialKey: readerExistingProgressKey,
-                  ),
+                ReaderTransferProgressFeedIndicator(
+                  feed: _pipeline.transferProgress.feed,
+                  networkKey: readerNetworkProgressKey,
+                  partialKey: readerExistingProgressKey,
                 ),
               ],
             ),

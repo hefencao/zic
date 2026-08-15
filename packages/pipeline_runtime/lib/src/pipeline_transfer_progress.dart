@@ -1,6 +1,6 @@
-import 'package:flutter/foundation.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:sessions/sessions.dart';
+
+import 'pipeline_frame_scheduler.dart';
 
 enum PipelineTransferPhase {
   idle,
@@ -9,7 +9,6 @@ enum PipelineTransferPhase {
   receiving,
 }
 
-@immutable
 final class PipelineTransferProgress {
   const PipelineTransferProgress({
     this.active = false,
@@ -118,19 +117,70 @@ PipelineTransferProgress pipelineTransferProgressFor(
   );
 }
 
+/// Read-only transfer-progress projection exposed by Pipeline.
+typedef PipelineTransferProgressListener = void Function(
+  PipelineTransferProgress value,
+);
+
+final class PipelineTransferProgressFeed {
+  PipelineTransferProgressFeed(PipelineTransferProgress initial)
+      : _value = initial;
+
+  final Set<PipelineTransferProgressListener> _listeners =
+      <PipelineTransferProgressListener>{};
+  PipelineTransferProgress _value;
+  bool _disposed = false;
+
+  PipelineTransferProgress get value => _value;
+
+  void addListener(
+    PipelineTransferProgressListener listener, {
+    bool fireImmediately = true,
+  }) {
+    if (_disposed) {
+      throw StateError('pipeline transfer progress feed is disposed');
+    }
+    _listeners.add(listener);
+    if (fireImmediately) listener(_value);
+  }
+
+  void removeListener(PipelineTransferProgressListener listener) {
+    _listeners.remove(listener);
+  }
+
+  void _publish(PipelineTransferProgress value) {
+    if (_disposed || _value == value) return;
+    _value = value;
+    for (final listener in _listeners.toList(growable: false)) {
+      listener(value);
+    }
+  }
+
+  void _dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _listeners.clear();
+  }
+}
+
 /// Pipeline-owned current-page transfer projection.
 ///
 /// DownloadSession remains authoritative for both the durable/playable partial
 /// and the transient transport cursor. This publisher selects only the
 /// resolved physical session and adds VibeVenera-style smoothed transport
-/// speed for presentation; it never owns download or resume state.
+/// speed for presentation; it never owns download or resume state. Frame
+/// coalescing is delegated through [PipelineFrameScheduler], so this runtime
+/// projection does not import Flutter notifier or scheduler types.
 final class PipelineTransferProgressPublisher {
-  PipelineTransferProgressPublisher()
-      : notifier = ValueNotifier<PipelineTransferProgress>(
+  PipelineTransferProgressPublisher({
+    required PipelineFrameScheduler frameScheduler,
+  })  : _frameScheduler = frameScheduler,
+        feed = PipelineTransferProgressFeed(
           const PipelineTransferProgress(),
         );
 
-  final ValueNotifier<PipelineTransferProgress> notifier;
+  final PipelineFrameScheduler _frameScheduler;
+  final PipelineTransferProgressFeed feed;
   DownloadSession? _selectedSession;
   DownloadSnapshotListener? _selectedListener;
   bool _scheduled = false;
@@ -163,21 +213,20 @@ final class PipelineTransferProgressPublisher {
 
   void _requestPublish({bool preferImmediate = false}) {
     if (_disposed) return;
-    final scheduler = SchedulerBinding.instance;
-    final phase = scheduler.schedulerPhase;
-    final canPublishNow = phase != SchedulerPhase.persistentCallbacks;
+    final canPublishNow = !_frameScheduler.inPersistentCallbacks;
     if (canPublishNow &&
-        (preferImmediate || phase == SchedulerPhase.idle || !_scheduled)) {
+        (preferImmediate || _frameScheduler.isIdle || !_scheduled)) {
       _scheduled = false;
       _publishNow();
       return;
     }
     if (_scheduled) return;
     _scheduled = true;
-    scheduler.addPostFrameCallback((_) {
+    _frameScheduler.afterFrame(() {
       _scheduled = false;
       if (!_disposed) _publishNow();
     });
+    _frameScheduler.requestFrame();
   }
 
   void _publishNow() {
@@ -230,7 +279,7 @@ final class PipelineTransferProgressPublisher {
   }
 
   void _set(PipelineTransferProgress value) {
-    if (!_disposed && notifier.value != value) notifier.value = value;
+    if (!_disposed) feed._publish(value);
   }
 
   void dispose() {
@@ -244,6 +293,6 @@ final class PipelineTransferProgressPublisher {
     _selectedSession = null;
     _selectedListener = null;
     _resetSpeedSample();
-    notifier.dispose();
+    feed._dispose();
   }
 }

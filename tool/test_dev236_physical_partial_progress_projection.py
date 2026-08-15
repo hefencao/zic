@@ -40,7 +40,10 @@ require("publisher follows resolved physical session for an exact alias" in test
 require("publisher.select(registry.find(aliasId));" in test, "test must select registry-resolved physical session")
 require("expect(registry.find(aliasId), same(session));" in test, "test must prove alias resolves to the physical session")
 build = int(m.group(1))
-if build >= 244:
+if build >= 289:
+    require("expect(publisher.feed.value.partialBytes, 1024);" in test, "test must prove inherited authoritative partial progress")
+    require("expect(publisher.feed.value.transportBytes, 512);" in test, "test must keep transient transport cursor distinct from inherited partial")
+elif build >= 244:
     require("expect(publisher.notifier.value.partialBytes, 1024);" in test, "test must prove inherited authoritative partial progress")
     require("expect(publisher.notifier.value.transportBytes, 512);" in test, "test must keep transient transport cursor distinct from inherited partial")
 else:

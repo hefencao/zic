@@ -372,6 +372,22 @@ final class _Factory implements PipelineMediaRuntimeFactory {
   }
 }
 
+final class _TestFrameScheduler implements PipelineFrameScheduler {
+  const _TestFrameScheduler();
+
+  @override
+  bool get inPersistentCallbacks => false;
+
+  @override
+  bool get isIdle => true;
+
+  @override
+  void afterFrame(void Function() callback) => scheduleMicrotask(callback);
+
+  @override
+  void requestFrame() {}
+}
+
 final class _Runtime
     implements PipelineMediaRuntime, PipelineOutputPrewarmer {
   bool closed = false;
@@ -389,6 +405,9 @@ final class _Runtime
 
   @override
   PipelineOutputProjector get outputs => const _Projector();
+
+  @override
+  PipelineFrameScheduler get frameScheduler => const _TestFrameScheduler();
 
   @override
   RendererKind get renderer => RendererKind.flutterImage;

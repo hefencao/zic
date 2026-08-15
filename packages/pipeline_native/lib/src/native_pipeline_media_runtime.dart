@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:bridge/bridge.dart';
 import 'package:domain/domain.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:media/media.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
@@ -117,6 +118,30 @@ final class _TextureTraceTarget {
   final TraceSink traceSink;
 }
 
+
+final class _FlutterPipelineFrameScheduler implements PipelineFrameScheduler {
+  const _FlutterPipelineFrameScheduler();
+
+  @override
+  bool get inPersistentCallbacks =>
+      SchedulerBinding.instance.schedulerPhase ==
+      SchedulerPhase.persistentCallbacks;
+
+  @override
+  bool get isIdle =>
+      SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle;
+
+  @override
+  void afterFrame(void Function() callback) {
+    SchedulerBinding.instance.addPostFrameCallback((_) => callback());
+  }
+
+  @override
+  void requestFrame() {
+    SchedulerBinding.instance.scheduleFrame();
+  }
+}
+
 final class _NativePipelineMediaRuntime
     implements PipelineMediaRuntime, PipelineOutputPrewarmer {
   _NativePipelineMediaRuntime({
@@ -145,6 +170,10 @@ final class _NativePipelineMediaRuntime
 
   @override
   final PipelineOutputProjector outputs;
+
+  @override
+  PipelineFrameScheduler get frameScheduler =>
+      const _FlutterPipelineFrameScheduler();
 
   @override
   Future<void> prewarmOutput({required int width, required int height}) =>

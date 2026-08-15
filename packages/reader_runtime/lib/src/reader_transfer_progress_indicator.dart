@@ -3,6 +3,68 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
 
+final class ReaderTransferProgressFeedIndicator extends StatefulWidget {
+  const ReaderTransferProgressFeedIndicator({
+    super.key,
+    required this.feed,
+    required this.networkKey,
+    required this.partialKey,
+  });
+
+  final PipelineTransferProgressFeed feed;
+  final Key networkKey;
+  final Key partialKey;
+
+  @override
+  State<ReaderTransferProgressFeedIndicator> createState() =>
+      _ReaderTransferProgressFeedIndicatorState();
+}
+
+final class _ReaderTransferProgressFeedIndicatorState
+    extends State<ReaderTransferProgressFeedIndicator> {
+  late PipelineTransferProgress _progress;
+
+  @override
+  void initState() {
+    super.initState();
+    _attach(widget.feed);
+  }
+
+  @override
+  void didUpdateWidget(
+    covariant ReaderTransferProgressFeedIndicator oldWidget,
+  ) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.feed, widget.feed)) {
+      oldWidget.feed.removeListener(_onProgress);
+      _attach(widget.feed);
+    }
+  }
+
+  void _attach(PipelineTransferProgressFeed feed) {
+    _progress = feed.value;
+    feed.addListener(_onProgress, fireImmediately: false);
+  }
+
+  void _onProgress(PipelineTransferProgress progress) {
+    if (!mounted || _progress == progress) return;
+    setState(() => _progress = progress);
+  }
+
+  @override
+  void dispose() {
+    widget.feed.removeListener(_onProgress);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ReaderTransferProgressIndicator(
+        progress: _progress,
+        networkKey: widget.networkKey,
+        partialKey: widget.partialKey,
+      );
+}
+
 final class ReaderTransferProgressIndicator extends StatelessWidget {
   const ReaderTransferProgressIndicator({
     super.key,

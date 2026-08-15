@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:domain/domain.dart';
@@ -8,6 +9,23 @@ import 'package:sessions/sessions.dart';
 import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
+
+
+final class _TestFrameScheduler implements PipelineFrameScheduler {
+  const _TestFrameScheduler();
+
+  @override
+  bool get inPersistentCallbacks => false;
+
+  @override
+  bool get isIdle => true;
+
+  @override
+  void afterFrame(void Function() callback) => scheduleMicrotask(callback);
+
+  @override
+  void requestFrame() {}
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -118,15 +136,17 @@ void main() {
 
     session.beginNetworkAttemptProgress(0);
     session.advanceNetworkAttemptProgress(512, force: true);
-    final publisher = PipelineTransferProgressPublisher();
+    final publisher = PipelineTransferProgressPublisher(
+      frameScheduler: const _TestFrameScheduler(),
+    );
     publisher.select(registry.find(aliasId));
 
     expect(registry.find(aliasId), same(session));
-    expect(publisher.notifier.value.active, isTrue);
-    expect(publisher.notifier.value.partialBytes, 1024);
-    expect(publisher.notifier.value.transportBytes, 512);
-    expect(publisher.notifier.value.phase, PipelineTransferPhase.replayingPrefix);
-    expect(publisher.notifier.value.totalBytes, 128 * 1024);
+    expect(publisher.feed.value.active, isTrue);
+    expect(publisher.feed.value.partialBytes, 1024);
+    expect(publisher.feed.value.transportBytes, 512);
+    expect(publisher.feed.value.phase, PipelineTransferPhase.replayingPrefix);
+    expect(publisher.feed.value.totalBytes, 128 * 1024);
 
     session.advanceNetworkAttemptProgress(1024 + 64 * 1024, force: true);
     await session.append(
@@ -135,8 +155,8 @@ void main() {
       List<int>.filled(64 * 1024, 1),
     );
     await Future<void>.delayed(Duration.zero);
-    expect(publisher.notifier.value.partialBytes, 1024 + 64 * 1024);
-    expect(publisher.notifier.value.transportBytes, 1024 + 64 * 1024);
+    expect(publisher.feed.value.partialBytes, 1024 + 64 * 1024);
+    expect(publisher.feed.value.transportBytes, 1024 + 64 * 1024);
 
     publisher.dispose();
     await session.reset();

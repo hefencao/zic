@@ -39,9 +39,11 @@ final class PipelinePageOutputStream {
     required UploadRegistry uploads,
     required DecodeRegistry decodes,
     required PipelineOutputProjector outputs,
+    required PipelineFrameScheduler frameScheduler,
   })  : _uploads = uploads,
         _decodes = decodes,
         _outputs = outputs,
+        _frameScheduler = frameScheduler,
         _snapshot = PipelinePageOutputSnapshot(
           state: PipelinePageOutputState.idle,
           surface: null,
@@ -56,6 +58,7 @@ final class PipelinePageOutputStream {
   final UploadRegistry _uploads;
   final DecodeRegistry _decodes;
   final PipelineOutputProjector _outputs;
+  final PipelineFrameScheduler _frameScheduler;
   final Set<PipelinePageOutputListener> _listeners =
       <PipelinePageOutputListener>{};
   final Set<PresentClaim> _deferredClaims = <PresentClaim>{};
@@ -392,12 +395,12 @@ final class PipelinePageOutputStream {
       return;
     }
     _deferredClaims.add(claim);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    _frameScheduler.afterFrame(() {
       if (_deferredClaims.remove(claim)) {
         claim.release();
       }
     });
-    WidgetsBinding.instance.scheduleFrame();
+    _frameScheduler.requestFrame();
   }
 
   void _publish(PipelinePageOutputSnapshot snapshot) {

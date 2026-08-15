@@ -1,3 +1,10 @@
+## 0.31.0-dev.289 - Pipeline frame scheduler boundary
+
+- Fix the dev.288 local Dart compile failure where the `pipeline_page_output.dart` part still referenced `WidgetsBinding` after its parent session library stopped importing Flutter widgets; treat it as a hidden framework-owner leak rather than adding another parent import.
+- Add Pipeline-owned `PipelineFrameScheduler`; output visual-claim retirement and transfer-progress frame coalescing consume that capability, while the Flutter `SchedulerBinding` adapter lives only in `pipeline_native` presentation composition.
+- Replace transfer-progress `ValueNotifier` with read-only `PipelineTransferProgressFeed`; ReaderRuntime subscribes through its own Stateful presentation adapter. Keep the existing progress semantics and visual-swap claim lifetime.
+- Constrain direct Flutter imports under `pipeline_runtime/lib/src` to the three explicit adapter seams: opaque Widget surface ABI, Reader session host, and root asset-bundle transport. dev.287/288 dimension projection and all Reader/download scheduling policies are unchanged.
+
 ## 0.31.0-dev.288 - Pipeline dimension projection boundary
 
 - Fix the dev.287 local Dart compile failure where `PipelineReaderSession.pageDimensions` exposed `ValueListenable` without importing its Flutter foundation declaration; do not paper over it with another UI import.
