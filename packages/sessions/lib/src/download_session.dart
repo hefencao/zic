@@ -12,6 +12,8 @@ import 'webp_decode_prefix_hints.dart';
 
 enum DownloadState { idle, queued, receiving, sealed, promoted, failed, disposed }
 
+const int _sourceMetadataPrefixLength = 64;
+
 typedef DownloadSnapshotListener = void Function(DownloadSnapshot snapshot);
 
 /// Supplies the authoritative encoded-byte prefix for a late Reader projection.
@@ -83,6 +85,8 @@ final class DownloadSnapshot {
     this.networkAttemptSequence = 0,
     this.networkAttemptActive = false,
     this.networkCursorLength = 0,
+    this.sourceCanvasWidth,
+    this.sourceCanvasHeight,
   });
 
   final DownloadId id;
@@ -114,6 +118,15 @@ final class DownloadSnapshot {
   /// Unlike [committedLength], this may restart behind an existing playable
   /// partial when a server ignores Range and the task must re-read the prefix.
   final int networkCursorLength;
+
+  /// Source-container canvas dimensions derived from the authoritative ingress
+  /// prefix for this physical generation. These are source metadata, not
+  /// decoder target/output raster dimensions.
+  final int? sourceCanvasWidth;
+  final int? sourceCanvasHeight;
+
+  bool get hasSourceCanvas =>
+      sourceCanvasWidth != null && sourceCanvasHeight != null;
 }
 
 final class DownloadSession {
@@ -166,6 +179,8 @@ final class DownloadSession {
   int _networkFlowProofLength = 0;
 
   List<int> _prefix = <int>[];
+  int? _sourceCanvasWidth;
+  int? _sourceCanvasHeight;
   int _pendingCommitTraceBytes = 0;
   int _pendingCommitTraceChunks = 0;
   int _pendingNativeIngressMicros = 0;
@@ -263,6 +278,8 @@ final class DownloadSession {
         networkAttemptSequence: _networkAttemptSequence,
         networkAttemptActive: _networkAttemptActive,
         networkCursorLength: _networkCursorLength,
+        sourceCanvasWidth: _sourceCanvasWidth,
+        sourceCanvasHeight: _sourceCanvasHeight,
       );
 
   void addSnapshotListener(
@@ -327,13 +344,14 @@ final class DownloadSession {
       verifyPromotedChecksum: verifyPromotedChecksum,
     );
     _prefix = List<int>.of(
-      await artifact.readPrefix(sniffPrefixLength),
+      await artifact.readPrefix(_sourceMetadataPrefixLength),
       growable: true,
     );
     _contentKind = sniffContent(
       _prefix,
       finalChunk: restored.state == ArtifactState.promoted,
     );
+    _refreshSourceCanvasFromPrefix();
 
     _networkStartLength = restored.committedLength;
 
@@ -392,6 +410,8 @@ final class DownloadSession {
         if (wrongOwner) {
           await _restartArtifact();
           _prefix = <int>[];
+          _sourceCanvasWidth = null;
+          _sourceCanvasHeight = null;
           _contentKind = ContentKind.unknown;
         }
       }
@@ -528,6 +548,8 @@ final class DownloadSession {
     _totalLength = totalLength;
     _networkStartLength = 0;
     _prefix = <int>[];
+    _sourceCanvasWidth = null;
+    _sourceCanvasHeight = null;
     _contentKind = ContentKind.unknown;
     _failure = null;
     _resetIngressProjections(_epoch);
@@ -571,11 +593,7 @@ final class DownloadSession {
       nativeIngressMicros: nativeIngressMicros,
       artifactWriteMicros: 0,
     );
-    if (_prefix.length < sniffPrefixLength && chunk.isNotEmpty) {
-      final remaining = sniffPrefixLength - _prefix.length;
-      _prefix.addAll(chunk.take(remaining));
-      _contentKind = sniffContent(_prefix);
-    }
+    _appendSourceMetadataPrefix(offset, chunk);
     _recordCommittedChunk(chunk.length);
   }
 
@@ -661,11 +679,7 @@ final class DownloadSession {
       nativeIngressMicros: nativeIngressMicros,
       artifactWriteMicros: artifactWriteMicros,
     );
-    if (_prefix.length < sniffPrefixLength && chunk.isNotEmpty) {
-      final remaining = sniffPrefixLength - _prefix.length;
-      _prefix.addAll(chunk.take(remaining));
-      _contentKind = sniffContent(_prefix);
-    }
+    _appendSourceMetadataPrefix(offset, chunk);
     _recordCommittedChunk(chunk.length);
   }
 
@@ -1019,6 +1033,8 @@ final class DownloadSession {
     _residentBodyAuthority = null;
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
+    _sourceCanvasWidth = null;
+    _sourceCanvasHeight = null;
     _failure = null;
     _resetPlayablePrefixEvidence();
     await _restartArtifact();
@@ -1057,6 +1073,8 @@ final class DownloadSession {
     _residentBodyAuthority = null;
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
+    _sourceCanvasWidth = null;
+    _sourceCanvasHeight = null;
     _resetPlayablePrefixEvidence();
     await index?.remove(id.key);
     _emit(
@@ -1105,6 +1123,94 @@ final class DownloadSession {
     }
     if (artifactWriteMicros > _pendingMaxArtifactWriteMicros) {
       _pendingMaxArtifactWriteMicros = artifactWriteMicros;
+    }
+  }
+
+  /// Returns the generation-local encoded prefix retained by the physical
+  /// ingress owner. Resident artifact-cache sessions intentionally may have an
+  /// empty [Artifact], so callers must not infer source metadata from that file.
+  Uint8List readIngressPrefix(int maxBytes) {
+    if (maxBytes <= 0 || _prefix.isEmpty) return Uint8List(0);
+    final end = maxBytes < _prefix.length ? maxBytes : _prefix.length;
+    return Uint8List.fromList(_prefix.sublist(0, end));
+  }
+
+  /// Reads an encoded prefix through this physical generation's body owner.
+  /// Small metadata reads hit the generation-local ingress prefix. Larger
+  /// reads use the external replay authority for resident bodies and the
+  /// session Artifact only for ordinary artifact-backed generations.
+  Future<Uint8List> readSourcePrefix(
+    int maxBytes, {
+    DownloadIngressReplayChunks? residentReplaySource,
+  }) async {
+    if (maxBytes <= 0 || committedLength <= 0) return Uint8List(0);
+    final end = maxBytes < committedLength ? maxBytes : committedLength;
+    if (end <= _prefix.length) {
+      return Uint8List.fromList(_prefix.sublist(0, end));
+    }
+    if (!_residentBodyBacked) {
+      return Uint8List.fromList(await artifact.readPrefix(end));
+    }
+    final replay = residentReplaySource;
+    if (replay == null) {
+      return readIngressPrefix(end);
+    }
+    final chunks = await replay(this, end);
+    final builder = BytesBuilder(copy: false);
+    var remaining = end;
+    await for (final rawChunk in chunks) {
+      if (remaining <= 0) break;
+      final chunk = rawChunk is Uint8List
+          ? rawChunk
+          : Uint8List.fromList(rawChunk);
+      if (chunk.length <= remaining) {
+        builder.add(chunk);
+        remaining -= chunk.length;
+      } else {
+        builder.add(chunk.sublist(0, remaining));
+        remaining = 0;
+      }
+    }
+    final result = builder.takeBytes();
+    if (result.length != end) {
+      throw Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'resident source prefix replay was short: '
+            '${result.length}/$end',
+      );
+    }
+    return result;
+  }
+
+  void _appendSourceMetadataPrefix(int offset, Uint8List chunk) {
+    if (chunk.isEmpty || _prefix.length >= _sourceMetadataPrefixLength) {
+      return;
+    }
+    // Prefix facts are only valid when bytes are contiguous from offset zero.
+    // Restored partials pre-populate [_prefix]; resumed suffix writes therefore
+    // do not need to reconstruct source metadata from a non-zero offset.
+    if (offset > _prefix.length) return;
+    final skip = _prefix.length - offset;
+    if (skip >= chunk.length) return;
+    final remaining = _sourceMetadataPrefixLength - _prefix.length;
+    final available = chunk.length - skip;
+    final take = remaining < available ? remaining : available;
+    _prefix.addAll(chunk.sublist(skip, skip + take));
+    _contentKind = sniffContent(_prefix);
+    _refreshSourceCanvasFromPrefix();
+  }
+
+  void _refreshSourceCanvasFromPrefix() {
+    if (_sourceCanvasWidth != null || _sourceCanvasHeight != null) return;
+    if (_prefix.length < 20) return;
+    try {
+      final info = parseWebpPrefixInfo(Uint8List.fromList(_prefix));
+      if (info == null) return;
+      _sourceCanvasWidth = info.width;
+      _sourceCanvasHeight = info.height;
+    } on FormatException {
+      // Content sniffing remains the authority for type classification. A bad
+      // or incomplete metadata header must not fail the transfer generation.
     }
   }
 

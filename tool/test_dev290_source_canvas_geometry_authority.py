@@ -16,6 +16,7 @@ def require(path, *markers):
 pub = text('apps/app/pubspec.yaml')
 m = re.search(r'^version:\s+0\.31\.0\+(\d+)\s*$', pub, re.M)
 req(m is not None and int(m.group(1)) >= 290, 'dev.290 app version missing')
+app_version = int(m.group(1))
 props = text('apps/app/android/zic-version.properties')
 m = re.search(r'^versionCode=(\d+)\s*$', props, re.M)
 req(m is not None and int(m.group(1)) >= 290, 'dev.290 Android version missing')
@@ -47,17 +48,28 @@ require(
     'prior.basis == PipelinePageDimensionBasis.sourceCanvas',
     'dimensions.basis == PipelinePageDimensionBasis.decodedRaster',
 )
-require(
-    'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
+pipeline_reader = text('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
+for marker in (
     'Future<void> _resolveAndPublishPageDimensions(',
-    'await download.artifact.readPrefix(64)',
-    'final info = parseWebpPrefixInfo(prefix);',
     'basis = PipelinePageDimensionBasis.sourceCanvas;',
-    "source = 'webp-prefix-source-canvas';",
     "source = 'decode-raster-fallback';",
     "'decodedWidth': decodedWidth,",
     "'decodedHeight': decodedHeight,",
-)
+):
+    req(marker in pipeline_reader, f'Pipeline source-canvas contract missing: {marker}')
+if app_version < 291:
+    for marker in (
+        'await download.artifact.readPrefix(64)',
+        'final info = parseWebpPrefixInfo(prefix);',
+        "source = 'webp-prefix-source-canvas';",
+    ):
+        req(marker in pipeline_reader, f'dev.290 source-canvas implementation missing: {marker}')
+else:
+    req('await download.artifact.readPrefix(64)' not in pipeline_reader,
+        'dev.291+ must not infer source metadata from the session Artifact')
+    req('snapshot?.sourceCanvasWidth' in pipeline_reader and
+        "source = 'physical-ingress-source-canvas';" in pipeline_reader,
+        'dev.291+ must preserve source-canvas authority through physical ingress metadata')
 
 reader = text('packages/reader_runtime/lib/src/reader_runtime_screen.dart')
 for marker in (

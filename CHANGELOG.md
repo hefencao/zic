@@ -1,3 +1,10 @@
+## 0.31.0-dev.291 - Physical ingress source metadata authority
+
+- 03:30 dev.290 device Trace shows all 12 `pageDimensionsResolved` events still use `basis=decodedRaster / source=decode-raster-fallback`; source-canvas resolution never hits despite future-page geometry commonly being prepared well before current, so do not widen decode previous1/next2.
+- Fix the ownership error behind that miss: artifact-cache resident physical sessions intentionally do not duplicate immutable body bytes into `DownloadSession.artifact`, yet both Pipeline dimension resolution and `PipelinePageStream.readPrefix()` read that non-authoritative Artifact and silently lost source metadata.
+- Retain only a generation-local 64-byte source-metadata prefix inside `DownloadSession`, parse WebP source canvas there, expose it read-only through `DownloadSnapshot`/`readIngressPrefix()`, and make Pipeline/UI projections consume that physical ingress fact instead of selecting a storage backend. Encoded body ownership and all Reader/Pipeline windows remain unchanged.
+- Keep dev.290 source-canvas-over-raster semantics but supersede its direct `download.artifact.readPrefix(64)` implementation. The next device Trace must first prove `physical-ingress-source-canvas` is reached before any further scale hypothesis is promoted.
+
 ## 0.31.0-dev.290 - Source-canvas geometry authority
 
 - 02:30 dev.289 device Trace falsifies predecode-window insufficiency for the reproduced scale defect: imminent page dimensions/geometry are already prepared roughly 0.4–3 seconds before visibility/current, so keep previous1/next2 decode and previous3/next7 encoded windows frozen.

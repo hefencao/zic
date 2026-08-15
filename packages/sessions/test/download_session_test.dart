@@ -465,6 +465,56 @@ void main() {
     sources.dispose();
   });
 
+  test('resident cache retains source metadata prefix outside Artifact', () {
+    final prefix = <int>[
+      0x52, 0x49, 0x46, 0x46,
+      0xf4, 0x03, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50,
+      0x56, 0x50, 0x38, 0x20,
+      0xe8, 0x03, 0x00, 0x00,
+      0x00, 0x00, 0x00,
+      0x9d, 0x01, 0x2a,
+      0x80, 0x02,
+      0xb0, 0x04,
+    ];
+    session.beginResidentImmutableIngress(
+      validators: const Validators(),
+      totalLength: prefix.length,
+    );
+    session.appendResidentImmutableIngress(0, prefix);
+    session.sealResidentImmutableIngress();
+
+    expect(session.artifact.committedLength, 0);
+    expect(session.snapshot.sourceCanvasWidth, 640);
+    expect(session.snapshot.sourceCanvasHeight, 1200);
+    expect(session.readIngressPrefix(prefix.length), prefix);
+  });
+
+  test('resident source prefix uses external body authority beyond metadata',
+      () async {
+    final bytes = <int>[
+      0x52, 0x49, 0x46, 0x46,
+      0x80, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50,
+      ...List<int>.generate(120, (index) => index & 0xff),
+    ];
+    session.beginResidentImmutableIngress(
+      validators: const Validators(),
+      totalLength: bytes.length,
+    );
+    session.appendResidentImmutableIngress(0, bytes);
+    session.sealResidentImmutableIngress();
+
+    final prefix = await session.readSourcePrefix(96,
+        residentReplaySource: (physical, endExclusive) async {
+      expect(physical, same(session));
+      return Stream<List<int>>.value(bytes.sublist(0, endExclusive));
+    });
+
+    expect(session.artifact.committedLength, 0);
+    expect(prefix, bytes.sublist(0, 96));
+  });
+
   test('resident-cache late Reader replays from external byte authority',
       () async {
     final bytes = <int>[...'RIFF....WEBP'.codeUnits, 1, 2, 3, 4, 5, 6];

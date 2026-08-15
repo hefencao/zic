@@ -911,6 +911,7 @@ final class PipelineReaderSession {
       () => PipelinePageStream.forDownload(
         id,
         resolvePhysical: () => _downloads.find(id),
+        residentReplaySource: _openResidentReplaySource,
       )..refreshBinding(),
     );
   }
@@ -1465,23 +1466,17 @@ final class PipelineReaderSession {
       source = 'manifest-source-canvas';
     } else {
       final download = _downloads.find(id.download);
-      if (download != null) {
-        try {
-          final prefix = Uint8List.fromList(
-            await download.artifact.readPrefix(64),
-          );
-          if (_disposed) return;
-          final info = parseWebpPrefixInfo(prefix);
-          if (info != null) {
-            width = info.width;
-            height = info.height;
-            basis = PipelinePageDimensionBasis.sourceCanvas;
-            source = 'webp-prefix-source-canvas';
-          }
-        } on Object {
-          // A decoded raster is still a useful provisional ratio. Exact source
-          // canvas metadata can upgrade it later through the same feed.
-        }
+      final snapshot = download?.snapshot;
+      final prefixWidth = snapshot?.sourceCanvasWidth;
+      final prefixHeight = snapshot?.sourceCanvasHeight;
+      if (prefixWidth != null &&
+          prefixHeight != null &&
+          prefixWidth > 0 &&
+          prefixHeight > 0) {
+        width = prefixWidth;
+        height = prefixHeight;
+        basis = PipelinePageDimensionBasis.sourceCanvas;
+        source = 'physical-ingress-source-canvas';
       }
     }
     if (_disposed) return;

@@ -52,10 +52,13 @@ final class PipelinePageStream {
   PipelinePageStream.forDownload(
     this.identity, {
     required DownloadSession? Function() resolvePhysical,
-  }) : _resolvePhysical = resolvePhysical;
+    DownloadIngressReplayChunks? residentReplaySource,
+  })  : _resolvePhysical = resolvePhysical,
+        _residentReplaySource = residentReplaySource;
 
   final DownloadId identity;
   final DownloadSession? Function() _resolvePhysical;
+  final DownloadIngressReplayChunks? _residentReplaySource;
   DownloadSession? _session;
   final Set<PipelinePageStreamListener> _listeners =
       <PipelinePageStreamListener>{};
@@ -84,7 +87,10 @@ final class PipelinePageStream {
   Future<Uint8List> readPrefix(int maxBytes) async {
     final session = _session;
     if (session == null || maxBytes <= 0) return Uint8List(0);
-    return Uint8List.fromList(await session.artifact.readPrefix(maxBytes));
+    return session.readSourcePrefix(
+      maxBytes,
+      residentReplaySource: _residentReplaySource,
+    );
   }
 
   void addListener(
