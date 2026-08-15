@@ -724,7 +724,8 @@ final class MediaRasterImage extends StatelessWidget {
 
 typedef MediaAspectChildBuilder = Widget Function(BoxFit innerFit);
 
-Alignment mediaAlignmentFor(BoxFit fit) => Alignment.center;
+Alignment mediaAlignmentFor(BoxFit fit) =>
+    fit == BoxFit.fitWidth ? Alignment.topCenter : Alignment.center;
 
 final class MediaAspectViewport extends StatelessWidget {
   const MediaAspectViewport({
@@ -743,15 +744,11 @@ final class MediaAspectViewport extends StatelessWidget {
     if (source == null || source.width <= 0 || source.height <= 0) {
       return SizedBox.expand(child: builder(fit));
     }
-    if (fit == BoxFit.fitWidth) {
-      // In continuous mode ReaderVerticalGeometry already owns the exact
-      // aspect-preserving, physical-pixel-aligned page box. Recomputing a
-      // second fitted height here can leave a subpixel strip at the boundary.
-      return SizedBox.expand(
-        key: mediaAspectViewportKey,
-        child: builder(BoxFit.fill),
-      );
-    }
+    // Presentation must never inherit a transient aspect error from the
+    // parent sliver. Continuous Reader owns page extent/navigation geometry,
+    // while media owns source-aspect preservation. In fitWidth mode the page
+    // top stays fixed and any temporary extent mismatch is clipped/blanked at
+    // the trailing edge instead of stretching the texture until layout idles.
     return SizedBox.expand(
       key: mediaAspectViewportKey,
       child: FittedBox(

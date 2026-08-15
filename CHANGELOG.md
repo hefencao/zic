@@ -1,3 +1,9 @@
+## 0.31.0-dev.293 - Vertical media aspect independence
+
+- 05:01 dev.292 device Trace closes the predecode/source-metadata hypothesis for the reproduced scale defect: pages 18-22 resolve `physical-ingress-source-canvas` roughly 0.9-5.5 seconds before first current, and source-canvas vs decoded-raster aspect error is only about 0.00-0.03%, yet active-scroll scale remains abnormal. Keep previous1/next2 decode and previous3/next7 encoded windows frozen.
+- Supersede the old stitched shortcut that converted `MediaAspectViewport(fitWidth)` into `BoxFit.fill`. Reader continues to own item extent/navigation geometry, while media presentation independently preserves source aspect with top-aligned `FittedBox(fitWidth)`; a transient parent-extent mismatch may clip/blank only at the trailing edge, but may never stretch the image until idle.
+- Do not restore dev.286 `presentationExtentAt`/OverflowBox or add another geometry owner. Preserve dev.291/292 physical ingress/replay authority and all Pipeline/NetLane/texture/retention policy windows.
+
 ## 0.31.0-dev.292 - Resident replay service binding boundary
 
 - Fix the dev.291 local Dart compile failures caused by mixing the unbound `(DownloadSession, endExclusive)` resident replay service with the already-bound `(endExclusive)` physical-generation capability; DownloadSession now consumes only the bound callback and PipelinePageStream binds exactly once to its currently resolved physical session.

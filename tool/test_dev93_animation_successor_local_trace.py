@@ -8,6 +8,13 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding='utf-8')
 
 
+
+
+def current_dev() -> int:
+    for line in read('apps/app/pubspec.yaml').splitlines():
+        if line.startswith('version:') and '+' in line:
+            return int(line.rsplit('+', 1)[1].strip())
+    raise SystemExit('FAIL: app version code missing')
 def require(path: str, *tokens: str) -> None:
     text = read(path)
     missing = [token for token in tokens if token not in text]
@@ -51,12 +58,22 @@ require(
     'packages/sessions/test/live_coordinator_test.dart',
     'authoritative seal are distinct decode opportunities',
 )
-require(
-    'packages/local_media_ui/test/media_aspect_viewport_test.dart',
-    'tester.getRect(find.byKey(childKey)).size',
-    'continuous fitWidth trusts the authoritative parent geometry',
-    'findsNothing',
-)
+if current_dev() >= 293:
+    require(
+        'packages/local_media_ui/test/media_aspect_viewport_test.dart',
+        'continuous fitWidth preserves source aspect across a transient parent extent',
+        'BoxFit.fitWidth',
+        'Alignment.topCenter',
+        'sourceBox.width, 100',
+        'sourceBox.height, 400',
+    )
+else:
+    require(
+        'packages/local_media_ui/test/media_aspect_viewport_test.dart',
+        'tester.getRect(find.byKey(childKey)).size',
+        'continuous fitWidth trusts the authoritative parent geometry',
+        'findsNothing',
+    )
 require(
     'packages/texture_bridge/lib/src/android_texture_presenter.dart',
     'required this.roundTripMicros,',

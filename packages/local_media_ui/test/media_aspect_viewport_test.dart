@@ -35,7 +35,7 @@ void main() {
   });
 
   testWidgets(
-      'continuous fitWidth trusts the authoritative parent geometry',
+      'continuous fitWidth preserves source aspect across a transient parent extent',
       (tester) async {
     const childKey = ValueKey<String>('continuous-media-child');
     await tester.pumpWidget(
@@ -57,15 +57,22 @@ void main() {
       ),
     );
 
-    expect(find.descendant(
+    final fitted = tester.widget<FittedBox>(find.descendant(
       of: find.byKey(mediaAspectViewportKey),
       matching: find.byType(FittedBox),
-    ), findsNothing);
+    ));
+    expect(fitted.fit, BoxFit.fitWidth);
+    expect(fitted.alignment, Alignment.topCenter);
     expect(
       tester.getRect(find.byKey(mediaAspectViewportKey)).size,
       const Size(200, 200),
     );
-    expect(tester.getRect(find.byKey(childKey)).size, const Size(200, 200));
+    // The fitted source box remains 1:4 even though the parent is temporarily
+    // square. FittedBox may paint it wider/taller, but it never rewrites the
+    // source box to the parent's 1:1 aspect.
+    final sourceBox = fitted.child! as SizedBox;
+    expect(sourceBox.width, 100);
+    expect(sourceBox.height, 400);
   });
 
   testWidgets('unknown intrinsic size keeps requested fit instead of filling',

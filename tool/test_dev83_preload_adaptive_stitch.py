@@ -10,6 +10,13 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+
+
+def current_dev() -> int:
+    for line in read('apps/app/pubspec.yaml').splitlines():
+        if line.startswith('version:') and '+' in line:
+            return int(line.rsplit('+', 1)[1].strip())
+    raise AssertionError('app version code missing')
 def require(path: str, *tokens: str) -> None:
     text = read(path)
     missing = [token for token in tokens if token not in text]
@@ -46,8 +53,18 @@ def main() -> None:
         "networkConcurrency: 5",
         "decodeConcurrency: 3",
         "uploadConcurrency: 2",
-        "return ReaderPipelineProfile.stable",
     )
+    if current_dev() >= 293:
+        require(
+            "packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart",
+            "ReaderPipelineProfile readerPipelineProfileFor(",
+            "ReaderPipelineProfile.stable;",
+        )
+    else:
+        require(
+            "packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart",
+            "return ReaderPipelineProfile.stable",
+        )
     reject(
         "packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart",
         "uri.scheme",
@@ -143,11 +160,24 @@ def main() -> None:
         "Transform.translate",
         "Positioned(top: -",
     )
-    require(
-        "packages/local_media_ui/lib/src/local_image_player.dart",
-        "ReaderVerticalGeometry already owns the exact",
-        "builder(BoxFit.fill)",
-    )
+    if current_dev() >= 293:
+        require(
+            "packages/local_media_ui/lib/src/local_image_player.dart",
+            "Presentation must never inherit a transient aspect error",
+            "fit == BoxFit.fitWidth ? Alignment.topCenter",
+            "fit: fit,",
+            "builder(BoxFit.fill)",
+        )
+        reject(
+            "packages/local_media_ui/lib/src/local_image_player.dart",
+            "ReaderVerticalGeometry already owns the exact",
+        )
+    else:
+        require(
+            "packages/local_media_ui/lib/src/local_image_player.dart",
+            "ReaderVerticalGeometry already owns the exact",
+            "builder(BoxFit.fill)",
+        )
     require(
         "packages/texture_bridge/lib/src/native_texture_viewport.dart",
         "if (fit == BoxFit.fill)",
