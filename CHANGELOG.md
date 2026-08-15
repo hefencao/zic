@@ -1,3 +1,9 @@
+## 0.31.0-dev.300 - Reader frame timing adapter boundary
+
+- Fix the dev.299 local Flutter compile failure where `ReaderView` referenced `FramePhase.vsyncStart` without owning/importing the dart:ui timing API. Do not patch this by importing engine enums into the Reader widget.
+- Introduce a framework-neutral `ReaderFrameTimingSource` / `ReaderFrameTimingSample` contract in `reader`; move `SchedulerBinding.addTimingsCallback`, `dart:ui.FrameTiming` and `FramePhase` parsing into the `reader_runtime` Flutter presentation adapter. Reader keeps only scroll/current/interaction correlation and Trace emission.
+- Preserve dev.299 direction-stable `current±2` static presentation continuity unchanged. Frame timing remains diagnostic-only; it does not drive geometry, navigation, Pipeline, decode/upload policy or scheduling.
+
 ## 0.31.0-dev.299 - Direction-stable static presentation continuity and frame cadence telemetry
 
 - The 10:27 dev.298 device Trace shows dev.298 was only directionally effective: actual page layout remains stable, but previously presented authoritative static frame 0 still re-enters platform presentation as zero-copy resident reuse. Page14 is already presented, then current moves 14 -> 13 -> 12 with readDirection=-1; page14 remains only two pages away yet drops out of the directional previous1/next2 decode plan, clears its UI projection, and is re-presented when it becomes visible transition again. The page host itself stays mounted.

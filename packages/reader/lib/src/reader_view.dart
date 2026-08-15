@@ -3,10 +3,10 @@ import 'dart:math' as math;
 
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'reader_controller.dart';
+import 'reader_frame_timing.dart';
 import 'vertical_reader_geometry.dart';
 
 typedef ReaderPageBuilder = Widget? Function(
@@ -59,6 +59,7 @@ final class ReaderView extends StatefulWidget {
     required this.controller,
     required this.clock,
     this.traceSink = const NoopTraceSink(),
+    this.frameTimingSource,
     this.pageBuilder,
     this.demandRevision,
     this.onTap,
@@ -70,6 +71,7 @@ final class ReaderView extends StatefulWidget {
   final ReaderController controller;
   final MonoClock clock;
   final TraceSink traceSink;
+  final ReaderFrameTimingSource? frameTimingSource;
   final ReaderPageBuilder? pageBuilder;
   final int Function()? demandRevision;
   final VoidCallback? onTap;
@@ -105,7 +107,7 @@ final class _ReaderViewState extends State<ReaderView> {
   int? _lastVerticalVisibleMaxIndex;
   late List<GlobalKey> _verticalPageLayoutKeys;
   int _lastVerticalLayoutSnapshotMicros = -1000000;
-  int? _lastVerticalFrameVsyncStartMicros;
+  ReaderFrameTimingSubscription? _frameTimingSubscription;
   Size _viewport = Size.zero;
   double _devicePixelRatio = 1;
   late ReadingDirection _lastDirection;
@@ -148,7 +150,7 @@ final class _ReaderViewState extends State<ReaderView> {
     _pageSlots = _createPageSlots();
     _verticalLayoutRatios = widget.pageAspectRatios;
     widget.controller.addListener(_handleControllerCommand);
-    SchedulerBinding.instance.addTimingsCallback(_handleFrameTimings);
+    _attachFrameTimingSource();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _syncToCurrentPage();
@@ -159,6 +161,10 @@ final class _ReaderViewState extends State<ReaderView> {
   @override
   void didUpdateWidget(covariant ReaderView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.frameTimingSource != widget.frameTimingSource) {
+      _detachFrameTimingSource();
+      _attachFrameTimingSource();
+    }
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_handleControllerCommand);
       widget.controller.addListener(_handleControllerCommand);
@@ -178,7 +184,6 @@ final class _ReaderViewState extends State<ReaderView> {
       _lastVerticalVisibleMaxIndex = widget.controller.currentIndex;
       _verticalPageLayoutKeys = _createVerticalPageLayoutKeys();
       _lastVerticalLayoutSnapshotMicros = -1000000;
-      _lastVerticalFrameVsyncStartMicros = null;
       _lastDirection = widget.controller.direction;
       _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
       _pageSlots = _createPageSlots();
@@ -236,7 +241,7 @@ final class _ReaderViewState extends State<ReaderView> {
 
   @override
   void dispose() {
-    SchedulerBinding.instance.removeTimingsCallback(_handleFrameTimings);
+    _detachFrameTimingSource();
     widget.controller.removeListener(_handleControllerCommand);
     _pageController.dispose();
     _verticalController.dispose();
@@ -855,9 +860,19 @@ final class _ReaderViewState extends State<ReaderView> {
     }
   }
 
-  void _handleFrameTimings(List<FrameTiming> timings) {
+  void _attachFrameTimingSource() {
+    final source = widget.frameTimingSource;
+    if (source == null || _frameTimingSubscription != null) return;
+    _frameTimingSubscription = source.subscribe(_handleFrameTimings);
+  }
+
+  void _detachFrameTimingSource() {
+    _frameTimingSubscription?.cancel();
+    _frameTimingSubscription = null;
+  }
+
+  void _handleFrameTimings(List<ReaderFrameTimingSample> timings) {
     if (!mounted || widget.controller.direction != ReadingDirection.vertical) {
-      _lastVerticalFrameVsyncStartMicros = null;
       return;
     }
     final position =
@@ -876,13 +891,6 @@ final class _ReaderViewState extends State<ReaderView> {
             .index
         : widget.controller.currentIndex;
     for (final timing in timings) {
-      final vsyncStartMicros =
-          timing.timestampInMicroseconds(FramePhase.vsyncStart);
-      final priorVsyncStart = _lastVerticalFrameVsyncStartMicros;
-      final frameIntervalMicros = priorVsyncStart == null
-          ? null
-          : vsyncStartMicros - priorVsyncStart;
-      _lastVerticalFrameVsyncStartMicros = vsyncStartMicros;
       widget.traceSink.record(
         traceEvent(
           clock: widget.clock,
@@ -890,13 +898,13 @@ final class _ReaderViewState extends State<ReaderView> {
           kind: TraceEventKind.readerFrameTiming,
           revision: widget.demandRevision?.call(),
           payload: <String, Object?>{
-            'buildMicros': timing.buildDuration.inMicroseconds,
-            'rasterMicros': timing.rasterDuration.inMicroseconds,
-            'totalSpanMicros': timing.totalSpan.inMicroseconds,
-            'vsyncOverheadMicros': timing.vsyncOverhead.inMicroseconds,
-            'vsyncStartMicros': vsyncStartMicros,
-            if (frameIntervalMicros != null)
-              'frameIntervalMicros': frameIntervalMicros,
+            'buildMicros': timing.buildMicros,
+            'rasterMicros': timing.rasterMicros,
+            'totalSpanMicros': timing.totalSpanMicros,
+            'vsyncOverheadMicros': timing.vsyncOverheadMicros,
+            'vsyncStartMicros': timing.vsyncStartMicros,
+            if (timing.frameIntervalMicros != null)
+              'frameIntervalMicros': timing.frameIntervalMicros,
             if (scrollPixels != null) 'scrollPixels': scrollPixels,
             if (viewportDimension != null)
               'viewportDimension': viewportDimension,

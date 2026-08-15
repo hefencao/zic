@@ -10,6 +10,7 @@ import 'package:pipeline_runtime/pipeline_runtime.dart';
 import 'package:reader/reader.dart';
 import 'package:telemetry/telemetry.dart';
 
+import 'flutter_reader_frame_timing_source.dart';
 import 'reader_session_settings.dart';
 import 'reader_settings_fields.dart';
 import 'reader_transfer_progress_indicator.dart';
@@ -1063,6 +1064,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
               controller: reader,
               clock: _pipeline.clock,
               traceSink: _pipeline.trace,
+              frameTimingSource: const FlutterReaderFrameTimingSource(),
               pageBuilder: pageBuilder,
               demandRevision: () => _pipeline.revision,
               onTap: _toggleControls,
