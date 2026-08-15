@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'reader_controller.dart';
@@ -104,6 +105,7 @@ final class _ReaderViewState extends State<ReaderView> {
   int? _lastVerticalVisibleMaxIndex;
   late List<GlobalKey> _verticalPageLayoutKeys;
   int _lastVerticalLayoutSnapshotMicros = -1000000;
+  int? _lastVerticalFrameVsyncStartMicros;
   Size _viewport = Size.zero;
   double _devicePixelRatio = 1;
   late ReadingDirection _lastDirection;
@@ -146,6 +148,7 @@ final class _ReaderViewState extends State<ReaderView> {
     _pageSlots = _createPageSlots();
     _verticalLayoutRatios = widget.pageAspectRatios;
     widget.controller.addListener(_handleControllerCommand);
+    SchedulerBinding.instance.addTimingsCallback(_handleFrameTimings);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _syncToCurrentPage();
@@ -175,6 +178,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _lastVerticalVisibleMaxIndex = widget.controller.currentIndex;
       _verticalPageLayoutKeys = _createVerticalPageLayoutKeys();
       _lastVerticalLayoutSnapshotMicros = -1000000;
+      _lastVerticalFrameVsyncStartMicros = null;
       _lastDirection = widget.controller.direction;
       _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
       _pageSlots = _createPageSlots();
@@ -232,6 +236,7 @@ final class _ReaderViewState extends State<ReaderView> {
 
   @override
   void dispose() {
+    SchedulerBinding.instance.removeTimingsCallback(_handleFrameTimings);
     widget.controller.removeListener(_handleControllerCommand);
     _pageController.dispose();
     _verticalController.dispose();
@@ -847,6 +852,61 @@ final class _ReaderViewState extends State<ReaderView> {
     }
     if (_pageController.hasClients) {
       _pageController.jumpToPage(index);
+    }
+  }
+
+  void _handleFrameTimings(List<FrameTiming> timings) {
+    if (!mounted || widget.controller.direction != ReadingDirection.vertical) {
+      _lastVerticalFrameVsyncStartMicros = null;
+      return;
+    }
+    final position =
+        _verticalController.hasClients ? _verticalController.position : null;
+    final scrollPixels = position?.pixels;
+    final viewportDimension = position?.viewportDimension;
+    final currentIndex = position != null &&
+            position.hasContentDimensions &&
+            viewportDimension != null &&
+            viewportDimension > 0
+        ? _verticalGeometry()
+            .positionAt(
+              pixels: scrollPixels ?? 0,
+              viewportDimension: viewportDimension,
+            )
+            .index
+        : widget.controller.currentIndex;
+    for (final timing in timings) {
+      final vsyncStartMicros =
+          timing.timestampInMicroseconds(FramePhase.vsyncStart);
+      final priorVsyncStart = _lastVerticalFrameVsyncStartMicros;
+      final frameIntervalMicros = priorVsyncStart == null
+          ? null
+          : vsyncStartMicros - priorVsyncStart;
+      _lastVerticalFrameVsyncStartMicros = vsyncStartMicros;
+      widget.traceSink.record(
+        traceEvent(
+          clock: widget.clock,
+          sessionId: widget.controller.sessionId,
+          kind: TraceEventKind.readerFrameTiming,
+          revision: widget.demandRevision?.call(),
+          payload: <String, Object?>{
+            'buildMicros': timing.buildDuration.inMicroseconds,
+            'rasterMicros': timing.rasterDuration.inMicroseconds,
+            'totalSpanMicros': timing.totalSpan.inMicroseconds,
+            'vsyncOverheadMicros': timing.vsyncOverhead.inMicroseconds,
+            'vsyncStartMicros': vsyncStartMicros,
+            if (frameIntervalMicros != null)
+              'frameIntervalMicros': frameIntervalMicros,
+            if (scrollPixels != null) 'scrollPixels': scrollPixels,
+            if (viewportDimension != null)
+              'viewportDimension': viewportDimension,
+            'currentIndex': currentIndex,
+            'interaction': _interaction.name,
+            'scrollActive': _verticalScrollActive,
+            'stitched': widget.verticalStitch,
+          },
+        ),
+      );
     }
   }
 

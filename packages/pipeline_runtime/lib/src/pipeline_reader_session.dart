@@ -936,8 +936,9 @@ final class PipelineReaderSession {
     final uploadIdentity = _activeUploadIdentity(id);
     output._bind(
       uploadIdentity,
-      retainedStaticIdentity:
-          uploadIdentity == null ? _activeDecodeIdentity(id) : null,
+      retainedStaticIdentity: uploadIdentity == null
+          ? _staticPresentationContinuityIdentity(id)
+          : null,
     );
     return output;
   }
@@ -1609,6 +1610,39 @@ final class PipelineReaderSession {
     return null;
   }
 
+  /// Presentation-only continuity for an already-presented static surface.
+  ///
+  /// Directional decode work remains previous1/next2. During a direction flip,
+  /// however, a page at absolute distance two can leave that directional plan
+  /// while still belonging to the union of the two possible directional
+  /// windows. Clearing an already visible static surface at that point lets
+  /// decode eligibility own UI lifetime and forces a later whole-page resident
+  /// re-presentation.
+  ///
+  /// This helper never creates decode/upload work. It reconstructs only the
+  /// current target identity so PipelinePageOutputStream can verify whether its
+  /// existing authoritative static projection is still the same surface.
+  DecodeId? _staticPresentationContinuityIdentity(DownloadId download) {
+    final binding = _binding;
+    final viewport = binding?.viewport;
+    if (binding == null || viewport == null) {
+      return null;
+    }
+    final pageIndex = _pageIndexByPageId[download.content.pageId];
+    if (pageIndex == null ||
+        (pageIndex - viewport.currentPageIndex).abs() > 2) {
+      return null;
+    }
+    final target = binding.pipeline.decodeTarget;
+    return DecodeId(
+      download: download,
+      physicalWidth: target.physicalWidth,
+      physicalHeight: target.physicalHeight,
+      pixelFormat: target.pixelFormat,
+      renderer: target.renderer,
+    );
+  }
+
   void _syncPageStreams() {
     for (final stream in _pageStreams.values) {
       stream.refreshBinding();
@@ -1620,8 +1654,9 @@ final class PipelineReaderSession {
       final uploadIdentity = _activeUploadIdentity(output.download);
       output._bind(
         uploadIdentity,
-        retainedStaticIdentity:
-            uploadIdentity == null ? _activeDecodeIdentity(output.download) : null,
+        retainedStaticIdentity: uploadIdentity == null
+            ? _staticPresentationContinuityIdentity(output.download)
+            : null,
       );
     }
   }

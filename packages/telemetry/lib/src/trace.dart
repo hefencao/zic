@@ -56,6 +56,7 @@ enum TraceEventKind {
   pageDimensionsResolved,
   pageGeometryPrepared,
   pageLayoutSnapshot,
+  readerFrameTiming,
   uploadState,
   frameUploaded,
   lastFrameKept,

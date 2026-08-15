@@ -1,3 +1,9 @@
+## 0.31.0-dev.299 - Direction-stable static presentation continuity and frame cadence telemetry
+
+- The 10:27 dev.298 device Trace shows dev.298 was only directionally effective: actual page layout remains stable, but previously presented authoritative static frame 0 still re-enters platform presentation as zero-copy resident reuse. Page14 is already presented, then current moves 14 -> 13 -> 12 with readDirection=-1; page14 remains only two pages away yet drops out of the directional previous1/next2 decode plan, clears its UI projection, and is re-presented when it becomes visible transition again. The page host itself stays mounted.
+- Keep the existing directional decode previous1/next2 policy unchanged, but make already-presented static UI continuity direction-stable within the union of those directional windows: current±2. This envelope may retain only an existing authoritative static surface/PresentClaim; it creates no DecodeDemand, UploadDemand, decode session, upload work or present call, and releases outside ±2 or on target/generation/dispose/listener invalidation.
+- Add Reader-owned Flutter `FrameTiming` telemetry for vertical sessions, recording build/raster/total span, vsync interval and delivered scroll/current/interaction context. It is diagnostic-only and is never read by geometry, navigation, Pipeline or schedulers.
+
 ## 0.31.0-dev.298 - Static presentation lifetime across upload-demand gaps
 
 - The 10:01 dev.297 device Trace falsifies the subpixel/pixel-snap magnitude hypothesis: the visible jitter is much larger than 1-2px while actual vertical page layout remains stable. Roll back dev.297 `PhysicalPixelAlignedPresentation`, the external-texture marker, and the <=0.5px bounded-fill behavior; retain dev.296 physical sourceCanvas aspect authority.
