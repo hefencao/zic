@@ -240,6 +240,12 @@ abstract interface class TaskLane {
   int get active;
   bool get isIdle;
 
+  /// Applies one scheduling transaction atomically. Mutations made inside the
+  /// callback update lane state immediately but defer scheduler pumping until
+  /// the outermost batch exits, so one authoritative plan revision cannot
+  /// repeatedly re-run the same admission/preemption scan.
+  void batch(void Function() action);
+
   bool submit({
     required String key,
     required int priority,
@@ -297,6 +303,8 @@ final class NetLane implements TaskLane {
   int get inactiveParkedResponses => _core.inactiveParkedResponses;
   @override
   bool get isIdle => _core.isIdle;
+  @override
+  void batch(void Function() action) => _core.batch(action);
   @override
   bool submit({required String key, required int priority, required LaneTask task}) =>
       _core.submit(key: key, priority: priority, task: task);
@@ -392,6 +400,8 @@ final class DecodeLane implements TaskLane {
   @override
   bool get isIdle => _core.isIdle;
   @override
+  void batch(void Function() action) => _core.batch(action);
+  @override
   bool submit({required String key, required int priority, required LaneTask task}) =>
       _core.submit(key: key, priority: priority, task: task);
   @override
@@ -436,6 +446,8 @@ final class UploadLane implements TaskLane {
   @override
   bool get isIdle => _core.isIdle;
   @override
+  void batch(void Function() action) => _core.batch(action);
+  @override
   bool submit({required String key, required int priority, required LaneTask task}) =>
       _core.submit(key: key, priority: priority, task: task);
   @override
@@ -468,6 +480,8 @@ final class MaintenanceLane implements TaskLane {
   int get active => _core.active;
   @override
   bool get isIdle => _core.isIdle;
+  @override
+  void batch(void Function() action) => _core.batch(action);
   @override
   bool submit({required String key, required int priority, required LaneTask task}) =>
       _core.submit(key: key, priority: priority, task: task);
@@ -519,6 +533,8 @@ final class _Lane {
   int _seq = 0;
   int _receivingActive = 0;
   int _transportLeasesActive = 0;
+  int _batchDepth = 0;
+  bool _pumpRequested = false;
   int _parkSeq = 0;
 
   int get queued => _pending.length;
@@ -587,6 +603,27 @@ final class _Lane {
   bool incomingOutranks(int incomingPriority, NetPolicyRank incumbent) =>
       incomingPriority - incumbent.effectivePriority >= preemptionThreshold;
 
+  void batch(void Function() action) {
+    _batchDepth++;
+    try {
+      action();
+    } finally {
+      _batchDepth--;
+      if (_batchDepth == 0 && _pumpRequested) {
+        _pumpRequested = false;
+        _pump();
+      }
+    }
+  }
+
+  void _requestPump() {
+    if (_batchDepth > 0) {
+      _pumpRequested = true;
+      return;
+    }
+    _pump();
+  }
+
   bool submit({
     required String key,
     required int priority,
@@ -607,7 +644,7 @@ final class _Lane {
         ..demanded = demanded;
       activeTask.token.updateFlowTargetFrames(flowTargetFrames);
       activeTask.token.updateDemanded(demanded);
-      if (increased) _pump();
+      if (increased) _requestPump();
       return false;
     }
     final pending = _pending[key];
@@ -621,7 +658,7 @@ final class _Lane {
         ..flowTargetFrames = flowTargetFrames
         ..demanded = demanded
         ..task = task;
-      if (increased) _pump();
+      if (increased) _requestPump();
       return false;
     }
     _pending[key] = _createPending(
@@ -634,7 +671,7 @@ final class _Lane {
       demanded: demanded,
       task: task,
     );
-    _pump();
+    _requestPump();
     return true;
   }
 
@@ -646,14 +683,14 @@ final class _Lane {
       _updateActivePriority(activeTask, priority);
       // Priority changes affect both queued admission and parked-response
       // resume order, so every real change re-runs the lane policy.
-      if (previous != priority) _pump();
+      if (previous != priority) _requestPump();
       return true;
     }
     final pending = _pending[key];
     if (pending == null) return false;
     final previous = pending.priority;
     _updatePendingPriority(pending, priority);
-    if (previous != priority) _pump();
+    if (previous != priority) _requestPump();
     return true;
   }
 
@@ -680,14 +717,14 @@ final class _Lane {
       // Demand membership does not own transport lifetime. An inactive
       // retained response keeps its transport lease until real lease pressure
       // needs that bounded network resource.
-      _pump();
+      _requestPump();
       return true;
     }
     final pending = _pending[key];
     if (pending == null) return false;
     if (pending.demanded == demanded) return true;
     pending.demanded = demanded;
-    _pump();
+    _requestPump();
     return true;
   }
 
@@ -758,7 +795,7 @@ final class _Lane {
       bucketLimit: bucketLimit,
       task: task,
     );
-    _pump();
+    _requestPump();
     return true;
   }
 
@@ -776,7 +813,7 @@ final class _Lane {
       bucketLimit: bucketLimit,
       task: task,
     );
-    _pump();
+    _requestPump();
     return true;
   }
 
@@ -992,7 +1029,7 @@ final class _Lane {
             }
             removed.token.dispose();
           }
-          _pump();
+          _requestPump();
           _notifyIdle();
         }),
       );
@@ -1060,7 +1097,7 @@ final class _Lane {
       task.transportLeaseHeld = false;
       _decrementTransportLease(task.bucket);
     }
-    _pump();
+    _requestPump();
   }
 
   Future<void> _acquireResponseReadPermit(
@@ -1077,7 +1114,7 @@ final class _Lane {
       ..resumeRequested = true
       ..resumeSeq = _seq++;
     final waiter = task.resumeCompleter ??= Completer<void>();
-    _pump();
+    _requestPump();
     await Future.any<void>(<Future<void>>[
       waiter.future,
       token.whenCancelled,
@@ -1210,7 +1247,7 @@ final class _Lane {
       () {
         _preemptionWake = null;
         _preemptionWakeAtMicros = null;
-        _pump();
+        _requestPump();
       },
     );
   }

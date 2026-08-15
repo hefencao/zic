@@ -6,6 +6,38 @@ import 'package:testkit/testkit.dart';
 
 void main() {
   _dev123NetLaneTests();
+  test('batch defers lane pumping until the authoritative mutation commits', () async {
+    final lane = DecodeLane(maxActive: 2);
+    final started = <String>[];
+    final releases = <Completer<void>>[];
+
+    lane.batch(() {
+      for (var i = 0; i < 3; i++) {
+        final release = Completer<void>();
+        releases.add(release);
+        lane.submit(
+          key: 'decode-$i',
+          priority: 100 - i,
+          task: (_) async {
+            started.add('decode-$i');
+            await release.future;
+          },
+        );
+      }
+      expect(started, isEmpty);
+      expect(lane.active, 0);
+      expect(lane.queued, 3);
+    });
+
+    await Future<void>.delayed(Duration.zero);
+    expect(started, <String>['decode-0', 'decode-1']);
+    expect(lane.active, 2);
+    for (final release in releases) {
+      if (!release.isCompleted) release.complete();
+    }
+    await lane.idle();
+  });
+
   test('queues by priority and keeps FIFO for equal priorities', () async {
     final lane = NetLane(maxActive: 1);
     final gate = Completer<void>();

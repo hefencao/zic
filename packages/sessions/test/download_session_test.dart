@@ -640,6 +640,20 @@ void main() {
     expect(session.canEvict, isTrue);
   });
 
+  test('priority-only demand migration does not rebroadcast media snapshot', () {
+    final snapshots = <DownloadSnapshot>[];
+    session.addSnapshotListener(snapshots.add);
+    final lease = session.attachDemand(scopeId: 'reader', priority: 700);
+    final afterAttach = snapshots.length;
+
+    lease.updatePriority(1000);
+
+    expect(session.effectivePriority, 1000);
+    expect(snapshots.length, afterAttach);
+    lease.detach();
+    expect(snapshots.length, afterAttach + 1);
+  });
+
   test(
     'snapshot observers follow promotion and cannot break the session',
     () async {

@@ -3,14 +3,22 @@
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 def read(path): return (ROOT/path).read_text(encoding='utf-8')
+def current_dev():
+    for line in read('apps/app/pubspec.yaml').splitlines():
+        if line.startswith('version:') and '+' in line:
+            return int(line.rsplit('+',1)[1].strip())
+    raise SystemExit('FAIL: app version code missing')
 def require(path,*tokens):
     text=read(path); missing=[t for t in tokens if t not in text]
     if missing: raise SystemExit(f'FAIL: {path} missing dev.301 tokens: {missing}')
 def forbid(path,*tokens):
     text=read(path); found=[t for t in tokens if t in text]
     if found: raise SystemExit(f'FAIL: {path} contains forbidden dev.301 tokens: {found}')
-require('apps/app/pubspec.yaml','version: 0.31.0+301')
-require('apps/app/android/zic-version.properties','versionCode=301')
+if current_dev() == 301:
+    require('apps/app/pubspec.yaml','version: 0.31.0+301')
+    require('apps/app/android/zic-version.properties','versionCode=301')
+elif current_dev() < 301:
+    raise SystemExit('FAIL: dev.301 gate executed before dev.301')
 require('packages/pipeline/lib/src/demand.dart',
         'bool sameSchedulingAs(DownloadDemand other)',
         'bool sameSchedulingAs(DecodeDemand other)',

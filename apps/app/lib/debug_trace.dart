@@ -23,6 +23,7 @@ TraceHighlightLevel traceHighlightLevel(TraceEvent event) =>
       TraceEventKind.pageCurrent ||
       TraceEventKind.pageLayoutSnapshot ||
       TraceEventKind.readerFrameTiming ||
+      TraceEventKind.pipelineReconcileTiming ||
       TraceEventKind.decodeDemand ||
       TraceEventKind.uploadDemand ||
       TraceEventKind.sourceRead ||
@@ -227,7 +228,8 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     // frame just to notify the trace viewer would make the diagnostic feed
     // self-sustaining and perturb the very cadence it measures. The export
     // still records every sample; ordinary trace activity refreshes the UI.
-    if (event.kind != TraceEventKind.readerFrameTiming) {
+    if (event.kind != TraceEventKind.readerFrameTiming &&
+        event.kind != TraceEventKind.pipelineReconcileTiming) {
       _scheduleNotification();
     }
   }

@@ -827,7 +827,15 @@ final class DownloadSession {
         'demandCount': demandCount,
       },
     );
-    _notifySnapshot();
+    // Priority belongs to transfer scheduling, not encoded-media/session
+    // lifecycle. Existing consumers update NetLane directly from the claim
+    // owner, so rebroadcasting a full DownloadSnapshot for a priority-only
+    // migration wakes PageStream/progress/retention observers that cannot use
+    // this fact. A newly attached scope still changes demanded/demandCount and
+    // remains a real session snapshot transition.
+    if (previous == null) {
+      _notifySnapshot();
+    }
   }
 
   void _detachDemand(String scopeId) {

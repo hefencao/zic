@@ -24,6 +24,7 @@ enum TraceEventKind {
   pageHostDisposed,
   firstFrameReady,
   policyDecision,
+  pipelineReconcileTiming,
   demandApplied,
   demandDetached,
   staleWorkRejected,

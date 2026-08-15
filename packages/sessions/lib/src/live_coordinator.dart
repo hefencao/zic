@@ -216,13 +216,57 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
 
   @override
   void reconcile(String sessionId, PipelineDelta update) {
+    final startedAtMicros = clock.nowMicros();
     _revision = update.plan.revision;
-    _reconcileDownloads(sessionId, update.diff.downloads);
-    _reconcileDecodes(sessionId, update.diff.decodes);
-    _reconcileUploads(sessionId, update.diff.uploads);
-    _refreshDemandLiveness(update.plan);
-    _flushSourceRebindWakes(sessionId);
-    _enforceBudget(sessionId);
+
+    // One accepted DemandPlan is one scheduler transaction. Reader page-boundary
+    // revisions routinely change the role/priority of most of the 3/7 download
+    // window plus all 2/1 decode and visible upload roles. Pumping a lane after
+    // every individual mutation repeatedly scans the same pending/active state
+    // on the UI isolate and can consume an entire vsync before rendering starts.
+    // Mutate all three lanes first, then let each lane pump once with the final
+    // authoritative state. This does not change policy, priorities or windows.
+    // Nest in reverse dependency order so commit unwinds network -> decode ->
+    // upload, matching the historical admission order while every lane still
+    // observes the same fully-mutated authoritative plan.
+    upload.batch(() {
+      decode.batch(() {
+        net.batch(() {
+          _reconcileDownloads(sessionId, update.diff.downloads);
+          _reconcileDecodes(sessionId, update.diff.decodes);
+          _reconcileUploads(sessionId, update.diff.uploads);
+          _refreshDemandLiveness(update.plan);
+          _flushSourceRebindWakes(sessionId);
+          _enforceBudget(sessionId);
+        });
+      });
+    });
+
+    traceSink.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.pipelineReconcileTiming,
+        revision: _revision,
+        payload: <String, Object?>{
+          'reconcileMicros':
+              (clock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
+          'downloadAdded': update.diff.downloads.added.length,
+          'downloadChanged': update.diff.downloads.changed.length,
+          'downloadRemoved': update.diff.downloads.removed.length,
+          'decodeAdded': update.diff.decodes.added.length,
+          'decodeChanged': update.diff.decodes.changed.length,
+          'decodeRemoved': update.diff.decodes.removed.length,
+          'uploadAdded': update.diff.uploads.added.length,
+          'uploadChanged': update.diff.uploads.changed.length,
+          'uploadRemoved': update.diff.uploads.removed.length,
+          'downloadCount': update.plan.downloads.length,
+          'decodeCount': update.plan.decodes.length,
+          'uploadCount': update.plan.uploads.length,
+          'atomicLaneBatch': true,
+        },
+      ),
+    );
   }
 
   /// Plan revision is liveness metadata, not scheduler identity. Semantic

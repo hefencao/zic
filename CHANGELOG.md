@@ -1,3 +1,10 @@
+## 0.31.0-dev.302 - Atomic lane reconcile transaction
+
+- 12:21 dev.301 device Trace confirms the dev.301 semantic-no-op revision cascade is mechanically gone, yet pronounced vertical jitter remains as missed-vsync: 43 frame intervals exceed 30ms overall and 37 occur during active vertical interaction. 28/37 active long gaps fall within 100ms after a real `policyDecision`.
+- A legitimate page-boundary revision still fans out synchronously on the UI isolate: common 11-download updates plus 4 decode and 2 upload mutations take roughly 10-15ms before normal build/raster. Each Net/Decode/Upload mutation previously called `_Lane._pump()` immediately, repeatedly scanning/admitting against intermediate state.
+- Treat one accepted `DemandPlan` as one scheduler transaction. `TaskLane.batch` applies mutations immediately but defers pumping until the outer batch commits; `LiveCoordinator` batches Net/Decode/Upload reconciliation so each lane pumps only against final authoritative state. Pure download-priority migration also stops rebroadcasting the full media/session snapshot to PageStream/progress/retention observers. Policy, 3/7, decode 2/1, priorities, NetLane capacity and presentation continuity are unchanged.
+- Add diagnostic-only `pipelineReconcileTiming` for accepted revision duration/diff cardinality. Recording this timing, like `readerFrameTiming`, must not request a new Flutter frame.
+
 ## 0.31.0-dev.301 - Semantic demand revision boundary
 
 - 11:43 dev.300 device Trace finally exposes a frame-cadence root cause at the scheduling boundary: Flutter misses repeated 2-4 vsync intervals while build/raster are usually only a few milliseconds. During the same scroll windows, offscreen WebP sniff/classification evidence produces forced policy revisions whose 11/4/2 resource plan is semantically unchanged, yet expiration-only revision churn re-emits all decode/upload demands on the UI isolate.
