@@ -8,6 +8,8 @@ import 'package:transport/transport.dart';
 final class AssetBundleTransport implements Transport {
   const AssetBundleTransport(this.bundle);
 
+  factory AssetBundleTransport.root() => AssetBundleTransport(rootBundle);
+
   final AssetBundle bundle;
 
   @override

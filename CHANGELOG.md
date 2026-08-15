@@ -1,3 +1,10 @@
+## 0.31.0-dev.288 - Pipeline dimension projection boundary
+
+- Fix the dev.287 local Dart compile failure where `PipelineReaderSession.pageDimensions` exposed `ValueListenable` without importing its Flutter foundation declaration; do not paper over it with another UI import.
+- Replace the temporary `ValueNotifier`/`ValueListenable` dimension surface with a Pipeline-owned read-only `PipelinePageDimensionsFeed`. Retained facts replay to newly attached Reader consumers, while publish/clear remain library-private and the boundary carries `pageIndex + assetKey + width/height` directly.
+- Remove Flutter imports from `pipeline_reader_session.dart`, move `rootBundle` knowledge behind `AssetBundleTransport.root()`, and pre-index chapter `pageId -> pageIndex` once so source-kind, decode-dimension and animation facts share one identity resolver instead of rescanning the chapter independently.
+- ReaderRuntime consumes dimension events directly through its existing `_reportPageDimensions` owner; it no longer pulls a notifier map and rescans every chapter page after each decode fact. dev.287 decode-ahead/future-tail geometry policy itself is unchanged.
+
 ## 0.31.0-dev.287 - Decode-ahead vertical geometry preparation
 
 - Supersede dev.286 live-presentation compensation after device evidence showed the ratio fact already existed in decode hundreds of milliseconds before UI/output, while Reader geometry learned it only after the page entered the viewport.
