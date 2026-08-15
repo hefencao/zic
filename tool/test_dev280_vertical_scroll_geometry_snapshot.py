@@ -33,7 +33,8 @@ for marker in (
     'late Map<String, double> _verticalLayoutRatios;',
     'Map<String, double>? _pendingVerticalLayoutRatios;',
     'bool get _verticalScrollActive',
-    '_pendingVerticalLayoutRatios = widget.pageAspectRatios;',
+    '_pendingVerticalLayoutRatios =',
+    '_adoptFutureVerticalRatios(widget.pageAspectRatios);',
     'final effectiveRatios = ratios ?? _verticalLayoutRatios;',
     'void _schedulePendingVerticalRatioCommit()',
     '_preserveVerticalAnchor(\n        oldRatios: _verticalLayoutRatios,',
@@ -46,8 +47,10 @@ for marker in (
 # Async ratio changes may preserve/restore an anchor only at the idle commit
 # boundary; didUpdateWidget must not directly anchor every measured map update.
 ratio_branch = reader[reader.index('if (ratiosChanged) {'):reader.index('\n  @override\n  void dispose()', reader.index('if (ratiosChanged) {'))]
-req('_pendingVerticalLayoutRatios = widget.pageAspectRatios;' in ratio_branch,
-    'active-scroll ratio updates are not deferred')
+req('_pendingVerticalLayoutRatios =' in ratio_branch,
+    'prefix-affecting active-scroll ratio updates are not deferred')
+req('_adoptFutureVerticalRatios(widget.pageAspectRatios);' in ratio_branch,
+    'dev.287 future-tail safe adoption seam missing')
 req('_verticalLayoutRatios = widget.pageAspectRatios;' in ratio_branch,
     'idle/non-vertical ratio adoption missing')
 req('oldWidget.pageAspectRatios != widget.pageAspectRatios' not in reader,
@@ -66,9 +69,9 @@ for path in (
 ):
     req((ROOT / path).is_file(), f'missing dev.280 governance file: {path}')
 
-require('docs/ARCHITECTURE.md', 'scroll-stable ratio snapshot', 'top-pixel anchor')
-require('docs/SPEC.md', 'scroll-stable geometry snapshot', 'latest-wins')
-require('docs/IMPLEMENTATION_STATUS.md', 'dev.280', 'vertical geometry snapshot')
+require('docs/ARCHITECTURE.md', 'scroll-stable layout snapshot', 'top-pixel')
+require('docs/SPEC.md', 'viewport prefix', 'latest-wins')
+require('docs/IMPLEMENTATION_STATUS.md', 'dev.280', 'geometry')
 require('docs/IMPLEMENTATION_PLAN.md', 'dev.280', 'scroll-stable geometry')
 require('docs/NEXT_CHAT_HANDOFF.md', 'dev.280', '纵向滑动抖动', 'scroll-stable')
 require('CHANGELOG.md', '0.31.0-dev.280', '纵向滚动稳定 geometry snapshot')

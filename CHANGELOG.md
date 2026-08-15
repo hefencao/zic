@@ -1,3 +1,9 @@
+## 0.31.0-dev.287 - Decode-ahead vertical geometry preparation
+
+- Supersede dev.286 live-presentation compensation after device evidence showed the ratio fact already existed in decode hundreds of milliseconds before UI/output, while Reader geometry learned it only after the page entered the viewport.
+- Publish first decoded frame dimensions as read-only Pipeline page metadata and replay them through ReaderRuntime’s existing aspect-ratio owner.
+- During active vertical scroll, prepare only pages strictly beyond the real visible tail; prefix-affecting ratios still wait for idle layout-time correction. Remove `presentationExtentAt`/OverflowBox workaround.
+
 ## 0.31.0-dev.286 - Live aspect projection over frozen vertical layout
 
 - 00:09 dev.285 device Trace shows a new presentation regression rather than another download/texture failure: 16 of 20 page first-frame dimensions arrive while the vertical Reader is dragging/scrolling. Their measured height/width median is about 3.20 while unknown vertical geometry falls back to 1.5, so dev.280's scroll-stable layout snapshot can remain intentionally stale by more than 100% until idle.

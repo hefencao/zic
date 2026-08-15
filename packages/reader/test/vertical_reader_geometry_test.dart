@@ -131,37 +131,6 @@ void main() {
     expect(geometry.extentAt(0), 900);
     expect(geometry.extentAt(1), 900);
   });
-  test('live presentation ratio does not mutate the frozen layout snapshot', () {
-    final unknownPage = PageAsset(
-      pageId: 'live-presentation',
-      chapterId: 'chapter',
-      index: 0,
-      uri: Uri.parse('asset:///live-presentation.png'),
-    );
-    final geometry = ReaderVerticalGeometry(
-      pages: <PageAsset>[unknownPage],
-      ratios: const <String, double>{},
-      viewportWidth: 400,
-      viewportHeight: 900,
-      stitch: true,
-      rotationQuarterTurns: 0,
-    );
-
-    expect(geometry.extentAt(0), 900);
-    expect(
-      geometry.presentationExtentAt(
-        0,
-        <String, double>{unknownPage.assetKey: 3.0},
-      ),
-      1200,
-    );
-    expect(
-      geometry.extentAt(0),
-      900,
-      reason: 'live presentation ratios must not mutate sliver layout extent',
-    );
-  });
-
   test('layout snapshot computes page extents once and reuses prefix bounds', () {
     final counting = _CountingRatioMap(<String, double>{
       for (final page in pages) page.assetKey: 1.6,

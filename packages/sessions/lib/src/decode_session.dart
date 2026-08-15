@@ -26,6 +26,8 @@ final class DecodeSnapshot {
     this.decodedPrefixFrames = 0,
     this.firstPlayablePrefixBytes = 0,
     this.firstFrameRequiredSourceLength = 0,
+    this.decodedWidth,
+    this.decodedHeight,
     this.failure,
   });
 
@@ -40,6 +42,11 @@ final class DecodeSnapshot {
   final int sourceLength;
   final bool sourceSealed;
   final int requiredSourceLength;
+
+  /// Dimensions of the decoded frame generation once the decoder has proven
+  /// at least one frame. These are decode facts, not Reader layout state.
+  final int? decodedWidth;
+  final int? decodedHeight;
 
   /// Number of leading animation frames the decoder has actually produced
   /// from the current unsealed ingress generation. This is decoder evidence,
@@ -147,6 +154,8 @@ final class DecodeSession {
   int _requiredSourceLength = 0;
   int _firstPlayablePrefixBytes = 0;
   int _firstFrameRequiredSourceLength = 0;
+  int? _decodedWidth;
+  int? _decodedHeight;
   AnimationInfo? _reportedAnimation;
   int _maxDecodedPrefixFrames = 0;
   int _partialPrefixCycle = 0;
@@ -201,6 +210,8 @@ final class DecodeSession {
       sourceLength: source?.length ?? 0,
       sourceSealed: source?.sealed ?? false,
       requiredSourceLength: _requiredSourceLength,
+      decodedWidth: _decodedWidth,
+      decodedHeight: _decodedHeight,
       decodedPrefixFrames: _maxDecodedPrefixFrames,
       firstPlayablePrefixBytes: _firstPlayablePrefixBytes,
       firstFrameRequiredSourceLength: _firstFrameRequiredSourceLength,
@@ -497,6 +508,8 @@ final class DecodeSession {
               sourceLength: source.length,
               sourceSealed: source.sealed,
             );
+            _decodedWidth ??= frame.width;
+            _decodedHeight ??= frame.height;
             _frameTimings[frame.index] = frameTiming;
             while (_frameTimings.length > 24) {
               _frameTimings.remove(_frameTimings.keys.first);
@@ -709,6 +722,8 @@ final class DecodeSession {
     _requiredSourceLength = 0;
     _firstPlayablePrefixBytes = 0;
     _firstFrameRequiredSourceLength = 0;
+    _decodedWidth = null;
+    _decodedHeight = null;
     _reportedAnimation = null;
     _frameTimings.clear();
     _cursorCreateMicros = 0;

@@ -17,6 +17,7 @@ final class DecodeRegistry {
     required this.clock,
     WebpDecodePrefixHints? prefixHints,
     this.onAnimationResolved,
+    this.onFrameDecoded,
     this.traceSink = const NoopTraceSink(),
   }) : prefixHints = prefixHints ?? WebpDecodePrefixHints();
 
@@ -27,6 +28,7 @@ final class DecodeRegistry {
   final WebpDecodePrefixHints prefixHints;
   final void Function(DecodeId id, AnimationInfo animation)?
       onAnimationResolved;
+  final void Function(DecodeId id, DecodeSnapshot snapshot)? onFrameDecoded;
   final TraceSink traceSink;
   final Map<DecodeId, DecodeSession> _sessions = <DecodeId, DecodeSession>{};
 
@@ -71,13 +73,19 @@ final class DecodeRegistry {
     int laneQueueMicros = 0,
     void Function(DecodeSnapshot snapshot)? onFrameReady,
   }) {
+    final observer = onFrameDecoded;
     return get(id).fill(
       demand: demand,
       revision: revision,
       cancel: token,
       preparedDepth: preparedDepth,
       laneQueueMicros: laneQueueMicros,
-      onFrameReady: onFrameReady,
+      onFrameReady: observer == null
+          ? onFrameReady
+          : (snapshot) {
+              observer(id, snapshot);
+              onFrameReady?.call(snapshot);
+            },
     );
   }
 

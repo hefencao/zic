@@ -101,6 +101,7 @@ final class _ReaderViewState extends State<ReaderView> {
   int? _zoomedPage;
   int? _lastReportedVerticalPage;
   int _lastVerticalTravelDirection = 0;
+  int? _lastVerticalVisibleMaxIndex;
   Size _viewport = Size.zero;
   double _devicePixelRatio = 1;
   late ReadingDirection _lastDirection;
@@ -138,6 +139,7 @@ final class _ReaderViewState extends State<ReaderView> {
     _handledNavigationRevision = widget.controller.navigationRevision;
     _lastDirection = widget.controller.direction;
     _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
+    _lastVerticalVisibleMaxIndex = widget.controller.currentIndex;
     _pageSlots = _createPageSlots();
     _verticalLayoutRatios = widget.pageAspectRatios;
     widget.controller.addListener(_handleControllerCommand);
@@ -167,6 +169,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _handledNavigationRevision = widget.controller.navigationRevision;
       _zoomedPage = null;
       _lastReportedVerticalPage = null;
+      _lastVerticalVisibleMaxIndex = widget.controller.currentIndex;
       _lastDirection = widget.controller.direction;
       _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
       _pageSlots = _createPageSlots();
@@ -197,9 +200,16 @@ final class _ReaderViewState extends State<ReaderView> {
         _pendingVerticalLayoutRatios = null;
         _invalidateVerticalGeometryCache();
       } else if (_verticalScrollActive) {
-        // Sliver item extents must remain immutable for one drag/ballistic
-        // scroll. Measured geometry is committed once the viewport is idle.
-        _pendingVerticalLayoutRatios = widget.pageAspectRatios;
+        // Ratios for pages strictly beyond the current viewport cannot change
+        // the prefix or extents of anything being painted now. Adopt those
+        // decode-ahead facts immediately so they are stable before the page
+        // enters the viewport. Changes at/before the visible tail remain
+        // pending until idle, preserving the dev.280 scroll-stable prefix.
+        _adoptFutureVerticalRatios(widget.pageAspectRatios);
+        _pendingVerticalLayoutRatios =
+            _sameVerticalRatios(_verticalLayoutRatios, widget.pageAspectRatios)
+                ? null
+                : widget.pageAspectRatios;
       } else {
         if (!stitchChanged) {
           _preserveVerticalAnchor(
@@ -310,45 +320,15 @@ final class _ReaderViewState extends State<ReaderView> {
                 }
                 final pageIndex = stitched ? itemIndex : itemIndex ~/ 2;
                 final page = _buildPage(pageIndex);
-                final layoutExtent = geometry.extentAt(pageIndex);
-                final presentationExtent = geometry.presentationExtentAt(
-                  pageIndex,
-                  widget.pageAspectRatios,
-                );
-                final presentationDiffers =
-                    (presentationExtent - layoutExtent).abs() > 0.5;
-                final presentation = OverflowBox(
-                  alignment: Alignment.topCenter,
-                  minWidth: _viewport.width,
-                  maxWidth: _viewport.width,
-                  minHeight: presentationExtent,
-                  maxHeight: presentationExtent,
-                  child: SizedBox(
-                    key: ValueKey<String>(
-                      'reader-vertical-presentation:$pageIndex',
-                    ),
-                    width: _viewport.width,
-                    height: presentationExtent,
-                    child: page,
-                  ),
-                );
                 return SizedBox(
                   key: ValueKey<String>('reader-vertical-page:$pageIndex'),
-                  height: layoutExtent,
-                  // The sliver extent remains frozen for the active scroll,
-                  // but a newly measured frame must not be stretched to that
-                  // stale box. Render it at the newest aspect-preserving
-                  // extent and clip only the transient overflow until idle
-                  // geometry commit makes layout and presentation agree.
-                  child: Stack(
-                    fit: StackFit.expand,
-                    clipBehavior: stitched &&
-                            _zoomedPage == null &&
-                            !presentationDiffers
-                        ? Clip.none
-                        : Clip.hardEdge,
-                    children: <Widget>[presentation],
-                  ),
+                  height: geometry.extentAt(pageIndex),
+                  // Exact stitched extents already constrain the page. Avoid
+                  // independent hard-clip edges during ordinary scrolling;
+                  // zoom still clips to its page so it cannot cover siblings.
+                  child: stitched && _zoomedPage == null
+                      ? page
+                      : ClipRect(child: page),
                 );
               },
             );
@@ -409,6 +389,52 @@ final class _ReaderViewState extends State<ReaderView> {
         _interaction == Interaction.scrolling ||
         _interaction == Interaction.settling ||
         _interaction == Interaction.scrubbing;
+  }
+
+  void _adoptFutureVerticalRatios(Map<String, double> latest) {
+    final pages = widget.controller.chapter.pages;
+    final visibleMax = (_lastVerticalVisibleMaxIndex ??
+            widget.controller.currentIndex)
+        .clamp(0, pages.length - 1)
+        .toInt();
+    Map<String, double>? merged;
+    final adopted = <int>[];
+    for (var index = visibleMax + 1; index < pages.length; index++) {
+      final key = pages[index].assetKey;
+      final ratio = latest[key];
+      if (ratio == null || _verticalLayoutRatios[key] == ratio) continue;
+      merged ??= <String, double>{..._verticalLayoutRatios};
+      merged[key] = ratio;
+      adopted.add(index);
+    }
+    if (merged == null) return;
+    _verticalLayoutRatios = Map<String, double>.unmodifiable(merged);
+    _invalidateVerticalGeometryCache();
+    widget.traceSink.record(
+      traceEvent(
+        clock: widget.clock,
+        sessionId: widget.controller.sessionId,
+        kind: TraceEventKind.pageGeometryPrepared,
+        revision: widget.demandRevision?.call(),
+        payload: <String, Object?>{
+          'pageIndexes': adopted,
+          'visibleMaxIndex': visibleMax,
+          'interaction': _interaction.name,
+          'source': 'decode-ahead-ratio',
+        },
+      ),
+    );
+  }
+
+  bool _sameVerticalRatios(
+    Map<String, double> left,
+    Map<String, double> right,
+  ) {
+    if (left.length != right.length) return false;
+    for (final entry in left.entries) {
+      if (right[entry.key] != entry.value) return false;
+    }
+    return true;
   }
 
   void _invalidateVerticalGeometryCache() {
@@ -886,6 +912,12 @@ final class _ReaderViewState extends State<ReaderView> {
       pixels: metrics.pixels,
       viewportDimension: metrics.viewportDimension,
     );
+    _lastVerticalVisibleMaxIndex = visible.isEmpty
+        ? position.index
+        : visible.fold<int>(
+            position.index,
+            (maximum, entry) => entry.index > maximum ? entry.index : maximum,
+          );
     double? currentVisible;
     for (final entry in visible) {
       if (entry.index == position.index) {

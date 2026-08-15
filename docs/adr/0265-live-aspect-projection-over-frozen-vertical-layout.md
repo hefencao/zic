@@ -1,6 +1,6 @@
 # ADR 0265：冻结纵向布局上的实时等比呈现
 
-状态：Accepted
+状态：Superseded
 
 接受版本：dev.286。
 
@@ -37,3 +37,7 @@
 - 同一帧后`reader-vertical-presentation:*`必须已经按最新ratio获得新的等比height，而不是等到idle。
 - idle后layout height再收敛到该presentation height，并保持dev.281 top-pixel layout correction语义。
 - `MediaAspectViewport(fitWidth)`仍可使用`BoxFit.fill`，因为Reader给它的visual child box在过渡期间也保持等比。
+
+## Superseded by dev.287
+
+00:35 dev.286真机仍报告“稳定后才正常”。dev.286只能在冻结sliver extent内把拉伸改成裁切/留白；当真实ratio直到页面已进入viewport后才到达时，不可能同时保证全宽、完整内容、比例正确和scroll-stable extent。dev.287把尺寸事实前移到decode-time并只提前准备真实viewport尾部之后的geometry；production不再使用`presentationExtentAt`/OverflowBox过渡workaround。

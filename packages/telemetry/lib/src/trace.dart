@@ -53,6 +53,8 @@ enum TraceEventKind {
   frameDecoded,
   animationLoop,
   mediaClassified,
+  pageDimensionsResolved,
+  pageGeometryPrepared,
   uploadState,
   frameUploaded,
   lastFrameKept,

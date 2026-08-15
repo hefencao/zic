@@ -57,6 +57,8 @@ void main() {
         reason: 'upload may start after frame 0 while refill continues');
     expect(result.state, DecodeState.ready);
     expect(result.depth, 2);
+    expect(result.decodedWidth, 1);
+    expect(result.decodedHeight, 1);
     expect(factory.created, 1);
     expect(
       factory.cursors.single.executionClasses,

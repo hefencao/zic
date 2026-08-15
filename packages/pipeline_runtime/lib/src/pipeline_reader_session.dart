@@ -26,6 +26,13 @@ typedef PipelineArtifactBytesLoader = Future<Uint8List> Function(
   MediaLoadToken token,
 );
 
+final class PipelinePageDimensions {
+  const PipelinePageDimensions({required this.width, required this.height});
+
+  final int width;
+  final int height;
+}
+
 const Duration _readerSessionRetentionDuration = Duration(minutes: 2);
 const int _maxRetainedReaderSessions = 1;
 
@@ -442,7 +449,10 @@ final class PipelineReaderSession {
           http: HttpTransport(userAgentProvider: userAgentProvider),
         ),
         _loaderTransport = LoaderTransport(loaderSources),
-        transferProgress = PipelineTransferProgressPublisher() {
+        transferProgress = PipelineTransferProgressPublisher(),
+        _pageDimensions = ValueNotifier<Map<String, PipelinePageDimensions>>(
+          const <String, PipelinePageDimensions>{},
+        ) {
     trace = MultiTraceSink(<TraceSink>[
       _memoryTrace,
       if (traceSink != null) traceSink,
@@ -508,6 +518,7 @@ final class PipelineReaderSession {
       clock: clock,
       prefixHints: decodePrefixHints,
       onAnimationResolved: _handleAnimationResolved,
+      onFrameDecoded: _handleFrameDecoded,
       traceSink: trace,
     );
     _uploads = UploadRegistry(
@@ -608,6 +619,9 @@ final class PipelineReaderSession {
   int? _playbackWakeAtMicros;
   bool _playbackPaused = false;
   final PipelineTransferProgressPublisher transferProgress;
+  final ValueNotifier<Map<String, PipelinePageDimensions>> _pageDimensions;
+  ValueListenable<Map<String, PipelinePageDimensions>> get pageDimensions =>
+      _pageDimensions;
   final ArtifactCacheReadScheduler artifactReadScheduler;
   ArtifactCachePressureLease? _startupArtifactPressure;
   DownloadId? _startupArtifactPressureDownload;
@@ -1402,6 +1416,48 @@ final class PipelineReaderSession {
     });
   }
 
+  void _handleFrameDecoded(DecodeId id, DecodeSnapshot snapshot) {
+    final width = snapshot.decodedWidth;
+    final height = snapshot.decodedHeight;
+    if (width == null || height == null || width <= 0 || height <= 0) return;
+    scheduleMicrotask(() {
+      if (_disposed) return;
+      final pageIndex = chapter.pages.indexWhere(
+        (page) => page.pageId == id.download.content.pageId,
+      );
+      if (pageIndex < 0) return;
+      final asset = chapter.pages[pageIndex];
+      final prior = _pageDimensions.value[asset.assetKey];
+      if (prior != null && prior.width == width && prior.height == height) {
+        return;
+      }
+      _pageDimensions.value = Map<String, PipelinePageDimensions>.unmodifiable(
+        <String, PipelinePageDimensions>{
+          ..._pageDimensions.value,
+          asset.assetKey: PipelinePageDimensions(
+            width: width,
+            height: height,
+          ),
+        },
+      );
+      trace.record(
+        traceEvent(
+          clock: clock,
+          sessionId: sessionId,
+          kind: TraceEventKind.pageDimensionsResolved,
+          identityHash: id.download.key,
+          revision: revision,
+          payload: <String, Object?>{
+            'pageIndex': pageIndex,
+            'width': width,
+            'height': height,
+            'source': 'decode-frame',
+          },
+        ),
+      );
+    });
+  }
+
   void _handleAnimationResolved(DecodeId id, AnimationInfo animation) {
     scheduleMicrotask(() {
       if (_disposed) return;
@@ -1715,6 +1771,7 @@ final class PipelineReaderSession {
     }
     _pageOutputs.clear();
     transferProgress.dispose();
+    _pageDimensions.dispose();
     _uploads.removeListener(_handleUploadSnapshot);
     final coordinatorDisposeStartedAtMicros = clock.nowMicros();
     // The coordinator removes this Reader's transfer consumer and waits for any

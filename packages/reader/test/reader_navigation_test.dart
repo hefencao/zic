@@ -717,16 +717,6 @@ void main() {
         reason:
             'async measured geometry must not mutate sliver extents mid-scroll',
       );
-      final firstPresentation = find.byKey(
-        const ValueKey<String>('reader-vertical-presentation:0'),
-      );
-      expect(
-        tester.getSize(firstPresentation).height,
-        greaterThan(initialHeight),
-        reason:
-            'newly measured media must use its live aspect ratio inside the frozen sliver box instead of stretching until idle',
-      );
-
       observations.clear();
       await gesture.up();
       await tester.pumpAndSettle();
@@ -748,6 +738,110 @@ void main() {
         reason:
             'an async ratio commit above the viewport must preserve the visible page identity',
       );
+    },
+  );
+
+  testWidgets(
+    'vertical decode-ahead ratios prepare unseen future pages during active scrolling',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'vertical-ahead-ratio-comic',
+        chapter: const Chapter(
+          chapterId: 'vertical-ahead-ratio-chapter',
+          comicId: 'vertical-ahead-ratio-comic',
+          title: 'vertical ahead ratio',
+          sequence: 0,
+          pageCount: 6,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          6,
+          (index) => PageAsset(
+            pageId: 'vertical-ahead-$index',
+            chapterId: 'vertical-ahead-ratio-chapter',
+            index: index,
+            uri: Uri.parse('asset:///vertical-ahead-$index.png'),
+            width: 1000,
+            height: 1000,
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final controller = ReaderController(
+        sessionId: 'reader-vertical-ahead-ratio-test',
+        chapter: chapter,
+        onObservation: (_) {},
+        clock: FakeClock(),
+        initialPage: 1,
+      );
+      addTearDown(controller.dispose);
+      final ratios = ValueNotifier<Map<String, double>>(
+        const <String, double>{},
+      );
+      addTearDown(ratios.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 400,
+            height: 400,
+            child: ValueListenableBuilder<Map<String, double>>(
+              valueListenable: ratios,
+              builder: (context, value, _) => ReaderView(
+                controller: controller,
+                clock: FakeClock(),
+                pageAspectRatios: value,
+                pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+                  key: ValueKey<String>('vertical-ahead:${asset.pageId}'),
+                  color: Colors.black,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await _pumpUntilFound(
+        tester,
+        find.byKey(const ValueKey<String>('reader-vertical-page:5')),
+      );
+
+      final list = find.byKey(
+        const ValueKey<String>('reader-vertical-list'),
+      );
+      final priorPage = find.byKey(
+        const ValueKey<String>('reader-vertical-page:0'),
+      );
+      final futurePage = find.byKey(
+        const ValueKey<String>('reader-vertical-page:5'),
+      );
+      final priorHeight = tester.getSize(priorPage).height;
+      final futureHeight = tester.getSize(futurePage).height;
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      await gesture.moveBy(const Offset(0, -18));
+      await tester.pump();
+
+      ratios.value = <String, double>{
+        chapter.pages.first.assetKey: 3.0,
+        chapter.pages.last.assetKey: 3.0,
+      };
+      await tester.pump();
+
+      expect(
+        tester.getSize(priorPage).height,
+        priorHeight,
+        reason: 'ratios before the visible prefix must remain frozen mid-scroll',
+      );
+      expect(
+        tester.getSize(futurePage).height,
+        greaterThan(futureHeight),
+        reason:
+            'decode-ahead ratios beyond the visible tail must become layout truth before the page enters the viewport',
+      );
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(tester.getSize(priorPage).height, greaterThan(priorHeight));
     },
   );
 

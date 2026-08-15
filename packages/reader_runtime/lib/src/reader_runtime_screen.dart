@@ -191,6 +191,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       metadata: widget.adaptiveMetadata,
     );
     _adaptiveProfile = _initialAdaptiveProfile(_settings);
+    _pipeline.pageDimensions.addListener(_syncPipelinePageDimensions);
+    _syncPipelinePageDimensions();
     final initialProfile = _adaptiveProfile;
     if (initialProfile != null &&
         initialProfile != _settings.adaptiveProfile) {
@@ -507,6 +509,17 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     }
   }
 
+  void _syncPipelinePageDimensions() {
+    if (!mounted) return;
+    final decoded = _pipeline.pageDimensions.value;
+    if (decoded.isEmpty) return;
+    for (final asset in widget.chapter.pages) {
+      final dimensions = decoded[asset.assetKey];
+      if (dimensions == null) continue;
+      _reportPageDimensions(asset, dimensions.width, dimensions.height);
+    }
+  }
+
   void _reportPageDimensions(PageAsset asset, int width, int height) {
     if (width <= 0 || height <= 0) return;
     _applyAdaptiveProfile(
@@ -552,6 +565,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   @override
   void dispose() {
     unawaited(_checkpointReaderProgress(force: true));
+    _pipeline.pageDimensions.removeListener(_syncPipelinePageDimensions);
     WidgetsBinding.instance.removeObserver(this);
     final reader = _reader;
     if (reader != null) {

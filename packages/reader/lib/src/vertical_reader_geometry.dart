@@ -87,18 +87,6 @@ final class ReaderVerticalGeometry {
 
   double extentAt(int index) => _extents[index];
 
-  /// Computes the presentation extent from a newer ratio projection without
-  /// mutating this immutable scroll-layout snapshot.
-  ///
-  /// Continuous Reader can therefore keep sliver extents frozen for one
-  /// active scroll while a newly decoded frame is immediately rendered with
-  /// its measured aspect ratio inside that stale layout box.
-  double presentationExtentAt(
-    int index,
-    Map<String, double> presentationRatios,
-  ) =>
-      _computeExtent(index, presentationRatios);
-
   ({double start, double end}) boundsAt(int index) => (
         start: _starts[index],
         end: _starts[index] + _extents[index],
