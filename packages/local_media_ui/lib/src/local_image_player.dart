@@ -568,19 +568,28 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       final output = widget.pageOutput;
       if (output != null) {
         final surface = _pageOutputSnapshot?.surface;
-        content = surface == null
-            ? _loadingIndicator()
-            : MediaAspectViewport(
-                dimensions: _reportedDimensions,
-                fit: widget.fit,
-                builder: (innerFit) => surface.build(
-                  key: webpNativeTextureViewportKey,
-                  fit: innerFit,
-                  filterQuality: widget.fit == BoxFit.fitWidth
-                      ? FilterQuality.low
-                      : FilterQuality.medium,
-                ),
-              );
+        if (surface == null) {
+          content = _loadingIndicator();
+        } else {
+          final media = MediaAspectViewport(
+            dimensions: _reportedDimensions,
+            fit: widget.fit,
+            builder: (innerFit) => surface.build(
+              key: webpNativeTextureViewportKey,
+              fit: innerFit,
+              filterQuality: widget.fit == BoxFit.fitWidth
+                  ? FilterQuality.low
+                  : FilterQuality.medium,
+            ),
+          );
+          content = widget.fit == BoxFit.fitWidth &&
+                  surface is PipelineExternalTextureSurface
+              ? PhysicalPixelAlignedPresentation(
+                  devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+                  child: media,
+                )
+              : media;
+        }
       } else if (bytes == null) {
         content = _loadingIndicator();
       } else {
@@ -739,6 +748,94 @@ final class MediaRasterImage extends StatelessWidget {
 
 typedef MediaAspectChildBuilder = Widget Function(BoxFit innerFit);
 
+/// Paint-only correction that moves an external texture edge to the nearest
+/// physical pixel without changing Reader layout or ScrollPosition.
+@visibleForTesting
+double physicalPixelSnapCorrection({
+  required double globalLogicalOffset,
+  required double devicePixelRatio,
+}) {
+  if (!globalLogicalOffset.isFinite ||
+      !devicePixelRatio.isFinite ||
+      devicePixelRatio <= 0) {
+    return 0;
+  }
+  final physical = globalLogicalOffset * devicePixelRatio;
+  return (physical.roundToDouble() - physical) / devicePixelRatio;
+}
+
+final class PhysicalPixelAlignedPresentation
+    extends SingleChildRenderObjectWidget {
+  const PhysicalPixelAlignedPresentation({
+    required this.devicePixelRatio,
+    required super.child,
+    super.key,
+  });
+
+  final double devicePixelRatio;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _RenderPhysicalPixelAlignedPresentation(devicePixelRatio);
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    covariant _RenderPhysicalPixelAlignedPresentation renderObject,
+  ) {
+    renderObject.devicePixelRatio = devicePixelRatio;
+  }
+}
+
+final class _RenderPhysicalPixelAlignedPresentation extends RenderProxyBox {
+  _RenderPhysicalPixelAlignedPresentation(this._devicePixelRatio);
+
+  double _devicePixelRatio;
+
+  set devicePixelRatio(double value) {
+    if (_devicePixelRatio == value) return;
+    _devicePixelRatio = value;
+    markNeedsPaint();
+  }
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    final child = this.child;
+    if (child == null) return;
+    final ratio = _devicePixelRatio;
+    if (!ratio.isFinite || ratio <= 0) {
+      context.paintChild(child, offset);
+      return;
+    }
+    final physicalWidth = size.width * ratio;
+    final physicalHeight = size.height * ratio;
+    final boxIsPhysicalPixelIntegral =
+        (physicalWidth - physicalWidth.roundToDouble()).abs() < 1e-6 &&
+        (physicalHeight - physicalHeight.roundToDouble()).abs() < 1e-6;
+    if (!boxIsPhysicalPixelIntegral) {
+      context.paintChild(child, offset);
+      return;
+    }
+    final transform = getTransformTo(null);
+    final storage = transform.storage;
+    final scaleAndShearAreIdentity =
+        (storage[0] - 1).abs() < 1e-9 &&
+        storage[1].abs() < 1e-9 &&
+        storage[4].abs() < 1e-9 &&
+        (storage[5] - 1).abs() < 1e-9;
+    if (!scaleAndShearAreIdentity) {
+      context.paintChild(child, offset);
+      return;
+    }
+    final globalOrigin = MatrixUtils.transformPoint(transform, Offset.zero);
+    final correction = physicalPixelSnapCorrection(
+      globalLogicalOffset: globalOrigin.dy,
+      devicePixelRatio: _devicePixelRatio,
+    );
+    context.paintChild(child, offset + Offset(0, correction));
+  }
+}
+
 Alignment mediaAlignmentFor(BoxFit fit) =>
     fit == BoxFit.fitWidth ? Alignment.topCenter : Alignment.center;
 
@@ -759,11 +856,51 @@ final class MediaAspectViewport extends StatelessWidget {
     if (source == null || source.width <= 0 || source.height <= 0) {
       return SizedBox.expand(child: builder(fit));
     }
-    // Presentation must never inherit a transient aspect error from the
-    // parent sliver. Continuous Reader owns page extent/navigation geometry,
-    // while media owns source-aspect preservation. In fitWidth mode the page
-    // top stays fixed and any temporary extent mismatch is clipped/blanked at
-    // the trailing edge instead of stretching the texture until layout idles.
+    if (fit == BoxFit.fitWidth) {
+      // Presentation must never inherit a transient aspect error from the
+      // parent sliver. Only ReaderVerticalGeometry's bounded nearest-physical-
+      // pixel rounding residual may collapse to the parent box below.
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final ratio = MediaQuery.devicePixelRatioOf(context);
+          if (constraints.hasBoundedWidth &&
+              constraints.hasBoundedHeight &&
+              constraints.maxWidth > 0 &&
+              constraints.maxHeight > 0 &&
+              ratio.isFinite &&
+              ratio > 0) {
+            final exactHeight =
+                constraints.maxWidth * source.height / source.width;
+            final roundingResidual =
+                (constraints.maxHeight - exactHeight).abs() * ratio;
+            if (roundingResidual <= 0.500001) {
+              // ReaderVerticalGeometry rounds the same source-aspect extent to
+              // the nearest physical pixel. Close only that bounded rounding
+              // residual so adjacent stitched Texture layers share one exact
+              // physical edge; a real/transient aspect mismatch still falls
+              // through to the FittedBox below.
+              return SizedBox.expand(
+                key: mediaAspectViewportKey,
+                child: builder(BoxFit.fill),
+              );
+            }
+          }
+          return SizedBox.expand(
+            key: mediaAspectViewportKey,
+            child: FittedBox(
+              fit: fit,
+              alignment: mediaAlignmentFor(fit),
+              clipBehavior: Clip.hardEdge,
+              child: SizedBox(
+                width: source.width,
+                height: source.height,
+                child: builder(BoxFit.fill),
+              ),
+            ),
+          );
+        },
+      );
+    }
     return SizedBox.expand(
       key: mediaAspectViewportKey,
       child: FittedBox(

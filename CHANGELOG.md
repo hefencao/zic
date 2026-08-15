@@ -1,3 +1,9 @@
+## 0.31.0-dev.297 - Stitched external-texture physical-pixel alignment
+
+- The 09:30 dev.296 device Trace keeps the already-frozen owners stable: 8/8 dimensions resolve from physical sourceCanvas, all 418 actual page-layout samples keep zero extent delta and identity scale/shear with one constant residual, and all 92 active vertical policy decisions keep `staticWarmUploads=0`. 19/24 platform presentations are zero-copy resident reuse.
+- The remaining compositor fact is now explicit: every sampled stitched page width/height is integral in physical pixels, but 414/418 page global-top samples land on a fractional physical-pixel phase (about -0.49..+0.49px) because continuous scroll translation itself is subpixel. External Texture layers can therefore have independently sampled edges even though the Sliver boxes are stable.
+- Keep ScrollPosition, ScrollPhysics and Reader extents untouched. For `fitWidth` media, only absorb the Reader source-aspect rounding residual when it is <=0.5 physical pixel; a real parent-aspect mismatch still uses the dev.293 FittedBox boundary. For Android/external-texture surfaces only, add paint-time vertical physical-pixel snapping when the presentation box itself is physical-pixel integral and has identity scale/shear. Encoded 3/7, decode 2/1, NetLane, retention and resident reuse remain frozen.
+
 ## 0.31.0-dev.296 - Source-canvas presentation aspect authority
 
 - The 08:43 dev.295 device Trace closes the previous hidden-static-upload and Sliver-layout hypotheses: all 89 active vertical policy decisions keep `staticWarmUploads=0`; all 320 `pageLayoutSnapshot` events keep `extentDeltaPx=0`, identity 2x2 transform and a constant corrected layout residual.

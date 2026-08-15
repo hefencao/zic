@@ -753,7 +753,8 @@ final class _FlutterOutputProjector implements PipelineOutputProjector {
   }
 }
 
-final class _AndroidTextureSurface implements PipelinePageSurface {
+final class _AndroidTextureSurface
+    implements PipelinePageSurface, PipelineExternalTextureSurface {
   const _AndroidTextureSurface({
     required this.lease,
     required this.width,
