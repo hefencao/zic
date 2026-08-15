@@ -717,6 +717,15 @@ void main() {
         reason:
             'async measured geometry must not mutate sliver extents mid-scroll',
       );
+      final firstPresentation = find.byKey(
+        const ValueKey<String>('reader-vertical-presentation:0'),
+      );
+      expect(
+        tester.getSize(firstPresentation).height,
+        greaterThan(initialHeight),
+        reason:
+            'newly measured media must use its live aspect ratio inside the frozen sliver box instead of stretching until idle',
+      );
 
       observations.clear();
       await gesture.up();

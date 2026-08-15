@@ -310,15 +310,45 @@ final class _ReaderViewState extends State<ReaderView> {
                 }
                 final pageIndex = stitched ? itemIndex : itemIndex ~/ 2;
                 final page = _buildPage(pageIndex);
+                final layoutExtent = geometry.extentAt(pageIndex);
+                final presentationExtent = geometry.presentationExtentAt(
+                  pageIndex,
+                  widget.pageAspectRatios,
+                );
+                final presentationDiffers =
+                    (presentationExtent - layoutExtent).abs() > 0.5;
+                final presentation = OverflowBox(
+                  alignment: Alignment.topCenter,
+                  minWidth: _viewport.width,
+                  maxWidth: _viewport.width,
+                  minHeight: presentationExtent,
+                  maxHeight: presentationExtent,
+                  child: SizedBox(
+                    key: ValueKey<String>(
+                      'reader-vertical-presentation:$pageIndex',
+                    ),
+                    width: _viewport.width,
+                    height: presentationExtent,
+                    child: page,
+                  ),
+                );
                 return SizedBox(
                   key: ValueKey<String>('reader-vertical-page:$pageIndex'),
-                  height: geometry.extentAt(pageIndex),
-                  // Exact stitched extents already constrain the page. Avoid
-                  // independent hard-clip edges during ordinary scrolling;
-                  // zoom still clips to its page so it cannot cover siblings.
-                  child: stitched && _zoomedPage == null
-                      ? page
-                      : ClipRect(child: page),
+                  height: layoutExtent,
+                  // The sliver extent remains frozen for the active scroll,
+                  // but a newly measured frame must not be stretched to that
+                  // stale box. Render it at the newest aspect-preserving
+                  // extent and clip only the transient overflow until idle
+                  // geometry commit makes layout and presentation agree.
+                  child: Stack(
+                    fit: StackFit.expand,
+                    clipBehavior: stitched &&
+                            _zoomedPage == null &&
+                            !presentationDiffers
+                        ? Clip.none
+                        : Clip.hardEdge,
+                    children: <Widget>[presentation],
+                  ),
                 );
               },
             );

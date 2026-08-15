@@ -39,7 +39,7 @@ final class ReaderVerticalGeometry {
 
   late final List<double> _extents = List<double>.generate(
     pages.length,
-    _computeExtent,
+    (index) => _computeExtent(index, ratios),
     growable: false,
   );
   late final List<double> _starts = _buildStarts();
@@ -54,10 +54,10 @@ final class ReaderVerticalGeometry {
     return starts;
   }
 
-  double _computeExtent(int index) {
+  double _computeExtent(int index, Map<String, double> ratioSource) {
     if (viewportWidth <= 0 || viewportHeight <= 0) return 1;
     final asset = pages[index];
-    var ratio = ratios[asset.assetKey];
+    var ratio = ratioSource[asset.assetKey];
     var hasMeasuredRatio = ratio != null;
     final width = asset.width?.toDouble();
     final height = asset.height?.toDouble();
@@ -86,6 +86,18 @@ final class ReaderVerticalGeometry {
   }
 
   double extentAt(int index) => _extents[index];
+
+  /// Computes the presentation extent from a newer ratio projection without
+  /// mutating this immutable scroll-layout snapshot.
+  ///
+  /// Continuous Reader can therefore keep sliver extents frozen for one
+  /// active scroll while a newly decoded frame is immediately rendered with
+  /// its measured aspect ratio inside that stale layout box.
+  double presentationExtentAt(
+    int index,
+    Map<String, double> presentationRatios,
+  ) =>
+      _computeExtent(index, presentationRatios);
 
   ({double start, double end}) boundsAt(int index) => (
         start: _starts[index],

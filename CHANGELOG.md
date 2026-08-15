@@ -1,3 +1,10 @@
+## 0.31.0-dev.286 - Live aspect projection over frozen vertical layout
+
+- 00:09 dev.285 device Trace shows a new presentation regression rather than another download/texture failure: 16 of 20 page first-frame dimensions arrive while the vertical Reader is dragging/scrolling. Their measured height/width median is about 3.20 while unknown vertical geometry falls back to 1.5, so dev.280's scroll-stable layout snapshot can remain intentionally stale by more than 100% until idle.
+- `MediaAspectViewport(BoxFit.fitWidth)` deliberately fills the Reader-owned page box because exact vertical geometry normally owns aspect ratio. Combined with the stale active-scroll snapshot this stretched newly decoded media to the placeholder/old extent until pending ratios committed at idle.
+- Keep the dev.280 invariant that `ListView.itemExtentBuilder` is immutable during one active scroll, but split layout extent from visual presentation extent. `ReaderVerticalGeometry.presentationExtentAt()` projects the latest measured ratio without mutating the snapshot; the vertical page renders in a top-aligned overflow box at that live aspect-preserving extent and transiently clips only the portion outside the frozen sliver box. Idle still performs the existing atomic geometry correction.
+- Remove the stale stable-spec reference to the device-falsified dev.284 mount-travel keep-alive guard. No Reader resource window, Pipeline demand, Download/Decode/Upload, texture, NetLane or promoted-retention policy changes.
+
 ## 0.31.0-dev.285 - Bounded hot promoted physical retention
 
 - 16:22 dev.284 device Trace falsified the page-host composition-boundary hypothesis: the new composition guard removed the prior page18/page19 short mount/dispose churn, but the fixed-region jitter remained. Roll back the dev.284 mount-travel keep-alive behavior and mark ADR 0263 superseded.
