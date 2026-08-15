@@ -19,8 +19,15 @@ def forbid(path: str, *tokens: str) -> None:
     if found:
         raise SystemExit(f'FAIL: {path} contains forbidden dev.294 tokens: {found}')
 
-require('apps/app/pubspec.yaml', 'version: 0.31.0+294')
-require('apps/app/android/zic-version.properties', 'versionCode=294')
+pubspec = read('apps/app/pubspec.yaml')
+props = read('apps/app/android/zic-version.properties')
+import re
+dev = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
+android_dev = re.search(r'^versionCode=(\d+)\s*$', props, re.M)
+if dev is None or int(dev.group(1)) < 294:
+    raise SystemExit('FAIL: dev.294+ app version missing')
+if android_dev is None or int(android_dev.group(1)) < 294:
+    raise SystemExit('FAIL: dev.294+ Android version missing')
 require('packages/telemetry/lib/src/trace.dart', 'pageLayoutSnapshot,')
 require(
     'packages/reader/lib/src/reader_view.dart',
@@ -33,7 +40,7 @@ require(
     "'renderHeight': renderObject.size.height",
     "'extentDeltaPx': renderObject.size.height - expectedExtent",
     "'layoutResidualPx':",
-    'globalOrigin.dy + pixels - expected.start',
+    'globalOrigin.dy + observedPixels - expected.start',
     "'globalTop': globalOrigin.dy",
     "'transformM00': transform[0]",
     "'transformTy': transform[13]",
@@ -59,12 +66,12 @@ require(
     'observation-only',
     'external Texture/SurfaceProducer compositor',
 )
-require(
-    'docs/NEXT_CHAT_HANDOFF.md',
-    '# dev.294 后续交接',
-    '缩放/比例异常解决',
-    '`pageLayoutSnapshot`',
-)
+handoff_tokens = ['缩放/比例异常解决', '`pageLayoutSnapshot`']
+if int(dev.group(1)) == 294:
+    handoff_tokens.insert(0, '# dev.294 后续交接')
+else:
+    handoff_tokens.insert(0, '# dev.295 后续交接')
+require('docs/NEXT_CHAT_HANDOFF.md', *handoff_tokens)
 forbid(
     'packages/reader/lib/src/reader_view.dart',
     'presentationExtentAt(',

@@ -996,8 +996,8 @@ final class _ReaderViewState extends State<ReaderView> {
       return;
     }
     _lastVerticalLayoutSnapshotMicros = now;
-    final pixels = metrics.pixels;
-    final viewportDimension = metrics.viewportDimension;
+    final scheduledPixels = metrics.pixels;
+    final scheduledViewportDimension = metrics.viewportDimension;
     final interaction = _interaction;
     final revision = widget.demandRevision?.call();
     final controller = widget.controller;
@@ -1028,6 +1028,12 @@ final class _ReaderViewState extends State<ReaderView> {
         final globalBottomRight = renderObject.localToGlobal(
           Offset(renderObject.size.width, renderObject.size.height),
         );
+        final position = _verticalController.hasClients
+            ? _verticalController.position
+            : null;
+        final observedPixels = position?.pixels ?? scheduledPixels;
+        final observedViewportDimension =
+            position?.viewportDimension ?? scheduledViewportDimension;
         final expected = geometry.boundsAt(pageIndex);
         final expectedExtent = geometry.extentAt(pageIndex);
         final role = pageIndex == currentIndex
@@ -1049,8 +1055,9 @@ final class _ReaderViewState extends State<ReaderView> {
               'visibleFraction': sample.fraction,
               'currentIndex': currentIndex,
               if (targetIndex != null) 'targetIndex': targetIndex,
-              'scrollPixels': pixels,
-              'viewportDimension': viewportDimension,
+              'scrollPixels': observedPixels,
+              'viewportDimension': observedViewportDimension,
+              'scheduledScrollPixels': scheduledPixels,
               'expectedStart': expected.start,
               'expectedExtent': expectedExtent,
               'renderWidth': renderObject.size.width,
@@ -1061,7 +1068,7 @@ final class _ReaderViewState extends State<ReaderView> {
               // Any wobble in the residual points at layout/transform rather
               // than the expected change in scroll position itself.
               'layoutResidualPx':
-                  globalOrigin.dy + pixels - expected.start,
+                  globalOrigin.dy + observedPixels - expected.start,
               'minWidth': constraints.minWidth,
               'maxWidth': constraints.maxWidth,
               'minHeight': constraints.minHeight,

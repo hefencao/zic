@@ -1,3 +1,9 @@
+## 0.31.0-dev.295 - Vertical active hidden-static upload deferral
+
+- Fresh dev.294 device Trace separates the remaining fixed-region/scroll jitter from Sliver item geometry: all 333 `pageLayoutSnapshot` events keep actual render extent equal to expected extent (`extentDeltaPx=0`) and the sampled 2x2 transform remains identity. The dev.294 residual probe itself captured pre-frame scroll pixels and is corrected to compare the post-frame RenderBox against live scroll pixels.
+- The same Trace exposes expensive Android texture presentation for static pages that are still hidden speculative `next` work during active vertical scrolling: page11 presents in about 24.4 ms (about 17.8 ms blit) and page10 in about 14.8 ms (about 10.7 ms blit). This is the gap left by dev.281, which deferred hidden `next2` only.
+- During vertical dragging/scrolling/settling, defer static UploadDemand for every hidden speculative role while keeping decode warm. Current, transition and genuinely viewport-visible static pages still upload immediately; idle resumes the existing stable-role static warming. Encoded 3/7, decode 2/1, NetLane, retention, media-aspect and source/replay ownership remain unchanged.
+
 ## 0.31.0-dev.294 - Vertical jitter actual-layout observability
 
 - Correct the dev.293 handoff premise using the authoritative device outcome: the vertical media scale/aspect defect is closed after dev.293; the remaining reproduced problem is fixed-region/scroll jitter. Keep the dev.293 `FittedBox(fitWidth)` boundary and freeze sourceCanvas, resident replay, previous3/next7, decode previous1/next2, NetLane and promoted-retention policy.

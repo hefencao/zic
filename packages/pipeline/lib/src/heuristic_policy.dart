@@ -117,12 +117,13 @@ final class HeuristicPolicy {
 
       final primaryUpload = role == PageRole.current ||
           role == PageRole.transition;
-      final deferVerticalNext2Upload =
+      final deferHiddenVerticalStaticUpload =
           observation.direction == ReadingDirection.vertical &&
+              staticWarm &&
+              !primaryUpload &&
               !visibleStatic &&
-              role == PageRole.next2 &&
               _verticalPresentationActive(observation.interaction);
-      if ((primaryUpload || staticWarm) && !deferVerticalNext2Upload) {
+      if ((primaryUpload || staticWarm) && !deferHiddenVerticalStaticUpload) {
         uploads[decode] = UploadDemand(
           role: role,
           priority: primaryUpload

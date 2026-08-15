@@ -67,18 +67,27 @@ req('super.adjustPositionForNewDimensions(' in physics,
     'custom vertical physics does not preserve normal scroll dimension behavior')
 
 policy = text('packages/pipeline/lib/src/heuristic_policy.dart')
-for marker in (
-    'final deferVerticalNext2Upload =',
-    'observation.direction == ReadingDirection.vertical',
-    '!visibleStatic',
-    'role == PageRole.next2',
-    '_verticalPresentationActive(observation.interaction)',
-    'if ((primaryUpload || staticWarm) && !deferVerticalNext2Upload)',
-    'Interaction.dragging ||',
-    'Interaction.scrolling ||',
-    'Interaction.settling => true,',
-):
-    req(marker in policy, f'vertical active next2 upload deferral missing: {marker}')
+if int(m.group(1)) >= 295:
+    policy_markers = (
+        'final deferHiddenVerticalStaticUpload =',
+        'observation.direction == ReadingDirection.vertical',
+        'staticWarm &&',
+        '!primaryUpload',
+        '!visibleStatic',
+        '_verticalPresentationActive(observation.interaction)',
+        'if ((primaryUpload || staticWarm) && !deferHiddenVerticalStaticUpload)',
+    )
+else:
+    policy_markers = (
+        'final deferVerticalNext2Upload =',
+        'observation.direction == ReadingDirection.vertical',
+        '!visibleStatic',
+        'role == PageRole.next2',
+        '_verticalPresentationActive(observation.interaction)',
+        'if ((primaryUpload || staticWarm) && !deferVerticalNext2Upload)',
+    )
+for marker in (*policy_markers, 'Interaction.dragging ||', 'Interaction.scrolling ||', 'Interaction.settling => true,'):
+    req(marker in policy, f'vertical active static upload deferral missing: {marker}')
 
 require(
     'packages/reader/test/reader_navigation_test.dart',
@@ -100,8 +109,12 @@ for path in (
 ):
     req((ROOT / path).is_file(), f'missing dev.281 governance file: {path}')
 
-require('docs/ARCHITECTURE.md', 'layout-time scroll correction', 'non-visible next2')
-require('docs/SPEC.md', 'layout-time correction', 'next2 texture upload')
+if int(m.group(1)) >= 295:
+    require('docs/ARCHITECTURE.md', 'layout-time scroll correction', 'non-visible speculative static texture upload')
+    require('docs/SPEC.md', 'layout-time correction', 'speculative static page MUST defer UploadDemand')
+else:
+    require('docs/ARCHITECTURE.md', 'layout-time scroll correction', 'non-visible next2')
+    require('docs/SPEC.md', 'layout-time correction', 'next2 texture upload')
 require('docs/IMPLEMENTATION_STATUS.md', 'dev.281', '10.432')
 require('docs/IMPLEMENTATION_PLAN.md', 'dev.281', 'slow-release', 'ballistic')
 require('docs/NEXT_CHAT_HANDOFF.md', 'dev.281', '10.432', 'next2')

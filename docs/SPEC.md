@@ -137,7 +137,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - lane normal concurrency：network 5、decode 3、upload 2；network/decode/upload 各 MUST 保留 1 个仅 current(priority 1000) 可用的 bounded handoff slot，transition(priority 900)不得占用；
 - source bucket：local 2、remote 5。
 
-Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor 或 texture。静态一帧满足；静态证据 MUST NOT 把 near/far encoded-only 页面提升为 speculative decode/upload，非可见静态预热只能发生在 current/transition/next/next2/previous 稳定 decode 角色内。真实 viewport 可见静态页 MAY 获得一帧输出，且不得重新引入 `PageRole.visible`。
+Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor 或 texture。静态一帧满足；静态证据 MUST NOT 把 near/far encoded-only 页面提升为 speculative decode/upload，非可见静态预热只能发生在 current/transition/next/next2/previous 稳定 decode 角色内。真实 viewport 可见静态页 MAY 获得一帧输出，且不得重新引入 `PageRole.visible`。纵排 dragging/scrolling/settling 期间，任何非 current/transition 且不在真实 viewport 的 speculative static page MUST defer UploadDemand，即使其稳定role为 immediate next/next2/previous；其 DecodeDemand MUST保持既有窗口语义，idle后 MAY恢复stable-role static warming。
 
 ## 4. 网络调度
 
@@ -208,7 +208,7 @@ Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor �
 
 ## 11. Telemetry
 
-Trace MUST 记录 demand/session/writer/source/decode/upload/present/retry/lifecycle 的可归因摘要。composition physical transfer对同一共享App/export TraceSink的同一事件 MUST 只投递一次；Reader-local memory trace MAY分别保留该physical event，但多个Reader不得放大全局导出次数。前若干不同帧 SHOULD 保留逐帧 timing，至少区分 lane queue、source wait、cursor/worker/native decode、upload backpressure、output prepare、platform/schedule queue、blit/replace和 channel dispatch。 纵排抖动诊断 MAY 以有界低频`pageLayoutSnapshot`记录真实可见page RenderBox的expected extent、constraints/size、paint/global rect、transform、role与interaction；该事件 MUST 只用于归因，MUST NOT 成为layout、navigation、presentation或scheduler输入。
+Trace MUST 记录 demand/session/writer/source/decode/upload/present/retry/lifecycle 的可归因摘要。composition physical transfer对同一共享App/export TraceSink的同一事件 MUST 只投递一次；Reader-local memory trace MAY分别保留该physical event，但多个Reader不得放大全局导出次数。前若干不同帧 SHOULD 保留逐帧 timing，至少区分 lane queue、source wait、cursor/worker/native decode、upload backpressure、output prepare、platform/schedule queue、blit/replace和 channel dispatch。 纵排抖动诊断 MAY 以有界低频`pageLayoutSnapshot`记录真实可见page RenderBox的expected extent、constraints/size、paint/global rect、transform、role与interaction；post-frame RenderBox若与scroll position做残差比较，MUST使用同一post-frame时点的live scroll pixels，不得混用调度采样时的旧pixels制造伪layout residual。该事件 MUST 只用于归因，MUST NOT 成为layout、navigation、presentation或scheduler输入。
 
 identity 超限时使用稳定 hash 与原长度；高频事件 MAY 在导出投影按语义分桶合并。`framePipelineTiming` 的合并 MUST 至少区分 trace reason、dominant stage 与角色，`decodeRefill` 的合并 MUST 至少区分 role、stage 与 source-wake，并保留 first/last、coalesced count 以及关键 timing/source length/revision 的 min/max；错误和生命周期边缘、retry/resume、`sourceRead` 与网络任务边缘 MUST 保留。Trace 不得成为业务状态权威来源，导出压缩 MUST NOT 驱动调度、重试或缓存，overlapping total 不得与子阶段重复参与 dominant 归因。
 

@@ -670,12 +670,54 @@ final class _FakeClock implements MonoClock {
       expect(
         activePlan.uploads.values.where((demand) => demand.role == PageRole.next),
         isNotEmpty,
-        reason: 'the immediate next page remains warm',
+        reason: 'a truly visible immediate next page still uploads',
+      );
+
+      final hiddenNextObservation = ReaderObs(
+        sessionId: 'vertical-active-static-hidden-next',
+        currentIndex: 5,
+        stableIndex: 5,
+        interaction: Interaction.scrolling,
+        logicalPosition: 5.05,
+        velocity: 2.5,
+        currentCoverage: Coverage(
+          pageIndex: 5,
+          assetKey: staticChapter.pages[5].assetKey,
+          fraction: 1,
+        ),
+        visibleCoverages: <Coverage>[
+          Coverage(
+            pageIndex: 5,
+            assetKey: staticChapter.pages[5].assetKey,
+            fraction: 1,
+          ),
+        ],
+        direction: ReadingDirection.vertical,
+        timestamp: DateTime.utc(2026, 8, 15),
+        monotonicMicros: 2,
+      );
+      final hiddenNextPlan = policy.createPlan(
+        revision: 2,
+        chapter: staticChapter,
+        observation: hiddenNextObservation,
+        window: resolver.resolve(staticChapter, hiddenNextObservation),
+        decodeTarget: target,
+      );
+      expect(
+        hiddenNextPlan.decodes.values.where((demand) => demand.role == PageRole.next),
+        isNotEmpty,
+        reason: 'hidden immediate next keeps its decoded warm frame',
+      );
+      expect(
+        hiddenNextPlan.uploads.values.where((demand) => demand.role == PageRole.next),
+        isEmpty,
+        reason:
+            'hidden immediate next must not blit a static texture during active vertical scrolling',
       );
 
       final idle = verticalObservation(Interaction.idle);
       final idlePlan = policy.createPlan(
-        revision: 2,
+        revision: 3,
         chapter: staticChapter,
         observation: idle,
         window: resolver.resolve(staticChapter, idle),
