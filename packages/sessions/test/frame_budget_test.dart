@@ -9,7 +9,7 @@ import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('frame budget preserves current and last outputs only', () async {
+  test('frame budget preserves current, last and visible static outputs', () async {
     final temp = await Directory.systemTemp.createTemp('frame_budget_test_');
     final clock = _Clock();
     final sources = SourcePool(
@@ -124,21 +124,22 @@ void main() {
           priority: 500,
           reason: 'test',
           expirationRevision: 1,
+          retainOutput: true,
         ),
       },
     );
 
-    expect(decodes.find(current)?.bytes, 200);
+    expect(decodes.find(current)?.bytes, 100);
     expect(decodes.find(last)?.bytes, 0,
         reason: 'last keeps the output, not decoded successors');
-    expect(decodes.find(near)?.bytes, 0);
+    expect(decodes.find(near)?.bytes, 100);
     expect(uploads.find(current)?.outputBytes, 200);
     expect(uploads.find(last)?.outputBytes, 200);
-    expect(uploads.find(near)?.outputBytes, 0);
-    expect(report.currentDecoded, 200);
-    expect(report.currentOutput, 400);
-    expect(report.decodedFreed, 400);
-    expect(report.outputFreed, 200);
+    expect(uploads.find(near)?.outputBytes, 200);
+    expect(report.currentDecoded, 100);
+    expect(report.currentOutput, 600);
+    expect(report.decodedFreed, 100);
+    expect(report.outputFreed, 0);
 
     uploads.dispose();
     decodes.dispose();

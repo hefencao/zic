@@ -109,6 +109,7 @@ final class _ReaderViewState extends State<ReaderView> {
   late List<GlobalKey> _verticalPageLayoutKeys;
   int _lastVerticalLayoutSnapshotMicros = -1000000;
   ReaderFrameTimingSubscription? _frameTimingSubscription;
+  _ReaderFrameTimingSummary? _frameTimingSummary;
   Size _viewport = Size.zero;
   double _devicePixelRatio = 1;
   late ReadingDirection _lastDirection;
@@ -124,15 +125,31 @@ final class _ReaderViewState extends State<ReaderView> {
   bool _verticalRatioCommitScheduled = false;
   double? _pendingVerticalGeometryCorrection;
   bool _verticalGeometryCorrectionClearScheduled = false;
+  double? _lastVerticalScrollPixels;
+  double? _lastVerticalLogicalPosition;
+  double? _lastVerticalVelocity;
+  int? _lastVerticalMetricsMicros;
+  int? _lastVerticalLayoutPageIndex;
+  double? _lastVerticalLayoutGlobalTop;
+  double? _lastVerticalLayoutGlobalBottom;
+  int? _lastVerticalLayoutMicros;
   ReaderVerticalGeometry? _cachedVerticalGeometry;
   Map<String, double>? _cachedVerticalRatios;
   Size? _cachedVerticalViewport;
   bool? _cachedVerticalStitch;
   int? _cachedVerticalRotation;
   double? _cachedVerticalDevicePixelRatio;
+  // Keep the steady-state composition window small while scrolling. The first
+  // layout gets one bounded six-screen pass so initial adjacent hosts can
+  // resolve before the reader is interactive; it is collapsed after the first
+  // scroll ends and never grows incrementally during idle or scrolling.
   int _verticalCacheScreens = 2;
-  bool _verticalWarmupScheduled = false;
-  ScrollPosition? _verticalScrollPosition;
+  bool _verticalInitialCompositionWarmupScheduled = false;
+  bool _verticalInitialCompositionPrimed = false;
+  static const int _verticalInitialCacheScreens = 6;
+  static const int _frameTimingBudgetMicros = 16667;
+  static const int _frameTimingMissedVsyncMicros = 20000;
+  static const int _frameTimingSummaryWindowMicros = 1000000;
 
   @override
   void initState() {
@@ -163,9 +180,28 @@ final class _ReaderViewState extends State<ReaderView> {
   @override
   void didUpdateWidget(covariant ReaderView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.frameTimingSource != widget.frameTimingSource) {
-      _detachFrameTimingSource();
+    final frameSourceChanged =
+        oldWidget.frameTimingSource != widget.frameTimingSource;
+    final traceOwnerChanged = oldWidget.traceSink != widget.traceSink ||
+        oldWidget.controller != widget.controller ||
+        oldWidget.clock != widget.clock;
+    if (frameSourceChanged) {
+      _flushFrameTimingSummary(
+        traceSink: oldWidget.traceSink,
+        controller: oldWidget.controller,
+        clock: oldWidget.clock,
+        demandRevision: oldWidget.demandRevision,
+      );
+      _frameTimingSubscription?.cancel();
+      _frameTimingSubscription = null;
       _attachFrameTimingSource();
+    } else if (traceOwnerChanged) {
+      _flushFrameTimingSummary(
+        traceSink: oldWidget.traceSink,
+        controller: oldWidget.controller,
+        clock: oldWidget.clock,
+        demandRevision: oldWidget.demandRevision,
+      );
     }
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_handleControllerCommand);
@@ -246,13 +282,6 @@ final class _ReaderViewState extends State<ReaderView> {
     _detachFrameTimingSource();
     widget.controller.removeListener(_handleControllerCommand);
     _pageController.dispose();
-    final position = _verticalScrollPosition;
-    if (position != null) {
-      position.isScrollingNotifier.removeListener(
-        _handleVerticalScrollingChanged,
-      );
-      _verticalScrollPosition = null;
-    }
     _verticalController.dispose();
     super.dispose();
   }
@@ -311,7 +340,7 @@ final class _ReaderViewState extends State<ReaderView> {
             final physics = _zoomedPage == null
                 ? _verticalScrollPhysics
                 : const NeverScrollableScrollPhysics();
-            _scheduleVerticalCompositionWarmup();
+            _scheduleVerticalInitialCompositionWarmup();
             final cacheExtent = _viewport.height > 0
                 ? _viewport.height * _verticalCacheScreens
                 : null;
@@ -535,68 +564,33 @@ final class _ReaderViewState extends State<ReaderView> {
   void _resetVerticalCompositionCache() {
     _invalidateVerticalGeometryCache();
     _verticalCacheScreens = 2;
-    _verticalWarmupScheduled = false;
+    _verticalInitialCompositionWarmupScheduled = false;
+    _verticalInitialCompositionPrimed = false;
+  }
+
+  void _scheduleVerticalInitialCompositionWarmup() {
+    if (_verticalInitialCompositionWarmupScheduled ||
+        _verticalInitialCompositionPrimed ||
+        widget.controller.direction != ReadingDirection.vertical ||
+        _viewport == Size.zero) {
+      return;
+    }
+    _verticalInitialCompositionWarmupScheduled = true;
+    _verticalCacheScreens = _verticalInitialCacheScreens;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          widget.controller.direction != ReadingDirection.vertical ||
+          _verticalInitialCompositionPrimed) {
+        return;
+      }
+      _verticalInitialCompositionPrimed = true;
+    });
   }
 
   ScrollController _createVerticalController({
     double initialScrollOffset = 0,
   }) =>
-      ScrollController(
-        initialScrollOffset: initialScrollOffset,
-        onAttach: _handleVerticalScrollAttach,
-        onDetach: _handleVerticalScrollDetach,
-      );
-
-  void _handleVerticalScrollAttach(ScrollPosition position) {
-    _verticalScrollPosition = position;
-    position.isScrollingNotifier.addListener(_handleVerticalScrollingChanged);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted ||
-          !identical(_verticalScrollPosition, position) ||
-          position.isScrollingNotifier.value) {
-        return;
-      }
-      _scheduleVerticalCompositionWarmup();
-    });
-  }
-
-  void _handleVerticalScrollDetach(ScrollPosition position) {
-    position.isScrollingNotifier.removeListener(_handleVerticalScrollingChanged);
-    if (identical(_verticalScrollPosition, position)) {
-      _verticalScrollPosition = null;
-    }
-  }
-
-  void _handleVerticalScrollingChanged() {
-    if (!mounted) return;
-    final position = _verticalScrollPosition;
-    if (position == null || position.isScrollingNotifier.value) {
-      return;
-    }
-    _scheduleVerticalCompositionWarmup();
-  }
-
-  void _scheduleVerticalCompositionWarmup() {
-    if (_verticalWarmupScheduled ||
-        _verticalCacheScreens >= 7 ||
-        widget.controller.direction != ReadingDirection.vertical) {
-      return;
-    }
-    _verticalWarmupScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _verticalWarmupScheduled = false;
-      if (!mounted ||
-          widget.controller.direction != ReadingDirection.vertical ||
-          !_verticalController.hasClients ||
-          _verticalController.position.isScrollingNotifier.value) {
-        return;
-      }
-      setState(() {
-        _verticalCacheScreens = math.min(7, _verticalCacheScreens + 1);
-      });
-      _scheduleVerticalCompositionWarmup();
-    });
-  }
+      ScrollController(initialScrollOffset: initialScrollOffset);
 
   ReaderVerticalGeometry _verticalGeometry({
     Map<String, double>? ratios,
@@ -748,6 +742,9 @@ final class _ReaderViewState extends State<ReaderView> {
     final controller = widget.controller;
     var rebuildLayout = false;
     if (_lastDirection != controller.direction) {
+      if (_lastDirection == ReadingDirection.vertical) {
+        _flushFrameTimingSummary();
+      }
       _lastDirection = controller.direction;
       _zoomedPage = null;
       _resetVerticalCompositionCache();
@@ -769,6 +766,7 @@ final class _ReaderViewState extends State<ReaderView> {
       rebuildLayout = true;
     }
     if (rebuildLayout && mounted) {
+      setState(() {});
     }
     final revision = controller.navigationRevision;
     if (revision == _handledNavigationRevision) return;
@@ -915,6 +913,7 @@ final class _ReaderViewState extends State<ReaderView> {
   }
 
   void _detachFrameTimingSource() {
+    _flushFrameTimingSummary();
     _frameTimingSubscription?.cancel();
     _frameTimingSubscription = null;
   }
@@ -931,32 +930,107 @@ final class _ReaderViewState extends State<ReaderView> {
     // false per-frame correlation. Preserve engine timing plus enough batch
     // anchors for offline monotonic alignment instead.
     final callbackMonotonicMicros = widget.clock.nowMicros();
-    final batchLastVsyncStartMicros = timings.last.vsyncStartMicros;
+    final context = _ReaderFrameTimingTraceContext(
+      callbackMonotonicMicros: callbackMonotonicMicros,
+      batchLastVsyncStartMicros: timings.last.vsyncStartMicros,
+      scrollPixels: _lastVerticalScrollPixels,
+      logicalPosition: _lastVerticalLogicalPosition,
+      velocity: _lastVerticalVelocity,
+      metricsMicros: _lastVerticalMetricsMicros,
+      layoutPageIndex: _lastVerticalLayoutPageIndex,
+      layoutGlobalTop: _lastVerticalLayoutGlobalTop,
+      layoutGlobalBottom: _lastVerticalLayoutGlobalBottom,
+      layoutMicros: _lastVerticalLayoutMicros,
+      interaction: _interaction,
+      geometryCorrectionTarget: _pendingVerticalGeometryCorrection,
+      stitched: widget.verticalStitch,
+    );
     for (var index = 0; index < timings.length; index++) {
       final timing = timings[index];
-      widget.traceSink.record(
-        traceEvent(
-          clock: widget.clock,
-          sessionId: widget.controller.sessionId,
-          kind: TraceEventKind.readerFrameTiming,
-          revision: widget.demandRevision?.call(),
-          payload: <String, Object?>{
-            'buildMicros': timing.buildMicros,
-            'rasterMicros': timing.rasterMicros,
-            'totalSpanMicros': timing.totalSpanMicros,
-            'vsyncOverheadMicros': timing.vsyncOverheadMicros,
-            'vsyncStartMicros': timing.vsyncStartMicros,
-            if (timing.frameIntervalMicros != null)
-              'frameIntervalMicros': timing.frameIntervalMicros,
-            'timingBatchIndex': index,
-            'timingBatchSize': timings.length,
-            'timingBatchCallbackMonotonicMicros': callbackMonotonicMicros,
-            'timingBatchLastVsyncStartMicros': batchLastVsyncStartMicros,
-            'stitched': widget.verticalStitch,
-          },
-        ),
-      );
+      if (_isFrameTimingOutlier(timing)) {
+        _flushFrameTimingSummary();
+        _recordFrameTiming(
+          timing,
+          context: context,
+          timingBatchIndex: index,
+          timingBatchSize: timings.length,
+        );
+      } else {
+        _appendFrameTimingSummary(timing, context);
+      }
     }
+  }
+
+  bool _isFrameTimingOutlier(ReaderFrameTimingSample timing) =>
+      timing.buildMicros >= _frameTimingBudgetMicros ||
+      timing.rasterMicros >= _frameTimingBudgetMicros ||
+      timing.totalSpanMicros >= _frameTimingBudgetMicros ||
+      (timing.frameIntervalMicros ?? 0) >= _frameTimingMissedVsyncMicros;
+
+  void _appendFrameTimingSummary(
+    ReaderFrameTimingSample timing,
+    _ReaderFrameTimingTraceContext context,
+  ) {
+    final summary = _frameTimingSummary;
+    if (summary != null &&
+        timing.vsyncStartMicros - summary.firstVsyncStartMicros >=
+            _frameTimingSummaryWindowMicros) {
+      _flushFrameTimingSummary();
+    }
+    final pending = _frameTimingSummary;
+    if (pending == null) {
+      _frameTimingSummary = _ReaderFrameTimingSummary(timing, context);
+    } else {
+      pending.add(timing, context);
+    }
+  }
+
+  void _flushFrameTimingSummary({
+    TraceSink? traceSink,
+    ReaderController? controller,
+    MonoClock? clock,
+    int Function()? demandRevision,
+  }) {
+    final summary = _frameTimingSummary;
+    if (summary == null) return;
+    _frameTimingSummary = null;
+    (traceSink ?? widget.traceSink).record(
+      traceEvent(
+        clock: clock ?? widget.clock,
+        sessionId: (controller ?? widget.controller).sessionId,
+        kind: TraceEventKind.readerFrameTiming,
+        revision: (demandRevision ?? widget.demandRevision)?.call(),
+        payload: summary.toPayload(),
+      ),
+    );
+  }
+
+  void _recordFrameTiming(
+    ReaderFrameTimingSample timing, {
+    required _ReaderFrameTimingTraceContext context,
+    required int timingBatchIndex,
+    required int timingBatchSize,
+  }) {
+    widget.traceSink.record(
+      traceEvent(
+        clock: widget.clock,
+        sessionId: widget.controller.sessionId,
+        kind: TraceEventKind.readerFrameTiming,
+        revision: widget.demandRevision?.call(),
+        payload: <String, Object?>{
+          ...context.toPayload(),
+          'buildMicros': timing.buildMicros,
+          'rasterMicros': timing.rasterMicros,
+          'totalSpanMicros': timing.totalSpanMicros,
+          'vsyncOverheadMicros': timing.vsyncOverheadMicros,
+          'vsyncStartMicros': timing.vsyncStartMicros,
+          if (timing.frameIntervalMicros != null)
+            'frameIntervalMicros': timing.frameIntervalMicros,
+          'timingBatchIndex': timingBatchIndex,
+          'timingBatchSize': timingBatchSize,
+        },
+      ),
+    );
   }
 
   bool _handlePagedScrollNotification(ScrollNotification notification) {
@@ -1006,9 +1080,11 @@ final class _ReaderViewState extends State<ReaderView> {
           ? Interaction.scrubbing
           : Interaction.idle;
       _emitFromVerticalMetrics(notification.metrics, forceLayoutSnapshot: true);
+      if (_verticalInitialCompositionPrimed && _verticalCacheScreens != 2) {
+        setState(() => _verticalCacheScreens = 2);
+      }
       if (_interaction == Interaction.idle) {
         _schedulePendingVerticalRatioCommit();
-        _scheduleVerticalCompositionWarmup();
       }
     }
     return false;
@@ -1032,6 +1108,10 @@ final class _ReaderViewState extends State<ReaderView> {
       viewportDimension: metrics.viewportDimension,
     );
     final velocity = _velocityFor(position.logicalPosition);
+    _lastVerticalScrollPixels = metrics.pixels;
+    _lastVerticalLogicalPosition = position.logicalPosition;
+    _lastVerticalVelocity = velocity;
+    _lastVerticalMetricsMicros = widget.clock.nowMicros();
     if (velocity.abs() > 0.001) {
       _lastVerticalTravelDirection = velocity > 0 ? 1 : -1;
     }
@@ -1112,7 +1192,13 @@ final class _ReaderViewState extends State<ReaderView> {
     final revision = widget.demandRevision?.call();
     final controller = widget.controller;
     final pages = controller.chapter.pages;
-    final samples = visible.take(8).toList(growable: false);
+    // This is diagnostics only. Sampling every mounted page makes the trace
+    // itself compete with a scroll frame on dense, short-page chapters.
+    final samples = visible
+        .where((sample) =>
+            sample.index == currentIndex || sample.index == targetIndex)
+        .take(2)
+        .toList(growable: false);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
           widget.controller != controller ||
@@ -1151,6 +1237,12 @@ final class _ReaderViewState extends State<ReaderView> {
             : pageIndex == targetIndex
                 ? 'transition'
                 : 'visible';
+        if (pageIndex == currentIndex) {
+          _lastVerticalLayoutPageIndex = pageIndex;
+          _lastVerticalLayoutGlobalTop = globalOrigin.dy;
+          _lastVerticalLayoutGlobalBottom = globalBottomRight.dy;
+          _lastVerticalLayoutMicros = widget.clock.nowMicros();
+        }
         widget.traceSink.record(
           traceEvent(
             clock: widget.clock,
@@ -1380,6 +1472,159 @@ final class _ReaderViewState extends State<ReaderView> {
       );
     }
   }
+}
+
+final class _ReaderFrameTimingTraceContext {
+  const _ReaderFrameTimingTraceContext({
+    required this.callbackMonotonicMicros,
+    required this.batchLastVsyncStartMicros,
+    required this.scrollPixels,
+    required this.logicalPosition,
+    required this.velocity,
+    required this.metricsMicros,
+    required this.layoutPageIndex,
+    required this.layoutGlobalTop,
+    required this.layoutGlobalBottom,
+    required this.layoutMicros,
+    required this.interaction,
+    required this.geometryCorrectionTarget,
+    required this.stitched,
+  });
+
+  final int callbackMonotonicMicros;
+  final int batchLastVsyncStartMicros;
+  final double? scrollPixels;
+  final double? logicalPosition;
+  final double? velocity;
+  final int? metricsMicros;
+  final int? layoutPageIndex;
+  final double? layoutGlobalTop;
+  final double? layoutGlobalBottom;
+  final int? layoutMicros;
+  final Interaction interaction;
+  final double? geometryCorrectionTarget;
+  final bool stitched;
+
+  Map<String, Object?> toPayload() => <String, Object?>{
+        'timingBatchCallbackMonotonicMicros': callbackMonotonicMicros,
+        'timingBatchLastVsyncStartMicros': batchLastVsyncStartMicros,
+        if (scrollPixels != null) 'scrollPixelsAtCallback': scrollPixels,
+        if (logicalPosition != null)
+          'logicalPositionAtCallback': logicalPosition,
+        if (velocity != null) 'scrollVelocityAtCallback': velocity,
+        if (metricsMicros != null)
+          'scrollSampleAgeMicros': callbackMonotonicMicros - metricsMicros!,
+        if (layoutPageIndex != null) 'layoutPageIndexAtCallback': layoutPageIndex,
+        if (layoutGlobalTop != null)
+          'layoutGlobalTopAtCallback': layoutGlobalTop,
+        if (layoutGlobalBottom != null)
+          'layoutGlobalBottomAtCallback': layoutGlobalBottom,
+        if (layoutMicros != null)
+          'layoutSampleAgeMicros': callbackMonotonicMicros - layoutMicros!,
+        'interactionAtCallback': interaction.name,
+        if (geometryCorrectionTarget != null)
+          'geometryCorrectionTarget': geometryCorrectionTarget,
+        'stitched': stitched,
+      };
+}
+
+final class _ReaderFrameTimingSummary {
+  _ReaderFrameTimingSummary(
+    ReaderFrameTimingSample timing,
+    _ReaderFrameTimingTraceContext context,
+  )   : firstVsyncStartMicros = timing.vsyncStartMicros,
+        _last = timing,
+        _context = context,
+        _minimumBuildMicros = timing.buildMicros,
+        _maximumBuildMicros = timing.buildMicros,
+        _minimumRasterMicros = timing.rasterMicros,
+        _maximumRasterMicros = timing.rasterMicros,
+        _minimumTotalSpanMicros = timing.totalSpanMicros,
+        _maximumTotalSpanMicros = timing.totalSpanMicros,
+        _minimumVsyncOverheadMicros = timing.vsyncOverheadMicros,
+        _maximumVsyncOverheadMicros = timing.vsyncOverheadMicros,
+        _minimumFrameIntervalMicros = timing.frameIntervalMicros,
+        _maximumFrameIntervalMicros = timing.frameIntervalMicros;
+
+  final int firstVsyncStartMicros;
+  int _sampleCount = 1;
+  ReaderFrameTimingSample _last;
+  _ReaderFrameTimingTraceContext _context;
+  int _minimumBuildMicros;
+  int _maximumBuildMicros;
+  int _minimumRasterMicros;
+  int _maximumRasterMicros;
+  int _minimumTotalSpanMicros;
+  int _maximumTotalSpanMicros;
+  int _minimumVsyncOverheadMicros;
+  int _maximumVsyncOverheadMicros;
+  int? _minimumFrameIntervalMicros;
+  int? _maximumFrameIntervalMicros;
+
+  void add(
+    ReaderFrameTimingSample timing,
+    _ReaderFrameTimingTraceContext context,
+  ) {
+    _sampleCount++;
+    _last = timing;
+    _context = context;
+    _minimumBuildMicros = math.min(_minimumBuildMicros, timing.buildMicros);
+    _maximumBuildMicros = math.max(_maximumBuildMicros, timing.buildMicros);
+    _minimumRasterMicros = math.min(_minimumRasterMicros, timing.rasterMicros);
+    _maximumRasterMicros = math.max(_maximumRasterMicros, timing.rasterMicros);
+    _minimumTotalSpanMicros = math.min(
+      _minimumTotalSpanMicros,
+      timing.totalSpanMicros,
+    );
+    _maximumTotalSpanMicros = math.max(
+      _maximumTotalSpanMicros,
+      timing.totalSpanMicros,
+    );
+    _minimumVsyncOverheadMicros = math.min(
+      _minimumVsyncOverheadMicros,
+      timing.vsyncOverheadMicros,
+    );
+    _maximumVsyncOverheadMicros = math.max(
+      _maximumVsyncOverheadMicros,
+      timing.vsyncOverheadMicros,
+    );
+    final interval = timing.frameIntervalMicros;
+    if (interval != null) {
+      _minimumFrameIntervalMicros = _minimumFrameIntervalMicros == null
+          ? interval
+          : math.min(_minimumFrameIntervalMicros!, interval);
+      _maximumFrameIntervalMicros = _maximumFrameIntervalMicros == null
+          ? interval
+          : math.max(_maximumFrameIntervalMicros!, interval);
+    }
+  }
+
+  Map<String, Object?> toPayload() => <String, Object?>{
+        ..._context.toPayload(),
+        'timingSummary': true,
+        'frameSampleCount': _sampleCount,
+        'firstVsyncStartMicros': firstVsyncStartMicros,
+        'lastVsyncStartMicros': _last.vsyncStartMicros,
+        'buildMicros': _last.buildMicros,
+        'minBuildMicros': _minimumBuildMicros,
+        'maxBuildMicros': _maximumBuildMicros,
+        'rasterMicros': _last.rasterMicros,
+        'minRasterMicros': _minimumRasterMicros,
+        'maxRasterMicros': _maximumRasterMicros,
+        'totalSpanMicros': _last.totalSpanMicros,
+        'minTotalSpanMicros': _minimumTotalSpanMicros,
+        'maxTotalSpanMicros': _maximumTotalSpanMicros,
+        'vsyncOverheadMicros': _last.vsyncOverheadMicros,
+        'minVsyncOverheadMicros': _minimumVsyncOverheadMicros,
+        'maxVsyncOverheadMicros': _maximumVsyncOverheadMicros,
+        'vsyncStartMicros': _last.vsyncStartMicros,
+        if (_last.frameIntervalMicros != null)
+          'frameIntervalMicros': _last.frameIntervalMicros,
+        if (_minimumFrameIntervalMicros != null)
+          'minFrameIntervalMicros': _minimumFrameIntervalMicros,
+        if (_maximumFrameIntervalMicros != null)
+          'maxFrameIntervalMicros': _maximumFrameIntervalMicros,
+      };
 }
 
 

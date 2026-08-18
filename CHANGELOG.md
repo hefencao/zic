@@ -1,3 +1,9 @@
+## Working tree - vertical frame-cadence follow-up
+
+- 固定纵向 page shell composition 为 6 个 viewport，移除 idle post-frame 渐增 warmup，避免手势前的大范围 sliver rebuild。
+- Debug trace 摘要使用 O(1) 导出事件计数，不再在每次 trace 事件上排序完整导出缓冲；恢复 Reader 方向/旋转变更遗漏的局部重建。
+- `readerFrameTiming` 的健康帧按约 1 秒摘要保留样本数与 min/max，build/raster/span 超预算或 vsync 间隔达到 20ms 的帧逐条保留；异常帧会切断健康摘要桶，避免诊断自身撑满 UI/export ring。
+
 ## 0.31.0-dev.304 - Constant-time diagnostic trace hot path
 
 - After dev.301–303 removed semantic revision churn, repeated lane pumping and hidden snapshot broadcasts, the reported vertical scroll drops still remain while recorded Flutter build/raster time is usually low. The remaining legal page-boundary path synchronously emits many demand/observation events on the UI isolate, so diagnostic processing itself is now treated as frame-budgeted work rather than free instrumentation.

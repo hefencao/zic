@@ -21,6 +21,7 @@ def forbid(text: str, token: str, label: str) -> None:
 
 telemetry = read('packages/telemetry/lib/src/trace.dart')
 debug_trace = read('apps/app/lib/debug_trace.dart')
+misc_page = read('apps/app/lib/misc_page.dart')
 pipeline = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 telemetry_test = read('packages/telemetry/test/trace_test.dart')
 app_test = read('apps/app/test/misc_settings_test.dart')
@@ -45,6 +46,11 @@ for token in (
     'identical(_exportBuckets[removedKey], removed)',
     'for (final entry in event.payload.entries)',
     '!hasListeners',
+    'int get exportEventCount => _exportEvents.length;',
+    'TraceEventKind.readerFrameTiming,',
+    '_isHealthyReaderFrameTiming',
+    '_forgetReaderFrameTimingBucket',
+    "'layoutSampleAgeMicros'",
 ):
     require(debug_trace, token, 'constant-time DebugTrace projection')
 for token in (
@@ -53,6 +59,9 @@ for token in (
     'for (final field in _exportRangeFields)',
 ):
     forbid(debug_trace, token, 'linear saturated DebugTrace hot path')
+
+require(misc_page, 'debugTrace.exportEventCount',
+        'constant-time trace summary count')
 
 require(pipeline, 'trace = traceSink ?? const NoopTraceSink();',
         'explicit production trace sink')

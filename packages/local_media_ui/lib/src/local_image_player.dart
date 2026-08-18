@@ -254,7 +254,18 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   void _attachPageOutput(PipelinePageOutputStream output) {
     void listener(PipelinePageOutputSnapshot snapshot) {
       if (!mounted) return;
-      setState(() => _pageOutputSnapshot = snapshot);
+      final prior = _pageOutputSnapshot;
+      final visualChanged = prior == null ||
+          prior.state != snapshot.state ||
+          !identical(prior.surface, snapshot.surface) ||
+          prior.frameIndex != snapshot.frameIndex ||
+          prior.replacing != snapshot.replacing ||
+          !identical(prior.failure, snapshot.failure);
+      if (visualChanged) {
+        setState(() => _pageOutputSnapshot = snapshot);
+      } else {
+        _pageOutputSnapshot = snapshot;
+      }
       if (snapshot.hasSurface) {
         final surface = snapshot.surface!;
         _reportDimensions(
@@ -1225,4 +1236,3 @@ ContentKindHint _contentKindHint(LocalImageFormat format) => switch (format) {
       LocalImageFormat.ico ||
       LocalImageFormat.heif => ContentKindHint.fallback,
     };
-

@@ -56,6 +56,8 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
   static const int _exportDefaultWindowMicros = 500000;
   static const int _exportFrameWindowMicros = 1000000;
   static const int _exportScrollWindowMicros = 250000;
+  static const int _readerFrameTimingBudgetMicros = 16667;
+  static const int _readerFrameTimingMissedVsyncMicros = 20000;
   static const Set<TraceEventKind> _coalescibleKinds = <TraceEventKind>{
     TraceEventKind.pageHostMounted,
     TraceEventKind.pageHostDisposed,
@@ -86,6 +88,7 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     TraceEventKind.framePipelineTiming,
     TraceEventKind.decodeRefill,
     TraceEventKind.playbackFrameDue,
+    TraceEventKind.readerFrameTiming,
   };
 
   static const Set<String> _exportRangeFields = <String>{
@@ -165,6 +168,18 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     'transformM11',
     'transformTx',
     'transformTy',
+    'buildMicros',
+    'rasterMicros',
+    'totalSpanMicros',
+    'vsyncOverheadMicros',
+    'frameIntervalMicros',
+    'scrollPixelsAtCallback',
+    'logicalPositionAtCallback',
+    'scrollVelocityAtCallback',
+    'scrollSampleAgeMicros',
+    'layoutGlobalTopAtCallback',
+    'layoutGlobalBottomAtCallback',
+    'layoutSampleAgeMicros',
   };
 
   final int maxEvents;
@@ -187,6 +202,7 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
   int get coalescedCount => _coalescedCount;
   int get exportCoalescedCount => _exportCoalescedCount;
   int get exportDroppedCount => _exportDroppedCount;
+  int get exportEventCount => _exportEvents.length;
   List<TraceEvent> get events => List<TraceEvent>.unmodifiable(_events);
   List<TraceEvent> get exportEvents {
     final ordered = _exportEvents.map((entry) => entry.event).toList()
@@ -207,10 +223,19 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
   void record(TraceEvent event) {
     if (_disposed || !_enabled) return;
     _recordedCount++;
+    final healthyFrameTiming = _isHealthyReaderFrameTiming(event);
+    if (event.kind == TraceEventKind.readerFrameTiming && !healthyFrameTiming) {
+      _forgetReaderFrameTimingBucket(event);
+    }
     if (_tryCoalesceExport(event)) {
       _exportCoalescedCount++;
     } else {
       _appendExport(event);
+    }
+    final retainInUi = event.kind != TraceEventKind.readerFrameTiming ||
+        !healthyFrameTiming;
+    if (!retainInUi) {
+      return;
     }
     if (_tryCoalesce(event)) {
       _coalescedCount++;
@@ -222,8 +247,8 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     }
     // FrameTiming is emitted after a rendered frame. Scheduling another UI
     // frame just to notify the trace viewer would make the diagnostic feed
-    // self-sustaining and perturb the very cadence it measures. The export
-    // still records every sample; ordinary trace activity refreshes the UI.
+    // self-sustaining and perturb the very cadence it measures. Ordinary
+    // trace activity refreshes the UI; healthy frame timing is export-only.
     if (event.kind != TraceEventKind.readerFrameTiming &&
         event.kind != TraceEventKind.pipelineReconcileTiming) {
       _scheduleNotification();
@@ -271,6 +296,10 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     if (!_exportCoalescibleKinds.contains(event.kind)) {
       return null;
     }
+    if (event.kind == TraceEventKind.readerFrameTiming &&
+        !_isHealthyReaderFrameTiming(event)) {
+      return null;
+    }
     final state = switch (event.kind) {
       TraceEventKind.decodeState ||
       TraceEventKind.uploadState => event.payload['state'],
@@ -289,10 +318,45 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
       TraceEventKind.decodeRefill =>
         '${event.payload['role']}|${event.payload['stage']}|'
             '${event.payload['sourceWake']}',
+      TraceEventKind.readerFrameTiming => 'healthy',
       _ => null,
     };
     return '${event.kind.name}|${event.sessionId}|'
         '${event.identityHash ?? ''}|${state ?? ''}';
+  }
+
+  bool _isHealthyReaderFrameTiming(TraceEvent event) {
+    if (event.kind != TraceEventKind.readerFrameTiming) return false;
+    final payload = event.payload;
+    bool below(String field, String maximumField, int limit) {
+      final value = payload[maximumField] ?? payload[field];
+      return value is num && value < limit;
+    }
+
+    final buildHealthy =
+        below('buildMicros', 'maxBuildMicros', _readerFrameTimingBudgetMicros);
+    final rasterHealthy = below(
+      'rasterMicros',
+      'maxRasterMicros',
+      _readerFrameTimingBudgetMicros,
+    );
+    final totalHealthy = below(
+      'totalSpanMicros',
+      'maxTotalSpanMicros',
+      _readerFrameTimingBudgetMicros,
+    );
+    final interval = payload['maxFrameIntervalMicros'] ??
+        payload['frameIntervalMicros'];
+    final intervalHealthy = interval == null ||
+        interval is num && interval < _readerFrameTimingMissedVsyncMicros;
+    return buildHealthy && rasterHealthy && totalHealthy && intervalHealthy;
+  }
+
+  void _forgetReaderFrameTimingBucket(TraceEvent event) {
+    final key =
+        '${TraceEventKind.readerFrameTiming.name}|${event.sessionId}|'
+        '${event.identityHash ?? ''}|healthy';
+    _exportBuckets.remove(key);
   }
 
   int _exportWindowMicros(TraceEventKind kind) => switch (kind) {
@@ -300,7 +364,8 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
         TraceEventKind.frameUploaded ||
         TraceEventKind.framePresented ||
         TraceEventKind.framePipelineTiming ||
-        TraceEventKind.playbackFrameDue => _exportFrameWindowMicros,
+        TraceEventKind.playbackFrameDue ||
+        TraceEventKind.readerFrameTiming => _exportFrameWindowMicros,
         TraceEventKind.readerObservation ||
         TraceEventKind.pageTransition ||
         TraceEventKind.pageLayoutSnapshot => _exportScrollWindowMicros,
@@ -327,6 +392,40 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     if (eventFrame != null) {
       payload['lastFrameIndex'] = eventFrame;
     }
+    if (event.kind == TraceEventKind.readerFrameTiming) {
+      final priorSamples = prior.payload['frameSampleCount'];
+      final eventSamples = event.payload['frameSampleCount'];
+      if (priorSamples is num && eventSamples is num) {
+        payload['frameSampleCount'] = priorSamples + eventSamples;
+      }
+      final firstVsync = prior.payload['firstVsyncStartMicros'] ??
+          prior.payload['vsyncStartMicros'];
+      final lastVsync = event.payload['lastVsyncStartMicros'] ??
+          event.payload['vsyncStartMicros'];
+      if (firstVsync != null) payload['firstVsyncStartMicros'] = firstVsync;
+      if (lastVsync != null) payload['lastVsyncStartMicros'] = lastVsync;
+      void preserveRange(String field) {
+        final label = '${field[0].toUpperCase()}${field.substring(1)}';
+        final priorValue = prior.payload['max$label'] ?? prior.payload[field];
+        final eventValue = event.payload['max$label'] ?? event.payload[field];
+        if (priorValue is num && eventValue is num) {
+          payload['max$label'] = _maxNumber(priorValue, eventValue);
+        }
+        final priorMinimum =
+            prior.payload['min$label'] ?? prior.payload[field];
+        final eventMinimum =
+            event.payload['min$label'] ?? event.payload[field];
+        if (priorMinimum is num && eventMinimum is num) {
+          payload['min$label'] = _minNumber(priorMinimum, eventMinimum);
+        }
+      }
+
+      preserveRange('buildMicros');
+      preserveRange('rasterMicros');
+      preserveRange('totalSpanMicros');
+      preserveRange('vsyncOverheadMicros');
+      preserveRange('frameIntervalMicros');
+    }
     final priorPosition = prior.payload['firstLogicalPosition'] ??
         prior.payload['logicalPosition'];
     final eventPosition = event.payload['logicalPosition'];
@@ -344,8 +443,16 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
       }
       final previous = prior.payload[field];
       final label = '${field[0].toUpperCase()}${field.substring(1)}';
-      final priorMin = prior.payload['min$label'];
-      final priorMax = prior.payload['max$label'];
+      final payloadMin = payload['min$label'];
+      final payloadMax = payload['max$label'];
+      final priorPayloadMin = prior.payload['min$label'];
+      final priorPayloadMax = prior.payload['max$label'];
+      final priorMin = payloadMin is num && priorPayloadMin is num
+          ? _minNumber(payloadMin, priorPayloadMin)
+          : payloadMin ?? priorPayloadMin;
+      final priorMax = payloadMax is num && priorPayloadMax is num
+          ? _maxNumber(payloadMax, priorPayloadMax)
+          : payloadMax ?? priorPayloadMax;
       final minimum = priorMin is num
           ? _minNumber(priorMin, latest)
           : previous is num

@@ -273,11 +273,13 @@ void main() {
     }
 
     expect(log.events, hasLength(1));
+    expect(log.exportEventCount, 3);
     expect(log.exportEvents, hasLength(3));
     expect(log.exportEvents.map((event) => event.payload['index']), <int>[2, 3, 4]);
     expect(log.exportDroppedCount, 2);
     expect(log.sessionIds, <String>{'reader'});
     log.clear();
+    expect(log.exportEventCount, 0);
     expect(log.exportEvents, isEmpty);
     expect(log.exportDroppedCount, 0);
   });
@@ -555,6 +557,70 @@ void main() {
     expect(folded.payload['minNativeDecodeMicros'], 100);
     expect(folded.payload['maxNativeDecodeMicros'], 102);
     expect(log.exportEvents.last.payload['dominantStage'], 'sourceWait');
+  });
+
+  test('reader frame timing folds healthy cadence but keeps jank boundaries', () {
+    final log = DebugTraceLog(maxEvents: 8, maxExportEvents: 8);
+    addTearDown(log.dispose);
+
+    TraceEvent timing(
+      int micros, {
+      int buildMicros = 3000,
+      int frameIntervalMicros = 16667,
+    }) => TraceEvent(
+          monotonicMicros: micros,
+          sessionId: 'reader-cadence',
+          kind: TraceEventKind.readerFrameTiming,
+          payload: <String, Object?>{
+            'buildMicros': buildMicros,
+            'rasterMicros': 2500,
+            'totalSpanMicros': 6000,
+            'vsyncOverheadMicros': 400,
+            'vsyncStartMicros': micros,
+            'frameIntervalMicros': frameIntervalMicros,
+          },
+        );
+
+    log.record(timing(0));
+    log.record(timing(100000));
+    log.record(timing(200000, buildMicros: 20000));
+    log.record(timing(300000));
+
+    expect(log.exportEvents, hasLength(3));
+    expect(log.exportCoalescedCount, 1);
+    expect(log.exportEvents[0].payload['coalescedCount'], 2);
+    expect(log.exportEvents[1].payload['buildMicros'], 20000);
+    expect(log.exportEvents[2].payload['coalescedCount'], isNull);
+    expect(log.events, hasLength(1));
+    expect(log.events.single.payload['buildMicros'], 20000);
+  });
+
+  test('reader frame timing retains interval jank as an independent sample', () {
+    final log = DebugTraceLog(maxEvents: 8, maxExportEvents: 8);
+    addTearDown(log.dispose);
+
+    TraceEvent timing(int micros, int interval) => TraceEvent(
+          monotonicMicros: micros,
+          sessionId: 'reader-interval',
+          kind: TraceEventKind.readerFrameTiming,
+          payload: <String, Object?>{
+            'buildMicros': 3000,
+            'rasterMicros': 2500,
+            'totalSpanMicros': 6000,
+            'vsyncOverheadMicros': 400,
+            'vsyncStartMicros': micros,
+            'frameIntervalMicros': interval,
+          },
+        );
+
+    log.record(timing(0, 16667));
+    log.record(timing(100000, 25000));
+    log.record(timing(200000, 16667));
+
+    expect(log.exportEvents, hasLength(3));
+    expect(log.exportEvents[1].payload['frameIntervalMicros'], 25000);
+    expect(log.events, hasLength(1));
+    expect(log.events.single.payload['frameIntervalMicros'], 25000);
   });
 
   test('decode refill export folds same role stage and source-wake bucket', () {

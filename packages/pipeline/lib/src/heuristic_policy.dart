@@ -146,6 +146,7 @@ final class HeuristicPolicy {
                   : 'heuristic:static-warm:${role.name}'
               : 'heuristic:${role.name}',
           expirationRevision: revision + 1,
+          retainOutput: visibleStatic,
         );
       }
     }

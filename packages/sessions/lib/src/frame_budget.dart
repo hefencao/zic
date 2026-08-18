@@ -62,8 +62,8 @@ final class FrameBudgetReport {
 
 /// Enforces frame budgets without sacrificing visible page outputs.
 ///
-/// Current decoded bytes are protected. Current, transition and frozen-last
-/// outputs are protected; other resources use only
+/// Current decoded bytes are protected. Current, transition, frozen-last and
+/// explicitly visible static outputs are protected; other resources use only
 /// the non-reserved portion
 /// and are trimmed in ascending priority. If protected output alone exceeds
 /// the total budget, the report stays over budget rather than turning a
@@ -95,8 +95,8 @@ final class FrameBudgeter {
         .where((entry) => entry.value.role == PageRole.current)
         .map((entry) => entry.key)
         .toSet();
-    final currentUploadIds = uploadDemands.entries
-        .where((entry) => _protectsOutput(entry.value.role))
+    final protectedUploadIds = uploadDemands.entries
+        .where((entry) => _protectsOutput(entry.value))
         .map((entry) => entry.key)
         .toSet();
 
@@ -106,7 +106,7 @@ final class FrameBudgeter {
       outputBefore: outputBefore,
       outputAfter: uploads.totalBytes,
       currentDecoded: decodes.bytesFor(currentDecodeIds),
-      currentOutput: uploads.bytesFor(currentUploadIds),
+      currentOutput: uploads.bytesFor(protectedUploadIds),
     );
   }
 
@@ -143,19 +143,19 @@ final class FrameBudgeter {
   }
 
   void _trimOutputs(Map<DecodeId, UploadDemand> demands) {
-    final current = demands.entries
-        .where((entry) => _protectsOutput(entry.value.role))
+    final protected = demands.entries
+        .where((entry) => _protectsOutput(entry.value))
         .map((entry) => entry.key)
         .toSet();
-    final currentBytes = uploads.bytesFor(current);
+    final protectedBytes = uploads.bytesFor(protected);
     final nonCurrentLimit = _remainingBudget(
       total: limits.outputBytes,
       reserve: limits.currentOutputReserve,
-      current: currentBytes,
+      current: protectedBytes,
     );
-    var nonCurrentBytes = uploads.totalBytes - currentBytes;
+    var nonCurrentBytes = uploads.totalBytes - protectedBytes;
     final candidates = uploads.sessions
-        .where((session) => !current.contains(session.id))
+        .where((session) => !protected.contains(session.id))
         .toList()
       ..sort((a, b) {
         final aPriority = demands[a.id]?.priority ?? -1;
@@ -185,7 +185,8 @@ final class FrameBudgeter {
 }
 
 
-bool _protectsOutput(PageRole role) =>
-    role == PageRole.current ||
-    role == PageRole.transition ||
-    role == PageRole.last;
+bool _protectsOutput(UploadDemand demand) =>
+    demand.retainOutput ||
+    demand.role == PageRole.current ||
+    demand.role == PageRole.transition ||
+    demand.role == PageRole.last;

@@ -98,6 +98,7 @@ void main() {
     );
     expect(visiblePage.value.reason, 'heuristic:static-visible:next');
     expect(visiblePage.value.priority, greaterThanOrEqualTo(880));
+    expect(visiblePage.value.retainOutput, isTrue);
     expect(plan.decodes[visiblePage.key]!.targetWatermark, 1);
   });
 }

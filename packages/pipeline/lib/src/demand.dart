@@ -109,6 +109,7 @@ final class UploadDemand {
     required this.priority,
     required this.reason,
     required this.expirationRevision,
+    this.retainOutput = false,
     this.decisionId,
   });
 
@@ -116,6 +117,12 @@ final class UploadDemand {
   final int priority;
   final String reason;
   final int expirationRevision;
+
+  /// Prevents frame-budget eviction while this static output is visible.
+  ///
+  /// This is deliberately distinct from [role]: continuous vertical reading
+  /// can show several pages at once, including pages with a non-primary role.
+  final bool retainOutput;
   final String? decisionId;
 
   /// Scheduling identity excludes [expirationRevision]; see [DownloadDemand].
@@ -123,6 +130,7 @@ final class UploadDemand {
       role == other.role &&
       priority == other.priority &&
       reason == other.reason &&
+      retainOutput == other.retainOutput &&
       decisionId == other.decisionId;
 
   @override
@@ -133,11 +141,19 @@ final class UploadDemand {
           priority == other.priority &&
           reason == other.reason &&
           expirationRevision == other.expirationRevision &&
+          retainOutput == other.retainOutput &&
           decisionId == other.decisionId;
 
   @override
   int get hashCode =>
-      Object.hash(role, priority, reason, expirationRevision, decisionId);
+      Object.hash(
+        role,
+        priority,
+        reason,
+        expirationRevision,
+        retainOutput,
+        decisionId,
+      );
 }
 
 final class DemandPlan {
