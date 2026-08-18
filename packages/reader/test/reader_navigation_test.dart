@@ -163,6 +163,16 @@ void main() {
         isEmpty,
         reason: 'crossing the role midpoint must not remount either loaded page',
       );
+      expect(
+        trace.events
+            .where(
+              (event) =>
+                  event.kind == TraceEventKind.pageHostMounted ||
+                  event.kind == TraceEventKind.pageHostDisposed,
+            )
+            .every((event) => event.payload['keepAlive'] is bool),
+        isTrue,
+      );
 
       await gesture.up();
       await tester.pump();
@@ -473,7 +483,7 @@ void main() {
   });
 
   testWidgets(
-    'vertical current changes rebuild only page shells whose state changed',
+    'vertical current changes do not rebuild cached media pages',
     (tester) async {
       final chapter = ChapterManifest(
         sourceId: 'source',
@@ -483,11 +493,11 @@ void main() {
           comicId: 'localized-rebuild-comic',
           title: 'localized rebuild',
           sequence: 0,
-          pageCount: 6,
+          pageCount: 2,
           sourceRevision: 'r1',
         ),
         pages: List<PageAsset>.generate(
-          6,
+          2,
           (index) => PageAsset(
             pageId: 'localized-$index',
             chapterId: 'localized-rebuild-chapter',
@@ -527,24 +537,28 @@ void main() {
           ),
         ),
       );
+      await tester.pump();
+      controller.requestPage(1);
+      await tester.pump();
       await _pumpUntilFound(
         tester,
-        find.byKey(const ValueKey<String>('localized:localized-3')),
+        find.byKey(const ValueKey<String>('localized:localized-1')),
       );
-      final prior = builds['localized-3'];
+      final currentPrior = builds['localized-0'];
+      final nextPrior = builds['localized-1'];
 
       controller.report(
         ReaderObs(
           sessionId: controller.sessionId,
-          currentIndex: 1,
-          stableIndex: 1,
+          currentIndex: 0,
+          stableIndex: 0,
           currentCoverage: Coverage(
-            pageIndex: 1,
-            assetKey: chapter.pages[1].assetKey,
+            pageIndex: 0,
+            assetKey: chapter.pages[0].assetKey,
             fraction: 1,
           ),
           interaction: Interaction.idle,
-          logicalPosition: 1,
+          logicalPosition: 0,
           velocity: 0,
           direction: ReadingDirection.vertical,
           timestamp: DateTime.utc(2026, 8, 4),
@@ -553,7 +567,8 @@ void main() {
       );
       await tester.pump();
 
-      expect(builds['localized-3'], prior);
+      expect(builds['localized-0'], currentPrior);
+      expect(builds['localized-1'], nextPrior);
     },
   );
 
@@ -589,6 +604,7 @@ void main() {
         clock: FakeClock(),
       );
       addTearDown(controller.dispose);
+      final clock = FakeClock();
       final ratios = ValueNotifier<Map<String, double>>(
         const <String, double>{},
       );
@@ -601,7 +617,7 @@ void main() {
             valueListenable: ratios,
             builder: (context, value, _) => ReaderView(
               controller: controller,
-              clock: FakeClock(),
+              clock: clock,
               pageAspectRatios: value,
               pageBuilder: (context, asset, reportFirstFrame) {
                 builds.update(
@@ -622,6 +638,7 @@ void main() {
         tester,
         find.byKey(const ValueKey<String>('composition:composition-0')),
       );
+      await tester.pumpAndSettle();
       final before = Map<String, int>.of(builds);
 
       ratios.value = <String, double>{
@@ -700,6 +717,7 @@ void main() {
       );
       final firstPage = find.byKey(
         const ValueKey<String>('reader-vertical-page:0'),
+        skipOffstage: false,
       );
       final initialHeight = tester.getSize(firstPage).height;
       final gesture = await tester.startGesture(tester.getCenter(list));
@@ -803,7 +821,10 @@ void main() {
       );
       await _pumpUntilFound(
         tester,
-        find.byKey(const ValueKey<String>('reader-vertical-page:5')),
+        find.byKey(
+          const ValueKey<String>('reader-vertical-page:5'),
+          skipOffstage: false,
+        ),
       );
 
       final list = find.byKey(
@@ -811,9 +832,11 @@ void main() {
       );
       final priorPage = find.byKey(
         const ValueKey<String>('reader-vertical-page:0'),
+        skipOffstage: false,
       );
       final futurePage = find.byKey(
         const ValueKey<String>('reader-vertical-page:5'),
+        skipOffstage: false,
       );
       final priorHeight = tester.getSize(priorPage).height;
       final futureHeight = tester.getSize(futurePage).height;

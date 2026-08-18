@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:domain/domain.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:telemetry/telemetry.dart';
 
@@ -131,12 +132,13 @@ final class _ReaderViewState extends State<ReaderView> {
   double? _cachedVerticalDevicePixelRatio;
   int _verticalCacheScreens = 2;
   bool _verticalWarmupScheduled = false;
+  ScrollPosition? _verticalScrollPosition;
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: widget.controller.currentIndex);
-    _verticalController = ScrollController();
+    _verticalController = _createVerticalController();
     _verticalScrollPhysics = _ReaderVerticalScrollPhysics(
       geometryCorrectionTarget: () => _pendingVerticalGeometryCorrection,
     );
@@ -173,7 +175,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _pageController = PageController(
         initialPage: widget.controller.currentIndex,
       );
-      _verticalController = ScrollController();
+      _verticalController = _createVerticalController();
       _verticalInitialOffsetApplied = false;
       _lastLogicalPosition = widget.controller.currentIndex.toDouble();
       _lastMicros = widget.clock.nowMicros();
@@ -244,6 +246,13 @@ final class _ReaderViewState extends State<ReaderView> {
     _detachFrameTimingSource();
     widget.controller.removeListener(_handleControllerCommand);
     _pageController.dispose();
+    final position = _verticalScrollPosition;
+    if (position != null) {
+      position.isScrollingNotifier.removeListener(
+        _handleVerticalScrollingChanged,
+      );
+      _verticalScrollPosition = null;
+    }
     _verticalController.dispose();
     super.dispose();
   }
@@ -529,6 +538,44 @@ final class _ReaderViewState extends State<ReaderView> {
     _verticalWarmupScheduled = false;
   }
 
+  ScrollController _createVerticalController({
+    double initialScrollOffset = 0,
+  }) =>
+      ScrollController(
+        initialScrollOffset: initialScrollOffset,
+        onAttach: _handleVerticalScrollAttach,
+        onDetach: _handleVerticalScrollDetach,
+      );
+
+  void _handleVerticalScrollAttach(ScrollPosition position) {
+    _verticalScrollPosition = position;
+    position.isScrollingNotifier.addListener(_handleVerticalScrollingChanged);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !identical(_verticalScrollPosition, position) ||
+          position.isScrollingNotifier.value) {
+        return;
+      }
+      _scheduleVerticalCompositionWarmup();
+    });
+  }
+
+  void _handleVerticalScrollDetach(ScrollPosition position) {
+    position.isScrollingNotifier.removeListener(_handleVerticalScrollingChanged);
+    if (identical(_verticalScrollPosition, position)) {
+      _verticalScrollPosition = null;
+    }
+  }
+
+  void _handleVerticalScrollingChanged() {
+    if (!mounted) return;
+    final position = _verticalScrollPosition;
+    if (position == null || position.isScrollingNotifier.value) {
+      return;
+    }
+    _scheduleVerticalCompositionWarmup();
+  }
+
   void _scheduleVerticalCompositionWarmup() {
     if (_verticalWarmupScheduled ||
         _verticalCacheScreens >= 7 ||
@@ -691,7 +738,9 @@ final class _ReaderViewState extends State<ReaderView> {
       _verticalOffsetFor(widget.controller.currentIndex),
     );
     _verticalController.dispose();
-    _verticalController = ScrollController(initialScrollOffset: initialOffset);
+    _verticalController = _createVerticalController(
+      initialScrollOffset: initialOffset,
+    );
     _verticalInitialOffsetApplied = true;
   }
 
@@ -720,7 +769,6 @@ final class _ReaderViewState extends State<ReaderView> {
       rebuildLayout = true;
     }
     if (rebuildLayout && mounted) {
-      setState(() {});
     }
     final revision = controller.navigationRevision;
     if (revision == _handledNavigationRevision) return;
@@ -960,6 +1008,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _emitFromVerticalMetrics(notification.metrics, forceLayoutSnapshot: true);
       if (_interaction == Interaction.idle) {
         _schedulePendingVerticalRatioCommit();
+        _scheduleVerticalCompositionWarmup();
       }
     }
     return false;
@@ -1366,11 +1415,15 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
   late bool _active;
   late bool _keepAlive;
   late int _rotationQuarterTurns;
+  late final ValueNotifier<bool> _activeNotifier;
+  late final ValueNotifier<bool> _keepAliveNotifier;
 
   @override
   void initState() {
     super.initState();
     _readControllerState();
+    _activeNotifier = ValueNotifier<bool>(_active);
+    _keepAliveNotifier = ValueNotifier<bool>(_keepAlive);
     widget.controller.addListener(_handleControllerChanged);
   }
 
@@ -1384,18 +1437,21 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
     final nextActive = widget.index == widget.controller.currentIndex;
     final nextKeepAlive = _keepAliveFor(widget.controller);
     final nextRotation = widget.controller.rotationQuarterTurns;
-    if (_active != nextActive ||
-        _keepAlive != nextKeepAlive ||
-        _rotationQuarterTurns != nextRotation) {
-      _active = nextActive;
-      _keepAlive = nextKeepAlive;
+    _active = nextActive;
+    _keepAlive = nextKeepAlive;
+    _activeNotifier.value = nextActive;
+    _keepAliveNotifier.value = nextKeepAlive;
+    if (_rotationQuarterTurns != nextRotation) {
       _rotationQuarterTurns = nextRotation;
+      setState(() {});
     }
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_handleControllerChanged);
+    _activeNotifier.dispose();
+    _keepAliveNotifier.dispose();
     super.dispose();
   }
 
@@ -1414,16 +1470,17 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
     final nextActive = widget.index == widget.controller.currentIndex;
     final nextKeepAlive = _keepAliveFor(widget.controller);
     final nextRotation = widget.controller.rotationQuarterTurns;
-    if (_active == nextActive &&
-        _keepAlive == nextKeepAlive &&
-        _rotationQuarterTurns == nextRotation) {
-      return;
-    }
-    setState(() {
+    if (_active != nextActive) {
       _active = nextActive;
+      _activeNotifier.value = nextActive;
+    }
+    if (_keepAlive != nextKeepAlive) {
       _keepAlive = nextKeepAlive;
-      _rotationQuarterTurns = nextRotation;
-    });
+      _keepAliveNotifier.value = nextKeepAlive;
+    }
+    if (_rotationQuarterTurns != nextRotation) {
+      setState(() => _rotationQuarterTurns = nextRotation);
+    }
   }
 
   @override
@@ -1433,7 +1490,7 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
       quarterTurns: _rotationQuarterTurns,
       child: _ZoomableReaderPage(
         key: ValueKey<String>('zoom:${widget.asset.assetKey}'),
-        active: _active,
+        active: _activeNotifier,
         clock: widget.clock,
         onTap: widget.onTap,
         onZoomChanged: widget.onZoomChanged,
@@ -1442,7 +1499,7 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
             'reader-page-host:${widget.asset.assetKey}',
           ),
           asset: widget.asset,
-          keepAlive: _keepAlive,
+          keepAlive: _keepAliveNotifier,
           sessionId: widget.controller.sessionId,
           clock: widget.clock,
           traceSink: widget.traceSink,
@@ -1465,7 +1522,7 @@ final class _ZoomableReaderPage extends StatefulWidget {
   });
 
   final Widget child;
-  final bool active;
+  final ValueListenable<bool> active;
   final MonoClock clock;
   final ValueChanged<bool> onZoomChanged;
   final VoidCallback? onTap;
@@ -1488,26 +1545,35 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
   void initState() {
     super.initState();
     _transformation = TransformationController();
+    widget.active.addListener(_handleActiveChanged);
   }
 
   @override
   void didUpdateWidget(covariant _ZoomableReaderPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.active != widget.active && _zoomed) {
-      _singleTapTimer?.cancel();
-      _singleTapTimer = null;
-      _lastTapAtMicros = null;
-      _lastTapPosition = null;
-      _transformation.value = Matrix4.identity();
-      _zoomed = false;
+    if (oldWidget.active != widget.active) {
+      oldWidget.active.removeListener(_handleActiveChanged);
+      widget.active.addListener(_handleActiveChanged);
+      _handleActiveChanged();
     }
   }
 
   @override
   void dispose() {
+    widget.active.removeListener(_handleActiveChanged);
     _singleTapTimer?.cancel();
     _transformation.dispose();
     super.dispose();
+  }
+
+  void _handleActiveChanged() {
+    if (widget.active.value || !_zoomed) return;
+    _singleTapTimer?.cancel();
+    _singleTapTimer = null;
+    _lastTapAtMicros = null;
+    _lastTapPosition = null;
+    _transformation.value = Matrix4.identity();
+    setState(() => _zoomed = false);
   }
 
   double get _scale => _transformation.value.getMaxScaleOnAxis();
@@ -1517,7 +1583,7 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
     if (_zoomed == zoomed) {
       return;
     }
-    _zoomed = zoomed;
+    setState(() => _zoomed = zoomed);
     widget.onZoomChanged(zoomed);
   }
 
@@ -1647,7 +1713,7 @@ final class _ReaderPageHost extends StatefulWidget {
   });
 
   final PageAsset asset;
-  final bool keepAlive;
+  final ValueListenable<bool> keepAlive;
   final String sessionId;
   final MonoClock clock;
   final TraceSink traceSink;
@@ -1667,6 +1733,7 @@ final class _ReaderPageHostState extends State<_ReaderPageHost>
   @override
   void initState() {
     super.initState();
+    widget.keepAlive.addListener(_handleKeepAliveChanged);
     _mountedAtMicros = widget.clock.nowMicros();
     _mountedRevision = widget.demandRevision?.call();
     _recordLifecycle(
@@ -1676,12 +1743,14 @@ final class _ReaderPageHostState extends State<_ReaderPageHost>
   }
 
   @override
-  bool get wantKeepAlive => widget.keepAlive;
+  bool get wantKeepAlive => widget.keepAlive.value;
 
   @override
   void didUpdateWidget(covariant _ReaderPageHost oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.keepAlive != widget.keepAlive) {
+      oldWidget.keepAlive.removeListener(_handleKeepAliveChanged);
+      widget.keepAlive.addListener(_handleKeepAliveChanged);
       updateKeepAlive();
     }
     if (oldWidget.asset.assetKey != widget.asset.assetKey) {
@@ -1697,6 +1766,7 @@ final class _ReaderPageHostState extends State<_ReaderPageHost>
 
   @override
   void dispose() {
+    widget.keepAlive.removeListener(_handleKeepAliveChanged);
     _recordLifecycle(
       TraceEventKind.pageHostDisposed,
       revision: widget.demandRevision?.call(),
@@ -1708,6 +1778,8 @@ final class _ReaderPageHostState extends State<_ReaderPageHost>
     );
     super.dispose();
   }
+
+  void _handleKeepAliveChanged() => updateKeepAlive();
 
   void _recordLifecycle(
     TraceEventKind kind, {
@@ -1723,7 +1795,7 @@ final class _ReaderPageHostState extends State<_ReaderPageHost>
         revision: revision,
         payload: <String, Object?>{
           'pageIndex': widget.asset.index,
-          'keepAlive': widget.keepAlive,
+          'keepAlive': widget.keepAlive.value,
           ...payload,
         },
       ),
