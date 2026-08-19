@@ -11,7 +11,7 @@ import 'package:reader/reader.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'flutter_reader_frame_timing_source.dart';
-import 'flutter_reader_touch_resampling.dart';
+import 'flutter_reader_platform_frame_cadence.dart';
 import 'reader_session_settings.dart';
 import 'reader_settings_fields.dart';
 import 'reader_transfer_progress_indicator.dart';
@@ -180,7 +180,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   late ReaderSessionSettings _settings;
   late final AdaptiveReaderClassifier _adaptiveClassifier;
   AdaptiveReaderProfile? _adaptiveProfile;
-  FlutterReaderTouchResamplingLease? _touchResamplingLease;
+  FlutterReaderPlatformFrameCadenceProbe? _platformFrameCadenceProbe;
 
   @override
   void initState() {
@@ -290,7 +290,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     created.currentIndexListenable.addListener(_handleReaderProgress);
     _target = target;
     _reader = created;
-    _syncTouchResampling();
+    _syncPlatformFrameCadenceProbe();
     _lastProgressPage = created.currentIndex;
     _lastProgressMode = _readerMode(created.direction);
   }
@@ -345,7 +345,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     _adaptiveProfile = candidate;
     _settings = _settings.copyWith(adaptiveProfile: candidate);
     _reader?.setDirection(candidate.direction);
-    _syncTouchResampling();
+    _syncPlatformFrameCadenceProbe();
     _persistSettings();
     if (mounted) setState(() {});
   }
@@ -592,14 +592,26 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     });
   }
 
-  void _syncTouchResampling() {
-    final vertical = _reader?.direction == ReadingDirection.vertical;
-    if (vertical) {
-      _touchResamplingLease ??= FlutterReaderTouchResampling.acquire();
+  void _syncPlatformFrameCadenceProbe() {
+    final reader = _reader;
+    final vertical = reader?.direction == ReadingDirection.vertical;
+    if (vertical && reader != null) {
+      if (_platformFrameCadenceProbe != null) return;
+      final probe = FlutterReaderPlatformFrameCadenceProbe(
+        clock: _pipeline.clock,
+        traceSink: _pipeline.trace,
+        sessionId: reader.sessionId,
+        revision: () => _pipeline.revision,
+      );
+      _platformFrameCadenceProbe = probe;
+      unawaited(probe.start());
       return;
     }
-    _touchResamplingLease?.release();
-    _touchResamplingLease = null;
+    final probe = _platformFrameCadenceProbe;
+    _platformFrameCadenceProbe = null;
+    if (probe != null) {
+      unawaited(probe.stop());
+    }
   }
 
   void _syncPipelinePlayback() {
@@ -609,8 +621,11 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
 
   @override
   void dispose() {
-    _touchResamplingLease?.release();
-    _touchResamplingLease = null;
+    final platformFrameCadenceProbe = _platformFrameCadenceProbe;
+    _platformFrameCadenceProbe = null;
+    if (platformFrameCadenceProbe != null) {
+      unawaited(platformFrameCadenceProbe.stop());
+    }
     unawaited(_checkpointReaderProgress(force: true));
     _pipeline.pageDimensions.removeListener(_handlePipelinePageDimensions);
     WidgetsBinding.instance.removeObserver(this);
@@ -848,7 +863,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       }
     });
     _reader?.setDirection(_resolveInitialDirection(_matchingInitialProgress()));
-    _syncTouchResampling();
+    _syncPlatformFrameCadenceProbe();
     final writer = widget.onSettingsChanged;
     if (writer != null) {
       try {

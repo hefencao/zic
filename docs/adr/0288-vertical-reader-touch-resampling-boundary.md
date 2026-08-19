@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted as a device-informed candidate in dev.309. The 05:24 dev.308 device Trace closes the dev.308 local-static pre-presentation and reverse-geometry regressions, but still shows raw vertical `ScrollUpdateNotification` cadence gaps large enough to explain the remaining strong jitter.
+Superseded by dev.310. The dev.309 experiment remains historical evidence, but the 08:20 device Trace shows 20/22 cadence outliers are `dragDriven=false` ballistic updates after finger lift, so touch resampling is not the main owner and its production lease is removed.
 
 ## Evidence
 

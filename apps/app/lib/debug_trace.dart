@@ -251,7 +251,8 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     // trace activity refreshes the UI; healthy frame timing is export-only.
     if (event.kind != TraceEventKind.readerFrameTiming &&
         event.kind != TraceEventKind.pipelineReconcileTiming &&
-        event.kind != TraceEventKind.scrollCadenceOutlier) {
+        event.kind != TraceEventKind.scrollCadenceOutlier &&
+        event.kind != TraceEventKind.platformFrameCadenceOutlier) {
       _scheduleNotification();
     }
   }

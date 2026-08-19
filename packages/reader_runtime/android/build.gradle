@@ -1,0 +1,34 @@
+group = "dev.zic.readerruntime"
+version = "1.0"
+
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:9.3.1"
+    }
+}
+
+apply plugin: "com.android.library"
+
+android {
+    namespace = "dev.zic.readerruntime"
+    compileSdk = 37
+
+    defaultConfig {
+        minSdk = 21
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+    }
+}

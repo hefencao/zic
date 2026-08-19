@@ -1,3 +1,9 @@
+## 0.31.0-dev.310 - Ballistic platform frame-cadence boundary
+
+- The 08:20 dev.309 device Trace falsifies touch sampling as the main vertical jitter owner: 20/22 `scrollCadenceOutlier` events are `dragDriven=false` ballistic updates after finger lift, with a 28.2005ms median and 42.888ms max. Their pixel deltas follow the inertial trajectory rather than showing discrete position jumps.
+- Roll back the dev.309 `GestureBinding.resamplingEnabled` lease while retaining `dragDriven` attribution. Do not tune sampling, synthesize positions, force Flutter frames or alter ScrollPhysics.
+- Add an observation-only Android Choreographer cadence probe owned by `reader_runtime`. Native code records only >20ms frame/callback gaps or >8ms callback lag into a 256-entry ring; Dart drains it every 2s and maps native monotonic timestamps into the existing Reader Trace as `platformFrameCadenceOutlier`. The probe never drives Reader/Pipeline state or schedules Flutter frames.
+
 ## 0.31.0-dev.309 - Vertical Reader touch resampling and cadence attribution
 
 - The 05:24 dev.308 device Trace mechanically closes the local-static preparation regressions: page19/page20 are firstFrameReady about 963ms/764ms before first transition, and sampled page extents no longer change from provisional to measured values. Strong jitter nevertheless remains.

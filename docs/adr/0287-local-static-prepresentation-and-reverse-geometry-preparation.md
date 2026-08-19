@@ -44,3 +44,5 @@ active vertical geometry按travel direction区分安全的future ratio：
 - 对local/durable static incoming page，`framePresented/firstFrameReady`应发生在其成为真实transition之前或至迟同一帧，不再出现约50ms visible black gap。
 - generic/network hidden static在active vertical仍保持dev.295 deferral。
 - reverse incoming页若sourceCanvas已提前解析，first-pass layout必须直接使用measured extent；visible top不得因prefix变化跳动。
+
+Historical owner token: `localPresentationReady`.
