@@ -37,7 +37,7 @@ require(
     '!primaryUpload',
     '!visibleStatic',
     '_verticalPresentationActive(observation.interaction)',
-    'if ((primaryUpload || staticWarm) && !deferHiddenVerticalStaticUpload)',
+    '!deferHiddenVerticalStaticUpload',
 )
 forbid('packages/pipeline/lib/src/heuristic_policy.dart', 'final deferVerticalNext2Upload =')
 require(

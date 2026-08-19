@@ -71,6 +71,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   int _streamingPrefixRequestedRevision = 0;
   int _streamingPrefixReadRevision = 0;
   bool _fallbackLoadStarted = false;
+  bool _pipelineAuthoritativeStatic = false;
+  bool _pipelineStaticLoadStarted = false;
   Size? _reportedDimensions;
   bool _reportedDimensionsAuthoritative = false;
 
@@ -114,6 +116,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _state = ImagePreviewState.loading(widget.image.format);
       _notifyObserver(_state);
       _fallbackLoadStarted = false;
+      _pipelineAuthoritativeStatic = false;
+      _pipelineStaticLoadStarted = false;
       final oldStreaming = oldWidget.pageStream;
       final oldListener = _pageStreamingListener;
       if (oldStreaming != null && oldListener != null) {
@@ -164,6 +168,13 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         );
       }
       final kind = snapshot.kind;
+      final encodedStatic =
+          snapshot.authoritativeStatic &&
+              kind == PipelinePageContentKind.webp;
+      if (encodedStatic) {
+        _activatePipelineStaticPresentation();
+        return;
+      }
       if (kind == PipelinePageContentKind.webp) {
         if (_detectedFormat != LocalImageFormat.webp) {
           setState(() => _detectedFormat = LocalImageFormat.webp);
@@ -254,6 +265,12 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   void _attachPageOutput(PipelinePageOutputStream output) {
     void listener(PipelinePageOutputSnapshot snapshot) {
       if (!mounted) return;
+      if (_pipelineAuthoritativeStatic) {
+        // Decoder truth has moved this page to the encoded static-image path.
+        // Any late native texture completion is stale presentation work and
+        // must not replace the Flutter ImageProvider surface.
+        return;
+      }
       final prior = _pageOutputSnapshot;
       final visualChanged = prior == null ||
           prior.state != snapshot.state ||
@@ -295,6 +312,74 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
     _pageOutputListener = listener;
     output.addListener(listener);
+  }
+
+  void _activatePipelineStaticPresentation() {
+    if (!_pipelineAuthoritativeStatic) {
+      setState(() {
+        _pipelineAuthoritativeStatic = true;
+        _pageOutputSnapshot = null;
+        _scheduledOutputSurface = null;
+      });
+      widget.onPlaybackCapabilityChanged?.call(false);
+    }
+    if (_pipelineStaticLoadStarted) {
+      return;
+    }
+    final loader = widget.tokenBytesLoader;
+    if (loader == null) {
+      return;
+    }
+    _pipelineStaticLoadStarted = true;
+    unawaited(_loadPipelineStaticEncoded(loader));
+  }
+
+  Future<void> _loadPipelineStaticEncoded(
+    LocalImageTokenBytesLoader loader,
+  ) async {
+    final generation = _generation;
+    final token = _loadToken;
+    try {
+      final bytes = await loader(widget.image, token);
+      token.throwIfCancelled();
+      if (!mounted ||
+          generation != _generation ||
+          token != _loadToken ||
+          !_pipelineAuthoritativeStatic) {
+        return;
+      }
+      final detected = detectLocalImageFormat(bytes, fileLength: bytes.length);
+      if (detected == null) {
+        throw const FormatException('Pipeline static image bytes are invalid');
+      }
+      final provider = MemoryImage(bytes);
+      setState(() {
+        _detectedFormat = detected;
+        _imageProvider = provider;
+      });
+      widget.traceSink.record(
+        traceEvent(
+          clock: widget.traceClock ?? const SystemClock(),
+          sessionId: widget.traceSessionId,
+          kind: TraceEventKind.staticEncodedPresentation,
+          identityHash: widget.downloadIdentity?.key,
+          revision: widget.demandRevision?.call(),
+          payload: <String, Object?>{
+            'format': detected.name,
+            'bytes': bytes.lengthInBytes,
+            'route': 'pipeline-compressed-bytes-flutter-codec',
+          },
+        ),
+      );
+    } on Object catch (error) {
+      if (!mounted ||
+          generation != _generation ||
+          token != _loadToken ||
+          token.isCancelled) {
+        return;
+      }
+      _publish(ImagePreviewState.invalid(_detectedFormat, error));
+    }
   }
 
   Future<void> _load() async {
@@ -454,6 +539,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         return;
       }
       _publish(ImagePreviewState.ready(format));
+      _reportFirstFrame();
     });
   }
 
@@ -583,6 +669,30 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           ),
         ),
       );
+    } else if (_pipelineAuthoritativeStatic) {
+      if (imageProvider == null) {
+        content = _loadingIndicator();
+      } else {
+        content = MediaRasterImage(
+          image: imageProvider,
+          dimensions: _reportedDimensions,
+          fit: widget.fit,
+          imageKey: imageFolderFlutterPreviewKey,
+          frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+            if (frame != null || wasSynchronouslyLoaded) {
+              _scheduleStaticFramePresented(
+                _generation,
+                _detectedFormat,
+              );
+            }
+            return child;
+          },
+          errorBuilder: (context, error, stackTrace) {
+            _scheduleError(error);
+            return const SizedBox.shrink();
+          },
+        );
+      }
     } else if (_detectedFormat.isWebp) {
       final output = widget.pageOutput;
       if (output != null) {

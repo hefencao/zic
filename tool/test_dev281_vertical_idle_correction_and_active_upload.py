@@ -78,7 +78,21 @@ req('super.adjustPositionForNewDimensions(' in physics,
     'custom vertical physics does not preserve normal scroll dimension behavior')
 
 policy = text('packages/pipeline/lib/src/heuristic_policy.dart')
-if int(m.group(1)) >= 295:
+if int(m.group(1)) >= 315:
+    policy_markers = (
+        'final encodedFlutterPresentation =',
+        'runtimeWebpPages.contains(entry.key)',
+        'runtimeAnimatedPages[entry.key] != true',
+        'final deferHiddenVerticalStaticUpload =',
+        'observation.direction == ReadingDirection.vertical',
+        'staticWarm &&',
+        '!primaryUpload',
+        '!visibleStatic',
+        '_verticalPresentationActive(observation.interaction)',
+        '!encodedFlutterPresentation',
+        '!deferHiddenVerticalStaticUpload',
+    )
+elif int(m.group(1)) >= 295:
     policy_markers = (
         'final deferHiddenVerticalStaticUpload =',
         'observation.direction == ReadingDirection.vertical',
@@ -120,7 +134,10 @@ for path in (
 ):
     req((ROOT / path).is_file(), f'missing dev.281 governance file: {path}')
 
-if int(m.group(1)) >= 295:
+if int(m.group(1)) >= 315:
+    require('docs/ARCHITECTURE.md', 'layout-time scroll correction', 'compressed bytes')
+    require('docs/SPEC.md', 'layout-time correction', 'compressed bytes')
+elif int(m.group(1)) >= 295:
     require('docs/ARCHITECTURE.md', 'layout-time scroll correction', 'non-visible speculative static texture upload')
     require('docs/SPEC.md', 'layout-time correction', 'speculative static page MUST defer UploadDemand')
 else:

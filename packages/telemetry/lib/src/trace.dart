@@ -55,6 +55,7 @@ enum TraceEventKind {
   frameDecoded,
   animationLoop,
   mediaClassified,
+  staticEncodedPresentation,
   pageDimensionsResolved,
   pageGeometryPrepared,
   pageLayoutSnapshot,

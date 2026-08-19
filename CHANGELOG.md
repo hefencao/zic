@@ -1,3 +1,9 @@
+## 0.31.0-dev.315 - Static WebP encoded Flutter presentation boundary
+
+- The 11:45 dev.314 low-performance-device trace falsifies hidden-next2 upload timing as the fixed-position root: 173 scroll cadence outliers remain after active hidden static warming is suppressed. All 14/14 authoritative classifications are static (`animated=false`, `frameCount=1`, `complete=true`), while first visible transition texture copies still cost up to 16.588ms and every positive platform blit sample has `surfaceReconfigureCount=1`.
+- Remove the static WebP SurfaceProducer first-copy from the Reader path instead of moving it between roles. Once transport has observed WebP, Android texture upload waits for decoder animation truth; `animated=true` keeps the existing native texture path, while `animated=false` loads the existing Pipeline artifact's compressed bytes through Flutter `MemoryImage`/ImageProvider.
+- This is not the dev.311 native-RGBA-to-`decodeImageFromPixels` experiment: native decode remains for classification/prewarm, but static presentation consumes original compressed bytes. 7/3, decode 2/1, NetLane, geometry, ScrollPhysics and animated WebP remain unchanged.
+
 ## 0.31.0-dev.314 - Fixed-position hidden static upload boundary
 
 - The 10:26 dev.313 low-performance-device trace changes the root-cause priority: 148 scroll cadence outliers cluster strongly by content index (currentIndex 20: 42; 12: 19; 22: 15; 23: 13), matching the user's repeated same-position reproduction. Native Choreographer still runs mostly at 14-18ms, but that global cadence cannot explain deterministic content-position hotspots and is retained only as a background amplifier.

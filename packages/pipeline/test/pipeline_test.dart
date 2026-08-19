@@ -950,6 +950,114 @@ void main() {
     );
   });
 
+  test('android texture waits for WebP animation truth and never uploads authoritative static', () {
+    final webpChapter = ChapterManifest(
+      sourceId: 'venera:fixture',
+      comicId: 'encoded-static-comic',
+      chapter: const Chapter(
+        chapterId: 'encoded-static-chapter',
+        comicId: 'encoded-static-comic',
+        title: 'encoded static',
+        sequence: 1,
+        pageCount: 6,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        6,
+        (index) => PageAsset(
+          pageId: 'encoded-static-$index',
+          chapterId: 'encoded-static-chapter',
+          index: index,
+          uri: Uri.parse('venera-resource://encoded-static/$index.webp'),
+          contentKindHint: ContentKindHint.webp,
+          animatedHint: true,
+        ),
+      ),
+      readingDirection: ReadingDirection.vertical,
+    );
+    final obs = ReaderObs(
+      sessionId: 'encoded-static',
+      currentIndex: 2,
+      stableIndex: 2,
+      interaction: Interaction.scrolling,
+      logicalPosition: 2.2,
+      velocity: 2,
+      currentCoverage: Coverage(
+        pageIndex: 2,
+        assetKey: webpChapter.pages[2].assetKey,
+        fraction: 0.8,
+      ),
+      targetCoverage: Coverage(
+        pageIndex: 3,
+        assetKey: webpChapter.pages[3].assetKey,
+        fraction: 0.2,
+      ),
+      visibleCoverages: <Coverage>[
+        Coverage(
+          pageIndex: 2,
+          assetKey: webpChapter.pages[2].assetKey,
+          fraction: 0.8,
+        ),
+        Coverage(
+          pageIndex: 3,
+          assetKey: webpChapter.pages[3].assetKey,
+          fraction: 0.2,
+        ),
+      ],
+      direction: ReadingDirection.vertical,
+      timestamp: DateTime.utc(2026, 8, 19),
+      monotonicMicros: 1,
+    );
+    final controller = PipelineController(
+      chapter: webpChapter,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+        renderer: RendererKind.androidTexture,
+      ),
+      clock: _TestClock(),
+      policy: const HeuristicPolicy(decodeWarmPages: true),
+      onUpdate: (_) {},
+    );
+
+    controller.accept(obs);
+    expect(controller.currentPlan.uploads, isNotEmpty);
+
+    expect(
+      controller.observeWebpTransportCost(pageIndex: 2, webp: true),
+      isTrue,
+    );
+    expect(
+      controller.observeWebpTransportCost(pageIndex: 3, webp: true),
+      isTrue,
+    );
+    expect(
+      controller.currentPlan.uploads.values.where(
+        (demand) => demand.role == PageRole.current ||
+            demand.role == PageRole.transition,
+      ),
+      isEmpty,
+      reason: 'unresolved WebP must wait for decoder animation truth before SurfaceProducer',
+    );
+
+    expect(controller.classifyPage(pageIndex: 2, animated: false), isTrue);
+    expect(controller.classifyPage(pageIndex: 3, animated: false), isTrue);
+    expect(
+      controller.currentPlan.uploads,
+      isEmpty,
+      reason: 'authoritative static WebP uses encoded Flutter presentation',
+    );
+
+    expect(controller.classifyPage(pageIndex: 3, animated: true), isTrue);
+    expect(
+      controller.currentPlan.uploads.values.where(
+        (demand) => demand.role == PageRole.transition,
+      ),
+      hasLength(1),
+      reason: 'authoritative animated WebP keeps native texture presentation',
+    );
+  });
+
   test('static evidence does not widen stable decode window into far pages', () {
     final longChapter = ChapterManifest(
       sourceId: 'venera:fixture',

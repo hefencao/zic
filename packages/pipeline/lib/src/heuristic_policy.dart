@@ -27,6 +27,7 @@ final class HeuristicPolicy {
     required RoleWindow window,
     required DecodeTarget decodeTarget,
     Map<int, bool> runtimeAnimatedPages = const <int, bool>{},
+    Set<int> runtimeWebpPages = const <int>{},
     Set<int> runtimeLocalStaticPages = const <int>{},
     bool assumeUnresolvedStatic = false,
     AnimatedPrefetchFlow? downloadFlow,
@@ -121,13 +122,19 @@ final class HeuristicPolicy {
       final localStaticReady =
           runtimeLocalStaticPages.contains(entry.key) &&
               runtimeAnimatedPages[entry.key] == false;
+      final encodedFlutterPresentation =
+          decodeTarget.renderer == RendererKind.androidTexture &&
+              runtimeWebpPages.contains(entry.key) &&
+              runtimeAnimatedPages[entry.key] != true;
       final deferHiddenVerticalStaticUpload =
           observation.direction == ReadingDirection.vertical &&
               staticWarm &&
               !primaryUpload &&
               !visibleStatic &&
               _verticalPresentationActive(observation.interaction);
-      if ((primaryUpload || staticWarm) && !deferHiddenVerticalStaticUpload) {
+      if ((primaryUpload || staticWarm) &&
+          !encodedFlutterPresentation &&
+          !deferHiddenVerticalStaticUpload) {
         uploads[decode] = UploadDemand(
           role: role,
           priority: primaryUpload
@@ -188,12 +195,18 @@ final class HeuristicPolicy {
       // relative network/decode role. If it is still inside the 7/3 window,
       // the regular loop above keeps downloading/decoding it as previous or
       // next. This upload-only overlay freezes the already-presented output.
-      uploads[decode] = UploadDemand(
-        role: PageRole.last,
-        priority: 850,
-        reason: 'heuristic:last-output-retained',
-        expirationRevision: revision + 1,
-      );
+      final encodedFlutterPresentation =
+          decodeTarget.renderer == RendererKind.androidTexture &&
+              runtimeWebpPages.contains(retainedIndex) &&
+              runtimeAnimatedPages[retainedIndex] != true;
+      if (!encodedFlutterPresentation) {
+        uploads[decode] = UploadDemand(
+          role: PageRole.last,
+          priority: 850,
+          reason: 'heuristic:last-output-retained',
+          expirationRevision: revision + 1,
+        );
+      }
     }
 
     return DemandPlan(
