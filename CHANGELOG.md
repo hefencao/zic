@@ -1,3 +1,9 @@
+## 0.31.0-dev.311 - Reader Flutter-image presentation boundary
+
+- The 08:58 dev.310 device Trace confirms the handoff split lands on Android/Choreographer cadence: 38/53 scroll cadence outliers are post-finger-lift ballistic, while 58 `platformFrameCadenceOutlier` samples include repeated 20–66ms system-frame gaps. Most platform misses do not overlap traced decode/reconcile/present work, so further Reader control-plane tuning is not the primary route.
+- Treat VibeVenera as a renderer-topology control rather than citing old Flutter issues as root cause: its continuous reader builds ordinary `ComicImage(ImageProvider)` / Flutter ImageStream pages, while this ZIC run uses `androidTexture` for every recorded static Pipeline frame.
+- Keep native source/cursor/libwebp decode, but make the production `NativePipelineMediaRuntimeFactory()` project through the existing Flutter `ui.Image` / `RawImage` path. Retain SurfaceProducer output only behind explicit `NativePipelineMediaRuntimeFactory.platformTexture()` diagnostic opt-in; standalone Animated WebP texture playback is unchanged. Reader geometry, ScrollPhysics, touch sampling, 3/7, decode 2/1 and NetLane stay frozen.
+
 ## 0.31.0-dev.310 - Ballistic platform frame-cadence boundary
 
 - The 08:20 dev.309 device Trace falsifies touch sampling as the main vertical jitter owner: 20/22 `scrollCadenceOutlier` events are `dragDriven=false` ballistic updates after finger lift, with a 28.2005ms median and 42.888ms max. Their pixel deltas follow the inertial trajectory rather than showing discrete position jumps.

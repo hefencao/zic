@@ -14,18 +14,37 @@ import 'package:texture_bridge/texture_bridge.dart';
 final class NativePipelineMediaRuntimeFactory
     with WidgetsBindingObserver
     implements PipelineMediaRuntimeFactory {
+  /// Production Reader default: keep native decode, but project decoded frames
+  /// through Flutter-owned [ui.Image] surfaces.
+  ///
+  /// The dev.310 device split showed missed Choreographer cadence while the
+  /// tested chapter consisted entirely of authoritative single-frame pages.
+  /// VibeVenera's continuous reader likewise keeps ordinary comic pages in
+  /// Flutter's Image/ImageStream composition path instead of one Android
+  /// external SurfaceProducer texture per page. Keeping the native decoder but
+  /// dropping external-texture presentation removes that project-specific
+  /// compositor/display variable without changing Reader geometry or physics.
   NativePipelineMediaRuntimeFactory() {
-    if (AndroidTexturePresenter.isSupported) {
-      final presenter = AndroidTexturePresenter(telemetrySink: _routeTelemetry);
-      _texturePresenter = presenter;
-      _texturePool = _AndroidTextureLeasePool(presenter);
-      try {
-        WidgetsBinding.instance.addObserver(this);
-      } on Object {
-        // Binding uninitialized in pure test environments.
-      }
-    }
     unawaited(_prewarmWithoutSurfacingFailure());
+  }
+
+  /// Diagnostic/compatibility opt-in for the former SurfaceProducer output
+  /// path. Production Reader composition intentionally does not use this.
+  NativePipelineMediaRuntimeFactory.platformTexture() {
+    _enablePlatformTexturePresentation();
+    unawaited(_prewarmWithoutSurfacingFailure());
+  }
+
+  void _enablePlatformTexturePresentation() {
+    if (!AndroidTexturePresenter.isSupported) return;
+    final presenter = AndroidTexturePresenter(telemetrySink: _routeTelemetry);
+    _texturePresenter = presenter;
+    _texturePool = _AndroidTextureLeasePool(presenter);
+    try {
+      WidgetsBinding.instance.addObserver(this);
+    } on Object {
+      // Binding uninitialized in pure test environments.
+    }
   }
 
   AndroidTexturePresenter? _texturePresenter;

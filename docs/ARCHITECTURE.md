@@ -251,7 +251,7 @@ transport / artifact stream
   -> premultiplied target-canvas RGBA
   -> FrameHolder
   -> UploadSession
-  -> Android texture 或 Flutter fallback
+  -> Flutter ui.Image/RawImage（Reader默认）或显式opt-in Android texture
 ```
 
 稳定约束：
@@ -265,11 +265,11 @@ transport / artifact stream
 - metadata 未完成且 source 增长时允许刷新 demux；未封缄 `needMoreData` 等待 source revision，不用定时销毁 cursor；source revision 是 Reader-local projection 的状态事实，只有实际 decode fill 或 DecodeSession 已证明无需 fill 后才能记为 consumed，current-bootstrap 暂时门控邻页不得吞掉其 pending source wake； `SourceEpoch`的decode authority只属于Reader-local ingress projection，不得再由DecodeSession同时读取physical DownloadSession epoch形成第二generation owner；projection在同epoch内rebuild并替换`EncodedSource`实例时，DecodeSession必须释放旧cursor/holder并重新绑定当前source，异步decode期间projection epoch变化属于生命周期cancel而非内容failure，cursor复用必须同时满足projection epoch与source实例identity一致；
 - target canvas 使用 contain 和 `height / width`，不裁切、不使用负位移或页面重叠掩盖接缝。
 
-## 9. Upload 与 Android texture
+## 9. Upload 与 renderer output
 
-primary upload 角色为 current、transition；上一 current 的 output retention通过独立 `retainedIndex`叠加 `last` upload demand，不改变该页的相对 previous/next 网络与解码角色。远离7/3窗口时 retention只保 output，不产生 download/decode。推测静态邻页可在预算内预上传。
+primary upload 角色为 current、transition；上一 current 的 output retention通过独立 `retainedIndex`叠加 `last` upload demand，不改变该页的相对 previous/next 网络与解码角色。远离7/3窗口时 retention只保 output，不产生 download/decode。生产Reader保留native source/cursor/libwebp decode，但默认将RGBA一次转换为Flutter `ui.Image`并由`RawImage`呈现；推测静态邻页仍只可在既有预算内预上传。
 
-Android 路径使用默认 platform MethodChannel、一个串行 blit lane和普通 `mainHandler.post`：
+SurfaceProducer路径不再是生产Reader默认，只能通过显式`NativePipelineMediaRuntimeFactory.platformTexture()`用于诊断/兼容；启用时仍使用默认platform MethodChannel、一个串行 blit lane和普通`mainHandler.post`：
 
 1. retain native frame；
 2. 单 lane 复制预乘 RGBA；
@@ -278,7 +278,7 @@ Android 路径使用默认 platform MethodChannel、一个串行 blit lane和普
 5. 返回 MethodChannel；
 6. UploadSession 记录 presentation 并推进 deadline。
 
-已承载页面 output 的 texture lease 在 output 结束时真实释放，不回到 Reader 间复用池。只有从未呈现过的预热 lease 可短期复用，App 非 resumed 时清理 idle prewarm。platform queue、schedule queue/call、blit 和 channel dispatch 必须分别计时。
+Flutter默认output由Pipeline frame lifetime持有`ui.Image`并随output释放；显式SurfaceProducer路径的texture lease仍在output结束时真实释放，不回到Reader间复用池。只有从未呈现过的预热lease可短期复用，App非resumed时清理idle prewarm；该opt-in路径的platform queue、schedule queue/call、blit和channel dispatch继续分别计时。
 
 ## 10. Reader 资源会话 retention
 
@@ -287,10 +287,10 @@ Reader Host 从 `PipelineReaderSessionFactory.acquire` 获取资源会话并在�
 - retention pool 最多保留 1 个 idle 章节会话；TTL 为 2 分钟；
 - key 包含稳定章节/source revision、loader URI/revision 和 composition 能力指纹；临时 loader 对象 identity 不参与；
 - 保留Reader-local SourcePool、Decode/Upload/media runtime以及对composition transfer runtime的consumer lease；physical DownloadRegistry、artifact/partial handoff与transfer workspace独立于Reader会话生命周期；
-- 释放 Reader binding、page projection、playback wake、present claim 和 used texture；
+- 释放 Reader binding、page projection、playback wake、present claim 和 renderer output资源；
 - 不同 key、TTL 到期、容量淘汰或 composition shutdown 时才完整逆序 dispose。
 
-这是一条资源 lease，不是 Reader UI 缓存，也不允许跨 Reader 复用 used SurfaceProducer。
+这是一条资源 lease，不是 Reader UI 缓存；Flutter `ui.Image`与显式opt-in SurfaceProducer都不得跨Reader复用used output。
 
 来源页打开已经持久化为 `LibraryComic` 的同一漫画时，source route lock 是该导航的唯一 presentation lock；不得在持有同一 `sourceId + raw comicId` lock 时再次调用会重复申请该 lock 的入口。路由锁只存在于内存导航生命周期，不写入 library，也不参与持久 identity。
 
