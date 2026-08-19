@@ -80,9 +80,11 @@ for token in ('13.8ms', '29.5ms', '32.2ms', 'scrollCadenceOutlier',
 
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-if not re.search(r'^version: 0\.31\.0\+307$', pubspec, re.M):
-    raise SystemExit('dev.307 app version mismatch')
-if not re.search(r'^versionCode=307$', props, re.M):
+match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+if match is None or int(match.group(1)) < 307:
+    raise SystemExit('dev.307 app version missing/regressed')
+version = int(match.group(1))
+if not re.search(rf'^versionCode={version}$', props, re.M):
     raise SystemExit('dev.307 Android version mismatch')
 
 print('dev.307 Reader position/command/lifecycle boundary: OK')

@@ -38,11 +38,15 @@ req('const _SourceWatchBinding({' not in binding,
 req('_SourceWatchBinding({' in binding, 'source-watch binding constructor missing')
 
 reader = text('packages/reader/lib/src/reader_view.dart')
+physics_target_marker = (
+    'if (target != null)' if int(m.group(1)) >= 308
+    else 'if (!isScrolling && target != null)'
+)
 for marker in (
     'final class _ReaderVerticalScrollPhysics extends ClampingScrollPhysics',
     'double? Function() geometryCorrectionTarget;',
     'double adjustPositionForNewDimensions({',
-    'if (!isScrolling && target != null)',
+    physics_target_marker,
     '.clamp(newPosition.minScrollExtent, newPosition.maxScrollExtent)',
     'double? _pendingVerticalGeometryCorrection;',
     'nextRatios: pending,',
@@ -51,6 +55,13 @@ for marker in (
     '_scheduleVerticalGeometryCorrectionClear();',
 ):
     req(marker in reader, f'atomic idle geometry correction missing: {marker}')
+if int(m.group(1)) >= 308:
+    for marker in (
+        'if (_lastVerticalTravelDirection < 0 &&',
+        'for (var index = 0; index < visibleMin; index++)',
+        '.restoreTop(oldAnchor)',
+    ):
+        req(marker in reader, f'dev.308 selective active prefix correction missing: {marker}')
 
 commit_start = reader.index('  void _schedulePendingVerticalRatioCommit()')
 commit_end = reader.index('  void _resetVerticalCompositionCache()', commit_start)

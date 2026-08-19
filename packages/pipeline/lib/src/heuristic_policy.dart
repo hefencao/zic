@@ -27,6 +27,7 @@ final class HeuristicPolicy {
     required RoleWindow window,
     required DecodeTarget decodeTarget,
     Map<int, bool> runtimeAnimatedPages = const <int, bool>{},
+    Set<int> runtimeLocalStaticPages = const <int>{},
     bool assumeUnresolvedStatic = false,
     AnimatedPrefetchFlow? downloadFlow,
     int readDirection = 1,
@@ -117,11 +118,15 @@ final class HeuristicPolicy {
 
       final primaryUpload = role == PageRole.current ||
           role == PageRole.transition;
+      final localStaticReady =
+          runtimeLocalStaticPages.contains(entry.key) &&
+              runtimeAnimatedPages[entry.key] == false;
       final deferHiddenVerticalStaticUpload =
           observation.direction == ReadingDirection.vertical &&
               staticWarm &&
               !primaryUpload &&
               !visibleStatic &&
+              !localStaticReady &&
               _verticalPresentationActive(observation.interaction);
       if ((primaryUpload || staticWarm) && !deferHiddenVerticalStaticUpload) {
         uploads[decode] = UploadDemand(
@@ -146,7 +151,12 @@ final class HeuristicPolicy {
                   : 'heuristic:static-warm:${role.name}'
               : 'heuristic:${role.name}',
           expirationRevision: revision + 1,
-          retainOutput: visibleStatic,
+          // A decoded static page backed by immutable local/durable bytes may
+          // prepare its external texture before it reaches the viewport. Keep
+          // that already-prepared output inside the existing bounded static
+          // budget so a fast transition cannot fall back to a black/loading
+          // surface while the platform blit catches up.
+          retainOutput: visibleStatic || localStaticReady,
         );
       }
     }

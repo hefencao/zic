@@ -41,7 +41,7 @@ final class _ReaderVerticalScrollPhysics extends ClampingScrollPhysics {
     required double velocity,
   }) {
     final target = geometryCorrectionTarget();
-    if (!isScrolling && target != null) {
+    if (target != null) {
       return target
           .clamp(newPosition.minScrollExtent, newPosition.maxScrollExtent)
           .toDouble();
@@ -105,6 +105,7 @@ final class _ReaderViewState extends State<ReaderView> {
   int? _zoomedPage;
   int? _lastReportedVerticalPage;
   int _lastVerticalTravelDirection = 0;
+  int? _lastVerticalVisibleMinIndex;
   int? _lastVerticalVisibleMaxIndex;
   late List<GlobalKey> _verticalPageLayoutKeys;
   int _lastVerticalLayoutSnapshotMicros = -1000000;
@@ -171,6 +172,7 @@ final class _ReaderViewState extends State<ReaderView> {
     _handledNavigationRevision = widget.controller.navigationRevision;
     _lastDirection = widget.controller.direction;
     _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
+    _lastVerticalVisibleMinIndex = widget.controller.currentIndex;
     _lastVerticalVisibleMaxIndex = widget.controller.currentIndex;
     _verticalKeepAliveCenter = ValueNotifier<int>(widget.controller.currentIndex);
     _verticalPageLayoutKeys = _createVerticalPageLayoutKeys();
@@ -227,6 +229,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _handledNavigationRevision = widget.controller.navigationRevision;
       _zoomedPage = null;
       _lastReportedVerticalPage = null;
+      _lastVerticalVisibleMinIndex = widget.controller.currentIndex;
       _lastVerticalVisibleMaxIndex = widget.controller.currentIndex;
       _verticalKeepAliveCenter.value = widget.controller.currentIndex;
       _verticalPageLayoutKeys = _createVerticalPageLayoutKeys();
@@ -466,22 +469,66 @@ final class _ReaderViewState extends State<ReaderView> {
 
   void _adoptFutureVerticalRatios(Map<String, double> latest) {
     final pages = widget.controller.chapter.pages;
+    if (pages.isEmpty || _lastVerticalTravelDirection == 0) return;
+    final visibleMin = (_lastVerticalVisibleMinIndex ??
+            widget.controller.currentIndex)
+        .clamp(0, pages.length - 1)
+        .toInt();
     final visibleMax = (_lastVerticalVisibleMaxIndex ??
             widget.controller.currentIndex)
         .clamp(0, pages.length - 1)
         .toInt();
+    final oldGeometry = _verticalGeometry();
+    final oldPixels = _verticalController.hasClients
+        ? _verticalController.position.pixels
+        : null;
+    final oldAnchor = oldPixels == null
+        ? null
+        : oldGeometry.anchorForTop(oldPixels);
     Map<String, double>? merged;
     final adopted = <int>[];
-    for (var index = visibleMax + 1; index < pages.length; index++) {
+
+    void adopt(int index) {
       final key = pages[index].assetKey;
       final ratio = latest[key];
-      if (ratio == null || _verticalLayoutRatios[key] == ratio) continue;
+      if (ratio == null || _verticalLayoutRatios[key] == ratio) return;
       merged ??= <String, double>{..._verticalLayoutRatios};
-      merged[key] = ratio;
+      merged![key] = ratio;
       adopted.add(index);
     }
+
+    if (_lastVerticalTravelDirection > 0) {
+      // Higher-index future pages are after the painted prefix, so their
+      // measured extents can be installed immediately without moving anything
+      // already visible.
+      for (var index = visibleMax + 1; index < pages.length; index++) {
+        adopt(index);
+      }
+    } else {
+      // When scrolling toward lower indexes, the incoming pages are part of
+      // the prefix of the current viewport. Their measured extents still need
+      // to be installed before they become visible, but doing so must atomically
+      // shift ScrollPosition by the same prefix delta. Otherwise fast reverse
+      // scrolling keeps one-screen provisional extents and visibly reflows when
+      // the reader later becomes idle.
+      for (var index = 0; index < visibleMin; index++) {
+        adopt(index);
+      }
+    }
     if (merged == null) return;
-    _verticalLayoutRatios = Map<String, double>.unmodifiable(merged);
+    final nextRatios = Map<String, double>.unmodifiable(merged!);
+    double? correction;
+    if (_lastVerticalTravelDirection < 0 &&
+        oldAnchor != null &&
+        oldPixels != null) {
+      correction = _verticalGeometry(ratios: nextRatios)
+          .restoreTop(oldAnchor);
+      if ((correction - oldPixels).abs() > 0.01) {
+        _pendingVerticalGeometryCorrection = correction;
+        _scheduleVerticalGeometryCorrectionClear();
+      }
+    }
+    _verticalLayoutRatios = nextRatios;
     _invalidateVerticalGeometryCache();
     widget.traceSink.record(
       traceEvent(
@@ -491,7 +538,10 @@ final class _ReaderViewState extends State<ReaderView> {
         revision: widget.demandRevision?.call(),
         payload: <String, Object?>{
           'pageIndexes': adopted,
+          'visibleMinIndex': visibleMin,
           'visibleMaxIndex': visibleMax,
+          'travelDirection': _lastVerticalTravelDirection,
+          if (correction != null) 'geometryCorrectionTarget': correction,
           'interaction': _interaction.name,
           'source': 'decode-ahead-ratio',
         },
@@ -1169,6 +1219,12 @@ final class _ReaderViewState extends State<ReaderView> {
       pixels: metrics.pixels,
       viewportDimension: metrics.viewportDimension,
     );
+    _lastVerticalVisibleMinIndex = visible.isEmpty
+        ? position.index
+        : visible.fold<int>(
+            position.index,
+            (minimum, entry) => entry.index < minimum ? entry.index : minimum,
+          );
     _lastVerticalVisibleMaxIndex = visible.isEmpty
         ? position.index
         : visible.fold<int>(

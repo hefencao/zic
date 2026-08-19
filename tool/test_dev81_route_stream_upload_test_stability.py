@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -102,8 +103,21 @@ assert '_pumpUntilCondition' not in reader_test
 for fixed_wait in ('Duration(milliseconds: 80)', 'Duration(milliseconds: 50)', 'Duration(milliseconds: 400)'):
     assert fixed_wait not in reader_test
 assert 'nowMicros = widget.clock.nowMicros()' in read('packages/reader/lib/src/reader_view.dart')
-assert reader_test.count('await gesture.up();\n      await tester.pumpAndSettle();') == 2
-assert reader_test.count('pumpAndSettle') == 2
+pubspec = read('apps/app/pubspec.yaml')
+version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+current_dev = int(version_match.group(1)) if version_match else 0
+settled_gesture_count = reader_test.count(
+    'await gesture.up();\n      await tester.pumpAndSettle();'
+)
+if current_dev < 308:
+    assert settled_gesture_count == 2
+    assert reader_test.count('pumpAndSettle') == 2
+else:
+    # dev.308 adds a deterministic reverse-prefix geometry regression that
+    # settles after gesture end; keep dev.81's ban on fixed waits while no
+    # longer treating the historical test count as an ownership contract.
+    assert settled_gesture_count >= 2
+    assert reader_test.count('pumpAndSettle') >= 2
 for token in (
     'final class ReaderVerticalGeometry',
     'ReaderVerticalAnchor anchorForTop',

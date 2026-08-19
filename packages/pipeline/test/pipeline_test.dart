@@ -735,9 +735,32 @@ void main() {
             'hidden immediate next must not blit a static texture during active vertical scrolling',
       );
 
+      final localStaticPlan = policy.createPlan(
+        revision: 3,
+        chapter: staticChapter,
+        observation: hiddenNextObservation,
+        window: resolver.resolve(staticChapter, hiddenNextObservation),
+        decodeTarget: target,
+        runtimeAnimatedPages: const <int, bool>{6: false, 7: false},
+        runtimeLocalStaticPages: const <int>{6, 7},
+      );
+      final localNext = localStaticPlan.uploads.entries.singleWhere(
+        (entry) => entry.value.role == PageRole.next,
+      );
+      final localNext2 = localStaticPlan.uploads.entries.singleWhere(
+        (entry) => entry.value.role == PageRole.next2,
+      );
+      expect(
+        localNext.value.retainOutput,
+        isTrue,
+        reason:
+            'a locally-backed authoritative static next page should be resident before it enters the viewport',
+      );
+      expect(localNext2.value.retainOutput, isTrue);
+
       final idle = verticalObservation(Interaction.idle);
       final idlePlan = policy.createPlan(
-        revision: 3,
+        revision: 4,
         chapter: staticChapter,
         observation: idle,
         window: resolver.resolve(staticChapter, idle),
@@ -820,6 +843,80 @@ void main() {
         (demand) => demand.reason.startsWith('heuristic:static-'),
       ).length,
       greaterThanOrEqualTo(2),
+    );
+  });
+
+  test('local static classification may pre-present inside the existing decode window', () {
+    final chapter = ChapterManifest(
+      sourceId: 'mihon:fixture',
+      comicId: 'local-static-controller-comic',
+      chapter: const Chapter(
+        chapterId: 'local-static-controller-chapter',
+        comicId: 'local-static-controller-comic',
+        title: 'local static controller',
+        sequence: 1,
+        pageCount: 8,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        8,
+        (index) => PageAsset(
+          pageId: 'local-static-$index',
+          chapterId: 'local-static-controller-chapter',
+          index: index,
+          uri: Uri.parse('mihon:resource:local-static-$index'),
+          animatedHint: true,
+        ),
+      ),
+      readingDirection: ReadingDirection.vertical,
+    );
+    final observation = ReaderObs(
+      sessionId: 'local-static-controller',
+      currentIndex: 3,
+      stableIndex: 3,
+      interaction: Interaction.scrolling,
+      logicalPosition: 3.05,
+      velocity: 2,
+      currentCoverage: Coverage(
+        pageIndex: 3,
+        assetKey: chapter.pages[3].assetKey,
+        fraction: 1,
+      ),
+      visibleCoverages: <Coverage>[
+        Coverage(
+          pageIndex: 3,
+          assetKey: chapter.pages[3].assetKey,
+          fraction: 1,
+        ),
+      ],
+      direction: ReadingDirection.vertical,
+      timestamp: DateTime.utc(2026, 8, 19),
+      monotonicMicros: 1,
+    );
+    final controller = PipelineController(
+      chapter: chapter,
+      decodeTarget: DecodeTarget(physicalWidth: 1000, physicalHeight: 1000),
+      clock: _TestClock(),
+      policy: const HeuristicPolicy(decodeWarmPages: true),
+      onUpdate: (_) {},
+    );
+
+    controller.accept(observation);
+    expect(
+      controller.currentPlan.uploads.values.where((d) => d.role == PageRole.next),
+      isEmpty,
+    );
+    expect(
+      controller.classifyPage(
+        pageIndex: 4,
+        animated: false,
+        localPresentationReady: true,
+      ),
+      isTrue,
+    );
+    expect(
+      controller.currentPlan.uploads.values.where((d) => d.role == PageRole.next),
+      isNotEmpty,
     );
   });
 

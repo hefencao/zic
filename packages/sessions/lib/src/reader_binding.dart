@@ -84,9 +84,17 @@ final class ReaderBinding {
     }
   }
 
-  bool classifyPage({required int pageIndex, required bool animated}) {
+  bool classifyPage({
+    required int pageIndex,
+    required bool animated,
+    bool? localPresentationReady,
+  }) {
     if (_detached) return false;
-    return pipeline.classifyPage(pageIndex: pageIndex, animated: animated);
+    return pipeline.classifyPage(
+      pageIndex: pageIndex,
+      animated: animated,
+      localPresentationReady: localPresentationReady,
+    );
   }
 
   bool observeWebpTransportCost({

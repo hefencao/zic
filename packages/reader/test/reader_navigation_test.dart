@@ -654,6 +654,112 @@ void main() {
 
 
   testWidgets(
+    'reverse vertical scroll prepares incoming measured prefix without visible reflow',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'vertical-reverse-prefix-comic',
+        chapter: const Chapter(
+          chapterId: 'vertical-reverse-prefix-chapter',
+          comicId: 'vertical-reverse-prefix-comic',
+          title: 'vertical reverse prefix',
+          sequence: 0,
+          pageCount: 4,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          4,
+          (index) => PageAsset(
+            pageId: 'vertical-reverse-$index',
+            chapterId: 'vertical-reverse-prefix-chapter',
+            index: index,
+            uri: Uri.parse('asset:///vertical-reverse-$index.png'),
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final controller = ReaderController(
+        sessionId: 'reader-vertical-reverse-prefix-test',
+        chapter: chapter,
+        onObservation: (_) {},
+        clock: FakeClock(),
+        initialPage: 2,
+      );
+      addTearDown(controller.dispose);
+      final ratios = ValueNotifier<Map<String, double>>(
+        <String, double>{
+          chapter.pages[2].assetKey: 1.5,
+          chapter.pages[3].assetKey: 1.5,
+        },
+      );
+      addTearDown(ratios.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ValueListenableBuilder<Map<String, double>>(
+            valueListenable: ratios,
+            builder: (context, value, _) => ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              pageAspectRatios: value,
+              pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+                key: ValueKey<String>('vertical-reverse:${asset.pageId}'),
+                color: Colors.black,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+      final page1 = find.byKey(
+        const ValueKey<String>('reader-vertical-page:1'),
+        skipOffstage: false,
+      );
+      final initialHeight = tester.getSize(page1).height;
+      final beforePage2Top = tester.getTopLeft(
+        find.byKey(
+          const ValueKey<String>('reader-vertical-page:2'),
+          skipOffstage: false,
+        ),
+      ).dy;
+
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      // Drag content down so the Reader travels toward lower page indexes.
+      await gesture.moveBy(const Offset(0, 120));
+      await tester.pump();
+      ratios.value = <String, double>{
+        ...ratios.value,
+        chapter.pages[1].assetKey: 2.5,
+      };
+      await tester.pump();
+
+      expect(
+        tester.getSize(page1).height,
+        greaterThan(initialHeight),
+        reason:
+            'an incoming lower-index page should use its measured extent before it enters the viewport',
+      );
+      final afterPage2Top = tester.getTopLeft(
+        find.byKey(
+          const ValueKey<String>('reader-vertical-page:2'),
+          skipOffstage: false,
+        ),
+      ).dy;
+      expect(
+        afterPage2Top,
+        closeTo(beforePage2Top + 120, 1.0),
+        reason:
+            'prefix growth must be absorbed by layout-time scroll correction instead of moving the current page',
+      );
+      await gesture.up();
+      await tester.pumpAndSettle();
+    },
+  );
+
+
+  testWidgets(
     'vertical measured ratios stay frozen until active scrolling is idle',
     (tester) async {
       final chapter = ChapterManifest(

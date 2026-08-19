@@ -55,6 +55,7 @@ final class PipelineController {
       BrowsingDirectionPredictor();
   int _readDirection = 1;
   final Map<int, bool> _runtimeAnimatedPages = <int, bool>{};
+  final Set<int> _runtimeLocalStaticPages = <int>{};
   final Set<int> _runtimeWebpCostPages = <int>{};
   ReaderObs? _lastObservation;
   Set<int>? _previousVisibleIndexes;
@@ -126,13 +127,25 @@ final class PipelineController {
     return true;
   }
 
-  bool classifyPage({required int pageIndex, required bool animated}) {
+  bool classifyPage({
+    required int pageIndex,
+    required bool animated,
+    bool? localPresentationReady,
+  }) {
     if (pageIndex < 0 || pageIndex >= chapter.pages.length) return false;
     final beforeFlowActive = pageIndex == _currentIndex
         ? _animatedFlowActiveFor(pageIndex)
         : false;
     final current = _runtimeAnimatedPages[pageIndex];
-    if (current == animated) return false;
+    var localityChanged = false;
+    if (animated) {
+      localityChanged = _runtimeLocalStaticPages.remove(pageIndex);
+    } else if (localPresentationReady != null) {
+      localityChanged = localPresentationReady
+          ? _runtimeLocalStaticPages.add(pageIndex)
+          : _runtimeLocalStaticPages.remove(pageIndex);
+    }
+    if (current == animated && !localityChanged) return false;
     _runtimeAnimatedPages[pageIndex] = animated;
     if (pageIndex == _currentIndex &&
         beforeFlowActive != _animatedFlowActiveFor(pageIndex)) {
@@ -244,6 +257,7 @@ final class PipelineController {
       window: window,
       decodeTarget: _decodeTarget,
       runtimeAnimatedPages: _runtimeAnimatedPages,
+      runtimeLocalStaticPages: _runtimeLocalStaticPages,
       assumeUnresolvedStatic: _assumeUnresolvedStatic,
       downloadFlow: animatedFlow,
       readDirection: _readDirection,
@@ -293,6 +307,7 @@ final class PipelineController {
           'runtimeStaticPages': _runtimeAnimatedPages.values
               .where((animated) => !animated)
               .length,
+          'runtimeLocalStaticPages': _runtimeLocalStaticPages.length,
           'runtimeWebpCostPages': _runtimeWebpCostPages.length,
           'assumeUnresolvedStatic': _assumeUnresolvedStatic,
           'animatedFlowActive': animatedFlow.active,

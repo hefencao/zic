@@ -1460,9 +1460,15 @@ final class PipelineReaderSession {
       final pageIndex = _pageIndexByPageId[id.download.content.pageId];
       if (pageIndex == null) return;
       final animated = animation.frameCount > 1;
+      final asset = chapter.pages[pageIndex];
+      final download = _downloads.find(id.download);
+      final localPresentationReady = !animated &&
+          (_isDirectImmutableLocalUri(asset.uri) ||
+              download?.residentBodyBacked == true);
       final changed = _binding?.classifyPage(
             pageIndex: pageIndex,
             animated: animated,
+            localPresentationReady: localPresentationReady,
           ) ??
           false;
       if (!changed) return;
@@ -1476,6 +1482,7 @@ final class PipelineReaderSession {
           payload: <String, Object?>{
             'pageIndex': pageIndex,
             'animated': animated,
+            'localPresentationReady': localPresentationReady,
             'frameCount': animation.frameCount,
             'loopCount': animation.loopCount,
             'complete': animation.complete,
