@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted in dev.311 as the next device-falsifiable jitter fix.
+Falsified by the 09:28 dev.311 device run; rolled back in dev.312.
 
 ## Evidence
 
@@ -19,6 +19,12 @@ Keep the native source/cursor/libwebp decode path, but make `NativePipelineMedia
 Retain the SurfaceProducer implementation behind explicit `NativePipelineMediaRuntimeFactory.platformTexture()` opt-in for diagnostics/compatibility. Do not use that opt-in in normal Reader composition. The standalone `NativeWebpPlayer` remains independent and keeps its existing Android texture path when supported.
 
 This change does not alter Reader geometry, ScrollPosition, ScrollPhysics, touch sampling, encoded 3/7, decode previous1/next2, NetLane, page-host retention or static pre-presentation eligibility.
+
+## dev.311 device result
+
+The 09:28 device run satisfies the experiment precondition: all 48 recorded `framePipelineTiming` samples use `renderer=flutterImage`. The symptom does not improve: 72 `scrollCadenceOutlier` events include 57 post-finger-lift ballistic gaps with median 28.194ms, while 87 `platformFrameCadenceOutlier` events include 70 Choreographer system-frame gaps >=20ms. Long `readerFrameTiming` intervals still have low build/raster cost, so moving static Reader presentation off SurfaceProducer does not close the cadence failure. The Flutter-image path additionally raises one-time `outputPrepareMicros` to roughly 31ms median in this run.
+
+Therefore renderer topology is not the unified cause and production default returns to the pre-dev.311 Android texture presentation boundary in dev.312. This rollback is not evidence for texture correctness; dev.310 already reproduced the same ballistic problem on that path.
 
 ## Device falsification
 

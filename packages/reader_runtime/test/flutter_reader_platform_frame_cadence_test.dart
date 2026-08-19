@@ -44,6 +44,10 @@ void main() {
               'frameGapMicros': 33333,
               'callbackGapMicros': 34000,
               'callbackLagMicros': 5000,
+              'threadCpuGapMicros': 1200,
+              'displayRefreshRateMilliHz': 120000,
+              'frameRatePolicyRequested': 1,
+              'displayHasArrSupport': 1,
             },
           ];
         case 'stopFrameCadenceProbe':
@@ -83,5 +87,9 @@ void main() {
     expect(event.payload['callbackGapMicros'], 34000);
     expect(event.payload['callbackLagMicros'], 5000);
     expect(event.payload['callbackOffsetMicros'], 5);
+    expect(event.payload['threadCpuGapMicros'], 1200);
+    expect(event.payload['displayRefreshRateMilliHz'], 120000);
+    expect(event.payload['frameRatePolicyRequested'], isTrue);
+    expect(event.payload['displayHasArrSupport'], isTrue);
   });
 }

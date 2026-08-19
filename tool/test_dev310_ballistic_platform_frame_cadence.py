@@ -48,7 +48,9 @@ for forbidden in ('GestureBinding', 'resamplingEnabled', 'samplingOffset'):
         raise SystemExit(f'dev.310 retained touch-resampling product mutation: {forbidden}')
 
 for token in (
-    'class ReaderRuntimePlugin : FlutterPlugin, MethodChannel.MethodCallHandler',
+    'import android.view.Choreographer',
+    'FlutterPlugin,',
+    'MethodChannel.MethodCallHandler,',
     'Choreographer.FrameCallback',
     'postFrameCallback(frameCallback)',
     'FRAME_GAP_OUTLIER_MICROS = 20_000L',

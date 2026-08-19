@@ -27,3 +27,10 @@ The former external-texture route is retained only through explicit `NativePipel
 ## Frozen / next proof
 
 Do not change touch resampling, ScrollPhysics, geometry/sourceCanvas, 3/7, decode 2/1, NetLane, current±2 static continuity or local-static pre-presentation. The next device proof must first show `renderer=flutterImage`, then compare ballistic and platform cadence on the same reproduction. A negative result closes this renderer-topology route and triggers Android System Trace rather than another speculative Reader tweak.
+
+
+## 09:28 falsification result
+
+The dev.311 device Trace confirms the switch actually took effect: all 48 `framePipelineTiming` events use `renderer=flutterImage`. Nevertheless 57/72 scroll cadence outliers are post-finger-lift ballistic with median 28.194ms, and 70/87 Android cadence outliers contain a Choreographer system-frame gap >=20ms. Long frame intervals are not explained by Flutter build/raster work. The experiment therefore falsifies SurfaceProducer-vs-Flutter-image topology as the unified cause.
+
+The same run shows `flutterImage` output preparation around 31ms median versus sub-millisecond median on the prior texture run. dev.312 rolls back the default presentation experiment to avoid retaining that measured regression while investigating the next independent boundary.

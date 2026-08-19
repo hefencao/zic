@@ -246,6 +246,7 @@ python3 "$ROOT/tool/test_dev308_local_static_prepresentation_reverse_geometry.py
 python3 "$ROOT/tool/test_dev309_vertical_touch_resampling_cadence.py"
 python3 "$ROOT/tool/test_dev310_ballistic_platform_frame_cadence.py"
 python3 "$ROOT/tool/test_dev311_reader_flutter_image_presentation_boundary.py"
+python3 "$ROOT/tool/test_dev312_android_arr_ballistic_boundary.py"
 python3 "$ROOT/tool/test_debug_trace_filter.py"
 python3 "$ROOT/tool/test_venera_network_cache_contract.py"
 python3 "$ROOT/tool/check_test_quarantine.py"

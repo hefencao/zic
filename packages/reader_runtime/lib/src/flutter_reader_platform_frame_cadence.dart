@@ -121,6 +121,12 @@ final class FlutterReaderPlatformFrameCadenceProbe {
         final frameGapMicros = sample['frameGapMicros'];
         final callbackGapMicros = sample['callbackGapMicros'];
         final callbackLagMicros = sample['callbackLagMicros'];
+        final threadCpuGapMicros = sample['threadCpuGapMicros'];
+        final displayRefreshRateMilliHz =
+            sample['displayRefreshRateMilliHz'];
+        final frameRatePolicyRequested =
+            sample['frameRatePolicyRequested'];
+        final displayHasArrSupport = sample['displayHasArrSupport'];
         if (frameTimeNanos is! int ||
             callbackNanos is! int ||
             frameGapMicros is! int ||
@@ -142,6 +148,14 @@ final class FlutterReaderPlatformFrameCadenceProbe {
               'callbackLagMicros': callbackLagMicros,
               'callbackOffsetMicros':
                   (callbackNanos - frameTimeNanos) ~/ 1000,
+              if (threadCpuGapMicros is int)
+                'threadCpuGapMicros': threadCpuGapMicros,
+              if (displayRefreshRateMilliHz is int)
+                'displayRefreshRateMilliHz': displayRefreshRateMilliHz,
+              if (frameRatePolicyRequested is int)
+                'frameRatePolicyRequested': frameRatePolicyRequested != 0,
+              if (displayHasArrSupport is int)
+                'displayHasArrSupport': displayHasArrSupport != 0,
             },
           ),
         );

@@ -1,3 +1,9 @@
+## 0.31.0-dev.312 - Android ARR ballistic boundary
+
+- Falsify dev.311 renderer topology on device: all 48 sampled pages use `renderer=flutterImage`, yet 57/72 scroll cadence outliers remain post-lift ballistic and 70/87 platform cadence outliers still contain >=20ms Choreographer system-frame gaps. Roll production Reader presentation back to the already-known dev.310 Android texture default to remove the added Flutter-image output-preparation cost; that rollback is not a candidate fix because dev.310 already reproduced the bug.
+- Fix `ReaderRuntimePlugin.kt` to import `android.view.Choreographer`. Extend cadence outliers with main-thread CPU-gap and display-refresh metadata while keeping the probe observation-only.
+- Add a separate Reader-scoped Android API 35+ adaptive-refresh policy: while a vertical Reader is mounted, save and disable `Window.isFrameRatePowerSavingsBalanced`; restore the exact prior value on exit/activity detach. Record `platformFrameRatePolicy` start/stop evidence so the next device A/B cannot be interpreted unless the policy actually applied.
+
 ## 0.31.0-dev.311 - Reader Flutter-image presentation boundary
 
 - The 08:58 dev.310 device Trace confirms the handoff split lands on Android/Choreographer cadence: 38/53 scroll cadence outliers are post-finger-lift ballistic, while 58 `platformFrameCadenceOutlier` samples include repeated 20–66ms system-frame gaps. Most platform misses do not overlap traced decode/reconcile/present work, so further Reader control-plane tuning is not the primary route.

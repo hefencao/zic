@@ -252,7 +252,8 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     if (event.kind != TraceEventKind.readerFrameTiming &&
         event.kind != TraceEventKind.pipelineReconcileTiming &&
         event.kind != TraceEventKind.scrollCadenceOutlier &&
-        event.kind != TraceEventKind.platformFrameCadenceOutlier) {
+        event.kind != TraceEventKind.platformFrameCadenceOutlier &&
+        event.kind != TraceEventKind.platformFrameRatePolicy) {
       _scheduleNotification();
     }
   }
