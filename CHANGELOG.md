@@ -1,3 +1,9 @@
+## 0.31.0-dev.314 - Fixed-position hidden static upload boundary
+
+- The 10:26 dev.313 low-performance-device trace changes the root-cause priority: 148 scroll cadence outliers cluster strongly by content index (currentIndex 20: 42; 12: 19; 22: 15; 23: 13), matching the user's repeated same-position reproduction. Native Choreographer still runs mostly at 14-18ms, but that global cadence cannot explain deterministic content-position hotspots and is retained only as a background amplifier.
+- Re-open only the active hidden-static presentation exception from dev.308. A concrete page-11 classification edge at 40.658911s (`animated=false`, `localPresentationReady=true`) immediately added hidden `next2` upload; its 712x2336 Android texture blit consumed 16.163ms and completed at 40.677365s immediately before a 32.845ms scroll cadence gap. Across correlated physical uploads, 16/19 are `next2`.
+- During vertical dragging/scrolling/settling, keep hidden static neighbors decoded but never start speculative texture upload solely because local/durable static classification becomes authoritative. Current/transition/actually-visible static pages still upload, and idle restores bounded pre-presentation. Encoded 7/3, decode 2/1, NetLane, ScrollPhysics, geometry and Reader position remain unchanged. This is a single-variable falsification; the proposed 180ms Pipeline control debounce is deliberately not included.
+
 ## 0.31.0-dev.313 - Platform-vsync effective cadence boundary
 
 - Cross-device dev.312 evidence rejects ARR as the shared root: the low-performance API36/120Hz device has `displayHasArrSupport=false` and still reproduces, while the high-performance ARR-capable device still reproduces with the dev.312 policy confirmed applied. Production Reader therefore stops activating the ARR intervention; its adapter/evidence remain for history.

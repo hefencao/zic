@@ -126,7 +126,6 @@ final class HeuristicPolicy {
               staticWarm &&
               !primaryUpload &&
               !visibleStatic &&
-              !localStaticReady &&
               _verticalPresentationActive(observation.interaction);
       if ((primaryUpload || staticWarm) && !deferHiddenVerticalStaticUpload) {
         uploads[decode] = UploadDemand(
@@ -151,11 +150,11 @@ final class HeuristicPolicy {
                   : 'heuristic:static-warm:${role.name}'
               : 'heuristic:${role.name}',
           expirationRevision: revision + 1,
-          // A decoded static page backed by immutable local/durable bytes may
-          // prepare its external texture before it reaches the viewport. Keep
-          // that already-prepared output inside the existing bounded static
-          // budget so a fast transition cannot fall back to a black/loading
-          // surface while the platform blit catches up.
+          // Local/durable static evidence still permits retained output, but
+          // active vertical scrolling never starts a hidden speculative texture
+          // upload. A page may upload once it is visible/current/transition, or
+          // while the Reader is idle, so platform blits cannot be triggered by
+          // an off-screen classification edge at a fixed scroll position.
           retainOutput: visibleStatic || localStaticReady,
         );
       }

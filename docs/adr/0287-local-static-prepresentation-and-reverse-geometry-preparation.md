@@ -46,3 +46,6 @@ active vertical geometry按travel direction区分安全的future ratio：
 - reverse incoming页若sourceCanvas已提前解析，first-pass layout必须直接使用measured extent；visible top不得因prefix变化跳动。
 
 Historical owner token: `localPresentationReady`.
+## dev.314 设备证据修订
+
+dev.308 的 reverse geometry 决策继续 Accepted；但“authoritative local static 可在 active vertical 中隐藏 pre-present”的例外被 dev.314 **Superseded**。10:26 真机显示 off-screen `mediaClassified(localPresentationReady=true)` 可在固定内容边界 force replan，并启动 `next2` SurfaceProducer blit；具体 page11 的 712x2336 blit 为 16.163ms，紧邻 32.845ms scroll cadence gap。故 local/durable static 只可在 idle 或成为 current/transition/真实 visible 后 upload；active 时仍保留 decode warm。

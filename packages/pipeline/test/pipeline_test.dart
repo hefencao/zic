@@ -744,19 +744,23 @@ void main() {
         runtimeAnimatedPages: const <int, bool>{6: false, 7: false},
         runtimeLocalStaticPages: const <int>{6, 7},
       );
-      final localNext = localStaticPlan.uploads.entries.singleWhere(
-        (entry) => entry.value.role == PageRole.next,
-      );
-      final localNext2 = localStaticPlan.uploads.entries.singleWhere(
-        (entry) => entry.value.role == PageRole.next2,
+      expect(
+        localStaticPlan.decodes.values.where(
+          (demand) =>
+              demand.role == PageRole.next || demand.role == PageRole.next2,
+        ),
+        isNotEmpty,
+        reason: 'local static neighbors remain decode-warm during active scroll',
       );
       expect(
-        localNext.value.retainOutput,
-        isTrue,
+        localStaticPlan.uploads.values.where(
+          (demand) =>
+              demand.role == PageRole.next || demand.role == PageRole.next2,
+        ),
+        isEmpty,
         reason:
-            'a locally-backed authoritative static next page should be resident before it enters the viewport',
+            'local static evidence must not start hidden platform blits during active vertical scrolling',
       );
-      expect(localNext2.value.retainOutput, isTrue);
 
       final idle = verticalObservation(Interaction.idle);
       final idlePlan = policy.createPlan(
@@ -846,7 +850,7 @@ void main() {
     );
   });
 
-  test('local static classification may pre-present inside the existing decode window', () {
+  test('local static classification defers hidden active upload but pre-presents when idle', () {
     final chapter = ChapterManifest(
       sourceId: 'mihon:fixture',
       comicId: 'local-static-controller-comic',
@@ -903,7 +907,9 @@ void main() {
 
     controller.accept(observation);
     expect(
-      controller.currentPlan.uploads.values.where((d) => d.role == PageRole.next),
+      controller.currentPlan.uploads.values.where(
+        (demand) => demand.role == PageRole.next,
+      ),
       isEmpty,
     );
     expect(
@@ -915,8 +921,32 @@ void main() {
       isTrue,
     );
     expect(
-      controller.currentPlan.uploads.values.where((d) => d.role == PageRole.next),
+      controller.currentPlan.uploads.values.where(
+        (demand) => demand.role == PageRole.next,
+      ),
+      isEmpty,
+      reason: 'classification must not start a hidden texture blit during active scroll',
+    );
+    final idleObservation = ReaderObs(
+      sessionId: observation.sessionId,
+      currentIndex: observation.currentIndex,
+      stableIndex: observation.stableIndex,
+      interaction: Interaction.idle,
+      logicalPosition: observation.logicalPosition,
+      velocity: 0,
+      currentCoverage: observation.currentCoverage,
+      visibleCoverages: observation.visibleCoverages,
+      direction: observation.direction,
+      timestamp: observation.timestamp,
+      monotonicMicros: 2,
+    );
+    controller.accept(idleObservation);
+    expect(
+      controller.currentPlan.uploads.values.where(
+        (demand) => demand.role == PageRole.next,
+      ),
       isNotEmpty,
+      reason: 'idle may pre-present an authoritative local static neighbor',
     );
   });
 

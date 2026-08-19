@@ -24,10 +24,18 @@ for token in (
     'final localStaticReady =',
     'runtimeLocalStaticPages.contains(entry.key)',
     'runtimeAnimatedPages[entry.key] == false',
-    '!localStaticReady &&',
     'retainOutput: visibleStatic || localStaticReady',
 ):
     require(policy, token, 'bounded local static presentation')
+
+pubspec = read('apps/app/pubspec.yaml')
+version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+version = int(version_match.group(1)) if version_match is not None else 0
+if version < 314:
+    require(policy, '!localStaticReady &&', 'dev.308 active-scroll local static exception')
+else:
+    if '!localStaticReady &&' in policy:
+        raise SystemExit('post-dev.314 restored fixed-position hidden local-static upload')
 
 # Generic hidden static must remain deferred; the local exception may only
 # remove that deferral after authoritative static/local facts exist.
@@ -71,11 +79,22 @@ if 'jumpTo(correction)' in view or 'presentationExtentAt(' in view:
 
 for token in (
     'runtimeLocalStaticPages: const <int>{6, 7}',
-    'a locally-backed authoritative static next page should be resident before it enters the viewport',
     'localPresentationReady: true',
     'hidden immediate next must not blit a static texture during active vertical scrolling',
 ):
     require(pipeline_test, token, 'local/static policy regression')
+if version >= 314:
+    require(
+        pipeline_test,
+        'local static evidence must not start hidden platform blits during active vertical scrolling',
+        'dev.314 superseding active-scroll local static regression',
+    )
+else:
+    require(
+        pipeline_test,
+        'a locally-backed authoritative static next page should be resident before it enters the viewport',
+        'dev.308 local static pre-presentation regression',
+    )
 for token in (
     'reverse vertical scroll prepares incoming measured prefix without visible reflow',
     'an incoming lower-index page should use its measured extent before it enters the viewport',
@@ -118,12 +137,9 @@ for path, limit in (
     if len(lines) > limit:
         raise SystemExit(f'dev.308 documentation budget exceeded: {path} {len(lines)}>{limit}')
 
-pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
-if match is None or int(match.group(1)) < 308:
+if version_match is None or version < 308:
     raise SystemExit('dev.308 app version missing/regressed')
-version = int(match.group(1))
 if not re.search(rf'^versionCode={version}$', props, re.M):
     raise SystemExit('dev.308 Android version mismatch')
 
