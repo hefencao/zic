@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted in dev.312 as a Reader-scoped, device-falsifiable platform scheduling intervention.
+Rejected as the shared root by dev.313 cross-device evidence. The dev.312 intervention remains documented as a completed A/B, not an active production Reader policy.
 
 ## Trigger
 
@@ -24,3 +24,8 @@ On the next same-device reproduction, require `platformFrameRatePolicy.phase=sta
 
 - If ballistic/system-frame gaps collapse materially, Android ARR/frame-rate policy is causal. Keep the Reader-scoped fix, then consider replacing the coarse Window disable with a velocity-aware hint only if power behavior warrants it.
 - If gaps remain at the same scale while the policy is confirmed applied, close ARR as root cause and capture Android System Trace/Perfetto around Choreographer/SurfaceFlinger/display scheduling. Do not return to touch resampling, geometry, renderer switching, or control-plane micro-optimization.
+
+
+## dev.313 cross-device result
+
+The low-performance API36/120Hz device reports `displayHasArrSupport=false` and still reproduces post-lift cadence loss. The high-performance API36/120Hz device reports `displayHasArrSupport=true`; dev.312 records `applied=true,currentBalanced=false`, yet ballistic median remains 28.606ms and low-CPU Choreographer gaps remain. ARR may still modulate device-specific severity, but it cannot be the common root. Production Reader therefore stops activating the ARR policy in dev.313 while the platform-vsync effective-cadence boundary is measured.

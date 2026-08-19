@@ -112,52 +112,64 @@ final class FlutterReaderPlatformFrameCadenceProbe {
       final raw = await _channel.invokeMethod<List<Object?>>(
         stop ? 'stopFrameCadenceProbe' : 'drainFrameCadenceProbe',
       );
-      if (raw == null) return;
-      for (final entry in raw) {
-        if (entry is! Map<Object?, Object?>) continue;
-        final sample = entry.cast<String, Object?>();
-        final frameTimeNanos = sample['frameTimeNanos'];
-        final callbackNanos = sample['callbackNanos'];
-        final frameGapMicros = sample['frameGapMicros'];
-        final callbackGapMicros = sample['callbackGapMicros'];
-        final callbackLagMicros = sample['callbackLagMicros'];
-        final threadCpuGapMicros = sample['threadCpuGapMicros'];
-        final displayRefreshRateMilliHz =
-            sample['displayRefreshRateMilliHz'];
-        final frameRatePolicyRequested =
-            sample['frameRatePolicyRequested'];
-        final displayHasArrSupport = sample['displayHasArrSupport'];
-        if (frameTimeNanos is! int ||
-            callbackNanos is! int ||
-            frameGapMicros is! int ||
-            callbackGapMicros is! int ||
-            callbackLagMicros is! int) {
-          continue;
+      if (raw != null) {
+        for (final entry in raw) {
+          if (entry is! Map<Object?, Object?>) continue;
+          final sample = entry.cast<String, Object?>();
+          final frameTimeNanos = sample['frameTimeNanos'];
+          final callbackNanos = sample['callbackNanos'];
+          final frameGapMicros = sample['frameGapMicros'];
+          final callbackGapMicros = sample['callbackGapMicros'];
+          final callbackLagMicros = sample['callbackLagMicros'];
+          final threadCpuGapMicros = sample['threadCpuGapMicros'];
+          final displayRefreshRateMilliHz =
+              sample['displayRefreshRateMilliHz'];
+          final frameRatePolicyRequested =
+              sample['frameRatePolicyRequested'];
+          final displayHasArrSupport = sample['displayHasArrSupport'];
+          if (frameTimeNanos is! int ||
+              callbackNanos is! int ||
+              frameGapMicros is! int ||
+              callbackGapMicros is! int ||
+              callbackLagMicros is! int) {
+            continue;
+          }
+          final mappedMicros =
+              dartAnchor + ((frameTimeNanos - nativeAnchor) ~/ 1000);
+          traceSink.record(
+            TraceEvent(
+              monotonicMicros: mappedMicros,
+              sessionId: sessionId,
+              kind: TraceEventKind.platformFrameCadenceOutlier,
+              revision: revision(),
+              payload: <String, Object?>{
+                'systemFrameGapMicros': frameGapMicros,
+                'callbackGapMicros': callbackGapMicros,
+                'callbackLagMicros': callbackLagMicros,
+                'callbackOffsetMicros':
+                    (callbackNanos - frameTimeNanos) ~/ 1000,
+                if (threadCpuGapMicros is int)
+                  'threadCpuGapMicros': threadCpuGapMicros,
+                if (displayRefreshRateMilliHz is int)
+                  'displayRefreshRateMilliHz': displayRefreshRateMilliHz,
+                if (frameRatePolicyRequested is int)
+                  'frameRatePolicyRequested':
+                      frameRatePolicyRequested != 0,
+                if (displayHasArrSupport is int)
+                  'displayHasArrSupport': displayHasArrSupport != 0,
+              },
+            ),
+          );
         }
-        final mappedMicros =
-            dartAnchor + ((frameTimeNanos - nativeAnchor) ~/ 1000);
-        traceSink.record(
-          TraceEvent(
-            monotonicMicros: mappedMicros,
-            sessionId: sessionId,
-            kind: TraceEventKind.platformFrameCadenceOutlier,
-            revision: revision(),
-            payload: <String, Object?>{
-              'systemFrameGapMicros': frameGapMicros,
-              'callbackGapMicros': callbackGapMicros,
-              'callbackLagMicros': callbackLagMicros,
-              'callbackOffsetMicros':
-                  (callbackNanos - frameTimeNanos) ~/ 1000,
-              if (threadCpuGapMicros is int)
-                'threadCpuGapMicros': threadCpuGapMicros,
-              if (displayRefreshRateMilliHz is int)
-                'displayRefreshRateMilliHz': displayRefreshRateMilliHz,
-              if (frameRatePolicyRequested is int)
-                'frameRatePolicyRequested': frameRatePolicyRequested != 0,
-              if (displayHasArrSupport is int)
-                'displayHasArrSupport': displayHasArrSupport != 0,
-            },
-          ),
+      }
+      final summary = await _channel.invokeMapMethod<String, Object?>(
+        'drainFrameCadenceSummary',
+      );
+      if (summary != null) {
+        _recordSummary(
+          summary,
+          dartAnchorMicros: dartAnchor,
+          nativeAnchorNanos: nativeAnchor,
         );
       }
     } on MissingPluginException {
@@ -165,6 +177,59 @@ final class FlutterReaderPlatformFrameCadenceProbe {
     } on PlatformException {
       return;
     }
+  }
+
+  void _recordSummary(
+    Map<String, Object?> summary, {
+    required int dartAnchorMicros,
+    required int nativeAnchorNanos,
+  }) {
+    final lastFrameTimeNanos = summary['lastFrameTimeNanos'];
+    final intervalCount = summary['frameIntervalCount'];
+    if (lastFrameTimeNanos is! int ||
+        intervalCount is! int ||
+        intervalCount <= 0) {
+      return;
+    }
+    final mappedMicros = dartAnchorMicros +
+        ((lastFrameTimeNanos - nativeAnchorNanos) ~/ 1000);
+    final payload = <String, Object?>{};
+    for (final key in const <String>[
+      'firstFrameTimeNanos',
+      'lastFrameTimeNanos',
+      'frameIntervalCount',
+      'frameGapSumMicros',
+      'minFrameGapMicros',
+      'maxFrameGapMicros',
+      'gapLt10msCount',
+      'gap10To14msCount',
+      'gap14To18msCount',
+      'gap18To20msCount',
+      'gap20To25msCount',
+      'gap25To35msCount',
+      'gapGe35msCount',
+      'displayRefreshRateMilliHz',
+    ]) {
+      final value = summary[key];
+      if (value is int) payload[key] = value;
+    }
+    final frameRatePolicyRequested = summary['frameRatePolicyRequested'];
+    if (frameRatePolicyRequested is int) {
+      payload['frameRatePolicyRequested'] = frameRatePolicyRequested != 0;
+    }
+    final displayHasArrSupport = summary['displayHasArrSupport'];
+    if (displayHasArrSupport is int) {
+      payload['displayHasArrSupport'] = displayHasArrSupport != 0;
+    }
+    traceSink.record(
+      TraceEvent(
+        monotonicMicros: mappedMicros,
+        sessionId: sessionId,
+        kind: TraceEventKind.platformFrameCadenceSummary,
+        revision: revision(),
+        payload: payload,
+      ),
+    );
   }
 
   Future<void> _stopNativeBestEffort() async {

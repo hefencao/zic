@@ -12,7 +12,6 @@ import 'package:telemetry/telemetry.dart';
 
 import 'flutter_reader_frame_timing_source.dart';
 import 'flutter_reader_platform_frame_cadence.dart';
-import 'flutter_reader_platform_frame_rate_policy.dart';
 import 'reader_session_settings.dart';
 import 'reader_settings_fields.dart';
 import 'reader_transfer_progress_indicator.dart';
@@ -182,7 +181,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   late final AdaptiveReaderClassifier _adaptiveClassifier;
   AdaptiveReaderProfile? _adaptiveProfile;
   FlutterReaderPlatformFrameCadenceProbe? _platformFrameCadenceProbe;
-  FlutterReaderPlatformFrameRatePolicy? _platformFrameRatePolicy;
 
   @override
   void initState() {
@@ -598,16 +596,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     final reader = _reader;
     final vertical = reader?.direction == ReadingDirection.vertical;
     if (vertical && reader != null) {
-      if (_platformFrameRatePolicy == null) {
-        final policy = FlutterReaderPlatformFrameRatePolicy(
-          clock: _pipeline.clock,
-          traceSink: _pipeline.trace,
-          sessionId: reader.sessionId,
-          revision: () => _pipeline.revision,
-        );
-        _platformFrameRatePolicy = policy;
-        unawaited(policy.start());
-      }
       if (_platformFrameCadenceProbe != null) return;
       final probe = FlutterReaderPlatformFrameCadenceProbe(
         clock: _pipeline.clock,
@@ -624,11 +612,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     if (probe != null) {
       unawaited(probe.stop());
     }
-    final policy = _platformFrameRatePolicy;
-    _platformFrameRatePolicy = null;
-    if (policy != null) {
-      unawaited(policy.stop());
-    }
   }
 
   void _syncPipelinePlayback() {
@@ -642,11 +625,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     _platformFrameCadenceProbe = null;
     if (platformFrameCadenceProbe != null) {
       unawaited(platformFrameCadenceProbe.stop());
-    }
-    final platformFrameRatePolicy = _platformFrameRatePolicy;
-    _platformFrameRatePolicy = null;
-    if (platformFrameRatePolicy != null) {
-      unawaited(platformFrameRatePolicy.stop());
     }
     unawaited(_checkpointReaderProgress(force: true));
     _pipeline.pageDimensions.removeListener(_handlePipelinePageDimensions);

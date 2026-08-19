@@ -24,6 +24,13 @@ class ReaderRuntimePlugin :
     private var lastFrameTimeNanos = 0L
     private var lastCallbackNanos = 0L
     private var lastThreadCpuNanos = 0L
+    private var summaryFirstFrameTimeNanos = 0L
+    private var summaryLastFrameTimeNanos = 0L
+    private var summaryIntervalCount = 0L
+    private var summaryFrameGapSumMicros = 0L
+    private var summaryMinFrameGapMicros = Long.MAX_VALUE
+    private var summaryMaxFrameGapMicros = 0L
+    private val summaryFrameGapBins = LongArray(FRAME_GAP_BIN_COUNT)
 
     private var activity: Activity? = null
     private var verticalReaderFrameRatePolicyRequested = false
@@ -45,6 +52,7 @@ class ReaderRuntimePlugin :
                     maxOf(0L, (callbackNanos - frameTimeNanos) / 1_000L)
                 val threadCpuGapMicros =
                     maxOf(0L, (threadCpuNanos - priorCpu) / 1_000L)
+                recordFrameGap(priorFrame, frameTimeNanos, frameGapMicros)
                 if (frameGapMicros >= FRAME_GAP_OUTLIER_MICROS ||
                     callbackGapMicros >= FRAME_GAP_OUTLIER_MICROS ||
                     callbackLagMicros >= CALLBACK_LAG_OUTLIER_MICROS
@@ -123,6 +131,7 @@ class ReaderRuntimePlugin :
                 lastFrameTimeNanos = 0L
                 lastCallbackNanos = 0L
                 lastThreadCpuNanos = 0L
+                resetFrameCadenceSummary()
                 monitoring = true
                 Choreographer.getInstance().postFrameCallback(frameCallback)
                 result.success(
@@ -134,6 +143,7 @@ class ReaderRuntimePlugin :
                 )
             }
             "drainFrameCadenceProbe" -> result.success(drainSamples())
+            "drainFrameCadenceSummary" -> result.success(drainFrameCadenceSummary())
             "stopFrameCadenceProbe" -> {
                 stopMonitoring()
                 result.success(drainSamples())
@@ -252,6 +262,71 @@ class ReaderRuntimePlugin :
         return display.hasArrSupport()
     }
 
+    private fun recordFrameGap(
+        priorFrameTimeNanos: Long,
+        frameTimeNanos: Long,
+        frameGapMicros: Long,
+    ) {
+        if (summaryFirstFrameTimeNanos == 0L) {
+            summaryFirstFrameTimeNanos = priorFrameTimeNanos
+        }
+        summaryLastFrameTimeNanos = frameTimeNanos
+        summaryIntervalCount += 1L
+        summaryFrameGapSumMicros += frameGapMicros
+        summaryMinFrameGapMicros = minOf(summaryMinFrameGapMicros, frameGapMicros)
+        summaryMaxFrameGapMicros = maxOf(summaryMaxFrameGapMicros, frameGapMicros)
+        summaryFrameGapBins[frameGapBinIndex(frameGapMicros)] += 1L
+    }
+
+    private fun frameGapBinIndex(frameGapMicros: Long): Int = when {
+        frameGapMicros < 10_000L -> 0
+        frameGapMicros < 14_000L -> 1
+        frameGapMicros < 18_000L -> 2
+        frameGapMicros < 20_000L -> 3
+        frameGapMicros < 25_000L -> 4
+        frameGapMicros < 35_000L -> 5
+        else -> 6
+    }
+
+    private fun resetFrameCadenceSummary() {
+        summaryFirstFrameTimeNanos = 0L
+        summaryLastFrameTimeNanos = 0L
+        summaryIntervalCount = 0L
+        summaryFrameGapSumMicros = 0L
+        summaryMinFrameGapMicros = Long.MAX_VALUE
+        summaryMaxFrameGapMicros = 0L
+        summaryFrameGapBins.fill(0L)
+    }
+
+    private fun drainFrameCadenceSummary(): Map<String, Long>? {
+        if (summaryIntervalCount == 0L || summaryLastFrameTimeNanos == 0L) return null
+        val summary = mutableMapOf(
+            "firstFrameTimeNanos" to summaryFirstFrameTimeNanos,
+            "lastFrameTimeNanos" to summaryLastFrameTimeNanos,
+            "frameIntervalCount" to summaryIntervalCount,
+            "frameGapSumMicros" to summaryFrameGapSumMicros,
+            "minFrameGapMicros" to summaryMinFrameGapMicros,
+            "maxFrameGapMicros" to summaryMaxFrameGapMicros,
+            "gapLt10msCount" to summaryFrameGapBins[0],
+            "gap10To14msCount" to summaryFrameGapBins[1],
+            "gap14To18msCount" to summaryFrameGapBins[2],
+            "gap18To20msCount" to summaryFrameGapBins[3],
+            "gap20To25msCount" to summaryFrameGapBins[4],
+            "gap25To35msCount" to summaryFrameGapBins[5],
+            "gapGe35msCount" to summaryFrameGapBins[6],
+            "frameRatePolicyRequested" to
+                if (verticalReaderFrameRatePolicyRequested) 1L else 0L,
+        )
+        displayRefreshRateMilliHz()?.let {
+            summary["displayRefreshRateMilliHz"] = it
+        }
+        displayHasArrSupport()?.let {
+            summary["displayHasArrSupport"] = if (it) 1L else 0L
+        }
+        resetFrameCadenceSummary()
+        return summary
+    }
+
     private fun appendSample(sample: Map<String, Long>) {
         synchronized(samples) {
             while (samples.size >= MAX_SAMPLES) {
@@ -274,5 +349,6 @@ class ReaderRuntimePlugin :
         private const val FRAME_GAP_OUTLIER_MICROS = 20_000L
         private const val CALLBACK_LAG_OUTLIER_MICROS = 8_000L
         private const val MAX_SAMPLES = 256
+        private const val FRAME_GAP_BIN_COUNT = 7
     }
 }

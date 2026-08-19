@@ -53,7 +53,8 @@ for token in (
 for token in (
     "'threadCpuGapMicros': threadCpuGapMicros",
     "'displayRefreshRateMilliHz': displayRefreshRateMilliHz",
-    "'frameRatePolicyRequested': frameRatePolicyRequested != 0",
+    "'frameRatePolicyRequested':",
+    'frameRatePolicyRequested != 0',
     "'displayHasArrSupport': displayHasArrSupport != 0",
 ):
     require(cadence, token, 'cadence attribution extension')
@@ -70,13 +71,20 @@ for forbidden in ('jumpTo(', 'animateTo(', 'scheduleFrame(', 'Ticker(', 'Animati
     if forbidden in policy:
         raise SystemExit(f'dev.312 ARR policy leaked into Reader scheduling: {forbidden}')
 
-for token in (
-    'FlutterReaderPlatformFrameRatePolicy? _platformFrameRatePolicy;',
-    '_platformFrameRatePolicy = policy;',
-    'unawaited(policy.start());',
-    'unawaited(policy.stop());',
-):
-    require(runtime, token, 'vertical Reader policy lifecycle')
+if version == 312:
+    for token in (
+        'FlutterReaderPlatformFrameRatePolicy? _platformFrameRatePolicy;',
+        '_platformFrameRatePolicy = policy;',
+        'unawaited(policy.start());',
+        'unawaited(policy.stop());',
+    ):
+        require(runtime, token, 'vertical Reader policy lifecycle')
+else:
+    # dev.313 device evidence rejects ARR as the shared root. The adapter and
+    # dev.312 evidence remain, but later production Readers must not keep the
+    # behavior intervention active while measuring platform cadence.
+    if 'FlutterReaderPlatformFrameRatePolicy' in runtime:
+        raise SystemExit('post-dev.312 Reader still activates rejected ARR policy')
 require(trace, 'platformFrameRatePolicy,', 'policy trace kind')
 require(debug, 'event.kind != TraceEventKind.platformFrameRatePolicy', 'no trace-viewer feedback frame')
 

@@ -28,6 +28,7 @@ void main() {
       () async {
     final calls = <String>[];
     var drained = false;
+    var summaryDrained = false;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
       calls.add(call.method);
@@ -50,6 +51,27 @@ void main() {
               'displayHasArrSupport': 1,
             },
           ];
+        case 'drainFrameCadenceSummary':
+          if (summaryDrained) return null;
+          summaryDrained = true;
+          return <String, Object?>{
+            'firstFrameTimeNanos': 1000000,
+            'lastFrameTimeNanos': 1030000,
+            'frameIntervalCount': 3,
+            'frameGapSumMicros': 50000,
+            'minFrameGapMicros': 8333,
+            'maxFrameGapMicros': 25000,
+            'gapLt10msCount': 1,
+            'gap10To14msCount': 0,
+            'gap14To18msCount': 1,
+            'gap18To20msCount': 0,
+            'gap20To25msCount': 0,
+            'gap25To35msCount': 1,
+            'gapGe35msCount': 0,
+            'displayRefreshRateMilliHz': 120000,
+            'frameRatePolicyRequested': 0,
+            'displayHasArrSupport': 1,
+          };
         case 'stopFrameCadenceProbe':
           return <Object?>[];
       }
@@ -75,21 +97,38 @@ void main() {
       containsAllInOrder(<String>[
         'startFrameCadenceProbe',
         'drainFrameCadenceProbe',
+        'drainFrameCadenceSummary',
         'stopFrameCadenceProbe',
+        'drainFrameCadenceSummary',
       ]),
     );
-    expect(sink.events, hasLength(1));
-    final event = sink.events.single;
-    expect(event.kind, TraceEventKind.platformFrameCadenceOutlier);
-    expect(event.monotonicMicros, 2000020);
-    expect(event.revision, 7);
-    expect(event.payload['systemFrameGapMicros'], 33333);
-    expect(event.payload['callbackGapMicros'], 34000);
-    expect(event.payload['callbackLagMicros'], 5000);
-    expect(event.payload['callbackOffsetMicros'], 5);
-    expect(event.payload['threadCpuGapMicros'], 1200);
-    expect(event.payload['displayRefreshRateMilliHz'], 120000);
-    expect(event.payload['frameRatePolicyRequested'], isTrue);
-    expect(event.payload['displayHasArrSupport'], isTrue);
+    expect(sink.events, hasLength(2));
+    final outlier = sink.events[0];
+    expect(outlier.kind, TraceEventKind.platformFrameCadenceOutlier);
+    expect(outlier.monotonicMicros, 2000020);
+    expect(outlier.revision, 7);
+    expect(outlier.payload['systemFrameGapMicros'], 33333);
+    expect(outlier.payload['callbackGapMicros'], 34000);
+    expect(outlier.payload['callbackLagMicros'], 5000);
+    expect(outlier.payload['callbackOffsetMicros'], 5);
+    expect(outlier.payload['threadCpuGapMicros'], 1200);
+    expect(outlier.payload['displayRefreshRateMilliHz'], 120000);
+    expect(outlier.payload['frameRatePolicyRequested'], isTrue);
+    expect(outlier.payload['displayHasArrSupport'], isTrue);
+
+    final summary = sink.events[1];
+    expect(summary.kind, TraceEventKind.platformFrameCadenceSummary);
+    expect(summary.monotonicMicros, 2000030);
+    expect(summary.revision, 7);
+    expect(summary.payload['frameIntervalCount'], 3);
+    expect(summary.payload['frameGapSumMicros'], 50000);
+    expect(summary.payload['minFrameGapMicros'], 8333);
+    expect(summary.payload['maxFrameGapMicros'], 25000);
+    expect(summary.payload['gapLt10msCount'], 1);
+    expect(summary.payload['gap14To18msCount'], 1);
+    expect(summary.payload['gap25To35msCount'], 1);
+    expect(summary.payload['frameRatePolicyRequested'], isFalse);
+    expect(summary.payload['displayHasArrSupport'], isTrue);
+
   });
 }

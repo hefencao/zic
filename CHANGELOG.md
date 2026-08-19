@@ -1,3 +1,9 @@
+## 0.31.0-dev.313 - Platform-vsync effective cadence boundary
+
+- Cross-device dev.312 evidence rejects ARR as the shared root: the low-performance API36/120Hz device has `displayHasArrSupport=false` and still reproduces, while the high-performance ARR-capable device still reproduces with the dev.312 policy confirmed applied. Production Reader therefore stops activating the ARR intervention; its adapter/evidence remain for history.
+- Existing Flutter healthy timing is ~16ms on both 120Hz devices, including high-device dragging, so a simple touch-held 120Hz to post-lift 60Hz switch is not supported. The high-performance device has a 28.606ms ballistic median and many low-main-thread-CPU platform misses, further downgrading raw compute starvation.
+- Extend the observation-only `android.view.Choreographer` probe with a two-second `platformFrameCadenceSummary` over every native interval using fixed cadence bins. The next run decides whether Android/OEM gives the app ~16.7ms cadence or Flutter consumes ~16ms frames from a ~8.3ms native cadence. No frame-rate request, touch-boost toggle, forced frame, ScrollPhysics or position smoothing is introduced.
+
 ## 0.31.0-dev.312 - Android ARR ballistic boundary
 
 - Falsify dev.311 renderer topology on device: all 48 sampled pages use `renderer=flutterImage`, yet 57/72 scroll cadence outliers remain post-lift ballistic and 70/87 platform cadence outliers still contain >=20ms Choreographer system-frame gaps. Roll production Reader presentation back to the already-known dev.310 Android texture default to remove the added Flutter-image output-preparation cost; that rollback is not a candidate fix because dev.310 already reproduced the bug.
