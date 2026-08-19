@@ -1,6 +1,6 @@
 # ADR 0293: Fixed-position hidden static upload boundary
 
-Status: Provisional / device-falsifiable for dev.314.
+Status: FALSIFIED by dev.314 device evidence; production behavior rolled back in dev.316.
 
 ## Context
 

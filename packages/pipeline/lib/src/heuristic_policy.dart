@@ -27,7 +27,6 @@ final class HeuristicPolicy {
     required RoleWindow window,
     required DecodeTarget decodeTarget,
     Map<int, bool> runtimeAnimatedPages = const <int, bool>{},
-    Set<int> runtimeWebpPages = const <int>{},
     Set<int> runtimeLocalStaticPages = const <int>{},
     bool assumeUnresolvedStatic = false,
     AnimatedPrefetchFlow? downloadFlow,
@@ -122,19 +121,14 @@ final class HeuristicPolicy {
       final localStaticReady =
           runtimeLocalStaticPages.contains(entry.key) &&
               runtimeAnimatedPages[entry.key] == false;
-      final encodedFlutterPresentation =
-          decodeTarget.renderer == RendererKind.androidTexture &&
-              runtimeWebpPages.contains(entry.key) &&
-              runtimeAnimatedPages[entry.key] != true;
       final deferHiddenVerticalStaticUpload =
           observation.direction == ReadingDirection.vertical &&
               staticWarm &&
               !primaryUpload &&
               !visibleStatic &&
+              !localStaticReady &&
               _verticalPresentationActive(observation.interaction);
-      if ((primaryUpload || staticWarm) &&
-          !encodedFlutterPresentation &&
-          !deferHiddenVerticalStaticUpload) {
+      if ((primaryUpload || staticWarm) && !deferHiddenVerticalStaticUpload) {
         uploads[decode] = UploadDemand(
           role: role,
           priority: primaryUpload
@@ -157,11 +151,11 @@ final class HeuristicPolicy {
                   : 'heuristic:static-warm:${role.name}'
               : 'heuristic:${role.name}',
           expirationRevision: revision + 1,
-          // Local/durable static evidence still permits retained output, but
-          // active vertical scrolling never starts a hidden speculative texture
-          // upload. A page may upload once it is visible/current/transition, or
-          // while the Reader is idle, so platform blits cannot be triggered by
-          // an off-screen classification edge at a fixed scroll position.
+          // A decoded static page backed by immutable local/durable bytes may
+          // prepare its external texture before it reaches the viewport. Keep
+          // that already-prepared output inside the existing bounded static
+          // budget so a fast transition cannot fall back to a black/loading
+          // surface while the platform blit catches up.
           retainOutput: visibleStatic || localStaticReady,
         );
       }
@@ -195,18 +189,12 @@ final class HeuristicPolicy {
       // relative network/decode role. If it is still inside the 7/3 window,
       // the regular loop above keeps downloading/decoding it as previous or
       // next. This upload-only overlay freezes the already-presented output.
-      final encodedFlutterPresentation =
-          decodeTarget.renderer == RendererKind.androidTexture &&
-              runtimeWebpPages.contains(retainedIndex) &&
-              runtimeAnimatedPages[retainedIndex] != true;
-      if (!encodedFlutterPresentation) {
-        uploads[decode] = UploadDemand(
-          role: PageRole.last,
-          priority: 850,
-          reason: 'heuristic:last-output-retained',
-          expirationRevision: revision + 1,
-        );
-      }
+      uploads[decode] = UploadDemand(
+        role: PageRole.last,
+        priority: 850,
+        reason: 'heuristic:last-output-retained',
+        expirationRevision: revision + 1,
+      );
     }
 
     return DemandPlan(

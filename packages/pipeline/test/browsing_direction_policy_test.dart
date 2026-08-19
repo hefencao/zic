@@ -18,10 +18,12 @@ void main() {
     );
   });
 
-  test('two consecutive reverse moves confirm browsing direction', () {
+  test('four reverse page steps confirm prefetch direction', () {
     final predictor = BrowsingDirectionPredictor();
     predictor.reset(direction: 1);
 
+    expect(predictor.record(delta: -1), 1);
+    expect(predictor.record(delta: -1), 1);
     expect(predictor.record(delta: -1), 1);
     expect(predictor.record(delta: -1), -1);
   });
@@ -71,7 +73,7 @@ void main() {
     expect(reverse.roleOf(14), PageRole.detached);
   });
 
-  test('controller keeps old 3/7 orientation for one-page reversal then flips',
+  test('controller keeps 3/7 prefetch orientation through local reverse traversal',
       () {
     final updates = <PipelineDelta>[];
     final trace = MemoryTraceSink();
@@ -98,15 +100,23 @@ void main() {
     expect(updates.last.window.roleOf(8), PageRole.previous);
 
     controller.accept(_observation(8, 2000000));
-    expect(updates.last.window.roleOf(7), PageRole.next);
-    expect(updates.last.window.roleOf(6), PageRole.next2);
-    expect(updates.last.window.roleOf(9), PageRole.previous);
+    expect(updates.last.window.roleOf(9), PageRole.next);
+    expect(updates.last.window.roleOf(7), PageRole.previous);
+
+    controller.accept(_observation(7, 2500000));
+    expect(updates.last.window.roleOf(8), PageRole.next);
+    expect(updates.last.window.roleOf(6), PageRole.previous);
+
+    controller.accept(_observation(6, 3000000));
+    expect(updates.last.window.roleOf(5), PageRole.next);
+    expect(updates.last.window.roleOf(4), PageRole.next2);
+    expect(updates.last.window.roleOf(7), PageRole.previous);
 
     final directions = trace.events
         .where((event) => event.kind == TraceEventKind.policyDecision)
         .map((event) => event.payload['readDirection'])
         .toList(growable: false);
-    expect(directions, containsAllInOrder(<Object?>[1, 1, -1]));
+    expect(directions, containsAllInOrder(<Object?>[1, 1, 1, 1, -1]));
   });
 
   test('animated flow credit uses browsing-relative distance', () {

@@ -75,16 +75,18 @@ void main() {
     expect(afterOneReverse.roleOf(97), PageRole.previous);
   });
 
-  test('two committed reverse page moves confirm one shared read direction', () {
+  test('four committed reverse page steps confirm prefetch direction', () {
     final predictor = BrowsingDirectionPredictor(initialDirection: 1);
+    expect(predictor.record(delta: -1), 1);
+    expect(predictor.record(delta: -1), 1);
     expect(predictor.record(delta: -1), 1);
     expect(predictor.record(delta: -1), -1);
 
-    final obs = observation(97, 3);
+    final obs = observation(95, 5);
     final window = resolver.resolve(
       chapter,
       obs,
-      previousCurrentIndex: 98,
+      previousCurrentIndex: 96,
       readDirection: predictor.direction,
     );
     final flow = const AnimatedPrefetchPolicy().plan(
@@ -108,20 +110,20 @@ void main() {
       readDirection: predictor.direction,
     );
 
-    expect(window.roleOf(96), PageRole.next);
-    expect(window.roleOf(95), PageRole.next2);
-    expect(window.roleOf(98), PageRole.previous);
-    expect(flow.targetFramesFor(96), 5);
-    expect(flow.targetFramesFor(95), 3);
-    expect(flow.targetFramesFor(98), 2);
+    expect(window.roleOf(94), PageRole.next);
+    expect(window.roleOf(93), PageRole.next2);
+    expect(window.roleOf(96), PageRole.previous);
+    expect(flow.targetFramesFor(94), 5);
+    expect(flow.targetFramesFor(93), 3);
+    expect(flow.targetFramesFor(96), 2);
 
     final priorities = <String, int>{
       for (final entry in plan.downloads.entries)
         entry.key.content.pageId: entry.value.priority,
     };
-    expect(priorities['p96'], 820);
-    expect(priorities['p95'], 800);
-    expect(priorities['p98'], 780);
+    expect(priorities['p94'], 820);
+    expect(priorities['p93'], 800);
+    expect(priorities['p96'], 780);
   });
 
   test('jump or scrub evidence clears a pending reversal candidate', () {

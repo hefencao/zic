@@ -36,7 +36,6 @@ final class PipelinePageStreamSnapshot {
     required this.kind,
     required this.sourceCanvasWidth,
     required this.sourceCanvasHeight,
-    required this.animated,
     required this.failure,
   });
 
@@ -52,15 +51,6 @@ final class PipelinePageStreamSnapshot {
   /// round width/height independently by a few physical pixels.
   final int? sourceCanvasWidth;
   final int? sourceCanvasHeight;
-
-  /// Decoder-owned animation classification for this logical page.
-  ///
-  /// `null` means unresolved. Once `false`, presentation may use the encoded
-  /// static-image path and must not require an Android external texture merely
-  /// because the transport kind is WebP.
-  final bool? animated;
-
-  bool get authoritativeStatic => animated == false;
   final Failure? failure;
 }
 
@@ -72,15 +62,12 @@ final class PipelinePageStream {
   PipelinePageStream.forDownload(
     this.identity, {
     required DownloadSession? Function() resolvePhysical,
-    required bool? Function() resolveAnimated,
     DownloadResidentReplaySource? residentReplaySource,
   })  : _resolvePhysical = resolvePhysical,
-        _resolveAnimated = resolveAnimated,
         _residentReplaySource = residentReplaySource;
 
   final DownloadId identity;
   final DownloadSession? Function() _resolvePhysical;
-  final bool? Function() _resolveAnimated;
   final DownloadResidentReplaySource? _residentReplaySource;
   DownloadSession? _session;
   final Set<PipelinePageStreamListener> _listeners =
@@ -93,26 +80,12 @@ final class PipelinePageStream {
     kind: null,
     sourceCanvasWidth: null,
     sourceCanvasHeight: null,
-    animated: null,
     failure: null,
   );
 
   PipelinePageStreamSnapshot get snapshot {
     final session = _session;
-    final animated = _resolveAnimated();
-    if (session == null) {
-      return PipelinePageStreamSnapshot(
-        state: _idle.state,
-        committedLength: _idle.committedLength,
-        totalLength: _idle.totalLength,
-        kind: _idle.kind,
-        sourceCanvasWidth: _idle.sourceCanvasWidth,
-        sourceCanvasHeight: _idle.sourceCanvasHeight,
-        animated: animated,
-        failure: _idle.failure,
-      );
-    }
-    return _project(session.snapshot, animated: animated);
+    return session == null ? _idle : _project(session.snapshot);
   }
 
   int get committedLength => _session?.committedLength ?? 0;
@@ -183,14 +156,6 @@ final class PipelinePageStream {
     }
   }
 
-  /// Re-emits the current transfer snapshot after decoder classification
-  /// changes. This does not create or mutate any physical transfer session.
-  void refreshClassification() {
-    if (_listeners.isNotEmpty) {
-      _broadcast(snapshot);
-    }
-  }
-
   void dispose() {
     if (_listeners.isNotEmpty) {
       _session?.removeSnapshotListener(_handleSessionSnapshot);
@@ -200,7 +165,7 @@ final class PipelinePageStream {
   }
 
   void _handleSessionSnapshot(DownloadSnapshot snapshot) =>
-      _broadcast(_project(snapshot, animated: _resolveAnimated()));
+      _broadcast(_project(snapshot));
 
   void _broadcast(PipelinePageStreamSnapshot snapshot) {
     for (final listener in _listeners.toList(growable: false)) {
@@ -208,10 +173,7 @@ final class PipelinePageStream {
     }
   }
 
-  static PipelinePageStreamSnapshot _project(
-    DownloadSnapshot snapshot, {
-    required bool? animated,
-  }) =>
+  static PipelinePageStreamSnapshot _project(DownloadSnapshot snapshot) =>
       PipelinePageStreamSnapshot(
         state: _state(snapshot.state),
         committedLength: snapshot.committedLength,
@@ -219,7 +181,6 @@ final class PipelinePageStream {
         kind: _contentKind(snapshot.contentKind),
         sourceCanvasWidth: snapshot.sourceCanvasWidth,
         sourceCanvasHeight: snapshot.sourceCanvasHeight,
-        animated: animated,
         failure: snapshot.failure,
       );
 }

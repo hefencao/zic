@@ -616,7 +616,6 @@ final class PipelineReaderSession {
   String? _readerSessionId;
   final Map<String, PipelinePageStream> _pageStreams =
       <String, PipelinePageStream>{};
-  final Map<String, bool> _pageAnimatedByDownload = <String, bool>{};
   final Map<String, PipelinePageOutputStream> _pageOutputs =
       <String, PipelinePageOutputStream>{};
   Timer? _playbackTicker;
@@ -989,7 +988,6 @@ final class PipelineReaderSession {
       () => PipelinePageStream.forDownload(
         id,
         resolvePhysical: () => _downloads.find(id),
-        resolveAnimated: () => _pageAnimatedByDownload[id.key],
         residentReplaySource: _residentReplaySource,
       )..refreshBinding(),
     );
@@ -1462,8 +1460,6 @@ final class PipelineReaderSession {
       final pageIndex = _pageIndexByPageId[id.download.content.pageId];
       if (pageIndex == null) return;
       final animated = animation.frameCount > 1;
-      _pageAnimatedByDownload[id.download.key] = animated;
-      _pageStreams[id.download.key]?.refreshClassification();
       final asset = chapter.pages[pageIndex];
       final download = _downloads.find(id.download);
       final localPresentationReady = !animated &&
@@ -1856,7 +1852,6 @@ final class PipelineReaderSession {
       stream.dispose();
     }
     _pageStreams.clear();
-    _pageAnimatedByDownload.clear();
     trace.record(
       traceEvent(
         clock: clock,

@@ -1,7 +1,7 @@
 # ADR 0294: Authoritative static WebP uses encoded Flutter presentation
 
 ## Status
-Accepted for dev.315 device falsification. dev.314 fixed-position hidden-static upload timing is **FALSIFIED as the root**: it removed active hidden `next2` pre-upload, but the 11:45 low-performance-device trace still contains 173 `scrollCadenceOutlier` events and moved first physical copies onto visible `transition` seams.
+FALSIFIED by dev.315 device evidence; production behavior rolled back in dev.316. dev.314 fixed-position hidden-static upload timing is **FALSIFIED as the root**: it removed active hidden `next2` pre-upload, but the 11:45 low-performance-device trace still contains 173 `scrollCadenceOutlier` events and moved first physical copies onto visible `transition` seams.
 
 ## Evidence
 The dev.314 trace contains 14 `mediaClassified` events and 14/14 are authoritative static (`animated=false`, `frameCount=1`, `complete=true`). There are 13 physical `framePipelineTiming` copies with `platformBlitMicros>0`; every one reports `surfaceReconfigureCount=1`. Visible transition copies include 16.588ms, 13.594ms, 12.178ms, 11.613ms and 10.837ms. Thus delaying speculative upload changes *when* the first SurfaceProducer copy happens, but does not remove the per-page RGBA copy from the scrolling seam.

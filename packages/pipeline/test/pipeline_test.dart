@@ -744,23 +744,19 @@ void main() {
         runtimeAnimatedPages: const <int, bool>{6: false, 7: false},
         runtimeLocalStaticPages: const <int>{6, 7},
       );
-      expect(
-        localStaticPlan.decodes.values.where(
-          (demand) =>
-              demand.role == PageRole.next || demand.role == PageRole.next2,
-        ),
-        isNotEmpty,
-        reason: 'local static neighbors remain decode-warm during active scroll',
+      final localNext = localStaticPlan.uploads.entries.singleWhere(
+        (entry) => entry.value.role == PageRole.next,
+      );
+      final localNext2 = localStaticPlan.uploads.entries.singleWhere(
+        (entry) => entry.value.role == PageRole.next2,
       );
       expect(
-        localStaticPlan.uploads.values.where(
-          (demand) =>
-              demand.role == PageRole.next || demand.role == PageRole.next2,
-        ),
-        isEmpty,
+        localNext.value.retainOutput,
+        isTrue,
         reason:
-            'local static evidence must not start hidden platform blits during active vertical scrolling',
+            'a locally-backed authoritative static next page should be resident before it enters the viewport',
       );
+      expect(localNext2.value.retainOutput, isTrue);
 
       final idle = verticalObservation(Interaction.idle);
       final idlePlan = policy.createPlan(
@@ -850,7 +846,7 @@ void main() {
     );
   });
 
-  test('local static classification defers hidden active upload but pre-presents when idle', () {
+  test('local static classification may pre-present inside the existing decode window', () {
     final chapter = ChapterManifest(
       sourceId: 'mihon:fixture',
       comicId: 'local-static-controller-comic',
@@ -907,9 +903,7 @@ void main() {
 
     controller.accept(observation);
     expect(
-      controller.currentPlan.uploads.values.where(
-        (demand) => demand.role == PageRole.next,
-      ),
+      controller.currentPlan.uploads.values.where((d) => d.role == PageRole.next),
       isEmpty,
     );
     expect(
@@ -921,140 +915,8 @@ void main() {
       isTrue,
     );
     expect(
-      controller.currentPlan.uploads.values.where(
-        (demand) => demand.role == PageRole.next,
-      ),
-      isEmpty,
-      reason: 'classification must not start a hidden texture blit during active scroll',
-    );
-    final idleObservation = ReaderObs(
-      sessionId: observation.sessionId,
-      currentIndex: observation.currentIndex,
-      stableIndex: observation.stableIndex,
-      interaction: Interaction.idle,
-      logicalPosition: observation.logicalPosition,
-      velocity: 0,
-      currentCoverage: observation.currentCoverage,
-      visibleCoverages: observation.visibleCoverages,
-      direction: observation.direction,
-      timestamp: observation.timestamp,
-      monotonicMicros: 2,
-    );
-    controller.accept(idleObservation);
-    expect(
-      controller.currentPlan.uploads.values.where(
-        (demand) => demand.role == PageRole.next,
-      ),
+      controller.currentPlan.uploads.values.where((d) => d.role == PageRole.next),
       isNotEmpty,
-      reason: 'idle may pre-present an authoritative local static neighbor',
-    );
-  });
-
-  test('android texture waits for WebP animation truth and never uploads authoritative static', () {
-    final webpChapter = ChapterManifest(
-      sourceId: 'venera:fixture',
-      comicId: 'encoded-static-comic',
-      chapter: const Chapter(
-        chapterId: 'encoded-static-chapter',
-        comicId: 'encoded-static-comic',
-        title: 'encoded static',
-        sequence: 1,
-        pageCount: 6,
-        sourceRevision: 'r1',
-      ),
-      pages: List<PageAsset>.generate(
-        6,
-        (index) => PageAsset(
-          pageId: 'encoded-static-$index',
-          chapterId: 'encoded-static-chapter',
-          index: index,
-          uri: Uri.parse('venera-resource://encoded-static/$index.webp'),
-          contentKindHint: ContentKindHint.webp,
-          animatedHint: true,
-        ),
-      ),
-      readingDirection: ReadingDirection.vertical,
-    );
-    final obs = ReaderObs(
-      sessionId: 'encoded-static',
-      currentIndex: 2,
-      stableIndex: 2,
-      interaction: Interaction.scrolling,
-      logicalPosition: 2.2,
-      velocity: 2,
-      currentCoverage: Coverage(
-        pageIndex: 2,
-        assetKey: webpChapter.pages[2].assetKey,
-        fraction: 0.8,
-      ),
-      targetCoverage: Coverage(
-        pageIndex: 3,
-        assetKey: webpChapter.pages[3].assetKey,
-        fraction: 0.2,
-      ),
-      visibleCoverages: <Coverage>[
-        Coverage(
-          pageIndex: 2,
-          assetKey: webpChapter.pages[2].assetKey,
-          fraction: 0.8,
-        ),
-        Coverage(
-          pageIndex: 3,
-          assetKey: webpChapter.pages[3].assetKey,
-          fraction: 0.2,
-        ),
-      ],
-      direction: ReadingDirection.vertical,
-      timestamp: DateTime.utc(2026, 8, 19),
-      monotonicMicros: 1,
-    );
-    final controller = PipelineController(
-      chapter: webpChapter,
-      decodeTarget: DecodeTarget(
-        physicalWidth: 1080,
-        physicalHeight: 1920,
-        renderer: RendererKind.androidTexture,
-      ),
-      clock: _TestClock(),
-      policy: const HeuristicPolicy(decodeWarmPages: true),
-      onUpdate: (_) {},
-    );
-
-    controller.accept(obs);
-    expect(controller.currentPlan.uploads, isNotEmpty);
-
-    expect(
-      controller.observeWebpTransportCost(pageIndex: 2, webp: true),
-      isTrue,
-    );
-    expect(
-      controller.observeWebpTransportCost(pageIndex: 3, webp: true),
-      isTrue,
-    );
-    expect(
-      controller.currentPlan.uploads.values.where(
-        (demand) => demand.role == PageRole.current ||
-            demand.role == PageRole.transition,
-      ),
-      isEmpty,
-      reason: 'unresolved WebP must wait for decoder animation truth before SurfaceProducer',
-    );
-
-    expect(controller.classifyPage(pageIndex: 2, animated: false), isTrue);
-    expect(controller.classifyPage(pageIndex: 3, animated: false), isTrue);
-    expect(
-      controller.currentPlan.uploads,
-      isEmpty,
-      reason: 'authoritative static WebP uses encoded Flutter presentation',
-    );
-
-    expect(controller.classifyPage(pageIndex: 3, animated: true), isTrue);
-    expect(
-      controller.currentPlan.uploads.values.where(
-        (demand) => demand.role == PageRole.transition,
-      ),
-      hasLength(1),
-      reason: 'authoritative animated WebP keeps native texture presentation',
     );
   });
 

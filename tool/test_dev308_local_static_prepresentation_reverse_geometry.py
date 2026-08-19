@@ -31,11 +31,11 @@ for token in (
 pubspec = read('apps/app/pubspec.yaml')
 version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
 version = int(version_match.group(1)) if version_match is not None else 0
-if version < 314:
+if version < 314 or version >= 316:
     require(policy, '!localStaticReady &&', 'dev.308 active-scroll local static exception')
 else:
     if '!localStaticReady &&' in policy:
-        raise SystemExit('post-dev.314 restored fixed-position hidden local-static upload')
+        raise SystemExit('dev.314-dev.315 must keep the fixed-position hidden local-static suppression experiment')
 
 # Generic hidden static must remain deferred; the local exception may only
 # remove that deferral after authoritative static/local facts exist.
@@ -83,7 +83,7 @@ for token in (
     'hidden immediate next must not blit a static texture during active vertical scrolling',
 ):
     require(pipeline_test, token, 'local/static policy regression')
-if version >= 314:
+if 314 <= version < 316:
     require(
         pipeline_test,
         'local static evidence must not start hidden platform blits during active vertical scrolling',

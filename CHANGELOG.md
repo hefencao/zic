@@ -1,10 +1,16 @@
-## 0.31.0-dev.315 - Static WebP encoded Flutter presentation boundary
+## 0.31.0-dev.316 - Prefetch direction hysteresis boundary
+
+- Roll production media/presentation behavior back to dev.313: dev.314 did not solve the jitter and moved first static copies onto visible transition seams; dev.315 still did not solve it and introduced 378 `reader-observation-reconcile` failures (`a plan must contain exactly one current demand per lane`). Static WebP is again the one-frame case of the unified native-texture pipeline; dev.314/dev.315 remain historical evidence only.
+- Reconstructing the stable 11:45 dev.314 `readerFrameTiming` batches onto Reader monotonic time isolates a UI-isolate cost that matches the user's VibeVenera DevTools comparison. Twenty 7/3 working-set direction flips each perform `downloadAdded=5/downloadRemoved=5`; those reconciles have 7.425ms median versus 1.289ms for other reconciles. Nine of sixteen frames with build>=10ms land within +/-15ms of such a flip; near-flip build median is 14.617ms versus 1.637ms away from flips.
+- Keep current/visible/transition viewport state immediate, but separate it from asymmetric prefetch intent. `BrowsingDirectionPredictor` now requires four cumulative committed-page steps in the opposite direction before flipping the 7/3 orientation. Encoded window size 7/3, decode 2/1, NetLane, ScrollPhysics, geometry, texture presentation and frame-rate policy are unchanged; no 180ms debounce is introduced.
+
+## 0.31.0-dev.315 - Static WebP encoded Flutter presentation boundary (FALSIFIED / rolled back in dev.316)
 
 - The 11:45 dev.314 low-performance-device trace falsifies hidden-next2 upload timing as the fixed-position root: 173 scroll cadence outliers remain after active hidden static warming is suppressed. All 14/14 authoritative classifications are static (`animated=false`, `frameCount=1`, `complete=true`), while first visible transition texture copies still cost up to 16.588ms and every positive platform blit sample has `surfaceReconfigureCount=1`.
 - Remove the static WebP SurfaceProducer first-copy from the Reader path instead of moving it between roles. Once transport has observed WebP, Android texture upload waits for decoder animation truth; `animated=true` keeps the existing native texture path, while `animated=false` loads the existing Pipeline artifact's compressed bytes through Flutter `MemoryImage`/ImageProvider.
 - This is not the dev.311 native-RGBA-to-`decodeImageFromPixels` experiment: native decode remains for classification/prewarm, but static presentation consumes original compressed bytes. 7/3, decode 2/1, NetLane, geometry, ScrollPhysics and animated WebP remain unchanged.
 
-## 0.31.0-dev.314 - Fixed-position hidden static upload boundary
+## 0.31.0-dev.314 - Fixed-position hidden static upload boundary (FALSIFIED / rolled back in dev.316)
 
 - The 10:26 dev.313 low-performance-device trace changes the root-cause priority: 148 scroll cadence outliers cluster strongly by content index (currentIndex 20: 42; 12: 19; 22: 15; 23: 13), matching the user's repeated same-position reproduction. Native Choreographer still runs mostly at 14-18ms, but that global cadence cannot explain deterministic content-position hotspots and is retained only as a background amplifier.
 - Re-open only the active hidden-static presentation exception from dev.308. A concrete page-11 classification edge at 40.658911s (`animated=false`, `localPresentationReady=true`) immediately added hidden `next2` upload; its 712x2336 Android texture blit consumed 16.163ms and completed at 40.677365s immediately before a 32.845ms scroll cadence gap. Across correlated physical uploads, 16/19 are `next2`.

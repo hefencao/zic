@@ -4,6 +4,19 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# dev.316 keeps this experiment only as historical evidence; production behavior is rolled back.
+_version_text = (ROOT / 'apps/app/pubspec.yaml').read_text(encoding='utf-8')
+_version_match = re.search(r'^version: 0\.31\.0\+(\d+)$', _version_text, re.M)
+if _version_match is not None and int(_version_match.group(1)) >= 316:
+    for _rel in (
+        'docs/adr/0293-fixed-position-hidden-static-upload-boundary.md',
+        'docs/audits/dev314-fixed-position-hidden-static-upload-audit.md',
+    ):
+        if not (ROOT / _rel).is_file(): raise SystemExit(f'missing historical dev.314 artifact: {_rel}')
+    print('dev.314 fixed-position hidden static upload boundary: FALSIFIED and rolled back')
+    raise SystemExit(0)
+
+
 
 def read(path: str) -> str:
     return (ROOT / path).read_text(encoding='utf-8')
