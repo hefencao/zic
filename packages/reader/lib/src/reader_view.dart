@@ -136,6 +136,19 @@ final class _ReaderViewState extends State<ReaderView> {
   int? _lastVerticalMetricsMicros;
   int? _lastVerticalScrollUpdateMicros;
   double? _lastVerticalScrollUpdatePixels;
+  int _verticalCadenceWindowStartMicros = 0;
+  int _verticalCadenceIntervalCount = 0;
+  int _verticalCadenceGapSumMicros = 0;
+  int _verticalCadenceMinGapMicros = 0;
+  int _verticalCadenceMaxGapMicros = 0;
+  int _verticalCadenceLt10ms = 0;
+  int _verticalCadence10To14ms = 0;
+  int _verticalCadence14To18ms = 0;
+  int _verticalCadence18To20ms = 0;
+  int _verticalCadence20To25ms = 0;
+  int _verticalCadence25To35ms = 0;
+  int _verticalCadenceGe35ms = 0;
+  int _verticalCadenceDragDriven = 0;
   late final ValueNotifier<int> _verticalKeepAliveCenter;
   int? _lastVerticalLayoutPageIndex;
   double? _lastVerticalLayoutGlobalTop;
@@ -1124,6 +1137,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _pendingVerticalGeometryCorrection = null;
       _lastVerticalScrollUpdateMicros = null;
       _lastVerticalScrollUpdatePixels = null;
+      _resetVerticalScrollCadenceSummary(widget.clock.nowMicros());
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
           : notification.dragDetails == null
@@ -1147,6 +1161,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
           : Interaction.idle;
+      _flushVerticalScrollCadenceSummary(widget.clock.nowMicros());
       _lastVerticalScrollUpdateMicros = null;
       _lastVerticalScrollUpdatePixels = null;
       _emitFromVerticalMetrics(notification.metrics, forceLayoutSnapshot: true);
@@ -1170,6 +1185,92 @@ final class _ReaderViewState extends State<ReaderView> {
     return false;
   }
 
+  void _resetVerticalScrollCadenceSummary(int nowMicros) {
+    _verticalCadenceWindowStartMicros = nowMicros;
+    _verticalCadenceIntervalCount = 0;
+    _verticalCadenceGapSumMicros = 0;
+    _verticalCadenceMinGapMicros = 0;
+    _verticalCadenceMaxGapMicros = 0;
+    _verticalCadenceLt10ms = 0;
+    _verticalCadence10To14ms = 0;
+    _verticalCadence14To18ms = 0;
+    _verticalCadence18To20ms = 0;
+    _verticalCadence20To25ms = 0;
+    _verticalCadence25To35ms = 0;
+    _verticalCadenceGe35ms = 0;
+    _verticalCadenceDragDriven = 0;
+  }
+
+  void _recordVerticalScrollCadenceSummary({
+    required int nowMicros,
+    required int gapMicros,
+    required bool dragDriven,
+  }) {
+    if (_verticalCadenceWindowStartMicros == 0) {
+      _resetVerticalScrollCadenceSummary(nowMicros - gapMicros);
+    }
+    _verticalCadenceIntervalCount++;
+    _verticalCadenceGapSumMicros += gapMicros;
+    if (_verticalCadenceMinGapMicros == 0 ||
+        gapMicros < _verticalCadenceMinGapMicros) {
+      _verticalCadenceMinGapMicros = gapMicros;
+    }
+    if (gapMicros > _verticalCadenceMaxGapMicros) {
+      _verticalCadenceMaxGapMicros = gapMicros;
+    }
+    if (dragDriven) _verticalCadenceDragDriven++;
+    if (gapMicros < 10000) {
+      _verticalCadenceLt10ms++;
+    } else if (gapMicros < 14000) {
+      _verticalCadence10To14ms++;
+    } else if (gapMicros < 18000) {
+      _verticalCadence14To18ms++;
+    } else if (gapMicros < 20000) {
+      _verticalCadence18To20ms++;
+    } else if (gapMicros < 25000) {
+      _verticalCadence20To25ms++;
+    } else if (gapMicros < 35000) {
+      _verticalCadence25To35ms++;
+    } else {
+      _verticalCadenceGe35ms++;
+    }
+    if (nowMicros - _verticalCadenceWindowStartMicros >= 1000000) {
+      _flushVerticalScrollCadenceSummary(nowMicros);
+      _resetVerticalScrollCadenceSummary(nowMicros);
+    }
+  }
+
+  void _flushVerticalScrollCadenceSummary(int nowMicros) {
+    final count = _verticalCadenceIntervalCount;
+    if (count == 0) return;
+    widget.traceSink.record(
+      traceEvent(
+        clock: widget.clock,
+        sessionId: widget.controller.sessionId,
+        kind: TraceEventKind.scrollCadenceSummary,
+        revision: widget.demandRevision?.call(),
+        payload: <String, Object?>{
+          'windowMicros': nowMicros - _verticalCadenceWindowStartMicros,
+          'intervalCount': count,
+          'gapMeanMicros': _verticalCadenceGapSumMicros ~/ count,
+          'minGapMicros': _verticalCadenceMinGapMicros,
+          'maxGapMicros': _verticalCadenceMaxGapMicros,
+          'gapLt10msCount': _verticalCadenceLt10ms,
+          'gap10To14msCount': _verticalCadence10To14ms,
+          'gap14To18msCount': _verticalCadence14To18ms,
+          'gap18To20msCount': _verticalCadence18To20ms,
+          'gap20To25msCount': _verticalCadence20To25ms,
+          'gap25To35msCount': _verticalCadence25To35ms,
+          'gapGe35msCount': _verticalCadenceGe35ms,
+          'dragDrivenCount': _verticalCadenceDragDriven,
+          'ballisticCount': count - _verticalCadenceDragDriven,
+          'currentIndex': widget.controller.currentIndex,
+          'interaction': _interaction.name,
+        },
+      ),
+    );
+  }
+
   void _recordVerticalScrollCadence(
     ScrollMetrics metrics, {
     required bool dragDriven,
@@ -1182,6 +1283,13 @@ final class _ReaderViewState extends State<ReaderView> {
     if (previousMicros == null || previousPixels == null) return;
     final gapMicros = now - previousMicros;
     final pixelDelta = metrics.pixels - previousPixels;
+    if (pixelDelta.abs() > 0.01) {
+      _recordVerticalScrollCadenceSummary(
+        nowMicros: now,
+        gapMicros: gapMicros,
+        dragDriven: dragDriven,
+      );
+    }
     if (gapMicros <= 20000 || pixelDelta.abs() <= 0.01) return;
     widget.traceSink.record(
       traceEvent(

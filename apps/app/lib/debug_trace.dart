@@ -24,6 +24,7 @@ TraceHighlightLevel traceHighlightLevel(TraceEvent event) =>
       TraceEventKind.pageTransition ||
       TraceEventKind.pageCurrent ||
       TraceEventKind.pageLayoutSnapshot ||
+      TraceEventKind.staticFlutterPresentation ||
       TraceEventKind.readerFrameTiming ||
       TraceEventKind.pipelineReconcileTiming ||
       TraceEventKind.decodeDemand ||
@@ -252,6 +253,7 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     if (event.kind != TraceEventKind.readerFrameTiming &&
         event.kind != TraceEventKind.pipelineReconcileTiming &&
         event.kind != TraceEventKind.scrollCadenceOutlier &&
+        event.kind != TraceEventKind.scrollCadenceSummary &&
         event.kind != TraceEventKind.platformFrameCadenceOutlier &&
         event.kind != TraceEventKind.platformFrameCadenceSummary &&
         event.kind != TraceEventKind.platformFrameRatePolicy) {

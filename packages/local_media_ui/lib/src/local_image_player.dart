@@ -71,6 +71,10 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   int _streamingPrefixRequestedRevision = 0;
   int _streamingPrefixReadRevision = 0;
   bool _fallbackLoadStarted = false;
+  bool _staticWebpProjectionLoadStarted = false;
+  ImageProvider<Object>? _staticWebpProjectionProvider;
+  int _staticWebpProjectionEncodedBytes = 0;
+  bool _staticWebpPresentationRecorded = false;
   Size? _reportedDimensions;
   bool _reportedDimensionsAuthoritative = false;
 
@@ -114,6 +118,10 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _state = ImagePreviewState.loading(widget.image.format);
       _notifyObserver(_state);
       _fallbackLoadStarted = false;
+      _staticWebpProjectionLoadStarted = false;
+      _staticWebpProjectionProvider = null;
+      _staticWebpProjectionEncodedBytes = 0;
+      _staticWebpPresentationRecorded = false;
       final oldStreaming = oldWidget.pageStream;
       final oldListener = _pageStreamingListener;
       if (oldStreaming != null && oldListener != null) {
@@ -251,6 +259,120 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
   }
 
+  bool _isAuthoritativeStaticWebpOutput(PipelinePageOutputSnapshot snapshot) =>
+      snapshot.hasSurface &&
+      snapshot.animation.complete &&
+      snapshot.animation.frameCount <= 1 &&
+      (snapshot.duration?.inMicroseconds ?? 0) <= 0;
+
+  void _maybePrepareStaticWebpProjection(
+    PipelinePageOutputSnapshot snapshot,
+  ) {
+    if (!_isAuthoritativeStaticWebpOutput(snapshot) ||
+        _staticWebpProjectionLoadStarted ||
+        _staticWebpProjectionProvider != null) {
+      return;
+    }
+    _staticWebpProjectionLoadStarted = true;
+    final generation = _generation;
+    final token = _loadToken;
+    unawaited(_prepareStaticWebpProjection(
+      generation: generation,
+      token: token,
+    ));
+  }
+
+  Future<void> _prepareStaticWebpProjection({
+    required int generation,
+    required MediaLoadToken token,
+  }) async {
+    try {
+      final tokenLoader = widget.tokenBytesLoader;
+      final loader = widget.bytesLoader;
+      final bytes = tokenLoader != null
+          ? await tokenLoader(widget.image, token)
+          : loader != null
+              ? await loader(widget.image)
+              : await widget.image.readAsBytes();
+      token.throwIfCancelled();
+      if (!mounted || generation != _generation || token != _loadToken) {
+        return;
+      }
+      final detected = detectLocalImageFormat(bytes, fileLength: bytes.length);
+      if (detected != LocalImageFormat.webp) {
+        throw StateError('authoritative static WebP artifact changed format');
+      }
+      setState(() {
+        _staticWebpProjectionProvider = MemoryImage(bytes);
+        _staticWebpProjectionEncodedBytes = bytes.length;
+      });
+    } on Object {
+      if (!mounted || generation != _generation || token != _loadToken) {
+        return;
+      }
+      // The already-presented Pipeline texture remains the authoritative
+      // fallback. This projection is attempted once per page generation; a
+      // failure must not disturb Reader output ownership or create a retry
+      // loop on the hot scroll path.
+    }
+  }
+
+  Widget _buildStaticWebpProjection(
+    PipelinePageSurface surface,
+    ImageProvider<Object> provider,
+  ) =>
+      MediaRasterImage(
+        image: provider,
+        dimensions: _reportedDimensions,
+        fit: widget.fit,
+        imageKey: const ValueKey<String>('static-webp-flutter-projection'),
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (frame != null || wasSynchronouslyLoaded) {
+            if (!_staticWebpPresentationRecorded) {
+              _staticWebpPresentationRecorded = true;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted ||
+                    !identical(_staticWebpProjectionProvider, provider)) {
+                  return;
+                }
+                widget.traceSink.record(
+                  traceEvent(
+                    clock: widget.traceClock ?? const SystemClock(),
+                    sessionId: widget.traceSessionId,
+                    kind: TraceEventKind.staticFlutterPresentation,
+                    identityHash: widget.downloadIdentity?.key,
+                    revision: widget.demandRevision?.call(),
+                    payload: <String, Object?>{
+                      'route': 'pipeline-texture-fallback-to-compressed-flutter-image',
+                      'encodedBytes': _staticWebpProjectionEncodedBytes,
+                      'textureRetained': true,
+                      'frameCount': _pageOutputSnapshot?.animation.frameCount,
+                    },
+                  ),
+                );
+              });
+            }
+            return child;
+          }
+          // Keep the already-ready native texture visible until Flutter's
+          // compressed-image codec has a frame. This makes the presentation
+          // switch gapless while leaving Pipeline upload/lease ownership
+          // completely unchanged.
+          return surface.build(
+            fit: BoxFit.fill,
+            filterQuality: widget.fit == BoxFit.fitWidth
+                ? FilterQuality.low
+                : FilterQuality.medium,
+          );
+        },
+        errorBuilder: (context, error, stackTrace) => surface.build(
+          fit: BoxFit.fill,
+          filterQuality: widget.fit == BoxFit.fitWidth
+              ? FilterQuality.low
+              : FilterQuality.medium,
+        ),
+      );
+
   void _attachPageOutput(PipelinePageOutputStream output) {
     void listener(PipelinePageOutputSnapshot snapshot) {
       if (!mounted) return;
@@ -271,6 +393,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         _pageOutputSnapshot = snapshot;
       }
       if (snapshot.hasSurface) {
+        _maybePrepareStaticWebpProjection(snapshot);
         final surface = snapshot.surface!;
         _reportDimensions(
           surface.width,
@@ -586,20 +709,26 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     } else if (_detectedFormat.isWebp) {
       final output = widget.pageOutput;
       if (output != null) {
-        final surface = _pageOutputSnapshot?.surface;
+        final snapshot = _pageOutputSnapshot;
+        final surface = snapshot?.surface;
+        final staticProvider = _staticWebpProjectionProvider;
         content = surface == null
             ? _loadingIndicator()
-            : MediaAspectViewport(
-                dimensions: _reportedDimensions,
-                fit: widget.fit,
-                builder: (innerFit) => surface.build(
-                  key: webpNativeTextureViewportKey,
-                  fit: innerFit,
-                  filterQuality: widget.fit == BoxFit.fitWidth
-                      ? FilterQuality.low
-                      : FilterQuality.medium,
-                ),
-              );
+            : staticProvider != null &&
+                    snapshot != null &&
+                    _isAuthoritativeStaticWebpOutput(snapshot)
+                ? _buildStaticWebpProjection(surface, staticProvider)
+                : MediaAspectViewport(
+                    dimensions: _reportedDimensions,
+                    fit: widget.fit,
+                    builder: (innerFit) => surface.build(
+                      key: webpNativeTextureViewportKey,
+                      fit: innerFit,
+                      filterQuality: widget.fit == BoxFit.fitWidth
+                          ? FilterQuality.low
+                          : FilterQuality.medium,
+                    ),
+                  );
       } else if (bytes == null) {
         content = _loadingIndicator();
       } else {

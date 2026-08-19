@@ -59,6 +59,8 @@ enum TraceEventKind {
   pageGeometryPrepared,
   pageLayoutSnapshot,
   scrollCadenceOutlier,
+  scrollCadenceSummary,
+  staticFlutterPresentation,
   platformFrameCadenceOutlier,
   platformFrameCadenceSummary,
   platformFrameRatePolicy,
