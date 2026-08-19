@@ -1104,7 +1104,9 @@ final class _ReaderViewState extends State<ReaderView> {
       _pendingVerticalAnchor = null;
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
-          : Interaction.scrolling;
+          : notification.dragDetails == null
+              ? Interaction.scrolling
+              : Interaction.dragging;
       _emitFromPageMetrics(notification.metrics);
     } else if (notification is ScrollEndNotification) {
       _interaction = widget.controller.pageScrubbing
@@ -1130,10 +1132,16 @@ final class _ReaderViewState extends State<ReaderView> {
       _emitFromVerticalMetrics(notification.metrics, forceLayoutSnapshot: true);
     } else if (notification is ScrollUpdateNotification) {
       _pendingVerticalAnchor = null;
+      final dragDriven = notification.dragDetails != null;
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
-          : Interaction.scrolling;
-      _recordVerticalScrollCadence(notification.metrics);
+          : dragDriven
+              ? Interaction.dragging
+              : Interaction.scrolling;
+      _recordVerticalScrollCadence(
+        notification.metrics,
+        dragDriven: dragDriven,
+      );
       _emitFromVerticalMetrics(notification.metrics);
     } else if (notification is ScrollEndNotification) {
       _interaction = widget.controller.pageScrubbing
@@ -1162,7 +1170,10 @@ final class _ReaderViewState extends State<ReaderView> {
     return false;
   }
 
-  void _recordVerticalScrollCadence(ScrollMetrics metrics) {
+  void _recordVerticalScrollCadence(
+    ScrollMetrics metrics, {
+    required bool dragDriven,
+  }) {
     final now = widget.clock.nowMicros();
     final previousMicros = _lastVerticalScrollUpdateMicros;
     final previousPixels = _lastVerticalScrollUpdatePixels;
@@ -1184,6 +1195,7 @@ final class _ReaderViewState extends State<ReaderView> {
           'scrollPixels': metrics.pixels,
           'viewportDimension': metrics.viewportDimension,
           'interaction': _interaction.name,
+          'dragDriven': dragDriven,
           'currentIndex': widget.controller.currentIndex,
         },
       ),

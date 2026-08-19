@@ -11,6 +11,7 @@ import 'package:reader/reader.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'flutter_reader_frame_timing_source.dart';
+import 'flutter_reader_touch_resampling.dart';
 import 'reader_session_settings.dart';
 import 'reader_settings_fields.dart';
 import 'reader_transfer_progress_indicator.dart';
@@ -179,6 +180,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   late ReaderSessionSettings _settings;
   late final AdaptiveReaderClassifier _adaptiveClassifier;
   AdaptiveReaderProfile? _adaptiveProfile;
+  FlutterReaderTouchResamplingLease? _touchResamplingLease;
 
   @override
   void initState() {
@@ -288,6 +290,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     created.currentIndexListenable.addListener(_handleReaderProgress);
     _target = target;
     _reader = created;
+    _syncTouchResampling();
     _lastProgressPage = created.currentIndex;
     _lastProgressMode = _readerMode(created.direction);
   }
@@ -342,6 +345,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     _adaptiveProfile = candidate;
     _settings = _settings.copyWith(adaptiveProfile: candidate);
     _reader?.setDirection(candidate.direction);
+    _syncTouchResampling();
     _persistSettings();
     if (mounted) setState(() {});
   }
@@ -588,6 +592,16 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     });
   }
 
+  void _syncTouchResampling() {
+    final vertical = _reader?.direction == ReadingDirection.vertical;
+    if (vertical) {
+      _touchResamplingLease ??= FlutterReaderTouchResampling.acquire();
+      return;
+    }
+    _touchResamplingLease?.release();
+    _touchResamplingLease = null;
+  }
+
   void _syncPipelinePlayback() {
     final state = _playback.value;
     _pipeline.setPlayback(paused: state.paused, speed: state.speed);
@@ -595,6 +609,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
 
   @override
   void dispose() {
+    _touchResamplingLease?.release();
+    _touchResamplingLease = null;
     unawaited(_checkpointReaderProgress(force: true));
     _pipeline.pageDimensions.removeListener(_handlePipelinePageDimensions);
     WidgetsBinding.instance.removeObserver(this);
@@ -832,6 +848,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       }
     });
     _reader?.setDirection(_resolveInitialDirection(_matchingInitialProgress()));
+    _syncTouchResampling();
     final writer = widget.onSettingsChanged;
     if (writer != null) {
       try {

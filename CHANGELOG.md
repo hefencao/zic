@@ -1,3 +1,9 @@
+## 0.31.0-dev.309 - Vertical Reader touch resampling and cadence attribution
+
+- The 05:24 dev.308 device Trace mechanically closes the local-static preparation regressions: page19/page20 are firstFrameReady about 963ms/764ms before first transition, and sampled page extents no longer change from provisional to measured values. Strong jitter nevertheless remains.
+- Raw vertical ScrollUpdate cadence is now the strongest signal: 49 non-zero `scrollCadenceOutlier` events have a 31.775ms median, 36.668ms p90 and 75.923ms max; many matching ~30-36ms Flutter frames have only ~1-3ms build/raster/vsync overhead. Enable Flutter built-in touch resampling only through a ref-counted `reader_runtime` lease while vertical continuous Reader is active, restoring the prior global value on final release. Do not tune `samplingOffset`, synthesize positions, force frames or alter ScrollPhysics.
+- Preserve drag semantics on ScrollUpdate (`dragDetails != null` => `Interaction.dragging`) and record `dragDriven` on cadence outliers. This makes the next device run distinguish touch sampling mismatch from ballistic/engine frame cadence without changing Pipeline's existing vertical active scheduling class.
+
 ## 0.31.0-dev.308 - Local static pre-presentation and reverse geometry preparation
 
 - The 04:45 dev.307 device Trace exposes a new local-image regression: page hosts can be mounted hundreds of milliseconds early while authoritative static presentation is still withheld until the page becomes a real transition. Page19 enters transition at ~38.554s and reaches firstFrameReady at ~38.605s; page20 enters at ~39.247s and becomes ready at ~39.299s. Their encoded bodies are already immutable local/durable authority, so dev.295 generic hidden-static active-scroll deferral is too broad for this case.
