@@ -660,6 +660,40 @@ void main() {
     expect(snapshots, hasLength(3));
   });
 
+  test('priority-only demand migration does not emit demand lifecycle trace', () async {
+    final trace = MemoryTraceSink();
+    final traced = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/trace-priority/page.webp.partial',
+        finalPath: '${temp.path}/trace-priority/page.webp',
+      ),
+      clock: FakeMonoClock(),
+      traceSink: trace,
+    );
+    await traced.restore();
+    addTearDown(() async {
+      if (!traced.activeRun) {
+        await traced.dispose();
+      }
+    });
+
+    final lease = traced.attachDemand(scopeId: 'reader', priority: 700);
+    expect(
+      trace.events.where((event) => event.kind == TraceEventKind.demandApplied),
+      hasLength(1),
+    );
+
+    lease.updatePriority(1000);
+
+    expect(traced.effectivePriority, 1000);
+    expect(
+      trace.events.where((event) => event.kind == TraceEventKind.demandApplied),
+      hasLength(1),
+    );
+    lease.detach();
+  });
+
   test('diagnostic transport trace does not publish media snapshot', () {
     final snapshots = <DownloadSnapshot>[];
     session.addSnapshotListener(snapshots.add);

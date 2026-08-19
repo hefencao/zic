@@ -164,6 +164,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final Map<DecodeId, int> _decodeDemandRevisions = <DecodeId, int>{};
   final Map<DecodeId, UploadDemand> _uploads = <DecodeId, UploadDemand>{};
   final Map<DecodeId, int> _uploadDemandRevisions = <DecodeId, int>{};
+  final Map<DownloadId, DownloadSession> _observedDownloadSessions =
+      <DownloadId, DownloadSession>{};
   final Map<DownloadId, _SourceWatchBinding> _sourceWatches =
       <DownloadId, _SourceWatchBinding>{};
   final Set<DownloadId> _sourceRebindWakes = <DownloadId>{};
@@ -378,6 +380,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       binding.projection.removeSourceListener(binding.listener);
     }
     _sourceWatches.clear();
+    _observedDownloadSessions.clear();
     _sourceRebindWakes.clear();
     _sourceRevisions.clear();
     _sourceWakeLengths.clear();
@@ -412,13 +415,14 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     if (diff.isEmpty) return;
     for (final id in diff.removed) {
       _downloads.remove(id);
+      _observedDownloadSessions.remove(id);
       _clearSourceKind(id);
     }
-    final observed = <MapEntry<DownloadId, DownloadDemand>>[
+    final scheduled = <MapEntry<DownloadId, DownloadDemand>>[
       ...diff.added.entries,
       ...diff.changed.entries,
     ];
-    for (final entry in observed) {
+    for (final entry in scheduled) {
       _downloads[entry.key] = entry.value;
     }
     _downloadTransfer.replaceDemands(
@@ -433,15 +437,37 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           ),
       },
     );
-    for (final entry in observed) {
+    // Source/ingress observation is physical-identity lifecycle work, not a
+    // scheduling-priority side effect. Newly demanded identities must attach;
+    // an existing logical id only re-enters this path if the physical session
+    // object actually changed. Routine role/priority migration therefore stays
+    // in the transfer scheduler and does not repeatedly attach ingress or walk
+    // Reader source-watch ownership on every page boundary.
+    for (final entry in diff.added.entries) {
       final session = registry.get(entry.key);
-      try {
-        onDownloadObserved?.call(session);
-      } on Object {
-        // Reader-local observers cannot break physical transfer ownership.
-      }
-      _watchSource(sessionId, entry.key, session);
+      _observeDownloadIdentity(sessionId, entry.key, session);
     }
+    for (final entry in diff.changed.entries) {
+      final session = registry.find(entry.key);
+      final observed = _observedDownloadSessions[entry.key];
+      if (session != null && !identical(observed, session)) {
+        _observeDownloadIdentity(sessionId, entry.key, session);
+      }
+    }
+  }
+
+  void _observeDownloadIdentity(
+    String sessionId,
+    DownloadId id,
+    DownloadSession session,
+  ) {
+    _observedDownloadSessions[id] = session;
+    try {
+      onDownloadObserved?.call(session);
+    } on Object {
+      // Reader-local observers cannot break physical transfer ownership.
+    }
+    _watchSource(sessionId, id, session);
   }
 
   void _clearSourceKind(DownloadId id) {
@@ -601,13 +627,15 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       _decodes[entry.key] = entry.value;
       final demandRevision = _revision;
       _decodeDemandRevisions[entry.key] = demandRevision;
-      _resourceTrace(
-        sessionId,
-        TraceEventKind.decodeDemand,
-        entry.key.key,
-        entry.value.priority,
-        revision: demandRevision,
-      );
+      if (diff.added.containsKey(entry.key)) {
+        _resourceTrace(
+          sessionId,
+          TraceEventKind.decodeDemand,
+          entry.key.key,
+          entry.value.priority,
+          revision: demandRevision,
+        );
+      }
       if (entry.value.role == PageRole.current) {
         _promoteDecodeToCurrent(sessionId, entry.key, demandRevision);
       }
@@ -1144,13 +1172,15 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       _uploads[entry.key] = entry.value;
       final demandRevision = _revision;
       _uploadDemandRevisions[entry.key] = demandRevision;
-      _resourceTrace(
-        sessionId,
-        TraceEventKind.uploadDemand,
-        entry.key.key,
-        entry.value.priority,
-        revision: demandRevision,
-      );
+      if (diff.added.containsKey(entry.key)) {
+        _resourceTrace(
+          sessionId,
+          TraceEventKind.uploadDemand,
+          entry.key.key,
+          entry.value.priority,
+          revision: demandRevision,
+        );
+      }
       final uploadRegistry = uploads;
       if (uploadRegistry != null &&
           (entry.value.role == PageRole.current ||

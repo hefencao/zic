@@ -401,16 +401,27 @@ final class DownloadTransferOwner {
     for (final entry in normalized.entries) {
       final prior = consumer._physicalDemands[entry.key];
       if (prior == entry.value) continue;
-      _upsertClaim(
-        consumer,
-        entry.key,
-        entry.value.exactId,
-        entry.value.demand,
-        sessionId: sessionId,
-        revision: revision,
-      );
+      final schedulingOnly = prior != null &&
+          _tryUpdateExistingClaimScheduling(
+            consumer,
+            entry.key,
+            prior,
+            entry.value,
+            sessionId: sessionId,
+            revision: revision,
+          );
+      if (!schedulingOnly) {
+        _upsertClaim(
+          consumer,
+          entry.key,
+          entry.value.exactId,
+          entry.value.demand,
+          sessionId: sessionId,
+          revision: revision,
+        );
+        toSchedule.add(entry.key);
+      }
       consumer._physicalDemands[entry.key] = entry.value;
-      toSchedule.add(entry.key);
     }
     consumer._demands
       ..clear()
@@ -490,6 +501,45 @@ final class DownloadTransferOwner {
     }
   }
 
+  bool _tryUpdateExistingClaimScheduling(
+    DownloadTransferConsumer consumer,
+    DownloadId id,
+    _ConsumerPhysicalDemand prior,
+    _ConsumerPhysicalDemand next, {
+    required String sessionId,
+    required int revision,
+  }) {
+    // This fast path is deliberately narrower than demand equality. A change
+    // in exact identity, integrity proof or completion intent can alter
+    // provider/body authority and must re-enter the full claim establishment
+    // path. Pure reason/priority/frame-target migration keeps the same physical
+    // claim and only updates scheduling state.
+    if (prior.exactId != next.exactId ||
+        prior.demand.expectedChecksum != next.demand.expectedChecksum ||
+        prior.demand.completionIntent != next.demand.completionIntent) {
+      return false;
+    }
+    final claim = _claims[id]?[consumer.scopeId];
+    final session = registry.find(id);
+    if (claim == null || session == null) {
+      return false;
+    }
+    claim
+      ..demand = next.demand
+      ..sessionId = sessionId
+      ..revision = revision;
+    claim.lease.updatePriority(next.demand.priority);
+    _refreshClaimScheduling(id, session, next.demand);
+
+    // Existing claims may currently be locally preparing, flow-paused or fully
+    // idle. The historical path re-ran ensure after every changed demand; keep
+    // that wake edge without rebuilding claim/session/watch ownership.
+    if (_networkTaskKeys[id] == null) {
+      _ensureDownloadTask(id, session);
+    }
+    return true;
+  }
+
   void _upsertClaim(
     DownloadTransferConsumer consumer,
     DownloadId id,
@@ -536,6 +586,14 @@ final class DownloadTransferOwner {
       existing.revision = revision;
       existing.lease.updatePriority(demand.priority);
     }
+    _refreshClaimScheduling(id, session, demand);
+  }
+
+  void _refreshClaimScheduling(
+    DownloadId id,
+    DownloadSession session,
+    TransferDemand demand,
+  ) {
     // A flow frame proof describes bytes already present in the physical
     // partial, not the policy target that happened to trigger suspension.
     // Demand/role changes therefore never invalidate it. A later positive

@@ -84,6 +84,183 @@ void main() {
   });
 
 
+  test('download priority migration does not re-observe physical identity', () async {
+    final temp = await Directory.systemTemp.createTemp('live_identity_observe_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'identity-observe',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/identity-observe.bin'),
+    );
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      index: index,
+    );
+    addTearDown(registry.dispose);
+    var observed = 0;
+    final coordinator = LiveCoordinator(
+      registry: registry,
+      transportFor: (_) => FakeTransport(bytes: const <int>[1, 2, 3]),
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      onDownloadObserved: (_) => observed++,
+    );
+    addTearDown(coordinator.dispose);
+
+    DemandPlan plan(int revision, int priority) => DemandPlan(
+          revision: revision,
+          downloads: <DownloadId, DownloadDemand>{
+            id: DownloadDemand(
+              role: priority >= 1000 ? PageRole.current : PageRole.next,
+              priority: priority,
+              reason: 'identity-observe',
+              expirationRevision: revision + 1,
+            ),
+          },
+          decodes: const <DecodeId, DecodeDemand>{},
+          uploads: const <DecodeId, UploadDemand>{},
+          keep: <ResourceId>{ResourceId.download(id)},
+        );
+
+    final first = plan(1, 1000);
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: first,
+        diff: DemandDiff.between(DemandPlan.empty(), first),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    expect(observed, 1);
+
+    final changed = plan(2, 700);
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: changed,
+        diff: DemandDiff.between(first, changed),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.next}),
+      ),
+    );
+    expect(observed, 1);
+  });
+
+  test('priority-role migration stays aggregate in reconcile trace', () async {
+    final temp = await Directory.systemTemp.createTemp('live_trace_migration_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'trace-migration',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/trace-migration.webp'),
+    );
+    final decodeId = DecodeId(
+      download: id,
+      physicalWidth: 320,
+      physicalHeight: 480,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final clock = _Clock();
+    final trace = MemoryTraceSink();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      index: index,
+    );
+    addTearDown(registry.dispose);
+    final coordinator = LiveCoordinator(
+      registry: registry,
+      transportFor: (_) => FakeTransport(bytes: const <int>[1]),
+      clock: clock,
+      traceSink: trace,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(coordinator.dispose);
+
+    DemandPlan plan(int revision, PageRole role, int priority) => DemandPlan(
+          revision: revision,
+          downloads: const <DownloadId, DownloadDemand>{},
+          decodes: <DecodeId, DecodeDemand>{
+            decodeId: DecodeDemand(
+              role: role,
+              priority: priority,
+              targetWatermark: 1,
+              reason: 'trace-migration',
+              expirationRevision: revision + 1,
+            ),
+          },
+          uploads: <DecodeId, UploadDemand>{
+            decodeId: UploadDemand(
+              role: role,
+              priority: priority,
+              reason: 'trace-migration',
+              expirationRevision: revision + 1,
+            ),
+          },
+          keep: <ResourceId>{ResourceId.decode(decodeId)},
+        );
+
+    final first = plan(1, PageRole.current, 1000);
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: first,
+        diff: DemandDiff.between(DemandPlan.empty(), first),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    expect(
+      trace.events.where((event) => event.kind == TraceEventKind.decodeDemand),
+      hasLength(1),
+    );
+    expect(
+      trace.events.where((event) => event.kind == TraceEventKind.uploadDemand),
+      hasLength(1),
+    );
+
+    final changed = plan(2, PageRole.transition, 900);
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: changed,
+        diff: DemandDiff.between(first, changed),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.transition}),
+      ),
+    );
+
+    expect(
+      trace.events.where((event) => event.kind == TraceEventKind.decodeDemand),
+      hasLength(1),
+    );
+    expect(
+      trace.events.where((event) => event.kind == TraceEventKind.uploadDemand),
+      hasLength(1),
+    );
+    final timing = trace.events.lastWhere(
+      (event) => event.kind == TraceEventKind.pipelineReconcileTiming,
+    );
+    expect(timing.payload['decodeChanged'], 1);
+    expect(timing.payload['uploadChanged'], 1);
+  });
+
   test('large unsupported-range catchup waits for foreground-adjacent demand',
       () async {
     final temp = await Directory.systemTemp.createTemp('live_catchup_defer_test_');

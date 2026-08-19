@@ -833,23 +833,25 @@ final class DownloadSession {
     final previous = _demandPriorities[scopeId];
     if (previous == priority) return;
     _demandPriorities[scopeId] = priority;
-    _recordTrace(
-      TraceEventKind.demandApplied,
-      <String, Object?>{
-        'lane': 'download',
-        'scopeId': scopeId,
-        'priority': priority,
-        'effectivePriority': effectivePriority,
-        'demandCount': demandCount,
-      },
-    );
     // Priority belongs to transfer scheduling, not encoded-media/session
-    // lifecycle. Existing consumers update NetLane directly from the claim
-    // owner, so rebroadcasting a full DownloadSnapshot for a priority-only
-    // migration wakes PageStream/progress/retention observers that cannot use
-    // this fact. A newly attached scope still changes demanded/demandCount and
-    // remains a real session snapshot transition.
+    // lifecycle. A newly attached demand scope is a lifecycle edge and remains visible in
+    // both the demand trace and DownloadSnapshot. Existing-scope priority
+    // migration is scheduling metadata only: DownloadTransferOwner/NetLane own
+    // the actual priority change, while Pipeline reconcile timing already
+    // records plan-level changed cardinality. Emitting one demandApplied event
+    // per hot-window priority migration serializes routine control telemetry on
+    // the UI isolate without adding lifecycle information.
     if (previous == null) {
+      _recordTrace(
+        TraceEventKind.demandApplied,
+        <String, Object?>{
+          'lane': 'download',
+          'scopeId': scopeId,
+          'priority': priority,
+          'effectivePriority': effectivePriority,
+          'demandCount': demandCount,
+        },
+      );
       _notifySnapshot();
     }
   }

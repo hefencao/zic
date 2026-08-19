@@ -1,3 +1,10 @@
+## 0.31.0-dev.305 - Scheduling-migration control-plane fast path
+
+- The 02:44 dev.304 device Trace keeps vertical geometry mechanically stable (`extentDeltaPx=0`, constant layout residual and identity transforms) while pronounced missed-vsync remains. Exported `readerFrameTiming` represents about 923 real frames; retained jank still reaches ~85.5ms while many 30-35ms gaps have only ~1-3ms build/raster. This keeps UI-isolate/control-plane work as the primary path and does not support reopening the position-jump/geometry hypothesis.
+- Legal page-boundary reconcile is still expensive after dev.301-304: 87 accepted reconciles have a 2.319ms median overall, but the 15 common `1 added / 10 changed / 1 removed` download-window migrations have an 8.387ms median and 11.284ms max. Existing identities were still re-emitting per-demand scheduling telemetry, re-entering ingress/source-watch observation, and running full physical-claim establishment code for role/priority-only migration.
+- Separate scheduling migration from lifecycle establishment. Existing-scope download priority changes no longer emit `demandApplied`; changed decode/upload demands remain visible through aggregate `pipelineReconcileTiming` instead of per-demand lifecycle trace. LiveCoordinator observes/attaches ingress only for new or actually replaced physical DownloadSession identities. DownloadTransferOwner uses a scheduling-only existing-claim fast path only while physical/exact identity, checksum proof and completion intent remain unchanged; identity/proof/completion changes still use the full claim path.
+- Keep policy, priorities, 3/7, decode 2/1, NetLane capacity, sourceCanvas, vertical geometry, texture/presentation and dev.299 current±2 continuity unchanged. Some long frame gaps contain no traced reconcile, so dev.305 is device-falsifiable control-plane reduction rather than a claim that every remaining missed-vsync cause is already closed.
+
 ## Working tree - vertical frame-cadence follow-up
 
 - 固定纵向 page shell composition 为 6 个 viewport，移除 idle post-frame 渐增 warmup，避免手势前的大范围 sliver rebuild。
