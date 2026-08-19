@@ -177,7 +177,7 @@ void main() {
 
     final controller = await ExternalPluginController.openDeferred(storage.path);
     addTearDown(controller.close);
-    await controller.uninstall('venera:test-owned');
+    await controller.remove('venera:test-owned');
 
     expect(
       await File('${pluginRoot.path}/installed.json.bak').exists(),

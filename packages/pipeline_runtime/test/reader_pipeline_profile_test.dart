@@ -74,7 +74,12 @@ void main() {
 
       expect(plan.downloads, hasLength(11), reason: scheme);
       expect(plan.decodes, hasLength(4), reason: scheme);
-      expect(plan.uploads, hasLength(1), reason: scheme);
+      expect(plan.uploads, hasLength(4), reason: scheme);
+      expect(
+        plan.uploads.values.where((u) => u.role == PageRole.current),
+        hasLength(1),
+        reason: scheme,
+      );
       expect(profile.networkConcurrency, 5, reason: scheme);
       expect(profile.localSourceConcurrency, 2, reason: scheme);
       expect(profile.remoteSourceConcurrency, 5, reason: scheme);

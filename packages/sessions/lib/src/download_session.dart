@@ -512,6 +512,9 @@ final class DownloadSession {
     Uri? validatorRequestUri,
   }) async {
     _requireNotDisposed();
+    if (artifact.state == ArtifactState.empty) {
+      await artifact.restore();
+    }
     _ingressProjectionRevision++;
     _validators = validators;
     _validatorRequestUri = validators.isEmpty
@@ -1257,8 +1260,8 @@ final class DownloadSession {
     _pendingCommitTraceChunks++;
     if (_pendingCommitTraceBytes >= sourceProgressQuantumBytes) {
       _flushCommittedTrace();
-      _notifySnapshot();
     }
+    _notifySnapshot();
   }
 
   void _flushCommittedTrace() {

@@ -5,7 +5,6 @@ import 'package:bridge/bridge.dart' show parseWebpInfo;
 import 'package:domain/domain.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zic/static_demo.dart';
 import 'package:zic/webp_demo.dart';
 
 File _nativeFixture(String name) {

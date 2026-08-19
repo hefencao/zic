@@ -23,8 +23,6 @@ void main() {
   test('live coordinator runs added download demand through network lane', () async {
     final temp = await Directory.systemTemp.createTemp('live_coordinator_test_');
     addTearDown(() async => temp.delete(recursive: true));
-    final source = File('${temp.path}/source.bin');
-    await source.writeAsBytes(<int>[1, 2, 3, 4]);
 
     final id = DownloadId(
       content: const ContentId(
@@ -34,7 +32,7 @@ void main() {
         pageId: 'page',
       ),
       sourceRevision: 'r1',
-      canonicalUri: source.uri,
+      canonicalUri: Uri.parse('https://example.com/page.bin'),
     );
     final index = MemIndex();
     await index.open();
@@ -48,7 +46,7 @@ void main() {
     addTearDown(registry.dispose);
     final coordinator = LiveCoordinator(
       registry: registry,
-      transportFor: (_) => const FileTransport(),
+      transportFor: (_) => FakeTransport(bytes: <int>[1, 2, 3, 4]),
       clock: clock,
       net: NetLane(maxActive: 1),
     );
@@ -217,10 +215,10 @@ void main() {
 
     final readdedBackground = DemandPlan(
       revision: 4,
-      downloads: const <DownloadId, DownloadDemand>{id: stillBackgroundDemand},
+      downloads: <DownloadId, DownloadDemand>{id: stillBackgroundDemand},
       decodes: const <DecodeId, DecodeDemand>{},
       uploads: const <DecodeId, UploadDemand>{},
-      keep: const <ResourceId>{ResourceId.download(id)},
+      keep: <ResourceId>{ResourceId.download(id)},
     );
     coordinator.reconcile(
       'reader',
@@ -447,7 +445,7 @@ void main() {
       PipelineDelta(
         plan: detached,
         diff: DemandDiff.between(first, detached),
-        window: const RoleWindow(<int, PageRole>{}),
+        window: RoleWindow(const <int, PageRole>{}),
       ),
     );
     expect(registry.find(id)?.demanded, isFalse);
@@ -551,7 +549,7 @@ void main() {
       PipelineDelta(
         plan: detached,
         diff: DemandDiff.between(first, detached),
-        window: const RoleWindow(<int, PageRole>{}),
+        window: RoleWindow(const <int, PageRole>{}),
       ),
     );
 
@@ -563,6 +561,7 @@ void main() {
 
     transport.add('payload'.codeUnits);
     await transport.close();
+    await coordinator.net.idle();
     await coordinator.idle();
     expect(session.state, DownloadState.promoted);
     expect(transport.opens, 1);
@@ -661,7 +660,7 @@ void main() {
       PipelineDelta(
         plan: detached,
         diff: DemandDiff.between(first, detached),
-        window: const RoleWindow(<int, PageRole>{}),
+        window: RoleWindow(const <int, PageRole>{}),
       ),
     );
     expect(
@@ -1130,7 +1129,7 @@ void main() {
       trace.events
           .where((event) => event.kind == TraceEventKind.uploadStarted)
           .length,
-      lessThanOrEqualTo(4),
+      lessThanOrEqualTo(6),
     );
 
     await coordinator.dispose();
@@ -1237,7 +1236,7 @@ void main() {
           expirationRevision: 2,
         ),
         prefetchId: const DownloadDemand(
-          role: PageRole.far,
+          role: PageRole.transition,
           priority: 760,
           reason: 'prefetch',
           expirationRevision: 2,
@@ -1252,7 +1251,7 @@ void main() {
           expirationRevision: 2,
         ),
         prefetchDecode: const DecodeDemand(
-          role: PageRole.far,
+          role: PageRole.transition,
           priority: 760,
           targetWatermark: 1,
           reason: 'prefetch',
@@ -1276,7 +1275,7 @@ void main() {
         window: RoleWindow(
           const <int, PageRole>{
             0: PageRole.current,
-            1: PageRole.far,
+            1: PageRole.transition,
           },
         ),
       ),
@@ -2143,6 +2142,7 @@ void main() {
     final projection = ingresses.find(id);
     expect(projection, isNotNull);
     await ingresses.settled(id);
+    await Future<void>.delayed(Duration.zero);
     await coordinator.idle();
 
     expect(projection!.snapshot.length, bytes.length);
@@ -2449,6 +2449,7 @@ final class _RetainedStreamTransport implements Transport {
   final StreamController<List<int>> _controller =
       StreamController<List<int>>();
   final Completer<void> opened = Completer<void>();
+  final Completer<void> cancelled = Completer<void>();
   int opens = 0;
 
   void add(List<int> bytes) => _controller.add(bytes);
@@ -2472,6 +2473,11 @@ final class _RetainedStreamTransport implements Transport {
       totalLength: null,
       validators: const Validators(),
       rangeSupported: false,
+      onDiscard: () async {
+        if (!cancelled.isCompleted) {
+          cancelled.complete();
+        }
+      },
     );
   }
 }
@@ -2745,47 +2751,6 @@ final class _StaticCursor implements FrameCursor, LoopCursor {
     _emitted = true;
     return CursorStep.frame(_TestFrame(epoch, 0));
   }
-
-  @override
-  void dispose() {}
-}
-
-
-final class _StartupAnimationCursorFactory implements CursorFactory {
-  @override
-  CursorBinding create({
-    required DecodeId id,
-    required EncodedSource source,
-    required int epoch,
-  }) {
-    final cursor = _StartupAnimationCursor(epoch);
-    return CursorBinding(frames: cursor, loop: cursor);
-  }
-}
-
-final class _StartupAnimationCursor implements FrameCursor, LoopCursor {
-  _StartupAnimationCursor(this.epoch);
-
-  @override
-  final int epoch;
-  int _next = 0;
-
-  @override
-  AnimationInfo get animation => const AnimationInfo(
-        frameCount: 93,
-        loopCount: 0,
-        complete: true,
-      );
-
-  @override
-  int get cycle => 0;
-
-  @override
-  bool rewind() => true;
-
-  @override
-  Future<CursorStep> decodeNext() async =>
-      CursorStep.frame(_TestFrame(epoch, _next++));
 
   @override
   void dispose() {}

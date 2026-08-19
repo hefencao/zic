@@ -854,8 +854,14 @@ final class _Lane {
     return completer.future;
   }
 
-  bool _containsAny(Set<String> keys) =>
-      keys.any((key) => _pending.containsKey(key) || _active.containsKey(key));
+  bool _containsAny(Set<String> keys) => keys.any((key) {
+        if (_pending.containsKey(key)) return true;
+        final task = _active[key];
+        if (task == null) return false;
+        return task.responseReadPermitHeld ||
+            task.resumeRequested ||
+            task.token.cancelled;
+      });
 
   bool _pendingBucketAvailable(
     _Pending pending, {
@@ -975,7 +981,7 @@ final class _Lane {
               (nextResume.value.priority == nextPending.priority &&
                   nextResume.value.resumeSeq <= nextPending.seq));
       if (resumeWins) {
-        _grantResponseReadPermit(nextResume!.key, nextResume.value);
+        _grantResponseReadPermit(nextResume.key, nextResume.value);
         continue;
       }
 
@@ -1098,6 +1104,7 @@ final class _Lane {
       _decrementTransportLease(task.bucket);
     }
     _requestPump();
+    _notifyIdle();
   }
 
   Future<void> _acquireResponseReadPermit(
@@ -1167,8 +1174,12 @@ final class _Lane {
     for (final entry in _active.entries) {
       final task = entry.value;
       if (!task.transportLeaseHeld ||
-          task.responseReadPermitHeld ||
-          !task.responseRetainedWhilePermitReleased ||
+          (task.responseReadPermitHeld &&
+              (task.token.restartCostElapsedMicros > 0 ||
+                  task.token.restartCostBytes > 0)) ||
+          (!task.responseRetainedWhilePermitReleased &&
+              (task.token.restartCostElapsedMicros > 0 ||
+                  task.token.restartCostBytes > 0)) ||
           task.demanded ||
           task.token.cancelled) {
         continue;
@@ -1196,6 +1207,9 @@ final class _Lane {
   }
 
   bool _inactiveParkedVictimBefore(_ActiveTask a, _ActiveTask b) {
+    if (a.responseReadPermitHeld != b.responseReadPermitHeld) {
+      return !a.responseReadPermitHeld;
+    }
     if (a.resumeRequested != b.resumeRequested) return !a.resumeRequested;
     if (a.priority != b.priority) return a.priority < b.priority;
     return a.parkedSeq < b.parkedSeq;

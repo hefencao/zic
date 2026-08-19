@@ -616,11 +616,14 @@ final class _MemoryArtifactStore implements ArtifactCacheBackend {
     return ArtifactCacheStreamEntry(
       length: bytes.lengthInBytes,
       open: ({required int start, int? endExclusive}) async* {
-        yield Uint8List.sublistView(
-          bytes,
-          start,
-          endExclusive ?? bytes.lengthInBytes,
-        );
+        final end = (endExclusive ?? bytes.lengthInBytes)
+            .clamp(start, bytes.lengthInBytes)
+            .toInt();
+        const chunkSize = defaultTransportChunkBytes;
+        for (var offset = start; offset < end; offset += chunkSize) {
+          final chunkEnd = (offset + chunkSize).clamp(offset, end).toInt();
+          yield Uint8List.sublistView(bytes, offset, chunkEnd);
+        }
       },
       readAll: () async => bytes,
     );

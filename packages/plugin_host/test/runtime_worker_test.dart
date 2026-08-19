@@ -25,6 +25,14 @@ void main() {
       addTearDown(session.close);
 
       final source = session.sources.single;
+      final sectionSource = source as SectionedBrowsableComicSource;
+      expect((await sectionSource.loadBrowseSections()).single.sectionId, 'popular');
+      await worker.handle(
+        ExternalPluginRuntimeRequest.loadSearchFilters(
+          requestId: 'filters-1',
+          externalSourceId: 'fixture',
+        ).toMessage(),
+      );
       final browse = await source.browse(query: 'fixture');
       expect(browse.items.single.comicId, 'comic-1');
       final comic = await source.loadComic('comic-1');

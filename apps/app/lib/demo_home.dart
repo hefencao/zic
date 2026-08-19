@@ -191,7 +191,6 @@ final class _DemoHomeState extends State<DemoHome> {
   late LibrarySortMode _sortMode;
   late ShelfViewPreference _shelfViewMode;
 
-  Future<void> get _libraryReady => _librarySession.ready;
   List<ImportedLibraryEntry> get _libraryEntries => _librarySession.entries;
   List<SavedComicRecord> get _savedComics => _librarySession.savedComics;
   List<LibraryCategory> get _categories => _librarySession.categories;
@@ -211,6 +210,8 @@ final class _DemoHomeState extends State<DemoHome> {
   bool get _libraryLoading => _librarySession.loading;
   String? get _activeSourceId => _librarySession.activeSourceId;
   set _activeSourceId(String? value) => _librarySession.activeSourceId = value;
+
+  void _setState(VoidCallback fn) => setState(fn);
 
   List<LibraryComic> get _libraryComics => collapseCanonicalLibraryComics(
         aggregateImportedLibrary(
@@ -1422,18 +1423,6 @@ final class _DemoHomeState extends State<DemoHome> {
       _selectedCategoryId = null;
     }
     await _reloadLibrary();
-  }
-
-  Future<void> _toggleCategory(
-    LibraryComic comic,
-    String categoryId,
-  ) async {
-    final preference = _preferenceForComic(comic);
-    final categories = preference.categoryIds.toSet();
-    if (!categories.add(categoryId)) {
-      categories.remove(categoryId);
-    }
-    await _savePreference(preference.copyWith(categoryIds: categories));
   }
 
   Future<void> _reorderCustom(int oldIndex, int newIndex) async {

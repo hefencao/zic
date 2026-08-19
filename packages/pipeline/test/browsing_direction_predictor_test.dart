@@ -100,7 +100,7 @@ void main() {
       chapter: chapter,
       observation: obs,
       window: window,
-      decodeTarget: const DecodeTarget(
+      decodeTarget: DecodeTarget(
         physicalWidth: 1080,
         physicalHeight: 1920,
       ),

@@ -20,7 +20,7 @@ final class _PreparedChapterMigration {
 ComicVersionSource? _sourceVersionCapability(BrowsableComicSource source) {
   final Object candidate = source;
   if (candidate is! ComicVersionSource) return null;
-  return candidate as ComicVersionSource;
+  return candidate;
 }
 
 bool _sourceSupportsVersionEntry(BrowsableComicSource source) =>

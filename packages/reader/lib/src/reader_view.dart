@@ -532,7 +532,9 @@ final class _ReaderViewState extends State<ReaderView> {
         return;
       }
       final pending = _pendingVerticalLayoutRatios;
-      if (pending == null || identical(pending, _verticalLayoutRatios)) {
+      if (pending == null ||
+          identical(pending, _verticalLayoutRatios) ||
+          _sameVerticalRatios(_verticalLayoutRatios, pending)) {
         _pendingVerticalLayoutRatios = null;
         return;
       }
@@ -571,6 +573,7 @@ final class _ReaderViewState extends State<ReaderView> {
   void _scheduleVerticalInitialCompositionWarmup() {
     if (_verticalInitialCompositionWarmupScheduled ||
         _verticalInitialCompositionPrimed ||
+        _verticalCacheScreens >= 7 ||
         widget.controller.direction != ReadingDirection.vertical ||
         _viewport == Size.zero) {
       return;
@@ -649,12 +652,24 @@ final class _ReaderViewState extends State<ReaderView> {
     Map<String, double>? ratios,
     bool? stitch,
     Size? viewport,
-  }) =>
-      _verticalGeometry(
-        ratios: ratios,
-        stitch: stitch,
-        viewport: viewport,
-      ).boundsAt(index);
+  }) {
+    final geometry = _verticalGeometry(
+      ratios: ratios,
+      stitch: stitch,
+      viewport: viewport,
+    );
+    final bounds = geometry.boundsAt(index);
+    assert(
+      _verticalExtent(
+            widget.controller.chapter.pages[index],
+            index,
+            ratios: ratios,
+            viewport: viewport,
+          ) >=
+          0,
+    );
+    return bounds;
+  }
 
   void _preserveVerticalAnchor({
     required Map<String, double> oldRatios,
@@ -716,14 +731,6 @@ final class _ReaderViewState extends State<ReaderView> {
 
   double _verticalOffsetFor(int index) =>
       _verticalGeometry().centeredOffsetFor(index);
-
-  ({int index, double logicalPosition}) _verticalPosition(
-    ScrollMetrics metrics,
-  ) =>
-      _verticalGeometry().positionAt(
-        pixels: metrics.pixels,
-        viewportDimension: metrics.viewportDimension,
-      );
 
   void _prepareVerticalControllerForCurrentPage() {
     if (_verticalController.hasClients || _viewport == Size.zero) return;
@@ -949,11 +956,25 @@ final class _ReaderViewState extends State<ReaderView> {
       final timing = timings[index];
       if (_isFrameTimingOutlier(timing)) {
         _flushFrameTimingSummary();
-        _recordFrameTiming(
-          timing,
-          context: context,
-          timingBatchIndex: index,
-          timingBatchSize: timings.length,
+        widget.traceSink.record(
+          traceEvent(
+            clock: widget.clock,
+            sessionId: widget.controller.sessionId,
+            kind: TraceEventKind.readerFrameTiming,
+            revision: widget.demandRevision?.call(),
+            payload: <String, Object?>{
+              ...context.toPayload(),
+              'buildMicros': timing.buildMicros,
+              'rasterMicros': timing.rasterMicros,
+              'totalSpanMicros': timing.totalSpanMicros,
+              'vsyncOverheadMicros': timing.vsyncOverheadMicros,
+              'vsyncStartMicros': timing.vsyncStartMicros,
+              if (timing.frameIntervalMicros != null)
+                'frameIntervalMicros': timing.frameIntervalMicros,
+              'timingBatchIndex': index,
+              'timingBatchSize': timings.length,
+            },
+          ),
         );
       } else {
         _appendFrameTimingSummary(timing, context);
@@ -1001,34 +1022,6 @@ final class _ReaderViewState extends State<ReaderView> {
         kind: TraceEventKind.readerFrameTiming,
         revision: (demandRevision ?? widget.demandRevision)?.call(),
         payload: summary.toPayload(),
-      ),
-    );
-  }
-
-  void _recordFrameTiming(
-    ReaderFrameTimingSample timing, {
-    required _ReaderFrameTimingTraceContext context,
-    required int timingBatchIndex,
-    required int timingBatchSize,
-  }) {
-    widget.traceSink.record(
-      traceEvent(
-        clock: widget.clock,
-        sessionId: widget.controller.sessionId,
-        kind: TraceEventKind.readerFrameTiming,
-        revision: widget.demandRevision?.call(),
-        payload: <String, Object?>{
-          ...context.toPayload(),
-          'buildMicros': timing.buildMicros,
-          'rasterMicros': timing.rasterMicros,
-          'totalSpanMicros': timing.totalSpanMicros,
-          'vsyncOverheadMicros': timing.vsyncOverheadMicros,
-          'vsyncStartMicros': timing.vsyncStartMicros,
-          if (timing.frameIntervalMicros != null)
-            'frameIntervalMicros': timing.frameIntervalMicros,
-          'timingBatchIndex': timingBatchIndex,
-          'timingBatchSize': timingBatchSize,
-        },
       ),
     );
   }
@@ -1081,7 +1074,13 @@ final class _ReaderViewState extends State<ReaderView> {
           : Interaction.idle;
       _emitFromVerticalMetrics(notification.metrics, forceLayoutSnapshot: true);
       if (_verticalInitialCompositionPrimed && _verticalCacheScreens != 2) {
-        setState(() => _verticalCacheScreens = 2);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted &&
+              _verticalCacheScreens != 2 &&
+              _interaction == Interaction.idle) {
+            setState(() => _verticalCacheScreens = 2);
+          }
+        });
       }
       if (_interaction == Interaction.idle) {
         _schedulePendingVerticalRatioCommit();
@@ -1192,13 +1191,7 @@ final class _ReaderViewState extends State<ReaderView> {
     final revision = widget.demandRevision?.call();
     final controller = widget.controller;
     final pages = controller.chapter.pages;
-    // This is diagnostics only. Sampling every mounted page makes the trace
-    // itself compete with a scroll frame on dense, short-page chapters.
-    final samples = visible
-        .where((sample) =>
-            sample.index == currentIndex || sample.index == targetIndex)
-        .take(2)
-        .toList(growable: false);
+    final samples = visible.take(8).toList(growable: false);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
           widget.controller != controller ||
@@ -1730,28 +1723,29 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
 
   @override
   Widget build(BuildContext context) {
+    final page = _ZoomableReaderPage(
+      key: ValueKey<String>('zoom:${widget.asset.assetKey}'),
+      active: _activeNotifier,
+      clock: widget.clock,
+      onTap: widget.onTap,
+      onZoomChanged: widget.onZoomChanged,
+      child: _ReaderPageHost(
+        key: ValueKey<String>(
+          'reader-page-host:${widget.asset.assetKey}',
+        ),
+        asset: widget.asset,
+        keepAlive: _keepAliveNotifier,
+        sessionId: widget.controller.sessionId,
+        clock: widget.clock,
+        traceSink: widget.traceSink,
+        pageBuilder: widget.pageBuilder,
+        demandRevision: widget.demandRevision,
+      ),
+    );
     return RotatedBox(
       key: ValueKey<String>('reader-page-rotation:${widget.index}'),
       quarterTurns: _rotationQuarterTurns,
-      child: _ZoomableReaderPage(
-        key: ValueKey<String>('zoom:${widget.asset.assetKey}'),
-        active: _activeNotifier,
-        clock: widget.clock,
-        onTap: widget.onTap,
-        onZoomChanged: widget.onZoomChanged,
-        child: _ReaderPageHost(
-          key: ValueKey<String>(
-            'reader-page-host:${widget.asset.assetKey}',
-          ),
-          asset: widget.asset,
-          keepAlive: _keepAliveNotifier,
-          sessionId: widget.controller.sessionId,
-          clock: widget.clock,
-          traceSink: widget.traceSink,
-          pageBuilder: widget.pageBuilder,
-          demandRevision: widget.demandRevision,
-        ),
-      ),
+      child: page,
     );
   }
 }

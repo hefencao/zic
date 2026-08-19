@@ -711,17 +711,16 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     required bool force,
     required int submittedAtMicros,
   }) async {
-    while (true) {
-      final current = _decodes[id];
-      if (current == null || current.expirationRevision < _revision) {
-        return;
-      }
-      final sourceRevision = _availableSourceRevision(id.download);
-      final observedSourceRevision = _decodeSourceRevisions[id] ?? -1;
-      final pendingSourceWake = sourceRevision > observedSourceRevision;
-      if (sourceWake && !pendingSourceWake) {
-        return;
-      }
+    final current = _decodes[id];
+    if (current == null || current.expirationRevision < _revision) {
+      return;
+    }
+    final sourceRevision = _availableSourceRevision(id.download);
+    final observedSourceRevision = _decodeSourceRevisions[id] ?? -1;
+    final pendingSourceWake = sourceRevision > observedSourceRevision;
+    if (sourceWake && !pendingSourceWake) {
+      return;
+    }
 
       final registry = decodes;
       final before = registry?.find(id)?.snapshot;
@@ -738,6 +737,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           // pending unless the session itself proves that no fill is needed.
           if (pendingSourceWake &&
               sourceRevision >= 0 &&
+              before?.state != DecodeState.waitingSource &&
               !_decodeNeedsFill(
                 before,
                 current,
@@ -777,7 +777,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             sourceWake: pendingSourceWake,
             force: force,
           )) {
-        if (pendingSourceWake && sourceRevision >= 0) {
+        if (pendingSourceWake &&
+            sourceRevision >= 0 &&
+            before?.state != DecodeState.waitingSource) {
           _decodeSourceRevisions[id] = sourceRevision;
         }
         return;
@@ -849,7 +851,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                 message: 'decode fill returned a failed snapshot',
               );
         }
-        if (sourceRevision >= 0) {
+        if (sourceRevision >= 0 &&
+            (after == null || after.state != DecodeState.waitingSource)) {
           _decodeSourceRevisions[id] = sourceRevision;
         }
         if (after != null) {
@@ -933,17 +936,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         }
         return;
       }
-
-      if (!pendingSourceWake) {
-        return;
-      }
-      final latestSourceRevision = _availableSourceRevision(id.download);
-      final consumedSourceRevision = _decodeSourceRevisions[id] ?? -1;
-      if (consumedSourceRevision >= latestSourceRevision) {
-        return;
-      }
     }
-  }
 
   void _scheduleDecodeRecovery(
     String sessionId,
@@ -1263,7 +1256,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                       before?.frameIndex != after.frameIndex);
               if (producedFrame ||
                   (after.state == UploadState.waitingFrame &&
-                      _decodes.containsKey(id))) {
+                      _decodes.containsKey(id) &&
+                      decodes?.find(id)?.state != DecodeState.waitingSource)) {
                 _wakeDecode(sessionId, id, force: true);
               }
             }

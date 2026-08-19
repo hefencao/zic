@@ -39,7 +39,7 @@ final class FakeTransport implements Transport {
         rangeSupported &&
         range.start <= bytes.length &&
         (validators == null || validators.isEmpty || validators.matches(this.validators));
-    final start = canServeRange ? range!.start : 0;
+    final start = canServeRange ? range.start : 0;
 
     return ByteResponse(
       bytes: _chunks(start),

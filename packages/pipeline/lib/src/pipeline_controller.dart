@@ -1,7 +1,6 @@
 import 'package:domain/domain.dart';
 import 'package:telemetry/telemetry.dart';
 
-import 'animated_prefetch_policy.dart';
 import 'browsing_direction_predictor.dart';
 import 'demand.dart';
 import 'decode_target.dart';
@@ -55,9 +54,11 @@ final class PipelineController {
   final BrowsingDirectionPredictor _directionPredictor =
       BrowsingDirectionPredictor();
   int _readDirection = 1;
-  ReaderObs? _lastObservation;
   final Map<int, bool> _runtimeAnimatedPages = <int, bool>{};
   final Set<int> _runtimeWebpCostPages = <int>{};
+  ReaderObs? _lastObservation;
+  Set<int>? _previousVisibleIndexes;
+  bool? _previousVerticalActive;
   int _animatedFlowStage = 0;
 
   int get revision => _revision;
@@ -207,8 +208,20 @@ final class PipelineController {
       previousCurrentIndex: _lastCurrentIndex,
       readDirection: _readDirection,
     );
+    final currentVisibleIndexes = observation.visibleCoverages
+        .where((coverage) => coverage.fraction > 0)
+        .map((coverage) => coverage.pageIndex)
+        .toSet()
+      ..add(observation.currentIndex);
+    final visibleChanged =
+        !_sameVisibleIndexes(_previousVisibleIndexes, currentVisibleIndexes);
+    final verticalActive = observation.direction == ReadingDirection.vertical &&
+        _isVerticalPresentationActive(observation.interaction);
+    final verticalActiveChanged = _previousVerticalActive != verticalActive;
     final windowChanged =
         !_sameRoles(_previousRoles, window.roles) ||
+        visibleChanged ||
+        verticalActiveChanged ||
         _previousRetainedIndex != window.retainedIndex;
     if (!force && !_decodeTargetDirty && !windowChanged) {
       return;
@@ -244,12 +257,16 @@ final class PipelineController {
     // refreshes expiration metadata and used to make every decode/upload look
     // changed even when the policy result was identical.
     if (!windowChanged && !_decodeTargetDirty && diff.isEmpty) {
+      _previousVisibleIndexes = currentVisibleIndexes;
+      _previousVerticalActive = verticalActive;
       return;
     }
 
     _revision = candidateRevision;
     _previousRoles = Map<int, PageRole>.unmodifiable(window.roles);
     _previousRetainedIndex = window.retainedIndex;
+    _previousVisibleIndexes = currentVisibleIndexes;
+    _previousVerticalActive = verticalActive;
     _previous = plan;
     _decodeTargetDirty = false;
 
@@ -306,4 +323,20 @@ bool _sameRoles(Map<int, PageRole>? previous, Map<int, PageRole> next) {
     }
   }
   return true;
+}
+
+bool _isVerticalPresentationActive(Interaction interaction) => switch (interaction) {
+      Interaction.dragging ||
+      Interaction.scrolling ||
+      Interaction.settling => true,
+      Interaction.idle ||
+      Interaction.scrubbing ||
+      Interaction.jumping => false,
+    };
+
+bool _sameVisibleIndexes(Set<int>? previous, Set<int> next) {
+  if (previous == null || previous.length != next.length) {
+    return false;
+  }
+  return previous.containsAll(next);
 }

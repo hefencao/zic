@@ -296,7 +296,7 @@ void main() {
     ingress.append(
       epoch: const SourceEpoch(0),
       offset: 0,
-      bytes: List<int>.filled(300000, 1),
+      bytes: <int>[...'RIFF....WEBP'.codeUnits, ...List<int>.filled(300000 - 12, 1)],
     );
     final download = DownloadSession(
       id: _downloadId(),
@@ -799,7 +799,7 @@ void main() {
       ingress.append(
         epoch: const SourceEpoch(0),
         offset: 0,
-        bytes: List<int>.filled(300000, 1),
+        bytes: <int>[...'RIFF....WEBP'.codeUnits, ...List<int>.filled(300000 - 12, 1)],
       );
       final download = DownloadSession(
         id: _downloadId(),

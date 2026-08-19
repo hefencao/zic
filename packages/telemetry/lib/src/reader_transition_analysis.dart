@@ -285,7 +285,7 @@ final class ReaderTransitionTraceAnalyzer {
             ordered,
             kind: TraceEventKind.firstFrameReady,
             matches: identity.matchesPage,
-            notBeforeMicros: mountedBeforeTransition!.monotonicMicros,
+            notBeforeMicros: mountedBeforeTransition.monotonicMicros,
             notAfterMicros: transition.monotonicMicros,
           )
         : null;

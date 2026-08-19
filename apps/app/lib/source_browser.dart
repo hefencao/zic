@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:network_bridge/network_bridge.dart';
 import 'package:resource_cache/resource_cache.dart';
-import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'package:downloads/downloads.dart';
@@ -379,7 +378,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         _hasMore = false;
         _nextOffset = _pageOffset;
       } else {
-        _applyBrowsePage(cached!, sourceId: source.sourceId);
+        _applyBrowsePage(cached, sourceId: source.sourceId);
       }
     });
   }

@@ -101,7 +101,7 @@ extension _DemoHomeViews on _DemoHomeState {
                       sources: _enabledSources,
                       activeSourceId: _activeSourceId,
                       onSourceSelected: (sourceId) {
-                        setState(() => _activeSourceId = sourceId);
+                        _setState(() => _activeSourceId = sourceId);
                       },
                       loadCover: _loadSourceBrowseCover,
                       onOpenComic: _openSourceComic,
@@ -400,30 +400,12 @@ extension _DemoHomeViews on _DemoHomeState {
     }
     await _removeComic(comic);
     if (mounted && _managedComicIdentities.contains(comic.identity)) {
-      setState(() {
+      _setState(() {
         _managedComicIdentities.remove(comic.identity);
         if (_managedComicIdentities.isEmpty) {
           _batchManagement = false;
         }
       });
-    }
-  }
-
-  Future<void> _copyComicInfo(LibraryComic comic) async {
-    final sources = comic.chapters
-        .map((entry) => entry.chapter.directoryId)
-        .where((value) => value.isNotEmpty)
-        .toSet()
-        .join('\n');
-    await Clipboard.setData(
-      ClipboardData(
-        text: sources.isEmpty ? comic.title : '${comic.title}\n$sources',
-      ),
-    );
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('漫画信息已复制')),
-      );
     }
   }
 
@@ -497,7 +479,7 @@ extension _DemoHomeViews on _DemoHomeState {
       await _moveComicToCategory(comic, targetCategoryId);
     }
     if (mounted) {
-      setState(_clearManagedSelection);
+      _setState(_clearManagedSelection);
     }
   }
 
@@ -548,7 +530,7 @@ extension _DemoHomeViews on _DemoHomeState {
       await _removeComic(comic);
     }
     if (mounted) {
-      setState(_clearManagedSelection);
+      _setState(_clearManagedSelection);
     }
   }
 
@@ -708,7 +690,7 @@ extension _DemoHomeViews on _DemoHomeState {
             IconButton(
               key: bookshelfBatchClearKey,
               tooltip: '清除选择',
-              onPressed: () => setState(_clearManagedSelection),
+              onPressed: () => _setState(_clearManagedSelection),
               icon: const Icon(Icons.close),
             ),
             const SizedBox(width: 14),
@@ -990,7 +972,7 @@ extension _DemoHomeViews on _DemoHomeState {
                   const SizedBox(width: 8),
                   TextButton.icon(
                     key: bookshelfManageKey,
-                    onPressed: () => setState(() {
+                    onPressed: () => _setState(() {
                       _manageShelf = !_manageShelf;
                       _clearManagedSelection();
                     }),
@@ -1074,7 +1056,7 @@ extension _DemoHomeViews on _DemoHomeState {
                 label: const Text('全部分类'),
                 selected: _selectedCategoryId == null,
                 showCheckmark: false,
-                onSelected: (_) => setState(() {
+                onSelected: (_) => _setState(() {
                   _selectedCategoryId = null;
                   _clearManagedSelection();
                 }),
@@ -1088,7 +1070,7 @@ extension _DemoHomeViews on _DemoHomeState {
                     label: Text(category.name),
                     selected: _selectedCategoryId == category.categoryId,
                     showCheckmark: false,
-                    onSelected: (_) => setState(() {
+                    onSelected: (_) => _setState(() {
                       _selectedCategoryId = category.categoryId;
                       _clearManagedSelection();
                     }),

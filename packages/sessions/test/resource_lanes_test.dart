@@ -2,10 +2,8 @@ import 'package:domain/domain.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:sessions/sessions.dart';
 import 'package:storage/storage.dart';
-import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 import 'package:testkit/testkit.dart';
-import 'package:transport/transport.dart';
 
 void main() {
   test('decode and upload demands run on their own lanes', () async {

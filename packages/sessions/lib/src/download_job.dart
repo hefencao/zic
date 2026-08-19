@@ -403,16 +403,16 @@ final class DownloadJob {
       }
     }
 
-    if (fullBodyCatchup) {
-      cancel?.beginRestartCost();
-    }
+    cancel?.beginRestartCost();
 
     final writer = session.acquireWriter();
     var offset = session.committedLength;
     final iterator = StreamIterator<List<int>>(response.bytes);
     List<int> catchupRemainder = const <int>[];
     var restartCostBytes = 0;
-    if (validatorlessRangeProbe) {
+    if (validatorlessRangeProbe &&
+        response.statusCode == 206 &&
+        response.rangeStart == probeStart) {
       var duplicatePrefixBytes = 0;
       try {
         catchupRemainder = await _verifyArtifactOverlap(
@@ -559,7 +559,7 @@ final class DownloadJob {
         networkCursor += chunk.length;
         session.advanceNetworkAttemptProgress(networkCursor);
         pending.add(chunk);
-        if (pending.length >= flushTarget) {
+        if (pending.length >= flushTarget || offset == 0) {
           await flushPending();
         }
       }
@@ -693,7 +693,18 @@ final class DownloadJob {
     if (preservedLength <= 0) {
       return const <int>[];
     }
-    if (expectedChecksum.isEmpty) {
+    var targetChecksum = expectedChecksum;
+    if (targetChecksum.isEmpty) {
+      final diskCrc = Crc32();
+      await for (final chunk in session.artifact.readChunks(
+        start: 0,
+        endExclusive: preservedLength,
+      )) {
+        diskCrc.add(chunk);
+      }
+      targetChecksum = diskCrc.hex;
+    }
+    if (targetChecksum.isEmpty) {
       throw const Failure(
         code: ErrorCode.resumeRejected,
         message: 'partial checksum unavailable; preserved the existing partial',
@@ -732,7 +743,7 @@ final class DownloadJob {
       consumed += take;
       onDuplicateBytes(consumed);
       if (remaining == 0) {
-        if (checksum.hex != expectedChecksum) {
+        if (checksum.hex != targetChecksum) {
           throw const Failure(
             code: ErrorCode.resumeRejected,
             message:

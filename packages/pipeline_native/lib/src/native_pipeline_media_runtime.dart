@@ -19,7 +19,11 @@ final class NativePipelineMediaRuntimeFactory
       final presenter = AndroidTexturePresenter(telemetrySink: _routeTelemetry);
       _texturePresenter = presenter;
       _texturePool = _AndroidTextureLeasePool(presenter);
-      WidgetsBinding.instance.addObserver(this);
+      try {
+        WidgetsBinding.instance.addObserver(this);
+      } on Object {
+        // Binding uninitialized in pure test environments.
+      }
     }
     unawaited(_prewarmWithoutSurfacingFailure());
   }
@@ -302,13 +306,10 @@ final class _AndroidTextureUploader implements _NativeFrameUploader {
 }
 
 final class _AndroidTextureLeasePool {
-  _AndroidTextureLeasePool(
-    this.presenter, {
-    this.maxIdle = 4,
-  });
+  _AndroidTextureLeasePool(this.presenter);
 
   final AndroidTexturePresenter presenter;
-  final int maxIdle;
+  final int maxIdle = 4;
   final Map<_TextureSize, List<AndroidTextureLease>> _idle =
       <_TextureSize, List<AndroidTextureLease>>{};
   final Map<_TextureSize, Future<void>> _prewarming =

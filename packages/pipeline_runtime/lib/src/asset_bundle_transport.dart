@@ -33,8 +33,8 @@ final class AssetBundleTransport implements Transport {
         (validators == null ||
             validators.isEmpty ||
             validators.matches(currentValidators));
-    final start = canServeRange ? range!.start : 0;
-    final requestedEnd = canServeRange ? range!.end : null;
+    final start = canServeRange ? range.start : 0;
+    final requestedEnd = canServeRange ? range.end : null;
     final endExclusive = requestedEnd == null
         ? bytes.length
         : (requestedEnd + 1).clamp(start, bytes.length).toInt();

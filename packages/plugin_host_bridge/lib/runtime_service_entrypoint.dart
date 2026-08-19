@@ -65,6 +65,8 @@ final class AndroidExternalPluginRuntimeServiceBootstrap {
 }
 
 AndroidExternalPluginRuntimeServiceHandler? _runtimeServiceHandler;
+AndroidExternalPluginRuntimeServiceHandler? get activeRuntimeServiceHandler =>
+    _runtimeServiceHandler;
 
 /// FlutterEngine entrypoint used only by the non-exported Android service
 /// process declared by `plugin_host_bridge`.

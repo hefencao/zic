@@ -262,7 +262,11 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           prior.replacing != snapshot.replacing ||
           !identical(prior.failure, snapshot.failure);
       if (visualChanged) {
-        setState(() => _pageOutputSnapshot = snapshot);
+        if (_pageOutputSnapshot == null) {
+          _pageOutputSnapshot = snapshot;
+        } else {
+          setState(() => _pageOutputSnapshot = snapshot);
+        }
       } else {
         _pageOutputSnapshot = snapshot;
       }
@@ -413,7 +417,11 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           _reportedDimensionsAuthoritative || authoritative;
     }
     if (mounted) {
-      setState(commit);
+      if (_reportedDimensions == null) {
+        commit();
+      } else {
+        setState(commit);
+      }
     } else {
       commit();
     }
@@ -780,7 +788,7 @@ final class MediaAspectViewport extends StatelessWidget {
       child: FittedBox(
         fit: fit,
         alignment: mediaAlignmentFor(fit),
-        clipBehavior: Clip.hardEdge,
+        clipBehavior: fit == BoxFit.fitWidth ? Clip.none : Clip.hardEdge,
         child: SizedBox(
           width: source.width,
           height: source.height,

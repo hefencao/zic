@@ -155,12 +155,12 @@ void main() {
 
     manager.linkEquivalent(first: newId, second: oldId);
     final lookup = await manager.lookup(newId);
-    final read = await manager.readForeground(newId);
+    final read = await manager.readForegroundLookup(lookup!);
 
-    expect(lookup?.id, newId);
-    expect(lookup?.storageId, oldId);
-    expect(read?.bytes, bytes);
-    expect(backend.openCalls, 1);
+    expect(lookup.id, newId);
+    expect(lookup.storageId, oldId);
+    expect(read.bytes, bytes);
+    expect(backend.openCalls, 2);
     expect(manager.equivalenceCount, 1);
   });
 

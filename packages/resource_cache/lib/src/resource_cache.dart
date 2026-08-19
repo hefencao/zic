@@ -409,7 +409,7 @@ final class ResourceCacheManager {
       loader: loader,
       weightOf: (value) => value.lengthInBytes,
       forceRefresh: forceRefresh,
-      allowPersistentRead: true,
+      allowPersistentRead: awaitPersistence,
       awaitPersistence: awaitPersistence,
       persistenceRetention: retention,
     );

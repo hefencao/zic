@@ -6,12 +6,8 @@ Uri _sourceComicWebUri(
   String comicId,
 ) {
   final Object candidate = source;
-  final ComicWebUriSource? webSource;
-  if (candidate is ComicWebUriSource) {
-    webSource = candidate as ComicWebUriSource;
-  } else {
-    webSource = null;
-  }
+  final ComicWebUriSource? webSource =
+      candidate is ComicWebUriSource ? candidate : null;
   return webSource?.resolveComicWebUri(comicId) ?? source.descriptor.website;
 }
 
@@ -20,12 +16,8 @@ ComicWebViewRequest _sourceWebViewRequest(
   Uri url,
 ) {
   final Object candidate = source;
-  final ComicWebViewRequestSource? requestSource;
-  if (candidate is ComicWebViewRequestSource) {
-    requestSource = candidate as ComicWebViewRequestSource;
-  } else {
-    requestSource = null;
-  }
+  final ComicWebViewRequestSource? requestSource =
+      candidate is ComicWebViewRequestSource ? candidate : null;
   return requestSource?.webViewRequest(url) ?? ComicWebViewRequest(url: url);
 }
 
@@ -138,7 +130,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
       final active = _sourceForId(source.sourceId) ?? source;
       final Object? candidate = active;
       if (candidate is AuthenticatableComicSource) {
-        final accountSource = candidate as AuthenticatableComicSource;
+        final accountSource = candidate;
         try {
           await accountSource.confirmWebLogin(
             currentUrl: snapshot.currentUrl.toString(),
@@ -247,7 +239,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
       return;
     }
     Navigator.of(context).pop();
-    setState(() {
+    _setState(() {
       _activeSourceId = source.sourceId;
       _sourcePageVisited = true;
       _sourceSearchQuery = normalized;

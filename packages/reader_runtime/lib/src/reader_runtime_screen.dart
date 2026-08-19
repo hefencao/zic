@@ -850,6 +850,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     BuildContext context,
     ReaderController reader,
   ) {
+    if (!_controlsVisible) return const SizedBox.shrink();
     final subtitle = widget.pageSubtitleBuilder?.call(
       widget.chapter.pages[reader.currentIndex],
     );
@@ -925,6 +926,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     BuildContext context,
     ReaderController reader,
   ) {
+    if (!_controlsVisible) return const SizedBox.shrink();
     final pages = widget.chapter.pages.length;
     return SafeArea(
       key: readerBottomControlsKey,

@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:domain/domain.dart';
 import 'package:sessions/sessions.dart';
 import 'package:storage/storage.dart';
-import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 import 'package:testkit/testkit.dart';
 

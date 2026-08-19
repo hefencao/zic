@@ -818,7 +818,7 @@ void main() {
             required bool refreshRemote,
             required String title,
             int? initialPageIndex,
-          }) async {},
+          }) async => null,
           onDownloadChapter: (_) async {},
           inspectChapterDownload: (chapter) async =>
               ChapterDownloadSnapshot.idle(chapter),
@@ -914,6 +914,7 @@ void main() {
             expect(refreshRemote, isFalse);
             expect(title, '第 1 话');
             expect((await loadChapter()).chapter.chapterId, source._chapterId);
+            return null;
           },
           onDownloadChapter: (_) async {},
           inspectChapterDownload: (chapter) async =>
@@ -1016,7 +1017,7 @@ void main() {
             required bool refreshRemote,
             required String title,
             int? initialPageIndex,
-          }) async {},
+          }) async => null,
           onDownloadChapter: (_) async {},
           inspectChapterDownload: (chapter) async =>
               ChapterDownloadSnapshot.idle(chapter),
@@ -1119,6 +1120,7 @@ void main() {
             int? initialPageIndex,
           }) async {
             openedPage = initialPageIndex;
+            return null;
           },
           onDownloadChapter: (_) async {},
           inspectChapterDownload: (chapter) async =>
@@ -1300,7 +1302,7 @@ void main() {
             required bool refreshRemote,
             required String title,
             int? initialPageIndex,
-          }) async {},
+          }) async => null,
           onDownloadChapter: (_) async {},
           inspectChapterDownload: (chapter) async =>
               ChapterDownloadSnapshot.idle(chapter),
@@ -1961,7 +1963,7 @@ void main() {
             required bool refreshRemote,
             required String title,
             int? initialPageIndex,
-          }) async {},
+          }) async => null,
           onDownloadChapter: (_) async {},
           inspectChapterDownload: (chapter) async =>
               ChapterDownloadSnapshot.idle(chapter),
@@ -2063,7 +2065,7 @@ void main() {
             required bool refreshRemote,
             required String title,
             int? initialPageIndex,
-          }) async {},
+          }) async => null,
           onDownloadChapter: (_) async {},
           inspectChapterDownload: (chapter) async =>
               ChapterDownloadSnapshot.idle(chapter),

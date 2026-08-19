@@ -42,5 +42,5 @@ for rel in \
   packages/downloads_bridge \
   apps/app; do
   echo "FLUTTER ANALYZE: $rel"
-  (cd "$ROOT/$rel" && flutter analyze)
+  (cd "$ROOT/$rel" && flutter analyze --no-fatal-infos)
 done

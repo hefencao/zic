@@ -244,9 +244,8 @@ void main() {
     );
     addTearDown(runtime.dispose);
     final first = runtime.registry.get(_id('failure-first'));
-    final second = runtime.registry.get(_id('failure-second'));
-
     await _writePartial(first, <int>[1, 2, 3]);
+    final second = runtime.registry.get(_id('failure-second'));
     await _writePartial(second, <int>[4, 5, 6]);
     await runtime.settlePhysicalRetention();
 

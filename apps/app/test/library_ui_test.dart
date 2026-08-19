@@ -56,8 +56,10 @@ Widget _localDetailsScreen({
       required bool refreshRemote,
       required String title,
       int? initialPageIndex,
-    }) async =>
-        onOpenChapter(await loadChapter()),
+    }) async {
+      await onOpenChapter(await loadChapter());
+      return null;
+    },
     onDownloadChapter: (_) async {},
     inspectChapterDownload: (chapter) async =>
         ChapterDownloadSnapshot.idle(chapter),
@@ -699,6 +701,7 @@ void main() {
                 sourceKind: ComicSourceKind.remote,
               ),
               coverSource: () async => MemoryEncodedResourceSource(_tinyPng()),
+              coverIdentity: chapter.comicId,
               downloadProgress: const ComicDownloadProgress.active(
                 label: '第 4 话',
                 completedPageUnits: 4,
@@ -736,6 +739,7 @@ void main() {
               comic: comic,
               preference: preference,
               coverSource: () async => MemoryEncodedResourceSource(_tinyPng()),
+              coverIdentity: chapter.comicId,
               downloadProgress: progress,
               onTap: () {},
             ),
@@ -846,6 +850,7 @@ void main() {
                       fastLoads++;
                       return MemoryEncodedResourceSource(_tinyPng());
                     },
+                    coverIdentity: fastChapter.comicId,
                     onTap: () {},
                   ),
                 ),
@@ -855,6 +860,7 @@ void main() {
                     comic: slowComic,
                     preference: preference(slowChapter),
                     coverSource: () => slowSource.future,
+                    coverIdentity: slowChapter.comicId,
                     onTap: () {},
                   ),
                 ),

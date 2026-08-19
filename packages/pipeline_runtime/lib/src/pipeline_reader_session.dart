@@ -1617,6 +1617,10 @@ final class PipelineReaderSession {
   /// current target identity so PipelinePageOutputStream can verify whether its
   /// existing authoritative static projection is still the same surface.
   DecodeId? _staticPresentationContinuityIdentity(DownloadId download) {
+    final active = _activeDecodeIdentity(download);
+    if (active != null) {
+      return active;
+    }
     final binding = _binding;
     final viewport = binding?.viewport;
     if (binding == null || viewport == null) {

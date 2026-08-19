@@ -586,6 +586,7 @@ void main() {
       clock: FakeMonoClock(),
       traceSink: trace,
     );
+    await session.restore();
     final writer = session.acquireWriter();
     await session.append(writer, 0, bytes.sublist(0, prefixLength));
     await session.pause(writer);

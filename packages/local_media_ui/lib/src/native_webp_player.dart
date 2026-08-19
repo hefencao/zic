@@ -80,7 +80,6 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
   int _cycle = 0;
   bool _paused = false;
   double _playbackSpeed = 1;
-  bool _preparing = false;
   bool _completionPending = false;
   int _generation = 0;
   bool _reportedFirstFrame = false;
@@ -668,7 +667,6 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
 
     final clock = Stopwatch()..start();
     _frameClock = clock;
-    _preparing = true;
     unawaited(_prepareFollowing(generation, prepared.duration, clock));
   }
 
@@ -728,10 +726,6 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
         _status = 'native 解码失败，已回退 Flutter codec';
       });
       _resetNative(disposeImage: false);
-    } finally {
-      if (generation == _generation) {
-        _preparing = false;
-      }
     }
   }
 
@@ -808,7 +802,6 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
     _timer = null;
     _timerClock = null;
     _frameClock = null;
-    _preparing = false;
     _completionPending = false;
     _pendingDelay = Duration.zero;
     _pending?.dispose();

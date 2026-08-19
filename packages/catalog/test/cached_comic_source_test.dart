@@ -461,7 +461,15 @@ final class _CountingSource implements
     browseLoads++;
     lastQuery = query;
     return SourceBrowsePage(
-      items: const <SourceComicSummary>[],
+      items: <SourceComicSummary>[
+        SourceComicSummary(
+          sourceId: sourceId,
+          comicId: 'comic',
+          title: 'Comic',
+          authors: const <String>[],
+          coverUri: Uri.parse('https://example.invalid/cover.jpg'),
+        ),
+      ],
       offset: offset,
       hasMore: false,
     );

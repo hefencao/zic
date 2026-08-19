@@ -271,6 +271,27 @@ final class LocalComicDetailsScreen extends StatefulWidget {
       _LocalComicDetailsScreenState();
 }
 
+Map<String, ChapterReadState> _projectChapterReadState(
+  Map<String, ChapterReadState> previous,
+  ImportedLibraryEntry entry,
+  bool isRead,
+) {
+  final identity = comicDetailsChapterIdentity(
+    entry.chapter.sourceId,
+    entry.chapter.chapterId,
+  );
+  return <String, ChapterReadState>{
+    ...previous,
+    identity: ChapterReadState(
+      sourceId: entry.chapter.sourceId,
+      comicId: entry.chapter.comicId,
+      chapterId: entry.chapter.chapterId,
+      isRead: isRead,
+      updatedAt: DateTime.now().toUtc(),
+    ),
+  };
+}
+
 final class _LocalComicDetailsScreenState
     extends State<LocalComicDetailsScreen> {
   late ComicDetailsLibrarySnapshot _library;
@@ -321,12 +342,14 @@ final class _LocalComicDetailsScreenState
   ComicPreviewSource? get _previewSource {
     final Object? candidate = widget.source;
     if (candidate is! ComicPreviewSource) return null;
+    // ignore: unnecessary_cast
     return candidate as ComicPreviewSource;
   }
 
   ComicCommentSource? get _commentSource {
     final Object? candidate = widget.source;
     if (candidate is! ComicCommentSource) return null;
+    // ignore: unnecessary_cast
     return candidate as ComicCommentSource;
   }
 
@@ -536,21 +559,8 @@ final class _LocalComicDetailsScreenState
   }
 
   Future<void> _setRead(ImportedLibraryEntry entry, bool isRead) async {
-    final identity = comicDetailsChapterIdentity(
-      entry.chapter.sourceId,
-      entry.chapter.chapterId,
-    );
     final previous = _library.readStates;
-    final next = <String, ChapterReadState>{
-      ...previous,
-      identity: ChapterReadState(
-        sourceId: entry.chapter.sourceId,
-        comicId: entry.chapter.comicId,
-        chapterId: entry.chapter.chapterId,
-        isRead: isRead,
-        updatedAt: DateTime.now().toUtc(),
-      ),
-    };
+    final next = _projectChapterReadState(previous, entry, isRead);
     setState(() => _library = _library.copyWith(readStates: next));
     try {
       await widget.onReadChanged(entry, isRead);
@@ -1168,12 +1178,14 @@ final class _RemoteComicDetailsScreenState
   ComicPreviewSource? get _previewSource {
     final Object? candidate = _currentSource;
     if (candidate is! ComicPreviewSource) return null;
+    // ignore: unnecessary_cast
     return candidate as ComicPreviewSource;
   }
 
   ComicCommentSource? get _commentSource {
     final Object? candidate = _currentSource;
     if (candidate is! ComicCommentSource) return null;
+    // ignore: unnecessary_cast
     return candidate as ComicCommentSource;
   }
 
@@ -1182,7 +1194,7 @@ final class _RemoteComicDetailsScreenState
     if (candidate is! ComicPreviewSource) {
       throw StateError('漫画源当前不支持预览');
     }
-    final source = candidate as ComicPreviewSource;
+    final source = candidate;
     if (!source.supportsComicPreview) {
       throw StateError('漫画源当前不支持预览');
     }
@@ -1200,7 +1212,7 @@ final class _RemoteComicDetailsScreenState
     if (candidate is! ComicCommentSource) {
       throw StateError('漫画源当前不支持评论');
     }
-    final source = candidate as ComicCommentSource;
+    final source = candidate;
     if (!source.supportsComicComments) {
       throw StateError('漫画源当前不支持评论');
     }
@@ -1461,21 +1473,8 @@ final class _RemoteComicDetailsScreenState
   }
 
   Future<void> _setRead(ImportedLibraryEntry entry, bool isRead) async {
-    final identity = comicDetailsChapterIdentity(
-      entry.chapter.sourceId,
-      entry.chapter.chapterId,
-    );
     final previous = _library.readStates;
-    final next = <String, ChapterReadState>{
-      ...previous,
-      identity: ChapterReadState(
-        sourceId: entry.chapter.sourceId,
-        comicId: entry.chapter.comicId,
-        chapterId: entry.chapter.chapterId,
-        isRead: isRead,
-        updatedAt: DateTime.now().toUtc(),
-      ),
-    };
+    final next = _projectChapterReadState(previous, entry, isRead);
     if (mounted) {
       setState(() => _library = _library.copyWith(readStates: next));
     }
@@ -2601,27 +2600,6 @@ bool _retainsWholeComic(ComicPreference preference) =>
     preference.collected ||
     preference.categoryIds.isNotEmpty;
 
-Map<String, ChapterReadState> _projectChapterReadState(
-  Map<String, ChapterReadState> current,
-  ImportedLibraryEntry entry,
-  bool isRead,
-) {
-  final identity = comicDetailsChapterIdentity(
-    entry.chapter.sourceId,
-    entry.chapter.chapterId,
-  );
-  return <String, ChapterReadState>{
-    ...current,
-    identity: ChapterReadState(
-      sourceId: entry.chapter.sourceId,
-      comicId: entry.chapter.comicId,
-      chapterId: entry.chapter.chapterId,
-      isRead: isRead,
-      updatedAt: DateTime.now().toUtc(),
-    ),
-  };
-}
-
 bool _isRead(
   Map<String, ChapterReadState> states,
   ImportedLibraryEntry entry,
@@ -2651,17 +2629,6 @@ int _compareChapterModels(
     return sequence;
   }
   return left.chapterId.compareTo(right.chapterId);
-}
-
-int _compareLibraryEntries(
-  ImportedLibraryEntry left,
-  ImportedLibraryEntry right,
-) {
-  final sequence = left.chapter.sequence.compareTo(right.chapter.sequence);
-  if (sequence != 0) {
-    return sequence;
-  }
-  return left.chapter.chapterId.compareTo(right.chapter.chapterId);
 }
 
 int _compareChapters(Chapter left, Chapter right) {

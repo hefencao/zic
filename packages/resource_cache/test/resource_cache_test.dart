@@ -68,7 +68,10 @@ void main() {
       first,
       second,
     ]);
-    expect(values.first, same(values.last));
+    expect(
+      (values.first as MemoryEncodedResourceSource).bytes,
+      same((values.last as MemoryEncodedResourceSource).bytes),
+    );
     expect(values.first.lengthInBytes, 3);
   });
 

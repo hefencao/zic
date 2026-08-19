@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:domain/domain.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:media/media.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
 import 'package:sessions/sessions.dart';
 import 'package:storage/storage.dart';

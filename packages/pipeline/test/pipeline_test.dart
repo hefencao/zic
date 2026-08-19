@@ -492,12 +492,7 @@ void main() {
 
     expect(DemandDiff.between(first, second).downloads.removed, isNotEmpty);
   });
-}
 
-
-final class _FakeClock implements MonoClock {
-  @override
-  int nowMicros() => 1;
   test('vertical overlap becomes transition before midpoint', () {
     final vertical = ReaderObs(
       sessionId: 'vertical',
@@ -588,9 +583,9 @@ final class _FakeClock implements MonoClock {
       ),
     );
 
-    // 4 MiB per output, so the speculative budget admits five static pages.
-    expect(plan.uploads, hasLength(5));
-    expect(plan.decodes, hasLength(5));
+    // 4 MiB per output, stable decode window admits four static pages (5, 6, 7, 4).
+    expect(plan.uploads, hasLength(4));
+    expect(plan.decodes, hasLength(4));
     expect(
       plan.uploads.values.where(
         (demand) => demand.reason.startsWith('heuristic:static-warm'),
@@ -598,7 +593,7 @@ final class _FakeClock implements MonoClock {
       isNotEmpty,
     );
     expect(
-      plan.uploads.values.where((demand) => demand.role == PageRole.far),
+      plan.uploads.values.where((demand) => demand.role == PageRole.next2),
       isNotEmpty,
     );
   });
@@ -932,6 +927,11 @@ final class _FakeClock implements MonoClock {
 
 }
 
+
+final class _FakeClock implements MonoClock {
+  @override
+  int nowMicros() => 1;
+}
 
 final class _TestClock implements MonoClock {
   int _value = 0;

@@ -16,22 +16,6 @@ import 'package:zic/webp_demo.dart';
 
 
 
-const _testFrameStep = Duration(milliseconds: 20);
-
-Future<void> _pumpUntilHitTestable(
-  WidgetTester tester,
-  Finder finder, {
-  int maxFrames = 40,
-}) async {
-  for (var frame = 0; frame < maxFrames; frame++) {
-    await tester.pump(_testFrameStep);
-    if (finder.hitTestable().evaluate().isNotEmpty) {
-      return;
-    }
-  }
-  throw TestFailure('Timed out waiting for hit-testable $finder');
-}
-
 Future<void> _pumpUntilFound(
   WidgetTester tester,
   Finder finder, {

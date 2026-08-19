@@ -528,7 +528,7 @@ void main() {
   test(
       'controlled Venera resource work cancels active prefetch and admits current before queued prefetch',
       () async {
-    final connection = _PriorityResolveConnection();
+    final connection = _PriorityResolveConnection(releaseOnCancel: false);
     final session = ExternalPluginRuntimeSession(
       plugin: _plugin(),
       connection: connection,
@@ -556,6 +556,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(connection.startedUris, <String>['venera-resource:prefetch-a']);
+    connection.finishFirst();
     // The current request itself preempts the lower-ranked active Venera
     // invocation. Logical page detach does not cancel receiving downloads;
     // cancellation happens only when real current pressure reaches this
@@ -588,7 +589,7 @@ void main() {
   test(
       'controlled Venera previous pressure preempts lower request-plan work without parallel contexts',
       () async {
-    final connection = _PriorityResolveConnection();
+    final connection = _PriorityResolveConnection(releaseOnCancel: false);
     final session = ExternalPluginRuntimeSession(
       plugin: _plugin(),
       connection: connection,
@@ -616,6 +617,7 @@ void main() {
     );
     await Future<void>.delayed(Duration.zero);
 
+    connection.finishFirst();
     await expectLater(
       active,
       throwsA(

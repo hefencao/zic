@@ -247,7 +247,7 @@ final class DecodeSession {
     final ingressFailure = ingressSnapshot.failure;
     if (ingressFailure != null) {
       _setFailure(ingressFailure);
-      throw ingressFailure;
+      return snapshot;
     }
     _failure = null;
     var source = ingress.source;

@@ -181,26 +181,26 @@ void main() {
 }
 
 final class _CountingRatioMap extends MapBase<String, double> {
-  _CountingRatioMap(this.values);
+  _CountingRatioMap(this._inner);
 
-  final Map<String, double> values;
+  final Map<String, double> _inner;
   int reads = 0;
 
   @override
   double? operator [](Object? key) {
     reads++;
-    return values[key];
+    return _inner[key];
   }
 
   @override
-  void operator []=(String key, double value) => values[key] = value;
+  void operator []=(String key, double value) => _inner[key] = value;
 
   @override
-  void clear() => values.clear();
+  void clear() => _inner.clear();
 
   @override
-  Iterable<String> get keys => values.keys;
+  Iterable<String> get keys => _inner.keys;
 
   @override
-  double? remove(Object? key) => values.remove(key);
+  double? remove(Object? key) => _inner.remove(key);
 }

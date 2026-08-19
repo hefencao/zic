@@ -483,7 +483,7 @@ void main() {
   });
 
   testWidgets(
-    'vertical current changes do not rebuild cached media pages',
+    'vertical current changes rebuild only page shells whose state changed',
     (tester) async {
       final chapter = ChapterManifest(
         sourceId: 'source',
@@ -638,7 +638,7 @@ void main() {
         tester,
         find.byKey(const ValueKey<String>('composition:composition-0')),
       );
-      await tester.pumpAndSettle();
+      await tester.pump();
       final before = Map<String, int>.of(builds);
 
       ratios.value = <String, double>{

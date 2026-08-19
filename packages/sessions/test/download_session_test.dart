@@ -9,6 +9,7 @@ import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 import 'package:testkit/testkit.dart';
+import 'package:transport/transport.dart';
 
 void main() {
   late Directory temp;
@@ -396,7 +397,10 @@ void main() {
     );
     final firstProjection = ingresses.get(firstSession);
     final body = <int>[...'RIFF....WEBPsealed-generation'.codeUnits];
-    await firstSession.bindResponse(totalLength: body.length);
+    await firstSession.bindResponse(
+      validators: const Validators(),
+      totalLength: body.length,
+    );
     final writer = firstSession.acquireWriter();
     await firstSession.append(writer, 0, body);
     await firstSession.seal(writer, expectedLength: body.length);
@@ -445,7 +449,7 @@ void main() {
     final ingresses = DownloadIngressProjectionRegistry(
       sources: sources,
       scopePrefix: 'reader-staged',
-      residentReplayChunks: (_) async => controller.stream,
+      residentReplaySource: (_, __) async => controller.stream,
     );
 
     final projection = ingresses.get(session);

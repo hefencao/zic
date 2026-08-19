@@ -186,18 +186,37 @@ void main() {
     expect(lane.active, 3);
 
     final currentStarted = Completer<void>();
+    final currentRelease = Completer<void>();
     lane.submit(
-      key: 'current',
+      key: 'current-1',
       priority: 1000,
       task: (_) async {
-        started.add('current');
+        started.add('current-1');
         currentStarted.complete();
+        await currentRelease.future;
       },
     );
 
     await currentStarted.future;
-    expect(await cancelled.future, 'prefetch-0');
-    expect(started, contains('current'));
+    expect(cancelled.isCompleted, isFalse,
+        reason: 'Current uses the reserved handoff slot first without cancelling active work');
+    expect(lane.active, 4);
+
+    final secondCurrentStarted = Completer<void>();
+    lane.submit(
+      key: 'current-2',
+      priority: 1000,
+      task: (_) async {
+        started.add('current-2');
+        secondCurrentStarted.complete();
+      },
+    );
+
+    expect(await cancelled.future, 'prefetch-0',
+        reason: 'Once reserved handoff is occupied, a second current preempts lower work');
+    await secondCurrentStarted.future;
+    expect(started, contains('current-2'));
+    currentRelease.complete();
     for (final gate in release.values) {
       if (!gate.isCompleted) gate.complete();
     }
@@ -1209,6 +1228,8 @@ void _dev123NetLaneTests() {
     lane.submitRanked(
       key: 'incumbent-demanded',
       priority: 0,
+      bucket: 'default',
+      bucketLimit: 1,
       demanded: true,
       task: (token) async {
         incumbentStarted.complete(token);
@@ -1219,6 +1240,8 @@ void _dev123NetLaneTests() {
     lane.submitRanked(
       key: 'incoming-normal',
       priority: 780,
+      bucket: 'default',
+      bucketLimit: 1,
       demanded: true,
       task: (_) async {
         incomingStarted = true;
@@ -1475,6 +1498,8 @@ void _dev123NetLaneTests() {
     lane.submitRanked(
       key: 'revisited',
       priority: 820,
+      bucket: 'default',
+      bucketLimit: 1,
       task: (token) async {
         incumbentStarted.complete(token);
         await incumbentRelease.future;
@@ -1493,6 +1518,8 @@ void _dev123NetLaneTests() {
     lane.submitRanked(
       key: 'outer-normal',
       priority: 780,
+      bucket: 'default',
+      bucketLimit: 1,
       task: (_) async {
         incomingStarted = true;
       },

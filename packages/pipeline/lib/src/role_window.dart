@@ -78,7 +78,6 @@ final class RoleResolver {
             ? target.fraction > 0
             : target.fraction >= transitionThreshold);
     if (targetIsVisible &&
-        target != null &&
         target.pageIndex >= 0 &&
         target.pageIndex < chapter.pages.length &&
         target.pageIndex != current) {

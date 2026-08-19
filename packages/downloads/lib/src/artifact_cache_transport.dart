@@ -766,16 +766,16 @@ ByteResponse _scheduledArtifactResponse(
     ArtifactCacheReadLease? lease;
     try {
       while (true) {
+        final available = await iterator.moveNext();
+        if (!available) {
+          return;
+        }
         var activeLease = lease;
         if (activeLease == null) {
           final wait = Stopwatch()..start();
           activeLease = await scheduler.acquire(priority: priority);
           lease = activeLease;
           onAcquired(wait.elapsedMicroseconds, activeLease.priority);
-        }
-        final available = await iterator.moveNext();
-        if (!available) {
-          return;
         }
         yield iterator.current;
 

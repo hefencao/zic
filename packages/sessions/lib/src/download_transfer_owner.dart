@@ -85,6 +85,7 @@ final class DownloadTransferOwner {
   final MonoClock clock;
   final TransferPrepare? prepareDownload;
   final NetLane net;
+  final Completer<void> _disposedCompleter = Completer<void>();
   final TransferIdentityResolver resolveTransferId;
   final TransferRankPolicy rankPolicy;
 
@@ -340,11 +341,17 @@ final class DownloadTransferOwner {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    if (!_disposedCompleter.isCompleted) {
+      _disposedCompleter.complete();
+    }
     final keys = _networkTaskKeys.values.toList(growable: false);
     final preparations = _localPreparations.values.toList(growable: false);
     for (final consumer in _consumers.toList(growable: false)) {
       _detachClaims(consumer, consumerDisposing: true);
       consumer._disposed = true;
+      if (!consumer._disposedCompleter.isCompleted) {
+        consumer._disposedCompleter.complete();
+      }
     }
     _consumers.clear();
     for (final key in keys) {
@@ -613,6 +620,9 @@ final class DownloadTransferOwner {
   Future<void> _disposeConsumer(DownloadTransferConsumer consumer) async {
     if (consumer._disposed) return;
     consumer._disposed = true;
+    if (!consumer._disposedCompleter.isCompleted) {
+      consumer._disposedCompleter.complete();
+    }
     final providerKeys = <String>[];
     for (final entry in _activeProviderLeases.entries.toList(growable: false)) {
       if (entry.value.scopeId != consumer.scopeId ||
@@ -699,10 +709,15 @@ final class DownloadTransferOwner {
         if (preparation != null) waits.add(preparation);
       }
       if (waits.isNotEmpty) {
-        await Future.wait<void>(waits);
+        await Future.any<void>(<Future<void>>[
+          Future.wait<void>(waits),
+          consumer.whenDisposed,
+          _disposedCompleter.future,
+        ]);
       } else {
         await Future<void>.delayed(Duration.zero);
       }
+      if (_disposed || consumer._disposed) return;
       var pending = false;
       for (final id in ids) {
         final session = registry.find(id);
@@ -720,20 +735,20 @@ final class DownloadTransferOwner {
               preferred.demand.flowTargetFrames,
               session,
             );
-        if (_networkTaskKeys.containsKey(id) ||
-            _downloadRetryPending.contains(id) ||
-            (session.demanded &&
-                !deferredForCurrentClaims &&
+        if (_downloadRetryPending.contains(id) ||
+            (!deferredForCurrentClaims &&
                 !flowSatisfiedForCurrentClaims &&
                 session.state != DownloadState.promoted &&
                 session.state != DownloadState.failed &&
                 session.state != DownloadState.disposed &&
-                !_downloadTerminalFailures.contains(id))) {
+                !_downloadTerminalFailures.contains(id) &&
+                (_networkTaskKeys.containsKey(id) || session.demanded))) {
           pending = true;
           break;
         }
       }
       if (!pending) return;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
     }
   }
 
@@ -1494,10 +1509,13 @@ final class DownloadTransferConsumer {
   String? _sessionId;
   int _revision = 0;
   bool _disposed = false;
+  final Completer<void> _disposedCompleter = Completer<void>();
 
   DownloadRegistry get registry => owner.registry;
   NetLane get net => owner.net;
   bool get disposed => _disposed;
+  Future<void> get whenDisposed => _disposedCompleter.future;
+  int get revision => _revision;
   Map<DownloadId, TransferDemand> get demands =>
       Map<DownloadId, TransferDemand>.unmodifiable(_demands);
 

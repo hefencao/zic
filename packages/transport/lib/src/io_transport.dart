@@ -199,8 +199,8 @@ final class FileTransport implements Transport {
     final canServeRange = range != null &&
         range.start <= length &&
         (validators == null || validators.isEmpty || validators.matches(currentValidators));
-    final start = canServeRange ? range!.start : 0;
-    final requestedEnd = canServeRange ? range!.end : null;
+    final start = canServeRange ? range.start : 0;
+    final requestedEnd = canServeRange ? range.end : null;
     final endExclusive = requestedEnd == null
         ? length
         : (requestedEnd + 1 > length ? length : requestedEnd + 1);
