@@ -285,7 +285,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       traceSink: _pipeline.trace,
     );
     created.setDirection(direction);
-    created.addListener(_handleReaderProgress);
+    created.currentIndexListenable.addListener(_handleReaderProgress);
     _target = target;
     _reader = created;
     _lastProgressPage = created.currentIndex;
@@ -601,7 +601,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     _playbackCapabilityRevision.dispose();
     final reader = _reader;
     if (reader != null) {
-      reader.removeListener(_handleReaderProgress);
+      reader.currentIndexListenable.removeListener(_handleReaderProgress);
       _pipeline.detach(reader.sessionId);
       reader.dispose();
     }
@@ -851,9 +851,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     ReaderController reader,
   ) {
     if (!_controlsVisible) return const SizedBox.shrink();
-    final subtitle = widget.pageSubtitleBuilder?.call(
-      widget.chapter.pages[reader.currentIndex],
-    );
     return SafeArea(
       key: readerTopControlsKey,
       bottom: false,
@@ -886,16 +883,27 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            if (subtitle != null && subtitle.isNotEmpty)
-                              Text(
-                                subtitle,
-                                key: readerPageSubtitleKey,
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: Colors.white70,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
+                            ValueListenableBuilder<int>(
+                              valueListenable: reader.currentIndexListenable,
+                              builder: (context, currentIndex, _) {
+                                final subtitle = widget.pageSubtitleBuilder?.call(
+                                  widget.chapter.pages[currentIndex],
+                                );
+                                if (subtitle == null || subtitle.isEmpty) {
+                                  return const SizedBox.shrink();
+                                }
+                                return Text(
+                                  subtitle,
+                                  key: readerPageSubtitleKey,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodySmall
+                                      ?.copyWith(color: Colors.white70),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                );
+                              },
+                            ),
                           ],
                         ),
                       ),
@@ -942,21 +950,26 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
-                  _ReaderPageScrubber(
-                    pages: pages,
-                    direction: reader.direction,
-                    currentIndex: reader.currentIndex,
-                    requestedIndex: reader.requestedIndex,
-                    onScrubStarted: reader.beginPageScrub,
-                    onScrubbed: reader.scrubToPage,
-                    onScrubEnded: reader.endPageScrub,
+                  ValueListenableBuilder<int>(
+                    valueListenable: reader.currentIndexListenable,
+                    builder: (context, currentIndex, _) => _ReaderPageScrubber(
+                      pages: pages,
+                      direction: reader.direction,
+                      currentIndex: currentIndex,
+                      requestedIndex: reader.requestedIndex,
+                      onScrubStarted: reader.beginPageScrub,
+                      onScrubbed: reader.scrubToPage,
+                      onScrubEnded: reader.endPageScrub,
+                    ),
                   ),
                   ValueListenableBuilder<int>(
-                    valueListenable: _playbackCapabilityRevision,
-                    builder: (context, _, _) =>
-                        ValueListenableBuilder<ReaderPlaybackState>(
-                      valueListenable: _playback,
-                      builder: (context, playback, _) => Row(
+                    valueListenable: reader.currentIndexListenable,
+                    builder: (context, _, _) => ValueListenableBuilder<int>(
+                      valueListenable: _playbackCapabilityRevision,
+                      builder: (context, _, _) =>
+                          ValueListenableBuilder<ReaderPlaybackState>(
+                        valueListenable: _playback,
+                        builder: (context, playback, _) => Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: <Widget>[
                           if (_currentPageSupportsPlayback(reader))
@@ -1015,7 +1028,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                                           : Icons.download_outlined,
                                     ),
                             ),
-                        ],
+                          ],
+                        ),
                       ),
                     ),
                   ),

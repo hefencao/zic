@@ -133,6 +133,9 @@ final class _ReaderViewState extends State<ReaderView> {
   double? _lastVerticalLogicalPosition;
   double? _lastVerticalVelocity;
   int? _lastVerticalMetricsMicros;
+  int? _lastVerticalScrollUpdateMicros;
+  double? _lastVerticalScrollUpdatePixels;
+  late final ValueNotifier<int> _verticalKeepAliveCenter;
   int? _lastVerticalLayoutPageIndex;
   double? _lastVerticalLayoutGlobalTop;
   double? _lastVerticalLayoutGlobalBottom;
@@ -169,6 +172,7 @@ final class _ReaderViewState extends State<ReaderView> {
     _lastDirection = widget.controller.direction;
     _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
     _lastVerticalVisibleMaxIndex = widget.controller.currentIndex;
+    _verticalKeepAliveCenter = ValueNotifier<int>(widget.controller.currentIndex);
     _verticalPageLayoutKeys = _createVerticalPageLayoutKeys();
     _pageSlots = _createPageSlots();
     _verticalLayoutRatios = widget.pageAspectRatios;
@@ -224,6 +228,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _zoomedPage = null;
       _lastReportedVerticalPage = null;
       _lastVerticalVisibleMaxIndex = widget.controller.currentIndex;
+      _verticalKeepAliveCenter.value = widget.controller.currentIndex;
       _verticalPageLayoutKeys = _createVerticalPageLayoutKeys();
       _lastVerticalLayoutSnapshotMicros = -1000000;
       _lastDirection = widget.controller.direction;
@@ -287,6 +292,7 @@ final class _ReaderViewState extends State<ReaderView> {
     widget.controller.removeListener(_handleControllerCommand);
     _pageController.dispose();
     _verticalController.dispose();
+    _verticalKeepAliveCenter.dispose();
     super.dispose();
   }
 
@@ -430,6 +436,7 @@ final class _ReaderViewState extends State<ReaderView> {
       return _ReaderPageShell(
         key: ValueKey<String>('reader-page-shell:${asset.assetKey}'),
         controller: widget.controller,
+        keepAliveCenter: _verticalKeepAliveCenter,
         asset: asset,
         index: index,
         clock: widget.clock,
@@ -758,6 +765,7 @@ final class _ReaderViewState extends State<ReaderView> {
       }
       _lastDirection = controller.direction;
       _zoomedPage = null;
+      _verticalKeepAliveCenter.value = controller.currentIndex;
       _resetVerticalCompositionCache();
       rebuildLayout = true;
       if (controller.direction == ReadingDirection.vertical) {
@@ -871,6 +879,7 @@ final class _ReaderViewState extends State<ReaderView> {
         return;
       }
       _lastLogicalPosition = requested.toDouble();
+      _verticalKeepAliveCenter.value = requested;
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
           : Interaction.jumping;
@@ -907,6 +916,7 @@ final class _ReaderViewState extends State<ReaderView> {
         return;
       }
       final maxExtent = _verticalController.position.maxScrollExtent;
+      _verticalKeepAliveCenter.value = index;
       _verticalController.jumpTo(
         _verticalOffsetFor(index).clamp(0.0, maxExtent).toDouble(),
       );
@@ -1060,6 +1070,8 @@ final class _ReaderViewState extends State<ReaderView> {
     if (notification is ScrollStartNotification) {
       _pendingVerticalAnchor = null;
       _pendingVerticalGeometryCorrection = null;
+      _lastVerticalScrollUpdateMicros = null;
+      _lastVerticalScrollUpdatePixels = null;
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
           : notification.dragDetails == null
@@ -1071,12 +1083,19 @@ final class _ReaderViewState extends State<ReaderView> {
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
           : Interaction.scrolling;
+      _recordVerticalScrollCadence(notification.metrics);
       _emitFromVerticalMetrics(notification.metrics);
     } else if (notification is ScrollEndNotification) {
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
           : Interaction.idle;
+      _lastVerticalScrollUpdateMicros = null;
+      _lastVerticalScrollUpdatePixels = null;
       _emitFromVerticalMetrics(notification.metrics, forceLayoutSnapshot: true);
+      if (_interaction == Interaction.idle &&
+          _verticalKeepAliveCenter.value != widget.controller.currentIndex) {
+        _verticalKeepAliveCenter.value = widget.controller.currentIndex;
+      }
       if (_verticalInitialCompositionPrimed && _verticalCacheScreens != 2) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted &&
@@ -1091,6 +1110,34 @@ final class _ReaderViewState extends State<ReaderView> {
       }
     }
     return false;
+  }
+
+  void _recordVerticalScrollCadence(ScrollMetrics metrics) {
+    final now = widget.clock.nowMicros();
+    final previousMicros = _lastVerticalScrollUpdateMicros;
+    final previousPixels = _lastVerticalScrollUpdatePixels;
+    _lastVerticalScrollUpdateMicros = now;
+    _lastVerticalScrollUpdatePixels = metrics.pixels;
+    if (previousMicros == null || previousPixels == null) return;
+    final gapMicros = now - previousMicros;
+    final pixelDelta = metrics.pixels - previousPixels;
+    if (gapMicros <= 20000 || pixelDelta.abs() <= 0.01) return;
+    widget.traceSink.record(
+      traceEvent(
+        clock: widget.clock,
+        sessionId: widget.controller.sessionId,
+        kind: TraceEventKind.scrollCadenceOutlier,
+        revision: widget.demandRevision?.call(),
+        payload: <String, Object?>{
+          'gapMicros': gapMicros,
+          'pixelDelta': pixelDelta,
+          'scrollPixels': metrics.pixels,
+          'viewportDimension': metrics.viewportDimension,
+          'interaction': _interaction.name,
+          'currentIndex': widget.controller.currentIndex,
+        },
+      ),
+    );
   }
 
   void _emitFromPageMetrics(ScrollMetrics metrics) {
@@ -1646,6 +1693,7 @@ final class _ReaderFrameTimingSummary {
 final class _ReaderPageShell extends StatefulWidget {
   const _ReaderPageShell({
     required this.controller,
+    required this.keepAliveCenter,
     required this.asset,
     required this.index,
     required this.clock,
@@ -1658,6 +1706,7 @@ final class _ReaderPageShell extends StatefulWidget {
   });
 
   final ReaderController controller;
+  final ValueListenable<int> keepAliveCenter;
   final PageAsset asset;
   final int index;
   final MonoClock clock;
@@ -1685,6 +1734,8 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
     _activeNotifier = ValueNotifier<bool>(_active);
     _keepAliveNotifier = ValueNotifier<bool>(_keepAlive);
     widget.controller.addListener(_handleControllerChanged);
+    widget.controller.currentIndexListenable.addListener(_handleCurrentIndexChanged);
+    widget.keepAliveCenter.addListener(_handleKeepAliveCenterChanged);
   }
 
   @override
@@ -1692,7 +1743,15 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_handleControllerChanged);
+      oldWidget.controller.currentIndexListenable
+          .removeListener(_handleCurrentIndexChanged);
       widget.controller.addListener(_handleControllerChanged);
+      widget.controller.currentIndexListenable
+          .addListener(_handleCurrentIndexChanged);
+    }
+    if (oldWidget.keepAliveCenter != widget.keepAliveCenter) {
+      oldWidget.keepAliveCenter.removeListener(_handleKeepAliveCenterChanged);
+      widget.keepAliveCenter.addListener(_handleKeepAliveCenterChanged);
     }
     final nextActive = widget.index == widget.controller.currentIndex;
     final nextKeepAlive = _keepAliveFor(widget.controller);
@@ -1710,6 +1769,9 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
   @override
   void dispose() {
     widget.controller.removeListener(_handleControllerChanged);
+    widget.controller.currentIndexListenable
+        .removeListener(_handleCurrentIndexChanged);
+    widget.keepAliveCenter.removeListener(_handleKeepAliveCenterChanged);
     _activeNotifier.dispose();
     _keepAliveNotifier.dispose();
     super.dispose();
@@ -1717,7 +1779,7 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
 
   bool _keepAliveFor(ReaderController controller) {
     return controller.direction == ReadingDirection.vertical &&
-        (widget.index - controller.currentIndex).abs() <= 7;
+        (widget.index - widget.keepAliveCenter.value).abs() <= 7;
   }
 
   void _readControllerState() {
@@ -1726,18 +1788,25 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
     _rotationQuarterTurns = widget.controller.rotationQuarterTurns;
   }
 
-  void _handleControllerChanged() {
+  void _handleCurrentIndexChanged() {
     final nextActive = widget.index == widget.controller.currentIndex;
+    if (_active == nextActive) return;
+    _active = nextActive;
+    _activeNotifier.value = nextActive;
+  }
+
+  void _handleKeepAliveCenterChanged() {
     final nextKeepAlive = _keepAliveFor(widget.controller);
+    if (_keepAlive == nextKeepAlive) return;
+    _keepAlive = nextKeepAlive;
+    _keepAliveNotifier.value = nextKeepAlive;
+  }
+
+  void _handleControllerChanged() {
+    // Broad controller notifications are commands (direction/rotation/request),
+    // never current-page projection. Direction can still change keepAlive.
+    _handleKeepAliveCenterChanged();
     final nextRotation = widget.controller.rotationQuarterTurns;
-    if (_active != nextActive) {
-      _active = nextActive;
-      _activeNotifier.value = nextActive;
-    }
-    if (_keepAlive != nextKeepAlive) {
-      _keepAlive = nextKeepAlive;
-      _keepAliveNotifier.value = nextKeepAlive;
-    }
     if (_rotationQuarterTurns != nextRotation) {
       setState(() => _rotationQuarterTurns = nextRotation);
     }

@@ -15,6 +15,7 @@ final class ReaderController extends ChangeNotifier {
         _clock = clock,
         _traceSink = traceSink,
         _currentIndex = initialPage,
+        _currentIndexNotifier = ValueNotifier<int>(initialPage),
         _stableIndex = initialPage,
         _direction = chapter.readingDirection;
 
@@ -25,6 +26,7 @@ final class ReaderController extends ChangeNotifier {
   final TraceSink _traceSink;
 
   int _currentIndex;
+  final ValueNotifier<int> _currentIndexNotifier;
   int _stableIndex;
   ReadingDirection _direction;
   int? _requestedIndex;
@@ -40,6 +42,7 @@ final class ReaderController extends ChangeNotifier {
   List<int> _lastTracedVisibleIndexes = const <int>[];
 
   int get currentIndex => _currentIndex;
+  ValueListenable<int> get currentIndexListenable => _currentIndexNotifier;
   int get stableIndex => _stableIndex;
   ReadingDirection get direction => _direction;
   int? get requestedIndex => _requestedIndex;
@@ -124,12 +127,16 @@ final class ReaderController extends ChangeNotifier {
     if (observation.sessionId != sessionId) {
       throw StateError('observation belongs to another reader session');
     }
-    final visibleStateChanged =
-        _currentIndex != observation.currentIndex ||
-        _stableIndex != observation.stableIndex;
+    final currentIndexChanged = _currentIndex != observation.currentIndex;
     _lastObservation = observation;
     _currentIndex = observation.currentIndex;
     _stableIndex = observation.stableIndex;
+    if (currentIndexChanged) {
+      // Current-page projection is high-frequency Reader state, not a
+      // navigation/rotation command. Keep it off the broad ChangeNotifier so
+      // page shells and controls can subscribe only to the fact they need.
+      _currentIndexNotifier.value = _currentIndex;
+    }
     if (_shouldTraceObservation(observation)) {
       final visibleIndexes = observation.visibleCoverages
           .map((coverage) => coverage.pageIndex)
@@ -156,9 +163,6 @@ final class ReaderController extends ChangeNotifier {
       _lastTracedTargetIndex = observation.targetCoverage?.pageIndex;
       _lastTracedInteraction = observation.interaction;
       _lastTracedVisibleIndexes = visibleIndexes;
-    }
-    if (visibleStateChanged) {
-      notifyListeners();
     }
     try {
       _onObservation(observation);
@@ -194,4 +198,9 @@ final class ReaderController extends ChangeNotifier {
     return false;
   }
 
+  @override
+  void dispose() {
+    _currentIndexNotifier.dispose();
+    super.dispose();
+  }
 }

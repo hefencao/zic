@@ -1,3 +1,9 @@
+## 0.31.0-dev.307 - Reader position/lifecycle boundary and scroll-cadence observability
+
+- The 04:12 dev.306 device Trace isolates the strong pre-exit jitter segment. Around 30.450s a ~29.5ms frame interval contains ~13.8ms Flutter build plus current 22→23, rev150 reconcile (~4.67ms) and page-host retirement/mount work; meanwhile ~29.945s/~30.042s still show ~29.5/~32.2ms intervals with only ~1–2ms build/raster. This proves a current-boundary rebuild amplifier exists but low-build cadence gaps remain a separate engine/input scheduling candidate.
+- Split ReaderController command notification from current-page projection: report() publishes currentIndex through a narrow ValueListenable and no longer wakes direction/rotation/navigation command listeners. Page active state, progress projection, subtitle/scrubber/playback capability subscribe narrowly; whole controls no longer rebuild on every current crossing.
+- Keep vertical current±7 page-host retention bounded but freeze its center during one active scroll and commit the new center at idle/explicit navigation, so far-host demotion/dispose does not compete with the current-crossing build. Add export-only scrollCadenceOutlier for raw ScrollUpdate gaps >20ms; do not alter ScrollPhysics or smooth/interpolate position.
+
 ## 0.31.0-dev.306 - Vertical continuous viewport/control-plane separation
 
 - The 03:32 dev.305 device Trace confirms the scheduling-migration fast path reduced common 1-added/10-changed/1-removed reconcile median from about 8.39ms to 4.73ms, yet strong visible jitter remains. Layout probes stay stable while several 30-45ms active-scroll frame gaps contain no policy/reconcile/texture/page-host event, so sessions/reconcile micro-optimization is now a secondary amplifier rather than the primary explanation.

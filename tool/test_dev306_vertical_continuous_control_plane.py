@@ -71,9 +71,11 @@ for token in ('1,197', '132', 'control no-op', '250ms', '500ms'):
 
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-if not re.search(r'^version: 0\.31\.0\+306$', pubspec, re.M):
-    raise SystemExit('dev.306 app version mismatch')
-if not re.search(r'^versionCode=306$', props, re.M):
+match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+if match is None or int(match.group(1)) < 306:
+    raise SystemExit('dev.306 app version missing/regressed')
+version = int(match.group(1))
+if not re.search(rf'^versionCode={version}$', props, re.M):
     raise SystemExit('dev.306 Android version mismatch')
 
 print('dev.306 vertical continuous viewport/control-plane separation: OK')

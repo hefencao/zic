@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Guard dev.116 compile closure and runtime WebP classification."""
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,10 +38,17 @@ if runtime.count("final artifactReadMicros =") != 1:
 for token in (
     "bool _keepAliveFor(ReaderController controller)",
     "ReadingDirection.vertical",
-    "(widget.index - controller.currentIndex).abs() <= 7",
     "keepAlive: _keepAlive",
 ):
     require(reader, token, "vertical host retention")
+version_match = re.search(r"^version: 0\.31\.0\+(\d+)$", read("apps/app/pubspec.yaml"), re.M)
+version = int(version_match.group(1)) if version_match else 0
+keepalive_token = (
+    "(widget.index - widget.keepAliveCenter.value).abs() <= 7"
+    if version >= 307
+    else "(widget.index - controller.currentIndex).abs() <= 7"
+)
+require(reader, keepalive_token, "vertical host retention")
 keep_alive_start = reader.find("bool _keepAliveFor(ReaderController controller)")
 keep_alive_end = reader.find("void _readControllerState()", keep_alive_start)
 if "animatedHint" in reader[keep_alive_start:keep_alive_end]:

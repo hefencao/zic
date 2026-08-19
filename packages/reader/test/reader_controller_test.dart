@@ -39,13 +39,15 @@ void main() {
       readingDirection: ReadingDirection.ltr,
     );
     final observations = <ReaderObs>[];
-    var notifications = 0;
+    var commandNotifications = 0;
+    var currentNotifications = 0;
     final controller = ReaderController(
       sessionId: 's1',
       chapter: chapter,
       onObservation: observations.add,
       clock: _Clock(),
-    )..addListener(() => notifications++);
+    )..addListener(() => commandNotifications++);
+    controller.currentIndexListenable.addListener(() => currentNotifications++);
 
     controller.report(
       ReaderObs(
@@ -71,7 +73,8 @@ void main() {
       ),
     );
     expect(observations, hasLength(1));
-    expect(notifications, 0);
+    expect(commandNotifications, 0);
+    expect(currentNotifications, 0);
 
     controller.report(
       ReaderObs(
@@ -91,7 +94,10 @@ void main() {
         monotonicMicros: 2,
       ),
     );
-    expect(notifications, 1);
+    expect(commandNotifications, 0,
+        reason: 'current projection must not wake command consumers');
+    expect(currentNotifications, 1);
+    expect(controller.currentIndexListenable.value, 1);
     controller.dispose();
   });
 
@@ -127,13 +133,15 @@ void main() {
     final priorErrorHandler = FlutterError.onError;
     FlutterError.onError = reportedErrors.add;
     addTearDown(() => FlutterError.onError = priorErrorHandler);
-    var notifications = 0;
+    var commandNotifications = 0;
+    var currentNotifications = 0;
     final controller = ReaderController(
       sessionId: 'navigation-isolation',
       chapter: chapter,
       onObservation: (_) => throw StateError('pipeline failed'),
       clock: _Clock(),
-    )..addListener(() => notifications++);
+    )..addListener(() => commandNotifications++);
+    controller.currentIndexListenable.addListener(() => currentNotifications++);
     addTearDown(controller.dispose);
 
     final observation = ReaderObs(
@@ -157,7 +165,8 @@ void main() {
     expect(controller.currentIndex, 1);
     expect(controller.stableIndex, 1);
     expect(controller.lastObservation, same(observation));
-    expect(notifications, 1,
+    expect(commandNotifications, 0);
+    expect(currentNotifications, 1,
         reason: 'visible navigation publishes before pipeline consumption');
     expect(reportedErrors, hasLength(1));
     expect(reportedErrors.single.exception, isA<StateError>());

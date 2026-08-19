@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Guard dev.115 empty-artifact self-heal and static host retention."""
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -63,9 +64,16 @@ for token in (
 for token in (
     "AutomaticKeepAliveClientMixin<_ReaderPageHost>",
     "bool get wantKeepAlive => widget.keepAlive",
-    "(widget.index - controller.currentIndex).abs() <= 7",
 ):
     require(reader, token, "vertical static page host")
+version_match = re.search(r"^version: 0\.31\.0\+(\d+)$", read("apps/app/pubspec.yaml"), re.M)
+version = int(version_match.group(1)) if version_match else 0
+keepalive_token = (
+    "(widget.index - widget.keepAliveCenter.value).abs() <= 7"
+    if version >= 307
+    else "(widget.index - controller.currentIndex).abs() <= 7"
+)
+require(reader, keepalive_token, "vertical static page host")
 if reader.count("TraceEventKind kind, {") != 1:
     raise SystemExit("Reader lifecycle callback contains a duplicate kind declaration")
 for token in (

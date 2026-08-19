@@ -54,8 +54,15 @@ for forbidden in (
     'compositionGuardActive: _compositionGuardActive',
 ):
     req(forbidden not in reader, f'superseded dev.284 Reader guard remains: {forbidden}')
-req('(widget.index - controller.currentIndex).abs() <= 7' in reader,
-    'nominal vertical page-host keepAlive contract was not restored')
+version = int(m.group(1))
+if version < 307:
+    req('(widget.index - controller.currentIndex).abs() <= 7' in reader,
+        'nominal vertical page-host keepAlive contract was not restored')
+else:
+    req('(widget.index - widget.keepAliveCenter.value).abs() <= 7' in reader,
+        'dev.307 must preserve the same bounded current±7 keepAlive radius')
+    req('late final ValueNotifier<int> _verticalKeepAliveCenter;' in reader,
+        'dev.307 bounded keepAlive center missing')
 
 test_text = text('packages/reader/test/vertical_reader_geometry_test.dart')
 req('composition mount guard absorbs local cache-boundary reversals' not in test_text,

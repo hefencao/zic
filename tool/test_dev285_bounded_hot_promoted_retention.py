@@ -63,8 +63,15 @@ for forbidden in (
     'readerVerticalCompositionMountTravelGuardPages',
 ):
     req(forbidden not in reader + geometry, f'dev.284 rollback incomplete: {forbidden}')
-req('(widget.index - controller.currentIndex).abs() <= 7' in reader,
-    'nominal vertical keepAlive radius not restored')
+version = int(m.group(1))
+if version < 307:
+    req('(widget.index - controller.currentIndex).abs() <= 7' in reader,
+        'nominal vertical keepAlive radius not restored')
+else:
+    req('(widget.index - widget.keepAliveCenter.value).abs() <= 7' in reader,
+        'dev.307 must preserve the same bounded current±7 keepAlive radius')
+    req('late final ValueNotifier<int> _verticalKeepAliveCenter;' in reader,
+        'dev.307 bounded keepAlive center missing')
 
 require(
     'packages/downloads/test/physical_transfer_retention_test.dart',
