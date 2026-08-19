@@ -697,7 +697,10 @@ final class PipelineReaderSession {
 
   /// Enqueues the latest Reader viewport observation behind the UI/navigation
   /// callback boundary. ReaderView must never synchronously execute demand,
-  /// transfer or decode reconciliation. Vertical continuous geometry remains
+  /// transfer or decode reconciliation. The drain uses an ordinary event turn,
+  /// not the microtask queue: page-boundary control work must yield back to the
+  /// engine/platform event loop after the current Flutter frame before it may
+  /// consume the Dart UI isolate. Vertical continuous geometry remains
   /// Reader-owned: coverage fraction, velocity and logical-position changes
   /// that preserve the same discrete control state do not re-enter Pipeline.
   /// A pending drain is still latest-wins, so a real current/target/visible or
@@ -725,7 +728,11 @@ final class PipelineReaderSession {
     if (_observationDrainScheduled) return;
     _observationDrainScheduled = true;
     final generation = _observationGeneration;
-    scheduleMicrotask(() => _drainObservation(generation));
+    // scheduleMicrotask here starves platform/input/vsync events until the
+    // whole plan/reconcile/lane-pump control transaction has completed. A
+    // zero-delay Timer keeps the same latest-wins semantics while yielding one
+    // ordinary event-loop turn after the frame that produced the observation.
+    Timer.run(() => _drainObservation(generation));
   }
 
   void _drainObservation(int generation) {

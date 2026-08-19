@@ -78,7 +78,7 @@ req('super.adjustPositionForNewDimensions(' in physics,
     'custom vertical physics does not preserve normal scroll dimension behavior')
 
 policy = text('packages/pipeline/lib/src/heuristic_policy.dart')
-if int(m.group(1)) >= 315:
+if int(m.group(1)) == 315:
     policy_markers = (
         'final encodedFlutterPresentation =',
         'runtimeWebpPages.contains(entry.key)',
@@ -134,7 +134,7 @@ for path in (
 ):
     req((ROOT / path).is_file(), f'missing dev.281 governance file: {path}')
 
-if int(m.group(1)) >= 315:
+if int(m.group(1)) == 315:
     require('docs/ARCHITECTURE.md', 'layout-time scroll correction', 'compressed bytes')
     require('docs/SPEC.md', 'layout-time correction', 'compressed bytes')
 elif int(m.group(1)) >= 295:

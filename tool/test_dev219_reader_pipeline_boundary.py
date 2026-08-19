@@ -44,7 +44,6 @@ forbid(registry, 'void dispose(Iterable<DownloadSession> sessions)', 'projection
 
 for token in (
     'void enqueueObservation(ReaderObs observation)',
-    'scheduleMicrotask(() => _drainObservation(generation));',
     "'stage': 'reader-observation-reconcile'",
     '_invalidateObservationQueue();',
 ):
@@ -93,4 +92,10 @@ if pub_match is None or int(pub_match.group(1)) < 219:
     raise SystemExit('dev.219+ app version mismatch')
 if android_match is None or int(android_match.group(1)) < 219:
     raise SystemExit('dev.219+ Android version mismatch')
+version_code = int(pub_match.group(1))
+if version_code < 317:
+    require(pipe, 'scheduleMicrotask(() => _drainObservation(generation));', 'historical microtask Reader observation seam')
+else:
+    require(pipe, 'Timer.run(() => _drainObservation(generation));', 'dev.317+ ordinary-event-turn Reader observation seam')
+    forbid(pipe[pipe.index('void _scheduleObservationDrain()'):pipe.index('void _drainObservation(int generation)')], 'scheduleMicrotask(', 'dev.317+ observation drain microtask priority')
 print('dev.219 Reader/pipeline observation-projection boundary: OK')

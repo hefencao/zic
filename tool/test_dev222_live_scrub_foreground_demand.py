@@ -60,7 +60,6 @@ require(pipeline, "'interaction': observation.interaction.name", 'scrub planning
 for token in (
     'void enqueueObservation(ReaderObs observation)',
     '_pendingObservation = observation;',
-    'scheduleMicrotask(() => _drainObservation(generation));',
 ):
     require(pipeline_session, token, 'latest-wins Reader-to-Pipeline coalescing seam')
 require(policy_test, 'slider scrub keeps only foreground-current resource demand', 'foreground-only demand regression')
@@ -86,4 +85,9 @@ if pub is None or int(pub.group(1)) < 222:
     raise SystemExit('dev.222 app version mismatch')
 if android is None or int(android.group(1)) < 222:
     raise SystemExit('dev.222 Android version mismatch')
+version_code = int(pub.group(1))
+if version_code < 317:
+    require(pipeline_session, 'scheduleMicrotask(() => _drainObservation(generation));', 'historical latest-wins microtask seam')
+else:
+    require(pipeline_session, 'Timer.run(() => _drainObservation(generation));', 'dev.317+ latest-wins ordinary-event-turn seam')
 print('dev.222 live Reader scrub / foreground demand boundary: OK')
