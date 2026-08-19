@@ -108,6 +108,10 @@ final class _ReaderViewState extends State<ReaderView> {
   int? _lastVerticalVisibleMaxIndex;
   late List<GlobalKey> _verticalPageLayoutKeys;
   int _lastVerticalLayoutSnapshotMicros = -1000000;
+  int _lastTransitionTraceMicros = -1000000;
+  int? _lastTransitionCurrentIndex;
+  int? _lastTransitionTargetIndex;
+  Interaction? _lastTransitionInteraction;
   ReaderFrameTimingSubscription? _frameTimingSubscription;
   _ReaderFrameTimingSummary? _frameTimingSummary;
   Size _viewport = Size.zero;
@@ -1181,7 +1185,10 @@ final class _ReaderViewState extends State<ReaderView> {
     bool force = false,
   }) {
     final now = widget.clock.nowMicros();
-    if (!force && now - _lastVerticalLayoutSnapshotMicros < 100000) {
+    // dev.294's active 10Hz probe has repeatedly shown stable geometry. Keep
+    // start/end samples and a coarse active heartbeat without spending every
+    // tenth frame on RenderBox/global-transform diagnostics.
+    if (!force && now - _lastVerticalLayoutSnapshotMicros < 500000) {
       return;
     }
     _lastVerticalLayoutSnapshotMicros = now;
@@ -1445,24 +1452,39 @@ final class _ReaderViewState extends State<ReaderView> {
     );
     widget.controller.report(observation);
     if (targetIndex != null) {
-      widget.traceSink.record(
-        traceEvent(
-          clock: widget.clock,
-          sessionId: widget.controller.sessionId,
-          kind: TraceEventKind.pageTransition,
-          identityHash: pages[targetIndex].assetKey,
-          revision: widget.demandRevision?.call(),
-          payload: <String, Object?>{
-            'currentIndex': boundedStable,
-            'targetIndex': targetIndex,
-            'logicalPosition': logicalPosition,
-            'velocity': velocity,
-            'interaction': _interaction.name,
-            'currentCoverage': currentFraction,
-            'targetCoverage': targetCoverage?.fraction,
-          },
-        ),
-      );
+      final now = observation.monotonicMicros;
+      final transitionChanged =
+          _lastTransitionCurrentIndex != boundedStable ||
+          _lastTransitionTargetIndex != targetIndex ||
+          _lastTransitionInteraction != _interaction;
+      if (transitionChanged || now - _lastTransitionTraceMicros >= 250000) {
+        widget.traceSink.record(
+          traceEvent(
+            clock: widget.clock,
+            sessionId: widget.controller.sessionId,
+            kind: TraceEventKind.pageTransition,
+            identityHash: pages[targetIndex].assetKey,
+            revision: widget.demandRevision?.call(),
+            payload: <String, Object?>{
+              'currentIndex': boundedStable,
+              'targetIndex': targetIndex,
+              'logicalPosition': logicalPosition,
+              'velocity': velocity,
+              'interaction': _interaction.name,
+              'currentCoverage': currentFraction,
+              'targetCoverage': targetCoverage?.fraction,
+            },
+          ),
+        );
+        _lastTransitionTraceMicros = now;
+        _lastTransitionCurrentIndex = boundedStable;
+        _lastTransitionTargetIndex = targetIndex;
+        _lastTransitionInteraction = _interaction;
+      }
+    } else {
+      _lastTransitionCurrentIndex = boundedStable;
+      _lastTransitionTargetIndex = null;
+      _lastTransitionInteraction = _interaction;
     }
   }
 }

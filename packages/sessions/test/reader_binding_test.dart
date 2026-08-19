@@ -221,6 +221,45 @@ void main() {
     expect(coordinator.viewport?.freezesPresentation, isTrue);
   });
 
+  test('vertical coverage-only motion does not resync playback control', () {
+    final coordinator = FakeCoordinator(clock: _Clock());
+    final binding = ReaderBinding(
+      chapter: _chapter(),
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _Clock(),
+      coordinator: coordinator,
+      playback: coordinator,
+    );
+
+    binding.accept(_obs(
+      interaction: Interaction.dragging,
+      current: 1,
+      currentFraction: 0.8,
+      target: 2,
+      targetFraction: 0.2,
+      direction: ReadingDirection.vertical,
+    ));
+    final revision = binding.revision;
+    final syncs = coordinator.playbackSyncs;
+
+    binding.accept(_obs(
+      interaction: Interaction.scrolling,
+      current: 1,
+      currentFraction: 0.55,
+      target: 2,
+      targetFraction: 0.45,
+      direction: ReadingDirection.vertical,
+    ));
+
+    expect(binding.revision, revision);
+    expect(coordinator.viewport?.phase, ViewportPhase.continuous);
+    expect(coordinator.playbackSyncs, syncs,
+        reason: 'coverage-only visual motion is not a playback mutation');
+  });
+
   test('detaching a binding removes every outstanding demand', () {
     final coordinator = FakeCoordinator(clock: _Clock());
     final binding = ReaderBinding(
@@ -322,6 +361,7 @@ ReaderObs _obs({
   required double currentFraction,
   int? target,
   double targetFraction = 0,
+  ReadingDirection direction = ReadingDirection.ltr,
 }) {
   return ReaderObs(
     sessionId: 'reader',
@@ -342,7 +382,7 @@ ReaderObs _obs({
             assetKey: 'chapter/page-$target',
             fraction: targetFraction,
           ),
-    direction: ReadingDirection.ltr,
+    direction: direction,
     timestamp: DateTime.utc(2026),
     monotonicMicros: 0,
   );

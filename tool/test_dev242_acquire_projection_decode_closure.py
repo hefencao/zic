@@ -18,8 +18,12 @@ require('_downloads.get' not in reader,
         'dev.242 presentation/read-only pipeline paths must not create physical download sessions')
 require('PipelinePageStream.forDownload(' in reader and 'resolvePhysical: () => _downloads.find(id)' in reader,
         'dev.242 page stream must be a non-creating logical projection')
-require('binding.accept(observation);\n    _syncPageStreams();' in reader,
-        'dev.242 page streams must bind only after demand reconciliation')
+require(
+    'binding.accept(observation);\n    _syncPageStreams();' in reader or
+    ('binding.accept(observation);' in reader and
+     'final planChanged = binding.pipeline.revision != revisionBefore;' in reader and
+     '_syncPageStreams();' in reader),
+    'dev.242 page streams must bind only after demand reconciliation')
 require('void refreshBinding()' in stream and '_resolvePhysical()' in stream,
         'dev.242 page stream must refresh through the pipeline-owned physical resolver')
 require('presentation pageStream cannot precreate an exact physical session before verified acquire' in reader_test,

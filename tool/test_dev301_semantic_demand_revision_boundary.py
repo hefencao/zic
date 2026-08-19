@@ -26,7 +26,9 @@ require('packages/pipeline/lib/src/demand.dart',
         'sameScheduling: (a, b) => a.sameSchedulingAs(b)')
 require('packages/pipeline/lib/src/pipeline_controller.dart',
         'final candidateRevision = _revision + 1;',
-        'if (!windowChanged && !_decodeTargetDirty && diff.isEmpty)',
+        ('if (!_decodeTargetDirty && diff.isEmpty)'
+         if current_dev() >= 306
+         else 'if (!windowChanged && !_decodeTargetDirty && diff.isEmpty)'),
         '_revision = candidateRevision;',
         'Never promote',
         '_runtimeWebpCostPages')

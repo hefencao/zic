@@ -1,5 +1,6 @@
 import 'package:domain/domain.dart';
 import 'package:pipeline/pipeline.dart';
+import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -101,4 +102,86 @@ void main() {
     expect(visiblePage.value.retainOutput, isTrue);
     expect(plan.decodes[visiblePage.key]!.targetWatermark, 1);
   });
+  test('far visible metadata does not create an empty scheduler revision', () {
+    final chapter = ChapterManifest(
+      sourceId: 'local',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'chapter',
+        sequence: 1,
+        pageCount: 20,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        20,
+        (index) => PageAsset(
+          pageId: 'p$index',
+          chapterId: 'chapter',
+          index: index,
+          uri: Uri.parse('asset:///p$index.png'),
+          width: 1000,
+          height: 1600,
+          contentKindHint: ContentKindHint.png,
+          animatedHint: false,
+        ),
+      ),
+      readingDirection: ReadingDirection.vertical,
+    );
+    ReaderObs observation({required bool includeFarVisible}) => ReaderObs(
+          sessionId: 'reader',
+          currentIndex: 8,
+          stableIndex: 8,
+          interaction: Interaction.scrolling,
+          logicalPosition: 8.4,
+          velocity: 1,
+          currentCoverage: Coverage(
+            pageIndex: 8,
+            assetKey: chapter.pages[8].assetKey,
+            fraction: 0.6,
+          ),
+          visibleCoverages: <Coverage>[
+            Coverage(
+              pageIndex: 8,
+              assetKey: chapter.pages[8].assetKey,
+              fraction: 0.6,
+            ),
+            if (includeFarVisible)
+              Coverage(
+                pageIndex: 19,
+                assetKey: chapter.pages[19].assetKey,
+                fraction: 0.1,
+              ),
+          ],
+          direction: ReadingDirection.vertical,
+          timestamp: DateTime.utc(2026, 8, 19),
+          monotonicMicros: includeFarVisible ? 2 : 1,
+        );
+    final updates = <PipelineDelta>[];
+    final controller = PipelineController(
+      chapter: chapter,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _Clock(),
+      onUpdate: updates.add,
+    );
+
+    controller.accept(observation(includeFarVisible: false));
+    final revision = controller.revision;
+    final updateCount = updates.length;
+    controller.accept(observation(includeFarVisible: true));
+
+    expect(controller.revision, revision);
+    expect(updates, hasLength(updateCount));
+  });
+
+}
+
+
+final class _Clock implements MonoClock {
+  @override
+  int nowMicros() => 0;
 }

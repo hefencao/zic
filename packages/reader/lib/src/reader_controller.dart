@@ -32,6 +32,12 @@ final class ReaderController extends ChangeNotifier {
   int _navigationRevision = 0;
   int _rotationQuarterTurns = 0;
   ReaderObs? _lastObservation;
+  int _lastObservationTraceMicros = -1000000;
+  int? _lastTracedCurrentIndex;
+  int? _lastTracedStableIndex;
+  int? _lastTracedTargetIndex;
+  Interaction? _lastTracedInteraction;
+  List<int> _lastTracedVisibleIndexes = const <int>[];
 
   int get currentIndex => _currentIndex;
   int get stableIndex => _stableIndex;
@@ -124,24 +130,33 @@ final class ReaderController extends ChangeNotifier {
     _lastObservation = observation;
     _currentIndex = observation.currentIndex;
     _stableIndex = observation.stableIndex;
-    _traceSink.record(
-      traceEvent(
-        clock: _clock,
-        sessionId: sessionId,
-        kind: TraceEventKind.readerObservation,
-        payload: <String, Object?>{
-          'currentIndex': observation.currentIndex,
-          'stableIndex': observation.stableIndex,
-          'interaction': observation.interaction.name,
-          'logicalPosition': observation.logicalPosition,
-          'velocity': observation.velocity,
-          'targetIndex': observation.targetCoverage?.pageIndex,
-          'visibleIndexes': observation.visibleCoverages
-              .map((coverage) => coverage.pageIndex)
-              .toList(growable: false),
-        },
-      ),
-    );
+    if (_shouldTraceObservation(observation)) {
+      final visibleIndexes = observation.visibleCoverages
+          .map((coverage) => coverage.pageIndex)
+          .toList(growable: false);
+      _traceSink.record(
+        traceEvent(
+          clock: _clock,
+          sessionId: sessionId,
+          kind: TraceEventKind.readerObservation,
+          payload: <String, Object?>{
+            'currentIndex': observation.currentIndex,
+            'stableIndex': observation.stableIndex,
+            'interaction': observation.interaction.name,
+            'logicalPosition': observation.logicalPosition,
+            'velocity': observation.velocity,
+            'targetIndex': observation.targetCoverage?.pageIndex,
+            'visibleIndexes': visibleIndexes,
+          },
+        ),
+      );
+      _lastObservationTraceMicros = observation.monotonicMicros;
+      _lastTracedCurrentIndex = observation.currentIndex;
+      _lastTracedStableIndex = observation.stableIndex;
+      _lastTracedTargetIndex = observation.targetCoverage?.pageIndex;
+      _lastTracedInteraction = observation.interaction;
+      _lastTracedVisibleIndexes = visibleIndexes;
+    }
     if (visibleStateChanged) {
       notifyListeners();
     }
@@ -161,4 +176,22 @@ final class ReaderController extends ChangeNotifier {
       );
     }
   }
+  bool _shouldTraceObservation(ReaderObs observation) {
+    if (observation.monotonicMicros - _lastObservationTraceMicros >= 250000 ||
+        _lastTracedCurrentIndex != observation.currentIndex ||
+        _lastTracedStableIndex != observation.stableIndex ||
+        _lastTracedTargetIndex != observation.targetCoverage?.pageIndex ||
+        _lastTracedInteraction != observation.interaction ||
+        _lastTracedVisibleIndexes.length != observation.visibleCoverages.length) {
+      return true;
+    }
+    for (var index = 0; index < _lastTracedVisibleIndexes.length; index++) {
+      if (_lastTracedVisibleIndexes[index] !=
+          observation.visibleCoverages[index].pageIndex) {
+        return true;
+      }
+    }
+    return false;
+  }
+
 }

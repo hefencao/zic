@@ -23,7 +23,10 @@ final class ReaderBinding {
     this.discretePages = true,
   })  : _coordinator = coordinator,
         _playback = playback,
-        _viewportResolver = viewportResolver {
+        _viewportResolver = viewportResolver,
+        _pageIndexes = <String, int>{
+          for (final page in chapter.pages) page.pageId: page.index,
+        } {
     pipeline = PipelineController(
       chapter: chapter,
       decodeTarget: decodeTarget,
@@ -41,10 +44,15 @@ final class ReaderBinding {
   final Coordinator _coordinator;
   final PlaybackCoordinator _playback;
   final ViewportResolver _viewportResolver;
+  final Map<String, int> _pageIndexes;
   late final PipelineController pipeline;
 
   ReaderObs? _observation;
   ViewportState? _viewport;
+  ViewportState? _playbackViewport;
+  int? _playbackPlanRevision;
+  int? _cachedUploadRevision;
+  Map<int, DecodeId> _cachedUploadIds = const <int, DecodeId>{};
   bool _detached = false;
 
   ViewportState? get viewport => _viewport;
@@ -57,7 +65,11 @@ final class ReaderBinding {
     _observation = observation;
     final viewport = _viewportResolver.resolve(
       observation,
-      discretePages: discretePages,
+      // Vertical Reader is continuous presentation. Coverage fractions remain
+      // Reader geometry facts; playback only needs current/target membership
+      // while the gesture is active.
+      discretePages:
+          discretePages && observation.direction != ReadingDirection.vertical,
     );
     _viewport = viewport;
     try {
@@ -66,7 +78,9 @@ final class ReaderBinding {
       // Viewport/presentation is Reader-local consumer state. A demand-lane
       // reconciliation failure may still be reported by the caller, but it
       // must not prevent the visible viewport/playback projection advancing.
-      _playback.syncPlayback(viewport, _uploadIds(pipeline.currentPlan));
+      // Do not re-run PlaybackGate for every continuous coverage fraction:
+      // only semantic viewport state or upload-plan identity can change it.
+      _syncPlayback(viewport);
     }
   }
 
@@ -146,20 +160,41 @@ final class ReaderBinding {
     if (_detached || viewport == null) {
       return;
     }
+    _syncPlayback(viewport, force: true);
+  }
+
+  void _syncPlayback(ViewportState viewport, {bool force = false}) {
+    final revision = pipeline.revision;
+    if (!force &&
+        _playbackPlanRevision == revision &&
+        _sameViewportState(_playbackViewport, viewport)) {
+      return;
+    }
     _playback.syncPlayback(viewport, _uploadIds(pipeline.currentPlan));
+    _playbackViewport = viewport;
+    _playbackPlanRevision = revision;
   }
 
   Map<int, DecodeId> _uploadIds(DemandPlan plan) {
-    final pageIndexes = <String, int>{
-      for (final page in chapter.pages) page.pageId: page.index,
-    };
+    if (_cachedUploadRevision == plan.revision) {
+      return _cachedUploadIds;
+    }
     final result = <int, DecodeId>{};
     for (final id in plan.uploads.keys) {
-      final index = pageIndexes[id.download.content.pageId];
+      final index = _pageIndexes[id.download.content.pageId];
       if (index != null) {
         result[index] = id;
       }
     }
-    return result;
+    _cachedUploadRevision = plan.revision;
+    _cachedUploadIds = Map<int, DecodeId>.unmodifiable(result);
+    return _cachedUploadIds;
   }
+
+  bool _sameViewportState(ViewportState? a, ViewportState b) =>
+      a != null &&
+      a.phase == b.phase &&
+      a.currentPageIndex == b.currentPageIndex &&
+      a.targetPageIndex == b.targetPageIndex &&
+      a.dominantPageIndex == b.dominantPageIndex;
 }

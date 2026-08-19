@@ -71,9 +71,11 @@ for token in ('8.387ms', 'scheduling-only', 'physical session', 'pipelineReconci
 
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-if not re.search(r'^version: 0\.31\.0\+305$', pubspec, re.M):
-    raise SystemExit('dev.305 app version mismatch')
-if not re.search(r'^versionCode=305$', props, re.M):
-    raise SystemExit('dev.305 Android version mismatch')
+pub_match = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+android_match = re.search(r'^versionCode=(\d+)$', props, re.M)
+if pub_match is None or int(pub_match.group(1)) < 305:
+    raise SystemExit('dev.305+ app version mismatch')
+if android_match is None or int(android_match.group(1)) < 305:
+    raise SystemExit('dev.305+ Android version mismatch')
 
 print('dev.305 scheduling migration control-plane fast path: OK')

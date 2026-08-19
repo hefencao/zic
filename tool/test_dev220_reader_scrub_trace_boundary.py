@@ -63,9 +63,18 @@ for token in (
     'try {',
     'pipeline.accept(observation);',
     '} finally {',
-    '_playback.syncPlayback(viewport, _uploadIds(pipeline.currentPlan));',
 ):
     require(accept, token, 'Reader-local viewport/playback boundary')
+current_version = int(re.search(r'^version: 0\.31\.0\+(\d+)$',
+                                read('apps/app/pubspec.yaml'), re.M).group(1))
+if current_version >= 306:
+    require(accept, '_syncPlayback(viewport);',
+            'dev.306 semantic playback boundary')
+    require(binding, '_playback.syncPlayback(viewport, _uploadIds(pipeline.currentPlan));',
+            'playback implementation')
+else:
+    require(accept, '_playback.syncPlayback(viewport, _uploadIds(pipeline.currentPlan));',
+            'Reader-local viewport/playback boundary')
 if accept.index('_viewport = viewport;') > accept.index('pipeline.accept(observation);'):
     raise SystemExit('dev.220 viewport fact must be committed before demand reconcile')
 

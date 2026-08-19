@@ -251,12 +251,13 @@ final class PipelineController {
     final plan = guard.enforce(proposal);
     final diff = DemandDiff.between(_previous, plan);
 
-    // Runtime source/media evidence is observational state. It may change
-    // without changing any authoritative scheduling request. Never promote
-    // that diagnostic-only mutation into a new plan revision: revision churn
-    // refreshes expiration metadata and used to make every decode/upload look
-    // changed even when the policy result was identical.
-    if (!windowChanged && !_decodeTargetDirty && diff.isEmpty) {
+    // Runtime source/media evidence and Reader window metadata may change
+    // without changing any authoritative scheduling request. Never promote an
+    // empty semantic demand diff into a scheduler revision merely because the
+    // viewport metadata changed: Reader owns the continuous visual position.
+    if (!_decodeTargetDirty && diff.isEmpty) {
+      _previousRoles = Map<int, PageRole>.unmodifiable(window.roles);
+      _previousRetainedIndex = window.retainedIndex;
       _previousVisibleIndexes = currentVisibleIndexes;
       _previousVerticalActive = verticalActive;
       return;

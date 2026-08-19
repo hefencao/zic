@@ -632,8 +632,12 @@ final class PipelineReaderSession {
   bool _disposed = false;
   bool _retainedForReaderReentry = false;
   ReaderObs? _pendingObservation;
+  ReaderObs? _lastAcceptedControlObservation;
   bool _observationDrainScheduled = false;
+  bool _observationControlDirty = false;
   int _observationGeneration = 0;
+  DownloadId? _lastControlCurrentDownload;
+  DecodeTarget? _lastControlDecodeTarget;
 
   bool get isDisposed => _disposed;
   int get revision => _binding?.revision ?? 0;
@@ -642,6 +646,10 @@ final class PipelineReaderSession {
   void attach(DecodeTarget target) {
     _requireOpen();
     _invalidateObservationQueue();
+    _lastAcceptedControlObservation = null;
+    _lastControlCurrentDownload = null;
+    _lastControlDecodeTarget = null;
+    _observationControlDirty = false;
     _retainedForReaderReentry = false;
     if (target.renderer != renderer) {
       throw ArgumentError.value(
@@ -684,18 +692,32 @@ final class PipelineReaderSession {
       throw StateError('pipeline Reader session is not attached');
     }
     binding.updateDecodeTarget(target);
+    _observationControlDirty = true;
   }
 
   /// Enqueues the latest Reader viewport observation behind the UI/navigation
   /// callback boundary. ReaderView must never synchronously execute demand,
-  /// transfer or decode reconciliation. Rapid scroll updates are latest-wins
-  /// within one microtask turn; page identity/current transitions remain in the
-  /// observation itself and are reconciled before the next frame.
+  /// transfer or decode reconciliation. Vertical continuous geometry remains
+  /// Reader-owned: coverage fraction, velocity and logical-position changes
+  /// that preserve the same discrete control state do not re-enter Pipeline.
+  /// A pending drain is still latest-wins, so a real current/target/visible or
+  /// interaction-boundary change replaces stale work before reconciliation.
   void enqueueObservation(ReaderObs observation) {
     if (_disposed || _retainedForReaderReentry) {
       return;
     }
     _pendingObservation = observation;
+    if (_observationDrainScheduled) {
+      return;
+    }
+    if (!_observationControlDirty &&
+        _sameVerticalControlObservation(
+          _lastAcceptedControlObservation,
+          observation,
+        )) {
+      _pendingObservation = null;
+      return;
+    }
     _scheduleObservationDrain();
   }
 
@@ -722,8 +744,17 @@ final class PipelineReaderSession {
     _pendingObservation = null;
     _observationDrainScheduled = false;
     if (observation == null) return;
+    if (!_observationControlDirty &&
+        _sameVerticalControlObservation(
+          _lastAcceptedControlObservation,
+          observation,
+        )) {
+      return;
+    }
+    var accepted = false;
     try {
       accept(observation);
+      accepted = true;
     } on Object catch (error, stackTrace) {
       trace.record(
         traceEvent(
@@ -740,14 +771,50 @@ final class PipelineReaderSession {
         ),
       );
     }
+    if (accepted) {
+      _lastAcceptedControlObservation = observation;
+      _observationControlDirty = false;
+    }
     if (_pendingObservation != null) {
       _scheduleObservationDrain();
     }
   }
 
+  bool _sameVerticalControlObservation(ReaderObs? a, ReaderObs b) {
+    if (a == null ||
+        a.direction != ReadingDirection.vertical ||
+        b.direction != ReadingDirection.vertical ||
+        a.currentIndex != b.currentIndex ||
+        a.stableIndex != b.stableIndex ||
+        a.targetCoverage?.pageIndex != b.targetCoverage?.pageIndex ||
+        _controlInteraction(a.interaction) !=
+            _controlInteraction(b.interaction) ||
+        a.visibleCoverages.length != b.visibleCoverages.length) {
+      return false;
+    }
+    for (var index = 0; index < a.visibleCoverages.length; index++) {
+      if (a.visibleCoverages[index].pageIndex !=
+          b.visibleCoverages[index].pageIndex) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  int _controlInteraction(Interaction interaction) => switch (interaction) {
+        Interaction.dragging ||
+        Interaction.scrolling ||
+        Interaction.settling => 1,
+        Interaction.idle => 2,
+        Interaction.scrubbing => 3,
+        Interaction.jumping => 4,
+      };
+
   void _invalidateObservationQueue() {
     _observationGeneration++;
     _pendingObservation = null;
+    _lastAcceptedControlObservation = null;
+    _observationControlDirty = false;
   }
 
   void accept(ReaderObs observation) {
@@ -763,27 +830,39 @@ final class PipelineReaderSession {
     final currentAsset = chapter.pages[pageIndex];
     final currentDownload = readerPageDownloadId(chapter, currentAsset);
     final target = binding.pipeline.decodeTarget;
-    final prewarmer = _media is PipelineOutputPrewarmer
-        ? _media as PipelineOutputPrewarmer
-        : null;
-    if (prewarmer != null) {
-      unawaited(
-        _prewarmOutput(
-          prewarmer,
-          id: currentDownload,
-          width: target.physicalWidth,
-          height: target.physicalHeight,
-        ),
-      );
+    final controlIdentityChanged =
+        _lastControlCurrentDownload != currentDownload ||
+        _lastControlDecodeTarget != target;
+    if (controlIdentityChanged) {
+      final prewarmer = _media is PipelineOutputPrewarmer
+          ? _media as PipelineOutputPrewarmer
+          : null;
+      if (prewarmer != null) {
+        unawaited(
+          _prewarmOutput(
+            prewarmer,
+            id: currentDownload,
+            width: target.physicalWidth,
+            height: target.physicalHeight,
+          ),
+        );
+      }
+      final currentOutput = _pageOutputs[currentDownload.key]?.snapshot;
+      if (currentOutput?.hasSurface != true) {
+        _startupCurrentDownload = currentDownload;
+      } else if (_startupCurrentDownload == currentDownload) {
+        _releaseStartupCurrentDownload();
+      }
+      _holdStartupArtifactPressureFor(currentDownload);
     }
-    final currentOutput = _pageOutputs[currentDownload.key]?.snapshot;
-    if (currentOutput?.hasSurface != true) {
-      _startupCurrentDownload = currentDownload;
-    } else if (_startupCurrentDownload == currentDownload) {
-      _releaseStartupCurrentDownload();
-    }
-    _holdStartupArtifactPressureFor(currentDownload);
+    final revisionBefore = binding.pipeline.revision;
     binding.accept(observation);
+    final planChanged = binding.pipeline.revision != revisionBefore;
+    _lastControlCurrentDownload = currentDownload;
+    _lastControlDecodeTarget = target;
+    if (!planChanged && !controlIdentityChanged) {
+      return;
+    }
     _syncPageStreams();
     transferProgress.select(_downloads.find(currentDownload));
     _syncStartupArtifactPressure();

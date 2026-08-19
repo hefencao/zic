@@ -28,12 +28,15 @@ if dev is None or int(dev.group(1)) < 294:
     raise SystemExit('FAIL: dev.294+ app version missing')
 if android_dev is None or int(android_dev.group(1)) < 294:
     raise SystemExit('FAIL: dev.294+ Android version missing')
+current_dev = int(dev.group(1))
 require('packages/telemetry/lib/src/trace.dart', 'pageLayoutSnapshot,')
 require(
     'packages/reader/lib/src/reader_view.dart',
     "GlobalKey(debugLabel: 'reader-vertical-layout:$index')",
     'forceLayoutSnapshot: true',
-    'now - _lastVerticalLayoutSnapshotMicros < 100000',
+    ('now - _lastVerticalLayoutSnapshotMicros < 500000'
+     if current_dev >= 306
+     else 'now - _lastVerticalLayoutSnapshotMicros < 100000'),
     'visible.take(8)',
     'TraceEventKind.pageLayoutSnapshot',
     "'expectedExtent': expectedExtent",
@@ -67,7 +70,6 @@ require(
     'external Texture/SurfaceProducer compositor',
 )
 handoff_tokens = ['缩放/比例异常解决', '`pageLayoutSnapshot`']
-current_dev = int(dev.group(1))
 if current_dev == 294:
     handoff_tokens.insert(0, '# dev.294 后续交接')
 elif current_dev == 295:
