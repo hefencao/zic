@@ -97,7 +97,10 @@ docs = ''.join(read(path) for path in (
     'docs/adr/0298-android-window-frame-metrics-boundary.md',
     'docs/audits/dev319-android-window-frame-metrics-audit.md',
 ))
-for token in ('dev.318', 'FALSIFIED', '2096', '1521', '26.294ms', '76/97', 'FrameMetrics', 'unknown delay', 'droppedReports'):
+for variants in (('2096', '2,096'), ('1521', '1,521')):
+    if not any(token in docs for token in variants):
+        raise SystemExit(f'dev.319 missing device/governance evidence: {variants[0]}')
+for token in ('dev.318', 'FALSIFIED', '26.294ms', '76/97', 'FrameMetrics', 'unknown delay', 'droppedReports'):
     require(docs, token, 'device/governance evidence')
 
 print('dev.319 Android Window FrameMetrics observation boundary: OK')

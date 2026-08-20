@@ -116,7 +116,10 @@ docs = ''.join(read(path) for path in (
     'docs/adr/0297-static-webp-flutter-projection-composition-boundary.md',
     'docs/audits/dev318-static-webp-composition-audit.md',
 ))
-for token in ('4772', '4761', '8.319ms', 'VibeVenera', 'ReaderImageProvider', 'dev.315'):
+for variants in (('4772', '4,772'), ('4761', '4,761')):
+    if not any(token in docs for token in variants):
+        raise SystemExit(f'dev.318 missing device/source evidence: {variants[0]}')
+for token in ('8.319ms', 'VibeVenera', 'ReaderImageProvider', 'dev.315'):
     require(docs, token, 'device/source evidence')
 if version_code == 318:
     require(docs, 'textureRetained', 'dev.318 projection evidence')

@@ -149,6 +149,32 @@ final class _ReaderViewState extends State<ReaderView> {
   int _verticalCadence25To35ms = 0;
   int _verticalCadenceGe35ms = 0;
   int _verticalCadenceDragDriven = 0;
+  bool _verticalSceneMotionProbeActive = false;
+  bool _verticalSceneMotionStopPending = false;
+  int _verticalSceneMotionWindowStartMicros = 0;
+  int _verticalSceneMotionSampleCount = 0;
+  int _verticalSceneMotionValidSampleCount = 0;
+  int _verticalSceneMotionMissingRenderBoxCount = 0;
+  int _verticalSceneMotionMovingSampleCount = 0;
+  int _verticalSceneMotionDragSampleCount = 0;
+  int _verticalSceneMotionBallisticSampleCount = 0;
+  int _verticalSceneMotionStationaryBallisticCount = 0;
+  int _verticalSceneMotionResidualOutlierCount = 0;
+  int _verticalSceneMotionFrameGapSumMicros = 0;
+  int _verticalSceneMotionMinFrameGapMicros = 0;
+  int _verticalSceneMotionMaxFrameGapMicros = 0;
+  int _verticalSceneMotionGapLt10ms = 0;
+  int _verticalSceneMotionGap10To14ms = 0;
+  int _verticalSceneMotionGap14To18ms = 0;
+  int _verticalSceneMotionGap18To20ms = 0;
+  int _verticalSceneMotionGap20To25ms = 0;
+  int _verticalSceneMotionGap25To35ms = 0;
+  int _verticalSceneMotionGapGe35ms = 0;
+  double _verticalSceneMotionMaxAbsResidualDeltaPx = 0;
+  int? _verticalSceneMotionLastFrameStampMicros;
+  int? _verticalSceneMotionLastCallbackMicros;
+  double? _verticalSceneMotionLastPixels;
+  double? _verticalSceneMotionLastResidualPx;
   late final ValueNotifier<int> _verticalKeepAliveCenter;
   int? _lastVerticalLayoutPageIndex;
   double? _lastVerticalLayoutGlobalTop;
@@ -1143,6 +1169,7 @@ final class _ReaderViewState extends State<ReaderView> {
           : notification.dragDetails == null
               ? Interaction.scrolling
               : Interaction.dragging;
+      _startVerticalSceneMotionProbe();
       _emitFromVerticalMetrics(notification.metrics, forceLayoutSnapshot: true);
     } else if (notification is ScrollUpdateNotification) {
       _pendingVerticalAnchor = null;
@@ -1152,6 +1179,9 @@ final class _ReaderViewState extends State<ReaderView> {
           : dragDriven
               ? Interaction.dragging
               : Interaction.scrolling;
+      if (!_verticalSceneMotionProbeActive) {
+        _startVerticalSceneMotionProbe();
+      }
       _recordVerticalScrollCadence(
         notification.metrics,
         dragDriven: dragDriven,
@@ -1161,6 +1191,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _interaction = widget.controller.pageScrubbing
           ? Interaction.scrubbing
           : Interaction.idle;
+      _verticalSceneMotionStopPending = true;
       _flushVerticalScrollCadenceSummary(widget.clock.nowMicros());
       _lastVerticalScrollUpdateMicros = null;
       _lastVerticalScrollUpdatePixels = null;
@@ -1183,6 +1214,261 @@ final class _ReaderViewState extends State<ReaderView> {
       }
     }
     return false;
+  }
+
+  void _startVerticalSceneMotionProbe() {
+    _verticalSceneMotionStopPending = false;
+    if (_verticalSceneMotionProbeActive) return;
+    _verticalSceneMotionProbeActive = true;
+    _resetVerticalSceneMotionSummary(widget.clock.nowMicros());
+    _verticalSceneMotionLastFrameStampMicros = null;
+    _verticalSceneMotionLastCallbackMicros = null;
+    _verticalSceneMotionLastPixels = null;
+    _verticalSceneMotionLastResidualPx = null;
+    _scheduleVerticalSceneMotionSample();
+  }
+
+  void _scheduleVerticalSceneMotionSample() {
+    if (!_verticalSceneMotionProbeActive) return;
+    final controller = widget.controller;
+    WidgetsBinding.instance.addPostFrameCallback((frameTimeStamp) {
+      if (!mounted ||
+          !_verticalSceneMotionProbeActive ||
+          widget.controller != controller ||
+          controller.direction != ReadingDirection.vertical) {
+        return;
+      }
+      _sampleVerticalSceneMotion(frameTimeStamp);
+      if (_verticalSceneMotionStopPending &&
+          _interaction == Interaction.idle) {
+        _flushVerticalSceneMotionSummary(widget.clock.nowMicros());
+        _verticalSceneMotionProbeActive = false;
+        _verticalSceneMotionStopPending = false;
+        _verticalSceneMotionLastFrameStampMicros = null;
+        _verticalSceneMotionLastCallbackMicros = null;
+        _verticalSceneMotionLastPixels = null;
+        _verticalSceneMotionLastResidualPx = null;
+        return;
+      }
+      _scheduleVerticalSceneMotionSample();
+    });
+  }
+
+  void _resetVerticalSceneMotionSummary(int nowMicros) {
+    _verticalSceneMotionWindowStartMicros = nowMicros;
+    _verticalSceneMotionSampleCount = 0;
+    _verticalSceneMotionValidSampleCount = 0;
+    _verticalSceneMotionMissingRenderBoxCount = 0;
+    _verticalSceneMotionMovingSampleCount = 0;
+    _verticalSceneMotionDragSampleCount = 0;
+    _verticalSceneMotionBallisticSampleCount = 0;
+    _verticalSceneMotionStationaryBallisticCount = 0;
+    _verticalSceneMotionResidualOutlierCount = 0;
+    _verticalSceneMotionFrameGapSumMicros = 0;
+    _verticalSceneMotionMinFrameGapMicros = 0;
+    _verticalSceneMotionMaxFrameGapMicros = 0;
+    _verticalSceneMotionGapLt10ms = 0;
+    _verticalSceneMotionGap10To14ms = 0;
+    _verticalSceneMotionGap14To18ms = 0;
+    _verticalSceneMotionGap18To20ms = 0;
+    _verticalSceneMotionGap20To25ms = 0;
+    _verticalSceneMotionGap25To35ms = 0;
+    _verticalSceneMotionGapGe35ms = 0;
+    _verticalSceneMotionMaxAbsResidualDeltaPx = 0;
+  }
+
+  void _sampleVerticalSceneMotion(Duration frameTimeStamp) {
+    final nowMicros = widget.clock.nowMicros();
+    final frameStampMicros = frameTimeStamp.inMicroseconds;
+    final previousFrameStampMicros = _verticalSceneMotionLastFrameStampMicros;
+    final previousCallbackMicros = _verticalSceneMotionLastCallbackMicros;
+    _verticalSceneMotionLastFrameStampMicros = frameStampMicros;
+    _verticalSceneMotionLastCallbackMicros = nowMicros;
+    _verticalSceneMotionSampleCount++;
+
+    int? frameGapMicros;
+    if (previousFrameStampMicros != null &&
+        frameStampMicros > previousFrameStampMicros) {
+      frameGapMicros = frameStampMicros - previousFrameStampMicros;
+      _recordVerticalSceneMotionFrameGap(frameGapMicros);
+    }
+
+    final position = _verticalController.hasClients
+        ? _verticalController.position
+        : null;
+    if (position == null || !position.hasContentDimensions) {
+      _verticalSceneMotionMissingRenderBoxCount++;
+      _maybeFlushVerticalSceneMotionSummary(nowMicros);
+      return;
+    }
+    final geometry = _verticalGeometry();
+    final scenePosition = geometry.positionAt(
+      pixels: position.pixels,
+      viewportDimension: position.viewportDimension,
+    );
+    final pageIndex = scenePosition.index;
+    if (pageIndex < 0 || pageIndex >= _verticalPageLayoutKeys.length) {
+      _verticalSceneMotionMissingRenderBoxCount++;
+      _maybeFlushVerticalSceneMotionSummary(nowMicros);
+      return;
+    }
+    final context = _verticalPageLayoutKeys[pageIndex].currentContext;
+    final renderObject = context?.findRenderObject();
+    if (renderObject is! RenderBox ||
+        !renderObject.attached ||
+        !renderObject.hasSize) {
+      _verticalSceneMotionMissingRenderBoxCount++;
+      _maybeFlushVerticalSceneMotionSummary(nowMicros);
+      return;
+    }
+
+    final globalTop = renderObject.localToGlobal(Offset.zero).dy;
+    final expectedStart = geometry.boundsAt(pageIndex).start;
+    final residual = globalTop + position.pixels - expectedStart;
+    final previousPixels = _verticalSceneMotionLastPixels;
+    final previousResidual = _verticalSceneMotionLastResidualPx;
+    _verticalSceneMotionLastPixels = position.pixels;
+    _verticalSceneMotionLastResidualPx = residual;
+    _verticalSceneMotionValidSampleCount++;
+    if (_interaction == Interaction.dragging) {
+      _verticalSceneMotionDragSampleCount++;
+    } else if (_interaction == Interaction.scrolling) {
+      _verticalSceneMotionBallisticSampleCount++;
+    }
+
+    double? pixelDelta;
+    double? residualDelta;
+    if (previousPixels != null) {
+      pixelDelta = position.pixels - previousPixels;
+      if (pixelDelta.abs() > 0.01) {
+        _verticalSceneMotionMovingSampleCount++;
+      } else if (_interaction == Interaction.scrolling) {
+        _verticalSceneMotionStationaryBallisticCount++;
+      }
+    }
+    if (previousResidual != null) {
+      residualDelta = residual - previousResidual;
+      final absolute = residualDelta.abs();
+      if (absolute > _verticalSceneMotionMaxAbsResidualDeltaPx) {
+        _verticalSceneMotionMaxAbsResidualDeltaPx = absolute;
+      }
+      if (absolute > 0.25) {
+        _verticalSceneMotionResidualOutlierCount++;
+      }
+    }
+
+    final callbackGapMicros = previousCallbackMicros == null
+        ? null
+        : nowMicros - previousCallbackMicros;
+    final sceneMismatch = residualDelta != null && residualDelta.abs() > 0.25;
+    final longFrame = frameGapMicros != null && frameGapMicros >= 20000;
+    if (sceneMismatch || longFrame) {
+      widget.traceSink.record(
+        traceEvent(
+          clock: widget.clock,
+          sessionId: widget.controller.sessionId,
+          kind: TraceEventKind.verticalSceneMotionOutlier,
+          revision: widget.demandRevision?.call(),
+          payload: <String, Object?>{
+            'frameStampMicros': frameStampMicros,
+            if (frameGapMicros != null) 'frameGapMicros': frameGapMicros,
+            if (callbackGapMicros != null)
+              'callbackGapMicros': callbackGapMicros,
+            'pageIndex': pageIndex,
+            'scrollPixels': position.pixels,
+            if (pixelDelta != null) 'pixelDelta': pixelDelta,
+            'globalTop': globalTop,
+            'expectedStart': expectedStart,
+            'layoutResidualPx': residual,
+            if (residualDelta != null) 'layoutResidualDeltaPx': residualDelta,
+            'interaction': _interaction.name,
+            'stitched': widget.verticalStitch,
+          },
+        ),
+      );
+    }
+    _maybeFlushVerticalSceneMotionSummary(nowMicros);
+  }
+
+  void _recordVerticalSceneMotionFrameGap(int gapMicros) {
+    _verticalSceneMotionFrameGapSumMicros += gapMicros;
+    if (_verticalSceneMotionMinFrameGapMicros == 0 ||
+        gapMicros < _verticalSceneMotionMinFrameGapMicros) {
+      _verticalSceneMotionMinFrameGapMicros = gapMicros;
+    }
+    if (gapMicros > _verticalSceneMotionMaxFrameGapMicros) {
+      _verticalSceneMotionMaxFrameGapMicros = gapMicros;
+    }
+    if (gapMicros < 10000) {
+      _verticalSceneMotionGapLt10ms++;
+    } else if (gapMicros < 14000) {
+      _verticalSceneMotionGap10To14ms++;
+    } else if (gapMicros < 18000) {
+      _verticalSceneMotionGap14To18ms++;
+    } else if (gapMicros < 20000) {
+      _verticalSceneMotionGap18To20ms++;
+    } else if (gapMicros < 25000) {
+      _verticalSceneMotionGap20To25ms++;
+    } else if (gapMicros < 35000) {
+      _verticalSceneMotionGap25To35ms++;
+    } else {
+      _verticalSceneMotionGapGe35ms++;
+    }
+  }
+
+  void _maybeFlushVerticalSceneMotionSummary(int nowMicros) {
+    if (nowMicros - _verticalSceneMotionWindowStartMicros < 1000000) return;
+    _flushVerticalSceneMotionSummary(nowMicros);
+    _resetVerticalSceneMotionSummary(nowMicros);
+  }
+
+  void _flushVerticalSceneMotionSummary(int nowMicros) {
+    final samples = _verticalSceneMotionSampleCount;
+    if (samples == 0) return;
+    final frameIntervals = _verticalSceneMotionGapLt10ms +
+        _verticalSceneMotionGap10To14ms +
+        _verticalSceneMotionGap14To18ms +
+        _verticalSceneMotionGap18To20ms +
+        _verticalSceneMotionGap20To25ms +
+        _verticalSceneMotionGap25To35ms +
+        _verticalSceneMotionGapGe35ms;
+    widget.traceSink.record(
+      traceEvent(
+        clock: widget.clock,
+        sessionId: widget.controller.sessionId,
+        kind: TraceEventKind.verticalSceneMotionSummary,
+        revision: widget.demandRevision?.call(),
+        payload: <String, Object?>{
+          'windowMicros': nowMicros - _verticalSceneMotionWindowStartMicros,
+          'sampleCount': samples,
+          'validSampleCount': _verticalSceneMotionValidSampleCount,
+          'missingRenderBoxCount': _verticalSceneMotionMissingRenderBoxCount,
+          'frameIntervalCount': frameIntervals,
+          if (frameIntervals > 0)
+            'frameGapMeanMicros':
+                _verticalSceneMotionFrameGapSumMicros ~/ frameIntervals,
+          'minFrameGapMicros': _verticalSceneMotionMinFrameGapMicros,
+          'maxFrameGapMicros': _verticalSceneMotionMaxFrameGapMicros,
+          'gapLt10msCount': _verticalSceneMotionGapLt10ms,
+          'gap10To14msCount': _verticalSceneMotionGap10To14ms,
+          'gap14To18msCount': _verticalSceneMotionGap14To18ms,
+          'gap18To20msCount': _verticalSceneMotionGap18To20ms,
+          'gap20To25msCount': _verticalSceneMotionGap20To25ms,
+          'gap25To35msCount': _verticalSceneMotionGap25To35ms,
+          'gapGe35msCount': _verticalSceneMotionGapGe35ms,
+          'movingSampleCount': _verticalSceneMotionMovingSampleCount,
+          'dragSampleCount': _verticalSceneMotionDragSampleCount,
+          'ballisticSampleCount': _verticalSceneMotionBallisticSampleCount,
+          'stationaryBallisticCount':
+              _verticalSceneMotionStationaryBallisticCount,
+          'residualOutlierCount': _verticalSceneMotionResidualOutlierCount,
+          'maxAbsLayoutResidualDeltaPx':
+              _verticalSceneMotionMaxAbsResidualDeltaPx,
+          'interaction': _interaction.name,
+          'stitched': widget.verticalStitch,
+        },
+      ),
+    );
   }
 
   void _resetVerticalScrollCadenceSummary(int nowMicros) {

@@ -34,6 +34,14 @@ def main() -> int:
         print(f'usage: {Path(sys.argv[0]).name} TRACE.jsonl', file=sys.stderr)
         return 2
     events = list(load(Path(sys.argv[1])))
+    first_active_scroll = None
+    for event in events:
+        if event.get('kind') != 'readerObservation':
+            continue
+        interaction = (event.get('payload', {}) or {}).get('interaction')
+        if interaction in ('dragging', 'scrolling', 'scrubbing'):
+            first_active_scroll = int(event.get('t', 0) or 0)
+            break
 
     platform = Counter()
     scroll = Counter()
@@ -72,7 +80,24 @@ def main() -> int:
                 else:
                     window[key] += int(payload.get(key, 0) or 0)
         elif kind == 'platformWindowFrameMetricsOutlier':
-            window_outliers.append(payload)
+            window_outliers.append((event, payload))
+
+    deduped_window_outliers = []
+    seen_window_vsync = set()
+    for event, payload in window_outliers:
+        key = payload.get('vsyncNanos')
+        if not isinstance(key, int) or key <= 0:
+            key = (payload.get('callbackNanos'), payload.get('totalDurationMicros'), payload.get('unknownDelayMicros'))
+        if key in seen_window_vsync:
+            continue
+        seen_window_vsync.add(key)
+        deduped_window_outliers.append((event, payload))
+    active_window_outliers = [
+        payload for event, payload in deduped_window_outliers
+        if first_active_scroll is not None and int(event.get('t', 0) or 0) >= first_active_scroll
+    ]
+    raw_window_outlier_count = len(window_outliers)
+    window_outliers = [payload for _, payload in deduped_window_outliers]
 
     print(f'events={len(events)} task_failed={sum(e.get("kind") == "taskFailed" for e in events)}')
     pf = platform['frameIntervalCount']
@@ -117,7 +142,10 @@ def main() -> int:
     )
 
     if window_outliers:
-        print(f'window_outliers={len(window_outliers)}')
+        print(
+            f'window_outliers_raw={raw_window_outlier_count} unique={len(window_outliers)} '
+            f'active_scroll_unique={len(active_window_outliers)}'
+        )
         for key in (
             'totalDurationMicros', 'unknownDelayMicros', 'syncMicros',
             'commandIssueMicros', 'swapBuffersMicros',
@@ -142,7 +170,9 @@ def main() -> int:
 
     unknown_share = window['unknownGe8msCount'] / wf
     long_total_share = (window['total20To35msCount'] + window['totalGe35msCount']) / wf
-    if unknown_share >= 0.05:
+    if first_active_scroll is not None and raw_window_outlier_count > 0 and not active_window_outliers and wf < max(120, pf // 4 if pf else 120):
+        verdict = 'window-metrics-sparse-before-active-scroll-not-scrolling-root'
+    elif unknown_share >= 0.05:
         verdict = 'android-window-ui-availability-delay-candidate'
     elif long_total_share >= 0.05:
         verdict = 'android-window-sync-command-swap-candidate'

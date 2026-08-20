@@ -44,6 +44,9 @@ class ReaderRuntimePlugin :
     private var windowMetricsDisplayRefreshRateMilliHz: Long? = null
     private var windowSummaryFrameCount = 0L
     private var windowSummaryDroppedReports = 0L
+    private var windowSummaryFirstVsyncNanos = 0L
+    private var windowSummaryLastVsyncNanos = 0L
+    private var lastWindowMetricVsyncNanos = 0L
     private var windowSummaryTotalDurationSumMicros = 0L
     private var windowSummaryUnknownDelaySumMicros = 0L
     private var windowSummaryMaxTotalDurationMicros = 0L
@@ -284,6 +287,16 @@ class ReaderRuntimePlugin :
         }
         val refreshRateMilliHz = windowMetricsDisplayRefreshRateMilliHz
         synchronized(windowFrameSamples) {
+            if (vsyncNanos > 0L && vsyncNanos == lastWindowMetricVsyncNanos) {
+                return
+            }
+            if (vsyncNanos > 0L) {
+                lastWindowMetricVsyncNanos = vsyncNanos
+                if (windowSummaryFirstVsyncNanos == 0L) {
+                    windowSummaryFirstVsyncNanos = vsyncNanos
+                }
+                windowSummaryLastVsyncNanos = vsyncNanos
+            }
             windowSummaryFrameCount += 1L
             windowSummaryDroppedReports += maxOf(0, droppedReports).toLong()
             windowSummaryTotalDurationSumMicros += totalMicros
@@ -335,6 +348,9 @@ class ReaderRuntimePlugin :
             windowFrameSamples.clear()
             windowSummaryFrameCount = 0L
             windowSummaryDroppedReports = 0L
+            windowSummaryFirstVsyncNanos = 0L
+            windowSummaryLastVsyncNanos = 0L
+            lastWindowMetricVsyncNanos = 0L
             windowSummaryTotalDurationSumMicros = 0L
             windowSummaryUnknownDelaySumMicros = 0L
             windowSummaryMaxTotalDurationMicros = 0L
@@ -357,6 +373,8 @@ class ReaderRuntimePlugin :
             val summary = mutableMapOf(
                 "frameCount" to windowSummaryFrameCount,
                 "droppedReports" to windowSummaryDroppedReports,
+                "firstVsyncNanos" to windowSummaryFirstVsyncNanos,
+                "lastVsyncNanos" to windowSummaryLastVsyncNanos,
                 "totalDurationSumMicros" to windowSummaryTotalDurationSumMicros,
                 "unknownDelaySumMicros" to windowSummaryUnknownDelaySumMicros,
                 "maxTotalDurationMicros" to windowSummaryMaxTotalDurationMicros,
@@ -375,6 +393,8 @@ class ReaderRuntimePlugin :
             }
             windowSummaryFrameCount = 0L
             windowSummaryDroppedReports = 0L
+            windowSummaryFirstVsyncNanos = 0L
+            windowSummaryLastVsyncNanos = 0L
             windowSummaryTotalDurationSumMicros = 0L
             windowSummaryUnknownDelaySumMicros = 0L
             windowSummaryMaxTotalDurationMicros = 0L

@@ -60,6 +60,8 @@ enum TraceEventKind {
   pageLayoutSnapshot,
   scrollCadenceOutlier,
   scrollCadenceSummary,
+  verticalSceneMotionOutlier,
+  verticalSceneMotionSummary,
   staticFlutterPresentation,
   platformFrameCadenceOutlier,
   platformFrameCadenceSummary,

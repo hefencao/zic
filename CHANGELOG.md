@@ -1,3 +1,10 @@
+## 0.31.0-dev.320 - vertical scene-motion frame boundary
+
+- Treat the 23:59 trace strictly as high-performance-device evidence: Choreographer is 2052/2064 <10ms (mean 8.419ms), non-zero ScrollUpdate is 1989/2047 <10ms, and Flutter framework/raster phases are usually small.
+- Correct dev.319 interpretation: only 62 Window FrameMetrics were observed and eight exported outliers are four duplicate vsync callbacks, all before active scrolling; startup UNKNOWN_DELAY is not promoted to the scrolling root cause. Window metrics now deduplicate identical vsync callbacks and expose first/last-vsync coverage.
+- Keep dev.317 ordinary-event-turn observation draining and existing native-texture presentation. Add observation-only active-scroll post-frame scene sampling of live ScrollPosition plus current RenderBox transform; aggregate the seam-invariant `globalTop + pixels - expectedStart` into `verticalSceneMotionSummary/Outlier`. No Reader/Pipeline/rendering policy changes.
+- Add `tool/analyze_vertical_scene_motion_jank.py`, ADR 0299 and the dev.320 high-performance audit. If scene motion is continuous on-device while stutter remains, the next boundary is actual SurfaceFlinger/Perfetto presentation rather than another Flutter framework tweak.
+
 ## 0.31.0-dev.319 - Android Window FrameMetrics observation boundary
 
 - The 16:22 dev.318 trace validly falsifies the static Flutter projection rather than repeating dev.315's planner failure: 11/11 authoritative classifications are `animated=false/frameCount=1/complete=true`, `staticFlutterPresentation` occurs 12 times and `taskFailed=0`, yet the Reader problem remains. Restore dev.317 native-texture static presentation; retain dev.317 `Timer.run` and dev.318 `scrollCadenceSummary` observation only.

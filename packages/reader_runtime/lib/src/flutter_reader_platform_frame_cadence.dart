@@ -304,6 +304,8 @@ final class FlutterReaderPlatformFrameCadenceProbe {
     for (final key in const <String>[
       'frameCount',
       'droppedReports',
+      'firstVsyncNanos',
+      'lastVsyncNanos',
       'totalDurationSumMicros',
       'unknownDelaySumMicros',
       'maxTotalDurationMicros',
