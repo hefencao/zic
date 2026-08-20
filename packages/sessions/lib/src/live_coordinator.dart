@@ -642,6 +642,26 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       if (onDecode == null && decodes == null) {
         continue;
       }
+      final registry = decodes;
+      final pendingSourceWake = _hasPendingSourceRevision(entry.key);
+      final before = registry?.find(entry.key)?.snapshot;
+      final preparedDepth = uploads?.preparedDepth(entry.key) ?? 0;
+      if (registry != null &&
+          !pendingSourceWake &&
+          !_decodeNeedsFill(
+            before,
+            entry.value,
+            preparedDepth: preparedDepth,
+            sourceWake: false,
+            force: true,
+          )) {
+        // Role/priority migration of an already-satisfied static page is
+        // scheduler metadata, not decode work. Remove any stale queued no-op
+        // and update a genuinely active task in place instead of following it
+        // with another lane task that will rediscover the same fact.
+        decode.cancelQueued(entry.key.key);
+        continue;
+      }
       final submit = diff.changed.containsKey(entry.key)
           ? decode.follow
           : decode.submit;
@@ -1211,6 +1231,18 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         }
       }
       if (onUpload == null && uploadRegistry == null) {
+        continue;
+      }
+      if (uploadRegistry != null &&
+          uploadRegistry.reusePreparedStaticForDemand(
+            entry.key,
+            entry.value,
+            revision: demandRevision,
+          )) {
+        // A retained/ready authoritative static output only changed policy
+        // role. Do not enqueue an UploadLane task merely to run prepare() into
+        // its already-ready no-op branch.
+        upload.cancelQueued(entry.key.key);
         continue;
       }
       _submitUpload(

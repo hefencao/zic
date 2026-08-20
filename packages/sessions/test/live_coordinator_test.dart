@@ -2457,6 +2457,12 @@ void main() {
     expect(uploads.find(decodeId)?.state, UploadState.ready);
     expect(decodes.find(decodeId)?.snapshot.depth, 0);
     expect(uploader.outputs, hasLength(1));
+    final uploadStartsBeforeDormant = trace.events
+        .where((event) => event.kind == TraceEventKind.uploadStarted)
+        .length;
+    final decodeStartsBeforeDormant = trace.events
+        .where((event) => event.kind == TraceEventKind.decodeStarted)
+        .length;
 
     prior = visible;
     final dormant = plan(revision: 2, decode: false, upload: false);
@@ -2501,6 +2507,20 @@ void main() {
     expect(uploads.find(decodeId)?.state, UploadState.ready);
     expect(uploader.outputs, hasLength(1),
         reason: 'revisit reuses the retained static output');
+    expect(
+      trace.events
+          .where((event) => event.kind == TraceEventKind.uploadStarted)
+          .length,
+      uploadStartsBeforeDormant,
+      reason: 'static revisit must not enqueue a no-op upload lane task',
+    );
+    expect(
+      trace.events
+          .where((event) => event.kind == TraceEventKind.decodeStarted)
+          .length,
+      decodeStartsBeforeDormant,
+      reason: 'static revisit must not enqueue a no-op decode fill',
+    );
   });
 
 }

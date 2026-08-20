@@ -140,7 +140,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - lane normal concurrency：network 5、decode 3、upload 2；network/decode/upload 各 MUST 保留 1 个仅 current(priority 1000) 可用的 bounded handoff slot，transition(priority 900)不得占用；
 - source bucket：local 2、remote 5。
 
-Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor 或 texture。静态一帧满足；静态证据 MUST NOT 把 near/far encoded-only 页面提升为 speculative decode/upload，非可见静态预热只能发生在 current/transition/next/next2/previous 稳定 decode 角色内。真实 viewport 可见静态页 MAY 获得一帧输出，且不得重新引入 `PageRole.visible`。纵排 dragging/scrolling/settling 期间，任何非 current/transition 且不在真实 viewport 的 speculative static page MUST defer UploadDemand，即使其稳定role为 immediate next/next2/previous；其 DecodeDemand MUST保持既有窗口语义，idle后 MAY恢复stable-role static warming。
+Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor 或 texture。静态一帧满足；当exact static DecodeSession已经满足且没有pending source revision时，role/priority-only DecodeDemand migration MUST NOT重新enqueue DecodeLane；当同一UploadSession保有ready authoritative static output、无successor/failure/in-flight prepare时，UploadDemand role/revision migration MAY原位adopt该output且 MUST NOT重新enqueue UploadLane。动画、缺帧、source revision/generation变化与failure recovery仍 MUST走完整media work路径。静态证据 MUST NOT 把 near/far encoded-only 页面提升为 speculative decode/upload，非可见静态预热只能发生在 current/transition/next/next2/previous 稳定 decode 角色内。真实 viewport 可见静态页 MAY 获得一帧输出，且不得重新引入 `PageRole.visible`。纵排 dragging/scrolling/settling 期间，任何非 current/transition 且不在真实 viewport 的 speculative static page MUST defer UploadDemand，即使其稳定role为 immediate next/next2/previous；其 DecodeDemand MUST保持既有窗口语义，idle后 MAY恢复stable-role static warming。
 
 ## 4. 网络调度
 

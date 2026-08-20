@@ -232,6 +232,21 @@ void main() {
         ),
         isFalse,
       );
+      expect(
+        upload.reusePreparedStaticForDemand(
+          demand: const UploadDemand(
+            role: PageRole.transition,
+            priority: 900,
+            reason: 'static-role-migration',
+            expirationRevision: 3,
+          ),
+          revision: 2,
+        ),
+        isTrue,
+      );
+      expect(upload.state, UploadState.ready);
+      expect(upload.outputBytes, retainedBytes);
+      expect(uploader.outputs, hasLength(1));
 
       upload.trimOutput();
       expect(upload.outputBytes, 0);

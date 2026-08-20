@@ -67,6 +67,17 @@ final class UploadRegistry {
 
   int preparedDepth(DecodeId id) => _sessions[id]?.preparedDepth ?? 0;
 
+  bool reusePreparedStaticForDemand(
+    DecodeId id,
+    UploadDemand demand, {
+    required int revision,
+  }) =>
+      _sessions[id]?.reusePreparedStaticForDemand(
+        demand: demand,
+        revision: revision,
+      ) ??
+      false;
+
   bool hasRunnablePlayback(Iterable<DecodeId> ids) {
     for (final id in ids) {
       if (_sessions[id]?.playbackRunning == true) {

@@ -187,6 +187,42 @@ final class UploadSession {
         failure: _failure,
       );
 
+  /// Rebinds an already-complete authoritative static output to a new role
+  /// without scheduling another upload-lane task.
+  ///
+  /// This is intentionally narrower than [prepare]: it is valid only when the
+  /// exact DecodeSession has no successor frame or failure to consume and no
+  /// serialized prepare is in flight. A role/priority-only demand migration
+  /// must not turn a resident one-frame output back into upload work.
+  bool reusePreparedStaticForDemand({
+    required UploadDemand demand,
+    required int revision,
+  }) {
+    _requireOpen();
+    final decodeSnapshot = decode.snapshot;
+    final holder = decode.holder;
+    if (_pendingPrepares != 0 ||
+        !hasRetainableStaticOutput ||
+        _slot == null ||
+        _slot!.frame.disposed ||
+        (holder != null && !holder.isEmpty) ||
+        decodeSnapshot.failure != null ||
+        decodeSnapshot.state == DecodeState.failed ||
+        decodeSnapshot.state == DecodeState.disposed) {
+      return false;
+    }
+    final wasRetainedWithoutDemand = _retainedWithoutDemand;
+    _retainedWithoutDemand = false;
+    _releaseUploaderWhenIdle = false;
+    _revision = revision;
+    _latestDemandRole = demand.role;
+    _setState(UploadState.ready);
+    if (wasRetainedWithoutDemand) {
+      _notifySnapshot();
+    }
+    return true;
+  }
+
   Future<UploadSnapshot> prepare({
     required UploadDemand demand,
     required int revision,
