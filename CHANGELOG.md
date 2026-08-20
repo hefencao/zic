@@ -1,3 +1,9 @@
+## 0.31.0-dev.324 - SurfaceFlinger Perfetto evidence boundary
+
+- The 05:33 dev.323 high-refresh device trace is valid (`taskFailed=0`, `big_5x5=0`) and closes the retained-static re-projection hypothesis as a sufficient root: all 10 active direction flips have `resident_static_represent total=0/associated=0`, while the same fixed-position hitch remains. Keep the dev.323 fast path, but do not widen current±2 presentation continuity or change keepAlive.
+- Existing observation-only audits now converge on the final presentation boundary: 2,480/2,487 Android cadence intervals are <10ms; Flutter summary cadence is 8.319ms over 2,398 samples; 2,190 vertical scene samples are valid with zero residual outliers; the only 27.926ms ScrollUpdate gap has no active-scroll Window FrameMetrics counterpart. This is not evidence for another Reader/Pipeline policy change.
+- Add an observation-only Android API31+ Perfetto capture using `android.surfaceflinger.frametimeline`, active SurfaceFlinger layer snapshots with composition/HWC/buffer flags, app/system gfx/view tracing, and process stats. Add an offline FrameTimeline analyzer that summarizes per-layer actual-present gaps, late/jank tags, fence state, GPU composition and SurfaceFlinger actual frames. Production Reader/Pipeline/texture behavior is unchanged.
+
 ## 0.31.0-dev.323 - retained static re-projection boundary
 
 - The valid 03:35 dev.322 device run restores complete loading (`taskFailed=0`) and proves the active download bridge did its intended transport work: 26 active direction flips have `big_5x5=0`, median add/remove 1/1, and flip reconcile median/max 4.617/5.874ms, yet the user still reports the same fixed-position hitch. Keep the bridge as a bounded control-plane optimization but close it as a sufficient jitter root; do not tune its quota.
