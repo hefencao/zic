@@ -1,3 +1,9 @@
+## 0.31.0-dev.321 - active download-window bridge boundary
+
+- The dev.320 01:31 high-refresh trace closes general scene-motion drift while exposing a repeatable fixed-position control transaction: 13/13 active read-direction flips perform `downloadAdded=5/downloadRemoved=5/downloadChanged=6`; flip reconcile median is 7.455ms and max 9.669ms against an 8.333ms 120Hz budget. Repeated page12/page14 flips also re-project resident static pairs without physical blit.
+- Keep the canonical desired encoded 7/3 window, decode 2/1, two-page direction predictor, dev.317 `Timer.run`, native texture and immediate current/visible/transition semantics. During vertical dragging/scrolling/settling only, bridge the physical encoded-download plan: all sources required by desired decode/upload/current/transition enter immediately, while encoded-only desired membership advances at most one new identity per committed current page and previous speculative identities temporarily fill unused capacity. Idle fully converges to canonical 7/3.
+- Add bridge telemetry and `tool/analyze_direction_flip_120hz_jank.py`, ADR 0300 and the dev.321 audit. This is not dev.316 hysteresis and not a time debounce: direction changes immediately; only far transport membership migration is amortized. If 5/5 churn collapses but fixed-position jitter remains, do not tune the quota/threshold; test static projection continuity independently.
+
 ## 0.31.0-dev.320 - vertical scene-motion frame boundary
 
 - Treat the 23:59 trace strictly as high-performance-device evidence: Choreographer is 2052/2064 <10ms (mean 8.419ms), non-zero ScrollUpdate is 1989/2047 <10ms, and Flutter framework/raster phases are usually small.

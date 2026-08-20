@@ -49,6 +49,7 @@ final class PipelineController {
   DemandPlan _previous = DemandPlan.empty();
   Map<int, PageRole>? _previousRoles;
   int? _previousRetainedIndex;
+  int? _previousPlannedCurrentIndex;
   int? _currentIndex;
   int? _lastCurrentIndex;
   final BrowsingDirectionPredictor _directionPredictor =
@@ -262,7 +263,16 @@ final class PipelineController {
       downloadFlow: animatedFlow,
       readDirection: _readDirection,
     );
-    final plan = guard.enforce(proposal);
+    final desiredPlan = guard.enforce(proposal);
+    final bridgeLocalMovement = _lastCurrentIndex == null ||
+        (observation.currentIndex - _lastCurrentIndex!).abs() <= 5;
+    final bridged = _bridgeActiveVerticalDownloads(
+      desiredPlan,
+      verticalActive: verticalActive && bridgeLocalMovement,
+      allowSpeculativeAdvance:
+          _previousPlannedCurrentIndex != observation.currentIndex,
+    );
+    final plan = guard.enforce(bridged.plan);
     final diff = DemandDiff.between(_previous, plan);
 
     // Runtime source/media evidence and Reader window metadata may change
@@ -274,6 +284,7 @@ final class PipelineController {
       _previousRetainedIndex = window.retainedIndex;
       _previousVisibleIndexes = currentVisibleIndexes;
       _previousVerticalActive = verticalActive;
+      _previousPlannedCurrentIndex = observation.currentIndex;
       return;
     }
 
@@ -282,6 +293,7 @@ final class PipelineController {
     _previousRetainedIndex = window.retainedIndex;
     _previousVisibleIndexes = currentVisibleIndexes;
     _previousVerticalActive = verticalActive;
+    _previousPlannedCurrentIndex = observation.currentIndex;
     _previous = plan;
     _decodeTargetDirty = false;
 
@@ -293,6 +305,13 @@ final class PipelineController {
         revision: _revision,
         payload: <String, Object?>{
           'downloads': plan.downloads.length,
+          'desiredDownloads': desiredPlan.downloads.length,
+          'downloadBridgeActive': bridged.active,
+          'downloadBridgeLocalMovement': bridgeLocalMovement,
+          'downloadBridgeRetained': bridged.retainedOutsideDesired,
+          'downloadBridgeDeferredDesired': bridged.deferredDesired,
+          'downloadBridgeDesiredAdvanced': bridged.desiredAdvanced,
+          'downloadBridgeSchedulingRetained': bridged.schedulingRetained,
           'decodes': plan.decodes.length,
           'uploads': plan.uploads.length,
           'staticWarmDecodes': plan.decodes.values
@@ -326,6 +345,201 @@ final class PipelineController {
     );
     _onUpdate(PipelineDelta(plan: plan, diff: diff, window: window));
   }
+
+  _ActiveDownloadBridgeResult _bridgeActiveVerticalDownloads(
+    DemandPlan desired, {
+    required bool verticalActive,
+    required bool allowSpeculativeAdvance,
+  }) {
+    if (!verticalActive || _previous.downloads.isEmpty) {
+      return _ActiveDownloadBridgeResult(
+        plan: desired,
+        active: false,
+        retainedOutsideDesired: 0,
+        deferredDesired: 0,
+        desiredAdvanced: 0,
+        schedulingRetained: 0,
+      );
+    }
+
+    // Reader-visible/decode/upload correctness stays authoritative and
+    // immediate. Only encoded-only speculative membership is allowed to lag
+    // while the viewport is moving. This avoids flipping the whole asymmetric
+    // 7/3 transport window in one UI-isolate event turn when readDirection
+    // reverses.
+    final mandatory = <DownloadId>{
+      for (final id in desired.decodes.keys) id.download,
+      for (final id in desired.uploads.keys) id.download,
+      for (final entry in desired.downloads.entries)
+        if (entry.value.role == PageRole.current ||
+            entry.value.role == PageRole.transition)
+          entry.key,
+    };
+    if (!mandatory.every(desired.downloads.containsKey)) {
+      // A guarded plan must already carry the transport source for every
+      // foreground decode/upload. If that invariant is ever violated, do not
+      // hide it behind the bridge.
+      return _ActiveDownloadBridgeResult(
+        plan: desired,
+        active: false,
+        retainedOutsideDesired: 0,
+        deferredDesired: 0,
+        desiredAdvanced: 0,
+        schedulingRetained: 0,
+      );
+    }
+
+    final capacity = desired.downloads.length;
+    final downloads = <DownloadId, DownloadDemand>{};
+
+    final mandatoryEntries = mandatory
+        .map((id) => MapEntry(id, desired.downloads[id]!))
+        .toList(growable: false)
+      ..sort((a, b) => b.value.priority.compareTo(a.value.priority));
+    for (final entry in mandatoryEntries) {
+      downloads[entry.key] = entry.value;
+    }
+
+    var schedulingRetained = 0;
+    final shared = desired.downloads.keys
+        .where(
+          (id) => !mandatory.contains(id) && _previous.downloads.containsKey(id),
+        )
+        .toList(growable: false)
+      ..sort((a, b) => desired.downloads[b]!.priority
+          .compareTo(desired.downloads[a]!.priority));
+    for (final id in shared) {
+      if (downloads.length >= capacity) break;
+      downloads[id] = _refreshBridgedDownload(
+        _previous.downloads[id]!,
+        desiredRevision: desired.revision,
+      );
+      schedulingRetained++;
+    }
+
+    final missingDesired = desired.downloads.entries
+        .where((entry) => !downloads.containsKey(entry.key))
+        .toList(growable: false)
+      ..sort((a, b) => b.value.priority.compareTo(a.value.priority));
+
+    // Advance at most one encoded-only speculative identity per committed page
+    // movement. Mandatory near/current transport above is unlimited and always
+    // immediate; this one-slot budget only spreads far 7/3 migration across
+    // successive pageCurrent observations instead of one direction-flip turn.
+    var desiredAdvanced = 0;
+    if (allowSpeculativeAdvance && missingDesired.isNotEmpty &&
+        downloads.length < capacity) {
+      final entry = missingDesired.removeAt(0);
+      downloads[entry.key] = entry.value;
+      desiredAdvanced = 1;
+    }
+
+    var retainedOutsideDesired = 0;
+    final stale = _previous.downloads.keys
+        .where((id) => !desired.downloads.containsKey(id))
+        .toList(growable: false)
+      ..sort((a, b) => _previous.downloads[b]!.priority
+          .compareTo(_previous.downloads[a]!.priority));
+    for (final id in stale) {
+      if (downloads.length >= capacity) break;
+      downloads[id] = _refreshBridgedDownload(
+        _previous.downloads[id]!,
+        desiredRevision: desired.revision,
+        speculativeOnly: true,
+      );
+      retainedOutsideDesired++;
+    }
+
+    for (final entry in missingDesired) {
+      if (downloads.length >= capacity) break;
+      downloads[entry.key] = entry.value;
+    }
+
+    final deferredDesired = desired.downloads.keys
+        .where((id) => !downloads.containsKey(id))
+        .length;
+    if (retainedOutsideDesired == 0 &&
+        deferredDesired == 0 &&
+        schedulingRetained == 0) {
+      return _ActiveDownloadBridgeResult(
+        plan: desired,
+        active: false,
+        retainedOutsideDesired: 0,
+        deferredDesired: 0,
+        desiredAdvanced: 0,
+        schedulingRetained: 0,
+      );
+    }
+
+    final keep = desired.keep
+        .where((resource) => resource.kind != ResourceKind.download)
+        .toSet();
+    for (final id in downloads.keys) {
+      keep.add(ResourceId.download(id));
+    }
+
+    return _ActiveDownloadBridgeResult(
+      plan: DemandPlan(
+        revision: desired.revision,
+        downloads: downloads,
+        decodes: desired.decodes,
+        uploads: desired.uploads,
+        keep: keep,
+      ),
+      active: true,
+      retainedOutsideDesired: retainedOutsideDesired,
+      deferredDesired: deferredDesired,
+      desiredAdvanced: desiredAdvanced,
+      schedulingRetained: schedulingRetained,
+    );
+  }
+
+  DownloadDemand _refreshBridgedDownload(
+    DownloadDemand previous, {
+    required int desiredRevision,
+    bool speculativeOnly = false,
+  }) {
+    final unsafeRole = previous.role == PageRole.current ||
+        previous.role == PageRole.transition ||
+        previous.role == PageRole.next ||
+        previous.role == PageRole.next2 ||
+        previous.role == PageRole.previous;
+    if (speculativeOnly && unsafeRole) {
+      return DownloadDemand(
+        role: PageRole.far,
+        priority: previous.priority.clamp(520, 760).toInt(),
+        reason: 'heuristic:active-download-bridge-retained',
+        expirationRevision: desiredRevision + 1,
+        flowTargetFrames: 0,
+      );
+    }
+    return DownloadDemand(
+      role: previous.role,
+      priority: previous.priority,
+      reason: previous.reason,
+      expirationRevision: desiredRevision + 1,
+      flowTargetFrames: previous.flowTargetFrames,
+      decisionId: previous.decisionId,
+    );
+  }
+}
+
+final class _ActiveDownloadBridgeResult {
+  const _ActiveDownloadBridgeResult({
+    required this.plan,
+    required this.active,
+    required this.retainedOutsideDesired,
+    required this.deferredDesired,
+    required this.desiredAdvanced,
+    required this.schedulingRetained,
+  });
+
+  final DemandPlan plan;
+  final bool active;
+  final int retainedOutsideDesired;
+  final int deferredDesired;
+  final int desiredAdvanced;
+  final int schedulingRetained;
 }
 
 

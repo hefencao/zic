@@ -988,6 +988,139 @@ void main() {
     );
   });
 
+  test('active vertical direction flip bridges far downloads one slot per page', () {
+    final longChapter = ChapterManifest(
+      sourceId: 'local',
+      comicId: 'bridge-comic',
+      chapter: const Chapter(
+        chapterId: 'bridge-chapter',
+        comicId: 'bridge-comic',
+        title: 'Bridge',
+        sequence: 1,
+        pageCount: 40,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        40,
+        (index) => PageAsset(
+          pageId: 'b$index',
+          chapterId: 'bridge-chapter',
+          index: index,
+          uri: Uri.parse('assets/b$index.webp'),
+          animatedHint: false,
+        ),
+      ),
+      readingDirection: ReadingDirection.ltr,
+    );
+    const resolver = RoleResolver(
+      forwardEncodedPages: 7,
+      backwardEncodedPages: 3,
+      forwardDecodePages: 2,
+      backwardDecodePages: 1,
+      nearRadius: 0,
+    );
+    const policy = HeuristicPolicy(decodeWarmPages: true);
+    const guard = PolicyGuard(maxDownloadDemands: 11);
+    final updates = <PipelineDelta>[];
+    final controller = PipelineController(
+      chapter: longChapter,
+      decodeTarget: DecodeTarget(physicalWidth: 1080, physicalHeight: 1920),
+      clock: _TestClock(),
+      windowResolver: resolver,
+      policy: policy,
+      guard: guard,
+      onUpdate: updates.add,
+    );
+
+    ReaderObs active(int index, int micros) => ReaderObs(
+          sessionId: 'bridge-reader',
+          currentIndex: index,
+          stableIndex: index,
+          interaction: Interaction.scrolling,
+          logicalPosition: index.toDouble(),
+          velocity: -1400,
+          currentCoverage: Coverage(
+            pageIndex: index,
+            assetKey: 'bridge-chapter/b$index',
+            fraction: 1,
+          ),
+          direction: ReadingDirection.vertical,
+          timestamp: DateTime.utc(2026, 8, 20),
+          monotonicMicros: micros,
+        );
+
+    controller.accept(active(14, 1));
+    controller.accept(active(13, 2));
+    controller.accept(active(12, 3));
+
+    final flip = updates.last;
+    expect(flip.window.roleOf(11), PageRole.next);
+    expect(flip.window.roleOf(10), PageRole.next2);
+    expect(flip.window.roleOf(13), PageRole.previous);
+    expect(flip.plan.downloads, hasLength(11));
+    expect(flip.diff.downloads.added.length, lessThanOrEqualTo(1));
+    expect(flip.diff.downloads.removed.length, lessThanOrEqualTo(1));
+    expect(
+      flip.plan.decodes.keys.every(
+        (id) => flip.plan.downloads.containsKey(id.download),
+      ),
+      isTrue,
+      reason: 'every immediate decode must retain an encoded source',
+    );
+    expect(
+      flip.plan.uploads.keys.every(
+        (id) => flip.plan.downloads.containsKey(id.download),
+      ),
+      isTrue,
+      reason: 'every immediate upload must retain an encoded source',
+    );
+
+    final desiredWindow = resolver.resolve(
+      longChapter,
+      active(12, 4),
+      previousCurrentIndex: 13,
+      readDirection: -1,
+    );
+    final desired = guard.enforce(
+      policy.createPlan(
+        revision: flip.plan.revision + 1,
+        chapter: longChapter,
+        observation: active(12, 4),
+        window: desiredWindow,
+        decodeTarget: DecodeTarget(physicalWidth: 1080, physicalHeight: 1920),
+        readDirection: -1,
+      ),
+    );
+    expect(
+      flip.plan.downloads.keys.toSet(),
+      isNot(desired.downloads.keys.toSet()),
+      reason: 'far encoded membership may lag while motion is active',
+    );
+
+    final idle = ReaderObs(
+      sessionId: 'bridge-reader',
+      currentIndex: 12,
+      stableIndex: 12,
+      interaction: Interaction.idle,
+      logicalPosition: 12,
+      velocity: 0,
+      currentCoverage: Coverage(
+        pageIndex: 12,
+        assetKey: 'bridge-chapter/b12',
+        fraction: 1,
+      ),
+      direction: ReadingDirection.vertical,
+      timestamp: DateTime.utc(2026, 8, 20),
+      monotonicMicros: 5,
+    );
+    controller.accept(idle);
+    expect(
+      updates.last.plan.downloads.keys.toSet(),
+      desired.downloads.keys.toSet(),
+      reason: 'idle must converge fully to the canonical 7/3 desired window',
+    );
+  });
+
   test('runtime animated evidence disables unresolved static inference', () {
     final overrides = <int, bool>{0: false, 1: false, 2: true};
     final obs = observation();
