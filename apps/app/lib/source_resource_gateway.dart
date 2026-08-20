@@ -10,6 +10,7 @@ bool isLegacyVeneraRuntimeLocator(String value) =>
     value.startsWith('venera-resource://');
 
 typedef ComicSourceResolver = BrowsableComicSource? Function(String sourceId);
+typedef ComicSourceReadinessWaiter = Future<void> Function(String sourceId);
 
 /// Composition-owned gateway for source-private image resources.
 ///
@@ -20,15 +21,18 @@ typedef ComicSourceResolver = BrowsableComicSource? Function(String sourceId);
 final class ComicSourceResourceGateway {
   ComicSourceResourceGateway({
     required ComicSourceResolver sourceForId,
+    ComicSourceReadinessWaiter? waitForSource,
     SourceResourceDirectTransport? directTransport,
     String Function()? defaultUserAgentProvider,
   })  : _sourceForId = sourceForId,
+        _waitForSource = waitForSource,
         _transports = ExternalPluginResourceTransportPool(
           directTransport: directTransport,
           defaultUserAgentProvider: defaultUserAgentProvider,
         );
 
   final ComicSourceResolver _sourceForId;
+  final ComicSourceReadinessWaiter? _waitForSource;
   final ExternalPluginResourceTransportPool _transports;
   final Set<ConfigurableChapterResourceAccess> _boundDownloads =
       HashSet<ConfigurableChapterResourceAccess>.identity();
@@ -123,13 +127,20 @@ final class ComicSourceResourceGateway {
             imageIdentity: requestUri.toString(),
             resourceRole: cacheRole,
             revision: cacheRevision,
-            awaitPersistence: awaitPersistence,
+            // Persistent reads are part of the cold-start hit path even when
+            // the eventual source miss writes its new response in background.
+            awaitPersistence: true,
             retention: retention,
           );
     if (cached != null) {
       return cached;
     }
 
+    // A cold Home projection may arrive before an optional external runtime
+    // has published its source adapter. Keep a cache miss pending until that
+    // one source-readiness transition completes; resolving the source before
+    // the cache probe would make warm covers depend on plugin activation.
+    await _waitForSource?.call(sourceId);
     final source = _requireSource(sourceId, requestUri);
     // Artwork cache identity is deliberately separate from the runtime comic
     // locator. External runtimes (notably Mihon) may encode mutable metadata in

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -62,6 +63,32 @@ void main() {
     expect(first, <int>[0xff, 0xd8, 0xff, 0xd9]);
     expect(second, first);
     expect(source.resolveCalls, 1);
+    expect(source.loads, 1);
+  });
+
+  test('artwork cache miss waits for deferred source publication', () async {
+    final source = _ImageSource();
+    final sourcePublished = Completer<void>();
+    final gateway = ComicSourceResourceGateway(
+      sourceForId: (sourceId) => sourceId == source.sourceId ? source : null,
+      waitForSource: (_) => sourcePublished.future,
+    );
+    final cache = ResourceCacheManager();
+    addTearDown(gateway.close);
+    addTearDown(cache.close);
+
+    final pending = gateway.loadArtworkSource(
+      cache: cache,
+      sourceId: source.sourceId,
+      comicId: 'comic',
+      uri: Uri.parse('mihon:resource:deferred-cover'),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(source.loads, 0);
+
+    sourcePublished.complete();
+    final result = await pending;
+    expect(result.lengthInBytes, 4);
     expect(source.loads, 1);
   });
 

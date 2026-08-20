@@ -15,7 +15,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - Home MUST 在本地库的 cover-bearing primary 数据可用后先呈现首页；native media
   prewarm、持久整本队列 restore、外部插件 activation 和 enrichment 不得成为首封面
   请求的硬门槛。
-- 外部来源可以在首帧之后 ready；封面 presentation MUST 使用稳定 canonical artwork identity。因来源暂不可用、transport 或 decode 失败后 MUST 保持稳定占位，不得由定时器、App resume、first-frame watchdog、provider eviction 或 loader closure 变化自动重启请求；只有显式来源刷新、资源 revision 或稳定 identity变化才能重新加载。
+- 外部来源可以在首帧之后 ready；封面 presentation MUST 使用稳定 canonical artwork identity。cache miss 在等待中的外部 source 首次发布前 MUST 保持同一个资源请求 pending，不能先以 source-unavailable 失败；source readiness 完成后仍不可用、transport 或 decode 失败时 MUST 保持稳定占位，不得由定时器、App resume、first-frame watchdog、provider eviction 或 loader closure 变化自动重启请求；只有显式来源刷新、资源 revision 或稳定 identity变化才能重新加载。
 - 首页每张封面 MUST 独立完成请求和显示；一张封面变慢或 durable response 写入变慢，
   不得阻塞其它已经取得 encoded bytes 的封面。冷 miss MAY 先使用 memory source，持久化
   写入由统一 response cache 后台完成；durable hit MUST 先物化为调用方自持有的 encoded bytes。response cache 的文件路径 MUST NOT 暴露给 `FileImage` 或其它长生命周期 presentation 对象；`FileEncodedResourceSource` 只允许外部稳定本地文件。durable image persistence MUST 区分 `transient` 与 `retained` 生命周期：browse/preview响应 MAY 受 TTL/LRU/maintenance 回收；library/history/details cover MUST 在同一 canonical cache key上晋升为 retained，并且 MUST NOT 被运行期容量/TTL整理删除。metadata refresh MUST NOT 以 comic namespace 粗粒度失效 artwork；retained cover仅由精确 artwork revision/显式整漫画资源删除/用户清缓存移除。
@@ -36,7 +36,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 外部 artwork MUST 通过 source-confirmed canonical comic identity 查询统一 response cache；
   命中时不得解析来源、创建 source transport 或等待插件 activation。cache miss 才可进入
   source loader。raw Mihon/插件 locator只用于 runtime调用与章节身份，不得切分 durable artwork namespace。
-- Home/阅读历史中已经持久化的 HTTP(S) artwork locator MUST 始终先进入统一 `ComicSourceResourceGateway` 的 source-independent durable-cache probe；active source/plugin 暂不可用时不得把网络 URL 交给本地文件 loader。durable miss 后才可要求来源 adapter。
+- Home/阅读历史中已经持久化的 HTTP(S) artwork locator MUST 始终先进入统一 `ComicSourceResourceGateway` 的 source-independent memory/durable-cache probe；active source/plugin 暂不可用时不得把网络 URL 交给本地文件 loader。durable miss 后，若是首次外部 source 发布尚未完成，gateway MUST 保持该次请求 pending，再要求来源 adapter。
 - 已挂载 Home 的 chapter/SavedComic mutation MUST 通过 `HomeLibrarySession` write-through投影边界完成：durable store写入成功后同一次操作必须更新 session可见投影；不得先直接写 store再依赖详情页退出或 `_reloadLibrary()` 追平。Reader route最终 progress MUST 为 route-local状态，返回后只发布一次；不得用跨 route全局 latest-progress槽。
 - Home library reload MUST NOT 用 mutation 之前捕获的旧 entries/SavedComic snapshot覆盖更新后的 write-through chapter/saved/progress投影。
 - Comic artwork基础 cache schema revision MUST 只有一个 owner。External artwork由 `ComicSourceResourceGateway` 自动添加 `comicArtworkCacheSchemaRevision`；调用方 MAY 只提供 content-specific revision，MUST NOT 再传基础 schema revision形成并行 namespace。

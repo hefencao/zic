@@ -170,6 +170,7 @@ final class _DemoHomeState extends State<DemoHome> {
   late final HomeLibrarySession _librarySession;
   late final ResourceCacheCoordinator _cacheCoordinator;
   late final bool _ownsCacheCoordinator;
+  Completer<void>? _initialExternalSourcesPublished;
 
   bool _picking = false;
   bool _pickingFolder = false;
@@ -271,6 +272,7 @@ final class _DemoHomeState extends State<DemoHome> {
     );
     _sourceResources = ComicSourceResourceGateway(
       sourceForId: _sourceForId,
+      waitForSource: _waitForExternalSource,
       directTransport: RhttpSourceResourceDirectTransport(),
       defaultUserAgentProvider: () => widget.preferences.networkUserAgent,
     );
@@ -291,7 +293,30 @@ final class _DemoHomeState extends State<DemoHome> {
     )..addListener(_handleLibrarySessionChanged);
     final externalPlugins = widget.externalPlugins;
     if (externalPlugins != null) {
+      _initialExternalSourcesPublished = Completer<void>();
       unawaited(_refreshExternalSourcesWhenReady(externalPlugins));
+    }
+  }
+
+  bool _isDeferredExternalSourceId(String sourceId) =>
+      sourceId.startsWith('mihon:') || sourceId.startsWith('venera:');
+
+  Future<void> _waitForExternalSource(String sourceId) async {
+    if (_sourceForId(sourceId) != null ||
+        !_isDeferredExternalSourceId(sourceId)) {
+      return;
+    }
+    final published = _initialExternalSourcesPublished;
+    if (published == null) {
+      return;
+    }
+    await published.future;
+  }
+
+  void _completeInitialExternalSourcesPublished() {
+    final published = _initialExternalSourcesPublished;
+    if (published != null && !published.isCompleted) {
+      published.complete();
     }
   }
 
@@ -405,6 +430,7 @@ final class _DemoHomeState extends State<DemoHome> {
   @override
   void dispose() {
     widget.preferences.removeListener(_handleAppPreferencesChanged);
+    _completeInitialExternalSourcesPublished();
     _librarySession.removeListener(_handleLibrarySessionChanged);
     unawaited(_closeHomeComposition());
     _librarySession.dispose();
@@ -457,6 +483,10 @@ final class _DemoHomeState extends State<DemoHome> {
               ),
       ),
     );
+    // Publish the resolver-visible source set before canonical-id persistence
+    // and the follow-up library reload. Artwork cache misses waiting on this
+    // transition can now proceed without a failed first request.
+    _completeInitialExternalSourcesPublished();
     await _librarySession.replaceSources(_sources, reloadLibrary: false);
     final canonicalIdsPersisted = await _persistKnownCanonicalComicIds();
     if (canonicalIdsPersisted) {
@@ -471,9 +501,11 @@ final class _DemoHomeState extends State<DemoHome> {
     try {
       await controller.ready;
     } on Object {
+      _completeInitialExternalSourcesPublished();
       return;
     }
     if (!mounted || !identical(widget.externalPlugins, controller)) {
+      _completeInitialExternalSourcesPublished();
       return;
     }
     await _replaceExternalSources();
