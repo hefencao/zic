@@ -53,6 +53,9 @@ final class UploadRegistry {
   PresentClaim? claimPresent(DecodeId id) =>
       _sessions[id]?.claimPresent();
 
+  bool reusePresentedStatic(DecodeId id, PresentClaim claim) =>
+      _sessions[id]?.reusePresentedStatic(claim) ?? false;
+
   Future<void> present(DecodeId id, PresentClaim claim) async {
     final session = _sessions[id];
     if (session == null) {

@@ -1,3 +1,9 @@
+## 0.31.0-dev.323 - retained static re-projection boundary
+
+- The valid 03:35 dev.322 device run restores complete loading (`taskFailed=0`) and proves the active download bridge did its intended transport work: 26 active direction flips have `big_5x5=0`, median add/remove 1/1, and flip reconcile median/max 4.617/5.874ms, yet the user still reports the same fixed-position hitch. Keep the bridge as a bounded control-plane optimization but close it as a sufficient jitter root; do not tune its quota.
+- All 26/26 active direction flips are followed within 15ms by exactly two authoritative-static `framePipelineTiming` presentations with `platformResidentReuse=true`. Across those flips the two redundant presentation paths cost 1.886ms median and 4.785ms max combined, with no blit, Surface reconfigure or platform upload. The retained OutputFrame/texture lease is already resident; only the page projection claim was dropped and later reacquired.
+- On static re-entry, acquire a fresh PresentClaim for lifetime ownership but, only when the exact retained OutputFrame is authoritative static and already has successful presentation timing, project it directly without calling `OutputFrame.present()` again. First presentation and every animated frame remain unchanged. Add a direct UploadSession regression and `tool/analyze_resident_static_reprojection_jank.py`.
+
 ## 0.31.0-dev.322 - active download bridge fixed-list mutation repair
 
 - The 02:50 dev.321 device trace is invalid for jitter attribution because 6,463/6,463 `taskFailed` events are `reader-observation-reconcile` failures with `Unsupported operation: Cannot remove from a fixed-length list`. The bridge built `missingDesired` with `toList(growable: false)` and then called `removeAt(0)` whenever one speculative identity needed to advance, aborting the whole reconcile and leaving many images without fresh demands.

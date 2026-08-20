@@ -330,6 +330,99 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('retained static output reuses prior presentation without re-presenting',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'upload_static_reproject_test_',
+    );
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpayload'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
+      ingress: ingress,
+    );
+    download.attachIngressProjection(projection);
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      ingress: projection,
+      cursors: _CursorFactory(
+        duration: Duration.zero,
+        frameLimit: 1,
+        animation: const AnimationInfo(
+          frameCount: 1,
+          loopCount: 1,
+          complete: true,
+        ),
+      ),
+      clock: _Clock(),
+    );
+    await decode.fill(
+      demand: const DecodeDemand(
+        role: PageRole.current,
+        priority: 1000,
+        targetWatermark: 1,
+        reason: 'static-reproject',
+        expirationRevision: 1,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+    final uploader = _Uploader();
+    final upload = UploadSession(
+      id: decode.id,
+      decode: decode,
+      uploader: uploader,
+      clock: _Clock(),
+    );
+    const demand = UploadDemand(
+      role: PageRole.current,
+      priority: 1000,
+      reason: 'static-reproject',
+      expirationRevision: 1,
+    );
+    await upload.prepare(
+      demand: demand,
+      revision: 1,
+      cancel: CancelToken(),
+    );
+
+    final first = upload.claimPresent();
+    expect(first, isNotNull);
+    expect(upload.reusePresentedStatic(first!), isFalse);
+    await upload.present(first);
+    first.release();
+    expect(uploader.outputs.single.presented, 1);
+
+    expect(upload.detach(retainStaticOutput: true), isFalse);
+    await upload.prepare(
+      demand: demand,
+      revision: 2,
+      cancel: CancelToken(),
+    );
+    final revisit = upload.claimPresent();
+    expect(revisit, isNotNull);
+    expect(upload.reusePresentedStatic(revisit!), isTrue);
+    expect(uploader.outputs.single.presented, 1);
+    revisit.release();
+
+    upload.dispose();
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('current animation starts from the visible frame without a startup gate',
       () async {
     final temp = await Directory.systemTemp.createTemp(
@@ -1492,29 +1585,32 @@ final class _Output implements OutputFrame, OutputFrameTiming {
   bool disposed = false;
   int presented = 0;
 
+  FramePresentationTiming? _lastPresentationTiming;
+
   @override
-  FramePresentationTiming get lastPresentationTiming =>
-      const FramePresentationTiming(
-        channelRoundTripMicros: 101,
-        platformQueueMicros: 23,
-        platformUploadMicros: 200,
-        platformRetainMicros: 31,
-        platformBlitMicros: 37,
-        surfaceReconfigureCount: 1,
-        platformScheduleMicros: 41,
-        platformScheduleQueueMicros: 29,
-        platformScheduleCallMicros: 12,
-        platformReplaceMicros: 42,
-        platformResultDispatchMicros: 43,
-        channelDispatchMicros: 6,
-        fallbackDecodeMicros: 0,
-        deadlineMissMicros: 0,
-        path: FramePresentationPath.platform,
-      );
+  FramePresentationTiming? get lastPresentationTiming =>
+      _lastPresentationTiming;
 
   @override
   Future<void> present() async {
     presented++;
+    _lastPresentationTiming = const FramePresentationTiming(
+      channelRoundTripMicros: 101,
+      platformQueueMicros: 23,
+      platformUploadMicros: 200,
+      platformRetainMicros: 31,
+      platformBlitMicros: 37,
+      surfaceReconfigureCount: 1,
+      platformScheduleMicros: 41,
+      platformScheduleQueueMicros: 29,
+      platformScheduleCallMicros: 12,
+      platformReplaceMicros: 42,
+      platformResultDispatchMicros: 43,
+      channelDispatchMicros: 6,
+      fallbackDecodeMicros: 0,
+      deadlineMissMicros: 0,
+      path: FramePresentationPath.platform,
+    );
   }
 
   @override

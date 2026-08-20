@@ -531,6 +531,33 @@ final class UploadSession {
     );
   }
 
+  bool reusePresentedStatic(PresentClaim claim) {
+    _requireOpen();
+    if (!identical(_slot?.frame, claim.frame) || claim.released) {
+      return false;
+    }
+    final animation = decode.snapshot.animation;
+    if (!animation.complete ||
+        animation.frameCount > 1 ||
+        claim.frame.duration.inMicroseconds > 0) {
+      return false;
+    }
+    final timing = claim.frame is OutputFrameTiming
+        ? (claim.frame as OutputFrameTiming).lastPresentationTiming
+        : null;
+    if (timing == null) {
+      return false;
+    }
+    // A retained static OutputFrame keeps ownership of the same platform
+    // surface/texture lease. Re-entering a presentation role therefore only
+    // needs a fresh lifetime claim and projection; invoking present() again
+    // would repeat the full presentation bookkeeping even though the platform
+    // reports residentReuse with no blit or reconfiguration. The slot claim is
+    // already authoritative for lifetime/budget ownership, so no UploadState
+    // notification is required merely to re-project the retained surface.
+    return true;
+  }
+
   Future<void> present(PresentClaim claim) async {
     _requireOpen();
     final presentStartedAt = clock.nowMicros();

@@ -29,3 +29,6 @@ A direction flip should no longer generate a 5-add/5-remove far-transport transa
 
 ## dev.322 implementation correction
 The first dev.321 device run did not validly test this decision. `missingDesired` was materialized with `toList(growable: false)` but the one-slot advance branch called `removeAt(0)`, producing 6,463 reconcile failures in the 02:50 trace and starving page demands. dev.322 preserves this ADR's bridge semantics but makes selection non-mutating (`first` plus a start index for the remaining fill). Any bridge trace with `taskFailed` is invalid for performance attribution.
+
+## dev.323 device result
+The corrected dev.322 03:35 run validly exercises this bridge with all pages loading and `taskFailed=0`. Across 26 active direction flips, `big_5x5=0`, download add/remove medians are 1/1, and reconcile median/max are 4.617/5.874ms. The transport objective is therefore achieved, but the user still reports the same fixed-position hitch. Keep this bridge as a bounded transport-control optimization; do not tune its quota or direction threshold as the remaining jitter repair. ADR 0301 owns the next independent retained-static re-projection boundary.

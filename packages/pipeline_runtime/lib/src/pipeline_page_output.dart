@@ -319,7 +319,10 @@ final class PipelinePageOutputStream {
       return;
     }
     try {
-      await _uploads.present(identity, claim);
+      final reusedStatic = _uploads.reusePresentedStatic(identity, claim);
+      if (!reusedStatic) {
+        await _uploads.present(identity, claim);
+      }
       if (_disposed ||
           generation != _generation ||
           _identity != identity) {
