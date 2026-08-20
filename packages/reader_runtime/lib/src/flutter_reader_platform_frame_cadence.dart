@@ -172,6 +172,25 @@ final class FlutterReaderPlatformFrameCadenceProbe {
           nativeAnchorNanos: nativeAnchor,
         );
       }
+      final windowRaw = await _channel.invokeMethod<List<Object?>>(
+        'drainWindowFrameMetricsProbe',
+      );
+      if (windowRaw != null) {
+        for (final entry in windowRaw) {
+          if (entry is! Map<Object?, Object?>) continue;
+          _recordWindowFrameMetricOutlier(
+            entry.cast<String, Object?>(),
+            dartAnchorMicros: dartAnchor,
+            nativeAnchorNanos: nativeAnchor,
+          );
+        }
+      }
+      final windowSummary = await _channel.invokeMapMethod<String, Object?>(
+        'drainWindowFrameMetricsSummary',
+      );
+      if (windowSummary != null) {
+        _recordWindowFrameMetricsSummary(windowSummary);
+      }
     } on MissingPluginException {
       return;
     } on PlatformException {
@@ -226,6 +245,87 @@ final class FlutterReaderPlatformFrameCadenceProbe {
         monotonicMicros: mappedMicros,
         sessionId: sessionId,
         kind: TraceEventKind.platformFrameCadenceSummary,
+        revision: revision(),
+        payload: payload,
+      ),
+    );
+  }
+
+  void _recordWindowFrameMetricOutlier(
+    Map<String, Object?> sample, {
+    required int dartAnchorMicros,
+    required int nativeAnchorNanos,
+  }) {
+    final callbackNanos = sample['callbackNanos'];
+    final vsyncNanos = sample['vsyncNanos'];
+    final sourceNanos = vsyncNanos is int && vsyncNanos > 0
+        ? vsyncNanos
+        : callbackNanos;
+    if (sourceNanos is! int) return;
+    final mappedMicros = dartAnchorMicros +
+        ((sourceNanos - nativeAnchorNanos) ~/ 1000);
+    final payload = <String, Object?>{};
+    for (final key in const <String>[
+      'callbackNanos',
+      'totalDurationMicros',
+      'unknownDelayMicros',
+      'inputHandlingMicros',
+      'animationMicros',
+      'layoutMeasureMicros',
+      'drawMicros',
+      'syncMicros',
+      'commandIssueMicros',
+      'swapBuffersMicros',
+      'droppedReports',
+      'intendedVsyncNanos',
+      'vsyncNanos',
+      'displayRefreshRateMilliHz',
+    ]) {
+      final value = sample[key];
+      if (value is int) payload[key] = value;
+    }
+    traceSink.record(
+      TraceEvent(
+        monotonicMicros: mappedMicros,
+        sessionId: sessionId,
+        kind: TraceEventKind.platformWindowFrameMetricsOutlier,
+        revision: revision(),
+        payload: payload,
+      ),
+    );
+  }
+
+  void _recordWindowFrameMetricsSummary(
+    Map<String, Object?> summary,
+  ) {
+    final frameCount = summary['frameCount'];
+    if (frameCount is! int || frameCount <= 0) return;
+    final payload = <String, Object?>{};
+    for (final key in const <String>[
+      'frameCount',
+      'droppedReports',
+      'totalDurationSumMicros',
+      'unknownDelaySumMicros',
+      'maxTotalDurationMicros',
+      'maxUnknownDelayMicros',
+      'totalLt8msCount',
+      'total8To12msCount',
+      'total12To20msCount',
+      'total20To35msCount',
+      'totalGe35msCount',
+      'unknownLt2msCount',
+      'unknown2To8msCount',
+      'unknownGe8msCount',
+      'displayRefreshRateMilliHz',
+    ]) {
+      final value = summary[key];
+      if (value is int) payload[key] = value;
+    }
+    traceSink.record(
+      TraceEvent(
+        monotonicMicros: clock.nowMicros(),
+        sessionId: sessionId,
+        kind: TraceEventKind.platformWindowFrameMetricsSummary,
         revision: revision(),
         payload: payload,
       ),

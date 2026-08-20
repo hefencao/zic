@@ -29,6 +29,8 @@ void main() {
     final calls = <String>[];
     var drained = false;
     var summaryDrained = false;
+    var windowDrained = false;
+    var windowSummaryDrained = false;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
       calls.add(call.method);
@@ -72,6 +74,47 @@ void main() {
             'frameRatePolicyRequested': 0,
             'displayHasArrSupport': 1,
           };
+        case 'drainWindowFrameMetricsProbe':
+          if (windowDrained) return <Object?>[];
+          windowDrained = true;
+          return <Object?>[
+            <String, Object?>{
+              'callbackNanos': 1040000,
+              'totalDurationMicros': 23000,
+              'unknownDelayMicros': 9000,
+              'inputHandlingMicros': 100,
+              'animationMicros': 200,
+              'layoutMeasureMicros': 300,
+              'drawMicros': 400,
+              'syncMicros': 500,
+              'commandIssueMicros': 600,
+              'swapBuffersMicros': 700,
+              'droppedReports': 2,
+              'intendedVsyncNanos': 1030000,
+              'vsyncNanos': 1035000,
+              'displayRefreshRateMilliHz': 120000,
+            },
+          ];
+        case 'drainWindowFrameMetricsSummary':
+          if (windowSummaryDrained) return null;
+          windowSummaryDrained = true;
+          return <String, Object?>{
+            'frameCount': 8,
+            'droppedReports': 2,
+            'totalDurationSumMicros': 80000,
+            'unknownDelaySumMicros': 12000,
+            'maxTotalDurationMicros': 23000,
+            'maxUnknownDelayMicros': 9000,
+            'totalLt8msCount': 3,
+            'total8To12msCount': 2,
+            'total12To20msCount': 2,
+            'total20To35msCount': 1,
+            'totalGe35msCount': 0,
+            'unknownLt2msCount': 6,
+            'unknown2To8msCount': 1,
+            'unknownGe8msCount': 1,
+            'displayRefreshRateMilliHz': 120000,
+          };
         case 'stopFrameCadenceProbe':
           return <Object?>[];
       }
@@ -98,11 +141,15 @@ void main() {
         'startFrameCadenceProbe',
         'drainFrameCadenceProbe',
         'drainFrameCadenceSummary',
+        'drainWindowFrameMetricsProbe',
+        'drainWindowFrameMetricsSummary',
         'stopFrameCadenceProbe',
         'drainFrameCadenceSummary',
+        'drainWindowFrameMetricsProbe',
+        'drainWindowFrameMetricsSummary',
       ]),
     );
-    expect(sink.events, hasLength(2));
+    expect(sink.events, hasLength(4));
     final outlier = sink.events[0];
     expect(outlier.kind, TraceEventKind.platformFrameCadenceOutlier);
     expect(outlier.monotonicMicros, 2000020);
@@ -129,6 +176,24 @@ void main() {
     expect(summary.payload['gap25To35msCount'], 1);
     expect(summary.payload['frameRatePolicyRequested'], isFalse);
     expect(summary.payload['displayHasArrSupport'], isTrue);
+
+    final windowOutlier = sink.events[2];
+    expect(windowOutlier.kind, TraceEventKind.platformWindowFrameMetricsOutlier);
+    expect(windowOutlier.monotonicMicros, 2000035);
+    expect(windowOutlier.payload['totalDurationMicros'], 23000);
+    expect(windowOutlier.payload['unknownDelayMicros'], 9000);
+    expect(windowOutlier.payload['syncMicros'], 500);
+    expect(windowOutlier.payload['swapBuffersMicros'], 700);
+    expect(windowOutlier.payload['droppedReports'], 2);
+    expect(windowOutlier.payload['displayRefreshRateMilliHz'], 120000);
+
+    final windowSummary = sink.events[3];
+    expect(windowSummary.kind, TraceEventKind.platformWindowFrameMetricsSummary);
+    expect(windowSummary.payload['frameCount'], 8);
+    expect(windowSummary.payload['droppedReports'], 2);
+    expect(windowSummary.payload['maxTotalDurationMicros'], 23000);
+    expect(windowSummary.payload['maxUnknownDelayMicros'], 9000);
+    expect(windowSummary.payload['unknownGe8msCount'], 1);
 
   });
 }

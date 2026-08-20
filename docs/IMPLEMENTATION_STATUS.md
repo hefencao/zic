@@ -26,7 +26,7 @@
 
 ## 当前发布候选
 
-- 当前版本：`0.31.0-dev.291` / App `0.31.0+291`。
+- 当前版本：`0.31.0-dev.319` / App `0.31.0+319`。
 - dev.273：03:33 dev.272 Trace未命中真实cold partial，但暴露local miss固定前置成本：58次`committedLength=0` prepare中位约87ms、最大约125ms，且origin均检查4个verified equivalents。根因是persistent partial read API为existence lookup materialize durable-store `DownloadSession`并restore。现改为SQLite index/file直接read authority，hit/miss均不创建store session；metadata损坏只丢resume evidence，wrong-owner record才失效；write mutation owner不变。Trace无local bytes改记`local-hydration-miss`。
 - dev.271：01:26 dev.270 Trace确认连接阶段回归：source-loader open中位约1.60s/P90约3.42s，`sourceRequestPlanMicros`中位约1.02s，`globalRunning`达到17–20且origin均为HTTP/1.1。现恢复transport/source lease为NetLane一等资源：live response park只释放body-read permit并继续占transport lease；artifact-cache local body同时释放两者。删除`maxInactiveParkedResponses`，inactive response只在真实transport lease pressure下以`inactive-transport-lease-reclaim`回收。Trace新增`globalTransportLeases/globalTransportLimit/bucketTransportLeases`；5+1与current优先级不变。
 - dev.269：23:32 dev.268 Trace确认同response park/resume主路径已闭环，但17次`parked-response-eviction`中9次victim仍`demanded=true`；同时persistent artifact 9–18MiB body已有`ArtifactCacheReadScheduler`却仍占remote NetLane permit。现将demanded flow parking与inactive response retention分开：仅`demanded=false` live response计入`maxInactiveParkedResponses`并可`inactive-response-retention-eviction`；Reader删除parked容量配置。artifact-cache durable body确认authority后释放network read permit并由artifact scheduler单独调度。Trace统计拆分read-permit-released/demanded-parked/inactive-parked；3/7、5/3/2/1、5+1均不变。

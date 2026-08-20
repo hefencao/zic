@@ -3,7 +3,11 @@ package dev.zic.readerruntime
 import android.app.Activity
 import android.os.Build
 import android.os.Debug
+import android.os.Handler
+import android.os.HandlerThread
 import android.view.Choreographer
+import android.view.FrameMetrics
+import android.view.Window
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -31,6 +35,21 @@ class ReaderRuntimePlugin :
     private var summaryMinFrameGapMicros = Long.MAX_VALUE
     private var summaryMaxFrameGapMicros = 0L
     private val summaryFrameGapBins = LongArray(FRAME_GAP_BIN_COUNT)
+
+    private val windowFrameSamples = ArrayDeque<Map<String, Long>>()
+    private var windowMetricsActivity: Activity? = null
+    private var windowMetricsThread: HandlerThread? = null
+    private var windowMetricsListener: Window.OnFrameMetricsAvailableListener? = null
+    @Volatile
+    private var windowMetricsDisplayRefreshRateMilliHz: Long? = null
+    private var windowSummaryFrameCount = 0L
+    private var windowSummaryDroppedReports = 0L
+    private var windowSummaryTotalDurationSumMicros = 0L
+    private var windowSummaryUnknownDelaySumMicros = 0L
+    private var windowSummaryMaxTotalDurationMicros = 0L
+    private var windowSummaryMaxUnknownDelayMicros = 0L
+    private val windowSummaryTotalBins = LongArray(WINDOW_DURATION_BIN_COUNT)
+    private val windowSummaryUnknownBins = LongArray(WINDOW_UNKNOWN_BIN_COUNT)
 
     private var activity: Activity? = null
     private var verticalReaderFrameRatePolicyRequested = false
@@ -100,24 +119,32 @@ class ReaderRuntimePlugin :
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
+        if (monitoring) {
+            attachWindowFrameMetrics(binding.activity)
+        }
         if (verticalReaderFrameRatePolicyRequested) {
             applyFrameRatePolicy()
         }
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
+        detachWindowFrameMetrics()
         restoreFrameRatePolicy(keepRequested = true)
         activity = null
     }
 
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
         activity = binding.activity
+        if (monitoring) {
+            attachWindowFrameMetrics(binding.activity)
+        }
         if (verticalReaderFrameRatePolicyRequested) {
             applyFrameRatePolicy()
         }
     }
 
     override fun onDetachedFromActivity() {
+        detachWindowFrameMetrics()
         restoreFrameRatePolicy(keepRequested = true)
         activity = null
     }
@@ -132,7 +159,9 @@ class ReaderRuntimePlugin :
                 lastCallbackNanos = 0L
                 lastThreadCpuNanos = 0L
                 resetFrameCadenceSummary()
+                resetWindowFrameMetrics()
                 monitoring = true
+                activity?.let { attachWindowFrameMetrics(it) }
                 Choreographer.getInstance().postFrameCallback(frameCallback)
                 result.success(
                     mapOf(
@@ -144,6 +173,10 @@ class ReaderRuntimePlugin :
             }
             "drainFrameCadenceProbe" -> result.success(drainSamples())
             "drainFrameCadenceSummary" -> result.success(drainFrameCadenceSummary())
+            "drainWindowFrameMetricsProbe" ->
+                result.success(drainWindowFrameMetricSamples())
+            "drainWindowFrameMetricsSummary" ->
+                result.success(drainWindowFrameMetricsSummary())
             "stopFrameCadenceProbe" -> {
                 stopMonitoring()
                 result.success(drainSamples())
@@ -164,9 +197,215 @@ class ReaderRuntimePlugin :
     }
 
     private fun stopMonitoring() {
-        if (!monitoring) return
+        val wasMonitoring = monitoring
         monitoring = false
-        Choreographer.getInstance().removeFrameCallback(frameCallback)
+        if (wasMonitoring) {
+            Choreographer.getInstance().removeFrameCallback(frameCallback)
+        }
+        detachWindowFrameMetrics()
+    }
+
+    private fun attachWindowFrameMetrics(target: Activity) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+        if (windowMetricsActivity === target && windowMetricsListener != null) {
+            return
+        }
+        detachWindowFrameMetrics()
+        val refreshRateMilliHz = displayRefreshRateMilliHz()
+        val thread = HandlerThread("zic-reader-window-metrics")
+        thread.start()
+        val handler = Handler(thread.looper)
+        val listener = Window.OnFrameMetricsAvailableListener {
+            _, metrics, droppedReports ->
+            recordWindowFrameMetrics(metrics, droppedReports)
+        }
+        try {
+            target.window.addOnFrameMetricsAvailableListener(listener, handler)
+        } catch (_: Throwable) {
+            thread.quitSafely()
+            return
+        }
+        windowMetricsActivity = target
+        windowMetricsThread = thread
+        windowMetricsListener = listener
+        windowMetricsDisplayRefreshRateMilliHz = refreshRateMilliHz
+    }
+
+    private fun detachWindowFrameMetrics() {
+        val target = windowMetricsActivity
+        val listener = windowMetricsListener
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
+            target != null &&
+            listener != null
+        ) {
+            try {
+                target.window.removeOnFrameMetricsAvailableListener(listener)
+            } catch (_: Throwable) {
+                // Diagnostics must not interfere with Reader teardown.
+            }
+        }
+        windowMetricsActivity = null
+        windowMetricsListener = null
+        windowMetricsDisplayRefreshRateMilliHz = null
+        windowMetricsThread?.quitSafely()
+        windowMetricsThread = null
+    }
+
+    private fun recordWindowFrameMetrics(
+        metrics: FrameMetrics,
+        droppedReports: Int,
+    ) {
+        if (!monitoring || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+        val callbackNanos = System.nanoTime()
+        val totalMicros = frameMetricMicros(metrics, FrameMetrics.TOTAL_DURATION)
+        val unknownMicros =
+            frameMetricMicros(metrics, FrameMetrics.UNKNOWN_DELAY_DURATION)
+        val inputMicros =
+            frameMetricMicros(metrics, FrameMetrics.INPUT_HANDLING_DURATION)
+        val animationMicros =
+            frameMetricMicros(metrics, FrameMetrics.ANIMATION_DURATION)
+        val layoutMeasureMicros =
+            frameMetricMicros(metrics, FrameMetrics.LAYOUT_MEASURE_DURATION)
+        val drawMicros = frameMetricMicros(metrics, FrameMetrics.DRAW_DURATION)
+        val syncMicros = frameMetricMicros(metrics, FrameMetrics.SYNC_DURATION)
+        val commandIssueMicros =
+            frameMetricMicros(metrics, FrameMetrics.COMMAND_ISSUE_DURATION)
+        val swapBuffersMicros =
+            frameMetricMicros(metrics, FrameMetrics.SWAP_BUFFERS_DURATION)
+        val intendedVsyncNanos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            metrics.getMetric(FrameMetrics.INTENDED_VSYNC_TIMESTAMP)
+        } else {
+            -1L
+        }
+        val vsyncNanos = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            metrics.getMetric(FrameMetrics.VSYNC_TIMESTAMP)
+        } else {
+            -1L
+        }
+        val refreshRateMilliHz = windowMetricsDisplayRefreshRateMilliHz
+        synchronized(windowFrameSamples) {
+            windowSummaryFrameCount += 1L
+            windowSummaryDroppedReports += maxOf(0, droppedReports).toLong()
+            windowSummaryTotalDurationSumMicros += totalMicros
+            windowSummaryUnknownDelaySumMicros += unknownMicros
+            windowSummaryMaxTotalDurationMicros =
+                maxOf(windowSummaryMaxTotalDurationMicros, totalMicros)
+            windowSummaryMaxUnknownDelayMicros =
+                maxOf(windowSummaryMaxUnknownDelayMicros, unknownMicros)
+            windowSummaryTotalBins[windowDurationBinIndex(totalMicros)] += 1L
+            windowSummaryUnknownBins[windowUnknownBinIndex(unknownMicros)] += 1L
+            val highRefresh =
+                refreshRateMilliHz != null && refreshRateMilliHz >= 90_000L
+            val totalThresholdMicros =
+                if (highRefresh) 12_500L else 20_000L
+            if (droppedReports <= 0 &&
+                totalMicros < totalThresholdMicros &&
+                unknownMicros < WINDOW_UNKNOWN_OUTLIER_MICROS
+            ) {
+                return
+            }
+            val sample = mutableMapOf(
+                "callbackNanos" to callbackNanos,
+                "totalDurationMicros" to totalMicros,
+                "unknownDelayMicros" to unknownMicros,
+                "inputHandlingMicros" to inputMicros,
+                "animationMicros" to animationMicros,
+                "layoutMeasureMicros" to layoutMeasureMicros,
+                "drawMicros" to drawMicros,
+                "syncMicros" to syncMicros,
+                "commandIssueMicros" to commandIssueMicros,
+                "swapBuffersMicros" to swapBuffersMicros,
+                "droppedReports" to maxOf(0, droppedReports).toLong(),
+            )
+            if (intendedVsyncNanos > 0L) {
+                sample["intendedVsyncNanos"] = intendedVsyncNanos
+            }
+            if (vsyncNanos > 0L) {
+                sample["vsyncNanos"] = vsyncNanos
+            }
+            refreshRateMilliHz?.let {
+                sample["displayRefreshRateMilliHz"] = it
+            }
+            appendWindowFrameMetricSample(sample)
+        }
+    }
+
+    private fun resetWindowFrameMetrics() {
+        synchronized(windowFrameSamples) {
+            windowFrameSamples.clear()
+            windowSummaryFrameCount = 0L
+            windowSummaryDroppedReports = 0L
+            windowSummaryTotalDurationSumMicros = 0L
+            windowSummaryUnknownDelaySumMicros = 0L
+            windowSummaryMaxTotalDurationMicros = 0L
+            windowSummaryMaxUnknownDelayMicros = 0L
+            windowSummaryTotalBins.fill(0L)
+            windowSummaryUnknownBins.fill(0L)
+        }
+    }
+
+    private fun drainWindowFrameMetricSamples(): List<Map<String, Long>> =
+        synchronized(windowFrameSamples) {
+            val drained = windowFrameSamples.toList()
+            windowFrameSamples.clear()
+            drained
+        }
+
+    private fun drainWindowFrameMetricsSummary(): Map<String, Long>? =
+        synchronized(windowFrameSamples) {
+            if (windowSummaryFrameCount == 0L) return@synchronized null
+            val summary = mutableMapOf(
+                "frameCount" to windowSummaryFrameCount,
+                "droppedReports" to windowSummaryDroppedReports,
+                "totalDurationSumMicros" to windowSummaryTotalDurationSumMicros,
+                "unknownDelaySumMicros" to windowSummaryUnknownDelaySumMicros,
+                "maxTotalDurationMicros" to windowSummaryMaxTotalDurationMicros,
+                "maxUnknownDelayMicros" to windowSummaryMaxUnknownDelayMicros,
+                "totalLt8msCount" to windowSummaryTotalBins[0],
+                "total8To12msCount" to windowSummaryTotalBins[1],
+                "total12To20msCount" to windowSummaryTotalBins[2],
+                "total20To35msCount" to windowSummaryTotalBins[3],
+                "totalGe35msCount" to windowSummaryTotalBins[4],
+                "unknownLt2msCount" to windowSummaryUnknownBins[0],
+                "unknown2To8msCount" to windowSummaryUnknownBins[1],
+                "unknownGe8msCount" to windowSummaryUnknownBins[2],
+            )
+            windowMetricsDisplayRefreshRateMilliHz?.let {
+                summary["displayRefreshRateMilliHz"] = it
+            }
+            windowSummaryFrameCount = 0L
+            windowSummaryDroppedReports = 0L
+            windowSummaryTotalDurationSumMicros = 0L
+            windowSummaryUnknownDelaySumMicros = 0L
+            windowSummaryMaxTotalDurationMicros = 0L
+            windowSummaryMaxUnknownDelayMicros = 0L
+            windowSummaryTotalBins.fill(0L)
+            windowSummaryUnknownBins.fill(0L)
+            summary
+        }
+
+    private fun appendWindowFrameMetricSample(sample: Map<String, Long>) {
+        while (windowFrameSamples.size >= MAX_WINDOW_FRAME_SAMPLES) {
+            windowFrameSamples.removeFirst()
+        }
+        windowFrameSamples.addLast(sample)
+    }
+
+    private fun frameMetricMicros(metrics: FrameMetrics, metric: Int): Long =
+        maxOf(0L, metrics.getMetric(metric)) / 1_000L
+
+    private fun windowDurationBinIndex(durationMicros: Long): Int = when {
+        durationMicros < 8_000L -> 0
+        durationMicros < 12_000L -> 1
+        durationMicros < 20_000L -> 2
+        durationMicros < 35_000L -> 3
+        else -> 4
+    }
+
+    private fun windowUnknownBinIndex(durationMicros: Long): Int = when {
+        durationMicros < 2_000L -> 0
+        durationMicros < 8_000L -> 1
+        else -> 2
     }
 
     private fun applyFrameRatePolicy(): Map<String, Any?> {
@@ -350,5 +589,9 @@ class ReaderRuntimePlugin :
         private const val CALLBACK_LAG_OUTLIER_MICROS = 8_000L
         private const val MAX_SAMPLES = 256
         private const val FRAME_GAP_BIN_COUNT = 7
+        private const val MAX_WINDOW_FRAME_SAMPLES = 64
+        private const val WINDOW_DURATION_BIN_COUNT = 5
+        private const val WINDOW_UNKNOWN_BIN_COUNT = 3
+        private const val WINDOW_UNKNOWN_OUTLIER_MICROS = 8_000L
     }
 }

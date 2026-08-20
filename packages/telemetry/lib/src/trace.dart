@@ -63,6 +63,8 @@ enum TraceEventKind {
   staticFlutterPresentation,
   platformFrameCadenceOutlier,
   platformFrameCadenceSummary,
+  platformWindowFrameMetricsOutlier,
+  platformWindowFrameMetricsSummary,
   platformFrameRatePolicy,
   readerFrameTiming,
   uploadState,

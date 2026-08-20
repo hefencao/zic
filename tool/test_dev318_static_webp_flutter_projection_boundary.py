@@ -17,8 +17,12 @@ def forbid(text: str, token: str, label: str) -> None:
 
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-if 'version: 0.31.0+318' not in pubspec or 'versionCode=318' not in props:
-    raise SystemExit('dev.318 version mismatch')
+match = re.search(r'versionCode=(\d+)', props)
+if match is None:
+    raise SystemExit('dev.318 missing versionCode')
+version_code = int(match.group(1))
+if version_code < 318:
+    raise SystemExit('dev.318 gate requires versionCode >= 318')
 
 player = read('packages/local_media_ui/lib/src/local_image_player.dart')
 trace = read('packages/telemetry/lib/src/trace.dart')
@@ -37,24 +41,38 @@ for token in ('AndroidTexturePresenter.isSupported', 'RendererKind.androidTextur
 for token in ('encodedFlutterPresentation', '_pipelineAuthoritativeStatic', 'staticEncodedPresentation'):
     forbid(policy + session + player, token, 'dev.315 demand-removal experiment')
 
-# Only authoritative one-frame WebP output may prepare the compressed Flutter projection.
-for token in (
+# dev.318 validly tested the static Flutter projection. dev.319 rolls only
+# that presentation experiment back after device falsification, while retaining
+# the useful motion-cadence observation.
+projection_tokens = (
     '_isAuthoritativeStaticWebpOutput',
-    'snapshot.animation.complete',
-    'snapshot.animation.frameCount <= 1',
     '_staticWebpProjectionLoadStarted',
-    'await tokenLoader(widget.image, token)',
-    'MemoryImage(bytes)',
     '_buildStaticWebpProjection(surface, staticProvider)',
     "'textureRetained': true",
     "'pipeline-texture-fallback-to-compressed-flutter-image'",
-):
-    require(player, token, 'gapless static Flutter projection')
-
-# Texture must remain the fallback until the Flutter compressed-image frame exists.
-projection = player[player.index('Widget _buildStaticWebpProjection('):player.index('void _attachPageOutput(')]
-for token in ('if (frame != null || wasSynchronouslyLoaded)', 'return child;', 'return surface.build(', 'fit: BoxFit.fill'):
-    require(projection, token, 'gapless texture-to-image visual swap')
+)
+if version_code == 318:
+    for token in projection_tokens:
+        require(player, token, 'gapless static Flutter projection')
+    for token in ('snapshot.animation.complete', 'snapshot.animation.frameCount <= 1'):
+        require(player, token, 'authoritative static projection gate')
+    require(player, 'MemoryImage(bytes)', 'compressed static WebP projection')
+    projection = player[
+        player.index('Widget _buildStaticWebpProjection('):
+        player.index('void _attachPageOutput(')
+    ]
+    for token in (
+        'if (frame != null || wasSynchronouslyLoaded)',
+        'return child;',
+        'return surface.build(',
+        'fit: BoxFit.fill',
+    ):
+        require(projection, token, 'gapless texture-to-image visual swap')
+else:
+    for token in projection_tokens:
+        forbid(player, token, 'falsified dev.318 static projection rollback')
+    require(player, 'detected.isWebp ? null : MemoryImage(bytes)',
+            'native WebP presentation restoration')
 
 # Animation must not be routed by a pre-classification guess.
 forbid(player, 'snapshot.animation.frameCount > 1', 'animated projection switch')
@@ -98,7 +116,12 @@ docs = ''.join(read(path) for path in (
     'docs/adr/0297-static-webp-flutter-projection-composition-boundary.md',
     'docs/audits/dev318-static-webp-composition-audit.md',
 ))
-for token in ('4772', '4761', '8.319ms', 'VibeVenera', 'ReaderImageProvider', 'dev.315', 'textureRetained'):
+for token in ('4772', '4761', '8.319ms', 'VibeVenera', 'ReaderImageProvider', 'dev.315'):
     require(docs, token, 'device/source evidence')
+if version_code == 318:
+    require(docs, 'textureRetained', 'dev.318 projection evidence')
+else:
+    for token in ('dev.318', 'FALSIFIED'):
+        require(docs, token, 'dev.318 device falsification evidence')
 
 print('dev.318 static WebP Flutter projection composition boundary: OK')
