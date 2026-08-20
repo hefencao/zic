@@ -1,3 +1,9 @@
+## 0.31.0-dev.322 - active download bridge fixed-list mutation repair
+
+- The 02:50 dev.321 device trace is invalid for jitter attribution because 6,463/6,463 `taskFailed` events are `reader-observation-reconcile` failures with `Unsupported operation: Cannot remove from a fixed-length list`. The bridge built `missingDesired` with `toList(growable: false)` and then called `removeAt(0)` whenever one speculative identity needed to advance, aborting the whole reconcile and leaving many images without fresh demands.
+- Keep the dev.321 bridge design unchanged, but make speculative advancement non-mutating: select `missingDesired.first`, remember a start index, then fill remaining desired entries by index. Add a direct PipelineController regression that performs active vertical committed-page movement, requires normal completion, keeps every decode/upload DownloadId present, and observes `downloadBridgeDesiredAdvanced=1`. The direction-flip analyzer now marks any task-failed run invalid before performance interpretation.
+- The dev.321 02:50 run must not be used to claim jitter relief. Re-run the same fully loaded 12↔14 high-refresh interval on dev.322; only after `task_failed=0` and all pages load may the 5/5 churn/reconcile/jitter hypothesis be evaluated.
+
 ## 0.31.0-dev.321 - active download-window bridge boundary
 
 - The dev.320 01:31 high-refresh trace closes general scene-motion drift while exposing a repeatable fixed-position control transaction: 13/13 active read-direction flips perform `downloadAdded=5/downloadRemoved=5/downloadChanged=6`; flip reconcile median is 7.455ms and max 9.669ms against an 8.333ms 120Hz budget. Repeated page12/page14 flips also re-project resident static pairs without physical blit.

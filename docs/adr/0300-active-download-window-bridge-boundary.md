@@ -1,7 +1,7 @@
 # ADR 0300: Active download-window bridge boundary
 
 ## Status
-Accepted for dev.321 device falsification.
+Accepted.
 
 ## Context
 The dev.320 01:31 high-refresh trace closes several broader explanations for the remaining fixed-position micro-jitter. Android Choreographer, non-zero ScrollUpdate and Flutter post-frame scene motion are predominantly ~8.3ms, while every `verticalSceneMotionSummary` reports zero layout-residual drift. Two reverse-geometry prefix rebases occur only while previously unknown lower-index dimensions are first adopted and therefore cannot explain the later repeated oscillation around pages 12-14.
@@ -26,3 +26,6 @@ The bridge changes only active physical encoded-download membership. Decode/uplo
 
 ## Consequences
 A direction flip should no longer generate a 5-add/5-remove far-transport transaction. Normal sustained motion still advances speculative encoded coverage one slot per committed page, while immediate decode/upload sources remain available. The next device trace must use the bridge telemetry and reconcile cardinalities to falsify this mechanism directly. If full-window download churn collapses but the same fixed-position jitter remains, do not tune the migration quota or direction threshold; the next independent candidate is the retained-static projection continuity boundary that currently causes direction-flip resident re-presentation.
+
+## dev.322 implementation correction
+The first dev.321 device run did not validly test this decision. `missingDesired` was materialized with `toList(growable: false)` but the one-slot advance branch called `removeAt(0)`, producing 6,463 reconcile failures in the 02:50 trace and starving page demands. dev.322 preserves this ADR's bridge semantics but makes selection non-mutating (`first` plus a start index for the remaining fill). Any bridge trace with `taskFailed` is invalid for performance attribution.

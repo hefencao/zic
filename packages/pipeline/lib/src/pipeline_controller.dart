@@ -427,11 +427,13 @@ final class PipelineController {
     // immediate; this one-slot budget only spreads far 7/3 migration across
     // successive pageCurrent observations instead of one direction-flip turn.
     var desiredAdvanced = 0;
+    var missingDesiredStart = 0;
     if (allowSpeculativeAdvance && missingDesired.isNotEmpty &&
         downloads.length < capacity) {
-      final entry = missingDesired.removeAt(0);
+      final entry = missingDesired.first;
       downloads[entry.key] = entry.value;
       desiredAdvanced = 1;
+      missingDesiredStart = 1;
     }
 
     var retainedOutsideDesired = 0;
@@ -450,8 +452,11 @@ final class PipelineController {
       retainedOutsideDesired++;
     }
 
-    for (final entry in missingDesired) {
+    for (var index = missingDesiredStart;
+        index < missingDesired.length;
+        index++) {
       if (downloads.length >= capacity) break;
+      final entry = missingDesired[index];
       downloads[entry.key] = entry.value;
     }
 

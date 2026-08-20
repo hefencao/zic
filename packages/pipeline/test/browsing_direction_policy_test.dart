@@ -109,6 +109,55 @@ void main() {
     expect(directions, containsAllInOrder(<Object?>[1, 1, -1]));
   });
 
+  test('active download bridge advances speculative identity without mutating fixed list',
+      () {
+    final chapter = _verticalChapter();
+    final updates = <PipelineDelta>[];
+    final trace = MemoryTraceSink();
+    final controller = PipelineController(
+      chapter: chapter,
+      decodeTarget: DecodeTarget(physicalWidth: 1080, physicalHeight: 1920),
+      clock: const _Clock(),
+      traceSink: trace,
+      windowResolver: const RoleResolver(
+        forwardEncodedPages: 7,
+        backwardEncodedPages: 3,
+        forwardDecodePages: 2,
+        backwardDecodePages: 1,
+        nearRadius: 0,
+      ),
+      onUpdate: updates.add,
+    );
+
+    expect(
+      () => controller.accept(_verticalObservation(chapter, 13, 1000000)),
+      returnsNormally,
+    );
+    expect(
+      () => controller.accept(_verticalObservation(chapter, 12, 1500000)),
+      returnsNormally,
+    );
+    expect(
+      () => controller.accept(_verticalObservation(chapter, 11, 2000000)),
+      returnsNormally,
+    );
+
+    final plan = controller.currentPlan;
+    expect(plan.downloads.length, lessThanOrEqualTo(11));
+    for (final id in plan.decodes.keys) {
+      expect(plan.downloads, contains(id.download));
+    }
+    for (final id in plan.uploads.keys) {
+      expect(plan.downloads, contains(id.download));
+    }
+    expect(
+      trace.events.where((event) =>
+          event.kind == TraceEventKind.policyDecision &&
+          event.payload['downloadBridgeDesiredAdvanced'] == 1),
+      isNotEmpty,
+    );
+  });
+
   test('animated flow credit uses browsing-relative distance', () {
     final chapter = _chapter();
     final obs = _observation(10, 1000000);
@@ -173,6 +222,55 @@ ReaderObs _observation(int current, int micros) => ReaderObs(
       ),
       direction: ReadingDirection.ltr,
       timestamp: DateTime.utc(2026, 8, 13),
+      monotonicMicros: micros,
+    );
+
+ChapterManifest _verticalChapter() => ChapterManifest(
+      sourceId: 'source',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'vertical-chapter',
+        comicId: 'comic',
+        title: 'Vertical chapter',
+        sequence: 1,
+        pageCount: 30,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        30,
+        (index) => PageAsset(
+          pageId: 'vp$index',
+          chapterId: 'vertical-chapter',
+          index: index,
+          uri: Uri.parse('https://example.test/vertical/$index.webp'),
+          animatedHint: true,
+        ),
+      ),
+      readingDirection: ReadingDirection.vertical,
+    );
+
+ReaderObs _verticalObservation(ChapterManifest chapter, int current, int micros) =>
+    ReaderObs(
+      sessionId: 'active-bridge-test',
+      currentIndex: current,
+      stableIndex: current,
+      interaction: Interaction.scrolling,
+      logicalPosition: current.toDouble(),
+      velocity: -1200,
+      currentCoverage: Coverage(
+        pageIndex: current,
+        assetKey: chapter.pages[current].assetKey,
+        fraction: 1,
+      ),
+      visibleCoverages: <Coverage>[
+        Coverage(
+          pageIndex: current,
+          assetKey: chapter.pages[current].assetKey,
+          fraction: 1,
+        ),
+      ],
+      direction: ReadingDirection.vertical,
+      timestamp: DateTime.utc(2026, 8, 20),
       monotonicMicros: micros,
     );
 

@@ -37,6 +37,14 @@ def main() -> None:
     args = parser.parse_args()
     events = load(args.trace)
 
+    task_failures = [event for event in events if event.get("kind") == "taskFailed"]
+    fixed_list_failures = [
+        event
+        for event in task_failures
+        if "Cannot remove from a fixed-length list"
+        in str((event.get("payload") or {}).get("error") or "")
+    ]
+
     reconciles = {
         event.get("revision"): event
         for event in events
@@ -101,7 +109,10 @@ def main() -> None:
         for page, count in sorted(page_counts.items(), key=lambda item: (-item[1], item[0]))
     ) or "none"
 
-    print(f"events={len(events)} policies={len(policies)} active_direction_flips={len(flips)}")
+    print(
+        f"events={len(events)} policies={len(policies)} active_direction_flips={len(flips)} "
+        f"task_failed={len(task_failures)} fixed_list_failures={len(fixed_list_failures)}"
+    )
     print(
         "flip_download_churn="
         f"big_5x5={big_5x5} "
@@ -121,7 +132,11 @@ def main() -> None:
         f"events={bridge_events} retained_total={bridge_retained} "
         f"deferred_desired_total={bridge_deferred}"
     )
-    if flips and big_5x5 == len(flips):
+    if fixed_list_failures:
+        print("verdict=invalid-bridge-run-fixed-length-mutation-failure")
+    elif task_failures:
+        print("verdict=invalid-run-task-failures")
+    elif flips and big_5x5 == len(flips):
         print("verdict=active-direction-flip-full-window-churn")
     elif flips and bridge_events and big_5x5 == 0:
         print("verdict=active-download-bridge-observed-without-full-window-flips")
