@@ -74,10 +74,7 @@ void main() {
         expect(originLoads, 0);
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pump();
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 2)),
-        );
+        await tester.pump(const Duration(minutes: 2));
       }
     },
   );

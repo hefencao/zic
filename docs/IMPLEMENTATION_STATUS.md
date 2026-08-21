@@ -178,11 +178,7 @@
 - Cloudflare 主路径与兼容路径统一委托 typed detector；仅严格 403/503 challenge 映射 `sourceVerificationRequired`，没有隐藏 WebView 或消息文本判断。
 - catalog response cache 使用稳定 source/comic/chapter identity 和结构 weight；页面正文不进入该缓存。
 - Home“更新漫画”与阅读历史分离：更新集合只消费章节 `SavedComicRecord.sourceUpdateAt` 与 projected confirmed-version `discoveredAt`，不消费普通 `updatedAt` 或 `ReadingProgress.updatedAt`；Reader checkpoint不逐页触发 Home rebuild，route返回后只用最终 `ReadingProgress`更新匹配的内存历史 entry一次。
-- 详情预览保留完整 URI 作为单项绘制身份，但 artwork role/cache key 使用去 `@x/y` 的 base URI，
-  同一原图的不同裁剪共享一份编码字节；Venera `loadThumbnails` 的首批与游标分页
-  不再重复消费 `loadInfo` 缩略图；折叠与展开共用按原顺序生成的等面积布局；实际行内含横图时最多 2 张、纯竖图时最多 3 张；只在相邻三个候选内做最小局部重排，并受阅读设置的 1–8 项上限约束（默认 4）。完整行按全部媒体宽度反算尺寸，预览图片区不再叠加 Card 和水平 padding；稀疏末行最多放大到参考完整行面积的 2.4 倍；折叠高度取第一行，展开图片区域不超过屏幕高度 90%，居中箭头控制展开；点击预览项会将索引传入既有 Reader 路由；Venera
-  `@x/y` 预览 URI 在保留绘制身份的同时按既有约定以去裁剪 URL 调用 `onThumbnailLoad`，封面、预览
-  和来源缩略图失败时统一使用稳定伪随机的柔和纯色占位；预览绘制只显示 `@x/y` 指定的原图区域。
+- 详情预览保留完整 URI 作为单项绘制身份，但 artwork role/cache key 使用去 `@x/y` 的 base URI，同一原图的不同裁剪共享一份编码字节；Venera `loadThumbnails` 的首批与游标分页不再重复消费 `loadInfo` 缩略图；折叠与展开共用按原顺序生成的等面积布局；实际行内含横图时最多 2 张、纯竖图时最多 3 张；只在相邻三个候选内做最小局部重排，并受阅读设置的 1–8 项上限约束（默认 4）。完整行按全部媒体宽度反算尺寸，预览图片区不再叠加 Card 和水平 padding；稀疏末行最多放大到参考完整行面积的 2.4 倍；折叠高度取第一行，展开图片区域不超过屏幕高度 90%，居中箭头控制展开；点击预览项会将索引传入既有 Reader 路由；Venera `@x/y` 预览 URI 在保留绘制身份的同时按既有约定以去裁剪 URL 调用 `onThumbnailLoad`，封面、预览和来源缩略图失败时统一使用稳定伪随机的柔和纯色占位；预览绘制只显示 `@x/y` 指定的原图区域。
 - ArtifactCacheManager 默认热字节 10 项/256 MiB，持久 backend只以exact DownloadId写入；verified equivalence仅提供direct lookup/acquire proof，不存在directed hard alias/rekey；foreground read join保持。
 - Reader encoded window 为前 7/后 3；decode 角色为前 2/后 1；动态 holder 最大水位为 7/5/3/2。
 - transition 覆盖率达到阈值后独立取得一帧，再恢复 current/neighbor staged refill；不存在 DownloadFlowGate、startup-buffer 或 holder-depth 网络资格门控。
@@ -192,8 +188,7 @@
 - Android output 使用默认 platform channel、单 blit lane和普通 main-thread post；used texture 不跨 Reader 复用。
 - Reader 资源会话最多保留 1 个 idle chapter、TTL 2 分钟；保留 resource session，释放 Reader binding、projection、playback wake 和 used texture。
 - Native identity保持 `zic-media-core-dev134-abi6-lib00121400`；dev.175 修改 Rust 内部锁临界区与 WebP frame preparation/decode 分段，但不修改 FFI ABI/JNI identity。
-- 核心文档已按 production code 重新对齐；Reader 综合决策见 ADR 0122，Home 冷启动与
-  封面前台完成见 ADR 0123/0124。
+- 核心文档已按 production code 重新对齐；Reader 综合决策见 ADR 0122，Home 冷启动与封面前台完成见 ADR 0123/0124。
 
 ## 当前开放问题
 
@@ -206,9 +201,7 @@
 - 需在 dev.173 真机先确认 Venera/Mihon普通 browse 已恢复，再继续验证 WNACG、筛选/下载反馈和迁移/更新提示：列表封面与 Reader正文应不再出现 `CLEARTEXT communication ... not permitted`；同一稳定 page demand的确定性失败不得再产生数百次 download重提。
 - 需真机确认 Venera `venera:ehentai` 初次 activation 在 Binder generation死亡时由 Android client保留 pending activation跨一个新 generation；若新 generation仍死亡，应采集 runtime process crash/kill 证据，而不是在 Dart/plugin层叠加重试。
 - 目标设备仍需验证 transition 首帧、远程 WebP frame cadence、后台重入和首页首封面时序。
-- 本轮首页冷启动修复仍需设备对比 `homeServicesReady`、`home-library-primary`、`homeCoverRequested`、各封面 `homeCoverSourceReady`/`homeCoverFirstFrame` 的真实间隔，
-  并确认慢封面不会形成全局屏障；还需确认 raw durable hit 不触发插件资源请求，隐藏
-  书架页不再产生重复首屏请求。
+- 本轮首页冷启动修复仍需设备对比 `homeServicesReady`、`home-library-primary`、`homeCoverRequested`、各封面 `homeCoverSourceReady`/`homeCoverFirstFrame` 的真实间隔，并确认慢封面不会形成全局屏障；还需确认 raw durable hit 不触发插件资源请求，隐藏书架页不再产生重复首屏请求。
 - Android APK 构建和真机生命周期验证未在当前环境执行。
 - 详情和漫画源刷新结果由同一个 `AppPullToRefresh` 定位；简介使用 Card，评论 HTML 换行转为普通文本，“继续”区增加上下间距。
 ## 验证矩阵

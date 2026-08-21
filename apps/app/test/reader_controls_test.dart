@@ -93,6 +93,11 @@ Widget _pipelineReader({
       builder: (context, pipeline) => build(pipeline),
     );
 
+Future<void> _disposePipelineReader(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump(const Duration(minutes: 2));
+}
+
 void main() {
   testWidgets('reader starts immersive and exposes complete bottom controls',
       (tester) async {
@@ -221,6 +226,7 @@ void main() {
       ignoring: true,
     );
     expect(_controlsPointer(tester, bottom).ignoring, isTrue);
+    await _disposePipelineReader(tester);
   });
 
   testWidgets('reader waits for the final progress checkpoint before pop',
@@ -237,36 +243,40 @@ void main() {
             body: Center(
               child: FilledButton(
                 key: launchKey,
-                onPressed: () => Navigator.of(context).push<void>(
-                  MaterialPageRoute<void>(
-                    builder: (_) => _pipelineReader(
-                      chapter: chapter,
-                      build: (pipeline) => ReaderRuntimeScreen(
+                onPressed: () => unawaited(
+                  Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => _pipelineReader(
                         chapter: chapter,
-                        pipeline: pipeline,
-                        screenKey: const ValueKey<String>(
-                          'reader-progress-screen',
-                        ),
-                        onProgressChanged: (progress) async {
-                          writes.add(progress);
-                          if (writes.length == 1) await firstWrite.future;
-                        },
-                        artifactPageBuilder: (
-                          context,
-                          asset,
-                          reportFirstFrame,
-                          runtime,
-                        ) => ColoredBox(
-                          key: ValueKey<String>(
-                            'reader-progress-page:${asset.index}',
+                        build: (pipeline) => ReaderRuntimeScreen(
+                          chapter: chapter,
+                          pipeline: pipeline,
+                          initiallyImmersive: false,
+                          screenKey: const ValueKey<String>(
+                            'reader-progress-screen',
                           ),
-                          color: Colors.black,
+                          onProgressChanged: (progress) {
+                            writes.add(progress);
+                            return firstWrite.future;
+                          },
+                          artifactPageBuilder: (
+                            context,
+                            asset,
+                            reportFirstFrame,
+                            runtime,
+                          ) =>
+                              ColoredBox(
+                            key: ValueKey<String>(
+                              'reader-progress-page:${asset.index}',
+                            ),
+                            color: Colors.black,
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
-                child: const Text('打开 Reader'),
+                child: const Text('Launch Reader'),
               ),
             ),
           ),
@@ -297,6 +307,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(launchKey), findsOneWidget);
     expect(writes.last.pageIndex, 2);
+    await _disposePipelineReader(tester);
   });
 
   testWidgets('static images hide playback-only controls', (tester) async {
@@ -337,6 +348,7 @@ void main() {
     expect(find.byKey(readerRotateKey), findsOneWidget);
     expect(find.byKey(readerFavoriteKey), findsOneWidget);
     expect(find.byKey(readerDownloadKey), findsNothing);
+    await _disposePipelineReader(tester);
   });
 
   testWidgets('top controls omit duplicate navigation and layout actions',
@@ -383,6 +395,7 @@ void main() {
     );
     expect(find.byKey(readerComicSettingsKey), findsOneWidget);
     expect(find.byKey(readerPageSliderKey), findsOneWidget);
+    await _disposePipelineReader(tester);
   });
 
   testWidgets('RTL reader mirrors slider direction and index labels',
@@ -430,6 +443,7 @@ void main() {
       find.byKey(const ValueKey<String>('reader-rtl-page:2')),
       findsOneWidget,
     );
+    await _disposePipelineReader(tester);
   });
 
   // Adaptive classification belongs to reader_runtime and is covered by

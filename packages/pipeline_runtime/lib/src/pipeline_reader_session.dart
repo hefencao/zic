@@ -366,12 +366,7 @@ final class PipelineReaderSessionFactory {
     _retentionPool.release(session);
   }
 
-  Future<void> disposeRetainedSessions() async {
-    await _retentionPool.disposeAll();
-    // `create()` callers are not represented in the retention pool. Dispose
-    // only runtimes that prove they have no live transfer consumers.
-    await _transferRuntimePool.disposeIdle();
-  }
+  Future<void> disposeRetainedSessions() => _retentionPool.disposeAll();
 
   /// Explicit composition shutdown for tests/app teardown after every active
   /// Reader/command consumer has detached from the physical transfer owner.
@@ -660,6 +655,7 @@ final class PipelineReaderSession {
   ReaderObs? _pendingObservation;
   ReaderObs? _lastAcceptedControlObservation;
   bool _observationDrainScheduled = false;
+  Timer? _observationDrainTimer;
   bool _observationControlDirty = false;
   int _observationGeneration = 0;
   DownloadId? _lastControlCurrentDownload;
@@ -756,10 +752,15 @@ final class PipelineReaderSession {
     // whole plan/reconcile/lane-pump control transaction has completed. A
     // zero-delay Timer keeps the same latest-wins semantics while yielding one
     // ordinary event-loop turn after the frame that produced the observation.
-    Timer.run(() => _drainObservation(generation));
+    _observationDrainTimer?.cancel();
+    _observationDrainTimer = Timer(Duration.zero, () {
+      _observationDrainTimer = null;
+      _drainObservation(generation);
+    });
   }
 
   void _drainObservation(int generation) {
+    _observationDrainTimer = null;
     if (generation != _observationGeneration ||
         _disposed ||
         _retainedForReaderReentry) {
@@ -885,9 +886,12 @@ final class PipelineReaderSession {
 
   void _invalidateObservationQueue() {
     _observationGeneration++;
+    _observationDrainScheduled = false;
     _pendingObservation = null;
     _lastAcceptedControlObservation = null;
     _observationControlDirty = false;
+    _observationDrainTimer?.cancel();
+    _observationDrainTimer = null;
   }
 
   void accept(ReaderObs observation) {

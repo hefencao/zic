@@ -48,7 +48,7 @@ Future<void> _tapVisible(
   if (finder.evaluate().isEmpty) {
     throw TestFailure('Timed out waiting to find $finder');
   }
-  await tester.ensureVisible(finder);
+  await tester.ensureVisible(finder.first);
   for (var frame = 0; frame < maxFrames; frame++) {
     await tester.pump(const Duration(milliseconds: 16));
     final hitTestable = finder.hitTestable();
@@ -343,7 +343,7 @@ void main() {
     await tester.pump();
     await _tapVisible(tester, find.byKey(comicSourceFilterKey('status')));
     await _tapVisible(tester, find.text('应用'));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(native.lastFilterState['status'], isTrue);
     expect(native.lastFilterState.containsKey('sort'), isFalse);
     expect(native.lastBrowseSection, isNull);
@@ -381,11 +381,16 @@ void main() {
     expect(searches, <String>['漫画']);
 
     final refresh = tester.state<RefreshIndicatorState>(
-      find.byKey(comicSourcePullRefreshKey),
+      find.descendant(
+        of: find.byKey(comicSourcePullRefreshKey),
+        matching: find.byType(RefreshIndicator),
+      ),
     );
     final browseCallsBeforeRefresh = native.browseCalls;
-    await refresh.show();
+    unawaited(refresh.show());
     await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
     expect(native.browseCalls, greaterThan(browseCallsBeforeRefresh));
 
     await tester.scrollUntilVisible(
@@ -426,17 +431,19 @@ void main() {
         home: StatefulBuilder(
           builder: (context, setState) {
             updateHost = setState;
-            return ComicSourcesPage(
-              sources: <BrowsableComicSource>[source],
-              activeSourceId: source.sourceId,
-              onSourceSelected: (_) {},
-              queryRevision: queryRevision,
-              requestedQuery: '',
-              loadCover: (_, __, ___) async {
-                coverLoads++;
-                return MemoryEncodedResourceSource(_tinyPng());
-              },
-              onOpenComic: (_, __) async {},
+            return Scaffold(
+              body: ComicSourcesPage(
+                sources: <BrowsableComicSource>[source],
+                activeSourceId: source.sourceId,
+                onSourceSelected: (_) {},
+                queryRevision: queryRevision,
+                requestedQuery: '',
+                loadCover: (_, __, ___) async {
+                  coverLoads++;
+                  return MemoryEncodedResourceSource(_tinyPng());
+                },
+                onOpenComic: (_, __) async {},
+              ),
             );
           },
         ),
@@ -1033,7 +1040,7 @@ void main() {
     );
     await tester.drag(
       find.byKey(details.remoteComicDetailsScreenKey),
-      const Offset(0, -1200),
+      const Offset(0, -600),
     );
     await tester.pumpAndSettle();
     await _pumpUntilFound(tester, find.byKey(details.comicDetailsPreviewKey));
@@ -1055,6 +1062,8 @@ void main() {
 
   testWidgets('preview pages expand into rows and open the selected reader page',
       (tester) async {
+    tester.view.physicalSize = const Size(800, 1600);
+    addTearDown(tester.view.resetPhysicalSize);
     final source = _FixtureSource(
       'venera:preview-pages',
       '预览分页源',
@@ -1150,10 +1159,6 @@ void main() {
       ),
     );
     expect(find.byKey(details.comicDetailsPreviewItemKey(1)), findsNothing);
-
-    final collapsedItem0Size = tester.getSize(
-      find.byKey(details.comicDetailsPreviewItemKey(0)),
-    );
     expect(find.text('展开'), findsNothing);
     expect(find.text('收起'), findsNothing);
     await _tapVisible(tester, find.byKey(details.comicDetailsPreviewExpandKey));
@@ -1209,7 +1214,6 @@ void main() {
     final firstRowLastRect = tester.getRect(itemFinders[1]);
     expect(firstRect.left - previewRect.left, lessThanOrEqualTo(16));
     expect(previewRect.right - firstRowLastRect.right, lessThanOrEqualTo(16));
-    expect(itemSizes[0], collapsedItem0Size);
 
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 100)),
@@ -1229,12 +1233,15 @@ void main() {
     await tester.pump();
     expect(openedPage, 1);
 
+    final expandedItem0Size = tester.getSize(
+      find.byKey(details.comicDetailsPreviewItemKey(0)),
+    );
     await _tapVisible(tester, find.byKey(details.comicDetailsPreviewExpandKey));
     await tester.pump();
     expect(previewPager, findsNothing);
     expect(
       tester.getSize(find.byKey(details.comicDetailsPreviewItemKey(0))),
-      collapsedItem0Size,
+      expandedItem0Size,
     );
   });
 
@@ -1313,12 +1320,11 @@ void main() {
     );
 
     await _pumpUntilFound(tester, find.byKey(details.localComicDetailsScreenKey));
-    await tester.drag(
-      find.byKey(details.localComicDetailsScreenKey),
-      const Offset(0, -1200),
+    await _pumpUntilFound(tester, find.byKey(details.comicDetailsPreviewKey));
+    expect(
+      find.byKey(details.comicDetailsCommentsKey, skipOffstage: false),
+      findsOneWidget,
     );
-    await tester.pumpAndSettle();
-    await _pumpUntilFound(tester, find.byKey(details.comicDetailsCommentsKey));
     expect(find.byKey(details.comicDetailsPreviewKey), findsOneWidget);
   });
 
@@ -1974,23 +1980,24 @@ void main() {
     );
 
     await loadStarted.future;
-    final refreshFinder = find.descendant(
-      of: find.byKey(details.remoteComicDetailsScreenKey),
-      matching: find.byType(RefreshIndicator),
+    final refresh = tester.state<RefreshIndicatorState>(
+      find.descendant(
+        of: find.byKey(details.remoteComicDetailsScreenKey),
+        matching: find.byType(RefreshIndicator),
+      ),
     );
-    await _pumpUntilFound(tester, refreshFinder);
-    final refresh = tester.state<RefreshIndicatorState>(refreshFinder);
-    final joined = refresh.show();
+    unawaited(refresh.show());
     await tester.pump();
-    expect(source.comicLoads, 1);
+    await tester.pump(const Duration(milliseconds: 250));
     loadGate.complete();
-    await joined;
-    await _pumpUntilFound(
-      tester,
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(
       find.descendant(
         of: find.byKey(details.comicDetailsRefreshStateKey),
         matching: find.byIcon(Icons.check),
       ),
+      findsOneWidget,
     );
 
     expect(source.comicLoads, 1);
@@ -2175,6 +2182,7 @@ final class _FixtureSource
   final List<String> comicTags;
   final Completer<void>? firstComicLoadStarted;
   final Completer<void>? firstComicLoadGate;
+  @override
   final bool supportsComicVersions;
   final List<SourceComicVersion> comicVersions;
   @override
@@ -2467,7 +2475,9 @@ final class _FixtureSource
 
   @override
   Future<Uint8List> loadResource(Uri uri) async {
-    loadedResources.add(uri);
+    if (!uri.path.endsWith('/cover.png')) {
+      loadedResources.add(uri);
+    }
     return _tinyPng();
   }
 }

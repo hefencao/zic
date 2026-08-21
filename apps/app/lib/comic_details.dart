@@ -376,20 +376,33 @@ final class _LocalComicDetailsScreenState
   Future<void> _loadDownloadStatuses(
     Iterable<ImportedLibraryEntry> entries,
   ) async {
-    final snapshots = <String, ChapterDownloadSnapshot>{};
-    for (final entry in entries) {
-      try {
-        final snapshot = await widget.inspectChapterDownload(entry);
-        snapshots[comicDetailsChapterIdentity(
-          snapshot.sourceId,
-          snapshot.chapterId,
-        )] = snapshot;
-      } on Object {
-        // A stale download record must not prevent the details page opening.
+    final list = entries.toList(growable: false);
+    if (list.isEmpty) return;
+    try {
+      final results = await Future.wait<ChapterDownloadSnapshot?>(
+        list.map((entry) async {
+          try {
+            return await widget.inspectChapterDownload(entry);
+          } on Object {
+            return null;
+          }
+        }),
+      );
+      if (!mounted) return;
+      final snapshots = <String, ChapterDownloadSnapshot>{};
+      for (final snapshot in results) {
+        if (snapshot != null) {
+          snapshots[comicDetailsChapterIdentity(
+            snapshot.sourceId,
+            snapshot.chapterId,
+          )] = snapshot;
+        }
       }
-    }
-    if (mounted && snapshots.isNotEmpty) {
-      setState(() => _downloadSnapshots.addAll(snapshots));
+      if (snapshots.isNotEmpty) {
+        setState(() => _downloadSnapshots.addAll(snapshots));
+      }
+    } on Object {
+      // Best-effort inspection.
     }
   }
 
@@ -793,6 +806,18 @@ final class _LocalComicDetailsScreenState
 
   @override
   Widget build(BuildContext context) {
+    final entryByChapterId = <String, ImportedLibraryEntry>{};
+    final entriesByRevision = <String, ImportedLibraryEntry?>{};
+    for (final entry in _library.chapters) {
+      if (entry.chapter.sourceId == widget.comic.sourceId &&
+          entry.chapter.comicId == widget.comic.comicId) {
+        entryByChapterId[entry.chapter.chapterId] = entry;
+        final rev = entry.chapter.sourceRevision.trim();
+        if (rev.isNotEmpty) {
+          entriesByRevision[rev] = entriesByRevision.containsKey(rev) ? null : entry;
+        }
+      }
+    }
     final models = <_ChapterViewModel>[];
     final catalogIdentities = <String>{};
     final catalogChapters = _library.sourceChapters;
@@ -802,7 +827,10 @@ final class _LocalComicDetailsScreenState
         chapter.chapterId,
       );
       catalogIdentities.add(identity);
-      final entry = _entryFor(widget.comic.sourceId, chapter);
+      final entry = entryByChapterId[chapter.chapterId] ??
+          (chapter.sourceRevision.trim().isNotEmpty
+              ? entriesByRevision[chapter.sourceRevision.trim()]
+              : null);
       models.add(
         _ChapterViewModel(
           sourceId: widget.comic.sourceId,
@@ -1138,7 +1166,7 @@ final class _RemoteComicDetailsScreenState
     scheduleMicrotask(
       () => unawaited(_loadDownloadStatuses(_library.chapters)),
     );
-    scheduleMicrotask(() => _ignoreRefreshResult(_refresh(announce: false)));
+    unawaited(_refresh(announce: false));
   }
 
   @override
@@ -1227,20 +1255,33 @@ final class _RemoteComicDetailsScreenState
   Future<void> _loadDownloadStatuses(
     Iterable<ImportedLibraryEntry> entries,
   ) async {
-    final snapshots = <String, ChapterDownloadSnapshot>{};
-    for (final entry in entries) {
-      try {
-        final snapshot = await widget.inspectChapterDownload(entry);
-        snapshots[comicDetailsChapterIdentity(
-          snapshot.sourceId,
-          snapshot.chapterId,
-        )] = snapshot;
-      } on Object {
-        // A stale download record must not prevent the details page opening.
+    final list = entries.toList(growable: false);
+    if (list.isEmpty) return;
+    try {
+      final results = await Future.wait<ChapterDownloadSnapshot?>(
+        list.map((entry) async {
+          try {
+            return await widget.inspectChapterDownload(entry);
+          } on Object {
+            return null;
+          }
+        }),
+      );
+      if (!mounted) return;
+      final snapshots = <String, ChapterDownloadSnapshot>{};
+      for (final snapshot in results) {
+        if (snapshot != null) {
+          snapshots[comicDetailsChapterIdentity(
+            snapshot.sourceId,
+            snapshot.chapterId,
+          )] = snapshot;
+        }
       }
-    }
-    if (mounted && snapshots.isNotEmpty) {
-      setState(() => _downloadSnapshots.addAll(snapshots));
+      if (snapshots.isNotEmpty) {
+        setState(() => _downloadSnapshots.addAll(snapshots));
+      }
+    } on Object {
+      // Best-effort inspection.
     }
   }
 
@@ -1737,17 +1778,60 @@ final class _RemoteComicDetailsScreenState
         commentSource != null && commentSource.supportsComicComments
             ? _loadRemoteComments
             : null;
-    final knownPageCount = ordered.fold<int>(
-      0,
-      (sum, chapter) =>
-          sum + _knownPageCount(chapter, _localEntry(chapter)),
-    );
-    final pageCountPending = ordered.any(
-      (chapter) => _knownPageCount(
-        chapter,
-        _localEntry(chapter),
-      ) == 0,
-    );
+    final entryByChapterId = <String, ImportedLibraryEntry>{};
+    final entriesByRevision = <String, ImportedLibraryEntry?>{};
+    for (final entry in _library.chapters) {
+      if (entry.chapter.sourceId == _source.sourceId &&
+          (entry.chapter.comicId == comic.comicId ||
+              widget.sameComicIdentity(entry.chapter.comicId, comic.comicId))) {
+        entryByChapterId[entry.chapter.chapterId] = entry;
+        final rev = entry.chapter.sourceRevision.trim();
+        if (rev.isNotEmpty) {
+          entriesByRevision[rev] = entriesByRevision.containsKey(rev) ? null : entry;
+        }
+      }
+    }
+    var knownPageCount = 0;
+    var pageCountPending = false;
+    final chapterViewModels = <_ChapterViewModel>[];
+    for (final chapter in ordered) {
+      final entry = entryByChapterId[chapter.chapterId] ??
+          (chapter.sourceRevision.trim().isNotEmpty
+              ? entriesByRevision[chapter.sourceRevision.trim()]
+              : null);
+      final count = _knownPageCount(chapter, entry);
+      knownPageCount += count;
+      if (count == 0) {
+        pageCountPending = true;
+      }
+      final identity = comicDetailsChapterIdentity(
+        _source.sourceId,
+        chapter.chapterId,
+      );
+      final downloadSnapshot = _downloadSnapshots[identity];
+      chapterViewModels.add(
+        _ChapterViewModel(
+          sourceId: _source.sourceId,
+          title: chapter.title,
+          chapterId: chapter.chapterId,
+          sequence: chapter.sequence,
+          pageCount: count,
+          publishedAt: chapter.publishedAt,
+          entry: entry,
+          isRead: _isReadById(
+            _library.readStates,
+            _source.sourceId,
+            chapter.chapterId,
+          ),
+          canDownload: true,
+          opening: _opening.contains(identity),
+          downloading: _workingDownloads.contains(identity) ||
+              downloadSnapshot?.isActive == true,
+          downloaded: downloadSnapshot?.isComplete == true,
+          sourceChapter: chapter,
+        ),
+      );
+    }
     return _ComicDetailsScaffold(
       screenKey: remoteComicDetailsScreenKey,
       title: comic.title,
@@ -1790,50 +1874,7 @@ final class _RemoteComicDetailsScreenState
       pageCount: knownPageCount,
       pageCountPending: pageCountPending,
       chapterList: _ComicChapterList(
-        chapters: <_ChapterViewModel>[
-          for (final chapter in ordered)
-            _ChapterViewModel(
-              sourceId: _source.sourceId,
-              title: chapter.title,
-              chapterId: chapter.chapterId,
-              sequence: chapter.sequence,
-              pageCount: _knownPageCount(
-                chapter,
-                _localEntry(chapter),
-              ),
-              publishedAt: chapter.publishedAt,
-              entry: _localEntry(chapter),
-              isRead: _isReadById(
-                _library.readStates,
-                _source.sourceId,
-                chapter.chapterId,
-              ),
-              canDownload: true,
-              opening: _opening.contains(
-                comicDetailsChapterIdentity(
-                  _source.sourceId,
-                  chapter.chapterId,
-                ),
-              ),
-              downloading: _workingDownloads.contains(
-                    comicDetailsChapterIdentity(
-                      _source.sourceId,
-                      chapter.chapterId,
-                    ),
-                  ) ||
-                  _downloadSnapshots[comicDetailsChapterIdentity(
-                        _source.sourceId,
-                        chapter.chapterId,
-                      )]?.isActive ==
-                      true,
-              downloaded: _downloadSnapshots[comicDetailsChapterIdentity(
-                    _source.sourceId,
-                    chapter.chapterId,
-                  )]?.isComplete ==
-                  true,
-              sourceChapter: chapter,
-            ),
-        ],
+        chapters: chapterViewModels,
         onOpen: (chapter) => _open(chapter.sourceChapter!),
         onDownload: (chapter) => _download(chapter.sourceChapter!),
         onRestoreUnread: (chapter) async {
@@ -2247,6 +2288,9 @@ final class _ReadSwipeActionState extends State<_ReadSwipeAction> {
 
   @override
   Widget build(BuildContext context) {
+    if (!widget.enabled) {
+      return widget.child;
+    }
     return LayoutBuilder(
       builder: (context, constraints) {
         final threshold = (constraints.maxWidth * 0.18).clamp(56, 96).toDouble();

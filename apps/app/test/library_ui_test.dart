@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:telemetry/telemetry.dart';
+import 'package:zic/artwork_placeholder.dart';
 import 'package:zic/comic_details.dart' as details;
 import 'package:zic/demo_home.dart';
 import 'package:zic/download_manager.dart';
@@ -152,7 +153,7 @@ void main() {
     expect(find.byKey(homeUpdatesSectionKey), findsOneWidget);
     expect(find.byKey(homeHistorySectionKey), findsOneWidget);
     final homeCover = find
-        .byKey(importedChapterEntryKey(chapter.sourceId, chapter.chapterId));
+        .byKey(historyChapterEntryKey(chapter.sourceId, chapter.chapterId));
     expect(homeCover, findsOneWidget);
     final homeCoverSize = tester.getSize(homeCover);
 
@@ -168,8 +169,9 @@ void main() {
         find.byKey(comicCoverKey(chapter.sourceId, chapter.comicId));
     expect(shelfCover, findsOneWidget);
     expect(tester.getSize(shelfCover), homeCoverSize);
-    expect(homeCoverSize.width, ComicCoverCard.cardWidth);
-    expect(homeCoverSize.height, ComicCoverCard.cardExtent);
+    final card = find.byType(ComicCoverCard).first;
+    expect(tester.getSize(card).width, ComicCoverCard.cardWidth);
+    expect(tester.getSize(card).height, ComicCoverCard.cardExtent);
   });
 
   testWidgets(
@@ -206,7 +208,7 @@ void main() {
     await tester.pumpWidget(
       App(libraryStore: store, comicSources: const <BrowsableComicSource>[]),
     );
-    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await _pumpUntilFound(tester, find.byType(ComicCoverCard));
 
     expect(find.byType(ComicCoverCard), findsOneWidget);
     expect(find.text('shelved-update'), findsOneWidget);
@@ -220,6 +222,17 @@ void main() {
     addTearDown(store.close);
     final chapter = _chapter(name: '延迟构建漫画');
     await store.upsertChapter(chapter);
+    await store.saveProgress(
+      ReadingProgress(
+        sourceId: chapter.sourceId,
+        comicId: chapter.comicId,
+        chapterId: chapter.chapterId,
+        pageIndex: 0,
+        subPageOffset: 0,
+        readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 7, 28, 1),
+      ),
+    );
     final trace = MemoryTraceSink();
 
     await tester.pumpWidget(
@@ -257,6 +270,7 @@ void main() {
         coverSourceId: 'https://example.invalid/cached-cover.png',
         savedAt: DateTime.utc(2026, 7, 28),
         updatedAt: DateTime.utc(2026, 7, 28),
+        sourceUpdateAt: DateTime.utc(2026, 7, 28),
       ),
     );
     await store.saveComicPreference(
@@ -264,7 +278,7 @@ void main() {
         sourceId: 'remote:test',
         comicId: 'cached-comic',
         sourceKind: ComicSourceKind.remote,
-      ),
+      ).copyWith(inShelf: true),
     );
 
     final cache = ResourceCacheCoordinator();
@@ -392,13 +406,41 @@ void main() {
     await tester.pump(const Duration(milliseconds: 320));
 
     expect(find.byKey(bookshelfBatchBarKey), findsOneWidget);
-    expect(tester.widget<ComicCoverCard>(first).selected, isTrue);
-    expect(tester.widget<ComicCoverCard>(second).selected, isFalse);
+    expect(
+      tester
+          .widget<ComicCoverCard>(
+            find.ancestor(of: first, matching: find.byType(ComicCoverCard)),
+          )
+          .selected,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<ComicCoverCard>(
+            find.ancestor(of: second, matching: find.byType(ComicCoverCard)),
+          )
+          .selected,
+      isFalse,
+    );
 
     await tester.tap(second);
     await tester.pump(const Duration(milliseconds: 200));
-    expect(tester.widget<ComicCoverCard>(first).selected, isTrue);
-    expect(tester.widget<ComicCoverCard>(second).selected, isTrue);
+    expect(
+      tester
+          .widget<ComicCoverCard>(
+            find.ancestor(of: first, matching: find.byType(ComicCoverCard)),
+          )
+          .selected,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<ComicCoverCard>(
+            find.ancestor(of: second, matching: find.byType(ComicCoverCard)),
+          )
+          .selected,
+      isTrue,
+    );
     expect(find.text('已选择 2 部'), findsOneWidget);
   });
 
@@ -875,7 +917,15 @@ void main() {
 
     expect(fastLoads, 1);
     expect(find.byType(Image), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byWidgetPredicate(
+          (w) => w is ComicCoverCard && w.comic == slowComic,
+        ),
+        matching: find.byType(SoftArtworkPlaceholder),
+      ),
+      findsOneWidget,
+    );
 
     slowSource.complete(MemoryEncodedResourceSource(_tinyPng()));
     await tester.pump();

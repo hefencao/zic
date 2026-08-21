@@ -271,6 +271,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   _SourceFailure? _failure;
   int _generation = 0;
   int _artworkRetryRevision = 0;
+  final Map<String, Future<EncodedResourceSource>> _cardCoverFutures =
+      <String, Future<EncodedResourceSource>>{};
   bool _recoveringSourceAccess = false;
   final Set<String> _verificationBrowserAttempts = <String>{};
   final Stopwatch _traceClock = Stopwatch()..start();
@@ -422,6 +424,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
 
   @override
   void dispose() {
+    _cardCoverFutures.clear();
     _scroll.dispose();
     _search.dispose();
     super.dispose();
@@ -629,6 +632,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     setState(() {
       _failure = null;
       if (forceRefresh) _artworkRetryRevision++;
+      if (forceRefresh) _cardCoverFutures.clear();
       _loading = !hasCached && !hasVisibleItems;
       _refreshing = hasCached || hasVisibleItems;
       if (cached != null && cachedChanged) {
@@ -823,8 +827,21 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     BrowsableComicSource source,
     SourceComicSummary comic,
     Uri uri,
-  ) async {
+  ) {
     final identity = _sourceCoverIdentity(source, comic);
+    final existing = _cardCoverFutures[identity];
+    if (existing != null) return existing;
+    final future = _loadSourceCardCoverUncached(source, comic, uri, identity);
+    _cardCoverFutures[identity] = future;
+    return future;
+  }
+
+  Future<EncodedResourceSource> _loadSourceCardCoverUncached(
+    BrowsableComicSource source,
+    SourceComicSummary comic,
+    Uri uri,
+    String identity,
+  ) async {
     _recordSourceTrace(
       TraceEventKind.retryScheduled,
       'cover-load-start',
@@ -847,6 +864,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       );
       return encoded;
     } on Object catch (error) {
+      _cardCoverFutures.remove(identity);
       _recordSourceTrace(
         TraceEventKind.taskFailed,
         'cover-source-failed',
@@ -1197,8 +1215,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
                 children: <Widget>[
                   Text('筛选', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 12),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 440),
+                  Flexible(
                     child: SingleChildScrollView(
                       key: comicSourceFilterBarKey,
                       child: Column(

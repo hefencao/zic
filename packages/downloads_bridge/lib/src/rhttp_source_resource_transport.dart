@@ -7,6 +7,7 @@ import 'package:rhttp/rhttp.dart' as rhttp;
 
 
 Future<void>? _rhttpInitialization;
+bool _rhttpAvailable = true;
 const bool _rhttpReceiveProgressDiagnosticsRequested =
     bool.fromEnvironment('ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS');
 const bool _rhttpReceiveProgressDiagnosticsEnabled =
@@ -14,8 +15,24 @@ const bool _rhttpReceiveProgressDiagnosticsEnabled =
     _rhttpReceiveProgressDiagnosticsRequested;
 
 /// Prewarms the Rust HTTP runtime without blocking the first application frame.
-Future<void> prewarmPlatformSourceResourceTransport() =>
-    _rhttpInitialization ??= rhttp.Rhttp.init();
+Future<void> prewarmPlatformSourceResourceTransport() async {
+  if (!_rhttpAvailable) {
+    throw UnsupportedError('rhttp native library unavailable');
+  }
+  final init = _rhttpInitialization;
+  if (init != null) {
+    return init;
+  }
+  try {
+    final future = rhttp.Rhttp.init();
+    _rhttpInitialization = future;
+    await future;
+  } on Object {
+    _rhttpAvailable = false;
+    _rhttpInitialization = null;
+    rethrow;
+  }
+}
 
 /// Production external-source media transport.
 ///
@@ -24,32 +41,36 @@ Future<void> prewarmPlatformSourceResourceTransport() =>
 /// through a reusable Rust/reqwest client.
 final class RhttpSourceResourceDirectTransport
     implements SourceResourceDirectTransport {
-  Future<rhttp.RhttpClient>? _clientFuture;
+  Future<rhttp.RhttpClient?>? _clientFuture;
   bool _closed = false;
 
-  Future<rhttp.RhttpClient> _client() {
+  Future<rhttp.RhttpClient?> _client() {
     if (_closed) {
       throw StateError('rhttp source resource transport is closed');
     }
     return _clientFuture ??= _createClient();
   }
 
-  Future<rhttp.RhttpClient> _createClient() async {
-    await prewarmPlatformSourceResourceTransport();
-    if (_closed) {
-      throw StateError('rhttp source resource transport is closed');
-    }
-    return rhttp.RhttpClient.create(
-      settings: const rhttp.ClientSettings(
-        redirectSettings: rhttp.RedirectSettings.none(),
-        timeoutSettings: rhttp.TimeoutSettings(
-          connectTimeout: Duration(seconds: 15),
-          keepAliveTimeout: Duration(seconds: 60),
-          keepAlivePing: Duration(seconds: 30),
+  Future<rhttp.RhttpClient?> _createClient() async {
+    try {
+      await prewarmPlatformSourceResourceTransport();
+      if (_closed) {
+        throw StateError('rhttp source resource transport is closed');
+      }
+      return await rhttp.RhttpClient.create(
+        settings: const rhttp.ClientSettings(
+          redirectSettings: rhttp.RedirectSettings.none(),
+          timeoutSettings: rhttp.TimeoutSettings(
+            connectTimeout: Duration(seconds: 15),
+            keepAliveTimeout: Duration(seconds: 60),
+            keepAlivePing: Duration(seconds: 30),
+          ),
+          throwOnStatusCode: false,
         ),
-        throwOnStatusCode: false,
-      ),
-    );
+      );
+    } on Object {
+      return null;
+    }
   }
 
   @override
@@ -60,6 +81,16 @@ final class RhttpSourceResourceDirectTransport
     _throwIfCancelled(control);
     final client = await _client();
     _throwIfCancelled(control);
+    if (client == null) {
+      throw Failure(
+        code: ErrorCode.network,
+        message: 'rhttp transport client unavailable for ${request.uri}',
+        details: const <String, Object?>{
+          'sourceMediaProtocolMismatch': true,
+          'sourceClientStateRequired': true,
+        },
+      );
+    }
     final cancelToken = rhttp.CancelToken();
     final taskControl = control;
     if (taskControl != null) {
@@ -178,7 +209,7 @@ final class RhttpSourceResourceDirectTransport
     _clientFuture = null;
     if (clientFuture != null) {
       unawaited(clientFuture.then((client) {
-        client.dispose();
+        client?.dispose();
       }));
     }
   }

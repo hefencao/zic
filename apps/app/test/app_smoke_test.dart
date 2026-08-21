@@ -16,13 +16,15 @@ import 'package:zic/webp_demo.dart';
 
 
 
+const _frameStep = Duration(milliseconds: 20);
+
 Future<void> _pumpUntilFound(
   WidgetTester tester,
   Finder finder, {
   int maxFrames = 80,
 }) async {
   for (var frame = 0; frame < maxFrames; frame++) {
-    await tester.pump();
+    await tester.pump(_frameStep);
     if (finder.evaluate().isNotEmpty) {
       return;
     }
@@ -45,7 +47,7 @@ Future<void> _pumpUntilKeyText(
   int maxFrames = 60,
 }) async {
   for (var frame = 0; frame < maxFrames; frame++) {
-    await tester.pump();
+    await tester.pump(_frameStep);
     final finder = find.byKey(key, skipOffstage: false);
     if (finder.evaluate().length == 1) {
       final widget = tester.widget<Text>(finder);
@@ -219,9 +221,10 @@ void main() {
         ),
       ),
     );
-    await tester.pump();
+    final page = find.byKey(readerMediaWebpPageKey);
+    await _pumpUntilFound(tester, page);
 
-    expect(find.byKey(readerMediaWebpPageKey), findsOneWidget);
+    expect(page, findsOneWidget);
     expect(find.byType(LocalImagePlayer), findsOneWidget);
     expect(find.byType(NativeWebpPlayer), findsNothing);
     final state = tester.widget<ImagePreviewStateRegion>(
@@ -231,9 +234,9 @@ void main() {
     expect(find.byKey(imagePageLoadingIndicatorKey), findsOneWidget);
     expect(find.byKey(webpEngineControlKey), findsNothing);
 
-    await tester.pumpWidget(const SizedBox.shrink());
     bytes.complete(_nativeFixture('finite_loop.webp').readAsBytesSync());
-    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await defaultLocalMediaPipelineFactory.disposeRetainedSessions();
   });
 
   testWidgets('bundled WebP entry pushes the catalog route', (tester) async {
@@ -345,13 +348,16 @@ void main() {
     await tester.pumpWidget(App(libraryStore: store));
     await tester.pump();
 
-    final entry = find.byKey(importedChapterEntryKey(record.sourceId, record.chapterId));
+    final entry = find.byKey(historyChapterEntryKey(record.sourceId, record.chapterId));
     await _pumpUntilFound(tester, entry);
     await tester.ensureVisible(entry);
     await tester.tap(entry);
+    final screen = find.byKey(imageFolderScreenKey, skipOffstage: false);
+    await _pumpUntilFound(tester, screen);
+    await tester.tap(screen);
     await _pumpUntilFound(
       tester,
-      find.byKey(imageFolderScreenKey, skipOffstage: false),
+      find.byKey(readerPageSubtitleKey, skipOffstage: false),
     );
 
     expect(
@@ -364,6 +370,9 @@ void main() {
       ).data,
       '002.bin · PNG',
     );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await defaultLocalMediaPipelineFactory.disposeRetainedSessions();
   });
 
 
@@ -379,7 +388,7 @@ void main() {
     await tester.pumpWidget(App(libraryStore: store));
     await _pumpUntilFound(
       tester,
-      find.byKey(importedChapterEntryKey(record.sourceId, record.chapterId)),
+      find.byKey(localImageFolderImportKey),
     );
 
     expect(find.text('本地目录维护'), findsNothing);
@@ -410,6 +419,9 @@ void main() {
       find.byKey(imageFolderScreenKey, skipOffstage: false),
       findsOneWidget,
     );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await defaultLocalMediaPipelineFactory.disposeRetainedSessions();
   });
 
   testWidgets('folder reader switches mixed image files by explicit identity', (
@@ -430,6 +442,9 @@ void main() {
         ),
       ),
     );
+    await tester.pump();
+    await tester.tap(find.byKey(imageFolderScreenKey));
+    await _pumpUntilFound(tester, find.byKey(readerPageSubtitleKey));
 
     expect(
       tester.widget<Text>(find.byKey(readerPageSubtitleKey)).data,
@@ -497,7 +512,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     pending['001.webp']!.complete(_folderBytes(_folderFixture().files.first));
     pending['002.bin']!.complete(_folderBytes(_folderFixture().files.last));
-    await tester.pump();
+    await defaultLocalMediaPipelineFactory.disposeRetainedSessions();
   });
 
   testWidgets('cancelled folder picker stays on home', (tester) async {
@@ -518,5 +533,7 @@ void main() {
     expect(find.byKey(imageFolderScreenKey), findsNothing);
     expect(find.byKey(localImageFolderImportKey), findsOneWidget);
     expect(find.byKey(localImageFolderPickerProgressKey), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }
