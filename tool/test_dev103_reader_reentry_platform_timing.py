@@ -40,7 +40,7 @@ require(
     "channel = MethodChannel(",
     "BLIT_LANE_COUNT = 1",
     "blitLanes.forEach { lane -> lane.execute {} }",
-    "return mainHandler.post {",
+    "if (mainHandler.post(::drainProducerSchedules))",
     "val lane: ExecutorService",
 )
 

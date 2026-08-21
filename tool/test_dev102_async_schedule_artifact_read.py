@@ -40,7 +40,7 @@ kotlin = read(
 )
 for token in (
     "complete: (ScheduleResult) -> Unit",
-    "return mainHandler.post {",
+    "if (mainHandler.post(::drainProducerSchedules))",
     "output.present(frameAddress, frameBytes) { presentation ->",
 ):
     if token not in kotlin:

@@ -618,6 +618,32 @@ final class PipelineReaderSession {
       <String, PipelinePageStream>{};
   final Map<String, PipelinePageOutputStream> _pageOutputs =
       <String, PipelinePageOutputStream>{};
+  final Set<DecodeId> _animatedOutputs = <DecodeId>{};
+  // DownloadSession publishes source-canvas metadata as soon as the WebP
+  // prefix is available. Keep one listener per physical session so the
+  // matching output lease can be created before the first decoded frame is
+  // handed to UploadSession. The listener is removed with the Reader session;
+  // retaining a Reader keeps it because the physical session may continue to
+  // receive bytes while the route is temporarily detached.
+  final Map<DownloadSession, DownloadSnapshotListener>
+      _outputPrewarmSnapshotListeners =
+      <DownloadSession, DownloadSnapshotListener>{};
+  // Platform texture leases are dimension-specific. Keep the exact raster
+  // size requested for each decode identity so a viewport-sized prewarm is
+  // never mistaken for a reusable output when the source is smaller or has a
+  // different aspect ratio.
+  final Map<DecodeId, ({int width, int height})> _outputPrewarmSizes =
+      <DecodeId, ({int width, int height})>{};
+  // A source-canvas callback can arrive while a visible PageView frame is
+  // being laid out/painted. Keep that exact request latest-wins and start it
+  // through the presentation adapter's idle boundary instead of posting
+  // another platform texture create into the same UI-critical turn. Detached
+  // current gallery outputs (no listener or no resident surface) still
+  // prewarm immediately so the first visible frame cannot be blank; deferred
+  // next/transition outputs are drained one platform create per idle task.
+  final Map<DecodeId, ({int width, int height})> _deferredOutputPrewarms =
+      <DecodeId, ({int width, int height})>{};
+  bool _outputPrewarmIdleScheduled = false;
   Timer? _playbackTicker;
   int? _playbackWakeAtMicros;
   bool _playbackPaused = false;
@@ -700,9 +726,10 @@ final class PipelineReaderSession {
   /// transfer or decode reconciliation. The drain uses an ordinary event turn,
   /// not the microtask queue: page-boundary control work must yield back to the
   /// engine/platform event loop after the current Flutter frame before it may
-  /// consume the Dart UI isolate. Vertical continuous geometry remains
-  /// Reader-owned: coverage fraction, velocity and logical-position changes
-  /// that preserve the same discrete control state do not re-enter Pipeline.
+  /// consume the Dart UI isolate. Coverage fraction, velocity and
+  /// logical-position changes that preserve the same discrete control state do
+  /// not re-enter Pipeline in either paged or continuous mode; the target's
+  /// transition visibility bucket remains an explicit horizontal boundary.
   /// A pending drain is still latest-wins, so a real current/target/visible or
   /// interaction-boundary change replaces stale work before reconciliation.
   void enqueueObservation(ReaderObs observation) {
@@ -714,10 +741,7 @@ final class PipelineReaderSession {
       return;
     }
     if (!_observationControlDirty &&
-        _sameVerticalControlObservation(
-          _lastAcceptedControlObservation,
-          observation,
-        )) {
+        _sameControlObservation(_lastAcceptedControlObservation, observation)) {
       _pendingObservation = null;
       return;
     }
@@ -752,10 +776,7 @@ final class PipelineReaderSession {
     _observationDrainScheduled = false;
     if (observation == null) return;
     if (!_observationControlDirty &&
-        _sameVerticalControlObservation(
-          _lastAcceptedControlObservation,
-          observation,
-        )) {
+        _sameControlObservation(_lastAcceptedControlObservation, observation)) {
       return;
     }
     var accepted = false;
@@ -787,13 +808,15 @@ final class PipelineReaderSession {
     }
   }
 
-  bool _sameVerticalControlObservation(ReaderObs? a, ReaderObs b) {
+  bool _sameControlObservation(ReaderObs? a, ReaderObs b) {
     if (a == null ||
-        a.direction != ReadingDirection.vertical ||
-        b.direction != ReadingDirection.vertical ||
+        a.direction != b.direction ||
         a.currentIndex != b.currentIndex ||
         a.stableIndex != b.stableIndex ||
         a.targetCoverage?.pageIndex != b.targetCoverage?.pageIndex ||
+        _targetVisibilityBucket(a) != _targetVisibilityBucket(b) ||
+        _playbackPhaseBucket(a) != _playbackPhaseBucket(b) ||
+        _playbackDominantIndex(a) != _playbackDominantIndex(b) ||
         _controlInteraction(a.interaction) !=
             _controlInteraction(b.interaction) ||
         a.visibleCoverages.length != b.visibleCoverages.length) {
@@ -806,6 +829,49 @@ final class PipelineReaderSession {
       }
     }
     return true;
+  }
+
+  int _targetVisibilityBucket(ReaderObs observation) {
+    final target = observation.targetCoverage;
+    if (target == null || target.fraction <= 0) return 0;
+    // RoleResolver promotes a horizontal target to transition at 0.15. The
+    // vertical resolver treats any positive target coverage as visible. Keep
+    // this semantic bucket in the latest-wins gate so fractional PageView
+    // updates do not rerun Pipeline policy while preserving the exact role
+    // boundary that can change demand.
+    if (observation.direction == ReadingDirection.vertical) return 1;
+    return target.fraction >= 0.15 ? 2 : 1;
+  }
+
+  int _playbackPhaseBucket(ReaderObs observation) {
+    if (observation.direction == ReadingDirection.vertical &&
+        observation.interaction != Interaction.idle) {
+      return 3; // continuous
+    }
+    final target = observation.targetCoverage;
+    if (target == null || observation.interaction == Interaction.idle) {
+      return 0; // idle
+    }
+    final current = observation.currentCoverage;
+    if (target.fraction >= 0.5 || current.fraction >= 0.5) {
+      return 1; // dominant
+    }
+    if (current.fraction >= 0.15 && target.fraction >= 0.15) {
+      return 2; // overlap
+    }
+    return 1; // dominant fallback used by ViewportResolver
+  }
+
+  int _playbackDominantIndex(ReaderObs observation) {
+    final phase = _playbackPhaseBucket(observation);
+    if (phase == 2 || phase == 3) return -1;
+    final target = observation.targetCoverage;
+    if (target == null || observation.interaction == Interaction.idle) {
+      return observation.currentCoverage.pageIndex;
+    }
+    return target.fraction > observation.currentCoverage.fraction
+        ? target.pageIndex
+        : observation.currentCoverage.pageIndex;
   }
 
   int _controlInteraction(Interaction interaction) => switch (interaction) {
@@ -845,14 +911,21 @@ final class PipelineReaderSession {
           ? _media as PipelineOutputPrewarmer
           : null;
       if (prewarmer != null) {
-        unawaited(
-          _prewarmOutput(
+        final size = _anticipatedOutputSize(currentDownload, target);
+        if (size != null) {
+          _requestOutputPrewarm(
             prewarmer,
-            id: currentDownload,
-            width: target.physicalWidth,
-            height: target.physicalHeight,
-          ),
-        );
+            id: DecodeId(
+              download: currentDownload,
+              physicalWidth: target.physicalWidth,
+              physicalHeight: target.physicalHeight,
+              pixelFormat: target.pixelFormat,
+              renderer: target.renderer,
+            ),
+            width: size.width,
+            height: size.height,
+          );
+        }
       }
       final currentOutput = _pageOutputs[currentDownload.key]?.snapshot;
       if (currentOutput?.hasSurface != true) {
@@ -874,8 +947,189 @@ final class PipelineReaderSession {
     transferProgress.select(_downloads.find(currentDownload));
     _syncStartupArtifactPressure();
     artifactReadScheduler.refresh();
-    _syncPageOutputs();
+    // The first accepted plan is already authoritative for detached gallery
+    // prewarm, even though the retained observation is written only after the
+    // full control transaction returns. Pass it explicitly so a ready
+    // current/next/transition output cannot wait for the PageView host to
+    // mount.
+    _syncPageOutputs(observation: observation);
     _ensurePlaybackTicker();
+  }
+
+  ({int width, int height})? _anticipatedOutputSize(
+    DownloadId id,
+    DecodeTarget target,
+  ) {
+    final pageIndex = _pageIndexByPageId[id.content.pageId];
+    if (pageIndex == null) return null;
+    final asset = chapter.pages[pageIndex];
+    final download = _downloads.find(id)?.snapshot;
+    final decodeId = _activeDecodeIdentity(id);
+    final decoded = decodeId == null ? null : _decodes.find(decodeId)?.snapshot;
+    // Prefer source-canvas facts because they own layout/aspect semantics.
+    // Once a frame has already decoded, its aligned raster is an exact output
+    // size fallback; omitting it leaves a narrow race where the first upload
+    // creates a SurfaceProducer before the detached prewarm can start.
+    final sourceWidth = asset.width ??
+        download?.sourceCanvasWidth ??
+        decoded?.decodedWidth;
+    final sourceHeight = asset.height ??
+        download?.sourceCanvasHeight ??
+        decoded?.decodedHeight;
+    if (sourceWidth == null ||
+        sourceHeight == null ||
+        sourceWidth <= 0 ||
+        sourceHeight <= 0) {
+      return null;
+    }
+    final raster = AlignedRasterSize.fit(
+      sourceWidth: sourceWidth,
+      sourceHeight: sourceHeight,
+      maxWidth: target.physicalWidth,
+      maxHeight: target.physicalHeight,
+      alignment: target.alignment,
+    );
+    return (width: raster.width, height: raster.height);
+  }
+
+  void _requestOutputPrewarm(
+    PipelineOutputPrewarmer prewarmer, {
+    required DecodeId id,
+    required int width,
+    required int height,
+  }) {
+    if (width <= 0 || height <= 0) return;
+    // Once UploadSession has claimed a frame, its uploader owns the
+    // authoritative texture lease. A deferred request that reaches this
+    // boundary must not create a second SurfaceProducer while that upload (or
+    // its ready resident frame) is still settling.
+    final upload = _uploads.find(id)?.snapshot;
+    if (upload?.state == UploadState.uploading ||
+        (upload?.state == UploadState.ready && upload?.frameIndex != null)) {
+      _deferredOutputPrewarms.remove(id);
+      return;
+    }
+    final size = (width: width, height: height);
+    if (_outputPrewarmSizes[id] == size ||
+        _deferredOutputPrewarms[id] == size) {
+      return;
+    }
+    if (_shouldDeferOutputPrewarm(id)) {
+      _deferredOutputPrewarms[id] = size;
+      _scheduleOutputPrewarmIdle();
+      return;
+    }
+    _startOutputPrewarm(
+      prewarmer,
+      id: id,
+      width: width,
+      height: height,
+      size: size,
+    );
+  }
+
+  bool _shouldDeferOutputPrewarm(DecodeId id) {
+    final scheduler = _media.frameScheduler;
+    final frameBusy =
+        scheduler.inPersistentCallbacks || scheduler.hasScheduledFrame;
+    if (!frameBusy) return false;
+
+    final role = _binding?.pipeline.currentPlan.uploads[id]?.role;
+    final output = _pageOutputs[id.download.key];
+    final detached = output == null ||
+        output._listeners.isEmpty ||
+        !output.snapshot.hasSurface;
+
+    // Current has a first-frame deadline. If its host is not mounted yet, or
+    // it has no resident surface to display, let the exact prewarm proceed in
+    // this turn. A next/transition lease is invisible until PageView catches
+    // up, so its platform create must yield to the frame already in flight.
+    if (role == PageRole.current) return !detached;
+    if (role == PageRole.next || role == PageRole.transition) return true;
+    return !detached;
+  }
+
+  void _startOutputPrewarm(
+    PipelineOutputPrewarmer prewarmer, {
+    required DecodeId id,
+    required int width,
+    required int height,
+    required ({int width, int height}) size,
+  }) {
+    _deferredOutputPrewarms.remove(id);
+    _outputPrewarmSizes[id] = size;
+    unawaited(
+      _prewarmOutput(
+        prewarmer,
+        id: id.download,
+        width: width,
+        height: height,
+        identity: id,
+        size: size,
+      ),
+    );
+  }
+
+  void _scheduleOutputPrewarmIdle() {
+    if (_outputPrewarmIdleScheduled) return;
+    _outputPrewarmIdleScheduled = true;
+    _media.frameScheduler.scheduleIdle(() {
+      _outputPrewarmIdleScheduled = false;
+      if (_disposed || _deferredOutputPrewarms.isEmpty) return;
+      final prewarmer = _media is PipelineOutputPrewarmer
+          ? _media as PipelineOutputPrewarmer
+          : null;
+      final uploads = _binding?.pipeline.currentPlan.uploads;
+      if (prewarmer == null || uploads == null) {
+        _deferredOutputPrewarms.clear();
+        return;
+      }
+
+      DecodeId? selectedId;
+      ({int width, int height})? selectedSize;
+      var selectedPriority = -1;
+      for (final entry in _deferredOutputPrewarms.entries.toList(
+        growable: false,
+      )) {
+        final role = uploads[entry.key]?.role;
+        final priority = switch (role) {
+          PageRole.current => 3,
+          PageRole.transition => 2,
+          PageRole.next => 1,
+          _ => 0,
+        };
+        if (priority == 0) {
+          _deferredOutputPrewarms.remove(entry.key);
+          continue;
+        }
+        if (priority > selectedPriority) {
+          selectedId = entry.key;
+          selectedSize = entry.value;
+          selectedPriority = priority;
+        }
+      }
+      final id = selectedId;
+      final size = selectedSize;
+      if (id == null || size == null) return;
+
+      _deferredOutputPrewarms.remove(id);
+      _startOutputPrewarm(
+        prewarmer,
+        id: id,
+        width: size.width,
+        height: size.height,
+        size: size,
+      );
+
+      // Creating a SurfaceProducer crosses the Android main-thread boundary.
+      // This callback is a Priority.idle handoff, so no create can run while
+      // Flutter has animation/touch callbacks pending. Keep at most one such
+      // create per idle task; another pending page gets a later idle slot
+      // instead of sharing the first UI budget window.
+      if (_deferredOutputPrewarms.isNotEmpty) {
+        _scheduleOutputPrewarmIdle();
+      }
+    });
   }
 
   Future<void> _prewarmOutput(
@@ -883,10 +1137,15 @@ final class PipelineReaderSession {
     required DownloadId id,
     required int width,
     required int height,
+    required DecodeId identity,
+    required ({int width, int height}) size,
   }) async {
     try {
       await prewarmer.prewarmOutput(width: width, height: height);
     } on Object catch (error) {
+      if (_outputPrewarmSizes[identity] == size) {
+        _outputPrewarmSizes.remove(identity);
+      }
       trace.record(
         traceEvent(
           clock: clock,
@@ -951,6 +1210,7 @@ final class PipelineReaderSession {
       output._dispose();
     }
     _pageOutputs.clear();
+    _outputPrewarmSizes.clear();
     for (final stream in _pageStreams.values) {
       stream.dispose();
     }
@@ -1005,13 +1265,7 @@ final class PipelineReaderSession {
     final id = readerPageDownloadId(chapter, asset);
     final output = _pageOutputs.putIfAbsent(
       id.key,
-      () => PipelinePageOutputStream._(
-        download: id,
-        uploads: _uploads,
-        decodes: _decodes,
-        outputs: _media.outputs,
-        frameScheduler: _media.frameScheduler,
-      ),
+      () => _newPageOutput(id),
     );
     final uploadIdentity = _activeUploadIdentity(id);
     output._bind(
@@ -1021,6 +1275,202 @@ final class PipelineReaderSession {
           : null,
     );
     return output;
+  }
+
+  PipelinePageOutputStream _newPageOutput(
+    DownloadId id, {
+    bool detachedPrewarm = false,
+  }) {
+    final output = PipelinePageOutputStream._(
+      download: id,
+      uploads: _uploads,
+      decodes: _decodes,
+      outputs: _media.outputs,
+      frameScheduler: _media.frameScheduler,
+      onPlaybackWakeChanged: _ensurePlaybackTicker,
+    );
+    if (detachedPrewarm) {
+      output._enableDetachedPrewarm();
+    }
+    return output;
+  }
+
+  void _maybePrewarmPagedOutput(
+    DecodeId id, {
+    ReaderObs? observation,
+  }) {
+    final acceptedObservation = observation ?? _lastAcceptedControlObservation;
+    if (acceptedObservation == null ||
+        acceptedObservation.direction == ReadingDirection.vertical ||
+        _media.renderer != RendererKind.androidTexture) {
+      return;
+    }
+    final pageIndex = _pageIndexByPageId[id.download.content.pageId];
+    if (pageIndex == null) return;
+    final demand = _binding?.pipeline.currentPlan.uploads[id];
+    if (demand == null ||
+        (demand.role != PageRole.current &&
+            demand.role != PageRole.next &&
+            demand.role != PageRole.transition)) {
+      // Only the current/transition/next output roles can become visible
+      // before a PageView host catches up. Keep this guard before creating
+      // any detached projection for the outer window.
+      return;
+    }
+    final asset = chapter.pages[pageIndex];
+    final download = _downloads.find(id.download);
+    if (!_mayUseNativeWebpOutput(asset, download?.contentKind)) {
+      return;
+    }
+    // The DownloadSession observer can fire while the first control
+    // transaction is still being committed, before the accepted observation
+    // is written back to [_lastAcceptedControlObservation]. If source-canvas
+    // metadata was already available at that boundary, make the exact lease
+    // request here as part of the role decision instead of waiting for another
+    // snapshot that may never arrive.
+    final prewarmer = _media is PipelineOutputPrewarmer
+        ? _media as PipelineOutputPrewarmer
+        : null;
+    final target = _binding?.pipeline.decodeTarget;
+    final size = target == null
+        ? null
+        : _anticipatedOutputSize(id.download, target);
+    if (prewarmer != null && size != null) {
+      _requestOutputPrewarm(
+        prewarmer,
+        id: id,
+        width: size.width,
+        height: size.height,
+      );
+    }
+    // The role plan is already a bounded visibility decision. Creating the
+    // projection here must not wait for WebP sniffing/classification (or even
+    // for the first upload snapshot): an opaque-URI page may be mounted while
+    // its kind is still unknown. _bind only records the exact DecodeId; it
+    // does not create demand, decode bytes or a platform texture. When the
+    // upload becomes ready, the stream can therefore present its first frame
+    // before PageView attaches its listener. Known non-WebP pages stay on
+    // their existing Flutter image/GIF path and never pay for an unused
+    // native texture.
+    final upload = _uploads.find(id)?.snapshot;
+    final readyUpload = upload?.state == UploadState.ready;
+    final existing = _pageOutputs[id.download.key];
+    if (existing != null &&
+        existing._identity == id &&
+        existing.snapshot.hasSurface) {
+      // The bounded first frame is already resident. Mark even a stream that
+      // was created by an attached host as detached-prewarm capable so a later
+      // PageView dispose can stop presenting invisible successors without
+      // waiting for another plan/classification boundary.
+      final shouldTrace = !existing._detachedPrewarmEnabled;
+      existing._enableDetachedPrewarm();
+      if (shouldTrace) {
+        _recordPagedOutputPrewarm(
+          id: id,
+          pageIndex: pageIndex,
+          role: demand.role,
+          readyUpload: readyUpload,
+          output: existing,
+          created: false,
+          prewarmWidth: size?.width,
+          prewarmHeight: size?.height,
+        );
+      }
+      return;
+    }
+    final created = existing == null;
+    final shouldTrace = existing == null ||
+        existing._identity != id ||
+        !existing._detachedPrewarmEnabled;
+    final output = _pageOutputs.putIfAbsent(
+      id.download.key,
+      () => _newPageOutput(id.download, detachedPrewarm: true),
+    );
+    output._enableDetachedPrewarm();
+    output._bind(id);
+    if (shouldTrace) {
+      _recordPagedOutputPrewarm(
+        id: id,
+        pageIndex: pageIndex,
+        role: demand.role,
+        readyUpload: readyUpload,
+        output: output,
+        created: created,
+        prewarmWidth: size?.width,
+        prewarmHeight: size?.height,
+      );
+    }
+  }
+
+  void _recordPagedOutputPrewarm({
+    required DecodeId id,
+    required int pageIndex,
+    required PageRole role,
+    required bool readyUpload,
+    required PipelinePageOutputStream output,
+    required bool created,
+    int? prewarmWidth,
+    int? prewarmHeight,
+  }) {
+    trace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.pageOutputPrewarmed,
+        identityHash: id.download.key,
+        revision: revision,
+        payload: <String, Object?>{
+          'pageIndex': pageIndex,
+          'role': role.name,
+          'readyUpload': readyUpload,
+          'detached': output._listeners.isEmpty,
+          'created': created,
+          if (prewarmWidth != null) 'prewarmWidth': prewarmWidth,
+          if (prewarmHeight != null) 'prewarmHeight': prewarmHeight,
+        },
+      ),
+    );
+  }
+
+  bool _mayUseNativeWebpOutput(PageAsset asset, ContentKind? contentKind) {
+    switch (asset.contentKindHint) {
+      case ContentKindHint.webp:
+        return true;
+      case ContentKindHint.unknown:
+        break;
+      case ContentKindHint.jpeg:
+      case ContentKindHint.png:
+      case ContentKindHint.gif:
+      case ContentKindHint.avif:
+      case ContentKindHint.fallback:
+        return false;
+    }
+    switch (contentKind) {
+      case ContentKind.webp:
+        return true;
+      case ContentKind.gif:
+      case ContentKind.fallback:
+        return false;
+      case ContentKind.unknown:
+      case null:
+        break;
+    }
+    final path = asset.uri.path.toLowerCase();
+    if (path.endsWith('.webp')) return true;
+    const nonWebpSuffixes = <String>[
+      '.gif',
+      '.jpg',
+      '.jpeg',
+      '.png',
+      '.avif',
+      '.bmp',
+      '.dib',
+      '.tif',
+      '.tiff',
+      '.ico',
+      '.heif',
+    ];
+    return !nonWebpSuffixes.any(path.endsWith);
   }
 
   Future<Uint8List> loadBytes(
@@ -1325,6 +1775,58 @@ final class PipelineReaderSession {
 
   void _observeDownloadSession(DownloadSession session) {
     _ingresses.attach(session);
+    if (_outputPrewarmSnapshotListeners.containsKey(session)) return;
+    late final DownloadSnapshotListener listener;
+    listener = (snapshot) {
+      _handleDownloadSnapshotForOutputPrewarm(snapshot);
+    };
+    _outputPrewarmSnapshotListeners[session] = listener;
+    session.addSnapshotListener(listener);
+  }
+
+  void _handleDownloadSnapshotForOutputPrewarm(DownloadSnapshot snapshot) {
+    if (_disposed ||
+        _retainedForReaderReentry ||
+        !snapshot.hasSourceCanvas ||
+        _media.renderer != RendererKind.androidTexture) {
+      return;
+    }
+    final observation = _lastAcceptedControlObservation;
+    if (observation == null || observation.direction == ReadingDirection.vertical) {
+      return;
+    }
+    final id = _activeUploadIdentity(snapshot.id);
+    if (id == null || _outputPrewarmSizes.containsKey(id)) return;
+    final demand = _binding?.pipeline.currentPlan.uploads[id];
+    if (demand == null ||
+        (demand.role != PageRole.current &&
+            demand.role != PageRole.next &&
+            demand.role != PageRole.transition)) {
+      return;
+    }
+    final pageIndex = _pageIndexByPageId[id.download.content.pageId];
+    if (pageIndex == null) return;
+    final asset = chapter.pages[pageIndex];
+    if (!_mayUseNativeWebpOutput(asset, snapshot.contentKind)) return;
+    final target = _binding?.pipeline.decodeTarget;
+    if (target == null) return;
+    final raster = AlignedRasterSize.fit(
+      sourceWidth: snapshot.sourceCanvasWidth!,
+      sourceHeight: snapshot.sourceCanvasHeight!,
+      maxWidth: target.physicalWidth,
+      maxHeight: target.physicalHeight,
+      alignment: target.alignment,
+    );
+    final prewarmer = _media is PipelineOutputPrewarmer
+        ? _media as PipelineOutputPrewarmer
+        : null;
+    if (prewarmer == null) return;
+    _requestOutputPrewarm(
+      prewarmer,
+      id: id,
+      width: raster.width,
+      height: raster.height,
+    );
   }
 
   void _handleSourceKindObserved(DownloadId id, ContentKind kind) {
@@ -1380,6 +1882,30 @@ final class PipelineReaderSession {
         decodedWidth <= 0 ||
         decodedHeight <= 0) {
       return;
+    }
+    final observation = _lastAcceptedControlObservation;
+    final demand = _binding?.pipeline.currentPlan.uploads[id];
+    final prewarmer = _media is PipelineOutputPrewarmer
+        ? _media as PipelineOutputPrewarmer
+        : null;
+    if (prewarmer != null &&
+        observation != null &&
+        observation.direction != ReadingDirection.vertical &&
+        _media.renderer == RendererKind.androidTexture &&
+        demand != null &&
+        (demand.role == PageRole.current ||
+            demand.role == PageRole.next ||
+            demand.role == PageRole.transition)) {
+      // The native decoder has already resolved the exact aligned canvas for
+      // this page. Start the matching SurfaceProducer prewarm before the
+      // upload lane asks for its lease; the old viewport-sized guess cannot be
+      // reused for a smaller or differently-shaped source.
+      _requestOutputPrewarm(
+        prewarmer,
+        id: id,
+        width: decodedWidth,
+        height: decodedHeight,
+      );
     }
     unawaited(
       _resolveAndPublishPageDimensions(
@@ -1462,10 +1988,20 @@ final class PipelineReaderSession {
   }
 
   void _handleAnimationResolved(DecodeId id, AnimationInfo animation) {
+    if (animation.frameCount > 1) {
+      _animatedOutputs.add(id);
+    } else {
+      _animatedOutputs.remove(id);
+    }
     scheduleMicrotask(() {
       if (_disposed) return;
       final pageIndex = _pageIndexByPageId[id.download.content.pageId];
       if (pageIndex == null) return;
+      // Classification can arrive after the upload snapshot. Promote the
+      // detached projection immediately so a ready first frame is resident
+      // before PageView mounts, even when the classification result itself
+      // does not change the current policy bucket.
+      _maybePrewarmPagedOutput(id);
       final animated = animation.frameCount > 1;
       final asset = chapter.pages[pageIndex];
       final download = _downloads.find(id.download);
@@ -1502,15 +2038,63 @@ final class PipelineReaderSession {
   }
 
   void _handleUploadSnapshot(DecodeId id, UploadSnapshot snapshot) {
-    _pageOutputs[id.download.key]?._accept(id, snapshot);
+    if (snapshot.state == UploadState.uploading ||
+        (snapshot.state == UploadState.ready && snapshot.frameIndex != null)) {
+      // The deferred idle request is now superseded by the real uploader
+      // lease. Remove it before output reconciliation can call
+      // [_maybePrewarmPagedOutput] again for this same snapshot.
+      _deferredOutputPrewarms.remove(id);
+    }
+    var output = _pageOutputs[id.download.key];
+    // Once a current/adjacent output already owns a resident surface, every
+    // animation upload can go straight to the output stream. Avoid repeating
+    // role/geometry/classification lookups on this high-frequency callback;
+    // the prewarm path is still entered for a missing/rebound/no-surface
+    // output and for all low-frequency plan/classification boundaries.
+    if (output == null ||
+        output._identity != id ||
+        (!output.snapshot.hasSurface && !output._detachedPrewarmEnabled)) {
+      _maybePrewarmPagedOutput(id);
+      // The prewarm path may create the stream for the first upload callback.
+      // Re-read it before accepting the snapshot so that first ready frame is
+      // presented immediately instead of waiting for the next animation tick.
+      output = _pageOutputs[id.download.key];
+    }
+    output?._accept(id, snapshot);
     // Pipeline reconciliation can create the upload session after the viewport
-    // observation was applied. Re-project the existing viewport so a late
-    // transition session is frozen and a late current session is resumed before
-    // its first presentation deadline is armed.
-    _binding?.resyncPlayback();
-    _ensurePlaybackTicker();
-    _maybeReleaseStartupCurrentDownload();
-    _maybeReleaseStartupArtifactPressure();
+    // observation was applied. Re-project the existing viewport while the
+    // session is still preparing so a late transition is frozen.
+    // The late current session is resumed before its first presentation
+    // deadline is armed. Once animation metadata confirms a multi-frame output,
+    // ready notifications are only presentation updates; replaying PlaybackGate
+    // for every frame would make the animation compete with the Reader's UI
+    // frame. Static and not-yet-classified outputs retain the original resync.
+    final isReadyAnimatedFrame =
+        snapshot.state == UploadState.ready &&
+        snapshot.frameIndex != null &&
+        _animatedOutputs.contains(id);
+    if (!isReadyAnimatedFrame) {
+      _binding?.resyncPlayback();
+    }
+    // An animated ready frame is followed by presentation, which arms the
+    // session deadline and invokes the output stream's lightweight wake hook.
+    // Do not scan every upload session from this pre-presentation callback; the
+    // due-frame path and the post-present hook preserve multi-page ordering.
+    if (!isReadyAnimatedFrame) {
+      _ensurePlaybackTicker();
+    }
+    // Once an Animated WebP is classified, ready notifications are frame
+    // presentation updates. The startup guards below scan the whole current
+    // upload plan and normally become no-ops after the first frame; repeating
+    // those scans for every animation frame needlessly runs on the UI isolate.
+    // Keep them for the first/unknown frame and while either startup lease is
+    // still held so release timing and pressure semantics remain unchanged.
+    if (!isReadyAnimatedFrame ||
+        _startupCurrentDownload != null ||
+        _startupArtifactPressureDownload != null) {
+      _maybeReleaseStartupCurrentDownload();
+      _maybeReleaseStartupArtifactPressure();
+    }
   }
 
   void _holdStartupArtifactPressureFor(DownloadId current) {
@@ -1740,8 +2324,10 @@ final class PipelineReaderSession {
     }
   }
 
-  void _syncPageOutputs() {
-    for (final output in _pageOutputs.values) {
+  void _syncPageOutputs({ReaderObs? observation}) {
+    final emptyOutputs = <String>[];
+    for (final entry in _pageOutputs.entries) {
+      final output = entry.value;
       final uploadIdentity = _activeUploadIdentity(output.download);
       output._bind(
         uploadIdentity,
@@ -1749,6 +2335,57 @@ final class PipelineReaderSession {
             ? _staticPresentationContinuityIdentity(output.download)
             : null,
       );
+      if (output._isEmptyDetachedStream) {
+        emptyOutputs.add(entry.key);
+      }
+    }
+    // Page hosts are recreated by PageView as pages leave/re-enter the
+    // viewport. Once a stream has no listener, identity or resident claim,
+    // retaining it in this map only adds work to every later plan sync.
+    for (final key in emptyOutputs) {
+      _pageOutputs.remove(key);
+    }
+    final acceptedObservation = observation ?? _lastAcceptedControlObservation;
+    final uploads = _binding?.pipeline.currentPlan.uploads;
+    // A prewarm marker is only a short-lived request guard. Once the role
+    // plan no longer admits that DecodeId as a page that can enter the
+    // gallery, let a later re-entry request a fresh unpresented lease. The
+    // native pool still deduplicates an in-flight/idle lease, so this does not
+    // allocate duplicate SurfaceProducers while the old request is settling.
+    if (_outputPrewarmSizes.isNotEmpty) {
+      _outputPrewarmSizes.removeWhere((id, _) {
+        final role = uploads?[id]?.role;
+        return role != PageRole.current &&
+            role != PageRole.next &&
+            role != PageRole.transition;
+      });
+    }
+    if (_deferredOutputPrewarms.isNotEmpty) {
+      _deferredOutputPrewarms.removeWhere((id, _) {
+        final role = uploads?[id]?.role;
+        return role != PageRole.current &&
+            role != PageRole.next &&
+            role != PageRole.transition;
+      });
+    }
+    if (acceptedObservation == null ||
+        acceptedObservation.direction == ReadingDirection.vertical ||
+        _media.renderer != RendererKind.androidTexture ||
+        uploads == null) {
+      return;
+    }
+    // Create the detached projection as soon as the role plan is committed,
+    // rather than waiting for the first UploadSnapshot callback. This closes
+    // the race where a current or prefetched frame is already ready before the
+    // PageView host mounts or begins its next drag.
+    for (final entry in uploads.entries) {
+      final role = entry.value.role;
+      if (role == PageRole.current ||
+          role == PageRole.next ||
+          role == PageRole.transition) {
+        final id = entry.key;
+        _maybePrewarmPagedOutput(id, observation: acceptedObservation);
+      }
     }
   }
 
@@ -1834,6 +2471,13 @@ final class PipelineReaderSession {
       output._dispose();
     }
     _pageOutputs.clear();
+    _outputPrewarmSizes.clear();
+    _deferredOutputPrewarms.clear();
+    _outputPrewarmIdleScheduled = false;
+    for (final entry in _outputPrewarmSnapshotListeners.entries) {
+      entry.key.removeSnapshotListener(entry.value);
+    }
+    _outputPrewarmSnapshotListeners.clear();
     transferProgress.dispose();
     _pageDimensions.dispose();
     _uploads.removeListener(_handleUploadSnapshot);
@@ -1849,6 +2493,8 @@ final class PipelineReaderSession {
     );
     _uploads.dispose();
     _decodes.dispose();
+    _animatedOutputs.clear();
+    _outputPrewarmSizes.clear();
     _ingresses.dispose();
     _streamingSources.dispose();
     final mediaCloseStartedAtMicros = clock.nowMicros();

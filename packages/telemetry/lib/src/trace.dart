@@ -46,6 +46,7 @@ enum TraceEventKind {
   retryScheduled,
   artifactSource,
   sourceRead,
+  pageOutputPrewarmed,
   pageOutputReleased,
   decodeDemand,
   decodePriorityPromoted,

@@ -734,6 +734,29 @@ void main() {
     expect(tester.binding.hasScheduledFrame, isFalse);
   });
 
+  testWidgets(
+      'debug trace media frame events do not request a diagnostic Flutter frame',
+      (tester) async {
+    final log = DebugTraceLog(maxEvents: 4);
+    addTearDown(log.dispose);
+    log.addListener(() {});
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+    expect(tester.binding.hasScheduledFrame, isFalse);
+
+    log.record(
+      TraceEvent(
+        monotonicMicros: 1,
+        sessionId: 'animated-reader',
+        kind: TraceEventKind.framePresented,
+        payload: const <String, Object?>{'frame': 1},
+      ),
+    );
+
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    expect(log.exportEvents, hasLength(1));
+  });
+
   test('debug trace coalesces lifecycle bursts but preserves failures', () {
     final log = DebugTraceLog(maxEvents: 20);
     addTearDown(log.dispose);

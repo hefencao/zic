@@ -92,6 +92,29 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     TraceEventKind.readerFrameTiming,
   };
 
+  // These events are produced by every decoded/uploaded animation frame.
+  // They remain in both bounded trace projections and the export stream, but
+  // must not request a new Flutter frame merely to refresh the trace panel.
+  // The old behaviour made an otherwise idle Animated WebP keep scheduling
+  // frames at presentation cadence, competing with PageView composition and
+  // making UI jank look like a playback/freeze problem. Natural reader input
+  // and lifecycle events still refresh the panel; the next ordinary refresh
+  // shows the accumulated/coalesced media samples.
+  static const Set<TraceEventKind> _mediaFrameUiRefreshSuppressed =
+      <TraceEventKind>{
+    TraceEventKind.bytesCommitted,
+    TraceEventKind.decodeStarted,
+    TraceEventKind.decodeState,
+    TraceEventKind.decodeRefill,
+    TraceEventKind.frameDecoded,
+    TraceEventKind.frameUploaded,
+    TraceEventKind.framePresented,
+    TraceEventKind.framePipelineTiming,
+    TraceEventKind.playbackFrameDue,
+    TraceEventKind.uploadStarted,
+    TraceEventKind.uploadState,
+  };
+
   static const Set<String> _exportRangeFields = <String>{
     'bytes',
     'depth',
@@ -250,7 +273,8 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     // frame just to notify the trace viewer would make the diagnostic feed
     // self-sustaining and perturb the very cadence it measures. Ordinary
     // trace activity refreshes the UI; healthy frame timing is export-only.
-    if (event.kind != TraceEventKind.readerFrameTiming &&
+    if (!_mediaFrameUiRefreshSuppressed.contains(event.kind) &&
+        event.kind != TraceEventKind.readerFrameTiming &&
         event.kind != TraceEventKind.pipelineReconcileTiming &&
         event.kind != TraceEventKind.scrollCadenceOutlier &&
         event.kind != TraceEventKind.scrollCadenceSummary &&

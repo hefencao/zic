@@ -99,6 +99,12 @@ final class UploadRegistry {
     return earliest;
   }
 
+  /// Returns one session's deadline without scanning the whole Reader window.
+  /// Presentation callbacks use this as a cheap hint before rebuilding the
+  /// global playback wake for an animated successor.
+  int? playbackDeadlineMicros(DecodeId id) =>
+      _sessions[id]?.playbackDeadlineMicros;
+
   UploadSession get(DecodeId id) {
     final decode = decodes.get(id);
     final existing = _sessions[id];

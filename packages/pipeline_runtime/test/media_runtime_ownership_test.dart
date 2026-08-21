@@ -258,7 +258,7 @@ void main() {
     await factory.disposeTransferRuntimes();
   });
 
-  test('current output prewarms the exact aligned decode target', () async {
+  test('current output prewarms the exact aligned decoded raster', () async {
     final runtime = _Runtime();
     final session = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
@@ -293,9 +293,237 @@ void main() {
 
     expect(
       await runtime.firstPrewarm.future,
-      <int>[target.physicalWidth, target.physicalHeight],
+      <int>[1056, 792],
     );
     expect(runtime.prewarmCalls, 1);
+
+    await session.dispose();
+  });
+
+  test('current detached prewarm bypasses an already queued Flutter frame', () async {
+    final scheduler = _ControlledFrameScheduler(scheduled: true);
+    final runtime = _Runtime(
+      renderer: RendererKind.androidTexture,
+      scheduler: scheduler,
+    );
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(runtime),
+    ).create(
+      chapter: _galleryChapter(pageCount: 1),
+      sessionId: 'current-prewarm-frame-priority-test',
+    );
+    session.attach(
+      DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+        renderer: RendererKind.androidTexture,
+      ),
+    );
+    final page = session.chapter.pages.single;
+    session.accept(
+      ReaderObs(
+        sessionId: 'reader',
+        currentIndex: 0,
+        stableIndex: 0,
+        interaction: Interaction.idle,
+        logicalPosition: 0,
+        velocity: 0,
+        currentCoverage: Coverage(
+          pageIndex: 0,
+          assetKey: page.assetKey,
+          fraction: 1,
+        ),
+        direction: ReadingDirection.ltr,
+        timestamp: DateTime.utc(2026),
+        monotonicMicros: 1,
+      ),
+    );
+
+    expect(runtime.prewarmCalls, 1);
+    expect(scheduler.pendingCallbackCount, 0);
+
+    await session.dispose();
+  });
+
+  test('deferred gallery prewarms consume one platform create per idle handoff', () async {
+    final scheduler = _ControlledFrameScheduler(scheduled: true);
+    final runtime = _Runtime(
+      renderer: RendererKind.androidTexture,
+      scheduler: scheduler,
+    );
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(runtime),
+    ).create(
+      chapter: _galleryChapter(pageCount: 4),
+      sessionId: 'deferred-gallery-prewarm-budget-test',
+    );
+
+    session.attach(
+      DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+        renderer: RendererKind.androidTexture,
+      ),
+    );
+    final current = session.chapter.pages[0];
+    final transition = session.chapter.pages[2];
+    session.accept(
+      ReaderObs(
+        sessionId: 'reader',
+        currentIndex: 0,
+        stableIndex: 0,
+        interaction: Interaction.dragging,
+        logicalPosition: 0.5,
+        velocity: 1,
+        currentCoverage: Coverage(
+          pageIndex: 0,
+          assetKey: current.assetKey,
+          fraction: 0.5,
+        ),
+        targetCoverage: Coverage(
+          pageIndex: 2,
+          assetKey: transition.assetKey,
+          fraction: 0.5,
+        ),
+        visibleCoverages: <Coverage>[
+          Coverage(
+            pageIndex: 0,
+            assetKey: current.assetKey,
+            fraction: 0.5,
+          ),
+          Coverage(
+            pageIndex: 2,
+            assetKey: transition.assetKey,
+            fraction: 0.5,
+          ),
+        ],
+        direction: ReadingDirection.ltr,
+        timestamp: DateTime.utc(2026),
+        monotonicMicros: 1,
+      ),
+    );
+
+    // Current is the only output allowed to cross the queued-frame boundary
+    // immediately. Transition and next remain pending for idle slots.
+    expect(runtime.prewarmCalls, 1);
+    expect(scheduler.pendingCallbackCount, 1);
+    expect(
+      scheduler.requestedFrames,
+      0,
+      reason: 'idle prewarm must not request a competing Flutter frame',
+    );
+
+    scheduler.flushAfterFrame();
+    expect(runtime.prewarmCalls, 2);
+    expect(scheduler.pendingCallbackCount, 1);
+
+    scheduler.flushAfterFrame();
+    expect(runtime.prewarmCalls, 3);
+    expect(scheduler.pendingCallbackCount, 0);
+
+    await session.dispose();
+  });
+
+  test('horizontal role window prewarms an unknown page kind', () async {
+    final trace = MemoryTraceSink();
+    final runtime = _Runtime(renderer: RendererKind.androidTexture);
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(runtime),
+    ).create(
+      chapter: _chapter(contentKindHint: ContentKindHint.unknown),
+      sessionId: 'unknown-kind-gallery-prewarm-test',
+      traceSink: trace,
+    );
+    final page = session.chapter.pages.single;
+    // Simulate PageView creating the host-owned projection before the role
+    // plan reaches the Reader session. Prewarm telemetry must still expose
+    // the transition even though the stream itself already exists.
+    session.pageOutput(page);
+    session.attach(
+      DecodeTarget(
+        physicalWidth: 320,
+        physicalHeight: 480,
+        renderer: RendererKind.androidTexture,
+      ),
+    );
+    session.accept(
+      ReaderObs(
+        sessionId: 'reader',
+        currentIndex: 0,
+        stableIndex: 0,
+        interaction: Interaction.idle,
+        logicalPosition: 0,
+        velocity: 0,
+        currentCoverage: Coverage(
+          pageIndex: 0,
+          assetKey: page.assetKey,
+          fraction: 1,
+        ),
+        direction: ReadingDirection.ltr,
+        timestamp: DateTime.utc(2026),
+        monotonicMicros: 1,
+      ),
+    );
+
+    final prewarms = trace.events.where(
+      (event) => event.kind == TraceEventKind.pageOutputPrewarmed,
+    );
+    expect(
+      prewarms,
+      hasLength(1),
+      reason: 'role-bounded prewarm must not wait for media classification',
+    );
+    expect(prewarms.single.payload['created'], isFalse);
+
+    await session.dispose();
+  });
+
+  test('known non-WebP pages do not allocate detached native outputs', () async {
+    final trace = MemoryTraceSink();
+    final runtime = _Runtime(renderer: RendererKind.androidTexture);
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(runtime),
+    ).create(
+      chapter: _chapter(
+        uri: Uri.parse('asset:///page-0.jpg'),
+        contentKindHint: ContentKindHint.jpeg,
+      ),
+      sessionId: 'non-webp-gallery-prewarm-test',
+      traceSink: trace,
+    );
+    final page = session.chapter.pages.single;
+    session.attach(
+      DecodeTarget(
+        physicalWidth: 320,
+        physicalHeight: 480,
+        renderer: RendererKind.androidTexture,
+      ),
+    );
+    session.accept(
+      ReaderObs(
+        sessionId: 'reader',
+        currentIndex: 0,
+        stableIndex: 0,
+        interaction: Interaction.idle,
+        logicalPosition: 0,
+        velocity: 0,
+        currentCoverage: Coverage(
+          pageIndex: 0,
+          assetKey: page.assetKey,
+          fraction: 1,
+        ),
+        direction: ReadingDirection.ltr,
+        timestamp: DateTime.utc(2026),
+        monotonicMicros: 1,
+      ),
+    );
+
+    expect(
+      trace.events.where(
+        (event) => event.kind == TraceEventKind.pageOutputPrewarmed,
+      ),
+      isEmpty,
+    );
 
     await session.dispose();
   });
@@ -319,7 +547,41 @@ void main() {
   });
 }
 
-ChapterManifest _chapter({int? width, int? height, Uri? uri}) => ChapterManifest(
+ChapterManifest _galleryChapter({int pageCount = 3}) {
+  final pages = List<PageAsset>.generate(
+    pageCount,
+    (index) => PageAsset(
+      pageId: 'page-$index',
+      chapterId: 'chapter',
+      index: index,
+      uri: Uri.parse('asset:///page-$index.webp'),
+      width: 4096,
+      height: 3072,
+      contentKindHint: ContentKindHint.webp,
+    ),
+  );
+  return ChapterManifest(
+    sourceId: 'source',
+    comicId: 'comic',
+    chapter: Chapter(
+      chapterId: 'chapter',
+      comicId: 'comic',
+      title: 'chapter',
+      sequence: 1,
+      pageCount: pageCount,
+      sourceRevision: 'r1',
+    ),
+    pages: pages,
+    readingDirection: ReadingDirection.ltr,
+  );
+}
+
+ChapterManifest _chapter({
+  int? width,
+  int? height,
+  Uri? uri,
+  ContentKindHint contentKindHint = ContentKindHint.webp,
+}) => ChapterManifest(
       sourceId: 'source',
       comicId: 'comic',
       chapter: const Chapter(
@@ -338,7 +600,7 @@ ChapterManifest _chapter({int? width, int? height, Uri? uri}) => ChapterManifest
           uri: uri ?? Uri.parse('asset:///page-0.webp'),
           width: width,
           height: height,
-          contentKindHint: ContentKindHint.webp,
+          contentKindHint: contentKindHint,
         ),
       ],
       readingDirection: ReadingDirection.ltr,
@@ -383,14 +645,73 @@ final class _TestFrameScheduler implements PipelineFrameScheduler {
   bool get isIdle => true;
 
   @override
+  bool get hasScheduledFrame => false;
+
+  @override
   void afterFrame(void Function() callback) => scheduleMicrotask(callback);
+
+  @override
+  void scheduleIdle(void Function() callback) => scheduleMicrotask(callback);
 
   @override
   void requestFrame() {}
 }
 
+final class _ControlledFrameScheduler implements PipelineFrameScheduler {
+  _ControlledFrameScheduler({this.scheduled = false});
+
+  bool scheduled;
+  final List<void Function()> _callbacks = <void Function()>[];
+
+  int requestedFrames = 0;
+
+  int get pendingCallbackCount => _callbacks.length;
+
+  @override
+  bool get inPersistentCallbacks => false;
+
+  @override
+  bool get isIdle => !scheduled;
+
+  @override
+  bool get hasScheduledFrame => scheduled;
+
+  @override
+  void afterFrame(void Function() callback) {
+    _callbacks.add(callback);
+  }
+
+  @override
+  void scheduleIdle(void Function() callback) {
+    _callbacks.add(callback);
+  }
+
+  @override
+  void requestFrame() {
+    requestedFrames++;
+    scheduled = true;
+  }
+
+  void flushAfterFrame() {
+    scheduled = false;
+    final callbacks = _callbacks.toList(growable: false);
+    _callbacks.clear();
+    for (final callback in callbacks) {
+      callback();
+    }
+  }
+}
+
 final class _Runtime
     implements PipelineMediaRuntime, PipelineOutputPrewarmer {
+  _Runtime({
+    RendererKind renderer = RendererKind.flutterImage,
+    PipelineFrameScheduler? scheduler,
+  })  : _renderer = renderer,
+        _scheduler = scheduler ?? const _TestFrameScheduler();
+
+  final RendererKind _renderer;
+  final PipelineFrameScheduler _scheduler;
   bool closed = false;
   int prewarmCalls = 0;
   final Completer<List<int>> firstPrewarm = Completer<List<int>>();
@@ -408,10 +729,10 @@ final class _Runtime
   PipelineOutputProjector get outputs => const _Projector();
 
   @override
-  PipelineFrameScheduler get frameScheduler => const _TestFrameScheduler();
+  PipelineFrameScheduler get frameScheduler => _scheduler;
 
   @override
-  RendererKind get renderer => RendererKind.flutterImage;
+  RendererKind get renderer => _renderer;
 
   @override
   Future<void> prewarmOutput({required int width, required int height}) async {
@@ -514,6 +835,9 @@ final class _Surface implements PipelinePageSurface {
 
   @override
   int get height => 1;
+
+  @override
+  Object get presentationIdentity => this;
 
   @override
   Widget build({

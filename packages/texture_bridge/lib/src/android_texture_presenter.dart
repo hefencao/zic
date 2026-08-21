@@ -175,6 +175,12 @@ final class AndroidTexturePresenter {
     );
   }
 
+  Future<void> _initialize(AndroidTextureLease lease) =>
+      _channel.invokeMethod<void>(
+        'initialize',
+        <String, Object?>{'textureId': lease.textureId},
+      );
+
   Future<void> _redraw(AndroidTextureLease lease) =>
       _channel.invokeMethod<void>(
         'redraw',
@@ -308,6 +314,16 @@ final class AndroidTextureLease {
     await _presenter._resize(this, width: width, height: height);
     this.width = width;
     this.height = height;
+  }
+
+  /// Materializes the platform surface before the first real frame upload.
+  ///
+  /// This is used by the bounded texture prewarm pool. It does not submit a
+  /// frame and therefore does not change playback or Flutter presentation
+  /// state.
+  Future<void> initialize() {
+    _requireActive();
+    return _presenter._initialize(this);
   }
 
   Future<TexturePresentTelemetry> present(

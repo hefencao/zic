@@ -35,7 +35,7 @@ for token in (
 for token in (
     "channel = MethodChannel(",
     "BLIT_LANE_COUNT = 1",
-    "return mainHandler.post {",
+    "if (mainHandler.post(::drainProducerSchedules))",
     "Thread(runnable, \"zic-texture-blit-$index\")",
 ):
     if token not in kotlin:

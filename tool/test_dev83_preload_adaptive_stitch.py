@@ -128,7 +128,7 @@ def main() -> None:
     require(
         "packages/local_media_ui/lib/src/local_image_player.dart",
         "animatedHint: image.format == LocalImageFormat.gif",
-        "widget.fit == BoxFit.fitWidth",
+        "webpNativeTextureViewportKey",
         "FilterQuality.low",
     )
     reject(

@@ -94,7 +94,7 @@ if native_identity != "zic-media-core-dev134-abi6-lib00121400":
 
 for token in (
     "BLIT_LANE_COUNT = 1",
-    "return mainHandler.post {",
+    "if (mainHandler.post(::drainProducerSchedules))",
 ):
     require(kotlin, token, "single-blit presentation retained")
 for forbidden in ("makeBackgroundTaskQueue", "postAtFrontOfQueue", "BLIT_LANE_COUNT = 2"):

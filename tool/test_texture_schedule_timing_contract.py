@@ -20,10 +20,24 @@ def require(relative: str, *tokens: str) -> None:
 require(
     "packages/texture_bridge/android/src/main/kotlin/dev/zic/texture/TextureBridgePlugin.kt",
     "data class ScheduleResult",
+    '"initialize" -> initialize(call, result)',
+    "output.initialize()",
+    "SurfaceProducer#getSurface()",
     "scheduleQueueMicros",
     "scheduleCallMicros",
     "complete: (ScheduleResult) -> Unit",
-    "return mainHandler.post {",
+    "val request = PendingProducerSchedule(",
+    "pendingSchedules += request",
+    "IdentityHashMap<",
+    "scheduledProducers",
+    "postFrameCallback(scheduleBoundaryCallback)",
+    "private fun onScheduleBoundary()",
+    "if (mainHandler.post(::drainProducerSchedules))",
+    "completionExecutor: ExecutorService",
+    "scheduleCompletionExecutor = newScheduleCompletionExecutor()",
+    "completionExecutor?.shutdown()",
+    "dispatchScheduleCompletion(request, result)",
+    "result.success(value)",
 )
 require(
     "packages/texture_bridge/lib/src/android_texture_presenter.dart",
@@ -74,5 +88,7 @@ if any(
     )
 ):
     raise SystemExit("FAIL: texture blit lane must not block on platform schedule")
+if "mainHandler.post { result.success" in kotlin or "mainHandler.post { result.error" in kotlin:
+    raise SystemExit("FAIL: schedule completion must not be marshalled through the UI looper")
 
 print("texture schedule timing and quarantine contract: OK")

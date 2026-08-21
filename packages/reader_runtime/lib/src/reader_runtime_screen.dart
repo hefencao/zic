@@ -882,7 +882,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     BuildContext context,
     ReaderController reader,
   ) {
-    if (!_controlsVisible) return const SizedBox.shrink();
+    if (!_controlsVisible) {
+      return const SizedBox.shrink(key: readerTopControlsKey);
+    }
     return SafeArea(
       key: readerTopControlsKey,
       bottom: false,
@@ -966,7 +968,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     BuildContext context,
     ReaderController reader,
   ) {
-    if (!_controlsVisible) return const SizedBox.shrink();
+    if (!_controlsVisible) {
+      return const SizedBox.shrink(key: readerBottomControlsKey);
+    }
     final pages = widget.chapter.pages.length;
     return SafeArea(
       key: readerBottomControlsKey,
@@ -1111,56 +1115,82 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
         key: widget.screenKey,
         backgroundColor: Colors.black,
         body: Stack(
-        fit: StackFit.expand,
-        children: <Widget>[
-          ValueListenableBuilder<Map<String, double>>(
-            valueListenable: _pageAspectRatios,
-            builder: (context, pageAspectRatios, _) => ReaderView(
-              controller: reader,
-              clock: _pipeline.clock,
-              traceSink: _pipeline.trace,
-              frameTimingSource: const FlutterReaderFrameTimingSource(),
-              pageBuilder: pageBuilder,
-              demandRevision: () => _pipeline.revision,
-              onTap: _toggleControls,
-              verticalStitch: _settings.effectiveVerticalStitch,
-              pageAspectRatios: pageAspectRatios,
+          fit: StackFit.expand,
+          children: <Widget>[
+            ValueListenableBuilder<Map<String, double>>(
+              valueListenable: _pageAspectRatios,
+              // Horizontal PageView uses fixed viewport pages and does not
+              // consume aspect ratios. Reuse the existing subtree for those
+              // updates so a newly resolved page dimension cannot rebuild the
+              // gallery while a page transition is being painted. A direction
+              // change rebuilds ReaderRuntimeScreen and supplies the latest
+              // map to the new child; vertical mode keeps the live builder.
+              child: reader.direction == ReadingDirection.vertical
+                  ? null
+                  : ReaderView(
+                      controller: reader,
+                      clock: _pipeline.clock,
+                      traceSink: _pipeline.trace,
+                      frameTimingSource:
+                          const FlutterReaderFrameTimingSource(),
+                      pageBuilder: pageBuilder,
+                      demandRevision: () => _pipeline.revision,
+                      onTap: _toggleControls,
+                      verticalStitch: _settings.effectiveVerticalStitch,
+                      pageAspectRatios: _pageAspectRatios.value,
+                    ),
+              builder: (context, pageAspectRatios, child) {
+                if (child != null &&
+                    reader.direction != ReadingDirection.vertical) {
+                  return child;
+                }
+                return ReaderView(
+                  controller: reader,
+                  clock: _pipeline.clock,
+                  traceSink: _pipeline.trace,
+                  frameTimingSource: const FlutterReaderFrameTimingSource(),
+                  pageBuilder: pageBuilder,
+                  demandRevision: () => _pipeline.revision,
+                  onTap: _toggleControls,
+                  verticalStitch: _settings.effectiveVerticalStitch,
+                  pageAspectRatios: pageAspectRatios,
+                );
+              },
             ),
-          ),
-          AnimatedBuilder(
-            animation: reader,
-            builder: (context, _) => AnimatedOpacity(
-              opacity: _controlsVisible ? 1 : 0,
-              duration: const Duration(milliseconds: 140),
-              child: IgnorePointer(
-                ignoring: !_controlsVisible,
-                child: ExcludeSemantics(
-                  excluding: !_controlsVisible,
-                  child: Align(
-                    alignment: Alignment.topCenter,
-                    child: _topControls(context, reader),
+            AnimatedBuilder(
+              animation: reader,
+              builder: (context, _) => AnimatedOpacity(
+                opacity: _controlsVisible ? 1 : 0,
+                duration: const Duration(milliseconds: 140),
+                child: IgnorePointer(
+                  ignoring: !_controlsVisible,
+                  child: ExcludeSemantics(
+                    excluding: !_controlsVisible,
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: _topControls(context, reader),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
-          AnimatedBuilder(
-            animation: reader,
-            builder: (context, _) => AnimatedOpacity(
-              opacity: _controlsVisible ? 1 : 0,
-              duration: const Duration(milliseconds: 140),
-              child: IgnorePointer(
-                ignoring: !_controlsVisible,
-                child: ExcludeSemantics(
-                  excluding: !_controlsVisible,
-                  child: Align(
-                    alignment: Alignment.bottomCenter,
-                    child: _bottomControls(context, reader),
+            AnimatedBuilder(
+              animation: reader,
+              builder: (context, _) => AnimatedOpacity(
+                opacity: _controlsVisible ? 1 : 0,
+                duration: const Duration(milliseconds: 140),
+                child: IgnorePointer(
+                  ignoring: !_controlsVisible,
+                  child: ExcludeSemantics(
+                    excluding: !_controlsVisible,
+                    child: Align(
+                      alignment: Alignment.bottomCenter,
+                      child: _bottomControls(context, reader),
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
           ],
         ),
       ),

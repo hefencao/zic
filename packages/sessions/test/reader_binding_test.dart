@@ -101,8 +101,8 @@ void main() {
 
     expect(binding.revision, demandRevision,
         reason: 'the stable role window must not resubmit demands');
-    expect(coordinator.playbackSyncs, playbackSyncs + 1,
-        reason: 'viewport coverage is independent from demand reconciliation');
+    expect(coordinator.playbackSyncs, playbackSyncs,
+        reason: 'coverage-only updates must not rerun PlaybackGate');
     expect(coordinator.viewport?.phase, ViewportPhase.dominant);
     expect(coordinator.viewport?.dominantPageIndex, 1);
   });

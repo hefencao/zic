@@ -100,6 +100,8 @@ final class _ReaderViewState extends State<ReaderView> {
   late final _ReaderVerticalScrollPhysics _verticalScrollPhysics;
   double _lastLogicalPosition = 0;
   int _lastMicros = 0;
+  double? _lastPagedVelocity;
+  int? _lastPagedMetricsMicros;
   Interaction _interaction = Interaction.idle;
   int _handledNavigationRevision = 0;
   int? _zoomedPage;
@@ -849,9 +851,7 @@ final class _ReaderViewState extends State<ReaderView> {
     final controller = widget.controller;
     var rebuildLayout = false;
     if (_lastDirection != controller.direction) {
-      if (_lastDirection == ReadingDirection.vertical) {
-        _flushFrameTimingSummary();
-      }
+      _flushFrameTimingSummary();
       _lastDirection = controller.direction;
       _zoomedPage = null;
       _verticalKeepAliveCenter.value = controller.currentIndex;
@@ -1029,11 +1029,13 @@ final class _ReaderViewState extends State<ReaderView> {
   }
 
   void _handleFrameTimings(List<ReaderFrameTimingSample> timings) {
-    if (!mounted ||
-        timings.isEmpty ||
-        widget.controller.direction != ReadingDirection.vertical) {
+    if (!mounted || timings.isEmpty) {
       return;
     }
+    final vertical = widget.controller.direction == ReadingDirection.vertical;
+    final pagePosition = !vertical && _pageController.hasClients
+        ? _pageController.position
+        : null;
     // Flutter delivers FrameTiming in batches. Reader state sampled here is
     // the callback-time state, not the historical state of every frame in the
     // batch, so attaching scroll/current/interaction to each sample invents a
@@ -1043,17 +1045,21 @@ final class _ReaderViewState extends State<ReaderView> {
     final context = _ReaderFrameTimingTraceContext(
       callbackMonotonicMicros: callbackMonotonicMicros,
       batchLastVsyncStartMicros: timings.last.vsyncStartMicros,
-      scrollPixels: _lastVerticalScrollPixels,
-      logicalPosition: _lastVerticalLogicalPosition,
-      velocity: _lastVerticalVelocity,
-      metricsMicros: _lastVerticalMetricsMicros,
-      layoutPageIndex: _lastVerticalLayoutPageIndex,
-      layoutGlobalTop: _lastVerticalLayoutGlobalTop,
-      layoutGlobalBottom: _lastVerticalLayoutGlobalBottom,
-      layoutMicros: _lastVerticalLayoutMicros,
+      mode: vertical ? 'vertical' : 'paged',
+      scrollPixels: vertical ? _lastVerticalScrollPixels : pagePosition?.pixels,
+      logicalPosition:
+          vertical ? _lastVerticalLogicalPosition : _lastLogicalPosition,
+      velocity: vertical ? _lastVerticalVelocity : _lastPagedVelocity,
+      metricsMicros:
+          vertical ? _lastVerticalMetricsMicros : _lastPagedMetricsMicros,
+      layoutPageIndex: vertical ? _lastVerticalLayoutPageIndex : null,
+      layoutGlobalTop: vertical ? _lastVerticalLayoutGlobalTop : null,
+      layoutGlobalBottom: vertical ? _lastVerticalLayoutGlobalBottom : null,
+      layoutMicros: vertical ? _lastVerticalLayoutMicros : null,
       interaction: _interaction,
-      geometryCorrectionTarget: _pendingVerticalGeometryCorrection,
-      stitched: widget.verticalStitch,
+      geometryCorrectionTarget:
+          vertical ? _pendingVerticalGeometryCorrection : null,
+      stitched: vertical && widget.verticalStitch,
     );
     for (var index = 0; index < timings.length; index++) {
       final timing = timings[index];
@@ -1601,6 +1607,8 @@ final class _ReaderViewState extends State<ReaderView> {
     final logicalPosition =
         metrics.page ?? widget.controller.currentIndex.toDouble();
     final velocity = _velocityFor(logicalPosition);
+    _lastPagedVelocity = velocity;
+    _lastPagedMetricsMicros = _lastMicros;
     _emitObservation(logicalPosition, velocity);
   }
 
@@ -2002,6 +2010,7 @@ final class _ReaderFrameTimingTraceContext {
   const _ReaderFrameTimingTraceContext({
     required this.callbackMonotonicMicros,
     required this.batchLastVsyncStartMicros,
+    required this.mode,
     required this.scrollPixels,
     required this.logicalPosition,
     required this.velocity,
@@ -2017,6 +2026,7 @@ final class _ReaderFrameTimingTraceContext {
 
   final int callbackMonotonicMicros;
   final int batchLastVsyncStartMicros;
+  final String mode;
   final double? scrollPixels;
   final double? logicalPosition;
   final double? velocity;
@@ -2032,6 +2042,7 @@ final class _ReaderFrameTimingTraceContext {
   Map<String, Object?> toPayload() => <String, Object?>{
         'timingBatchCallbackMonotonicMicros': callbackMonotonicMicros,
         'timingBatchLastVsyncStartMicros': batchLastVsyncStartMicros,
+        'mode': mode,
         if (scrollPixels != null) 'scrollPixelsAtCallback': scrollPixels,
         if (logicalPosition != null)
           'logicalPositionAtCallback': logicalPosition,

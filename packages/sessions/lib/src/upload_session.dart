@@ -321,7 +321,18 @@ final class UploadSession {
     }
 
     _epoch = holder.epoch;
-    _setState(UploadState.uploading);
+    // A successor of an already-presented Animated WebP is an internal
+    // producer transition. The resident output remains valid while the
+    // platform upload is in flight, so broadcasting the transient
+    // `uploading` snapshot only makes the Reader replay playback policy and
+    // walk its output projection on every animation frame. Keep the state and
+    // trace edge authoritative, but let the ready snapshot publish the new
+    // frame once it is actually available. First-frame/role handoff uploads
+    // still notify normally.
+    final animatedSuccessor =
+        _slot != null &&
+        decodeSnapshot.animation.frameCount > 1;
+    _setState(UploadState.uploading, notify: !animatedSuccessor);
     final inputBytes = claim.frame.byteLength;
     final inputDurationMicros = claim.frame.duration.inMicroseconds;
     late final OutputFrame uploaded;
@@ -549,7 +560,20 @@ final class UploadSession {
     // and retires this slot.
     _awaitingSuccessor = true;
     _failure = null;
-    _setState(UploadState.ready, forceNotify: true);
+    // The resident frame remains the authoritative visual output while an
+    // animated successor is being prepared. Broadcasting this unchanged
+    // `ready` snapshot on every due tick only re-enters the Reader output
+    // stream and global playback scan before a successor exists. The upload
+    // completion below is the first observable edge that can change the
+    // projection. Keep static/zero-duration behaviour intact.
+    final animated =
+        decode.snapshot.animation.frameCount > 1 ||
+        (_slot?.frame.duration.inMicroseconds ?? 0) > 0;
+    _setState(
+      UploadState.ready,
+      forceNotify: true,
+      notify: !animated,
+    );
     return true;
   }
 
@@ -643,7 +667,15 @@ final class UploadSession {
         _playback.clear();
         _nextUploadEligibleAtMicros = null;
       }
-      _notifySnapshot();
+      // The page output stream owns the visual projection and advances it
+      // when this presentation future completes. For animated frames, a
+      // second identical UploadSnapshot here only re-enters that stream and
+      // the Reader playback gate; the ready snapshot emitted by prepare()
+      // already delivered the frame. Keep the notification for a static
+      // presentation because it is a low-frequency ownership edge.
+      if (authoritativeStatic) {
+        _notifySnapshot();
+      }
     }
     final presentationAckCreditMicros = platformTiming == null ||
             platformTiming.path != FramePresentationPath.platform ||
@@ -1109,15 +1141,21 @@ final class UploadSession {
     uploader.release(id);
   }
 
-  void _setState(UploadState state, {bool forceNotify = false}) {
+  void _setState(
+    UploadState state, {
+    bool forceNotify = false,
+    bool notify = true,
+  }) {
     if (_state == state) {
-      if (forceNotify) {
+      if (forceNotify && notify) {
         _notifySnapshot();
       }
       return;
     }
     _state = state;
-    _notifySnapshot();
+    if (notify) {
+      _notifySnapshot();
+    }
     _emit(
       TraceEventKind.uploadState,
       <String, Object?>{

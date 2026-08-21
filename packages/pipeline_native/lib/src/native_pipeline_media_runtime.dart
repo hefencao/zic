@@ -106,6 +106,17 @@ final class NativePipelineMediaRuntimeFactory
     if (sessionId == null) return;
     final target = _traceTargets[sessionId];
     if (target == null) return;
+    // UploadSession already records the authoritative per-frame upload and
+    // keeps the full platform timing on OutputFrame for framePipelineTiming.
+    // Routing every successful texture present here duplicates that event and
+    // allocates/sanitizes another payload on the Flutter isolate while the
+    // MethodChannel response is being delivered. Keep only platform samples
+    // that can explain a missed 120 Hz frame (or a surface transition); the
+    // output timing path itself remains unchanged for playback/ack semantics.
+    if (event is TexturePresentTelemetry &&
+        !_isDiagnosticTexturePresent(event)) {
+      return;
+    }
     _recordTextureTelemetry(
       event,
       sessionId: sessionId,
@@ -122,6 +133,24 @@ final class _TextureTraceTarget {
   final TraceSink traceSink;
 }
 
+const int _textureTelemetryDiagnosticThresholdMicros = 20000;
+
+bool _isDiagnosticTexturePresent(TexturePresentTelemetry event) {
+  if (event.deadlineMissMicros > 0 || event.surfaceReconfigureCount > 0) {
+    return true;
+  }
+  const threshold = _textureTelemetryDiagnosticThresholdMicros;
+  return event.queueMicros >= threshold ||
+      event.uploadMicros >= threshold ||
+      event.retainMicros >= threshold ||
+      event.blitMicros >= threshold ||
+      event.scheduleMicros >= threshold ||
+      event.scheduleQueueMicros >= threshold ||
+      event.scheduleCallMicros >= threshold ||
+      event.replaceMicros >= threshold ||
+      event.resultDispatchMicros >= threshold ||
+      event.roundTripMicros >= threshold;
+}
 
 final class _FlutterPipelineFrameScheduler implements PipelineFrameScheduler {
   const _FlutterPipelineFrameScheduler();
@@ -136,8 +165,55 @@ final class _FlutterPipelineFrameScheduler implements PipelineFrameScheduler {
       SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle;
 
   @override
+  bool get hasScheduledFrame {
+    final binding = SchedulerBinding.instance;
+    final phase = binding.schedulerPhase;
+    // Once a frame starts, Flutter clears hasScheduledFrame before transient
+    // callbacks. PageView gesture/settling work runs in that phase, so the
+    // queued-frame bit alone would let a presentation-only texture update
+    // compete with the very frame that is composing the page transition.
+    // Treat every pre-post-frame phase as busy. A post-frame callback is the
+    // intentional handoff for the latest successor and must not recursively
+    // defer itself just because the next frame is already marked scheduled.
+    if (phase != SchedulerPhase.idle &&
+        phase != SchedulerPhase.postFrameCallbacks) {
+      return true;
+    }
+    return phase == SchedulerPhase.idle && binding.hasScheduledFrame;
+  }
+
+  @override
   void afterFrame(void Function() callback) {
     SchedulerBinding.instance.addPostFrameCallback((_) => callback());
+  }
+
+  @override
+  void scheduleIdle(void Function() callback) {
+    final binding = SchedulerBinding.instance;
+    void runWhenIdle() {
+      // Priority.idle is gated by transient callbacks, but a frame can also
+      // be queued for layout without a transient callback. Do not let a
+      // platform SurfaceProducer create slip into that gap; hand it to the
+      // next post-frame event and re-enter the idle queue there.
+      if (binding.hasScheduledFrame ||
+          binding.schedulerPhase != SchedulerPhase.idle) {
+        binding.addPostFrameCallback((_) {
+          binding.scheduleTask<void>(
+            runWhenIdle,
+            Priority.idle,
+            debugLabel: 'zic-output-prewarm',
+          );
+        });
+        return;
+      }
+      callback();
+    }
+
+    binding.scheduleTask<void>(
+      runWhenIdle,
+      Priority.idle,
+      debugLabel: 'zic-output-prewarm',
+    );
   }
 
   @override
@@ -312,13 +388,23 @@ final class _AndroidTextureLeasePool {
   final int maxIdle = 4;
   final Map<_TextureSize, List<AndroidTextureLease>> _idle =
       <_TextureSize, List<AndroidTextureLease>>{};
-  final Map<_TextureSize, Future<void>> _prewarming =
-      <_TextureSize, Future<void>>{};
+  final List<AndroidTextureLease> _idleOrder = <AndroidTextureLease>[];
+  final Map<_TextureSize, Set<_TexturePrewarmRequest>> _prewarming =
+      <_TextureSize, Set<_TexturePrewarmRequest>>{};
+  // A deferred Reader prewarm can lose the race with an authoritative upload.
+  // Keep real lease creates visible to a later prewarm request so it observes
+  // that create instead of starting a second SurfaceProducer for the same
+  // raster while the upload is still in flight.
+  final Map<_TextureSize, Set<Future<AndroidTextureLease>>> _acquiring =
+      <_TextureSize, Set<Future<AndroidTextureLease>>>{};
   final Set<_TextureSize> _prewarmedSizes = <_TextureSize>{};
   int _generation = 0;
 
   int get idleCount =>
       _idle.values.fold<int>(0, (sum, leases) => sum + leases.length);
+
+  int get pendingPrewarmCount =>
+      _prewarming.values.fold<int>(0, (sum, requests) => sum + requests.length);
 
   Future<_TextureReservation> acquire({
     required int width,
@@ -326,51 +412,186 @@ final class _AndroidTextureLeasePool {
   }) async {
     final size = _TextureSize(width, height);
     var leases = _idle[size];
-    if (leases == null || leases.isEmpty) {
-      final warming = _prewarming[size];
-      if (warming != null) {
-        await warming;
-        leases = _idle[size];
+    while (leases == null || leases.isEmpty) {
+      final warming = _prewarming[size]
+          ?.where((request) => request.generation == _generation)
+          .toList(growable: false);
+      if (warming == null || warming.isEmpty) break;
+      // A same-size current/next/transition request may have more than one
+      // lease in flight. Wait for the first one to settle, then consume the
+      // idle lease if it succeeded; a failed prewarm falls back to the
+      // authoritative upload create below without poisoning the upload. The
+      // loop matters when multiple upload callers are released by one
+      // completion: each caller gets a chance to await the next lease rather
+      // than synchronously creating a duplicate while it is still warming.
+      try {
+        await Future.any<void>(
+          warming.map((request) => request.future),
+        );
+      } on Object {
+        // The prewarm future remains observable to its own caller. An upload
+        // must still be able to create its required lease when the best-effort
+        // detached prewarm failed.
       }
+      leases = _idle[size];
     }
     if (leases != null && leases.isNotEmpty) {
       final lease = leases.removeLast();
-      if (leases.isEmpty) _idle.remove(size);
+      if (leases.isEmpty) {
+        _idle.remove(size);
+      }
+      _idleOrder.remove(lease);
+      _updatePrewarmMarker(size);
       return _TextureReservation(
         lease: lease,
         reused: true,
       );
     }
-    return _TextureReservation(
-      lease: await presenter.create(width: width, height: height),
-      reused: false,
-    );
+    final creating = presenter.create(width: width, height: height);
+    _acquiring
+        .putIfAbsent(size, () => <Future<AndroidTextureLease>>{})
+        .add(creating);
+    try {
+      return _TextureReservation(
+        lease: await creating,
+        reused: false,
+      );
+    } finally {
+      final creates = _acquiring[size];
+      creates?.remove(creating);
+      if (creates != null && creates.isEmpty) {
+        _acquiring.remove(size);
+      }
+    }
   }
 
   Future<void> prewarm({required int width, required int height}) {
     if (width <= 0 || height <= 0) return Future<void>.value();
     final size = _TextureSize(width, height);
-    if (_prewarmedSizes.contains(size) ||
-        (_idle[size]?.isNotEmpty ?? false)) {
+    if (_idle[size]?.isNotEmpty ?? false) {
       return Future<void>.value();
     }
-    _prewarmedSizes.add(size);
-    final generation = _generation;
-    return _prewarming.putIfAbsent(size, () async {
-      try {
-        final lease = await presenter.create(width: width, height: height);
-        if (generation != _generation || idleCount >= maxIdle) {
-          await lease.release();
-          return;
+    final acquiring = _acquiring[size];
+    if (acquiring != null && acquiring.isNotEmpty) {
+      // The authoritative upload owns the lease produced by this create. A
+      // prewarm has no idle lease to add in this case; waiting only keeps the
+      // request observable and, importantly, prevents a duplicate create.
+      return Future.wait<void>(
+        acquiring.map((future) => future.then<void>((_) {})),
+        eagerError: true,
+      );
+    }
+    _TexturePrewarmRequest? pending;
+    final pendingRequests = _prewarming[size];
+    if (pendingRequests != null) {
+      for (final request in pendingRequests) {
+        if (request.generation == _generation) {
+          pending = request;
+          break;
         }
-        _idle.putIfAbsent(size, () => <AndroidTextureLease>[]).add(lease);
-      } on Object {
-        _prewarmedSizes.remove(size);
-        rethrow;
-      } finally {
-        _prewarming.remove(size);
       }
-    });
+    }
+    if (pending != null) return pending.future;
+
+    // A new exact current/transition size must not be silently rejected just
+    // because older, now-unneeded sizes occupy the bounded idle pool. Evict
+    // the oldest idle lease first; pending creates remain bounded and are not
+    // cancelled across a platform lifecycle boundary.
+    if (idleCount + pendingPrewarmCount >= maxIdle) {
+      final evicted = _removeOldestIdle();
+      if (evicted == null) {
+        return Future<void>.value();
+      }
+      unawaited(_releaseWithoutSurfacingFailure(evicted));
+    }
+    final request = _TexturePrewarmRequest(
+      size: size,
+      generation: _generation,
+    );
+    _prewarming
+        .putIfAbsent(size, () => <_TexturePrewarmRequest>{})
+        .add(request);
+    _prewarmedSizes.add(size);
+    unawaited(_runPrewarm(request, width: width, height: height));
+    return request.future;
+  }
+
+  Future<void> _runPrewarm(
+    _TexturePrewarmRequest request, {
+    required int width,
+    required int height,
+  }) async {
+    AndroidTextureLease? lease;
+    try {
+      lease = await presenter.create(width: width, height: height);
+      await lease.initialize();
+      if (request.generation != _generation || idleCount >= maxIdle) {
+        await lease.release();
+      } else {
+        _idle
+            .putIfAbsent(request.size, () => <AndroidTextureLease>[])
+            .add(lease);
+        _idleOrder.add(lease);
+      }
+      if (!request.completion.isCompleted) {
+        request.completion.complete();
+      }
+    } on Object catch (error, stackTrace) {
+      if (lease != null && !lease.released) {
+        try {
+          await lease.release();
+        } on Object {
+          // The original prewarm failure remains authoritative.
+        }
+      }
+      if (!request.completion.isCompleted) {
+        request.completion.completeError(error, stackTrace);
+      }
+    } finally {
+      final requests = _prewarming[request.size];
+      requests?.remove(request);
+      if (requests != null && requests.isEmpty) {
+        _prewarming.remove(request.size);
+      }
+      _updatePrewarmMarker(request.size);
+    }
+  }
+
+  AndroidTextureLease? _removeOldestIdle() {
+    while (_idleOrder.isNotEmpty) {
+      final lease = _idleOrder.removeAt(0);
+      for (final entry in _idle.entries.toList(growable: false)) {
+        if (!entry.value.remove(lease)) continue;
+        if (entry.value.isEmpty) _idle.remove(entry.key);
+        _updatePrewarmMarker(entry.key);
+        return lease;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _releaseWithoutSurfacingFailure(
+    AndroidTextureLease lease,
+  ) async {
+    try {
+      await lease.release();
+    } on Object {
+      // Pool eviction is best-effort; the next create/present remains the
+      // authoritative platform failure boundary.
+    }
+  }
+
+  void _updatePrewarmMarker(_TextureSize size) {
+    final hasIdle = _idle[size]?.isNotEmpty ?? false;
+    final hasPending = _prewarming[size]?.any(
+          (request) => request.generation == _generation,
+        ) ??
+        false;
+    if (hasIdle || hasPending) {
+      _prewarmedSizes.add(size);
+    } else {
+      _prewarmedSizes.remove(size);
+    }
   }
 
   Future<void> releaseIdle() async {
@@ -380,11 +601,25 @@ final class _AndroidTextureLeasePool {
         .expand((value) => value)
         .toList(growable: false);
     _idle.clear();
+    _idleOrder.clear();
     await Future.wait<void>(
       leases.map((lease) => lease.release()),
       eagerError: false,
     );
   }
+}
+
+final class _TexturePrewarmRequest {
+  _TexturePrewarmRequest({
+    required this.size,
+    required this.generation,
+  });
+
+  final _TextureSize size;
+  final int generation;
+  final Completer<void> completion = Completer<void>();
+
+  Future<void> get future => completion.future;
 }
 
 final class _TextureReservation {
@@ -423,12 +658,24 @@ final class _AndroidTextureSlot {
   final int width;
   final int height;
   final Future<_TextureReservation> reservation;
+  final Object _presentationIdentity = Object();
   final Completer<void> _released = Completer<void>();
+  _AndroidTextureSurface? _surface;
   int _frameOwners = 0;
   bool _retired = false;
   bool _releaseStarted = false;
 
   bool get retired => _retired;
+
+  Object get presentationIdentity => _presentationIdentity;
+
+  _AndroidTextureSurface surfaceFor(AndroidTextureLease lease) =>
+      _surface ??= _AndroidTextureSurface(
+        lease: lease,
+        presentationIdentity: _presentationIdentity,
+        width: width,
+        height: height,
+      );
 
   void retainFrame() {
     if (_retired) throw StateError('Android texture slot is retired');
@@ -485,6 +732,7 @@ final class _AndroidTextureOutputFrame
   final AndroidTextureLease lease;
   final String sessionId;
   final bool leaseReused;
+  final Object _fallbackPresentationIdentity = Object();
   ui.Image? _fallback;
   FramePresentationTiming? _lastPresentationTiming;
 
@@ -501,6 +749,12 @@ final class _AndroidTextureOutputFrame
   }
 
   ui.Image? get fallback => _fallback;
+
+  Object get presentationIdentity => slot.presentationIdentity;
+
+  _AndroidTextureSurface get surface => slot.surfaceFor(lease);
+
+  Object get fallbackPresentationIdentity => _fallbackPresentationIdentity;
 
   @override
   int get epoch => _activeFrame.epoch;
@@ -682,6 +936,9 @@ final class _FlutterImageOutputFrame implements OutputFrame {
   final Duration duration;
 
   ui.Image? _image;
+  final Object _presentationIdentity = Object();
+
+  Object get presentationIdentity => _presentationIdentity;
 
   ui.Image get image {
     final image = _image;
@@ -721,13 +978,10 @@ final class _AndroidOutputProjector implements PipelineOutputProjector {
     }
     final fallback = frame.fallback;
     return fallback == null
-        ? _AndroidTextureSurface(
-            lease: frame.lease,
-            width: frame.width,
-            height: frame.height,
-          )
+        ? frame.surface
         : _FlutterImageSurface(
             image: fallback,
+            presentationIdentity: frame.fallbackPresentationIdentity,
             width: frame.width,
             height: frame.height,
           );
@@ -748,6 +1002,7 @@ final class _FlutterOutputProjector implements PipelineOutputProjector {
     }
     return _FlutterImageSurface(
       image: frame.image,
+      presentationIdentity: frame.presentationIdentity,
       width: frame.width,
       height: frame.height,
     );
@@ -757,17 +1012,22 @@ final class _FlutterOutputProjector implements PipelineOutputProjector {
 final class _AndroidTextureSurface implements PipelinePageSurface {
   const _AndroidTextureSurface({
     required this.lease,
+    required Object presentationIdentity,
     required this.width,
     required this.height,
-  });
+  }) : _presentationIdentity = presentationIdentity;
 
   final AndroidTextureLease lease;
+  final Object _presentationIdentity;
 
   @override
   final int width;
 
   @override
   final int height;
+
+  @override
+  Object get presentationIdentity => _presentationIdentity;
 
   @override
   Widget build({
@@ -788,17 +1048,22 @@ final class _AndroidTextureSurface implements PipelinePageSurface {
 final class _FlutterImageSurface implements PipelinePageSurface {
   const _FlutterImageSurface({
     required this.image,
+    required Object presentationIdentity,
     required this.width,
     required this.height,
-  });
+  }) : _presentationIdentity = presentationIdentity;
 
   final ui.Image image;
+  final Object _presentationIdentity;
 
   @override
   final int width;
 
   @override
   final int height;
+
+  @override
+  Object get presentationIdentity => _presentationIdentity;
 
   @override
   Widget build({

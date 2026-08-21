@@ -133,6 +133,8 @@ final class PipelineTransferProgressFeed {
 
   PipelineTransferProgress get value => _value;
 
+  bool get hasListeners => _listeners.isNotEmpty;
+
   void addListener(
     PipelineTransferProgressListener listener, {
     bool fireImmediately = true,
@@ -213,7 +215,17 @@ final class PipelineTransferProgressPublisher {
 
   void _requestPublish({bool preferImmediate = false}) {
     if (_disposed) return;
-    final canPublishNow = !_frameScheduler.inPersistentCallbacks;
+    // The feed keeps its latest value for a later fire-immediate attachment,
+    // but an unobserved progress projection must not enqueue a post-frame
+    // callback (or force an extra frame) while the Reader is composing pages.
+    if (!feed.hasListeners) {
+      _scheduled = false;
+      _publishNow();
+      return;
+    }
+    final frameBusy = _frameScheduler.inPersistentCallbacks ||
+        _frameScheduler.hasScheduledFrame;
+    final canPublishNow = !frameBusy;
     if (canPublishNow &&
         (preferImmediate || _frameScheduler.isIdle || !_scheduled)) {
       _scheduled = false;
@@ -226,7 +238,12 @@ final class PipelineTransferProgressPublisher {
       _scheduled = false;
       if (!_disposed) _publishNow();
     });
-    _frameScheduler.requestFrame();
+    // The current frame will drain the post-frame callback when the scheduler
+    // is already transient/persistent or a frame is queued. Requesting one
+    // more frame in that window only adds an avoidable UI turn.
+    if (!frameBusy) {
+      _frameScheduler.requestFrame();
+    }
   }
 
   void _publishNow() {

@@ -20,7 +20,7 @@ binding_test = read('packages/sessions/test/reader_binding_test.dart')
 pipeline_test = read('packages/pipeline/test/vertical_visible_policy_test.dart')
 
 for token in (
-    '_sameVerticalControlObservation(',
+    '_sameControlObservation(',
     '_controlInteraction(Interaction interaction)',
     'Interaction.dragging ||',
     '_observationControlDirty',

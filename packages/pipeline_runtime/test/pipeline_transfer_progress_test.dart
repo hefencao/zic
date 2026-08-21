@@ -20,7 +20,13 @@ final class _TestFrameScheduler implements PipelineFrameScheduler {
   bool get isIdle => true;
 
   @override
+  bool get hasScheduledFrame => false;
+
+  @override
   void afterFrame(void Function() callback) => scheduleMicrotask(callback);
+
+  @override
+  void scheduleIdle(void Function() callback) => scheduleMicrotask(callback);
 
   @override
   void requestFrame() {}

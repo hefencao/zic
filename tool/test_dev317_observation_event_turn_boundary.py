@@ -15,7 +15,7 @@ code=int(m.group(1))
 if not re.search(rf'^versionCode={code}$', props, re.M):
     raise SystemExit('dev.317+ Android version mismatch')
 session=read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
-for token in ('void enqueueObservation(ReaderObs observation)','_pendingObservation = observation;','_sameVerticalControlObservation','_observationDrainScheduled','Timer.run(() => _drainObservation(generation));'):
+for token in ('void enqueueObservation(ReaderObs observation)','_pendingObservation = observation;','_sameControlObservation','_observationDrainScheduled','Timer.run(() => _drainObservation(generation));'):
     require(session, token, 'latest-wins ordinary-event-turn seam')
 region=session[session.index('void _scheduleObservationDrain()'):session.index('void _drainObservation(int generation)')]
 forbid(region, 'scheduleMicrotask(()', 'observation drain microtask call')

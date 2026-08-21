@@ -65,7 +65,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   PipelinePageStreamListener? _pageStreamingListener;
   PipelinePageOutputListener? _pageOutputListener;
   PipelinePageOutputSnapshot? _pageOutputSnapshot;
-  PipelinePageSurface? _scheduledOutputSurface;
+  Object? _scheduledOutputPresentationIdentity;
   bool _streamingPrefixSyncing = false;
   int _streamingPrefixRequestedLength = 0;
   int _streamingPrefixRequestedRevision = 0;
@@ -73,6 +73,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   bool _fallbackLoadStarted = false;
   Size? _reportedDimensions;
   bool _reportedDimensionsAuthoritative = false;
+  bool? _reportedPlaybackCapability;
+  ValueChanged<bool>? _reportedPlaybackCapabilityCallback;
 
   @override
   void initState() {
@@ -110,6 +112,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _imageProvider = null;
       _reportedDimensions = null;
       _reportedDimensionsAuthoritative = false;
+      _reportedPlaybackCapability = null;
+      _reportedPlaybackCapabilityCallback = null;
       _detectedFormat = widget.image.format;
       _state = ImagePreviewState.loading(widget.image.format);
       _notifyObserver(_state);
@@ -127,7 +131,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       }
       _pageOutputListener = null;
       _pageOutputSnapshot = null;
-      _scheduledOutputSurface = null;
+      _scheduledOutputPresentationIdentity = null;
       _streamingPrefixSyncing = false;
       _streamingPrefixRequestedLength = 0;
       _streamingPrefixRequestedRevision = 0;
@@ -233,7 +237,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
             _reportDimensions(info.width, info.height);
           }
           if (webpPrefixDeclaresAnimation(prefix)) {
-            widget.onPlaybackCapabilityChanged?.call(true);
+            _reportPlaybackCapability(true);
           }
         } on Object {
           // Wait for the next source lifecycle revision before retrying.
@@ -255,20 +259,33 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     void listener(PipelinePageOutputSnapshot snapshot) {
       if (!mounted) return;
       final prior = _pageOutputSnapshot;
+      final priorSurface = prior?.surface;
+      final nextSurface = snapshot.surface;
+      final presentationChanged = priorSurface == null
+          ? nextSurface != null
+          : nextSurface == null ||
+              !identical(
+                priorSurface.presentationIdentity,
+                nextSurface.presentationIdentity,
+              );
+      final dimensionsChanged = priorSurface == null
+          ? nextSurface != null
+          : nextSurface == null ||
+              priorSurface.width != nextSurface.width ||
+              priorSurface.height != nextSurface.height;
       final visualChanged = prior == null ||
           prior.state != snapshot.state ||
-          !identical(prior.surface, snapshot.surface) ||
-          prior.frameIndex != snapshot.frameIndex ||
+          presentationChanged ||
+          dimensionsChanged ||
           prior.replacing != snapshot.replacing ||
           !identical(prior.failure, snapshot.failure);
-      if (visualChanged) {
-        if (_pageOutputSnapshot == null) {
-          _pageOutputSnapshot = snapshot;
-        } else {
-          setState(() => _pageOutputSnapshot = snapshot);
-        }
-      } else {
-        _pageOutputSnapshot = snapshot;
+      _pageOutputSnapshot = snapshot;
+      // Animation metadata can become more precise while a WebP prefix is
+      // being classified, but it does not change the native texture view.
+      // Keep reporting dimensions/capability and first-frame state below;
+      // only a surface/layout/state change needs a Flutter subtree rebuild.
+      if (visualChanged && prior != null) {
+        setState(() {});
       }
       if (snapshot.hasSurface) {
         final surface = snapshot.surface!;
@@ -278,12 +295,20 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           authoritative: false,
         );
         if (snapshot.animation.complete) {
-          widget.onPlaybackCapabilityChanged?.call(snapshot.isAnimated);
+          _reportPlaybackCapability(snapshot.isAnimated);
         }
         _schedulePipelineOutputFirstFrame(surface);
+        if (!visualChanged) {
+          // An Android SurfaceProducer lease updates its resident texture for
+          // every animation frame without changing the Flutter widget tree.
+          // Keep the latest immutable snapshot for a future listener/rebuild,
+          // but do not repeat dimensions, capability or first-frame work on
+          // the UI isolate for a presentation-only frame.
+          return;
+        }
         return;
       }
-      _scheduledOutputSurface = null;
+      _scheduledOutputPresentationIdentity = null;
       if (snapshot.state == PipelinePageOutputState.failed) {
         _publish(
           ImagePreviewState.invalid(
@@ -347,7 +372,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           return;
         }
       }
-      widget.onPlaybackCapabilityChanged?.call(
+      _reportPlaybackCapability(
         detected == LocalImageFormat.gif,
       );
       setState(() {
@@ -473,6 +498,20 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
   }
 
+  void _reportPlaybackCapability(bool supported) {
+    final callback = widget.onPlaybackCapabilityChanged;
+    if (callback == null) {
+      return;
+    }
+    if (identical(_reportedPlaybackCapabilityCallback, callback) &&
+        _reportedPlaybackCapability == supported) {
+      return;
+    }
+    _reportedPlaybackCapabilityCallback = callback;
+    _reportedPlaybackCapability = supported;
+    callback(supported);
+  }
+
   void _publish(ImagePreviewState state) {
     if (!mounted ||
         (_state.phase == state.phase &&
@@ -533,17 +572,22 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   void _schedulePipelineOutputFirstFrame(PipelinePageSurface surface) {
-    if (_reportedFirstFrame || identical(_scheduledOutputSurface, surface)) {
+    final presentationIdentity = surface.presentationIdentity;
+    if (_reportedFirstFrame ||
+        identical(_scheduledOutputPresentationIdentity, presentationIdentity)) {
       return;
     }
-    _scheduledOutputSurface = surface;
+    _scheduledOutputPresentationIdentity = presentationIdentity;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted ||
           _reportedFirstFrame ||
-          !identical(_pageOutputSnapshot?.surface, surface)) {
+          !identical(
+            _pageOutputSnapshot?.surface?.presentationIdentity,
+            presentationIdentity,
+          )) {
         return;
       }
-      _scheduledOutputSurface = null;
+      _scheduledOutputPresentationIdentity = null;
       _onWebpFirstFrame();
     });
   }
@@ -595,9 +639,12 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
                 builder: (innerFit) => surface.build(
                   key: webpNativeTextureViewportKey,
                   fit: innerFit,
-                  filterQuality: widget.fit == BoxFit.fitWidth
-                      ? FilterQuality.low
-                      : FilterQuality.medium,
+                  // The gallery uses BoxFit.contain, but high-resolution
+                  // SurfaceProducer textures must still stay on the cheap
+                  // bilinear path. FilterQuality.medium can synchronously
+                  // build a mipmap the first time a page enters PageView,
+                  // stealing the transition frame from layout/raster.
+                  filterQuality: FilterQuality.low,
                 ),
               );
       } else if (bytes == null) {
@@ -621,7 +668,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
             traceSessionId: widget.traceSessionId,
             demandRevision: widget.demandRevision,
             playback: widget.playback,
-            onPlaybackCapabilityChanged: widget.onPlaybackCapabilityChanged,
+            onPlaybackCapabilityChanged: _reportPlaybackCapability,
             fit: innerFit,
             flutterAnimatedCodecFactory: widget.flutterAnimatedCodecFactory,
           ),

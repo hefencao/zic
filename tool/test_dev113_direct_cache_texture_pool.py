@@ -67,6 +67,15 @@ for token in (
 for token in (
     "_AndroidTextureLeasePool",
     "final Set<_TextureSize> _prewarmedSizes",
+    "Map<_TextureSize, Set<_TexturePrewarmRequest>>",
+    "pendingPrewarmCount",
+    "await lease.initialize();",
+    "final List<AndroidTextureLease> _idleOrder",
+    "final Map<_TextureSize, Set<Future<AndroidTextureLease>>> _acquiring",
+    "final creating = presenter.create(width: width, height: height)",
+    "acquiring.map((future) => future.then<void>((_) {}))",
+    "_removeOldestIdle",
+    "Future.any<void>",
     "await pool.releaseIdle()",
     "value.lease",
     "textureLeaseReused",
@@ -82,6 +91,8 @@ if not (
 for token in (
     "_prewarmOutput(",
     "'lane': 'output-prewarm'",
+    "upload?.state == UploadState.uploading",
+    "snapshot.state == UploadState.uploading",
 ):
     require(reader, token, "Reader output prewarm projection")
 require(texture, "final bool? leaseReused", "texture telemetry context")

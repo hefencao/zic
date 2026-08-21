@@ -38,6 +38,19 @@ class Handler(val looper: Looper) {
     fun postAtFrontOfQueue(action: () -> Unit): Boolean { action(); return true }
 }
 """,
+    "android/view/Choreographer.kt": """
+package android.view
+class Choreographer {
+    fun postFrameCallback(callback: FrameCallback) {}
+    fun removeFrameCallback(callback: FrameCallback) {}
+    fun interface FrameCallback {
+        fun doFrame(frameTimeNanos: Long)
+    }
+    companion object {
+        @JvmStatic fun getInstance(): Choreographer = Choreographer()
+    }
+}
+""",
     "android/view/Surface.kt": """
 package android.view
 class Surface

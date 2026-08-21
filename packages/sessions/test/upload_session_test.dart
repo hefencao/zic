@@ -599,6 +599,8 @@ void main() {
       uploader: uploader,
       clock: playbackClock,
     );
+    final snapshots = <UploadSnapshot>[];
+    upload.addSnapshotListener(snapshots.add);
     const uploadDemand = UploadDemand(
       role: PageRole.current,
       priority: 1000,
@@ -614,6 +616,7 @@ void main() {
     expect(firstClaim, isNotNull);
     await upload.present(firstClaim!);
     firstClaim.release();
+    snapshots.clear();
 
     expect(upload.preparedDepth, 0);
     final buffered = await decode.fill(
@@ -635,10 +638,19 @@ void main() {
     playbackClock.value = 16000;
     expect(upload.takeDueFrame(), 0);
     expect(upload.advance(0), isTrue);
+    expect(
+      snapshots,
+      isEmpty,
+      reason: 'advancing an animated output must not rebroadcast its old frame',
+    );
     final replaced = await upload.prepare(
       demand: uploadDemand,
       revision: 3,
       cancel: CancelToken(),
+    );
+    expect(
+      snapshots.map((snapshot) => snapshot.state),
+      isNot(contains(UploadState.uploading)),
     );
     expect(replaced.frameIndex, 1);
     expect(uploader.outputs, hasLength(2));

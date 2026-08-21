@@ -17,8 +17,12 @@ def require(body: str, token: str, label: str) -> None:
 
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
-if 'version: 0.31.0+325' not in pubspec or 'versionCode=325' not in props:
-    raise SystemExit('dev.325 version mismatch')
+app_version = re.search(r'^version: 0\.31\.0\+(\d+)$', pubspec, re.M)
+android_version = re.search(r'^versionCode=(\d+)$', props, re.M)
+if (app_version is None or android_version is None or
+        app_version.group(1) != android_version.group(1) or
+        int(app_version.group(1)) < 325):
+    raise SystemExit('dev.325 compatibility boundary version mismatch')
 
 coordinator = read('packages/sessions/lib/src/live_coordinator.dart')
 session = read('packages/sessions/lib/src/upload_session.dart')

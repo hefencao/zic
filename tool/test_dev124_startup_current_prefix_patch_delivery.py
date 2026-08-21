@@ -27,8 +27,8 @@ check = read("tool/check.sh")
 
 for token in (
     "final target = binding.pipeline.decodeTarget",
-    "width: target.physicalWidth",
-    "height: target.physicalHeight",
+    "width: size.width",
+    "height: size.height",
     "DownloadId? _startupCurrentDownload",
     "currentBucket == 'local' && _profile.downloadBucket(id) == 'local'",
     "? 1",
@@ -49,7 +49,7 @@ for token in (
 ):
     require(profile, token, "stable Reader source concurrency")
 for token in (
-    "current output prewarms the exact aligned decode target",
+    "current output prewarms the exact aligned decoded raster",
     "await runtime.firstPrewarm.future",
     "PipelineMediaRuntime, PipelineOutputPrewarmer",
 ):

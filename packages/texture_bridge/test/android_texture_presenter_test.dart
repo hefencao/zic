@@ -39,6 +39,7 @@ void main() {
             'textureBytes': 64,
             'inFlightBytes': 64,
           };
+        case 'initialize':
         case 'resize':
         case 'redraw':
         case 'release':
@@ -113,6 +114,16 @@ void main() {
     expect(calls.map((call) => call.method), <String>['create', 'present']);
     expect(calls.last.arguments, containsPair('deadlineAfterMicros', 100));
     expect(calls.last.arguments, containsPair('frameBytes', 64));
+  });
+
+  test('lease initialization is separate from frame presentation', () async {
+    final presenter = AndroidTexturePresenter(channel: channel);
+    final lease = await presenter.create(width: 4, height: 4);
+
+    await lease.initialize();
+
+    expect(calls.map((call) => call.method), <String>['create', 'initialize']);
+    expect(calls.last.arguments, <String, Object?>{'textureId': 17});
   });
 
   test('resident output identity skips a redundant platform blit', () async {

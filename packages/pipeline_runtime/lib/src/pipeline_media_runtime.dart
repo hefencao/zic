@@ -48,6 +48,16 @@ abstract interface class PipelinePageSurface {
   int get width;
   int get height;
 
+  /// Opaque identity of the underlying presentation target, independent of
+  /// the encoded/decoded frame currently resident in it.
+  ///
+  /// Android texture frames in one DecodeId normally share one SurfaceProducer
+  /// lease. Presentation can therefore replace the platform contents without
+  /// requiring the Flutter page subtree to rebuild for every animation frame.
+  /// The token must not expose or transfer ownership of the target. A changed
+  /// identity means that the widget must obtain a new surface view.
+  Object get presentationIdentity;
+
   Widget build({
     Key? key,
     BoxFit fit = BoxFit.contain,
