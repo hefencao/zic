@@ -1164,45 +1164,11 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
           children: <Widget>[
             ValueListenableBuilder<Map<String, double>>(
               valueListenable: _pageAspectRatios,
-              // Horizontal PageView uses fixed viewport pages and does not
-              // consume aspect ratios. Reuse the existing subtree for those
-              // updates so a newly resolved page dimension cannot rebuild the
-              // gallery while a page transition is being painted. A direction
-              // change rebuilds ReaderRuntimeScreen and supplies the latest
-              // map to the new child; vertical mode keeps the live builder.
-              child: reader.direction == ReadingDirection.vertical
-                  ? null
-                  : ReaderView(
-                      controller: reader,
-                      clock: _pipeline.clock,
-                      traceSink: _pipeline.trace,
-                      frameTimingSource:
-                          const FlutterReaderFrameTimingSource(),
-                      pageBuilder: pageBuilder,
-                      demandRevision: () => _pipeline.revision,
-                      onTap: _toggleControls,
-                      verticalStitch: _settings.effectiveVerticalStitch,
-                      pageAspectRatios: _pageAspectRatios.value,
-                      zoomStageFirst: _settings.zoomStageFirst,
-                      zoomStageSecond: _settings.zoomStageSecond,
-                      longPressZoomEnabled:
-                          _effectiveLongPressZoom(reader),
-                      longPressZoomRestoreOnRelease:
-                          _settings.longPressZoomRestoreOnRelease,
-                      longPressZoomMoveMode:
-                          _settings.longPressZoomMoveMode,
-                      longPressZoomPanRatio:
-                          _settings.longPressZoomPanRatio,
-                      longPressZoomLimitToViewport:
-                          _settings.longPressZoomLimitToViewport,
-                      doubleTapZoomOrigin: _settings.doubleTapZoomOrigin,
-                      onZoomScaleChanged: _handleZoomScaleChanged,
-                    ),
-              builder: (context, pageAspectRatios, child) {
-                if (child != null &&
-                    reader.direction != ReadingDirection.vertical) {
-                  return child;
-                }
+              // Horizontal PageView geometry stays fixed, but the paged zoom
+              // boundary follows the contain-fitted image rect. Remote
+              // manifests often omit dimensions, so the Reader must receive
+              // the ratio discovered by the first decoded frame as well.
+              builder: (context, pageAspectRatios, _) {
                 return ReaderView(
                   controller: reader,
                   clock: _pipeline.clock,
