@@ -50,7 +50,7 @@ require(
     "ZIC-QUARANTINE(Q-001): whole-App legacy runtime route",
     "ZIC-QUARANTINE(Q-002): persisted legacy route test timing",
     "ZIC-QUARANTINE(Q-003): whole-App retry test bootstrap race",
-    "final joined = refresh.show();",
+    "unawaited(refresh.show());",
     "expect(source.loadedResources, isEmpty);",
 )
 require(

@@ -2,7 +2,10 @@ import 'dart:async';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:reader/reader.dart';
 import 'package:reader_runtime/reader_runtime.dart';
 
 enum ShelfSourceFilter { all, local, remote }
@@ -21,6 +24,7 @@ final class ComicReaderSettings {
     this.verticalStitchOverride,
     this.adaptiveEnabled = true,
     this.adaptiveProfile,
+    this.verticalLongPressZoom,
   });
 
   static const Object _unset = Object();
@@ -30,6 +34,7 @@ final class ComicReaderSettings {
   final bool? verticalStitchOverride;
   final bool adaptiveEnabled;
   final AdaptiveReaderProfile? adaptiveProfile;
+  final bool? verticalLongPressZoom;
 
   ComicReaderSettings copyWith({
     bool? enabled,
@@ -37,6 +42,7 @@ final class ComicReaderSettings {
     Object? verticalStitchOverride = _unset,
     bool? adaptiveEnabled,
     Object? adaptiveProfile = _unset,
+    Object? verticalLongPressZoom = _unset,
   }) =>
       ComicReaderSettings(
         enabled: enabled ?? this.enabled,
@@ -50,6 +56,9 @@ final class ComicReaderSettings {
         adaptiveProfile: identical(adaptiveProfile, _unset)
             ? this.adaptiveProfile
             : adaptiveProfile as AdaptiveReaderProfile?,
+        verticalLongPressZoom: identical(verticalLongPressZoom, _unset)
+            ? this.verticalLongPressZoom
+            : verticalLongPressZoom as bool?,
       );
 
   @override
@@ -60,7 +69,8 @@ final class ComicReaderSettings {
           directionOverride == other.directionOverride &&
           verticalStitchOverride == other.verticalStitchOverride &&
           adaptiveEnabled == other.adaptiveEnabled &&
-          adaptiveProfile == other.adaptiveProfile;
+          adaptiveProfile == other.adaptiveProfile &&
+          verticalLongPressZoom == other.verticalLongPressZoom;
 
   @override
   int get hashCode => Object.hash(
@@ -69,6 +79,7 @@ final class ComicReaderSettings {
         verticalStitchOverride,
         adaptiveEnabled,
         adaptiveProfile,
+        verticalLongPressZoom,
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -80,6 +91,8 @@ final class ComicReaderSettings {
         'adaptiveEnabled': adaptiveEnabled,
         if (adaptiveProfile != null)
           'adaptiveProfile': adaptiveProfile!.toJson(),
+        if (verticalLongPressZoom != null)
+          'verticalLongPressZoom': verticalLongPressZoom,
       };
 
   factory ComicReaderSettings.fromJson(Map<String, Object?> json) =>
@@ -95,6 +108,9 @@ final class ComicReaderSettings {
                 ? true
                 : null,
         adaptiveEnabled: _boolValue(json['adaptiveEnabled'], true),
+        verticalLongPressZoom: json['verticalLongPressZoom'] is bool
+            ? json['verticalLongPressZoom'] as bool
+            : null,
         adaptiveProfile: json['adaptiveProfile'] is Map
             ? AdaptiveReaderProfile.fromJson(
                 Map<String, Object?>.from(
@@ -131,6 +147,17 @@ final class AppPreferencesController extends ChangeNotifier {
   bool _readerStartsImmersive = true;
   bool _adaptiveReaderEnabled = false;
   bool _defaultVerticalStitch = false;
+  double _defaultZoomStageFirst = 1.5;
+  double _defaultZoomStageSecond = 2.0;
+  bool _longPressZoomEnabled = true;
+  bool _longPressZoomRestoreOnRelease = true;
+  ReaderLongPressMoveMode _longPressZoomMoveMode =
+      ReaderLongPressMoveMode.drag;
+  double _longPressZoomPanRatio = 1.0;
+  bool _longPressZoomLimitToViewport = true;
+  ReaderDoubleTapZoomOrigin _doubleTapZoomOrigin =
+      ReaderDoubleTapZoomOrigin.center;
+  bool _zoomDecodeBoostEnabled = true;
   int _detailsPreviewMaxItemsPerRow = 4;
   String _networkUserAgent = defaultNetworkUserAgent;
   List<String> _sourceSearchHistory = <String>[];
@@ -151,6 +178,15 @@ final class AppPreferencesController extends ChangeNotifier {
   bool get readerStartsImmersive => _readerStartsImmersive;
   bool get adaptiveReaderEnabled => _adaptiveReaderEnabled;
   bool get defaultVerticalStitch => _defaultVerticalStitch;
+  double get defaultZoomStageFirst => _defaultZoomStageFirst;
+  double get defaultZoomStageSecond => _defaultZoomStageSecond;
+  ReaderDoubleTapZoomOrigin get doubleTapZoomOrigin => _doubleTapZoomOrigin;
+  bool get longPressZoomEnabled => _longPressZoomEnabled;
+  bool get longPressZoomRestoreOnRelease => _longPressZoomRestoreOnRelease;
+  ReaderLongPressMoveMode get longPressZoomMoveMode => _longPressZoomMoveMode;
+  double get longPressZoomPanRatio => _longPressZoomPanRatio;
+  bool get longPressZoomLimitToViewport => _longPressZoomLimitToViewport;
+  bool get zoomDecodeBoostEnabled => _zoomDecodeBoostEnabled;
   int get detailsPreviewMaxItemsPerRow => _detailsPreviewMaxItemsPerRow;
   String get networkUserAgent => _networkUserAgent;
   List<String> get sourceSearchHistory =>
@@ -223,6 +259,43 @@ final class AppPreferencesController extends ChangeNotifier {
       values['defaultVerticalStitch'],
       _defaultVerticalStitch,
     );
+    _defaultZoomStageFirst =
+        _doubleValue(values['defaultZoomStage1'], _defaultZoomStageFirst,
+            min: 1.1, max: 8);
+    _defaultZoomStageSecond =
+        _doubleValue(values['defaultZoomStage2'], _defaultZoomStageSecond,
+            min: 1.1, max: 8);
+    if (_defaultZoomStageSecond < _defaultZoomStageFirst) {
+      _defaultZoomStageSecond = _defaultZoomStageFirst;
+    }
+    _longPressZoomEnabled =
+        _boolValue(values['longPressZoomEnabled'], _longPressZoomEnabled);
+    _longPressZoomRestoreOnRelease = _boolValue(
+      values['longPressZoomRestoreOnRelease'],
+      _longPressZoomRestoreOnRelease,
+    );
+    _longPressZoomMoveMode = _enumByName(
+      ReaderLongPressMoveMode.values,
+      values['longPressZoomMoveMode'],
+      _longPressZoomMoveMode,
+    );
+    _longPressZoomPanRatio = _doubleValue(
+      values['longPressZoomPanRatio'],
+      _longPressZoomPanRatio,
+      min: 0.25,
+      max: 4,
+    );
+    _longPressZoomLimitToViewport = _boolValue(
+      values['longPressZoomLimitToViewport'],
+      _longPressZoomLimitToViewport,
+    );
+    _doubleTapZoomOrigin = _enumByName(
+      ReaderDoubleTapZoomOrigin.values,
+      values['doubleTapZoomOrigin'],
+      _doubleTapZoomOrigin,
+    );
+    _zoomDecodeBoostEnabled =
+        _boolValue(values['zoomDecodeBoost'], _zoomDecodeBoostEnabled);
     _detailsPreviewMaxItemsPerRow = _intInRange(
       values['detailsPreviewMaxItemsPerRow'],
       fallback: _detailsPreviewMaxItemsPerRow,
@@ -297,6 +370,66 @@ final class AppPreferencesController extends ChangeNotifier {
   void setDefaultVerticalStitch(bool value) {
     if (_disposed || _defaultVerticalStitch == value) return;
     _defaultVerticalStitch = value;
+    _changed();
+  }
+
+  void setDefaultZoomStageFirst(double value) {
+    final clamped = value.clamp(1.1, 8.0).toDouble();
+    if (_disposed || _defaultZoomStageFirst == clamped) return;
+    _defaultZoomStageFirst = clamped;
+    if (_defaultZoomStageSecond < clamped) {
+      _defaultZoomStageSecond = clamped;
+    }
+    _changed();
+  }
+
+  void setDefaultZoomStageSecond(double value) {
+    final clamped = value.clamp(1.1, 8.0).toDouble();
+    if (_disposed || _defaultZoomStageSecond == clamped) return;
+    _defaultZoomStageSecond = math.max(clamped, _defaultZoomStageFirst);
+    _changed();
+  }
+
+  void setLongPressZoomEnabled(bool value) {
+    if (_disposed || _longPressZoomEnabled == value) return;
+    _longPressZoomEnabled = value;
+    _changed();
+  }
+
+  void setLongPressZoomRestoreOnRelease(bool value) {
+    if (_disposed || _longPressZoomRestoreOnRelease == value) return;
+    _longPressZoomRestoreOnRelease = value;
+    _changed();
+  }
+
+  void setLongPressZoomMoveMode(ReaderLongPressMoveMode value) {
+    if (_disposed || _longPressZoomMoveMode == value) return;
+    _longPressZoomMoveMode = value;
+    _changed();
+  }
+
+  void setLongPressZoomPanRatio(double value) {
+    final clamped = value.clamp(0.25, 4.0).toDouble();
+    if (_disposed || _longPressZoomPanRatio == clamped) return;
+    _longPressZoomPanRatio = clamped;
+    _changed();
+  }
+
+  void setLongPressZoomLimitToViewport(bool value) {
+    if (_disposed || _longPressZoomLimitToViewport == value) return;
+    _longPressZoomLimitToViewport = value;
+    _changed();
+  }
+
+  void setDoubleTapZoomOrigin(ReaderDoubleTapZoomOrigin value) {
+    if (_disposed || _doubleTapZoomOrigin == value) return;
+    _doubleTapZoomOrigin = value;
+    _changed();
+  }
+
+  void setZoomDecodeBoostEnabled(bool value) {
+    if (_disposed || _zoomDecodeBoostEnabled == value) return;
+    _zoomDecodeBoostEnabled = value;
     _changed();
   }
 
@@ -450,6 +583,15 @@ final class AppPreferencesController extends ChangeNotifier {
       'readerStartsImmersive': _readerStartsImmersive,
       'adaptiveReaderEnabled': _adaptiveReaderEnabled,
       'defaultVerticalStitch': _defaultVerticalStitch,
+      'defaultZoomStage1': _defaultZoomStageFirst,
+      'defaultZoomStage2': _defaultZoomStageSecond,
+      'doubleTapZoomOrigin': _doubleTapZoomOrigin.name,
+      'longPressZoomEnabled': _longPressZoomEnabled,
+      'longPressZoomRestoreOnRelease': _longPressZoomRestoreOnRelease,
+      'longPressZoomMoveMode': _longPressZoomMoveMode.name,
+      'longPressZoomPanRatio': _longPressZoomPanRatio,
+      'longPressZoomLimitToViewport': _longPressZoomLimitToViewport,
+      'zoomDecodeBoost': _zoomDecodeBoostEnabled,
       'detailsPreviewMaxItemsPerRow': _detailsPreviewMaxItemsPerRow,
       'networkUserAgent': _networkUserAgent,
       'sourceSearchHistory': _sourceSearchHistory,
@@ -509,6 +651,19 @@ Map<String, ComicReaderSettings> _decodeComicReaderSettings(Object? raw) {
 }
 
 bool _boolValue(Object? raw, bool fallback) => raw is bool ? raw : fallback;
+
+double _doubleValue(
+  Object? raw,
+  double fallback, {
+  required double min,
+  required double max,
+}) {
+  if (raw is num) {
+    final parsed = raw.toDouble();
+    if (parsed.isFinite) return parsed.clamp(min, max).toDouble();
+  }
+  return fallback;
+}
 
 String _networkUserAgentValue(Object? raw, {required String fallback}) {
   if (raw is! String) return fallback;

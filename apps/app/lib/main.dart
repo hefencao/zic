@@ -82,6 +82,13 @@ final class _BootstrapAppState extends State<_BootstrapApp>
           unawaited(services.close());
         } else {
           setState(() => _services = services);
+          unawaited(
+            services.externalPluginsReady.then<void>((_) {
+              if (!_disposed) {
+                setState(() {});
+              }
+            }),
+          );
         }
       }),
     );
@@ -142,7 +149,6 @@ final class _AppServices {
     this.downloadComposition,
     this.wholeComicDownloads,
     this.cacheCoordinator,
-    this.externalPlugins,
     this.storageRoot,
   });
 
@@ -151,8 +157,13 @@ final class _AppServices {
   final PersistentDownloadComposition? downloadComposition;
   final WholeComicDownloadQueue? wholeComicDownloads;
   final ResourceCacheCoordinator? cacheCoordinator;
-  final ExternalPluginController? externalPlugins;
   final String? storageRoot;
+
+  /// Set once the deferred external plugin host finishes opening. Local
+  /// home content must not wait for this; the UI mounts on core services and
+  /// picks up external sources through a later widget update.
+  ExternalPluginController? externalPlugins;
+  Future<void> externalPluginsReady = Future<void>.value();
   bool _closed = false;
   Future<void>? _partialCheckpoint;
 
@@ -192,6 +203,14 @@ final class _AppServices {
       firstError ??= error;
       firstStackTrace ??= stackTrace;
     }
+    // The deferred plugin open may still be in flight; settle it before the
+    // close pass so a late controller cannot leak after teardown.
+    try {
+      await externalPluginsReady.timeout(const Duration(minutes: 1));
+    } on Object catch (error, stackTrace) {
+      firstError ??= error;
+      firstStackTrace ??= stackTrace;
+    }
     for (final close in <Future<void> Function()>[
       if (wholeComicDownloads != null) wholeComicDownloads!.close,
       if (cacheCoordinator != null) cacheCoordinator!.close,
@@ -224,7 +243,6 @@ Future<_AppServices> _openServices(
   PersistentDownloadComposition? downloadComposition;
   WholeComicDownloadQueue? wholeComicDownloads;
   ResourceCacheCoordinator? cacheCoordinator;
-  ExternalPluginController? externalPlugins;
   try {
     final openedAt = telemetry.nowMicros();
     var stageStarted = telemetry.nowMicros();
@@ -281,33 +299,31 @@ Future<_AppServices> _openServices(
       ownsEnvironment: platformEnvironment != null,
     );
     telemetry.serviceReady('whole-comic-queue', startedAtMicros: stageStarted);
-    stageStarted = telemetry.nowMicros();
-    try {
-      externalPlugins = await ExternalPluginController.openDeferred(
-        root,
-        userAgentProvider: () => preferences.networkUserAgent,
-      );
-      telemetry.serviceReady(
-        'external-plugin-host',
-        startedAtMicros: stageStarted,
-      );
-    } on Object catch (error) {
-      debugPrint('external plugin runtime unavailable: $error');
-    }
-    telemetry.servicesReady(startedAtMicros: openedAt);
-    return _AppServices(
+    final services = _AppServices(
       libraryStore: libraryStore,
       chapterDownloads: chapterDownloads,
       downloadComposition: downloadComposition,
       wholeComicDownloads: wholeComicDownloads,
       cacheCoordinator: cacheCoordinator,
-      externalPlugins: externalPlugins,
       storageRoot: root,
     );
+    // The external plugin host historically spent ~2s here and gated every
+    // home service. Local library/covers only need the stages above, so open
+    // the host concurrently and let the UI mount immediately.
+    final pluginStageStarted = telemetry.nowMicros();
+    String userAgentProvider() => preferences.networkUserAgent;
+    services.externalPluginsReady = _attachExternalPlugins(
+      telemetry,
+      services,
+      root,
+      userAgentProvider,
+      pluginStageStarted,
+    );
+    telemetry.servicesReady(startedAtMicros: openedAt);
+    return services;
   } on Object catch (error) {
     debugPrint('durable application storage unavailable: $error');
     await wholeComicDownloads?.close();
-    await externalPlugins?.close();
     await cacheCoordinator?.close();
     if (downloadComposition != null) {
       await downloadComposition.close();
@@ -316,6 +332,33 @@ Future<_AppServices> _openServices(
     }
     await libraryStore?.close();
     return _AppServices();
+  }
+}
+
+Future<void> _attachExternalPlugins(
+  HomeStartupTelemetry telemetry,
+  _AppServices services,
+  String root,
+  String Function() userAgentProvider,
+  int stageStartedMicros,
+) async {
+  try {
+    final controller = await ExternalPluginController.openDeferred(
+      root,
+      userAgentProvider: userAgentProvider,
+    );
+    if (!services._closed && services.externalPlugins == null) {
+      services.externalPlugins = controller;
+      telemetry.serviceReady(
+        'external-plugin-host',
+        startedAtMicros: stageStartedMicros,
+      );
+      return;
+    }
+    // The app tore down while the host was opening; release it immediately.
+    await controller.close();
+  } on Object catch (error) {
+    debugPrint('external plugin runtime unavailable: $error');
   }
 }
 

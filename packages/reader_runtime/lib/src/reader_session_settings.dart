@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:domain/domain.dart';
 import 'package:flutter/foundation.dart';
+import 'package:reader/reader.dart';
 
 @immutable
 final class ReaderSessionSettings {
@@ -13,9 +14,19 @@ final class ReaderSessionSettings {
     this.globalAdaptiveEnabled = false,
     this.comicAdaptiveEnabled = true,
     this.adaptiveProfile,
+    this.zoomStages = defaultZoomStages,
+    this.defaultLongPressZoom = true,
+    this.verticalLongPressZoomOverride,
+    this.longPressZoomRestoreOnRelease = true,
+    this.longPressZoomMoveMode = ReaderLongPressMoveMode.drag,
+    this.longPressZoomPanRatio = 1.0,
+    this.longPressZoomLimitToViewport = true,
+    this.doubleTapZoomOrigin = ReaderDoubleTapZoomOrigin.center,
+    this.zoomDecodeBoost = true,
   });
 
   static const Object _unset = Object();
+  static const List<double> defaultZoomStages = <double>[1.5, 2.0];
 
   final bool comicSpecificEnabled;
   final ReadingDirection? directionOverride;
@@ -25,11 +36,66 @@ final class ReaderSessionSettings {
   final bool comicAdaptiveEnabled;
   final AdaptiveReaderProfile? adaptiveProfile;
 
+  /// Double-tap zoom stages, ordered ascending. Two stages: the first
+  /// double-tap enters [zoomStages[0]], the second [zoomStages[1]], the third
+  /// returns to 1x. Values are clamped to (1, 8].
+  final List<double> zoomStages;
+
+  /// Long-press magnifier baseline for paged reading. Continuous mode keeps
+  /// its own opt-in below so vertical strip reading never enables it by
+  /// accident while dragging.
+  final bool defaultLongPressZoom;
+
+  /// Per-comic tri-state for continuous long-press zoom. Null inherits the
+  /// disabled continuous default; true opts a vertical comic in.
+  final bool? verticalLongPressZoomOverride;
+
+  /// True (default) restores 1x when a long-press zoom gesture ends. False
+  /// keeps the magnification until double-tap or page change.
+  final bool longPressZoomRestoreOnRelease;
+
+  /// Long-press zoom movement: content follows the finger (drag) or the
+  /// magnified region stays centered on the finger (focus).
+  final ReaderLongPressMoveMode longPressZoomMoveMode;
+
+  /// Finger-to-content travel multiplier while dragging a long-press zoom.
+  /// 1.0 follows the zoomed resolution exactly.
+  final double longPressZoomPanRatio;
+
+  /// When true (default), long-press drag keeps the scaled content covering
+  /// the viewport: if an edge leaves through one side, the opposite edge stays
+  /// inside. False allows free dragging past the viewport.
+  final bool longPressZoomLimitToViewport;
+
+  /// Where double-tap zoom anchors the magnified result: centered on the
+  /// viewport, snapped to the viewport edge nearest the tap, or focused on
+  /// the tap position.
+  final ReaderDoubleTapZoomOrigin doubleTapZoomOrigin;
+
+  /// When zoomed past the first stage, raise decode resolution for demanded
+  /// pages so the visible region gains real pixels instead of upscaled ones.
+  final bool zoomDecodeBoost;
+
   bool get effectiveVerticalStitch => comicSpecificEnabled
       ? verticalStitchOverride ?? fallbackVerticalStitch
       : fallbackVerticalStitch;
   bool get effectiveAdaptiveEnabled =>
       globalAdaptiveEnabled && comicAdaptiveEnabled;
+
+  double get zoomStageFirst =>
+      zoomStages.length > 0 ? _clampStage(zoomStages[0], 1.1) : 1.5;
+  double get zoomStageSecond => zoomStages.length > 1
+      ? _clampStage(zoomStages[1], zoomStageFirst)
+      : math.max(2.0, zoomStageFirst * 2);
+
+  bool get effectiveLongPressZoomPaged => defaultLongPressZoom;
+  bool get effectiveLongPressZoomVertical =>
+      comicSpecificEnabled ? verticalLongPressZoomOverride ?? false : false;
+
+  static double _clampStage(double value, double lowerBound) {
+    if (!value.isFinite) return lowerBound <= 1 ? 2.0 : lowerBound;
+    return value.clamp(math.max(1.1, lowerBound), 8.0).toDouble();
+  }
 
   ReaderSessionSettings copyWith({
     bool? comicSpecificEnabled,
@@ -39,6 +105,15 @@ final class ReaderSessionSettings {
     bool? globalAdaptiveEnabled,
     bool? comicAdaptiveEnabled,
     Object? adaptiveProfile = _unset,
+    List<double>? zoomStages,
+    bool? defaultLongPressZoom,
+    Object? verticalLongPressZoomOverride = _unset,
+    bool? longPressZoomRestoreOnRelease,
+    ReaderLongPressMoveMode? longPressZoomMoveMode,
+    double? longPressZoomPanRatio,
+    bool? longPressZoomLimitToViewport,
+    ReaderDoubleTapZoomOrigin? doubleTapZoomOrigin,
+    bool? zoomDecodeBoost,
   }) =>
       ReaderSessionSettings(
         comicSpecificEnabled:
@@ -58,6 +133,22 @@ final class ReaderSessionSettings {
         adaptiveProfile: identical(adaptiveProfile, _unset)
             ? this.adaptiveProfile
             : adaptiveProfile as AdaptiveReaderProfile?,
+        zoomStages: zoomStages ?? this.zoomStages,
+        defaultLongPressZoom: defaultLongPressZoom ?? this.defaultLongPressZoom,
+        verticalLongPressZoomOverride:
+            identical(verticalLongPressZoomOverride, _unset)
+                ? this.verticalLongPressZoomOverride
+                : verticalLongPressZoomOverride as bool?,
+        longPressZoomRestoreOnRelease:
+            longPressZoomRestoreOnRelease ?? this.longPressZoomRestoreOnRelease,
+        longPressZoomMoveMode:
+            longPressZoomMoveMode ?? this.longPressZoomMoveMode,
+        longPressZoomPanRatio:
+            longPressZoomPanRatio ?? this.longPressZoomPanRatio,
+        longPressZoomLimitToViewport:
+            longPressZoomLimitToViewport ?? this.longPressZoomLimitToViewport,
+        doubleTapZoomOrigin: doubleTapZoomOrigin ?? this.doubleTapZoomOrigin,
+        zoomDecodeBoost: zoomDecodeBoost ?? this.zoomDecodeBoost,
       );
 
   @override
@@ -70,7 +161,17 @@ final class ReaderSessionSettings {
           fallbackVerticalStitch == other.fallbackVerticalStitch &&
           globalAdaptiveEnabled == other.globalAdaptiveEnabled &&
           comicAdaptiveEnabled == other.comicAdaptiveEnabled &&
-          adaptiveProfile == other.adaptiveProfile;
+          adaptiveProfile == other.adaptiveProfile &&
+          _sameStages(zoomStages, other.zoomStages) &&
+          defaultLongPressZoom == other.defaultLongPressZoom &&
+          verticalLongPressZoomOverride ==
+              other.verticalLongPressZoomOverride &&
+          longPressZoomRestoreOnRelease == other.longPressZoomRestoreOnRelease &&
+          longPressZoomMoveMode == other.longPressZoomMoveMode &&
+          longPressZoomPanRatio == other.longPressZoomPanRatio &&
+          longPressZoomLimitToViewport == other.longPressZoomLimitToViewport &&
+          doubleTapZoomOrigin == other.doubleTapZoomOrigin &&
+          zoomDecodeBoost == other.zoomDecodeBoost;
 
   @override
   int get hashCode => Object.hash(
@@ -81,7 +182,24 @@ final class ReaderSessionSettings {
         globalAdaptiveEnabled,
         comicAdaptiveEnabled,
         adaptiveProfile,
+        Object.hashAll(zoomStages),
+        defaultLongPressZoom,
+        verticalLongPressZoomOverride,
+        longPressZoomRestoreOnRelease,
+        longPressZoomMoveMode,
+        longPressZoomPanRatio,
+        longPressZoomLimitToViewport,
+        doubleTapZoomOrigin,
+        zoomDecodeBoost,
       );
+
+  static bool _sameStages(List<double> a, List<double> b) {
+    if (a.length != b.length) return false;
+    for (var index = 0; index < a.length; index++) {
+      if (a[index] != b[index]) return false;
+    }
+    return true;
+  }
 }
 
 @immutable

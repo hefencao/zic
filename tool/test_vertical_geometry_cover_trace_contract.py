@@ -39,7 +39,7 @@ def main() -> None:
         "initialScrollOffset: initialOffset",
         "reader-vertical-gap:",
         "addRepaintBoundaries: !stitched",
-        "stitched && _zoomedPage == null",
+        "(stitched || !_stripZoomed) && _zoomedPage == null",
         ": ClipRect(child: page)",
     )
     reject(

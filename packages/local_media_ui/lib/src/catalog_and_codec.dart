@@ -34,7 +34,11 @@ final class WebpCatalogScreen extends StatelessWidget {
                 child: ListTile(
                   leading: SizedBox.square(
                     dimension: 64,
-                    child: Image.asset(entry.asset, fit: BoxFit.cover),
+                    child: Image.asset(
+                      entry.asset,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                    ),
                   ),
                   title: Text(entry.title),
                   subtitle: Text(

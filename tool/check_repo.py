@@ -955,7 +955,7 @@ def check_compile_regressions() -> None:
         '_ReaderPageHost',
         'reportFirstFrame',
         'InteractiveViewer(',
-        'maxScale: 5',
+        'maxScale: math.max(',
         'onPointerDown: _handlePointerDown',
         'onPointerUp: _handlePointerUp',
         '_singleTapTimer',

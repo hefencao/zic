@@ -1487,10 +1487,31 @@ final class DownloadTransferOwner {
       token.throwIfCancelled();
       return;
     }
-    await Future.any<void>(<Future<void>>[
-      sleep(delay),
-      token.whenCancelled,
-    ]);
+    if (token.cancelled) {
+      token.throwIfCancelled();
+      return;
+    }
+    if (identical(sleep, _defaultTransferSleep)) {
+      final completer = Completer<void>();
+      final timer = Timer(delay, () {
+        if (!completer.isCompleted) completer.complete();
+      });
+      void onCancel() {
+        timer.cancel();
+        if (!completer.isCompleted) completer.complete();
+      }
+      unawaited(token.whenCancelled.then((_) => onCancel()));
+      try {
+        await completer.future;
+      } finally {
+        timer.cancel();
+      }
+    } else {
+      await Future.any<void>(<Future<void>>[
+        sleep(delay),
+        token.whenCancelled,
+      ]);
+    }
     token.throwIfCancelled();
   }
 

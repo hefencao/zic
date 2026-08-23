@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:reader/reader.dart';
 import 'package:reader_runtime/reader_runtime.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:zic/app_preferences.dart';
@@ -75,6 +76,15 @@ void main() {
         'readerStartsImmersive': false,
         'adaptiveReaderEnabled': true,
         'defaultVerticalStitch': true,
+        'defaultZoomStage1': 3.0,
+        'defaultZoomStage2': 5.0,
+        'longPressZoomEnabled': false,
+        'longPressZoomRestoreOnRelease': false,
+        'longPressZoomMoveMode': 'focus',
+        'longPressZoomPanRatio': 1.5,
+        'longPressZoomLimitToViewport': false,
+        'doubleTapZoomOrigin': 'snap',
+        'zoomDecodeBoost': false,
         'detailsPreviewMaxItemsPerRow': 6,
         'networkUserAgent': 'fixture-network-agent',
         'animatedWebpPrefetchBudgetMiB': 72, // ignored legacy dev.247/248 key
@@ -109,6 +119,18 @@ void main() {
     expect(controller.readerStartsImmersive, isFalse);
     expect(controller.adaptiveReaderEnabled, isTrue);
     expect(controller.defaultVerticalStitch, isTrue);
+    expect(controller.defaultZoomStageFirst, 3.0);
+    expect(controller.defaultZoomStageSecond, 5.0);
+    expect(controller.longPressZoomEnabled, isFalse);
+    expect(controller.longPressZoomRestoreOnRelease, isFalse);
+    expect(
+      controller.longPressZoomMoveMode,
+      ReaderLongPressMoveMode.focus,
+    );
+    expect(controller.longPressZoomPanRatio, 1.5);
+    expect(controller.longPressZoomLimitToViewport, isFalse);
+    expect(controller.doubleTapZoomOrigin, ReaderDoubleTapZoomOrigin.snap);
+    expect(controller.zoomDecodeBoostEnabled, isFalse);
     expect(controller.detailsPreviewMaxItemsPerRow, 6);
     expect(controller.networkUserAgent, 'fixture-network-agent');
     expect(controller.sourceSearchHistory, <String>['Alpha', 'beta']);
@@ -132,6 +154,11 @@ void main() {
     controller.setShelfSortMode(LibrarySortMode.custom);
     controller.setDetailsPreviewMaxItemsPerRow(4);
     controller.setNetworkUserAgent('custom-network-agent');
+    controller.setLongPressZoomRestoreOnRelease(true);
+    controller.setLongPressZoomMoveMode(ReaderLongPressMoveMode.drag);
+    controller.setLongPressZoomPanRatio(2.0);
+    controller.setLongPressZoomLimitToViewport(true);
+    controller.setDoubleTapZoomOrigin(ReaderDoubleTapZoomOrigin.focus);
     controller.rememberSourceSearch('Gamma');
     controller.acknowledgeComicVersionNotice(
       'source-a',
@@ -154,6 +181,11 @@ void main() {
     expect(written?['version'], 6);
     expect(written?['detailsPreviewMaxItemsPerRow'], 4);
     expect(written?['networkUserAgent'], 'custom-network-agent');
+    expect(written?['longPressZoomRestoreOnRelease'], true);
+    expect(written?['longPressZoomMoveMode'], 'drag');
+    expect(written?['longPressZoomPanRatio'], 2.0);
+    expect(written?['longPressZoomLimitToViewport'], true);
+    expect(written?['doubleTapZoomOrigin'], 'focus');
     expect(written?.containsKey('animatedWebpPrefetchBudgetMiB'), isFalse);
     expect((written?['sourceSearchHistory']! as List).first, 'Gamma');
     expect(
@@ -168,6 +200,24 @@ void main() {
               as Map)['directionOverride'],
       'vertical',
     );
+  });
+
+  test('reading zoom defaults match the product baseline', () {
+    final controller = AppPreferencesController();
+    addTearDown(controller.dispose);
+    expect(controller.defaultZoomStageFirst, 1.5);
+    expect(controller.defaultZoomStageSecond, 2.0);
+    expect(
+      controller.doubleTapZoomOrigin,
+      ReaderDoubleTapZoomOrigin.center,
+    );
+    expect(controller.longPressZoomRestoreOnRelease, isTrue);
+    expect(
+      controller.longPressZoomMoveMode,
+      ReaderLongPressMoveMode.drag,
+    );
+    expect(controller.longPressZoomPanRatio, 1.0);
+    expect(controller.longPressZoomLimitToViewport, isTrue);
   });
 
   test('legacy per-comic stitch false inherits the global setting', () async {

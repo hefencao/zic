@@ -13,6 +13,7 @@ import 'package:telemetry/telemetry.dart';
 import 'flutter_reader_frame_timing_source.dart';
 import 'flutter_reader_platform_frame_cadence.dart';
 import 'reader_session_settings.dart';
+import 'reader_zoom_decode.dart';
 import 'reader_settings_fields.dart';
 import 'reader_transfer_progress_indicator.dart';
 
@@ -31,6 +32,8 @@ const readerComicSettingsEnabledKey =
     ValueKey<String>('reader-comic-settings-enabled');
 const readerAdaptiveSettingsKey = ValueKey<String>('reader-adaptive-settings');
 const readerVerticalStitchKey = ValueKey<String>('reader-vertical-stitch');
+const readerVerticalLongPressZoomKey =
+    ValueKey<String>('reader-vertical-long-press-zoom');
 const readerExistingProgressKey = ValueKey<String>('reader-existing-progress');
 const readerNetworkProgressKey = ValueKey<String>('reader-network-progress');
 Key readerSpeedOptionKey(double speed) =>
@@ -181,6 +184,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   late final AdaptiveReaderClassifier _adaptiveClassifier;
   AdaptiveReaderProfile? _adaptiveProfile;
   FlutterReaderPlatformFrameCadenceProbe? _platformFrameCadenceProbe;
+  DecodeTarget? _appliedZoomDecodeTarget;
 
   @override
   void initState() {
@@ -614,6 +618,38 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     }
   }
 
+  bool _effectiveLongPressZoom(ReaderController reader) =>
+      reader.direction == ReadingDirection.vertical
+          ? _settings.effectiveLongPressZoomVertical
+          : _settings.effectiveLongPressZoomPaged;
+
+  Size get _mediaQuerySize => MediaQueryData.fromView(View.of(context)).size;
+  double get _mediaQueryDevicePixelRatio =>
+      MediaQueryData.fromView(View.of(context)).devicePixelRatio;
+
+  void _handleZoomScaleChanged(double scale) {
+    final reader = _reader;
+    final base = _target;
+    if (reader == null || base == null || !mounted) return;
+    final asset = widget.chapter.pages[reader.currentIndex];
+    final boosted = boostedDecodeTargetForZoom(
+      base,
+      scale: scale,
+      enabled: _settings.zoomDecodeBoost && !_playback.value.paused,
+      viewportLogicalWidth: _mediaQuerySize.width.round(),
+      viewportLogicalHeight: _mediaQuerySize.height.round(),
+      devicePixelRatio: _mediaQueryDevicePixelRatio,
+      maxSourceWidth: asset.width,
+      maxSourceHeight: asset.height,
+    );
+    final next = boosted ?? base;
+    if (next == base && _appliedZoomDecodeTarget == null) return;
+    if (next == _appliedZoomDecodeTarget) return;
+    _pipeline.updateDecodeTarget(next);
+    _target = next;
+    _appliedZoomDecodeTarget = next == base ? null : next;
+  }
+
   void _syncPipelinePlayback() {
     final state = _playback.value;
     _pipeline.setPlayback(paused: state.paused, speed: state.speed);
@@ -821,6 +857,15 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                       onChanged: (value) => setSheetState(
                         () => draft = draft.copyWith(
                           verticalStitchOverride: value,
+                        ),
+                      ),
+                    ),
+                    readerVerticalLongPressZoomField(
+                      key: readerVerticalLongPressZoomKey,
+                      value: draft.verticalLongPressZoomOverride,
+                      onChanged: (value) => setSheetState(
+                        () => draft = draft.copyWith(
+                          verticalLongPressZoomOverride: value,
                         ),
                       ),
                     ),
@@ -1138,6 +1183,20 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                       onTap: _toggleControls,
                       verticalStitch: _settings.effectiveVerticalStitch,
                       pageAspectRatios: _pageAspectRatios.value,
+                      zoomStageFirst: _settings.zoomStageFirst,
+                      zoomStageSecond: _settings.zoomStageSecond,
+                      longPressZoomEnabled:
+                          _effectiveLongPressZoom(reader),
+                      longPressZoomRestoreOnRelease:
+                          _settings.longPressZoomRestoreOnRelease,
+                      longPressZoomMoveMode:
+                          _settings.longPressZoomMoveMode,
+                      longPressZoomPanRatio:
+                          _settings.longPressZoomPanRatio,
+                      longPressZoomLimitToViewport:
+                          _settings.longPressZoomLimitToViewport,
+                      doubleTapZoomOrigin: _settings.doubleTapZoomOrigin,
+                      onZoomScaleChanged: _handleZoomScaleChanged,
                     ),
               builder: (context, pageAspectRatios, child) {
                 if (child != null &&
@@ -1154,6 +1213,17 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                   onTap: _toggleControls,
                   verticalStitch: _settings.effectiveVerticalStitch,
                   pageAspectRatios: pageAspectRatios,
+                  zoomStageFirst: _settings.zoomStageFirst,
+                  zoomStageSecond: _settings.zoomStageSecond,
+                  longPressZoomEnabled: _effectiveLongPressZoom(reader),
+                  longPressZoomRestoreOnRelease:
+                      _settings.longPressZoomRestoreOnRelease,
+                  longPressZoomMoveMode: _settings.longPressZoomMoveMode,
+                  longPressZoomPanRatio: _settings.longPressZoomPanRatio,
+                  longPressZoomLimitToViewport:
+                      _settings.longPressZoomLimitToViewport,
+                  doubleTapZoomOrigin: _settings.doubleTapZoomOrigin,
+                  onZoomScaleChanged: _handleZoomScaleChanged,
                 );
               },
             ),

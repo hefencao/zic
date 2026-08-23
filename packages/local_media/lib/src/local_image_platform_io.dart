@@ -122,11 +122,11 @@ Future<LocalImageSourceResponse> openLocalImageSource(
         sourceId,
       ),
   };
-  if (!await file.exists()) {
+  if (!file.existsSync()) {
     throw FileSystemException('本地图片不存在', file.path);
   }
-  final length = await file.length();
-  final modified = await file.lastModified();
+  final length = file.lengthSync();
+  final modified = file.lastModifiedSync();
   final revision = '$length:${modified.microsecondsSinceEpoch}:${file.path}';
   final rangeRequested = start > 0 || endExclusive != null;
   final canServeRange = rangeRequested &&
@@ -154,12 +154,12 @@ Stream<List<int>> _readLocalFileChunks(
   int endExclusive,
 ) async* {
   const chunkBytes = 1024 * 1024;
-  final reader = await file.open();
+  final reader = file.openSync();
   try {
-    await reader.setPosition(start);
+    reader.setPositionSync(start);
     var remaining = endExclusive - start;
     while (remaining > 0) {
-      final chunk = await reader.read(
+      final chunk = reader.readSync(
         remaining < chunkBytes ? remaining : chunkBytes,
       );
       if (chunk.isEmpty) break;
@@ -167,7 +167,7 @@ Stream<List<int>> _readLocalFileChunks(
       yield chunk;
     }
   } finally {
-    await reader.close();
+    reader.closeSync();
   }
 }
 
@@ -178,12 +178,12 @@ Future<Uint8List> readLocalImageSource(String sourceId) async {
     return _androidBridge.readDocument(sourceId);
   }
   if (scheme == 'file') {
-    return File.fromUri(uri!).readAsBytes();
+    return File.fromUri(uri!).readAsBytesSync();
   }
   if (scheme.isNotEmpty) {
     throw FileSystemException('不支持的本地图片来源协议', sourceId);
   }
-  return File(sourceId).readAsBytes();
+  return File(sourceId).readAsBytesSync();
 }
 
 String? localImageFilePath(String sourceId) {

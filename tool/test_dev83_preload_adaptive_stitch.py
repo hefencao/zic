@@ -150,7 +150,7 @@ def main() -> None:
     require(
         "packages/reader/lib/src/reader_view.dart",
         "addRepaintBoundaries: !stitched",
-        "stitched && _zoomedPage == null",
+        "(stitched || !_stripZoomed) && _zoomedPage == null",
         "? page",
         ": ClipRect(child: page)",
     )

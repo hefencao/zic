@@ -366,7 +366,12 @@ final class PipelineReaderSessionFactory {
     _retentionPool.release(session);
   }
 
-  Future<void> disposeRetainedSessions() => _retentionPool.disposeAll();
+  Future<void> disposeRetainedSessions() async {
+    await _retentionPool.disposeAll();
+    // `create()` callers are not represented in the retention pool. Dispose
+    // only runtimes that prove they have no live transfer consumers.
+    await _transferRuntimePool.disposeIdle();
+  }
 
   /// Explicit composition shutdown for tests/app teardown after every active
   /// Reader/command consumer has detached from the physical transfer owner.
@@ -655,7 +660,6 @@ final class PipelineReaderSession {
   ReaderObs? _pendingObservation;
   ReaderObs? _lastAcceptedControlObservation;
   bool _observationDrainScheduled = false;
-  Timer? _observationDrainTimer;
   bool _observationControlDirty = false;
   int _observationGeneration = 0;
   DownloadId? _lastControlCurrentDownload;
@@ -752,15 +756,10 @@ final class PipelineReaderSession {
     // whole plan/reconcile/lane-pump control transaction has completed. A
     // zero-delay Timer keeps the same latest-wins semantics while yielding one
     // ordinary event-loop turn after the frame that produced the observation.
-    _observationDrainTimer?.cancel();
-    _observationDrainTimer = Timer(Duration.zero, () {
-      _observationDrainTimer = null;
-      _drainObservation(generation);
-    });
+    Timer.run(() => _drainObservation(generation));
   }
 
   void _drainObservation(int generation) {
-    _observationDrainTimer = null;
     if (generation != _observationGeneration ||
         _disposed ||
         _retainedForReaderReentry) {
@@ -890,8 +889,6 @@ final class PipelineReaderSession {
     _pendingObservation = null;
     _lastAcceptedControlObservation = null;
     _observationControlDirty = false;
-    _observationDrainTimer?.cancel();
-    _observationDrainTimer = null;
   }
 
   void accept(ReaderObs observation) {
@@ -1558,6 +1555,13 @@ final class PipelineReaderSession {
         message: 'presentation requested bytes before transfer acquisition',
       );
     }
+    if (_isDirectImmutableLocalUri(asset.uri)) {
+      // An immutable local source owns final bytes before, during and after
+      // its transfer. Presentation must not queue behind the transfer copy,
+      // CRC and promotion just to read the same immutable body back; the
+      // validated direct read below is the exact post-promotion authority.
+      return _readDirectImmutableSource(asset, id, session, token);
+    }
     if (session.state != DownloadState.promoted) {
       await _waitForPromotion(session, token);
     }
@@ -1646,6 +1650,11 @@ final class PipelineReaderSession {
             '${bytes.lengthInBytes}/$expected',
       );
     }
+    // Keep the validated immutable body in the presentation memory tier so
+    // rapid keep-alive eviction/remount cycles during fast continuous
+    // scrolling do not repeat the same source read. Promotion still owns the
+    // durable artifact; a later promotion remember() supersedes this entry.
+    _artifactCacheManager?.remember(id: id, bytes: bytes);
     _recordPresentationCacheRead(
       asset: asset,
       id: id,
@@ -2398,7 +2407,7 @@ final class PipelineReaderSession {
     final deadline = ids == null
         ? null
         : _uploads.earliestPlaybackDeadlineMicros(ids);
-    if (_playbackPaused || deadline == null || _disposed) {
+    if (_playbackPaused || deadline == null || _disposed || _retainedForReaderReentry) {
       _cancelPlaybackWake();
       return;
     }
@@ -2425,7 +2434,7 @@ final class PipelineReaderSession {
   }
 
   void _advanceDueFrames() {
-    if (_disposed || _playbackPaused) {
+    if (_disposed || _playbackPaused || _retainedForReaderReentry) {
       _ensurePlaybackTicker();
       return;
     }

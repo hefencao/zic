@@ -175,9 +175,16 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         _requestStreamingWebpPrefix(stream, snapshot);
         return;
       }
+      // A bound transfer session is enough to start presentation loading.
+      // Pipeline loadBytes owns every remaining wait (promotion, artifact
+      // read or validated immutable direct source), so waiting for sealed/
+      // promoted here would only add queue latency for pages that become
+      // visible during fast continuous scrolling.
       if (!_fallbackLoadStarted &&
-          (snapshot.state == PipelinePageTransferState.promoted ||
-              snapshot.state == PipelinePageTransferState.sealed)) {
+          (snapshot.state == PipelinePageTransferState.queued ||
+              snapshot.state == PipelinePageTransferState.receiving ||
+              snapshot.state == PipelinePageTransferState.sealed ||
+              snapshot.state == PipelinePageTransferState.promoted)) {
         _fallbackLoadStarted = true;
         unawaited(_load());
       }
@@ -1182,6 +1189,7 @@ final class _ControlledAnimatedImageState
   }
 
   void _schedule(int generation, Duration delay) {
+    if (!mounted || generation != _generation) return;
     _timer?.cancel();
     _remaining = delay;
     _timerClock = Stopwatch()..start();

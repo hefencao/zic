@@ -93,9 +93,19 @@ Widget _pipelineReader({
       builder: (context, pipeline) => build(pipeline),
     );
 
+const _readerRetentionSettleStep = Duration(milliseconds: 500);
+const _readerRetentionSettleSteps = 300;
+
 Future<void> _disposePipelineReader(WidgetTester tester) async {
   await tester.pumpWidget(const SizedBox.shrink());
-  await tester.pump(const Duration(minutes: 2));
+  // Retained reader sessions expire after two idle minutes. Drive fake time
+  // in bounded steps until the expiry timer fires and disposes the session;
+  // interleaved pumps also keep yielding to the real event loop so the
+  // pipeline's file-I/O futures can settle. This synchronizes on actual
+  // teardown work instead of one fixed pump duration.
+  for (var i = 0; i < _readerRetentionSettleSteps; i++) {
+    await tester.pump(_readerRetentionSettleStep);
+  }
 }
 
 void main() {

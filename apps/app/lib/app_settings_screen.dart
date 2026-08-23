@@ -5,6 +5,7 @@ import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:reader/reader.dart';
 import 'package:resource_cache/resource_cache.dart';
 
 import 'dialog_actions.dart';
@@ -34,6 +35,24 @@ const dataCacheRefreshKey = ValueKey<String>('data-cache-refresh');
 const readingAdaptiveKey = ValueKey<String>('reading-adaptive');
 const readingVerticalStitchKey =
     ValueKey<String>('reading-vertical-stitch');
+const readingZoomStageFirstKey =
+    ValueKey<String>('reading-zoom-stage-first');
+const readingZoomStageSecondKey =
+    ValueKey<String>('reading-zoom-stage-second');
+const readingLongPressZoomKey =
+    ValueKey<String>('reading-long-press-zoom');
+const readingLongPressZoomRestoreKey =
+    ValueKey<String>('reading-long-press-zoom-restore');
+const readingLongPressZoomMoveModeKey =
+    ValueKey<String>('reading-long-press-zoom-move-mode');
+const readingDoubleTapZoomOriginKey =
+    ValueKey<String>('reading-double-tap-zoom-origin');
+const readingLongPressZoomPanRatioKey =
+    ValueKey<String>('reading-long-press-zoom-pan-ratio');
+const readingLongPressZoomLimitKey =
+    ValueKey<String>('reading-long-press-zoom-limit');
+const readingZoomDecodeBoostKey =
+    ValueKey<String>('reading-zoom-decode-boost');
 const readingPreviewMaxItemsPerRowKey =
     ValueKey<String>('reading-preview-max-items-per-row');
 
@@ -580,6 +599,170 @@ final class ReadingSettingsScreen extends StatelessWidget {
               subtitle: const Text('纵向连续模式移除页间距；不合并页面文件或缓存身份。'),
               value: preferences.defaultVerticalStitch,
               onChanged: preferences.setDefaultVerticalStitch,
+            ),
+            const _SettingsSectionTitle('缩放'),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: <Widget>[
+                  Expanded(
+                    child: DropdownButtonFormField<double>(
+                      key: readingZoomStageFirstKey,
+                      initialValue: preferences.defaultZoomStageFirst,
+                      decoration: const InputDecoration(
+                        labelText: '双击放大 · 一级',
+                      ),
+                      items: const <double>[1.5, 2.0, 2.5, 3.0]
+                          .map<DropdownMenuItem<double>>(
+                            (value) => DropdownMenuItem(
+                              value: value,
+                              child: Text('${value}x'),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          preferences.setDefaultZoomStageFirst(value);
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DropdownButtonFormField<double>(
+                      key: readingZoomStageSecondKey,
+                      initialValue: preferences.defaultZoomStageSecond,
+                      decoration: const InputDecoration(
+                        labelText: '双击放大 · 二级',
+                      ),
+                      items: const <double>[2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
+                          .map<DropdownMenuItem<double>>(
+                            (value) => DropdownMenuItem(
+                              value: value,
+                              child: Text('${value}x'),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          preferences.setDefaultZoomStageSecond(value);
+                        }
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            SwitchListTile(
+              key: readingLongPressZoomKey,
+              title: const Text('长按放大（分页模式）'),
+              subtitle: const Text('长按后随手指拖动查看细节；连续模式需在本漫画设置中单独开启。'),
+              value: preferences.longPressZoomEnabled,
+              onChanged: preferences.setLongPressZoomEnabled,
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: DropdownButtonFormField<ReaderDoubleTapZoomOrigin>(
+                key: readingDoubleTapZoomOriginKey,
+                initialValue: preferences.doubleTapZoomOrigin,
+                decoration: const InputDecoration(
+                  labelText: '双击放大图片位置',
+                  helperText: '居中：以屏幕中心放大；吸附：按点击侧贴齐边缘；聚焦：以点击位置为中心。',
+                  border: OutlineInputBorder(),
+                ),
+                items: const <DropdownMenuItem<ReaderDoubleTapZoomOrigin>>[
+                  DropdownMenuItem(
+                    value: ReaderDoubleTapZoomOrigin.center,
+                    child: Text('居中'),
+                  ),
+                  DropdownMenuItem(
+                    value: ReaderDoubleTapZoomOrigin.snap,
+                    child: Text('吸附'),
+                  ),
+                  DropdownMenuItem(
+                    value: ReaderDoubleTapZoomOrigin.focus,
+                    child: Text('聚焦'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    preferences.setDoubleTapZoomOrigin(value);
+                  }
+                },
+              ),
+            ),
+            SwitchListTile(
+              key: readingLongPressZoomRestoreKey,
+              title: const Text('长按放大松手复原'),
+              subtitle: const Text(
+                '松手后恢复原始大小；关闭后保持放大，'
+                '双击页面或切换页面退出。',
+              ),
+              value: preferences.longPressZoomRestoreOnRelease,
+              onChanged: preferences.setLongPressZoomRestoreOnRelease,
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: DropdownButtonFormField<ReaderLongPressMoveMode>(
+                key: readingLongPressZoomMoveModeKey,
+                initialValue: preferences.longPressZoomMoveMode,
+                decoration: const InputDecoration(
+                  labelText: '长按放大移动方式',
+                  helperText: '拖动：内容跟随手指移动；聚焦：手指作为放大镜位置。',
+                  border: OutlineInputBorder(),
+                ),
+                items: const <DropdownMenuItem<ReaderLongPressMoveMode>>[
+                  DropdownMenuItem(
+                    value: ReaderLongPressMoveMode.drag,
+                    child: Text('拖动'),
+                  ),
+                  DropdownMenuItem(
+                    value: ReaderLongPressMoveMode.focus,
+                    child: Text('聚焦'),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    preferences.setLongPressZoomMoveMode(value);
+                  }
+                },
+              ),
+            ),
+            ListTile(
+              key: readingLongPressZoomPanRatioKey,
+              title: const Text('长按放大拖动比率'),
+              subtitle: Slider(
+                min: 0.25,
+                max: 3,
+                divisions: 11,
+                label:
+                    '${preferences.longPressZoomPanRatio.toStringAsFixed(2)}x',
+                value: preferences.longPressZoomPanRatio.clamp(0.25, 3).toDouble(),
+                onChanged: preferences.setLongPressZoomPanRatio,
+              ),
+              trailing: Text(
+                '${preferences.longPressZoomPanRatio.toStringAsFixed(2)}x',
+              ),
+            ),
+            SwitchListTile(
+              key: readingLongPressZoomLimitKey,
+              title: const Text('放大拖动限制在可视范围'),
+              subtitle: const Text(
+                '顶部超出上边界时底部不得超出下边界；'
+                '关闭后可自由把页面拖出屏幕。',
+              ),
+              value: preferences.longPressZoomLimitToViewport,
+              onChanged: preferences.setLongPressZoomLimitToViewport,
+            ),
+            SwitchListTile(
+              key: readingZoomDecodeBoostKey,
+              title: const Text('放大时提升解码分辨率'),
+              subtitle: const Text(
+                '仅对可视区域涉及的页面按当前倍率提高解码尺寸，'
+                '不超过原图分辨率。',
+              ),
+              value: preferences.zoomDecodeBoostEnabled,
+              onChanged: preferences.setZoomDecodeBoostEnabled,
             ),
             ListTile(
               key: readingPreviewMaxItemsPerRowKey,

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:domain/domain.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:telemetry/telemetry.dart';
 
@@ -15,6 +16,54 @@ typedef ReaderPageBuilder = Widget? Function(
   PageAsset asset,
   VoidCallback reportFirstFrame,
 );
+
+/// How the zoomed content follows the finger during a long-press zoom.
+enum ReaderLongPressMoveMode {
+  /// Drag: content moves with the finger, scaled by the pan ratio.
+  drag,
+
+  /// Focus: the finger acts as a magnifier position; the content point under
+  /// the finger stays under it while the rest of the page slides past.
+  focus,
+}
+
+/// Where double-tap zoom anchors the magnified result.
+enum ReaderDoubleTapZoomOrigin {
+  /// Center: zoom around the viewport center regardless of the tap point.
+  center,
+
+  /// Snap: zoom around the tap point, then snap the image edge nearest the
+  /// tap flush with that side of the viewport (right half snaps right edge).
+  /// Axes whose scaled image cannot cover the viewport stay centered.
+  snap,
+
+  /// Focus: keep the tapped content point under the tap position.
+  focus,
+}
+
+/// Clamps one translation axis against the actual scaled image rect instead
+/// of the page widget: while the scaled image can cover the view it must
+/// (one edge out means the opposite edge stays in); otherwise the image is
+/// kept centered because panning cannot reveal more of it.
+double _clampAxisForImage(
+  double value, {
+  required double scale,
+  required double viewSize,
+  required double? Function() imageStart,
+  required double? Function() imageEnd,
+}) {
+  final start = imageStart();
+  final end = imageEnd();
+  if (start == null || end == null || !(end > start)) {
+    return value.clamp(viewSize * (1 - scale), 0.0).toDouble();
+  }
+  final scaledStart = scale * start;
+  final scaledEnd = scale * end;
+  if (scaledEnd - scaledStart <= viewSize + precisionErrorTolerance) {
+    return (viewSize - (scaledStart + scaledEnd)) / 2;
+  }
+  return value.clamp(viewSize - scaledEnd, -scaledStart).toDouble();
+}
 
 
 final class _ReaderVerticalScrollPhysics extends ClampingScrollPhysics {
@@ -66,6 +115,15 @@ final class ReaderView extends StatefulWidget {
     this.onTap,
     this.verticalStitch = false,
     this.pageAspectRatios = const <String, double>{},
+    this.zoomStageFirst = 1.5,
+    this.zoomStageSecond = 2.0,
+    this.longPressZoomEnabled = false,
+    this.longPressZoomRestoreOnRelease = true,
+    this.longPressZoomMoveMode = ReaderLongPressMoveMode.drag,
+    this.longPressZoomPanRatio = 1.0,
+    this.longPressZoomLimitToViewport = true,
+    this.doubleTapZoomOrigin = ReaderDoubleTapZoomOrigin.center,
+    this.onZoomScaleChanged,
     super.key,
   });
 
@@ -90,11 +148,46 @@ final class ReaderView extends StatefulWidget {
   /// changing page, download, decode or cache identity.
   final Map<String, double> pageAspectRatios;
 
+  /// Double-tap zoom stages, ascending and > 1. The cycle is
+  /// 1x → [zoomStageFirst] → [zoomStageSecond] → 1x.
+  final double zoomStageFirst;
+  final double zoomStageSecond;
+
+  /// Where double-tap zoom anchors the magnified result.
+  final ReaderDoubleTapZoomOrigin doubleTapZoomOrigin;
+
+  /// Enables the long-press magnifier lens that follows the finger.
+  final bool longPressZoomEnabled;
+
+  /// True (default) animates back to 1x when the long press ends. False keeps
+  /// the zoom after release; double-tap or page change then returns to 1x.
+  final bool longPressZoomRestoreOnRelease;
+
+  /// Long-press zoom movement: drag follows the finger, focus keeps the
+  /// magnified region centered on the finger position.
+  final ReaderLongPressMoveMode longPressZoomMoveMode;
+
+  /// Multiplier between finger travel and zoomed-content travel while dragging
+  /// in [ReaderLongPressMoveMode.drag]. 1.0 follows the zoomed resolution
+  /// exactly; values below 1 dampen small adjustments.
+  final double longPressZoomPanRatio;
+
+  /// When true (default), dragging cannot pull a scaled edge past the opposite
+  /// viewport boundary: if the top goes out above, the bottom stays inside.
+  /// When false, dragging is unconstrained.
+  final bool longPressZoomLimitToViewport;
+
+  /// Reports the settled zoom scale (1x when fully zoomed out) whenever a
+  /// gesture completes or a stage transition finishes. Consumers use it to
+  /// raise decode resolution for the visible region only.
+  final ValueChanged<double>? onZoomScaleChanged;
+
   @override
   State<ReaderView> createState() => _ReaderViewState();
 }
 
-final class _ReaderViewState extends State<ReaderView> {
+final class _ReaderViewState extends State<ReaderView>
+    with TickerProviderStateMixin {
   late PageController _pageController;
   late ScrollController _verticalController;
   late final _ReaderVerticalScrollPhysics _verticalScrollPhysics;
@@ -195,6 +288,23 @@ final class _ReaderViewState extends State<ReaderView> {
   int _verticalCacheScreens = 2;
   bool _verticalInitialCompositionWarmupScheduled = false;
   bool _verticalInitialCompositionPrimed = false;
+  // Strip-level zoom for continuous vertical reading. One uniform matrix
+  // transforms every page together, so stitched seams cannot split under
+  // zoom; page extents and ScrollPosition stay untouched.
+  double _stripScale = 1;
+  Offset _stripOffset = Offset.zero;
+  late final ValueNotifier<Matrix4> _stripTransform =
+      ValueNotifier<Matrix4>(Matrix4.identity());
+  bool _stripPinchActive = false;
+  double? _stripPinchBaseScale;
+  Offset? _stripPinchBaseOffset;
+  double? _stripPinchInitialDistance;
+  Offset? _stripPinchInitialFocal;
+  final Map<int, Offset> _stripPointerPositions = <int, Offset>{};
+  bool _stripLensActive = false;
+  Offset? _stripLensStartViewport;
+  Offset? _stripLensBaseOffset;
+  AnimationController? _stripZoomAnimation;
   static const int _verticalInitialCacheScreens = 6;
   static const int _frameTimingBudgetMicros = 16667;
   static const int _frameTimingMissedVsyncMicros = 20000;
@@ -269,6 +379,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _interaction = Interaction.idle;
       _handledNavigationRevision = widget.controller.navigationRevision;
       _zoomedPage = null;
+      _resetStripZoom();
       _lastReportedVerticalPage = null;
       _lastVerticalVisibleMinIndex = widget.controller.currentIndex;
       _lastVerticalVisibleMaxIndex = widget.controller.currentIndex;
@@ -305,6 +416,10 @@ final class _ReaderViewState extends State<ReaderView> {
         _pendingVerticalLayoutRatios = null;
         _invalidateVerticalGeometryCache();
       } else if (_verticalScrollActive) {
+        // ignore: avoid_print
+        print('DBGW adopt branch inter=' + _interaction.name);
+        // ignore: avoid_print
+        print('DBGW scrollActive branch');
         // Ratios for pages strictly beyond the current viewport cannot change
         // the prefix or extents of anything being painted now. Adopt those
         // decode-ahead facts immediately so they are stable before the page
@@ -316,6 +431,8 @@ final class _ReaderViewState extends State<ReaderView> {
                 ? null
                 : widget.pageAspectRatios;
       } else {
+        // ignore: avoid_print
+        print('DBGW immediate branch active=' + _verticalScrollActive.toString());
         if (!stitchChanged) {
           _preserveVerticalAnchor(
             oldRatios: _verticalLayoutRatios,
@@ -334,6 +451,8 @@ final class _ReaderViewState extends State<ReaderView> {
   void dispose() {
     _detachFrameTimingSource();
     widget.controller.removeListener(_handleControllerCommand);
+    _stripZoomAnimation?.dispose();
+    _stripTransform.dispose();
     _pageController.dispose();
     _verticalController.dispose();
     _verticalKeepAliveCenter.dispose();
@@ -391,9 +510,9 @@ final class _ReaderViewState extends State<ReaderView> {
             final itemCount = stitched
                 ? pageCount
                 : (pageCount == 0 ? 0 : pageCount * 2 - 1);
-            final physics = _zoomedPage == null
-                ? _verticalScrollPhysics
-                : const NeverScrollableScrollPhysics();
+            // Strip zoom is a viewport-space visual layer: scrolling stays
+            // enabled while zoomed so the reader can keep flipping pages
+            // under the magnifier. Pinch/double-tap/lens own zoom changes.
             _scheduleVerticalInitialCompositionWarmup();
             final cacheExtent = _viewport.height > 0
                 ? _viewport.height * _verticalCacheScreens
@@ -403,7 +522,7 @@ final class _ReaderViewState extends State<ReaderView> {
               controller: _verticalController,
               itemCount: itemCount,
               cacheExtent: cacheExtent,
-              physics: physics,
+              physics: _verticalScrollPhysics,
               // In stitched mode adjacent pages share one paint layer. A
               // RepaintBoundary per page lets external texture edges round
               // independently while scrolling and can expose a transient
@@ -434,17 +553,38 @@ final class _ReaderViewState extends State<ReaderView> {
                     key: _verticalPageLayoutKeys[pageIndex],
                     // Exact stitched extents already constrain the page. Avoid
                     // independent hard-clip edges during ordinary scrolling;
-                    // zoom still clips to its page so it cannot cover siblings.
-                    child: stitched && _zoomedPage == null
+                    // strip zoom clips at the viewport, per-page zoom clips to
+                    // its page so it cannot cover siblings.
+                    child: (stitched || !_stripZoomed) && _zoomedPage == null
                         ? page
                         : ClipRect(child: page),
                   ),
                 );
               },
             );
+            final transformed = ClipRect(
+              child: AnimatedBuilder(
+                animation: _stripTransform,
+                builder: (context, _) => Transform(
+                  transform: _stripTransform.value,
+                  alignment: Alignment.topLeft,
+                  child: list,
+                ),
+              ),
+            );
+            // Pinch is tracked with raw pointers instead of a
+            // ScaleGestureRecognizer so single-finger drags always stay with
+            // the list's scroll recognizer.
             return NotificationListener<ScrollNotification>(
               onNotification: _handleVerticalScrollNotification,
-              child: list,
+              child: Listener(
+                behavior: HitTestBehavior.translucent,
+                onPointerDown: _handleStripPointerDown,
+                onPointerMove: _handleStripPointerMove,
+                onPointerUp: _handleStripPointerUp,
+                onPointerCancel: _handleStripPointerCancel,
+                child: transformed,
+              ),
             );
           }
           return NotificationListener<ScrollNotification>(
@@ -466,6 +606,25 @@ final class _ReaderViewState extends State<ReaderView> {
   }
 
   Widget _buildPage(int index) => _pageSlots[index];
+
+  /// Current display ratio (height/width) of a page, from runtime-observed
+  /// ratios first and manifest dimensions as fallback. Used for image-rect
+  /// based boundary constraints; null means the page box is assumed filled.
+  double? _pageAspectRatioFor(int index) {
+    final pages = widget.controller.chapter.pages;
+    if (index < 0 || index >= pages.length) return null;
+    final asset = pages[index];
+    var ratio = widget.pageAspectRatios[asset.assetKey];
+    if (ratio == null) {
+      final width = asset.width?.toDouble();
+      final height = asset.height?.toDouble();
+      if (width != null && height != null && width > 0 && height > 0) {
+        ratio = height / width;
+      }
+    }
+    if (ratio == null || !ratio.isFinite || ratio <= 0) return null;
+    return ratio;
+  }
 
   List<GlobalKey> _createVerticalPageLayoutKeys() => List<GlobalKey>.generate(
         widget.controller.chapter.pages.length,
@@ -493,6 +652,20 @@ final class _ReaderViewState extends State<ReaderView> {
           if (_zoomedPage == next) return;
           setState(() => _zoomedPage = next);
         },
+        zoomStageFirst: widget.zoomStageFirst,
+        zoomStageSecond: widget.zoomStageSecond,
+        longPressZoomEnabled: widget.longPressZoomEnabled,
+        longPressZoomRestoreOnRelease: widget.longPressZoomRestoreOnRelease,
+        longPressZoomMoveMode: widget.longPressZoomMoveMode,
+        longPressZoomPanRatio: widget.longPressZoomPanRatio,
+        longPressZoomLimitToViewport: widget.longPressZoomLimitToViewport,
+        doubleTapZoomOrigin: widget.doubleTapZoomOrigin,
+        pageAspectRatio: () => _pageAspectRatioFor(index),
+        onScaleChanged: widget.onZoomScaleChanged,
+        onStripLensStart: _handleStripLensStartedAt,
+        onStripLensMove: _handleStripLensMovedTo,
+        onStripLensEnd: _handleStripLensFinished,
+        onStripDoubleTap: _handleStripDoubleTappedAt,
       );
     }, growable: false);
   }
@@ -697,6 +870,360 @@ final class _ReaderViewState extends State<ReaderView> {
   }) =>
       ScrollController(initialScrollOffset: initialScrollOffset);
 
+  // ---------------------------------------------------------------------------
+  // Continuous strip zoom. One uniform matrix scales every page together so
+  // stitched seams cannot split; page extents, ScrollPosition and pipeline
+  // demand stay untouched while zoomed.
+  // ---------------------------------------------------------------------------
+
+  bool get _stripZoomed {
+    return _stripScale != 1;
+  }
+
+  Matrix4 get _currentStripMatrix => Matrix4.identity()
+    ..translate(_stripOffset.dx, _stripOffset.dy)
+    ..scale(_stripScale);
+
+  void _applyStripMatrix() {
+    _stripTransform.value = _currentStripMatrix;
+    setState(() {});
+  }
+
+  void _cancelStripAnimation() {
+    _stripZoomAnimation?.stop();
+    _stripZoomAnimation?.dispose();
+    _stripZoomAnimation = null;
+  }
+
+  Offset _clampStripPivot(Offset globalPivot) {
+    final size = _viewport;
+    if (size == Size.zero) return Offset.zero;
+    return Offset(
+      globalPivot.dx.clamp(0.0, size.width).toDouble(),
+      globalPivot.dy.clamp(0.0, size.height).toDouble(),
+    );
+  }
+
+  void _setStripZoom(double scale, Offset pivotGlobal) {
+    final clampedScale =
+        scale.clamp(1.0, math.max(widget.zoomStageSecond, 1.1)).toDouble();
+    final size = _viewport == Size.zero
+        ? const Size(1, 1)
+        : _viewport;
+    if (clampedScale <= 1.001) {
+      _stripScale = 1;
+      _stripOffset = Offset.zero;
+      _applyStripMatrix();
+      return;
+    }
+    final focal = _clampStripPivot(pivotGlobal);
+    // Keep the content point under the pivot fixed: offset' = p - s*(p - o).
+    final dx = focal.dx - clampedScale * (focal.dx - _stripOffset.dx);
+    final dy = focal.dy - clampedScale * (focal.dy - _stripOffset.dy);
+    var offsetX = dx.clamp(size.width * (1 - clampedScale), 0.0).toDouble();
+    var offsetY = dy.clamp(size.height * (1 - clampedScale), 0.0).toDouble();
+    if ((size.width * clampedScale) < size.width + precisionErrorTolerance) {
+      offsetX = (size.width - size.width * clampedScale) / 2;
+    }
+    if ((size.height * clampedScale) <
+        size.height + precisionErrorTolerance) {
+      offsetY = (size.height - size.height * clampedScale) / 2;
+    }
+    _stripScale = clampedScale;
+    _stripOffset = Offset(offsetX, offsetY);
+    _applyStripMatrix();
+  }
+
+  void _animateStripZoom(double targetScale, Offset pivotGlobal) {
+    _cancelStripAnimation();
+    final startScale = _stripScale;
+    final startOffset = _stripOffset;
+    if (targetScale <= 1.001 && startScale <= 1.001) return;
+    final controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    );
+    _stripZoomAnimation = controller;
+    controller.addListener(() {
+      final eased = Curves.easeOutCubic.transform(controller.value);
+      _stripScale = startScale + (targetScale - startScale) * eased;
+      _stripOffset = Offset.lerp(startOffset, Offset.zero, eased)!;
+      _applyStripMatrix();
+    });
+    controller.addStatusListener((status) {
+      if (status != AnimationStatus.completed) return;
+      _setStripZoom(targetScale, pivotGlobal);
+      _notifyZoomSettled();
+    });
+    controller.forward();
+  }
+
+  void _cycleStripZoom(Offset globalPivot) {
+    final first = math.max(1.1, widget.zoomStageFirst);
+    final second = math.max(first, widget.zoomStageSecond);
+    final next = !_stripZoomed
+        ? first
+        : _stripScale >= second - 0.01
+            ? 1.0
+            : second;
+    final local = _viewportLocalFromGlobal(globalPivot);
+    final size = _viewport == Size.zero ? const Size(1, 1) : _viewport;
+    switch (widget.doubleTapZoomOrigin) {
+      case ReaderDoubleTapZoomOrigin.center:
+        _animateStripZoom(next, _clampStripPivot(size.center(Offset.zero)));
+      case ReaderDoubleTapZoomOrigin.snap:
+        // Pivot from the horizontal edge nearest the tap so that edge snaps
+        // flush with that side of the viewport; the vertical anchor keeps
+        // the tap position.
+        final pivotX = local.dx >= size.width / 2 ? size.width : 0.0;
+        _animateStripZoom(next, _clampStripPivot(Offset(pivotX, local.dy)));
+      case ReaderDoubleTapZoomOrigin.focus:
+        _animateStripZoom(next, _clampStripPivot(local));
+    }
+  }
+
+  void _notifyZoomSettled() {
+    widget.onZoomScaleChanged?.call(_stripScale);
+  }
+
+  void _handleStripPointerDown(PointerDownEvent event) {
+    _stripPointerPositions[event.pointer] = event.position;
+    if (_stripPointerPositions.length == 2) {
+      _cancelStripAnimation();
+      final positions =
+          _stripPointerPositions.values.toList(growable: false);
+      _stripPinchActive = true;
+      _stripPinchBaseScale = _stripScale;
+      _stripPinchBaseOffset = _stripOffset;
+      _stripPinchInitialDistance = (positions[0] - positions[1]).distance;
+      _stripPinchInitialFocal = Offset(
+        (positions[0].dx + positions[1].dx) / 2,
+        (positions[0].dy + positions[1].dy) / 2,
+      );
+      setState(() {});
+    }
+  }
+
+  void _handleStripPointerMove(PointerMoveEvent event) {
+    if (!_stripPointerPositions.containsKey(event.pointer)) return;
+    _stripPointerPositions[event.pointer] = event.position;
+    if (_stripPinchActive &&
+        _stripPointerPositions.length >= 2 &&
+        _stripPinchInitialDistance != null &&
+        _stripPinchInitialDistance! > 0) {
+      final positions =
+          _stripPointerPositions.values.toList(growable: false);
+      final distance = (positions[0] - positions[1]).distance;
+      final focal = Offset(
+        (positions[0].dx + positions[1].dx) / 2,
+        (positions[0].dy + positions[1].dy) / 2,
+      );
+      _applyStripPinch(
+        newDistance: distance,
+        newFocal: focal,
+      );
+      return;
+    }
+  }
+
+  void _handleStripPointerUp(PointerUpEvent event) {
+    _stripPointerPositions.remove(event.pointer);
+    if (_stripPinchActive && _stripPointerPositions.length < 2) {
+      _finishStripPinch();
+    }
+  }
+
+  void _handleStripPointerCancel(PointerCancelEvent event) {
+    _stripPointerPositions.remove(event.pointer);
+    if (_stripPinchActive && _stripPointerPositions.length < 2) {
+      _finishStripPinch();
+    }
+  }
+
+  void _applyStripPinch({
+    required double newDistance,
+    required Offset newFocal,
+  }) {
+    if (!_stripPinchActive || _stripPinchBaseScale == null) return;
+    final base = _stripPinchBaseScale!;
+    final baseOffset = _stripPinchBaseOffset ?? Offset.zero;
+    final focalStart = _stripPinchInitialFocal ?? newFocal;
+    final size = _viewport == Size.zero ? const Size(1, 1) : _viewport;
+    final clamped = (base * (newDistance / _stripPinchInitialDistance!))
+        .clamp(1.0, math.max(widget.zoomStageSecond, widget.zoomStageFirst))
+        .toDouble();
+    // The content point under the starting focal stays under the moving
+    // focal while the strip scales.
+    final contentPointDx = (focalStart.dx - baseOffset.dx) / base;
+    final contentPointDy = (focalStart.dy - baseOffset.dy) / base;
+    var dx = (newFocal.dx - contentPointDx * clamped)
+        .clamp(size.width * (1 - clamped), 0.0)
+        .toDouble();
+    var dy = (newFocal.dy - contentPointDy * clamped)
+        .clamp(size.height * (1 - clamped), 0.0)
+        .toDouble();
+    _stripScale = clamped;
+    if (clamped <= 1.001) {
+      _stripOffset = Offset.zero;
+      _stripTransform.value = Matrix4.identity();
+      return;
+    }
+    _stripOffset = Offset(dx, dy);
+    _stripTransform.value = _currentStripMatrix;
+  }
+
+  void _finishStripPinch() {
+    if (!_stripPinchActive) return;
+    _stripPinchActive = false;
+    _stripPinchBaseScale = null;
+    _stripPinchBaseOffset = null;
+    _stripPinchInitialDistance = null;
+    _stripPinchInitialFocal = null;
+    if (!_stripZoomed) {
+      _stripScale = 1;
+      _stripOffset = Offset.zero;
+      _applyStripMatrix();
+      _notifyZoomSettled();
+      return;
+    }
+    if (_stripScale < 1.15) {
+      _animateStripZoom(1.0, _viewport.center(Offset.zero));
+    } else {
+      _setStripZoom(_stripScale, _viewport.center(Offset.zero));
+      _notifyZoomSettled();
+    }
+  }
+
+  void _handleStripDoubleTappedAt(Offset global) {
+    _cycleStripZoom(_viewportLocalFromGlobal(global));
+  }
+
+  Offset _viewportLocalFromGlobal(Offset global) {
+    final box = context.findRenderObject();
+    if (box is RenderBox && box.hasSize) {
+      return box.globalToLocal(global);
+    }
+    return global;
+  }
+
+  void _handleStripLensStartedAt() {
+    final pointer = _stripPointerPositions.values.isEmpty
+        ? null
+        : _stripPointerPositions.values.first;
+    if (pointer == null) return;
+    _handleStripLensStartAt(_viewportLocalFromGlobal(pointer));
+  }
+
+  double get _effectiveStripPanRatio =>
+      widget.longPressZoomPanRatio.isFinite &&
+              widget.longPressZoomPanRatio > 0
+          ? widget.longPressZoomPanRatio.clamp(0.25, 4.0).toDouble()
+          : 1.0;
+
+  /// Horizontal image edges (in viewport coordinates) of the current page,
+  /// or null when the page is assumed to fill the width. Pages are laid out
+  /// full-width; a contain-fit image narrower than the box leaves side bars
+  /// that the boundary constraint must not treat as draggable content.
+  ({double left, double right})? _stripCurrentImageEdges() {
+    final size = _viewport;
+    if (size == Size.zero) return null;
+    final index = widget.controller.currentIndex;
+    final ratio = _pageAspectRatioFor(index);
+    if (ratio == null) return null;
+    final boxHeight = _verticalGeometry().extentAt(index);
+    var imageWidth = size.width;
+    var imageHeight = imageWidth * ratio;
+    if (imageHeight > boxHeight && imageHeight > 0) {
+      imageHeight = boxHeight;
+      imageWidth = imageHeight / ratio;
+    }
+    final left = (size.width - imageWidth) / 2;
+    return (left: left, right: left + imageWidth);
+  }
+
+  /// Keeps a scaled edge from passing the opposite viewport boundary while
+  /// [ReaderView.longPressZoomLimitToViewport] is enabled: if the top leaves
+  /// through the top, the bottom stays inside the bottom. The horizontal axis
+  /// follows the actual current-page image rect, not just the page widget, so
+  /// letterboxed pages stay centered instead of sliding off screen.
+  Offset _clampStripTranslation(Offset translation, double scale) {
+    if (!widget.longPressZoomLimitToViewport) return translation;
+    final size = _viewport == Size.zero ? const Size(1, 1) : _viewport;
+    final dx = _clampAxisForImage(
+      translation.dx,
+      scale: scale,
+      viewSize: size.width,
+      imageStart: () => _stripCurrentImageEdges()?.left,
+      imageEnd: () => _stripCurrentImageEdges()?.right,
+    );
+    final dy = translation.dy
+        .clamp(size.height * (1 - scale), 0.0)
+        .toDouble();
+    return Offset(dx, dy);
+  }
+
+  void _handleStripLensMovedTo(Offset globalPosition) {
+    if (!_stripLensActive || !_stripZoomed) return;
+    final start = _stripLensStartViewport;
+    final base = _stripLensBaseOffset;
+    if (start == null || base == null) return;
+    final local = _viewportLocalFromGlobal(globalPosition);
+    final scale = _stripScale;
+    final Offset translation;
+    switch (widget.longPressZoomMoveMode) {
+      case ReaderLongPressMoveMode.drag:
+        // Content follows the finger relative to the lens-entry state, scaled
+        // by the configured ratio against the zoomed resolution.
+        translation = base + (local - start) * _effectiveStripPanRatio;
+      case ReaderLongPressMoveMode.focus:
+        // The content point under the finger stays under it: t = p * (1 - s).
+        translation = Offset(
+          local.dx * (1 - scale),
+          local.dy * (1 - scale),
+        );
+    }
+    _stripOffset = _clampStripTranslation(translation, scale);
+    _applyStripMatrix();
+  }
+
+  void _handleStripLensFinished() {
+    if (!_stripLensActive) return;
+    _stripLensActive = false;
+    _stripLensStartViewport = null;
+    _stripLensBaseOffset = null;
+    // Continuous mode keeps the strip zoom after release: scrolling stays
+    // enabled under the magnifier and there is no auto restore. Double-tap
+    // cycles back to 1x; pinching below the exit threshold also resets.
+    _notifyZoomSettled();
+  }
+
+  void _handleStripLensStartAt(Offset viewportLocal) {
+    _cancelStripAnimation();
+    _stripLensActive = true;
+    final pivot = _clampStripPivot(viewportLocal);
+    _stripLensStartViewport = pivot;
+    _setStripZoom(
+      math.max(widget.zoomStageFirst, 2.0),
+      pivot,
+    );
+    _stripLensBaseOffset = _stripOffset;
+  }
+
+  void _resetStripZoom() {
+    _cancelStripAnimation();
+    if (!_stripLensActive && _stripScale == 1 && _stripOffset == Offset.zero) {
+      return;
+    }
+    _stripLensActive = false;
+    _stripLensStartViewport = null;
+    _stripLensBaseOffset = null;
+    _stripScale = 1;
+    _stripOffset = Offset.zero;
+    _applyStripMatrix();
+  }
+
+
+
   ReaderVerticalGeometry _verticalGeometry({
     Map<String, double>? ratios,
     bool? stitch,
@@ -854,6 +1381,7 @@ final class _ReaderViewState extends State<ReaderView> {
       _flushFrameTimingSummary();
       _lastDirection = controller.direction;
       _zoomedPage = null;
+      _resetStripZoom();
       _verticalKeepAliveCenter.value = controller.currentIndex;
       _resetVerticalCompositionCache();
       rebuildLayout = true;
@@ -910,6 +1438,8 @@ final class _ReaderViewState extends State<ReaderView> {
           ? Interaction.scrubbing
           : Interaction.jumping;
       _zoomedPage = null;
+      // Strip zoom intentionally survives page jumps: scrolling stays
+      // enabled while zoomed, so navigation must not reset it either.
       final maxExtent = _verticalController.position.maxScrollExtent;
       _verticalController.jumpTo(
         _verticalOffsetFor(requested).clamp(0.0, maxExtent).toDouble(),
@@ -2174,7 +2704,21 @@ final class _ReaderPageShell extends StatefulWidget {
     required this.pageBuilder,
     required this.demandRevision,
     required this.onZoomChanged,
+    required this.zoomStageFirst,
+    required this.zoomStageSecond,
+    required this.longPressZoomEnabled,
+    required this.longPressZoomRestoreOnRelease,
+    required this.longPressZoomMoveMode,
+    required this.longPressZoomPanRatio,
+    required this.longPressZoomLimitToViewport,
+    required this.doubleTapZoomOrigin,
+    required this.pageAspectRatio,
     this.onTap,
+    this.onScaleChanged,
+    this.onStripLensStart,
+    this.onStripLensMove,
+    this.onStripLensEnd,
+    this.onStripDoubleTap,
     super.key,
   });
 
@@ -2187,7 +2731,28 @@ final class _ReaderPageShell extends StatefulWidget {
   final ReaderPageBuilder? pageBuilder;
   final int Function()? demandRevision;
   final ValueChanged<bool> onZoomChanged;
+  final double zoomStageFirst;
+  final double zoomStageSecond;
+  final bool longPressZoomEnabled;
+  final bool longPressZoomRestoreOnRelease;
+  final ReaderLongPressMoveMode longPressZoomMoveMode;
+  final double longPressZoomPanRatio;
+  final bool longPressZoomLimitToViewport;
+
+  /// Where double-tap zoom anchors the magnified result.
+  final ReaderDoubleTapZoomOrigin doubleTapZoomOrigin;
+
+  /// Resolves this page's current display ratio (height/width) for the
+  /// image-rect based boundary constraints.
+  final double? Function() pageAspectRatio;
   final VoidCallback? onTap;
+  final ValueChanged<double>? onScaleChanged;
+  final VoidCallback? onStripLensStart;
+
+  /// Receives the raw global pointer position while the strip lens is active.
+  final void Function(Offset globalPosition)? onStripLensMove;
+  final VoidCallback? onStripLensEnd;
+  final void Function(Offset globalPosition)? onStripDoubleTap;
 
   @override
   State<_ReaderPageShell> createState() => _ReaderPageShellState();
@@ -2293,6 +2858,22 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
       clock: widget.clock,
       onTap: widget.onTap,
       onZoomChanged: widget.onZoomChanged,
+      interactive:
+          widget.controller.direction != ReadingDirection.vertical,
+      zoomStageFirst: widget.zoomStageFirst,
+      zoomStageSecond: widget.zoomStageSecond,
+      longPressZoomEnabled: widget.longPressZoomEnabled,
+      longPressZoomRestoreOnRelease: widget.longPressZoomRestoreOnRelease,
+      longPressZoomMoveMode: widget.longPressZoomMoveMode,
+      longPressZoomPanRatio: widget.longPressZoomPanRatio,
+      longPressZoomLimitToViewport: widget.longPressZoomLimitToViewport,
+      doubleTapZoomOrigin: widget.doubleTapZoomOrigin,
+      pageAspectRatio: widget.pageAspectRatio,
+      onScaleChanged: widget.onScaleChanged,
+      onStripLensStart: widget.onStripLensStart,
+      onStripLensMove: widget.onStripLensMove,
+      onStripLensEnd: widget.onStripLensEnd,
+      onStripDoubleTap: widget.onStripDoubleTap,
       child: _ReaderPageHost(
         key: ValueKey<String>(
           'reader-page-host:${widget.asset.assetKey}',
@@ -2321,6 +2902,21 @@ final class _ZoomableReaderPage extends StatefulWidget {
     required this.clock,
     required this.onZoomChanged,
     this.onTap,
+    this.interactive = true,
+    this.zoomStageFirst = 1.5,
+    this.zoomStageSecond = 2.0,
+    this.longPressZoomEnabled = false,
+    this.longPressZoomRestoreOnRelease = true,
+    this.longPressZoomMoveMode = ReaderLongPressMoveMode.drag,
+    this.longPressZoomPanRatio = 1.0,
+    this.longPressZoomLimitToViewport = true,
+    this.doubleTapZoomOrigin = ReaderDoubleTapZoomOrigin.center,
+    this.pageAspectRatio,
+    this.onScaleChanged,
+    this.onStripLensStart,
+    this.onStripLensMove,
+    this.onStripLensEnd,
+    this.onStripDoubleTap,
     super.key,
   });
 
@@ -2330,13 +2926,57 @@ final class _ZoomableReaderPage extends StatefulWidget {
   final ValueChanged<bool> onZoomChanged;
   final VoidCallback? onTap;
 
+  /// False inside continuous strips where the whole-strip zoom owns all
+  /// magnification gestures; the page only keeps tap-to-toggle-controls.
+  final bool interactive;
+  final double zoomStageFirst;
+  final double zoomStageSecond;
+  final bool longPressZoomEnabled;
+
+  /// True (default) restores 1x when the long press ends; false keeps the
+  /// zoom until a double-tap, page change or reset.
+  final bool longPressZoomRestoreOnRelease;
+
+  /// Long-press zoom movement: drag follows the finger, focus keeps the
+  /// magnified region centered on the finger.
+  final ReaderLongPressMoveMode longPressZoomMoveMode;
+
+  /// Finger-to-content travel multiplier for [ReaderLongPressMoveMode.drag].
+  final double longPressZoomPanRatio;
+
+  /// When true, dragging keeps the scaled content covering the viewport.
+  final bool longPressZoomLimitToViewport;
+
+  /// Where double-tap zoom anchors the magnified result.
+  final ReaderDoubleTapZoomOrigin doubleTapZoomOrigin;
+
+  /// Resolves this page's current display ratio (height/width) for the
+  /// image-rect based boundary constraints.
+  final double? Function()? pageAspectRatio;
+  final ValueChanged<double>? onScaleChanged;
+
+  /// Strip-mode lens hooks (continuous reading). The page drives them from
+  /// its own raw-pointer timer so no LongPress recognizer can compete with
+  /// list scrolling. The move hook receives the raw global pointer position.
+  final VoidCallback? onStripLensStart;
+  final void Function(Offset globalPosition)? onStripLensMove;
+  final VoidCallback? onStripLensEnd;
+  final void Function(Offset globalPosition)? onStripDoubleTap;
+
   @override
   State<_ZoomableReaderPage> createState() => _ZoomableReaderPageState();
 }
 
-final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
+final class _ZoomableReaderPageState extends State<_ZoomableReaderPage>
+    with TickerProviderStateMixin {
   late final TransformationController _transformation;
   bool _zoomed = false;
+  int _stageIndex = -1;
+  bool _lensActive = false;
+  Offset? _lensBaseTranslation;
+  bool _stripLensCandidate = false;
+  Timer? _stripLensTimer;
+  AnimationController? _transition;
   int? _pointer;
   Offset? _pointerDown;
   bool _tapCandidate = false;
@@ -2359,27 +2999,48 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
       widget.active.addListener(_handleActiveChanged);
       _handleActiveChanged();
     }
+    if (!widget.interactive && oldWidget.interactive) {
+      _resetZoom();
+    }
   }
 
   @override
   void dispose() {
     widget.active.removeListener(_handleActiveChanged);
+    _transition?.dispose();
     _singleTapTimer?.cancel();
+    _stripLensTimer?.cancel();
     _transformation.dispose();
     super.dispose();
   }
 
   void _handleActiveChanged() {
     if (widget.active.value || !_zoomed) return;
+    _resetZoom();
+  }
+
+  void _resetZoom() {
+    _transition?.stop();
+    _lensActive = false;
+    _lensBaseTranslation = null;
+    _stageIndex = -1;
     _singleTapTimer?.cancel();
     _singleTapTimer = null;
     _lastTapAtMicros = null;
     _lastTapPosition = null;
     _transformation.value = Matrix4.identity();
-    setState(() => _zoomed = false);
+    if (_zoomed) {
+      setState(() => _zoomed = false);
+    } else {
+      _reportScale(1);
+    }
   }
 
   double get _scale => _transformation.value.getMaxScaleOnAxis();
+
+  void _reportScale(double value) {
+    widget.onScaleChanged?.call(value);
+  }
 
   void _publishZoom() {
     final zoomed = _scale > 1.01;
@@ -2390,19 +3051,262 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
     widget.onZoomChanged(zoomed);
   }
 
-  void _toggleZoom(Offset position) {
-    if (_zoomed) {
-      _transformation.value = Matrix4.identity();
-    } else {
-      const scale = 2.25;
-      _transformation.value = Matrix4.identity()
-        ..translate(
-          -position.dx * (scale - 1),
-          -position.dy * (scale - 1),
-        )
-        ..scale(scale);
+  Size get _boxSize =>
+      context.size ?? MediaQuery.of(context).size;
+
+  /// Actual displayed image rect within the page box under contain fit, or
+  /// null when the ratio is unknown (page assumed filled). Boundary
+  /// constraints follow this rect so letterboxed pages behave correctly.
+  Rect? _imageRect(Size box) {
+    final ratio = widget.pageAspectRatio?.call();
+    if (ratio == null || !ratio.isFinite || ratio <= 0 || box.isEmpty) {
+      return null;
     }
+    var width = box.width;
+    var height = width * ratio;
+    if (height > box.height && height > 0) {
+      height = box.height;
+      width = height / ratio;
+    }
+    return Rect.fromLTWH(
+      (box.width - width) / 2,
+      (box.height - height) / 2,
+      width,
+      height,
+    );
+  }
+
+  void _cycleStages(Offset position) {
+    if (!widget.interactive) return;
+    final nextIndex = _stageIndex >= 1 ? -1 : _stageIndex + 1;
+    final target = nextIndex < 0
+        ? Matrix4.identity()
+        : _stageMatrix(nextIndex, position);
+    final settledScale =
+        nextIndex < 0 ? 1.0 : target.getMaxScaleOnAxis();
+    _transition?.stop();
+    _transformation.value = target;
+    _stageIndex = nextIndex;
     _publishZoom();
+    _reportScale(settledScale);
+  }
+
+  Matrix4 _stageMatrix(int index, Offset tapLocal) {
+    final scale = switch (index) {
+      0 => widget.zoomStageFirst,
+      1 => math.max(widget.zoomStageFirst, widget.zoomStageSecond),
+      _ => 1.0,
+    };
+    if (scale <= 1.001) {
+      return Matrix4.identity();
+    }
+    final size = _boxSize;
+    final pivot = switch (widget.doubleTapZoomOrigin) {
+      ReaderDoubleTapZoomOrigin.center =>
+        Offset(size.width / 2, size.height / 2),
+      _ => tapLocal,
+    };
+    var translation = Offset(
+      pivot.dx * (1 - scale),
+      pivot.dy * (1 - scale),
+    );
+    if (widget.doubleTapZoomOrigin == ReaderDoubleTapZoomOrigin.snap) {
+      final rect = _imageRect(size);
+      if (rect != null) {
+        double snapAxis({
+          required double contentStart,
+          required double contentEnd,
+          required double viewSize,
+          required double tapPosition,
+        }) {
+          if (contentEnd - contentStart <=
+              viewSize + precisionErrorTolerance) {
+            // The scaled image cannot cover this axis; center it instead.
+            return (viewSize - (contentStart + contentEnd)) / 2;
+          }
+          return tapPosition >= viewSize / 2
+              ? viewSize - contentEnd
+              : -contentStart;
+        }
+        translation = Offset(
+          snapAxis(
+            contentStart: scale * rect.left,
+            contentEnd: scale * rect.right,
+            viewSize: size.width,
+            tapPosition: tapLocal.dx,
+          ),
+          snapAxis(
+            contentStart: scale * rect.top,
+            contentEnd: scale * rect.bottom,
+            viewSize: size.height,
+            tapPosition: tapLocal.dy,
+          ),
+        );
+      }
+    }
+    translation = _limitTranslation(scale, translation);
+    return Matrix4.identity()
+      ..translate(translation.dx, translation.dy)
+      ..scale(scale);
+  }
+
+  void _animateTo(Matrix4 target, {required VoidCallback? onCompleted}) {
+    _transition?.stop();
+    _transition?.dispose();
+    final start = _transformation.value.clone();
+    final controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    );
+    _transition = controller;
+    controller.addListener(() {
+      final eased = Curves.easeOutCubic.transform(controller.value);
+      final from = start.storage;
+      final to = target.storage;
+      final mixed = Float64List(16);
+      for (var index = 0; index < 16; index++) {
+        mixed[index] = from[index] + (to[index] - from[index]) * eased;
+      }
+      _transformation.value = Matrix4.fromFloat64List(mixed);
+    });
+    controller.addStatusListener((status) {
+      if (status != AnimationStatus.completed) return;
+      // Re-evaluate the zoom state against the settled matrix so the
+      // InteractiveViewer unmounts and page scrolling resumes after a
+      // restore-on-release magnifier.
+      _publishZoom();
+      onCompleted?.call();
+    });
+    controller.forward();
+  }
+
+  Offset _clampTranslation(double scale, Offset translation) {
+    final size = _boxSize;
+    final maxX = size.width * (scale - 1);
+    final maxY = size.height * (scale - 1);
+    return Offset(
+      translation.dx.clamp(-maxX, 0.0).toDouble(),
+      translation.dy.clamp(-maxY, 0.0).toDouble(),
+    );
+  }
+
+  void _handleLensStart(LongPressStartDetails details) {
+    if (!widget.interactive || !widget.longPressZoomEnabled || _zoomed) {
+      return;
+    }
+    _cancelPendingTap();
+    final scale = math.max(widget.zoomStageSecond, widget.zoomStageFirst);
+    _lensActive = true;
+    final entry = Offset(
+      details.localPosition.dx * (1 - scale),
+      details.localPosition.dy * (1 - scale),
+    );
+    final clamped = _limitTranslation(scale, entry);
+    _transformation.value = Matrix4.identity()
+      ..translate(clamped.dx, clamped.dy)
+      ..scale(scale);
+    _lensBaseTranslation = Offset(
+      _transformation.value.storage[12],
+      _transformation.value.storage[13],
+    );
+    _publishZoom();
+    _reportScale(_scale);
+  }
+
+  double get _effectiveLensPanRatio =>
+      widget.longPressZoomPanRatio.isFinite &&
+              widget.longPressZoomPanRatio > 0
+          ? widget.longPressZoomPanRatio.clamp(0.25, 4.0).toDouble()
+          : 1.0;
+
+  /// Boundary constraint against the actual displayed image rect (contain
+  /// fit), not just the page widget: a scaled edge leaving through one side
+  /// keeps the opposite side inside; an axis the scaled image cannot cover
+  /// stays centered.
+  Offset _limitTranslation(double scale, Offset translation) {
+    if (!widget.longPressZoomLimitToViewport) return translation;
+    final size = _boxSize;
+    final rect = _imageRect(size);
+    if (rect == null) return _clampTranslation(scale, translation);
+    return Offset(
+      _clampAxisForImage(
+        translation.dx,
+        scale: scale,
+        viewSize: size.width,
+        imageStart: () => rect.left,
+        imageEnd: () => rect.right,
+      ),
+      _clampAxisForImage(
+        translation.dy,
+        scale: scale,
+        viewSize: size.height,
+        imageStart: () => rect.top,
+        imageEnd: () => rect.bottom,
+      ),
+    );
+  }
+
+  void _handleLensMove(LongPressMoveUpdateDetails details) {
+    if (!_lensActive) return;
+    final scale = math.max(math.max(
+      widget.zoomStageSecond,
+      widget.zoomStageFirst,
+    ), 1.01);
+    final base = _lensBaseTranslation ?? Offset.zero;
+    final Offset translation;
+    switch (widget.longPressZoomMoveMode) {
+      case ReaderLongPressMoveMode.drag:
+        // offsetFromOrigin is cumulative from the long-press origin. Applying
+        // it to the entry translation exactly once makes content follow the
+        // finger at the zoomed resolution; re-adding it per update was the
+        // source of the runaway drag.
+        translation = base + details.offsetFromOrigin * _effectiveLensPanRatio;
+      case ReaderLongPressMoveMode.focus:
+        // The content point under the finger stays under it: t = p * (1 - s).
+        final position = details.localPosition;
+        translation = Offset(
+          position.dx * (1 - scale),
+          position.dy * (1 - scale),
+        );
+    }
+    final clamped = _limitTranslation(scale, translation);
+    _transformation.value = Matrix4.identity()
+      ..translate(clamped.dx, clamped.dy)
+      ..scale(scale);
+  }
+
+  void _handleLensEnd(LongPressEndDetails details) {
+    if (!widget.interactive) return;
+    _finishPagedLens();
+  }
+
+  /// Settles the paged magnifier. Owned by the long-press recognizer (end or
+  /// cancel); the outer raw-pointer handlers must not clear [_lensActive]
+  /// first, or restore/persist would never run.
+  void _finishPagedLens() {
+    if (!_lensActive) return;
+    _lensActive = false;
+    _lensBaseTranslation = null;
+    if (!widget.longPressZoomRestoreOnRelease) {
+      // Persistent magnifier: keep the zoom after release. The next double-tap
+      // cycles back to 1x and page changes reset via _resetZoom.
+      _stageIndex = 1;
+      _reportScale(_scale);
+      _publishZoom();
+      return;
+    }
+    _animateTo(Matrix4.identity(), onCompleted: () {
+      _stageIndex = -1;
+      _reportScale(1);
+    });
+    _publishZoom();
+  }
+
+  void _cancelPendingTap() {
+    _singleTapTimer?.cancel();
+    _singleTapTimer = null;
+    _lastTapAtMicros = null;
+    _lastTapPosition = null;
   }
 
   void _handlePointerDown(PointerDownEvent event) {
@@ -2413,20 +3317,62 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
     _pointer = event.pointer;
     _pointerDown = event.localPosition;
     _tapCandidate = true;
+    if (!widget.interactive &&
+        widget.longPressZoomEnabled &&
+        widget.onStripLensStart != null) {
+      _stripLensCandidate = true;
+      _stripLensTimer?.cancel();
+      _stripLensTimer = Timer(const Duration(milliseconds: 420), () {
+        _stripLensTimer = null;
+        if (!_stripLensCandidate ||
+            _pointer != event.pointer ||
+            _tapCandidate == false) {
+          return;
+        }
+        _lensActive = true;
+        widget.onStripLensStart?.call();
+      });
+    }
   }
 
   void _handlePointerMove(PointerMoveEvent event) {
-    if (event.pointer != _pointer || !_tapCandidate) {
+    if (event.pointer != _pointer) {
+      return;
+    }
+    if (_lensActive) {
+      // Strip lens follows raw pointer positions for the whole gesture; the
+      // paged lens is owned by the long-press recognizer's move updates.
+      if (!widget.interactive) {
+        widget.onStripLensMove?.call(event.position);
+      }
       return;
     }
     final origin = _pointerDown;
     if (origin == null || (event.localPosition - origin).distance > 12) {
       _tapCandidate = false;
     }
+    if (!_tapCandidate) {
+      return;
+    }
+    if (_stripLensCandidate &&
+        (event.localPosition - (origin ?? event.localPosition)).distance >
+            kTouchSlop) {
+      _stripLensCandidate = false;
+      _stripLensTimer?.cancel();
+      _stripLensTimer = null;
+    }
   }
 
   void _handlePointerCancel(PointerCancelEvent event) {
     if (event.pointer == _pointer) {
+      if (_lensActive && !widget.interactive) {
+        _lensActive = false;
+        _lensBaseTranslation = null;
+        widget.onStripLensEnd?.call();
+      }
+      _stripLensCandidate = false;
+      _stripLensTimer?.cancel();
+      _stripLensTimer = null;
       _clearPointer();
     }
   }
@@ -2437,6 +3383,23 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
     }
     final candidate = _tapCandidate;
     final position = event.localPosition;
+    if (_lensActive) {
+      // Strip mode ends the lens here; interactive mode lets the long-press
+      // recognizer's onLongPressEnd/onLongPressCancel own the settle.
+      if (!widget.interactive) {
+        _lensActive = false;
+        _lensBaseTranslation = null;
+        _stripLensCandidate = false;
+        _stripLensTimer?.cancel();
+        _stripLensTimer = null;
+        widget.onStripLensEnd?.call();
+      }
+      _clearPointer();
+      return;
+    }
+    _stripLensCandidate = false;
+    _stripLensTimer?.cancel();
+    _stripLensTimer = null;
     _clearPointer();
     if (!candidate) {
       return;
@@ -2453,7 +3416,15 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
       _singleTapTimer = null;
       _lastTapAtMicros = null;
       _lastTapPosition = null;
-      _toggleZoom(position);
+      if (!widget.interactive && widget.onStripDoubleTap != null) {
+        final box = context.findRenderObject();
+        final global = box is RenderBox
+            ? box.localToGlobal(position)
+            : position;
+        widget.onStripDoubleTap?.call(global);
+        return;
+      }
+      _cycleStages(position);
       return;
     }
     _lastTapAtMicros = nowMicros;
@@ -2476,29 +3447,58 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage> {
   @override
   Widget build(BuildContext context) {
     final child = SizedBox.expand(child: widget.child);
+    if (!widget.interactive) {
+      return Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: _handlePointerDown,
+        onPointerMove: _handlePointerMove,
+        onPointerUp: _handlePointerUp,
+        onPointerCancel: _handlePointerCancel,
+        child: child,
+      );
+    }
     return Listener(
       behavior: HitTestBehavior.opaque,
       onPointerDown: _handlePointerDown,
       onPointerMove: _handlePointerMove,
       onPointerUp: _handlePointerUp,
       onPointerCancel: _handlePointerCancel,
-      // At scale 1 the page content must not install a scale recognizer in the
-      // horizontal gesture arena. Remote image widgets otherwise win the drag
-      // before PageView can turn it into navigation. Double tap enters the
-      // explicit zoom state; only then does InteractiveViewer own pan/scale.
-      child: _zoomed
-          ? InteractiveViewer(
-              transformationController: _transformation,
-              minScale: 1,
-              maxScale: 5,
-              panEnabled: true,
-              scaleEnabled: true,
-              clipBehavior: Clip.hardEdge,
-              onInteractionUpdate: (_) => _publishZoom(),
-              onInteractionEnd: (_) => _publishZoom(),
-              child: child,
-            )
-          : child,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onLongPressStart: widget.longPressZoomEnabled
+            ? _handleLensStart
+            : null,
+        onLongPressMoveUpdate:
+            widget.longPressZoomEnabled ? _handleLensMove : null,
+        onLongPressEnd: widget.longPressZoomEnabled ? _handleLensEnd : null,
+        onLongPressCancel:
+            widget.longPressZoomEnabled ? _finishPagedLens : null,
+        // At scale 1 the page content must not install a scale recognizer in
+        // the horizontal gesture arena. Remote image widgets otherwise win the
+        // drag before PageView can turn it into navigation. Double tap cycles
+        // the configured zoom stages; only when zoomed does InteractiveViewer
+        // own pan/scale.
+        child: _zoomed
+            ? InteractiveViewer(
+                transformationController: _transformation,
+                minScale: 1,
+                maxScale: math.max(
+                  widget.zoomStageSecond,
+                  widget.zoomStageFirst,
+                ),
+                panEnabled: true,
+                scaleEnabled: true,
+                clipBehavior: Clip.hardEdge,
+                onInteractionUpdate: (_) => _publishZoom(),
+                onInteractionEnd: (_) {
+                  _publishZoom();
+                  _stageIndex = -1;
+                  _reportScale(_scale);
+                },
+                child: child,
+              )
+            : child,
+      ),
     );
   }
 }

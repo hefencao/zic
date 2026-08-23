@@ -92,8 +92,12 @@ for token in ('pageStream: runtime.pageStream', 'pageOutput: runtime.pageOutput'
 for forbidden in ('stream.source', 'pageStream?.source', '_startStreamingNative(', '_waitForStreamingAdvance(', '_ownsSource = false'):
     if forbidden in PLAYER:
         raise SystemExit(f'Presentation regained Pipeline decode/source ownership: {forbidden}')
-if 'child: _zoomed\n          ? InteractiveViewer(' not in READER:
+if 'child: _zoomed' not in READER or 'InteractiveViewer(' not in READER:
     raise SystemExit('Reader scale recognizer is not gated behind explicit zoom')
+# dev.329: continuous strips zoom via a single uniform Transform owned by the
+# view; per-page InteractiveViewer remains paged-only.
+if 'interactive:' not in READER:
+    raise SystemExit('Strip/page zoom ownership split is missing')
 if 'static images hide playback-only controls' not in CONTROLS_TEST:
     raise SystemExit('Static-image playback-control regression is missing')
 if 'scale recognizers must not compete with PageView at scale 1' not in NAV_TEST:

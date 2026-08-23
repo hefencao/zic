@@ -99,23 +99,19 @@ final class ImportedImageChapterScreen extends StatelessWidget {
       final uri = chapter.pages[index].uri;
       final loader = byteLoaders[page.sourceId];
       final responseLoader = responseLoaders[page.sourceId];
-      if (loader != null || responseLoader != null || uri.scheme == 'content') {
-        sources[uri] = LoaderTransportSource(
-          revision: '${record.sourceRevision}:$index',
-          loadBytes: loader,
-          openControlledResponse: responseLoader,
-          openResponse: responseLoader == null &&
-                  loader == null &&
-                  uri.scheme == 'content'
-              ? ({ByteRange? range, Validators? validators}) =>
-                  _openLocalMediaResponse(
-                    page.sourceId,
-                    range: range,
-                    validators: validators,
-                  )
-              : null,
-        );
-      }
+      sources[uri] = LoaderTransportSource(
+        revision: '${record.sourceRevision}:$index',
+        loadBytes: loader,
+        openControlledResponse: responseLoader,
+        openResponse: responseLoader == null && loader == null
+            ? ({ByteRange? range, Validators? validators}) =>
+                _openLocalMediaResponse(
+                  page.sourceId,
+                  range: range,
+                  validators: validators,
+                )
+            : null,
+      );
     }
 
     return PipelineReaderSessionHost(

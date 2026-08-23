@@ -29,3 +29,33 @@ Widget readerVerticalStitchOverrideField({
         },
       ),
     );
+
+Widget readerVerticalLongPressZoomField({
+  required Key key,
+  required bool? value,
+  required ValueChanged<bool?> onChanged,
+}) =>
+    DropdownButtonFormField<String>(
+      key: key,
+      value: switch (value) {
+        true => 'on',
+        false => 'off',
+        null => 'inherit',
+      },
+      decoration: const InputDecoration(
+        labelText: '纵向长按放大',
+        helperText: '连续模式默认关闭；可仅为本漫画启用。',
+      ),
+      items: const <DropdownMenuItem<String>>[
+        DropdownMenuItem(value: 'inherit', child: Text('默认（关闭）')),
+        DropdownMenuItem(value: 'on', child: Text('启用长按放大')),
+        DropdownMenuItem(value: 'off', child: Text('停用')),
+      ],
+      onChanged: (next) => onChanged(
+        switch (next) {
+          'on' => true,
+          'off' => false,
+          _ => null,
+        },
+      ),
+    );

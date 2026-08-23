@@ -16,6 +16,15 @@ extension ReaderPreferenceProjection on AppPreferencesController {
       globalAdaptiveEnabled: adaptiveReaderEnabled,
       comicAdaptiveEnabled: comic.adaptiveEnabled,
       adaptiveProfile: comic.adaptiveProfile,
+      zoomStages: <double>[defaultZoomStageFirst, defaultZoomStageSecond],
+      defaultLongPressZoom: longPressZoomEnabled,
+      verticalLongPressZoomOverride: comic.verticalLongPressZoom,
+      longPressZoomRestoreOnRelease: longPressZoomRestoreOnRelease,
+      longPressZoomMoveMode: longPressZoomMoveMode,
+      longPressZoomPanRatio: longPressZoomPanRatio,
+      longPressZoomLimitToViewport: longPressZoomLimitToViewport,
+      doubleTapZoomOrigin: doubleTapZoomOrigin,
+      zoomDecodeBoost: zoomDecodeBoostEnabled,
     );
   }
 
@@ -28,6 +37,7 @@ extension ReaderPreferenceProjection on AppPreferencesController {
       enabled: settings.comicSpecificEnabled,
       directionOverride: settings.directionOverride,
       verticalStitchOverride: settings.verticalStitchOverride,
+      verticalLongPressZoom: settings.verticalLongPressZoomOverride,
       adaptiveEnabled: settings.comicAdaptiveEnabled,
       adaptiveProfile: settings.adaptiveProfile,
     );

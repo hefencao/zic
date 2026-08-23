@@ -27,8 +27,10 @@ final class EphemeralCacheWorkspace {
 
   Future<void> dispose() async {
     final root = Directory(rootPath);
-    if (await root.exists()) {
-      await root.delete(recursive: true);
+    if (root.existsSync()) {
+      try {
+        root.deleteSync(recursive: true);
+      } catch (_) {}
     }
   }
 }

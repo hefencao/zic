@@ -388,7 +388,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     // This barrier removes only this Reader/command consumer from the
     // composition physical owner. If an active task captured this Reader's
     // transport, dispose waits for that task to physically exit before the
-    // Reader may close the transport. Other consumers are not cancelled.
     await _downloadTransfer.dispose();
     final ownedOwner = _ownedDownloadTransferOwner;
     _ownedDownloadTransferOwner = null;

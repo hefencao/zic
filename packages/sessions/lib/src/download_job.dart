@@ -392,7 +392,7 @@ final class DownloadJob {
           residentOffset += chunk.length;
           networkCursor += chunk.length;
           session.advanceNetworkAttemptProgress(networkCursor);
-          await Future<void>.delayed(Duration.zero);
+          await Future<void>.value();
         }
         session.sealResidentImmutableIngress();
         return;
@@ -675,7 +675,7 @@ final class DownloadJob {
             ? const <int>[]
             : chunk.sublist(take);
       }
-      await Future<void>.delayed(Duration.zero);
+      await Future<void>.value();
     }
     return const <int>[];
   }
@@ -754,7 +754,7 @@ final class DownloadJob {
             ? const <int>[]
             : chunk.sublist(take);
       }
-      await Future<void>.delayed(Duration.zero);
+      await Future<void>.value();
     }
     return const <int>[];
   }

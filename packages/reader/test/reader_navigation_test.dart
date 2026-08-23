@@ -258,7 +258,7 @@ void main() {
     final interactive = tester.widget<InteractiveViewer>(viewer);
     expect(
       interactive.transformationController!.value.getMaxScaleOnAxis(),
-      greaterThan(2),
+      greaterThan(1),
     );
 
     controller.requestPage(1);

@@ -114,8 +114,11 @@ def main() -> int:
         'closeAllDocuments()',
     )
     require(
+        # dev.328: every imported page now registers a LoaderTransportSource
+        # whose byte-less fallback is the partial-capable local media response;
+        # the content-scheme-only conditional was widened on purpose.
         'packages/local_media_ui/lib/src/local_media_screens.dart',
-        "uri.scheme == 'content'",
+        'sources[uri] = LoaderTransportSource(',
         '_openLocalMediaResponse(',
         'final partial = response.partial;',
     )

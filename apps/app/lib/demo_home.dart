@@ -291,10 +291,27 @@ final class _DemoHomeState extends State<DemoHome> {
       waitForPrimaryFrame: () => WidgetsBinding.instance.endOfFrame,
       startupTelemetry: widget.startupTelemetry,
     )..addListener(_handleLibrarySessionChanged);
+    // Always armed so external-source cover requests stay pending (never
+    // fail source-unavailable) while the deferred plugin host is still
+    // opening; it completes once sources are published or refresh gives up.
+    _initialExternalSourcesPublished = Completer<void>();
     final externalPlugins = widget.externalPlugins;
     if (externalPlugins != null) {
-      _initialExternalSourcesPublished = Completer<void>();
       unawaited(_refreshExternalSourcesWhenReady(externalPlugins));
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant DemoHome oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Startup mounts home on core services before the deferred external
+    // plugin host finishes opening. Adopt the late controller exactly once so
+    // external sources publish without rebuilding the whole shelf subtree.
+    final plugins = widget.externalPlugins;
+    if (oldWidget.externalPlugins == null &&
+        plugins != null &&
+        !identical(oldWidget.externalPlugins, plugins)) {
+      unawaited(_refreshExternalSourcesWhenReady(plugins));
     }
   }
 
