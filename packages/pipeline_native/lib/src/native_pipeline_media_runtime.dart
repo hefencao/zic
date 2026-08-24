@@ -25,7 +25,6 @@ final class NativePipelineMediaRuntimeFactory
         // Binding uninitialized in pure test environments.
       }
     }
-    unawaited(_prewarmWithoutSurfacingFailure());
   }
 
   AndroidTexturePresenter? _texturePresenter;
@@ -51,14 +50,6 @@ final class NativePipelineMediaRuntimeFactory
     } on Object {
       // Lifecycle cleanup is best-effort. A later create/present remains
       // authoritative for reporting platform texture failures.
-    }
-  }
-
-  Future<void> _prewarmWithoutSurfacingFailure() async {
-    try {
-      await prewarm();
-    } on Object {
-      // A later real create/present call remains authoritative for errors.
     }
   }
 

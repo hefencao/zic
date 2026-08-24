@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:local_media/local_media.dart';
 import 'package:network_bridge/network_bridge.dart';
 import 'package:resource_cache/resource_cache.dart';
+import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:downloads/downloads.dart';
 import 'package:downloads_bridge/downloads_bridge.dart';
@@ -26,6 +27,7 @@ import 'reader_preferences.dart';
 import 'source_migration_compare.dart';
 import 'source_resource_gateway.dart';
 import 'static_demo.dart';
+import 'startup_platform.dart';
 import 'webp_demo.dart';
 import 'home_library_session.dart';
 import 'home_widgets.dart';
@@ -35,6 +37,7 @@ part 'demo_home_source_compat.dart';
 part 'demo_home_catalog_identity.dart';
 part 'demo_home_source_migration.dart';
 part 'demo_home_reader_route.dart';
+part 'demo_home_service_handoff.dart';
 const homePageKey = ValueKey<String>('home-page');
 const bookshelfPageKey = ValueKey<String>('bookshelf-page');
 const homeUpdatesSectionKey = ValueKey<String>('home-updates-section');
@@ -121,13 +124,19 @@ final class DemoHome extends StatefulWidget {
     required this.folderPicker,
     this.folderRefresher = defaultImageFolderRefresher,
     this.libraryStore,
+    this.homeProjectionSnapshotStore,
+    this.persistHomeProjectionSnapshot = true,
     this.chapterDownloads,
     this.downloadComposition,
     this.wholeComicDownloads,
     this.comicSources,
     this.externalPlugins,
+    this.externalPluginLoader,
+    this.platformEnvironmentLoader,
     this.networkBridge = const AndroidNetworkBridge(),
     this.cacheCoordinator,
+    this.serviceHandoff,
+    this.persistMissingPreferences = true,
     required this.preferences,
     required this.debugTrace,
     this.storageRoot,
@@ -141,13 +150,19 @@ final class DemoHome extends StatefulWidget {
   final ImageFolderPicker folderPicker;
   final ImageFolderRefresher folderRefresher;
   final ImportedLibraryStore? libraryStore;
+  final HomeProjectionSnapshotStore? homeProjectionSnapshotStore;
+  final bool persistHomeProjectionSnapshot;
   final ChapterDownloadService? chapterDownloads;
   final ChapterDownloadTransferRuntimeProvider? downloadComposition;
   final WholeComicDownloadQueue? wholeComicDownloads;
   final List<BrowsableComicSource>? comicSources;
   final ExternalPluginController? externalPlugins;
+  final Future<ExternalPluginController?> Function()? externalPluginLoader;
+  final Future<void> Function()? platformEnvironmentLoader;
   final AndroidNetworkBridge networkBridge;
   final ResourceCacheCoordinator? cacheCoordinator;
+  final HomeServiceHandoff? serviceHandoff;
+  final bool persistMissingPreferences;
   final AppPreferencesController preferences;
   final DebugTraceLog debugTrace;
   final String? storageRoot;
@@ -160,17 +175,21 @@ enum _DownloadCompletionKind { chapter, wholeComic }
 
 final class _DemoHomeState extends State<DemoHome> {
   final Stopwatch _traceClock = Stopwatch()..start();
-  late final ImportedLibraryStore _library;
-  late final ChapterDownloadService _chapterDownloads;
-  late final ChapterDownloadTransferRuntimeProvider? _downloadComposition;
-  late final ArtifactCacheManager? _readerArtifactCache;
+  late ImportedLibraryStore _library;
+  late ChapterDownloadService _chapterDownloads;
+  late ChapterDownloadTransferRuntimeProvider? _downloadComposition;
+  late ArtifactCacheManager? _readerArtifactCache;
   late final ComicSourceResourceGateway _sourceResources;
-  late final WholeComicDownloadQueue _wholeComicDownloads;
+  late WholeComicDownloadQueue _wholeComicDownloads;
   late List<BrowsableComicSource> _sources;
   late final HomeLibrarySession _librarySession;
-  late final ResourceCacheCoordinator _cacheCoordinator;
-  late final bool _ownsCacheCoordinator;
+  late ResourceCacheCoordinator _cacheCoordinator;
+  late bool _ownsCacheCoordinator;
+  ExternalPluginController? _activeExternalPlugins;
   Completer<void>? _initialExternalSourcesPublished;
+  Future<ExternalPluginController?>? _externalPluginLoading;
+  Future<void>? _externalSourcesPublishing;
+  bool _suppressLibrarySessionRebuild = false;
 
   bool _picking = false;
   bool _pickingFolder = false;
@@ -214,6 +233,137 @@ final class _DemoHomeState extends State<DemoHome> {
 
   void _setState(VoidCallback fn) => setState(fn);
 
+  HomeServiceHandoff? get _serviceHandoff => widget.serviceHandoff;
+
+  ImportedLibraryStore? get _incomingLibraryStore =>
+      widget.libraryStore ?? _serviceHandoff?.libraryStore;
+
+  ChapterDownloadService? get _incomingChapterDownloads =>
+      widget.chapterDownloads ?? _serviceHandoff?.chapterDownloads;
+
+  ChapterDownloadTransferRuntimeProvider? get _incomingDownloadComposition =>
+      widget.downloadComposition ?? _serviceHandoff?.downloadComposition;
+
+  WholeComicDownloadQueue? get _incomingWholeComicDownloads =>
+      widget.wholeComicDownloads ?? _serviceHandoff?.wholeComicDownloads;
+
+  ResourceCacheCoordinator? get _incomingCacheCoordinator =>
+      widget.cacheCoordinator ?? _serviceHandoff?.cacheCoordinator;
+
+  ExternalPluginController? get _incomingExternalPlugins =>
+      widget.externalPlugins ?? _serviceHandoff?.externalPlugins;
+
+  Future<ExternalPluginController?> Function()? get _externalPluginLoader =>
+      widget.externalPluginLoader ?? _serviceHandoff?.externalPluginLoader;
+
+  Future<void> Function()? get _platformEnvironmentLoader =>
+      widget.platformEnvironmentLoader ??
+      _serviceHandoff?.platformEnvironmentLoader;
+
+  String? get _storageRoot => widget.storageRoot ?? _serviceHandoff?.storageRoot;
+
+  bool get _persistHomeProjectionSnapshot =>
+      _serviceHandoff?.persistHomeProjectionSnapshot ??
+      widget.persistHomeProjectionSnapshot;
+
+  Future<void> _ensurePlatformEnvironment() async {
+    try {
+      await _platformEnvironmentLoader?.call();
+    } on Object catch (error) {
+      debugPrint('runtime download policy signals unavailable: $error');
+    }
+  }
+
+  Future<ExternalPluginController?> _ensureExternalPluginController() {
+    final active = _activeExternalPlugins;
+    if (active != null) {
+      return Future<ExternalPluginController?>.value(active);
+    }
+    final existing = _externalPluginLoading;
+    if (existing != null) {
+      return existing;
+    }
+    final loader = _externalPluginLoader;
+    if (loader == null) {
+      return Future<ExternalPluginController?>.value();
+    }
+    late final Future<ExternalPluginController?> opening;
+    opening = Future<ExternalPluginController?>.sync(loader).whenComplete(() {
+      if (identical(_externalPluginLoading, opening)) {
+        _externalPluginLoading = null;
+      }
+    });
+    _externalPluginLoading = opening;
+    return opening;
+  }
+
+  Future<void> _ensureExternalSourcesPublished() {
+    final existing = _externalSourcesPublishing;
+    if (existing != null) {
+      return existing;
+    }
+    late final Future<void> publishing;
+    publishing = _publishExternalSources().whenComplete(() {
+      if (identical(_externalSourcesPublishing, publishing)) {
+        _externalSourcesPublishing = null;
+      }
+    });
+    _externalSourcesPublishing = publishing;
+    return publishing;
+  }
+
+  Future<void> _publishExternalSources() async {
+    // The bootstrap Home is created before durable services install the
+    // external-plugin loader. Keep source waiters pending across this gap;
+    // completing the readiness gate here would turn "not started yet" into a
+    // permanent source-unavailable error for the first cover request.
+    if (_externalPluginLoader == null) {
+      return;
+    }
+    try {
+      final controller = await _ensureExternalPluginController();
+      if (!mounted) return;
+      if (controller != null) {
+        try {
+          await controller.ready;
+        } on Object {
+          return;
+        }
+      }
+      if (controller != null) {
+        _activeExternalPlugins = controller;
+        await _replaceExternalSources();
+      }
+    } on Object catch (error) {
+      debugPrint('external plugin runtime unavailable: $error');
+    } finally {
+      _completeInitialExternalSourcesPublished();
+    }
+  }
+
+  List<BrowsableComicSource> _buildCachedSources(
+    ResourceCacheCoordinator cache, {
+    ExternalPluginController? externalPlugins,
+  }) {
+    final rawSources = widget.comicSources ??
+        <BrowsableComicSource>[
+          MangaDexSource(
+            userAgentProvider: () => widget.preferences.networkUserAgent,
+          ),
+          ...?externalPlugins?.activeSources,
+        ];
+    return List<BrowsableComicSource>.unmodifiable(
+      rawSources.map(
+        (source) => source is CachedBrowsableComicSource
+            ? source
+            : CachedBrowsableComicSource(
+                source: source,
+                cache: cache.responses,
+              ),
+      ),
+    );
+  }
+
   List<LibraryComic> get _libraryComics => collapseCanonicalLibraryComics(
         aggregateImportedLibrary(
           _libraryEntries,
@@ -229,12 +379,14 @@ final class _DemoHomeState extends State<DemoHome> {
     _sortMode = widget.preferences.shelfSortMode;
     _shelfViewMode = widget.preferences.shelfView;
     widget.preferences.addListener(_handleAppPreferencesChanged);
-    final ownsLibrary = widget.libraryStore == null;
-    _library = widget.libraryStore ?? MemoryImportedLibraryStore();
-    final ownsChapterDownloads = widget.chapterDownloads == null;
-    _chapterDownloads = widget.chapterDownloads ??
+    final initialLibrary = _incomingLibraryStore;
+    final ownsLibrary = initialLibrary == null;
+    _library = initialLibrary ?? MemoryImportedLibraryStore();
+    final initialChapterDownloads = _incomingChapterDownloads;
+    final ownsChapterDownloads = initialChapterDownloads == null;
+    _chapterDownloads = initialChapterDownloads ??
         MemoryChapterDownloadService(pageLoader: _loadChapterPageBytes);
-    _downloadComposition = widget.downloadComposition ??
+    _downloadComposition = _incomingDownloadComposition ??
         (_chapterDownloads is ChapterDownloadTransferRuntimeProvider
             ? _chapterDownloads as ChapterDownloadTransferRuntimeProvider
             : null);
@@ -244,7 +396,7 @@ final class _DemoHomeState extends State<DemoHome> {
                 backend: _chapterDownloads as ArtifactCacheBackend,
               )
             : null);
-    final suppliedCache = widget.cacheCoordinator;
+    final suppliedCache = _incomingCacheCoordinator;
     _ownsCacheCoordinator = suppliedCache == null;
     _cacheCoordinator = suppliedCache ??
         ResourceCacheCoordinator(
@@ -253,66 +405,60 @@ final class _DemoHomeState extends State<DemoHome> {
                   ? _chapterDownloads as ArtifactCacheMaintenance
                   : null),
         );
-    final rawSources = widget.comicSources ??
-        <BrowsableComicSource>[
-          MangaDexSource(
-            userAgentProvider: () => widget.preferences.networkUserAgent,
-          ),
-          ...?widget.externalPlugins?.activeSources,
-        ];
-    _sources = List<BrowsableComicSource>.unmodifiable(
-      rawSources.map(
-        (source) => source is CachedBrowsableComicSource
-            ? source
-            : CachedBrowsableComicSource(
-                source: source,
-                cache: _cacheCoordinator.responses,
-              ),
-      ),
+    _sources = _buildCachedSources(
+      _cacheCoordinator,
+      externalPlugins: _incomingExternalPlugins,
     );
     _sourceResources = ComicSourceResourceGateway(
       sourceForId: _sourceForId,
       waitForSource: _waitForExternalSource,
-      directTransport: RhttpSourceResourceDirectTransport(),
+      directTransport: RhttpSourceResourceDirectTransport(
+        preparePlatform: prepareRhttpPlatform,
+      ),
       defaultUserAgentProvider: () => widget.preferences.networkUserAgent,
     );
     _sourceResources.bindTo(_chapterDownloads);
-    final ownsWholeComicDownloads = widget.wholeComicDownloads == null;
-    _wholeComicDownloads = widget.wholeComicDownloads ??
+    final initialWholeComicDownloads = _incomingWholeComicDownloads;
+    final ownsWholeComicDownloads = initialWholeComicDownloads == null;
+    _wholeComicDownloads = initialWholeComicDownloads ??
         WholeComicDownloadQueue(downloads: _chapterDownloads);
     _librarySession = HomeLibrarySession(
       library: _library,
+      snapshotStore: widget.homeProjectionSnapshotStore,
       chapterDownloads: _chapterDownloads,
       wholeComicDownloads: _wholeComicDownloads,
       sources: _sources,
       ownsLibrary: ownsLibrary,
       ownsChapterDownloads: ownsChapterDownloads,
       ownsWholeComicDownloads: ownsWholeComicDownloads,
+      persistMissingPreferences: widget.persistMissingPreferences,
+      persistSnapshot: _persistHomeProjectionSnapshot,
       waitForPrimaryFrame: () => WidgetsBinding.instance.endOfFrame,
       startupTelemetry: widget.startupTelemetry,
     )..addListener(_handleLibrarySessionChanged);
+    _librarySession.downloadProjectionChanges.addListener(
+      _handleDownloadProjectionChanged,
+    );
     // Always armed so external-source cover requests stay pending (never
     // fail source-unavailable) while the deferred plugin host is still
     // opening; it completes once sources are published or refresh gives up.
     _initialExternalSourcesPublished = Completer<void>();
-    final externalPlugins = widget.externalPlugins;
+    final externalPlugins = _incomingExternalPlugins;
+    _activeExternalPlugins = externalPlugins;
     if (externalPlugins != null) {
       unawaited(_refreshExternalSourcesWhenReady(externalPlugins));
     }
+    _serviceHandoff?.addListener(_handleServiceHandoffChanged);
   }
 
   @override
   void didUpdateWidget(covariant DemoHome oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Startup mounts home on core services before the deferred external
-    // plugin host finishes opening. Adopt the late controller exactly once so
-    // external sources publish without rebuilding the whole shelf subtree.
-    final plugins = widget.externalPlugins;
-    if (oldWidget.externalPlugins == null &&
-        plugins != null &&
-        !identical(oldWidget.externalPlugins, plugins)) {
-      unawaited(_refreshExternalSourcesWhenReady(plugins));
+    if (!identical(oldWidget.serviceHandoff, widget.serviceHandoff)) {
+      oldWidget.serviceHandoff?.removeListener(_handleServiceHandoffChanged);
+      widget.serviceHandoff?.addListener(_handleServiceHandoffChanged);
     }
+    _handleServiceHandoffChanged();
   }
 
   bool _isDeferredExternalSourceId(String sourceId) =>
@@ -323,11 +469,11 @@ final class _DemoHomeState extends State<DemoHome> {
         !_isDeferredExternalSourceId(sourceId)) {
       return;
     }
+    await _ensureExternalSourcesPublished();
     final published = _initialExternalSourcesPublished;
-    if (published == null) {
-      return;
+    if (published != null && !published.isCompleted) {
+      await published.future;
     }
-    await published.future;
   }
 
   void _completeInitialExternalSourcesPublished() {
@@ -358,9 +504,19 @@ final class _DemoHomeState extends State<DemoHome> {
 
   void _handleLibrarySessionChanged() {
     _syncWholeComicCompletionBadges();
+    if (_suppressLibrarySessionRebuild) {
+      return;
+    }
     if (mounted) {
       setState(() {});
     }
+  }
+
+  void _handleDownloadProjectionChanged() {
+    // Download progress has its own card-level listenable. Keep completion
+    // badge bookkeeping in sync without invalidating the library projection
+    // that drives the Home update/history lists.
+    _syncWholeComicCompletionBadges();
   }
 
   void _syncWholeComicCompletionBadges() {
@@ -447,8 +603,12 @@ final class _DemoHomeState extends State<DemoHome> {
   @override
   void dispose() {
     widget.preferences.removeListener(_handleAppPreferencesChanged);
+    _serviceHandoff?.removeListener(_handleServiceHandoffChanged);
     _completeInitialExternalSourcesPublished();
     _librarySession.removeListener(_handleLibrarySessionChanged);
+    _librarySession.downloadProjectionChanges.removeListener(
+      _handleDownloadProjectionChanged,
+    );
     unawaited(_closeHomeComposition());
     _librarySession.dispose();
     super.dispose();
@@ -488,7 +648,7 @@ final class _DemoHomeState extends State<DemoHome> {
             !source.sourceId.startsWith('mihon:') &&
             !source.sourceId.startsWith('venera:'))
         .toList(growable: true);
-    final external = widget.externalPlugins?.activeSources ??
+    final external = _activeExternalPlugins?.activeSources ??
         const <BrowsableComicSource>[];
     _sources = List<BrowsableComicSource>.unmodifiable(
       <BrowsableComicSource>[...builtIn, ...external].map(
@@ -504,12 +664,23 @@ final class _DemoHomeState extends State<DemoHome> {
     // and the follow-up library reload. Artwork cache misses waiting on this
     // transition can now proceed without a failed first request.
     _completeInitialExternalSourcesPublished();
-    await _librarySession.replaceSources(_sources, reloadLibrary: false);
+    _suppressLibrarySessionRebuild = true;
+    try {
+      await _librarySession.replaceSources(_sources, reloadLibrary: false);
+    } finally {
+      _suppressLibrarySessionRebuild = false;
+    }
     final canonicalIdsPersisted = await _persistKnownCanonicalComicIds();
     if (canonicalIdsPersisted) {
       await _reloadLibrary();
     }
-    if (mounted) setState(() {});
+    // Home cover loaders observe the updated resolver directly. Rebuilding
+    // the Home tree for a source-only publication recreates pending cover
+    // widgets just as the external source becomes ready. The source page,
+    // when visible, still needs one explicit presentation refresh.
+    if (mounted && _navigationIndex == 2) {
+      setState(() {});
+    }
   }
 
   Future<void> _refreshExternalSourcesWhenReady(
@@ -521,7 +692,7 @@ final class _DemoHomeState extends State<DemoHome> {
       _completeInitialExternalSourcesPublished();
       return;
     }
-    if (!mounted || !identical(widget.externalPlugins, controller)) {
+    if (!mounted || !identical(_activeExternalPlugins, controller)) {
       _completeInitialExternalSourcesPublished();
       return;
     }
@@ -529,13 +700,21 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Future<void> _openSourceManagement() async {
+    final externalPlugins = await _ensureExternalPluginController();
+    if (!mounted) return;
+    if (externalPlugins != null &&
+        !identical(_activeExternalPlugins, externalPlugins)) {
+      _activeExternalPlugins = externalPlugins;
+      await _replaceExternalSources();
+    }
+    if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => SourceManagementScreen(
           sources: _sources,
           preferences: _sourcePreferences,
           onPreferenceChanged: _saveSourcePreference,
-          externalPlugins: widget.externalPlugins,
+          externalPlugins: externalPlugins,
           networkBridge: widget.networkBridge,
           onExternalSourcesChanged: _replaceExternalSources,
         ),
@@ -546,7 +725,14 @@ final class _DemoHomeState extends State<DemoHome> {
     }
   }
 
-  void _openDownloadManager() {
+  Future<void> _openDownloadManager() async {
+    await _ensurePlatformEnvironment();
+    if (!mounted) return;
+    // The startup Home projection does not need a full artifact-index walk.
+    // Refresh only when the user explicitly opens the manager, where the
+    // complete per-chapter status is actually visible and useful.
+    await _refreshDownloadSnapshots(_libraryEntries);
+    if (!mounted) return;
     final route = Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => DownloadManagerScreen(
@@ -578,7 +764,7 @@ final class _DemoHomeState extends State<DemoHome> {
             preferences: widget.preferences,
             downloads: _wholeComicDownloads,
             cacheCoordinator: _cacheCoordinator,
-            storageRoot: widget.storageRoot,
+            storageRoot: _storageRoot,
             exportBackup: () => exportImportedLibraryBackup(_library),
           ),
         ),
@@ -892,6 +1078,7 @@ final class _DemoHomeState extends State<DemoHome> {
     }
     setState(() => _picking = true);
     try {
+      await attachAndroidPlugin('file_selector_android');
       final picked = await widget.picker();
       if (!mounted || picked == null) {
         return;
@@ -920,6 +1107,8 @@ final class _DemoHomeState extends State<DemoHome> {
     }
     setState(() => _pickingFolder = true);
     try {
+      await attachAndroidPlugin('file_selector_android');
+      await attachAndroidPlugin('local_media_bridge');
       final folder = await widget.folderPicker();
       if (!mounted || folder == null) {
         return;
@@ -1012,7 +1201,7 @@ final class _DemoHomeState extends State<DemoHome> {
     required bool refreshRemote,
     int? initialPageIndex,
   }) async {
-    final entry = await loadChapter();
+    final entry = await _librarySession.hydrateEntry(await loadChapter());
     final legacyVenera = _hasLegacyVeneraLocators(entry.chapter);
     final current = legacyVenera
         ? await _refreshRemoteEntry(entry, forceSourceRefresh: true)
@@ -1605,6 +1794,12 @@ final class _DemoHomeState extends State<DemoHome> {
               _sourcePageVisited = true;
             }
           });
+          if (index == 2) {
+            // External runtimes are optional source capability. Opening the
+            // source tab is an explicit demand boundary; it must not be part
+            // of a fresh-install Home/background startup turn.
+            unawaited(_ensureExternalSourcesPublished());
+          }
         },
       ),
     );

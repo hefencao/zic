@@ -47,11 +47,13 @@ for token in (
     require(bridge, token, 'rhttp streaming transport invariant')
 
 home = read('apps/app/lib/demo_home.dart')
-require(home, 'directTransport: RhttpSourceResourceDirectTransport()',
+require(home, 'directTransport: RhttpSourceResourceDirectTransport(',
         'production source transport injection')
+require(home, 'preparePlatform: prepareRhttpPlatform,',
+        'lazy Android rhttp context preparation')
 main = read('apps/app/lib/main.dart')
-require(main, 'prewarmPlatformSourceResourceTransport()',
-        'background rhttp native prewarm')
+if 'prewarmPlatformSourceResourceTransport()' in main:
+    raise SystemExit('rhttp native prewarm must remain out of Home startup')
 
 test = read('packages/downloads/test/source_resource_transport_test.dart')
 for token in (

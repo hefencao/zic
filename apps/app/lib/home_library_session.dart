@@ -6,7 +6,82 @@ import 'package:domain/domain.dart';
 import 'package:flutter/foundation.dart';
 
 import 'package:downloads/downloads.dart';
+import 'package:plugin_host_bridge/plugin_host_bridge.dart';
+import 'package:resource_cache/resource_cache.dart';
+import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
+
+/// Stable composition boundary between the bootstrap Home and durable app
+/// services. Updating this object does not rebuild MaterialApp or DemoHome;
+/// the existing Home session adopts the services in place.
+final class HomeServiceHandoff extends ChangeNotifier {
+  ImportedLibraryStore? libraryStore;
+  ChapterDownloadService? chapterDownloads;
+  ChapterDownloadTransferRuntimeProvider? downloadComposition;
+  WholeComicDownloadQueue? wholeComicDownloads;
+  ResourceCacheCoordinator? cacheCoordinator;
+  ExternalPluginController? externalPlugins;
+  Future<ExternalPluginController?> Function()? externalPluginLoader;
+  Future<void> Function()? platformEnvironmentLoader;
+  String? storageRoot;
+  bool persistHomeProjectionSnapshot = false;
+
+  void setBootstrapCache(ResourceCacheCoordinator cache) {
+    if (cacheCoordinator == null) {
+      cacheCoordinator = cache;
+    }
+  }
+
+  void setBootstrapLibrary(ImportedLibraryStore library) {
+    libraryStore = library;
+  }
+
+  void updateServices({
+    required ImportedLibraryStore? libraryStore,
+    required ChapterDownloadService? chapterDownloads,
+    required ChapterDownloadTransferRuntimeProvider? downloadComposition,
+    required WholeComicDownloadQueue? wholeComicDownloads,
+    required ResourceCacheCoordinator? cacheCoordinator,
+    required ExternalPluginController? externalPlugins,
+    required Future<ExternalPluginController?> Function()?
+        externalPluginLoader,
+    required Future<void> Function()? platformEnvironmentLoader,
+    required String? storageRoot,
+    required bool persistHomeProjectionSnapshot,
+  }) {
+    final changed = !identical(this.libraryStore, libraryStore) ||
+        !identical(this.chapterDownloads, chapterDownloads) ||
+        !identical(this.downloadComposition, downloadComposition) ||
+        !identical(this.wholeComicDownloads, wholeComicDownloads) ||
+        !identical(this.cacheCoordinator, cacheCoordinator) ||
+        !identical(this.externalPlugins, externalPlugins) ||
+        this.externalPluginLoader != externalPluginLoader ||
+        this.platformEnvironmentLoader != platformEnvironmentLoader ||
+        this.storageRoot != storageRoot ||
+        this.persistHomeProjectionSnapshot != persistHomeProjectionSnapshot;
+    this.libraryStore = libraryStore;
+    this.chapterDownloads = chapterDownloads;
+    this.downloadComposition = downloadComposition;
+    this.wholeComicDownloads = wholeComicDownloads;
+    this.cacheCoordinator = cacheCoordinator;
+    this.externalPlugins = externalPlugins;
+    this.externalPluginLoader = externalPluginLoader;
+    this.platformEnvironmentLoader = platformEnvironmentLoader;
+    this.storageRoot = storageRoot;
+    this.persistHomeProjectionSnapshot = persistHomeProjectionSnapshot;
+    if (changed) {
+      notifyListeners();
+    }
+  }
+
+  void updateExternalPlugins(ExternalPluginController? value) {
+    if (identical(externalPlugins, value)) {
+      return;
+    }
+    externalPlugins = value;
+    notifyListeners();
+  }
+}
 
 /// Owns the durable library projection and background download subscriptions
 /// used by the home shell. Navigation, dialogs and transient UI selection stay
@@ -20,6 +95,9 @@ final class HomeLibrarySession extends ChangeNotifier {
     required this.ownsLibrary,
     required this.ownsChapterDownloads,
     required this.ownsWholeComicDownloads,
+    this.snapshotStore,
+    this.persistSnapshot = true,
+    this.persistMissingPreferences = true,
     this.waitForPrimaryFrame,
     this.startupTelemetry,
   }) : _sources = List<BrowsableComicSource>.unmodifiable(sources) {
@@ -27,27 +105,36 @@ final class HomeLibrarySession extends ChangeNotifier {
       acceptDownloadSnapshot,
     );
     _wholeComicSubscription = wholeComicDownloads.changes.listen((snapshot) {
-      _wholeComicQueueSnapshot = snapshot;
-      _publish();
+      _acceptWholeComicQueueSnapshot(snapshot);
     });
     _wholeComicQueueSnapshot = wholeComicDownloads.snapshot;
-    ready = _initialize();
+    _ready = _initialize();
   }
 
-  final ImportedLibraryStore library;
-  final ChapterDownloadService chapterDownloads;
-  final WholeComicDownloadQueue wholeComicDownloads;
+  ImportedLibraryStore library;
+  ChapterDownloadService chapterDownloads;
+  WholeComicDownloadQueue wholeComicDownloads;
   List<BrowsableComicSource> _sources;
   List<BrowsableComicSource> get sources => _sources;
-  final bool ownsLibrary;
-  final bool ownsChapterDownloads;
-  final bool ownsWholeComicDownloads;
+  bool ownsLibrary;
+  bool ownsChapterDownloads;
+  bool ownsWholeComicDownloads;
+  final HomeProjectionSnapshotStore? snapshotStore;
+  bool persistSnapshot;
+
+  /// Missing source/comic preferences are projected from their defaults while
+  /// the library is opening. The app disables persistence for the first Home
+  /// projection because these writes are synchronous SQLite mutations on the
+  /// UI isolate; explicit user changes still persist through DemoHome.
+  final bool persistMissingPreferences;
   final Future<void> Function()? waitForPrimaryFrame;
   final HomeStartupTelemetry? startupTelemetry;
 
-  late final StreamSubscription<ChapterDownloadSnapshot> _downloadSubscription;
-  late final StreamSubscription<WholeComicQueueSnapshot> _wholeComicSubscription;
-  late final Future<void> ready;
+  late StreamSubscription<ChapterDownloadSnapshot> _downloadSubscription;
+  late StreamSubscription<WholeComicQueueSnapshot> _wholeComicSubscription;
+  late Future<void> _ready;
+  Future<void> get ready => _ready;
+  Future<void>? _serviceAdoption;
 
   List<ImportedLibraryEntry> _entries = const <ImportedLibraryEntry>[];
   List<SavedComicRecord> _savedComics = const <SavedComicRecord>[];
@@ -62,11 +149,16 @@ final class HomeLibrarySession extends ChangeNotifier {
   Map<String, ChapterDownloadSnapshot> _downloadSnapshots =
       const <String, ChapterDownloadSnapshot>{};
   late WholeComicQueueSnapshot _wholeComicQueueSnapshot;
+  final ChangeNotifier _downloadProjectionChanges = ChangeNotifier();
   Object? _error;
   bool _loading = true;
   String? _activeSourceId;
   bool _closed = false;
   int _libraryProjectionRevision = 0;
+  int? _snapshotLibraryRevision;
+  bool _snapshotRewriteNeeded = false;
+  Future<void> _snapshotWriteTail = Future<void>.value();
+  final Stopwatch _homeStartupClock = Stopwatch()..start();
 
   List<ImportedLibraryEntry> get entries => _entries;
   List<SavedComicRecord> get savedComics => _savedComics;
@@ -80,6 +172,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       _downloadSnapshots;
   WholeComicQueueSnapshot get wholeComicQueueSnapshot =>
       _wholeComicQueueSnapshot;
+  Listenable get downloadProjectionChanges => _downloadProjectionChanges;
   Object? get error => _error;
   bool get loading => _loading;
   String? get activeSourceId => _activeSourceId;
@@ -106,17 +199,99 @@ final class HomeLibrarySession extends ChangeNotifier {
   }
 
   Future<void> _initialize() async {
+    _homeLog(
+      'initialize-start store=${library.runtimeType} '
+      'snapshotStore=${snapshotStore != null} '
+      'persistSnapshot=$persistSnapshot sources=${sources.length}',
+    );
     try {
-      await library.open();
-      await _reload(publishPrimary: true);
-      await wholeComicDownloads.ready;
-      _wholeComicQueueSnapshot = wholeComicDownloads.snapshot;
-      _publish();
+      final snapshotFuture = snapshotStore == null
+          ? null
+          : _traceStartupOperation<HomeProjectionSnapshot?>(
+              'snapshot-read',
+              () => snapshotStore!.read(),
+              summary: (snapshot) => snapshot == null
+                  ? 'present=false'
+                  : _snapshotSummary(snapshot),
+            );
+      if (snapshotFuture == null) {
+        _homeLog('snapshot-read-skipped reason=no-store');
+      }
+      final openFuture = _traceStartupOperation<void>(
+        'library-open',
+        library.open,
+      );
+      HomeProjectionSnapshot? loadedSnapshot;
+      if (snapshotFuture != null) {
+        final snapshot = await snapshotFuture;
+        if (snapshot != null) {
+          loadedSnapshot = snapshot;
+          _applySnapshot(snapshot, publish: false);
+        }
+      }
+      await openFuture;
+      _homeLog(
+        'library-open-ready snapshotPresent=${loadedSnapshot != null}',
+      );
+      if (loadedSnapshot != null && !persistSnapshot) {
+        // The bootstrap Home is backed by an intentionally empty lazy memory
+        // store. It may display a durable snapshot, but it must not reconcile
+        // that snapshot against the empty memory store and erase the visible
+        // projection before the real SQLite-backed Home is attached.
+        _loading = false;
+        _error = null;
+        _publish();
+        _homeLog(
+          'bootstrap-snapshot-only-published '
+          '${_snapshotSummary(loadedSnapshot)}',
+        );
+        _observeWholeComicQueueReady();
+        _homeLog('initialize-complete mode=bootstrap-snapshot-only');
+        return;
+      }
+      await _reload(
+        publishPrimary: true,
+        snapshotRevision: loadedSnapshot?.libraryRevision,
+      );
+      _observeWholeComicQueueReady();
+      _homeLog(
+        'initialize-complete entries=${_entries.length} '
+        'saved=${_savedComics.length} readStates=${_readStates.length}',
+      );
     } on Object catch (error) {
+      _homeLog('initialize-failed errorType=${error.runtimeType}');
       _error = error;
       _loading = false;
       _publish();
     }
+  }
+
+  void _observeWholeComicQueueReady() {
+    final queue = wholeComicDownloads;
+    unawaited(
+      _traceStartupOperation<void>(
+        'whole-comic-downloads-ready',
+        () => queue.ready,
+      ).then<void>(
+        (_) {
+          if (_closed || !identical(queue, wholeComicDownloads)) {
+            return;
+          }
+          final snapshot = queue.snapshot;
+          _acceptWholeComicQueueSnapshot(snapshot);
+          _homeLog(
+            'whole-comic-downloads-snapshot-updated '
+            'jobs=${snapshot.jobs.length} projection=download-only',
+          );
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          _homeLog(
+            'whole-comic-downloads-ready-failed '
+            'errorType=${error.runtimeType}',
+          );
+        },
+      ),
+    );
   }
 
   Future<void> reload({bool waitForOpen = true}) async {
@@ -126,17 +301,287 @@ final class HomeLibrarySession extends ChangeNotifier {
     await _reload(publishPrimary: false);
   }
 
-  Future<void> _reload({required bool publishPrimary}) async {
-    final projectionRevisionAtStart = _libraryProjectionRevision;
+  /// Replaces the bootstrap-only services without replacing the Home widget.
+  ///
+  /// The snapshot projection remains mounted while the durable services are
+  /// adopted. If its revision still matches SQLite, no second library
+  /// projection notification is needed; otherwise one authoritative reload
+  /// replaces it in place.
+  Future<void> adoptServices({
+    required ImportedLibraryStore library,
+    required ChapterDownloadService chapterDownloads,
+    required WholeComicDownloadQueue wholeComicDownloads,
+    required List<BrowsableComicSource> sources,
+    required bool persistSnapshot,
+  }) {
+    final existing = _serviceAdoption;
+    if (existing != null) {
+      return existing;
+    }
+    late final Future<void> adoption;
+    adoption = _adoptServices(
+      library: library,
+      chapterDownloads: chapterDownloads,
+      wholeComicDownloads: wholeComicDownloads,
+      sources: sources,
+      persistSnapshot: persistSnapshot,
+    ).whenComplete(() {
+      if (identical(_serviceAdoption, adoption)) {
+        _serviceAdoption = null;
+      }
+    });
+    _serviceAdoption = adoption;
+    return adoption;
+  }
+
+  Future<void> _adoptServices({
+    required ImportedLibraryStore library,
+    required ChapterDownloadService chapterDownloads,
+    required WholeComicDownloadQueue wholeComicDownloads,
+    required List<BrowsableComicSource> sources,
+    required bool persistSnapshot,
+  }) async {
+    final previousReady = _ready;
+    await previousReady;
+    if (_closed) {
+      return;
+    }
+    if (identical(this.library, library) &&
+        identical(this.chapterDownloads, chapterDownloads) &&
+        identical(this.wholeComicDownloads, wholeComicDownloads)) {
+      this.persistSnapshot = persistSnapshot;
+      return;
+    }
+
+    final previousLibrary = this.library;
+    final previousChapterDownloads = this.chapterDownloads;
+    final previousWholeComicDownloads = this.wholeComicDownloads;
+    final previousOwnsLibrary = ownsLibrary;
+    final previousOwnsChapterDownloads = ownsChapterDownloads;
+    final previousOwnsWholeComicDownloads = ownsWholeComicDownloads;
+    await _downloadSubscription.cancel();
+    await _wholeComicSubscription.cancel();
+
+    this.library = library;
+    this.chapterDownloads = chapterDownloads;
+    this.wholeComicDownloads = wholeComicDownloads;
+    ownsLibrary = false;
+    ownsChapterDownloads = false;
+    ownsWholeComicDownloads = false;
+    this.persistSnapshot = persistSnapshot;
+    _sources = List<BrowsableComicSource>.unmodifiable(sources);
+    _downloadSubscription = chapterDownloads.changes.listen(
+      acceptDownloadSnapshot,
+    );
+    _wholeComicSubscription = wholeComicDownloads.changes.listen((snapshot) {
+      _acceptWholeComicQueueSnapshot(snapshot);
+    });
+    _wholeComicQueueSnapshot = wholeComicDownloads.snapshot;
+
+    if (previousOwnsWholeComicDownloads) {
+      await previousWholeComicDownloads.close();
+    }
+    if (previousOwnsChapterDownloads) {
+      await previousChapterDownloads.close();
+    }
+    if (previousOwnsLibrary) {
+      await previousLibrary.close();
+    }
+
+    _ready = _reconcileAdoptedServices();
+    await _ready;
+  }
+
+  Future<void> _reconcileAdoptedServices() async {
+    await library.open();
+    final snapshotRevision = _snapshotLibraryRevision;
+    final currentRevision = snapshotRevision == null
+        ? null
+        : await _traceStartupOperation<int?>(
+            'handoff-projection-revision-read',
+            _readLibraryProjectionRevision,
+            summary: (revision) => 'revision=${revision ?? 'none'}',
+          );
+    if (snapshotRevision != null && currentRevision == snapshotRevision) {
+      _activeSourceId = _activeSourceIdForCurrentSources();
+      _error = null;
+      _loading = false;
+      _observeWholeComicQueueReady();
+      if (_snapshotRewriteNeeded) {
+        _snapshotRewriteNeeded = false;
+        _scheduleSnapshotWrite();
+      }
+      _homeLog(
+        'services-handoff-complete mode=revision-fast-path '
+        'entries=${_entries.length} saved=${_savedComics.length}',
+      );
+      return;
+    }
+
+    await _reload(publishPrimary: false);
+    _observeWholeComicQueueReady();
+    _homeLog(
+      'services-handoff-complete mode=authoritative-reload '
+      'entries=${_entries.length} saved=${_savedComics.length}',
+    );
+  }
+
+  void _applySnapshot(
+    HomeProjectionSnapshot snapshot, {
+    bool publish = true,
+  }) {
+    if (_closed) {
+      return;
+    }
+    _entries = List<ImportedLibraryEntry>.unmodifiable(snapshot.entries);
+    _savedComics = List<SavedComicRecord>.unmodifiable(snapshot.savedComics);
+    _categories = List<LibraryCategory>.unmodifiable(snapshot.categories);
+    _preferences = Map<String, ComicPreference>.unmodifiable(
+      <String, ComicPreference>{
+        for (final preference in snapshot.preferences)
+          preference.identity: preference,
+      },
+    );
+    _readStates = Map<String, ChapterReadState>.unmodifiable(
+      <String, ChapterReadState>{
+        for (final state in snapshot.readStates) state.identity: state,
+      },
+    );
+    _sourcePreferences = Map<String, ComicSourcePreference>.unmodifiable(
+      <String, ComicSourcePreference>{
+        for (final preference in snapshot.sourcePreferences)
+          preference.sourceId: preference,
+      },
+    );
+    _versionRelations =
+        List<ComicVersionRelation>.unmodifiable(snapshot.versionRelations);
+    _snapshotLibraryRevision = snapshot.libraryRevision;
+    _snapshotRewriteNeeded = snapshot.requiresRewrite;
+    _activeSourceId = _activeSourceIdForCurrentSources();
+    _error = null;
+    if (publish) {
+      _publish();
+    }
+    _homeLog('snapshot-applied ${_snapshotSummary(snapshot)}');
+  }
+
+  Future<void> _reload({
+    required bool publishPrimary,
+    int? snapshotRevision,
+  }) async {
     final primaryStartedAt = startupTelemetry?.nowMicros();
-    final entriesFuture = library.list();
-    final savedComicsFuture = library.listSavedComics();
+    _homeLog(
+      'reload-start publishPrimary=$publishPrimary '
+      'snapshotRevision=${snapshotRevision ?? 'none'}',
+    );
+    if (publishPrimary && snapshotRevision != null) {
+      final currentRevision = await _traceStartupOperation<int?>(
+        'projection-revision-read',
+        _readLibraryProjectionRevision,
+        summary: (revision) => 'revision=${revision ?? 'none'}',
+      );
+      _homeLog(
+        'snapshot-revision-check snapshot=$snapshotRevision '
+        'current=${currentRevision ?? 'none'} '
+        'match=${currentRevision == snapshotRevision}',
+      );
+      if (currentRevision != null && currentRevision == snapshotRevision) {
+        _activeSourceId = _activeSourceIdForCurrentSources();
+        _error = null;
+        _loading = false;
+        _publish();
+        if (primaryStartedAt != null) {
+          startupTelemetry?.serviceReady(
+            'home-library-primary',
+            startedAtMicros: primaryStartedAt,
+          );
+        }
+        unawaited(_refreshDownloadSnapshotsAfterFrame(_entries));
+        if (_snapshotRewriteNeeded) {
+          _snapshotRewriteNeeded = false;
+          _homeLog('legacy-snapshot-rewrite-requested');
+          _scheduleSnapshotWrite();
+        }
+        _homeLog(
+          'reload-complete mode=revision-fast-path '
+          'entries=${_entries.length} saved=${_savedComics.length}',
+        );
+        return;
+      }
+    }
+    final projectionRevisionAtStart = _libraryProjectionRevision;
+    _homeLog('primary-query-batch-start');
+    final entriesFuture = _traceStartupOperation<List<ImportedLibraryEntry>>(
+      'query-entries',
+      library.list,
+      summary: (entries) => 'count=${entries.length}',
+    );
+    final savedComicsFuture =
+        _traceStartupOperation<List<SavedComicRecord>>(
+      'query-saved-comics',
+      library.listSavedComics,
+      summary: (comics) => 'count=${comics.length}',
+    );
+    // These are read-only startup queries. Start them with the primary query
+    // instead of waiting for the primary frame barrier; the Home update strip
+    // needs the stored shelf preferences and confirmed versions, while the
+    // history strip can already be projected from the chapter progress.
+    final categoriesFuture =
+        _traceStartupOperation<List<LibraryCategory>>(
+      'query-categories',
+      library.listCategories,
+      summary: (categories) => 'count=${categories.length}',
+    );
+    final preferencesFuture =
+        _traceStartupOperation<List<ComicPreference>>(
+      'query-comic-preferences',
+      library.listComicPreferences,
+      summary: (preferences) => 'count=${preferences.length}',
+    );
+    final sourcePreferencesFuture =
+        _traceStartupOperation<List<ComicSourcePreference>>(
+      'query-source-preferences',
+      library.listSourcePreferences,
+      summary: (preferences) => 'count=${preferences.length}',
+    );
+    final readStatesFuture =
+        _traceStartupOperation<List<ChapterReadState>>(
+      'query-read-states',
+      () => library.listAllChapterReadStates(),
+      summary: (states) => 'count=${states.length}',
+    );
+    final versionRelationStore = library is ComicVersionRelationStore
+        ? library as ComicVersionRelationStore
+        : null;
+    final versionRelationsFuture = versionRelationStore == null
+        ? Future<List<ComicVersionRelation>>.value(
+            const <ComicVersionRelation>[],
+          )
+        : _traceStartupOperation<List<ComicVersionRelation>>(
+            'query-version-relations',
+            versionRelationStore.listAllComicVersionRelations,
+            summary: (relations) => 'count=${relations.length}',
+          );
     final entries = await entriesFuture;
     final savedComics = await savedComicsFuture;
+    final storedPreferences = await preferencesFuture;
+    final versionRelations = await versionRelationsFuture;
+    final preferences = <String, ComicPreference>{
+      for (final preference in storedPreferences)
+        preference.identity: preference,
+    };
+    _homeLog(
+      'primary-query-batch-complete entries=${entries.length} '
+      'saved=${savedComics.length} preferences=${preferences.length} '
+      'versionRelations=${versionRelations.length}',
+    );
     if (publishPrimary) {
       if (_libraryProjectionRevision == projectionRevisionAtStart) {
         _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
         _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
+        _preferences = Map<String, ComicPreference>.unmodifiable(preferences);
+        _versionRelations =
+            List<ComicVersionRelation>.unmodifiable(versionRelations);
       }
       _error = null;
       _publish();
@@ -146,28 +591,24 @@ final class HomeLibrarySession extends ChangeNotifier {
           startedAtMicros: primaryStartedAt,
         );
       }
+      _homeLog(
+        'primary-published entries=${_entries.length} '
+        'saved=${_savedComics.length} preferences=${_preferences.length} '
+        'versionRelations=${_versionRelations.length}',
+      );
       // Let Flutter present the cover-bearing primary projection before the
       // synchronous catalog enrichment and default writes continue on the
       // same isolate.
-      await (waitForPrimaryFrame?.call() ??
-          Future<void>.delayed(const Duration(milliseconds: 16)));
+      await _traceStartupOperation<void>(
+        'primary-frame-wait',
+        () => waitForPrimaryFrame?.call() ??
+            Future<void>.delayed(const Duration(milliseconds: 16)),
+      );
     }
 
     final enrichmentStartedAt = startupTelemetry?.nowMicros();
-    final categoriesFuture = library.listCategories();
-    final preferencesFuture = library.listComicPreferences();
-    final sourcePreferencesFuture = library.listSourcePreferences();
-    final readStatesFuture = library.listAllChapterReadStates();
-    final versionRelationStore = library is ComicVersionRelationStore
-        ? library as ComicVersionRelationStore
-        : null;
-    final versionRelationsFuture = versionRelationStore == null
-        ? Future<List<ComicVersionRelation>>.value(
-            const <ComicVersionRelation>[],
-          )
-        : versionRelationStore.listAllComicVersionRelations();
+    _homeLog('enrichment-start');
     final categories = await categoriesFuture;
-    final storedPreferences = await preferencesFuture;
     final storedSourcePreferences = await sourcePreferencesFuture;
     final sourcePreferences = <String, ComicSourcePreference>{
       for (final preference in storedSourcePreferences)
@@ -181,6 +622,9 @@ final class HomeLibrarySession extends ChangeNotifier {
           .map((source) => source.descriptor.language.toLowerCase())
           .where((language) => language.startsWith('$systemLanguage-')),
     );
+    final sourceDefaultsClock = Stopwatch()..start();
+    var sourceDefaultsCreated = 0;
+    var sourceDefaultsPersisted = 0;
     for (var index = 0; index < sources.length; index++) {
       final source = sources[index];
       if (sourcePreferences.containsKey(source.sourceId)) {
@@ -197,26 +641,23 @@ final class HomeLibrarySession extends ChangeNotifier {
         updatedAt: DateTime.now().toUtc(),
       );
       sourcePreferences[source.sourceId] = preference;
-      await library.saveSourcePreference(preference);
+      sourceDefaultsCreated++;
+      if (persistMissingPreferences) {
+        await library.saveSourcePreference(preference);
+        sourceDefaultsPersisted++;
+      }
     }
+    _homeLog(
+      'source-preferences-defaults-complete '
+      'created=$sourceDefaultsCreated persisted=$sourceDefaultsPersisted '
+      'durationMs=${sourceDefaultsClock.elapsedMilliseconds}',
+    );
 
-    final enabled = sources
-        .where((source) => sourcePreferences[source.sourceId]?.enabled ?? true)
-        .toList(growable: false)
-      ..sort((left, right) =>
-          (sourcePreferences[left.sourceId]?.sortOrder ?? 0).compareTo(
-            sourcePreferences[right.sourceId]?.sortOrder ?? 0,
-          ));
-    final nextActiveSourceId = enabled.any(
-      (source) => source.sourceId == _activeSourceId,
-    )
-        ? _activeSourceId
-        : (enabled.isEmpty ? null : enabled.first.sourceId);
+    final nextActiveSourceId = _activeSourceIdFor(
+      sourcePreferences,
+      current: _activeSourceId,
+    );
 
-    final preferences = <String, ComicPreference>{
-      for (final preference in storedPreferences)
-        preference.identity: preference,
-    };
     var nextOrder = preferences.values.fold<int>(
       0,
       (value, preference) =>
@@ -229,6 +670,9 @@ final class HomeLibrarySession extends ChangeNotifier {
         _libraryProjectionRevision != projectionRevisionAtStart;
     final seedEntries = projectionChanged ? _entries : entries;
     final seedSavedComics = projectionChanged ? _savedComics : savedComics;
+    final seedPreferences = projectionChanged
+        ? <String, ComicPreference>{..._preferences}
+        : preferences;
     final comicSeeds = <({
       String sourceId,
       String comicId,
@@ -251,9 +695,12 @@ final class HomeLibrarySession extends ChangeNotifier {
               : ComicSourceKind.remote,
         ),
     ];
+    final comicDefaultsClock = Stopwatch()..start();
+    var comicDefaultsCreated = 0;
+    var comicDefaultsPersisted = 0;
     for (final seed in comicSeeds) {
       final identity = comicLibraryIdentity(seed.sourceId, seed.comicId);
-      if (preferences.containsKey(identity)) {
+      if (seedPreferences.containsKey(identity)) {
         continue;
       }
       final preference = ComicPreference.defaults(
@@ -265,14 +712,26 @@ final class HomeLibrarySession extends ChangeNotifier {
         inShelf: seed.sourceKind == ComicSourceKind.local,
         updatedAt: DateTime.now().toUtc(),
       );
-      preferences[preference.identity] = preference;
-      await library.saveComicPreference(preference);
+      seedPreferences[preference.identity] = preference;
+      comicDefaultsCreated++;
+      if (persistMissingPreferences) {
+        await library.saveComicPreference(preference);
+        comicDefaultsPersisted++;
+      }
     }
+    _homeLog(
+      'comic-preferences-defaults-complete '
+      'created=$comicDefaultsCreated persisted=$comicDefaultsPersisted '
+      'durationMs=${comicDefaultsClock.elapsedMilliseconds}',
+    );
 
     final readStates = <String, ChapterReadState>{
       for (final state in await readStatesFuture) state.identity: state,
     };
-    final versionRelations = await versionRelationsFuture;
+    final seedReadStates = projectionChanged ? _readStates : readStates;
+    final seedSourcePreferences = projectionChanged
+        ? _sourcePreferences
+        : sourcePreferences;
 
     if (_libraryProjectionRevision == projectionRevisionAtStart) {
       _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
@@ -281,14 +740,20 @@ final class HomeLibrarySession extends ChangeNotifier {
           List<ComicVersionRelation>.unmodifiable(versionRelations);
     }
     _categories = List<LibraryCategory>.unmodifiable(categories);
-    _preferences = Map<String, ComicPreference>.unmodifiable(preferences);
-    _readStates = Map<String, ChapterReadState>.unmodifiable(readStates);
+    _preferences = Map<String, ComicPreference>.unmodifiable(seedPreferences);
+    _readStates = Map<String, ChapterReadState>.unmodifiable(seedReadStates);
     _sourcePreferences =
-        Map<String, ComicSourcePreference>.unmodifiable(sourcePreferences);
+        Map<String, ComicSourcePreference>.unmodifiable(seedSourcePreferences);
     _activeSourceId = nextActiveSourceId;
     _error = null;
     _loading = false;
     _publish();
+    _homeLog(
+      'enrichment-published entries=${_entries.length} '
+      'saved=${_savedComics.length} categories=${_categories.length} '
+      'preferences=${_preferences.length} readStates=${_readStates.length} '
+      'sourcePreferences=${_sourcePreferences.length}',
+    );
     if (enrichmentStartedAt != null) {
       startupTelemetry?.serviceReady(
         'home-library-enrichment',
@@ -297,7 +762,9 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
     final visibleEntries =
         _libraryProjectionRevision == projectionRevisionAtStart ? entries : _entries;
-    unawaited(refreshDownloadSnapshots(visibleEntries));
+    unawaited(_refreshDownloadSnapshotsAfterFrame(visibleEntries));
+    _snapshotRewriteNeeded = false;
+    _scheduleSnapshotWrite();
   }
 
   Future<void> ensureReady() async {
@@ -320,6 +787,21 @@ final class HomeLibrarySession extends ChangeNotifier {
       _loading = false;
       _publish();
     }
+  }
+
+  /// Resolves a Home entry against the authoritative store before any path
+  /// locator is consumed by Reader or downloads. Compact snapshot entries keep
+  /// only the page count and cover metadata, so they are intentionally not
+  /// suitable for page loading.
+  Future<ImportedLibraryEntry> hydrateEntry(
+    ImportedLibraryEntry entry,
+  ) async {
+    final hydrated = await _traceStartupOperation<ImportedLibraryEntry?>(
+      'chapter-hydrate',
+      () => library.get(entry.chapter.sourceId, entry.chapter.chapterId),
+      summary: (value) => 'present=${value != null}',
+    );
+    return hydrated ?? entry;
   }
 
   Future<void> upsertVersionRelation(ComicVersionRelation relation) async {
@@ -359,6 +841,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _versionRelations = List<ComicVersionRelation>.unmodifiable(next);
     _libraryProjectionRevision++;
     _publish();
+    _scheduleSnapshotWrite();
   }
 
   void replacePreference(ComicPreference preference) {
@@ -368,14 +851,18 @@ final class HomeLibrarySession extends ChangeNotifier {
         preference.identity: preference,
       },
     );
+    _libraryProjectionRevision++;
     _publish();
+    _scheduleSnapshotWrite();
   }
 
   void replaceReadState(ChapterReadState state) {
     _readStates = Map<String, ChapterReadState>.unmodifiable(
       <String, ChapterReadState>{..._readStates, state.identity: state},
     );
+    _libraryProjectionRevision++;
     _publish();
+    _scheduleSnapshotWrite();
   }
 
   /// Persists a chapter and updates the Home projection in the same owner.
@@ -406,6 +893,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _entries = List<ImportedLibraryEntry>.unmodifiable(next);
     _libraryProjectionRevision++;
     _publish();
+    _scheduleSnapshotWrite();
   }
 
   Future<void> upsertSavedComic(SavedComicRecord comic) async {
@@ -424,6 +912,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _savedComics = List<SavedComicRecord>.unmodifiable(next);
     _libraryProjectionRevision++;
     _publish();
+    _scheduleSnapshotWrite();
   }
 
   Future<void> removeSavedComic(String sourceId, String comicId) async {
@@ -436,6 +925,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _savedComics = List<SavedComicRecord>.unmodifiable(next);
     _libraryProjectionRevision++;
     _publish();
+    _scheduleSnapshotWrite();
   }
 
   /// Persists progress for non-Reader mutation flows and updates Home.
@@ -490,6 +980,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _entries = List<ImportedLibraryEntry>.unmodifiable(next);
     _libraryProjectionRevision++;
     _publish();
+    _scheduleSnapshotWrite();
   }
 
   Future<void> replaceSources(
@@ -519,17 +1010,22 @@ final class HomeLibrarySession extends ChangeNotifier {
     if (!enabled.any((source) => source.sourceId == _activeSourceId)) {
       _activeSourceId = enabled.isEmpty ? null : enabled.first.sourceId;
     }
+    _libraryProjectionRevision++;
     _publish();
+    _scheduleSnapshotWrite();
   }
 
   void acceptDownloadSnapshot(ChapterDownloadSnapshot snapshot) {
+    if (_closed) {
+      return;
+    }
     _downloadSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
       <String, ChapterDownloadSnapshot>{
         ..._downloadSnapshots,
         snapshot.identity: snapshot,
       },
     );
-    _publish();
+    _downloadProjectionChanges.notifyListeners();
   }
 
   Future<void> refreshDownloadSnapshots(
@@ -537,13 +1033,21 @@ final class HomeLibrarySession extends ChangeNotifier {
   ) async {
     final requested = entries.toList(growable: false);
     final snapshots = <String, ChapterDownloadSnapshot>{};
+    final startedAt = _homeStartupClock.elapsedMilliseconds;
+    _homeLog('download-snapshot-refresh-start entries=${requested.length}');
     try {
       for (final snapshot in await chapterDownloads.inspectMany(requested)) {
         snapshots[snapshot.identity] = snapshot;
       }
+      _homeLog(
+        'download-snapshot-refresh-complete '
+        'entries=${requested.length} snapshots=${snapshots.length} '
+        'durationMs=${_homeStartupClock.elapsedMilliseconds - startedAt}',
+      );
     } on Object {
       // Preserve per-entry recovery for a single stale diagnostic record while
       // keeping the normal startup path to one bulk index projection.
+      _homeLog('download-snapshot-refresh-bulk-failed');
       for (final entry in requested) {
         try {
           final snapshot = await chapterDownloads.inspect(entry);
@@ -552,6 +1056,11 @@ final class HomeLibrarySession extends ChangeNotifier {
           // A stale diagnostic record must not block the durable library.
         }
       }
+      _homeLog(
+        'download-snapshot-refresh-fallback-complete '
+        'entries=${requested.length} snapshots=${snapshots.length} '
+        'durationMs=${_homeStartupClock.elapsedMilliseconds - startedAt}',
+      );
     }
     if (_closed) {
       return;
@@ -559,12 +1068,22 @@ final class HomeLibrarySession extends ChangeNotifier {
     _downloadSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
       snapshots,
     );
-    _publish();
+    _downloadProjectionChanges.notifyListeners();
+  }
+
+  Future<void> _refreshDownloadSnapshotsAfterFrame(
+    Iterable<ImportedLibraryEntry> entries,
+  ) async {
+    // inspectMany() walks the artifact index and every chapter page. It is
+    // useful for an accurate progress projection, but it must not compete
+    // with the first Home frame that already has a usable snapshot.
+    await (waitForPrimaryFrame?.call() ?? Future<void>.delayed(Duration.zero));
+    if (_closed) return;
+    await refreshDownloadSnapshots(entries);
   }
 
   void refreshWholeComicSnapshot() {
-    _wholeComicQueueSnapshot = wholeComicDownloads.snapshot;
-    _publish();
+    _acceptWholeComicQueueSnapshot(wholeComicDownloads.snapshot);
   }
 
   Future<void> close() async {
@@ -585,11 +1104,159 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
   }
 
+  @override
+  void dispose() {
+    _downloadProjectionChanges.dispose();
+    super.dispose();
+  }
+
   void _publish() {
     if (!_closed) {
       notifyListeners();
     }
   }
+
+  void _acceptWholeComicQueueSnapshot(WholeComicQueueSnapshot snapshot) {
+    if (_closed) {
+      return;
+    }
+    _wholeComicQueueSnapshot = snapshot;
+    _downloadProjectionChanges.notifyListeners();
+  }
+
+  Future<int?> _readLibraryProjectionRevision() async {
+    final candidate = library;
+    if (candidate is! ImportedLibraryRevisionStore) {
+      _homeLog('projection-revision-unavailable reason=store-unsupported');
+      return null;
+    }
+    try {
+      final revisionStore = candidate as ImportedLibraryRevisionStore;
+      return await revisionStore.libraryProjectionRevision;
+    } on Object {
+      // Revision metadata is an optimization. A failed optional read must
+      // fall back to the authoritative projection reconciliation.
+      _homeLog('projection-revision-unavailable reason=read-failed');
+      return null;
+    }
+  }
+
+  String? _activeSourceIdForCurrentSources() =>
+      _activeSourceIdFor(_sourcePreferences, current: _activeSourceId);
+
+  String? _activeSourceIdFor(
+    Map<String, ComicSourcePreference> preferences, {
+    required String? current,
+  }) {
+    final enabled = sources
+        .where((source) => preferences[source.sourceId]?.enabled ?? true)
+        .toList(growable: false)
+      ..sort((left, right) =>
+          (preferences[left.sourceId]?.sortOrder ?? 0).compareTo(
+            preferences[right.sourceId]?.sortOrder ?? 0,
+          ));
+    return enabled.any((source) => source.sourceId == current)
+        ? current
+        : (enabled.isEmpty ? null : enabled.first.sourceId);
+  }
+
+  void _scheduleSnapshotWrite() {
+    if (_closed || !persistSnapshot) {
+      return;
+    }
+    final store = snapshotStore;
+    if (store == null) {
+      return;
+    }
+    _homeLog(
+      'snapshot-write-scheduled entries=${_entries.length} '
+      'saved=${_savedComics.length} readStates=${_readStates.length}',
+    );
+    final operation = _snapshotWriteTail.then<void>((_) async {
+      if (_closed) {
+        return;
+      }
+      final startedAt = _homeStartupClock.elapsedMilliseconds;
+      _homeLog('snapshot-write-start');
+      final libraryRevision = await _traceStartupOperation<int?>(
+        'snapshot-write-revision-read',
+        _readLibraryProjectionRevision,
+        summary: (revision) => 'revision=${revision ?? 'none'}',
+      );
+      if (_closed) {
+        return;
+      }
+      final snapshot = HomeProjectionSnapshot(
+        entries: List<ImportedLibraryEntry>.unmodifiable(_entries),
+        savedComics: List<SavedComicRecord>.unmodifiable(_savedComics),
+        categories: List<LibraryCategory>.unmodifiable(_categories),
+        preferences: List<ComicPreference>.unmodifiable(_preferences.values),
+        readStates: List<ChapterReadState>.unmodifiable(_readStates.values),
+        sourcePreferences: List<ComicSourcePreference>.unmodifiable(
+          _sourcePreferences.values,
+        ),
+        versionRelations: List<ComicVersionRelation>.unmodifiable(
+          _versionRelations,
+        ),
+        libraryRevision: libraryRevision,
+      );
+      await store.write(snapshot);
+      _homeLog(
+        'snapshot-write-complete ${_snapshotSummary(snapshot)} '
+        'durationMs=${_homeStartupClock.elapsedMilliseconds - startedAt}',
+      );
+    });
+    _snapshotWriteTail = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    unawaited(operation.catchError((Object error, StackTrace _) {
+      _homeLog(
+        'snapshot-write-failed errorType=${error.runtimeType}',
+      );
+    }));
+  }
+
+  void _homeLog(String message) {
+    debugPrint(
+      '[zic-home] elapsedMs=${_homeStartupClock.elapsedMilliseconds} $message',
+    );
+  }
+
+  Future<T> _traceStartupOperation<T>(
+    String stage,
+    Future<T> Function() operation, {
+    String Function(T value)? summary,
+  }) async {
+    final startedAt = _homeStartupClock.elapsedMilliseconds;
+    _homeLog('$stage-start');
+    try {
+      final value = await operation();
+      final detail = summary == null ? '' : ' ${summary(value)}';
+      _homeLog(
+        '$stage-complete durationMs='
+        '${_homeStartupClock.elapsedMilliseconds - startedAt}$detail',
+      );
+      return value;
+    } on Object catch (error) {
+      _homeLog(
+        '$stage-failed durationMs='
+        '${_homeStartupClock.elapsedMilliseconds - startedAt} '
+        'errorType=${error.runtimeType}',
+      );
+      rethrow;
+    }
+  }
+
+  String _snapshotSummary(HomeProjectionSnapshot snapshot) =>
+      'present=true entries=${snapshot.entries.length} '
+      'saved=${snapshot.savedComics.length} '
+      'categories=${snapshot.categories.length} '
+      'preferences=${snapshot.preferences.length} '
+      'readStates=${snapshot.readStates.length} '
+      'sourcePreferences=${snapshot.sourcePreferences.length} '
+      'versionRelations=${snapshot.versionRelations.length} '
+      'revision=${snapshot.libraryRevision ?? 'none'}';
 }
 
 bool defaultComicSourceEnabled(

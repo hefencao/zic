@@ -16,7 +16,7 @@ import 'package:zic/app_settings_screen.dart';
 import 'package:zic/debug_trace.dart';
 import 'package:zic/debug_trace_screen.dart';
 import 'package:zic/library_backup.dart';
-import 'package:zic/main.dart';
+import 'package:zic/app.dart';
 import 'package:zic/misc_page.dart';
 import 'package:zic/reader_preferences.dart';
 
@@ -60,6 +60,22 @@ void main() {
     expect(find.byKey(settingsAppearanceEntryKey), findsOneWidget);
   });
 
+  testWidgets('appearance settings exposes AMOLED dark mode', (tester) async {
+    final preferences = AppPreferencesController();
+    addTearDown(preferences.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppearanceSettingsScreen(preferences: preferences),
+      ),
+    );
+
+    expect(find.byKey(appearanceAmoledKey), findsOneWidget);
+    expect(preferences.amoledDarkTheme, isFalse);
+    await tester.tap(find.byKey(appearanceAmoledKey));
+    await tester.pump();
+    expect(preferences.amoledDarkTheme, isTrue);
+  });
+
   test('application preferences load and persist through injected storage', () async {
     final controller = AppPreferencesController();
     addTearDown(controller.dispose);
@@ -68,6 +84,7 @@ void main() {
     await controller.attach(
       read: () async => <String, Object?>{
         'themeMode': 'light',
+        'amoledDarkTheme': true,
         'debugTraceEnabled': false,
         'shelfSourceFilter': 'remote',
         'shelfSortMode': 'title',
@@ -111,6 +128,7 @@ void main() {
     );
 
     expect(controller.themeMode, ThemeMode.light);
+    expect(controller.amoledDarkTheme, isTrue);
     expect(controller.debugTraceEnabled, isFalse);
     expect(controller.shelfSourceFilter, ShelfSourceFilter.remote);
     expect(controller.shelfSortMode, LibrarySortMode.title);
@@ -151,6 +169,7 @@ void main() {
     );
 
     controller.setThemeMode(ThemeMode.dark);
+    controller.setAmoledDarkTheme(false);
     controller.setShelfSortMode(LibrarySortMode.custom);
     controller.setDetailsPreviewMaxItemsPerRow(4);
     controller.setNetworkUserAgent('custom-network-agent');
@@ -177,6 +196,7 @@ void main() {
     await controller.flush();
 
     expect(written?['themeMode'], 'dark');
+    expect(written?['amoledDarkTheme'], isFalse);
     expect(written?['shelfSortMode'], 'custom');
     expect(written?['version'], 6);
     expect(written?['detailsPreviewMaxItemsPerRow'], 4);
@@ -280,6 +300,22 @@ void main() {
 
     expect(controller.themeMode, ThemeMode.light);
     expect(written?['themeMode'], 'light');
+  });
+
+  test('missing startup preferences stay in memory until user change', () async {
+    final controller = AppPreferencesController();
+    addTearDown(controller.dispose);
+    var writes = 0;
+
+    await controller.attach(
+      read: () async => null,
+      write: (_) async => writes++,
+    );
+
+    expect(writes, 0);
+    controller.setThemeMode(ThemeMode.light);
+    await controller.flush();
+    expect(writes, 1);
   });
 
   test('debug trace projection is bounded and can be disabled', () {

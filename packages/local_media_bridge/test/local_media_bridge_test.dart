@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_media_bridge/local_media_bridge.dart';
@@ -8,11 +9,42 @@ import 'package:local_media_bridge/local_media_bridge.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel(localMediaBridgeChannelName);
+  const startupChannel = MethodChannel('dev.zic.zic/startup');
   const bridge = LocalMediaBridge(channel: channel);
 
   tearDown(() async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(startupChannel, null);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  test('attaches deferred Android plugin before first bridge call', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    final calls = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(startupChannel, (call) async {
+      calls.add('startup:${call.method}');
+      expect(call.method, 'attachPlugin');
+      expect(
+        call.arguments,
+        const <String, Object?>{'name': 'local_media_bridge'},
+      );
+      return null;
+    });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add('bridge:${call.method}');
+      expect(call.method, 'pickImageDirectory');
+      return null;
+    });
+
+    expect(await bridge.pickImageDirectory(), isNull);
+    expect(calls, <String>[
+      'startup:attachPlugin',
+      'bridge:pickImageDirectory',
+    ]);
   });
 
   test('scoped directory response preserves document identities', () async {

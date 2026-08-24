@@ -12,8 +12,8 @@
 
 ## 决策
 
-1. `main()` 先呈现 Bootstrap/App，再以后台任务预热进程级 native media worker；
-   native 预热失败只记录诊断，不阻塞首页。
+1. `main()` 直接呈现 App 的 memory-backed Home，不创建自定义 Flutter bootstrap
+   surface；durable services、外部插件和 native capability 均不得成为首页首帧的硬门槛。
 2. `WholeComicDownloadQueue` 的持久 JSON restore 通过 `ready` 表达，App 只创建
    queue，不在首页组合完成前等待 restore；需要队列状态的 Home/Download Manager
    继续显式等待 `ready`。

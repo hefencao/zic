@@ -11,7 +11,7 @@ import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:zic/comic_details.dart' as details;
 import 'package:zic/demo_home.dart';
-import 'package:zic/main.dart';
+import 'package:zic/app.dart';
 import 'package:zic/source_browser.dart';
 import 'package:zic/webp_demo.dart';
 

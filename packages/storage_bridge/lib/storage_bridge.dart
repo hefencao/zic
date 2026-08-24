@@ -8,6 +8,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage/storage.dart';
 
+export 'package:storage/storage.dart'
+    show HomeProjectionSnapshot, HomeProjectionSnapshotStore;
+
 /// Builds the engine-facing provider for immutable encoded image content.
 ///
 /// File-backed sources avoid materializing the whole encoded file in the Dart
@@ -32,23 +35,74 @@ Future<Uint8List> readEncodedResourceBytes(EncodedResourceSource source) =>
       FileEncodedResourceSource(:final path) => File(path).readAsBytes(),
     };
 
-Future<String> getDefaultZicStorageRoot() async {
-  final support = await getApplicationSupportDirectory();
-  return '${support.path}/zic';
+Future<String> getDefaultZicStorageRoot({
+  Future<String?> Function()? applicationSupportPath,
+}) async {
+  final supportPath = await applicationSupportPath?.call() ??
+      (await getApplicationSupportDirectory()).path;
+  return '$supportPath/zic';
+}
+
+ImportedLibraryStore createLazyImportedLibraryStore({
+  required Future<String> Function() storageRoot,
+}) =>
+    LazyImportedLibraryStore(rootProvider: storageRoot);
+
+HomeProjectionSnapshotStore createHomeProjectionSnapshotStore({
+  required Future<String> Function() storageRoot,
+}) =>
+    HomeProjectionSnapshotStore(rootProvider: storageRoot);
+
+/// Returns whether the installation already has durable application state.
+///
+/// A fresh install must not create the imported-library, offline-cache, or
+/// Home projection snapshot files just because Home was opened. Existing state
+/// still includes a queue or snapshot file because restoring either projection
+/// requires the durable composition to reconcile it.
+Future<bool> durableZicStateExists(String storageRoot) async {
+  final importedLibrary = File('$storageRoot/imported_library.sqlite3');
+  final offlineCache = File('$storageRoot/offline_chapters/cache.sqlite');
+  final wholeComicQueue = File('$storageRoot/whole_comic_queue.json');
+  final homeSnapshot = File('$storageRoot/home_projection_snapshot.json');
+  // A completed Home snapshot is itself durable application state. Checking
+  // it first avoids probing the large SQLite/cache files on the hot startup
+  // path; the durable open below still validates the authoritative stores.
+  if (await homeSnapshot.exists()) {
+    print(
+      '[zic-storage] durable-state-files '
+      'library=unknown offlineCache=unknown wholeComicQueue=unknown '
+      'homeSnapshot=true source=home-snapshot',
+    );
+    return true;
+  }
+  final results = await Future.wait<bool>(<Future<bool>>[
+    importedLibrary.exists(),
+    offlineCache.exists(),
+    wholeComicQueue.exists(),
+    homeSnapshot.exists(),
+  ]);
+  print(
+    '[zic-storage] durable-state-files '
+    'library=${results[0]} offlineCache=${results[1]} '
+    'wholeComicQueue=${results[2]} homeSnapshot=${results[3]} source=full-scan',
+  );
+  return results.any((exists) => exists);
 }
 
 ResourceCacheCoordinator createAppResourceCache({
   required String storageRoot,
+  ResourceCacheManager? responses,
   ArtifactCacheMaintenance? artifacts,
   void Function(Object error, StackTrace stackTrace)? onPersistenceError,
 }) {
   return ResourceCacheCoordinator(
-    responses: ResourceCacheManager(
-      byteStore: FileResourceCacheByteStore(
-        '$storageRoot/resource_cache/responses',
-      ),
-      onPersistenceError: onPersistenceError,
-    ),
+    responses: responses ??
+        ResourceCacheManager(
+          byteStore: FileResourceCacheByteStore(
+            '$storageRoot/resource_cache/responses',
+          ),
+          onPersistenceError: onPersistenceError,
+        ),
     artifacts: artifacts,
   );
 }

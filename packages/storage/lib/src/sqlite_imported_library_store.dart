@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -7,13 +8,14 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 
 import 'sqlite_progress_writer.dart';
 
-const _schemaVersion = 8;
+const _schemaVersion = 9;
 
 final class SqliteImportedLibraryStore
     implements
         ImportedLibraryStore,
         ComicVersionRelationStore,
-        ReaderProgressCheckpointStore {
+        ReaderProgressCheckpointStore,
+        ImportedLibraryRevisionStore {
   SqliteImportedLibraryStore(this.path);
 
   SqliteImportedLibraryStore.memory() : path = null;
@@ -21,26 +23,46 @@ final class SqliteImportedLibraryStore
   final String? path;
   sql.Database? _db;
   SqliteProgressWriter? _progressWriter;
+  Future<void>? _progressWriterOpening;
 
   @override
   Future<void> open() async {
     if (_db != null) {
+      _storageLog('library-open-skipped reason=already-open');
       return;
     }
+    final startedAt = Stopwatch()..start();
     final dbPath = path;
+    _storageLog(
+      'library-open-start persistent=${dbPath != null}',
+    );
     if (dbPath != null) {
       await File(dbPath).parent.create(recursive: true);
     }
+    _storageLog('library-parent-ready durationMs=${startedAt.elapsedMilliseconds}');
+    final sqliteOpenStartedAt = Stopwatch()..start();
     final db = dbPath == null
         ? sql.sqlite3.openInMemory()
         : sql.sqlite3.open(dbPath);
+    _storageLog(
+      'library-sqlite-connection-opened '
+      'durationMs=${sqliteOpenStartedAt.elapsedMilliseconds}',
+    );
     try {
+      final pragmaStartedAt = Stopwatch()..start();
       db.execute('PRAGMA foreign_keys = ON');
       db.execute('PRAGMA journal_mode = WAL');
       db.execute('PRAGMA busy_timeout = 5000');
+      _storageLog(
+        'library-pragmas-complete '
+        'durationMs=${pragmaStartedAt.elapsedMilliseconds}',
+      );
       final version =
           db.select('PRAGMA user_version').first.values.first as int;
+      _storageLog('library-schema-version version=$version');
       if (version == 0) {
+        final schemaStartedAt = Stopwatch()..start();
+        _storageLog('library-schema-create-start from=0');
         db.execute('BEGIN IMMEDIATE');
         try {
           _createCompositeLibraryTables(db);
@@ -49,34 +71,97 @@ final class SqliteImportedLibraryStore
           _createSavedComicTables(db);
           _createMigrationIssueTable(db);
           _createComicVersionRelationTable(db);
+          _createLibraryProjectionRevision(db);
           db.execute('PRAGMA user_version = $_schemaVersion');
           db.execute('COMMIT');
         } on Object {
           db.execute('ROLLBACK');
           rethrow;
         }
+        _storageLog(
+          'library-schema-create-complete '
+          'version=$_schemaVersion '
+          'durationMs=${schemaStartedAt.elapsedMilliseconds}',
+        );
       } else if (version >= 1 && version <= 4) {
+        final migrationStartedAt = Stopwatch()..start();
+        _storageLog('library-schema-migration-start from=$version');
         _prepareLegacySchemaForMigration(db);
         _migrateToCompositeSchema(db, fromVersion: version);
+        _storageLog(
+          'library-schema-migration-complete from=$version '
+          'to=$_schemaVersion '
+          'durationMs=${migrationStartedAt.elapsedMilliseconds}',
+        );
       } else if (version == 5) {
+        final migrationStartedAt = Stopwatch()..start();
+        _storageLog('library-schema-migration-start from=5');
         _migrateMigrationIssueAcknowledgement(db);
+        _storageLog(
+          'library-schema-migration-complete from=5 to=$_schemaVersion '
+          'durationMs=${migrationStartedAt.elapsedMilliseconds}',
+        );
       } else if (version == 6) {
+        final migrationStartedAt = Stopwatch()..start();
+        _storageLog('library-schema-migration-start from=6');
         _migrateComicVersionRelations(db);
+        _storageLog(
+          'library-schema-migration-complete from=6 to=$_schemaVersion '
+          'durationMs=${migrationStartedAt.elapsedMilliseconds}',
+        );
       } else if (version == 7) {
+        final migrationStartedAt = Stopwatch()..start();
+        _storageLog('library-schema-migration-start from=7');
         _migrateComicVersionPageMappings(db);
+        _storageLog(
+          'library-schema-migration-complete from=7 to=$_schemaVersion '
+          'durationMs=${migrationStartedAt.elapsedMilliseconds}',
+        );
+      } else if (version == 8) {
+        final migrationStartedAt = Stopwatch()..start();
+        _storageLog('library-schema-migration-start from=8');
+        _migrateLibraryProjectionRevision(db);
+        _storageLog(
+          'library-schema-migration-complete from=8 to=$_schemaVersion '
+          'durationMs=${migrationStartedAt.elapsedMilliseconds}',
+        );
       } else if (version != _schemaVersion) {
         throw StateError(
           'unsupported imported library schema version: $version',
         );
       }
-      if (dbPath != null) {
-        _progressWriter = await SqliteProgressWriter.open(dbPath);
-      }
       _db = db;
-    } on Object {
+      _storageLog(
+        'library-open-complete version=$_schemaVersion '
+        'durationMs=${startedAt.elapsedMilliseconds}',
+      );
+      if (dbPath != null) {
+        // This is diagnostic only and deliberately does not delay the first
+        // Home projection. It makes the distinction between the authoritative
+        // SQLite library and the compact startup snapshot visible in a cold
+        // start trace.
+        unawaited(_logLibraryStorageBytes(dbPath));
+      }
+    } on Object catch (error) {
+      _storageLog(
+        'library-open-failed '
+        'durationMs=${startedAt.elapsedMilliseconds} '
+        'errorType=${error.runtimeType}',
+      );
       db.dispose();
       rethrow;
     }
+  }
+
+  @override
+  Future<int?> get libraryProjectionRevision async {
+    final rows = _requireDb().select('''
+      SELECT revision
+      FROM library_projection_revision
+      WHERE singleton = 1
+      LIMIT 1
+    ''');
+    return rows.isEmpty ? null : rows.first['revision']! as int;
   }
 
   @override
@@ -167,7 +252,9 @@ final class SqliteImportedLibraryStore
       await writer.save(progress);
       return;
     }
-    _saveProgressSynchronously(_requireDb(), progress);
+    final db = _requireDb();
+    _saveProgressSynchronously(db, progress);
+    _startProgressWriter(db);
   }
 
   @override
@@ -177,7 +264,9 @@ final class SqliteImportedLibraryStore
       writer.enqueue(progress);
       return;
     }
-    _saveProgressSynchronously(_requireDb(), progress);
+    final db = _requireDb();
+    _saveProgressSynchronously(db, progress);
+    _startProgressWriter(db);
   }
 
   void _saveProgressSynchronously(
@@ -729,11 +818,43 @@ final class SqliteImportedLibraryStore
 
   @override
   Future<void> close() async {
+    // Release the foreground connection before waiting for a background
+    // writer that may still be waiting for SQLite's WAL lock. Waiting first
+    // can deadlock on a fresh database where the writer is opening its second
+    // connection for the first time.
+    final db = _db;
+    _db = null;
     final progressWriter = _progressWriter;
     _progressWriter = null;
+    final progressWriterOpening = _progressWriterOpening;
+    _progressWriterOpening = null;
+    db?.dispose();
     await progressWriter?.close();
-    _db?.dispose();
-    _db = null;
+    await progressWriterOpening;
+  }
+
+  void _startProgressWriter(sql.Database db) {
+    final dbPath = path;
+    if (dbPath == null ||
+        _progressWriter != null ||
+        _progressWriterOpening != null) {
+      return;
+    }
+    late final Future<void> opening;
+    opening = SqliteProgressWriter.open(dbPath)
+        .then<void>((writer) async {
+          if (identical(_db, db)) {
+            _progressWriter = writer;
+          } else {
+            await writer.close();
+          }
+        })
+        .catchError((Object _, StackTrace __) {
+          // The synchronous progress path remains available if the optional
+          // background writer cannot be started. Reader progress must not make
+          // Home startup fail just because its optimization is unavailable.
+        });
+    _progressWriterOpening = opening;
   }
 
   void _putProgress(sql.Database db, ReadingProgress progress) {
@@ -908,6 +1029,7 @@ void _migrateMigrationIssueAcknowledgement(sql.Database db) {
       ON library_migration_issue(acknowledged_us, issue_id)
     ''');
     _createComicVersionRelationTable(db);
+    _createLibraryProjectionRevision(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -920,6 +1042,7 @@ void _migrateComicVersionRelations(sql.Database db) {
   db.execute('BEGIN IMMEDIATE');
   try {
     _createComicVersionRelationTable(db);
+    _createLibraryProjectionRevision(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -942,6 +1065,19 @@ void _migrateComicVersionPageMappings(sql.Database db) {
         ADD COLUMN page_mappings_json TEXT NOT NULL DEFAULT '[]'
       """);
     }
+    _createLibraryProjectionRevision(db);
+    db.execute('PRAGMA user_version = $_schemaVersion');
+    db.execute('COMMIT');
+  } on Object {
+    db.execute('ROLLBACK');
+    rethrow;
+  }
+}
+
+void _migrateLibraryProjectionRevision(sql.Database db) {
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    _createLibraryProjectionRevision(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -1258,6 +1394,7 @@ void _migrateToCompositeSchema(
       );
     }
     _createComicVersionRelationTable(db);
+    _createLibraryProjectionRevision(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -1618,4 +1755,96 @@ void _createComicVersionRelationTable(sql.Database db) {
     CREATE INDEX IF NOT EXISTS comic_version_relation_predecessor
     ON comic_version_relation(source_id, predecessor_comic_id, discovered_us DESC)
   ''');
+}
+
+void _createLibraryProjectionRevision(sql.Database db) {
+  final startedAt = Stopwatch()..start();
+  _storageLog('projection-revision-schema-start');
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS library_projection_revision (
+      singleton INTEGER NOT NULL PRIMARY KEY CHECK(singleton = 1),
+      revision INTEGER NOT NULL
+    )
+  ''');
+  db.execute('''
+    INSERT OR IGNORE INTO library_projection_revision (singleton, revision)
+    VALUES (1, 0)
+  ''');
+
+  const tables = <String>[
+    'imported_chapter',
+    'reading_progress',
+    'comic_preference',
+    'chapter_read_state',
+    'library_category',
+    'saved_comic',
+    'comic_source_preference',
+    'comic_version_relation',
+  ];
+  final existingTables = db
+      .select("SELECT name FROM sqlite_master WHERE type = 'table'")
+      .map((row) => row['name']! as String)
+      .toSet();
+  for (final table in tables) {
+    if (!existingTables.contains(table)) {
+      continue;
+    }
+    db.execute('''
+      CREATE TRIGGER IF NOT EXISTS ${table}_projection_revision_insert
+      AFTER INSERT ON $table
+      BEGIN
+        UPDATE library_projection_revision
+        SET revision = revision + 1
+        WHERE singleton = 1;
+      END
+    ''');
+    db.execute('''
+      CREATE TRIGGER IF NOT EXISTS ${table}_projection_revision_update
+      AFTER UPDATE ON $table
+      BEGIN
+        UPDATE library_projection_revision
+        SET revision = revision + 1
+        WHERE singleton = 1;
+      END
+    ''');
+    db.execute('''
+      CREATE TRIGGER IF NOT EXISTS ${table}_projection_revision_delete
+      AFTER DELETE ON $table
+      BEGIN
+        UPDATE library_projection_revision
+        SET revision = revision + 1
+        WHERE singleton = 1;
+      END
+    ''');
+  }
+  _storageLog(
+    'projection-revision-schema-complete '
+    'durationMs=${startedAt.elapsedMilliseconds}',
+  );
+}
+
+void _storageLog(String message) {
+  print('[zic-storage] $message');
+}
+
+Future<void> _logLibraryStorageBytes(String dbPath) async {
+  final startedAt = Stopwatch()..start();
+  try {
+    final sizes = await Future.wait<int>(<Future<int>>[
+      File(dbPath).length(),
+      File('$dbPath-wal').length(),
+      File('$dbPath-shm').length(),
+    ]);
+    _storageLog(
+      'library-storage-size databaseBytes=${sizes[0]} '
+      'walBytes=${sizes[1]} shmBytes=${sizes[2]} '
+      'durationMs=${startedAt.elapsedMilliseconds}',
+    );
+  } on Object catch (error) {
+    _storageLog(
+      'library-storage-size-failed '
+      'durationMs=${startedAt.elapsedMilliseconds} '
+      'errorType=${error.runtimeType}',
+    );
+  }
 }

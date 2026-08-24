@@ -51,17 +51,14 @@ require(
     'final _defaultNativeMediaRuntimeFactory = NativePipelineMediaRuntimeFactory();',
     'Future<void> prewarmDefaultLocalMediaPipeline()',
 )
-require(
-    'apps/app/lib/main.dart',
-    'await prewarmDefaultLocalMediaPipeline();',
-    "debugPrint('native media prewarm unavailable: $error');",
-    'runApp(const _BootstrapApp());',
-)
 main = read('apps/app/lib/main.dart')
-if main.index('runApp(const _BootstrapApp());') > main.index(
-    'await prewarmDefaultLocalMediaPipeline();'
-):
-    raise SystemExit('native media prewarm must not precede the Bootstrap frame')
+forbidden = (
+    'prewarmDefaultLocalMediaPipeline()',
+    'prewarmPlatformSourceResourceTransport()',
+)
+if any(token in main for token in forbidden):
+    raise SystemExit('native media/rhttp prewarm must remain out of Home startup')
+require('apps/app/lib/main.dart', 'runApp(\n    _BootstrapApp(')
 require(
     'packages/media/lib/src/frame.dart',
     'enum DecodeExecutionClass { current, nonCurrent }',

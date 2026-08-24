@@ -14,10 +14,43 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 
 ### 1.1 首页冷启动
 
-- Home MUST 在本地库的 cover-bearing primary 数据可用后先呈现首页；native media
-  prewarm、持久整本队列 restore、外部插件 activation 和 enrichment 不得成为首封面
-  请求的硬门槛。
+- bootstrap 与 durable service 之间 MUST 通过稳定 handoff 原地切换 `HomeLibrarySession` 的服务；不得因服务到达更换 `MaterialApp`/Home key 或销毁重建首页导航状态。快照已证明 revision 一致时 handoff MUST 保持现有更新漫画/阅读历史投影，不得重复发布同一 projection。
+
+- Home MUST 在本地库的 cover-bearing primary 数据可用后先呈现首页；native media prewarm、持久整本队列 restore、外部插件 activation 和 enrichment 不得成为首封面请求的硬门槛。
+- 启动 build MUST 不等待 durable services。入口 MUST 直接挂载不依赖 durable services 的 memory-backed Home，不得创建自定义 Flutter bootstrap surface；durable service open MUST 在首个 Home frame 之后立即异步启动，且不得决定 Home 是否可见。
+- 外观 MUST 读取并持久化 `ThemeMode`；AMOLED 开关启用时，且当前有效主题为深色，`darkTheme` 的 surface/scaffold/canvas 背景 MUST 使用纯黑。首帧加载背景 MUST 跟随有效主题，不得为启动阶段强制使用浅色。
+- Durable service open 完成后 MUST 主动提交内存 Home 到 durable projection；该提交不得只注册等待下一帧的回调而不安排 frame，否则用户手势不得成为加载更新漫画和阅读历史的隐式触发条件。
+- 首帧前只允许建立轻量 startup/trace channel；native decode、`media_core` texture、rhttp 和 feature bridge MUST 在实际 Reader/source/platform capability 使用前保持未初始化或未挂载，首次使用只能由对应 capability 自己按需挂载。
+- Android `FlutterEngine` MUST 关闭 embedding 的自动 `GeneratedPluginRegistrant` 注册；
+  仅覆盖 `configureFlutterEngine` 不足以满足该边界，因为隐式 engine 会在该回调之前注册
+  插件。feature bridge 只能在对应 capability 通过 startup channel 显式挂载。
+- `LocalMediaBridge` 的 Android `pickImageDirectory`、`scanImageDirectory`、`openDocument` 与 `readDocument` MUST 在调用 `dev.zic/local_media` 前通过 startup channel single-flight attach `local_media_bridge`；这样持久记录直接恢复到 Reader 时不得依赖曾经执行过的文件夹选择流程。
+- Android 应用存储根目录 MUST 优先随 Dart entrypoint args 同步注入，避免冷启动首次 MethodChannel 往返；旧宿主才由轻量 startup channel 返回，不能为了首个 `path_provider` 查询提前挂载 JNI。Home/runtime composition MUST 直接挂载到 Flutter root，不得通过自定义 bootstrap surface 或 deferred loading unit 延后首个可见 raster。首帧后的异步阶段只打开 durable/native/plugin capability，UI isolate 仍是唯一的 Flutter presentation/composition owner。
+- 新安装且不存在 imported-library、offline-cache 或 whole-comic queue 状态时，Home MUST
+  不打开 SQLite 或创建 WAL/schema；`LazyImportedLibraryStore` MUST 以内存投影服务，并在
+  首次明确持久化写入时先将该投影迁移到 SQLite，再转发写入。已有 durable state 的服务
+  只能在 Home 可见窗口之后打开。SQLite 句柄 MUST NOT 跨 isolate 传递。
+- 已有 durable state 时，Home MAY 先读取 `HomeProjectionSnapshotStore` 的上一次成功投影，
+  以 stale-while-revalidate 方式显示更新漫画和阅读历史；bootstrap/memory-backed Home
+  MUST NOT 将空投影写回快照。SQLite MUST 继续是唯一事实源，reconcile 后只替换新增、修改或
+  删除的 identity，并异步原子写回新快照。快照 SHOULD 保存 SQLite Home projection revision；
+  修订号一致时 MUST 允许直接复用快照，只有修订号变化或无法证明一致时才扫描事实源。快照 v2
+  的 entries MUST 只包含 Home 元数据、pageCount、cover locator 与 progress，不得复制完整 page
+  locator；旧 v1 读取成功后 MUST 自动原子重写为 v2。compact entry 在 Reader、下载或版本迁移
+  前 MUST 通过 authoritative library hydrate 完整 pages。快照缺失、损坏、版本不兼容或读取失败 MUST 静默
+  回退 SQLite，不能阻塞 Home 或覆盖 SQLite 数据。
+- 快照序列化结果超过 64 KiB 时 SHOULD 使用 gzip，读取 MUST 同时兼容明文与 gzip；旧 v1 或大型明文快照读取成功后 MUST 自动原子重写为 v2 compact gzip。
+- Whole-comic queue MUST 保持为独立队列状态文件，不得复制 Home entries 或章节正文；恢复 SHOULD 通过章节下载索引的 `inspectMany()` 批量投影，并在 Home primary 可见后后台完成，queue `ready` 不得成为更新漫画或阅读历史首显的硬门槛。
+- 空的或从未产生阅读记录的 imported library 打开 MUST NOT 创建 Reader progress writer
+  或第二个 SQLite/WAL 连接；该 writer 只能在首次真正写入 `ReadingProgress` 时懒启动，
+  且不能反向成为 Home 冷启动的硬门槛。
+- Home 启动期缺失的来源/漫画默认偏好 MUST 先以内存投影提供给首个 Home；不得为建立这些
+  默认值在 UI isolate 同步执行 SQLite 写入。只有用户明确修改偏好时才 MUST 持久化该偏好，
+  之后的 reload MUST 继续尊重已存储值。
+- 首次安装缺失的 `app_preferences.json` MUST 先使用内存默认偏好；启动阶段不得为写出完整
+  默认文档执行 flush/rename。用户首次修改任一应用偏好时才创建并持久化该文档。
 - 外部来源可以在首帧之后 ready；封面 presentation MUST 使用稳定 canonical artwork identity。cache miss 在等待中的外部 source 首次发布前 MUST 保持同一个资源请求 pending，不能先以 source-unavailable 失败；source readiness 完成后仍不可用、transport 或 decode 失败时 MUST 保持稳定占位，不得由定时器、App resume、first-frame watchdog、provider eviction 或 loader closure 变化自动重启请求；只有显式来源刷新、资源 revision 或稳定 identity变化才能重新加载。
+- Home 启动 MUST NOT 枚举 Android 上全部已安装包来发现 Mihon 扩展；设备扩展发现只能在来源管理页面的显式操作路径执行。外部插件 manifest 恢复和已安装 runtime activation MAY 在首帧后的 durable handoff 中后台执行，但不得成为首封面硬门槛；Home 封面等待 source readiness 时 MUST 保持 pending。显式来源管理操作仍可触发设备扩展发现与刷新。
 - 首页每张封面 MUST 独立完成请求和显示；一张封面变慢或 durable response 写入变慢，
   不得阻塞其它已经取得 encoded bytes 的封面。冷 miss MAY 先使用 memory source，持久化
   写入由统一 response cache 后台完成；durable hit MUST 先物化为调用方自持有的 encoded bytes。response cache 的文件路径 MUST NOT 暴露给 `FileImage` 或其它长生命周期 presentation 对象；`FileEncodedResourceSource` 只允许外部稳定本地文件。durable image persistence MUST 区分 `transient` 与 `retained` 生命周期：browse/preview响应 MAY 受 TTL/LRU/maintenance 回收；library/history/details cover MUST 在同一 canonical cache key上晋升为 retained，并且 MUST NOT 被运行期容量/TTL整理删除。metadata refresh MUST NOT 以 comic namespace 粗粒度失效 artwork；retained cover仅由精确 artwork revision/显式整漫画资源删除/用户清缓存移除。
@@ -85,6 +118,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - Production external-plugin runtime MUST use an explicit bounded active-session safety ceiling large enough for mixed installed sources; current composition sets 32. The generic test/embed default MUST NOT silently become a user-visible eight-plugin limit.
 - plugin host MUST NOT 把 network bridge 的内部 browser-cookie session实现列为 Mihon common runtime ABI。Cookie snapshot reset MUST 通过稳定网络适配器边界调用。
 - Mihon common runtime完整性预检中所有 `dev.zic.network.*` 动态类型 MUST 在 network bridge consumer R8规则中保留原始全限定类名和成员；typed `SourceVerificationRequiredException` 不得被混淆、裁剪或用错误消息字符串替代。
+- app startup channel 通过类名反射挂载的 feature plugin 和 rhttp entry MUST 在 app R8规则中保留原始全限定类名及可调用成员；release APK 不得因 `Class.forName` 入口被混淆或裁剪而返回 `ClassNotFoundException`。
 - 外部插件持久 manifest MUST 逐记录容错；一个坏记录不得清空其它已导入插件。写入 MUST 保留上一代 `.bak`；启动恢复 SHOULD 依次尝试主 manifest、`.bak`、残留 `.part` 和旧 `.invalid`，并允许旧 sandbox绝对 payload路径按 owned-root basename迁移。恢复记录仍 MUST 经过原有 payload hash、签名、ABI和 entry class检查。
 - 来源详情若提供预览能力，详情页 MUST 能先显示 `ComicManifest` 中已经返回的预览项，
   后续页 MUST 通过 `ComicPreviewSource` 独立加载；预览图片必须复用统一 artwork loader，

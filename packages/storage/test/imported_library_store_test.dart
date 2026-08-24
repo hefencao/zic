@@ -71,7 +71,52 @@ void main() {
     expect(successors.single.successorComicId, relation.successorComicId);
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 8);
+    expect(db.select('PRAGMA user_version').single.values.single, 9);
+  });
+
+  test('sqlite persists a Home projection revision across writes and reopen',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-library-projection-revision-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final path = '${directory.path}/library.sqlite3';
+    final store = SqliteImportedLibraryStore(path);
+    await store.open();
+    final initial = await store.libraryProjectionRevision;
+    expect(initial, 0);
+    final initialRevision = initial!;
+
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/chapter',
+      displayName: 'Revision chapter',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.jpg',
+          sourceId: 'file:///revision/001.jpg',
+          contentKindHint: ContentKindHint.jpeg,
+        ),
+      ],
+    );
+    await store.upsertChapter(chapter);
+    final afterWrite = await store.libraryProjectionRevision;
+    expect(afterWrite, greaterThan(initialRevision));
+    final afterWriteRevision = afterWrite!;
+    await store.close();
+
+    final reopened = SqliteImportedLibraryStore(path);
+    await reopened.open();
+    expect(await reopened.libraryProjectionRevision, afterWriteRevision);
+    await reopened.removeChapter(chapter.sourceId, chapter.chapterId);
+    expect(
+      await reopened.libraryProjectionRevision,
+      greaterThan(afterWriteRevision),
+    );
+    await reopened.close();
   });
 
   test('sqlite imported library persists chapter, progress, and cascade delete',
@@ -376,7 +421,7 @@ void main() {
     expect(await store.getComicPreference(saved.sourceId, saved.comicId), isNull);
   });
 
-  test('sqlite migrates schema 3 through composite schema 8', () async {
+  test('sqlite migrates schema 3 through composite schema 9', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-saved-comic-migration-',
     );
@@ -398,7 +443,7 @@ void main() {
     );
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 8);
+    expect(db.select('PRAGMA user_version').single.values.single, 9);
   });
 
   test('sqlite schema 5 adds durable migration issue acknowledgement',
@@ -452,7 +497,7 @@ void main() {
 
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 8);
+    expect(db.select('PRAGMA user_version').single.values.single, 9);
     expect(
       db.select('PRAGMA table_info(library_migration_issue)')
           .map((row) => row['name'])
@@ -500,7 +545,7 @@ void main() {
 
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 8);
+    expect(db.select('PRAGMA user_version').single.values.single, 9);
     expect(
       db.select('PRAGMA table_info(comic_version_relation)')
           .map((row) => row['name'])

@@ -14,7 +14,7 @@ import 'package:zic/comic_details.dart' as details;
 import 'package:zic/demo_home.dart';
 import 'package:zic/download_manager.dart';
 import 'package:zic/library_diagnostics.dart';
-import 'package:zic/main.dart';
+import 'package:zic/app.dart';
 
 Uint8List _tinyPng() => base64Decode(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'

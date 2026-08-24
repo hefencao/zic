@@ -28,6 +28,23 @@ ImportedLibraryEntry _entry(int chapter) => ImportedLibraryEntry(
       ),
     );
 
+final class _CountingQueueStore implements WholeComicQueueStore {
+  Map<String, Object?>? value;
+  var saveCount = 0;
+
+  @override
+  Future<Map<String, Object?>?> load() async => value;
+
+  @override
+  Future<void> save(Map<String, Object?> data) async {
+    saveCount++;
+    value = Map<String, Object?>.from(data);
+  }
+
+  @override
+  Future<void> close() async {}
+}
+
 Future<WholeComicQueueJobSnapshot> _waitForJob(
   WholeComicDownloadQueue queue,
   bool Function(WholeComicQueueJobSnapshot job) predicate,
@@ -52,6 +69,30 @@ Future<WholeComicQueueJobSnapshot> _waitForJob(
 }
 
 void main() {
+  test('empty durable queue does not persist default state on restore', () async {
+    final store = _CountingQueueStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    addTearDown(downloads.close);
+    final queue = WholeComicDownloadQueue(
+      downloads: downloads,
+      store: store,
+    );
+    addTearDown(queue.close);
+
+    await queue.ready;
+    expect(store.saveCount, 0);
+
+    await queue.enqueue(
+      sourceId: 'queue-source',
+      comicId: 'queue-comic',
+      comicTitle: '队列漫画',
+      chapters: <ImportedLibraryEntry>[_entry(1)],
+    );
+    expect(store.saveCount, greaterThan(0));
+  });
+
   test('whole-comic queue enforces configured chapter concurrency', () async {
     var active = 0;
     var maxActive = 0;

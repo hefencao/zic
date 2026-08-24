@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:telemetry/telemetry.dart';
 
+import 'deferred_android_plugin.dart';
+
 const _frameCadenceChannel = MethodChannel(
   'dev.zic/reader_runtime_frame_cadence',
 );
@@ -43,6 +45,7 @@ final class FlutterReaderPlatformFrameCadenceProbe {
     if (_disposed || _started || !_supportedPlatform) return;
     final dartSendMicros = clock.nowMicros();
     try {
+      await ensureReaderRuntimePluginAttached();
       final response = await _channel.invokeMapMethod<String, Object?>(
         'startFrameCadenceProbe',
       );

@@ -125,7 +125,6 @@
 验证等级：`Implemented`、`Verified-static`、`Verified-toolchain`、`Verified-device`、`Unverified`。本快照没有新增 `Verified-device` 结论。
 
 ## 当前实现
-
 - dev.213：同源版本full artifact迟到promote现在可主动通知仍在origin的等价Reader demand；目标DownloadSession保留committed prefix，仅替换network attempt并从equivalent full继续。VibeVenera的alias-before-DownloadIdentity会有效共享in-flight/session partial，但ZIC暂不把独立Reader的hot writer提升为全局owner；只保留durable inactive partial跨版本复制。dev.212 stale mapping现在真正strong revalidate并刷新verifiedAt；origin trace输出`verifiedEquivalentCandidates`用于区分mapping缺边和候选尚无full。
 - 构建/依赖基线为 Dart>=3.12、Flutter>=3.44、AGP9.3.1、Gradle9.5.0、compileSdk37；Gradle daemon按用户本地环境要求使用OpenJDK25，但Android Java/Kotlin class-file target继续17。workspace直接 `test`约束为`^1.25.0`以兼容Flutter3.44固定的test_api解析。五个本地Android Flutter插件不再自行apply KGP，稳定Flutter兼容层仍保持 `android.builtInKotlin=false/android.newDsl=false`；Mihon ABI兼容依赖继续固定。
 - 外部漫画媒体生产host使用 `downloads_bridge/RhttpSourceResourceDirectTransport` + rhttp 0.18.0：source request-plan、NetLane、DownloadSession/artifact所有权不变；Rust/rhttp只执行已规范化单次请求并观察同一个`TaskControl`。dev.182移除dev.179误加的transport层64/256KiB二次framing；媒体前缀验证后保持raw stream，唯一aggregation回到`DownloadJob`的首批约16KiB/后续64KiB source-progress quantum。pure `downloads`仍以Dart HttpClient作为非Flutter/test默认，后台首帧后预热rhttp runtime。 dev.192在该raw stream边界增加`onReceiveProgress`与body-event只读diagnostics；`ByteResponseReadDiagnostics`只有snapshot能力，不提供pause/priority/quota。逐事件采样仅在非product构建启用，product/release不注册额外progress callback。
@@ -150,8 +149,9 @@
 - 初次 Venera/Mihon activation 的 Binder generation连续性已下沉到 Android `PluginRuntimeServiceClient`：仅 pending activation可跨一个 `runtime-service-died/disconnected` generation；Dart backend删除初次 activation重放，session invocation与业务失败仍按原 owner处理。
 - Home外部封面继续把 live source readiness作为显式加载依赖：首屏早于 plugin ready且 warm cache miss时，失败 Future只在对应 source从 unavailable→available后重新求值；普通 progress/enrichment rebuild不重试。历史/更新横向 Sliver直接 child使用 `section + canonical comic identity` 稳定 key并提供 reorder index callback。
 - debug/profile/release 共用 `dev.zic.zic`、`versionName=0.31.0` 和 `versionCode=192`。
-- 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment。
-- 冷启动先呈现 App/Bootstrap；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。
+- 首页先发布章节投影与 SavedComic primary 数据，封面不等待分类、偏好和阅读状态 enrichment；已有 durable state 时由 `HomeProjectionSnapshotStore` 先显示上次成功投影，快照保存 SQLite Home projection revision，修订号未变化时跳过全量章节 JSON reconcile，变化或旧快照无修订号时再以 SQLite 为事实源 reconcile 后异步原子写回，bootstrap 内存投影禁止覆盖快照。快照已升级为 v2 compact entries，只保留章节元数据、页数、封面定位和 progress，不再复制完整 pages；旧 v1 读取成功后自动重写，Reader/下载/版本迁移入口通过 authoritative library hydrate 完整章节。
+- 冷启动直接呈现 App 的 memory-backed Home，不再绘制自定义 Flutter bootstrap surface；native media prewarm、整本队列 restore 和外部插件 activation不阻塞 Home primary，外部 source ready 后增量接入。整本队列恢复使用 `inspectMany()` 批量读取索引，并在 Home primary 后台刷新，不再逐章节扫描或阻塞首页投影。
+- 快照序列化结果超过 64 KiB 时自动 gzip，读取兼容明文 v1/v2；旧 v1 或大型明文读取成功后自动原子重写为 v2 compact gzip。SQLite 文件仍是章节正文定位和 Home 事实源，不属于快照副本。
 - artwork资源恢复唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。Home、书架、漫画源和详情 presentation 已删除定时 retry、first-frame watchdog、App resume自动 retry、全局 ImageCache eviction和 App级短时 Future join；详情统一使用 `ComicDetailsArtworkLoader` 并显式传递 cover/preview/avatar role。普通 artwork直接复用 `StableArtworkImage`；需要裁剪/尺寸测量时只有一个显式 ImageStream listener，不再同时创建第二个 `Image`。
 - 外部 artwork 的 raw comicId只保留 runtime locator语义；durable cover/preview namespace使用来源 canonical comic identity。Home、漫画源、详情与迁移统一经 `ComicSourceResourceGateway`，`mihon:resource:` 不再误入本地文件 loader；gateway先查 source-independent durable cache，miss后才要求 active source。
 - 详情页通用“迁移漫画源”AppBar入口与同源版本能力统一到一个迁移 owner：同源确认版本在迁移面板提供“查看/迁移”，跨源标题搜索只发现候选；所有迁移继续进入严格比较确认且只复制 exact chapter状态。漫画源卡片左上书架图标+变暗只投影 shelf membership，右上感叹号直接消费章节更新或 projected confirmed successor；点击确认同源更新可直接查看 successor。
@@ -202,8 +202,7 @@
 - 需在 dev.173 真机先确认 Venera/Mihon普通 browse 已恢复，再继续验证 WNACG、筛选/下载反馈和迁移/更新提示：列表封面与 Reader正文应不再出现 `CLEARTEXT communication ... not permitted`；同一稳定 page demand的确定性失败不得再产生数百次 download重提。
 - 需真机确认 Venera `venera:ehentai` 初次 activation 在 Binder generation死亡时由 Android client保留 pending activation跨一个新 generation；若新 generation仍死亡，应采集 runtime process crash/kill 证据，而不是在 Dart/plugin层叠加重试。
 - 目标设备仍需验证 transition 首帧、远程 WebP frame cadence、后台重入和首页首封面时序。
-- 本轮首页冷启动修复仍需设备对比 `homeServicesReady`、`home-library-primary`、`homeCoverRequested`、各封面 `homeCoverSourceReady`/`homeCoverFirstFrame` 的真实间隔，并确认慢封面不会形成全局屏障；还需确认 raw durable hit 不触发插件资源请求，隐藏书架页不再产生重复首屏请求。
-- Android APK 构建和真机生命周期验证未在当前环境执行。
+- 本轮首页冷启动修复仍需设备对比 `homeServicesReady`、`home-library-primary`、`homeCoverRequested`、各封面 `homeCoverSourceReady`/`homeCoverFirstFrame` 的真实间隔，并确认慢封面不会形成全局屏障；还需确认 raw durable hit 不触发插件资源请求，隐藏书架页不再产生重复首屏请求；Android 路径应确认日志为 `storage-path-source=entrypoint-args`。
 - 详情和漫画源刷新结果由同一个 `AppPullToRefresh` 定位；简介使用 Card，评论 HTML 换行转为普通文本，“继续”区增加上下间距。
 ## 验证矩阵
 | 检查 | 状态 |
@@ -215,8 +214,7 @@
 | Kotlin texture bridge + dev.164 PluginRuntimeServiceClient stub compile | Verified-toolchain |
 | pinned libwebp host build/smoke | Unverified：当前基线缺少 `third_party/source_archives/libwebp-1.6.0.zip` |
 | 受影响 Flutter owner tests 与 analyzer | Verified：本轮本地 Flutter/Dart 工具链已执行定向 owner tests 且全仓 analyze 无新增告警（历史 Unverified 行为旧环境记录） |
-| Android debug/release split APK | Unverified：当前环境没有完整 Android SDK/NDK |
+| Android debug/release split APK | Verified-toolchain/device：release arm64 split APK 已构建并以 `adb install -r` 覆盖安装验证；未卸载、未清理 App 数据。|
 | 设备性能与生命周期 | Implemented；待设备复验 |
 | Verified-device | 无新增结论；本轮 paged/vertical control no-op 在 enqueue 边界去重，transfer projection 在 Flutter frame 忙时让出 UI；不改变 playback/freeze 语义，待 profile Android 真机复测 `readerFrameTiming` 与切页 cadence。 |
-
-本轮补充：修正二级放大交互拖动未经过实际图片矩形钳制的问题；continuous 未锁定时恢复整条 strip 的单指水平平移，双击第二下按住在已放大态只固定当前倍率与偏移、不再推进下一级，锁定态再次普通双击仅解锁。缩放专项回归已覆盖这些路径。
+| 主题/AMOLED 加载背景 | Verified-static：首帧背景跟随有效主题，AMOLED 深色开关持久化且深色 surface/scaffold/canvas 使用纯黑。 |

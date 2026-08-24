@@ -16,6 +16,7 @@ import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'external_plugin_repository_model.dart';
 import 'external_plugin_repository_screen.dart';
 import 'external_source_settings_screen.dart';
+import 'startup_platform.dart';
 
 const comicSourcesPageKey = ValueKey<String>('comic-sources-page');
 const comicSourceManageKey = ValueKey<String>('comic-source-manage');
@@ -138,6 +139,7 @@ Future<void> openComicSourceSettings(
   if (!sourceSupportsSettings(source)) {
     return;
   }
+  await attachAndroidPlugin('network_bridge');
   await Navigator.of(context).push(
     MaterialPageRoute<void>(
       builder: (_) => ExternalSourceSettingsScreen(
@@ -2821,12 +2823,32 @@ final class _RemoteImageState extends State<_RemoteImage> {
       builder: (context, snapshot) {
         final data = snapshot.data;
         if (data != null) {
-          return StableArtworkImage(
-            source: data,
-            seed: widget.uri?.toString() ?? 'source-comic-cover',
-            fit: BoxFit.cover,
-            onFrameReady: widget.onFrameReady,
-            onDecodeFailure: widget.onDecodeFailure,
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              // Browse cards are deliberately small, but source responses can
+              // be full-resolution covers. Without a decode bound every card
+              // asks Flutter to decode the original image and a page of
+              // covers can compete with scrolling/rasterization for several
+              // frames. Keep the encoded source immutable while constraining
+              // only the presentation decode to the actual card width.
+              final logicalWidth = constraints.hasBoundedWidth
+                  ? constraints.maxWidth
+                  : 132.0;
+              final cacheWidth = (logicalWidth *
+                      MediaQuery.devicePixelRatioOf(context))
+                  .ceil()
+                  .clamp(64, 512)
+                  .toInt();
+              return StableArtworkImage(
+                source: data,
+                seed: widget.uri?.toString() ?? 'source-comic-cover',
+                cacheWidth: cacheWidth,
+                fit: BoxFit.cover,
+                filterQuality: FilterQuality.low,
+                onFrameReady: widget.onFrameReady,
+                onDecodeFailure: widget.onDecodeFailure,
+              );
+            },
           );
         }
         if (snapshot.hasError) {

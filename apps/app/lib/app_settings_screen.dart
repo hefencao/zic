@@ -29,6 +29,7 @@ const readingSettingsScreenKey = ValueKey<String>('reading-settings-screen');
 const downloadSettingsScreenKey = ValueKey<String>('download-settings-screen');
 const appearanceSettingsScreenKey =
     ValueKey<String>('appearance-settings-screen');
+const appearanceAmoledKey = ValueKey<String>('appearance-amoled');
 const dataBackupExportKey = ValueKey<String>('data-backup-export');
 const dataCacheClearKey = ValueKey<String>('data-cache-clear');
 const dataCacheRefreshKey = ValueKey<String>('data-cache-refresh');
@@ -141,7 +142,7 @@ final class SettingsScreen extends StatelessWidget {
             key: settingsAppearanceEntryKey,
             icon: Icons.palette_outlined,
             title: '外观',
-            subtitle: '跟随系统、浅色或深色',
+            subtitle: '跟随系统、浅色、深色或 AMOLED',
             onTap: () => _push(
               context,
               AppearanceSettingsScreen(preferences: preferences),
@@ -880,8 +881,21 @@ final class AppearanceSettingsScreen extends StatelessWidget {
               onSelectionChanged: (values) =>
                   preferences.setThemeMode(values.single),
             ),
+            const SizedBox(height: 8),
+            SwitchListTile(
+              key: appearanceAmoledKey,
+              contentPadding: EdgeInsets.zero,
+              secondary: const Icon(Icons.brightness_1_outlined),
+              title: const Text('AMOLED 纯黑'),
+              subtitle: const Text('深色模式使用纯黑背景，适合 OLED 屏幕'),
+              value: preferences.amoledDarkTheme,
+              onChanged: preferences.setAmoledDarkTheme,
+            ),
             const SizedBox(height: 16),
-            const Text('主题切换立即作用于整个应用，并持久化到应用数据目录。'),
+            const Text(
+              '主题切换立即作用于整个应用，并持久化到应用数据目录。'
+              'AMOLED 仅在深色模式生效。',
+            ),
           ],
         ),
       ),

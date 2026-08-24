@@ -64,6 +64,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     Uri url, {
     bool cloudflareVerification = false,
   }) async {
+    await attachAndroidPlugin('network_bridge');
     final request = _sourceWebViewRequest(source, url);
     final effectiveUserAgent = request.userAgent?.trim().isNotEmpty == true
         ? request.userAgent!.trim()
@@ -121,7 +122,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
       // existing restart behavior for now and is intentionally not changed in
       // this iteration.
       if (source.sourceId.startsWith('mihon:')) {
-        final controller = widget.externalPlugins;
+        final controller = _activeExternalPlugins;
         if (controller != null) {
           await controller.restartMihonSourceForBrowserHandoff(source.sourceId);
           await _replaceExternalSources();
@@ -166,13 +167,20 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     return readLocalImageSource(page.sourceId);
   }
 
+  Future<ChapterDownloadSnapshot> _inspectChapterDownload(
+    ImportedLibraryEntry entry,
+  ) async {
+    return _chapterDownloads.inspect(await _librarySession.hydrateEntry(entry));
+  }
+
   Future<void> _downloadChapter(ImportedLibraryEntry entry) async {
-    final current = _hasLegacyVeneraLocators(entry.chapter)
+    final hydrated = await _librarySession.hydrateEntry(entry);
+    final current = _hasLegacyVeneraLocators(hydrated.chapter)
         ? await _refreshRemoteEntry(
-            entry,
+            hydrated,
             forceSourceRefresh: true,
           )
-        : entry;
+        : hydrated;
     await _chapterDownloads.download(current);
     final snapshot = await _chapterDownloads.inspect(current);
     _acceptDownloadSnapshot(snapshot);
@@ -190,13 +198,14 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
   ) async {
     final chapters = <ImportedLibraryEntry>[];
     for (final entry in entries) {
+      final hydrated = await _librarySession.hydrateEntry(entry);
       chapters.add(
-        _hasLegacyVeneraLocators(entry.chapter)
+        _hasLegacyVeneraLocators(hydrated.chapter)
             ? await _refreshRemoteEntry(
-                entry,
+                hydrated,
                 forceSourceRefresh: true,
               )
-            : entry,
+            : hydrated,
       );
     }
     if (chapters.isEmpty) {
@@ -206,6 +215,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     if (comicIdentity != comicLibraryIdentity(first.sourceId, first.comicId)) {
       throw StateError('整本下载身份与章节所有者不一致');
     }
+    await _ensurePlatformEnvironment();
     await _wholeComicDownloads.enqueue(
       sourceId: first.sourceId,
       comicId: first.comicId,
@@ -358,7 +368,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               initialPageIndex: initialPageIndex,
             ),
             onDownloadChapter: _downloadChapter,
-            inspectChapterDownload: _chapterDownloads.inspect,
+            inspectChapterDownload: _inspectChapterDownload,
             downloadChanges: _chapterDownloads.changes,
             onDownloadComic: (entries) =>
                 _downloadComicEntries(identity, entries),
@@ -492,7 +502,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             initialPageIndex: initialPageIndex,
           ),
           onDownloadChapter: _downloadChapter,
-          inspectChapterDownload: _chapterDownloads.inspect,
+          inspectChapterDownload: _inspectChapterDownload,
           downloadChanges: _chapterDownloads.changes,
           onDownloadComic: (entries) => _downloadComicEntries(
             comicLibraryIdentity(comic.sourceId, comic.comicId),

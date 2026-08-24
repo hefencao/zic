@@ -446,6 +446,7 @@ final class WholeComicDownloadQueue {
 
   Future<void> _restore() async {
     final data = await _store.load();
+    var changed = false;
     if (data != null) {
       final rawPolicy = data['policy'];
       if (rawPolicy is Map<Object?, Object?>) {
@@ -464,19 +465,55 @@ final class WholeComicDownloadQueue {
           );
           if (job.phase == WholeComicQueuePhase.running) {
             job.phase = WholeComicQueuePhase.queued;
+            changed = true;
           }
           _jobs[job.jobId] = job;
         }
       }
     }
     for (final job in _jobs.values) {
+      // Terminal queue phases are already durable user intent. Re-scanning
+      // every chapter of a completed/failed/cancelled comic during cold start
+      // can block the Flutter isolate for hundreds of milliseconds. Explicit
+      // retry or re-enqueue still calls _refreshCompleted before scheduling;
+      // startup only needs the persisted terminal projection.
+      if (job.phase == WholeComicQueuePhase.complete) {
+        job.completedChapterIdentities
+          ..clear()
+          ..addAll(job.chapters.map(_chapterIdentity));
+        continue;
+      }
+      if (job.phase == WholeComicQueuePhase.failed ||
+          job.phase == WholeComicQueuePhase.cancelled) {
+        continue;
+      }
+      final completedBefore = Set<String>.of(job.completedChapterIdentities);
+      final phaseBefore = job.phase;
+      final failureBefore = job.failure;
       await _refreshCompleted(job);
+      if (completedBefore.length != job.completedChapterIdentities.length ||
+          !completedBefore.containsAll(job.completedChapterIdentities)) {
+        changed = true;
+      }
       if (job.completedChapterIdentities.length == job.chapters.length) {
         job.phase = WholeComicQueuePhase.complete;
         job.failure = null;
       }
+      changed = changed ||
+          phaseBefore != job.phase ||
+          failureBefore != job.failure;
     }
-    await _publish();
+    if (data == null) {
+      // An empty install has no queue state to restore. Avoid creating and
+      // flushing a default JSON document on the first Home startup; the first
+      // explicit queue mutation will persist the complete state.
+    } else if (changed) {
+      await _publish();
+    } else {
+      // Preserve the initial snapshot notification for callers that supplied
+      // a durable queue, without rewriting an unchanged file on every launch.
+      _emit();
+    }
     _requestSchedule();
   }
 
@@ -646,13 +683,27 @@ final class WholeComicDownloadQueue {
 
   Future<void> _refreshCompleted(_WholeComicQueueJob job) async {
     final completed = <String>{};
-    for (final entry in job.chapters) {
-      try {
-        if ((await _downloads.inspect(entry)).isComplete) {
-          completed.add(_chapterIdentity(entry));
+    try {
+      // Restore is a startup path and a whole-comic job can contain hundreds
+      // of chapters. Persistent chapter downloads already expose a bulk
+      // projection backed by one artifact index read; avoid reopening and
+      // scanning the same index once per chapter here.
+      for (final snapshot in await _downloads.inspectMany(job.chapters)) {
+        if (snapshot.isComplete) {
+          completed.add(snapshot.identity);
         }
-      } on Object {
-        // Missing/stale artifacts remain queued and are redownloaded.
+      }
+    } on Object {
+      // Preserve per-entry recovery for a stale diagnostic record or an older
+      // service implementation whose bulk projection cannot complete.
+      for (final entry in job.chapters) {
+        try {
+          if ((await _downloads.inspect(entry)).isComplete) {
+            completed.add(_chapterIdentity(entry));
+          }
+        } on Object {
+          // Missing/stale artifacts remain queued and are redownloaded.
+        }
       }
     }
     job.completedChapterIdentities

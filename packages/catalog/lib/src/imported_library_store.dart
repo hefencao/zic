@@ -97,6 +97,16 @@ abstract interface class ReaderProgressCheckpointStore {
   void enqueueProgress(ReadingProgress progress);
 }
 
+/// Optional durable revision for the Home projection.
+///
+/// A snapshot may be reused without decoding every SQLite row only when the
+/// storage implementation can prove that the Home-owned tables have not
+/// changed since the snapshot was written. Implementations that cannot provide
+/// that proof should omit this capability and let Home reconcile normally.
+abstract interface class ImportedLibraryRevisionStore {
+  Future<int?> get libraryProjectionRevision;
+}
+
 abstract interface class ImportedLibraryStore {
   Future<void> open();
 

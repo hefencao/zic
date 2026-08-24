@@ -41,6 +41,9 @@ Future<void> prewarmPlatformSourceResourceTransport() async {
 /// through a reusable Rust/reqwest client.
 final class RhttpSourceResourceDirectTransport
     implements SourceResourceDirectTransport {
+  RhttpSourceResourceDirectTransport({this.preparePlatform});
+
+  final Future<void> Function()? preparePlatform;
   Future<rhttp.RhttpClient?>? _clientFuture;
   bool _closed = false;
 
@@ -53,6 +56,7 @@ final class RhttpSourceResourceDirectTransport
 
   Future<rhttp.RhttpClient?> _createClient() async {
     try {
+      await preparePlatform?.call();
       await prewarmPlatformSourceResourceTransport();
       if (_closed) {
         throw StateError('rhttp source resource transport is closed');

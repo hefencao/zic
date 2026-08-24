@@ -14,7 +14,7 @@ After a process restart the Home screen could remain black for several seconds e
 2. Cover presentation receives `EncodedResourceSource`. Warm durable covers use `FileEncodedResourceSource` and an engine-facing `FileImage`; network misses may arrive in memory once, are atomically persisted, and then resolve to that durable file.
 3. File-backed warm hits validate key, expiry and length without a whole-file `readAsBytes` or hash on the startup path. Access-time touches are held in memory and flushed in a batch during store close. Atomic write/promotion remains the integrity boundary.
 4. Ordinary local static images use a file provider when no Reader/pipeline loader or decode probe owns the request. Android `content://`, animated formats and Reader pages keep their explicit byte/session adapters.
-5. `main()` mounts a Flutter bootstrap surface immediately. Durable services open after `runApp`; failure falls back to the existing in-memory composition rather than leaving the native window black.
+5. `main()` mounts the App directly without a custom Flutter bootstrap surface. Durable services still open asynchronously after `runApp`; failure falls back to the existing in-memory composition rather than leaving the native window black.
 6. `PersistentChapterDownloadService.open` opens the index only. Home read-state uses one bulk library query, and Home download badges use `inspectMany` over one cache-index listing without creating sessions or checking page files. The exact `DownloadSession` is materialized/restored only when a command touches that page.
 7. “Zero copy” means no avoidable complete encoded-file copy into the Dart heap. Platform image decoders may still map or copy data internally; storage-to-texture absolute zero copy is not promised.
 

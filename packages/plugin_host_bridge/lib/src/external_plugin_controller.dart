@@ -53,10 +53,12 @@ final class ExternalPluginController {
   ExternalPluginController._({
     required this.storageRoot,
     this.userAgentProvider,
+    required this.discoverDeviceMihonExtensions,
   });
 
   final String storageRoot;
   final String Function()? userAgentProvider;
+  final bool discoverDeviceMihonExtensions;
   late final Directory _root = Directory('$storageRoot/external_plugins');
   late final File _manifest = File('${_root.path}/installed.json');
   final Map<String, InstalledExternalPlugin> _installed =
@@ -112,23 +114,43 @@ final class ExternalPluginController {
     return controller;
   }
 
+  /// Reports whether a recoverable manifest may exist without creating the
+  /// external-plugin directory or activating any installed runtime.
+  static Future<bool> hasDurableManifest(String storageRoot) async {
+    const suffixes = <String>[
+      '',
+      '.part',
+      '.bak',
+      '.invalid',
+    ];
+    final manifestPath = '$storageRoot/external_plugins/installed.json';
+    for (final suffix in suffixes) {
+      if (await File('$manifestPath$suffix').exists()) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Opens the controller's durable manifest without activating installed
   /// runtimes. Activation continues in [ready] so optional plugin work cannot
   /// delay the first Home projection.
   static Future<ExternalPluginController> openDeferred(
     String storageRoot, {
     String Function()? userAgentProvider,
+    bool discoverDeviceMihonExtensions = true,
   }) async {
     final controller = ExternalPluginController._(
       storageRoot: storageRoot,
       userAgentProvider: userAgentProvider,
+      discoverDeviceMihonExtensions: discoverDeviceMihonExtensions,
     );
     await controller._prepare();
     controller._ready = controller._initializeInBackground();
     return controller;
   }
 
-  /// Completes after device extension discovery and installed plugin
+  /// Completes after optional device extension discovery and installed plugin
   /// activation have finished. Individual activation failures are retained in
   /// [activationFailures], matching the eager-open behavior.
   Future<void> get ready => _ready;
@@ -139,11 +161,13 @@ final class ExternalPluginController {
   }
 
   Future<void> _initializeInBackground() async {
-    try {
-      await refreshDeviceMihonExtensions();
-    } on Object catch (error) {
-      _deviceMihonExtensions = const <InstalledMihonExtension>[];
-      _deviceMihonDiscoveryError = error;
+    if (discoverDeviceMihonExtensions) {
+      try {
+        await refreshDeviceMihonExtensions();
+      } on Object catch (error) {
+        _deviceMihonExtensions = const <InstalledMihonExtension>[];
+        _deviceMihonDiscoveryError = error;
+      }
     }
     await _activateInstalled();
   }

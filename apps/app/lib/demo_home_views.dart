@@ -175,6 +175,8 @@ extension _DemoHomeViews on _DemoHomeState {
         (left, right) => right.lastReadChapter!.progress!.updatedAt
             .compareTo(left.lastReadChapter!.progress!.updatedAt),
       );
+    final hasPrimaryLibraryProjection =
+        _libraryEntries.isNotEmpty || !_libraryLoading;
     return SingleChildScrollView(
       key: homePageKey,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
@@ -182,7 +184,7 @@ extension _DemoHomeViews on _DemoHomeState {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
           HomeSectionTitle(
-            key: homeUpdatesSectionKey,
+            key: hasPrimaryLibraryProjection ? homeUpdatesSectionKey : null,
             title: '更新漫画',
             subtitle: updates.isEmpty ? '加入书架的漫画有新章节或新版本时显示' : null,
           ),
@@ -193,7 +195,7 @@ extension _DemoHomeViews on _DemoHomeState {
           ),
           const SizedBox(height: 24),
           HomeSectionTitle(
-            key: homeHistorySectionKey,
+            key: hasPrimaryLibraryProjection ? homeHistorySectionKey : null,
             title: '阅读历史',
             subtitle: history.isEmpty ? '开始阅读后会保留最后位置' : null,
           ),
@@ -273,37 +275,40 @@ extension _DemoHomeViews on _DemoHomeState {
           return SizedBox(
             key: ValueKey<String>(presentationIdentity),
             width: ComicCoverCard.cardWidth,
-            child: ComicCoverCard(
-              interactionKey: resume == null
-                  ? ValueKey<String>('comic-entry:${comic.identity}')
-                  : history
-                      ? historyChapterEntryKey(
-                          resume.chapter.sourceId,
-                          resume.chapter.chapterId,
-                        )
-                      : importedChapterEntryKey(
-                          resume.chapter.sourceId,
-                          resume.chapter.chapterId,
-                        ),
-              comic: comic,
-              preference: _preferenceForComic(comic),
-              coverIdentity: coverIdentity,
-              telemetryIdentity: presentationIdentity,
-              coverSource: _coverSourceLoaderForComic(comic),
-              sourceAvailable: _coverSourceAvailableForComic(comic),
-              startupTelemetry: telemetryOwners == null ||
-                      telemetryOwners.add(presentationIdentity)
-                  ? widget.startupTelemetry
-                  : null,
-              downloadProgress: _downloadProgressForComic(comic),
-              onTap: () => unawaited(_openComic(comic)),
-              onLongPress: () {
-                if (resume == null || _hasDetails(comic)) {
-                  unawaited(_openComicDetails(comic));
-                } else {
-                  unawaited(_openImportedChapter(resume));
-                }
-              },
+            child: AnimatedBuilder(
+              animation: _librarySession.downloadProjectionChanges,
+              builder: (context, _) => ComicCoverCard(
+                interactionKey: resume == null
+                    ? ValueKey<String>('comic-entry:${comic.identity}')
+                    : history
+                        ? historyChapterEntryKey(
+                            resume.chapter.sourceId,
+                            resume.chapter.chapterId,
+                          )
+                        : importedChapterEntryKey(
+                            resume.chapter.sourceId,
+                            resume.chapter.chapterId,
+                          ),
+                comic: comic,
+                preference: _preferenceForComic(comic),
+                coverIdentity: coverIdentity,
+                telemetryIdentity: presentationIdentity,
+                coverSource: _coverSourceLoaderForComic(comic),
+                sourceAvailable: _coverSourceAvailableForComic(comic),
+                startupTelemetry: telemetryOwners == null ||
+                        telemetryOwners.add(presentationIdentity)
+                    ? widget.startupTelemetry
+                    : null,
+                downloadProgress: _downloadProgressForComic(comic),
+                onTap: () => unawaited(_openComic(comic)),
+                onLongPress: () {
+                  if (resume == null || _hasDetails(comic)) {
+                    unawaited(_openComicDetails(comic));
+                  } else {
+                    unawaited(_openImportedChapter(resume));
+                  }
+                },
+              ),
             ),
           );
         },
@@ -712,28 +717,31 @@ extension _DemoHomeViews on _DemoHomeState {
   Widget _buildGalleryTile(LibraryComic comic) {
     final selected = _managedComicIdentities.contains(comic.identity);
     final coverIdentity = _canonicalComicKey(comic.sourceId, comic.comicId);
-    final card = ComicCoverCard(
+    final card = AnimatedBuilder(
       key: ValueKey<String>('library-cover:$coverIdentity'),
-      interactionKey: comicCoverKey(comic.sourceId, comic.comicId),
-      comic: comic,
-      preference: _preferenceForComic(comic),
-      coverIdentity: coverIdentity,
-      coverSource: _coverSourceLoaderForComic(comic),
-      sourceAvailable: _coverSourceAvailableForComic(comic),
-      startupTelemetry: widget.startupTelemetry,
-      downloadProgress: _downloadProgressForComic(comic),
-      selected: selected,
-      onTap: () => _handleShelfTap(comic),
-      onLongPress: _manageShelf
-          ? () => _startBatchSelection(comic)
-          : () {
-              final resume = comic.resumeChapter;
-              if (resume == null || _hasDetails(comic)) {
-                unawaited(_openComicDetails(comic));
-              } else {
-                unawaited(_openImportedChapter(resume));
-              }
-            },
+      animation: _librarySession.downloadProjectionChanges,
+      builder: (context, _) => ComicCoverCard(
+        interactionKey: comicCoverKey(comic.sourceId, comic.comicId),
+        comic: comic,
+        preference: _preferenceForComic(comic),
+        coverIdentity: coverIdentity,
+        coverSource: _coverSourceLoaderForComic(comic),
+        sourceAvailable: _coverSourceAvailableForComic(comic),
+        startupTelemetry: widget.startupTelemetry,
+        downloadProgress: _downloadProgressForComic(comic),
+        selected: selected,
+        onTap: () => _handleShelfTap(comic),
+        onLongPress: _manageShelf
+            ? () => _startBatchSelection(comic)
+            : () {
+                final resume = comic.resumeChapter;
+                if (resume == null || _hasDetails(comic)) {
+                  unawaited(_openComicDetails(comic));
+                } else {
+                  unawaited(_openImportedChapter(resume));
+                }
+              },
+      ),
     );
     Widget tile = card;
     if (_manageShelf && !_batchManagement) {
@@ -844,50 +852,54 @@ extension _DemoHomeViews on _DemoHomeState {
   Widget _buildShelfList(List<LibraryComic> comics) {
     Widget item(LibraryComic comic, int index) {
       final coverIdentity = _canonicalComicKey(comic.sourceId, comic.comicId);
-      return ShelfListTile(
+      return AnimatedBuilder(
         key: ValueKey<String>('library-list:$coverIdentity'),
-        comic: comic,
-        preference: _preferenceForComic(comic),
-        coverSource: _coverSourceLoaderForComic(comic),
-        coverIdentity: coverIdentity,
-        sourceAvailable: _coverSourceAvailableForComic(comic),
-        startupTelemetry: widget.startupTelemetry,
-        downloadProgress: _downloadProgressForComic(comic),
-        selected: _managedComicIdentities.contains(comic.identity),
-        onTap: () => _handleShelfTap(comic),
-        onLongPress: _manageShelf
-            ? () => _startBatchSelection(comic)
-            : () {
-                final resume = comic.resumeChapter;
-                if (resume == null || _hasDetails(comic)) {
-                  unawaited(_openComicDetails(comic));
-                } else {
-                  unawaited(_openImportedChapter(resume));
-                }
-              },
-        trailing: _manageShelf && !_batchManagement
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  _comicMovePopup(comic),
-                  IconButton(
-                    key: comicDeleteKey(comic.sourceId, comic.comicId),
-                    tooltip: '删除漫画',
-                    color: Theme.of(context).colorScheme.error,
-                    onPressed: () => _confirmRemoveComic(comic),
-                    icon: const Icon(Icons.delete_outline),
-                  ),
-                  if (_sortMode == LibrarySortMode.custom && !_batchManagement)
-                    ReorderableDragStartListener(
-                      index: index,
-                      child: const Padding(
-                        padding: EdgeInsets.all(10),
-                        child: Icon(Icons.drag_handle),
-                      ),
+        animation: _librarySession.downloadProjectionChanges,
+        builder: (context, _) => ShelfListTile(
+          comic: comic,
+          preference: _preferenceForComic(comic),
+          coverSource: _coverSourceLoaderForComic(comic),
+          coverIdentity: coverIdentity,
+          sourceAvailable: _coverSourceAvailableForComic(comic),
+          startupTelemetry: widget.startupTelemetry,
+          downloadProgress: _downloadProgressForComic(comic),
+          selected: _managedComicIdentities.contains(comic.identity),
+          onTap: () => _handleShelfTap(comic),
+          onLongPress: _manageShelf
+              ? () => _startBatchSelection(comic)
+              : () {
+                  final resume = comic.resumeChapter;
+                  if (resume == null || _hasDetails(comic)) {
+                    unawaited(_openComicDetails(comic));
+                  } else {
+                    unawaited(_openImportedChapter(resume));
+                  }
+                },
+          trailing: _manageShelf && !_batchManagement
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    _comicMovePopup(comic),
+                    IconButton(
+                      key: comicDeleteKey(comic.sourceId, comic.comicId),
+                      tooltip: '删除漫画',
+                      color: Theme.of(context).colorScheme.error,
+                      onPressed: () => _confirmRemoveComic(comic),
+                      icon: const Icon(Icons.delete_outline),
                     ),
-                ],
-              )
-            : null,
+                    if (_sortMode == LibrarySortMode.custom &&
+                        !_batchManagement)
+                      ReorderableDragStartListener(
+                        index: index,
+                        child: const Padding(
+                          padding: EdgeInsets.all(10),
+                          child: Icon(Icons.drag_handle),
+                        ),
+                      ),
+                  ],
+                )
+              : null,
+        ),
       );
     }
     if (_manageShelf &&

@@ -304,7 +304,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     if (existing != null &&
         existing.chapter.pages.isNotEmpty &&
         !_hasLegacyVeneraLocators(existing.chapter)) {
-      return existing;
+      return _librarySession.hydrateEntry(existing);
     }
     final manifest = await source.loadChapter(chapter.chapterId);
     if (manifest.sourceId != source.sourceId ||
@@ -513,11 +513,12 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         final sourceChapterId = currentIsSuccessor
             ? mapping.predecessorChapterId
             : mapping.successorChapterId;
-        final sourceEntry = _exactChapterEntry(
+        final sourceEntryHint = _exactChapterEntry(
           current.chapter.sourceId,
           sourceChapterId,
         );
-        if (sourceEntry == null) continue;
+        if (sourceEntryHint == null) continue;
+        final sourceEntry = await _librarySession.hydrateEntry(sourceEntryHint);
         if (currentIsSuccessor &&
             (mapping.successorPageCount != current.chapter.pages.length ||
                 mapping.predecessorPageCount !=
@@ -1200,13 +1201,14 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           targetRecord.sourceId,
           targetRecord.chapterId,
         );
+        final sourceEntry = await _librarySession.hydrateEntry(match.source);
         prepared.add(
           _PreparedChapterMigration(
             targetRecord: targetRecord,
-            sourceProgress: match.source.progress,
+            sourceProgress: sourceEntry.progress,
             sourceReadState: _chapterReadStates[chapterLibraryIdentity(
-              match.source.chapter.sourceId,
-              match.source.chapter.chapterId,
+              sourceEntry.chapter.sourceId,
+              sourceEntry.chapter.chapterId,
             )],
             targetProgress: targetEntry?.progress,
             targetReadState: targetReadStates[chapterLibraryIdentity(
@@ -1214,7 +1216,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
               targetRecord.chapterId,
             )],
             artifactReuse: VerifiedArtifactReusePlan.match(
-              oldChapter: match.source.chapter.toManifest(),
+              oldChapter: sourceEntry.chapter.toManifest(),
               newChapter: targetManifest,
             ),
           ),

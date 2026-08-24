@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:downloads/downloads.dart';
+import 'package:storage_bridge/storage_bridge.dart';
 import 'package:zic/home_library_session.dart';
 
 void main() {
@@ -48,6 +50,96 @@ void main() {
 
     expect(session.preferences[preference.identity]?.liked, isTrue);
     expect(notifications, 1);
+  });
+
+  test('download projection changes do not rebuild the library projection',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    await session.ready;
+    await queue.ready;
+    await Future<void>.delayed(Duration.zero);
+
+    var libraryNotifications = 0;
+    var downloadNotifications = 0;
+    session.addListener(() => libraryNotifications++);
+    session.downloadProjectionChanges.addListener(
+      () => downloadNotifications++,
+    );
+    session.acceptDownloadSnapshot(
+      const ChapterDownloadSnapshot(
+        sourceId: 'fixture-source',
+        comicId: 'fixture-comic',
+        comicTitle: 'Fixture',
+        chapterId: 'fixture-chapter',
+        sourceRevision: 'r1',
+        title: 'Chapter 1',
+        completedPages: 0,
+        totalPages: 1,
+        receivedBytes: 0,
+        phase: ChapterDownloadPhase.idle,
+      ),
+    );
+
+    expect(libraryNotifications, 0);
+    expect(downloadNotifications, 1);
+    expect(session.downloadSnapshots, hasLength(1));
+  });
+
+  test('startup can project missing preferences without durable writes',
+      () async {
+    final delegate = MemoryImportedLibraryStore();
+    await delegate.open();
+    final comic = SavedComicRecord(
+      sourceId: 'fixture-source',
+      comicId: 'fixture-comic',
+      title: 'Fixture',
+    );
+    await delegate.upsertSavedComic(comic);
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+      persistMissingPreferences: false,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    await session.ready;
+
+    expect(session.preferences[comic.identity], isNotNull);
+    expect(library.comicPreferenceWrites, 0);
   });
 
   test('chapter writes and final progress update the mounted Home projection',
@@ -295,19 +387,367 @@ void main() {
     expect(session.loading, isFalse);
   });
 
+  test('shows the previous Home snapshot before reconciling SQLite data',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-home-session-snapshot-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final snapshotStore = HomeProjectionSnapshotStore.atPath(
+      '${directory.path}/snapshot.json',
+    );
+    final oldChapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/old',
+      displayName: 'Old chapter',
+      pages: <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: 'old.jpg',
+          sourceId: '${directory.path}/old/old.jpg',
+          contentKindHint: ContentKindHint.jpeg,
+        ),
+      ],
+    );
+    final currentChapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/current',
+      displayName: 'Current chapter',
+      pages: <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: 'current.jpg',
+          sourceId: '${directory.path}/current/current.jpg',
+          contentKindHint: ContentKindHint.jpeg,
+        ),
+      ],
+    );
+    await snapshotStore.write(
+      HomeProjectionSnapshot(
+        entries: <ImportedLibraryEntry>[
+          ImportedLibraryEntry(chapter: oldChapter),
+        ],
+        savedComics: const <SavedComicRecord>[],
+        categories: const <LibraryCategory>[],
+        preferences: const <ComicPreference>[],
+        readStates: const <ChapterReadState>[],
+        sourcePreferences: const <ComicSourcePreference>[],
+        versionRelations: const <ComicVersionRelation>[],
+      ),
+    );
+
+    final delegate = MemoryImportedLibraryStore();
+    await delegate.open();
+    await delegate.upsertChapter(currentChapter);
+    final openGate = Completer<void>();
+    final categories = Completer<List<LibraryCategory>>();
+    final library = _GatedLibraryStore(
+      delegate,
+      categories.future,
+      openGate: openGate.future,
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final primaryFrame = Completer<void>();
+    final session = HomeLibrarySession(
+      library: library,
+      snapshotStore: snapshotStore,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+      waitForPrimaryFrame: () => primaryFrame.future,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    for (var attempt = 0;
+        attempt < 20 && session.entries.isEmpty;
+        attempt++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(session.entries.single.chapter.displayName, 'Old chapter');
+
+    openGate.complete();
+    categories.complete(const <LibraryCategory>[]);
+    primaryFrame.complete();
+    await session.ready;
+    expect(session.entries.single.chapter.displayName, 'Current chapter');
+
+    HomeProjectionSnapshot? persisted;
+    for (var attempt = 0; attempt < 20; attempt++) {
+      persisted = await snapshotStore.read();
+      if (persisted?.entries.single.chapter.displayName == 'Current chapter') {
+        break;
+      }
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(persisted?.entries.single.chapter.displayName, 'Current chapter');
+  });
+
+  test('reuses a snapshot when the durable projection revision is unchanged',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-home-session-revision-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/chapter',
+      displayName: 'Cached chapter',
+      pages: <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.jpg',
+          sourceId: '${directory.path}/chapter/001.jpg',
+          contentKindHint: ContentKindHint.jpeg,
+        ),
+      ],
+    );
+    final snapshotStore = HomeProjectionSnapshotStore.atPath(
+      '${directory.path}/snapshot.json',
+    );
+    await snapshotStore.write(
+      HomeProjectionSnapshot(
+        entries: <ImportedLibraryEntry>[ImportedLibraryEntry(chapter: chapter)],
+        savedComics: const <SavedComicRecord>[],
+        categories: const <LibraryCategory>[],
+        preferences: const <ComicPreference>[],
+        readStates: const <ChapterReadState>[],
+        sourcePreferences: const <ComicSourcePreference>[],
+        versionRelations: const <ComicVersionRelation>[],
+        libraryRevision: 7,
+      ),
+    );
+    final delegate = MemoryImportedLibraryStore();
+    await delegate.open();
+    await delegate.upsertChapter(chapter);
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+      libraryRevision: 7,
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      snapshotStore: snapshotStore,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    await session.ready;
+
+    expect(session.entries.single.chapter.displayName, 'Cached chapter');
+    expect(library.listCalls, 0);
+    expect(session.loading, isFalse);
+  });
+
+  test('bootstrap does not reconcile a snapshot against empty memory storage',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-home-bootstrap-snapshot-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/chapter',
+      displayName: 'Bootstrap chapter',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.jpg',
+          sourceId: 'file:///bootstrap/001.jpg',
+          contentKindHint: ContentKindHint.jpeg,
+        ),
+      ],
+    );
+    final snapshotStore = HomeProjectionSnapshotStore.atPath(
+      '${directory.path}/snapshot.json',
+    );
+    await snapshotStore.write(
+      HomeProjectionSnapshot(
+        entries: <ImportedLibraryEntry>[ImportedLibraryEntry(chapter: chapter)],
+        savedComics: const <SavedComicRecord>[],
+        categories: const <LibraryCategory>[],
+        preferences: const <ComicPreference>[],
+        readStates: const <ChapterReadState>[],
+        sourcePreferences: const <ComicSourcePreference>[],
+        versionRelations: const <ComicVersionRelation>[],
+      ),
+    );
+    final memory = MemoryImportedLibraryStore();
+    await memory.open();
+    final library = _GatedLibraryStore(
+      memory,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      snapshotStore: snapshotStore,
+      persistSnapshot: false,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    await session.ready;
+
+    expect(session.entries.single.chapter.displayName, 'Bootstrap chapter');
+    expect(library.listCalls, 0);
+  });
+
+  test('durable service handoff keeps the matching snapshot projection',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-home-service-handoff-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/chapter',
+      displayName: 'Handoff chapter',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.jpg',
+          sourceId: 'file:///handoff/001.jpg',
+          contentKindHint: ContentKindHint.jpeg,
+        ),
+      ],
+    );
+    final snapshotStore = HomeProjectionSnapshotStore.atPath(
+      '${directory.path}/snapshot.json',
+    );
+    await snapshotStore.write(
+      HomeProjectionSnapshot(
+        entries: <ImportedLibraryEntry>[ImportedLibraryEntry(chapter: chapter)],
+        savedComics: const <SavedComicRecord>[],
+        categories: const <LibraryCategory>[],
+        preferences: const <ComicPreference>[],
+        readStates: const <ChapterReadState>[],
+        sourcePreferences: const <ComicSourcePreference>[],
+        versionRelations: const <ComicVersionRelation>[],
+        libraryRevision: 7,
+      ),
+    );
+
+    final bootstrapLibrary = MemoryImportedLibraryStore();
+    final bootstrapDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final bootstrapQueue = WholeComicDownloadQueue(
+      downloads: bootstrapDownloads,
+    );
+    final durableDelegate = MemoryImportedLibraryStore();
+    final durableLibrary = _GatedLibraryStore(
+      durableDelegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+      libraryRevision: 7,
+    );
+    final durableDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final durableQueue = WholeComicDownloadQueue(downloads: durableDownloads);
+    final session = HomeLibrarySession(
+      library: bootstrapLibrary,
+      snapshotStore: snapshotStore,
+      persistSnapshot: false,
+      chapterDownloads: bootstrapDownloads,
+      wholeComicDownloads: bootstrapQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await durableQueue.close();
+      await durableDownloads.close();
+      await durableLibrary.close();
+    });
+
+    await session.ready;
+    await session.adoptServices(
+      library: durableLibrary,
+      chapterDownloads: durableDownloads,
+      wholeComicDownloads: durableQueue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: true,
+    );
+
+    expect(session.entries.single.chapter.displayName, 'Handoff chapter');
+    expect(durableLibrary.listCalls, 0);
+    expect(session.loading, isFalse);
+  });
+
 }
 
 
-final class _GatedLibraryStore implements ImportedLibraryStore {
-  _GatedLibraryStore(this.delegate, this.categories);
+final class _GatedLibraryStore
+    implements ImportedLibraryStore, ImportedLibraryRevisionStore {
+  _GatedLibraryStore(
+    this.delegate,
+    this.categories, {
+    this.openGate,
+    this.libraryRevision,
+  });
 
   final ImportedLibraryStore delegate;
   final Future<List<LibraryCategory>> categories;
+  final Future<void>? openGate;
+  final int? libraryRevision;
+  var comicPreferenceWrites = 0;
+  var sourcePreferenceWrites = 0;
+  var listCalls = 0;
 
   @override
-  Future<void> open() => delegate.open();
+  Future<int?> get libraryProjectionRevision async => libraryRevision;
+
   @override
-  Future<List<ImportedLibraryEntry>> list() => delegate.list();
+  Future<void> open() async {
+    await openGate;
+    await delegate.open();
+  }
+  @override
+  Future<List<ImportedLibraryEntry>> list() {
+    listCalls++;
+    return delegate.list();
+  }
   @override
   Future<ImportedLibraryEntry?> get(String sourceId, String chapterId) =>
       delegate.get(sourceId, chapterId);
@@ -348,7 +788,10 @@ final class _GatedLibraryStore implements ImportedLibraryStore {
       delegate.getComicPreference(sourceId, comicId);
   @override
   Future<void> saveComicPreference(ComicPreference preference) =>
-      delegate.saveComicPreference(preference);
+      Future<void>(() {
+        comicPreferenceWrites++;
+        return delegate.saveComicPreference(preference);
+      });
   @override
   Future<List<ChapterReadState>> listChapterReadStates(
     String sourceId,
@@ -366,7 +809,10 @@ final class _GatedLibraryStore implements ImportedLibraryStore {
       delegate.listSourcePreferences();
   @override
   Future<void> saveSourcePreference(ComicSourcePreference preference) =>
-      delegate.saveSourcePreference(preference);
+      Future<void>(() {
+        sourcePreferenceWrites++;
+        return delegate.saveSourcePreference(preference);
+      });
   @override
   Future<List<LibraryMigrationIssue>> listMigrationIssues({
     bool includeAcknowledged = false,

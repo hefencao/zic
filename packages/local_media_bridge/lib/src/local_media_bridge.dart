@@ -8,6 +8,11 @@ import 'package:flutter/services.dart';
 const String localMediaBridgeChannelName = 'dev.zic/local_media';
 const int localMediaBridgeProtocolVersion = 5;
 const int localMediaBridgeChunkBytes = 1024 * 1024;
+const MethodChannel _startupPlatformChannel = MethodChannel(
+  'dev.zic.zic/startup',
+);
+
+Future<void>? _localMediaPluginAttachment;
 
 @immutable
 final class LocalMediaDocument {
@@ -83,6 +88,7 @@ final class LocalMediaBridge {
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
 
   Future<LocalMediaDirectory?> pickImageDirectory() async {
+    await _ensurePluginAttached();
     final response = await _channel.invokeMapMethod<String, Object?>(
       'pickImageDirectory',
     );
@@ -90,6 +96,7 @@ final class LocalMediaBridge {
   }
 
   Future<LocalMediaDirectory> scanImageDirectory(String treeUri) async {
+    await _ensurePluginAttached();
     final normalized = treeUri.trim();
     if (normalized.isEmpty) {
       throw ArgumentError.value(treeUri, 'treeUri', 'must not be empty');
@@ -110,6 +117,7 @@ final class LocalMediaBridge {
     int? endExclusive,
     String? expectedRevision,
   }) async {
+    await _ensurePluginAttached();
     final normalized = sourceUri.trim();
     if (normalized.isEmpty) {
       throw ArgumentError.value(sourceUri, 'sourceUri', 'must not be empty');
@@ -245,6 +253,7 @@ final class LocalMediaBridge {
   }
 
   Future<Uint8List> readDocument(String sourceUri) async {
+    await _ensurePluginAttached();
     final normalized = sourceUri.trim();
     if (normalized.isEmpty) {
       throw ArgumentError.value(sourceUri, 'sourceUri', 'must not be empty');
@@ -257,6 +266,37 @@ final class LocalMediaBridge {
       throw StateError('Android document read returned no bytes');
     }
     return bytes;
+  }
+
+  Future<void> _ensurePluginAttached() async {
+    if (!isSupported) {
+      return;
+    }
+    final existing = _localMediaPluginAttachment;
+    if (existing != null) {
+      await existing;
+      return;
+    }
+    final future = _startupPlatformChannel.invokeMethod<void>(
+      'attachPlugin',
+      const <String, Object?>{'name': 'local_media_bridge'},
+    );
+    _localMediaPluginAttachment = future;
+    try {
+      await future;
+    } on MissingPluginException {
+      // Hosts that register the generated plugin eagerly do not expose the
+      // app-owned startup channel. The local bridge call remains authoritative
+      // on those hosts.
+      if (identical(_localMediaPluginAttachment, future)) {
+        _localMediaPluginAttachment = Future<void>.value();
+      }
+    } on Object {
+      if (identical(_localMediaPluginAttachment, future)) {
+        _localMediaPluginAttachment = null;
+      }
+      rethrow;
+    }
   }
 
   LocalMediaDirectory _parseDirectory(Map<String, Object?> response) {

@@ -86,20 +86,19 @@ Reader 章节资源会话的唯一组合所有者。它把 demand reconcile 到 
 
 ### Home 冷启动组合
 
-`apps/app` 的 Home 关键路径只等待能产生封面的本地库 primary 数据和内置来源。
-进程级 native media prewarm 在 Bootstrap/App 呈现后后台运行；持久整本下载队列以
-`ready` Future 恢复；已安装外部插件由 `ExternalPluginController.openDeferred` 先完成
-manifest 准备，再在后台完成设备扩展发现和 runtime activation。Home 在插件 ready 后
-增量替换 source projection，不重新拥有或复制资源缓存。
+bootstrap 与 durable services 之间通过稳定 `HomeServiceHandoff` 原地交接现有 `DemoHome/HomeLibrarySession`；服务到达不会更换 `MaterialApp`、Home key 或导航状态。快照已证明 revision 一致时 handoff 只切换服务引用，不再次发布同一更新漫画/阅读历史投影。
 
-`HomeLibrarySession` 先发布 entries/SavedComic primary，交给 Flutter 完成一个可注入的
-首帧边界，再读取 enrichment 和写入缺失默认值。已挂载 Home 的 chapter/SavedComic mutation
-必须通过该 session write-through：durable store 仍负责持久化，session 在同一次成功写入后立即替换
-可见投影，不能依赖后续详情页或全量 reload 追平第二状态。外部 artwork 的恢复/cache权威只有
-`ComicSourceResourceGateway/ResourceCacheManager`：presentation取得一个不可变
-`EncodedResourceSource` 后只建立一个 ImageProvider。response cache拥有的持久文件是可撤销实现细节，
-不得把其路径借给 Flutter；跨 cache 边界必须物化为 presentation 自持有的 encoded bytes。只有导入的
-稳定本地文件可使用 `FileEncodedResourceSource/FileImage`。Future/ImageStream失败保持稳定占位，
+`apps/app` 的 Home 关键路径只等待能产生封面的本地库 primary 数据和内置来源。入口直接挂载 memory-backed Home，不创建自定义 Flutter bootstrap surface，也不以 deferred loading unit 作为首个可见 frame 的门槛。Home 首帧之后立即异步启动 durable open，不以 durable readiness 作为可见性门槛；durable open 完成后立即替换内存投影，不依赖后续用户手势或偶然产生的 Flutter frame。native decode、`media_core` texture、rhttp 和 feature bridge 均在对应 capability 首次使用时按需挂载。持久整本队列继续以 `ready` Future 恢复，其独立状态文件通过 `inspectMany()` 批量投影并在 Home primary 后台刷新；外部插件在 durable handoff 后后台恢复，外部 source 尚未 ready 时首页封面请求保持 pending，来源管理页仍可显式刷新设备扩展。队列和章节下载状态通过 Home 的独立下载投影通知更新封面水印，不得因为下载恢复重发库投影通知或重建“更新漫画/阅读历史”列表。
+
+`MainActivity` 显式创建关闭自动 `GeneratedPluginRegistrant` 的 `FlutterEngine`，并在 Activity 结束时销毁；仅覆盖 `configureFlutterEngine` 不能阻止 implicit engine 的构造期注册，feature bridge 只能通过 startup channel 按能力挂载。`LocalMediaBridge` 在 Android 的 pick/scan/open/read 入口前共享 single-flight attach，保证从持久阅读记录直接进入 Reader 时也先注册 `dev.zic/local_media`；startup channel 不存在的宿主才回退其自身的 eager registration。按类名反射的 Android feature plugin 及 rhttp 入口必须由 app 的 R8 keep 规则保留原始全限定名。Android 存储根目录优先随 Dart entrypoint args 同步注入，避免冷启动首次 MethodChannel 往返；旧宿主才回退轻量 startup channel，首帧后只打开 durable/native/plugin capability，不创建第二份 owner。
+首次安装的 `app_preferences.json` 不在 Home 启动时强制写入；偏好控制器先使用内存默认值，用户首次修改时才创建持久文件。
+`AppPreferencesController` 负责持久化 `ThemeMode` 与 AMOLED 深色开关；`MaterialApp` 只在有效深色主题下应用 AMOLED 纯黑 surface/scaffold/canvas，首帧加载背景不再强制切换为浅色。
+
+新安装且不存在 imported-library、offline-cache 或 whole-comic queue 状态时，Home 不打开 SQLite 或创建 WAL/schema；`LazyImportedLibraryStore` 先提供内存投影，首次 chapter、收藏、已读、偏好或进度写入时迁移到持久库。已有 durable state 的服务仍在 Home 可见窗口之后打开；Reader checkpoint writer 的第二个 WAL 连接也只在首次真正写入 `ReadingProgress` 后懒启动。
+
+已有 durable state 时，`HomeProjectionSnapshotStore` 先读取上一次成功 reconcile 的 Home 投影；bootstrap Home 只读该快照，不能把空的内存投影写回。快照只用于 stale-while-revalidate 首显，`SqliteImportedLibraryStore` 仍是章节、进度、书架、偏好、分类、已读状态和版本关系的唯一事实源。快照同时保存 SQLite Home projection revision；修订号一致时直接复用快照，只有修订号变化、快照缺少修订号或存储实现无法提供修订号时才执行事实源 reconcile，并通过临时文件替换异步写回。当前快照 v2 的 entries 只保存 Home 所需章节元数据、页数、封面定位和 progress，不复制完整 page locator；超过 64 KiB 的快照以 gzip 存储，读取仍兼容明文 v1/v2，大型明文或旧 v1 读取成功后自动原子重写为 compact v2 gzip。compact entry 只有在 Reader、下载或版本迁移前才由 authoritative library hydrate 完整 pages。进程内重复读取共享同一个快照读操作/结果。快照损坏、版本不兼容或读取失败都必须静默回退 SQLite。
+
+`HomeLibrarySession` 先发布 entries/SavedComic primary，再读取 enrichment；启动期缺失的来源/漫画默认偏好只加入内存投影，用户明确修改时才持久化。已挂载 Home 的 chapter/SavedComic mutation 必须通过该 session write-through。外部 artwork 的恢复/cache权威只有 `ComicSourceResourceGateway/ResourceCacheManager`：presentation取得不可变 `EncodedResourceSource` 后只建立一个 ImageProvider；response cache持久文件不得借给 Flutter，跨 cache 边界必须物化为 presentation 自持有的 encoded bytes。只有导入的稳定本地文件可使用 `FileEncodedResourceSource/FileImage`。Future/ImageStream失败保持稳定占位，
 普通 rebuild、App resume、timer/watchdog或 ImageCache eviction都不得自动建立第二套请求。
 首页 artwork 的冷 miss 在 encoded bytes 到达后可先返回 memory source，durable response
 写入由 `ResourceCacheManager` 后台排队；同一批封面按卡片独立完成，不等待全部封面或
@@ -390,7 +389,9 @@ namespace 由 canonical comic identity 固定，raw Mihon `comicId`、封面 URL
 图片加载失败的边界必须分开：cache hit/miss 只说明编码字节是否存在；source loader 的失效路径、非图片响应、权限/challenge/空响应由 gateway 拒绝；Flutter decode 错误只影响 presentation。单张失败的 Trace 至少记录脱敏 `sourceId/raw comicId/resourceRole/URI`、cache origin 和 transport/decode 错误，不能仅凭占位图判断缓存冲突。
 
 ### Reader checkpoint 与历史投影边界
-Reader 页面变化只 enqueue 最新 `ReadingProgress`，不得等待 SQLite或逐页发布 Home；storage isolate 对同 source/chapter latest-wins，空闲约 8 秒提交、持续活跃最多约 30 秒提交。显式 `saveProgress()`/store close 可等待内部 durability barrier，但 Reader route API不暴露 barrier。
+Reader 页面变化只 enqueue 最新 `ReadingProgress`，不得等待 SQLite或逐页发布 Home；首次
+checkpoint 写入前不创建 progress writer，首次写入后 storage isolate 对同 source/chapter
+latest-wins，空闲约 8 秒提交、持续活跃最多约 30 秒提交。显式 `saveProgress()`/store close 可等待内部 durability barrier，但 Reader route API不暴露 barrier。
 Reader 返回后 Home只更新该 route最终 progress一次，已挂载详情只替换当前章节；不得在返回路径读取/重建整库。硬进程终止仍为 best-effort，不宣称最后一页绝对持久化。
 
 ## 12. 插件与网络边界

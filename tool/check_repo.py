@@ -1473,7 +1473,7 @@ def check_compile_regressions() -> None:
         ROOT / 'packages/storage/lib/src/sqlite_imported_library_store.dart'
     ).read_text(encoding='utf-8')
     for required in (
-        'const _schemaVersion = 8',
+        'const _schemaVersion = 9',
         'PRAGMA user_version = $_schemaVersion',
         'PRIMARY KEY(source_id, chapter_id)',
         'PRIMARY KEY(source_id, comic_id)',
@@ -2127,11 +2127,16 @@ def check_compile_regressions() -> None:
         if required not in payload_inspectors:
             fail(f'external plugin payload inspection is incomplete: {required}')
 
-    app_main = (ROOT / 'apps/app/lib/main.dart').read_text(encoding='utf-8')
+    app_main = (
+        (ROOT / 'apps/app/lib/main.dart').read_text(encoding='utf-8')
+        + (ROOT / 'apps/app/lib/app_runtime.dart').read_text(encoding='utf-8')
+        + (ROOT / 'apps/app/lib/home_library_session.dart').read_text(encoding='utf-8')
+    )
     for required in (
-        'runApp(const _BootstrapApp())',
-        "services == null ? 'bootstrap-memory' : 'durable-services'",
-        'setState(() => _services = services)',
+        'runApp(\n    _BootstrapApp(',
+        'final class HomeServiceHandoff',
+        'serviceHandoff: _serviceHandoff',
+        '_serviceHandoff.updateServices(',
         'openImportedLibraryStore(root)',
     ):
         if required not in app_main:
@@ -2640,6 +2645,14 @@ def check_current_iteration() -> None:
         ROOT
         / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/PluginHostBridgePlugin.kt'
     ).read_text(encoding='utf-8')
+    app_main = (
+        (ROOT / 'apps/app/lib/main.dart').read_text(encoding='utf-8')
+        + (ROOT / 'apps/app/lib/app_runtime.dart').read_text(encoding='utf-8')
+    )
+    main_activity = (
+        ROOT
+        / 'apps/app/android/app/src/main/kotlin/dev/zic/zic/MainActivity.kt'
+    ).read_text(encoding='utf-8')
     for required in (
         'ENTRY_CLASS_KEYS',
         'entryClasses',
@@ -2675,6 +2688,75 @@ def check_current_iteration() -> None:
     ):
         if required not in home or required not in telemetry:
             fail(f'dev.43 Home startup attribution is incomplete: {required}')
+    storage_bridge = (
+        ROOT / 'packages/storage_bridge/lib/storage_bridge.dart'
+    ).read_text(encoding='utf-8')
+    startup_platform = (
+        ROOT / 'apps/app/lib/startup_platform.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'applicationSupportPath: getStartupApplicationSupportPath',
+        'durableZicStateExists(root)',
+        'startupApplicationSupportPathFromArguments',
+        'startupApplicationSupportPathValue',
+    ):
+        if required not in app_main:
+            fail(f'cold-start durable storage boundary is incomplete: {required}')
+    for required in (
+        'startupApplicationSupportPathFromArguments',
+        'zic-application-support=',
+        'applicationSupportPath',
+    ):
+        if required not in startup_platform:
+            fail(f'Android startup path Dart boundary is incomplete: {required}')
+    main_source = (ROOT / 'apps/app/lib/main.dart').read_text(encoding='utf-8')
+    if 'runApp(\n    _BootstrapApp(' not in main_source:
+        fail('cold-start entrypoint must mount the bootstrap app immediately')
+    for required in (
+        "import 'app_runtime.dart' deferred as runtime",
+        'await runtime.loadLibrary()',
+        'runtime.createStartupApp(',
+    ):
+        if required not in main_source:
+            fail(f'post-raster app composition boundary is incomplete: {required}')
+    if 'applicationSupportPath' not in main_activity:
+        fail('Android startup path method is incomplete')
+    if 'filesDir.absolutePath' not in main_activity:
+        fail('Android startup path must use the app files directory')
+    for required in (
+        'getDartEntrypointArgs(): List<String>',
+        'zic-application-support=',
+    ):
+        if required not in main_activity:
+            fail(f'Android startup entrypoint path injection is incomplete: {required}')
+    for required in (
+        'provideFlutterEngine(context: Context)',
+        'FlutterEngine(context.applicationContext, null, false)',
+        'shouldDestroyEngineWithHost(): Boolean = true',
+        'Unable to create deferred plugin',
+    ):
+        if required not in main_activity:
+            fail(
+                'Android implicit plugin registration boundary is incomplete: '
+                f'{required}'
+            )
+    deferred_plugin_rules = (
+        ROOT / 'apps/app/android/app/proguard-rules.pro'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'dev.flutter.packages.file_selector_android.FileSelectorAndroidPlugin',
+        'dev.zic.localmedia.LocalMediaBridgePlugin',
+        'dev.zic.network.NetworkBridgePlugin',
+        'dev.zic.pluginhost.PluginHostBridgePlugin',
+        'dev.zic.readerruntime.ReaderRuntimePlugin',
+        'dev.zic.runtime.RuntimeBridgePlugin',
+        'dev.zic.texture.TextureBridgePlugin',
+        'com.flutter_rust_bridge.rhttp.RhttpPlugin',
+    ):
+        if required not in deferred_plugin_rules:
+            fail(f'deferred Android plugin keep rules are incomplete: {required}')
+    if 'ensureStartupPlatformReady' in app_main:
+        fail('cold-start storage must not eagerly prepare JNI')
     for required in (
         'Executors.newSingleThreadExecutor',
         'getPackageArchiveInfo',
@@ -2897,7 +2979,10 @@ def check_current_iteration() -> None:
     runtime_manifest = (
         ROOT / 'packages/plugin_host_bridge/android/src/main/AndroidManifest.xml'
     ).read_text(encoding='utf-8')
-    app_main = (ROOT / 'apps/app/lib/main.dart').read_text(encoding='utf-8')
+    app_main = (
+        (ROOT / 'apps/app/lib/main.dart').read_text(encoding='utf-8')
+        + (ROOT / 'apps/app/lib/app_runtime.dart').read_text(encoding='utf-8')
+    )
     for required in (
         'final class AndroidExternalPluginRuntimeServiceBootstrap',
         'zicExternalPluginRuntimeServiceMain',

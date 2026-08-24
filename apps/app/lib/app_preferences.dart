@@ -139,6 +139,7 @@ final class AppPreferencesController extends ChangeNotifier {
   AppPreferencesController();
 
   ThemeMode _themeMode = ThemeMode.dark;
+  bool _amoledDarkTheme = false;
   bool _debugTraceEnabled = true;
   ShelfSourceFilter _shelfSourceFilter = ShelfSourceFilter.all;
   LibrarySortMode _shelfSortMode = LibrarySortMode.recent;
@@ -168,8 +169,11 @@ final class AppPreferencesController extends ChangeNotifier {
   Future<void> _writeTail = Future<void>.value();
   int _revision = 0;
   bool _disposed = false;
+  bool _attached = false;
 
   ThemeMode get themeMode => _themeMode;
+  bool get amoledDarkTheme => _amoledDarkTheme;
+  bool get isAttached => _attached;
   bool get debugTraceEnabled => _debugTraceEnabled;
   ShelfSourceFilter get shelfSourceFilter => _shelfSourceFilter;
   LibrarySortMode get shelfSortMode => _shelfSortMode;
@@ -215,19 +219,36 @@ final class AppPreferencesController extends ChangeNotifier {
         if (_revision != revisionAtStart) {
           await _queuePersist();
         }
+        _attached = true;
+        notifyListeners();
       }
       rethrow;
     }
     if (_disposed) return;
     _write = write;
-    if (_revision != revisionAtStart || values == null) {
+    if (_revision != revisionAtStart) {
       await _queuePersist();
+      _attached = true;
+      notifyListeners();
+      return;
+    }
+    // A brand-new install can use the in-memory defaults until the user
+    // changes a preference. Persisting the complete default document here
+    // makes first startup perform a synchronous flush/rename on the UI
+    // isolate and provides no user-visible benefit.
+    if (values == null) {
+      _attached = true;
+      notifyListeners();
       return;
     }
     _themeMode = _enumByName(
       ThemeMode.values,
       values['themeMode'],
       _themeMode,
+    );
+    _amoledDarkTheme = _boolValue(
+      values['amoledDarkTheme'],
+      _amoledDarkTheme,
     );
     _debugTraceEnabled =
         _boolValue(values['debugTraceEnabled'], _debugTraceEnabled);
@@ -316,12 +337,21 @@ final class AppPreferencesController extends ChangeNotifier {
     _comicReaderSettings = _decodeComicReaderSettings(
       values['comicReaderSettings'],
     );
-    if (!_disposed) notifyListeners();
+    if (!_disposed) {
+      _attached = true;
+      notifyListeners();
+    }
   }
 
   void setThemeMode(ThemeMode value) {
     if (_disposed || _themeMode == value) return;
     _themeMode = value;
+    _changed();
+  }
+
+  void setAmoledDarkTheme(bool value) {
+    if (_disposed || _amoledDarkTheme == value) return;
+    _amoledDarkTheme = value;
     _changed();
   }
 
@@ -575,6 +605,7 @@ final class AppPreferencesController extends ChangeNotifier {
     await write(<String, Object?>{
       'version': 6,
       'themeMode': _themeMode.name,
+      'amoledDarkTheme': _amoledDarkTheme,
       'debugTraceEnabled': _debugTraceEnabled,
       'shelfSourceFilter': _shelfSourceFilter.name,
       'shelfSortMode': _shelfSortMode.name,

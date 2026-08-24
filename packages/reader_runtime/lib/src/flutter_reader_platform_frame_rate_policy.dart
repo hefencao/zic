@@ -2,6 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:telemetry/telemetry.dart';
 
+import 'deferred_android_plugin.dart';
+
 const _frameRatePolicyChannel = MethodChannel(
   'dev.zic/reader_runtime_frame_rate_policy',
 );
@@ -34,6 +36,7 @@ final class FlutterReaderPlatformFrameRatePolicy {
   Future<void> start() async {
     if (_disposed || _started || !_supportedPlatform) return;
     try {
+      await ensureReaderRuntimePluginAttached();
       final response = await _channel.invokeMapMethod<String, Object?>(
         'setVerticalReaderFrameRatePolicy',
         const <String, Object?>{'active': true},

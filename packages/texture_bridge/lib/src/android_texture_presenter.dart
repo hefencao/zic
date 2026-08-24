@@ -3,6 +3,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 const String textureBridgeChannelName = 'dev.zic/texture';
+const MethodChannel _startupPlatformChannel = MethodChannel(
+  'dev.zic.zic/startup',
+);
 
 typedef TextureTelemetrySink = void Function(TextureTelemetry event);
 
@@ -140,6 +143,7 @@ final class AndroidTexturePresenter {
 
   final MethodChannel _channel;
   final TextureTelemetrySink? telemetrySink;
+  Future<void>? _pluginAttachment;
 
   static bool get isSupported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
@@ -159,6 +163,7 @@ final class AndroidTexturePresenter {
     required int height,
   }) async {
     _checkDimensions(width, height);
+    await _ensureTextureBridgeAttached();
     final response = await _channel.invokeMapMethod<String, Object?>(
       'create',
       <String, Object?>{'width': width, 'height': height},
@@ -173,6 +178,31 @@ final class AndroidTexturePresenter {
       width: width,
       height: height,
     );
+  }
+
+  Future<void> _ensureTextureBridgeAttached() async {
+    if (!isSupported) return;
+    final existing = _pluginAttachment;
+    if (existing != null) {
+      await existing;
+      return;
+    }
+    final future = _startupPlatformChannel.invokeMethod<void>(
+      'attachPlugin',
+      const <String, Object?>{'name': 'texture_bridge'},
+    );
+    _pluginAttachment = future;
+    try {
+      await future;
+    } on MissingPluginException {
+      // The platform channel is absent on hosts that do not use the app
+      // Android shell. The texture call below remains authoritative.
+    } on Object {
+      if (identical(_pluginAttachment, future)) {
+        _pluginAttachment = null;
+      }
+      rethrow;
+    }
   }
 
   Future<void> _initialize(AndroidTextureLease lease) =>
