@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -66,6 +67,8 @@ final class ExternalPluginController {
   final Map<String, String> _pendingPayloads = <String, String>{};
   final Map<String, Object> _activationFailures = <String, Object>{};
   final Map<String, Object> _manifestRestoreFailures = <String, Object>{};
+  final StreamController<void> _sourceChanges =
+      StreamController<void>.broadcast();
   late final ExternalPluginPayloadLoader _payloads =
       CallbackExternalPluginPayloadLoader(_acquirePinnedPayload);
   late final MihonApkInspector _mihonInspector = MihonApkInspector(
@@ -85,6 +88,7 @@ final class ExternalPluginController {
     _PinnedExternalPluginHost(
       format: ExternalComicPluginFormat.mihonExtension,
       inspector: _mihonInspector,
+      pinnedInspection: _cachedPinnedInspection,
       executor: MihonIsolatedExecutor(
         backend: AndroidMihonIsolatedRuntimeBackend(),
       ),
@@ -93,6 +97,7 @@ final class ExternalPluginController {
     _PinnedExternalPluginHost(
       format: ExternalComicPluginFormat.veneraJavaScript,
       inspector: _veneraInspector,
+      pinnedInspection: _cachedPinnedInspection,
       executor: VeneraSandboxExecutor(
         backend: AndroidVeneraSandboxRuntimeBackend(),
       ),
@@ -155,21 +160,31 @@ final class ExternalPluginController {
   /// [activationFailures], matching the eager-open behavior.
   Future<void> get ready => _ready;
 
+  /// Emits whenever startup or an explicit lifecycle operation changes the
+  /// active source projection. Consumers can publish each source as soon as
+  /// its own runtime is ready instead of waiting behind a sibling plugin.
+  Stream<void> get sourceChanges => _sourceChanges.stream;
+
   Future<void> _prepare() async {
     await _root.create(recursive: true);
     await _readManifest();
   }
 
   Future<void> _initializeInBackground() async {
-    if (discoverDeviceMihonExtensions) {
+    final activation = _activateInstalled();
+    if (!discoverDeviceMihonExtensions) {
+      await activation;
+      return;
+    }
+    final discovery = () async {
       try {
         await refreshDeviceMihonExtensions();
       } on Object catch (error) {
         _deviceMihonExtensions = const <InstalledMihonExtension>[];
         _deviceMihonDiscoveryError = error;
       }
-    }
-    await _activateInstalled();
+    }();
+    await Future.wait<void>(<Future<void>>[discovery, activation]);
   }
 
   List<InstalledExternalPlugin> get installed =>
@@ -191,6 +206,13 @@ final class ExternalPluginController {
 
   Map<String, Object> get activationFailures =>
       Map<String, Object>.unmodifiable(_activationFailures);
+
+  /// Whether the last activation failure can be retried without reinstalling
+  /// or changing the trusted plugin record.
+  bool canRetryActivation(String pluginId) {
+    final failure = _activationFailures[pluginId];
+    return failure != null && _isRetryableActivationFailure(failure);
+  }
 
   Map<String, Object> get manifestRestoreFailures =>
       Map<String, Object>.unmodifiable(_manifestRestoreFailures);
@@ -221,6 +243,7 @@ final class ExternalPluginController {
     try {
       await _registry.replace(record.plugin);
       _activationFailures.remove(pluginId);
+      _notifySourceChange();
     } on Object catch (error) {
       _activationFailures[pluginId] = error;
       rethrow;
@@ -456,6 +479,7 @@ final class ExternalPluginController {
           : await _registry.activate(record.plugin);
       runtimeReplaced = true;
       _activationFailures.remove(pluginId);
+      _notifySourceChange();
       await _writeManifest();
       if (previous != null && previous.payloadPath != record.payloadPath) {
         await _deleteBestEffort(File(previous.payloadPath));
@@ -463,16 +487,34 @@ final class ExternalPluginController {
       return sources;
     } on Object catch (error) {
       if (!runtimeReplaced) {
-        // Transactional registry replacement leaves the old active session
-        // untouched when candidate activation/validation fails. Restore only
-        // the controller's manifest view; there is no session to reactivate.
-        if (previous == null) {
-          _installed.remove(pluginId);
+        final keepForRetry = previous == null &&
+            _isRetryableActivationFailure(error);
+        if (keepForRetry) {
+          // A transient activation failure must not erase the user's newly
+          // enabled plugin. Keep the immutable payload and manifest record so
+          // the installed row can retry without another download/approval.
+          _installed[pluginId] = record;
+          _activationFailures[pluginId] = error;
+          try {
+            await _writeManifest();
+          } on Object catch (persistError) {
+            _activationFailures[pluginId] = persistError;
+          }
+          _notifySourceChange();
         } else {
-          _installed[pluginId] = previous;
+          // Transactional registry replacement leaves the old active session
+          // untouched when candidate activation/validation fails. Restore only
+          // the controller's manifest view; there is no session to reactivate.
+          if (previous == null) {
+            _installed.remove(pluginId);
+          } else {
+            _installed[pluginId] = previous;
+          }
+          _activationFailures[pluginId] = error;
+          _notifySourceChange();
         }
-        _activationFailures[pluginId] = error;
-        if (previous == null || previous.payloadPath != record.payloadPath) {
+        if (!keepForRetry &&
+            (previous == null || previous.payloadPath != record.payloadPath)) {
           await _deleteBestEffort(File(record.payloadPath));
         }
       } else {
@@ -481,7 +523,39 @@ final class ExternalPluginController {
         // deleting it here would create an active-session/payload mismatch.
         _installed[pluginId] = record;
         _activationFailures[pluginId] = error;
+        _notifySourceChange();
       }
+      rethrow;
+    }
+  }
+
+  /// Retries an installed plugin after a recoverable activation failure.
+  ///
+  /// A currently active session is replaced when the failure came from a
+  /// runtime refresh or manifest write; an inactive record is activated from
+  /// its already-owned payload. The trusted record is never removed by this
+  /// operation.
+  Future<List<BrowsableComicSource>> retryActivation(String pluginId) async {
+    _requireOpen();
+    final record = _installed[pluginId];
+    if (record == null) {
+      throw StateError('external plugin is not installed: $pluginId');
+    }
+    final failure = _activationFailures[pluginId];
+    if (failure != null && !_isRetryableActivationFailure(failure)) {
+      throw StateError('external plugin activation failure is not retryable');
+    }
+    try {
+      final sources = _registry.isActive(pluginId)
+          ? await _registry.replace(record.plugin)
+          : await _registry.activate(record.plugin);
+      _activationFailures.remove(pluginId);
+      await _writeManifest();
+      _notifySourceChange();
+      return sources;
+    } on Object catch (error) {
+      _activationFailures[pluginId] = error;
+      _notifySourceChange();
       rethrow;
     }
   }
@@ -491,6 +565,7 @@ final class ExternalPluginController {
     await _registry.deactivate(pluginId);
     final removed = _installed.remove(pluginId);
     _activationFailures.remove(pluginId);
+    _notifySourceChange();
     await _writeManifest();
     if (removed != null) {
       await _deleteBestEffort(File(removed.payloadPath));
@@ -501,12 +576,12 @@ final class ExternalPluginController {
     if (_closed) return;
     _closed = true;
     try {
-      await _ready;
-    } on Object {
-      // Closing still drains any registry work below; background startup
-      // errors must not escape the application shutdown path.
+      // Enter registry shutdown immediately. Waiting for the aggregate ready
+      // barrier first would let one stuck plugin delay teardown of all others.
+      await _registry.close();
+    } finally {
+      await _sourceChanges.close();
     }
-    await _registry.close();
   }
 
   ExternalPluginInspector _inspector(ExternalComicPluginFormat format) =>
@@ -531,13 +606,77 @@ final class ExternalPluginController {
     return ExternalPluginPayloadFile(path: path, byteLength: length);
   }
 
+  Future<ExternalPluginInspection?> _cachedPinnedInspection(
+    ExternalComicPluginCatalogEntry plugin,
+    InstalledExternalPlugin record,
+  ) async {
+    // The manifest already contains the approved immutable payload identity
+    // and runtime metadata. The Android executor still verifies the exact
+    // payload length and SHA-256 before class loading; this warm path only
+    // avoids repeating Dart metadata parsing and hashing on every app start.
+    switch (record.plugin.format) {
+      case ExternalComicPluginFormat.mihonExtension:
+        if (record.packageName == null ||
+            record.signerSha256 == null ||
+            record.versionCode == null ||
+            record.extensionLib == null ||
+            record.entryClasses.isEmpty ||
+            record.entryClasses.any((value) => value.trim().isEmpty)) {
+          return null;
+        }
+      case ExternalComicPluginFormat.veneraJavaScript:
+        if (record.sourceKey == null || record.sourceKey!.trim().isEmpty) {
+          return null;
+        }
+    }
+    final payload = await _acquirePinnedPayload(plugin);
+    return ExternalPluginInspection(
+      format: record.plugin.format,
+      payloadSha256: record.payloadSha256,
+      requestedCapabilities: switch (record.plugin.format) {
+        ExternalComicPluginFormat.mihonExtension =>
+          _mihonInspector.requestedCapabilities,
+        ExternalComicPluginFormat.veneraJavaScript =>
+          _veneraInspector.requestedCapabilities,
+      },
+      payloadPath: payload.path,
+      payloadByteLength: payload.byteLength,
+      packageName: record.packageName,
+      signerSha256: record.signerSha256,
+      versionCode: record.versionCode,
+      extensionLib: record.extensionLib,
+      mihonEntryClasses: record.entryClasses,
+      sourceKey: record.sourceKey,
+    );
+  }
+
   Future<void> _activateInstalled() async {
-    for (final record in _installed.values.toList(growable: false)) {
-      try {
-        await _registry.activate(record.plugin);
-      } on Object catch (error) {
-        _activationFailures[record.plugin.pluginId] = error;
+    final records = _installed.values.toList(growable: false);
+    if (records.isEmpty) return;
+    var next = 0;
+    Future<void> activateNext() async {
+      while (true) {
+        final index = next++;
+        if (index >= records.length) return;
+        final record = records[index];
+        try {
+          await _registry.activate(record.plugin);
+          _notifySourceChange();
+        } on Object catch (error) {
+          _activationFailures[record.plugin.pluginId] = error;
+          _notifySourceChange();
+        }
       }
+    }
+    final workerCount = records.length < 4 ? records.length : 4;
+    await Future.wait<void>(
+      List<Future<void>>.generate(workerCount, (_) => activateNext()),
+    );
+  }
+
+  void _notifySourceChange() {
+    if (!_closed && !_sourceChanges.isClosed) {
+      _sourceChanges.add(null);
     }
   }
 
@@ -748,6 +887,7 @@ final class _PinnedExternalPluginHost implements ExternalComicPluginHost {
   const _PinnedExternalPluginHost({
     required this.format,
     required this.inspector,
+    this.pinnedInspection,
     required this.executor,
     required this.recordFor,
   });
@@ -755,6 +895,10 @@ final class _PinnedExternalPluginHost implements ExternalComicPluginHost {
   @override
   final ExternalComicPluginFormat format;
   final ExternalPluginInspector inspector;
+  final Future<ExternalPluginInspection?> Function(
+    ExternalComicPluginCatalogEntry plugin,
+    InstalledExternalPlugin record,
+  )? pinnedInspection;
   final ExternalPluginExecutor executor;
   final InstalledExternalPlugin? Function(String pluginId) recordFor;
 
@@ -771,7 +915,14 @@ final class _PinnedExternalPluginHost implements ExternalComicPluginHost {
         },
       );
     }
-    final inspection = await inspector.inspect(plugin);
+    final effectiveInspector = pinnedInspection == null
+        ? inspector
+        : _RecordAwarePinnedInspector(
+            fallback: inspector,
+            pinned: pinnedInspection!,
+            record: record,
+          );
+    final inspection = await effectiveInspector.inspect(plugin);
     if (!_matchesPin(record, inspection)) {
       throw ExternalPluginActivationException(
         pluginId: plugin.pluginId,
@@ -808,6 +959,30 @@ final class _PinnedExternalPluginHost implements ExternalComicPluginHost {
   }
 }
 
+final class _RecordAwarePinnedInspector implements ExternalPluginInspector {
+  const _RecordAwarePinnedInspector({
+    required this.fallback,
+    required this.pinned,
+    required this.record,
+  });
+
+  final ExternalPluginInspector fallback;
+  final Future<ExternalPluginInspection?> Function(
+    ExternalComicPluginCatalogEntry plugin,
+    InstalledExternalPlugin record,
+  ) pinned;
+  final InstalledExternalPlugin record;
+
+  @override
+  ExternalComicPluginFormat get format => fallback.format;
+
+  @override
+  Future<ExternalPluginInspection> inspect(
+    ExternalComicPluginCatalogEntry plugin,
+  ) async =>
+      await pinned(plugin, record) ?? fallback.inspect(plugin);
+}
+
 final class _PinnedInspection implements ExternalPluginInspector {
   const _PinnedInspection(this.format, this.value);
 
@@ -836,6 +1011,43 @@ bool _matchesPin(
 bool _listEquals(List<String> left, List<String> right) =>
     left.length == right.length &&
     Iterable<int>.generate(left.length).every((index) => left[index] == right[index]);
+
+bool _isRetryableActivationFailure(Object error) {
+  if (error is ExternalPluginActivationException) {
+    const terminalDenials = <ExternalPluginDenial>{
+      ExternalPluginDenial.formatMismatch,
+      ExternalPluginDenial.insecureEntrypoint,
+      ExternalPluginDenial.untrustedRepository,
+      ExternalPluginDenial.quarantined,
+      ExternalPluginDenial.adultContentDenied,
+      ExternalPluginDenial.payloadNotTrusted,
+      ExternalPluginDenial.packageMismatch,
+      ExternalPluginDenial.signerNotTrusted,
+      ExternalPluginDenial.versionMismatch,
+      ExternalPluginDenial.versionRollback,
+      ExternalPluginDenial.unsupportedAbi,
+      ExternalPluginDenial.capabilityDenied,
+      ExternalPluginDenial.sourceIdentityMismatch,
+      ExternalPluginDenial.inspectionFailed,
+      ExternalPluginDenial.runtimeMetadataMissing,
+    };
+    return error.denials.every((denial) => !terminalDenials.contains(denial));
+  }
+  if (error is ExternalPluginRuntimeProcessException) {
+    const terminalCodes = <String>{
+      'limits-unsupported',
+      'payload-too-large',
+      'payload-changed',
+      'payload-identity-mismatch',
+      'source-identity-mismatch',
+    };
+    return !terminalCodes.contains(error.code);
+  }
+  if (error is FormatException || error is ArgumentError) {
+    return false;
+  }
+  return true;
+}
 
 bool _hasFilename(Uri uri, String filename) =>
     uri.pathSegments.isNotEmpty && uri.pathSegments.last == filename;

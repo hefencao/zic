@@ -36,6 +36,7 @@ void main() {
       factories: const <ExternalPluginRuntimeDriverFactory>[],
       verifiedDirectory: Directory('${root.path}/verified'),
       processId: 'process-entrypoint-test',
+      warmVeneraResolverHttp: false,
       channel: channel,
     );
     try {

@@ -115,6 +115,9 @@ extension _DemoHomeViews on _DemoHomeState {
                       onOpenUpdate: _openSourceUpdateForSummary,
                       onOpenSourceWebView: _openSourceWebView,
                       resolveSource: _sourceForId,
+                      externalPlugins: _activeExternalPlugins,
+                      onExternalPluginRetry:
+                          _retryExternalPluginFromSourcePage,
                       traceSink: widget.debugTrace,
                       requestedQuery: _sourceSearchQuery,
                       queryRevision: _sourceSearchRevision,

@@ -76,6 +76,15 @@ final class MihonApkInspector implements ExternalPluginInspector {
   final ExternalPluginPayloadLoader payloads;
   final MihonApkMetadataReader metadata;
   final int maxPayloadBytes;
+  final Set<ExternalPluginCapability> requestedCapabilities =
+      const <ExternalPluginCapability>{
+    ExternalPluginCapability.network,
+    ExternalPluginCapability.cookies,
+    ExternalPluginCapability.persistentStorage,
+    ExternalPluginCapability.credentials,
+    ExternalPluginCapability.webView,
+    ExternalPluginCapability.nativeCode,
+  };
 
   @override
   ExternalComicPluginFormat get format =>
@@ -88,10 +97,14 @@ final class MihonApkInspector implements ExternalPluginInspector {
     _requireFormat(plugin, format);
     final payload = await payloads.acquire(plugin);
     await _validatePayload(payload, maxPayloadBytes);
-    final apk = await metadata.readMetadata(payload.path);
+    final metadataAndDigest = await Future.wait<dynamic>(<Future<dynamic>>[
+      metadata.readMetadata(payload.path),
+      _sha256File(payload),
+    ]);
+    final apk = metadataAndDigest[0] as MihonApkMetadata;
     return ExternalPluginInspection(
       format: format,
-      payloadSha256: await _sha256File(payload),
+      payloadSha256: metadataAndDigest[1] as String,
       payloadPath: payload.path,
       payloadByteLength: payload.byteLength,
       packageName: apk.packageName,
@@ -99,14 +112,7 @@ final class MihonApkInspector implements ExternalPluginInspector {
       versionCode: apk.versionCode,
       extensionLib: apk.extensionLib,
       mihonEntryClasses: apk.entryClasses,
-      requestedCapabilities: const <ExternalPluginCapability>{
-        ExternalPluginCapability.network,
-        ExternalPluginCapability.cookies,
-        ExternalPluginCapability.persistentStorage,
-        ExternalPluginCapability.credentials,
-        ExternalPluginCapability.webView,
-        ExternalPluginCapability.nativeCode,
-      },
+      requestedCapabilities: requestedCapabilities,
     );
   }
 }

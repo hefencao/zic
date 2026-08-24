@@ -448,9 +448,10 @@ final class ExternalPluginRuntimeProcessHost {
   final Map<String, _ProcessRuntimeSession> _sessions =
       <String, _ProcessRuntimeSession>{};
   final Map<String, Future<void>> _closingSessions = <String, Future<void>>{};
+  final Set<Future<void>> _pendingActivations = <Future<void>>{};
 
   bool _closing = false;
-  Future<void> _activationTail = Future<void>.value();
+  int _activatingSessions = 0;
   Future<void>? _closeFuture;
 
   int get activeSessionCount => _sessions.length;
@@ -466,14 +467,35 @@ final class ExternalPluginRuntimeProcessHost {
         ),
       );
     }
-    final activation = _activationTail.then(
-      (_) => _activate(activationMessage),
+    if (_sessions.length +
+            _closingSessions.length +
+            _activatingSessions >=
+        maxActiveSessions) {
+      return Future<ExternalPluginRuntimeProcessActivation>.error(
+        const ExternalPluginRuntimeProcessException(
+          code: 'session-limit',
+          message: 'isolated runtime session limit reached',
+        ),
+      );
+    }
+    _activatingSessions++;
+    final activation = _activate(activationMessage);
+    late final Future<void> tracked;
+    tracked = activation.then<void>(
+      (_) {
+        _finishActivation(tracked);
+      },
+      onError: (Object _, StackTrace __) {
+        _finishActivation(tracked);
+      },
     );
-    _activationTail = activation.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace __) {},
-    );
+    _pendingActivations.add(tracked);
     return activation;
+  }
+
+  void _finishActivation(Future<void> activation) {
+    _pendingActivations.remove(activation);
+    _activatingSessions--;
   }
 
   Future<ExternalPluginRuntimeProcessActivation> _activate(
@@ -483,12 +505,6 @@ final class ExternalPluginRuntimeProcessHost {
       throw const ExternalPluginRuntimeProcessException(
         code: 'process-closing',
         message: 'isolated runtime process is closing',
-      );
-    }
-    if (_sessions.length + _closingSessions.length >= maxActiveSessions) {
-      throw const ExternalPluginRuntimeProcessException(
-        code: 'session-limit',
-        message: 'isolated runtime session limit reached',
       );
     }
     final activation =
@@ -605,7 +621,10 @@ final class ExternalPluginRuntimeProcessHost {
 
   Future<void> _close() async {
     _closing = true;
-    await _activationTail;
+    final pendingActivations = _pendingActivations.toList(growable: false);
+    if (pendingActivations.isNotEmpty) {
+      await Future.wait<void>(pendingActivations);
+    }
     final sessions = _sessions.values.toList(growable: false);
     _sessions.clear();
     final closing = <Future<void>>[

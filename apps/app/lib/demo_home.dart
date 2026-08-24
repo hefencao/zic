@@ -186,9 +186,13 @@ final class _DemoHomeState extends State<DemoHome> {
   late ResourceCacheCoordinator _cacheCoordinator;
   late bool _ownsCacheCoordinator;
   ExternalPluginController? _activeExternalPlugins;
+  ExternalPluginController? _watchedExternalPlugins;
+  StreamSubscription<void>? _externalPluginSourceChanges;
   Completer<void>? _initialExternalSourcesPublished;
   Future<ExternalPluginController?>? _externalPluginLoading;
   Future<void>? _externalSourcesPublishing;
+  Future<void>? _externalSourceRefresh;
+  bool _externalSourceRefreshPending = false;
   bool _suppressLibrarySessionRebuild = false;
 
   bool _picking = false;
@@ -332,7 +336,12 @@ final class _DemoHomeState extends State<DemoHome> {
       }
       if (controller != null) {
         _activeExternalPlugins = controller;
-        await _replaceExternalSources();
+        _watchExternalPluginSources(controller);
+        _requestExternalSourceRefresh(controller);
+        final refresh = _externalSourceRefresh;
+        if (refresh != null) {
+          await refresh;
+        }
       }
     } on Object catch (error) {
       debugPrint('external plugin runtime unavailable: $error');
@@ -446,6 +455,7 @@ final class _DemoHomeState extends State<DemoHome> {
     final externalPlugins = _incomingExternalPlugins;
     _activeExternalPlugins = externalPlugins;
     if (externalPlugins != null) {
+      _watchExternalPluginSources(externalPlugins);
       unawaited(_refreshExternalSourcesWhenReady(externalPlugins));
     }
     _serviceHandoff?.addListener(_handleServiceHandoffChanged);
@@ -604,6 +614,7 @@ final class _DemoHomeState extends State<DemoHome> {
   void dispose() {
     widget.preferences.removeListener(_handleAppPreferencesChanged);
     _serviceHandoff?.removeListener(_handleServiceHandoffChanged);
+    unawaited(_externalPluginSourceChanges?.cancel());
     _completeInitialExternalSourcesPublished();
     _librarySession.removeListener(_handleLibrarySessionChanged);
     _librarySession.downloadProjectionChanges.removeListener(
@@ -696,7 +707,72 @@ final class _DemoHomeState extends State<DemoHome> {
       _completeInitialExternalSourcesPublished();
       return;
     }
-    await _replaceExternalSources();
+    _requestExternalSourceRefresh(controller);
+    final refresh = _externalSourceRefresh;
+    if (refresh != null) {
+      await refresh;
+    }
+  }
+
+  void _watchExternalPluginSources(ExternalPluginController controller) {
+    if (identical(_watchedExternalPlugins, controller)) {
+      return;
+    }
+    final previous = _externalPluginSourceChanges;
+    _externalPluginSourceChanges = null;
+    _watchedExternalPlugins = controller;
+    if (previous != null) {
+      unawaited(previous.cancel());
+    }
+    _externalPluginSourceChanges = controller.sourceChanges.listen((_) {
+      _requestExternalSourceRefresh(controller);
+    });
+  }
+
+  void _requestExternalSourceRefresh(ExternalPluginController controller) {
+    if (!mounted || !identical(_activeExternalPlugins, controller)) {
+      return;
+    }
+    _externalSourceRefreshPending = true;
+    if (_externalSourceRefresh != null) {
+      return;
+    }
+    late final Future<void> refresh;
+    refresh = _drainExternalSourceRefresh(controller).whenComplete(() {
+      if (identical(_externalSourceRefresh, refresh)) {
+        _externalSourceRefresh = null;
+      }
+    });
+    _externalSourceRefresh = refresh;
+    unawaited(refresh);
+  }
+
+  Future<void> _drainExternalSourceRefresh(
+    ExternalPluginController controller,
+  ) async {
+    try {
+      while (_externalSourceRefreshPending &&
+          mounted &&
+          identical(_activeExternalPlugins, controller)) {
+        _externalSourceRefreshPending = false;
+        await _replaceExternalSources();
+      }
+    } on Object catch (error) {
+      debugPrint('external source projection refresh failed: $error');
+    }
+  }
+
+  Future<void> _retryExternalPluginFromSourcePage(
+    InstalledExternalPlugin plugin,
+  ) async {
+    final controller = _activeExternalPlugins;
+    if (controller == null) return;
+    await controller.retryActivation(plugin.plugin.pluginId);
+    _requestExternalSourceRefresh(controller);
+    final refresh = _externalSourceRefresh;
+    if (refresh != null) {
+      await refresh;
+    }
   }
 
   Future<void> _openSourceManagement() async {
@@ -705,7 +781,12 @@ final class _DemoHomeState extends State<DemoHome> {
     if (externalPlugins != null &&
         !identical(_activeExternalPlugins, externalPlugins)) {
       _activeExternalPlugins = externalPlugins;
-      await _replaceExternalSources();
+      _watchExternalPluginSources(externalPlugins);
+      _requestExternalSourceRefresh(externalPlugins);
+      final refresh = _externalSourceRefresh;
+      if (refresh != null) {
+        await refresh;
+      }
     }
     if (!mounted) return;
     await Navigator.of(context).push(
@@ -720,9 +801,6 @@ final class _DemoHomeState extends State<DemoHome> {
         ),
       ),
     );
-    if (mounted) {
-      await _reloadLibrary();
-    }
   }
 
   Future<void> _openDownloadManager() async {

@@ -1,8 +1,20 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:rhttp/rhttp.dart' as rhttp;
+
+const bool _veneraResolverDiagnostics = bool.fromEnvironment(
+  'ZIC_VENERA_RESOLVER_DIAGNOSTICS',
+  defaultValue: true,
+);
+
+void _veneraResolverLog(String message) {
+  if (_veneraResolverDiagnostics) {
+    debugPrint('[zic-venera-http] $message');
+  }
+}
 
 /// rhttp executor owned by the isolated plugin Dart process.
 ///
@@ -33,9 +45,10 @@ final class VeneraResolverHttpService {
   }
 
   Future<rhttp.RhttpClient> _createClient() async {
+    final stopwatch = Stopwatch()..start();
     await rhttp.Rhttp.init();
     if (_closed) throw StateError('Venera resolver HTTP service is closed');
-    return rhttp.RhttpClient.create(
+    final client = await rhttp.RhttpClient.create(
       settings: const rhttp.ClientSettings(
         redirectSettings: rhttp.RedirectSettings.none(),
         timeoutSettings: rhttp.TimeoutSettings(
@@ -46,6 +59,26 @@ final class VeneraResolverHttpService {
         throwOnStatusCode: false,
       ),
     );
+    _veneraResolverLog(
+      'client-ready initMs=${stopwatch.elapsedMilliseconds}',
+    );
+    return client;
+  }
+
+  Future<void> warmUp() async {
+    final stopwatch = Stopwatch()..start();
+    try {
+      await _client();
+      _veneraResolverLog(
+        'warmup-complete totalMs=${stopwatch.elapsedMilliseconds}',
+      );
+    } on Object catch (error) {
+      _veneraResolverLog(
+        'warmup-failed totalMs=${stopwatch.elapsedMilliseconds} '
+        'error=${error.runtimeType}',
+      );
+      rethrow;
+    }
   }
 
   Future<Map<String, Object?>> _request(Map<String, Object?> message) async {
@@ -76,8 +109,11 @@ final class VeneraResolverHttpService {
       requestId: requestId,
       cancelToken: cancelToken,
     );
+    final stopwatch = Stopwatch()..start();
+    var clientWaitMs = 0;
     try {
       final client = await _client();
+      clientWaitMs = stopwatch.elapsedMilliseconds;
       final response = await client.requestStream(
         method: rhttp.HttpMethod(method),
         url: url,
@@ -98,6 +134,7 @@ final class VeneraResolverHttpService {
       }
       return <String, Object?>{
         'status': response.statusCode,
+        'version': response.version.name,
         'headers': <String, Object?>{
           for (final entry in response.headerMapList.entries)
             entry.key: entry.value.join(', '),
@@ -105,16 +142,34 @@ final class VeneraResolverHttpService {
         'body': builder.takeBytes(),
       };
     } on rhttp.RhttpCancelException {
+      if (requestId == null) {
+        _veneraResolverLog(
+          'request-cancelled totalMs=${stopwatch.elapsedMilliseconds} '
+          'clientWaitMs=$clientWaitMs',
+        );
+      }
       throw PlatformException(
         code: 'venera-resolver-http-cancelled',
         message: 'Venera resolver HTTP request was cancelled',
       );
     } on rhttp.RhttpException catch (error) {
+      if (requestId == null) {
+        _veneraResolverLog(
+          'request-failed totalMs=${stopwatch.elapsedMilliseconds} '
+          'clientWaitMs=$clientWaitMs error=${error.runtimeType}',
+        );
+      }
       throw PlatformException(
         code: 'venera-resolver-http-failed',
         message: error.toString(),
       );
     } finally {
+      if (requestId == null && !_closed) {
+        _veneraResolverLog(
+          'request-finished totalMs=${stopwatch.elapsedMilliseconds} '
+          'clientWaitMs=$clientWaitMs',
+        );
+      }
       _active.remove(callId);
     }
   }

@@ -255,6 +255,8 @@ Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor �
 - 普通图片正文 SHOULD 由宿主 transport 流式下载。平台 transport MAY 将底层网络小包聚合为面向 Pipeline 的较大逻辑块，以降低 Dart 调度/commit 开销；首播块 SHOULD 小于持续传输块，聚合不得改变字节顺序、取消、Range/validator、artifact或重试所有权。
 - 插件不得访问导航、Reader、demand、artifact、App state 或底层缓存。
 - Cookie、token、脚本 payload 和 Base64 正文不得原样写入 Trace。
+- durable handoff 后已安装插件恢复 MAY 对互不相关的 runtime 使用最多 4 个并发激活 worker；registry MUST 只串行化最终 session 的短状态提交，并在提交边界重新检查 source identity collision，慢候选不得阻塞已完成候选。manifest 已保存的插件元数据 MAY 跳过重复 Dart inspection/hash，但隔离 runtime 在加载前 MUST 重新验证 payload byte length 与 SHA-256；设备 Mihon 扫描 MAY 与已安装插件激活并行。漫画源页底部控件 MUST 先投影已安装记录；不可恢复的 typed denial/完整性错误 MUST 回滚新记录并删除新 payload，可恢复失败 MUST 保留记录和 payload，失败条目点击 MUST 触发同一 pluginId 的重新激活；replacement 失败 MUST 保留旧 session。漫画源管理页返回 MUST NOT 等待后台库 projection reload。
+- Venera MUST 保持单 WebView、单 invocation 生命周期。可能等待 origin 的 `Network.*` MUST 通过异步 native callback bridge执行，不得阻塞 WebView JavascriptInterface 线程；激活 MUST 只等待源代码显式 `await` 的初始化工作，激活期间未等待的后台工作 MUST 在下一次 invocation 前由 runtime-owned gate追平。取消 MUST 继续沿 `requestId` 贯穿 JavaScript、native transport 与 rhttp；runtime close MUST 取消未完成的 bridge transport，scheduler permit 只能在真实 invocation 结束后释放。rhttp client warm-up MAY 在 runtime service ready 前执行，但不得把网络路径延迟伪装成设备/CPU加载性能。
 
 ## 11. Telemetry
 

@@ -47,6 +47,7 @@ final class _ExternalPluginRepositoryScreenState
   List<ExternalComicPluginCatalogEntry> _entries =
       const <ExternalComicPluginCatalogEntry>[];
   final Set<String> _working = <String>{};
+  StreamSubscription<void>? _controllerChanges;
   _ExternalPluginPage _page = _ExternalPluginPage.installed;
   Object? _repositoryError;
   Object? _deviceError;
@@ -83,6 +84,9 @@ final class _ExternalPluginRepositoryScreenState
   @override
   void initState() {
     super.initState();
+    _controllerChanges = widget.controller.sourceChanges.listen((_) {
+      if (mounted) setState(() {});
+    });
     _deviceError = widget.controller.deviceMihonDiscoveryError;
     if (widget.format == ExternalComicPluginFormat.mihonExtension) {
       scheduleMicrotask(_loadRepository);
@@ -91,6 +95,11 @@ final class _ExternalPluginRepositoryScreenState
 
   @override
   void dispose() {
+    final controllerChanges = _controllerChanges;
+    _controllerChanges = null;
+    if (controllerChanges != null) {
+      unawaited(controllerChanges.cancel());
+    }
     _url.dispose();
     super.dispose();
   }
@@ -182,6 +191,25 @@ final class _ExternalPluginRepositoryScreenState
       if (mounted) setState(() {});
     } on Object catch (error) {
       if (mounted) await _showOperationError('无法移除 ${plugin.name}', error);
+    } finally {
+      _working.remove(plugin.pluginId);
+      if (mounted) setState(() {});
+    }
+  }
+
+  Future<void> _retry(InstalledExternalPlugin installed) async {
+    final plugin = installed.plugin;
+    if (!_working.add(plugin.pluginId)) return;
+    setState(() {});
+    try {
+      await widget.controller.retryActivation(plugin.pluginId);
+      await widget.onSourcesChanged();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${plugin.name} 已重新加载')),
+      );
+    } on Object catch (error) {
+      if (mounted) await _showOperationError('无法加载 ${plugin.name}', error);
     } finally {
       _working.remove(plugin.pluginId);
       if (mounted) setState(() {});
@@ -302,12 +330,19 @@ final class _ExternalPluginRepositoryScreenState
                   deviceMihonScan: widget.controller.deviceMihonScan,
                   installedPluginIds: _installedPluginIds,
                   activationFailures: widget.controller.activationFailures,
+                  retryablePluginIds: <String>{
+                    for (final pluginId
+                        in widget.controller.activationFailures.keys)
+                      if (widget.controller.canRetryActivation(pluginId))
+                        pluginId,
+                  },
                   manifestRestoreFailures:
                       widget.controller.manifestRestoreFailures,
                   working: _working,
                   loadingDevice: _loadingDevice,
                   deviceError: _deviceError,
                   onRemove: (installed) => unawaited(_remove(installed)),
+                  onRetry: (installed) => unawaited(_retry(installed)),
                   onInstallDeviceMihon: (extension) =>
                       unawaited(_installDeviceMihon(extension)),
                   selectedLanguage: _installedLanguage,
@@ -349,11 +384,13 @@ final class _InstalledPluginsPane extends StatelessWidget {
     required this.deviceMihonScan,
     required this.installedPluginIds,
     required this.activationFailures,
+    required this.retryablePluginIds,
     required this.manifestRestoreFailures,
     required this.working,
     required this.loadingDevice,
     required this.deviceError,
     required this.onRemove,
+    required this.onRetry,
     required this.onInstallDeviceMihon,
     required this.selectedLanguage,
     required this.onLanguageSelected,
@@ -367,11 +404,13 @@ final class _InstalledPluginsPane extends StatelessWidget {
   final InstalledMihonScan deviceMihonScan;
   final Set<String> installedPluginIds;
   final Map<String, Object> activationFailures;
+  final Set<String> retryablePluginIds;
   final Map<String, Object> manifestRestoreFailures;
   final Set<String> working;
   final bool loadingDevice;
   final Object? deviceError;
   final ValueChanged<InstalledExternalPlugin> onRemove;
+  final ValueChanged<InstalledExternalPlugin> onRetry;
   final ValueChanged<InstalledMihonExtension> onInstallDeviceMihon;
   final String selectedLanguage;
   final ValueChanged<String> onLanguageSelected;
@@ -461,36 +500,49 @@ final class _InstalledPluginsPane extends StatelessWidget {
             _InstalledPluginTile(
               item: item,
               failure: activationFailures[item.plugin.pluginId],
+              retryable: retryablePluginIds.contains(item.plugin.pluginId),
               busy: working.contains(item.plugin.pluginId),
               onRemove: onRemove,
+              onRetry: onRetry,
             ),
             const Divider(height: 1),
           ],
       ],
     );
   }
+
 }
 
 final class _InstalledPluginTile extends StatelessWidget {
   const _InstalledPluginTile({
     required this.item,
     required this.failure,
+    required this.retryable,
     required this.busy,
     required this.onRemove,
+    required this.onRetry,
   });
 
   final InstalledExternalPlugin item;
   final Object? failure;
+  final bool retryable;
   final bool busy;
   final ValueChanged<InstalledExternalPlugin> onRemove;
+  final ValueChanged<InstalledExternalPlugin> onRetry;
 
   @override
   Widget build(BuildContext context) {
     final plugin = item.plugin;
+    final canRetry = failure != null && retryable && !busy;
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      onTap: canRetry ? () => onRetry(item) : null,
       leading: Icon(
-        failure == null ? Icons.check_circle_outline : Icons.error_outline,
+        failure == null
+            ? Icons.check_circle_outline
+            : retryable
+                ? Icons.refresh_outlined
+                : Icons.error_outline,
       ),
       title: Text(plugin.name),
       subtitle: Text(
@@ -500,7 +552,7 @@ final class _InstalledPluginTile extends StatelessWidget {
                 'v${plugin.version}',
                 if (plugin.sources.isNotEmpty) '${plugin.sources.length} 个源',
               ].whereType<String>().join(' · ')
-            : '启动失败 · $failure',
+            : '${retryable ? '加载失败，点击重试' : '加载失败，请重新安装'} · $failure',
         maxLines: 3,
         overflow: TextOverflow.ellipsis,
       ),
@@ -509,10 +561,21 @@ final class _InstalledPluginTile extends StatelessWidget {
               dimension: 20,
               child: CircularProgressIndicator(strokeWidth: 2),
             )
-          : IconButton(
-              tooltip: '移除',
-              onPressed: () => onRemove(item),
-              icon: const Icon(Icons.delete_outline),
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                if (canRetry)
+                  IconButton(
+                    tooltip: '重新加载',
+                    onPressed: () => onRetry(item),
+                    icon: const Icon(Icons.refresh),
+                  ),
+                IconButton(
+                  tooltip: '移除',
+                  onPressed: () => onRemove(item),
+                  icon: const Icon(Icons.delete_outline),
+                ),
+              ],
             ),
     );
   }

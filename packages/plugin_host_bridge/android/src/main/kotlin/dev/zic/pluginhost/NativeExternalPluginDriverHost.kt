@@ -39,11 +39,19 @@ internal class NativeExternalPluginDriverHost(
     private val worker: ExecutorService = Executors.newCachedThreadPool { runnable ->
         Thread(runnable, "zic-native-plugin-driver").apply { isDaemon = true }
     }
+    private val cacheCleanup: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "zic-mihon-cache-cleanup").apply { isDaemon = true }
+    }
     private val drivers = ConcurrentHashMap<String, NativeExternalPluginDriver>()
     @Volatile private var closed = false
 
     init {
-        cleanupStaleMihonRuntimeRoots(context.codeCacheDir)
+        // Legacy per-driver roots can contain large extracted plugin state.
+        // They are maintenance work and must not run on the service main
+        // thread, which is also responsible for Binder/Flutter bootstrap.
+        cacheCleanup.execute {
+            runCatching { cleanupStaleMihonRuntimeRoots(context.codeCacheDir) }
+        }
     }
 
     fun handles(method: String): Boolean = method in METHODS
@@ -116,6 +124,7 @@ internal class NativeExternalPluginDriverHost(
                         payloadPath = payloadPath,
                         payloadLength = payloadLength,
                         payloadSha256 = payloadSha256,
+                        executor = worker,
                         resolverHttp = veneraResolverHttp,
                         networkCache = veneraNetworkCache,
                     ) { driverResult ->
@@ -225,6 +234,7 @@ internal class NativeExternalPluginDriverHost(
         veneraNetworkCache.clear()
         veneraResolverHttp.close()
         worker.shutdownNow()
+        cacheCleanup.shutdownNow()
     }
 
     companion object {

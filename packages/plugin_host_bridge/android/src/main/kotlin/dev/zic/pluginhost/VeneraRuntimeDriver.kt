@@ -9,6 +9,8 @@ import android.graphics.Matrix
 import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import android.webkit.CookieManager
 import dev.zic.network.AndroidBrowserCookieSession
 import android.webkit.JavascriptInterface
@@ -28,12 +30,32 @@ import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.Cipher
 import javax.crypto.Mac
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
+
+private const val VENERA_RUNTIME_LOG_TAG = "ZicPluginRuntime"
+
+private fun veneraActivationLog(
+    driverId: String,
+    stage: String,
+    startedAt: Long,
+    stageStarted: Long,
+    detail: String? = null,
+) {
+    if (!Log.isLoggable(VENERA_RUNTIME_LOG_TAG, Log.DEBUG)) return
+    val now = SystemClock.elapsedRealtime()
+    Log.d(
+        VENERA_RUNTIME_LOG_TAG,
+        "venera-activation driver=$driverId stage=$stage " +
+            "stageMs=${now - stageStarted} totalMs=${now - startedAt}" +
+            (detail?.let { " $it" } ?: ""),
+    )
+}
 
 /** Venera JavaScript runtime hosted by a process-private, UI-less WebView. */
 internal class VeneraRuntimeDriver private constructor(
@@ -184,14 +206,20 @@ internal class VeneraRuntimeDriver private constructor(
             payloadPath: String,
             payloadLength: Long,
             payloadSha256: String,
+            executor: ExecutorService,
             resolverHttp: VeneraResolverHttpTransport,
             networkCache: VeneraHttpCacheStore,
             callback: (Result<VeneraRuntimeDriver>) -> Unit,
         ) {
             check(Looper.myLooper() == Looper.getMainLooper())
+            val startedAt = SystemClock.elapsedRealtime()
+            var stageStarted = startedAt
+            veneraActivationLog(driverId, "start", startedAt, stageStarted)
             val prepared = runCatching {
                 val payload = File(payloadPath)
                 verifyVeneraPayload(payload, payloadLength, payloadSha256)
+                veneraActivationLog(driverId, "payload-verified", startedAt, stageStarted)
+                stageStarted = SystemClock.elapsedRealtime()
                 val script = payload.readText(Charsets.UTF_8)
                 val className = Regex(
                     "class\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\s+extends\\s+ComicSource",
@@ -200,11 +228,21 @@ internal class VeneraRuntimeDriver private constructor(
                 val sourceKey = activation.requireString("sourceKey")
                 val pluginId = activation.requireString("pluginId")
                 val pluginVersion = activation.requireString("pluginVersion")
+                veneraActivationLog(
+                    driverId,
+                    "metadata-ready",
+                    startedAt,
+                    stageStarted,
+                    "plugin=$pluginId source=$sourceKey",
+                )
                 val capabilities = activation["capabilities"].asVeneraCapabilities()
                 val limits = activation["limits"].stringMap("runtime limits")
                 val maxResponseBytes = limits.requireLong("maxResponseBytes")
                     .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                veneraActivationLog(driverId, "webview-create-start", startedAt, stageStarted)
+                stageStarted = SystemClock.elapsedRealtime()
                 val webView = WebView(context)
+                veneraActivationLog(driverId, "webview-created", startedAt, stageStarted)
                 webView.settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = false
@@ -219,6 +257,9 @@ internal class VeneraRuntimeDriver private constructor(
                 }
                 val bridge = VeneraNativeBridge(
                     context = context,
+                    webView = webView,
+                    executor = executor,
+                    driverId = driverId,
                     sourceKey = sourceKey,
                     capabilities = capabilities,
                     maxResponseBytes = maxResponseBytes,
@@ -242,7 +283,10 @@ internal class VeneraRuntimeDriver private constructor(
                     pluginVersion = pluginVersion,
                 )
             }
-            prepared.onFailure { callback(Result.failure(it)) }
+            prepared.onFailure {
+                veneraActivationLog(driverId, "failed-${it.javaClass.simpleName}", startedAt, stageStarted)
+                callback(Result.failure(it))
+            }
             val state = prepared.getOrNull() ?: return
             val completed = AtomicBoolean(false)
             val activationStarted = AtomicBoolean(false)
@@ -251,6 +295,12 @@ internal class VeneraRuntimeDriver private constructor(
             fun finish(result: Result<VeneraRuntimeDriver>) {
                 if (!completed.compareAndSet(false, true)) return
                 state.bridge.activationSink = null
+                veneraActivationLog(
+                    driverId,
+                    if (result.isSuccess) "complete" else "failed",
+                    startedAt,
+                    stageStarted,
+                )
                 if (result.isFailure) {
                     state.bridge.close()
                     state.webView.removeJavascriptInterface(BRIDGE_NAME)
@@ -261,6 +311,7 @@ internal class VeneraRuntimeDriver private constructor(
             }
 
             state.bridge.activationSink = { envelope ->
+                veneraActivationLog(driverId, "activation-envelope", startedAt, stageStarted)
                 mainHandler.post {
                     finish(
                         runCatching {
@@ -311,6 +362,8 @@ internal class VeneraRuntimeDriver private constructor(
             state.webView.webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView, url: String) {
                     if (completed.get() || !activationStarted.compareAndSet(false, true)) return
+                    veneraActivationLog(driverId, "page-finished", startedAt, stageStarted)
+                    stageStarted = SystemClock.elapsedRealtime()
                     view.evaluateJavascript(state.activationScript(), null)
                 }
             }
@@ -348,23 +401,28 @@ private data class VeneraActivation(
         append(script)
         append("\n;(async()=>{try{globalThis.__zicSource=new ")
         append(className)
-        append("();__zicInstallSourceData(__zicSource);await Promise.resolve(__zicSource.init?.());")
+        append("();ZicNative.activationTrace('source-created');__zicInstallSourceData(__zicSource);ZicNative.activationTrace('source-data-installed');")
+        append("ZicNative.activationTrace('init-start');await Promise.resolve(__zicSource.init?.());ZicNative.activationTrace('init-complete');__zicActivationOpen=false;")
         append("if(__zicCompareVersion(String(__zicSource.minAppVersion||'0'),appVersion)>0)")
         append("throw new Error('Venera source requires app '+__zicSource.minAppVersion+' or newer');")
         append("const __browse=__zicHasBrowseCapability(__zicSource);")
         append("if(!__browse)throw new Error('Venera source exposes no compatible browse capability');")
+        append("ZicNative.activationTrace('capabilities-ready');")
         append("ZicNative.activated(JSON.stringify({ok:true,key:String(__zicSource.key||''),")
         append("name:String(__zicSource.name||''),url:String(__zicSource.url||''),")
         append("supportsBrowse:__browse,supportsSearch:__zicHasSearchCapability(__zicSource),")
         append("supportsComicPreview:typeof __zicSource.comic?.loadThumbnails==='function',")
         append("supportsComicComments:typeof __zicSource.comic?.loadComments==='function'}));")
-        append("}catch(e){ZicNative.activated(JSON.stringify({ok:false,")
+        append("}catch(e){__zicActivationOpen=false;ZicNative.activated(JSON.stringify({ok:false,")
         append("message:__zicErrorMessage(e,'activation')}));}})();")
     }
 }
 
 private class VeneraNativeBridge(
     context: Context,
+    private val webView: WebView,
+    private val executor: ExecutorService,
+    private val driverId: String,
     private val sourceKey: String,
     private val capabilities: Set<String>,
     private val maxResponseBytes: Int,
@@ -383,38 +441,24 @@ private class VeneraNativeBridge(
     private val nativeBytes = LinkedHashMap<String, ByteArray>()
     private val cookieManager = CookieManager.getInstance()
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
+    private val asyncCalls = ConcurrentHashMap<String, String>()
+    private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile private var closed = false
     @Volatile var resultSink: ((String, JSONObject) -> Unit)? = null
     @Volatile var finishedSink: ((String) -> Unit)? = null
     @Volatile var activationSink: ((JSONObject) -> Unit)? = null
 
     @JavascriptInterface
     fun request(raw: String): String {
-        return runCatching {
+        var method = "unknown"
+        var activationCall = false
+        var startedAt = 0L
+        val response = runCatching {
             val message = JSONObject(raw)
-            val value = when (message.getString("method")) {
-                "http" -> http(message)
-                "http_binary" -> httpBinary(message)
-                "cookie" -> cookie(message)
-                "load_data" -> loadData(message)
-                "save_data" -> saveData(message)
-                "delete_data" -> deleteData(message)
-                "load_setting" -> loadSetting(message)
-                "save_setting" -> saveSetting(message)
-                "convert" -> convert(message)
-                "uuid" -> UUID.randomUUID().toString()
-                "random" -> random(message)
-                "delay" -> error(
-                    "Venera delay must be handled asynchronously by the JavaScript bridge",
-                )
-                "getLocale" -> Locale.getDefault().toLanguageTag().replace('-', '_')
-                "getPlatform" -> "android"
-                "isLogged" -> isLogged()
-                "log" -> null
-                "image" -> image(message)
-                "UI", "setClipboard", "getClipboard", "compute" ->
-                    error("Venera capability is not available in background source runtime")
-                else -> error("unsupported Venera bridge method")
-            }
+            method = message.optString("method", "unknown")
+            activationCall = !message.has("requestId")
+            if (activationCall) startedAt = SystemClock.elapsedRealtime()
+            val value = execute(message)
             JSONObject().put("ok", true).put("value", encodeWireValue(value)).toString()
         }.getOrElse { error ->
             JSONObject()
@@ -422,6 +466,124 @@ private class VeneraNativeBridge(
                 .put("error", error.sanitizedMessage())
                 .toString()
         }
+        if (activationCall && startedAt != 0L) {
+            veneraActivationLog(
+                driverId = driverId,
+                stage = "activation-bridge",
+                startedAt = startedAt,
+                stageStarted = startedAt,
+                detail = "method=$method",
+            )
+        }
+        return response
+    }
+
+    /**
+     * HTTP is the only bridge operation that may wait on origin I/O. Keep it
+     * off the WebView JavascriptInterface thread and return its envelope by a
+     * main-thread evaluateJavascript callback. The executor is the native
+     * runtime host's worker pool; it does not add a second network scheduler.
+     */
+    @JavascriptInterface
+    fun requestAsync(raw: String) {
+        val message = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        val callId = message.optString("bridgeCallId")
+            .trim()
+            .takeIf { it.isNotEmpty() }
+            ?: return
+        val requestId = message.optString("requestId")
+            .trim()
+            .takeIf { it.isNotEmpty() }
+        val transportRequestId = requestId ?: "venera-bridge-$callId"
+        val executeMessage = if (requestId == null) {
+            JSONObject(message.toString()).put("requestId", transportRequestId)
+        } else {
+            message
+        }
+        asyncCalls[callId] = transportRequestId
+        try {
+            executor.execute {
+                val startedAt = SystemClock.elapsedRealtime()
+                val response = runCatching {
+                    require(executeMessage.optString("method") in setOf("http", "http_binary")) {
+                        "Venera asynchronous bridge only supports HTTP"
+                    }
+                    if (cancelled.contains(transportRequestId)) {
+                        error("Venera request was cancelled")
+                    }
+                    val value = execute(executeMessage)
+                    JSONObject().put("ok", true).put("value", encodeWireValue(value))
+                }.getOrElse { error ->
+                    JSONObject()
+                        .put("ok", false)
+                        .put("error", error.sanitizedMessage())
+                }
+                asyncCalls.remove(callId)
+                if (requestId == null) {
+                    veneraActivationLog(
+                        driverId = driverId,
+                        stage = "activation-async-bridge",
+                        startedAt = startedAt,
+                        stageStarted = startedAt,
+                        detail = "method=${message.optString("method", "unknown")}",
+                    )
+                }
+                postAsyncResponse(callId, response)
+            }
+        } catch (error: Throwable) {
+            asyncCalls.remove(callId)
+            postAsyncResponse(
+                callId,
+                JSONObject()
+                    .put("ok", false)
+                    .put("error", error.sanitizedMessage()),
+            )
+        }
+    }
+
+    private fun postAsyncResponse(callId: String, response: JSONObject) {
+        mainHandler.post {
+            if (closed) return@post
+            webView.evaluateJavascript(
+                "__zicBridgeResponse(${JSONObject.quote(callId)}," +
+                    "${JSONObject.quote(response.toString())});",
+                null,
+            )
+        }
+    }
+
+    private fun execute(message: JSONObject): Any? = when (message.getString("method")) {
+        "http" -> http(message)
+        "http_binary" -> httpBinary(message)
+        "cookie" -> cookie(message)
+        "load_data" -> loadData(message)
+        "save_data" -> saveData(message)
+        "delete_data" -> deleteData(message)
+        "load_setting" -> loadSetting(message)
+        "save_setting" -> saveSetting(message)
+        "convert" -> convert(message)
+        "uuid" -> UUID.randomUUID().toString()
+        "random" -> random(message)
+        "delay" -> error(
+            "Venera delay must be handled asynchronously by the JavaScript bridge",
+        )
+        "getLocale" -> Locale.getDefault().toLanguageTag().replace('-', '_')
+        "getPlatform" -> "android"
+        "isLogged" -> isLogged()
+        "log" -> null
+        "image" -> image(message)
+        "UI", "setClipboard", "getClipboard", "compute" ->
+            error("Venera capability is not available in background source runtime")
+        else -> error("unsupported Venera bridge method")
+    }
+
+    @JavascriptInterface
+    fun activationTrace(stage: String) {
+        if (!Log.isLoggable(VENERA_RUNTIME_LOG_TAG, Log.DEBUG)) return
+        Log.d(
+            VENERA_RUNTIME_LOG_TAG,
+            "venera-activation driver=$driverId stage=js-${stage.take(80)}",
+        )
     }
 
     @JavascriptInterface
@@ -552,12 +714,22 @@ private class VeneraNativeBridge(
             }
             if (cacheEligible && redirectCount == 0) {
                 cacheRequestHeaders = LinkedHashMap(requestHeaders)
-                networkCache.lookup(
+                val cached = networkCache.lookup(
                     namespace = networkCacheNamespace,
                     url = cacheUrl,
                     requestHeaders = requestHeaders,
                     cacheTime = cacheTime,
-                )?.let { return it }
+                )
+                if (requestId == null && Log.isLoggable(VENERA_RUNTIME_LOG_TAG, Log.DEBUG)) {
+                    val cacheState = if (cached == null) "miss" else "hit"
+                    val cacheMode = cacheTime ?: "default"
+                    Log.d(
+                        VENERA_RUNTIME_LOG_TAG,
+                        "venera-activation driver=$driverId stage=http-cache-" +
+                            "$cacheState cacheTime=$cacheMode",
+                    )
+                }
+                cached?.let { return it }
             }
             val result = executeHttpRequest(
                 target = target,
@@ -1021,9 +1193,16 @@ private class VeneraNativeBridge(
     }
 
     override fun close() {
+        if (closed) return
+        closed = true
         activationSink = null
         resultSink = null
         finishedSink = null
+        asyncCalls.values.toList().forEach { requestId ->
+            cancelled.add(requestId)
+            resolverHttp.cancel(requestId)
+        }
+        asyncCalls.clear()
         cancelled.clear()
         synchronized(nativeBytes) { nativeBytes.clear() }
         releaseImages()
@@ -1370,6 +1549,10 @@ function __zicEncode(value) {
 }
 let __zicActiveRequestId=null;
 const __zicBridgeMetrics=new Map();
+const __zicBridgeWaiters=new Map();
+let __zicBridgeCallKey=0;
+const __zicActivationWork=new Set();
+let __zicActivationOpen=true;
 function __zicNowMicros(){const clock=globalThis.performance?.now?.bind(globalThis.performance);return Math.round((clock?clock():Date.now())*1000)}
 function __zicBridgeMetric(requestId){if(!requestId)return {networkMicros:0,networkCalls:0,networkCacheHits:0,networkOriginCalls:0};let metric=__zicBridgeMetrics.get(requestId);if(!metric){metric={networkMicros:0,networkCalls:0,networkCacheHits:0,networkOriginCalls:0};__zicBridgeMetrics.set(requestId,metric)}return metric}
 function __zicBridgeNetworkSnapshot(requestId){const metric=requestId?__zicBridgeMetrics.get(requestId):null;return {networkMicros:Number(metric?.networkMicros||0),networkCalls:Number(metric?.networkCalls||0),networkCacheHits:Number(metric?.networkCacheHits||0),networkOriginCalls:Number(metric?.networkOriginCalls||0)}}
@@ -1387,6 +1570,10 @@ function __zicDelay(time,requestId){
   });
 }
 function __zicCancelDelays(requestId){const scoped=__zicDelayWaiters.get(requestId);if(!scoped)return;__zicDelayWaiters.delete(requestId);for(const waiter of scoped){__zicBrowserClearTimeout(waiter.timer);waiter.reject(new Error('Venera request was cancelled'))}}
+function __zicTrackActivationWork(promise){if(!__zicActivationOpen)return promise;let tracked;const settle=(value,error)=>new Promise((resolve,reject)=>{__zicBrowserSetTimeout(()=>{__zicActivationWork.delete(tracked);if(error)reject(error);else resolve(value)},0)});tracked=Promise.resolve(promise).then(value=>settle(value),error=>settle(null,error));__zicActivationWork.add(tracked);return tracked}
+async function __zicWaitForActivationWork(){while(__zicActivationWork.size)await Promise.allSettled(Array.from(__zicActivationWork))}
+function __zicBridgeResponse(callId,raw){const key=String(callId),waiter=__zicBridgeWaiters.get(key);if(!waiter)return;__zicBridgeWaiters.delete(key);try{const envelope=typeof raw==='string'?JSON.parse(raw):raw;if(!envelope?.ok){waiter.reject(new Error(envelope?.error||'Venera bridge failed'));return}waiter.resolve(__zicDecode(envelope.value))}catch(error){waiter.reject(error)}}
+function __zicRequestAsync(message){const callId='zic-async-'+String(++__zicBridgeCallKey);const request={...message,bridgeCallId:callId};return new Promise((resolve,reject)=>{__zicBridgeWaiters.set(callId,{resolve,reject});try{ZicNative.requestAsync(JSON.stringify(__zicEncode(request)))}catch(error){__zicBridgeWaiters.delete(callId);reject(error)}})}
 function sendMessage(message) {
   const requestId=message.requestId??__zicActiveRequestId;
   if(requestId&&message.requestId==null){message={...message,requestId}}
@@ -1397,6 +1584,11 @@ function sendMessage(message) {
   }
   if(message.method==='delay')return __zicDelay(message.time,requestId);
   const networkCall=message.method==='http'||message.method==='http_binary';
+  if(networkCall&&typeof ZicNative.requestAsync==='function'){
+    const networkStarted=__zicNowMicros();
+    const asyncResult=__zicRequestAsync(message).then(value=>{if(requestId){const metric=__zicBridgeMetric(requestId);metric.networkMicros+=Math.max(0,__zicNowMicros()-networkStarted);metric.networkCalls++;if(__zicBridgeCacheHit(value))metric.networkCacheHits++;else metric.networkOriginCalls++}return value},error=>{if(requestId){const metric=__zicBridgeMetric(requestId);metric.networkMicros+=Math.max(0,__zicNowMicros()-networkStarted);metric.networkCalls++;metric.networkOriginCalls++}throw error});
+    return __zicTrackActivationWork(asyncResult);
+  }
   const networkStarted=networkCall?__zicNowMicros():0;
   let decodedValue;
   try {
@@ -1659,6 +1851,6 @@ async function __zicOperation(request){
  }
  throw new Error('Unsupported Venera operation');
 }
-async function __zicInvoke(raw){const request=typeof raw==='string'?JSON.parse(raw):raw,previousRequestId=__zicActiveRequestId;__zicActiveRequestId=request.requestId;try{const value=await __zicOperation(request);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:true,value:__zicEncode(value)}))}catch(error){const message=__zicErrorMessage(error,request.operation),retryable=/timeout|timed out|connect|network|dns|temporar|HTTP 5\d\d/i.test(message);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:false,code:'venera-operation-failed',message,retryable}))}finally{__zicBridgeMetrics.delete(request.requestId);__zicCancelled.delete(request.requestId);__zicActiveRequestId=previousRequestId;ZicNative.finished(request.requestId)}}
+async function __zicInvoke(raw){const request=typeof raw==='string'?JSON.parse(raw):raw,previousRequestId=__zicActiveRequestId;try{await __zicWaitForActivationWork();if(__zicCancelled.has(request.requestId))throw new Error('Venera request was cancelled');__zicActiveRequestId=request.requestId;const value=await __zicOperation(request);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:true,value:__zicEncode(value)}))}catch(error){const message=__zicErrorMessage(error,request.operation),retryable=/timeout|timed out|connect|network|dns|temporar|HTTP 5\d\d/i.test(message);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:false,code:'venera-operation-failed',message,retryable}))}finally{__zicBridgeMetrics.delete(request.requestId);__zicCancelled.delete(request.requestId);__zicActiveRequestId=previousRequestId;ZicNative.finished(request.requestId)}}
 function __zicCancel(requestId){__zicCancelled.add(requestId);__zicCancelDelays(requestId)}
 """

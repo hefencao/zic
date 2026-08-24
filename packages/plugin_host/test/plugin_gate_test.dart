@@ -346,6 +346,117 @@ void main() {
     expect(results[1].single.sourceId, 'venera:fixture');
   });
 
+  test('runtime registry runs independent activation candidates concurrently',
+      () async {
+    final firstPlugin = _veneraPluginNamed('first', 'first');
+    final secondPlugin = _veneraPluginNamed('second', 'second');
+    final gate = Completer<void>();
+    final host = _ConcurrentHost(
+      <ExternalComicPluginSession>[
+        _Session(firstPlugin, <BrowsableComicSource>[_Source('venera:first')]),
+        _Session(secondPlugin, <BrowsableComicSource>[_Source('venera:second')]),
+      ],
+      gate,
+    );
+    final registry = ExternalPluginRuntimeRegistry(
+      <ExternalComicPluginHost>[host],
+    );
+    addTearDown(registry.close);
+
+    final first = registry.activate(firstPlugin);
+    final second = registry.activate(secondPlugin);
+    expect(host.calls, 2);
+    gate.complete();
+
+    final results = await Future.wait(<Future<List<BrowsableComicSource>>>[
+      first,
+      second,
+    ]);
+    expect(results[0].single.sourceId, 'venera:first');
+    expect(results[1].single.sourceId, 'venera:second');
+    expect(registry.activeSources.map((source) => source.sourceId), <String>[
+      'venera:first',
+      'venera:second',
+    ]);
+  });
+
+  test('completed candidate commits without waiting for a slower sibling',
+      () async {
+    final firstPlugin = _veneraPluginNamed('first', 'first');
+    final secondPlugin = _veneraPluginNamed('second', 'second');
+    final firstSession = _Session(
+      firstPlugin,
+      <BrowsableComicSource>[_Source('venera:first')],
+    );
+    final secondSession = _Session(
+      secondPlugin,
+      <BrowsableComicSource>[_Source('venera:second')],
+    );
+    final firstGate = Completer<void>();
+    final secondGate = Completer<void>();
+    final host = _PerPluginGateHost(
+      <String, Future<ExternalComicPluginSession>>{
+        firstPlugin.pluginId: firstGate.future.then((_) => firstSession),
+        secondPlugin.pluginId: secondGate.future.then((_) => secondSession),
+      },
+    );
+    final registry = ExternalPluginRuntimeRegistry(
+      <ExternalComicPluginHost>[host],
+    );
+    addTearDown(() async {
+      if (!firstGate.isCompleted) firstGate.complete();
+      if (!secondGate.isCompleted) secondGate.complete();
+      await registry.close();
+    });
+
+    final first = registry.activate(firstPlugin);
+    final second = registry.activate(secondPlugin);
+    secondGate.complete();
+
+    final secondSources = await second.timeout(const Duration(seconds: 1));
+    expect(secondSources.single.sourceId, 'venera:second');
+    expect(registry.isActive(secondPlugin.pluginId), isTrue);
+
+    firstGate.complete();
+    await first;
+  });
+
+  test('runtime registry rechecks source collisions at commit',
+      () async {
+    final firstPlugin = _veneraPluginNamed('first', 'shared');
+    final secondPlugin = _veneraPluginNamed('second', 'shared');
+    final gate = Completer<void>();
+    final host = _ConcurrentHost(
+      <ExternalComicPluginSession>[
+        _Session(firstPlugin, <BrowsableComicSource>[_Source('venera:shared')]),
+        _Session(secondPlugin, <BrowsableComicSource>[_Source('venera:shared')]),
+      ],
+      gate,
+    );
+    final registry = ExternalPluginRuntimeRegistry(
+      <ExternalComicPluginHost>[host],
+    );
+    addTearDown(registry.close);
+
+    final first = registry.activate(firstPlugin);
+    final second = registry.activate(secondPlugin);
+    expect(host.calls, 2);
+    gate.complete();
+
+    await first;
+    await expectLater(
+      second,
+      throwsA(
+        isA<ExternalPluginActivationException>().having(
+          (error) => error.denials,
+          'denials',
+          contains(ExternalPluginDenial.sourceIdentityCollision),
+        ),
+      ),
+    );
+    expect(registry.ownerOfSource('venera:shared'), firstPlugin.pluginId);
+  });
+
   test('runtime registry owns session deactivation', () async {
     final session = _Session(
       _veneraPlugin(),
@@ -430,22 +541,27 @@ ExternalComicPluginCatalogEntry _mihonPlugin() =>
     );
 
 ExternalComicPluginCatalogEntry _veneraPlugin() =>
+    _veneraPluginNamed('fixture', 'fixture');
+
+ExternalComicPluginCatalogEntry _veneraPluginNamed(
+  String pluginName,
+  String sourceName,
+) =>
     ExternalComicPluginCatalogEntry(
       format: ExternalComicPluginFormat.veneraJavaScript,
-      pluginId: 'venera:fixture',
-      name: 'Fixture',
+      pluginId: 'venera:$pluginName',
+      name: pluginName,
       version: '1.0.0',
-      entrypoint: Uri.parse('https://repo.invalid/fixture.js'),
-      sources: const <ExternalComicPluginSource>[
+      entrypoint: Uri.parse('https://repo.invalid/$pluginName.js'),
+      sources: <ExternalComicPluginSource>[
         ExternalComicPluginSource(
-          sourceId: 'venera:fixture',
-          externalId: 'fixture',
-          name: 'Fixture',
+          sourceId: 'venera:$sourceName',
+          externalId: sourceName,
+          name: sourceName,
           language: 'en',
         ),
       ],
     );
-
 
 final class _BlockingHost implements ExternalComicPluginHost {
   _BlockingHost({required this.session, required this.gate});
@@ -466,6 +582,43 @@ final class _BlockingHost implements ExternalComicPluginHost {
     await gate.future;
     return session;
   }
+}
+
+final class _ConcurrentHost implements ExternalComicPluginHost {
+  _ConcurrentHost(this.sessions, this.gate);
+
+  final List<ExternalComicPluginSession> sessions;
+  final Completer<void> gate;
+  int calls = 0;
+
+  @override
+  ExternalComicPluginFormat get format =>
+      ExternalComicPluginFormat.veneraJavaScript;
+
+  @override
+  Future<ExternalComicPluginSession> activate(
+    ExternalComicPluginCatalogEntry plugin,
+  ) async {
+    final index = calls++;
+    await gate.future;
+    return sessions[index];
+  }
+}
+
+final class _PerPluginGateHost implements ExternalComicPluginHost {
+  _PerPluginGateHost(this._activations);
+
+  final Map<String, Future<ExternalComicPluginSession>> _activations;
+
+  @override
+  ExternalComicPluginFormat get format =>
+      ExternalComicPluginFormat.veneraJavaScript;
+
+  @override
+  Future<ExternalComicPluginSession> activate(
+    ExternalComicPluginCatalogEntry plugin,
+  ) =>
+      _activations[plugin.pluginId]!;
 }
 
 final class _QueueHost implements ExternalComicPluginHost {

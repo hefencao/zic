@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:catalog/catalog.dart';
 
 import 'plugin_contract.dart';
@@ -23,6 +25,7 @@ final class ExternalPluginRuntimeRegistry {
       <String, ExternalComicPluginSession>{};
   final Map<String, Future<List<BrowsableComicSource>>> _activations =
       <String, Future<List<BrowsableComicSource>>>{};
+  Future<void> _commitTail = Future<void>.value();
   final Map<String, String> _sourceOwners = <String, String>{};
   bool _closed = false;
 
@@ -82,45 +85,77 @@ final class ExternalPluginRuntimeRegistry {
 
   Future<List<BrowsableComicSource>> _activate(
     ExternalComicPluginCatalogEntry plugin,
-  ) async {
-    final session = await _activateCandidate(plugin);
-    _installSession(plugin.pluginId, session);
-    return List<BrowsableComicSource>.unmodifiable(session.sources);
+  ) {
+    final candidate = _activateCandidate(plugin);
+    return candidate.then<List<BrowsableComicSource>>((session) async {
+      final committed = _enqueueCommit<List<BrowsableComicSource>>(() {
+        // Only this synchronous state transition is serialized. Waiting for
+        // candidate activation here would make a slow plugin block every
+        // already-finished candidate behind it.
+        _validateCandidate(plugin, session);
+        _installSession(plugin.pluginId, session);
+        return List<BrowsableComicSource>.unmodifiable(session.sources);
+      });
+      try {
+        return await committed;
+      } on Object {
+        await session.close();
+        rethrow;
+      }
+    });
   }
 
   Future<List<BrowsableComicSource>> _replace(
     ExternalComicPluginCatalogEntry plugin,
     ExternalComicPluginSession existing,
-  ) async {
+  ) {
     // Activate and validate the replacement while the old session remains
     // authoritative. A transient activation failure must never remove a
     // previously working imported plugin/source from the App.
-    final replacement = await _activateCandidate(
+    final candidate = _activateCandidate(
       plugin,
       replacingPluginId: plugin.pluginId,
     );
-    if (_closed) {
-      await replacement.close();
-      throw StateError('external plugin runtime registry is closed');
-    }
-    if (!identical(_sessions[plugin.pluginId], existing)) {
-      await replacement.close();
-      throw StateError('external plugin runtime session changed during replacement');
-    }
+    return candidate.then<List<BrowsableComicSource>>((replacement) async {
+      final committed = _enqueueCommit<List<BrowsableComicSource>>(() {
+        // Keep the old session authoritative until this short synchronous
+        // commit succeeds. Its asynchronous close is deliberately outside
+        // the registry commit lane so a slow teardown cannot stall another
+        // plugin activation.
+        _validateCandidate(
+          plugin,
+          replacement,
+          replacingPluginId: plugin.pluginId,
+        );
+        if (!identical(_sessions[plugin.pluginId], existing)) {
+          throw StateError(
+            'external plugin runtime session changed during replacement',
+          );
+        }
 
-    for (final source in existing.sources) {
-      if (_sourceOwners[source.sourceId] == plugin.pluginId) {
-        _sourceOwners.remove(source.sourceId);
+        for (final source in existing.sources) {
+          if (_sourceOwners[source.sourceId] == plugin.pluginId) {
+            _sourceOwners.remove(source.sourceId);
+          }
+        }
+        _installSession(plugin.pluginId, replacement);
+        return List<BrowsableComicSource>.unmodifiable(replacement.sources);
+      });
+      try {
+        final sources = await committed;
+        try {
+          await existing.close();
+        } on Object {
+          // The new validated session is already authoritative. A retired-
+          // session cleanup failure must not roll back to a runtime that is
+          // being closed.
+        }
+        return sources;
+      } on Object {
+        await replacement.close();
+        rethrow;
       }
-    }
-    _installSession(plugin.pluginId, replacement);
-    try {
-      await existing.close();
-    } on Object {
-      // The new validated session is already authoritative. A retired-session
-      // cleanup failure must not roll back to a runtime that is being closed.
-    }
-    return List<BrowsableComicSource>.unmodifiable(replacement.sources);
+    });
   }
 
   Future<ExternalComicPluginSession> _activateCandidate(
@@ -138,8 +173,25 @@ final class ExternalPluginRuntimeRegistry {
     }
 
     final session = await host.activate(plugin);
-    if (_closed) {
+    try {
+      _validateCandidate(
+        plugin,
+        session,
+        replacingPluginId: replacingPluginId,
+      );
+      return session;
+    } on Object {
       await session.close();
+      rethrow;
+    }
+  }
+
+  void _validateCandidate(
+    ExternalComicPluginCatalogEntry plugin,
+    ExternalComicPluginSession session, {
+    String? replacingPluginId,
+  }) {
+    if (_closed) {
       throw StateError('external plugin runtime registry is closed');
     }
     final sourcePrefix = switch (plugin.format) {
@@ -152,7 +204,6 @@ final class ExternalPluginRuntimeRegistry {
         session.sources.any(
           (source) => !source.sourceId.startsWith(sourcePrefix),
         )) {
-      await session.close();
       throw ExternalPluginActivationException(
         pluginId: plugin.pluginId,
         denials: const <ExternalPluginDenial>{
@@ -163,7 +214,6 @@ final class ExternalPluginRuntimeRegistry {
     final sourceIds = session.sources.map((source) => source.sourceId).toList();
     final uniqueSourceIds = sourceIds.toSet();
     if (uniqueSourceIds.length != sourceIds.length) {
-      await session.close();
       throw ExternalPluginActivationException(
         pluginId: plugin.pluginId,
         denials: const <ExternalPluginDenial>{
@@ -176,7 +226,6 @@ final class ExternalPluginRuntimeRegistry {
       return owner != null && owner != replacingPluginId;
     }).toSet();
     if (collisions.isNotEmpty) {
-      await session.close();
       throw ExternalPluginActivationException(
         pluginId: plugin.pluginId,
         denials: const <ExternalPluginDenial>{
@@ -187,7 +236,17 @@ final class ExternalPluginRuntimeRegistry {
         ),
       );
     }
-    return session;
+  }
+
+  Future<T> _enqueueCommit<T>(FutureOr<T> Function() operation) {
+    final previous = _commitTail;
+    late final Future<T> committed;
+    committed = previous.then<T>((_) => operation());
+    _commitTail = committed.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return committed;
   }
 
   void _installSession(String pluginId, ExternalComicPluginSession session) {

@@ -2,6 +2,8 @@ package dev.zic.pluginhost
 
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import io.flutter.plugin.common.MethodChannel
 import java.io.Closeable
 import java.net.URL
@@ -9,6 +11,8 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
+
+private const val VENERA_RESOLVER_LOG_TAG = "ZicPluginRuntime"
 
 internal data class VeneraResolverHttpResult(
     val status: Int,
@@ -52,6 +56,7 @@ internal class DartRhttpVeneraResolverTransport(
         check(Looper.myLooper() != Looper.getMainLooper()) {
             "Venera resolver HTTP must not block the Android main thread"
         }
+        val startedAt = SystemClock.elapsedRealtime()
         val callId = "venera-http-${UUID.randomUUID()}"
         val latch = CountDownLatch(1)
         val value = AtomicReference<Any?>()
@@ -120,6 +125,16 @@ internal class DartRhttpVeneraResolverTransport(
         }
         require(body.size <= maxResponseBytes) {
             "Venera resolver response exceeds $maxResponseBytes bytes"
+        }
+        if (requestId == null && Log.isLoggable(VENERA_RESOLVER_LOG_TAG, Log.DEBUG)) {
+            val totalMs = SystemClock.elapsedRealtime() - startedAt
+            val responseVersion = result["version"] ?: "unknown"
+            Log.d(
+                VENERA_RESOLVER_LOG_TAG,
+                "venera-resolver rpc totalMs=$totalMs " +
+                    "status=$status bytes=${body.size} " +
+                    "version=$responseVersion",
+            )
         }
         return VeneraResolverHttpResult(status, responseHeaders, body)
     }

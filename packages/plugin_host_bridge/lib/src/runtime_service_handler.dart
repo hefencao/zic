@@ -41,6 +41,19 @@ final class AndroidExternalPluginRuntimeServiceHandler {
     _channel.setMethodCallHandler(dispatch);
   }
 
+  /// Starts the reusable Venera HTTP client while the native runtime service
+  /// is still bootstrapping. A source's first `init()` request must not pay
+  /// the rhttp/native client initialization cost on the WebView bridge path.
+  Future<void> warmVeneraResolverHttp() async {
+    try {
+      await _veneraResolverHttp.warmUp();
+    } on Object {
+      // The first real Venera request remains the authority for reporting a
+      // resolver failure. Warm-up is opportunistic and must not prevent the
+      // runtime service from becoming ready.
+    }
+  }
+
   /// Public for service-bootstrap conformance tests and non-MethodChannel
   /// transports that still need the exact same error mapping.
   Future<Object?> dispatch(MethodCall call) async {

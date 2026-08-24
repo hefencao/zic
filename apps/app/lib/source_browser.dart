@@ -58,6 +58,8 @@ Key comicSourceFilterKey(String filterId) =>
     ValueKey<String>('comic-source-filter:$filterId');
 Key comicSourceChoiceKey(String sourceId) =>
     ValueKey<String>('comic-source-choice:$sourceId');
+Key comicSourcePluginChoiceKey(String pluginId) =>
+    ValueKey<String>('comic-source-plugin-choice:$pluginId');
 Key sourceComicCardKey(String sourceId, String comicId) =>
     ValueKey<String>('source-comic:$sourceId\u0000$comicId');
 Key sourceComicCoverVerificationKey(String sourceId, String comicId) =>
@@ -193,6 +195,8 @@ final class ComicSourcesPage extends StatefulWidget {
     this.onOpenUpdate,
     this.onOpenSourceWebView,
     this.resolveSource,
+    this.externalPlugins,
+    this.onExternalPluginRetry,
     this.traceSink = const NoopTraceSink(),
     this.requestedQuery,
     this.queryRevision = 0,
@@ -220,6 +224,9 @@ final class ComicSourcesPage extends StatefulWidget {
     required bool cloudflareVerification,
   })? onOpenSourceWebView;
   final BrowsableComicSource? Function(String sourceId)? resolveSource;
+  final ExternalPluginController? externalPlugins;
+  final Future<void> Function(InstalledExternalPlugin plugin)?
+      onExternalPluginRetry;
   final TraceSink traceSink;
   final String? requestedQuery;
   final int queryRevision;
@@ -1347,6 +1354,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
             sources: widget.sources,
             activeSourceId: widget.activeSourceId,
             onSelected: widget.onSourceSelected,
+            externalPlugins: widget.externalPlugins,
+            onExternalPluginRetry: widget.onExternalPluginRetry,
           ),
         ],
       ),
@@ -1759,25 +1768,219 @@ final class _SourcePager extends StatelessWidget {
   }
 }
 
-final class _SourceSwitcher extends StatelessWidget {
+final class _SourceSwitcher extends StatefulWidget {
   const _SourceSwitcher({
     required this.sources,
     required this.activeSourceId,
     required this.onSelected,
+    this.externalPlugins,
+    this.onExternalPluginRetry,
   });
 
   final List<BrowsableComicSource> sources;
   final String? activeSourceId;
   final ValueChanged<String> onSelected;
+  final ExternalPluginController? externalPlugins;
+  final Future<void> Function(InstalledExternalPlugin plugin)?
+      onExternalPluginRetry;
+
+  @override
+  State<_SourceSwitcher> createState() => _SourceSwitcherState();
+}
+
+final class _SourceSwitcherState extends State<_SourceSwitcher> {
+  final Set<String> _workingPlugins = <String>{};
+  StreamSubscription<void>? _externalPluginChanges;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenToExternalPlugins(widget.externalPlugins);
+  }
+
+  @override
+  void didUpdateWidget(covariant _SourceSwitcher oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.externalPlugins, widget.externalPlugins)) {
+      _listenToExternalPlugins(widget.externalPlugins);
+    }
+  }
+
+  @override
+  void dispose() {
+    final changes = _externalPluginChanges;
+    _externalPluginChanges = null;
+    if (changes != null) {
+      unawaited(changes.cancel());
+    }
+    super.dispose();
+  }
+
+  void _listenToExternalPlugins(ExternalPluginController? controller) {
+    final previous = _externalPluginChanges;
+    _externalPluginChanges = null;
+    if (previous != null) {
+      unawaited(previous.cancel());
+    }
+    _workingPlugins.clear();
+    if (controller == null) return;
+    _externalPluginChanges = controller.sourceChanges.listen((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  List<InstalledExternalPlugin> _visiblePlugins(
+    ExternalPluginController controller,
+  ) {
+    final plugins = controller.installed.where((plugin) {
+      final failure = controller.activationFailures[plugin.plugin.pluginId];
+      // A terminal activation failure is intentionally not presented as an
+      // enabled source control. Recoverable failures stay visible so a tap
+      // can retry the already-owned payload.
+      return failure == null ||
+          controller.canRetryActivation(plugin.plugin.pluginId);
+    }).where((plugin) {
+      // A plugin without a usable source name cannot produce a meaningful
+      // source-page control. Do not invent a generic placeholder label.
+      return _pluginDisplayName(plugin) != null;
+    }).toList(growable: true)
+      ..sort((left, right) => left.plugin.name.compareTo(right.plugin.name));
+    return plugins;
+  }
+
+  Future<void> _retryPlugin(InstalledExternalPlugin plugin) async {
+    final controller = widget.externalPlugins;
+    final pluginId = plugin.plugin.pluginId;
+    if (controller == null || !_workingPlugins.add(pluginId)) return;
+    setState(() {});
+    final displayName = _pluginDisplayName(plugin);
+    if (displayName == null) {
+      _workingPlugins.remove(pluginId);
+      if (mounted) setState(() {});
+      return;
+    }
+    try {
+      final callback = widget.onExternalPluginRetry;
+      if (callback != null) {
+        await callback(plugin);
+      } else {
+        await controller.retryActivation(pluginId);
+      }
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$displayName 已重新加载')),
+        );
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$displayName 加载失败：$error')),
+        );
+      }
+    } finally {
+      _workingPlugins.remove(pluginId);
+      if (mounted) setState(() {});
+    }
+  }
+
+  String? _pluginDisplayName(InstalledExternalPlugin plugin) {
+    final pluginId = plugin.plugin.pluginId;
+    final controller = widget.externalPlugins;
+    if (controller != null) {
+      for (final source in widget.sources) {
+        if (controller.ownerOfSource(source.sourceId) != pluginId) continue;
+        final activeName = source.descriptor.name.trim();
+        if (activeName.isNotEmpty) return activeName;
+      }
+    }
+
+    for (final source in plugin.plugin.sources) {
+      final name = source.name.trim();
+      if (name.isNotEmpty) return name;
+    }
+    return null;
+  }
+
+  Widget _pluginChip(
+    BuildContext context,
+    ExternalPluginController controller,
+    InstalledExternalPlugin plugin,
+  ) {
+    final pluginId = plugin.plugin.pluginId;
+    final failure = controller.activationFailures[pluginId];
+    final retryable = controller.canRetryActivation(pluginId);
+    final busy = _workingPlugins.contains(pluginId);
+    final pluginSources = widget.sources
+        .where((source) => controller.ownerOfSource(source.sourceId) == pluginId)
+        .toList(growable: false);
+    final selected = pluginSources.any(
+      (source) => source.sourceId == widget.activeSourceId,
+    );
+    final accent = pluginSources.isNotEmpty
+        ? _comicSourceAccent(pluginSources.first)
+        : plugin.plugin.format == ExternalComicPluginFormat.mihonExtension
+            ? Colors.green
+            : Colors.blue;
+    final displayName = _pluginDisplayName(plugin);
+    if (displayName == null) return const SizedBox.shrink();
+    final label = failure == null
+        ? displayName
+        : '$displayName · 点击重试';
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 120),
+      child: ChoiceChip(
+        key: comicSourcePluginChoiceKey(pluginId),
+        label: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        selected: selected,
+        showCheckmark: false,
+        selectedColor: accent,
+        side: BorderSide(color: accent.withValues(alpha: .7)),
+        labelStyle: selected
+            ? TextStyle(color: Theme.of(context).colorScheme.onPrimary)
+            : TextStyle(color: accent),
+        onSelected: busy
+            ? null
+            : failure != null && retryable
+                ? (_) => unawaited(_retryPlugin(plugin))
+                : pluginSources.isEmpty
+                    ? null
+                    : (_) => widget.onSelected(pluginSources.first.sourceId),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final controller = widget.externalPlugins;
+    final plugins = controller == null
+        ? const <InstalledExternalPlugin>[]
+        : _visiblePlugins(controller);
+    final visiblePluginIds = <String>{
+      for (final plugin in plugins) plugin.plugin.pluginId,
+    };
+    // A plugin control represents all of that plugin's sources. Keep the
+    // original source switcher as the only bottom control and collapse the
+    // represented source chips instead of rendering a second set beside it.
+    final sourceControls = controller == null
+        ? widget.sources
+        : widget.sources
+            .where(
+              (source) => !visiblePluginIds.contains(
+                controller.ownerOfSource(source.sourceId),
+              ),
+            )
+            .toList(growable: false);
+    final itemCount = sourceControls.length + plugins.length;
     return Material(
       key: comicSourceSwitcherKey,
       elevation: 3,
       child: SafeArea(
         top: false,
-        child: sources.isEmpty
+        child: itemCount == 0
             ? const SizedBox(
                 height: 58,
                 child: Center(child: Text('没有已启用的漫画源')),
@@ -1790,12 +1993,19 @@ final class _SourceSwitcher extends StatelessWidget {
                     vertical: 10,
                   ),
                   scrollDirection: Axis.horizontal,
-                  itemCount: sources.length,
+                  itemCount: itemCount,
                   separatorBuilder: (_, __) => const SizedBox(width: 8),
                   itemBuilder: (context, index) {
-                    final source = sources[index];
+                    if (index < plugins.length) {
+                      return _pluginChip(
+                        context,
+                        controller!,
+                        plugins[index],
+                      );
+                    }
+                    final source = sourceControls[index - plugins.length];
                     final accent = _comicSourceAccent(source);
-                    final selected = source.sourceId == activeSourceId;
+                    final selected = source.sourceId == widget.activeSourceId;
                     return ChoiceChip(
                       key: comicSourceChoiceKey(source.sourceId),
                       label: Text(source.descriptor.name),
@@ -1808,7 +2018,7 @@ final class _SourceSwitcher extends StatelessWidget {
                               color: Theme.of(context).colorScheme.onPrimary,
                             )
                           : TextStyle(color: accent),
-                      onSelected: (_) => onSelected(source.sourceId),
+                      onSelected: (_) => widget.onSelected(source.sourceId),
                     );
                   },
                 ),
@@ -2155,7 +2365,6 @@ final class _SourceManagementScreenState
           ));
     });
   }
-
 
   Future<void> _openSourceSettings(BrowsableComicSource source) async {
     await openComicSourceSettings(

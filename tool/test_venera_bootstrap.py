@@ -408,6 +408,33 @@ async function checkRequestScopedDelayCancellation(){
  if(!cancelled||elapsed>500||__zicDelayWaiters.has(requestId))throw new Error('request-scoped delay did not cancel promptly '+JSON.stringify({cancelled,elapsed,retained:__zicDelayWaiters.has(requestId)}));
 }
 
+async function checkAsyncNetworkBridgeAndActivationGate(){
+ let seen=null,completed=null,finished=null;
+ const previousRequestAsync=ZicNative.requestAsync;
+ ZicNative.requestAsync=raw=>{
+   const message=__zicDecode(JSON.parse(raw));seen=message;
+   setTimeout(()=>__zicBridgeResponse(message.bridgeCallId,JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},body:'background'})})),30);
+ };
+ const background=Network.get('https://api.invalid/background');
+ __zicActivationOpen=false;
+ globalThis.__zicSource={};
+ ZicNative.complete=(requestId,envelope)=>{completed={requestId,envelope:JSON.parse(envelope)}};
+ ZicNative.finished=requestId=>{finished=requestId};
+ const started=Date.now();
+ await __zicInvoke({requestId:'activation-gate',operation:'loadBrowseSections',arguments:{}});
+ const elapsed=Date.now()-started;
+ if(seen?.requestId!==undefined||completed?.requestId!=='activation-gate'||finished!=='activation-gate'||elapsed<20||__zicActivationWork.size)throw new Error('async activation bridge did not gate the next invocation '+JSON.stringify({seen,completed,finished,elapsed,retained:__zicActivationWork.size}));
+ await background;
+ let cancelledComplete=null,cancelledFinished=null;
+ ZicNative.complete=(requestId,envelope)=>{cancelledComplete={requestId,envelope}};
+ ZicNative.finished=requestId=>{cancelledFinished=requestId};
+ const cancelledInvocation=__zicInvoke({requestId:'async-cancel',operation:'loadResource',arguments:{uri:'https://api.invalid/cancel'}});
+ setTimeout(()=>__zicCancel('async-cancel'),5);
+ await cancelledInvocation;
+ if(cancelledComplete!==null||cancelledFinished!=='async-cancel')throw new Error('async bridge cancellation released the invocation early '+JSON.stringify({cancelledComplete,cancelledFinished}));
+ if(previousRequestAsync===undefined)delete ZicNative.requestAsync;else ZicNative.requestAsync=previousRequestAsync;
+}
+
 async function checkInvokeRequestLifecycle(){
  let seenRequestId=null,completed=null,finished=null;
  globalThis.__zicSource={comic:{onImageLoad:async()=>({url:'https://cdn.invalid/image.jpg',method:'GET',data:'must-not-cross-get'})}};
@@ -424,7 +451,7 @@ async function checkInvokeRequestLifecycle(){
  if(seenRequestId!=='invoke-lifecycle'||completed?.requestId!=='invoke-lifecycle'||finished!=='invoke-lifecycle')throw new Error('invoke lifecycle did not retain the request id '+JSON.stringify({seenRequestId,completed,finished}));
 }
 
-(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkRequestScopedDelayCancellation();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkRequestScopedDelayCancellation();await checkAsyncNetworkBridgeAndActivationGate();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

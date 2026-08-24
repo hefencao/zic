@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Base64
+import android.util.Log
 import androidx.preference.EditTextPreference
 import androidx.preference.ListPreference
 import androidx.preference.MultiSelectListPreference
@@ -1215,8 +1216,13 @@ internal class MihonRuntimeDriver private constructor(
             payloadSha256: String,
             executor: ExecutorService,
         ): MihonRuntimeDriver {
+            val startedAt = SystemClock.elapsedRealtime()
+            var stageStarted = startedAt
+            mihonActivationLog(driverId, "start", startedAt, stageStarted)
             val payload = File(payloadPath)
             verifyPayload(payload, payloadLength, payloadSha256)
+            mihonActivationLog(driverId, "payload-verified", startedAt, stageStarted)
+            stageStarted = SystemClock.elapsedRealtime()
             verifyMihonCommonRuntimeAbi(context.classLoader)
             val pluginId = activation.requireString("pluginId")
             val version = activation.requireString("pluginVersion")
@@ -1224,6 +1230,15 @@ internal class MihonRuntimeDriver private constructor(
             require(extensionLib in supportedMihonExtensionLibs) {
                 "Unsupported Mihon extension ABI: $extensionLib"
             }
+            val abiAsset = readMihonAbiAsset(context, extensionLib)
+            val artifactRoot = mihonRuntimeArtifactsRoot(
+                codeCacheDir = context.codeCacheDir,
+                pluginId = pluginId,
+                version = version,
+                payloadSha256 = payloadSha256,
+                extensionLib = extensionLib,
+                abi = Build.SUPPORTED_ABIS.firstOrNull() ?: "unknown",
+            )
             val runtimeRoot = mihonRuntimeRoot(
                 codeCacheDir = context.codeCacheDir,
                 pluginId = pluginId,
@@ -1234,44 +1249,88 @@ internal class MihonRuntimeDriver private constructor(
                 check(mkdirs()) { "Mihon runtime directory could not be created" }
             }
             try {
-                val apk = stageReadOnlyMihonApk(
-                    payload = payload,
-                    target = File(runtimeRoot, "extension.apk"),
-                    expectedLength = payloadLength,
-                    expectedSha256 = payloadSha256,
-                )
-                val abi = stageReadOnlyMihonAbi(
-                    context = context,
-                    extensionLib = extensionLib,
-                    target = File(runtimeRoot, "abi.jar"),
-                )
-                val nativeDir = extractNativeLibraries(apk, File(runtimeRoot, "lib"))
-                val abiOptimized = File(runtimeRoot, "abi-dex").apply {
-                    check(mkdirs()) { "Mihon ABI dex directory could not be created" }
+                stageStarted = SystemClock.elapsedRealtime()
+                val loaded = synchronized(mihonRuntimeCacheLock) {
+                    val cacheHit = mihonRuntimeArtifactCacheHit(
+                        artifactRoot = artifactRoot,
+                        payloadLength = payloadLength,
+                        payloadSha256 = payloadSha256,
+                        abiAsset = abiAsset,
+                    )
+                    if (!cacheHit) {
+                        artifactRoot.deleteRecursively()
+                        check(artifactRoot.mkdirs()) {
+                            "Mihon runtime artifact directory could not be created"
+                        }
+                    }
+                    val apk = stageReadOnlyMihonApk(
+                        payload = payload,
+                        target = File(artifactRoot, "extension.apk"),
+                        expectedLength = payloadLength,
+                        expectedSha256 = payloadSha256,
+                        verifiedExisting = cacheHit,
+                    )
+                    val abi = stageReadOnlyMihonAbi(
+                        context = context,
+                        extensionLib = extensionLib,
+                        asset = abiAsset,
+                        target = File(artifactRoot, "abi.jar"),
+                        verifiedExisting = cacheHit,
+                    )
+                    val nativeDir = extractNativeLibraries(
+                        apk,
+                        File(artifactRoot, "lib"),
+                    )
+                    val abiOptimized = File(artifactRoot, "abi-dex").apply {
+                        check(isDirectory || mkdirs()) {
+                            "Mihon ABI dex directory could not be created"
+                        }
+                    }
+                    val abiLoader = DexClassLoader(
+                        abi.path,
+                        abiOptimized.path,
+                        null,
+                        context.classLoader,
+                    )
+                    val extensionOptimized = File(artifactRoot, "extension-dex").apply {
+                        check(isDirectory || mkdirs()) {
+                            "Mihon extension dex directory could not be created"
+                        }
+                    }
+                    val loader = MihonExtensionClassLoader(
+                        dexPath = apk.path,
+                        optimizedDirectory = extensionOptimized,
+                        librarySearchPath = nativeDir,
+                        parent = abiLoader,
+                    )
+                    MihonLoadedRuntime(
+                        apk = apk,
+                        nativeLibraryDir = nativeDir,
+                        loader = loader,
+                        cacheHit = cacheHit,
+                    )
                 }
-                val abiLoader = DexClassLoader(
-                    abi.path,
-                    abiOptimized.path,
-                    null,
-                    context.classLoader,
+                mihonActivationLog(
+                    driverId,
+                    "artifacts-${if (loaded.cacheHit) "reused" else "staged"}",
+                    startedAt,
+                    stageStarted,
                 )
-                val extensionOptimized = File(runtimeRoot, "extension-dex").apply {
-                    check(mkdirs()) { "Mihon extension dex directory could not be created" }
-                }
-                val loader = MihonExtensionClassLoader(
-                    dexPath = apk.path,
-                    optimizedDirectory = extensionOptimized,
-                    librarySearchPath = nativeDir,
-                    parent = abiLoader,
-                )
+                stageStarted = SystemClock.elapsedRealtime()
+                val loader = loaded.loader
                 verifyMihonPluginAbi(loader)
+                mihonActivationLog(driverId, "dex-loaded", startedAt, stageStarted)
+                stageStarted = SystemClock.elapsedRealtime()
                 val extensionContext = createMihonPayloadContext(
                     base = context,
-                    apk = apk,
+                    apk = loaded.apk,
                     loader = loader,
                     expectedPackageName = activation.requireString("packageName"),
                     runtimeRoot = runtimeRoot,
+                    nativeLibraryRoot = loaded.nativeLibraryDir,
                 )
+                mihonActivationLog(driverId, "context-ready", startedAt, stageStarted)
+                stageStarted = SystemClock.elapsedRealtime()
                 try {
                     initializeMihonInjekt(loader, extensionContext)
                 } catch (error: Throwable) {
@@ -1280,6 +1339,8 @@ internal class MihonRuntimeDriver private constructor(
                         error,
                     )
                 }
+                mihonActivationLog(driverId, "injekt-ready", startedAt, stageStarted)
+                stageStarted = SystemClock.elapsedRealtime()
                 val limits = activation["limits"].stringMap("runtime limits")
                 val maxResponseBytes = limits.requireLong("maxResponseBytes")
                     .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
@@ -1313,6 +1374,7 @@ internal class MihonRuntimeDriver private constructor(
                     }
                 }
                 require(discovered.isNotEmpty()) { "Mihon extension exposed no Source entries" }
+                mihonActivationLog(driverId, "entries-ready", startedAt, stageStarted)
                 // A verified browser snapshot may have been produced for a
                 // Cloudflare redirect/subdomain rather than the extension's
                 // declared baseUrl. A restarted Mihon process therefore
@@ -1352,6 +1414,16 @@ internal class MihonRuntimeDriver private constructor(
                 )
             } catch (error: Throwable) {
                 runtimeRoot.deleteRecursively()
+                Log.e(
+                    MIHON_RUNTIME_LOG_TAG,
+                    "mihon activation failed driver=$driverId " + error.sanitizedMessage(),
+                )
+                mihonActivationLog(
+                    driverId,
+                    "failed-${error.javaClass.simpleName}",
+                    startedAt,
+                    stageStarted,
+                )
                 throw error
             }
         }
@@ -1504,6 +1576,7 @@ private fun createMihonPayloadContext(
     loader: ClassLoader,
     expectedPackageName: String,
     runtimeRoot: File,
+    nativeLibraryRoot: File?,
 ): Context {
     val packageInfo = base.packageManager.getPackageArchiveInfo(
         apk.path,
@@ -1517,7 +1590,7 @@ private fun createMihonPayloadContext(
     }.apply {
         sourceDir = apk.path
         publicSourceDir = apk.path
-        nativeLibraryDir = File(runtimeRoot, "lib").path
+        nativeLibraryDir = (nativeLibraryRoot ?: File(runtimeRoot, "lib")).path
     }
     val resources = base.packageManager.getResourcesForApplication(applicationInfo)
     return MihonPayloadContext(
@@ -1733,6 +1806,32 @@ private data class MihonAbiAsset(
     val sha256: String,
 )
 
+private data class MihonLoadedRuntime(
+    val apk: File,
+    val nativeLibraryDir: File?,
+    val loader: MihonExtensionClassLoader,
+    val cacheHit: Boolean,
+)
+
+private val mihonRuntimeCacheLock = Any()
+
+private const val MIHON_RUNTIME_LOG_TAG = "ZicPluginRuntime"
+
+private fun mihonActivationLog(
+    driverId: String,
+    stage: String,
+    startedAt: Long,
+    stageStarted: Long,
+) {
+    if (!Log.isLoggable(MIHON_RUNTIME_LOG_TAG, Log.DEBUG)) return
+    val now = SystemClock.elapsedRealtime()
+    Log.d(
+        MIHON_RUNTIME_LOG_TAG,
+        "mihon-activation driver=$driverId stage=$stage " +
+            "stageMs=${now - stageStarted} totalMs=${now - startedAt}",
+    )
+}
+
 private fun readMihonAbiAsset(context: Context, extensionLib: String): MihonAbiAsset {
     val version = mihonAbiAssetVersion(extensionLib)
     val properties = Properties().apply {
@@ -1755,14 +1854,16 @@ private fun readMihonAbiAsset(context: Context, extensionLib: String): MihonAbiA
 private fun stageReadOnlyMihonAbi(
     context: Context,
     extensionLib: String,
+    asset: MihonAbiAsset,
     target: File,
+    verifiedExisting: Boolean,
 ): File {
-    val asset = readMihonAbiAsset(context, extensionLib)
     return stageReadOnlyMihonCode(
         target = target,
         expectedLength = asset.length,
         expectedSha256 = asset.sha256,
         label = "Mihon ${mihonAbiAssetVersion(extensionLib)} ABI",
+        verifiedExisting = verifiedExisting,
     ) {
         context.assets.open(asset.path, AssetManager.ACCESS_STREAMING)
     }
@@ -2277,11 +2378,13 @@ private fun stageReadOnlyMihonApk(
     target: File,
     expectedLength: Long,
     expectedSha256: String,
+    verifiedExisting: Boolean,
 ): File = stageReadOnlyMihonCode(
     target = target,
     expectedLength = expectedLength,
     expectedSha256 = expectedSha256,
     label = "Mihon runtime APK",
+    verifiedExisting = verifiedExisting,
 ) { payload.inputStream().buffered() }
 
 private fun stageReadOnlyMihonCode(
@@ -2289,27 +2392,36 @@ private fun stageReadOnlyMihonCode(
     expectedLength: Long,
     expectedSha256: String,
     label: String,
+    verifiedExisting: Boolean,
     openInput: () -> InputStream,
 ): File {
     target.parentFile?.let { parent ->
         check(parent.isDirectory || parent.mkdirs()) { "$label directory could not be created" }
+    }
+    if (target.isFile) {
+        if (verifiedExisting || runCatching {
+                verifyCodeFile(target, expectedLength, expectedSha256, label)
+            }.isSuccess
+        ) {
+            return target
+        }
+        check(target.delete()) { "$label could not be replaced" }
     }
     val staging = File(target.parentFile, "${target.name}.part")
     if (staging.exists()) {
         check(staging.delete()) { "stale $label staging file could not be removed" }
     }
     FileOutputStream(staging).use { output ->
-        check(staging.setReadOnly()) {
-            "$label staging file could not be made read-only before writing"
-        }
         openInput().use { input -> input.copyTo(output) }
         output.fd.sync()
     }
     verifyCodeFile(staging, expectedLength, expectedSha256, label)
+    check(staging.setReadOnly()) {
+        "$label staging file could not be made read-only"
+    }
     if (target.exists()) check(target.delete()) { "$label could not be replaced" }
     check(staging.renameTo(target)) { "$label staging file could not be promoted" }
     check(target.setReadOnly()) { "$label could not remain read-only" }
-    verifyCodeFile(target, expectedLength, expectedSha256, label)
     return target
 }
 
@@ -2339,23 +2451,73 @@ private fun verifyCodeFile(
 }
 
 private fun extractNativeLibraries(apk: File, root: File): File? {
+    val marker = File(root.parentFile, "native-libs.meta")
+    val cachedAbi = runCatching {
+        marker.takeIf { it.isFile }?.readText(Charsets.UTF_8)?.trim()
+    }.getOrNull()
+    if (cachedAbi == "none") return null
+    if (!cachedAbi.isNullOrBlank() && root.isDirectory && root.listFiles()
+            ?.any { it.isFile && it.name.endsWith(".so") } == true
+    ) {
+        return root
+    }
+    root.deleteRecursively()
+    if (marker.exists()) check(marker.delete()) {
+        "stale Mihon native library marker could not be removed"
+    }
     ZipFile(apk).use { zip ->
         val abi = Build.SUPPORTED_ABIS.firstOrNull { candidate ->
             zip.entries().asSequence().any { entry ->
                 entry.name.startsWith("lib/$candidate/") && entry.name.endsWith(".so")
             }
-        } ?: return null
+        } ?: run {
+            writeReadOnlyMihonMarker(marker, "none")
+            return null
+        }
         root.mkdirs()
         zip.entries().asSequence()
             .filter { !it.isDirectory && it.name.startsWith("lib/$abi/") && it.name.endsWith(".so") }
             .forEach { entry ->
                 val target = File(root, File(entry.name).name)
                 zip.getInputStream(entry).use { input ->
-                    FileOutputStream(target).use { output -> input.copyTo(output) }
+                    FileOutputStream(target).use { output ->
+                        input.copyTo(output)
+                        output.fd.sync()
+                    }
                 }
+                check(target.setReadOnly()) { "Mihon native library could not be made read-only" }
             }
+        writeReadOnlyMihonMarker(marker, abi)
     }
     return root
+}
+
+private fun writeReadOnlyMihonMarker(target: File, value: String) {
+    target.parentFile?.let { parent ->
+        check(parent.isDirectory || parent.mkdirs()) {
+            "Mihon native library marker directory could not be created"
+        }
+    }
+    val staging = File(target.parentFile, "${target.name}.part")
+    if (staging.exists()) check(staging.delete()) {
+        "stale Mihon native library marker could not be removed"
+    }
+    FileOutputStream(staging).use { output ->
+        output.write(value.toByteArray(Charsets.UTF_8))
+        output.fd.sync()
+    }
+    check(staging.setReadOnly()) {
+        "Mihon native library marker could not be made read-only"
+    }
+    if (target.exists()) check(target.delete()) {
+        "Mihon native library marker could not be replaced"
+    }
+    check(staging.renameTo(target)) {
+        "Mihon native library marker could not be promoted"
+    }
+    check(target.setReadOnly()) {
+        "Mihon native library marker could not remain read-only"
+    }
 }
 
 private fun java.io.InputStream.readBytesBounded(maxBytes: Int): ByteArray {
@@ -2378,7 +2540,16 @@ private fun normalizeWebsite(value: String): String = runCatching {
 }.getOrDefault("https://invalid.local/")
 
 internal fun cleanupStaleMihonRuntimeRoots(codeCacheDir: File) {
-    File(codeCacheDir, "mihon").deleteRecursively()
+    val root = File(codeCacheDir, "mihon")
+    // Session state is normally removed by MihonRuntimeDriver.close(). Do not
+    // recursively remove it during service bootstrap: a crash can leave
+    // extension-owned cache files here, and that cleanup would turn startup
+    // into a synchronous storage scan. The asynchronous maintenance pass only
+    // removes the legacy pre-cache layout; immutable v2 artifacts and current
+    // session roots are retained for the runtime/cache owners to handle.
+    root.listFiles()
+        ?.filter { it.name != "artifacts" && it.name != "sessions" }
+        ?.forEach { it.deleteRecursively() }
 }
 
 internal fun mihonRuntimeRoot(
@@ -2388,8 +2559,43 @@ internal fun mihonRuntimeRoot(
     driverId: String,
 ): File = File(
     codeCacheDir,
-    "mihon/${safePath(pluginId)}/${safePath(version)}/${safePath(driverId)}",
+    "mihon/sessions/${safePath(pluginId)}/${safePath(version)}/${safePath(driverId)}",
 )
+
+internal fun mihonRuntimeArtifactsRoot(
+    codeCacheDir: File,
+    pluginId: String,
+    version: String,
+    payloadSha256: String,
+    extensionLib: String,
+    abi: String,
+): File = File(
+    codeCacheDir,
+    "mihon/artifacts/${safePath(MIHON_RUNTIME_TRANSFORM_REVISION)}/" +
+        "${safePath(pluginId)}/${safePath(version)}/" +
+        "${safePath(payloadSha256)}/${safePath(mihonAbiAssetVersion(extensionLib))}/" +
+        safePath(abi),
+)
+
+private fun mihonRuntimeArtifactCacheHit(
+    artifactRoot: File,
+    payloadLength: Long,
+    payloadSha256: String,
+    abiAsset: MihonAbiAsset,
+): Boolean = artifactRoot.isDirectory && runCatching {
+    verifyCodeFile(
+        File(artifactRoot, "extension.apk"),
+        payloadLength,
+        payloadSha256,
+        "Mihon cached runtime APK",
+    )
+    verifyCodeFile(
+        File(artifactRoot, "abi.jar"),
+        abiAsset.length,
+        abiAsset.sha256,
+        "Mihon cached ABI",
+    )
+}.isSuccess
 
 private fun safePath(value: String): String =
     MessageDigest.getInstance("SHA-256")

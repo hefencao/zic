@@ -19,6 +19,7 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     final plugins = _incomingExternalPlugins;
     if (plugins != null && !identical(_activeExternalPlugins, plugins)) {
       _activeExternalPlugins = plugins;
+      _watchExternalPluginSources(plugins);
       unawaited(_ensureExternalSourcesPublished());
     }
   }

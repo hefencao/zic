@@ -29,6 +29,7 @@ final class AndroidExternalPluginRuntimeServiceBootstrap {
     ExternalPluginRuntimePayloadVerifier? payloadVerifier,
     Directory? verifiedDirectory,
     String? processId,
+    bool warmVeneraResolverHttp = true,
     MethodChannel channel = const MethodChannel(
       AndroidExternalPluginRuntimeServiceHandler.defaultChannelName,
     ),
@@ -52,6 +53,13 @@ final class AndroidExternalPluginRuntimeServiceBootstrap {
     );
     handler.attach();
     try {
+      if (warmVeneraResolverHttp) {
+        // runtimeServiceReady is the boundary after which native activation
+        // requests may enter the WebView. Waiting here makes the opportunistic
+        // rhttp warm-up deterministic and prevents the first init request
+        // from racing client creation.
+        await handler.warmVeneraResolverHttp();
+      }
       await channel.invokeMethod<void>(
         'runtimeServiceReady',
         <String, Object?>{'processId': endpoint.processId},

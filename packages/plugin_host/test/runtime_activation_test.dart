@@ -76,6 +76,39 @@ void main() {
     expect(factory.driver?.closed, isTrue);
   });
 
+  test('independent process activations do not wait behind a slow sibling',
+      () async {
+    final createGate = Completer<void>();
+    final factory = _FixtureDriverFactory(
+      format: ExternalComicPluginFormat.mihonExtension,
+      createGate: createGate,
+    );
+    final host = ExternalPluginRuntimeProcessHost(
+      factories: <ExternalPluginRuntimeDriverFactory>[factory],
+      payloadVerifier: FileExternalPluginRuntimePayloadVerifier(
+        verifiedDirectory: verified,
+      ),
+      maxActiveSessions: 2,
+      sessionIdFactory: (activation) => activation.pluginVersion,
+    );
+    final first = host.activate(_mihonMessage(payload, payloadHash));
+    await factory.createStarted.future;
+    final second = host.activate(
+      _mihonMessage(payload, payloadHash)..['pluginVersion'] = '2.0.0',
+    );
+
+    await factory.secondCreateStarted.future.timeout(
+      const Duration(seconds: 1),
+    );
+    expect(factory.createCount, 2);
+    createGate.complete();
+    await Future.wait(<Future<ExternalPluginRuntimeProcessActivation>>[
+      first,
+      second,
+    ]);
+    await host.close();
+  });
+
   test('payload mutation is rejected before a driver is created', () async {
     final factory = _FixtureDriverFactory(
       format: ExternalComicPluginFormat.mihonExtension,
@@ -264,6 +297,7 @@ final class _FixtureDriverFactory
   final Completer<void>? createGate;
   final Completer<void>? driverCloseGate;
   final Completer<void> createStarted = Completer<void>();
+  final Completer<void> secondCreateStarted = Completer<void>();
   int createCount = 0;
   ExternalPluginRuntimeActivationEnvelope? lastActivation;
   ExternalPluginRuntimeVerifiedPayload? lastPayload;
@@ -282,6 +316,9 @@ final class _FixtureDriverFactory
     lastPayload = payload;
     if (!createStarted.isCompleted) {
       createStarted.complete();
+    }
+    if (createCount == 2 && !secondCreateStarted.isCompleted) {
+      secondCreateStarted.complete();
     }
     await createGate?.future;
     return driver = _FixtureDriver(

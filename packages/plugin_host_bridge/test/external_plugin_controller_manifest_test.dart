@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plugin_host/plugin_host.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 
 void main() {
@@ -56,6 +57,95 @@ void main() {
       controller.activationFailures,
       containsPair('venera:test-owned', anything),
     );
+  });
+
+  test('recoverable activation failure keeps the enabled record for retry',
+      () async {
+    final storage = await Directory.systemTemp.createTemp(
+      'zic-external-plugin-retry-',
+    );
+    addTearDown(() => storage.delete(recursive: true));
+    final pluginRoot = Directory('${storage.path}/external_plugins');
+    await pluginRoot.create(recursive: true);
+    final payload = await File('${pluginRoot.path}/retryable.js').writeAsString(
+      '''
+class RetryableSource extends ComicSource {
+  key = "retryable";
+}
+''',
+    );
+    await File('${pluginRoot.path}/installed.json').writeAsString(
+      jsonEncode(<String, Object?>{
+        'version': 1,
+        'plugins': <Object?>[
+          _record('retryable', payload.path, sourceKey: 'retryable'),
+        ],
+      }),
+    );
+
+    final controller = await ExternalPluginController.openDeferred(storage.path);
+    addTearDown(controller.close);
+    await controller.ready;
+
+    expect(
+      controller.installed.map((record) => record.plugin.pluginId),
+      orderedEquals(<String>['venera:test-retryable']),
+    );
+    expect(controller.canRetryActivation('venera:test-retryable'), isTrue);
+    expect(await payload.exists(), isTrue);
+
+    await expectLater(
+      controller.retryActivation('venera:test-retryable'),
+      throwsA(anything),
+    );
+    expect(controller.canRetryActivation('venera:test-retryable'), isTrue);
+    expect(await payload.exists(), isTrue);
+  });
+
+  test('non-recoverable activation failure rolls back a new record',
+      () async {
+    final storage = await Directory.systemTemp.createTemp(
+      'zic-external-plugin-terminal-',
+    );
+    addTearDown(() => storage.delete(recursive: true));
+    final payload = await File('${storage.path}/terminal.js').writeAsString(
+      'class TerminalSource extends ComicSource {}',
+    );
+    final controller = await ExternalPluginController.openDeferred(
+      storage.path,
+      discoverDeviceMihonExtensions: false,
+    );
+    addTearDown(controller.close);
+    final plugin = ExternalComicPluginCatalogEntry(
+      format: ExternalComicPluginFormat.veneraJavaScript,
+      pluginId: 'venera:test-terminal',
+      name: 'Test terminal',
+      version: '1.0.0',
+      entrypoint: Uri.http('example.com', '/terminal.js'),
+      sources: const <ExternalComicPluginSource>[],
+      requiresRuntimeDiscovery: true,
+    );
+    final inspection = ExternalPluginInspection(
+      format: ExternalComicPluginFormat.veneraJavaScript,
+      payloadSha256: List<String>.filled(64, '0').join(),
+      payloadPath: payload.path,
+      payloadByteLength: await payload.length(),
+      sourceKey: 'terminal',
+    );
+
+    await expectLater(
+      controller.approveAndActivate(
+        ExternalPluginInstallPreview(
+          plugin: plugin,
+          inspection: inspection,
+          repository: Uri.https('example.com', '/'),
+        ),
+      ),
+      throwsA(isA<ExternalPluginActivationException>()),
+    );
+    expect(controller.installed, isEmpty);
+    expect(controller.canRetryActivation(plugin.pluginId), isFalse);
+    expect(await payload.exists(), isFalse);
   });
 
   test('manifest restore keeps valid plugins when one record is malformed',
@@ -218,7 +308,11 @@ void main() {
   });
 }
 
-Map<String, Object?> _record(String suffix, String payloadPath) =>
+Map<String, Object?> _record(
+  String suffix,
+  String payloadPath, {
+  String? sourceKey,
+}) =>
     <String, Object?>{
       'plugin': <String, Object?>{
         'format': 'veneraJavaScript',
@@ -234,4 +328,5 @@ Map<String, Object?> _record(String suffix, String payloadPath) =>
       'payloadSha256': List<String>.filled(64, '0').join(),
       'repositoryOrigin': 'https://example.com',
       'entryClasses': const <Object?>[],
+      if (sourceKey != null) 'sourceKey': sourceKey,
     };
