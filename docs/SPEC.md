@@ -19,6 +19,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - Home MUST 在本地库的 cover-bearing primary 数据可用后先呈现首页；native media prewarm、持久整本队列 restore、外部插件 activation 和 enrichment 不得成为首封面请求的硬门槛。
 - 启动 build MUST 不等待 durable services。入口 MUST 直接挂载不依赖 durable services 的 memory-backed Home，不得创建自定义 Flutter bootstrap surface；durable service open MUST 在首个 Home frame 之后立即异步启动，且不得决定 Home 是否可见。
 - 外观 MUST 读取并持久化 `ThemeMode`；AMOLED 开关启用时，且当前有效主题为深色，`darkTheme` 的 surface/scaffold/canvas 背景 MUST 使用纯黑。首帧加载背景 MUST 跟随有效主题，不得为启动阶段强制使用浅色。
+- 首页根路由的系统返回 MUST 先显示“再按一次返回键退出”确认提示，并在确认窗口（当前为 2 秒）内再次返回才结束应用；窗口过期后 MUST 重新要求确认。该确认 MUST 只拦截根路由自身的返回，MUST NOT 改变其他路由（Reader、详情、对话框）或漫画源页内部返回手势的既有语义。
 - Durable service open 完成后 MUST 主动提交内存 Home 到 durable projection；该提交不得只注册等待下一帧的回调而不安排 frame，否则用户手势不得成为加载更新漫画和阅读历史的隐式触发条件。
 - 首帧前只允许建立轻量 startup/trace channel；native decode、`media_core` texture、rhttp 和 feature bridge MUST 在实际 Reader/source/platform capability 使用前保持未初始化或未挂载，首次使用只能由对应 capability 自己按需挂载。
 - Android `FlutterEngine` MUST 关闭 embedding 的自动 `GeneratedPluginRegistrant` 注册；

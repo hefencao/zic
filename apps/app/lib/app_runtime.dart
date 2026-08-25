@@ -5,6 +5,7 @@ import 'package:downloads/downloads.dart';
 import 'package:downloads_bridge/downloads_bridge.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:network_bridge/network_bridge.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'package:plugin_host_bridge/runtime_service_entrypoint.dart'
@@ -783,31 +784,92 @@ final class _AppState extends State<App> {
           useMaterial3: true,
         ),
         themeMode: _preferences.themeMode,
-        home: DemoHome(
-          key: widget.homeKey,
-          picker: widget.picker,
-          folderPicker: widget.folderPicker,
-          folderRefresher: widget.folderRefresher,
-          libraryStore: widget.libraryStore,
-          homeProjectionSnapshotStore: widget.homeProjectionSnapshotStore,
-          persistHomeProjectionSnapshot: widget.persistHomeProjectionSnapshot,
-          chapterDownloads: widget.chapterDownloads,
-          downloadComposition: widget.downloadComposition,
-          wholeComicDownloads: widget.wholeComicDownloads,
-          comicSources: widget.comicSources,
-          externalPlugins: widget.externalPlugins,
-          platformEnvironmentLoader: widget.platformEnvironmentLoader,
-          networkBridge: widget.networkBridge,
-          cacheCoordinator: widget.cacheCoordinator,
-          serviceHandoff: widget.serviceHandoff,
-          persistMissingPreferences: widget.persistMissingPreferences,
-          externalPluginLoader: widget.externalPluginLoader,
-          startupTelemetry: widget.startupTelemetry,
-          preferences: _preferences,
-          debugTrace: _debugTrace,
-          storageRoot: widget.storageRoot,
+        home: _RootBackExitGuard(
+          child: DemoHome(
+            key: widget.homeKey,
+            picker: widget.picker,
+            folderPicker: widget.folderPicker,
+            folderRefresher: widget.folderRefresher,
+            libraryStore: widget.libraryStore,
+            homeProjectionSnapshotStore: widget.homeProjectionSnapshotStore,
+            persistHomeProjectionSnapshot: widget.persistHomeProjectionSnapshot,
+            chapterDownloads: widget.chapterDownloads,
+            downloadComposition: widget.downloadComposition,
+            wholeComicDownloads: widget.wholeComicDownloads,
+            comicSources: widget.comicSources,
+            externalPlugins: widget.externalPlugins,
+            platformEnvironmentLoader: widget.platformEnvironmentLoader,
+            networkBridge: widget.networkBridge,
+            cacheCoordinator: widget.cacheCoordinator,
+            serviceHandoff: widget.serviceHandoff,
+            persistMissingPreferences: widget.persistMissingPreferences,
+            externalPluginLoader: widget.externalPluginLoader,
+            startupTelemetry: widget.startupTelemetry,
+            preferences: _preferences,
+            debugTrace: _debugTrace,
+            storageRoot: widget.storageRoot,
+          ),
         ),
       ),
+    );
+  }
+}
+
+final class _RootBackExitGuard extends StatefulWidget {
+  const _RootBackExitGuard({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_RootBackExitGuard> createState() => _RootBackExitGuardState();
+}
+
+final class _RootBackExitGuardState extends State<_RootBackExitGuard> {
+  static const Duration _confirmWindow = Duration(seconds: 2);
+  bool _exitArmed = false;
+  Timer? _disarmTimer;
+
+  void _handlePopInvokedWithResult(bool didPop, Object? result) {
+    if (didPop) return;
+    if (_exitArmed) {
+      _disarm();
+      unawaited(SystemNavigator.pop());
+      return;
+    }
+    _exitArmed = true;
+    _disarmTimer?.cancel();
+    _disarmTimer = Timer(_confirmWindow, () {
+      _exitArmed = false;
+      _disarmTimer = null;
+    });
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('再按一次返回键退出'),
+          duration: _confirmWindow,
+        ),
+      );
+  }
+
+  void _disarm() {
+    _exitArmed = false;
+    _disarmTimer?.cancel();
+    _disarmTimer = null;
+  }
+
+  @override
+  void dispose() {
+    _disarmTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: _handlePopInvokedWithResult,
+      child: widget.child,
     );
   }
 }

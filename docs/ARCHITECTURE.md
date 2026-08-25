@@ -92,7 +92,7 @@ bootstrap 与 durable services 之间通过稳定 `HomeServiceHandoff` 原地交
 
 `MainActivity` 显式创建关闭自动 `GeneratedPluginRegistrant` 的 `FlutterEngine`，并在 Activity 结束时销毁；仅覆盖 `configureFlutterEngine` 不能阻止 implicit engine 的构造期注册，feature bridge 只能通过 startup channel 按能力挂载。`LocalMediaBridge` 在 Android 的 pick/scan/open/read 入口前共享 single-flight attach，保证从持久阅读记录直接进入 Reader 时也先注册 `dev.zic/local_media`；startup channel 不存在的宿主才回退其自身的 eager registration。按类名反射的 Android feature plugin 及 rhttp 入口必须由 app 的 R8 keep 规则保留原始全限定名。Android 存储根目录优先随 Dart entrypoint args 同步注入，避免冷启动首次 MethodChannel 往返；旧宿主才回退轻量 startup channel，首帧后只打开 durable/native/plugin capability，不创建第二份 owner。
 首次安装的 `app_preferences.json` 不在 Home 启动时强制写入；偏好控制器先使用内存默认值，用户首次修改时才创建持久文件。
-`AppPreferencesController` 负责持久化 `ThemeMode` 与 AMOLED 深色开关；`MaterialApp` 只在有效深色主题下应用 AMOLED 纯黑 surface/scaffold/canvas，首帧加载背景不再强制切换为浅色。
+`AppPreferencesController` 负责持久化 `ThemeMode` 与 AMOLED 深色开关；`MaterialApp` 只在有效深色主题下应用 AMOLED 纯黑 surface/scaffold/canvas，首帧加载背景不再强制切换为浅色。App 根路由的退出确认由 `_RootBackExitGuard` 拥有：它以 `PopScope(canPop: false)` 包裹 Home 根路由，首次系统返回只显示“再按一次返回键退出”提示并开启 2 秒确认 Timer，窗口内再次返回才调用 `SystemNavigator.pop()` 结束应用；守卫只挂在根路由上，其他路由、对话框与漫画源页内部返回手势（含其 `WillPopScope`）先于该守卫消费返回事件。
 
 新安装且不存在 imported-library、offline-cache 或 whole-comic queue 状态时，Home 不打开 SQLite 或创建 WAL/schema；`LazyImportedLibraryStore` 先提供内存投影，首次 chapter、收藏、已读、偏好或进度写入时迁移到持久库。已有 durable state 的服务仍在 Home 可见窗口之后打开；Reader checkpoint writer 的第二个 WAL 连接也只在首次真正写入 `ReadingProgress` 后懒启动。SQLite schema 10 将 `chapter_read_state` 作为独立的来源章节身份状态，不再用指向 `imported_chapter` 的外键阻止未 hydrate 章节先写入已读状态；显式删除章节负责清理章节、进度和已读状态。
 
