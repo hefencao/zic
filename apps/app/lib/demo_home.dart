@@ -1667,6 +1667,7 @@ final class _DemoHomeState extends State<DemoHome> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: _navigationIndex != 2,
       appBar: AppBar(
         title: Text(
           switch (_navigationIndex) {

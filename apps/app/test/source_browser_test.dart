@@ -401,6 +401,8 @@ void main() {
     await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
     await _tapVisible(tester, find.text('漫画'));
     expect(searches, <String>['漫画']);
+    expect(find.byKey(comicSourceSearchKey), findsNothing);
+    expect(native.browseQueries.last, '漫画');
 
     final refresh = tester.state<RefreshIndicatorState>(
       find.descendant(
@@ -414,6 +416,7 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
     await tester.pumpAndSettle();
     expect(native.browseCalls, greaterThan(browseCallsBeforeRefresh));
+    expect(native.browseQueries.last, isEmpty);
 
     await tester.scrollUntilVisible(
       find.byKey(comicSourcePagerKey),
@@ -434,6 +437,118 @@ void main() {
       find.byKey(sourceComicCardKey(native.sourceId, '${native.sourceId}-comic-0')),
     );
     expect(native.lastBrowseSection, 'latest');
+
+    await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
+    await _tapVisible(tester, find.byKey(comicSourceSearchLockKey));
+    expect(find.byIcon(Icons.lock), findsOneWidget);
+    await tester.enterText(find.byKey(comicSourceSearchKey), '漫画');
+    tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pump();
+    expect(find.byKey(comicSourceSearchKey), findsNothing);
+    await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
+    final lockedSearch = tester.widget<SearchBar>(
+      find.byKey(comicSourceSearchKey),
+    );
+    expect(lockedSearch.controller?.text, '漫画');
+    expect(native.browseQueries.last, '漫画');
+  });
+
+  testWidgets('search long press opens aggregate results and exits collapsed',
+      (tester) async {
+    final native = _FixtureSource('fixture-aggregate', '聚合源');
+    final other = _FixtureSource('fixture-other', '其他源');
+    var activeSourceId = native.sourceId;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: StatefulBuilder(
+          builder: (context, setState) => Scaffold(
+            body: ComicSourcesPage(
+              sources: <BrowsableComicSource>[native, other],
+              activeSourceId: activeSourceId,
+              onSourceSelected: (sourceId) {
+                setState(() => activeSourceId = sourceId);
+              },
+              loadCover: (_, __, ___) async =>
+                  MemoryEncodedResourceSource(_tinyPng()),
+              onOpenComic: (_, __) async {},
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(
+      tester,
+      find.byKey(
+        sourceComicCardKey(native.sourceId, '${native.sourceId}-comic-0'),
+      ),
+    );
+    await tester.longPress(find.byKey(comicSourceSearchFabKey));
+    await tester.pump();
+    expect(find.byKey(comicSourceAggregateResultsKey), findsOneWidget);
+    expect(find.byKey(comicSourceSearchKey), findsNothing);
+    expect(find.byKey(comicSourceAggregateSearchKey), findsNothing);
+
+    await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
+    await tester.enterText(find.byKey(comicSourceSearchKey), '聚合源');
+    tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pump();
+    expect(find.byKey(comicSourceSearchKey), findsNothing);
+    await _pumpUntilFound(
+      tester,
+      find.byKey(
+        ValueKey<String>(
+          'aggregate-source-comic:${native.sourceId}\u0000${native._comicId}',
+        ),
+      ),
+    );
+    await tester.longPress(find.byKey(comicSourceSearchFabKey));
+    await tester.pump();
+    expect(
+      find.byKey(
+        ValueKey<String>(
+          'aggregate-source-comic:${native.sourceId}\u0000${native._comicId}',
+        ),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('请输入关键词开始聚合搜索'), findsNothing);
+
+    await _tapVisible(tester, find.byKey(comicSourceChoiceKey(other.sourceId)));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(
+        sourceComicCardKey(other.sourceId, '${other.sourceId}-comic-0'),
+      ),
+    );
+    await tester.longPress(find.byKey(comicSourceSearchFabKey));
+    await tester.pump();
+    expect(
+      find.byKey(
+        ValueKey<String>(
+          'aggregate-source-comic:${native.sourceId}\u0000${native._comicId}',
+        ),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('请输入关键词开始聚合搜索'), findsNothing);
+
+    await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
+    expect(find.byKey(comicSourceAggregateSearchKey), findsNothing);
+    expect(find.byKey(comicSourceSearchLockKey), findsOneWidget);
+
+    await tester.tap(find.byIcon(Icons.keyboard_arrow_up));
+    await tester.pump();
+    final aggregateOption = tester.widget<FilterChip>(
+      find.byKey(comicSourceAggregateSearchKey),
+    );
+    expect(aggregateOption.selected, isFalse);
+
+    await tester.binding.handlePopRoute();
+    await tester.pump();
+    await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
+    expect(find.byKey(comicSourceSearchKey), findsOneWidget);
+    expect(find.byKey(comicSourceAggregateSearchKey), findsNothing);
   });
 
   testWidgets(
@@ -2502,6 +2617,7 @@ final class _FixtureSource
   int _chapterLoads = 0;
   int _chapterRefreshes = 0;
   int browseCalls = 0;
+  final List<String> browseQueries = <String>[];
   int filteredBrowseCalls = 0;
   final List<Uri> loadedResources = <Uri>[];
   final List<String?> previewTokens = <String?>[];
@@ -2597,6 +2713,7 @@ final class _FixtureSource
     int limit = 24,
   }) async {
     browseCalls++;
+    browseQueries.add(query);
     final error = browseError;
     if (error != null) {
       throw error;

@@ -23,9 +23,17 @@ const comicSourceManageKey = ValueKey<String>('comic-source-manage');
 const sourceManagementScreenKey =
     ValueKey<String>('source-management-screen');
 const comicSourceSearchKey = ValueKey<String>('comic-source-search');
+const comicSourceSearchLockKey =
+    ValueKey<String>('comic-source-search-lock');
 const comicSourceSearchFabKey = ValueKey<String>('comic-source-search-fab');
 const comicSourceSearchHistoryKey =
     ValueKey<String>('comic-source-search-history');
+const comicSourceSearchExpandKey =
+    ValueKey<String>('comic-source-search-expand');
+const comicSourceAggregateSearchKey =
+    ValueKey<String>('comic-source-aggregate-search');
+const comicSourceAggregateResultsKey =
+    ValueKey<String>('comic-source-aggregate-results');
 const comicSourceSwitcherKey = ValueKey<String>('comic-source-switcher');
 const comicSourceLoadingKey = ValueKey<String>('comic-source-loading');
 const comicSourceErrorKey = ValueKey<String>('comic-source-error');
@@ -60,6 +68,10 @@ Key comicSourceChoiceKey(String sourceId) =>
     ValueKey<String>('comic-source-choice:$sourceId');
 Key comicSourcePluginChoiceKey(String pluginId) =>
     ValueKey<String>('comic-source-plugin-choice:$pluginId');
+Key comicSourceAggregatePluginKey(String pluginId) =>
+    ValueKey<String>('comic-source-aggregate-plugin:$pluginId');
+Key comicSourceAggregateCategoryKey(String categoryId) =>
+    ValueKey<String>('comic-source-aggregate-category:$categoryId');
 Key sourceComicCardKey(String sourceId, String comicId) =>
     ValueKey<String>('source-comic:$sourceId\u0000$comicId');
 Key sourceComicCoverVerificationKey(String sourceId, String comicId) =>
@@ -255,10 +267,73 @@ final class _SourceBrowseViewState {
   final bool filterViewActive;
 }
 
+final class _AggregateSearchPlugin {
+  const _AggregateSearchPlugin({
+    required this.pluginId,
+    required this.label,
+    required this.accent,
+    required this.source,
+  });
+
+  final String pluginId;
+  final String label;
+  final Color accent;
+  final BrowsableComicSource source;
+}
+
+final class _AggregateSearchResult {
+  const _AggregateSearchResult({required this.source, required this.comic});
+
+  final BrowsableComicSource source;
+  final SourceComicSummary comic;
+}
+
+final class _AggregateSearchOptions extends ChangeNotifier {
+  bool expanded = false;
+  bool enabled = false;
+  Set<String> pluginIds = <String>{};
+  Set<String> categoryIds = <String>{};
+
+  void setExpanded(bool value, Iterable<String> availablePluginIds) {
+    if (value) {
+      final available = availablePluginIds.toSet();
+      pluginIds = pluginIds.intersection(available);
+      if (pluginIds.isEmpty) pluginIds = available;
+    }
+    if (expanded == value) return;
+    expanded = value;
+    notifyListeners();
+  }
+
+  void setEnabled(bool value, Iterable<String> availablePluginIds) {
+    if (value && pluginIds.isEmpty) {
+      pluginIds = availablePluginIds.toSet();
+    }
+    if (enabled == value) return;
+    enabled = value;
+    notifyListeners();
+  }
+
+  void togglePlugin(String pluginId, bool selected) {
+    final next = Set<String>.of(pluginIds);
+    selected ? next.add(pluginId) : next.remove(pluginId);
+    pluginIds = next;
+    notifyListeners();
+  }
+
+  void toggleCategory(String categoryId, bool selected) {
+    final next = Set<String>.of(categoryIds);
+    selected ? next.add(categoryId) : next.remove(categoryId);
+    categoryIds = next;
+    notifyListeners();
+  }
+}
+
 final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   static const int _pageSize = 24;
 
   final TextEditingController _search = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
   final ScrollController _scroll = ScrollController();
   final Map<String, _SourceBrowseViewState> _sourceViewStates =
       <String, _SourceBrowseViewState>{};
@@ -275,7 +350,19 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       const <SourceSearchFilterNode>[];
   SourceSearchFilterState _filterState = const <String, Object?>{};
   bool _filterViewActive = false;
-  bool _searchExpanded = false;
+  final ValueNotifier<bool> _searchExpanded = ValueNotifier<bool>(false);
+  bool _searchQueryLocked = false;
+  final _AggregateSearchOptions _aggregateSearch = _AggregateSearchOptions();
+  List<_AggregateSearchResult> _aggregateItems =
+      const <_AggregateSearchResult>[];
+  List<_AggregateSearchResult> _lastAggregateItems =
+      const <_AggregateSearchResult>[];
+  String _aggregateQuery = '';
+  String _lastAggregateQuery = '';
+  String _lastSearchQuery = '';
+  bool _aggregateViewActive = false;
+  bool _aggregateLoading = false;
+  Object? _aggregateFailure;
   bool _refreshing = false;
   _SourceFailure? _failure;
   int _generation = 0;
@@ -404,6 +491,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   void didUpdateWidget(covariant ComicSourcesPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.queryRevision != widget.queryRevision) {
+      _exitAggregateSearchView(rebuild: false);
+      _aggregateSearch.setEnabled(
+        false,
+        _aggregateSearchPlugins().map((plugin) => plugin.pluginId),
+      );
       _query = widget.requestedQuery?.trim() ?? '';
       _pageOffset = 0;
       _search.value = TextEditingValue(
@@ -421,6 +513,16 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     if (oldWidget.activeSourceId != widget.activeSourceId ||
         !_sameSourceIds(oldWidget.sources, widget.sources) ||
         activeSourceReplaced) {
+      _exitAggregateSearchView(rebuild: false);
+      if (!_sameSourceIds(oldWidget.sources, widget.sources)) {
+        _lastAggregateItems = const <_AggregateSearchResult>[];
+        _lastAggregateQuery = '';
+        _lastSearchQuery = '';
+      }
+      _aggregateSearch.setEnabled(
+        false,
+        _aggregateSearchPlugins().map((plugin) => plugin.pluginId),
+      );
       _rememberSourceView(oldWidget.activeSourceId);
       _sections = const <SourceBrowseSection>[];
       _searchFilters = const <SourceSearchFilterNode>[];
@@ -435,6 +537,9 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   void dispose() {
     _cardCoverFutures.clear();
     _scroll.dispose();
+    _searchExpanded.dispose();
+    _aggregateSearch.dispose();
+    _searchFocus.dispose();
     _search.dispose();
     super.dispose();
   }
@@ -1276,13 +1381,125 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   }
 
   void _collapseSearch() {
-    if (!_searchExpanded) return;
     FocusManager.instance.primaryFocus?.unfocus();
-    setState(() => _searchExpanded = false);
+    _setSearchOptionsExpanded(false);
+    if (!_searchExpanded.value) return;
+    _searchExpanded.value = false;
+  }
+
+  void _expandSearch() {
+    if (_searchExpanded.value) return;
+    _searchExpanded.value = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _searchExpanded.value) {
+        _searchFocus.requestFocus();
+      }
+    });
+  }
+
+  void _openAggregateSearch() {
+    final plugins = _aggregateSearchPlugins();
+    if (plugins.isEmpty) return;
+    final enteredQuery = _search.text.trim();
+    final cachedItems = _aggregateItems.isNotEmpty
+        ? _aggregateItems
+        : _lastAggregateItems;
+    final cachedQuery = _aggregateItems.isNotEmpty
+        ? (_aggregateQuery.isNotEmpty ? _aggregateQuery : _lastAggregateQuery)
+        : _lastAggregateQuery;
+    final query = enteredQuery.isNotEmpty
+        ? enteredQuery
+        : (cachedQuery.isNotEmpty ? cachedQuery : _lastSearchQuery);
+    _setSearchOptionsExpanded(false);
+    final selectedPlugins = plugins.toList(growable: false);
+    setState(() {
+      _aggregateViewActive = true;
+      _aggregateLoading = false;
+      _aggregateFailure = null;
+      _aggregateItems = cachedItems;
+      _aggregateQuery = cachedQuery;
+    });
+    if (cachedItems.isEmpty && query.isNotEmpty) {
+      unawaited(_runAggregateSearch(query, selectedPlugins));
+    }
+  }
+
+  void _exitAggregateSearchView({bool rebuild = true}) {
+    final hasAggregateState =
+        _aggregateViewActive ||
+        _aggregateLoading ||
+        _aggregateSearch.enabled ||
+        _aggregateQuery.isNotEmpty ||
+        _aggregateItems.isNotEmpty;
+    if (!hasAggregateState) return;
+    ++_generation;
+    void clearState() {
+      _aggregateViewActive = false;
+      _aggregateLoading = false;
+      _aggregateFailure = null;
+      _aggregateItems = const <_AggregateSearchResult>[];
+      _aggregateQuery = '';
+    }
+    if (rebuild && mounted) {
+      setState(() {
+        clearState();
+      });
+    } else {
+      clearState();
+    }
+  }
+
+  Future<bool> _refreshAggregateResults() async {
+    final query = (_aggregateQuery.isNotEmpty
+            ? _aggregateQuery
+            : _lastAggregateQuery)
+        .trim();
+    if (query.isNotEmpty) {
+      final plugins = _aggregateSearch.enabled
+          ? _aggregateSearchPlugins()
+              .where(
+                (plugin) => _aggregateSearch.pluginIds.contains(plugin.pluginId),
+              )
+              .toList(growable: false)
+          : _aggregateSearchPlugins();
+      if (plugins.isNotEmpty) {
+        await _runAggregateSearch(query, plugins);
+        return true;
+      }
+    }
+    _exitAggregateSearchView();
+    return _reload(forceRefresh: true);
+  }
+
+  List<_AggregateSearchPlugin> _aggregateSearchPlugins() {
+    final controller = widget.externalPlugins;
+    final plugins = <_AggregateSearchPlugin>[];
+    final seen = <String>{};
+    for (final source in widget.sources) {
+      final owner = controller?.ownerOfSource(source.sourceId);
+      final pluginId = owner ?? 'source:${source.sourceId}';
+      if (!seen.add(pluginId)) continue;
+      plugins.add(
+        _AggregateSearchPlugin(
+          pluginId: pluginId,
+          label: source.descriptor.name,
+          accent: _comicSourceAccent(source),
+          source: source,
+        ),
+      );
+    }
+    return plugins;
+  }
+
+  void _setSearchOptionsExpanded(bool expanded) {
+    _aggregateSearch.setExpanded(
+      expanded,
+      _aggregateSearchPlugins().map((plugin) => plugin.pluginId),
+    );
   }
 
   bool _handleSourceScroll(ScrollNotification notification) {
-    if (_searchExpanded &&
+    if (_searchExpanded.value &&
         (notification is ScrollStartNotification ||
             notification is UserScrollNotification)) {
       scheduleMicrotask(_collapseSearch);
@@ -1292,16 +1509,142 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
 
   void _submitSearch(String value) {
     final normalized = value.trim();
+    if (_aggregateSearch.enabled) {
+      final selectedPlugins = _aggregateSearchPlugins()
+          .where(
+            (plugin) =>
+                _aggregateSearch.pluginIds.contains(plugin.pluginId),
+          )
+          .toList(growable: false);
+      if (selectedPlugins.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('请至少选择一个搜索插件')),
+        );
+        return;
+      }
+      _query = normalized;
+      _aggregateQuery = normalized;
+      _pageOffset = 0;
+      if (normalized.isNotEmpty) {
+        _lastSearchQuery = normalized;
+        widget.onSearchCommitted?.call(normalized);
+      }
+      _collapseSearch();
+      unawaited(_runAggregateSearch(normalized, selectedPlugins));
+      if (!_searchQueryLocked) {
+        _query = '';
+        _search.clear();
+      }
+      _aggregateSearch.setEnabled(
+        false,
+        _aggregateSearchPlugins().map((plugin) => plugin.pluginId),
+      );
+      return;
+    }
+    _exitAggregateSearchView();
     _query = normalized;
     _pageOffset = 0;
     if (normalized.isNotEmpty) {
+      _lastSearchQuery = normalized;
       widget.onSearchCommitted?.call(normalized);
     }
     _collapseSearch();
     unawaited(_reload(offset: 0));
+    if (!_searchQueryLocked) {
+      _query = '';
+      _aggregateQuery = '';
+      _search.clear();
+    }
+  }
+
+  Future<List<_AggregateSearchResult>> _searchAggregatePlugin(
+    _AggregateSearchPlugin plugin,
+    String query,
+    Set<String> categoryIds,
+  ) async {
+    final source = plugin.source;
+    final pages = <SourceBrowsePage>[];
+    if (categoryIds.isEmpty) {
+      pages.add(
+        await source.browse(query: query, offset: 0, limit: _pageSize),
+      );
+    } else {
+      final Object candidate = source;
+      if (candidate is! SectionedBrowsableComicSource) {
+        return const <_AggregateSearchResult>[];
+      }
+      final sections = await candidate.loadBrowseSections();
+      for (final section in sections) {
+        if (!categoryIds.contains(section.sectionId)) continue;
+        pages.add(
+          await candidate.browseSection(
+            section.sectionId,
+            query: query,
+            offset: 0,
+            limit: _pageSize,
+          ),
+        );
+      }
+    }
+    final seen = <String>{};
+    final results = <_AggregateSearchResult>[];
+    for (final page in pages) {
+      for (final comic in page.items) {
+        final identity = _stableSourceComicIdentity(source, comic.comicId);
+        if (!seen.add(identity)) continue;
+        results.add(_AggregateSearchResult(source: source, comic: comic));
+      }
+    }
+    return results;
+  }
+
+  Future<void> _runAggregateSearch(
+    String query,
+    List<_AggregateSearchPlugin> plugins,
+  ) async {
+    final generation = ++_generation;
+    final categoryIds = Set<String>.of(_aggregateSearch.categoryIds);
+    setState(() {
+      _aggregateViewActive = true;
+      _aggregateLoading = true;
+      _aggregateFailure = null;
+      _aggregateItems = const <_AggregateSearchResult>[];
+      _aggregateQuery = query;
+    });
+    final batches = await Future.wait(
+      plugins.map((plugin) async {
+        try {
+          return (
+            items: await _searchAggregatePlugin(plugin, query, categoryIds),
+            error: null as Object?,
+          );
+        } on Object catch (error) {
+          return (
+            items: const <_AggregateSearchResult>[],
+            error: error as Object?,
+          );
+        }
+      }),
+    );
+    if (!mounted || generation != _generation) return;
+    final results = <_AggregateSearchResult>[];
+    Object? firstError;
+    for (final batch in batches) {
+      results.addAll(batch.items);
+      firstError ??= batch.error;
+    }
+    setState(() {
+      _aggregateItems = List<_AggregateSearchResult>.unmodifiable(results);
+      _lastAggregateItems = List<_AggregateSearchResult>.unmodifiable(results);
+      _lastAggregateQuery = query;
+      _aggregateFailure = results.isEmpty ? firstError : null;
+      _aggregateLoading = false;
+    });
+    if (_scroll.hasClients) _scroll.jumpTo(0);
   }
 
   void _selectBrowseSection(String sectionId) {
+    _exitAggregateSearchView();
     if (_selectedSectionId == sectionId && !_filterViewActive) return;
     setState(() {
       _selectedSectionId = sectionId;
@@ -1326,7 +1669,11 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final source = _activeSource;
     return WillPopScope(
       onWillPop: () async {
-        if (!_searchExpanded) return true;
+        if (_aggregateViewActive) {
+          _exitAggregateSearchView();
+          return false;
+        }
+        if (!_searchExpanded.value) return true;
         _collapseSearch();
         return false;
       },
@@ -1336,27 +1683,191 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
           Expanded(
             child: Stack(
               children: <Widget>[
-                Positioned.fill(child: _buildBody(source)),
-              if (_refreshing)
-                const Align(
-                  alignment: Alignment.topCenter,
-                  child: LinearProgressIndicator(minHeight: 2),
+                Positioned.fill(
+                  child: RepaintBoundary(child: _buildBody(source)),
                 ),
-              Positioned(
-                left: 12,
-                bottom: 12,
-                child: _buildFloatingSearch(context, source),
+                if (_refreshing)
+                  const Align(
+                    alignment: Alignment.topCenter,
+                    child: LinearProgressIndicator(minHeight: 2),
+                  ),
+                Positioned(
+                  left: 12,
+                  bottom: 12,
+                  child: _SourceSearchKeyboardInset(
+                    child: ValueListenableBuilder<bool>(
+                      valueListenable: _searchExpanded,
+                      builder: (context, expanded, child) =>
+                          _buildFloatingSearch(context, source, expanded),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          RepaintBoundary(
+            child: _SourceSwitcher(
+              sources: widget.sources,
+              activeSourceId: widget.activeSourceId,
+              onSelected: (sourceId) {
+                _exitAggregateSearchView();
+                _aggregateSearch.setEnabled(
+                  false,
+                  _aggregateSearchPlugins().map((plugin) => plugin.pluginId),
+                );
+                widget.onSourceSelected(sourceId);
+              },
+              externalPlugins: widget.externalPlugins,
+              onExternalPluginRetry: widget.onExternalPluginRetry,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchHistory(
+    BuildContext context,
+    List<String> history,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 8, 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Text(
+                '搜索历史',
+                style: Theme.of(context).textTheme.labelLarge,
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: widget.onSearchHistoryCleared,
+                child: const Text('清空'),
               ),
             ],
           ),
-        ),
-          _SourceSwitcher(
-            sources: widget.sources,
-            activeSourceId: widget.activeSourceId,
-            onSelected: widget.onSourceSelected,
-            externalPlugins: widget.externalPlugins,
-            onExternalPluginRetry: widget.onExternalPluginRetry,
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: <Widget>[
+              for (final query in history)
+                InputChip(
+                  label: Text(query),
+                  onPressed: () {
+                    _search.value = TextEditingValue(
+                      text: query,
+                      selection: TextSelection.collapsed(offset: query.length),
+                    );
+                    _submitSearch(query);
+                  },
+                  onDeleted: widget.onSearchRemoved == null
+                      ? null
+                      : () => widget.onSearchRemoved!(query),
+                ),
+            ],
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAggregateSearchOptions(
+    BuildContext context,
+    List<_AggregateSearchPlugin> plugins,
+    List<SourceBrowseSection> categories,
+  ) {
+    final options = _aggregateSearch;
+    final pluginIds = plugins.map((plugin) => plugin.pluginId);
+    final categoryAccent = Theme.of(context).colorScheme.primary;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilterChip(
+              key: comicSourceAggregateSearchKey,
+              avatar: const Icon(Icons.hub_outlined, size: 18),
+              label: const Text('聚合搜索'),
+              selected: options.enabled,
+              showCheckmark: false,
+              onSelected: (selected) =>
+                  options.setEnabled(selected, pluginIds),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text('搜索插件', style: Theme.of(context).textTheme.labelLarge),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              for (final plugin in plugins)
+                FilterChip(
+                  key: comicSourceAggregatePluginKey(plugin.pluginId),
+                  label: Text(plugin.label),
+                  selected: options.pluginIds.contains(plugin.pluginId),
+                  showCheckmark: false,
+                  selectedColor: plugin.accent,
+                  side: BorderSide(
+                    color: plugin.accent.withValues(alpha: .7),
+                  ),
+                  labelStyle: options.pluginIds.contains(plugin.pluginId)
+                      ? TextStyle(
+                          color: Theme.of(context).colorScheme.onPrimary,
+                        )
+                      : TextStyle(color: plugin.accent),
+                  onSelected: options.enabled
+                      ? (selected) => options.togglePlugin(
+                            plugin.pluginId,
+                            selected,
+                          )
+                      : null,
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text('搜索分类', style: Theme.of(context).textTheme.labelLarge),
+          const SizedBox(height: 6),
+          if (categories.isEmpty)
+            Text(
+              '当前来源没有可选分类',
+              style: Theme.of(context).textTheme.bodySmall,
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: <Widget>[
+                for (final category in categories)
+                  FilterChip(
+                    key: comicSourceAggregateCategoryKey(category.sectionId),
+                    label: Text(category.label),
+                    selected:
+                        options.categoryIds.contains(category.sectionId),
+                    showCheckmark: false,
+                    selectedColor: categoryAccent,
+                    side: BorderSide(
+                      color: categoryAccent.withValues(alpha: .7),
+                    ),
+                    labelStyle:
+                        options.categoryIds.contains(category.sectionId)
+                            ? TextStyle(
+                                color: Theme.of(context).colorScheme.onPrimary,
+                              )
+                            : TextStyle(color: categoryAccent),
+                    onSelected: options.enabled
+                        ? (selected) => options.toggleCategory(
+                              category.sectionId,
+                              selected,
+                            )
+                        : null,
+                  ),
+              ],
+            ),
         ],
       ),
     );
@@ -1365,114 +1876,139 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   Widget _buildFloatingSearch(
     BuildContext context,
     BrowsableComicSource? source,
+    bool expanded,
   ) {
     final maxWidth = MediaQuery.sizeOf(context).width;
     final expandedWidth = (maxWidth - 24).clamp(260.0, 480.0).toDouble();
-    if (!_searchExpanded) {
-      return FloatingActionButton.small(
+    if (!expanded) {
+      return GestureDetector(
         key: comicSourceSearchFabKey,
-        heroTag: 'comic-source-search',
-        tooltip: '搜索漫画源',
-        onPressed: source == null
+        behavior: HitTestBehavior.opaque,
+        onTap: source == null
             ? null
-            : () => setState(() => _searchExpanded = true),
-        child: const Icon(Icons.search),
+            : _expandSearch,
+        onLongPress: source == null ? null : _openAggregateSearch,
+        child: IgnorePointer(
+          child: FloatingActionButton.small(
+            onPressed: source == null ? null : () {},
+            heroTag: 'comic-source-search',
+            tooltip: '搜索漫画源，长按打开聚合搜索',
+            child: const Icon(Icons.search),
+          ),
+        ),
       );
     }
     final history = widget.searchHistory;
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onVerticalDragStart: (_) => _collapseSearch(),
-      child: Material(
+    final plugins = _aggregateSearchPlugins();
+    final categories = _displaySections();
+    return AnimatedBuilder(
+      animation: _aggregateSearch,
+      builder: (context, child) => Material(
         key: comicSourceSearchHistoryKey,
         elevation: 6,
         borderRadius: BorderRadius.circular(24),
-        clipBehavior: Clip.antiAlias,
+        clipBehavior: Clip.hardEdge,
         child: SizedBox(
-        width: expandedWidth,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            if (history.isNotEmpty)
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 220),
-                child: ListView(
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.fromLTRB(12, 10, 8, 4),
-                  children: <Widget>[
-                    Row(
+          width: expandedWidth,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              GestureDetector(
+                key: comicSourceSearchExpandKey,
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragEnd: (details) {
+                  final velocity = details.primaryVelocity ?? 0;
+                  if (velocity < 0) {
+                    _setSearchOptionsExpanded(true);
+                  } else if (velocity > 0) {
+                    _setSearchOptionsExpanded(false);
+                  }
+                },
+                child: SizedBox(
+                  height: 30,
+                  child: Center(
+                    child: IconButton(
+                      tooltip: _aggregateSearch.expanded
+                          ? '收起扩展搜索'
+                          : '展开扩展搜索',
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      onPressed: () => _setSearchOptionsExpanded(
+                        !_aggregateSearch.expanded,
+                      ),
+                      icon: Icon(
+                        _aggregateSearch.expanded
+                            ? Icons.keyboard_arrow_down
+                            : Icons.keyboard_arrow_up,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (_aggregateSearch.expanded)
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 300),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: <Widget>[
-                        Text(
-                          '搜索历史',
-                          style: Theme.of(context).textTheme.labelLarge,
+                        _buildAggregateSearchOptions(
+                          context,
+                          plugins,
+                          categories,
                         ),
-                        const Spacer(),
-                        TextButton(
-                          onPressed: widget.onSearchHistoryCleared,
-                          child: const Text('清空'),
-                        ),
+                        if (history.isNotEmpty)
+                          _buildSearchHistory(context, history),
                       ],
                     ),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: <Widget>[
-                        for (final query in history)
-                          InputChip(
-                            label: Text(query),
-                            onPressed: () {
-                              _search.value = TextEditingValue(
-                                text: query,
-                                selection: TextSelection.collapsed(
-                                  offset: query.length,
-                                ),
-                              );
-                              _submitSearch(query);
-                            },
-                            onDeleted: widget.onSearchRemoved == null
-                                ? null
-                                : () => widget.onSearchRemoved!(query),
-                          ),
-                      ],
+                  ),
+                )
+              else if (history.isNotEmpty)
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 220),
+                  child: SingleChildScrollView(
+                    child: _buildSearchHistory(context, history),
+                  ),
+                ),
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _search,
+                builder: (context, value, child) => SearchBar(
+                  key: comicSourceSearchKey,
+                  controller: _search,
+                  focusNode: _searchFocus,
+                  autoFocus: false,
+                  enabled: source != null,
+                  hintText: source == null
+                      ? '请先启用漫画源'
+                      : '搜索 ${source.descriptor.name}',
+                  leading: IconButton(
+                    tooltip: '收起搜索',
+                    onPressed: _collapseSearch,
+                    icon: const Icon(Icons.chevron_left),
+                  ),
+                  trailing: <Widget>[
+                    if (value.text.isNotEmpty)
+                      IconButton(
+                        tooltip: '清除搜索',
+                        onPressed: _search.clear,
+                        icon: const Icon(Icons.close),
+                      ),
+                    IconButton(
+                      key: comicSourceSearchLockKey,
+                      tooltip: _searchQueryLocked ? '解除关键词锁定' : '锁定关键词',
+                      onPressed: () => setState(
+                        () => _searchQueryLocked = !_searchQueryLocked,
+                      ),
+                      icon: Icon(
+                        _searchQueryLocked ? Icons.lock : Icons.lock_open,
+                      ),
                     ),
                   ],
+                  onSubmitted: _submitSearch,
                 ),
               ),
-            SearchBar(
-              key: comicSourceSearchKey,
-              controller: _search,
-              autoFocus: true,
-              enabled: source != null,
-              hintText:
-                  source == null ? '请先启用漫画源' : '搜索 ${source.descriptor.name}',
-              leading: IconButton(
-                tooltip: '收起搜索',
-                onPressed: _collapseSearch,
-                icon: const Icon(Icons.chevron_left),
-              ),
-              trailing: <Widget>[
-                if (_search.text.isNotEmpty)
-                  IconButton(
-                    tooltip: '清除搜索',
-                    onPressed: () {
-                      _search.clear();
-                      _submitSearch('');
-                    },
-                    icon: const Icon(Icons.close),
-                  ),
-                IconButton(
-                  tooltip: '刷新',
-                  onPressed: source == null || _loading
-                      ? null
-                      : () => unawaited(_reload(forceRefresh: true)),
-                  icon: const Icon(Icons.refresh),
-                ),
-              ],
-              onChanged: (_) => setState(() {}),
-              onSubmitted: _submitSearch,
-            ),
-          ],
+            ],
           ),
         ),
       ),
@@ -1506,6 +2042,9 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         key: comicSourceEmptyKey,
         child: Text('没有已启用的漫画源，请从顶部管理入口启用。'),
       );
+    }
+    if (_aggregateViewActive) {
+      return _buildAggregateResultsBody();
     }
     if (_loading && _items.isEmpty) {
       return _refreshableStatus(
@@ -1711,6 +2250,172 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       },
     );
   }
+
+  Widget _buildAggregateResultsBody() {
+    final query = _aggregateQuery;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const width = 132.0;
+        const spacing = 12.0;
+        final count = ((constraints.maxWidth + spacing) / (width + spacing))
+            .floor()
+            .clamp(1, 12)
+            .toInt();
+        final used = count * width + (count - 1) * spacing;
+        final padding =
+            ((constraints.maxWidth - used) / 2).clamp(12, 80).toDouble();
+        return NotificationListener<ScrollNotification>(
+          onNotification: _handleSourceScroll,
+          child: AppPullToRefresh(
+            key: comicSourcePullRefreshKey,
+            resultKey: comicSourceRefreshStateKey,
+            onRefresh: _refreshAggregateResults,
+            child: CustomScrollView(
+              key: comicSourceAggregateResultsKey,
+              controller: _scroll,
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: <Widget>[
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+                    child: Text(
+                      query.isEmpty ? '聚合搜索' : '聚合搜索：$query',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                ),
+                if (_aggregateLoading)
+                  const SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (_aggregateItems.isEmpty)
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(
+                      child: Text(
+                        _aggregateFailure == null
+                            ? '请输入关键词开始聚合搜索'
+                            : '聚合搜索失败：$_aggregateFailure',
+                      ),
+                    ),
+                  )
+                else
+                  SliverPadding(
+                    padding: EdgeInsets.fromLTRB(padding, 8, padding, 84),
+                    sliver: SliverGrid(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: count,
+                        mainAxisExtent: 224,
+                        crossAxisSpacing: spacing,
+                        mainAxisSpacing: 12,
+                      ),
+                      delegate: SliverChildBuilderDelegate(
+                        (context, index) {
+                          final result = _aggregateItems[index];
+                          final source = result.source;
+                          final comic = result.comic;
+                          return _SourceComicCard(
+                            key: ValueKey<String>(
+                              'aggregate-source-comic:${source.sourceId}\u0000'
+                              '${_stableSourceComicIdentity(source, comic.comicId)}',
+                            ),
+                            source: source,
+                            comic: comic,
+                            inShelf: widget.isInShelf?.call(source, comic) ??
+                                false,
+                            hasUpdate: widget.hasUpdate?.call(source, comic) ??
+                                false,
+                            reloadToken: _artworkRetryRevision,
+                            loadCover: _loadSourceCardCover,
+                            onCoverFrameReady: () => _recordSourceTrace(
+                              TraceEventKind.firstFrameReady,
+                              'aggregate-cover-first-frame',
+                              source,
+                              identityHash: _sourceCoverIdentity(source, comic),
+                            ),
+                            onCoverDecodeFailure: () => _recordSourceTrace(
+                              TraceEventKind.taskFailed,
+                              'aggregate-cover-decode-failed',
+                              source,
+                              identityHash: _sourceCoverIdentity(source, comic),
+                              payload: const <String, Object?>{
+                                'failureLayer': 'presentation-decode',
+                              },
+                            ),
+                            onSourceVerificationRequired:
+                                widget.onOpenSourceWebView == null
+                                    ? null
+                                    : () => unawaited(
+                                          _recoverSourceAccess(source),
+                                        ),
+                            onOpenUpdate: widget.onOpenUpdate == null
+                                ? null
+                                : () => unawaited(
+                                      widget.onOpenUpdate!(source, comic),
+                                    ),
+                            onTap: () => unawaited(
+                              widget.onOpenComic(source, comic),
+                            ),
+                          );
+                        },
+                        childCount: _aggregateItems.length,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+final class _SourceSearchKeyboardInset extends StatefulWidget {
+  const _SourceSearchKeyboardInset({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_SourceSearchKeyboardInset> createState() =>
+      _SourceSearchKeyboardInsetState();
+}
+
+final class _SourceSearchKeyboardInsetState
+    extends State<_SourceSearchKeyboardInset> {
+  double _bottomClearance = 0;
+  bool _measurementScheduled = false;
+
+  void _scheduleBottomClearanceMeasurement() {
+    if (_measurementScheduled) return;
+    _measurementScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _measurementScheduled = false;
+      if (!mounted) return;
+      final box = context.findRenderObject();
+      if (box is! RenderBox || !box.hasSize) return;
+      final bottom = box.localToGlobal(Offset(0, box.size.height)).dy;
+      final clearance = (MediaQuery.sizeOf(context).height - bottom)
+          .clamp(0.0, double.infinity)
+          .toDouble();
+      if ((clearance - _bottomClearance).abs() < 0.5) return;
+      setState(() => _bottomClearance = clearance);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    _scheduleBottomClearanceMeasurement();
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    final overlap = (keyboardInset - _bottomClearance)
+        .clamp(0.0, keyboardInset)
+        .toDouble();
+    return Padding(
+      padding: EdgeInsets.only(bottom: overlap),
+      child: RepaintBoundary(child: widget.child),
+    );
+  }
 }
 
 final class _SourcePager extends StatelessWidget {
@@ -1832,11 +2537,17 @@ final class _SourceSwitcherState extends State<_SourceSwitcher> {
   List<InstalledExternalPlugin> _visiblePlugins(
     ExternalPluginController controller,
   ) {
+    final activePluginIds = <String>{};
+    for (final source in widget.sources) {
+      final owner = controller.ownerOfSource(source.sourceId);
+      if (owner != null) activePluginIds.add(owner);
+    }
     final plugins = controller.installed.where((plugin) {
+      if (!activePluginIds.contains(plugin.plugin.pluginId)) return false;
       final failure = controller.activationFailures[plugin.plugin.pluginId];
-      // A terminal activation failure is intentionally not presented as an
-      // enabled source control. Recoverable failures stay visible so a tap
-      // can retry the already-owned payload.
+      // Bottom controls represent enabled source sessions, not installed
+      // payload records. An inactive Venera or Mihon plugin remains available
+      // from management but must not appear as a disabled source control.
       return failure == null ||
           controller.canRetryActivation(plugin.plugin.pluginId);
     }).where((plugin) {
