@@ -1561,10 +1561,14 @@ void main() {
     await store.open();
     addTearDown(store.close);
     const sourceId = 'fixture-version';
+    final versionLoadStarted = Completer<void>();
+    final versionLoadGate = Completer<void>();
     final source = _FixtureSource(
       sourceId,
       '版本源',
       supportsComicVersions: true,
+      versionLoadStarted: versionLoadStarted,
+      versionLoadGate: versionLoadGate,
       comicVersions: const <SourceComicVersion>[
         SourceComicVersion(
           sourceId: sourceId,
@@ -1573,6 +1577,24 @@ void main() {
           generation: 2,
         ),
       ],
+    );
+    await store.saveComicVersionRelation(
+      ComicVersionRelation(
+        sourceId: sourceId,
+        predecessorComicId: '$sourceId-comic',
+        successorComicId: 'fixture-version-new-comic',
+        predecessorTitle: '版本源 漫画',
+        discoveredAt: DateTime.utc(2026, 8, 25),
+      ),
+    );
+    await store.saveComicVersionRelation(
+      ComicVersionRelation(
+        sourceId: sourceId,
+        predecessorComicId: 'fixture-version-old-comic',
+        successorComicId: '$sourceId-comic',
+        predecessorTitle: '旧版标题',
+        discoveredAt: DateTime.utc(2026, 8, 20),
+      ),
     );
 
     await tester.pumpWidget(
@@ -1598,11 +1620,48 @@ void main() {
     );
     expect(find.byKey(details.comicDetailsMigrateKey), findsOneWidget);
     expect(find.byKey(details.comicDetailsVersionActionKey), findsOneWidget);
-    expect(find.byKey(details.comicDetailsVersionViewKey), findsOneWidget);
+    expect(versionLoadStarted.isCompleted, isTrue);
+    expect(find.byIcon(Icons.error_outline), findsOneWidget);
+    expect(find.byKey(details.comicDetailsVersionViewKey), findsNothing);
+    expect(find.byKey(details.comicDetailsVersionMigrateKey), findsNothing);
+    await _tapVisible(
+      tester,
+      find.byKey(details.comicDetailsVersionActionKey),
+    );
+    await _pumpUntilFound(
+      tester,
+      find.byKey(details.comicDetailsVersionViewKey),
+    );
     expect(find.byKey(details.comicDetailsVersionMigrateKey), findsOneWidget);
-    expect(find.text('查看新版本'), findsOneWidget);
-    expect(find.text('迁移'), findsOneWidget);
+    expect(find.text('新版本'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.text('版本源 漫画'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('更新日期：2026-08-25'), findsOneWidget);
+    expect(find.text('fixture-version-new-comic'), findsNothing);
+    expect(find.textContaining('版本 2'), findsNothing);
+    await tester.tap(find.byIcon(Icons.flip));
+    await tester.pump();
+    expect(find.text('旧版本'), findsOneWidget);
+    expect(find.text('旧版标题'), findsOneWidget);
+    expect(find.text('更新日期：2026-08-20'), findsOneWidget);
+    expect(
+      tester
+          .widget<IconButton>(
+            find.byKey(details.comicDetailsVersionMigrateCurrentKey),
+          )
+          .onPressed,
+      isNotNull,
+    );
     expect(find.text('有新版本'), findsNothing);
+    versionLoadGate.complete();
+    await tester.tap(find.byIcon(Icons.flip));
+    await _pumpUntilFound(tester, find.text('新版标题'));
+    expect(find.text('fixture-version-new-comic'), findsNothing);
   });
 
   testWidgets('whole comic shelf and chapter download have separate ownership',
@@ -2394,6 +2453,8 @@ final class _FixtureSource
     this.firstComicLoadStarted,
     this.firstComicLoadGate,
     this.supportsComicVersions = false,
+    this.versionLoadStarted,
+    this.versionLoadGate,
     this.comicVersions = const <SourceComicVersion>[],
     this.supportsComicPreview = false,
     this.previewPageCount = 1,
@@ -2421,6 +2482,8 @@ final class _FixtureSource
   final Completer<void>? firstComicLoadGate;
   @override
   final bool supportsComicVersions;
+  final Completer<void>? versionLoadStarted;
+  final Completer<void>? versionLoadGate;
   final List<SourceComicVersion> comicVersions;
   @override
   final bool supportsComicPreview;
@@ -2566,6 +2629,9 @@ final class _FixtureSource
   @override
   Future<List<SourceComicVersion>> findComicVersions(String comicId) async {
     expect(comicId, _comicId);
+    final started = versionLoadStarted;
+    if (started != null && !started.isCompleted) started.complete();
+    await versionLoadGate?.future;
     return comicVersions;
   }
 

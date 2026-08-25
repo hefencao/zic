@@ -39,6 +39,8 @@ const comicDetailsVersionViewKey =
     ValueKey<String>('comic-details-version-view');
 const comicDetailsVersionMigrateKey =
     ValueKey<String>('comic-details-version-migrate');
+const comicDetailsVersionMigrateCurrentKey =
+    ValueKey<String>('comic-details-version-migrate-current');
 const comicDetailsContinueReadingKey =
     ValueKey<String>('comic-details-continue-reading');
 const comicDetailsReadingHistoryKey =
@@ -195,10 +197,12 @@ final class ComicDetailsVersionState {
   const ComicDetailsVersionState({
     this.successors = const <SourceComicVersion>[],
     this.predecessors = const <SourceComicVersion>[],
+    this.backgroundRefresh,
   });
 
   final List<SourceComicVersion> successors;
   final List<SourceComicVersion> predecessors;
+  final Future<ComicDetailsVersionState>? backgroundRefresh;
 
   bool get isEmpty => successors.isEmpty && predecessors.isEmpty;
 }
@@ -2724,7 +2728,9 @@ final class _ComicDetailsHeader extends StatelessWidget {
                         selected: preference.inShelf,
                         onPressed: () => unawaited(
                           onPreferenceChanged(
-                            preference.copyWith(inShelf: !preference.inShelf),
+                            preference.copyWith(
+                              inShelf: !preference.inShelf,
+                            ),
                           ),
                         ),
                       ),
@@ -3349,16 +3355,19 @@ final class _PreferenceButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return IconButton.filledTonal(
-      tooltip: label,
-      isSelected: selected,
-      onPressed: onPressed,
-      icon: loading
-          ? const SizedBox.square(
-              dimension: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : Icon(icon),
+    return SizedBox.square(
+      dimension: 48,
+      child: IconButton.filledTonal(
+        tooltip: label,
+        isSelected: selected,
+        onPressed: onPressed,
+        icon: loading
+            ? const SizedBox.square(
+                dimension: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(icon),
+      ),
     );
   }
 }

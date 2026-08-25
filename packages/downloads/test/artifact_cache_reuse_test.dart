@@ -75,6 +75,44 @@ void main() {
     expect(await cache.readForeground(newSecond), isNull);
   });
 
+  test('version migration materializes verified artifacts under target keys',
+      () async {
+    final oldChapter = _chapter(
+      comicId: 'old',
+      revision: 'old',
+      urls: const <String>[
+        'https://e-hentai.org/s/aaaaaaaaaaaaaaaa/1-1',
+      ],
+    );
+    final newChapter = _chapter(
+      comicId: 'new',
+      revision: 'new',
+      urls: const <String>[
+        'https://e-hentai.org/s/aaaaaaaaaaaaaaaa/2-1',
+      ],
+    );
+    final oldId = readerPageDownloadId(oldChapter, oldChapter.pages.single);
+    final newId = readerPageDownloadId(newChapter, newChapter.pages.single);
+    final backend = _Backend(<DownloadId, Uint8List>{
+      oldId: Uint8List.fromList(<int>[4, 5, 6]),
+    });
+    final plan = VerifiedArtifactReusePlan.match(
+      oldChapter: oldChapter,
+      newChapter: newChapter,
+    );
+
+    expect(
+      await plan.materializeTargetArtifacts(
+        ArtifactCacheManager(backend: backend),
+      ),
+      1,
+    );
+
+    final reopened = ArtifactCacheManager(backend: backend);
+    expect((await reopened.readForeground(newId))?.bytes, <int>[4, 5, 6]);
+    expect(await reopened.lookupAuthoritative(oldId), isNotNull);
+  });
+
   test('page index or title similarity alone never creates reuse aliases', () {
     final oldChapter = _chapter(
       comicId: 'old',

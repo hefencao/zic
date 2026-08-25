@@ -26,6 +26,13 @@ ComicVersionSource? _sourceVersionCapability(BrowsableComicSource source) {
 bool _sourceSupportsVersionEntry(BrowsableComicSource source) =>
     _sourceVersionCapability(source)?.supportsComicVersions == true;
 
+String? _sourceVersionRelationDate(DateTime? value) {
+  if (value == null) return null;
+  final local = value.toLocal();
+  String twoDigits(int part) => part.toString().padLeft(2, '0');
+  return '${local.year}-${twoDigits(local.month)}-${twoDigits(local.day)}';
+}
+
 const Duration _versionPageMappingRevalidationInterval = Duration(minutes: 10);
 
 bool _versionPageMappingIsFresh(
@@ -95,6 +102,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   Future<List<SourceComicVersion>> _storedSourceSuccessors({
     required String sourceId,
     required String predecessorComicId,
+    required String fallbackTitle,
   }) async {
     final store = _comicVersionRelationStore();
     if (store == null) {
@@ -111,8 +119,11 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           SourceComicVersion(
             sourceId: sourceId,
             comicId: relations[index].successorComicId,
-            title: '',
+            title: relations[index].predecessorTitle.trim().isEmpty
+                ? fallbackTitle
+                : relations[index].predecessorTitle.trim(),
             generation: relations.length - index,
+            date: _sourceVersionRelationDate(relations[index].discoveredAt),
           ),
     ];
   }
@@ -120,6 +131,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   Future<List<SourceComicVersion>> _storedSourcePredecessors({
     required String sourceId,
     required String successorComicId,
+    required String fallbackTitle,
   }) async {
     final store = _comicVersionRelationStore();
     if (store == null) return const <SourceComicVersion>[];
@@ -134,8 +146,11 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           SourceComicVersion(
             sourceId: sourceId,
             comicId: relations[index].predecessorComicId,
-            title: relations[index].predecessorTitle,
+            title: relations[index].predecessorTitle.trim().isEmpty
+                ? '旧版：$fallbackTitle'
+                : relations[index].predecessorTitle.trim(),
             generation: index + 1,
+            date: _sourceVersionRelationDate(relations[index].discoveredAt),
             isPredecessor: true,
           ),
     ];
@@ -587,38 +602,51 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     final storedSuccessors = await _storedSourceSuccessors(
       sourceId: source.sourceId,
       predecessorComicId: currentComicId,
+      fallbackTitle: title,
     );
     final storedPredecessors = await _storedSourcePredecessors(
       sourceId: source.sourceId,
       successorComicId: currentComicId,
+      fallbackTitle: title,
     );
-    var discovered = const <SourceComicVersion>[];
-    try {
-      discovered = await versionSource.findComicVersions(currentComicId);
-      await _rememberSourceSuccessors(
-        source: source,
-        predecessorComicId: currentComicId,
-        predecessorTitle: title,
-        successors: discovered.where((item) => !item.isPredecessor),
-      );
-    } on Object {
-      if (storedSuccessors.isEmpty && storedPredecessors.isEmpty) rethrow;
-    }
 
     List<SourceComicVersion> merge(
       Iterable<SourceComicVersion> values, {
       required bool predecessor,
     }) {
-      final identities = <String>{};
+      final indexes = <String, int>{};
+      final currentCanonical = _canonicalComicKey(
+        source.sourceId,
+        currentComicId,
+      );
       final result = <SourceComicVersion>[];
       for (final item in values) {
         if (item.isPredecessor != predecessor ||
             item.sourceId != source.sourceId ||
             item.comicId.isEmpty ||
             item.comicId == currentComicId ||
-            !identities.add(item.comicId)) {
+            _canonicalComicKey(source.sourceId, item.comicId) ==
+                currentCanonical) {
           continue;
         }
+        final existingIndex = indexes[item.comicId];
+        if (existingIndex != null) {
+          final existing = result[existingIndex];
+          result[existingIndex] = SourceComicVersion(
+            sourceId: existing.sourceId,
+            comicId: existing.comicId,
+            title: existing.title.trim().isEmpty
+                ? item.title.trim()
+                : existing.title.trim(),
+            generation: existing.generation,
+            date: existing.date?.trim().isNotEmpty == true
+                ? existing.date!.trim()
+                : item.date?.trim(),
+            isPredecessor: predecessor,
+          );
+          continue;
+        }
+        indexes[item.comicId] = result.length;
         result.add(item);
       }
       result.sort((left, right) {
@@ -631,21 +659,66 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       return List<SourceComicVersion>.unmodifiable(result);
     }
 
+    details.ComicDetailsVersionState stateFor(
+      Iterable<SourceComicVersion> discovered, {
+      Future<details.ComicDetailsVersionState>? backgroundRefresh,
+    }
+    ) =>
+        details.ComicDetailsVersionState(
+          successors: merge(
+            <SourceComicVersion>[...discovered, ...storedSuccessors],
+            predecessor: false,
+          ),
+          predecessors: merge(
+            <SourceComicVersion>[...discovered, ...storedPredecessors],
+            predecessor: true,
+          ),
+          backgroundRefresh: backgroundRefresh,
+        );
+
+    Future<List<SourceComicVersion>> refreshVersions() async {
+      final discovered = await versionSource.findComicVersions(currentComicId);
+      await _rememberSourceSuccessors(
+        source: source,
+        predecessorComicId: currentComicId,
+        predecessorTitle: title,
+        successors: discovered.where((item) => !item.isPredecessor),
+      );
+      return discovered;
+    }
+
+    if (storedSuccessors.isNotEmpty || storedPredecessors.isNotEmpty) {
+      final backgroundRefresh = Future<void>(() {}).then((_) async {
+        try {
+          return stateFor(await refreshVersions());
+        } on Object {
+          // A confirmed durable relation remains usable while offline.
+          return stateFor(const <SourceComicVersion>[]);
+        }
+      });
+      _scheduleVersionReuseWarmup(
+        source,
+        currentComicId,
+        refreshVersions: false,
+      );
+      return stateFor(
+        const <SourceComicVersion>[],
+        backgroundRefresh: backgroundRefresh,
+      );
+    }
+
+    var discovered = const <SourceComicVersion>[];
+    try {
+      discovered = await refreshVersions();
+    } on Object {
+      if (storedPredecessors.isEmpty) rethrow;
+    }
     _scheduleVersionReuseWarmup(
       source,
       currentComicId,
       refreshVersions: false,
     );
-    return details.ComicDetailsVersionState(
-      successors: merge(
-        <SourceComicVersion>[...discovered, ...storedSuccessors],
-        predecessor: false,
-      ),
-      predecessors: merge(
-        <SourceComicVersion>[...discovered, ...storedPredecessors],
-        predecessor: true,
-      ),
-    );
+    return stateFor(discovered);
   }
 
   bool _sourceComicHasUpdate(
@@ -1218,6 +1291,27 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           targetRecord.chapterId,
         );
         final sourceEntry = await _librarySession.hydrateEntry(match.source);
+        final sourceChapter = sourceEntry.chapter.toManifest();
+        var artifactReuse = VerifiedArtifactReusePlan.match(
+          oldChapter: sourceChapter,
+          newChapter: targetManifest,
+        );
+        if (replacingSource && artifactReuse.mappings.isEmpty) {
+          try {
+            artifactReuse =
+                await VerifiedArtifactReusePlan.matchResolvedRelated(
+              sourceChapter: sourceChapter,
+              targetChapter: targetManifest,
+              resolveIdentity: (page) =>
+                  _sourceResources.verifiedPageReuseIdentity(
+                sourceId: request.source.sourceId,
+                locator: page.uri,
+              ),
+            );
+          } on Object {
+            // Migration remains valid when optional media reuse proof fails.
+          }
+        }
         prepared.add(
           _PreparedChapterMigration(
             targetRecord: targetRecord,
@@ -1231,12 +1325,20 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
               targetRecord.sourceId,
               targetRecord.chapterId,
             )],
-            artifactReuse: VerifiedArtifactReusePlan.match(
-              oldChapter: sourceEntry.chapter.toManifest(),
-              newChapter: targetManifest,
-            ),
+            artifactReuse: artifactReuse,
           ),
         );
+      }
+
+      var materializedPageArtifacts = 0;
+      final artifactCache = _readerArtifactCache;
+      if (artifactCache != null) {
+        for (final item in prepared) {
+          materializedPageArtifacts +=
+              await item.artifactReuse.materializeTargetArtifacts(
+            artifactCache,
+          );
+        }
       }
 
       final migrationTime = DateTime.now().toUtc();
@@ -1278,7 +1380,6 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         final targetRecord = item.targetRecord;
         await _librarySession.upsertChapter(targetRecord);
         migratedChapters++;
-        final artifactCache = _readerArtifactCache;
         if (artifactCache != null) {
           registeredPageEquivalences +=
               item.artifactReuse.registerEquivalences(artifactCache);
@@ -1357,8 +1458,10 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
             '保留 $preservedTargetStates 项目标源已有状态',
           if (registeredPageEquivalences > 0)
             '登记 $registeredPageEquivalences 页已验证媒体等价关系',
+          if (materializedPageArtifacts > 0)
+            '复用 $materializedPageArtifacts 页旧版离线文件到新 key',
           if (replacingSource)
-            '旧版本记录已替换，离线文件需在下载管理中单独清理'
+            '旧版本记录已替换，未匹配的旧版离线文件仍保留'
           else
             '原来源与离线文件保留',
         ];

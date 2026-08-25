@@ -150,6 +150,15 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
               onPressed: () => unawaited(widget.onOpenSourceWebView!()),
               icon: const Icon(Icons.public),
             ),
+          if (widget.loadVersionState != null &&
+              widget.onViewVersion != null &&
+              widget.onMigrateVersion != null)
+            _ComicDetailsVersionActions(
+              key: comicDetailsVersionSectionKey,
+              load: widget.loadVersionState!,
+              onView: widget.onViewVersion!,
+              onMigrate: widget.onMigrateVersion!,
+            ),
           if (widget.onMigrateSource != null)
             IconButton(
               key: comicDetailsMigrateKey,
@@ -194,20 +203,6 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
                     ),
                   ),
                 ),
-                if (widget.loadVersionState != null &&
-                    widget.onViewVersion != null &&
-                    widget.onMigrateVersion != null)
-                  SliverPadding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-                    sliver: SliverToBoxAdapter(
-                      child: _ComicDetailsVersionActions(
-                        key: comicDetailsVersionSectionKey,
-                        load: widget.loadVersionState!,
-                        onView: widget.onViewVersion!,
-                        onMigrate: widget.onMigrateVersion!,
-                      ),
-                    ),
-                  ),
                 if (widget.onContinueReading != null)
                   SliverPadding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
@@ -305,89 +300,81 @@ final class _ComicDetailsVersionActions extends StatefulWidget {
 final class _ComicDetailsVersionActionsState
     extends State<_ComicDetailsVersionActions> {
   late Future<ComicDetailsVersionState> _state;
+  final ValueNotifier<ComicDetailsVersionState?> _resolvedState =
+      ValueNotifier<ComicDetailsVersionState?>(null);
   bool _working = false;
 
   @override
   void initState() {
     super.initState();
     _state = widget.load();
+    unawaited(_consumeState(_state));
   }
 
-  Future<SourceComicVersion?> _chooseVersion(
-    String title,
-    List<SourceComicVersion> versions,
+  Future<void> _consumeState(
+    Future<ComicDetailsVersionState> initial,
   ) async {
-    if (versions.isEmpty) return null;
-    if (versions.length == 1) return versions.single;
-    return showDialog<SourceComicVersion>(
+    final ComicDetailsVersionState state;
+    try {
+      state = await initial;
+    } on Object {
+      return;
+    }
+    if (!mounted) return;
+    _resolvedState.value = state;
+    final refresh = state.backgroundRefresh;
+    if (refresh == null) return;
+    final refreshed = await refresh;
+    if (!mounted) return;
+    _resolvedState.value = refreshed;
+    setState(() {
+      _state = Future<ComicDetailsVersionState>.value(refreshed);
+    });
+  }
+
+  @override
+  void dispose() {
+    _resolvedState.dispose();
+    super.dispose();
+  }
+
+  Future<void> _showVersions() async {
+    final command = await showDialog<_ComicDetailsVersionCommand>(
       context: context,
-      builder: (context) => SimpleDialog(
-        title: Text(title),
-        children: <Widget>[
-          for (final version in versions)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(context, version),
-              child: ListTile(
-                title: Text(
-                  version.title.trim().isEmpty
-                      ? version.comicId
-                      : version.title.trim(),
-                ),
-                subtitle: Text(<String>[
-                  '版本 ${version.generation}',
-                  if (version.date?.trim().isNotEmpty == true)
-                    version.date!.trim(),
-                ].join(' · ')),
-              ),
-            ),
-        ],
+      builder: (context) => _ComicDetailsVersionDialog(
+        state: _resolvedState,
       ),
     );
-  }
-
-  Future<void> _run(
-    String chooserTitle,
-    List<SourceComicVersion> versions,
-    ComicDetailsVersionViewer action,
-  ) async {
-    final version = await _chooseVersion(chooserTitle, versions);
-    if (version == null || !mounted) return;
+    if (command == null || !mounted) return;
     setState(() => _working = true);
     try {
-      await action(version);
+      await (command.migrate
+          ? widget.onMigrate(command.version)
+          : widget.onView(command.version));
     } finally {
       if (mounted) setState(() => _working = false);
     }
   }
 
-  Widget _versionRow({
-    required bool successor,
-    required List<SourceComicVersion> versions,
-  }) {
-    final label = successor ? '新版本' : '旧版本';
-    return Row(
-      children: <Widget>[
-        Expanded(
-          child: FilledButton.tonal(
-            key: successor ? comicDetailsVersionViewKey : null,
-            onPressed: _working
-                ? null
-                : () => _run('选择$label', versions, widget.onView),
-            child: Text('查看$label'),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: FilledButton.tonal(
-            key: successor ? comicDetailsVersionMigrateKey : null,
-            onPressed: _working
-                ? null
-                : () => _run('选择要迁移的$label', versions, widget.onMigrate),
-            child: const Text('迁移'),
-          ),
-        ),
-      ],
+  Widget _indicatorIcon(ComicDetailsVersionState state) {
+    final hasSuccessors = state.successors.isNotEmpty;
+    final hasPredecessors = state.predecessors.isNotEmpty;
+    final angle = hasSuccessors && hasPredecessors
+        ? math.pi / 2
+        : hasPredecessors
+            ? math.pi
+            : 0.0;
+    return Transform.rotate(
+      angle: angle,
+      child: const Icon(Icons.error_outline),
     );
+  }
+
+  String _tooltip(ComicDetailsVersionState state) {
+    if (state.successors.isNotEmpty && state.predecessors.isNotEmpty) {
+      return '存在新旧版本';
+    }
+    return state.predecessors.isNotEmpty ? '存在旧版本' : '发现同源更新';
   }
 
   @override
@@ -396,25 +383,162 @@ final class _ComicDetailsVersionActionsState
       future: _state,
       builder: (context, snapshot) {
         final state = snapshot.data;
-        if (state == null || state.isEmpty) return const SizedBox.shrink();
-        return Card(
+        if (state == null || state.isEmpty) {
+          return const SizedBox.square(dimension: 48);
+        }
+        return IconButton(
           key: comicDetailsVersionActionKey,
-          margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                if (state.successors.isNotEmpty)
-                  _versionRow(successor: true, versions: state.successors),
-                if (state.successors.isNotEmpty &&
-                    state.predecessors.isNotEmpty)
-                  const SizedBox(height: 8),
-                if (state.predecessors.isNotEmpty)
-                  _versionRow(successor: false, versions: state.predecessors),
-              ],
+          tooltip: _tooltip(state),
+          onPressed: _working
+              ? null
+              : () => unawaited(_showVersions()),
+          icon: _working
+              ? const SizedBox.square(
+                  dimension: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : _indicatorIcon(state),
+        );
+      },
+    );
+  }
+}
+
+final class _ComicDetailsVersionCommand {
+  const _ComicDetailsVersionCommand({
+    required this.version,
+    required this.migrate,
+  });
+
+  final SourceComicVersion version;
+  final bool migrate;
+}
+
+final class _ComicDetailsVersionDialog extends StatefulWidget {
+  const _ComicDetailsVersionDialog({required this.state});
+
+  final ValueNotifier<ComicDetailsVersionState?> state;
+
+  @override
+  State<_ComicDetailsVersionDialog> createState() =>
+      _ComicDetailsVersionDialogState();
+}
+
+final class _ComicDetailsVersionDialogState
+    extends State<_ComicDetailsVersionDialog> {
+  late bool _showPredecessors;
+
+  @override
+  void initState() {
+    super.initState();
+    _showPredecessors = widget.state.value?.successors.isEmpty ?? false;
+  }
+
+  _ComicDetailsVersionCommand _command(
+    SourceComicVersion version, {
+    required bool migrate,
+  }) =>
+      _ComicDetailsVersionCommand(version: version, migrate: migrate);
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<ComicDetailsVersionState?>(
+      valueListenable: widget.state,
+      builder: (context, state, child) {
+        if (state == null) return const SizedBox.shrink();
+        final showPredecessors = _showPredecessors
+            ? state.predecessors.isNotEmpty || state.successors.isEmpty
+            : state.successors.isEmpty && state.predecessors.isNotEmpty;
+        final versions = showPredecessors
+            ? state.predecessors
+            : state.successors;
+        final canFlip = state.successors.isNotEmpty &&
+            state.predecessors.isNotEmpty;
+        final migrateToCurrent = state.predecessors.isEmpty
+            ? null
+            : state.predecessors.first;
+        return AlertDialog(
+          title: Text(showPredecessors ? '旧版本' : '新版本'),
+          content: SizedBox(
+            width: 520,
+            child: ListView.separated(
+              shrinkWrap: true,
+              itemCount: versions.length,
+              separatorBuilder: (context, index) => const Divider(height: 1),
+              itemBuilder: (context, index) {
+                final version = versions[index];
+                final title = version.title.trim().isEmpty
+                    ? (showPredecessors
+                        ? '未命名旧版本'
+                        : '未命名新版本')
+                    : version.title.trim();
+                final date = version.date?.trim();
+                return ListTile(
+                  key: index == 0 ? comicDetailsVersionViewKey : null,
+                  title: Text(
+                    title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  subtitle: date == null || date.isEmpty
+                      ? null
+                      : Text('更新日期：$date'),
+                  onTap: () => Navigator.pop(
+                    context,
+                    _command(version, migrate: false),
+                  ),
+                  trailing: IconButton(
+                    key: index == 0 ? comicDetailsVersionMigrateKey : null,
+                    tooltip: version.isPredecessor
+                        ? '迁移到当前版本'
+                        : '迁移到此版本',
+                    onPressed: () => Navigator.pop(
+                      context,
+                      _command(version, migrate: true),
+                    ),
+                    icon: const Icon(Icons.compare_arrows),
+                  ),
+                );
+              },
             ),
           ),
+          actions: <Widget>[
+            SizedBox(
+              width: double.infinity,
+              child: Row(
+                children: <Widget>[
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: () => Navigator.pop(context),
+                    icon: const Icon(Icons.close),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    key: comicDetailsVersionMigrateCurrentKey,
+                    tooltip: '迁移到当前版本',
+                    onPressed: migrateToCurrent == null
+                        ? null
+                        : () => Navigator.pop(
+                              context,
+                              _command(migrateToCurrent, migrate: true),
+                            ),
+                    icon: const Icon(Icons.compare_arrows),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip:
+                        showPredecessors ? '显示新版本' : '显示旧版本',
+                    onPressed: canFlip
+                        ? () => setState(
+                              () => _showPredecessors = !showPredecessors,
+                            )
+                        : null,
+                    icon: const Icon(Icons.flip),
+                  ),
+                ],
+              ),
+            ),
+          ],
         );
       },
     );
