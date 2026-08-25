@@ -96,17 +96,6 @@ require('docs/ARCHITECTURE.md', 'platformResident', 'OutputFrame identity', 'Sur
 require('docs/SPEC.md', 'platformResident', 'RGBA Surface copy')
 require('docs/IMPLEMENTATION_STATUS.md', 'dev.282', '15–37ms', 'presentation ordinal')
 require('docs/IMPLEMENTATION_PLAN.md', 'dev.282', 'platformResident', '首次新OutputFrame')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.282', 'platformResident', 'previous3/next7')
 require('CHANGELOG.md', '0.31.0-dev.282', 'resident')
-
-# dev.281 geometry and active next2 deferral remain frozen; dev.282 is only a
-# presentation-copy deletion.
-require(
-    'docs/NEXT_CHAT_HANDOFF.md',
-    'layout-time correction',
-    'staticWarmUploads=0',
-    'sealed-source-generation-preserved',
-    'normal5+current reserved1',
-)
 
 print('PASS: dev.282 retained Android texture resident presentation')

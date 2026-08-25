@@ -433,7 +433,23 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     BrowsableComicSource source,
     String comicId, {
     bool refreshVersions = true,
+    bool deferUntilAfterFrame = false,
   }) {
+    if (deferUntilAfterFrame) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _scheduleVersionReuseWarmup(
+              source,
+              comicId,
+              refreshVersions: refreshVersions,
+            );
+          }
+        });
+      });
+      return;
+    }
     final key = '${source.sourceId}\u0000$comicId';
     if (_versionReuseWarmups.containsKey(key)) return;
     late Future<void> future;

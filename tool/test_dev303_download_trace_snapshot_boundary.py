@@ -53,5 +53,4 @@ require('docs/ARCHITECTURE.md',
         'DownloadSession诊断Trace与DownloadSnapshot publication必须是两个独立ownership edge')
 require('docs/SPEC.md',
         '`DownloadSession` diagnostics Trace emission与`DownloadSnapshot` publication MUST分离')
-require('docs/NEXT_CHAT_HANDOFF.md','dev.303','10.213ms','dev.295目标已正面闭合')
 print('dev.303 download trace / snapshot publication boundary: OK')

@@ -17,7 +17,10 @@ PLAYER = '\n'.join(path.read_text() for path in [PLAYER_ROOT / 'local_media_ui.d
 READER = (ROOT / 'packages/reader/lib/src/reader_view.dart').read_text()
 CONTROLS_TEST = (ROOT / 'apps/app/test/reader_controls_test.dart').read_text()
 NAV_TEST = (ROOT / 'packages/reader/test/reader_navigation_test.dart').read_text()
-STARTUP = (ROOT / 'apps/app/lib/main.dart').read_text()
+STARTUP = (
+    (ROOT / 'apps/app/lib/main.dart').read_text()
+    + (ROOT / 'apps/app/lib/app_runtime.dart').read_text()
+)
 LIBRARY = (ROOT / 'apps/app/lib/demo_home_views.dart').read_text()
 
 for token in (
@@ -102,7 +105,7 @@ if 'static images hide playback-only controls' not in CONTROLS_TEST:
     raise SystemExit('Static-image playback-control regression is missing')
 if 'scale recognizers must not compete with PageView at scale 1' not in NAV_TEST:
     raise SystemExit('Remote swipe gesture regression is missing')
-if "services == null ? 'bootstrap-memory' : 'durable-services'" not in STARTUP:
+if 'HomeServiceHandoff' not in STARTUP or '_serviceHandoff.updateServices(' not in STARTUP:
     raise SystemExit('Non-blocking bootstrap service swap is missing')
 if 'importedLibraryLoadingKey' not in LIBRARY or 'Positioned(' not in LIBRARY:
     raise SystemExit('Background library restore indicator is missing')

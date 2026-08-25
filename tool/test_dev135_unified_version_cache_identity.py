@@ -149,15 +149,19 @@ for token in (
 for unsafe in ('title ==', 'authors', 'page.index'):
     reject(reuse, unsafe, 'unsafe cache-reuse matching')
 
-# Production app has one response-cache composition root and one Reader
-# artifact-cache composition root. UI widgets must not create private managers.
+# Production app has one active response-cache composition root and one active
+# Reader artifact-cache root. DemoHome constructs the bootstrap root and the
+# durable service handoff constructs its replacement; UI widgets must not
+# create any additional private managers.
 app_sources = '\n'.join(
     path.read_text(encoding='utf-8')
     for path in (ROOT / 'apps/app/lib').glob('*.dart')
 )
 if 'ResourceCacheManager(' in app_sources:
     raise SystemExit('App UI must not create a private ResourceCacheManager')
-if len(re.findall(r'(?<!with)ArtifactCacheManager\(', app_sources)) != 1:
-    raise SystemExit('App must retain exactly one composition-owned artifact cache')
+if len(re.findall(r'(?<!with)ArtifactCacheManager\(', app_sources)) != 2:
+    raise SystemExit(
+        'App must retain only bootstrap and durable-handoff artifact caches'
+    )
 
 print('dev.135 unified version/cache identity contract: OK')

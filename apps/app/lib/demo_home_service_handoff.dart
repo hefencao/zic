@@ -21,6 +21,10 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
       _activeExternalPlugins = plugins;
       _watchExternalPluginSources(plugins);
       unawaited(_ensureExternalSourcesPublished());
+    } else if (plugins == null && _externalPluginLoader != null) {
+      // The loader may arrive without a core-service adoption on an install
+      // whose only durable state is the external-plugin manifest.
+      unawaited(_ensureExternalSourcesPublished());
     }
   }
 

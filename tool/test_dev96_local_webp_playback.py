@@ -58,7 +58,7 @@ forbidden = (
 )
 if any(token in main for token in forbidden):
     raise SystemExit('native media/rhttp prewarm must remain out of Home startup')
-require('apps/app/lib/main.dart', 'runApp(\n    _BootstrapApp(')
+require('apps/app/lib/main.dart', 'runApp(\n    runtime.createStartupApp(')
 require(
     'packages/media/lib/src/frame.dart',
     'enum DecodeExecutionClass { current, nonCurrent }',

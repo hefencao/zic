@@ -36,7 +36,7 @@ require(
     '恢复 Chrome 默认值',
 )
 require(
-    'apps/app/lib/main.dart',
+    'apps/app/lib/app_runtime.dart',
     'userAgentProvider: () => preferences.networkUserAgent',
 )
 require(

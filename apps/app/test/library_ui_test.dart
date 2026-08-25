@@ -30,6 +30,7 @@ Widget _localDetailsScreen({
   required Future<void> Function(ImportedLibraryEntry chapter, bool isRead)
       onReadChanged,
   required Future<void> Function(ImportedLibraryEntry chapter) onOpenChapter,
+  Future<void> Function(ImportedLibraryEntry chapter)? onDeleteChapter,
 }) {
   final snapshot = details.ComicDetailsLibrarySnapshot(
     chapters: comic.chapters,
@@ -62,6 +63,7 @@ Widget _localDetailsScreen({
       return null;
     },
     onDownloadChapter: (_) async {},
+    onDeleteChapter: onDeleteChapter,
     inspectChapterDownload: (chapter) async =>
         ChapterDownloadSnapshot.idle(chapter),
     downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
@@ -973,6 +975,126 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 320));
     expect(read, isFalse);
+
+    await tester.drag(
+      find.byKey(chapterReadKey(chapter.sourceId, chapter.chapterId)),
+      const Offset(320, 0),
+    );
+    await tester.pump(const Duration(milliseconds: 320));
+    expect(read, isTrue);
+  });
+
+  testWidgets('long pressing a cached chapter confirms and deletes it',
+      (tester) async {
+    final chapter = _chapter();
+    final entry = ImportedLibraryEntry(chapter: chapter);
+    ImportedLibraryEntry? deleted;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _localDetailsScreen(
+          comic: LibraryComic.fromEntries(<ImportedLibraryEntry>[entry]),
+          preference: ComicPreference.defaults(
+            sourceId: chapter.sourceId,
+            comicId: chapter.comicId,
+          ),
+          readStates: const <String, ChapterReadState>{},
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (_) async {},
+          onDeleteChapter: (value) async => deleted = value,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.longPress(
+      find.byKey(details.comicDetailsChapterKey(
+        chapter.sourceId,
+        chapter.chapterId,
+      )),
+    );
+    await tester.pump();
+    expect(find.byKey(details.comicDetailsDeleteChapterKey(
+      chapter.sourceId,
+      chapter.chapterId,
+    )), findsOneWidget);
+
+    await tester.tap(find.byKey(details.comicDetailsDeleteChapterKey(
+      chapter.sourceId,
+      chapter.chapterId,
+    )));
+    await tester.pump();
+    expect(deleted, same(entry));
+    expect(
+      find.byKey(details.comicDetailsChapterKey(
+        chapter.sourceId,
+        chapter.chapterId,
+      )),
+      findsNothing,
+    );
+  });
+
+  testWidgets('left swiping reveals a delete action', (tester) async {
+    final chapter = _chapter();
+    final entry = ImportedLibraryEntry(chapter: chapter);
+    ImportedLibraryEntry? deleted;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _localDetailsScreen(
+          comic: LibraryComic.fromEntries(<ImportedLibraryEntry>[entry]),
+          preference: ComicPreference.defaults(
+            sourceId: chapter.sourceId,
+            comicId: chapter.comicId,
+          ),
+          readStates: const <String, ChapterReadState>{},
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (_) async {},
+          onDeleteChapter: (value) async => deleted = value,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      tester.widget<ListTile>(
+        find.byKey(details.comicDetailsChapterKey(
+          chapter.sourceId,
+          chapter.chapterId,
+        )),
+      ).onLongPress,
+      isNotNull,
+    );
+
+    await tester.drag(
+      find.byKey(chapterReadKey(chapter.sourceId, chapter.chapterId)),
+      const Offset(-160, 0),
+    );
+    await tester.pump(const Duration(milliseconds: 320));
+    expect(
+      tester.widget<IconButton>(
+        find.byKey(details.comicDetailsDeleteRevealKey(
+          chapter.sourceId,
+          chapter.chapterId,
+        )),
+      ).onPressed,
+      isNotNull,
+    );
+    expect(
+      find.byKey(details.comicDetailsDeleteRevealKey(
+        chapter.sourceId,
+        chapter.chapterId,
+      )),
+      findsOneWidget,
+    );
+    expect(deleted, isNull);
+
+    await tester.tap(find.byKey(details.comicDetailsDeleteRevealKey(
+      chapter.sourceId,
+      chapter.chapterId,
+    )));
+    await tester.pump();
+    expect(deleted, same(entry));
   });
 
   testWidgets('details groups chapters and opens the selected chapter',

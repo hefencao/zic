@@ -201,6 +201,16 @@ void main() {
     );
     expect(session.entries.single.progress?.comicId, 'raw-current');
     expect(session.entries.single.progress?.subPageOffset, 0.5);
+    session.replaceReadState(
+      ChapterReadState(
+        sourceId: chapter.sourceId,
+        comicId: chapter.comicId,
+        chapterId: chapter.chapterId,
+        isRead: true,
+        updatedAt: DateTime.utc(2026, 8, 8, 1),
+      ),
+    );
+    expect(session.readStates, hasLength(1));
 
     final saved = SavedComicRecord(
       sourceId: 'fixture-source',
@@ -214,6 +224,7 @@ void main() {
 
     await session.removeChapter(chapter.sourceId, chapter.chapterId);
     expect(session.entries, isEmpty);
+    expect(session.readStates, isEmpty);
   });
 
   test('confirmed version relations are a write-through Home projection',

@@ -22,10 +22,6 @@ require('packages/local_media_ui/lib/src/local_image_player.dart','if (!authorit
 require('packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart','forwardEncodedPages: 7','backwardEncodedPages: 3','forwardDecodePages: 2','backwardDecodePages: 1')
 require('docs/adr/0275-source-canvas-presentation-aspect-authority.md','960x1950','952x1936','2.55px','decoded raster')
 require('docs/audits/dev296-source-canvas-presentation-aspect-audit.md','320 条 `pageLayoutSnapshot`','35.55555555555475','sourceCanvasWidth/sourceCanvasHeight','external Texture')
-if current_dev == 296:
-    require('docs/NEXT_CHAT_HANDOFF.md','# dev.296 后续交接','2.55 physical px')
-else:
-    require('docs/NEXT_CHAT_HANDOFF.md',f'# dev.{current_dev} 后续交接','dev.296','sourceCanvas','external Texture')
 require('docs/ARCHITECTURE.md','最终aspect必须消费同一physical sourceCanvas authority')
 require('docs/SPEC.md','MediaAspectViewport`的最终aspect authority')
 print('dev.296 source-canvas presentation aspect authority: OK')

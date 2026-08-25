@@ -115,7 +115,6 @@ require(
 require('docs/ARCHITECTURE.md', 'source canvas', 'decoded raster')
 require('docs/SPEC.md', 'source canvas', 'decoded raster')
 require('docs/IMPLEMENTATION_STATUS.md', 'dev.290', '预解码窗口不足', 'source canvas')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.290', 'source canvas', 'decode 2/1')
 require('CHANGELOG.md', '0.31.0-dev.290', 'Source-canvas geometry authority')
 req('test_dev290_source_canvas_geometry_authority.py' in text('tool/check.sh'),
     'dev.290 gate not wired into tool/check.sh')

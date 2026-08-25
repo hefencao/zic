@@ -76,7 +76,8 @@ require(driver, 'if (method == "GET" || method == "HEAD") {\n            null', 
 # runtime/session disappears; controller install/update may not deactivate first.
 for token in (
     'Future<List<BrowsableComicSource>> replace(',
-    'final replacement = await _activateCandidate(',
+    'final candidate = _activateCandidate(',
+    'final committed = _enqueueCommit<List<BrowsableComicSource>>(() {',
     'if (!identical(_sessions[plugin.pluginId], existing))',
     '_installSession(plugin.pluginId, replacement);',
     'await existing.close();',

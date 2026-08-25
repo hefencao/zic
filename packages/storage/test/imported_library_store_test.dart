@@ -71,7 +71,7 @@ void main() {
     expect(successors.single.successorComicId, relation.successorComicId);
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 9);
+    expect(db.select('PRAGMA user_version').single.values.single, 10);
   });
 
   test('sqlite persists a Home projection revision across writes and reopen',
@@ -339,6 +339,126 @@ void main() {
     expect(await store.getComicPreference(chapter.sourceId, chapter.comicId), isNull);
   });
 
+  test('sqlite accepts read state before chapter hydration', () async {
+    final store = SqliteImportedLibraryStore.memory();
+    await store.open();
+    addTearDown(store.close);
+    final state = ChapterReadState(
+      sourceId: 'remote-source',
+      comicId: 'remote-comic',
+      chapterId: 'remote-chapter',
+      isRead: true,
+      updatedAt: DateTime.utc(2026, 8, 25, 1),
+    );
+
+    await store.saveChapterReadState(state);
+    expect(
+      (await store.listChapterReadStates(state.sourceId, state.comicId))
+          .single
+          .toJson(),
+      state.toJson(),
+    );
+
+    await store.removeChapter(state.sourceId, state.chapterId);
+    expect(
+      await store.listChapterReadStates(state.sourceId, state.comicId),
+      isEmpty,
+    );
+  });
+
+  test('sqlite schema 9 migrates read state to an unowned table', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-read-state-ownership-migration-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final path = '${directory.path}/library.sqlite3';
+    final chapter = _sourceChapter('source-v9');
+    final oldState = ChapterReadState(
+      sourceId: chapter.sourceId,
+      comicId: chapter.comicId,
+      chapterId: chapter.chapterId,
+      isRead: true,
+      updatedAt: DateTime.utc(2026, 8, 25, 2),
+    );
+    final legacy = sql.sqlite3.open(path);
+    legacy.execute('PRAGMA foreign_keys = ON');
+    legacy.execute('''
+      CREATE TABLE imported_chapter (
+        source_id TEXT NOT NULL,
+        chapter_id TEXT NOT NULL,
+        comic_id TEXT NOT NULL,
+        imported_us INTEGER NOT NULL,
+        chapter_json TEXT NOT NULL,
+        PRIMARY KEY(source_id, chapter_id)
+      )
+    ''');
+    legacy.execute('''
+      CREATE TABLE chapter_read_state (
+        source_id TEXT NOT NULL,
+        chapter_id TEXT NOT NULL,
+        comic_id TEXT NOT NULL,
+        updated_us INTEGER NOT NULL,
+        read_json TEXT NOT NULL,
+        PRIMARY KEY(source_id, chapter_id),
+        FOREIGN KEY(source_id, chapter_id)
+          REFERENCES imported_chapter(source_id, chapter_id)
+          ON DELETE CASCADE
+      )
+    ''');
+    legacy.execute('''
+      CREATE INDEX chapter_read_state_comic
+      ON chapter_read_state(source_id, comic_id, chapter_id)
+    ''');
+    legacy.execute(
+      'INSERT INTO imported_chapter VALUES (?, ?, ?, ?, ?)',
+      <Object?>[
+        chapter.sourceId,
+        chapter.chapterId,
+        chapter.comicId,
+        chapter.importedAt.microsecondsSinceEpoch,
+        jsonEncode(chapter.toJson()),
+      ],
+    );
+    legacy.execute(
+      'INSERT INTO chapter_read_state VALUES (?, ?, ?, ?, ?)',
+      <Object?>[
+        oldState.sourceId,
+        oldState.chapterId,
+        oldState.comicId,
+        oldState.updatedAt.microsecondsSinceEpoch,
+        jsonEncode(oldState.toJson()),
+      ],
+    );
+    legacy.execute('PRAGMA user_version = 9');
+    legacy.dispose();
+
+    final store = SqliteImportedLibraryStore(path);
+    await store.open();
+    addTearDown(store.close);
+    expect(
+      (await store.listChapterReadStates(oldState.sourceId, oldState.comicId))
+          .single
+          .toJson(),
+      oldState.toJson(),
+    );
+    final newState = ChapterReadState(
+      sourceId: oldState.sourceId,
+      comicId: oldState.comicId,
+      chapterId: 'chapter-without-entry',
+      isRead: false,
+      updatedAt: DateTime.utc(2026, 8, 25, 3),
+    );
+    await store.saveChapterReadState(newState);
+    expect(
+      (await store.listChapterReadStates(newState.sourceId, newState.comicId))
+          .map((state) => state.chapterId),
+      contains(newState.chapterId),
+    );
+    final db = sql.sqlite3.open(path);
+    addTearDown(db.dispose);
+    expect(db.select('PRAGMA user_version').single.values.single, 10);
+  });
+
   test('sqlite migrates schema 2 source preferences', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-source-preference-migration-',
@@ -421,7 +541,7 @@ void main() {
     expect(await store.getComicPreference(saved.sourceId, saved.comicId), isNull);
   });
 
-  test('sqlite migrates schema 3 through composite schema 9', () async {
+  test('sqlite migrates schema 3 through composite schema 10', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-saved-comic-migration-',
     );
@@ -443,7 +563,7 @@ void main() {
     );
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 9);
+    expect(db.select('PRAGMA user_version').single.values.single, 10);
   });
 
   test('sqlite schema 5 adds durable migration issue acknowledgement',
@@ -497,7 +617,7 @@ void main() {
 
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 9);
+    expect(db.select('PRAGMA user_version').single.values.single, 10);
     expect(
       db.select('PRAGMA table_info(library_migration_issue)')
           .map((row) => row['name'])
@@ -545,7 +665,7 @@ void main() {
 
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 9);
+    expect(db.select('PRAGMA user_version').single.values.single, 10);
     expect(
       db.select('PRAGMA table_info(comic_version_relation)')
           .map((row) => row['name'])

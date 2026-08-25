@@ -92,6 +92,7 @@ final class CachedBrowsableComicSource
         SectionedBrowsableComicSource,
         FilterableBrowsableComicSource,
         CachedSourceBrowseProjection,
+        CachedComicDetailsProjection,
         RefreshableChapterComicSource,
         ResolvableComicResourceSource,
         ControlledResolvableComicResourceSource,
@@ -407,6 +408,44 @@ final class CachedBrowsableComicSource
   Future<ComicPreviewPage> loadComicPreview(
     String comicId, {
     String? nextToken,
+  }) =>
+      _loadComicPreview(
+        comicId,
+        nextToken: nextToken,
+        forceRefresh: false,
+      );
+
+  @override
+  ComicPreviewPage? peekComicPreview(
+    String comicId, {
+    String? nextToken,
+  }) {
+    final identity = _comicIdentity(comicId);
+    final cached = cache.peek<ComicPreviewPage>(
+      _comicPreviewKey(identity, nextToken: nextToken),
+    );
+    if (cached != null) return cached;
+    if (nextToken == null) {
+      return cache.peek<ComicManifest>(_comicKey(identity))?.preview;
+    }
+    return null;
+  }
+
+  @override
+  Future<ComicPreviewPage> refreshComicPreview(
+    String comicId, {
+    String? nextToken,
+  }) =>
+      _loadComicPreview(
+        comicId,
+        nextToken: nextToken,
+        forceRefresh: true,
+      );
+
+  Future<ComicPreviewPage> _loadComicPreview(
+    String comicId, {
+    required String? nextToken,
+    required bool forceRefresh,
   }) {
     final Object candidate = source;
     if (candidate is! ComicPreviewSource) {
@@ -420,9 +459,23 @@ final class CachedBrowsableComicSource
         ComicPreviewPage(items: const <ComicPreviewAsset>[]),
       );
     }
-    return previewSource.loadComicPreview(
-      comicId,
-      nextToken: nextToken,
+    final identity = _comicIdentity(comicId);
+    return cache.getOrLoad<ComicPreviewPage>(
+      key: _comicPreviewKey(identity, nextToken: nextToken),
+      forceRefresh: forceRefresh,
+      loader: () {
+        final embedded = nextToken == null
+            ? cache.peek<ComicManifest>(_comicKey(identity))?.preview
+            : null;
+        if (!forceRefresh && embedded != null) {
+          return Future<ComicPreviewPage>.value(embedded);
+        }
+        return previewSource.loadComicPreview(
+          comicId,
+          nextToken: nextToken,
+        );
+      },
+      weightOf: _previewWeight,
     );
   }
 
@@ -440,6 +493,59 @@ final class CachedBrowsableComicSource
     String? subId,
     required int page,
     String? replyTo,
+  }) =>
+      _loadComicComments(
+        comicId,
+        subId: subId,
+        page: page,
+        replyTo: replyTo,
+        forceRefresh: false,
+      );
+
+  @override
+  ComicCommentPage? peekComicComments(
+    String comicId, {
+    String? subId,
+    required int page,
+    String? replyTo,
+  }) {
+    final identity = _comicIdentity(comicId);
+    final cached = cache.peek<ComicCommentPage>(
+      _comicCommentsKey(
+        identity,
+        subId: subId,
+        page: page,
+        replyTo: replyTo,
+      ),
+    );
+    if (cached != null) return cached;
+    if (page == 1 && replyTo == null) {
+      return cache.peek<ComicManifest>(_comicKey(identity))?.comments;
+    }
+    return null;
+  }
+
+  @override
+  Future<ComicCommentPage> refreshComicComments(
+    String comicId, {
+    String? subId,
+    required int page,
+    String? replyTo,
+  }) =>
+      _loadComicComments(
+        comicId,
+        subId: subId,
+        page: page,
+        replyTo: replyTo,
+        forceRefresh: true,
+      );
+
+  Future<ComicCommentPage> _loadComicComments(
+    String comicId, {
+    required String? subId,
+    required int page,
+    required String? replyTo,
+    required bool forceRefresh,
   }) {
     final Object candidate = source;
     if (candidate is! ComicCommentSource) {
@@ -461,27 +567,124 @@ final class CachedBrowsableComicSource
         ),
       );
     }
-    return commentSource.loadComicComments(
-      comicId,
-      subId: subId,
-      page: page,
-      replyTo: replyTo,
+    final identity = _comicIdentity(comicId);
+    return cache.getOrLoad<ComicCommentPage>(
+      key: _comicCommentsKey(
+        identity,
+        subId: subId,
+        page: page,
+        replyTo: replyTo,
+      ),
+      forceRefresh: forceRefresh,
+      loader: () {
+        final embedded = page == 1 && replyTo == null
+            ? cache.peek<ComicManifest>(_comicKey(identity))?.comments
+            : null;
+        if (!forceRefresh && embedded != null) {
+          return Future<ComicCommentPage>.value(embedded);
+        }
+        return commentSource.loadComicComments(
+          comicId,
+          subId: subId,
+          page: page,
+          replyTo: replyTo,
+        );
+      },
+      weightOf: _commentPageWeight,
     );
   }
 
   @override
-  Future<ComicManifest> loadComic(String comicId) {
+  Future<ComicManifest> loadComic(String comicId) =>
+      _loadComic(comicId, forceRefresh: false);
+
+  @override
+  ComicManifest? peekComic(String comicId) {
+    final identity = _comicIdentity(comicId);
+    final manifest = cache.peek<ComicManifest>(_comicKey(identity));
+    if (manifest == null) return null;
+    final preview = peekComicPreview(comicId);
+    final comments = peekComicComments(
+      comicId,
+      subId: manifest.comic.sourceSubId,
+      page: 1,
+    );
+    if (identical(preview, manifest.preview) &&
+        identical(comments, manifest.comments)) {
+      return manifest;
+    }
+    return ComicManifest(
+      comic: manifest.comic,
+      chapters: manifest.chapters,
+      preview: preview ?? manifest.preview,
+      comments: comments ?? manifest.comments,
+    );
+  }
+
+  @override
+  Future<ComicManifest> refreshComic(String comicId) =>
+      _loadComic(comicId, forceRefresh: true);
+
+  Future<ComicManifest> _loadComic(
+    String comicId, {
+    required bool forceRefresh,
+  }) {
     final identity = _comicIdentity(comicId);
     return cache
         .getOrLoad<ComicManifest>(
           key: _comicKey(identity),
           loader: () => source.loadComic(comicId),
           weightOf: _comicWeight,
+          forceRefresh: forceRefresh,
         )
-        .then((manifest) {
+        .then((manifest) async {
       _rememberComic(manifest);
+      if (forceRefresh) {
+        await _synchronizeEmbeddedComicDetailPages(identity, manifest);
+      }
       return manifest;
     });
+  }
+
+  Future<void> _synchronizeEmbeddedComicDetailPages(
+    ComicResourceCacheIdentity identity,
+    ComicManifest manifest,
+  ) async {
+    final writes = <Future<void>>[];
+    final preview = manifest.preview;
+    if (preview != null) {
+      writes.add(
+        cache
+            .getOrLoad<ComicPreviewPage>(
+              key: _comicPreviewKey(identity, nextToken: null),
+              forceRefresh: true,
+              loader: () => Future<ComicPreviewPage>.value(preview),
+              weightOf: _previewWeight,
+            )
+            .then<void>((_) {}),
+      );
+    }
+    final comments = manifest.comments;
+    if (comments != null) {
+      writes.add(
+        cache
+            .getOrLoad<ComicCommentPage>(
+              key: _comicCommentsKey(
+                identity,
+                subId: manifest.comic.sourceSubId,
+                page: 1,
+                replyTo: null,
+              ),
+              forceRefresh: true,
+              loader: () => Future<ComicCommentPage>.value(comments),
+              weightOf: _commentPageWeight,
+            )
+            .then<void>((_) {}),
+      );
+    }
+    if (writes.isNotEmpty) {
+      await Future.wait<void>(writes);
+    }
   }
 
   @override
@@ -544,11 +747,13 @@ final class CachedBrowsableComicSource
         ? source as ResolvableComicResourceSource
         : null;
     if (resolvable == null) {
-      final direct = uri.scheme == 'http' || uri.scheme == 'https';
+      // The wrapped source only exposes the legacy complete-byte loader. Keep
+      // that source-owned session boundary instead of making the host replay
+      // its opaque locator as a direct HTTP request.
       return Future<ComicResourceRequest>.value(
         ComicResourceRequest(
           uri: uri,
-          requiresRuntimeTransform: !direct,
+          requiresRuntimeTransform: true,
         ),
       );
     }
@@ -785,7 +990,9 @@ int _previewWeight(ComicPreviewPage? page) => page == null
         (asset) =>
             _cacheObjectOverhead +
             _uriWeight(asset.uri) +
-            _textWeight(asset.label),
+            _textWeight(asset.label) +
+            (asset.width ?? 0) ~/ 4 +
+            (asset.height ?? 0) ~/ 4,
       ) +
         _textWeight(page.nextToken);
 
@@ -799,7 +1006,11 @@ int _commentPageWeight(ComicCommentPage? page) => page == null
             _textWeight(comment.userName) +
             _uriWeight(comment.avatarUri) +
             _textWeight(comment.content) +
-            _textWeight(comment.time),
+            _textWeight(comment.time) +
+            (comment.replyCount ?? 0) ~/ 2 +
+            (comment.score ?? 0) ~/ 2 +
+            (comment.isLiked == null ? 0 : 1) +
+            (comment.voteStatus ?? 0).abs() ~/ 2,
       );
 
 int _chapterValueWeight(Chapter chapter) =>
@@ -946,6 +1157,40 @@ ResourceCacheKey _comicKey(ComicResourceCacheIdentity identity) =>
       revision: identity.sourceId.startsWith('mihon:')
           ? 'mihon-comic-details-v2-host-contract'
           : '',
+    );
+
+ResourceCacheKey _comicPreviewKey(
+  ComicResourceCacheIdentity identity, {
+  required String? nextToken,
+}) =>
+    ResourceCacheKey(
+      kind: ResourceCacheKind.comicDetails,
+      identity: encodeStableCacheKey(
+        'comic-preview',
+        <String>[identity.sourceId, identity.comicId, nextToken ?? ''],
+      ),
+      namespace: identity.namespace,
+    );
+
+ResourceCacheKey _comicCommentsKey(
+  ComicResourceCacheIdentity identity, {
+  required String? subId,
+  required int page,
+  required String? replyTo,
+}) =>
+    ResourceCacheKey(
+      kind: ResourceCacheKind.comicDetails,
+      identity: encodeStableCacheKey(
+        'comic-comments',
+        <String>[
+          identity.sourceId,
+          identity.comicId,
+          subId ?? '',
+          '$page',
+          replyTo ?? '',
+        ],
+      ),
+      namespace: identity.namespace,
     );
 
 ResourceCacheKey _imageKey({

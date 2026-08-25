@@ -1473,7 +1473,7 @@ def check_compile_regressions() -> None:
         ROOT / 'packages/storage/lib/src/sqlite_imported_library_store.dart'
     ).read_text(encoding='utf-8')
     for required in (
-        'const _schemaVersion = 9',
+        'const _schemaVersion = 10',
         'PRAGMA user_version = $_schemaVersion',
         'PRIMARY KEY(source_id, chapter_id)',
         'PRIMARY KEY(source_id, comic_id)',
@@ -2133,7 +2133,7 @@ def check_compile_regressions() -> None:
         + (ROOT / 'apps/app/lib/home_library_session.dart').read_text(encoding='utf-8')
     )
     for required in (
-        'runApp(\n    _BootstrapApp(',
+        'runtime.createStartupApp(',
         'final class HomeServiceHandoff',
         'serviceHandoff: _serviceHandoff',
         '_serviceHandoff.updateServices(',
@@ -2710,15 +2710,14 @@ def check_current_iteration() -> None:
         if required not in startup_platform:
             fail(f'Android startup path Dart boundary is incomplete: {required}')
     main_source = (ROOT / 'apps/app/lib/main.dart').read_text(encoding='utf-8')
-    if 'runApp(\n    _BootstrapApp(' not in main_source:
+    if 'runApp(\n    runtime.createStartupApp(' not in main_source:
         fail('cold-start entrypoint must mount the bootstrap app immediately')
     for required in (
-        "import 'app_runtime.dart' deferred as runtime",
-        'await runtime.loadLibrary()',
+        "import 'app_runtime.dart' as runtime",
         'runtime.createStartupApp(',
     ):
         if required not in main_source:
-            fail(f'post-raster app composition boundary is incomplete: {required}')
+            fail(f'bootstrap app composition boundary is incomplete: {required}')
     if 'applicationSupportPath' not in main_activity:
         fail('Android startup path method is incomplete')
     if 'filesDir.absolutePath' not in main_activity:
@@ -2879,7 +2878,8 @@ def check_current_iteration() -> None:
         'payload-identity-mismatch',
         'source-identity-mismatch',
         'await temporary.rename(promoted.path)',
-        'await _activationTail',
+        '_pendingActivations',
+        '_activatingSessions',
         '_closingSessions',
     ):
         if required not in runtime_activation:

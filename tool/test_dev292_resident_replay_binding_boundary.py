@@ -95,7 +95,6 @@ require(
 require("docs/ARCHITECTURE.md", "DownloadResidentReplaySource", "DownloadResidentReplayChunks")
 require("docs/SPEC.md", "DownloadResidentReplaySource", "CompositionDownloadTransferRuntime")
 require("docs/IMPLEMENTATION_STATUS.md", "dev.292", "replay(this,end)")
-require("docs/NEXT_CHAT_HANDOFF.md", "dev.292", "DownloadResidentReplayChunks")
 require("CHANGELOG.md", "0.31.0-dev.292", "Resident replay service binding boundary")
 req("test_dev292_resident_replay_binding_boundary.py" in text("tool/check.sh"),
     "dev.292 gate not wired into tool/check.sh")

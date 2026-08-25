@@ -153,6 +153,14 @@ if kotlinc:
         (work / 'AndroidOs.kt').write_text('''package android.os
 class Looper { companion object { fun getMainLooper(): Looper = Looper(); fun myLooper(): Looper? = null } }
 class Handler(val looper: Looper) { fun post(block: () -> Unit): Boolean { block(); return true } }
+object SystemClock { fun elapsedRealtime(): Long = 0L }
+''')
+        (work / 'AndroidUtil.kt').write_text('''package android.util
+object Log {
+  const val DEBUG: Int = 3
+  fun isLoggable(tag: String, level: Int): Boolean = false
+  fun d(tag: String, message: String): Int = 0
+}
 ''')
         (work / 'MethodChannel.kt').write_text('''package io.flutter.plugin.common
 class MethodChannel {
@@ -164,6 +172,7 @@ class MethodChannel {
         subprocess.run([
             kotlinc,
             str(work / 'AndroidOs.kt'),
+            str(work / 'AndroidUtil.kt'),
             str(work / 'MethodChannel.kt'),
             str(ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraResolverHttpTransport.kt'),
             '-d', str(jar),

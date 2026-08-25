@@ -55,7 +55,6 @@ require(
 require('docs/ARCHITECTURE.md', 'targetCoverage', 'page-local fraction', '真实 viewport')
 require('docs/SPEC.md', 'targetCoverage', 'MUST 为 null', 'floor/ceil')
 require('docs/IMPLEMENTATION_STATUS.md', 'dev.283', '22次', 'current+1')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.283', 'hidden target', 'platformResidentReuse')
 require('CHANGELOG.md', '0.31.0-dev.283', 'Vertical visible-target authority')
 
 # Recent fixes remain present; dev.283 is an observation semantic correction,

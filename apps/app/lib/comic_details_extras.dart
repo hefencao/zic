@@ -538,12 +538,15 @@ final class _ComicDetailsPreviewSectionState
     super.didUpdateWidget(oldWidget);
     final initial = widget.initialPage;
     if (initial != null &&
-        oldWidget.initialPage == null &&
-        _items.isEmpty) {
+        !_samePreviewMetadata(initial, oldWidget.initialPage)) {
       setState(() {
         _items = initial.items.toList(growable: false);
         _nextToken = initial.nextToken;
+        _previewPageIndex = 0;
       });
+      if (_previewPageController.hasClients) {
+        _previewPageController.jumpToPage(0);
+      }
     }
   }
 
@@ -711,8 +714,7 @@ final class _ComicDetailsCommentsSectionState
     super.didUpdateWidget(oldWidget);
     final initial = widget.initialPage;
     if (initial != null &&
-        oldWidget.initialPage == null &&
-        _items.isEmpty) {
+        !_sameCommentMetadata(initial, oldWidget.initialPage)) {
       setState(() {
         _items = initial.items.toList(growable: false);
         _page = initial.page;
@@ -1009,11 +1011,230 @@ final class _ComicDetailsCommentsPageState
   }
 }
 
-String _plainCommentText(String value) => value
-    .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
-    .replaceAll('&amp;', '&')
-    .replaceAll('&lt;', '<')
-    .replaceAll('&gt;', '>');
+String _plainCommentText(String value) => _decodeCommentHtml(value)
+    .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
+
+final class _CommentInlinePart {
+  const _CommentInlinePart.text(this.text)
+      : imageUri = null,
+        alt = null,
+        width = null,
+        height = null;
+
+  const _CommentInlinePart.image({
+    required this.imageUri,
+    required this.alt,
+    required this.width,
+    required this.height,
+  }) : text = null;
+
+  final String? text;
+  final Uri? imageUri;
+  final String? alt;
+  final double? width;
+  final double? height;
+}
+
+List<_CommentInlinePart> _parseCommentContent(String value) {
+  final source = _decodeCommentHtml(value);
+  final parts = <_CommentInlinePart>[];
+  final tags = RegExp(
+    r'<\s*(img|br)\b[^>]*>',
+    caseSensitive: false,
+  );
+  var cursor = 0;
+
+  void addText(String text) {
+    if (text.isNotEmpty) {
+      parts.add(_CommentInlinePart.text(text));
+    }
+  }
+
+  for (final match in tags.allMatches(source)) {
+    addText(source.substring(cursor, match.start));
+    final tag = match.group(0)!;
+    if (match.group(1)!.toLowerCase() == 'br') {
+      addText('\n');
+    } else {
+      final uri = _commentImageUri(_commentAttribute(tag, 'src'));
+      if (uri == null) {
+        // Keep malformed image markup visible instead of silently dropping
+        // user content.
+        addText(tag);
+      } else {
+        // Some source pages emit `styIe` with a capital I in place of the
+        // `l`; accept that exact compatibility spelling as well.
+        final style = _commentAttribute(tag, 'style') ??
+            _commentAttribute(tag, 'styIe');
+        parts.add(
+          _CommentInlinePart.image(
+            imageUri: uri,
+            alt: _commentAttribute(tag, 'alt')?.trim().isNotEmpty == true
+                ? _commentAttribute(tag, 'alt')!.trim()
+                : '表情',
+            width: _commentImageDimension(
+              style,
+              'width',
+              _commentAttribute(tag, 'width'),
+            ),
+            height: _commentImageDimension(
+              style,
+              'height',
+              _commentAttribute(tag, 'height'),
+            ),
+          ),
+        );
+      }
+    }
+    cursor = match.end;
+  }
+  addText(source.substring(cursor));
+  return parts;
+}
+
+String _decodeCommentHtml(String value) {
+  var decoded = value.replaceAllMapped(
+    RegExp(r'&#x([0-9a-f]+);', caseSensitive: false),
+    (match) {
+      final code = int.tryParse(match.group(1)!, radix: 16);
+      return code == null ? match.group(0)! : String.fromCharCode(code);
+    },
+  );
+  decoded = decoded.replaceAllMapped(
+    RegExp(r'&#([0-9]+);'),
+    (match) {
+      final code = int.tryParse(match.group(1)!);
+      return code == null ? match.group(0)! : String.fromCharCode(code);
+    },
+  );
+  return decoded
+      .replaceAll('&nbsp;', '\u00a0')
+      .replaceAll('&quot;', '"')
+      .replaceAll('&#39;', "'")
+      .replaceAll('&apos;', "'")
+      .replaceAll('&amp;', '&')
+      .replaceAll('&lt;', '<')
+      .replaceAll('&gt;', '>');
+}
+
+String? _commentAttribute(String tag, String name) {
+  final pattern = RegExp(
+    r'(?:^|\s)' +
+        RegExp.escape(name) +
+        r'\s*=\s*(?:"([^"]*)"|\x27([^\x27]*)\x27|([^\s>]+))',
+    caseSensitive: false,
+  );
+  final match = pattern.firstMatch(tag);
+  if (match == null) return null;
+  final value = (match.group(1) ?? match.group(2) ?? match.group(3))?.trim();
+  if (value == null) return null;
+  return value
+      .replaceFirst(RegExp(r'^[“”‘’"\x27]+'), '')
+      .replaceFirst(RegExp(r'[“”‘’"\x27]+$'), '');
+}
+
+Uri? _commentImageUri(String? raw) {
+  if (raw == null || raw.trim().isEmpty) return null;
+  final value = raw.trim();
+  final candidates = <String>[
+    for (final match in RegExp(
+      r'\]\(\s*(https?://[^)\s]+)',
+      caseSensitive: false,
+    ).allMatches(value))
+      match.group(1)!,
+    value,
+  ];
+  for (final candidateValue in candidates.reversed) {
+    var candidate = candidateValue.trim();
+    if (candidate.startsWith('//')) candidate = 'https:$candidate';
+    candidate = candidate.replaceFirst(RegExp(r'[\],.;]+$'), '');
+    final uri = Uri.tryParse(candidate);
+    if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
+      return uri;
+    }
+  }
+  return null;
+}
+
+double _commentImageDimension(
+  String? style,
+  String property,
+  String? attribute,
+) {
+  final styled = style == null
+      ? null
+      : RegExp(
+          '$property\\s*:\\s*([0-9]+(?:\\.[0-9]+)?)\\s*px',
+          caseSensitive: false,
+        ).firstMatch(style)?.group(1);
+  final value = double.tryParse(styled ?? attribute ?? '') ?? 18;
+  return value.clamp(8, 64).toDouble();
+}
+
+final class _CommentContent extends StatelessWidget {
+  const _CommentContent({
+    required this.sourceId,
+    required this.comicId,
+    required this.content,
+    required this.loadArtwork,
+  });
+
+  final String sourceId;
+  final String comicId;
+  final String content;
+  final ComicDetailsArtworkLoader loadArtwork;
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = _parseCommentContent(content);
+    final hasImage = parts.any((part) => part.imageUri != null);
+    if (!hasImage) {
+      return Text(
+        _plainCommentText(content),
+        maxLines: 5,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+    final spans = <InlineSpan>[];
+    for (final part in parts) {
+      final text = part.text;
+      final uri = part.imageUri;
+      if (text != null) {
+        spans.add(TextSpan(text: text));
+      } else if (uri != null) {
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.middle,
+            child: Semantics(
+              label: part.alt,
+              image: true,
+              child: SizedBox(
+                width: part.width,
+                height: part.height,
+                child: _ComicDetailsArtwork(
+                  sourceId: sourceId,
+                  comicId: comicId,
+                  uri: uri,
+                  loader: loadArtwork,
+                  resourceRole: 'comment-emoji',
+                  fit: BoxFit.contain,
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+    return Text.rich(
+      TextSpan(
+        style: DefaultTextStyle.of(context).style,
+        children: spans,
+      ),
+      maxLines: 5,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+}
 
 final class _ComicDetailsCommentCard extends StatelessWidget {
   const _ComicDetailsCommentCard({
@@ -1067,10 +1288,11 @@ final class _ComicDetailsCommentCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
-            Text(
-              _plainCommentText(comment.content),
-              maxLines: 5,
-              overflow: TextOverflow.ellipsis,
+            _CommentContent(
+              sourceId: sourceId,
+              comicId: comicId,
+              content: comment.content,
+              loadArtwork: loadArtwork,
             ),
             if (onOpenReplies != null)
               Align(

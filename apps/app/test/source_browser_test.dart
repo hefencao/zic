@@ -66,6 +66,29 @@ Future<void> _tapVisible(
 }
 
 void main() {
+  test('chapter presentation keys remain source/chapter scoped', () {
+    const sourceId = 'fixture-key-source';
+    const chapterId = 'fixture-key-chapter';
+    expect(
+      sourceChapterKey(sourceId, chapterId),
+      details.comicDetailsChapterKey(sourceId, chapterId),
+    );
+    expect(
+      sourceChapterKey(sourceId, chapterId),
+      const ValueKey<String>(
+        'source-chapter:fixture-key-source\u0000fixture-key-chapter',
+      ),
+    );
+    expect(
+      sourceChapterKey(sourceId, chapterId),
+      isNot(sourceChapterKey(sourceId, 'fixture-key-chapter-2')),
+    );
+    expect(
+      sourceChapterKey(sourceId, chapterId),
+      isNot(sourceChapterKey('fixture-key-source-2', chapterId)),
+    );
+  });
+
   testWidgets('third page switches and manages enabled comic sources',
       (tester) async {
     final store = MemoryImportedLibraryStore();
@@ -119,7 +142,6 @@ void main() {
     expect(find.byKey(comicSourceChoiceKey('fixture-b')), findsNothing);
     expect(find.byKey(comicSourceChoiceKey('fixture-a')), findsOneWidget);
   });
-
 
   testWidgets('source cards project shelf membership without owning it',
       (tester) async {
@@ -1328,6 +1350,211 @@ void main() {
     expect(find.byKey(details.comicDetailsPreviewKey), findsOneWidget);
   });
 
+  testWidgets('comment HTML emoji uses the artwork loader', (tester) async {
+    final source = _FixtureSource(
+      'fixture-comment-emoji',
+      '评论表情源',
+    );
+    final comic = Comic(
+      comicId: source._comicId,
+      sourceId: source.sourceId,
+      title: source._comic.title,
+      authors: source._comic.authors,
+      tags: source._comic.tags,
+      readingDirection: source._comic.readingDirection,
+    );
+    const emojiUrl =
+        'https://www.cdnhjk.net/media/emoji/0922c375da40e6b69002bd89b858572f424dcfca.png';
+    final manifest = ComicManifest(
+      comic: comic,
+      chapters: const <Chapter>[],
+      comments: ComicCommentPage(
+        page: 1,
+        maxPage: 1,
+        items: const <ComicComment>[
+          ComicComment(
+            userName: '读者',
+            content: '<img styIe="width:18px;height:18px" '
+                'src="[https://www.cdnhjk.net/media/emoji/0922c375da40e6b69002bd89b858572f424dcfca]'
+                '(https://www.cdnhjk.net/media/emoji/0922c375da40e6b69002bd89b858572f424dcfca.png)'
+                '[.png](https://www.cdnhjk.net/media/emoji/0922c375da40e6b69002bd89b858572f424dcfca.png)" '
+                'alt=“臉紅“ />',
+          ),
+        ],
+      ),
+    );
+    final library = details.ComicDetailsLibrarySnapshot(
+      chapters: const <ImportedLibraryEntry>[],
+      sourceComic: comic,
+      sourceChapters: const <Chapter>[],
+      sourceManifest: manifest,
+      readStates: const <String, ChapterReadState>{},
+      preference: ComicPreference.defaults(
+        sourceId: source.sourceId,
+        comicId: source._comicId,
+      ),
+    );
+    final libraryComic = LibraryComic(
+      sourceId: source.sourceId,
+      comicId: source._comicId,
+      title: comic.title,
+      authors: comic.authors,
+      tags: comic.tags,
+      description: comic.description,
+      coverSourceId: null,
+      readingDirection: comic.readingDirection,
+      chapters: const <ImportedLibraryEntry>[],
+      sourceChapters: const <Chapter>[],
+      savedAt: DateTime.utc(2026, 8, 1),
+      metadataUpdatedAt: DateTime.utc(2026, 8, 2),
+    );
+    Uri? loadedEmoji;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: details.LocalComicDetailsScreen(
+          comic: libraryComic,
+          initialLibrary: library,
+          categories: const <LibraryCategory>[],
+          loadCover: ({
+            required String sourceId,
+            required String comicId,
+            required Uri? coverUri,
+            required ImportedLibraryEntry? fallbackChapter,
+            required String resourceRole,
+          }) async {
+            if (resourceRole == 'comment-emoji') loadedEmoji = coverUri;
+            return MemoryEncodedResourceSource(_tinyPng());
+          },
+          reloadLibrary: ({required bool refreshContent}) async => library,
+          source: source,
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (
+            _, {
+            required bool refreshRemote,
+            required String title,
+            int? initialPageIndex,
+          }) async => null,
+          onDownloadChapter: (_) async {},
+          inspectChapterDownload: (chapter) async =>
+              ChapterDownloadSnapshot.idle(chapter),
+          downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+          onDownloadComic: (_) async {},
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(
+      tester,
+      find.byKey(details.comicDetailsCommentsKey),
+    );
+    await tester.pumpAndSettle();
+    expect(loadedEmoji, Uri.parse(emojiUrl));
+    expect(find.textContaining('<img'), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is Image && widget.fit == BoxFit.contain,
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('details paints before bulk download status inspection completes',
+      (tester) async {
+    final source = _FixtureSource(
+      'fixture-detail-first-frame',
+      '详情首帧源',
+      includeSecondChapter: true,
+    );
+    final firstEntry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord.remote(
+        comic: source._comic,
+        manifest: await source.loadChapter(source._chapterId),
+      ),
+    );
+    final secondEntry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord.remote(
+        comic: source._comic,
+        manifest: await source.loadChapter(source._secondChapterId),
+      ),
+    );
+    final sourceManifest = await source.loadComic(source._comicId);
+    final comic = LibraryComic(
+      sourceId: source.sourceId,
+      comicId: source._comicId,
+      title: source._comic.title,
+      authors: source._comic.authors,
+      tags: source._comic.tags,
+      description: source._comic.description,
+      coverSourceId: source._comic.coverUri?.toString(),
+      readingDirection: source._comic.readingDirection,
+      chapters: <ImportedLibraryEntry>[firstEntry, secondEntry],
+      sourceChapters: sourceManifest.chapters,
+      savedAt: DateTime.utc(2026, 8, 1),
+      metadataUpdatedAt: DateTime.utc(2026, 8, 2),
+    );
+    final library = details.ComicDetailsLibrarySnapshot(
+      chapters: <ImportedLibraryEntry>[firstEntry, secondEntry],
+      sourceComic: source._comic,
+      sourceChapters: sourceManifest.chapters,
+      readStates: const <String, ChapterReadState>{},
+      preference: ComicPreference.defaults(
+        sourceId: source.sourceId,
+        comicId: source._comicId,
+      ),
+    );
+    final releaseInspection = Completer<void>();
+    var bulkInspectionStarted = false;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: details.LocalComicDetailsScreen(
+          comic: comic,
+          initialLibrary: library,
+          categories: const <LibraryCategory>[],
+          loadCover: ({
+            required String sourceId,
+            required String comicId,
+            required Uri? coverUri,
+            required ImportedLibraryEntry? fallbackChapter,
+            required String resourceRole,
+          }) async => MemoryEncodedResourceSource(_tinyPng()),
+          reloadLibrary: ({required bool refreshContent}) async => library,
+          source: source,
+          ensureSourceChapter: (_, __, ___) async => firstEntry,
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (
+            _, {
+            required bool refreshRemote,
+            required String title,
+            int? initialPageIndex,
+          }) async => null,
+          onDownloadChapter: (_) async {},
+          inspectChapterDownload: (chapter) async =>
+              ChapterDownloadSnapshot.idle(chapter),
+          inspectChapterDownloads: (chapters) async {
+            bulkInspectionStarted = true;
+            await releaseInspection.future;
+            return chapters.map(ChapterDownloadSnapshot.idle).toList();
+          },
+          downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+          onDownloadComic: (_) async {},
+        ),
+      ),
+    );
+
+    expect(bulkInspectionStarted, isTrue);
+    expect(find.byKey(details.localComicDetailsScreenKey), findsOneWidget);
+    expect(find.byKey(details.comicDetailsChapterListKey), findsOneWidget);
+    expect(find.text('第 2 话'), findsOneWidget);
+
+    releaseInspection.complete();
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('details separates same-source version view and migration',
       (tester) async {
     final store = MemoryImportedLibraryStore();
@@ -1689,6 +1916,16 @@ void main() {
     );
 
     expect(source.comicLoads, 2);
+    expect(
+      find.byKey(
+          sourceChapterKey('fixture-refresh', 'fixture-refresh-chapter')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+          sourceChapterKey('fixture-refresh', 'fixture-refresh-chapter-2')),
+      findsOneWidget,
+    );
     expect(await store.get('fixture-refresh', 'fixture-refresh-chapter-2'),
         isNull);
     final savedComic = await store.getSavedComic(

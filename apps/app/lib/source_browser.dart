@@ -71,7 +71,7 @@ Key sourceComicShelfDimKey(String sourceId, String comicId) =>
 Key sourceComicUpdateMarkerKey(String sourceId, String comicId) =>
     ValueKey<String>('source-comic-update:$sourceId\u0000$comicId');
 Key sourceChapterKey(String sourceId, String chapterId) =>
-    ValueKey<String>('source-chapter:$sourceId\u0000$chapterId');
+    details.comicDetailsChapterKey(sourceId, chapterId);
 
 typedef SourceComicCoverLoader = Future<EncodedResourceSource> Function(
   BrowsableComicSource source,
@@ -2608,9 +2608,11 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     required this.onReadChanged,
     required this.onOpenChapter,
     required this.onDownloadChapter,
+    this.onDeleteChapter,
     required this.inspectChapterDownload,
     required this.downloadChanges,
     required this.onDownloadComic,
+    this.inspectChapterDownloads,
     this.artworkIdentity,
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
@@ -2639,7 +2641,10 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       onReadChanged;
   final details.ComicDetailsChapterOpener onOpenChapter;
   final details.ComicDetailsChapterDownloader onDownloadChapter;
+  final details.ComicDetailsChapterDeleter? onDeleteChapter;
   final details.ComicDetailsChapterDownloadInspector inspectChapterDownload;
+  final details.ComicDetailsChapterDownloadBulkInspector?
+      inspectChapterDownloads;
   final Stream<ChapterDownloadSnapshot> downloadChanges;
   final details.ComicDetailsComicDownloader onDownloadComic;
   final String? artworkIdentity;
@@ -2670,7 +2675,9 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       onReadChanged: onReadChanged,
       onOpenChapter: onOpenChapter,
       onDownloadChapter: onDownloadChapter,
+      onDeleteChapter: onDeleteChapter,
       inspectChapterDownload: inspectChapterDownload,
+      inspectChapterDownloads: inspectChapterDownloads,
       downloadChanges: downloadChanges,
       onDownloadComic: onDownloadComic,
       artworkIdentity: artworkIdentity,

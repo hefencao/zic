@@ -42,6 +42,91 @@ void main() {
     );
   });
 
+  test('comic detail preview and comments use independent cached responses',
+      () async {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+
+    final preview = await source.loadComicPreview('comic');
+    expect(await source.loadComicPreview('comic'), same(preview));
+    final comments = await source.loadComicComments(
+      'comic',
+      page: 1,
+    );
+    expect(
+      await source.loadComicComments('comic', page: 1),
+      same(comments),
+    );
+    expect(raw.previewLoads, 1);
+    expect(raw.commentLoads, 1);
+    expect(source.peekComicPreview('comic'), same(preview));
+    expect(source.peekComicComments('comic', page: 1), same(comments));
+
+    await source.refreshComicPreview('comic');
+    await source.refreshComicComments('comic', page: 1);
+
+    expect(raw.previewLoads, 2);
+    expect(raw.commentLoads, 2);
+    expect(
+      cache.stats.forKind(ResourceCacheKind.comicDetails).entries,
+      2,
+    );
+  });
+
+  test('forced embedded detail refresh replaces stale side-page projections',
+      () async {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+
+    raw.embeddedPreview = _previewPage('embedded-old');
+    raw.embeddedComments = _commentPage('embedded-old');
+    await source.refreshComic('comic');
+    expect(source.peekComicPreview('comic')!.items.single.label, 'embedded-old');
+    expect(
+      source.peekComicComments('comic', page: 1)!.items.single.content,
+      'embedded-old',
+    );
+
+    raw.embeddedPreview = _previewPage('embedded-new');
+    raw.embeddedComments = _commentPage('embedded-new');
+    await source.refreshComic('comic');
+
+    expect(source.peekComicPreview('comic')!.items.single.label, 'embedded-new');
+    expect(
+      source.peekComicComments('comic', page: 1)!.items.single.content,
+      'embedded-new',
+    );
+  });
+
+  test('independent side refresh bypasses embedded first pages', () async {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+
+    raw.embeddedPreview = _previewPage('embedded');
+    raw.embeddedComments = _commentPage('embedded');
+    await source.loadComic('comic');
+
+    await source.refreshComicPreview('comic');
+    await source.refreshComicComments('comic', page: 1);
+
+    expect(
+      source.peekComicPreview('comic')!.items.single.uri,
+      Uri.parse('https://example.invalid/preview/1'),
+    );
+    expect(
+      source.peekComicComments('comic', page: 1)!.items.single.content,
+      'Comment 1',
+    );
+    expect(raw.previewLoads, 1);
+    expect(raw.commentLoads, 1);
+  });
+
 
   test('browse sections and pages use stable cache identities with refresh',
       () async {
@@ -378,12 +463,31 @@ void main() {
   });
 }
 
+ComicPreviewPage _previewPage(String label) => ComicPreviewPage(
+      items: <ComicPreviewAsset>[
+        ComicPreviewAsset(
+          uri: Uri.parse('https://example.invalid/$label'),
+          label: label,
+        ),
+      ],
+    );
+
+ComicCommentPage _commentPage(String content) => ComicCommentPage(
+      page: 1,
+      maxPage: 1,
+      items: <ComicComment>[
+        ComicComment(userName: 'Reader', content: content),
+      ],
+    );
+
 final class _CountingSource implements
         BrowsableComicSource,
         ComicWebUriSource,
         CanonicalComicIdentitySource,
         ComicWebViewRequestSource,
         ComicVersionSource,
+        ComicPreviewSource,
+        ComicCommentSource,
         SectionedBrowsableComicSource,
         FilterableBrowsableComicSource {
   var comicLoads = 0;
@@ -391,6 +495,10 @@ final class _CountingSource implements
   var browseLoads = 0;
   var resourceLoads = 0;
   var versionLoads = 0;
+  var previewLoads = 0;
+  var commentLoads = 0;
+  ComicPreviewPage? embeddedPreview;
+  ComicCommentPage? embeddedComments;
   var sectionLoads = 0;
   var sectionBrowseLoads = 0;
   var filterBrowseLoads = 0;
@@ -496,6 +604,8 @@ final class _CountingSource implements
           sourceRevision: 'r1',
         ),
       ],
+      preview: embeddedPreview,
+      comments: embeddedComments,
     );
   }
 
@@ -522,6 +632,51 @@ final class _CountingSource implements
         ),
       ],
       readingDirection: ReadingDirection.ltr,
+    );
+  }
+
+  @override
+  bool get supportsComicPreview => true;
+
+  @override
+  Future<ComicPreviewPage> loadComicPreview(
+    String comicId, {
+    String? nextToken,
+  }) async {
+    previewLoads++;
+    return ComicPreviewPage(
+      items: <ComicPreviewAsset>[
+        ComicPreviewAsset(
+          uri: Uri.parse('https://example.invalid/preview/$previewLoads'),
+          width: 100,
+          height: 200,
+        ),
+      ],
+      nextToken: nextToken == null ? 'next' : null,
+    );
+  }
+
+  @override
+  bool get supportsComicComments => true;
+
+  @override
+  Future<ComicCommentPage> loadComicComments(
+    String comicId, {
+    String? subId,
+    required int page,
+    String? replyTo,
+  }) async {
+    commentLoads++;
+    return ComicCommentPage(
+      page: page,
+      maxPage: page,
+      items: <ComicComment>[
+        ComicComment(
+          id: 'comment-$commentLoads',
+          userName: 'Reader',
+          content: 'Comment $commentLoads',
+        ),
+      ],
     );
   }
 

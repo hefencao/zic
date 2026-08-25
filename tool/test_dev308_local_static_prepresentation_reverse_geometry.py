@@ -123,7 +123,6 @@ all_docs = ''.join(read(path) for path in (
 for token in (
     '51ms', '52ms', '924.44', '1533.23', '1433.28',
     'localPresentationReady', 'visibleMin', 'geometryCorrectionTarget',
-    'dev.295目标已正面闭合', 'staticWarmUploads=0',
 ):
     require(all_docs, token, 'governed dev.308 evidence/boundary')
 

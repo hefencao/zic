@@ -8,7 +8,7 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 
 import 'sqlite_progress_writer.dart';
 
-const _schemaVersion = 9;
+const _schemaVersion = 10;
 
 final class SqliteImportedLibraryStore
     implements
@@ -123,6 +123,14 @@ final class SqliteImportedLibraryStore
         _migrateLibraryProjectionRevision(db);
         _storageLog(
           'library-schema-migration-complete from=8 to=$_schemaVersion '
+          'durationMs=${migrationStartedAt.elapsedMilliseconds}',
+        );
+      } else if (version == 9) {
+        final migrationStartedAt = Stopwatch()..start();
+        _storageLog('library-schema-migration-start from=9');
+        _migrateChapterReadStateOwnership(db);
+        _storageLog(
+          'library-schema-migration-complete from=9 to=$_schemaVersion '
           'durationMs=${migrationStartedAt.elapsedMilliseconds}',
         );
       } else if (version != _schemaVersion) {
@@ -319,10 +327,18 @@ final class SqliteImportedLibraryStore
       WHERE source_id = ? AND chapter_id = ?
       LIMIT 1
     ''', <Object?>[sourceId, chapterId]);
-    if (rows.isEmpty) {
+    final comicId = rows.isEmpty ? null : rows.first['comic_id']! as String;
+    db.execute(
+      'DELETE FROM chapter_read_state WHERE source_id = ? AND chapter_id = ?',
+      <Object?>[sourceId, chapterId],
+    );
+    db.execute(
+      'DELETE FROM reading_progress WHERE source_id = ? AND chapter_id = ?',
+      <Object?>[sourceId, chapterId],
+    );
+    if (comicId == null) {
       return;
     }
-    final comicId = rows.first['comic_id']! as String;
     db.execute(
       'DELETE FROM imported_chapter WHERE source_id = ? AND chapter_id = ?',
       <Object?>[sourceId, chapterId],
@@ -1030,6 +1046,7 @@ void _migrateMigrationIssueAcknowledgement(sql.Database db) {
     ''');
     _createComicVersionRelationTable(db);
     _createLibraryProjectionRevision(db);
+    _rebuildChapterReadStateWithoutChapterForeignKey(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -1043,6 +1060,7 @@ void _migrateComicVersionRelations(sql.Database db) {
   try {
     _createComicVersionRelationTable(db);
     _createLibraryProjectionRevision(db);
+    _rebuildChapterReadStateWithoutChapterForeignKey(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -1066,6 +1084,7 @@ void _migrateComicVersionPageMappings(sql.Database db) {
       """);
     }
     _createLibraryProjectionRevision(db);
+    _rebuildChapterReadStateWithoutChapterForeignKey(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -1078,12 +1097,63 @@ void _migrateLibraryProjectionRevision(sql.Database db) {
   db.execute('BEGIN IMMEDIATE');
   try {
     _createLibraryProjectionRevision(db);
+    _rebuildChapterReadStateWithoutChapterForeignKey(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
     db.execute('ROLLBACK');
     rethrow;
   }
+}
+
+void _migrateChapterReadStateOwnership(sql.Database db) {
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    _rebuildChapterReadStateWithoutChapterForeignKey(db);
+    db.execute('PRAGMA user_version = $_schemaVersion');
+    db.execute('COMMIT');
+  } on Object {
+    db.execute('ROLLBACK');
+    rethrow;
+  }
+}
+
+void _rebuildChapterReadStateWithoutChapterForeignKey(sql.Database db) {
+  // Read state is keyed by the source-owned chapter identity and may be
+  // created while a compact detail projection has not materialized a full
+  // imported chapter. Rebuild the v9 table once so that this path does not
+  // need to fetch chapter metadata merely to toggle read/unread.
+  final table = db.select('''
+    SELECT 1
+    FROM sqlite_master
+    WHERE type = 'table' AND name = 'chapter_read_state'
+    LIMIT 1
+  ''');
+  if (table.isEmpty) return;
+  db.execute('DROP INDEX IF EXISTS chapter_read_state_comic');
+  db.execute('ALTER TABLE chapter_read_state RENAME TO chapter_read_state_v9');
+  db.execute('''
+    CREATE TABLE chapter_read_state (
+      source_id TEXT NOT NULL,
+      chapter_id TEXT NOT NULL,
+      comic_id TEXT NOT NULL,
+      updated_us INTEGER NOT NULL,
+      read_json TEXT NOT NULL,
+      PRIMARY KEY(source_id, chapter_id)
+    )
+  ''');
+  db.execute('''
+    INSERT INTO chapter_read_state (
+      source_id, chapter_id, comic_id, updated_us, read_json
+    )
+    SELECT source_id, chapter_id, comic_id, updated_us, read_json
+    FROM chapter_read_state_v9
+  ''');
+  db.execute('DROP TABLE chapter_read_state_v9');
+  db.execute('''
+    CREATE INDEX chapter_read_state_comic
+    ON chapter_read_state(source_id, comic_id, chapter_id)
+  ''');
 }
 
 void _migrateToCompositeSchema(
@@ -1519,10 +1589,7 @@ void _createCompositeLibraryTables(sql.Database db) {
       comic_id TEXT NOT NULL,
       updated_us INTEGER NOT NULL,
       read_json TEXT NOT NULL,
-      PRIMARY KEY(source_id, chapter_id),
-      FOREIGN KEY(source_id, chapter_id)
-        REFERENCES imported_chapter(source_id, chapter_id)
-        ON DELETE CASCADE
+      PRIMARY KEY(source_id, chapter_id)
     )
   ''');
   _createCompositeIndexes(db);

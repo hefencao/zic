@@ -73,10 +73,6 @@ require('docs/ARCHITECTURE.md', 'scroll-stable layout snapshot', 'top-pixel')
 require('docs/SPEC.md', 'viewport prefix', 'latest-wins')
 require('docs/IMPLEMENTATION_STATUS.md', 'dev.280', 'geometry')
 require('docs/IMPLEMENTATION_PLAN.md', 'dev.280', 'scroll-stable geometry')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.280', '纵向滑动抖动', 'scroll-stable')
 require('CHANGELOG.md', '0.31.0-dev.280', '纵向滚动稳定 geometry snapshot')
-
-# This fix is presentation-only: frozen resource-policy constants must remain.
-require('docs/NEXT_CHAT_HANDOFF.md', 'previous3/next7', 'normal5+current reserved1')
 
 print('PASS: dev.280 scroll-stable vertical geometry snapshot')

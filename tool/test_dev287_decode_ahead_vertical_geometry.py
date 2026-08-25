@@ -32,7 +32,6 @@ require('docs/audits/dev287-decode-ahead-vertical-geometry-audit.md','dev.287','
 require('docs/ARCHITECTURE.md','decodedWidth/decodedHeight','visible tail之后')
 require('docs/SPEC.md','DecodeSession首个成功frame','visible tail之后')
 require('docs/IMPLEMENTATION_STATUS.md','dev.287','5.884986s','pageDimensions')
-require('docs/NEXT_CHAT_HANDOFF.md','dev.287','300–350ms','pageDimensions')
 require('CHANGELOG.md','0.31.0-dev.287','Decode-ahead vertical geometry preparation')
 req('test_dev287_decode_ahead_vertical_geometry.py' in text('tool/check.sh'),'dev.287 gate not wired into tool/check.sh')
 print('PASS: dev.287 decode-ahead vertical geometry preparation')

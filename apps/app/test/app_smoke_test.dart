@@ -17,6 +17,8 @@ import 'package:zic/webp_demo.dart';
 
 
 const _frameStep = Duration(milliseconds: 20);
+const _readerRetentionSettleStep = Duration(milliseconds: 500);
+const _readerRetentionSettleSteps = 300;
 
 Future<void> _pumpUntilFound(
   WidgetTester tester,
@@ -30,6 +32,17 @@ Future<void> _pumpUntilFound(
     }
   }
   throw TestFailure('Timed out waiting for $finder');
+}
+
+Future<void> _disposePipelineReader(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  // Drive the real two-minute retained-session expiry through bounded fake
+  // time steps. Interleaved pumps also drain observation timers and allow
+  // file-I/O futures to settle without awaiting the composition-wide close
+  // from inside Flutter's fake-async zone.
+  for (var i = 0; i < _readerRetentionSettleSteps; i++) {
+    await tester.pump(_readerRetentionSettleStep);
+  }
 }
 
 Future<void> _expandDiagnostics(WidgetTester tester) async {
@@ -235,8 +248,7 @@ void main() {
     expect(find.byKey(webpEngineControlKey), findsNothing);
 
     bytes.complete(_nativeFixture('finite_loop.webp').readAsBytesSync());
-    await tester.pumpWidget(const SizedBox.shrink());
-    await defaultLocalMediaPipelineFactory.disposeRetainedSessions();
+    await _disposePipelineReader(tester);
   });
 
   testWidgets('bundled WebP entry pushes the catalog route', (tester) async {
@@ -371,8 +383,7 @@ void main() {
       '002.bin · PNG',
     );
 
-    await tester.pumpWidget(const SizedBox.shrink());
-    await defaultLocalMediaPipelineFactory.disposeRetainedSessions();
+    await _disposePipelineReader(tester);
   });
 
 
@@ -420,8 +431,7 @@ void main() {
       findsOneWidget,
     );
 
-    await tester.pumpWidget(const SizedBox.shrink());
-    await defaultLocalMediaPipelineFactory.disposeRetainedSessions();
+    await _disposePipelineReader(tester);
   });
 
   testWidgets('folder reader switches mixed image files by explicit identity', (
@@ -509,10 +519,9 @@ void main() {
       ImagePreviewPhase.loading,
     );
 
-    await tester.pumpWidget(const SizedBox.shrink());
     pending['001.webp']!.complete(_folderBytes(_folderFixture().files.first));
     pending['002.bin']!.complete(_folderBytes(_folderFixture().files.last));
-    await defaultLocalMediaPipelineFactory.disposeRetainedSessions();
+    await _disposePipelineReader(tester);
   });
 
   testWidgets('cancelled folder picker stays on home', (tester) async {

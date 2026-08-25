@@ -74,6 +74,33 @@ final class HomeServiceHandoff extends ChangeNotifier {
     }
   }
 
+  /// Publishes optional runtime capabilities without replacing the
+  /// memory-backed bootstrap services.
+  ///
+  /// An installation may have an external-plugin manifest without any core
+  /// library/download state. Source management still needs the durable root
+  /// and plugin loader in that case, while Home must keep its bootstrap
+  /// library and response cache instead of opening empty SQLite stores.
+  void updateDeferredCapabilities({
+    required ExternalPluginController? externalPlugins,
+    required Future<ExternalPluginController?> Function()?
+        externalPluginLoader,
+    required Future<void> Function()? platformEnvironmentLoader,
+    required String? storageRoot,
+  }) {
+    final changed = !identical(this.externalPlugins, externalPlugins) ||
+        this.externalPluginLoader != externalPluginLoader ||
+        this.platformEnvironmentLoader != platformEnvironmentLoader ||
+        this.storageRoot != storageRoot;
+    this.externalPlugins = externalPlugins;
+    this.externalPluginLoader = externalPluginLoader;
+    this.platformEnvironmentLoader = platformEnvironmentLoader;
+    this.storageRoot = storageRoot;
+    if (changed) {
+      notifyListeners();
+    }
+  }
+
   void updateExternalPlugins(ExternalPluginController? value) {
     if (identical(externalPlugins, value)) {
       return;
@@ -889,8 +916,17 @@ final class HomeLibrarySession extends ChangeNotifier {
     final next = _entries
         .where((entry) => entry.identity != identity)
         .toList(growable: false);
-    if (next.length == _entries.length) return;
-    _entries = List<ImportedLibraryEntry>.unmodifiable(next);
+    final nextReadStates = <String, ChapterReadState>{..._readStates}
+      ..remove(identity);
+    final entriesChanged = next.length != _entries.length;
+    final readStateChanged = nextReadStates.length != _readStates.length;
+    if (!entriesChanged && !readStateChanged) return;
+    if (entriesChanged) {
+      _entries = List<ImportedLibraryEntry>.unmodifiable(next);
+    }
+    if (readStateChanged) {
+      _readStates = Map<String, ChapterReadState>.unmodifiable(nextReadStates);
+    }
     _libraryProjectionRevision++;
     _publish();
     _scheduleSnapshotWrite();

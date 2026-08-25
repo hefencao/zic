@@ -137,7 +137,7 @@ def main() -> int:
         'readSourceWebViewSnapshot(',
     )
     require(
-        'apps/app/lib/main.dart',
+        'apps/app/lib/app_runtime.dart',
         "import 'package:network_bridge/network_bridge.dart';",
         'this.networkBridge = const AndroidNetworkBridge()',
         'final AndroidNetworkBridge networkBridge;',

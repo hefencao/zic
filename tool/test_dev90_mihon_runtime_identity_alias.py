@@ -89,14 +89,18 @@ require(
     'apps/app/lib/demo_home.dart',
     "part 'demo_home_catalog_identity.dart';",
     'collapseCanonicalLibraryComics',
-    'requestedComicIdLength',
-    'identityHash: _comicIdentityTraceHash',
 )
 require(
     'apps/app/lib/demo_home_catalog_identity.dart',
     '_preferredSavedComicAlias',
     'collapsed-to-single-chapter',
     '_canonicalComicKey',
+    'identityHash: _comicIdentityTraceHash',
+)
+require(
+    'apps/app/lib/demo_home_details.dart',
+    'requestedComicIdLength',
+    'identityHash: _comicIdentityTraceHash',
 )
 forbid('apps/app/lib/demo_home.dart', 'List<LibraryComic> _collapseComicAliases')
 require(

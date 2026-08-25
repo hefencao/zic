@@ -76,7 +76,6 @@ for path in (
 require('docs/ARCHITECTURE.md','PipelinePageDimensionsFeed','ValueNotifier','ValueListenable')
 require('docs/SPEC.md','PipelinePageDimensionsFeed','ValueListenable')
 require('docs/IMPLEMENTATION_STATUS.md','dev.288','ValueListenable','PipelinePageDimensionsFeed')
-require('docs/NEXT_CHAT_HANDOFF.md','dev.288','ValueListenable','PipelinePageDimensionsFeed')
 require('CHANGELOG.md','0.31.0-dev.288','Pipeline dimension projection boundary')
 req('test_dev288_pipeline_dimension_projection_boundary.py' in text('tool/check.sh'),'dev.288 gate not wired into tool/check.sh')
 print('PASS: dev.288 Pipeline dimension projection compile/ownership closure')

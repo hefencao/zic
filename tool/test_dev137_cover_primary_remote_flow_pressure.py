@@ -25,13 +25,17 @@ profile = read("packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart")
 analyzer = read("tool/analyze_frame_pipeline_trace.py")
 
 for token in (
-    "final entriesFuture = library.list()",
-    "final savedComicsFuture = library.listSavedComics()",
+    "final entriesFuture = _traceStartupOperation<List<ImportedLibraryEntry>>(",
+    "library.list,",
+    "_traceStartupOperation<List<SavedComicRecord>>(",
+    "library.listSavedComics,",
     "if (publishPrimary)",
     "_savedComics = List<SavedComicRecord>.unmodifiable(savedComics)",
     "'home-library-primary'",
-    "final categoriesFuture = library.listCategories()",
-    "final readStatesFuture = library.listAllChapterReadStates()",
+    "_traceStartupOperation<List<LibraryCategory>>(",
+    "library.listCategories,",
+    "_traceStartupOperation<List<ChapterReadState>>(",
+    "() => library.listAllChapterReadStates(),",
 ):
     require(home, token, "Home primary projection")
 if home.index("if (publishPrimary)") >= home.index(

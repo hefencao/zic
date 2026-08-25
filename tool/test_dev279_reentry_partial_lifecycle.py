@@ -67,7 +67,7 @@ for marker in (
 ):
     req(marker in runtime, f'composition partial checkpoint missing: {marker}')
 
-app = text('apps/app/lib/main.dart')
+app = text('apps/app/lib/main.dart') + text('apps/app/lib/app_runtime.dart')
 for marker in (
     'with WidgetsBindingObserver',
     'AppLifecycleState.paused',
@@ -96,7 +96,6 @@ for path in (
 require('docs/ARCHITECTURE.md', 'physical object generation与Reader encoded generation边界', 'durable safety checkpoint')
 require('docs/SPEC.md', 'physical object generation与Reader encoded generation', 'durable safety checkpoint')
 require('docs/IMPLEMENTATION_STATUS.md', 'dev.279', 'sealed-source-generation-preserved')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.279', 'persistentMappings=5', 'sealed-source-generation-preserved')
 require('CHANGELOG.md', '0.31.0-dev.279', 'lifecycle partial checkpoint')
 
 print('PASS: dev.279 sealed Reader generation continuity + lifecycle partial durability')

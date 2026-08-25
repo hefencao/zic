@@ -74,14 +74,5 @@ require(
     '14.809ms',
     '`deferHiddenVerticalStaticUpload`',
 )
-if current_dev == 295:
-    require('docs/NEXT_CHAT_HANDOFF.md', '# dev.295 后续交接', 'hidden speculative static')
-else:
-    require(
-        'docs/NEXT_CHAT_HANDOFF.md',
-        f'# dev.{current_dev} 后续交接',
-        'dev.295目标已正面闭合',
-        'staticWarmUploads=0',
-    )
 forbid('packages/reader/lib/src/reader_view.dart', 'presentationExtentAt(')
 print('dev.295 vertical active visible-static upload boundary: OK')

@@ -17,6 +17,7 @@ import 'app_preferences.dart';
 import 'debug_trace.dart';
 import 'demo_home.dart';
 import 'home_library_session.dart';
+import 'resettable_single_flight.dart';
 import 'startup_platform.dart';
 import 'webp_demo.dart';
 
@@ -228,7 +229,16 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       // Empty installs deliberately remain memory-backed. In particular, do
       // not create SQLite/WAL files merely because Home was opened. The first
       // explicit durable operation is responsible for crossing that boundary.
+      // Plugin management is an independent optional capability: publish its
+      // loader and durable root without replacing the bootstrap services.
       _startupLog('services-open-skipped-empty-state');
+      _services = services;
+      _serviceHandoff.updateDeferredCapabilities(
+        externalPlugins: services.externalPlugins,
+        externalPluginLoader: () => _ensureExternalPlugins(services),
+        platformEnvironmentLoader: services.ensurePlatformEnvironment,
+        storageRoot: services.storageRoot,
+      );
       return;
     }
     _startupLog('services-open-complete');
@@ -344,7 +354,9 @@ final class _AppServices {
   /// picks up external sources through a later widget update.
   ExternalPluginController? externalPlugins;
   Future<void> externalPluginsReady = Future<void>.value();
-  Future<ExternalPluginController?>? _externalPluginOpening;
+  final ResettableSingleFlight<ExternalPluginController?>
+      _externalPluginOpening =
+      ResettableSingleFlight<ExternalPluginController?>();
   Future<void>? _platformEnvironmentOpening;
   bool _closed = false;
   Future<void>? _partialCheckpoint;
@@ -382,7 +394,7 @@ final class _AppServices {
     if (current != null) {
       return Future<ExternalPluginController?>.value(current);
     }
-    final opening = _externalPluginOpening;
+    final opening = _externalPluginOpening.active;
     if (opening != null) {
       return opening;
     }
@@ -390,24 +402,33 @@ final class _AppServices {
     if (root == null || _closed) {
       return Future<ExternalPluginController?>.value();
     }
-    final background = externalPluginsReady;
-    late final Future<ExternalPluginController?> forcedOpening;
-    forcedOpening = background.then<ExternalPluginController?>((_) async {
-      if (_closed || externalPlugins != null) {
+    // A failed optional open must not poison explicit source-management
+    // retries. Settle the previous attempt before starting the next one, but
+    // do not propagate its failure as the result of every later attempt.
+    final background = externalPluginsReady.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    final forcedOpening = _externalPluginOpening.run(
+      () => background.then<ExternalPluginController?>((_) async {
+        if (_closed || externalPlugins != null) {
+          return externalPlugins;
+        }
+        await _attachExternalPlugins(
+          telemetry,
+          this,
+          root,
+          () => preferences.networkUserAgent,
+          telemetry.nowMicros(),
+          force: true,
+        );
         return externalPlugins;
-      }
-      await _attachExternalPlugins(
-        telemetry,
-        this,
-        root,
-        () => preferences.networkUserAgent,
-        telemetry.nowMicros(),
-        force: true,
-      );
-      return externalPlugins;
-    });
-    _externalPluginOpening = forcedOpening;
-    externalPluginsReady = forcedOpening.then<void>((_) {});
+      }),
+    );
+    externalPluginsReady = forcedOpening.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
     return forcedOpening;
   }
 
@@ -496,6 +517,7 @@ Future<_AppServices> _openServices(
   PersistentDownloadComposition? downloadComposition;
   WholeComicDownloadQueue? wholeComicDownloads;
   ResourceCacheCoordinator? cacheCoordinator;
+  String? resolvedStorageRoot;
   try {
     final openedAt = telemetry.nowMicros();
     var stageStarted = telemetry.nowMicros();
@@ -505,6 +527,7 @@ Future<_AppServices> _openServices(
         getDefaultZicStorageRoot(
           applicationSupportPath: getStartupApplicationSupportPath,
         ));
+    resolvedStorageRoot = root;
     _startupLog(
       'storage-root-resolve-complete '
       'durationMs=${storageRootClock.elapsedMilliseconds}',
@@ -606,7 +629,11 @@ Future<_AppServices> _openServices(
       await chapterDownloads?.close();
     }
     await libraryStore?.close();
-    return _AppServices();
+    // External source management is independent from the core library and
+    // download stores. If one of those stores cannot open (for example while
+    // recovering a cross-version schema), keep the resolved root so the
+    // Mihon/Venera host can still attach and expose its management pages.
+    return _AppServices(storageRoot: resolvedStorageRoot);
   }
 }
 

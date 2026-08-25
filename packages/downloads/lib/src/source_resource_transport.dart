@@ -315,11 +315,14 @@ final class _SourceResourceTransport implements ControlledTransport {
         ? source as ResolvableComicResourceSource
         : null;
     if (controlled == null && resolvable == null) {
-      final direct = locator.scheme == 'http' || locator.scheme == 'https';
+      // A legacy BrowsableComicSource that only exposes loadResource owns the
+      // request/session boundary itself. Treat it as the compatibility path;
+      // sending its opaque locator to the host HttpClient can hang or bypass
+      // source cookies even when the source can return the bytes immediately.
       return (
         request: ComicResourceRequest(
           uri: locator,
-          requiresRuntimeTransform: !direct,
+          requiresRuntimeTransform: true,
         ),
         cacheHit: false,
       );

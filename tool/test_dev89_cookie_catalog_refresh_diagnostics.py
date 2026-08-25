@@ -173,6 +173,9 @@ forbid(
 home_catalog = read("apps/app/lib/demo_home.dart") + read(
     "apps/app/lib/demo_home_catalog_identity.dart"
 )
+home_catalog += read(
+    "apps/app/lib/demo_home_details.dart"
+)
 for token in (
     "_rejectCatalogRegression",
     "chapter-catalog-regression-rejected",

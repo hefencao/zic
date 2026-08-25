@@ -173,6 +173,15 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     return _chapterDownloads.inspect(await _librarySession.hydrateEntry(entry));
   }
 
+  Future<Iterable<ChapterDownloadSnapshot>> _inspectChapterDownloads(
+    Iterable<ImportedLibraryEntry> entries,
+  ) async {
+    final hydrated = await Future.wait<ImportedLibraryEntry>(
+      entries.map(_librarySession.hydrateEntry),
+    );
+    return _chapterDownloads.inspectMany(hydrated);
+  }
+
   Future<void> _downloadChapter(ImportedLibraryEntry entry) async {
     final hydrated = await _librarySession.hydrateEntry(entry);
     final current = _hasLegacyVeneraLocators(hydrated.chapter)
@@ -190,6 +199,18 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
         current.chapter.comicId,
       );
     }
+  }
+
+  Future<void> _deleteChapter(ImportedLibraryEntry entry) async {
+    // Detail routes may start from a compact Home snapshot. Deletion needs the
+    // authoritative page list so ChapterDownloadService can evict every page
+    // artifact instead of only removing the library row.
+    final hydrated = await _librarySession.hydrateEntry(entry);
+    await _chapterDownloads.delete(hydrated);
+    await _librarySession.removeChapter(
+      hydrated.chapter.sourceId,
+      hydrated.chapter.chapterId,
+    );
   }
 
   Future<void> _downloadComicEntries(
@@ -270,7 +291,11 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     if (!_openingComicIdentities.add(identity)) return;
     _clearDownloadCompletionBadge(source.sourceId, comic.comicId);
     if (_sourceSupportsVersionEntry(source)) {
-      _scheduleVersionReuseWarmup(source, comic.comicId);
+      _scheduleVersionReuseWarmup(
+        source,
+        comic.comicId,
+        deferUntilAfterFrame: true,
+      );
     }
     final local = resolveCanonicalAlias
         ? _libraryComicForSourceIdentity(source.sourceId, comic.comicId)
@@ -368,7 +393,9 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               initialPageIndex: initialPageIndex,
             ),
             onDownloadChapter: _downloadChapter,
+            onDeleteChapter: _deleteChapter,
             inspectChapterDownload: _inspectChapterDownload,
+            inspectChapterDownloads: _inspectChapterDownloads,
             downloadChanges: _chapterDownloads.changes,
             onDownloadComic: (entries) =>
                 _downloadComicEntries(identity, entries),
@@ -450,7 +477,11 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     _clearDownloadCompletionBadge(comic.sourceId, comic.comicId);
     final source = _sourceForId(comic.sourceId);
     if (source != null && _sourceSupportsVersionEntry(source)) {
-      _scheduleVersionReuseWarmup(source, comic.comicId);
+      _scheduleVersionReuseWarmup(
+        source,
+        comic.comicId,
+        deferUntilAfterFrame: true,
+      );
     }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -502,7 +533,9 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             initialPageIndex: initialPageIndex,
           ),
           onDownloadChapter: _downloadChapter,
+          onDeleteChapter: _deleteChapter,
           inspectChapterDownload: _inspectChapterDownload,
+          inspectChapterDownloads: _inspectChapterDownloads,
           downloadChanges: _chapterDownloads.changes,
           onDownloadComic: (entries) => _downloadComicEntries(
             comicLibraryIdentity(comic.sourceId, comic.comicId),

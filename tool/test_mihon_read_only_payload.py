@@ -42,7 +42,13 @@ fun main() {
     val target = File(root, "runtime/extension.apk")
     target.parentFile.mkdirs()
     target.writeText("old")
-    val staged = stageReadOnlyMihonApk(payload, target, bytes.size.toLong(), sha)
+    val staged = stageReadOnlyMihonApk(
+        payload,
+        target,
+        bytes.size.toLong(),
+        sha,
+        verifiedExisting = false,
+    )
     check(staged.readBytes().contentEquals(bytes))
     val permissions = Files.getPosixFilePermissions(staged.toPath())
     check(PosixFilePermission.OWNER_WRITE !in permissions)

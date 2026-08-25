@@ -27,7 +27,7 @@ session = read("apps/app/lib/home_library_session.dart")
 for token in (
     "List<ComicVersionRelation> _versionRelations",
     "List<ComicVersionRelation> get versionRelations => _versionRelations;",
-    "versionRelationStore.listAllComicVersionRelations()",
+    "versionRelationStore.listAllComicVersionRelations,",
     "Future<void> upsertVersionRelation(ComicVersionRelation relation) async {",
     "replaceVersionRelation(relation);",
 ):

@@ -77,7 +77,6 @@ require(
 require("docs/ARCHITECTURE.md", "generation-local source-metadata prefix", "sourceCanvasWidth")
 require("docs/SPEC.md", "generation-local source-metadata prefix", "physical-ingress-source-canvas")
 require("docs/IMPLEMENTATION_STATUS.md", "dev.291", "residentBodyBacked", "source metadata")
-require("docs/NEXT_CHAT_HANDOFF.md", "dev.291", "physical ingress", "sourceCanvas")
 require("CHANGELOG.md", "0.31.0-dev.291", "Physical ingress source metadata authority")
 req("test_dev291_physical_source_metadata_authority.py" in text("tool/check.sh"),
     "dev.291 gate not wired into tool/check.sh")

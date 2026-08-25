@@ -69,14 +69,6 @@ require(
     'observation-only',
     'external Texture/SurfaceProducer compositor',
 )
-handoff_tokens = ['缩放/比例异常解决', '`pageLayoutSnapshot`']
-if current_dev == 294:
-    handoff_tokens.insert(0, '# dev.294 后续交接')
-elif current_dev == 295:
-    handoff_tokens.insert(0, '# dev.295 后续交接')
-else:
-    handoff_tokens.insert(0, f'# dev.{current_dev} 后续交接')
-require('docs/NEXT_CHAT_HANDOFF.md', *handoff_tokens)
 forbid(
     'packages/reader/lib/src/reader_view.dart',
     'presentationExtentAt(',

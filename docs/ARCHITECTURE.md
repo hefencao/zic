@@ -42,7 +42,7 @@ Native implementation
 
 ### `catalog`
 
-漫画源、漫画/章节/page manifest、来源能力和 catalog cache identity。`CachedBrowsableComicSource` 只缓存 browse/details/chapter metadata，不拥有 artwork 加载；Reader 页面正文仍透传到统一 Pipeline。
+漫画源、漫画/章节/page manifest、来源能力和 catalog cache identity。`CachedBrowsableComicSource` 缓存 browse、details、preview/comment 分页和 chapter metadata，所有这些可重新获取的响应共用注入的 `ResourceCacheManager`，但按稳定 response identity 分开；它不拥有 artwork 加载，Reader 页面正文仍透传到统一 Pipeline。
 
 ### `resource_cache`
 
@@ -86,15 +86,15 @@ Reader 章节资源会话的唯一组合所有者。它把 demand reconcile 到 
 
 ### Home 冷启动组合
 
-bootstrap 与 durable services 之间通过稳定 `HomeServiceHandoff` 原地交接现有 `DemoHome/HomeLibrarySession`；服务到达不会更换 `MaterialApp`、Home key 或导航状态。快照已证明 revision 一致时 handoff 只切换服务引用，不再次发布同一更新漫画/阅读历史投影。
+bootstrap 与 durable services 之间通过稳定 `HomeServiceHandoff` 原地交接现有 `DemoHome/HomeLibrarySession`；服务到达不会更换 `MaterialApp`、Home key 或导航状态。快照已证明 revision 一致时 handoff 只切换服务引用，不再次发布同一更新漫画/阅读历史投影。外部插件 loader、storage root 等可选 capability 独立于 core service handoff：即使安装只有 external-plugin manifest、没有 imported-library/download/queue 文件，或 core SQLite 因跨版本 schema 等原因打开失败，也保留已解析的 storage root 并补充插件 capability，不替换 memory-backed library/cache 或创建空 SQLite。
 
-`apps/app` 的 Home 关键路径只等待能产生封面的本地库 primary 数据和内置来源。入口直接挂载 memory-backed Home，不创建自定义 Flutter bootstrap surface，也不以 deferred loading unit 作为首个可见 frame 的门槛。Home 首帧之后立即异步启动 durable open，不以 durable readiness 作为可见性门槛；durable open 完成后立即替换内存投影，不依赖后续用户手势或偶然产生的 Flutter frame。native decode、`media_core` texture、rhttp 和 feature bridge 均在对应 capability 首次使用时按需挂载。持久整本队列继续以 `ready` Future 恢复，其独立状态文件通过 `inspectMany()` 批量投影并在 Home primary 后台刷新；外部插件在 durable handoff 后后台恢复，外部 source 尚未 ready 时首页封面请求保持 pending，来源管理页仍可显式刷新设备扩展。队列和章节下载状态通过 Home 的独立下载投影通知更新封面水印，不得因为下载恢复重发库投影通知或重建“更新漫画/阅读历史”列表。
+`apps/app` 的 Home 关键路径只等待能产生封面的本地库 primary 数据和内置来源。入口直接挂载 memory-backed Home，不创建自定义 Flutter bootstrap surface，也不以 deferred loading unit 作为首个可见 frame 的门槛。Home 首帧之后立即异步启动 durable open，不以 durable readiness 作为可见性门槛；durable open 完成后立即替换内存投影，不依赖后续用户手势或偶然产生的 Flutter frame。native decode、`media_core` texture、rhttp 和 feature bridge 均在对应 capability 首次使用时按需挂载。持久整本队列继续以 `ready` Future 恢复，其独立状态文件通过 `inspectMany()` 批量投影并在 Home primary 后台刷新；外部插件在 capability handoff 后后台恢复，首次宿主打开失败不得缓存永久 `null`，显式进入来源管理必须能够重新打开；外部 source 尚未 ready 时首页封面请求保持 pending，来源管理页仍可显式刷新设备扩展。source projection 的 single-flight 在释放 owner 时重新检查尾部 change，不能丢失 activation 完成事件。队列和章节下载状态通过 Home 的独立下载投影通知更新封面水印，不得因为下载恢复重发库投影通知或重建“更新漫画/阅读历史”列表。
 
 `MainActivity` 显式创建关闭自动 `GeneratedPluginRegistrant` 的 `FlutterEngine`，并在 Activity 结束时销毁；仅覆盖 `configureFlutterEngine` 不能阻止 implicit engine 的构造期注册，feature bridge 只能通过 startup channel 按能力挂载。`LocalMediaBridge` 在 Android 的 pick/scan/open/read 入口前共享 single-flight attach，保证从持久阅读记录直接进入 Reader 时也先注册 `dev.zic/local_media`；startup channel 不存在的宿主才回退其自身的 eager registration。按类名反射的 Android feature plugin 及 rhttp 入口必须由 app 的 R8 keep 规则保留原始全限定名。Android 存储根目录优先随 Dart entrypoint args 同步注入，避免冷启动首次 MethodChannel 往返；旧宿主才回退轻量 startup channel，首帧后只打开 durable/native/plugin capability，不创建第二份 owner。
 首次安装的 `app_preferences.json` 不在 Home 启动时强制写入；偏好控制器先使用内存默认值，用户首次修改时才创建持久文件。
 `AppPreferencesController` 负责持久化 `ThemeMode` 与 AMOLED 深色开关；`MaterialApp` 只在有效深色主题下应用 AMOLED 纯黑 surface/scaffold/canvas，首帧加载背景不再强制切换为浅色。
 
-新安装且不存在 imported-library、offline-cache 或 whole-comic queue 状态时，Home 不打开 SQLite 或创建 WAL/schema；`LazyImportedLibraryStore` 先提供内存投影，首次 chapter、收藏、已读、偏好或进度写入时迁移到持久库。已有 durable state 的服务仍在 Home 可见窗口之后打开；Reader checkpoint writer 的第二个 WAL 连接也只在首次真正写入 `ReadingProgress` 后懒启动。
+新安装且不存在 imported-library、offline-cache 或 whole-comic queue 状态时，Home 不打开 SQLite 或创建 WAL/schema；`LazyImportedLibraryStore` 先提供内存投影，首次 chapter、收藏、已读、偏好或进度写入时迁移到持久库。已有 durable state 的服务仍在 Home 可见窗口之后打开；Reader checkpoint writer 的第二个 WAL 连接也只在首次真正写入 `ReadingProgress` 后懒启动。SQLite schema 10 将 `chapter_read_state` 作为独立的来源章节身份状态，不再用指向 `imported_chapter` 的外键阻止未 hydrate 章节先写入已读状态；显式删除章节负责清理章节、进度和已读状态。
 
 已有 durable state 时，`HomeProjectionSnapshotStore` 先读取上一次成功 reconcile 的 Home 投影；bootstrap Home 只读该快照，不能把空的内存投影写回。快照只用于 stale-while-revalidate 首显，`SqliteImportedLibraryStore` 仍是章节、进度、书架、偏好、分类、已读状态和版本关系的唯一事实源。快照同时保存 SQLite Home projection revision；修订号一致时直接复用快照，只有修订号变化、快照缺少修订号或存储实现无法提供修订号时才执行事实源 reconcile，并通过临时文件替换异步写回。当前快照 v2 的 entries 只保存 Home 所需章节元数据、页数、封面定位和 progress，不复制完整 page locator；超过 64 KiB 的快照以 gzip 存储，读取仍兼容明文 v1/v2，大型明文或旧 v1 读取成功后自动原子重写为 compact v2 gzip。compact entry 只有在 Reader、下载或版本迁移前才由 authoritative library hydrate 完整 pages。进程内重复读取共享同一个快照读操作/结果。快照损坏、版本不兼容或读取失败都必须静默回退 SQLite。
 
@@ -130,12 +130,11 @@ Home 的“更新漫画”投影只取已在书架且具有 source-confirmed upd
 
 详情页与漫画源页的统一刷新由 `AppPullToRefresh` 拥有 edge trigger、72 px位移、进行中状态与成功/失败结果图标；页面不得叠加第二套刷新状态。
 
-详情扩展数据由 source adapter 负责：`ComicManifest` 可携带首批预览缩略图和评论，
-`ComicPreviewSource`/`ComicCommentSource` 只在来源声明能力时提供继续分页。App 只消费
-规范化 URI、评论字段和不透明的 `sourceSubId`/回复 ID；图片仍走统一 artwork cache，
-评论完整列表和回复通过详情次级页加载，不把评论请求或插件 transport 变成章节目录的
-全局门控。Venera 直接复用 `comic.loadThumbnails` 与 `comic.loadComments`，因此已有
-`ComicDetails` 能力的来源可渐进显示预览、评论和回复。预览 URI 保留 Venera 的
+详情入口采用 stale-while-revalidate：若 `CachedComicDetailsProjection` 有热 manifest，页面先同步投影漫画和章节，并复用已缓存的首屏预览/评论；主详情请求和可选预览/评论请求在后台刷新。Presentation 按漫画字段、章节列表、预览页和评论页分别比较，只替换发生变化的那一类，失败的可选请求保留旧投影。内嵌在新 manifest 中的首屏页只在强制主响应刷新后同步到对应分页 key，分页独立刷新不会被普通主响应命中覆盖。预览图/头像的编码字节仍归 `ComicSourceResourceGateway/ResourceCacheManager` 的 artwork 路径，不归 catalog metadata cache。
+详情首帧不得等待下载状态、artifact index、章节 page I/O 或跨版本 page mapping warmup。章节状态检查在首帧后以 `inspectMany()` 批量读取，并合并同一详情路由的并发检查；跨版本版本发现和 mapping warmup 也在详情首帧后后台执行。Reader、DownloadSession、NetLane 的正文和调度所有权不因该 UI 优化下沉到详情页。
+详情扩展数据由 source adapter 负责：`ComicManifest` 可携带首批预览缩略图和评论，`ComicPreviewSource`/`ComicCommentSource` 只在来源声明能力时提供继续分页。App 只消费
+规范化 URI、评论字段和不透明的 `sourceSubId`/回复 ID；评论正文的受限 HTML 只解析实体、换行和 HTTP(S) `img`，emoji 仍通过统一 artwork loader/cache 绘制，不把原始标签直接交给文本控件。图片仍走统一 artwork cache，评论完整列表和回复通过详情次级页加载，不把评论请求或插件 transport 变成章节目录的
+全局门控。Venera 直接复用 `comic.loadThumbnails` 与 `comic.loadComments`，因此已有 `ComicDetails` 能力的来源可渐进显示预览、评论和回复。预览 URI 保留 Venera 的
 `@x/y` 裁剪标识用于预览项/widget/painter 的单项身份，但 `onThumbnailLoad` 请求回调接收
 去掉裁剪标识的原图地址；该 base URI 也是编码字节缓存身份，App 解码后只绘制对应裁剪区域。
 预览栏折叠与展开共用同一套顺序布局。实际行含横图时最多 2 张，纯竖图行最多 3 张；只允许在相邻三个候选内做最小局部重排。完整行直接用全部媒体宽度反算等面积 tile，不再把剩余宽度变成外边距或巨大项间距；标题保留普通内容边距，但图片区不叠加 Card 或水平 border/padding。只有稀疏末行允许相对完整行放大，面积上限为参考完整行的 2.4 倍。阅读设置提供每行最大数量 1–8，默认 4。折叠态只显示同一布局第一行，高度取第一行实际高度；展开态继续消费来源分页，并由 `PageView` 左右分页呈现后续行。展开图片区域按屏幕高度 90% 封顶，开关位于中间且只显示上下箭头。行规划优先使用 `ComicPreviewAsset.width/height`，缺失时以解码后的可见裁剪尺寸回填；缩略图使用 `BoxFit.contain`，不拉伸或强制裁切。预览失败只显示按资源 identity 生成的柔和单色占位，不显示破损图片图标。
@@ -323,6 +322,7 @@ Reader 页面变化产生的 `ReadingProgress` 由 `reader_runtime` 串行合并
 | `LibraryComic.identity` / Flutter comic key | 书架实体身份 | 当前为 `sourceId\u0000comicId`（UI key 再加各自前缀）；标题、作者和封面 URL 都不参与。两个同名漫画只有在这组身份也相同才会被视为同一个实体。 |
 | `canonicalComicId` | 来源确认的稳定同源身份 | 由来源从 raw locator 投影的稳定等价值，用于冷书架归并和 durable comic/artwork namespace；不得替换插件请求、章节或 Reader `ContentId` 中的 raw `comicId`。Mihon 当前以规范化漫画 Web URL投影 canonical identity。 |
 | `chapterId` | 来源原生章节身份 | `Chapter`/`ChapterManifest` 的章节身份；章节元数据响应 key 使用 `[sourceId, chapterId]`，并挂到已知漫画 namespace。 |
+| 详情/来源页章节 Flutter key | 章节行的 presentation identity | `sourceChapterKey` 与 `comicDetailsChapterKey` 必须保持同一字面值 `source-chapter:${sourceId}\u0000${chapterId}`；已读滑动容器和下载按钮分别使用 `chapter-read:${sourceId}\u0000${chapterId}` 与 `chapter-download:${sourceId}\u0000${chapterId}`。这些是 UI key，不是 metadata response cache key。右划切换已读/未读，左划露出最右侧删除按钮并由点击触发删除；长按已缓存行打开确认框。 |
 | `pageId` / `PageAsset.assetKey` | 章节内页面身份 | `PageAsset` 保留 `pageId` 和 `chapterId`，`assetKey` 为 `chapterId/pageId`；它不是封面/预览响应缓存 key。 |
 | `ContentId` | Reader 内容实体身份 | `[sourceId, comicId, chapterId, pageId]`，用于确定一个漫画章节页面；`ContentId.key` 只服务 Reader/download identity。 |
 | `DownloadId` | 确定字节版本 | `ContentId + sourceRevision + canonicalUri`，用于 Reader 下载/artifact；页面 URL 变化或来源版本变化会形成新的确定字节身份。 |
@@ -404,7 +404,7 @@ Reader 返回后 Home只更新该 route最终 progress一次，已挂载详情�
 - **统一 host transport**：仅重放来源已经解析成无状态 request plan 的单次资源请求。生产 Flutter composition由 `downloads_bridge` 注入可取消的 Rust/rhttp streaming transport并复用client/keep-alive；rangeStart=0 的完整/首段response通过媒体前缀校验后保持raw streaming cadence，合法206且`Content-Range.start > 0`的中段不得再次要求完整图片magic header，应直接保持raw stream/cancellation/diagnostics；不得仅因中段不含文件头而转runtime fallback，也不再建立第二套64/256KiB framing。transport packet边界由 `DownloadJob` 统一聚合为首批约16KiB、后续64KiB source-progress quantum后才进入session/native/artifact；pure `downloads` 的 Dart HttpClient只作为非Flutter/test默认。两者都关闭自动redirect，只有无 Cookie状态变化且直接返回编码媒体时才有资格把字节交给 Pipeline，且平台 transport必须观察同一个 `TaskControl`。rhttp持续传输观测只允许通过`ByteResponseReadDiagnostics`在stream结束/取消时snapshot receive-progress与raw-body cadence；HTTP version和匿名endpoint hash仅用于trace。该seam不得提供pause/resume、bandwidth quota或priority，也不得进入Reader/Pipeline/session policy；
 - **control-plane HTTP**：插件仓库索引/APK/JS安装等，不属于漫画 response cache，但仍使用 composition 的默认 UA fallback。
 
-`ResourceCacheManager` 是可重新获取 metadata/artwork response 的唯一缓存 owner。Catalog browse/details只管理 metadata，`CachedBrowsableComicSource` 不提供 artwork loader facade；封面、预览不得直接取得 raw source transport。章节正文/Reader page body 明确由 DownloadSession/artifact/Pipeline 管理，因此通过 `ComicSourceResourceGateway.pageResponseLoaderFor/loadPageBytes` 绕过 response cache。两者必须复用同一 source-resolved response loader；full-byte fallback不得直接调用 `source.loadResource()`。章节下载侧只接受原子 `ChapterResourceAccess`，不得分别更新 byte loader 与 streaming transport。
+`ResourceCacheManager` 是可重新获取 metadata/artwork response 的唯一缓存 owner。Catalog browse/details/preview/comment/chapter 只管理 metadata，`CachedBrowsableComicSource` 不提供 artwork loader facade；封面、预览不得直接取得 raw source transport。章节正文/Reader page body 明确由 DownloadSession/artifact/Pipeline 管理，因此通过 `ComicSourceResourceGateway.pageResponseLoaderFor/loadPageBytes` 绕过 response cache。两者必须复用同一 source-resolved response loader；full-byte fallback不得直接调用 `source.loadResource()`。章节下载侧只接受原子 `ChapterResourceAccess`，不得分别更新 byte loader 与 streaming transport。
 
 插件先生成 request plan。GET/HEAD 必须零 body且不得携带实体 headers。Mihon 页面资源必须从 `HttpSource.imageRequest(page)`（或等价 source request）保留准确 URL、method、headers和必要的小型 request body；共享 transport不得注入 Venera专用默认 UA。Android宿主必须提供可执行 source实际返回 HTTP(S)媒体 URL 的统一网络能力，不能按具体插件/域名维护 cleartext白名单或擅自 HTTPS改写；URL选择仍属于 source/request plan。宿主直连前同步投影当前 source OkHttp CookieJar Cookie与同站点 browser-session UA。若宿主 HTTP成功但响应前缀不是支持的编码图片，字节不得进入 Pipeline/decoder，而应使用已有 source-owned runtime network兼容路径；普通可重放图片仍由宿主流式 transport进入统一 Pipeline，完整图片正文不得仅因 Cookie/header需求改走 JSON/Base64 RPC。页面下载的 retry只有 `LiveCoordinator` 一个 owner：runtime transient错误必须投影为 `ErrorCode.network`后进入有界重试；非 retryable/source错误或重试耗尽在当前 demand内成为 terminal，source listener/finally不得自行重复提交。
 

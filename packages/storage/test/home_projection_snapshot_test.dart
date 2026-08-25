@@ -206,7 +206,7 @@ void main() {
       }
     });
     final path = '${directory.path}/snapshot.json';
-    final description = List<String>.filled(70000, 'x').join();
+    final description = List<String>.filled(700000, 'x').join();
     final snapshot = HomeProjectionSnapshot(
       entries: const <ImportedLibraryEntry>[],
       savedComics: <SavedComicRecord>[

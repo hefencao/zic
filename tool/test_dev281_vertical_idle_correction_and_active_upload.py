@@ -145,10 +145,6 @@ else:
     require('docs/SPEC.md', 'layout-time correction', 'next2 texture upload')
 require('docs/IMPLEMENTATION_STATUS.md', 'dev.281', '10.432')
 require('docs/IMPLEMENTATION_PLAN.md', 'dev.281', 'slow-release', 'ballistic')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.281', '10.432', 'next2')
 require('CHANGELOG.md', '0.31.0-dev.281', 'layout-time correction')
-
-# Frozen resource and lifecycle boundaries remain visible in the handoff.
-require('docs/NEXT_CHAT_HANDOFF.md', 'previous3/next7', 'normal5+current reserved1', 'sealed-source-generation-preserved')
 
 print('PASS: dev.281 vertical idle correction + active next2 upload deferral')

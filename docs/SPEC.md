@@ -50,7 +50,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 首次安装缺失的 `app_preferences.json` MUST 先使用内存默认偏好；启动阶段不得为写出完整
   默认文档执行 flush/rename。用户首次修改任一应用偏好时才创建并持久化该文档。
 - 外部来源可以在首帧之后 ready；封面 presentation MUST 使用稳定 canonical artwork identity。cache miss 在等待中的外部 source 首次发布前 MUST 保持同一个资源请求 pending，不能先以 source-unavailable 失败；source readiness 完成后仍不可用、transport 或 decode 失败时 MUST 保持稳定占位，不得由定时器、App resume、first-frame watchdog、provider eviction 或 loader closure 变化自动重启请求；只有显式来源刷新、资源 revision 或稳定 identity变化才能重新加载。
-- Home 启动 MUST NOT 枚举 Android 上全部已安装包来发现 Mihon 扩展；设备扩展发现只能在来源管理页面的显式操作路径执行。外部插件 manifest 恢复和已安装 runtime activation MAY 在首帧后的 durable handoff 中后台执行，但不得成为首封面硬门槛；Home 封面等待 source readiness 时 MUST 保持 pending。显式来源管理操作仍可触发设备扩展发现与刷新。
+- Home 启动 MUST NOT 枚举 Android 上全部已安装包来发现 Mihon 扩展；设备扩展发现只能在来源管理页面的显式操作路径执行。外部插件 manifest 恢复和已安装 runtime activation MAY 在首帧后的 capability handoff 中后台执行，但不得成为首封面硬门槛；该 handoff MUST 独立于 imported-library/download/queue durable-state 判定，只有 external-plugin manifest 的安装仍 MUST 能进入 Mihon/Venera 管理页且不得为此创建空 core SQLite。首次插件宿主打开失败不得把 settled null/error single-flight 永久复用于后续显式操作；显式来源管理 MUST 能重试。Home 封面等待 source readiness 时 MUST 保持 pending。显式来源管理操作仍可触发设备扩展发现与刷新；逐插件 source change 在 projection single-flight 退出边界到达时 MUST 被后继 refresh 消费，不得丢失。
 - 首页每张封面 MUST 独立完成请求和显示；一张封面变慢或 durable response 写入变慢，
   不得阻塞其它已经取得 encoded bytes 的封面。冷 miss MAY 先使用 memory source，持久化
   写入由统一 response cache 后台完成；durable hit MUST 先物化为调用方自持有的 encoded bytes。response cache 的文件路径 MUST NOT 暴露给 `FileImage` 或其它长生命周期 presentation 对象；`FileEncodedResourceSource` 只允许外部稳定本地文件。durable image persistence MUST 区分 `transient` 与 `retained` 生命周期：browse/preview响应 MAY 受 TTL/LRU/maintenance 回收；library/history/details cover MUST 在同一 canonical cache key上晋升为 retained，并且 MUST NOT 被运行期容量/TTL整理删除。metadata refresh MUST NOT 以 comic namespace 粗粒度失效 artwork；retained cover仅由精确 artwork revision/显式整漫画资源删除/用户清缓存移除。
@@ -120,6 +120,11 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - Mihon common runtime完整性预检中所有 `dev.zic.network.*` 动态类型 MUST 在 network bridge consumer R8规则中保留原始全限定类名和成员；typed `SourceVerificationRequiredException` 不得被混淆、裁剪或用错误消息字符串替代。
 - app startup channel 通过类名反射挂载的 feature plugin 和 rhttp entry MUST 在 app R8规则中保留原始全限定类名及可调用成员；release APK 不得因 `Class.forName` 入口被混淆或裁剪而返回 `ClassNotFoundException`。
 - 外部插件持久 manifest MUST 逐记录容错；一个坏记录不得清空其它已导入插件。写入 MUST 保留上一代 `.bak`；启动恢复 SHOULD 依次尝试主 manifest、`.bak`、残留 `.part` 和旧 `.invalid`，并允许旧 sandbox绝对 payload路径按 owned-root basename迁移。恢复记录仍 MUST 经过原有 payload hash、签名、ABI和 entry class检查。
+- 详情漫画、章节、预览首屏/分页和评论首屏/分页 MUST 使用与漫画源页/搜索相同的 `ResourceCacheManager`，但 MUST 以漫画详情、预览分页、评论分页各自的稳定 response identity 分区；不得以详情页私有缓存复制 catalog cache owner。预览图和评论头像的编码字节 MUST 继续走统一 artwork cache，不能进入 metadata response cache。
+- 进入详情页时 MUST 先投影可用热详情数据，再异步刷新主详情和可选预览/评论元数据；章节、漫画字段、预览页和评论页 MUST 分别比较，只有对应类别稳定字段变化时才替换该类别投影。可选请求失败 MUST 保留旧类别数据，不能清空已显示内容。强制主响应若携带内嵌首屏，MUST 更新对应分页 projection；普通主响应缓存命中不得覆盖独立分页刷新结果。
+- 详情首帧 MUST 不等待下载状态检查、artifact index/page I/O、跨版本 page mapping warmup 或 source request-plan；下载状态检查 MUST 在首帧后批量读取并合并同一路由的重复请求，版本 discovery/mapping warmup MUST 在首帧后后台执行。
+- 详情页与漫画源页的章节 presentation key MUST 保持为 `source-chapter:${sourceId}\u0000${chapterId}`；`sourceId` 或 `chapterId` 任一变化 MUST 产生不同 key。已读滑动容器和下载按钮可使用各自的 `chapter-read:`/`chapter-download:` 前缀，但不得把标题、sequence、URL、sourceRevision 或缓存 response identity 放入章节身份 key。
+- 章节行的右划 MUST 切换当前章节的已读/未读状态，不得因当前状态禁用该方向；UI MUST 先完成投影，章节补齐和已读持久化 MUST 在后台完成，不得阻塞手势。`chapter_read_state` MUST 能在章节尚未 hydrate 时按 `sourceId + chapterId` 独立持久化，不得通过指向章节表的外键强制先获取章节信息。左划 MUST 只露出最右侧垃圾桶，点击后才触发删除，不得在滑动结束时自动删除；即使章节尚未 hydrate 也必须显示该入口，只有点击垃圾桶时才允许后台补齐完整 entry。已缓存章节支持长按打开删除确认框；删除 MUST 同时清理章节记录、阅读进度、已读状态和离线页面，且删除实际使用完整 hydrated entry。
 - 来源详情若提供预览能力，详情页 MUST 能先显示 `ComicManifest` 中已经返回的预览项，
   后续页 MUST 通过 `ComicPreviewSource` 独立加载；预览图片必须复用统一 artwork loader，
   不得为详情页建立专用图片缓存或等待其它章节/评论请求。Venera 的 `@x/y` 裁剪标识
@@ -130,7 +135,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
   预览栏折叠与展开 MUST 使用同一套排版结果：折叠态只显示第一行，高度由该行实际高度决定；展开态继续自动消费来源分页并以 `PageView` 左右分页呈现后续行。预览项 MUST 尽量保持来源原始顺序，并在可读尺寸下放置尽可能多的图片。完整行 MUST 直接使用全部媒体宽度反算等面积 tile，不得以外层 Card、重复水平 padding 或扩大 item gap 消耗剩余宽度；只有稀疏末行 MAY 放大到参考完整行面积的 2.4 倍。实际行含横图时最多 2 项，纯竖图行最多 3 项，并受用户设置的更小上限约束。阅读设置 MUST 提供每行最大数量 1–8，默认 4。图片区域 MUST 不超过屏幕高度的 90%，展开/收起按钮 MUST 居中且只显示箭头，不得显示“展开/收起”文字。不得拉伸、强制裁切或建立详情页专用图片缓存。
 - 来源详情若提供评论能力，详情页 SHOULD 显示评论栏，并 MUST 支持分页评论次级页；
   评论存在回复数量和不透明 ID 时，次级页 MUST 能按原 source `subId`/回复 ID 加载回复。
-  这些能力是可选的，来源未声明时不得发起插件请求。
+  这些能力是可选的，来源未声明时不得发起插件请求。评论正文的受限 HTML MUST 将 HTTP(S) `img` 交由统一 artwork loader 作为行内图片并支持 `br`/HTML entity；不得把原始 `<img>` 标签显示为文本或建立 emoji 私有网络/缓存 owner。
 
 ## 2. Reader 行为
 
@@ -255,7 +260,7 @@ Policy MUST 只输出 demand/keep，不得创建 transport、artifact、cursor �
 - 普通图片正文 SHOULD 由宿主 transport 流式下载。平台 transport MAY 将底层网络小包聚合为面向 Pipeline 的较大逻辑块，以降低 Dart 调度/commit 开销；首播块 SHOULD 小于持续传输块，聚合不得改变字节顺序、取消、Range/validator、artifact或重试所有权。
 - 插件不得访问导航、Reader、demand、artifact、App state 或底层缓存。
 - Cookie、token、脚本 payload 和 Base64 正文不得原样写入 Trace。
-- durable handoff 后已安装插件恢复 MAY 对互不相关的 runtime 使用最多 4 个并发激活 worker；registry MUST 只串行化最终 session 的短状态提交，并在提交边界重新检查 source identity collision，慢候选不得阻塞已完成候选。manifest 已保存的插件元数据 MAY 跳过重复 Dart inspection/hash，但隔离 runtime 在加载前 MUST 重新验证 payload byte length 与 SHA-256；设备 Mihon 扫描 MAY 与已安装插件激活并行。漫画源页底部控件 MUST 先投影已安装记录；不可恢复的 typed denial/完整性错误 MUST 回滚新记录并删除新 payload，可恢复失败 MUST 保留记录和 payload，失败条目点击 MUST 触发同一 pluginId 的重新激活；replacement 失败 MUST 保留旧 session。漫画源管理页返回 MUST NOT 等待后台库 projection reload。
+- durable handoff 后已安装插件恢复 MAY 对互不相关的 runtime 使用最多 4 个并发激活 worker；registry MUST 只串行化最终 session 的短状态提交，并在提交边界重新检查 source identity collision，慢候选不得阻塞先完成的候选。manifest 已保存的插件元数据 MAY 跳过重复 Dart inspection/hash，但隔离 runtime 在加载前 MUST 重新验证 payload byte length 与 SHA-256；设备 Mihon 扫描 MAY 与已安装插件激活并行。漫画源页底部控件 MUST 先投影已安装记录；不可恢复的 typed denial/完整性错误 MUST 回滚新记录并删除新 payload，可恢复失败 MUST 保留记录和 payload，失败条目点击 MUST 触发同一 pluginId 的重新激活；replacement 失败 MUST 保留旧 session。漫画源管理页返回 MUST NOT 等待后台库 projection reload。
 - Venera MUST 保持单 WebView、单 invocation 生命周期。可能等待 origin 的 `Network.*` MUST 通过异步 native callback bridge执行，不得阻塞 WebView JavascriptInterface 线程；激活 MUST 只等待源代码显式 `await` 的初始化工作，激活期间未等待的后台工作 MUST 在下一次 invocation 前由 runtime-owned gate追平。取消 MUST 继续沿 `requestId` 贯穿 JavaScript、native transport 与 rhttp；runtime close MUST 取消未完成的 bridge transport，scheduler permit 只能在真实 invocation 结束后释放。rhttp client warm-up MAY 在 runtime service ready 前执行，但不得把网络路径延迟伪装成设备/CPU加载性能。
 
 ## 11. Telemetry
@@ -283,7 +288,7 @@ identity 超限时使用稳定 hash 与原长度；locator脱敏pattern MUST复�
 3. 详情与漫画源下拉刷新 MUST 共用同一个组件拥有 edge trigger、位移、刷新进度和成功/失败反馈；结果图标 MUST 与刷新指示器使用同一落点。
 
 4. encoded artwork source 已就绪后，普通 artwork MUST 只创建一个 ImageProvider/解码监听；需要裁剪或尺寸测量的 Presentation MAY 显式监听一个 ImageStream并直接绘制 decoded image，但 MUST NOT 同时构建第二个 `Image`监听同一 provider。
-5. 远程详情 MUST 先显示已有 catalog cache，并等待当前 active source adapter 完成后台刷新；预览、评论及章节操作 MUST 在调用时解析当前 adapter，不得持有插件重启前的关闭 session。
+5. 远程详情 MUST 先显示已有 catalog/detail cache，并等待当前 active source adapter 完成后台刷新；主详情、章节、预览和评论 MUST 按元数据类别增量替换，预览、评论及章节操作 MUST 在调用时解析当前 adapter，不得持有插件重启前的关闭 session。详情 route 的首帧 MUST 不依赖下载状态/artifact I/O 或跨版本 mapping warmup。
 6. Mihon chapter catalog MUST 只投影插件/source API实际返回的完整 `SChapter` 列表。TachiyomiX 1.6/current Mihon MUST 先调用 `getMangaUpdate(manga, existingChapters, ..., fetchChapters=true)`；只有 combined能力明确不存在时 MAY回退 legacy `fetchMangaDetails/fetchChapterList`。正文 MUST先调用 `getPageList(SChapter)`，只有能力不存在时 MAY回退 `fetchPageList`。成功空列表是合法结果；真实调用错误保持失败。MUST NOT 从 manga URL生成兼容单章，也不得按标题、`SChapter.url`、number或sequence推断、增加、删除或合并章节。
 7. Reader progress 的有序性与 durable I/O MUST 解耦：SQLite实现 MUST 在非 UI isolate执行同步 sqlite3/章节校验；Reader页面变化只入队 latest checkpoint，不得逐页发布 Home/library projection。Reader route MUST NOT 等待 durable barrier；返回后 Home/详情只发布最终内存 progress投影，storage isolate按自身 batch/生命周期策略完成持久化。
 8. 外部 artwork MUST 统一通过 `ComicSourceResourceGateway`；raw plugin comic locator 与 durable artwork identity MUST 分离。Mihon 等可变 raw locator必须使用 source canonical comic identity构造封面/预览 cache namespace；`mihon:resource:` 等插件 URI不得传给本地文件 loader。

@@ -322,6 +322,43 @@ abstract interface class CachedSourceBrowseProjection {
   });
 }
 
+/// Cache projection for stale-while-revalidate comic detail metadata.
+///
+/// The projection shares the catalog response cache with browse/search, but
+/// keeps comic manifests, preview pages and comment pages under separate
+/// response identities. Presentation can synchronously project a warm detail
+/// response and refresh each metadata family independently after the first
+/// frame.
+abstract interface class CachedComicDetailsProjection {
+  ComicManifest? peekComic(String comicId);
+
+  ComicPreviewPage? peekComicPreview(
+    String comicId, {
+    String? nextToken,
+  });
+
+  ComicCommentPage? peekComicComments(
+    String comicId, {
+    String? subId,
+    required int page,
+    String? replyTo,
+  });
+
+  Future<ComicManifest> refreshComic(String comicId);
+
+  Future<ComicPreviewPage> refreshComicPreview(
+    String comicId, {
+    String? nextToken,
+  });
+
+  Future<ComicCommentPage> refreshComicComments(
+    String comicId, {
+    String? subId,
+    required int page,
+    String? replyTo,
+  });
+}
+
 /// A source-owned successor/predecessor relation.
 ///
 /// The source adapter returns its opaque [comicId] unchanged so Presentation

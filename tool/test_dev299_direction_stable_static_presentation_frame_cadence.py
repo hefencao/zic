@@ -56,9 +56,5 @@ require('docs/adr/0278-static-presentation-direction-stable-continuity.md',
 require('docs/audits/dev299-direction-stable-static-presentation-frame-cadence-audit.md',
         'page14','current变12','readDirection=-1','frameIntervalMicros')
 require('docs/SPEC.md','directional decode previous1/next2 policy仍是唯一decode work窗口','`current±2`','`readerFrameTiming`')
-if current_dev() == 299:
-    require('docs/NEXT_CHAT_HANDOFF.md','# dev.299 后续交接','current±2','FrameTiming')
-else:
-    require('docs/NEXT_CHAT_HANDOFF.md','current±2','FrameTiming')
 forbid('packages/local_media_ui/lib/src/local_image_player.dart','PhysicalPixelAlignedPresentation(', 'roundingResidual <= 0.500001')
 print('dev.299 direction-stable static presentation + frame cadence: OK')

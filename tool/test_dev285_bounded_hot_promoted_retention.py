@@ -91,7 +91,6 @@ require(
 require('docs/ARCHITECTURE.md', '8-session LRU hot tail', 'ordinary handoff')
 require('docs/SPEC.md', '默认最多8个', 'promoted hot budget')
 require('docs/IMPLEMENTATION_STATUS.md', 'dev.285', '84次', 'session-copy')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.285', '84次', '最多8个')
 require('CHANGELOG.md', '0.31.0-dev.285', 'Bounded hot promoted physical retention')
 
 check = text('tool/check.sh')

@@ -25,7 +25,7 @@ for token in (
 
 storage = read('packages/storage/lib/src/sqlite_imported_library_store.dart')
 for token in (
-    'const _schemaVersion = 9;',
+    'const _schemaVersion = 10;',
     "page_mappings_json TEXT NOT NULL DEFAULT '[]'",
     'void _migrateComicVersionPageMappings(',
     '_comicVersionPageMappingsFromJson(',
