@@ -1,16 +1,15 @@
 
 # zic Product and Engineering Specification
 
-本文件是规范，不是实施报告。`MUST` 表示发布合同，`SHOULD` 表示默认要求，`MAY` 表示可选行为。实现和验证状态见 `IMPLEMENTATION_STATUS.md`。
+本文件是规范，不是实施报告。`MUST` 表示发布合同，`SHOULD` 表示默认要求，`MAY` 表示可选行为。实现和验证状态见 `IMPLEMENTATION_STATUS.md`。`ARCHITECTURE.md` 描述当前代码如何实现本文件的合同（分层、所有权、机制与数据流），两文件分工不同、不互相复制条款。
 
 ## 1. 产品范围
 
-zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静态图片、Animated WebP、partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及本地 Debug Trace 导出。 纵向Reader的异步尺寸更新 MUST 在active scroll期间冻结所有会改变当前viewport前缀的sliver geometry；idle采用这类新geometry时 MUST 以layout-time correction原子维持top-pixel连续。DecodeSession首个成功frame MAY触发尺寸事实提前解析，但Reader页面几何的最终authority MUST是source canvas而非decoded raster；Pipeline只读`PipelinePageDimensionsFeed` MUST携带dimension basis并优先`PageAsset`/WebP source canvas，decoded raster仅可作为provisional fallback且 MUST NOT覆盖已知source canvas。VP8X/VP8/VP8L source canvas解析 MUST只依赖其固定header，不得等待整个compressed image chunk；presentation output/surface raster MUST NOT经UI尺寸回调成为Reader source geometry。`DownloadSession` MUST持有generation-local source-metadata prefix并可投影`sourceCanvasWidth/sourceCanvasHeight`；该prefix不得复制正文，且Pipeline/PageStream MUST从physical ingress读取source metadata，MUST NOT直接从可能为空的session `Artifact`猜测resident body。设备诊断命中该路径时source MUST记录为`physical-ingress-source-canvas`。 Resident replay MUST区分未绑定`DownloadResidentReplaySource(session,endExclusive)`与physical-generation bound `DownloadResidentReplayChunks(endExclusive)`；`DownloadSession`只能消费bound capability，Pipeline/registry只能在当前physical session解析后绑定一次。cache/local-source backend选择 MUST由`CompositionDownloadTransferRuntime`拥有，Pipeline MUST NOT自行实现resident replay backend routing。该feed MUST NOT暴露Flutter `ValueNotifier`/`ValueListenable`，consumer attach MUST可重放retained dimension facts，publish/clear MUST保持Pipeline-private；Pipeline output/progress core同样 MUST NOT直接依赖`WidgetsBinding`/`SchedulerBinding`或Flutter notifier；visual frame boundary MUST通过`PipelineFrameScheduler`由presentation adapter注入，transfer progress MUST通过只读`PipelineTransferProgressFeed`投影。严格位于真实visible tail之后的future page source ratio MAY在active scroll中提前采用，因为它不得改变当前viewport prefix；visible tail及之前的新ratio MUST继续等待idle。不得恢复dev.286 visual extent/OverflowBox workaround，也不得以扩大decode previous1/next2掩盖source geometry authority错误。vertical drag/ballistic期间 MAY 暂缓非可见next2 output upload，但 MUST 保留next2 decode与current/transition/visible/immediate-next需求。 生产Reader MUST默认保留native decode与Android SurfaceProducer output；dev.311 Flutter `ui.Image/RawImage`默认实验已被设备证据否证，不得继续作为生产默认。该路径的UploadDemand只准备/持有output，真正RGBA Surface copy发生在presentation；同一lease已resident的具体OutputFrame再次present必须零copy复用并记录`platformResident`，不得重复platform blit/schedule。frame identity变化、resize/release使该复用失效；SurfaceProducer重建仍由platform redraw负责。`PipelinePageSurface.presentationIdentity` MUST稳定标识底层 presentation target，而不是每个动画帧包装对象；同一 Android lease 的动画帧更新不得触发 Reader 页面子树重建或重复 PlaybackGate，UI/PageView frame MUST优先，surface/lease/fallback/尺寸/错误变化仍 MUST立即更新视觉 projection。
-`PipelinePageSurface.presentationIdentity` MUST以 opaque token 稳定标识底层 presentation target，不得暴露 lease/image 或每个动画帧包装对象；同一 Android lease 的动画帧更新不得触发 Reader 页面子树重建或重复 PlaybackGate，已有 output 的 transient `uploading` 与 present 完成通知 MUST NOT 重新广播到 PlaybackGate；同一 presentation target 的旧 claim 在平台 copy 完成后 MUST 立即释放，只有真实 surface/lease/fallback 替换才通过 `PipelineFrameScheduler` 合并到安全 frame；若 successor 在 Flutter persistent callbacks 或下一帧已排队期间到达，Pipeline MUST只合并最新帧并在该 frame 后提交，首帧仍 MUST立即确认；UI/PageView frame MUST优先，surface/lease/fallback/尺寸/错误变化仍 MUST立即更新视觉 projection。Reader WebP texture viewport MUST 使用 `FilterQuality.low`，避免高分辨率横向 gallery 首次合成时同步生成 mipmap。横向 gallery 的 current/next/transition role 计划 MAY 在 PageView host 挂载前建立有界 detached output；该 projection MUST 不等待 upload ready、WebP sniff 或 decode classification，upload ready 后只预呈现首帧；manifest、已知 physical content kind 或明显非-WebP URI 后缀已确认的页面 MUST NOT 建立无用 native output；current 且无 listener 或尚无 resident surface 时 MUST 立即预热，next/transition 在 Flutter frame 已提交或排队时 MUST 延后到 scheduler idle task，动画/触摸回调未清空前不得启动 platform create，仍继续解码且不得提交隐藏 successor，host attach 后 MUST 立即追上最新帧；Android texture lease prewarm MUST 使用 source canvas 按 DecodeTarget 等比 fit 后的实际 decoded raster 尺寸，DownloadSession 解析出 WebP 固定前缀 source canvas 后 Pipeline MUST 尽早为 current/next/transition 请求该精确尺寸；同一 raster 尺寸的 deferred request MUST 按 current > transition > next 优先级每个 idle task 最多启动一个 platform create，idle+pending 总量 MUST 受全局有界池限制；decoded frame 到达后的尺寸仅作兜底，失败请求 MUST 可重试；该边界不得改变 playback/freeze 语义，vertical Reader MUST 不启用。
- SurfaceProducer exact-size prewarm MUST materialize `SurfaceProducer.getSurface()` on the serialized blit lane before the lease enters the idle pool; it MUST NOT call `scheduleFrame()` or alter playback/freeze/resume state. Same-size prewarm requests MUST coalesce; if an authoritative upload acquire for that raster is already in flight, the prewarm MUST observe that acquire rather than create a second producer. When the bounded idle pool is full, a new exact-size request MAY evict only the oldest idle lease; pending creates MUST remain bounded and MUST NOT be replaced by an unbounded UI-owned queue.
- 纵向 page shell composition 的 steady-state `cacheExtent` SHOULD 固定为 2 个 viewport 高度；首次布局 MAY 使用一次有界 6 屏组成以准备初始相邻 page host，并在首个 scroll end 后收回到 2 屏。该值只影响 Flutter sliver 组成，不得扩大 Reader 的 encoded/decode/upload/texture 需求窗口；不得在 idle post-frame 回调中逐步扩张 cache window。可见静态页的输出保留由 `UploadDemand.retainOutput` 明确表达并由 `FrameBudgeter` 保护，不得依赖页面 role 推断。
+zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静态图片、Animated WebP、partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及本地 Debug Trace 导出。
 
 项目不承诺 DRM 绕过、通用视频播放、社交功能或模型直接操作底层资源生命周期。
+
+阅读引擎的几何、输出与资源调度合同见第 2、3 章；各合同的实现机制（分层、所有权与数据流）见 `ARCHITECTURE.md`。
 
 ### 1.1 首页冷启动
 
@@ -22,39 +21,19 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 首页根路由的系统返回 MUST 先显示“再按一次返回键退出”确认提示，并在确认窗口（当前为 2 秒）内再次返回才结束应用；窗口过期后 MUST 重新要求确认。该确认 MUST 只拦截根路由自身的返回，MUST NOT 改变其他路由（Reader、详情、对话框）或漫画源页内部返回手势的既有语义。
 - Durable service open 完成后 MUST 主动提交内存 Home 到 durable projection；该提交不得只注册等待下一帧的回调而不安排 frame，否则用户手势不得成为加载更新漫画和阅读历史的隐式触发条件。
 - 首帧前只允许建立轻量 startup/trace channel；native decode、`media_core` texture、rhttp 和 feature bridge MUST 在实际 Reader/source/platform capability 使用前保持未初始化或未挂载，首次使用只能由对应 capability 自己按需挂载。
-- Android `FlutterEngine` MUST 关闭 embedding 的自动 `GeneratedPluginRegistrant` 注册；
-  仅覆盖 `configureFlutterEngine` 不足以满足该边界，因为隐式 engine 会在该回调之前注册
-  插件。feature bridge 只能在对应 capability 通过 startup channel 显式挂载。
+- Android `FlutterEngine` MUST 关闭 embedding 的自动 `GeneratedPluginRegistrant` 注册；仅覆盖 `configureFlutterEngine` 不足以满足该边界，因为隐式 engine 会在该回调之前注册插件。feature bridge 只能在对应 capability 通过 startup channel 显式挂载。
 - `LocalMediaBridge` 的 Android `pickImageDirectory`、`scanImageDirectory`、`openDocument` 与 `readDocument` MUST 在调用 `dev.zic/local_media` 前通过 startup channel single-flight attach `local_media_bridge`；这样持久记录直接恢复到 Reader 时不得依赖曾经执行过的文件夹选择流程。
 - Android 应用存储根目录 MUST 优先随 Dart entrypoint args 同步注入，避免冷启动首次 MethodChannel 往返；旧宿主才由轻量 startup channel 返回，不能为了首个 `path_provider` 查询提前挂载 JNI。Home/runtime composition MUST 直接挂载到 Flutter root，不得通过自定义 bootstrap surface 或 deferred loading unit 延后首个可见 raster。首帧后的异步阶段只打开 durable/native/plugin capability，UI isolate 仍是唯一的 Flutter presentation/composition owner。
-- 新安装且不存在 imported-library、offline-cache 或 whole-comic queue 状态时，Home MUST
-  不打开 SQLite 或创建 WAL/schema；`LazyImportedLibraryStore` MUST 以内存投影服务，并在
-  首次明确持久化写入时先将该投影迁移到 SQLite，再转发写入。已有 durable state 的服务
-  只能在 Home 可见窗口之后打开。SQLite 句柄 MUST NOT 跨 isolate 传递。
-- 已有 durable state 时，Home MAY 先读取 `HomeProjectionSnapshotStore` 的上一次成功投影，
-  以 stale-while-revalidate 方式显示更新漫画和阅读历史；bootstrap/memory-backed Home
-  MUST NOT 将空投影写回快照。SQLite MUST 继续是唯一事实源，reconcile 后只替换新增、修改或
-  删除的 identity，并异步原子写回新快照。快照 SHOULD 保存 SQLite Home projection revision；
-  修订号一致时 MUST 允许直接复用快照，只有修订号变化或无法证明一致时才扫描事实源。快照 v2
-  的 entries MUST 只包含 Home 元数据、pageCount、cover locator 与 progress，不得复制完整 page
-  locator；旧 v1 读取成功后 MUST 自动原子重写为 v2。compact entry 在 Reader、下载或版本迁移
-  前 MUST 通过 authoritative library hydrate 完整 pages。快照缺失、损坏、版本不兼容或读取失败 MUST 静默
-  回退 SQLite，不能阻塞 Home 或覆盖 SQLite 数据。
+- 新安装且不存在 imported-library、offline-cache 或 whole-comic queue 状态时，Home MUST不打开 SQLite 或创建 WAL/schema；`LazyImportedLibraryStore` MUST 以内存投影服务，并在首次明确持久化写入时先将该投影迁移到 SQLite，再转发写入。已有 durable state 的服务只能在 Home 可见窗口之后打开。SQLite 句柄 MUST NOT 跨 isolate 传递。
+- 已有 durable state 时，Home MAY 先读取 `HomeProjectionSnapshotStore` 的上一次成功投影，以 stale-while-revalidate 方式显示更新漫画和阅读历史；bootstrap/memory-backed HomeMUST NOT 将空投影写回快照。SQLite MUST 继续是唯一事实源，reconcile 后只替换新增、修改或删除的 identity，并异步原子写回新快照。快照 SHOULD 保存 SQLite Home projection revision；修订号一致时 MUST 允许直接复用快照，只有修订号变化或无法证明一致时才扫描事实源。快照 v2的 entries MUST 只包含 Home 元数据、pageCount、cover locator 与 progress，不得复制完整 pagelocator；旧 v1 读取成功后 MUST 自动原子重写为 v2。compact entry 在 Reader、下载或版本迁移前 MUST 通过 authoritative library hydrate 完整 pages。快照缺失、损坏、版本不兼容或读取失败 MUST 静默回退 SQLite，不能阻塞 Home 或覆盖 SQLite 数据。
 - 快照序列化结果超过 64 KiB 时 SHOULD 使用 gzip，读取 MUST 同时兼容明文与 gzip；旧 v1 或大型明文快照读取成功后 MUST 自动原子重写为 v2 compact gzip。
 - Whole-comic queue MUST 保持为独立队列状态文件，不得复制 Home entries 或章节正文；恢复 SHOULD 通过章节下载索引的 `inspectMany()` 批量投影，并在 Home primary 可见后后台完成，queue `ready` 不得成为更新漫画或阅读历史首显的硬门槛。
-- 空的或从未产生阅读记录的 imported library 打开 MUST NOT 创建 Reader progress writer
-  或第二个 SQLite/WAL 连接；该 writer 只能在首次真正写入 `ReadingProgress` 时懒启动，
-  且不能反向成为 Home 冷启动的硬门槛。
-- Home 启动期缺失的来源/漫画默认偏好 MUST 先以内存投影提供给首个 Home；不得为建立这些
-  默认值在 UI isolate 同步执行 SQLite 写入。只有用户明确修改偏好时才 MUST 持久化该偏好，
-  之后的 reload MUST 继续尊重已存储值。
-- 首次安装缺失的 `app_preferences.json` MUST 先使用内存默认偏好；启动阶段不得为写出完整
-  默认文档执行 flush/rename。用户首次修改任一应用偏好时才创建并持久化该文档。
+- 空的或从未产生阅读记录的 imported library 打开 MUST NOT 创建 Reader progress writer或第二个 SQLite/WAL 连接；该 writer 只能在首次真正写入 `ReadingProgress` 时懒启动，且不能反向成为 Home 冷启动的硬门槛。
+- Home 启动期缺失的来源/漫画默认偏好 MUST 先以内存投影提供给首个 Home；不得为建立这些默认值在 UI isolate 同步执行 SQLite 写入。只有用户明确修改偏好时才 MUST 持久化该偏好，之后的 reload MUST 继续尊重已存储值。
+- 首次安装缺失的 `app_preferences.json` MUST 先使用内存默认偏好；启动阶段不得为写出完整默认文档执行 flush/rename。用户首次修改任一应用偏好时才创建并持久化该文档。
 - 外部来源可以在首帧之后 ready；封面 presentation MUST 使用稳定 canonical artwork identity。cache miss 在等待中的外部 source 首次发布前 MUST 保持同一个资源请求 pending，不能先以 source-unavailable 失败；source readiness 完成后仍不可用、transport 或 decode 失败时 MUST 保持稳定占位，不得由定时器、App resume、first-frame watchdog、provider eviction 或 loader closure 变化自动重启请求；只有显式来源刷新、资源 revision 或稳定 identity变化才能重新加载。
 - Home 启动 MUST NOT 枚举 Android 上全部已安装包来发现 Mihon 扩展；设备扩展发现只能在来源管理页面的显式操作路径执行。外部插件 manifest 恢复和已安装 runtime activation MAY 在首帧后的 capability handoff 中后台执行，但不得成为首封面硬门槛；该 handoff MUST 独立于 imported-library/download/queue durable-state 判定，只有 external-plugin manifest 的安装仍 MUST 能进入 Mihon/Venera 管理页且不得为此创建空 core SQLite。首次插件宿主打开失败不得把 settled null/error single-flight 永久复用于后续显式操作；显式来源管理 MUST 能重试。Home 封面等待 source readiness 时 MUST 保持 pending。显式来源管理操作仍可触发设备扩展发现与刷新；逐插件 source change 在 projection single-flight 退出边界到达时 MUST 被后继 refresh 消费，不得丢失。
-- 首页每张封面 MUST 独立完成请求和显示；一张封面变慢或 durable response 写入变慢，
-  不得阻塞其它已经取得 encoded bytes 的封面。冷 miss MAY 先使用 memory source，持久化
-  写入由统一 response cache 后台完成；durable hit MUST 先物化为调用方自持有的 encoded bytes。response cache 的文件路径 MUST NOT 暴露给 `FileImage` 或其它长生命周期 presentation 对象；`FileEncodedResourceSource` 只允许外部稳定本地文件。durable image persistence MUST 区分 `transient` 与 `retained` 生命周期：browse/preview响应 MAY 受 TTL/LRU/maintenance 回收；library/history/details cover MUST 在同一 canonical cache key上晋升为 retained，并且 MUST NOT 被运行期容量/TTL整理删除。metadata refresh MUST NOT 以 comic namespace 粗粒度失效 artwork；retained cover仅由精确 artwork revision/显式整漫画资源删除/用户清缓存移除。
+- 首页每张封面 MUST 独立完成请求和显示；一张封面变慢或 durable response 写入变慢，不得阻塞其它已经取得 encoded bytes 的封面。冷 miss MAY 先使用 memory source，持久化写入由统一 response cache 后台完成；durable hit MUST 先物化为调用方自持有的 encoded bytes。response cache 的文件路径 MUST NOT 暴露给 `FileImage` 或其它长生命周期 presentation 对象；`FileEncodedResourceSource` 只允许外部稳定本地文件。durable image persistence MUST 区分 `transient` 与 `retained` 生命周期：browse/preview响应 MAY 受 TTL/LRU/maintenance 回收；library/history/details cover MUST 在同一 canonical cache key上晋升为 retained，并且 MUST NOT 被运行期容量/TTL整理删除。metadata refresh MUST NOT 以 comic namespace 粗粒度失效 artwork；retained cover仅由精确 artwork revision/显式整漫画资源删除/用户清缓存移除。
 - 首页、书架和详情封面 Presentation State MUST 使用 canonical comic identity，不得因 raw Mihon alias、resume chapter、封面 URL 或 loader closure变化被销毁。Presentation MUST NOT 自己做定时 retry、first-frame watchdog、ImageCache eviction 或短时 Future join；资源重试/缓存所有权唯一属于 `ComicSourceResourceGateway/ResourceCacheManager`。
 - 全局网络 User-Agent MUST 是 composition-owned fallback设置，默认采用稳定 Android Chrome UA并可由用户修改。来源 request plan显式 UA、browser-session UA或 source-owned client策略 MUST 优先；全局 fallback不得覆盖来源权威。
 - Android Mihon宿主 MUST 能执行 extension/source实际返回的 HTTP(S)媒体 URL；cleartext兼容能力 MUST 在统一宿主网络策略提供，MUST NOT按 WNACG等具体域名/插件维护静态白名单，也不得把 source返回的 HTTP URL擅自改写为 HTTPS。
@@ -69,42 +48,26 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - App presentation MUST NOT 直接创建 `HttpClient`/`HttpURLConnection`或直接消费 source transport。Venera `Network.*` 的 source runtime仍拥有Cookie、manual redirect、`cache-time`、`prevent-parallel`、requestId grouping与single-JS-invocation语义，但实际HTTP MUST由isolated plugin Dart process的reusable rhttp/reqwest resolver client执行；Kotlin/WebView bridge MUST NOT再持有第二HTTP client/connection pool。最终 media replay继续使用主流程rhttp direct transport；进程隔离允许两个owner-local client实例，但两者 MUST属于同一rhttp client family。
 - host replay MUST 只用于可无状态平铺的单次 source request。遇到 redirect、`Set-Cookie`、未知 client wrapper、认证/session语义或成功 HTTP却非编码媒体响应时 MUST 切回 source-owned client；不得让独立 Dart HTTP client接管来源 Cookie/session状态。
 - metadata/artwork MUST 经过 `ResourceCacheManager`；只有 Reader/章节 page body 与 artifact/download路径 MAY 通过明确命名的 page-body API绕过 response cache。插件仓库/APK/JS下载属于 control-plane，不得伪装成漫画 source response cache。 `CachedBrowsableComicSource` MUST NOT 暴露 artwork 加载 facade。`loadPageBytes` 与 streaming page loader MUST 共享同一 source-resolved response path；full-byte fallback MUST NOT 直接调用 raw source transport。章节下载的可变资源能力 MUST 作为单一 `ChapterResourceAccess` 原子绑定，不得使用多个 setter 形成半更新状态。
-- 外部 artwork MUST 通过 source-confirmed canonical comic identity 查询统一 response cache；
-  命中时不得解析来源、创建 source transport 或等待插件 activation。cache miss 才可进入
-  source loader。raw Mihon/插件 locator只用于 runtime调用与章节身份，不得切分 durable artwork namespace。
+- 外部 artwork MUST 通过 source-confirmed canonical comic identity 查询统一 response cache；命中时不得解析来源、创建 source transport 或等待插件 activation。cache miss 才可进入source loader。raw Mihon/插件 locator只用于 runtime调用与章节身份，不得切分 durable artwork namespace。
 - Home/阅读历史中已经持久化的 HTTP(S) artwork locator MUST 始终先进入统一 `ComicSourceResourceGateway` 的 source-independent memory/durable-cache probe；active source/plugin 暂不可用时不得把网络 URL 交给本地文件 loader。durable miss 后，若是首次外部 source 发布尚未完成，gateway MUST 保持该次请求 pending，再要求来源 adapter。
 - 已挂载 Home 的 chapter/SavedComic mutation MUST 通过 `HomeLibrarySession` write-through投影边界完成：durable store写入成功后同一次操作必须更新 session可见投影；不得先直接写 store再依赖详情页退出或 `_reloadLibrary()` 追平。Reader route最终 progress MUST 为 route-local状态，返回后只发布一次；不得用跨 route全局 latest-progress槽。
 - Home library reload MUST NOT 用 mutation 之前捕获的旧 entries/SavedComic snapshot覆盖更新后的 write-through chapter/saved/progress投影。
 - Comic artwork基础 cache schema revision MUST 只有一个 owner。External artwork由 `ComicSourceResourceGateway` 自动添加 `comicArtworkCacheSchemaRevision`；调用方 MAY 只提供 content-specific revision，MUST NOT 再传基础 schema revision形成并行 namespace。
 - 初次 external runtime activation 在 session建立前发生 Binder `runtime-service-died/disconnected` 时，generation continuity MUST 由 Android runtime-service client拥有；最多跨一个 service generation。Dart/plugin activation层 MUST NOT 通过再次调用 activation实现同一恢复，业务/ABI/请求错误 MUST NOT 被重放。
-- 来源确认过的同源 canonical comic identity SHOULD 持久化在 SavedComic 元数据中，供
-  插件未激活时的书架只读归并使用；原始 comic/chapter request identity MUST 保持不变。
-- 未访问的首页、书架、来源和杂项导航页 MUST 延迟构建；首次访问后页面状态 MAY 保留，
-  但隐藏页面不得为首屏预先创建封面 loader 或重复发起 cover request。
-- Home primary、enrichment 和可选 runtime 的状态仍 MUST 由各自 owner 管理；不得
-  新增 App 私有正文/图片缓存或让 UI 直接调度网络。
+- 来源确认过的同源 canonical comic identity SHOULD 持久化在 SavedComic 元数据中，供插件未激活时的书架只读归并使用；原始 comic/chapter request identity MUST 保持不变。
+- 未访问的首页、书架、来源和杂项导航页 MUST 延迟构建；首次访问后页面状态 MAY 保留，但隐藏页面不得为首屏预先创建封面 loader 或重复发起 cover request。
+- Home primary、enrichment 和可选 runtime 的状态仍 MUST 由各自 owner 管理；不得新增 App 私有正文/图片缓存或让 UI 直接调度网络。
 - “更新漫画” MUST 只显示当前已在书架且存在 source-confirmed update 的漫画。章节/目录变化 MUST 由 `SavedComicRecord.sourceUpdateAt` 表示；confirmed同源 successor/version MUST 由 `ComicVersionRelationStore` 的持久 relation及其首次 `discoveredAt` 表示，并由 `HomeLibrarySession` 投影供 Home/source browser 同步消费。版本 relation MUST NOT 通过写 `sourceUpdateAt` 来伪装成章节更新。presentation MUST 合并两个事实源排序；阅读进度、普通 metadata刷新、仅浏览/阅读记录 MUST NOT 推进它们。漫画源卡片 MAY 将 confirmed successor 投影为右上更新感叹号，点击时 MUST 可直接查看该 raw version；该提示不得把 successor伪装成已入书架。远程漫画缺少偏好记录时 MUST NOT 默认视为已加入书架；阅读历史 MUST 单独按 `ReadingProgress.updatedAt` 排序。
 
 ### 1.2 详情页与来源迁移
 
 - 详情页顶部控制栏 MUST 不重复显示漫画标题；漫画标题只在详情内容区显示。
-- 存在阅读进度时，详情页 MUST 提供可操作的“继续”药丸按钮；继续/阅读历史行 MUST 位于
-  章节总数行上方，阅读历史 MUST 与按钮位于同一行并放在按钮之后，历史文字之前显示时钟图标。继续 MUST 通过既有
-  `onOpenChapter` facade 打开保存的章节，不得等待无关的来源刷新。
+- 存在阅读进度时，详情页 MUST 提供可操作的“继续”药丸按钮；继续/阅读历史行 MUST 位于章节总数行上方，阅读历史 MUST 与按钮位于同一行并放在按钮之后，历史文字之前显示时钟图标。继续 MUST 通过既有`onOpenChapter` facade 打开保存的章节，不得等待无关的来源刷新。
 - 来源漫画第一次打开后即使已持久化为 SavedComic，后续再次打开 MUST 复用当前已持有的 comic route identity lock，不得在同一调用链嵌套申请相同 `sourceId + comicId` 锁而静默吞掉导航。
-- 详情页 SHOULD 同时提供通用“迁移漫画源”入口与同源版本快捷入口；来源提供 `ComicVersionSource` 时，同源候选 MUST 使用来源
-  自己的版本关系（Venera/E-Hentai 使用详情页 `#gnd`），不得改为标题 browse 或要求浏览器
-  页面权限；没有该能力时 MAY 回退到来源 browse 结果。入口展示不同原生 `comicId`，不得把
-  当前版本再次列为迁移目标。来源确认的新版关系 MUST 可持久化，使后续打开新版时也能显示旧版；
-  旧版和新版都可作为同源迁移目标。
-- 迁移面板 MUST 显示当前插件和当前来源，目标源 MAY 是当前来源或其他已启用来源。相同 `sourceId` 的确认版本 MUST 在同一面板提供直接“查看”和“迁移”；跨源标题搜索只负责发现候选，MUST NOT 建立同源关系。相同
-  `sourceId` 下不同 `comicId` 是合法的同源版本迁移，适用于 URL/gallery locator 变化；
-  目标漫画及章节身份 MUST 在任何持久写入前校验。
-- 迁移 MUST 只复制整部漫画偏好、精确章节匹配得到的阅读位置/已读状态和有证据的 artifact
-  复用关系。目标写入成功后，同源替换 MUST 清理旧版本的漫画/章节元数据；跨源迁移 MUST
-  保留原来源。来源专属 URL 和离线字节不得被当作可直接复制的元数据。
-- App-owned modal panel 的关闭操作 MUST 是左下角 X；确认、保存、删除等正向操作位于
-  右侧，不得以“取消”文字按钮替代关闭 X。
+- 详情页 SHOULD 同时提供通用“迁移漫画源”入口与同源版本快捷入口；来源提供 `ComicVersionSource` 时，同源候选 MUST 使用来源自己的版本关系（Venera/E-Hentai 使用详情页 `#gnd`），不得改为标题 browse 或要求浏览器页面权限；没有该能力时 MAY 回退到来源 browse 结果。入口展示不同原生 `comicId`，不得把当前版本再次列为迁移目标。来源确认的新版关系 MUST 可持久化，使后续打开新版时也能显示旧版；旧版和新版都可作为同源迁移目标。
+- 迁移面板 MUST 显示当前插件和当前来源，目标源 MAY 是当前来源或其他已启用来源。相同 `sourceId` 的确认版本 MUST 在同一面板提供直接“查看”和“迁移”；跨源标题搜索只负责发现候选，MUST NOT 建立同源关系。相同`sourceId` 下不同 `comicId` 是合法的同源版本迁移，适用于 URL/gallery locator 变化；目标漫画及章节身份 MUST 在任何持久写入前校验。
+- 迁移 MUST 只复制整部漫画偏好、精确章节匹配得到的阅读位置/已读状态和有证据的 artifact复用关系。目标写入成功后，同源替换 MUST 清理旧版本的漫画/章节元数据；跨源迁移 MUST保留原来源。来源专属 URL 和离线字节不得被当作可直接复制的元数据。
+- App-owned modal panel 的关闭操作 MUST 是左下角 X；确认、保存、删除等正向操作位于右侧，不得以“取消”文字按钮替代关闭 X。
 - 漫画源页 MUST 使用来源自身声明的 browse section；Mihon Popular/Latest 与 Venera explore/category target 均属于来源内部分类。原生/Mihon/Venera 运行时类型 MUST NOT 作为内容分类行，只能以来源 chip 的视觉标识区分。固定大小 catalog page MUST 使用显式上一页/下一页，pager MUST 位于内容滚动尾部；切换来源、section 或外部搜索请求时 MUST 回到第一页。
 - 切换漫画 source 时，Presentation MUST 在同一更新周期将 projection owner切换为目标 source；MUST只使用**当前 Presentation request identity**的目标精确缓存直接投影，没有精确缓存时显示目标 loading/error并按当前 section/query/filter请求加载。Catalog可保留目标最近 projection作为诊断/内部 cache事实，但 MUST NOT用它反向改写 UI默认 section/query/filter。旧 source页面不得因目标请求失败继续可见。
 - 强制刷新遇到 `sourceVerificationRequired` 且存在 WebView capability 时 MAY 自动进入一次目标 source验证。**任何一次**手动或自动验证浏览器 handoff都 MUST 消耗该 `sourceId + request URL` 的自动 fallback机会；若恢复重试仍失败，后续普通刷新 MUST NOT循环打开 WebView，只保留错误诊断和手动恢复。成功 browse后 MAY 清除该 guard。
@@ -130,17 +93,8 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 详情首帧 MUST 不等待下载状态检查、artifact index/page I/O、跨版本 page mapping warmup 或 source request-plan；下载状态检查 MUST 在首帧后批量读取并合并同一路由的重复请求，版本 discovery/mapping warmup MUST 在首帧后后台执行。
 - 详情页与漫画源页的章节 presentation key MUST 保持为 `source-chapter:${sourceId}\u0000${chapterId}`；`sourceId` 或 `chapterId` 任一变化 MUST 产生不同 key。已读滑动容器和下载按钮可使用各自的 `chapter-read:`/`chapter-download:` 前缀，但不得把标题、sequence、URL、sourceRevision 或缓存 response identity 放入章节身份 key。
 - 章节行的右划 MUST 切换当前章节的已读/未读状态，不得因当前状态禁用该方向；UI MUST 先完成投影，章节补齐和已读持久化 MUST 在后台完成，不得阻塞手势。`chapter_read_state` MUST 能在章节尚未 hydrate 时按 `sourceId + chapterId` 独立持久化，不得通过指向章节表的外键强制先获取章节信息。左划 MUST 只露出最右侧垃圾桶，点击后才触发删除，不得在滑动结束时自动删除；即使章节尚未 hydrate 也必须显示该入口，只有点击垃圾桶时才允许后台补齐完整 entry。已缓存章节支持长按打开删除确认框；删除 MUST 同时清理章节记录、阅读进度、已读状态和离线页面，且删除实际使用完整 hydrated entry。
-- 来源详情若提供预览能力，详情页 MUST 能先显示 `ComicManifest` 中已经返回的预览项，
-  后续页 MUST 通过 `ComicPreviewSource` 独立加载；预览图片必须复用统一 artwork loader，
-  不得为详情页建立专用图片缓存或等待其它章节/评论请求。Venera 的 `@x/y` 裁剪标识
-  MUST 保留在预览项和绘制身份中，同时传给 `onThumbnailLoad` 的 URL MUST 去除该标识；
-  去除后的原图 URI MUST 是编码字节缓存和实际请求的身份，使同一原图的不同裁剪只产生一次
-  请求/缓存项；宿主绘制时 MUST 只显示该标识指定的原图区域。图片失败时 MUST 使用按资源
-  identity 稳定生成的柔和纯色占位，不得显示破损图片图标。
-  预览栏折叠与展开 MUST 使用同一套排版结果：折叠态只显示第一行，高度由该行实际高度决定；展开态继续自动消费来源分页并以 `PageView` 左右分页呈现后续行。预览项 MUST 尽量保持来源原始顺序，并在可读尺寸下放置尽可能多的图片。完整行 MUST 直接使用全部媒体宽度反算等面积 tile，不得以外层 Card、重复水平 padding 或扩大 item gap 消耗剩余宽度；只有稀疏末行 MAY 放大到参考完整行面积的 2.4 倍。实际行含横图时最多 2 项，纯竖图行最多 3 项，并受用户设置的更小上限约束。阅读设置 MUST 提供每行最大数量 1–8，默认 4。图片区域 MUST 不超过屏幕高度的 90%，展开/收起按钮 MUST 居中且只显示箭头，不得显示“展开/收起”文字。不得拉伸、强制裁切或建立详情页专用图片缓存。
-- 来源详情若提供评论能力，详情页 SHOULD 显示评论栏，并 MUST 支持分页评论次级页；
-  评论存在回复数量和不透明 ID 时，次级页 MUST 能按原 source `subId`/回复 ID 加载回复。
-  这些能力是可选的，来源未声明时不得发起插件请求。评论正文的受限 HTML MUST 将 HTTP(S) `img` 交由统一 artwork loader 作为行内图片并支持 `br`/HTML entity；不得把原始 `<img>` 标签显示为文本或建立 emoji 私有网络/缓存 owner。
+- 来源详情若提供预览能力，详情页 MUST 能先显示 `ComicManifest` 中已经返回的预览项，后续页 MUST 通过 `ComicPreviewSource` 独立加载；预览图片必须复用统一 artwork loader，不得为详情页建立专用图片缓存或等待其它章节/评论请求。Venera 的 `@x/y` 裁剪标识MUST 保留在预览项和绘制身份中，同时传给 `onThumbnailLoad` 的 URL MUST 去除该标识；去除后的原图 URI MUST 是编码字节缓存和实际请求的身份，使同一原图的不同裁剪只产生一次请求/缓存项；宿主绘制时 MUST 只显示该标识指定的原图区域。图片失败时 MUST 使用按资源identity 稳定生成的柔和纯色占位，不得显示破损图片图标。预览栏折叠与展开 MUST 使用同一套排版结果：折叠态只显示第一行，高度由该行实际高度决定；展开态继续自动消费来源分页并以 `PageView` 左右分页呈现后续行。预览项 MUST 尽量保持来源原始顺序，并在可读尺寸下放置尽可能多的图片。完整行 MUST 直接使用全部媒体宽度反算等面积 tile，不得以外层 Card、重复水平 padding 或扩大 item gap 消耗剩余宽度；只有稀疏末行 MAY 放大到参考完整行面积的 2.4 倍。实际行含横图时最多 2 项，纯竖图行最多 3 项，并受用户设置的更小上限约束。阅读设置 MUST 提供每行最大数量 1–8，默认 4。图片区域 MUST 不超过屏幕高度的 90%，展开/收起按钮 MUST 居中且只显示箭头，不得显示“展开/收起”文字。不得拉伸、强制裁切或建立详情页专用图片缓存。
+- 来源详情若提供评论能力，详情页 SHOULD 显示评论栏，并 MUST 支持分页评论次级页；评论存在回复数量和不透明 ID 时，次级页 MUST 能按原 source `subId`/回复 ID 加载回复。这些能力是可选的，来源未声明时不得发起插件请求。评论正文的受限 HTML MUST 将 HTTP(S) `img` 交由统一 artwork loader 作为行内图片并支持 `br`/HTML entity；不得把原始 `<img>` 标签显示为文本或建立 emoji 私有网络/缓存 owner。
 
 ## 2. Reader 行为
 
@@ -167,9 +121,7 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 内容 MUST 等比呈现，统一使用 `height / width`；不得裁切正文，或用负位移、重叠和多套比例公式掩盖接缝。
 - Reader MUST 支持沉浸、跳页、暂停、倍速、方向和布局命令；命令只通过 Reader facade 提交。
 - Reader slider MUST实时跟随拖动跳页：`onChanged`更新UI preview并通过Reader-owned scrub navigation推进PageView/current page；不得等到`onChangeEnd`才改变可见页。scrub observation MUST显式标记`Interaction.scrubbing`，其Pipeline计划只能包含当前页foreground download/decode/upload，不得逐格展开7/3 prefetch窗口；`onChangeEnd` MUST在最终页结束scrub并恢复正常完整窗口。viewport acknowledge前slider仍以preview/requested page作为受控显示值，不得被旧`currentIndex`回拉。
-- Reader 页码或阅读模式改变后 MUST 通过既有 progress facade 持久化 `ReadingProgress`；App
-  lifecycle 进入 inactive/paused/detached 和 Reader route dispose 时 MUST 强制 flush 最近进度。
-  Home projection MUST 在写入成功后立即更新，不能要求先退出详情页才反映阅读历史。
+- Reader 页码或阅读模式改变后 MUST 通过既有 progress facade 持久化 `ReadingProgress`；Applifecycle 进入 inactive/paused/detached 和 Reader route dispose 时 MUST 强制 flush 最近进度。Home projection MUST 在写入成功后立即更新，不能要求先退出详情页才反映阅读历史。
 - Reader 正常返回前 MUST 等待最终 progress writer drain；详情页等待 Reader route返回后 MUST 立即重读本地 snapshot。异常进程终止只能依靠持续 checkpoint降低损失窗口，不得宣称绝对 crash-safe。
 - UI 控件存在性 MUST 来自 capability，不得用静态/动画猜测下载或播放能力。
 - 双击缩放分级与长按放大 MUST 可设置：双击循环 1x → 一级（默认 1.5x）→ 二级（默认 2.0x）→ 1x；长按放大分页模式默认开启，连续模式默认关闭且仅可按漫画单独开启。
@@ -180,6 +132,11 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - 连续模式的缩放（双击分级、捏合与长按放大）MUST 作用于整条页面序列的统一变换：所有可见页一起缩放，接缝不得分裂。放大是视口空间的视觉层：列表滚动 MUST 保持可用（可在放大状态下继续滚动切页），跳页/滑动不得自动复位缩放；仅方向切换/换章节等结构性变更复位。
 - 连续模式放大后双指捏合松开 MUST 保持结果倍率与偏移，不得因倍率低于阈值自动弹回 1x。已在放大态时长按 MUST NOT 跳变倍率，仅按移动方式调整水平偏移并在松手后锁定。
 - 双击的第二下按住超过长按阈值时 MUST 触发"固定水平偏移锁定"：放大态保持当前倍率并固定整条 strip 的水平偏移，按住期间 MUST 禁用水平方向拖动；从 1x 开始时 MAY 进入一级倍率。松手保持倍率与偏移，且 MUST NOT 触发单击呼出控制栏。锁定态再次普通双击 MUST 仅退出锁定并保持当前倍率；解锁后的普通双击才继续离散阶段循环。双击配对 MUST 使用屏幕坐标判定（strip 变换会使局部坐标在动画期间漂移），且 MUST 用离散阶段索引推进 1x → 一级 → 二级 → 1x：快速连续双击 MUST 单调步进，MUST NOT 因动画中间值回退到更小倍率。未锁定时普通单指水平滑动 MUST 平移整条 strip；锁定时 MUST NOT 改变偏移，从而以固定偏移从视觉上整体裁切漫画边缘；双击第二下按住期间 MUST 独占指针：禁用垂直滚动切页，松手恢复滚动并锁定倍率与偏移，且 MUST NOT 触发单击呼出控制栏。双击/再放大换级时 MUST 以"保持锚点内容不动"计算目标偏移（offset' = f − s'·((f−o)/s)，除以当前倍率；一级进入时 s=1 退化为既有公式），二级及以上的偏移 MUST NOT 按一级偏移基数计算。分页和 strip 的二级换级都 MUST 按当前倍率换算锚点并使用实际缩放图片矩形进行边界钳制；缩放动画 MUST 直接向解析后的目标帧插值且逐帧按当前倍率钳制偏移，MUST NOT 先按旧偏移播放再二次修正产生回跳或过程越界。strip 处于放大态时延迟比例提交（provisional→measured）MUST 冻结，不得在放大镜下改变内容尺寸；回到 1x 后立即落盘。缩放倍率变化经 `onZoomScaleChanged` 投影给解码提升，仅为可视区域提高解码分辨率且不超过原图。
+
+### 2.4 页面几何、输出与预热合同
+
+纵向Reader的异步尺寸更新 MUST 在active scroll期间冻结所有会改变当前viewport前缀的sliver geometry；idle采用这类新geometry时 MUST 以layout-time correction原子维持top-pixel连续。DecodeSession首个成功frame MAY触发尺寸事实提前解析，但Reader页面几何的最终authority MUST是source canvas而非decoded raster；Pipeline只读`PipelinePageDimensionsFeed` MUST携带dimension basis并优先`PageAsset`/WebP source canvas，decoded raster仅可作为provisional fallback且 MUST NOT覆盖已知source canvas。VP8X/VP8/VP8L source canvas解析 MUST只依赖其固定header，不得等待整个compressed image chunk；presentation output/surface raster MUST NOT经UI尺寸回调成为Reader source geometry。`DownloadSession` MUST持有generation-local source-metadata prefix并可投影`sourceCanvasWidth/sourceCanvasHeight`；该prefix不得复制正文，且Pipeline/PageStream MUST从physical ingress读取source metadata，MUST NOT直接从可能为空的session `Artifact`猜测resident body。设备诊断命中该路径时source MUST记录为`physical-ingress-source-canvas`。 Resident replay MUST区分未绑定`DownloadResidentReplaySource(session,endExclusive)`与physical-generation bound `DownloadResidentReplayChunks(endExclusive)`；`DownloadSession`只能消费bound capability，Pipeline/registry只能在当前physical session解析后绑定一次。cache/local-source backend选择 MUST由`CompositionDownloadTransferRuntime`拥有，Pipeline MUST NOT自行实现resident replay backend routing。该feed MUST NOT暴露Flutter `ValueNotifier`/`ValueListenable`，consumer attach MUST可重放retained dimension facts，publish/clear MUST保持Pipeline-private；Pipeline output/progress core同样 MUST NOT直接依赖`WidgetsBinding`/`SchedulerBinding`或Flutter notifier；visual frame boundary MUST通过`PipelineFrameScheduler`由presentation adapter注入，transfer progress MUST通过只读`PipelineTransferProgressFeed`投影。严格位于真实visible tail之后的future page source ratio MAY在active scroll中提前采用，因为它不得改变当前viewport prefix；visible tail及之前的新ratio MUST继续等待idle。不得恢复dev.286 visual extent/OverflowBox workaround，也不得以扩大decode previous1/next2掩盖source geometry authority错误。vertical drag/ballistic期间 MAY 暂缓非可见next2 output upload，但 MUST 保留next2 decode与current/transition/visible/immediate-next需求。 生产Reader MUST默认保留native decode与Android SurfaceProducer output；dev.311 Flutter `ui.Image/RawImage`默认实验已被设备证据否证，不得继续作为生产默认。该路径的UploadDemand只准备/持有output，真正RGBA Surface copy发生在presentation；同一lease已resident的具体OutputFrame再次present必须零copy复用并记录`platformResident`，不得重复platform blit/schedule。frame identity变化、resize/release使该复用失效；SurfaceProducer重建仍由platform redraw负责。`PipelinePageSurface.presentationIdentity` MUST稳定标识底层 presentation target，而不是每个动画帧包装对象；同一 Android lease 的动画帧更新不得触发 Reader 页面子树重建或重复 PlaybackGate，UI/PageView frame MUST优先，surface/lease/fallback/尺寸/错误变化仍 MUST立即更新视觉 projection。
+`PipelinePageSurface.presentationIdentity` MUST以 opaque token 稳定标识底层 presentation target，不得暴露 lease/image 或每个动画帧包装对象；同一 Android lease 的动画帧更新不得触发 Reader 页面子树重建或重复 PlaybackGate，已有 output 的 transient `uploading` 与 present 完成通知 MUST NOT 重新广播到 PlaybackGate；同一 presentation target 的旧 claim 在平台 copy 完成后 MUST 立即释放，只有真实 surface/lease/fallback 替换才通过 `PipelineFrameScheduler` 合并到安全 frame；若 successor 在 Flutter persistent callbacks 或下一帧已排队期间到达，Pipeline MUST只合并最新帧并在该 frame 后提交，首帧仍 MUST立即确认；UI/PageView frame MUST优先，surface/lease/fallback/尺寸/错误变化仍 MUST立即更新视觉 projection。Reader WebP texture viewport MUST 使用 `FilterQuality.low`，避免高分辨率横向 gallery 首次合成时同步生成 mipmap。横向 gallery 的 current/next/transition role 计划 MAY 在 PageView host 挂载前建立有界 detached output；该 projection MUST 不等待 upload ready、WebP sniff 或 decode classification，upload ready 后只预呈现首帧；manifest、已知 physical content kind 或明显非-WebP URI 后缀已确认的页面 MUST NOT 建立无用 native output；current 且无 listener 或尚无 resident surface 时 MUST 立即预热，next/transition 在 Flutter frame 已提交或排队时 MUST 延后到 scheduler idle task，动画/触摸回调未清空前不得启动 platform create，仍继续解码且不得提交隐藏 successor，host attach 后 MUST 立即追上最新帧；Android texture lease prewarm MUST 使用 source canvas 按 DecodeTarget 等比 fit 后的实际 decoded raster 尺寸，DownloadSession 解析出 WebP 固定前缀 source canvas 后 Pipeline MUST 尽早为 current/next/transition 请求该精确尺寸；同一 raster 尺寸的 deferred request MUST 按 current > transition > next 优先级每个 idle task 最多启动一个 platform create，idle+pending 总量 MUST 受全局有界池限制；decoded frame 到达后的尺寸仅作兜底，失败请求 MUST 可重试；该边界不得改变 playback/freeze 语义，vertical Reader MUST 不启用。SurfaceProducer exact-size prewarm MUST materialize `SurfaceProducer.getSurface()` on the serialized blit lane before the lease enters the idle pool; it MUST NOT call `scheduleFrame()` or alter playback/freeze/resume state. Same-size prewarm requests MUST coalesce; if an authoritative upload acquire for that raster is already in flight, the prewarm MUST observe that acquire rather than create a second producer. When the bounded idle pool is full, a new exact-size request MAY evict only the oldest idle lease; pending creates MUST remain bounded and MUST NOT be replaced by an unbounded UI-owned queue.纵向 page shell composition 的 steady-state `cacheExtent` SHOULD 固定为 2 个 viewport 高度；首次布局 MAY 使用一次有界 6 屏组成以准备初始相邻 page host，并在首个 scroll end 后收回到 2 屏。该值只影响 Flutter sliver 组成，不得扩大 Reader 的 encoded/decode/upload/texture 需求窗口；不得在 idle post-frame 回调中逐步扩张 cache window。可见静态页的输出保留由 `UploadDemand.retainOutput` 明确表达并由 `FrameBudgeter` 保护，不得依赖页面 role 推断。
 
 ## 3. Pipeline 与角色合同
 
@@ -293,8 +250,7 @@ identity 超限时使用稳定 hash 与原长度；locator脱敏pattern MUST复�
 3. 详情与漫画源下拉刷新 MUST 共用同一个组件拥有 edge trigger、位移、刷新进度和成功/失败反馈；结果图标 MUST 与刷新指示器使用同一落点。
 
 4. encoded artwork source 已就绪后，普通 artwork MUST 只创建一个 ImageProvider/解码监听；需要裁剪或尺寸测量的 Presentation MAY 显式监听一个 ImageStream并直接绘制 decoded image，但 MUST NOT 同时构建第二个 `Image`监听同一 provider。
-5. 远程详情 MUST 先显示已有 catalog/detail cache，并等待当前 active source adapter 完成后台刷新；主详情、章节、预览和评论 MUST 按元数据类别增量替换，预览、评论及章节操作 MUST 在调用时解析当前 adapter，不得持有插件重启前的关闭 session。详情 route 的首帧 MUST 不依赖下载状态/artifact I/O 或跨版本 mapping warmup。已持久化的同源 successor/predecessor MUST 先于网络发现投影，网络只在后台校准；版本入口 MUST 与“下载整本”保持同行且使用固定占位，无版本关系/加载中不绘制图标，不得迟到插入整块 UI 改变布局。面板 MUST 在同一层切换新/旧版，标题点击直接查看详情，行尾迁移直接进入对比；列表 MUST 显示可读标题和日期，MUST NOT 显示 opaque ID 或 source 伪 generation。
-   正文喜欢、书架、收藏和下载 MUST 保持统一 48×48 `_PreferenceButton` 尺寸，不得因不可见版本槽整体缩小。版本入口 MUST 位于顶部 AppBar“迁移漫画源”控件左侧并复用标准 `IconButton` 风格；无关系时仅保留标准 action 空槽。缓存首显后的 source refresh MUST 更新当前 route/面板。“迁移到当前版本”只在存在非当前 canonical predecessor 时可用，并 MUST 进入迁移对比。同源替换对已验证等价的 durable source artifact MUST 物化为目标 exact DownloadId，确保移除旧记录或重启后仍不重新下载；未验证页面 MUST NOT 复用。
+5. 远程详情 MUST 先显示已有 catalog/detail cache，并等待当前 active source adapter 完成后台刷新；主详情、章节、预览和评论 MUST 按元数据类别增量替换，预览、评论及章节操作 MUST 在调用时解析当前 adapter，不得持有插件重启前的关闭 session。详情 route 的首帧 MUST 不依赖下载状态/artifact I/O 或跨版本 mapping warmup。已持久化的同源 successor/predecessor MUST 先于网络发现投影，网络只在后台校准；版本入口 MUST 与“下载整本”保持同行且使用固定占位，无版本关系/加载中不绘制图标，不得迟到插入整块 UI 改变布局。面板 MUST 在同一层切换新/旧版，标题点击直接查看详情，行尾迁移直接进入对比；列表 MUST 显示可读标题和日期，MUST NOT 显示 opaque ID 或 source 伪 generation。正文喜欢、书架、收藏和下载 MUST 保持统一 48×48 `_PreferenceButton` 尺寸，不得因不可见版本槽整体缩小。版本入口 MUST 位于顶部 AppBar“迁移漫画源”控件左侧并复用标准 `IconButton` 风格；无关系时仅保留标准 action 空槽。缓存首显后的 source refresh MUST 更新当前 route/面板。“迁移到当前版本”只在存在非当前 canonical predecessor 时可用，并 MUST 进入迁移对比。同源替换对已验证等价的 durable source artifact MUST 物化为目标 exact DownloadId，确保移除旧记录或重启后仍不重新下载；未验证页面 MUST NOT 复用。
 6. Mihon chapter catalog MUST 只投影插件/source API实际返回的完整 `SChapter` 列表。TachiyomiX 1.6/current Mihon MUST 先调用 `getMangaUpdate(manga, existingChapters, ..., fetchChapters=true)`；只有 combined能力明确不存在时 MAY回退 legacy `fetchMangaDetails/fetchChapterList`。正文 MUST先调用 `getPageList(SChapter)`，只有能力不存在时 MAY回退 `fetchPageList`。成功空列表是合法结果；真实调用错误保持失败。MUST NOT 从 manga URL生成兼容单章，也不得按标题、`SChapter.url`、number或sequence推断、增加、删除或合并章节。
 7. Reader progress 的有序性与 durable I/O MUST 解耦：SQLite实现 MUST 在非 UI isolate执行同步 sqlite3/章节校验；Reader页面变化只入队 latest checkpoint，不得逐页发布 Home/library projection。Reader route MUST NOT 等待 durable barrier；返回后 Home/详情只发布最终内存 progress投影，storage isolate按自身 batch/生命周期策略完成持久化。
 8. 外部 artwork MUST 统一通过 `ComicSourceResourceGateway`；raw plugin comic locator 与 durable artwork identity MUST 分离。Mihon 等可变 raw locator必须使用 source canonical comic identity构造封面/预览 cache namespace；`mihon:resource:` 等插件 URI不得传给本地文件 loader。
