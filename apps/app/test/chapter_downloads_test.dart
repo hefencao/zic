@@ -261,6 +261,26 @@ final class _BlockingInspectManyDownloadService
       _delegate.isDownloaded(entry);
 
   @override
+  Future<ComicConflictReport> inspectComicConflicts({
+    required String sourceId,
+    String? sourceDisplayName,
+    required String comicId,
+    required String comicTitle,
+  }) =>
+      _delegate.inspectComicConflicts(
+        sourceId: sourceId,
+        sourceDisplayName: sourceDisplayName,
+        comicId: comicId,
+        comicTitle: comicTitle,
+      );
+
+  @override
+  Future<List<ImportedLibraryEntry>> discoverOrphanedEntries(
+    Iterable<ImportedLibraryEntry> knownEntries,
+  ) =>
+      _delegate.discoverOrphanedEntries(knownEntries);
+
+  @override
   Future<Uint8List> readPage(ImportedLibraryEntry entry, int pageIndex) =>
       _delegate.readPage(entry, pageIndex);
 

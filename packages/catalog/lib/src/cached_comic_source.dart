@@ -800,8 +800,33 @@ final class CachedBrowsableComicSource
             <String>[sourceId, chapterId],
           ),
     );
-    _chapterComicIds.remove(chapterId);
-    return loadChapter(chapterId);
+    final comicId = _chapterComicIds.remove(chapterId);
+    final refreshable = source is RefreshableChapterComicSource
+        ? source as RefreshableChapterComicSource
+        : null;
+    final loader = refreshable != null
+        ? () => refreshable.refreshChapter(chapterId)
+        : () => source.loadChapter(chapterId);
+    return cache
+        .getOrLoad<ChapterManifest>(
+          key: ResourceCacheKey(
+            kind: ResourceCacheKind.chapterMetadata,
+            identity: encodeStableCacheKey(
+              'chapter-metadata',
+              <String>[sourceId, chapterId],
+            ),
+            namespace: comicId == null
+                ? sourceResourceCacheNamespace(sourceId)
+                : _comicIdentity(comicId).namespace,
+            revision: _chapterMetadataSchemaRevision,
+          ),
+          loader: loader,
+          weightOf: _chapterWeight,
+        )
+        .then((manifest) {
+      _rememberChapter(chapterId, manifest.comicId);
+      return manifest;
+    });
   }
 
   @override

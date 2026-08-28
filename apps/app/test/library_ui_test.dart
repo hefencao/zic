@@ -30,7 +30,7 @@ Widget _localDetailsScreen({
   required Future<void> Function(ImportedLibraryEntry chapter, bool isRead)
       onReadChanged,
   required Future<void> Function(ImportedLibraryEntry chapter) onOpenChapter,
-  Future<void> Function(ImportedLibraryEntry chapter)? onDeleteChapter,
+  details.ComicDetailsChapterDeleter? onDeleteChapter,
 }) {
   final snapshot = details.ComicDetailsLibrarySnapshot(
     chapters: comic.chapters,
@@ -1001,7 +1001,7 @@ void main() {
           onPreferenceChanged: (_) async {},
           onReadChanged: (_, __) async {},
           onOpenChapter: (_) async {},
-          onDeleteChapter: (value) async => deleted = value,
+          onDeleteChapter: (value, {deleteFiles = false}) async => deleted = value,
         ),
       ),
     );
@@ -1050,7 +1050,7 @@ void main() {
           onPreferenceChanged: (_) async {},
           onReadChanged: (_, __) async {},
           onOpenChapter: (_) async {},
-          onDeleteChapter: (value) async => deleted = value,
+          onDeleteChapter: (value, {deleteFiles = false}) async => deleted = value,
         ),
       ),
     );

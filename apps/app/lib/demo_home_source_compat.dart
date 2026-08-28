@@ -184,13 +184,27 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
 
   Future<void> _downloadChapter(ImportedLibraryEntry entry) async {
     final hydrated = await _librarySession.hydrateEntry(entry);
-    final current = _hasLegacyVeneraLocators(hydrated.chapter)
+    var current = _hasLegacyVeneraLocators(hydrated.chapter)
         ? await _refreshRemoteEntry(
             hydrated,
             forceSourceRefresh: true,
           )
         : hydrated;
-    await _chapterDownloads.download(current);
+    try {
+      await _chapterDownloads.download(current);
+    } on Object catch (error) {
+      if (error.toString().contains('must use a runtime token')) {
+        final refreshed = await _refreshStaleQueueChapter(current);
+        if (refreshed != null) {
+          current = refreshed;
+          await _chapterDownloads.download(current);
+        } else {
+          rethrow;
+        }
+      } else {
+        rethrow;
+      }
+    }
     final snapshot = await _chapterDownloads.inspect(current);
     _acceptDownloadSnapshot(snapshot);
     if (snapshot.isComplete) {
@@ -201,12 +215,14 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     }
   }
 
-  Future<void> _deleteChapter(ImportedLibraryEntry entry) async {
-    // Detail routes may start from a compact Home snapshot. Deletion needs the
-    // authoritative page list so ChapterDownloadService can evict every page
-    // artifact instead of only removing the library row.
+  Future<void> _deleteChapter(
+    ImportedLibraryEntry entry, {
+    bool deleteFiles = false,
+  }) async {
     final hydrated = await _librarySession.hydrateEntry(entry);
-    await _chapterDownloads.delete(hydrated);
+    if (deleteFiles) {
+      await _chapterDownloads.delete(hydrated);
+    }
     await _librarySession.removeChapter(
       hydrated.chapter.sourceId,
       hydrated.chapter.chapterId,
@@ -396,6 +412,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             onDeleteChapter: _deleteChapter,
             inspectChapterDownload: _inspectChapterDownload,
             inspectChapterDownloads: _inspectChapterDownloads,
+            inspectComicConflicts: _chapterDownloads.inspectComicConflicts,
             downloadChanges: _chapterDownloads.changes,
             onDownloadComic: (entries) =>
                 _downloadComicEntries(identity, entries),
@@ -536,6 +553,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           onDeleteChapter: _deleteChapter,
           inspectChapterDownload: _inspectChapterDownload,
           inspectChapterDownloads: _inspectChapterDownloads,
+          inspectComicConflicts: _chapterDownloads.inspectComicConflicts,
           downloadChanges: _chapterDownloads.changes,
           onDownloadComic: (entries) => _downloadComicEntries(
             comicLibraryIdentity(comic.sourceId, comic.comicId),

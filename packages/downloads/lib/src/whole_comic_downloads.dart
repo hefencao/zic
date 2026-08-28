@@ -364,6 +364,13 @@ final class WholeComicDownloadQueue {
     _requestSchedule();
   }
 
+  /// Optional source-side refresher used to self-heal chapters whose
+  /// persisted page URIs died with a plugin runtime restart. The owner
+  /// (Home) binds it after construction; the queue itself never reaches into
+  /// sources.
+  Future<ImportedLibraryEntry?> Function(ImportedLibraryEntry entry)?
+      refreshStaleChapter;
+
   Future<void> retry(String jobId) async {
     await ready;
     final job = _requireJob(jobId);
@@ -372,6 +379,7 @@ final class WholeComicDownloadQueue {
       return;
     }
     await _refreshCompleted(job);
+    job.failedChapterIdentities.clear();
     job.phase = job.completedChapterIdentities.length == job.chapters.length
         ? WholeComicQueuePhase.complete
         : WholeComicQueuePhase.queued;
@@ -587,9 +595,16 @@ final class WholeComicDownloadQueue {
       for (final job in _jobs.values) {
         if (job.phase == WholeComicQueuePhase.running &&
             !_hasActiveForJob(job.jobId) &&
-            job.completedChapterIdentities.length == job.chapters.length) {
-          job.phase = WholeComicQueuePhase.complete;
-          job.failure = null;
+            job.completedChapterIdentities.length +
+                    job.failedChapterIdentities.length ==
+                job.chapters.length) {
+          final failures = job.failedChapterIdentities.length;
+          job.phase = failures > 0
+              ? WholeComicQueuePhase.failed
+              : WholeComicQueuePhase.complete;
+          job.failure = failures > 0
+              ? '$failures/${job.chapters.length} 章下载失败，可重试'
+              : null;
           job.touch();
           changed = true;
         }
@@ -622,10 +637,12 @@ final class WholeComicDownloadQueue {
       }
       for (final entry in job.chapters) {
         final identity = _chapterIdentity(entry);
-        if (!job.completedChapterIdentities.contains(identity) &&
-            !_active.containsKey(identity)) {
-          return (job, entry);
+        if (job.completedChapterIdentities.contains(identity) ||
+            job.failedChapterIdentities.contains(identity) ||
+            _active.containsKey(identity)) {
+          continue;
         }
+        return (job, entry);
       }
     }
     return null;
@@ -647,6 +664,7 @@ final class WholeComicDownloadQueue {
     ImportedLibraryEntry entry,
   ) async {
     final identity = _chapterIdentity(entry);
+    Object? chapterFailure;
     try {
       final current = await _downloads.inspect(entry);
       if (!current.isComplete) {
@@ -655,30 +673,75 @@ final class WholeComicDownloadQueue {
       final next = await _downloads.inspect(entry);
       if (next.isComplete) {
         job.completedChapterIdentities.add(identity);
-      } else if (!_closing &&
-          job.phase != WholeComicQueuePhase.paused &&
-          job.phase != WholeComicQueuePhase.waitingForPolicy &&
-          job.phase != WholeComicQueuePhase.cancelled) {
-        job.phase = WholeComicQueuePhase.failed;
-        job.failure = next.failure ?? '章节“${entry.chapter.displayName}”未完成';
+        job.failedChapterIdentities.remove(identity);
+      } else if (next.failure != null) {
+        chapterFailure = next.failure!;
       }
     } on Object catch (error) {
-      if (!_closing &&
-          job.phase != WholeComicQueuePhase.paused &&
-          job.phase != WholeComicQueuePhase.waitingForPolicy &&
-          job.phase != WholeComicQueuePhase.cancelled) {
-        job.phase = WholeComicQueuePhase.failed;
-        job.failure = error.toString();
+      if (!_closing && job.phase == WholeComicQueuePhase.running) {
+        chapterFailure = error;
       }
-    } finally {
-      _active.remove(identity);
-      job.touch();
-      if (job.phase == WholeComicQueuePhase.failed) {
-        await _cancelActiveForJob(job.jobId);
-      }
-      await _publish();
-      _requestSchedule();
     }
+    if (chapterFailure != null &&
+        !_closing &&
+        job.phase == WholeComicQueuePhase.running) {
+      // One stale-manifest self-heal per chapter per session: a plugin
+      // runtime restart invalidates persisted page URIs, and re-pulling the
+      // chapter manifest from the source restores fresh ones.
+      if (await _selfHealStaleChapter(job, entry, chapterFailure)) {
+        _active.remove(identity);
+        _requestSchedule();
+        return;
+      }
+      // Chapter-scoped failure: never cancel sibling chapters. The job only
+      // turns failed once every chapter reached a terminal state (see the
+      // completion check in _schedule).
+      job.failedChapterIdentities.add(identity);
+      job.failure =
+          '章节「${entry.chapter.displayName}」下载失败：${_describeChapterFailure(chapterFailure)}';
+    }
+    _active.remove(identity);
+    job.touch();
+    await _publish();
+    _requestSchedule();
+  }
+
+  /// Returns true when a refreshed manifest was obtained and the chapter was
+  /// relaunched; false leaves failure bookkeeping to the caller.
+  Future<bool> _selfHealStaleChapter(
+    _WholeComicQueueJob job,
+    ImportedLibraryEntry entry,
+    Object error,
+  ) async {
+    if (!error.toString().contains('must use a runtime token')) {
+      return false;
+    }
+    if (refreshStaleChapter == null) {
+      return false;
+    }
+    final identity = _chapterIdentity(entry);
+    if (!job.selfHealAttemptedIdentities.add(identity)) {
+      return false;
+    }
+    final ImportedLibraryEntry? refreshed;
+    try {
+      refreshed = await refreshStaleChapter!(entry);
+    } on Object {
+      return false;
+    }
+    if (refreshed == null || _closing) {
+      return false;
+    }
+    final index = job.chapters.indexWhere(
+      (candidate) => _chapterIdentity(candidate) == identity,
+    );
+    if (index >= 0) {
+      job.chapters[index] = refreshed;
+    }
+    job.completedChapterIdentities.remove(identity);
+    job.failedChapterIdentities.remove(identity);
+    _launch(job, refreshed);
+    return true;
   }
 
   Future<void> _refreshCompleted(_WholeComicQueueJob job) async {
@@ -828,8 +891,16 @@ final class _WholeComicQueueJob {
   final String sourceId;
   final String comicId;
   final String comicTitle;
-  final List<ImportedLibraryEntry> chapters;
+  List<ImportedLibraryEntry> chapters;
   final Set<String> completedChapterIdentities;
+
+  /// Chapters that exhausted their attempts in this session. They stop being
+  /// scheduled immediately but never cancel sibling chapters; retry clears
+  /// the set so every failed chapter runs again.
+  final Set<String> failedChapterIdentities = <String>{};
+
+  /// Chapters that already consumed the one-shot stale-manifest self-heal.
+  final Set<String> selfHealAttemptedIdentities = <String>{};
   WholeComicQueuePhase phase;
   String? failure;
   final DateTime createdAt;
@@ -863,6 +934,8 @@ final class _WholeComicQueueJob {
         'updatedAt': updatedAt.toIso8601String(),
         'completedChapterIdentities':
             completedChapterIdentities.toList(growable: false),
+        'failedChapterIdentities':
+            failedChapterIdentities.toList(growable: false),
         'chapters': chapters
             .map((entry) => entry.chapter.toJson())
             .toList(growable: false),
@@ -901,7 +974,12 @@ final class _WholeComicQueueJob {
       failure: json['failure'] as String?,
       createdAt: DateTime.parse(_requiredString(json, 'createdAt')).toUtc(),
       updatedAt: DateTime.parse(_requiredString(json, 'updatedAt')).toUtc(),
-    );
+    )
+      ..failedChapterIdentities.addAll(
+        (json['failedChapterIdentities'] as List<Object?>?)
+                ?.whereType<String>() ??
+            const <String>[],
+      );
   }
 }
 
@@ -910,6 +988,18 @@ String _chapterIdentity(ImportedLibraryEntry entry) => chapterDownloadIdentity(
       entry.chapter.chapterId,
       entry.chapter.sourceRevision,
     );
+
+/// Maps raw runtime failures to user-actionable queue messages. A persisted
+/// page manifest can outlive the plugin runtime epoch that issued its
+/// resource URIs; resuming such a chapter fails hard inside the runtime and
+/// only re-downloading from a fresh manifest can recover it.
+String _describeChapterFailure(Object error) {
+  final text = error.toString();
+  if (text.contains('must use a runtime token')) {
+    return '页面地址已失效（来源运行时已重启），请删除该任务后重新下载';
+  }
+  return text;
+}
 
 String _requiredString(Map<String, Object?> json, String key) {
   final value = json[key];

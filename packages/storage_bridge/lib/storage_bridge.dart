@@ -9,7 +9,18 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:storage/storage.dart';
 
 export 'package:storage/storage.dart'
-    show HomeProjectionSnapshot, HomeProjectionSnapshotStore;
+    show
+        CacheLayout,
+        ChapterDownloadStoreMoveReport,
+        HomeProjectionSnapshot,
+        HomeProjectionSnapshotStore,
+        chapterDownloadStoreHasContent,
+        defaultChapterDownloadDirectory,
+        isSameDirectoryPath,
+        isSameOrNestedDirectoryPath,
+        moveChapterDownloadStore,
+        probeChapterDownloadDirectoryWritable,
+        resolveChapterDownloadDirectory;
 
 /// Builds the engine-facing provider for immutable encoded image content.
 ///
@@ -59,9 +70,18 @@ HomeProjectionSnapshotStore createHomeProjectionSnapshotStore({
 /// Home projection snapshot files just because Home was opened. Existing state
 /// still includes a queue or snapshot file because restoring either projection
 /// requires the durable composition to reconcile it.
-Future<bool> durableZicStateExists(String storageRoot) async {
+///
+/// [chapterDownloadDirectory] overrides where the chapter-download store index
+/// lives when the user configured a custom download directory.
+Future<bool> durableZicStateExists(
+  String storageRoot, {
+  String? chapterDownloadDirectory,
+}) async {
   final importedLibrary = File('$storageRoot/imported_library.sqlite3');
-  final offlineCache = File('$storageRoot/offline_chapters/cache.sqlite');
+  final offlineCache = File(
+    '${chapterDownloadDirectory ?? '$storageRoot/offline_chapters'}'
+    '/cache.sqlite',
+  );
   final wholeComicQueue = File('$storageRoot/whole_comic_queue.json');
   final homeSnapshot = File('$storageRoot/home_projection_snapshot.json');
   // A completed Home snapshot is itself durable application state. Checking
@@ -105,6 +125,78 @@ ResourceCacheCoordinator createAppResourceCache({
         ),
     artifacts: artifacts,
   );
+}
+
+/// Returns whether [directory] holds an opened-before chapter-download store
+/// index. Composition code consumes this probe instead of touching `dart:io`.
+Future<bool> chapterDownloadIndexExists(String directory) =>
+    File('$directory/cache.sqlite').exists();
+
+/// Completes a deferred or interrupted chapter-download store move and
+/// returns the effective chapter-download directory for this launch.
+///
+/// The settings flow records the intended target plus the previous store
+/// location before touching any bytes, so a crash mid-move is repaired here,
+/// before any service opens the stores. A move failure is reported but never
+/// blocks startup; opening the store at the target then degrades exactly like
+/// any other durable-storage failure.
+Future<String> settleChapterDownloadDirectory({
+  required String storageRoot,
+  required String? configuredOverride,
+  String? pendingMoveFrom,
+}) async {
+  final defaultDirectory = defaultChapterDownloadDirectory(storageRoot);
+  final target = configuredOverride ?? defaultDirectory;
+  final separator = Platform.pathSeparator;
+  bool samePath(String a, String b) {
+    String strip(String value) {
+      var result = value;
+      while (result.length > 1 && result.endsWith(separator)) {
+        result = result.substring(0, result.length - 1);
+      }
+      return result;
+    }
+
+    return strip(a) == strip(b);
+  }
+
+  if (pendingMoveFrom != null &&
+      !samePath(pendingMoveFrom, target) &&
+      chapterDownloadStoreHasContent(pendingMoveFrom)) {
+    try {
+      final report = await moveChapterDownloadStore(
+        from: pendingMoveFrom,
+        to: target,
+      );
+      print(
+        '[zic-storage] chapter-download move completed '
+        'from=$pendingMoveFrom to=$target files=${report.movedFileCount} '
+        'records=${report.rewrittenRecordCount}',
+      );
+    } on Object catch (error) {
+      print('[zic-storage] chapter-download move failed: $error');
+    }
+  } else if (!samePath(defaultDirectory, target) &&
+      chapterDownloadStoreHasContent(defaultDirectory) &&
+      !await File('$target/cache.sqlite').exists()) {
+    // An override is configured while the default location still owns the
+    // only complete copy of the store (for example a crash before the move
+    // started). Bring the store to the configured location.
+    try {
+      final report = await moveChapterDownloadStore(
+        from: defaultDirectory,
+        to: target,
+      );
+      print(
+        '[zic-storage] chapter-download default-location adoption completed '
+        'to=$target files=${report.movedFileCount} '
+        'records=${report.rewrittenRecordCount}',
+      );
+    } on Object catch (error) {
+      print('[zic-storage] chapter-download move failed: $error');
+    }
+  }
+  return target;
 }
 
 Future<ImportedLibraryStore> openDefaultImportedLibraryStore() async {

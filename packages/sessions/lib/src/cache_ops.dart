@@ -42,7 +42,8 @@ final class CacheOps {
     Set<DownloadId> protected = const <DownloadId>{},
   }) async {
     final records = await index.list();
-    final protectedKeys = protected.map((id) => id.key).toSet();
+    final protectedKeys = protected.map((id) => id.key).toSet()
+      ..addAll(_pinnedKeys(records));
     final busyKeys = <String>{
       for (final session in registry.sessions)
         if (!session.canEvict) session.id.key,
@@ -66,13 +67,19 @@ final class CacheOps {
     Set<DownloadId> protected = const <DownloadId>{},
   }) async {
     final records = await index.list();
-    final protectedKeys = protected.map((id) => id.key).toSet();
+    final protectedKeys = protected.map((id) => id.key).toSet()
+      ..addAll(_pinnedKeys(records));
     return _apply(
       records: records,
       requestedBytes: records.fold<int>(0, (sum, rec) => sum + rec.bytes),
       protectedKeys: protectedKeys,
     );
   }
+
+  /// Explicitly downloaded chapters survive capacity trims and cache clears;
+  /// only a per-chapter delete may remove them.
+  Set<String> _pinnedKeys(Iterable<CacheRec> records) =>
+      <String>{for (final record in records) if (record.pinned) record.key};
 
   Future<CacheReport> _apply({
     required Iterable<CacheRec> records,

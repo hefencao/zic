@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "audit_version": "1.6.0",
+  "last_updated": "2026-08-28T10:50:00+08:00",
+  "system": "zic-download-subsystem",
+  "scope": "下载链路、下载管理、下载目录与设置",
+  "summary": {
+    "total_issues": 12,
+    "critical_p0": 2,
+    "high_p1": 3,
+    "medium_p2": 7,
+    "governance_status": "in_progress",
+    "resolved_count": 10,
+    "deferred_count": 1,
+    "pending_count": 1
+  },
+  "issues": [
+    {
+      "id": "DL-DIR-001",
+      "domain": "download_directory_and_settings",
+      "severity": "P0",
+      "title": "运行时切换至 SAF 目录服务重启失败降级为内存模式",
+      "locations": [
+        "apps/app/lib/app_runtime.dart:459-472"
+      ],
+      "root_cause": "_rebuildDownloadServices 缺少 saf:// 目标解析与 safTreeIo / safTreeUri 参数传递，直接将 saf:// URI 传入 PersistentDownloadComposition.open，底层尝试以 POSIX 路径创建目录并打开 SQLite 失败。",
+      "impact": "用户在设置页选择 SAF 目录后，提示“目录已更新，但下载服务重启失败”，下载服务静默降级为内存模式，导致后续下载无法落盘。",
+      "status": "resolved",
+      "remediation_applied": "在 _rebuildDownloadServices 中提取 safOverride，向 PersistentDownloadComposition.open 注入 _SafTreeIoAdapter(SafStore(treeUri: safOverride)) 与 safTreeUri，与启动期打开逻辑完全对称。"
+    },
+    {
+      "id": "DL-DIR-002",
+      "domain": "download_directory_and_settings",
+      "severity": "P0",
+      "title": "SAF 模式未绑定 SafArtifactBytes 导致读取即自毁删除索引",
+      "locations": [
+        "packages/downloads/lib/src/chapter_downloads.dart:685-691",
+        "packages/downloads/lib/src/chapter_downloads.dart:1020-1025",
+        "packages/downloads/lib/src/artifact_bytes.dart:169-209"
+      ],
+      "root_cause": "PersistentDownloadArtifactStore.open 在传入 safMirror 时未自动构建 SafArtifactBytes 绑定给 _bytes，仍使用 LocalArtifactBytes。openArtifactStream 校验 saf: 路径调用 File.exists 返回 false，进而触发 _invalidateIndexedArtifact 抹除 SQLite 索引记录。",
+      "impact": "SAF 镜像下载成功后，任何读取尝试（阅读器阅读、isDownloaded 检查）都会判定文件不存在并立即物理删除索引记录，导致下载文件永久丢失。",
+      "status": "resolved",
+      "remediation_applied": "新增 CompositeArtifactBytes 统一实现 saf: 与 local 路径自适应分发；PersistentDownloadArtifactStore.open 在挂载 safMirror 时自动绑定 CompositeArtifactBytes(saf: SafArtifactBytes(safMirror))；_invalidateIndexedArtifact 与 evict 改走 _bytes.delete 适配 SAF 远端删除。"
+    },
+    {
+      "id": "DL-DIR-003",
+      "domain": "download_directory_and_settings",
+      "severity": "P2",
+      "title": "跨 Scheme（POSIX ↔ SAF）迁移静默失效且无 UI 提示约束",
+      "locations": [
+        "apps/app/lib/app_settings_screen.dart:450-495"
+      ],
+      "root_cause": "changeChapterDownloadDirectory 对 safTarget 直接强行置 migrateFiles = false，设置对话框此前未禁用勾选，用户勾选后文件未被迁移容易造成困惑。",
+      "impact": "用户勾选迁移文件切换至 SAF 目录后，历史下载文件留在原处未被迁移，容易造成数据丢失误解。",
+      "status": "resolved",
+      "remediation_applied": "在 _confirmDownloadDirectoryChange 对话框中，当目标为 SAF 目录时自动禁用迁移复选框（锁定为 false），并显示诚实提示说明“SAF 目录暂不支持跨存储方案自动搬运文件；旧下载将保留在原目录”。"
+    },
+    {
+      "id": "DL-DIR-004",
+      "domain": "download_directory_and_settings",
+      "severity": "P2",
+      "title": "单插件独立下载目录与 SAF 模式不兼容",
+      "locations": [
+        "apps/app/lib/external_plugin_repository_screen.dart:345-370",
+        "apps/app/lib/app_runtime.dart:48-56"
+      ],
+      "root_cause": "DownloadRegistry.layoutResolver 仅支持 POSIX CacheLayout，无法支持针对特定插件使用独立 SAF Tree URI 的存储隔离。",
+      "impact": "在 SAF 全局模式下，单插件自定义目录若设置为 SAF 路径会导致 CacheLayout 抛异常或路径错乱。",
+      "status": "resolved",
+      "remediation_applied": "在插件管理设置独立目录时，显式拦截并拒绝 saf:// 路径并给出友好提示；在 sourceDownloadLayoutResolver 中过滤 saf:// 路径返回 null（回退默认 store），杜绝非法路径进入 CacheLayout。"
+    },
+    {
+      "id": "DL-DIR-005",
+      "domain": "download_directory_and_settings",
+      "severity": "P2",
+      "title": "下载目录单/多章节按需结构化落盘、自愈迁移与同名冲突治理",
+      "locations": [
+        "packages/storage/lib/src/comic_folder_manifest.dart",
+        "packages/downloads/lib/src/comic_conflict_inspector.dart",
+        "packages/downloads/lib/src/chapter_downloads.dart:740-820,1470-1580,1705-1760",
+        "packages/downloads/lib/src/artifact_bytes.dart:235-255",
+        "apps/app/lib/comic_details.dart:980-1015,2235-2270"
+      ],
+      "root_cause": "下载文件此前统一平铺在 final/ 目录下以 hash.bin 命名，外部文件管理器无法直接浏览；且单章节图集场景若嵌套章节子目录会增加冗余层级，删除章节时未提示清理已下载文件且遗留空目录。",
+      "impact": "用户在外部文件管理器/图库中层级冗余，删除章节时可能无意泄漏孤立的本地下载文件或遗留空目录。",
+      "status": "resolved",
+      "remediation_applied": "①引入 ComicFolderManifest（.zic.json）自描述元数据规范与跨平台安全字符清洗；②单章节图集优先平铺在漫画根目录下（<漫画名>/<页码>.<扩展名>），当后续变成多章节下载其他章节时，自动将历史首章节文件与索引平滑迁移至其专属章节子目录（<漫画名>/<章节名>/<页码>.<扩展名>）；③多源同名冲突时自动追加来源后缀（<漫画名> (<来源名>)/）；④删除章节时若存在已下载文件弹出确认提示「是否同时删除本地下载文件？」，确认后同步清理页面文件与空章节/漫画目录。"
+    },
+    {
+      "id": "DL-PIPE-001",
+      "domain": "download_pipeline",
+      "severity": "P1",
+      "title": "章节内页面严格单页串行遍历下载（流水线与网络并发瓶颈）",
+      "locations": [
+        "packages/downloads/lib/src/chapter_downloads.dart:1345-1374"
+      ],
+      "root_cause": "PersistentChapterDownloadService._runDownload 在 for 循环中逐页提交 replaceDemands 并 await consumer.idle()，导致物理网络并发与流水线能力未被利用。",
+      "impact": "多图漫画章节下载速度受网络往返时延（RTT）限制，下载吞吐率低。",
+      "status": "deferred_standalone_milestone",
+      "governance_note": "该问题深度牵涉 Pipeline/NetLane 调度权威、FlowGate 流量门控、内存水位控制与阅读器并行加载边界。当前保持逐页串行现状，留待后续独立专项设计与严格基准评测，严禁混入常规修复以避免引入隐式控制流耦合与回归。",
+      "remediation_plan": "后续专项规划：在保障内存水位与 NetLane 流量门控严格解耦的前提下，设计章节内多页滑动窗口需求提交与落盘管道化模型。"
+    },
+    {
+      "id": "DL-PIPE-002",
+      "domain": "download_pipeline",
+      "severity": "P2",
+      "title": "直连传输对 302 重定向与 Set-Cookie 过度敏感拦截回退",
+      "locations": [
+        "packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart:137-149",
+        "packages/downloads/lib/src/source_resource_transport.dart:502-512"
+      ],
+      "root_cause": "RhttpSourceResourceDirectTransport 默认 redirectSettings: none，遇到 CDN 302 临时签名跳转即抛异常回退到插件运行时整体内存加载。",
+      "impact": "采用 CDN 跳转的图床每次下载先产生一次无谓的失败与重定向延迟，增加网络往返与内存压力。",
+      "status": "resolved",
+      "remediation_applied": "在 Rhttp 与 HttpClient 直连下载传输实现中，放行 200/206 成功响应携带的附带 Set-Cookie 头部，仅在未跟随的重定向（3xx）状态时回退至插件运行时，消除 CDN 临时鉴权与图片安全 Cookie 导致的无谓回退与时延。"
+    },
+    {
+      "id": "DL-PIPE-003",
+      "domain": "download_pipeline",
+      "severity": "P2",
+      "title": "SAF 模式下 Partial 临时分块仍占用内部私有存储",
+      "locations": [
+        "packages/downloads/lib/src/chapter_downloads.dart:726-755"
+      ],
+      "root_cause": "SAF 仅在 promoted 后进行镜像拷贝，未完成的 partial 断点分块仍写入本地私有存储。",
+      "impact": "内部存储极度紧张的设备进行大批量下载时，仍可能因内部空间不足导致中间态失败。",
+      "status": "pending",
+      "remediation_plan": "远期支持 SAF 流式直接写入或维持本地暂存并优化中间态水位淘汰。"
+    },
+    {
+      "id": "DL-MGR-001",
+      "domain": "download_management",
+      "severity": "P1",
+      "title": "单章独立下载与重试缺少 Token 过期自愈机制",
+      "locations": [
+        "apps/app/lib/demo_home_source_compat.dart:185-202"
+      ],
+      "root_cause": "refreshStaleChapter 仅在整本下载队列接入，单章下载（ChapterDownloadService）在插件重启后重试时直接失败，无法重新拉取 Manifest 自愈。",
+      "impact": "应用切后台重启后，用户在管理页单独重试失败章节时持续报错，必须退回详情页重新进入。",
+      "status": "resolved",
+      "remediation_applied": "在 _downloadChapter 中加入 must use a runtime token 异常捕获与 _refreshStaleQueueChapter 自动刷新重试机制，实现单章与整本自愈能力对齐。"
+    },
+    {
+      "id": "DL-MGR-002",
+      "domain": "download_management",
+      "severity": "P2",
+      "title": "游离离线内容在下载管理列表中不可见",
+      "locations": [
+        "apps/app/lib/download_manager.dart:78-85",
+        "apps/app/lib/demo_home.dart:828"
+      ],
+      "root_cause": "DownloadManagerScreen 的条目严格由书架 widget.entries 传入，未入书架即下载或被移出书架的离线章节无法在列表中展示与单项清理。",
+      "impact": "游离章节占用磁盘空间，用户在下载管理页无法查看具体来源与删除，只能全量清空缓存。",
+      "status": "resolved",
+      "remediation_applied": "在 ChapterDownloadService 接口与实现中落地 discoverOrphanedEntries 离线章节探测，并在 DownloadManagerScreen._reload() 中自动探测并合并未入书架/游离下载条目，实现游离离线内容可视化与单项清理支持。"
+    },
+    {
+      "id": "DL-MGR-003",
+      "domain": "download_management",
+      "severity": "P2",
+      "title": "漫画详情页单章下载同步 Await 阻塞交互",
+      "locations": [
+        "apps/app/lib/comic_details.dart:1174-1196",
+        "apps/app/lib/comic_details.dart:2389-2410"
+      ],
+      "root_cause": "_download 直接 await 整章所有页面下载完成，导致下载按钮长时间处于 loading 旋转，阻碍用户继续操作。",
+      "impact": "点击下载后按钮长时间处于 loading，无法即时感知后台排队与分块进度。",
+      "status": "resolved",
+      "remediation_applied": "将 _download 改为非阻塞异步发起下载（unawaited + catchError 提示），即时释放 UI 并给出已开始下载 SnackBar，依赖既有的 downloadChanges 流式更新下载快照与进度。"
+    },
+    {
+      "id": "DL-DIR-006",
+      "domain": "download_directory_and_settings",
+      "severity": "P1",
+      "title": "同名/重加入漫画下载前缺少文件冲突探测与覆盖确认",
+      "locations": [
+        "packages/downloads/lib/src/comic_conflict_inspector.dart:52-164",
+        "packages/downloads/lib/src/chapter_downloads.dart:863-888",
+        "apps/app/lib/comic_details.dart:1184-1240",
+        "apps/app/lib/comic_details.dart:2473-2530"
+      ],
+      "root_cause": "下载前未调用 ComicConflictInspector 探测目标目录中的现有文件，当用户删除书架保留文件或同名漫画更新后重新下载时，直接覆盖已有文件且修改时间错乱。",
+      "impact": "同名漫画重加书架或远端章节更新重新下载时，静默覆盖历史已有文件，破坏本地已有数据一致性。",
+      "status": "resolved",
+      "remediation_applied": "ComicConflictInspector 增加 SAF 与 POSIX 双模式探测及 hasExistingFiles / matchingCandidate 判定；ChapterDownloadService 暴露 inspectComicConflicts 接口并在 PersistentChapterDownloadService / PersistentDownloadArtifactStore 落地；详情页在触发单章/整本下载前进行同名目录/文件探测并弹窗确认覆盖（「发现同名下载文件」），确认后才允许覆盖，彻底根除静默覆盖风险。"
+    }
+  ]
+}

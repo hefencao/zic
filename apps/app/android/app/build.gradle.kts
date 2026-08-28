@@ -107,3 +107,9 @@ val verifyZicNativeArtifacts by tasks.registering {
 tasks.named("preBuild").configure {
     dependsOn(verifyZicNativeArtifacts)
 }
+
+// SAF byte bridge: DocumentFile tree walking for user-chosen download
+// directories (no storage permission; persisted tree grants only).
+dependencies {
+    implementation("androidx.documentfile:documentfile:1.0.1")
+}

@@ -499,7 +499,7 @@ final class _SourceResourceTransport implements ControlledTransport {
       await _abortHttpResponse(response);
       _throwIfTaskCancelled(control);
     }
-    if (response.isRedirect || response.cookies.isNotEmpty) {
+    if (response.isRedirect) {
       await _abortHttpResponse(response);
       throw Failure(
         code: ErrorCode.network,

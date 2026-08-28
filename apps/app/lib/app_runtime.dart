@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:catalog/catalog.dart';
+import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:downloads_bridge/downloads_bridge.dart';
 import 'package:flutter/foundation.dart';
@@ -19,6 +20,7 @@ import 'debug_trace.dart';
 import 'demo_home.dart';
 import 'home_library_session.dart';
 import 'resettable_single_flight.dart';
+import 'saf_store.dart';
 import 'startup_platform.dart';
 import 'webp_demo.dart';
 
@@ -38,6 +40,22 @@ Widget createStartupApp({
       startupApplicationSupportPathValue: startupApplicationSupportPathValue,
       startupStorageMetadataWarmed: startupStorageMetadataWarmed,
     );
+
+/// Per-source physical download roots: sources with a user-configured
+/// directory write new artifacts under that root; everything else keeps the
+/// default store layout. Existing bytes stay readable through their indexed
+/// absolute paths.
+CacheLayout? Function(DownloadId id) sourceDownloadLayoutResolver(
+  AppPreferencesController preferences,
+) =>
+    (id) {
+      final directory =
+          preferences.sourceDownloadDirectoryFor(id.content.sourceId);
+      if (directory == null || directory.startsWith('saf://')) {
+        return null;
+      }
+      return CacheLayout(directory);
+    };
 
 final Stopwatch _startupClock = Stopwatch()..start();
 
@@ -123,7 +141,8 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     );
     _serviceHandoff = HomeServiceHandoff()
       ..setBootstrapLibrary(_bootstrapLibrary)
-      ..setBootstrapCache(_bootstrapCache);
+      ..setBootstrapCache(_bootstrapCache)
+      ..setChapterDownloadRelay(changeChapterDownloadDirectory);
     // Begin both small durable reads before durable services are opened.
     // HomeLibrarySession joins the in-flight snapshot read later, while
     // preferences can finish before the durable composition is adopted.
@@ -279,6 +298,266 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     }
     return controller;
   }
+
+  /// Applies a new chapter-download directory chosen in settings.
+  ///
+  /// Returns a user-facing error message, or `null` on success. The intent is
+  /// persisted before any byte moves so an interrupted attempt is completed at
+  /// the next startup by [settleChapterDownloadDirectory]. Index and artifact
+  /// bytes always move together; the string preference alone never relocates
+  /// the store.
+  Future<String?> changeChapterDownloadDirectory({
+    String? directory,
+    required bool migrateFiles,
+  }) async {
+    final services = _services;
+    final root = await _storageRoot;
+    if (services == null) {
+      return '存储尚未就绪，请稍后重试';
+    }
+    // SAF roots are used verbatim: no Venera nested-store rules, no POSIX
+    // resolution, and file migration across schemes is not supported yet.
+    final safTarget = directory != null && directory.startsWith('saf://');
+    String target;
+    try {
+      if (safTarget) {
+        target = directory;
+      } else {
+        target = directory == null
+            ? defaultChapterDownloadDirectory(root)
+            : await resolveChapterDownloadDirectory(directory);
+      }
+    } on Object catch (error) {
+      debugPrint('chapter-download directory resolve failed: $error');
+      return '无法使用所选目录';
+    }
+    if (safTarget && migrateFiles) {
+      migrateFiles = false;
+    }
+    final previousOverride = _preferences.chapterDownloadDirectoryOverride;
+    final current = previousOverride ??
+        defaultChapterDownloadDirectory(root);
+    if (_isSamePath(target, current)) {
+      _preferences.setChapterDownloadDirectoryOverride(
+        directory == null ? null : target,
+      );
+      _preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+      return null;
+    }
+    if (!services.hasCoreServices) {
+      // Memory-mode install: no download store owns durable jobs, so a
+      // directory change here would split the recorded path from where the
+      // next launch actually opens its store. Refuse custom targets and let
+      // the default reset through only because it removes a stale override.
+      if (directory != null) {
+        return '下载服务未运行（内存模式），无法切换到自定义目录；请重启应用后再试';
+      }
+      _preferences.setChapterDownloadDirectoryOverride(null);
+      _preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+      return null;
+    }
+
+    final queue = services.wholeComicDownloads;
+    final busyJobs =
+        queue?.snapshot.jobs.any((job) => job.isActive) ?? false;
+    if (busyJobs) {
+      return '有正在进行的整本下载任务，请先暂停或等待完成';
+    }
+    // Reader transfer consumers hold live artifact streams; tearing the
+    // composition down under them would fail halfway through closing.
+    final composition = services.downloadComposition;
+    if (composition != null && composition.transferRuntime.hasConsumers) {
+      return '阅读器正在使用下载内容，请稍后再试';
+    }
+    final hasStoreContent = chapterDownloadStoreHasContent(current);
+    if (migrateFiles && hasStoreContent && _isSameOrNested(current, target)) {
+      return '新目录不能包含或嵌套于当前下载目录';
+    }
+    // Android scoped storage can allow listing/creating a directory while
+    // still denying file writes; probe once so the switch fails here with a
+    // clear reason instead of degrading downloads to memory later. SAF roots
+    // are validated by their persisted document-tree grant instead.
+    if (directory != null && !target.startsWith('saf://')) {
+      try {
+        await probeChapterDownloadDirectoryWritable(target);
+      } on Object catch (error) {
+        debugPrint('chapter-download directory write probe failed: $error');
+        return '所选目录不可写：$error';
+      }
+    }
+
+    // Persist the intent first. If anything below crashes, the next startup
+    // completes the move from the recorded source directory.
+    _preferences.setChapterDownloadDirectoryOverride(
+      directory == null ? null : target,
+    );
+    _preferences.setChapterDownloadDirectoryPendingMoveFrom(
+      migrateFiles && hasStoreContent ? current : null,
+    );
+    await _preferences.flush();
+
+    Object? closeFailure;
+    try {
+      await services.checkpointTransferPartials();
+      if (queue != null) {
+        await queue.close();
+      }
+      await services.cacheCoordinator?.close();
+      // Throws while Reader transfer consumers are still attached; nothing
+      // has moved yet at that point.
+      await services.downloadComposition?.close();
+    } on Object catch (error) {
+      closeFailure = error;
+    }
+    if (closeFailure != null) {
+      debugPrint('download service close for directory change failed: '
+          '$closeFailure');
+      _preferences.setChapterDownloadDirectoryOverride(previousOverride);
+      _preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+      final rebuilt = await _rebuildDownloadServices(
+        storageRoot: root,
+        downloadDirectory: current,
+        previous: services,
+      );
+      if (rebuilt != null) {
+        _publishDegradedServices(storageRoot: root);
+      }
+      return '下载服务忙，目录暂未切换';
+    }
+
+    Object? moveError;
+    final pendingFrom = _preferences.chapterDownloadDirectoryPendingMoveFrom;
+    if (pendingFrom != null) {
+      try {
+        final report = await moveChapterDownloadStore(
+          from: pendingFrom,
+          to: target,
+        );
+        _startupLog(
+          'chapter-download-move-complete files=${report.movedFileCount} '
+          'records=${report.rewrittenRecordCount} to=$target',
+        );
+      } on Object catch (error) {
+        moveError = error;
+        debugPrint('chapter-download move failed: $error');
+      }
+    }
+    final rebuildError = await _rebuildDownloadServices(
+      storageRoot: root,
+      downloadDirectory: target,
+      previous: services,
+    );
+    if (rebuildError != null) {
+      _publishDegradedServices(storageRoot: root);
+      return '目录已更新，但下载服务重启失败：$rebuildError';
+    }
+    _preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+    return moveError == null ? null : '目录已切换，但部分文件迁移失败：$moveError';
+  }
+
+  /// Reopens the download-owned durable services after a store move or an
+  /// aborted change. The library store and external plugins stay untouched;
+  /// they do not live under the download directory. Returns the rebuild
+  /// failure (null on success) so callers can surface the real cause.
+  Future<Object?> _rebuildDownloadServices({
+    required String storageRoot,
+    required String downloadDirectory,
+    required _AppServices previous,
+  }) async {
+    try {
+      final safOverride = downloadDirectory.startsWith('saf://')
+          ? downloadDirectory.substring(5)
+          : null;
+      final composition = await PersistentDownloadComposition.open(
+        storageRoot,
+        directory: safOverride == null ? downloadDirectory : null,
+        layoutResolver: sourceDownloadLayoutResolver(_preferences),
+        userAgentProvider: () => _preferences.networkUserAgent,
+        transferNet: defaultLocalMediaPipelineFactory.pageDownloadLane,
+        safTreeIo: safOverride == null
+            ? null
+            : _SafTreeIoAdapter(SafStore(treeUri: safOverride)),
+        safTreeUri: safOverride,
+      );
+      final cacheCoordinator = createAppResourceCache(
+        storageRoot: storageRoot,
+        artifacts: composition.artifactStore,
+        onPersistenceError: (error, stackTrace) {
+          debugPrint('durable response cache failed: $error');
+        },
+      )..updateMaintenancePolicy(
+          ResourceCacheMaintenancePolicy.forArtifactLimitBytes(
+            _preferences.cacheLimitMb * 1024 * 1024,
+          ),
+        );
+      final platformEnvironment = PlatformWholeComicQueueEnvironment();
+      final wholeComicDownloads = createPersistentWholeComicDownloadQueue(
+        path: '$storageRoot/whole_comic_queue.json',
+        downloads: composition.chapterDownloads,
+        environment: platformEnvironment,
+        ownsEnvironment: true,
+      );
+      final services = _AppServices(
+        libraryStore: previous.libraryStore,
+        chapterDownloads: composition.chapterDownloads,
+        downloadComposition: composition,
+        wholeComicDownloads: wholeComicDownloads,
+        cacheCoordinator: cacheCoordinator,
+        platformEnvironment: platformEnvironment,
+        storageRoot: storageRoot,
+      );
+      // An optional plugin host open may still be in flight on the replaced
+      // instance. Settle it so its controller is not stranded unpublished.
+      try {
+        await previous.externalPluginsReady
+            .timeout(const Duration(seconds: 30));
+      } on Object catch (_) {
+        // Keep going without the optional controller.
+      }
+      services.externalPlugins = previous.externalPlugins;
+      _services = services;
+      _serviceHandoff.updateServices(
+        libraryStore: services.libraryStore,
+        chapterDownloads: services.chapterDownloads,
+        downloadComposition: services.downloadComposition,
+        wholeComicDownloads: services.wholeComicDownloads,
+        cacheCoordinator: services.cacheCoordinator,
+        externalPlugins: services.externalPlugins,
+        externalPluginLoader: () => _ensureExternalPlugins(services),
+        platformEnvironmentLoader: services.ensurePlatformEnvironment,
+        storageRoot: services.storageRoot,
+        persistHomeProjectionSnapshot: true,
+      );
+      _startupLog('download-services-rebuilt-at $downloadDirectory');
+      return null;
+    } on Object catch (error, stackTrace) {
+      _startupLog('download-services-rebuild-failed-at $downloadDirectory '
+          'error=$error');
+      debugPrint('download service rebuild failed: $error $stackTrace');
+      return error;
+    }
+  }
+
+  void _publishDegradedServices({required String storageRoot}) {
+    final degraded = _AppServices(
+      libraryStore: _services?.libraryStore,
+      storageRoot: storageRoot,
+    );
+    degraded.externalPlugins = _services?.externalPlugins;
+    _services = degraded;
+    _startupLog('download-services-degraded-memory');
+    _serviceHandoff.updateDeferredCapabilities(
+      externalPlugins: degraded.externalPlugins,
+      externalPluginLoader: () => _ensureExternalPlugins(degraded),
+      platformEnvironmentLoader: degraded.ensurePlatformEnvironment,
+      storageRoot: storageRoot,
+    );
+  }
+
+  bool _isSamePath(String a, String b) => isSameDirectoryPath(a, b);
+
+  bool _isSameOrNested(String a, String b) =>
+      isSameOrNestedDirectoryPath(a, b);
 
   void _syncDebugTrace() {
     _debugTrace.enabled = _preferences.debugTraceEnabled;
@@ -506,6 +785,67 @@ final class _AppServices {
   }
 }
 
+/// Binds the app-side SAF channel client to the downloads package's
+/// transport interface. Lives here because platform channels are an app
+/// concern; the package stays testable with fakes.
+class _SafTreeIoAdapter implements SafTreeIo {
+  _SafTreeIoAdapter(this._store);
+
+  final SafStore _store;
+
+  @override
+  Future<int?> open(
+    String relativePath, {
+    SafWriteMode mode = SafWriteMode.read,
+  }) {
+    return _store.open(
+      relativePath,
+      mode: switch (mode) {
+        SafWriteMode.read => SafMode.read,
+        SafWriteMode.writeAppend => SafMode.writeAppend,
+        SafWriteMode.writeTruncate => SafMode.writeTruncate,
+      },
+    );
+  }
+
+  @override
+  Future<Uint8List> read(int handle, int length) =>
+      _store.read(handle, length);
+
+  @override
+  Future<void> write(int handle, Uint8List bytes) =>
+      _store.write(handle, bytes);
+
+  @override
+  Future<void> seek(int handle, int position) => _store.seek(handle, position);
+
+  @override
+  Future<void> close(int handle) => _store.close(handle);
+
+  @override
+  Future<bool> delete(String relativePath) => _store.delete(relativePath);
+
+  @override
+  Future<bool> exists(String relativePath) => _store.exists(relativePath);
+
+  @override
+  Future<int?> length(int handle) => _store.length(handle);
+
+  @override
+  Future<List<SafTreeFile>> list(String relativePath) async {
+    final entries = await _store.list(relativePath);
+    return entries
+        .map(
+          (e) => SafTreeFile(
+            name: e.name,
+            isDirectory: e.isDirectory,
+            length: e.length,
+          ),
+        )
+        .toList();
+  }
+}
+
 Future<_AppServices> _openServices(
   HomeStartupTelemetry telemetry,
   AppPreferencesController preferences, {
@@ -555,11 +895,26 @@ Future<_AppServices> _openServices(
     _startupLog('preferences-attach-complete');
     telemetry.serviceReady('storage-root', startedAtMicros: stageStarted);
 
+    // Finish any deferred chapter-download store move before a service can
+    // open the stores, then resolve the effective download directory for this
+    // launch. The default-location probe above stays valid; an override only
+    // adds one extra cheap file existence check below.
+    final chapterDownloadDirectory = await settleChapterDownloadDirectory(
+      storageRoot: root,
+      configuredOverride: preferences.chapterDownloadDirectoryOverride,
+      pendingMoveFrom: preferences.chapterDownloadDirectoryPendingMoveFrom,
+    );
+    preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+    _startupLog(
+      'chapter-download-directory-resolved path=$chapterDownloadDirectory',
+    );
+
     // A fresh install has no library, download index, or queue state. Opening
     // both SQLite stores here would create their WAL files and run their first
     // schema transactions solely because Home was shown. Keep the Home
     // projection in memory until an actual durable state exists.
-    final hasDurableState = await durableStateFuture;
+    final hasDurableState = await durableStateFuture ||
+        await chapterDownloadIndexExists(chapterDownloadDirectory);
     _startupLog(
       'durable-state-check-complete '
       'durationMs=${durableStateClock.elapsedMilliseconds} '
@@ -577,10 +932,19 @@ Future<_AppServices> _openServices(
     telemetry.serviceReady('library-store', startedAtMicros: stageStarted);
     stageStarted = telemetry.nowMicros();
     _startupLog('download-composition-open-start');
+    final safOverride = chapterDownloadDirectory.startsWith('saf://')
+        ? chapterDownloadDirectory.substring(5)
+        : null;
     downloadComposition = await PersistentDownloadComposition.open(
       root,
+      directory: safOverride == null ? chapterDownloadDirectory : null,
+      layoutResolver: sourceDownloadLayoutResolver(preferences),
       userAgentProvider: () => preferences.networkUserAgent,
       transferNet: defaultLocalMediaPipelineFactory.pageDownloadLane,
+      safTreeIo: safOverride == null
+          ? null
+          : _SafTreeIoAdapter(SafStore(treeUri: safOverride)),
+      safTreeUri: safOverride,
     );
     _startupLog('download-composition-open-complete');
     chapterDownloads = downloadComposition.chapterDownloads;
@@ -593,6 +957,11 @@ Future<_AppServices> _openServices(
       onPersistenceError: (error, stackTrace) {
         debugPrint('durable response cache failed: $error');
       },
+    );
+    cacheCoordinator.updateMaintenancePolicy(
+      ResourceCacheMaintenancePolicy.forArtifactLimitBytes(
+        preferences.cacheLimitMb * 1024 * 1024,
+      ),
     );
     telemetry.serviceReady('resource-cache', startedAtMicros: stageStarted);
     // The queue starts with its conservative in-memory environment. Attaching
@@ -620,7 +989,23 @@ Future<_AppServices> _openServices(
     _startupLog('durable-services-ready');
     return services;
   } on Object catch (error) {
-    _startupLog('services-open-failed errorType=${error.runtimeType}');
+    // Persist the full failure into the trace file so device-side "downloads
+    // finish but nothing lands on disk" reports can be diagnosed from
+    // .log/log.txt alone: a failed durable open silently falls back to the
+    // memory-backed services below.
+    telemetry.sink.record(
+      TraceEvent(
+        monotonicMicros: telemetry.nowMicros(),
+        sessionId: 'home-startup',
+        kind: TraceEventKind.taskFailed,
+        identityHash: 'home-startup\u0000services-open-failed',
+        payload: <String, Object?>{
+          'stage': 'durable-services-open',
+          'error': '$error',
+        },
+      ),
+    );
+    _startupLog('services-open-failed $error');
     debugPrint('durable application storage unavailable: $error');
     await wholeComicDownloads?.close();
     await cacheCoordinator?.close();

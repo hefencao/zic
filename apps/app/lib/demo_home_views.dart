@@ -381,22 +381,76 @@ extension _DemoHomeViews on _DemoHomeState {
   }
 
   Future<void> _confirmRemoveComic(LibraryComic comic) async {
+    var deleteFiles = false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('删除漫画'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text('从书架和本地记录中删除“${comic.title}”？此操作不可撤销。'),
+              const SizedBox(height: 12),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('同时删除本地下载文件'),
+                value: deleteFiles,
+                onChanged: (val) {
+                  setDialogState(() {
+                    deleteFiles = val ?? false;
+                  });
+                },
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+            ],
+          ),
+          actions: <Widget>[
+            AppDialogActions(
+              onClose: () => Navigator.of(context).pop(false),
+              actions: <Widget>[
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.error,
+                    foregroundColor: Theme.of(context).colorScheme.onError,
+                  ),
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: const Text('删除'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    await _removeComic(comic, deleteFiles: deleteFiles);
+    if (mounted && _managedComicIdentities.contains(comic.identity)) {
+      _setState(() {
+        _managedComicIdentities.remove(comic.identity);
+        if (_managedComicIdentities.isEmpty) {
+          _batchManagement = false;
+        }
+      });
+    }
+  }
+
+  Future<void> _confirmArchiveComic(LibraryComic comic) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('删除漫画'),
-        content: Text('从书架和本地记录中删除“${comic.title}”？此操作不可撤销。'),
+        title: const Text('归档漫画'),
+        content: Text('归档“${comic.title}”将清理所有本地已下载文件与正文缓存，但会完整保留书架收藏、阅读进度、已读状态和封面。\n\n后续打开时将重新按需在线加载。'),
         actions: <Widget>[
           AppDialogActions(
-            onClose: () => Navigator.of(context).pop(false),
+            onClose: () => Navigator.pop(context, false),
             actions: <Widget>[
               FilledButton(
-                style: FilledButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.error,
-                  foregroundColor: Theme.of(context).colorScheme.onError,
-                ),
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('删除'),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('归档'),
               ),
             ],
           ),
@@ -406,14 +460,14 @@ extension _DemoHomeViews on _DemoHomeState {
     if (confirmed != true) {
       return;
     }
-    await _removeComic(comic);
-    if (mounted && _managedComicIdentities.contains(comic.identity)) {
-      _setState(() {
-        _managedComicIdentities.remove(comic.identity);
-        if (_managedComicIdentities.isEmpty) {
-          _batchManagement = false;
-        }
-      });
+    await _archiveComic(comic);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 2),
+          content: Text('已归档“${comic.title}”（已清理下载文件与正文缓存）'),
+        ),
+      );
     }
   }
 
@@ -509,22 +563,77 @@ extension _DemoHomeViews on _DemoHomeState {
     if (selected.isEmpty) {
       return;
     }
+    var deleteFiles = false;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('删除 ${selected.length} 部漫画？'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Text('将删除书架记录、章节元数据与阅读状态。'),
+              const SizedBox(height: 12),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('同时删除本地下载文件'),
+                value: deleteFiles,
+                onChanged: (val) {
+                  setDialogState(() {
+                    deleteFiles = val ?? false;
+                  });
+                },
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+            ],
+          ),
+          actions: <Widget>[
+            AppDialogActions(
+              onClose: () => Navigator.pop(context, false),
+              actions: <Widget>[
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.error,
+                    foregroundColor: Theme.of(context).colorScheme.onError,
+                  ),
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('删除'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true) {
+      return;
+    }
+    for (final comic in selected) {
+      await _removeComic(comic, deleteFiles: deleteFiles);
+    }
+    if (mounted) {
+      _setState(_clearManagedSelection);
+    }
+  }
+
+  Future<void> _archiveManagedComics() async {
+    final selected = _selectedManagedComics();
+    if (selected.isEmpty) {
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('删除 ${selected.length} 部漫画？'),
-        content: const Text('将删除书架记录、章节元数据与阅读状态；离线文件需在下载管理中单独清理。'),
+        title: Text('归档 ${selected.length} 部漫画？'),
+        content: const Text('将清理所选漫画的本地已下载文件与正文缓存，但会完整保留书架收藏、阅读进度、已读状态和封面。\n\n后续打开时将重新按需在线加载。'),
         actions: <Widget>[
           AppDialogActions(
             onClose: () => Navigator.pop(context, false),
             actions: <Widget>[
               FilledButton(
-                style: FilledButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.error,
-                  foregroundColor: Theme.of(context).colorScheme.onError,
-                ),
                 onPressed: () => Navigator.pop(context, true),
-                child: const Text('删除'),
+                child: const Text('归档'),
               ),
             ],
           ),
@@ -535,10 +644,16 @@ extension _DemoHomeViews on _DemoHomeState {
       return;
     }
     for (final comic in selected) {
-      await _removeComic(comic);
+      await _archiveComic(comic);
     }
     if (mounted) {
       _setState(_clearManagedSelection);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 2),
+          content: Text('已归档 ${selected.length} 部漫画（已清理下载文件与正文缓存）'),
+        ),
+      );
     }
   }
 
@@ -705,6 +820,11 @@ extension _DemoHomeViews on _DemoHomeState {
             const SizedBox(height: 32, child: VerticalDivider(width: 18)),
             const SizedBox(width: 8),
             IconButton(
+              tooltip: '批量归档 (释放空间)',
+              onPressed: selected.isEmpty ? null : _archiveManagedComics,
+              icon: const Icon(Icons.archive_outlined),
+            ),
+            IconButton(
               key: bookshelfBatchDeleteKey,
               tooltip: '批量删除',
               color: Theme.of(context).colorScheme.error,
@@ -755,14 +875,27 @@ extension _DemoHomeViews on _DemoHomeState {
           Positioned(
             top: 4,
             right: 4,
-            child: CoverActionSurface(
-              child: IconButton(
-                key: comicDeleteKey(comic.sourceId, comic.comicId),
-                tooltip: '删除漫画',
-                color: Theme.of(context).colorScheme.error,
-                onPressed: () => _confirmRemoveComic(comic),
-                icon: const Icon(Icons.delete_outline),
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                CoverActionSurface(
+                  child: IconButton(
+                    tooltip: '归档 (释放空间)',
+                    onPressed: () => _confirmArchiveComic(comic),
+                    icon: const Icon(Icons.archive_outlined),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                CoverActionSurface(
+                  child: IconButton(
+                    key: comicDeleteKey(comic.sourceId, comic.comicId),
+                    tooltip: '删除漫画',
+                    color: Theme.of(context).colorScheme.error,
+                    onPressed: () => _confirmRemoveComic(comic),
+                    icon: const Icon(Icons.delete_outline),
+                  ),
+                ),
+              ],
             ),
           ),
           Positioned(
@@ -883,6 +1016,11 @@ extension _DemoHomeViews on _DemoHomeState {
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
                     _comicMovePopup(comic),
+                    IconButton(
+                      tooltip: '归档 (释放空间)',
+                      onPressed: () => _confirmArchiveComic(comic),
+                      icon: const Icon(Icons.archive_outlined),
+                    ),
                     IconButton(
                       key: comicDeleteKey(comic.sourceId, comic.comicId),
                       tooltip: '删除漫画',

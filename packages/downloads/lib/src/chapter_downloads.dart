@@ -5,6 +5,8 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
+
+import 'artifact_bytes.dart';
 import 'package:domain/domain.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:sessions/sessions.dart';
@@ -14,6 +16,7 @@ import 'package:transport/transport.dart';
 
 import 'artifact_cache_manager.dart';
 import 'artifact_cache_store.dart';
+import 'comic_conflict_inspector.dart';
 import 'composition_download_transfer_runtime.dart';
 import 'partial_download_store.dart';
 
@@ -118,7 +121,19 @@ abstract interface class ChapterDownloadService {
     Iterable<ImportedLibraryEntry> entries,
   );
 
+  /// Discovers offline downloaded chapters in store that are not present in [knownEntries].
+  Future<List<ImportedLibraryEntry>> discoverOrphanedEntries(
+    Iterable<ImportedLibraryEntry> knownEntries,
+  );
+
   Future<bool> isDownloaded(ImportedLibraryEntry entry);
+
+  Future<ComicConflictReport> inspectComicConflicts({
+    required String sourceId,
+    String? sourceDisplayName,
+    required String comicId,
+    required String comicTitle,
+  });
 
   Future<Uint8List> readPage(ImportedLibraryEntry entry, int pageIndex);
 
@@ -420,8 +435,28 @@ final class MemoryChapterDownloadService
   }
 
   @override
+  Future<List<ImportedLibraryEntry>> discoverOrphanedEntries(
+    Iterable<ImportedLibraryEntry> knownEntries,
+  ) async => const <ImportedLibraryEntry>[];
+
+  @override
   Future<bool> isDownloaded(ImportedLibraryEntry entry) async =>
       (await inspect(entry)).isComplete;
+
+  @override
+  Future<ComicConflictReport> inspectComicConflicts({
+    required String sourceId,
+    String? sourceDisplayName,
+    required String comicId,
+    required String comicTitle,
+  }) async =>
+      ComicConflictReport(
+        candidates: const <ComicFolderCandidate>[],
+        hasDirectExactMatch: false,
+        hasTitleConflicts: false,
+        recommendedDirectoryName:
+            buildComicDirectoryName(comicTitle: comicTitle),
+      );
 
   @override
   Future<Uint8List> readPage(
@@ -656,35 +691,301 @@ final class PersistentDownloadArtifactStore
     required DownloadRegistry registry,
     required SqliteIndex index,
     required CacheOps cacheOps,
+    required ArtifactBytes bytes,
+    this.safTreeIo,
   })  : _registry = registry,
         _index = index,
-        _cacheOps = cacheOps;
+        _cacheOps = cacheOps,
+        _bytes = bytes;
 
-  static Future<PersistentDownloadArtifactStore> open(String root) async {
-    final layout = CacheLayout('$root/offline_chapters');
+  static Future<PersistentDownloadArtifactStore> open(
+    String root, {
+    String? directory,
+    CacheLayout? Function(DownloadId id)? layoutResolver,
+    ArtifactBytes? bytes,
+    SafTreeIo? safMirror,
+  }) async {
+    final layout = CacheLayout(directory ?? '$root/offline_chapters');
     final index = SqliteIndex(layout.dbPath);
     await index.open();
     final clock = SystemClock();
-    final registry = DownloadRegistry(layout: layout, clock: clock, index: index);
+    final registry = DownloadRegistry(
+      layout: layout,
+      clock: clock,
+      index: index,
+      layoutResolver: layoutResolver,
+    );
+    final resolvedBytes = bytes ??
+        (safMirror == null
+            ? const LocalArtifactBytes()
+            : CompositeArtifactBytes(
+                local: const LocalArtifactBytes(),
+                saf: SafArtifactBytes(safMirror),
+              ));
     return PersistentDownloadArtifactStore._(
       registry: registry,
       index: index,
       cacheOps: CacheOps(index: index, registry: registry, clock: clock),
+      bytes: resolvedBytes,
+      safTreeIo: safMirror,
     );
+  }
+
+  String? _safTreeUri;
+
+  /// The SAF tree finals mirror into; null keeps everything local.
+  String? get safTreeUri => _safTreeUri;
+
+  void setSafTree(String treeUri) {
+    _safTreeUri = treeUri;
   }
 
   final DownloadRegistry _registry;
   final SqliteIndex _index;
   final CacheOps _cacheOps;
+  final ArtifactBytes _bytes;
+
+  /// When set, freshly promoted finals are mirrored into the SAF tree and
+  /// their index records switch to `saf:` paths; the local staging copy is
+  /// removed afterwards. Reading follows the record path scheme.
+  final SafTreeIo? safTreeIo;
   final Map<DownloadId, Future<void>> _artifactWrites =
       <DownloadId, Future<void>>{};
   bool _closed = false;
 
   int get materializedSessionCount => _registry.sessions.length;
 
+  CacheLayout get layout => _registry.layout;
+
   Future<Map<String, CacheRec>> indexedRecords() async => <String, CacheRec>{
         for (final record in await _index.list()) record.key: record,
       };
+
+  /// Mirrors a freshly promoted local final into the configured SAF tree and
+  /// rewrites the index record to its `saf:` path, removing the local staging
+  /// copy. Failures keep the local copy authoritative so downloads never
+  /// lose bytes to a transient SAF error.
+  /// Returns the distinct chapter IDs currently downloaded for [comicId] from [sourceId].
+  Future<List<String>> downloadedChapterIds({
+    required String sourceId,
+    required String comicId,
+  }) async {
+    _requireOpen();
+    final chapters = <String>{};
+    for (final record in await _index.list()) {
+      final content = record.id.content;
+      if (content.sourceId == sourceId &&
+          content.comicId == comicId &&
+          record.state == CacheState.ready &&
+          record.bytes > 0) {
+        chapters.add(content.chapterId);
+      }
+    }
+    return chapters.toList(growable: false);
+  }
+
+  /// When a comic with a single chapter directly at root transitions to having
+  /// multiple chapters, migrates existing root-level page files of previous
+  /// chapters into their dedicated chapter subdirectories.
+  Future<void> migrateSingleChapterToSubdirectory({
+    required String sourceId,
+    required String comicId,
+    required String comicTitle,
+    String? conflictSourceSuffix,
+    required String previousChapterId,
+    required String previousChapterTitle,
+    int previousSequence = 1,
+  }) async {
+    _requireOpen();
+    final safIo = safTreeIo;
+    final treeUri = this.safTreeUri;
+    final comicDir = buildComicDirectoryName(
+      comicTitle: comicTitle,
+      conflictSourceSuffix: conflictSourceSuffix,
+    );
+    final chapterDir = buildChapterDirectoryName(
+      previousChapterTitle,
+      fallbackIndex: previousSequence,
+    );
+
+    for (final record in await _index.list()) {
+      final content = record.id.content;
+      if (content.sourceId == sourceId &&
+          content.comicId == comicId &&
+          content.chapterId == previousChapterId &&
+          record.state == CacheState.ready) {
+        final parsed = parseSafRecordPath(record.path);
+        if (parsed != null && safIo != null && treeUri != null) {
+          final rel = parsed.relativePath;
+          final segments = rel.split('/');
+          if (segments.length == 2 && segments[0] == comicDir) {
+            final fileName = segments[1];
+            final newRel = '$comicDir/$chapterDir/$fileName';
+            try {
+              final handle = await safIo.open(rel, mode: SafWriteMode.read);
+              if (handle != null) {
+                final len = await safIo.length(handle) ?? 0;
+                final bytes = await safIo.read(handle, len);
+                await safIo.close(handle);
+                await writeBytesToSaf(safIo, newRel, bytes);
+                await safIo.delete(rel);
+                await _index.put(
+                  record.copyWith(
+                    path: encodeSafRecordPath(
+                      treeUri: treeUri,
+                      relativePath: newRel,
+                    ),
+                  ),
+                );
+              }
+            } catch (_) {}
+          }
+        } else if (record.path.isNotEmpty) {
+          final file = File(record.path);
+          if (await file.exists()) {
+            final parent = file.parent;
+            if (parent.path.endsWith(comicDir)) {
+              final destDir = Directory('${parent.path}/$chapterDir');
+              if (!await destDir.exists()) {
+                await destDir.create(recursive: true);
+              }
+              final destFile = File('${destDir.path}/${file.uri.pathSegments.last}');
+              await file.rename(destFile.path);
+              await _index.put(record.copyWith(path: destFile.path));
+            }
+          }
+        }
+      }
+    }
+  }
+
+  /// Inspects candidate comic directories and existing files prior to download.
+  Future<ComicConflictReport> inspectComicConflicts({
+    required String sourceId,
+    String? sourceDisplayName,
+    required String comicId,
+    required String comicTitle,
+  }) async {
+    _requireOpen();
+    final safIo = safTreeIo;
+    final treeUri = this.safTreeUri;
+    if (safIo != null && treeUri != null) {
+      return inspectSafComicConflicts(
+        safIo: safIo,
+        safTreeUri: treeUri,
+        sourceId: sourceId,
+        sourceDisplayName: sourceDisplayName,
+        comicId: comicId,
+        comicTitle: comicTitle,
+      );
+    }
+    final rootDir = _registry.layout.root;
+    return inspectPosixComicConflicts(
+      rootDirectory: rootDir,
+      sourceId: sourceId,
+      sourceDisplayName: sourceDisplayName,
+      comicId: comicId,
+      comicTitle: comicTitle,
+    );
+  }
+
+  /// Mirrors a freshly promoted local final into the configured SAF tree and
+  /// rewrites the index record to its `saf:` path, removing the local staging
+  /// copy. Failures keep the local copy authoritative so downloads never
+  /// lose bytes to a transient SAF error.
+  Future<void> mirrorPromotedToSafIfConfigured(
+    DownloadId id, {
+    ImportedLibraryEntry? entry,
+    int? pageIndex,
+    bool isSingleChapter = false,
+  }) async {
+    final safIo = safTreeIo;
+    final treeUri = this.safTreeUri;
+    if (safIo == null || treeUri == null) return;
+    final rec = (await _index.get(id.key));
+    if (rec == null || parseSafRecordPath(rec.path) != null) return;
+    final local = File(rec.path);
+    if (rec.bytes <= 0 || !await local.exists()) return;
+    final ext = await sniffImageExtension(local);
+    final token = _registry.layout.tokenFor(id);
+    
+    final String relativePath;
+    if (entry != null && pageIndex != null) {
+      final comicDir = buildComicDirectoryName(
+        comicTitle: entry.chapter.comicTitle,
+      );
+      final pageFileName = buildPageFileName(
+        pageIndex: pageIndex,
+        extension: ext,
+      );
+      if (isSingleChapter) {
+        relativePath = '$comicDir/$pageFileName';
+      } else {
+        final chapterDir = buildChapterDirectoryName(
+          entry.chapter.displayName,
+          fallbackIndex: entry.chapter.sequence,
+        );
+        relativePath = '$comicDir/$chapterDir/$pageFileName';
+      }
+      
+      try {
+        final manifest = ComicFolderManifest(
+          comicTitle: entry.chapter.comicTitle,
+          comicId: entry.chapter.comicId,
+          sourceId: entry.chapter.sourceId,
+          updatedAt: DateTime.now(),
+        );
+        await writeBytesToSaf(
+          safIo,
+          '$comicDir/$comicManifestFileName',
+          Uint8List.fromList(utf8.encode(manifest.encode())),
+        );
+      } catch (_) {
+        // Non-critical metadata write failure
+      }
+    } else {
+      relativePath = 'final/$token.$ext';
+    }
+
+    await copyFileIntoSaf(safIo, local, relativePath);
+    await _index.put(
+      rec.copyWith(
+        path: encodeSafRecordPath(
+          treeUri: treeUri,
+          relativePath: relativePath,
+        ),
+      ),
+    );
+    try {
+      await local.delete();
+    } on FileSystemException {
+      // The staging copy is redundant once the SAF bytes are authoritative;
+      // a failed unlink only costs disk space until the next trim.
+    }
+  }
+
+  /// Marks every indexed record of one chapter as explicitly downloaded so
+  /// capacity trims and cache clears can no longer evict it. Returns the
+  /// number of records newly pinned.
+  Future<int> pinChapterRecords({
+    required String sourceId,
+    required String comicId,
+    required String chapterId,
+  }) async {
+    _requireOpen();
+    var pinnedCount = 0;
+    for (final record in await _index.list()) {
+      final content = record.id.content;
+      final matches = content.sourceId == sourceId &&
+          content.comicId == comicId &&
+          content.chapterId == chapterId;
+      if (matches && !record.pinned) {
+        await _index.put(record.copyWith(pinned: true));
+        pinnedCount++;
+      }
+    }
+    return pinnedCount;
+  }
 
   DownloadSession sessionFor(DownloadId id) => _registry.get(id);
   DownloadSession? findSession(DownloadId id) => _registry.find(id);
@@ -693,6 +994,10 @@ final class PersistentDownloadArtifactStore
     final session = _registry.find(id);
     if (session != null && (session.activeRun || session.hasWriter)) {
       throw StateError('durable artifact is busy');
+    }
+    final record = await _index.get(id.key);
+    if (record != null && record.path.startsWith('saf:')) {
+      await _invalidateIndexedArtifact(id, record: record);
     }
     await _registry.evict(id);
   }
@@ -721,12 +1026,12 @@ final class PersistentDownloadArtifactStore
     if (record == null || record.state != CacheState.ready || record.id != id) {
       return null;
     }
-    final file = File(record.path);
-    if (record.bytes <= 0 || !await file.exists()) {
+    final file = record.path;
+    if (record.bytes <= 0 || !await _bytes.exists(file)) {
       await _invalidateIndexedArtifact(id, record: record);
       return null;
     }
-    final length = await file.length();
+    final length = await _bytes.length(file);
     if (length <= 0 || length != record.bytes) {
       await _invalidateIndexedArtifact(id, record: record);
       return null;
@@ -738,13 +1043,19 @@ final class PersistentDownloadArtifactStore
     ));
     return ArtifactCacheStreamEntry(
       length: length,
-      open: ({required int start, int? endExclusive}) => _readIndexedChunks(
-        record.path,
-        length: length,
+      open: ({required int start, int? endExclusive}) => _bytes.readChunks(
+        file,
         start: start,
         endExclusive: endExclusive,
       ),
-      readAll: () => _readIndexedBytes(record.path, expectedLength: length),
+      readAll: () async {
+        final builder = BytesBuilder(copy: false);
+        await for (final chunk
+            in _bytes.readChunks(file, start: 0, endExclusive: length)) {
+          builder.add(chunk);
+        }
+        return builder.takeBytes();
+      },
     );
   }
 
@@ -917,8 +1228,7 @@ final class PersistentDownloadArtifactStore
     final current = record ?? await _index.get(id.key);
     await _index.remove(id.key);
     if (current == null) return;
-    final file = File(current.path);
-    if (await file.exists()) await file.delete();
+    await _bytes.delete(current.path);
   }
 
   @override
@@ -1000,12 +1310,20 @@ final class PersistentDownloadComposition
 
   static Future<PersistentDownloadComposition> open(
     String root, {
+    String? directory,
+    CacheLayout? Function(DownloadId id)? layoutResolver,
     String Function()? userAgentProvider,
     NetLane? transferNet,
+    SafTreeIo? safTreeIo,
+    String? safTreeUri,
   }) async {
     final authorities = await _openPersistentDownloadAuthorities(
       root,
+      directory: directory,
+      layoutResolver: layoutResolver,
       transferNet: transferNet,
+      safTreeIo: safTreeIo,
+      safTreeUri: safTreeUri,
     );
     final chapterDownloads = PersistentChapterDownloadService._(
       artifactStore: authorities.artifactStore,
@@ -1055,9 +1373,21 @@ typedef _PersistentDownloadAuthorities = ({
 
 Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
   String root, {
+  String? directory,
+  CacheLayout? Function(DownloadId id)? layoutResolver,
   NetLane? transferNet,
+  SafTreeIo? safTreeIo,
+  String? safTreeUri,
 }) async {
-  final store = await PersistentDownloadArtifactStore.open(root);
+  final store = await PersistentDownloadArtifactStore.open(
+    root,
+    directory: directory,
+    layoutResolver: layoutResolver,
+    safMirror: safTreeIo,
+  );
+  if (safTreeUri != null) {
+    store.setSafTree(safTreeUri);
+  }
   final cache = ArtifactCacheManager(backend: store);
   final runtime = CompositionDownloadTransferRuntime(
     artifactCacheManager: cache,
@@ -1096,12 +1426,20 @@ final class PersistentChapterDownloadService
 
   static Future<PersistentChapterDownloadService> open(
     String root, {
+    String? directory,
+    CacheLayout? Function(DownloadId id)? layoutResolver,
     String Function()? userAgentProvider,
     NetLane? transferNet,
+    SafTreeIo? safTreeIo,
+    String? safTreeUri,
   }) async {
     final authorities = await _openPersistentDownloadAuthorities(
       root,
+      directory: directory,
+      layoutResolver: layoutResolver,
       transferNet: transferNet,
+      safTreeIo: safTreeIo,
+      safTreeUri: safTreeUri,
     );
     return PersistentChapterDownloadService._(
       artifactStore: authorities.artifactStore,
@@ -1199,7 +1537,29 @@ final class PersistentChapterDownloadService
     _commandConsumers[identity] = consumer;
     var revision = 0;
     try {
-      for (final page in manifest.pages) {
+      final existingChapters = await artifactStore.downloadedChapterIds(
+        sourceId: manifest.sourceId,
+        comicId: entry.chapter.comicId,
+      );
+      final isSingleChapter = existingChapters.isEmpty ||
+          (existingChapters.length == 1 &&
+              existingChapters.contains(entry.chapter.chapterId));
+
+      if (existingChapters.isNotEmpty &&
+          !existingChapters.contains(entry.chapter.chapterId)) {
+        for (final prevId in existingChapters) {
+          await artifactStore.migrateSingleChapterToSubdirectory(
+            sourceId: manifest.sourceId,
+            comicId: entry.chapter.comicId,
+            comicTitle: entry.chapter.comicTitle,
+            previousChapterId: prevId,
+            previousChapterTitle: '第 1 话',
+          );
+        }
+      }
+
+      for (var pageIndex = 0; pageIndex < manifest.pages.length; pageIndex++) {
+        final page = manifest.pages[pageIndex];
         token.throwIfCancelled();
         final id = _downloadId(manifest, page);
         final durable = await artifactStore.openArtifactStream(id);
@@ -1245,6 +1605,12 @@ final class PersistentChapterDownloadService
             );
           }
           await transferRuntime.persistPromoted(id);
+          await artifactStore.mirrorPromotedToSafIfConfigured(
+            id,
+            entry: entry,
+            pageIndex: pageIndex + 1,
+            isSingleChapter: isSingleChapter,
+          );
           if (await artifactStore.openArtifactStream(id) == null) {
             throw StateError(
               'chapter command completed physical transfer without durable artifact: '
@@ -1258,6 +1624,37 @@ final class PersistentChapterDownloadService
       consumer.replaceDemands(identity, ++revision, const <DownloadId, TransferDemand>{});
       await progress.flush();
       progress.close();
+      await artifactStore.pinChapterRecords(
+        sourceId: manifest.sourceId,
+        comicId: entry.chapter.comicId,
+        chapterId: entry.chapter.chapterId,
+      );
+      try {
+        final comicDirName = buildComicDirectoryName(
+          comicTitle: entry.chapter.comicTitle,
+        );
+        final comicFolder = Directory('${artifactStore.layout.root}/$comicDirName');
+        if (await comicFolder.exists() || await Directory(artifactStore.layout.root).exists()) {
+          if (!await comicFolder.exists()) {
+            await comicFolder.create(recursive: true);
+          }
+          final manifestFile = File('${comicFolder.path}/$comicManifestFileName');
+          final allChapters = (await artifactStore.downloadedChapterIds(
+            sourceId: manifest.sourceId,
+            comicId: entry.chapter.comicId,
+          )).toSet()..add(entry.chapter.chapterId);
+          final manifestData = ComicFolderManifest(
+            comicTitle: entry.chapter.comicTitle,
+            comicId: entry.chapter.comicId,
+            sourceId: entry.chapter.sourceId,
+            chapters: allChapters.toList(),
+            updatedAt: DateTime.now(),
+          );
+          await manifestFile.writeAsString(manifestData.encode());
+        }
+      } catch (_) {
+        // Non-critical local metadata write
+      }
       _terminalPhases[identity] = ChapterDownloadPhase.complete;
       await _emitInspection(entry, phase: ChapterDownloadPhase.complete);
     } on Failure catch (error) {
@@ -1368,6 +1765,54 @@ final class PersistentChapterDownloadService
         throw StateError('下载任务仍在写入，无法删除离线文件');
       }
       await artifactStore.evict(id);
+      await transferRuntime.registry.evict(id);
+    }
+    // Clean up empty directories in SAF and local storage
+    try {
+      final safIo = artifactStore.safTreeIo;
+      final comicDirName = buildComicDirectoryName(
+        comicTitle: entry.chapter.comicTitle,
+      );
+      final chapterDirName = buildChapterDirectoryName(
+        entry.chapter.displayName,
+        fallbackIndex: entry.chapter.sequence,
+      );
+      if (safIo != null) {
+        await safIo.delete('$comicDirName/$chapterDirName');
+        final remainingChapters = await artifactStore.downloadedChapterIds(
+          sourceId: entry.chapter.sourceId,
+          comicId: entry.chapter.comicId,
+        );
+        if (remainingChapters.isEmpty) {
+          await safIo.delete('$comicDirName/$comicManifestFileName');
+          await safIo.delete(comicDirName);
+        }
+      }
+      final comicFolder = Directory('${artifactStore.layout.root}/$comicDirName');
+      final chapterFolder = Directory('${comicFolder.path}/$chapterDirName');
+      if (await chapterFolder.exists()) {
+        final chapterFiles = await chapterFolder.list().toList();
+        if (chapterFiles.isEmpty) {
+          await chapterFolder.delete();
+        }
+      }
+      if (await comicFolder.exists()) {
+        final remainingChapters = await artifactStore.downloadedChapterIds(
+          sourceId: entry.chapter.sourceId,
+          comicId: entry.chapter.comicId,
+        );
+        if (remainingChapters.isEmpty) {
+          final comicFiles = await comicFolder.list().toList();
+          final nonManifest = comicFiles.where(
+            (f) => !f.path.endsWith(comicManifestFileName),
+          ).toList();
+          if (nonManifest.isEmpty) {
+            await comicFolder.delete(recursive: true);
+          }
+        }
+      }
+    } catch (_) {
+      // Non-critical directory cleanup error
     }
     final identity = _identity(entry);
     _cancelled.remove(identity);
@@ -1379,6 +1824,105 @@ final class PersistentChapterDownloadService
   Future<ChapterDownloadSnapshot> inspect(ImportedLibraryEntry entry) {
     _requireOpen();
     return _buildSnapshot(entry);
+  }
+
+  @override
+  Future<List<ImportedLibraryEntry>> discoverOrphanedEntries(
+    Iterable<ImportedLibraryEntry> knownEntries,
+  ) async {
+    _requireOpen();
+    final knownIdentities = <String>{
+      for (final e in knownEntries)
+        chapterDownloadIdentity(
+          e.chapter.sourceId,
+          e.chapter.chapterId,
+          e.chapter.sourceRevision,
+        ),
+    };
+    final records = await artifactStore.indexedRecords();
+    final orphanedGroups =
+        <String, List<({String pageId, String uri, String revision, int bytes})>>{};
+    for (final entry in records.entries) {
+      final key = entry.key;
+      final pipeIdx = key.indexOf('|');
+      final contentKey =
+          pipeIdx == -1 ? key : key.substring(0, pipeIdx);
+      final parts = contentKey.split('/');
+      if (parts.length < 4) continue;
+      final sourceId = parts[0];
+      final comicId = parts[1];
+      final chapterId = parts[2];
+      final pageId = parts.sublist(3).join('/');
+
+      var revision = 'offline';
+      var uri = 'file://$pageId';
+      if (pipeIdx != -1) {
+        final rest = key.substring(pipeIdx + 1);
+        final secondPipe = rest.indexOf('|');
+        if (secondPipe != -1) {
+          final rev = rest.substring(0, secondPipe);
+          if (rev.trim().isNotEmpty) {
+            revision = rev.trim();
+          }
+          uri = rest.substring(secondPipe + 1);
+        } else if (rest.trim().isNotEmpty) {
+          revision = rest.trim();
+        }
+      }
+
+      final chapterKey = '$sourceId\u0000$comicId\u0000$chapterId';
+      orphanedGroups
+          .putIfAbsent(
+            chapterKey,
+            () => <({String pageId, String uri, String revision, int bytes})>[],
+          )
+          .add((
+            pageId: pageId,
+            uri: uri,
+            revision: revision,
+            bytes: entry.value.bytes,
+          ));
+    }
+
+    final orphaned = <ImportedLibraryEntry>[];
+    for (final group in orphanedGroups.entries) {
+      if (group.value.isEmpty) continue;
+      final parts = group.key.split('\u0000');
+      final sourceId = parts[0];
+      final comicId = parts[1];
+      final chapterId = parts[2];
+      final revision = group.value.first.revision;
+      final identity =
+          chapterDownloadIdentity(sourceId, chapterId, revision);
+      if (knownIdentities.contains(identity)) continue;
+
+      final pages = <ImportedPageRecord>[
+        for (var i = 0; i < group.value.length; i++)
+          ImportedPageRecord(
+            displayName: group.value[i].pageId,
+            sourceId: group.value[i].uri,
+            pageId: group.value[i].pageId,
+            contentKindHint: ContentKindHint.unknown,
+            byteLength: group.value[i].bytes,
+          ),
+      ];
+
+      orphaned.add(
+        ImportedLibraryEntry(
+          chapter: ImportedChapterRecord(
+            directoryId: 'orphaned:$comicId',
+            displayName: chapterId,
+            sourceId: sourceId,
+            comicId: comicId,
+            comicTitle: comicId,
+            chapterId: chapterId,
+            sourceRevision: revision,
+            pages: pages,
+          ),
+        ),
+      );
+    }
+    return List<ImportedLibraryEntry>.unmodifiable(orphaned);
   }
 
   @override
@@ -1500,6 +2044,20 @@ final class PersistentChapterDownloadService
   @override
   Future<bool> isDownloaded(ImportedLibraryEntry entry) async =>
       (await inspect(entry)).isComplete;
+
+  @override
+  Future<ComicConflictReport> inspectComicConflicts({
+    required String sourceId,
+    String? sourceDisplayName,
+    required String comicId,
+    required String comicTitle,
+  }) =>
+      artifactStore.inspectComicConflicts(
+        sourceId: sourceId,
+        sourceDisplayName: sourceDisplayName,
+        comicId: comicId,
+        comicTitle: comicTitle,
+      );
 
   @override
   Future<Uint8List> readPage(

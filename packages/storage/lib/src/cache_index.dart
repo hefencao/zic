@@ -11,6 +11,7 @@ final class CacheRec {
     required this.checksum,
     required this.createdUs,
     required this.touchedUs,
+    this.pinned = false,
   });
 
   final DownloadId id;
@@ -21,6 +22,10 @@ final class CacheRec {
   final int createdUs;
   final int touchedUs;
 
+  /// Explicitly downloaded content is protected from capacity trims and
+  /// cache clears; only an explicit per-chapter delete may remove it.
+  final bool pinned;
+
   String get key => id.key;
 
   CacheRec copyWith({
@@ -30,6 +35,7 @@ final class CacheRec {
     String? checksum,
     int? createdUs,
     int? touchedUs,
+    bool? pinned,
   }) {
     return CacheRec(
       id: id,
@@ -39,6 +45,7 @@ final class CacheRec {
       checksum: checksum ?? this.checksum,
       createdUs: createdUs ?? this.createdUs,
       touchedUs: touchedUs ?? this.touchedUs,
+      pinned: pinned ?? this.pinned,
     );
   }
 
@@ -50,6 +57,7 @@ final class CacheRec {
         'checksum': checksum,
         'createdUs': createdUs,
         'touchedUs': touchedUs,
+        'pinned': pinned,
       };
 
   factory CacheRec.fromJson(Map<String, Object?> json) {
@@ -65,6 +73,7 @@ final class CacheRec {
       checksum: json['checksum']! as String,
       createdUs: json['createdUs']! as int,
       touchedUs: json['touchedUs']! as int,
+      pinned: json['pinned'] == true,
     );
   }
 }

@@ -63,7 +63,7 @@ final class RhttpSourceResourceDirectTransport
       }
       return await rhttp.RhttpClient.create(
         settings: const rhttp.ClientSettings(
-          redirectSettings: rhttp.RedirectSettings.none(),
+          redirectSettings: rhttp.RedirectSettings.limited(5),
           timeoutSettings: rhttp.TimeoutSettings(
             connectTimeout: Duration(seconds: 15),
             keepAliveTimeout: Duration(seconds: 60),
@@ -134,8 +134,7 @@ final class RhttpSourceResourceDirectTransport
     _throwIfCancelled(control);
 
     final headers = response.headerMapList;
-    if (_headerValues(headers, HttpHeaders.setCookieHeader).isNotEmpty ||
-        _isRedirectStatus(response.statusCode)) {
+    if (_isRedirectStatus(response.statusCode)) {
       cancelToken.cancel();
       throw Failure(
         code: ErrorCode.network,

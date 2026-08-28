@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -7,6 +8,7 @@ import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:sessions/sessions.dart';
+import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 import 'package:transport/transport.dart';
@@ -966,6 +968,214 @@ void main() {
     expect(loadedPages.where((index) => index == 0).length, 1);
     expect(loadedPages.where((index) => index == 1).length, 2);
   });
+
+  test('CompositeArtifactBytes delegates transparently between local and SAF',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('composite-bytes-test');
+    addTearDown(() => temp.delete(recursive: true));
+    final localFile = File('${temp.path}/sample.bin');
+    await localFile.writeAsBytes(<int>[1, 2, 3, 4]);
+
+    final safStorage = <String, Uint8List>{
+      'final/p1.bin': Uint8List.fromList(<int>[10, 20, 30]),
+    };
+    final safIo = _MemorySafIo(safStorage);
+    final composite = CompositeArtifactBytes(
+      saf: SafArtifactBytes(safIo),
+    );
+
+    expect(await composite.exists(localFile.path), isTrue);
+    expect(await composite.length(localFile.path), 4);
+    final localChunks = await composite
+        .readChunks(localFile.path, start: 1, endExclusive: 3)
+        .toList();
+    expect(localChunks.single, <int>[2, 3]);
+
+    final safPath = encodeSafRecordPath(
+      treeUri: 'content://saf-test-tree',
+      relativePath: 'final/p1.bin',
+    );
+    expect(await composite.exists(safPath), isTrue);
+    expect(await composite.length(safPath), 3);
+    final safChunks = await composite
+        .readChunks(safPath, start: 0, endExclusive: 2)
+        .toList();
+    expect(safChunks.single, <int>[10, 20]);
+
+    await composite.delete(safPath);
+    expect(await composite.exists(safPath), isFalse);
+    expect(safStorage.containsKey('final/p1.bin'), isFalse);
+
+    await composite.delete(localFile.path);
+    expect(await composite.exists(localFile.path), isFalse);
+  });
+
+  test('sniffImageExtension detects known image headers correctly', () async {
+    final temp = await Directory.systemTemp.createTemp('sniff-ext-test');
+    addTearDown(() => temp.delete(recursive: true));
+
+    final jpgFile = File('${temp.path}/t.jpg');
+    await jpgFile.writeAsBytes(<int>[0xff, 0xd8, 0xff, 0xe0, 0x00]);
+    expect(await sniffImageExtension(jpgFile), 'jpg');
+
+    final pngFile = File('${temp.path}/t.png');
+    await pngFile.writeAsBytes(<int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    expect(await sniffImageExtension(pngFile), 'png');
+
+    final webpFile = File('${temp.path}/t.webp');
+    await webpFile.writeAsBytes(<int>[
+      0x52, 0x49, 0x46, 0x46,
+      0x00, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50,
+    ]);
+    expect(await sniffImageExtension(webpFile), 'webp');
+
+    final gifFile = File('${temp.path}/t.gif');
+    await gifFile.writeAsBytes(<int>[0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
+    expect(await sniffImageExtension(gifFile), 'gif');
+
+    final binFile = File('${temp.path}/t.bin');
+    await binFile.writeAsBytes(<int>[1, 2, 3, 4]);
+    expect(await sniffImageExtension(binFile), 'bin');
+  });
+
+  test('PersistentChapterDownloadService discovers orphaned entries not in known set', () async {
+    final temp = await Directory.systemTemp.createTemp('orphaned-test');
+    addTearDown(() => temp.delete(recursive: true));
+
+    final service = await PersistentChapterDownloadService.open(temp.path);
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        loadBytes: (sourceId, uri) async => Uint8List.fromList(<int>[1, 2, 3]),
+      ),
+    );
+
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:test:comic',
+        displayName: '测试章节',
+        sourceId: 'mihon:test',
+        comicId: 'comic-1',
+        chapterId: 'ch-1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          const ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'mihon:resource:page-1',
+            pageId: 'page-1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: 3,
+          ),
+        ],
+      ),
+    );
+
+    // Download an entry
+    await service.download(entry);
+    expect(await service.isDownloaded(entry), isTrue);
+
+    // If knownEntries contains entry, discoverOrphanedEntries returns empty
+    final none = await service.discoverOrphanedEntries(<ImportedLibraryEntry>[entry]);
+    expect(none, isEmpty);
+
+    // If knownEntries is empty, discoverOrphanedEntries returns the entry
+    final orphaned = await service.discoverOrphanedEntries(const <ImportedLibraryEntry>[]);
+    expect(orphaned.length, 1);
+    expect(orphaned.first.chapter.chapterId, entry.chapter.chapterId);
+    expect(orphaned.first.chapter.comicId, entry.chapter.comicId);
+    expect(orphaned.first.chapter.sourceId, entry.chapter.sourceId);
+  });
+
+  test('Structured download writes flat single-chapter and auto-migrates on multi-chapter transition', () async {
+    final temp = await Directory.systemTemp.createTemp('structured-download-test');
+    addTearDown(() => temp.delete(recursive: true));
+
+    final memoryStorage = <String, Uint8List>{};
+    final memorySaf = _MemorySafIo(memoryStorage);
+    final service = await PersistentChapterDownloadService.open(
+      temp.path,
+      safTreeIo: memorySaf,
+      safTreeUri: 'content://com.android.externalstorage.documents/tree/1234',
+    );
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        loadBytes: (sourceId, uri) async => Uint8List.fromList(<int>[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+      ),
+    );
+
+    final entry1 = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:test:comic-one',
+        displayName: '第 1 话',
+        sourceId: 'mihon:test',
+        comicId: 'comic-one',
+        comicTitle: '航海王',
+        chapterId: 'ch-01',
+        sourceRevision: 'r1',
+        sequence: 1,
+        pages: <ImportedPageRecord>[
+          const ImportedPageRecord(
+            displayName: '001.png',
+            sourceId: 'mihon:resource:page-1',
+            pageId: 'page-1',
+            contentKindHint: ContentKindHint.png,
+            byteLength: 8,
+          ),
+        ],
+      ),
+    );
+
+    // 1. Download single chapter: should be flat directly under comic folder
+    await service.download(entry1);
+    expect(await service.isDownloaded(entry1), isTrue);
+
+    final singleChapterPaths = memoryStorage.keys.toList();
+    expect(singleChapterPaths, contains('航海王/001.png'));
+    expect(singleChapterPaths, contains('航海王/.zic.json'));
+    expect(singleChapterPaths, isNot(contains('航海王/第 1 话/001.png')));
+
+    // 2. Download second chapter: should auto-migrate ch-01 to subfolder and save ch-02 to subfolder
+    final entry2 = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:test:comic-one',
+        displayName: '第 2 话',
+        sourceId: 'mihon:test',
+        comicId: 'comic-one',
+        comicTitle: '航海王',
+        chapterId: 'ch-02',
+        sourceRevision: 'r1',
+        sequence: 2,
+        pages: <ImportedPageRecord>[
+          const ImportedPageRecord(
+            displayName: '001.png',
+            sourceId: 'mihon:resource:page-2',
+            pageId: 'page-2',
+            contentKindHint: ContentKindHint.png,
+            byteLength: 8,
+          ),
+        ],
+      ),
+    );
+
+    await service.download(entry2);
+    expect(await service.isDownloaded(entry1), isTrue);
+    expect(await service.isDownloaded(entry2), isTrue);
+
+    final multiChapterPaths = memoryStorage.keys.toList();
+    expect(multiChapterPaths, contains('航海王/第 1 话/001.png'));
+    expect(multiChapterPaths, contains('航海王/第 2 话/001.png'));
+    expect(multiChapterPaths, isNot(contains('航海王/001.png')));
+
+    // 3. Delete chapters: cleans up entries
+    await service.delete(entry1);
+    expect(await service.isDownloaded(entry1), isFalse);
+    expect(await service.isDownloaded(entry2), isTrue);
+
+    await service.delete(entry2);
+    expect(await service.isDownloaded(entry2), isFalse);
+  });
 }
 
 
@@ -1093,3 +1303,96 @@ DownloadId _readerArtifactId(String pageId) => DownloadId(
       sourceRevision: 'reader-cache-r1',
       canonicalUri: Uri.parse('https://example.invalid/$pageId.bin'),
     );
+
+final class _MemorySafIo implements SafTreeIo {
+  _MemorySafIo(this.storage);
+
+  final Map<String, Uint8List> storage;
+  final Map<int, ({String path, int pos})> _handles =
+      <int, ({String path, int pos})>{};
+  int _nextHandle = 1;
+
+  @override
+  Future<int?> open(String relativePath, {SafWriteMode? mode}) async {
+    if (!storage.containsKey(relativePath)) {
+      if (mode == SafWriteMode.writeTruncate || mode == SafWriteMode.writeAppend) {
+        storage[relativePath] = Uint8List(0);
+      } else {
+        return null;
+      }
+    }
+    final handle = _nextHandle++;
+    final initialPos = mode == SafWriteMode.writeAppend
+        ? storage[relativePath]!.lengthInBytes
+        : 0;
+    _handles[handle] = (path: relativePath, pos: initialPos);
+    return handle;
+  }
+
+  @override
+  Future<Uint8List> read(int handle, int length) async {
+    final state = _handles[handle];
+    if (state == null) throw StateError('invalid handle');
+    final bytes = storage[state.path]!;
+    final start = state.pos;
+    final end = (start + length).clamp(0, bytes.lengthInBytes);
+    _handles[handle] = (path: state.path, pos: end);
+    return Uint8List.fromList(bytes.sublist(start, end));
+  }
+
+  @override
+  Future<void> write(int handle, Uint8List bytes) async {
+    final state = _handles[handle];
+    if (state == null) throw StateError('invalid handle');
+    final existing = storage[state.path] ?? Uint8List(0);
+    final builder = BytesBuilder(copy: false);
+    builder.add(existing.sublist(0, state.pos));
+    builder.add(bytes);
+    storage[state.path] = builder.takeBytes();
+    _handles[handle] = (path: state.path, pos: state.pos + bytes.lengthInBytes);
+  }
+
+  @override
+  Future<int?> length(int handle) async {
+    final state = _handles[handle];
+    if (state == null) return null;
+    return storage[state.path]?.lengthInBytes ?? 0;
+  }
+
+  @override
+  Future<void> seek(int handle, int position) async {
+    final state = _handles[handle];
+    if (state == null) throw StateError('invalid handle');
+    _handles[handle] = (path: state.path, pos: position);
+  }
+
+  @override
+  Future<void> close(int handle) async {
+    _handles.remove(handle);
+  }
+
+  @override
+  Future<bool> delete(String relativePath) async =>
+      storage.remove(relativePath) != null;
+
+  @override
+  Future<bool> exists(String relativePath) async =>
+      storage.containsKey(relativePath);
+
+  @override
+  Future<List<SafTreeFile>> list(String relativePath) async {
+    final dirs = <String>{};
+    for (final path in storage.keys) {
+      final segments = path.split('/');
+      if (segments.length > 1) {
+        dirs.add(segments.first);
+      }
+    }
+    return dirs
+        .map(
+          (d) => SafTreeFile(name: d, isDirectory: true, length: 0),
+        )
+        .toList();
+  }
+}
+

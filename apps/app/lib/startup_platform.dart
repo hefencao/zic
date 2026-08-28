@@ -74,3 +74,22 @@ Future<void> attachAndroidPlugin(String name) async {
     // Non-Android hosts do not expose the app startup channel.
   }
 }
+
+/// Opens the system All-files-access page for this app so user-chosen
+/// download directories on shared/SD storage accept direct file writes.
+/// Returns false when the platform page is unavailable.
+Future<bool> openAllFilesAccessSettings() async {
+  if (kIsWeb || !Platform.isAndroid) {
+    return false;
+  }
+  try {
+    await startupPlatformChannel.invokeMethod<void>(
+      'openAllFilesAccessSettings',
+    );
+    return true;
+  } on MissingPluginException {
+    return false;
+  } on PlatformException {
+    return false;
+  }
+}

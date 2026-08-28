@@ -11,6 +11,7 @@ final class DownloadRegistry {
     this.index,
     this.traceSink = const NoopTraceSink(),
     this.onSessionCreated,
+    this.layoutResolver,
   });
 
   final CacheLayout layout;
@@ -18,6 +19,14 @@ final class DownloadRegistry {
   final CacheIndex? index;
   final TraceSink traceSink;
   final void Function(DownloadSession session)? onSessionCreated;
+
+  /// Optional per-download physical root override.
+  ///
+  /// Returns the [CacheLayout] that owns [id]'s bytes, or `null` to fall back
+  /// to [layout]. This only decides where NEW artifacts and partials are
+  /// written; durable reads always use the absolute record path in the index,
+  /// so bytes previously stored under another root stay readable.
+  final CacheLayout? Function(DownloadId id)? layoutResolver;
 
   final Map<DownloadId, DownloadSession> _sessions =
       <DownloadId, DownloadSession>{};
@@ -75,9 +84,11 @@ final class DownloadRegistry {
   DownloadSession get(DownloadId id) {
     final physicalId = resolvePhysicalId(id);
     return _sessions.putIfAbsent(physicalId, () {
+      final effectiveLayout =
+          layoutResolver?.call(physicalId) ?? layout;
       final session = DownloadSession(
         id: physicalId,
-        artifact: layout.artifactFor(physicalId),
+        artifact: effectiveLayout.artifactFor(physicalId),
         clock: clock,
         traceSink: traceSink,
         sessionId: 'download:${layout.tokenFor(physicalId)}',

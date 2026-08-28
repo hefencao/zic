@@ -53,6 +53,22 @@ final class ResourceCacheMaintenancePolicy {
         assert(artifactTargetWeight >= 0),
         assert(artifactTargetWeight <= artifactMaxWeight);
 
+  /// Builds a policy from one user-facing cache capacity in bytes.
+  ///
+  /// The persistent artifact tier receives the full capacity and trims down
+  /// to 75% of it, mirroring the default 512 MiB / 384 MiB ratio. Response
+  /// targets stay at their small fixed defaults: the user limit governs the
+  /// dominant page-artifact tier, not reusable source responses.
+  factory ResourceCacheMaintenancePolicy.forArtifactLimitBytes(int maxBytes) {
+    if (maxBytes <= 0) {
+      throw ArgumentError.value(maxBytes, 'maxBytes', 'must be positive');
+    }
+    return ResourceCacheMaintenancePolicy(
+      artifactMaxWeight: maxBytes,
+      artifactTargetWeight: maxBytes * 3 ~/ 4,
+    );
+  }
+
   final int responseTargetWeight;
   /// Target for transient durable response bytes only. Retained artwork is not
   /// capacity-trimmed and remains governed by explicit invalidation/clear.
@@ -114,12 +130,24 @@ final class ResourceCacheCoordinator {
   ResourceCacheCoordinator({
     ResourceCacheManager? responses,
     this.artifacts,
-    this.maintenancePolicy = const ResourceCacheMaintenancePolicy(),
-  }) : responses = responses ?? ResourceCacheManager();
+    ResourceCacheMaintenancePolicy? maintenancePolicy,
+  })  : responses = responses ?? ResourceCacheManager(),
+        _maintenancePolicy =
+            maintenancePolicy ?? ResourceCacheMaintenancePolicy();
 
   final ResourceCacheManager responses;
   final ArtifactCacheMaintenance? artifacts;
-  final ResourceCacheMaintenancePolicy maintenancePolicy;
+  ResourceCacheMaintenancePolicy _maintenancePolicy;
+
+  /// Current trim policy. Updates take effect on the next [trim] run; they do
+  /// not evict eagerly.
+  ResourceCacheMaintenancePolicy get maintenancePolicy => _maintenancePolicy;
+
+  /// Replaces the trim policy, for example when the user changes the cache
+  /// capacity setting. The next [trim] enforces the new limits.
+  void updateMaintenancePolicy(ResourceCacheMaintenancePolicy policy) {
+    _maintenancePolicy = policy;
+  }
 
   Future<ResourceCacheUsage> inspect() async {
     final artifactMaintenance = artifacts;

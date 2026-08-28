@@ -139,6 +139,11 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     }
     try {
       final usageFuture = widget.cacheCoordinator?.inspect();
+      final orphaned =
+          await widget.downloads.discoverOrphanedEntries(_entries.values);
+      for (final entry in orphaned) {
+        _entries[_identity(entry)] = entry;
+      }
       final snapshots = await widget.downloads.inspectMany(_entries.values);
       final usage = usageFuture == null ? null : await usageFuture;
       if (!mounted) {
@@ -808,7 +813,12 @@ final class _DownloadTaskTile extends StatelessWidget {
                   icon: const Icon(Icons.stop_circle_outlined),
                 )
               else if (snapshot.phase == ChapterDownloadPhase.failed ||
-                  snapshot.phase == ChapterDownloadPhase.cancelled)
+                  snapshot.phase == ChapterDownloadPhase.cancelled ||
+                  // Interrupted chapters lose their in-memory terminal phase
+                  // on restart and surface as idle with partial durable
+                  // bytes; they must stay resumable from this list.
+                  (snapshot.phase == ChapterDownloadPhase.idle &&
+                      snapshot.hasDurableBytes))
                 IconButton(
                   key: downloadManagerRetryKey(snapshot.identity),
                   tooltip: '重试下载',

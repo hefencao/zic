@@ -34,8 +34,17 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     final wholeComicDownloads = _incomingWholeComicDownloads;
     if (library == null ||
         chapterDownloads == null ||
-        wholeComicDownloads == null ||
-        identical(library, _library)) {
+        wholeComicDownloads == null) {
+      return;
+    }
+    // A download-only rebuild (directory switch) keeps the library store
+    // instance, so the gate must accept an unchanged library as long as any
+    // owned service instance changed.
+    final libraryChanged = !identical(library, _library);
+    final downloadsChanged =
+        !identical(chapterDownloads, _chapterDownloads) ||
+            !identical(wholeComicDownloads, _wholeComicDownloads);
+    if (!libraryChanged && !downloadsChanged) {
       return;
     }
     final previousChapterDownloads = _chapterDownloads;

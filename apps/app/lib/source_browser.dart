@@ -9,6 +9,7 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'package:downloads/downloads.dart';
+import 'app_preferences.dart';
 import 'app_pull_to_refresh.dart';
 import 'artwork_placeholder.dart';
 import 'comic_details.dart' as details;
@@ -1509,12 +1510,14 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
 
   void _submitSearch(String value) {
     final normalized = value.trim();
-    if (_aggregateSearch.enabled) {
-      final selectedPlugins = _aggregateSearchPlugins()
-          .where(
-            (plugin) =>
-                _aggregateSearch.pluginIds.contains(plugin.pluginId),
-          )
+    if (_aggregateSearch.enabled || _aggregateViewActive) {
+      final allPlugins = _aggregateSearchPlugins();
+      final selectedPlugins = (_aggregateSearch.enabled
+              ? allPlugins.where(
+                  (plugin) =>
+                      _aggregateSearch.pluginIds.contains(plugin.pluginId),
+                )
+              : allPlugins)
           .toList(growable: false);
       if (selectedPlugins.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1537,7 +1540,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       }
       _aggregateSearch.setEnabled(
         false,
-        _aggregateSearchPlugins().map((plugin) => plugin.pluginId),
+        allPlugins.map((plugin) => plugin.pluginId),
       );
       return;
     }
@@ -1669,13 +1672,15 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final source = _activeSource;
     return WillPopScope(
       onWillPop: () async {
+        if (_searchExpanded.value) {
+          _collapseSearch();
+          return false;
+        }
         if (_aggregateViewActive) {
           _exitAggregateSearchView();
           return false;
         }
-        if (!_searchExpanded.value) return true;
-        _collapseSearch();
-        return false;
+        return true;
       },
       child: Column(
         key: comicSourcesPageKey,
@@ -2673,19 +2678,54 @@ final class _SourceSwitcherState extends State<_SourceSwitcher> {
     final visiblePluginIds = <String>{
       for (final plugin in plugins) plugin.plugin.pluginId,
     };
-    // A plugin control represents all of that plugin's sources. Keep the
-    // original source switcher as the only bottom control and collapse the
-    // represented source chips instead of rendering a second set beside it.
-    final sourceControls = controller == null
-        ? widget.sources
-        : widget.sources
-            .where(
-              (source) => !visiblePluginIds.contains(
-                controller.ownerOfSource(source.sourceId),
-              ),
-            )
-            .toList(growable: false);
-    final itemCount = sourceControls.length + plugins.length;
+    final pluginById = <String, InstalledExternalPlugin>{
+      for (final plugin in plugins) plugin.plugin.pluginId: plugin,
+    };
+    // Chip order follows the unified drag sort of the source-management page:
+    // widget.sources arrives preference-ordered, so each plugin control is
+    // emitted at the position of its first represented source.
+    final chips = <Widget>[];
+    final emittedOwners = <String>{};
+    var itemCount = 0;
+    void emitSourceChip(BrowsableComicSource source) {
+      final accent = _comicSourceAccent(source);
+      final selected = source.sourceId == widget.activeSourceId;
+      itemCount++;
+      chips.add(
+        ChoiceChip(
+          key: comicSourceChoiceKey(source.sourceId),
+          label: Text(source.descriptor.name),
+          selected: selected,
+          showCheckmark: false,
+          selectedColor: accent,
+          side: BorderSide(color: accent.withValues(alpha: .7)),
+          labelStyle: selected
+              ? TextStyle(color: Theme.of(context).colorScheme.onPrimary)
+              : TextStyle(color: accent),
+          onSelected: (_) => widget.onSelected(source.sourceId),
+        ),
+      );
+    }
+
+    for (final source in widget.sources) {
+      final owner = controller?.ownerOfSource(source.sourceId);
+      if (owner != null && visiblePluginIds.contains(owner)) {
+        if (emittedOwners.add(owner)) {
+          itemCount++;
+          chips.add(_pluginChip(context, controller!, pluginById[owner]!));
+        }
+        continue;
+      }
+      emitSourceChip(source);
+    }
+    // A visible plugin whose sources are all filtered out (for example an
+    // activation failure being retried) still gets its control at the end.
+    for (final plugin in plugins) {
+      if (emittedOwners.add(plugin.plugin.pluginId)) {
+        itemCount++;
+        chips.add(_pluginChip(context, controller!, plugin));
+      }
+    }
     return Material(
       key: comicSourceSwitcherKey,
       elevation: 3,
@@ -2706,32 +2746,7 @@ final class _SourceSwitcherState extends State<_SourceSwitcher> {
                   scrollDirection: Axis.horizontal,
                   itemCount: itemCount,
                   separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (context, index) {
-                    if (index < plugins.length) {
-                      return _pluginChip(
-                        context,
-                        controller!,
-                        plugins[index],
-                      );
-                    }
-                    final source = sourceControls[index - plugins.length];
-                    final accent = _comicSourceAccent(source);
-                    final selected = source.sourceId == widget.activeSourceId;
-                    return ChoiceChip(
-                      key: comicSourceChoiceKey(source.sourceId),
-                      label: Text(source.descriptor.name),
-                      selected: selected,
-                      showCheckmark: false,
-                      selectedColor: accent,
-                      side: BorderSide(color: accent.withValues(alpha: .7)),
-                      labelStyle: selected
-                          ? TextStyle(
-                              color: Theme.of(context).colorScheme.onPrimary,
-                            )
-                          : TextStyle(color: accent),
-                      onSelected: (_) => widget.onSelected(source.sourceId),
-                    );
-                  },
+                  itemBuilder: (context, index) => chips[index],
                 ),
               ),
       ),
@@ -2878,6 +2893,29 @@ final class _SourceComicCard extends StatelessWidget {
   }
 }
 
+/// One sortable row of the unified source-management list.
+///
+/// A Mihon extension family (multi-language variants of one installed plugin)
+/// collapses into a single entry represented by its most recently enabled
+/// variant; every other origin is a single-source entry.
+final class _SourceManagementEntry {
+  const _SourceManagementEntry.single(this.source)
+      : family = null,
+        representativeVariant = null;
+
+  const _SourceManagementEntry.family(this.family, this.representativeVariant)
+      : source = null;
+
+  final BrowsableComicSource? source;
+  final MihonSourceLanguageGroup? family;
+  final BrowsableComicSource? representativeVariant;
+
+  BrowsableComicSource get representative =>
+      representativeVariant ?? source!;
+
+  String get entryKey => family?.groupKey ?? source!.sourceId;
+}
+
 final class SourceManagementScreen extends StatefulWidget {
   const SourceManagementScreen({
     required this.sources,
@@ -2886,6 +2924,7 @@ final class SourceManagementScreen extends StatefulWidget {
     this.externalPlugins,
     this.networkBridge = const AndroidNetworkBridge(),
     this.onExternalSourcesChanged,
+    this.appPreferences,
     super.key,
   });
 
@@ -2897,6 +2936,10 @@ final class SourceManagementScreen extends StatefulWidget {
   final AndroidNetworkBridge networkBridge;
   final Future<void> Function()? onExternalSourcesChanged;
 
+  /// Application-level preferences owning the per-source download directory
+  /// map used by the plugin manager.
+  final AppPreferencesController? appPreferences;
+
   @override
   State<SourceManagementScreen> createState() =>
       _SourceManagementScreenState();
@@ -2905,6 +2948,7 @@ final class SourceManagementScreen extends StatefulWidget {
 final class _SourceManagementScreenState
     extends State<SourceManagementScreen> {
   late List<BrowsableComicSource> _sources;
+  final Set<String> _expandedFamilies = <String>{};
   late Map<String, ComicSourcePreference> _preferences;
 
   @override
@@ -2935,6 +2979,62 @@ final class _SourceManagementScreenState
         return;
       }
       setState(() => _preferences[source.sourceId] = previous);
+      _showSourceFailureSnackBar(
+        context,
+        prefix: '保存漫画源设置失败',
+        failure: _SourceFailure.capture(error, stackTrace),
+      );
+    }
+  }
+
+  /// Enables one language variant of a Mihon extension family.
+  ///
+  /// Only the most recently enabled variant stays active: enabling [target]
+  /// disables the currently enabled siblings, stamps [ComicSourcePreference
+  /// .lastEnabledAt], and the family row then represents [target].
+  Future<void> _enableMihonVariant(
+    BrowsableComicSource target, {
+    required List<BrowsableComicSource> variants,
+  }) async {
+    final now = DateTime.now().toUtc();
+    final previousPreferences = Map<String, ComicSourcePreference>.of(
+      _preferences,
+    );
+    final updates = <ComicSourcePreference>[];
+    var changed = false;
+    void apply(BrowsableComicSource source, ComicSourcePreference next) {
+      final old = _preferences[source.sourceId];
+      if (identical(old, next)) return;
+      changed = true;
+      _preferences[source.sourceId] = next;
+      updates.add(next);
+    }
+
+    setState(() {
+      apply(
+        target,
+        _preference(target).copyWith(
+          enabled: true,
+          lastEnabledAt: now,
+          updatedAt: now,
+        ),
+      );
+      for (final sibling in variants) {
+        if (sibling.sourceId == target.sourceId) continue;
+        final preference = _preference(sibling);
+        if (preference.enabled) {
+          apply(sibling, preference.copyWith(enabled: false, updatedAt: now));
+        }
+      }
+    });
+    if (!changed) return;
+    try {
+      for (final preference in updates) {
+        await widget.onPreferenceChanged(preference);
+      }
+    } on Object catch (error, stackTrace) {
+      if (!mounted) return;
+      setState(() => _preferences = previousPreferences);
       _showSourceFailureSnackBar(
         context,
         prefix: '保存漫画源设置失败',
@@ -2982,62 +3082,242 @@ final class _SourceManagementScreenState
     }
   }
 
-  Future<void> _persistSourceCategory(
-    List<BrowsableComicSource> orderedCategory,
-  ) async {
-    if (orderedCategory.isEmpty) return;
-    final native = _sources
-        .where((source) =>
-            !source.sourceId.startsWith('mihon:') &&
-            !source.sourceId.startsWith('venera:'))
-        .toList(growable: false);
-    final mihon = _sources
-        .where((source) => source.sourceId.startsWith('mihon:'))
-        .toList(growable: false);
-    final venera = _sources
-        .where((source) => source.sourceId.startsWith('venera:'))
-        .toList(growable: false);
-    if (orderedCategory.first.sourceId.startsWith('mihon:')) {
-      await _persistSourceOrder(<BrowsableComicSource>[
-        ...native,
-        ...orderedCategory,
-        ...venera,
-      ]);
-    } else if (orderedCategory.first.sourceId.startsWith('venera:')) {
-      await _persistSourceOrder(<BrowsableComicSource>[
-        ...native,
-        ...mihon,
-        ...orderedCategory,
-      ]);
-    } else {
-      await _persistSourceOrder(<BrowsableComicSource>[
-        ...orderedCategory,
-        ...mihon,
-        ...venera,
-      ]);
-    }
-  }
-
-  Future<void> _reorderSourceCategory(
-    List<BrowsableComicSource> category,
+  Future<void> _reorderEntries(
+    List<_SourceManagementEntry> entries,
     int oldIndex,
     int newIndex,
   ) async {
     if (newIndex > oldIndex) newIndex--;
-    final reordered = List<BrowsableComicSource>.of(category);
+    final reordered = List<_SourceManagementEntry>.of(entries);
     final moved = reordered.removeAt(oldIndex);
     reordered.insert(newIndex, moved);
-    await _persistSourceCategory(reordered);
+    final orderedSources = <BrowsableComicSource>[];
+    for (final entry in reordered) {
+      final family = entry.family;
+      if (family == null) {
+        orderedSources.add(entry.source!);
+        continue;
+      }
+      orderedSources.add(entry.representative);
+      for (final variant in family.otherLanguages) {
+        if (variant.sourceId != entry.representative.sourceId) {
+          orderedSources.add(variant);
+        }
+      }
+      if (family.defaultSource.sourceId !=
+          entry.representative.sourceId) {
+        orderedSources.add(family.defaultSource);
+      }
+    }
+    await _persistSourceOrder(orderedSources);
   }
 
-  Widget _reorderableSourceList(List<BrowsableComicSource> sources) {
+  Widget _managementList(BuildContext context) {
+    final entries = _buildManagementEntries(context);
     return ReorderableListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      itemCount: sources.length,
+      itemCount: entries.length,
       onReorder: (oldIndex, newIndex) =>
-          unawaited(_reorderSourceCategory(sources, oldIndex, newIndex)),
-      itemBuilder: (context, index) => _sourceTile(sources[index]),
+          unawaited(_reorderEntries(entries, oldIndex, newIndex)),
+      itemBuilder: (context, index) {
+        final entry = entries[index];
+        return KeyedSubtree(
+          key: ValueKey<String>('source-entry:${entry.entryKey}'),
+          child: entry.family == null
+              ? _sourceTile(entry.source!)
+              : _familyTile(context, entry),
+        );
+      },
+    );
+  }
+
+  /// One flat sortable list across origins. Mihon language variants of the
+  /// same extension collapse into a single draggable row that represents the
+  /// most recently enabled variant.
+  List<_SourceManagementEntry> _buildManagementEntries(
+    BuildContext context,
+  ) {
+    final preferredLanguage = Localizations.localeOf(context).languageCode;
+    final ownerBySourceId = <String, String?>{
+      for (final source in _sources)
+        source.sourceId: widget.externalPlugins?.ownerOfSource(source.sourceId),
+    };
+    String? ownerOf(BrowsableComicSource source) =>
+        ownerBySourceId[source.sourceId];
+
+    final placeholders = <_SourceManagementEntry?>[];
+    final pendingVariants = <String, List<BrowsableComicSource>>{};
+    for (final source in _sources) {
+      if (source.sourceId.startsWith('mihon:')) {
+        final key = mihonSourceGroupKey(source, ownerOf(source));
+        final existing = pendingVariants[key];
+        if (existing == null) {
+          pendingVariants[key] = <BrowsableComicSource>[source];
+          placeholders.add(null);
+        } else {
+          existing.add(source);
+        }
+        continue;
+      }
+      placeholders.add(_SourceManagementEntry.single(source));
+    }
+    final entries = <_SourceManagementEntry>[];
+    for (final placeholder in placeholders) {
+      if (placeholder != null) {
+        entries.add(placeholder);
+        continue;
+      }
+      // The next pending family in first-occurrence order fills this slot.
+      final key = pendingVariants.keys.first;
+      final variants = pendingVariants.remove(key)!;
+      final group = groupMihonSourcesByLanguage(
+        variants,
+        preferredLanguage: preferredLanguage,
+        pluginOwner: (sourceId) => ownerBySourceId[sourceId],
+      ).single;
+      entries.add(
+        _SourceManagementEntry.family(
+          group,
+          _representativeOf(group),
+        ),
+      );
+    }
+    return entries;
+  }
+
+  BrowsableComicSource _representativeOf(MihonSourceLanguageGroup group) {
+    BrowsableComicSource? best;
+    DateTime? bestTime;
+    for (final variant in [
+      group.defaultSource,
+      ...group.otherLanguages,
+    ]) {
+      final preference = _preference(variant);
+      if (!preference.enabled) continue;
+      final stamp = preference.lastEnabledAt ?? preference.updatedAt;
+      if (best == null || stamp.isAfter(bestTime!)) {
+        best = variant;
+        bestTime = stamp;
+      }
+    }
+    return best ?? group.defaultSource;
+  }
+
+  Widget _familyTile(BuildContext context, _SourceManagementEntry entry) {
+    final family = entry.family!;
+    final representative = entry.representative;
+    final expanded = _expandedFamilies.contains(family.groupKey);
+    final variants = <BrowsableComicSource>[
+      ...family.otherLanguages,
+      if (!family.otherLanguages.contains(representative))
+        family.defaultSource,
+    ].where((variant) => variant.sourceId != representative.sourceId).toList();
+    return Column(
+      children: <Widget>[
+        _sourceTile(
+          representative,
+          iconTap: variants.isEmpty
+              ? null
+              : () => setState(() {
+                    if (!_expandedFamilies.add(family.groupKey)) {
+                      _expandedFamilies.remove(family.groupKey);
+                    }
+                  }),
+          iconExpanded: expanded,
+          onToggleOverride: (value) => unawaited(
+            value
+                ? _enableMihonVariant(
+                    representative,
+                    variants: [
+                      representative,
+                      ...variants,
+                    ],
+                  )
+                : _toggle(representative, false),
+          ),
+        ),
+        if (expanded)
+          for (final variant in variants) ...<Widget>[
+            _sourceTile(
+              variant,
+              nested: true,
+              iconTap: null,
+              onToggleOverride: (value) => unawaited(
+                value
+                    ? _enableMihonVariant(
+                        variant,
+                        variants: [representative, ...variants],
+                      )
+                    : _toggle(variant, false),
+              ),
+            ),
+          ],
+      ],
+    );
+  }
+
+  Widget _sourceTile(
+    BrowsableComicSource source, {
+    bool nested = false,
+    VoidCallback? iconTap,
+    bool iconExpanded = false,
+    ValueChanged<bool>? onToggleOverride,
+  }) {
+    final preference = _preference(source);
+    final originIcon = Icon(
+      source.sourceId.startsWith('mihon:')
+          ? Icons.extension_outlined
+          : source.sourceId.startsWith('venera:')
+              ? Icons.javascript_outlined
+              : Icons.public,
+    );
+    return SwitchListTile(
+      key: ValueKey<String>('source-manager:${source.sourceId}'),
+      contentPadding: EdgeInsets.fromLTRB(nested ? 40 : 16, 0, 12, 0),
+      value: preference.enabled,
+      onChanged: onToggleOverride ?? (value) => unawaited(_toggle(source, value)),
+      secondary: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          // The expandable family icon keeps the exact same 24px footprint as
+          // the plain origin icon, so the representative row stays aligned
+          // with single-source rows; only the collapsed state is highlighted.
+          if (iconTap != null)
+            Tooltip(
+              message: iconExpanded ? '收起其他语言' : '展开其他语言',
+              child: GestureDetector(
+                onTap: iconTap,
+                child: Icon(
+                  source.sourceId.startsWith('mihon:')
+                      ? Icons.extension_outlined
+                      : source.sourceId.startsWith('venera:')
+                          ? Icons.javascript_outlined
+                          : Icons.public,
+                  size: 24,
+                  color: iconExpanded
+                      ? null
+                      : Theme.of(context).colorScheme.primary,
+                ),
+              ),
+            )
+          else
+            originIcon,
+          if ((source.sourceId.startsWith('mihon:') ||
+                  source.sourceId.startsWith('venera:')) &&
+              sourceSupportsSettings(source))
+            IconButton(
+              key: ValueKey<String>('source-settings:${source.sourceId}'),
+              tooltip: '插件设置与登录',
+              onPressed: () => unawaited(_openSourceSettings(source)),
+              icon: const Icon(Icons.settings_outlined),
+            ),
+        ],
+      ),
+      title: Text(source.descriptor.name),
+      subtitle: Text(
+        '${source.descriptor.language} · ${source.descriptor.website.host}',
+      ),
     );
   }
 
@@ -3053,6 +3333,7 @@ final class _SourceManagementScreenState
           format: format,
           controller: controller,
           onSourcesChanged: changed,
+          preferences: widget.appPreferences,
         ),
       ),
     );
@@ -3090,44 +3371,6 @@ final class _SourceManagementScreenState
     }
   }
 
-  Widget _sourceTile(
-    BrowsableComicSource source, {
-    bool nested = false,
-  }) {
-    final preference = _preference(source);
-    return SwitchListTile(
-      key: ValueKey<String>('source-manager:${source.sourceId}'),
-      contentPadding: EdgeInsets.fromLTRB(nested ? 40 : 16, 0, 12, 0),
-      value: preference.enabled,
-      onChanged: (value) => unawaited(_toggle(source, value)),
-      secondary: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          Icon(
-            source.sourceId.startsWith('mihon:')
-                ? Icons.extension_outlined
-                : source.sourceId.startsWith('venera:')
-                    ? Icons.javascript_outlined
-                    : Icons.public,
-          ),
-          if ((source.sourceId.startsWith('mihon:') ||
-                  source.sourceId.startsWith('venera:')) &&
-              sourceSupportsSettings(source))
-            IconButton(
-              key: ValueKey<String>('source-settings:${source.sourceId}'),
-              tooltip: '插件设置与登录',
-              onPressed: () => unawaited(_openSourceSettings(source)),
-              icon: const Icon(Icons.settings_outlined),
-            ),
-        ],
-      ),
-      title: Text(source.descriptor.name),
-      subtitle: Text(
-        '${source.descriptor.language} · ${source.descriptor.website.host}',
-      ),
-    );
-  }
-
   Widget _sectionHeader(
     BuildContext context, {
     required String title,
@@ -3145,83 +3388,9 @@ final class _SourceManagementScreenState
         ),
       );
 
-  Widget _mihonSourceList(BuildContext context) {
-    final mihonSources = _sources
-        .where((source) => source.sourceId.startsWith('mihon:'))
-        .toList(growable: false);
-    final groups = groupMihonSourcesByLanguage(
-      mihonSources,
-      preferredLanguage: Localizations.localeOf(context).languageCode,
-      pluginOwner: (sourceId) =>
-          widget.externalPlugins?.ownerOfSource(sourceId),
-    );
-    return ReorderableListView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: groups.length,
-      onReorder: (oldIndex, newIndex) {
-        if (newIndex > oldIndex) newIndex--;
-        final reordered = List<MihonSourceLanguageGroup>.of(groups);
-        final moved = reordered.removeAt(oldIndex);
-        reordered.insert(newIndex, moved);
-        final flattened = <BrowsableComicSource>[
-          for (final group in reordered)
-            ...<BrowsableComicSource>[
-              group.defaultSource,
-              ...group.otherLanguages,
-            ],
-        ];
-        unawaited(_persistSourceCategory(flattened));
-      },
-      itemBuilder: (context, index) {
-        final group = groups[index];
-        return KeyedSubtree(
-          key: ValueKey<String>('mihon-source-group:${group.groupKey}'),
-          child: Column(
-            children: <Widget>[
-              _sourceTile(group.defaultSource),
-              if (group.otherLanguages.isNotEmpty)
-                ExpansionTile(
-                  key: PageStorageKey<String>(
-                    'source-manager-mihon-languages:${group.groupKey}',
-                  ),
-                  initiallyExpanded: false,
-                  leading: const Icon(Icons.translate_outlined),
-                  title: Text('其他语言（${group.otherLanguages.length}）'),
-                  subtitle: Text(
-                    group.otherLanguages
-                        .map((source) => source.descriptor.language)
-                        .join('、'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  children: <Widget>[
-                    for (final source in group.otherLanguages)
-                      _sourceTile(source, nested: true),
-                  ],
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final nativeSources = _sources
-        .where(
-          (source) =>
-              !source.sourceId.startsWith('mihon:') &&
-              !source.sourceId.startsWith('venera:'),
-        )
-        .toList(growable: false);
-    final mihonSources = _sources
-        .where((source) => source.sourceId.startsWith('mihon:'))
-        .toList(growable: false);
-    final veneraSources = _sources
-        .where((source) => source.sourceId.startsWith('venera:'))
-        .toList(growable: false);
+    final entries = _buildManagementEntries(context);
 
     return Scaffold(
       key: sourceManagementScreenKey,
@@ -3265,36 +3434,14 @@ final class _SourceManagementScreenState
               children: <Widget>[
                 _sectionHeader(
                   context,
-                  title: '原生',
-                  icon: Icons.apps_outlined,
-                  count: nativeSources.length,
+                  title: '漫画源 · 长按拖动排序',
+                  icon: Icons.low_priority_outlined,
+                  count: entries.length,
                 ),
-                if (nativeSources.isEmpty)
-                  const ListTile(title: Text('没有原生漫画源'))
+                if (entries.isEmpty)
+                  const ListTile(title: Text('没有可用漫画源'))
                 else
-                  _reorderableSourceList(nativeSources),
-                const Divider(height: 1),
-                _sectionHeader(
-                  context,
-                  title: 'Mihon',
-                  icon: Icons.extension_outlined,
-                  count: mihonSources.length,
-                ),
-                if (mihonSources.isEmpty)
-                  const ListTile(title: Text('没有已启用的 Mihon 漫画源'))
-                else
-                  _mihonSourceList(context),
-                const Divider(height: 1),
-                _sectionHeader(
-                  context,
-                  title: 'Venera',
-                  icon: Icons.javascript_outlined,
-                  count: veneraSources.length,
-                ),
-                if (veneraSources.isEmpty)
-                  const ListTile(title: Text('没有已启用的 Venera 漫画源'))
-                else
-                  _reorderableSourceList(veneraSources),
+                  _managementList(context),
               ],
             ),
           ),
@@ -3324,6 +3471,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     required this.downloadChanges,
     required this.onDownloadComic,
     this.inspectChapterDownloads,
+    this.inspectComicConflicts,
     this.artworkIdentity,
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
@@ -3356,6 +3504,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final details.ComicDetailsChapterDownloadInspector inspectChapterDownload;
   final details.ComicDetailsChapterDownloadBulkInspector?
       inspectChapterDownloads;
+  final details.ComicDetailsConflictInspector? inspectComicConflicts;
   final Stream<ChapterDownloadSnapshot> downloadChanges;
   final details.ComicDetailsComicDownloader onDownloadComic;
   final String? artworkIdentity;
@@ -3389,6 +3538,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       onDeleteChapter: onDeleteChapter,
       inspectChapterDownload: inspectChapterDownload,
       inspectChapterDownloads: inspectChapterDownloads,
+      inspectComicConflicts: inspectComicConflicts,
       downloadChanges: downloadChanges,
       onDownloadComic: onDownloadComic,
       artworkIdentity: artworkIdentity,

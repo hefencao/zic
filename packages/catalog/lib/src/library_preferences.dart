@@ -1,13 +1,13 @@
 enum ComicSourceKind { local, remote }
 
 enum LibrarySortMode { recent, title, pageCount, custom }
-
 final class ComicSourcePreference {
   const ComicSourcePreference({
     required this.sourceId,
     required this.enabled,
     required this.sortOrder,
     required this.updatedAt,
+    this.lastEnabledAt,
   });
 
   factory ComicSourcePreference.defaults({
@@ -25,15 +25,23 @@ final class ComicSourcePreference {
   final int sortOrder;
   final DateTime updatedAt;
 
+  /// When this source was last explicitly enabled. Multi-language Mihon
+  /// extensions use it so the most recently enabled variant represents the
+  /// plugin family; `null` means the source was never toggled.
+  final DateTime? lastEnabledAt;
+
   ComicSourcePreference copyWith({
     bool? enabled,
     int? sortOrder,
     DateTime? updatedAt,
-  }) => ComicSourcePreference(
+    DateTime? lastEnabledAt,
+  }) =>
+      ComicSourcePreference(
         sourceId: sourceId,
         enabled: enabled ?? this.enabled,
         sortOrder: sortOrder ?? this.sortOrder,
         updatedAt: (updatedAt ?? this.updatedAt).toUtc(),
+        lastEnabledAt: lastEnabledAt ?? this.lastEnabledAt,
       );
 
   Map<String, Object> toJson() => <String, Object>{
@@ -41,6 +49,8 @@ final class ComicSourcePreference {
         'enabled': enabled,
         'sortOrder': sortOrder,
         'updatedAt': updatedAt.toUtc().toIso8601String(),
+        if (lastEnabledAt != null)
+          'lastEnabledAt': lastEnabledAt!.toUtc().toIso8601String(),
       };
 
   factory ComicSourcePreference.fromJson(Map<String, Object?> json) =>
@@ -49,7 +59,13 @@ final class ComicSourcePreference {
         enabled: _requiredBool(json, 'enabled'),
         sortOrder: _requiredInt(json, 'sortOrder'),
         updatedAt: DateTime.parse(_requiredString(json, 'updatedAt')),
+        lastEnabledAt: _optionalDateTime(json['lastEnabledAt']),
       );
+}
+
+DateTime? _optionalDateTime(Object? raw) {
+  if (raw is! String || raw.trim().isEmpty) return null;
+  return DateTime.parse(raw);
 }
 
 final class LibraryCategory {

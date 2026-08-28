@@ -5,6 +5,19 @@ export 'package:transport/transport.dart' show ByteResponse, ByteResponseFlowCon
 export 'src/artifact_cache_reuse.dart';
 export 'src/artifact_cache_manager.dart';
 export 'src/artifact_cache_read_scheduler.dart';
+export 'src/artifact_bytes.dart'
+    show
+        ArtifactBytes,
+        CompositeArtifactBytes,
+        LocalArtifactBytes,
+        SafArtifactBytes,
+        SafTreeIo,
+        SafTreeFile,
+        SafWriteMode,
+        copyFileIntoSaf,
+        encodeSafRecordPath,
+        parseSafRecordPath,
+        sniffImageExtension;
 export 'src/artifact_cache_store.dart';
 export 'src/artifact_cache_transport.dart';
 export 'src/composition_download_transfer_runtime.dart';
@@ -13,6 +26,7 @@ export 'src/partial_download_handoff.dart';
 export 'src/partial_download_store.dart';
 export 'src/reader_page_identity.dart';
 
+export 'src/comic_conflict_inspector.dart';
 export 'src/chapter_downloads.dart';
 export 'src/whole_comic_downloads.dart';
 

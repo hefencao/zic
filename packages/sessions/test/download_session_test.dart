@@ -917,6 +917,34 @@ void main() {
     expect(session.firstFrameRequiredPrefixBytes, 0);
     expect(session.decodedPrefixFrames, 0);
   });
+  test('registry layoutResolver routes new artifacts to per-source roots', () {
+      final clock = FakeMonoClock();
+      final defaultLayout = CacheLayout('/tmp/registry-resolver-default');
+      final customLayout = CacheLayout('/tmp/registry-resolver-custom');
+      final downloads = DownloadRegistry(
+        layout: defaultLayout,
+        clock: clock,
+        layoutResolver: (id) =>
+            id.content.sourceId == 'venera:custom' ? customLayout : null,
+      );
+      addTearDown(downloads.dispose);
+
+      final customSession = downloads.get(_idWithSource('venera:custom'));
+      final defaultSession = downloads.get(_id());
+
+      expect(customSession.artifact.partialPath,
+          startsWith(customLayout.partialDir));
+      expect(customSession.artifact.finalPath, startsWith(customLayout.finalDir));
+      expect(defaultSession.artifact.partialPath,
+          startsWith(defaultLayout.partialDir));
+      expect(defaultSession.artifact.finalPath, startsWith(defaultLayout.finalDir));
+      // Session identity stays derived from the download identity, not the
+      // physical root.
+      expect(
+        downloads.find(customSession.id)!.sessionId,
+        'download:${defaultLayout.tokenFor(customSession.id)}',
+      );
+    });
 }
 
 DownloadId _id() => DownloadId(
@@ -930,6 +958,16 @@ DownloadId _id() => DownloadId(
       canonicalUri: Uri.parse('https://example.test/page.webp'),
     );
 
+DownloadId _idWithSource(String sourceId) => DownloadId(
+      content: ContentId(
+        sourceId: sourceId,
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/page.webp'),
+    );
 
 final class _TestSourceFactory implements SourceFactory {
   @override

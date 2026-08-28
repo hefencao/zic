@@ -405,7 +405,27 @@ final class _RecordingDownloads
       const <ChapterDownloadSnapshot>[];
 
   @override
+  Future<List<ImportedLibraryEntry>> discoverOrphanedEntries(
+    Iterable<ImportedLibraryEntry> knownEntries,
+  ) async =>
+      const <ImportedLibraryEntry>[];
+
+  @override
   Future<bool> isDownloaded(ImportedLibraryEntry entry) async => false;
+
+  @override
+  Future<ComicConflictReport> inspectComicConflicts({
+    required String sourceId,
+    String? sourceDisplayName,
+    required String comicId,
+    required String comicTitle,
+  }) async =>
+      ComicConflictReport(
+        candidates: const <ComicFolderCandidate>[],
+        hasDirectExactMatch: false,
+        hasTitleConflicts: false,
+        recommendedDirectoryName: comicTitle,
+      );
 
   @override
   Future<Uint8List> readPage(ImportedLibraryEntry entry, int pageIndex) =>

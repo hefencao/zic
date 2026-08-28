@@ -7,10 +7,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:reader/reader.dart';
 import 'package:resource_cache/resource_cache.dart';
+import 'startup_platform.dart';
+import 'package:storage_bridge/storage_bridge.dart';
 
 import 'dialog_actions.dart';
 
 import 'app_preferences.dart';
+import 'directory_picker.dart';
 
 const settingsScreenKey = ValueKey<String>('settings-screen');
 const settingsDataEntryKey = ValueKey<String>('settings-data-entry');
@@ -33,6 +36,8 @@ const appearanceAmoledKey = ValueKey<String>('appearance-amoled');
 const dataBackupExportKey = ValueKey<String>('data-backup-export');
 const dataCacheClearKey = ValueKey<String>('data-cache-clear');
 const dataCacheRefreshKey = ValueKey<String>('data-cache-refresh');
+const dataDownloadDirectoryKey = ValueKey<String>('data-download-directory');
+const dataCacheLimitKey = ValueKey<String>('data-cache-limit');
 const readingAdaptiveKey = ValueKey<String>('reading-adaptive');
 const readingVerticalStitchKey =
     ValueKey<String>('reading-vertical-stitch');
@@ -64,6 +69,7 @@ final class SettingsScreen extends StatelessWidget {
     required this.cacheCoordinator,
     required this.exportBackup,
     this.storageRoot,
+    this.onChangeChapterDownloadDirectory,
     super.key,
   });
 
@@ -72,6 +78,10 @@ final class SettingsScreen extends StatelessWidget {
   final ResourceCacheCoordinator cacheCoordinator;
   final Future<String?> Function() exportBackup;
   final String? storageRoot;
+  final Future<String?> Function({
+    String? directory,
+    required bool migrateFiles,
+  })? onChangeChapterDownloadDirectory;
 
   @override
   Widget build(BuildContext context) {
@@ -89,9 +99,12 @@ final class SettingsScreen extends StatelessWidget {
             onTap: () => _push(
               context,
               DataSettingsScreen(
+                preferences: preferences,
                 storageRoot: storageRoot,
                 cacheCoordinator: cacheCoordinator,
                 exportBackup: exportBackup,
+                onChangeChapterDownloadDirectory:
+                    onChangeChapterDownloadDirectory,
               ),
             ),
           ),
@@ -164,15 +177,22 @@ final class SettingsScreen extends StatelessWidget {
 
 final class DataSettingsScreen extends StatefulWidget {
   const DataSettingsScreen({
+    required this.preferences,
     required this.cacheCoordinator,
     required this.exportBackup,
     this.storageRoot,
+    this.onChangeChapterDownloadDirectory,
     super.key,
   });
 
+  final AppPreferencesController preferences;
   final String? storageRoot;
   final ResourceCacheCoordinator cacheCoordinator;
   final Future<String?> Function() exportBackup;
+  final Future<String?> Function({
+    String? directory,
+    required bool migrateFiles,
+  })? onChangeChapterDownloadDirectory;
 
   @override
   State<DataSettingsScreen> createState() => _DataSettingsScreenState();
@@ -182,6 +202,7 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen> {
   ResourceCacheUsage? _usage;
   Object? _failure;
   bool _busy = false;
+  bool _changingDownloadDirectory = false;
 
   @override
   void initState() {
@@ -268,79 +289,413 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen> {
     }
   }
 
+  String? get _effectiveDownloadDirectory {
+    final root = widget.storageRoot;
+    if (root == null) return null;
+    final override = widget.preferences.chapterDownloadDirectoryOverride;
+    return override ?? defaultChapterDownloadDirectory(root);
+  }
+
+  /// One-row download-directory setting: the tile itself shows the effective
+  /// path and opens the picker; unlike Venera there is no second display row.
+  Future<void> _changeDownloadDirectory() async {
+    if (_changingDownloadDirectory) return;
+    if (widget.onChangeChapterDownloadDirectory == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('下载服务尚未就绪，请稍后重试')),
+      );
+      return;
+    }
+    final messenger = ScaffoldMessenger.of(context);
+    String? picked;
+    try {
+      picked = await pickDirectory();
+    } on Object catch (error) {
+      debugPrint('directory picker failed: $error');
+      messenger.showSnackBar(
+        SnackBar(content: Text('无法打开目录选择器：$error')),
+      );
+      return;
+    }
+    if (!mounted || picked == null || picked.isEmpty) return;
+    // SAF trees bypass the Venera old/new-file rules entirely: the tree IS
+    // the store root, nothing needs creating, and writability comes from the
+    // persisted document-tree grant rather than a POSIX probe.
+    final safPicked = picked.startsWith('content://')
+        ? 'saf://$picked'
+        : null;
+    String target;
+    if (safPicked != null) {
+      target = safPicked;
+    } else if (picked.startsWith('saf://')) {
+      target = picked;
+    } else {
+      try {
+        // The preview must not create anything on disk — a cancelled dialog
+        // would otherwise leave empty offline_chapters(N) directories.
+        target = await resolveChapterDownloadDirectory(picked, create: false);
+      } on Object catch (error) {
+        debugPrint('download directory resolve failed: $error');
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法使用所选目录')),
+        );
+        return;
+      }
+    }
+    if (!mounted) return;
+    final migrate = await _confirmDownloadDirectoryChange(target);
+    if (!mounted || migrate == null) return;
+    await _applyDownloadDirectoryChange(
+      directory: picked,
+      migrateFiles: migrate,
+      successMessage: '下载目录已更新',
+    );
+  }
+
+  /// Trailing reset control: restores the in-app default store location by
+  /// reusing the same confirmation + move flow as an explicit change.
+  Future<void> _resetDownloadDirectory() async {
+    if (_changingDownloadDirectory) return;
+    final root = widget.storageRoot;
+    if (widget.onChangeChapterDownloadDirectory == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('下载服务尚未就绪，请稍后重试')),
+      );
+      return;
+    }
+    if (root == null) return;
+    final target = defaultChapterDownloadDirectory(root);
+    final migrate = await _confirmDownloadDirectoryChange(
+      target,
+      title: '重置默认下载目录',
+    );
+    if (!mounted || migrate == null) return;
+    await _applyDownloadDirectoryChange(
+      directory: null,
+      migrateFiles: migrate,
+      successMessage: '已恢复默认下载目录',
+    );
+  }
+
+  Future<void> _applyDownloadDirectoryChange({
+    required String? directory,
+    required bool migrateFiles,
+    required String successMessage,
+  }) async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _changingDownloadDirectory = true);
+    String? failure;
+    try {
+      failure = await widget.onChangeChapterDownloadDirectory!(
+        directory: directory,
+        migrateFiles: migrateFiles,
+      );
+      // Scoped storage rejects POSIX writes on shared storage until the user
+      // grants All-files-access. Offer the system toggle once, then retry the
+      // exact same change after they return.
+      if (failure != null && failure.contains('所选目录不可写')) {
+        final granted = await _offerAllFilesAccess();
+        if (granted) {
+          failure = await widget.onChangeChapterDownloadDirectory!(
+            directory: directory,
+            migrateFiles: migrateFiles,
+          );
+        }
+      }
+    } finally {
+      if (mounted) setState(() => _changingDownloadDirectory = false);
+    }
+    messenger.showSnackBar(
+      SnackBar(content: Text(failure ?? successMessage)),
+    );
+    if (failure == null && mounted) {
+      await _refreshUsage();
+    }
+  }
+
+  /// Shows the storage-permission guide. Returns true when the user chose to
+  /// open the system page (and has now returned), signalling a retry.
+  /// [manualOnly] skips the retry signal — used when there is no pending
+  /// change to re-apply and the user should simply pick again.
+  Future<bool> _offerAllFilesAccess({bool manualOnly = false}) async {
+    final retry = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('需要"所有文件访问"权限'),
+        content: const Text(
+          '所选目录位于共享存储或 SD 卡，Android 11+ 默认禁止应用直接写入文件。'
+          '授予"所有文件访问"后即可把下载目录设到这里。\n\n'
+          '点击"去授权"跳转系统开关，开启后返回本页会自动重试。',
+        ),
+        actions: <Widget>[
+          AppDialogActions(
+            onClose: () => Navigator.pop(dialogContext, false),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('去授权'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    if (retry != true) {
+      return false;
+    }
+    return openAllFilesAccessSettings();
+  }
+
+  /// Returns whether to migrate files (null = cancelled).
+  Future<bool?> _confirmDownloadDirectoryChange(
+    String target, {
+    String title = '设置默认下载目录',
+  }) {
+    final isSaf = target.startsWith('saf://');
+    var migrate = !isSaf;
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: Text(title),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(target),
+              const SizedBox(height: 8),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('迁移已下载文件'),
+                subtitle: Text(
+                  isSaf
+                      ? 'SAF 目录暂不支持跨存储方案自动搬运文件；旧下载将保留在原目录。'
+                      : '索引与文件一起移动；不迁移时旧下载保留在原目录，'
+                          '应用内会显示为未下载。',
+                ),
+                value: isSaf ? false : migrate,
+                onChanged: isSaf
+                    ? null
+                    : (value) =>
+                        setDialogState(() => migrate = value ?? false),
+              ),
+            ],
+          ),
+          actions: <Widget>[
+            AppDialogActions(
+              onClose: () => Navigator.pop(dialogContext, null),
+              actions: <Widget>[
+                FilledButton(
+                  onPressed: () =>
+                      Navigator.pop(dialogContext, isSaf ? false : migrate),
+                  child: const Text('设置'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editCacheLimit() async {
+    final controller = TextEditingController(
+      text: '${widget.preferences.cacheLimitMb}',
+    );
+    final confirmed = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('设置缓存上限'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          inputFormatters: <TextInputFormatter>[
+            FilteringTextInputFormatter.digitsOnly,
+          ],
+          decoration: const InputDecoration(
+            labelText: '大小（MB）',
+            helperText:
+                '范围 $minCacheLimitMb–$maxCacheLimitMb MB；超过后自动清理最久未用的页面缓存。',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: <Widget>[
+          AppDialogActions(
+            onClose: () => Navigator.pop(dialogContext, null),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () {
+                  final value = int.tryParse(controller.text);
+                  Navigator.pop(
+                    dialogContext,
+                    value?.clamp(0, 1 << 30).toInt(),
+                  );
+                },
+                child: const Text('设置'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (!mounted || confirmed == null) return;
+    setState(() => _busy = true);
+    try {
+      widget.preferences.setCacheLimitMb(confirmed);
+      widget.cacheCoordinator.updateMaintenancePolicy(
+        ResourceCacheMaintenancePolicy.forArtifactLimitBytes(
+          widget.preferences.cacheLimitMb * 1024 * 1024,
+        ),
+      );
+      // Enforce the new limit immediately instead of waiting for the next
+      // scheduled maintenance pass.
+      final report = await widget.cacheCoordinator.trim();
+      await _refreshUsageQuietly();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            report.totalReleasedBytes > 0
+                ? '缓存上限已设为 ${widget.preferences.cacheLimitMb} MB，'
+                    '已释放 ${_formatBytes(report.totalReleasedBytes)}'
+                : '缓存上限已设为 ${widget.preferences.cacheLimitMb} MB',
+          ),
+        ),
+      );
+    } on Object catch (error) {
+      if (mounted) setState(() => _failure = error);
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _refreshUsageQuietly() async {
+    try {
+      final usage = await widget.cacheCoordinator.inspect();
+      if (mounted) setState(() => _usage = usage);
+    } on Object catch (error) {
+      if (mounted) setState(() => _failure = error);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final root = widget.storageRoot;
+    final downloadDirectory = _effectiveDownloadDirectory;
     return Scaffold(
       key: dataSettingsScreenKey,
       appBar: AppBar(title: const Text('数据')),
-      body: ListView(
-        padding: const EdgeInsets.only(bottom: 24),
-        children: <Widget>[
-          const _SettingsSectionTitle('目录'),
-          _DirectoryTile(
-            title: '应用数据目录',
-            path: root,
-          ),
-          _DirectoryTile(
-            title: '章节下载目录',
-            path: root == null ? null : '$root/offline_chapters',
-          ),
-          _DirectoryTile(
-            title: '响应缓存目录',
-            path: root == null ? null : '$root/resource_cache/responses',
-          ),
-          _DirectoryTile(
-            title: '插件数据目录',
-            path: root == null ? null : '$root/external_plugins',
-          ),
-          const Padding(
-            padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
-            child: Text('目录迁移必须同时迁移索引与 artifact，不允许只改字符串路径。'),
-          ),
-          const Divider(),
-          const _SettingsSectionTitle('备份'),
-          ListTile(
-            key: dataBackupExportKey,
-            enabled: !_busy,
-            leading: const Icon(Icons.backup_outlined),
-            title: const Text('导出数据备份'),
-            subtitle: const Text('导出漫画、章节、进度、书架分类与来源偏好；不复制缓存字节。'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: _busy ? null : _exportBackup,
-          ),
-          const Divider(),
-          const _SettingsSectionTitle('缓存'),
-          ListTile(
-            title: const Text('当前缓存'),
-            subtitle: Text(
-              _failure != null
-                  ? '读取失败：$_failure'
-                  : _usage == null
-                      ? '正在读取…'
-                      : '${_formatBytes(_usage!.totalBytes)} · ${_usage!.totalEntries} 项',
+      body: AnimatedBuilder(
+        animation: widget.preferences,
+        builder: (context, _) => ListView(
+          padding: const EdgeInsets.only(bottom: 24),
+          children: <Widget>[
+            const _SettingsSectionTitle('目录'),
+            _DirectoryTile(
+              title: '应用数据目录',
+              path: root,
             ),
-            trailing: IconButton(
-              key: dataCacheRefreshKey,
-              tooltip: '刷新缓存统计',
-              onPressed: _busy ? null : _refreshUsage,
-              icon: _busy
+            ListTile(
+              key: dataDownloadDirectoryKey,
+              enabled: !_changingDownloadDirectory,
+              leading: const Icon(Icons.folder_special_outlined),
+              title: const Text('默认下载目录'),
+              subtitle: Text(
+                downloadDirectory == null
+                    ? '当前使用内存服务'
+                    : widget.onChangeChapterDownloadDirectory == null
+                        ? '$downloadDirectory\n下载服务未运行，下载不会写入磁盘'
+                        : downloadDirectory,
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: _changingDownloadDirectory
                   ? const SizedBox.square(
                       dimension: 20,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.refresh),
+                  : widget.preferences.chapterDownloadDirectoryOverride != null
+                      ? TextButton(
+                          onPressed: _resetDownloadDirectory,
+                          child: const Text('重置默认'),
+                        )
+                      : const Icon(Icons.edit_outlined),
+              onTap: _changeDownloadDirectory,
             ),
-          ),
-          ListTile(
-            key: dataCacheClearKey,
-            enabled: !_busy,
-            leading: const Icon(Icons.cleaning_services_outlined),
-            title: const Text('清理缓存'),
-            subtitle: const Text('通过统一缓存协调器清理，不直接遍历或删除 Reader 文件。'),
-            onTap: _busy ? null : _clearCache,
-          ),
-        ],
+            _DirectoryTile(
+              title: '响应缓存目录',
+              path: root == null ? null : '$root/resource_cache/responses',
+            ),
+            _DirectoryTile(
+              title: '插件数据目录',
+              path: root == null ? null : '$root/external_plugins',
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: Text(
+                '更改下载目录时索引与文件一起迁移；'
+                '不允许只改字符串路径。',
+              ),
+            ),
+            const Divider(),
+            const _SettingsSectionTitle('备份'),
+            ListTile(
+              key: dataBackupExportKey,
+              enabled: !_busy,
+              leading: const Icon(Icons.backup_outlined),
+              title: const Text('导出数据备份'),
+              subtitle: const Text('导出漫画、章节、进度、书架分类与来源偏好；不复制缓存字节。'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _busy ? null : _exportBackup,
+            ),
+            const Divider(),
+            const _SettingsSectionTitle('缓存'),
+            ListTile(
+              title: const Text('当前缓存'),
+              subtitle: Text(
+                _failure != null
+                    ? '读取失败：$_failure'
+                    : _usage == null
+                        ? '正在读取…'
+                        : '${_formatBytes(_usage!.totalBytes)} · ${_usage!.totalEntries} 项',
+              ),
+              trailing: IconButton(
+                key: dataCacheRefreshKey,
+                tooltip: '刷新缓存统计',
+                onPressed: _busy ? null : _refreshUsage,
+                icon: _busy
+                    ? const SizedBox.square(
+                        dimension: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.refresh),
+              ),
+            ),
+            ListTile(
+              key: dataCacheLimitKey,
+              enabled: !_busy && root != null,
+              leading: const Icon(Icons.speed_outlined),
+              title: const Text('缓存上限'),
+              subtitle: Text(
+                '${widget.preferences.cacheLimitMb} MB · '
+                '超出后自动清理最久未使用的页面缓存',
+              ),
+              trailing: const Icon(Icons.edit_outlined),
+              onTap: _busy ? null : _editCacheLimit,
+            ),
+            ListTile(
+              key: dataCacheClearKey,
+              enabled: !_busy,
+              leading: const Icon(Icons.cleaning_services_outlined),
+              title: const Text('清理缓存'),
+              subtitle: const Text('通过统一缓存协调器清理，不直接遍历或删除 Reader 文件。'),
+              onTap: _busy ? null : _clearCache,
+            ),
+          ],
+        ),
       ),
     );
   }

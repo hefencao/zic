@@ -4,9 +4,13 @@ import 'package:catalog/catalog.dart';
 import 'package:flutter/material.dart';
 import 'package:plugin_host/plugin_host.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
+import 'package:storage_bridge/storage_bridge.dart';
 
 import 'dialog_actions.dart';
 import 'external_plugin_repository_model.dart';
+import 'app_preferences.dart';
+import 'directory_picker.dart';
+import 'venera_plugin_editor_screen.dart';
 
 enum _ExternalPluginPage { installed, repository }
 
@@ -22,12 +26,19 @@ final class ExternalPluginRepositoryScreen extends StatefulWidget {
     required this.format,
     required this.controller,
     required this.onSourcesChanged,
+    this.preferences,
     super.key,
   });
 
   final ExternalComicPluginFormat format;
   final ExternalPluginController controller;
   final Future<void> Function() onSourcesChanged;
+
+  /// Application preferences owning the per-source download directory map.
+  ///
+  /// When absent, the per-plugin download directory row stays hidden and the
+  /// rest of the management screen keeps working (widget-only harnesses).
+  final AppPreferencesController? preferences;
 
   @override
   State<ExternalPluginRepositoryScreen> createState() =>
@@ -46,6 +57,10 @@ final class _ExternalPluginRepositoryScreenState
   );
   List<ExternalComicPluginCatalogEntry> _entries =
       const <ExternalComicPluginCatalogEntry>[];
+  Map<String, ExternalComicPluginCatalogEntry> _updates =
+      const <String, ExternalComicPluginCatalogEntry>{};
+  bool _remindedUpdates = false;
+  bool _checkingUpdates = false;
   final Set<String> _working = <String>{};
   StreamSubscription<void>? _controllerChanges;
   _ExternalPluginPage _page = _ExternalPluginPage.installed;
@@ -88,6 +103,7 @@ final class _ExternalPluginRepositoryScreenState
       if (mounted) setState(() {});
     });
     _deviceError = widget.controller.deviceMihonDiscoveryError;
+    scheduleMicrotask(_checkUpdates);
     if (widget.format == ExternalComicPluginFormat.mihonExtension) {
       scheduleMicrotask(_loadRepository);
     }
@@ -144,14 +160,82 @@ final class _ExternalPluginRepositoryScreenState
     }
   }
 
-  Future<void> _install(ExternalComicPluginCatalogEntry plugin) async {
+  Map<String, ExternalComicPluginCatalogEntry> get _installedEntries =>
+      <String, ExternalComicPluginCatalogEntry>{
+        for (final item in widget.controller.installed)
+          item.plugin.pluginId: item.plugin,
+      };
+
+  /// Update reminder: installed plugins are compared against every trusted
+  /// repository origin they were installed from. One reminder dialog per
+  /// screen visit; badges stay visible afterwards.
+  Future<void> _checkUpdates() async {
+    if (_checkingUpdates) return;
+    setState(() => _checkingUpdates = true);
+    try {
+      final updates = await widget.controller.checkUpdates(
+        format: widget.format,
+      );
+      if (!mounted) return;
+      setState(() => _updates = updates);
+      if (updates.isEmpty || _remindedUpdates) return;
+      _remindedUpdates = true;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text('发现 ${updates.length} 个插件更新'),
+          content: SizedBox(
+            width: 420,
+            child: ListView(
+              shrinkWrap: true,
+              children: <Widget>[
+                for (final entry in updates.values)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading:
+                        const Icon(Icons.system_update_alt_outlined),
+                    title: Text(entry.name),
+                    subtitle: Text('新版本 v${entry.version}'),
+                  ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            AppDialogActions(
+              onClose: () => Navigator.pop(context),
+              actions: <Widget>[
+                FilledButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    setState(() => _page = _ExternalPluginPage.repository);
+                  },
+                  child: const Text('前往更新'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    } on Object catch (error) {
+      debugPrint('plugin update check failed: $error');
+    } finally {
+      if (mounted) setState(() => _checkingUpdates = false);
+    }
+  }
+
+  Future<void> _install(
+    ExternalComicPluginCatalogEntry plugin, {
+    Uri? repository,
+  }) async {
     if (!_working.add(plugin.pluginId)) return;
     setState(() {});
     try {
-      final repository = Uri.parse(_url.text.trim());
+      final effectiveRepository =
+          repository ?? Uri.parse(_url.text.trim());
       final preview = await widget.controller.inspect(
         plugin: plugin,
-        repository: repository,
+        repository: effectiveRepository,
       );
       if (!mounted) {
         await widget.controller.discardPreview(preview);
@@ -172,6 +256,7 @@ final class _ExternalPluginRepositoryScreenState
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${plugin.name} 已启用')),
       );
+      unawaited(_checkUpdates());
       setState(() {});
     } on Object catch (error) {
       if (mounted) await _showOperationError('无法启用 ${plugin.name}', error);
@@ -179,6 +264,127 @@ final class _ExternalPluginRepositoryScreenState
       _working.remove(plugin.pluginId);
       if (mounted) setState(() {});
     }
+  }
+
+  Future<void> _updateFromInstalled(InstalledExternalPlugin installed) async {
+    final entry = _updates[installed.plugin.pluginId];
+    if (entry == null) return;
+    final repository = Uri.tryParse(installed.repositoryOrigin);
+    if (repository == null) return;
+    await _install(entry, repository: repository);
+  }
+
+  Future<void> _editVeneraJavaScript(
+    InstalledExternalPlugin installed,
+  ) async {
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => VeneraPluginEditorScreen(
+          controller: widget.controller,
+          installed: installed,
+        ),
+      ),
+    );
+    if (changed == true) {
+      await widget.onSourcesChanged();
+    }
+  }
+
+  Set<String> _pluginSourceIds(InstalledExternalPlugin item) =>
+      <String>{
+        for (final source in item.plugin.sources) source.sourceId,
+        // Source identities discovered at the last successful activation.
+        // Device-imported Mihon extensions only expose them here and through
+        // the runtime, never through repository metadata.
+        ...item.sourceIds,
+        if (item.plugin.format == ExternalComicPluginFormat.veneraJavaScript &&
+            item.sourceKey != null &&
+            item.sourceKey!.trim().isNotEmpty)
+          'venera:${item.sourceKey}',
+      };
+
+  String? _pluginDownloadDirectory(InstalledExternalPlugin item) {
+    final preferences = widget.preferences;
+    if (preferences == null) return null;
+    for (final sourceId in _pluginSourceIds(item)) {
+      final directory = preferences.sourceDownloadDirectoryFor(sourceId);
+      if (directory != null) return directory;
+    }
+    return null;
+  }
+
+  /// Per-plugin download directory: one row per plugin; the choice applies to
+  /// every external source the plugin exposes and only steers where NEW
+  /// downloads are written. Existing bytes stay at their recorded location.
+  Future<void> _changePluginDownloadDirectory(
+    InstalledExternalPlugin item,
+  ) async {
+    final preferences = widget.preferences;
+    if (preferences == null) return;
+    final sourceIds = _pluginSourceIds(item);
+    if (sourceIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            '该插件尚未成功加载来源，无法确定下载目录作用范围；'
+            '请先重新加载插件后再设置。',
+          ),
+        ),
+      );
+      return;
+    }
+    final current = _pluginDownloadDirectory(item);
+    final decision = await showDialog<_DownloadDirectoryDecision>(
+      context: context,
+      builder: (dialogContext) => _PluginDownloadDirectoryDialog(
+        pluginName: item.plugin.name,
+        currentDirectory: current,
+      ),
+    );
+    if (!mounted || decision == null) return;
+    String? target = decision.directory;
+    if (!decision.restoreDefault && target == null) return;
+    if (decision.restoreDefault) {
+      target = null;
+    } else {
+      if (target!.startsWith('saf://')) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('单插件独立目录仅支持本地文件夹；如需使用 SAF 请设置全局默认下载目录'),
+          ),
+        );
+        return;
+      }
+      try {
+        target = await resolveChapterDownloadDirectory(target);
+        // Same scoped-storage probe as the global setting: a directory
+        // that lists fine but rejects file writes must fail here, not
+        // silently degrade every download of this plugin later.
+        await probeChapterDownloadDirectoryWritable(target);
+      } on Object catch (error) {
+        debugPrint('download directory resolve failed: $error');
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('无法使用所选目录：$error')),
+        );
+        return;
+      }
+    }
+    for (final sourceId in sourceIds) {
+      preferences.setSourceDownloadDirectory(sourceId, target);
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          decision.restoreDefault
+              ? '${item.plugin.name} 已恢复默认下载目录'
+              : '新下载将写入：$target',
+        ),
+      ),
+    );
+    setState(() {});
   }
 
   Future<void> _remove(InstalledExternalPlugin installed) async {
@@ -325,6 +531,7 @@ final class _ExternalPluginRepositoryScreenState
                   format: widget.format,
                   ecosystem: _ecosystem,
                   installed: _installed,
+                  updates: _updates,
                   deviceMihonExtensions:
                       widget.controller.deviceMihonExtensions,
                   deviceMihonScan: widget.controller.deviceMihonScan,
@@ -351,12 +558,20 @@ final class _ExternalPluginRepositoryScreenState
                   },
                   onRefreshDeviceMihon: () =>
                       unawaited(_refreshDeviceMihon()),
+                  onUpdate: (installed) =>
+                      unawaited(_updateFromInstalled(installed)),
+                  onEditJavaScript: (installed) =>
+                      unawaited(_editVeneraJavaScript(installed)),
+                  downloadDirectoryOf: _pluginDownloadDirectory,
+                  onChangeDownloadDirectory: (installed) => unawaited(
+                    _changePluginDownloadDirectory(installed),
+                  ),
                 ),
               _ExternalPluginPage.repository => _RepositoryPane(
                   format: widget.format,
                   url: _url,
                   entries: _entries,
-                  installedPluginIds: _installedPluginIds,
+                  installedEntries: _installedEntries,
                   working: _working,
                   loading: _loadingRepository,
                   error: _repositoryError,
@@ -380,6 +595,7 @@ final class _InstalledPluginsPane extends StatelessWidget {
     required this.format,
     required this.ecosystem,
     required this.installed,
+    required this.updates,
     required this.deviceMihonExtensions,
     required this.deviceMihonScan,
     required this.installedPluginIds,
@@ -395,11 +611,16 @@ final class _InstalledPluginsPane extends StatelessWidget {
     required this.selectedLanguage,
     required this.onLanguageSelected,
     required this.onRefreshDeviceMihon,
+    required this.onUpdate,
+    required this.onEditJavaScript,
+    required this.downloadDirectoryOf,
+    required this.onChangeDownloadDirectory,
   });
 
   final ExternalComicPluginFormat format;
   final String ecosystem;
   final List<InstalledExternalPlugin> installed;
+  final Map<String, ExternalComicPluginCatalogEntry> updates;
   final List<InstalledMihonExtension> deviceMihonExtensions;
   final InstalledMihonScan deviceMihonScan;
   final Set<String> installedPluginIds;
@@ -415,6 +636,10 @@ final class _InstalledPluginsPane extends StatelessWidget {
   final String selectedLanguage;
   final ValueChanged<String> onLanguageSelected;
   final VoidCallback onRefreshDeviceMihon;
+  final ValueChanged<InstalledExternalPlugin> onUpdate;
+  final ValueChanged<InstalledExternalPlugin> onEditJavaScript;
+  final String? Function(InstalledExternalPlugin) downloadDirectoryOf;
+  final ValueChanged<InstalledExternalPlugin> onChangeDownloadDirectory;
 
   @override
   Widget build(BuildContext context) {
@@ -502,8 +727,16 @@ final class _InstalledPluginsPane extends StatelessWidget {
               failure: activationFailures[item.plugin.pluginId],
               retryable: retryablePluginIds.contains(item.plugin.pluginId),
               busy: working.contains(item.plugin.pluginId),
+              update: updates[item.plugin.pluginId],
               onRemove: onRemove,
               onRetry: onRetry,
+              onUpdate: onUpdate,
+              onEditJavaScript:
+                  format == ExternalComicPluginFormat.veneraJavaScript
+                      ? onEditJavaScript
+                      : null,
+              downloadDirectory: downloadDirectoryOf(item),
+              onChangeDownloadDirectory: onChangeDownloadDirectory,
             ),
             const Divider(height: 1),
           ],
@@ -519,16 +752,26 @@ final class _InstalledPluginTile extends StatelessWidget {
     required this.failure,
     required this.retryable,
     required this.busy,
+    required this.update,
     required this.onRemove,
     required this.onRetry,
+    required this.onUpdate,
+    required this.onEditJavaScript,
+    required this.downloadDirectory,
+    required this.onChangeDownloadDirectory,
   });
 
   final InstalledExternalPlugin item;
   final Object? failure;
   final bool retryable;
   final bool busy;
+  final ExternalComicPluginCatalogEntry? update;
   final ValueChanged<InstalledExternalPlugin> onRemove;
   final ValueChanged<InstalledExternalPlugin> onRetry;
+  final ValueChanged<InstalledExternalPlugin> onUpdate;
+  final ValueChanged<InstalledExternalPlugin>? onEditJavaScript;
+  final String? downloadDirectory;
+  final ValueChanged<InstalledExternalPlugin> onChangeDownloadDirectory;
 
   @override
   Widget build(BuildContext context) {
@@ -564,6 +807,34 @@ final class _InstalledPluginTile extends StatelessWidget {
           : Row(
               mainAxisSize: MainAxisSize.min,
               children: <Widget>[
+                if (failure == null && update != null)
+                  IconButton(
+                    tooltip: '更新到 v${update!.version}',
+                    onPressed: () => onUpdate(item),
+                    icon: Badge(
+                      label: const Text('!'),
+                      child: const Icon(Icons.system_update_alt_outlined),
+                    ),
+                  ),
+                if (onEditJavaScript != null && failure == null)
+                  IconButton(
+                    tooltip: '编辑 JS',
+                    onPressed: () => onEditJavaScript!(item),
+                    icon: const Icon(Icons.code_outlined),
+                  ),
+                if (failure == null)
+                  IconButton(
+                    tooltip: downloadDirectory == null
+                        ? '下载目录（默认）'
+                        : '下载目录：$downloadDirectory',
+                    onPressed: () => onChangeDownloadDirectory(item),
+                    icon: Icon(
+                      Icons.folder_copy_outlined,
+                      color: downloadDirectory == null
+                          ? null
+                          : Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
                 if (canRetry)
                   IconButton(
                     tooltip: '重新加载',
@@ -586,7 +857,7 @@ final class _RepositoryPane extends StatelessWidget {
     required this.format,
     required this.url,
     required this.entries,
-    required this.installedPluginIds,
+    required this.installedEntries,
     required this.working,
     required this.loading,
     required this.error,
@@ -599,7 +870,7 @@ final class _RepositoryPane extends StatelessWidget {
   final ExternalComicPluginFormat format;
   final TextEditingController url;
   final List<ExternalComicPluginCatalogEntry> entries;
-  final Set<String> installedPluginIds;
+  final Map<String, ExternalComicPluginCatalogEntry> installedEntries;
   final Set<String> working;
   final bool loading;
   final Object? error;
@@ -607,6 +878,24 @@ final class _RepositoryPane extends StatelessWidget {
   final ValueChanged<String> onLanguageSelected;
   final VoidCallback onLoad;
   final ValueChanged<ExternalComicPluginCatalogEntry> onInstall;
+
+  Widget _repositoryTile(
+    BuildContext context,
+    ExternalComicPluginCatalogEntry plugin, {
+    bool indent = false,
+  }) {
+    final installed = installedEntries[plugin.pluginId];
+    final updatable = installed != null &&
+        externalPluginCatalogEntryIsNewer(plugin, installed: installed);
+    return _RepositoryPluginTile(
+      plugin: plugin,
+      active: installed != null,
+      updatable: updatable,
+      working: working.contains(plugin.pluginId),
+      indent: indent,
+      onInstall: onInstall,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -696,14 +985,38 @@ final class _RepositoryPane extends StatelessWidget {
             padding: EdgeInsets.all(24),
             child: Center(child: Text('该语言分类下没有仓库插件')),
           )
+        else if (format == ExternalComicPluginFormat.mihonExtension)
+          for (final group in groupMihonEntriesByLanguage(
+            visibleEntries,
+            preferredLanguage: preferredLanguage,
+          )) ...<Widget>[
+            _repositoryTile(context, group.defaultEntry),
+            if (group.otherLanguages.isNotEmpty)
+              ExpansionTile(
+                key: PageStorageKey<String>(
+                  'mihon-languages:${group.groupKey}',
+                ),
+                initiallyExpanded: false,
+                dense: true,
+                leading: const Icon(Icons.translate_outlined),
+                title: Text('其他语言（${group.otherLanguages.length}）'),
+                subtitle: Text(
+                  group.otherLanguages
+                      .map(externalPluginEntryLanguage)
+                      .join('、'),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                children: <Widget>[
+                  for (final plugin in group.otherLanguages)
+                    _repositoryTile(context, plugin, indent: true),
+                ],
+              ),
+            const Divider(height: 1),
+          ]
         else
           for (final plugin in visibleEntries) ...<Widget>[
-            _RepositoryPluginTile(
-              plugin: plugin,
-              active: installedPluginIds.contains(plugin.pluginId),
-              working: working.contains(plugin.pluginId),
-              onInstall: onInstall,
-            ),
+            _repositoryTile(context, plugin),
             const Divider(height: 1),
           ],
       ],
@@ -914,19 +1227,23 @@ final class _RepositoryPluginTile extends StatelessWidget {
   const _RepositoryPluginTile({
     required this.plugin,
     required this.active,
+    required this.updatable,
     required this.working,
     required this.onInstall,
+    this.indent = false,
   });
 
   final ExternalComicPluginCatalogEntry plugin;
   final bool active;
+  final bool updatable;
   final bool working;
   final ValueChanged<ExternalComicPluginCatalogEntry> onInstall;
+  final bool indent;
 
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      contentPadding: EdgeInsets.symmetric(horizontal: indent ? 24 : 8, vertical: 4),
       leading: Icon(
         plugin.format == ExternalComicPluginFormat.mihonExtension
             ? Icons.extension_outlined
@@ -947,8 +1264,10 @@ final class _RepositoryPluginTile extends StatelessWidget {
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           : FilledButton.tonal(
-              onPressed: () => onInstall(plugin),
-              child: Text(active ? '更新' : '安装'),
+              onPressed: active && !updatable ? null : () => onInstall(plugin),
+              child: Text(
+                !active ? '安装' : (updatable ? '更新' : '已安装'),
+              ),
             ),
     );
   }
@@ -1005,6 +1324,127 @@ final class _TrustDialog extends StatelessWidget {
             FilledButton(
               onPressed: () => Navigator.pop(context, true),
               child: const Text('信任并启用'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// User decision from the per-plugin download directory dialog.
+final class _DownloadDirectoryDecision {
+  const _DownloadDirectoryDecision({
+    required this.restoreDefault,
+    this.directory,
+  });
+
+  final bool restoreDefault;
+  final String? directory;
+}
+
+final class _PluginDownloadDirectoryDialog extends StatefulWidget {
+  const _PluginDownloadDirectoryDialog({
+    required this.pluginName,
+    required this.currentDirectory,
+  });
+
+  final String pluginName;
+  final String? currentDirectory;
+
+  @override
+  State<_PluginDownloadDirectoryDialog> createState() =>
+      _PluginDownloadDirectoryDialogState();
+}
+
+final class _PluginDownloadDirectoryDialogState
+    extends State<_PluginDownloadDirectoryDialog> {
+  String? _picked;
+  bool _picking = false;
+
+  Future<void> _pick() async {
+    if (_picking) return;
+    setState(() => _picking = true);
+    String? picked;
+    Object? failure;
+    try {
+      picked = await pickDirectory();
+    } on Object catch (error) {
+      debugPrint('directory picker failed: $error');
+      failure = error;
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+    if (!mounted) return;
+    if (failure != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('无法打开目录选择器：$failure')),
+      );
+      return;
+    }
+    if (picked == null || picked.isEmpty) return;
+    setState(() => _picked = picked);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('下载目录 · ${widget.pluginName}'),
+      content: SizedBox(
+        width: 440,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            SelectableText(
+              '当前：${widget.currentDirectory ?? '默认下载目录'}',
+            ),
+            if (_picked != null) ...<Widget>[
+              const SizedBox(height: 8),
+              SelectableText('新目录：$_picked'),
+            ],
+            const SizedBox(height: 8),
+            const Text(
+              '该插件的来源新下载将写入所选目录；'
+              '已存在的文件保留原位置，不受影响。',
+            ),
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        AppDialogActions(
+          onClose: () => Navigator.pop(context),
+          actions: <Widget>[
+            TextButton(
+              onPressed: _picking ? null : _pick,
+              child: _picking
+                  ? const SizedBox.square(
+                      dimension: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('选择目录'),
+            ),
+            if (widget.currentDirectory != null)
+              TextButton(
+                onPressed: () => Navigator.pop(
+                  context,
+                  const _DownloadDirectoryDecision(
+                    restoreDefault: true,
+                  ),
+                ),
+                child: const Text('恢复默认'),
+              ),
+            FilledButton(
+              onPressed: _picked == null
+                  ? null
+                  : () => Navigator.pop(
+                        context,
+                        _DownloadDirectoryDecision(
+                          restoreDefault: false,
+                          directory: _picked,
+                        ),
+                      ),
+              child: const Text('设置'),
             ),
           ],
         ),

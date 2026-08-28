@@ -392,8 +392,16 @@ final class _DemoHomeState extends State<DemoHome> {
     final initialLibrary = _incomingLibraryStore;
     final ownsLibrary = initialLibrary == null;
     _library = initialLibrary ?? MemoryImportedLibraryStore();
+    // Ownership rule: the whole-comic job table must never wrap a chapter
+    // service it does not co-own. A RAM queue around a durable service
+    // writes artifacts to disk while losing the task list on restart; a
+    // durable queue over a RAM service would enqueue jobs nothing can seal.
+    // Bind the durable pair only when BOTH arrive together; otherwise own a
+    // matching memory pair until handoff adoption swaps in the matched trio.
     final initialChapterDownloads = _incomingChapterDownloads;
+    final initialWholeComicDownloads = _incomingWholeComicDownloads;
     final ownsChapterDownloads = initialChapterDownloads == null;
+    final ownsWholeComicDownloads = initialWholeComicDownloads == null;
     _chapterDownloads = initialChapterDownloads ??
         MemoryChapterDownloadService(pageLoader: _loadChapterPageBytes);
     _downloadComposition = _incomingDownloadComposition ??
@@ -428,10 +436,10 @@ final class _DemoHomeState extends State<DemoHome> {
       defaultUserAgentProvider: () => widget.preferences.networkUserAgent,
     );
     _sourceResources.bindTo(_chapterDownloads);
-    final initialWholeComicDownloads = _incomingWholeComicDownloads;
-    final ownsWholeComicDownloads = initialWholeComicDownloads == null;
-    _wholeComicDownloads = initialWholeComicDownloads ??
-        WholeComicDownloadQueue(downloads: _chapterDownloads);
+    _wholeComicDownloads = (initialWholeComicDownloads != null
+        ? initialWholeComicDownloads
+        : WholeComicDownloadQueue(downloads: _chapterDownloads))
+      ..refreshStaleChapter = _refreshStaleQueueChapter;
     _librarySession = HomeLibrarySession(
       library: _library,
       snapshotStore: widget.homeProjectionSnapshotStore,
@@ -808,6 +816,7 @@ final class _DemoHomeState extends State<DemoHome> {
           externalPlugins: externalPlugins,
           networkBridge: widget.networkBridge,
           onExternalSourcesChanged: _replaceExternalSources,
+          appPreferences: widget.preferences,
         ),
       ),
     );
@@ -854,6 +863,8 @@ final class _DemoHomeState extends State<DemoHome> {
             cacheCoordinator: _cacheCoordinator,
             storageRoot: _storageRoot,
             exportBackup: () => exportImportedLibraryBackup(_library),
+            onChangeChapterDownloadDirectory:
+                _serviceHandoff?.chapterDownloadRelay,
           ),
         ),
       ),
@@ -959,6 +970,25 @@ final class _DemoHomeState extends State<DemoHome> {
       manifest: manifest,
     );
     return _librarySession.upsertChapter(record);
+  }
+
+  /// Queue self-heal hook: re-pull the chapter manifest from its source so
+  /// page URIs invalidated by a plugin runtime restart get fresh tokens.
+  /// Returns null when the refresh is impossible or fails; the queue then
+  /// records a normal chapter failure.
+  Future<ImportedLibraryEntry?> _refreshStaleQueueChapter(
+    ImportedLibraryEntry entry,
+  ) async {
+    try {
+      final refreshed = await _refreshRemoteEntry(
+        entry,
+        forceSourceRefresh: true,
+      );
+      return identical(refreshed, entry) ? null : refreshed;
+    } on Object catch (error) {
+      debugPrint('stale chapter manifest refresh failed: $error');
+      return null;
+    }
   }
 
   Future<ImportedLibraryEntry> _refreshRemoteEntry(
@@ -1507,9 +1537,16 @@ final class _DemoHomeState extends State<DemoHome> {
         },
       );
 
-  Future<void> _removeComic(LibraryComic comic) async {
+  Future<void> _removeComic(
+    LibraryComic comic, {
+    bool deleteFiles = false,
+  }) async {
     await _ensureLibraryReady();
     for (final entry in comic.chapters) {
+      if (deleteFiles) {
+        final hydrated = await _librarySession.hydrateEntry(entry);
+        await _chapterDownloads.delete(hydrated);
+      }
       await _librarySession.removeChapter(
         entry.chapter.sourceId,
         entry.chapter.chapterId,
@@ -1519,6 +1556,22 @@ final class _DemoHomeState extends State<DemoHome> {
     final source = _sourceForId(comic.sourceId);
     if (source != null) {
       invalidateCachedComicMetadata(source, comic.comicId);
+    }
+    invalidateAllComicResources(
+      _cacheCoordinator.responses,
+      sourceId: comic.sourceId,
+      comicId: _canonicalComicId(comic.sourceId, comic.comicId),
+    );
+    if (mounted) {
+      await _reloadLibrary();
+    }
+  }
+
+  Future<void> _archiveComic(LibraryComic comic) async {
+    await _ensureLibraryReady();
+    for (final entry in comic.chapters) {
+      final hydrated = await _librarySession.hydrateEntry(entry);
+      await _chapterDownloads.delete(hydrated);
     }
     invalidateAllComicResources(
       _cacheCoordinator.responses,

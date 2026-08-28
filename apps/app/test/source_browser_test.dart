@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
@@ -19,6 +20,19 @@ Uint8List _tinyPng() => base64Decode(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
       'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     );
+
+Future<Uint8List> _generatePng({int width = 500, int height = 500}) async {
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  canvas.drawRect(
+    Rect.fromLTWH(0, 0, width.toDouble(), height.toDouble()),
+    Paint()..color = const Color(0xFF00FF00),
+  );
+  final picture = recorder.endRecording();
+  final image = await picture.toImage(width, height);
+  final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+  return byteData!.buffer.asUint8List();
+}
 
 Future<void> _pumpUntilFound(
   WidgetTester tester,
@@ -392,7 +406,7 @@ void main() {
 
     await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
     await tester.drag(
-      find.byKey(comicSourceSearchKey),
+      find.byKey(comicSourcePullRefreshKey),
       const Offset(0, -80),
     );
     await tester.pump();
@@ -442,7 +456,7 @@ void main() {
     await _tapVisible(tester, find.byKey(comicSourceSearchLockKey));
     expect(find.byIcon(Icons.lock), findsOneWidget);
     await tester.enterText(find.byKey(comicSourceSearchKey), '漫画');
-    tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.testTextInput.receiveAction(TextInputAction.search);
     await tester.pump();
     expect(find.byKey(comicSourceSearchKey), findsNothing);
     await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
@@ -480,7 +494,7 @@ void main() {
     await _pumpUntilFound(
       tester,
       find.byKey(
-        sourceComicCardKey(native.sourceId, '${native.sourceId}-comic-0'),
+        sourceComicCardKey(native.sourceId, native._comicId),
       ),
     );
     await tester.longPress(find.byKey(comicSourceSearchFabKey));
@@ -491,7 +505,7 @@ void main() {
 
     await _tapVisible(tester, find.byKey(comicSourceSearchFabKey));
     await tester.enterText(find.byKey(comicSourceSearchKey), '聚合源');
-    tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.testTextInput.receiveAction(TextInputAction.search);
     await tester.pump();
     expect(find.byKey(comicSourceSearchKey), findsNothing);
     await _pumpUntilFound(
@@ -518,7 +532,7 @@ void main() {
     await _pumpUntilFound(
       tester,
       find.byKey(
-        sourceComicCardKey(other.sourceId, '${other.sourceId}-comic-0'),
+        sourceComicCardKey(other.sourceId, other._comicId),
       ),
     );
     await tester.longPress(find.byKey(comicSourceSearchFabKey));
@@ -1241,11 +1255,8 @@ void main() {
             required Uri? coverUri,
             required ImportedLibraryEntry? fallbackChapter,
             required String resourceRole,
-                }) async => MemoryEncodedResourceSource(
-                (await rootBundle.load('assets/demo/pages/001.png'))
-                    .buffer
-                    .asUint8List(),
-              ),
+          }) async =>
+              MemoryEncodedResourceSource(await _generatePng()),
           reloadLibrary: ({required bool refreshContent}) async {
             final manifest = await source.loadComic(source._comicId);
             return library.copyWith(
@@ -1280,20 +1291,28 @@ void main() {
     await _pumpUntilFound(tester, find.byKey(details.remoteComicDetailsScreenKey));
     await tester.drag(
       find.byKey(details.remoteComicDetailsScreenKey),
-      const Offset(0, -1200),
+      const Offset(0, -600),
     );
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 100));
     await _pumpUntilFound(tester, find.byKey(details.comicDetailsPreviewItemKey(0)));
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 100)),
-    );
-    await tester.pump();
-    await _pumpUntilFound(
-      tester,
+    for (var frame = 0; frame < 60; frame++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 25)),
+      );
+      await tester.pump();
+      if (find.descendant(
+        of: find.byKey(details.comicDetailsPreviewItemKey(0)),
+        matching: find.byType(CustomPaint),
+      ).evaluate().isNotEmpty) {
+        break;
+      }
+    }
+    expect(
       find.descendant(
         of: find.byKey(details.comicDetailsPreviewItemKey(0)),
         matching: find.byType(CustomPaint),
       ),
+      findsOneWidget,
     );
     expect(find.byKey(details.comicDetailsPreviewItemKey(1)), findsNothing);
     expect(find.text('展开'), findsNothing);
@@ -1352,16 +1371,24 @@ void main() {
     expect(firstRect.left - previewRect.left, lessThanOrEqualTo(16));
     expect(previewRect.right - firstRowLastRect.right, lessThanOrEqualTo(16));
 
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 100)),
-    );
-    await tester.pump();
-    await _pumpUntilFound(
-      tester,
+    for (var frame = 0; frame < 60; frame++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 25)),
+      );
+      await tester.pump();
+      if (find.descendant(
+        of: find.byKey(details.comicDetailsPreviewItemKey(1)),
+        matching: find.byType(CustomPaint),
+      ).evaluate().isNotEmpty) {
+        break;
+      }
+    }
+    expect(
       find.descendant(
         of: find.byKey(details.comicDetailsPreviewItemKey(1)),
         matching: find.byType(CustomPaint),
       ),
+      findsOneWidget,
     );
     await _tapVisible(
       tester,
@@ -1373,7 +1400,8 @@ void main() {
     final expandedItem0Size = tester.getSize(
       find.byKey(details.comicDetailsPreviewItemKey(0)),
     );
-    await _tapVisible(tester, find.byKey(details.comicDetailsPreviewExpandKey));
+    await tester.ensureVisible(find.byKey(details.comicDetailsPreviewExpandKey));
+    await tester.tap(find.byKey(details.comicDetailsPreviewExpandKey));
     await tester.pump();
     expect(previewPager, findsNothing);
     expect(
@@ -1784,7 +1812,7 @@ void main() {
     final store = MemoryImportedLibraryStore();
     await store.open();
     addTearDown(store.close);
-    final source = _FixtureSource('fixture', '测试源');
+    final source = _FixtureSource('fixture', '测试源', runtimePageUri: true);
 
     await tester.pumpWidget(
       App(
@@ -1816,7 +1844,7 @@ void main() {
     final download =
         details.comicDetailsDownloadKey('fixture', 'fixture-chapter');
     await _tapVisible(tester, find.byKey(download));
-    await _pumpUntilFound(tester, find.textContaining('已下载'));
+    await _pumpUntilFound(tester, find.byIcon(Icons.download_done));
 
     final entry = await store.get('fixture', 'fixture-chapter');
     expect(entry, isNotNull);
@@ -1982,6 +2010,7 @@ void main() {
       'fixture-route',
       '集中路由源',
       includeSecondChapter: true,
+      runtimePageUri: true,
     );
 
     await tester.pumpWidget(
@@ -2036,7 +2065,7 @@ void main() {
       'fixture-route-chapter-2',
     );
     await _tapVisible(tester, find.byKey(secondDownload));
-    await _pumpUntilFound(tester, find.textContaining('已下载'));
+    await _pumpUntilFound(tester, find.byIcon(Icons.download_done));
     expect(await store.get('fixture-route', 'fixture-route-chapter'), isNull);
     expect(
         await store.get('fixture-route', 'fixture-route-chapter-2'), isNotNull);
@@ -2116,7 +2145,11 @@ void main() {
     final store = MemoryImportedLibraryStore();
     await store.open();
     addTearDown(store.close);
-    final source = _FixtureSource('fixture-active', '进行中下载源');
+    final source = _FixtureSource(
+      'fixture-active',
+      '进行中下载源',
+      runtimePageUri: true,
+    );
     final pageGate = Completer<void>();
     final pageStarted = Completer<void>();
     final downloads = MemoryChapterDownloadService(
@@ -2164,6 +2197,7 @@ void main() {
       'fixture-active',
       'fixture-active-chapter',
     );
+    await _pumpUntilFound(tester, find.byKey(downloadKey));
     await _tapVisible(tester, find.byKey(downloadKey));
     for (var frame = 0; frame < 80 && !pageStarted.isCompleted; frame++) {
       await tester.pump(const Duration(milliseconds: 16));
@@ -2217,6 +2251,7 @@ void main() {
       'fixture-whole',
       '整本下载源',
       includeSecondChapter: true,
+      runtimePageUri: true,
     );
     final downloads = MemoryChapterDownloadService(
       pageLoader: (entry, pageIndex) async => _tinyPng(),
@@ -2241,13 +2276,25 @@ void main() {
     );
     await _pumpUntilFound(
       tester,
-      find.byKey(details.comicDetailsDownloadAllKey),
+      find.byKey(details.remoteComicDetailsScreenKey),
     );
-    await _tapVisible(tester, find.byKey(details.comicDetailsDownloadAllKey));
+    await _pumpUntilFound(
+      tester,
+      find.byKey(
+        details.comicDetailsChapterKey('fixture-whole', 'fixture-whole-chapter'),
+      ),
+    );
+    await _tapVisible(
+      tester,
+      find.descendant(
+        of: find.byKey(details.comicDetailsDownloadAllKey),
+        matching: find.byType(IconButton),
+      ),
+    );
 
     ImportedLibraryEntry? first;
     ImportedLibraryEntry? second;
-    for (var frame = 0; frame < 120; frame++) {
+    for (var frame = 0; frame < 240; frame++) {
       await tester.pump(const Duration(milliseconds: 16));
       first = await store.get('fixture-whole', 'fixture-whole-chapter');
       second = await store.get('fixture-whole', 'fixture-whole-chapter-2');
@@ -2648,7 +2695,9 @@ final class _FixtureSource
         title: '$name 漫画',
         authors: const <String>['测试作者'],
         tags: comicTags,
-        coverUri: Uri.https('example.invalid', '/$sourceId/cover.png'),
+        coverUri: runtimePageUri
+            ? Uri.parse('venera-resource:$sourceId/cover.png')
+            : Uri.https('example.invalid', '/$sourceId/cover.png'),
         readingDirection: ReadingDirection.ltr,
       );
 

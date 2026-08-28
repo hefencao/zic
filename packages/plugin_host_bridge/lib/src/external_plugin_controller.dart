@@ -30,6 +30,7 @@ final class InstalledExternalPlugin {
     this.extensionLib,
     this.entryClasses = const <String>[],
     this.sourceKey,
+    this.sourceIds = const <String>[],
   });
 
   final ExternalComicPluginCatalogEntry plugin;
@@ -42,6 +43,13 @@ final class InstalledExternalPlugin {
   final String? extensionLib;
   final List<String> entryClasses;
   final String? sourceKey;
+
+  /// External source identities discovered at the last successful activation.
+  ///
+  /// Repository metadata does not describe device-imported Mihon sources, so
+  /// per-source user settings (for example download directories) persist this
+  /// runtime fact instead of re-deriving it.
+  final List<String> sourceIds;
 }
 
 /// App-shell owner for external repository discovery, immutable payload files,
@@ -105,6 +113,7 @@ final class ExternalPluginController {
     ),
   ]);
   late final Future<void> _ready;
+  Future<void> _manifestWriteTail = Future<void>.value();
   bool _closed = false;
 
   static Future<ExternalPluginController> open(
@@ -453,7 +462,7 @@ final class ExternalPluginController {
     if (path == null || path.trim().isEmpty) {
       throw StateError('external plugin preview payload is unavailable');
     }
-    final record = InstalledExternalPlugin(
+    var record = InstalledExternalPlugin(
       plugin: preview.plugin,
       payloadPath: path,
       payloadSha256: preview.inspection.payloadSha256,
@@ -467,8 +476,7 @@ final class ExternalPluginController {
     );
     final pluginId = record.plugin.pluginId;
     final previous = _installed[pluginId];
-    final replacingActive = _registry.isActive(pluginId);
-    // Payload resolution for the candidate reads the installed record. Publish
+    final replacingActive = _registry.isActive(pluginId);    // Payload resolution for the candidate reads the installed record. Publish
     // the candidate record in memory, but keep the previous runtime session
     // authoritative until registry.replace validates the new payload/source set.
     _installed[pluginId] = record;
@@ -478,6 +486,13 @@ final class ExternalPluginController {
           ? await _registry.replace(record.plugin)
           : await _registry.activate(record.plugin);
       runtimeReplaced = true;
+      final activatedIds = <String>[
+        for (final source in sources) source.sourceId,
+      ];
+      if (!_listEquals(record.sourceIds, activatedIds)) {
+        record = _withDiscoveredSourceIds(record, activatedIds);
+        _installed[pluginId] = record;
+      }
       _activationFailures.remove(pluginId);
       _notifySourceChange();
       await _writeManifest();
@@ -537,7 +552,7 @@ final class ExternalPluginController {
   /// operation.
   Future<List<BrowsableComicSource>> retryActivation(String pluginId) async {
     _requireOpen();
-    final record = _installed[pluginId];
+    var record = _installed[pluginId];
     if (record == null) {
       throw StateError('external plugin is not installed: $pluginId');
     }
@@ -549,6 +564,13 @@ final class ExternalPluginController {
       final sources = _registry.isActive(pluginId)
           ? await _registry.replace(record.plugin)
           : await _registry.activate(record.plugin);
+      final activatedIds = <String>[
+        for (final source in sources) source.sourceId,
+      ];
+      if (!_listEquals(record.sourceIds, activatedIds)) {
+        record = _withDiscoveredSourceIds(record, activatedIds);
+        _installed[pluginId] = record;
+      }
       _activationFailures.remove(pluginId);
       await _writeManifest();
       _notifySourceChange();
@@ -570,6 +592,126 @@ final class ExternalPluginController {
     if (removed != null) {
       await _deleteBestEffort(File(removed.payloadPath));
     }
+  }
+
+  /// Checks each distinct trusted repository origin among installed plugins
+  /// of [format] and returns newer catalog entries keyed by [pluginId].
+  ///
+  /// One unreachable repository never hides updates from the others; its
+  /// plugins are simply absent from the result. Device-imported Mihon
+  /// extensions without a real repository origin are skipped.
+  Future<Map<String, ExternalComicPluginCatalogEntry>> checkUpdates({
+    required ExternalComicPluginFormat format,
+  }) async {
+    _requireOpen();
+    final origins = <String, List<InstalledExternalPlugin>>{};
+    for (final record in _installed.values) {
+      if (record.plugin.format != format) continue;
+      final origin = Uri.tryParse(record.repositoryOrigin);
+      if (origin == null ||
+          origin.host == 'installed.mihon.invalid' ||
+          origin.host.isEmpty) {
+        continue;
+      }
+      origins.putIfAbsent(record.repositoryOrigin, () => []).add(record);
+    }
+    final updates = <String, ExternalComicPluginCatalogEntry>{};
+    for (final entry in origins.entries) {
+      final index = Uri.tryParse(entry.key);
+      if (index == null) continue;
+      final List<ExternalComicPluginCatalogEntry> entries;
+      try {
+        entries = await loadRepository(format: format, index: index);
+      } on Object {
+        continue;
+      }
+      for (final record in entry.value) {
+        ExternalComicPluginCatalogEntry? latest;
+        for (final candidate in entries) {
+          if (candidate.pluginId == record.plugin.pluginId) {
+            latest = candidate;
+            break;
+          }
+        }
+        if (latest == null) continue;
+        if (externalPluginCatalogEntryIsNewer(
+          latest,
+          installed: record.plugin,
+        )) {
+          updates[record.plugin.pluginId] = latest;
+        }
+      }
+    }
+    return updates;
+  }
+
+  /// Returns the trusted Venera payload source of an installed plugin.
+  Future<String> readVeneraJavaScript(String pluginId) async {
+    final record = _requireVeneraRecord(pluginId);
+    try {
+      return await File(record.payloadPath).readAsString();
+    } on FileSystemException catch (error) {
+      throw StateError('venera plugin payload is unreadable: $error');
+    }
+  }
+
+  /// Persists a user-edited Venera payload and re-activates the plugin from
+  /// it.
+  ///
+  /// Local edits are explicitly user-owned trust: the edited script is
+  /// inspected again (source key/capabilities may change), pinned under a new
+  /// digest, and only replaces the running session after that inspection and
+  /// activation succeed. The previous payload stays authoritative on any
+  /// failure.
+  Future<List<BrowsableComicSource>> saveVeneraJavaScript(
+    String pluginId,
+    String source,
+  ) async {
+    final record = _requireVeneraRecord(pluginId);
+    if (source.trim().isEmpty) {
+      throw ArgumentError.value(source, 'source', 'must not be empty');
+    }
+    final previousPending = _pendingPayloads.remove(pluginId);
+    if (previousPending != null) {
+      await _deleteBestEffort(File(previousPending));
+    }
+    final safeId =
+        base64Url.encode(utf8.encode(pluginId)).replaceAll('=', '');
+    final revision = DateTime.now().toUtc().microsecondsSinceEpoch;
+    final payload = File('${_root.path}/$safeId-$revision.js');
+    final partial = File('${payload.path}.part');
+    try {
+      await partial.parent.create(recursive: true);
+      await partial.writeAsString(source, flush: true);
+      await partial.rename(payload.path);
+    } on Object {
+      await _deleteBestEffort(partial);
+      rethrow;
+    }
+    _pendingPayloads[pluginId] = payload.path;
+    final ExternalPluginInstallPreview preview;
+    try {
+      preview = ExternalPluginInstallPreview(
+        plugin: record.plugin,
+        inspection: await _veneraInspector.inspect(record.plugin),
+        repository: Uri.parse(record.repositoryOrigin),
+      );
+    } on Object catch (error) {
+      _pendingPayloads.remove(pluginId);
+      await _deleteBestEffort(payload);
+      throw StateError('编辑后的脚本无效：$error');
+    }
+    return approveAndActivate(preview);
+  }
+
+  InstalledExternalPlugin _requireVeneraRecord(String pluginId) {
+    _requireOpen();
+    final record = _installed[pluginId];
+    if (record == null ||
+        record.plugin.format != ExternalComicPluginFormat.veneraJavaScript) {
+      throw StateError('venera plugin is not installed: $pluginId');
+    }
+    return record;
   }
 
   Future<void> close() async {
@@ -660,7 +802,21 @@ final class ExternalPluginController {
         if (index >= records.length) return;
         final record = records[index];
         try {
-          await _registry.activate(record.plugin);
+          final sources = await _registry.activate(record.plugin);
+          final activatedIds = <String>[
+            for (final source in sources) source.sourceId,
+          ];
+          if (!_listEquals(record.sourceIds, activatedIds)) {
+            _installed[record.plugin.pluginId] =
+                _withDiscoveredSourceIds(record, activatedIds);
+            try {
+              await _writeManifest();
+            } on Object {
+              // The runtime session is already active; persisting the newly
+              // discovered identities must not fail the activation itself.
+              // The next successful user-facing manifest write records them.
+            }
+          }
           _notifySourceChange();
         } on Object catch (error) {
           _activationFailures[record.plugin.pluginId] = error;
@@ -749,7 +905,21 @@ final class ExternalPluginController {
     return recoveredPath;
   }
 
-  Future<void> _writeManifest({bool backupCurrent = true}) async {
+  Future<void> _writeManifest({bool backupCurrent = true}) {
+    // Background recovery activates up to four plugins concurrently and may
+    // persist newly discovered source identities; the atomic write/rename
+    // sequence itself must stay serialized.
+    final previous = _manifestWriteTail;
+    final operation =
+        previous.then((_) => _writeManifestNow(backupCurrent: backupCurrent));
+    _manifestWriteTail = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return operation;
+  }
+
+  Future<void> _writeManifestNow({required bool backupCurrent}) async {
     await _root.create(recursive: true);
     final partial = File('${_manifest.path}.part');
     final backup = File('${_manifest.path}.bak');
@@ -1068,6 +1238,24 @@ void _requireHttps(Uri uri) {
   }
 }
 
+/// Returns whether [candidate] should be offered to the user as an update
+/// over [installed].
+///
+/// Version codes decide when both sides publish them; without codes, any
+/// different version string counts so repositories that only bump the string
+/// still surface a reminder.
+bool externalPluginCatalogEntryIsNewer(
+  ExternalComicPluginCatalogEntry candidate, {
+  required ExternalComicPluginCatalogEntry installed,
+}) {
+  final candidateCode = candidate.versionCode;
+  final installedCode = installed.versionCode;
+  if (candidateCode != null && installedCode != null) {
+    return candidateCode > installedCode;
+  }
+  return candidate.version != installed.version;
+}
+
 String _origin(Uri uri) {
   final port = uri.hasPort && uri.port != 443 ? ':${uri.port}' : '';
   return 'https://${uri.host}$port';
@@ -1085,6 +1273,7 @@ Map<String, Object?> _recordToJson(InstalledExternalPlugin record) =>
       'extensionLib': record.extensionLib,
       'entryClasses': record.entryClasses,
       'sourceKey': record.sourceKey,
+      'sourceIds': record.sourceIds,
     };
 
 InstalledExternalPlugin _recordFromJson(Object? raw) {
@@ -1100,8 +1289,28 @@ InstalledExternalPlugin _recordFromJson(Object? raw) {
     extensionLib: _optionalString(json['extensionLib']),
     entryClasses: _optionalStringList(json['entryClasses']),
     sourceKey: _optionalString(json['sourceKey']),
+    sourceIds: _optionalStringList(json['sourceIds']),
   );
 }
+
+/// Returns [record] with the source identities observed at activation.
+InstalledExternalPlugin _withDiscoveredSourceIds(
+  InstalledExternalPlugin record,
+  List<String> sourceIds,
+) =>
+    InstalledExternalPlugin(
+      plugin: record.plugin,
+      payloadPath: record.payloadPath,
+      payloadSha256: record.payloadSha256,
+      repositoryOrigin: record.repositoryOrigin,
+      packageName: record.packageName,
+      signerSha256: record.signerSha256,
+      versionCode: record.versionCode,
+      extensionLib: record.extensionLib,
+      entryClasses: record.entryClasses,
+      sourceKey: record.sourceKey,
+      sourceIds: List<String>.unmodifiable(sourceIds),
+    );
 
 Map<String, Object?> _pluginToJson(ExternalComicPluginCatalogEntry plugin) =>
     <String, Object?>{
@@ -1215,6 +1424,7 @@ Future<InstalledExternalPlugin?> _restoreOwnedPayloadRecord(
     extensionLib: record.extensionLib,
     entryClasses: record.entryClasses,
     sourceKey: record.sourceKey,
+    sourceIds: record.sourceIds,
   );
   return await _isOwnedPayloadFile(relocated, canonicalRoot) ? relocated : null;
 }

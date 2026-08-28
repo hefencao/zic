@@ -26,6 +26,27 @@ final class HomeServiceHandoff extends ChangeNotifier {
   String? storageRoot;
   bool persistHomeProjectionSnapshot = false;
 
+  /// Runtime-owned capability for applying a new chapter-download directory.
+  ///
+  /// The settings UI only collects the user choice; the runtime owner closes,
+  /// migrates and reopens the download services and republishes them through
+  /// [updateServices]. Returns a user-facing error message on failure, or
+  /// `null` on success. Absent when the runtime has not registered the
+  /// capability (for example in widget-only test harnesses).
+  Future<String?> Function({
+    String? directory,
+    required bool migrateFiles,
+  })? chapterDownloadRelay;
+
+  void setChapterDownloadRelay(
+    Future<String?> Function({
+      String? directory,
+      required bool migrateFiles,
+    })? relay,
+  ) {
+    chapterDownloadRelay = relay;
+  }
+
   void setBootstrapCache(ResourceCacheCoordinator cache) {
     if (cacheCoordinator == null) {
       cacheCoordinator = cache;
@@ -1142,6 +1163,9 @@ final class HomeLibrarySession extends ChangeNotifier {
 
   @override
   void dispose() {
+    _closed = true;
+    _downloadSubscription.cancel();
+    _wholeComicSubscription.cancel();
     _downloadProjectionChanges.dispose();
     super.dispose();
   }

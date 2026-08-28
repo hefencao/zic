@@ -105,6 +105,11 @@ void main() {
         'detailsPreviewMaxItemsPerRow': 6,
         'networkUserAgent': 'fixture-network-agent',
         'animatedWebpPrefetchBudgetMiB': 72, // ignored legacy dev.247/248 key
+        'sourceDownloadDirectories': <String, Object?>{
+          'venera:alpha': '/data/downloads-alpha',
+          'mihon:beta': 42, // invalid entries are dropped
+          ' ': '/data/ignored', // blank keys are dropped
+        },
         'sourceSearchHistory': <Object?>['Alpha', 'beta', 'alpha'],
         'comicReaderSettings': <String, Object?>{
           comicReaderSettingsIdentity('source-a', 'comic-a'):
@@ -151,6 +156,15 @@ void main() {
     expect(controller.zoomDecodeBoostEnabled, isFalse);
     expect(controller.detailsPreviewMaxItemsPerRow, 6);
     expect(controller.networkUserAgent, 'fixture-network-agent');
+    expect(controller.chapterDownloadDirectoryOverride, isNull);
+    expect(controller.chapterDownloadDirectoryPendingMoveFrom, isNull);
+    expect(controller.cacheLimitMb, defaultCacheLimitMb);
+    expect(
+      controller.sourceDownloadDirectoryFor('venera:alpha'),
+      '/data/downloads-alpha',
+    );
+    expect(controller.sourceDownloadDirectoryFor('mihon:beta'), isNull);
+    expect(controller.sourceDownloadDirectoryFor('unknown'), isNull);
     expect(controller.sourceSearchHistory, <String>['Alpha', 'beta']);
     expect(
       controller.comicReaderSettingsFor('source-a', 'comic-a'),
@@ -173,6 +187,10 @@ void main() {
     controller.setShelfSortMode(LibrarySortMode.custom);
     controller.setDetailsPreviewMaxItemsPerRow(4);
     controller.setNetworkUserAgent('custom-network-agent');
+    controller.setChapterDownloadDirectoryOverride('/data/downloads');
+    controller.setChapterDownloadDirectoryPendingMoveFrom('/data/old');
+    controller.setCacheLimitMb(1024);
+    controller.setSourceDownloadDirectory('venera:gamma', '/data/gamma');
     controller.setLongPressZoomRestoreOnRelease(true);
     controller.setLongPressZoomMoveMode(ReaderLongPressMoveMode.drag);
     controller.setLongPressZoomPanRatio(2.0);
@@ -201,6 +219,19 @@ void main() {
     expect(written?['version'], 6);
     expect(written?['detailsPreviewMaxItemsPerRow'], 4);
     expect(written?['networkUserAgent'], 'custom-network-agent');
+    expect(written?['chapterDownloadDirectoryOverride'], '/data/downloads');
+    expect(
+      written?['chapterDownloadDirectoryPendingMoveFrom'],
+      '/data/old',
+    );
+    expect(written?['cacheLimitMb'], 1024);
+    expect(
+      written?['sourceDownloadDirectories'],
+      <String, String>{
+        'venera:alpha': '/data/downloads-alpha',
+        'venera:gamma': '/data/gamma',
+      },
+    );
     expect(written?['longPressZoomRestoreOnRelease'], true);
     expect(written?['longPressZoomMoveMode'], 'drag');
     expect(written?['longPressZoomPanRatio'], 2.0);

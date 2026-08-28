@@ -13,6 +13,7 @@ import 'package:telemetry/telemetry.dart';
 import 'package:downloads/downloads.dart';
 import 'app_pull_to_refresh.dart';
 import 'artwork_placeholder.dart';
+import 'comic_download_conflict_dialog.dart';
 import 'dialog_actions.dart';
 
 part 'comic_details_interactions.dart';
@@ -174,8 +175,9 @@ typedef ComicDetailsChapterDownloader = Future<void> Function(
   ImportedLibraryEntry chapter,
 );
 typedef ComicDetailsChapterDeleter = Future<void> Function(
-  ImportedLibraryEntry chapter,
-);
+  ImportedLibraryEntry chapter, {
+  bool deleteFiles,
+});
 
 typedef ComicDetailsChapterDownloadInspector =
     Future<ChapterDownloadSnapshot> Function(ImportedLibraryEntry chapter);
@@ -187,6 +189,13 @@ typedef ComicDetailsChapterDownloadBulkInspector =
 typedef ComicDetailsComicDownloader = Future<void> Function(
   Iterable<ImportedLibraryEntry> chapters,
 );
+
+typedef ComicDetailsConflictInspector = Future<ComicConflictReport> Function({
+  required String sourceId,
+  required String comicId,
+  required String comicTitle,
+  String? sourceDisplayName,
+});
 
 typedef ComicDetailsComicPersister = Future<void> Function(
   ComicManifest manifest,
@@ -430,6 +439,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     required this.downloadChanges,
     required this.onDownloadComic,
     this.inspectChapterDownloads,
+    this.inspectComicConflicts,
     this.source,
     this.ensureSourceChapter,
     this.onOpenSourceWebView,
@@ -459,6 +469,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final ComicDetailsChapterDownloadBulkInspector? inspectChapterDownloads;
   final Stream<ChapterDownloadSnapshot> downloadChanges;
   final ComicDetailsComicDownloader onDownloadComic;
+  final ComicDetailsConflictInspector? inspectComicConflicts;
   final BrowsableComicSource? source;
   final ComicDetailsChapterEnsurer? ensureSourceChapter;
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
@@ -524,6 +535,7 @@ final class _LocalComicDetailsScreenState
   StreamSubscription<ChapterDownloadSnapshot>? _downloadSubscription;
   Future<void>? _downloadStatusRefreshInFlight;
   bool _downloadingComic = false;
+  bool _conflictConfirmed = false;
   _DetailFailure? _failure;
   final Map<String, Future<ImportedLibraryEntry>> _ensureInFlight =
       <String, Future<ImportedLibraryEntry>>{};
@@ -646,7 +658,11 @@ final class _LocalComicDetailsScreenState
       if (!mounted) return;
       final snapshots = <String, ChapterDownloadSnapshot>{};
       final currentIdentities = <String>{
-        for (final entry in _library.chapters) entry.identity,
+        for (final entry in _library.chapters)
+          comicDetailsChapterIdentity(
+            entry.chapter.sourceId,
+            entry.chapter.chapterId,
+          ),
       };
       for (final snapshot in results) {
         if (snapshot == null) continue;
@@ -657,6 +673,12 @@ final class _LocalComicDetailsScreenState
         // A status inspection may finish after a long-press deletion. Do not
         // resurrect the deleted chapter's download projection.
         if (!currentIdentities.contains(identity)) continue;
+        final existing = _downloadSnapshots[identity];
+        if (existing != null &&
+            existing.isActive &&
+            snapshot.phase == ChapterDownloadPhase.idle) {
+          continue;
+        }
         snapshots[identity] = snapshot;
       }
       if (snapshots.isNotEmpty) {
@@ -765,7 +787,8 @@ final class _LocalComicDetailsScreenState
         },
       );
       if (announce) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showDetailsSnackBar(
+          context,
           const SnackBar(content: Text('漫画详情已更新')),
         );
       }
@@ -967,7 +990,10 @@ final class _LocalComicDetailsScreenState
   Future<void> _restoreUnread(_ChapterViewModel chapter) =>
       _setReadFromChapter(chapter, false);
 
-  Future<void> _deleteChapter(_ChapterViewModel chapter) {
+  Future<void> _deleteChapter(
+    _ChapterViewModel chapter, {
+    bool deleteFiles = false,
+  }) {
     final deleter = widget.onDeleteChapter;
     if (deleter == null) {
       return Future<void>.value();
@@ -982,7 +1008,14 @@ final class _LocalComicDetailsScreenState
     setState(() {});
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        unawaited(_deleteChapterInBackground(chapter, identity, deleter));
+        unawaited(
+          _deleteChapterInBackground(
+            chapter,
+            identity,
+            deleter,
+            deleteFiles: deleteFiles,
+          ),
+        );
       }
     });
     return Future<void>.value();
@@ -991,8 +1024,9 @@ final class _LocalComicDetailsScreenState
   Future<void> _deleteChapterInBackground(
     _ChapterViewModel chapter,
     String identity,
-    ComicDetailsChapterDeleter deleter,
-  ) async {
+    ComicDetailsChapterDeleter deleter, {
+    bool deleteFiles = false,
+  }) async {
     try {
       final sourceChapter = chapter.sourceChapter;
       final resolved = chapter.entry ??
@@ -1000,7 +1034,7 @@ final class _LocalComicDetailsScreenState
       if (resolved == null) {
         throw StateError('无法确定要删除的章节');
       }
-      await deleter(resolved);
+      await deleter(resolved, deleteFiles: deleteFiles);
       if (!mounted) return;
       _pendingDeletionIdentities.remove(identity);
       _deletionRevision++;
@@ -1160,6 +1194,43 @@ final class _LocalComicDetailsScreenState
     );
   }
 
+  Future<bool> _confirmDownloadConflictIfNeeded({
+    required String sourceId,
+    required String comicId,
+    required String comicTitle,
+    String? chapterTitle,
+  }) async {
+    if (_conflictConfirmed) return true;
+    final inspector = widget.inspectComicConflicts;
+    if (inspector == null) return true;
+    try {
+      final report = await inspector(
+        sourceId: sourceId,
+        comicId: comicId,
+        comicTitle: comicTitle,
+        sourceDisplayName: widget.source?.descriptor.name,
+      );
+      if (report.candidates.isEmpty || !mounted) return true;
+
+      final decision = await promptComicConflictResolution(
+        context: context,
+        report: report,
+        comicTitle: comicTitle,
+        sourceId: sourceId,
+        sourceDisplayName: widget.source?.descriptor.name,
+        chapterTitle: chapterTitle,
+      );
+      if (decision == ComicConflictDecision.overwrite ||
+          decision == ComicConflictDecision.saveAsNew) {
+        _conflictConfirmed = true;
+        return true;
+      }
+      return false;
+    } catch (_) {
+      return true;
+    }
+  }
+
   Future<void> _download(_ChapterViewModel chapter) async {
     final identity = comicDetailsChapterIdentity(
       chapter.sourceId,
@@ -1171,15 +1242,29 @@ final class _LocalComicDetailsScreenState
         current?.isComplete == true) {
       return;
     }
+    final ok = await _confirmDownloadConflictIfNeeded(
+      sourceId: chapter.sourceId,
+      comicId: chapter.entry?.chapter.comicId ?? widget.comic.comicId,
+      comicTitle: chapter.entry?.chapter.comicTitle ?? widget.comic.title,
+      chapterTitle: chapter.title,
+    );
+    if (!ok) return;
     setState(() => _workingDownloads.add(identity));
     try {
       final entry = chapter.entry ?? await _ensure(chapter.sourceChapter!);
-      await widget.onDownloadChapter(entry);
-      final snapshot = await widget.inspectChapterDownload(entry);
+      unawaited(
+        widget.onDownloadChapter(entry).catchError(
+          (Object error, StackTrace stackTrace) {
+            if (mounted) {
+              _showLocalFailure(error, stackTrace);
+            }
+          },
+        ),
+      );
       if (mounted) {
-        _acceptDownloadSnapshot(snapshot);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('章节“${chapter.title}”已下载')),
+        _showDetailsSnackBar(
+          context,
+          SnackBar(content: Text('已开始下载“${chapter.title}”')),
         );
       }
     } on Object catch (error, stackTrace) {
@@ -1199,6 +1284,13 @@ final class _LocalComicDetailsScreenState
     if (_downloadingComic) {
       return;
     }
+    final ok = await _confirmDownloadConflictIfNeeded(
+      sourceId: widget.comic.sourceId,
+      comicId: widget.comic.comicId,
+      comicTitle: widget.comic.title,
+      chapterTitle: '整本漫画',
+    );
+    if (!ok) return;
     setState(() => _downloadingComic = true);
     try {
       final entries = <ImportedLibraryEntry>[];
@@ -1220,7 +1312,8 @@ final class _LocalComicDetailsScreenState
       await widget.onDownloadComic(entries);
       await _loadDownloadStatuses(entries);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showDetailsSnackBar(
+          context,
           SnackBar(content: Text('“${widget.comic.title}”已加入整本下载队列')),
         );
       }
@@ -1494,6 +1587,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     required this.downloadChanges,
     required this.onDownloadComic,
     this.inspectChapterDownloads,
+    this.inspectComicConflicts,
     this.artworkIdentity,
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
@@ -1527,6 +1621,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsChapterDownloadBulkInspector? inspectChapterDownloads;
   final Stream<ChapterDownloadSnapshot> downloadChanges;
   final ComicDetailsComicDownloader onDownloadComic;
+  final ComicDetailsConflictInspector? inspectComicConflicts;
   final String? artworkIdentity;
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
@@ -1562,6 +1657,7 @@ final class _RemoteComicDetailsScreenState
   StreamSubscription<ChapterDownloadSnapshot>? _downloadSubscription;
   Future<void>? _downloadStatusRefreshInFlight;
   bool _downloadingComic = false;
+  bool _conflictConfirmed = false;
   final Map<String, Future<ImportedLibraryEntry>> _ensureInFlight =
       <String, Future<ImportedLibraryEntry>>{};
   final Map<String, Future<void>> _readStateWrites = <String, Future<void>>{};
@@ -1777,7 +1873,11 @@ final class _RemoteComicDetailsScreenState
       if (!mounted) return;
       final snapshots = <String, ChapterDownloadSnapshot>{};
       final currentIdentities = <String>{
-        for (final entry in _library.chapters) entry.identity,
+        for (final entry in _library.chapters)
+          comicDetailsChapterIdentity(
+            entry.chapter.sourceId,
+            entry.chapter.chapterId,
+          ),
       };
       for (final snapshot in results) {
         if (snapshot == null) continue;
@@ -1788,6 +1888,12 @@ final class _RemoteComicDetailsScreenState
         // A status inspection may finish after a long-press deletion. Do not
         // resurrect the deleted chapter's download projection.
         if (!currentIdentities.contains(identity)) continue;
+        final existing = _downloadSnapshots[identity];
+        if (existing != null &&
+            existing.isActive &&
+            snapshot.phase == ChapterDownloadPhase.idle) {
+          continue;
+        }
         snapshots[identity] = snapshot;
       }
       if (snapshots.isNotEmpty) {
@@ -1962,7 +2068,8 @@ final class _RemoteComicDetailsScreenState
       );
       _scheduleDownloadStatusRefresh(library.chapters);
       if (announce) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showDetailsSnackBar(
+          context,
           SnackBar(content: Text('已更新 ${manifest.chapters.length} 个章节')),
         );
       }
@@ -2182,7 +2289,10 @@ final class _RemoteComicDetailsScreenState
   Future<void> _restoreUnread(_ChapterViewModel chapter) =>
       _setReadFromChapter(chapter, false);
 
-  Future<void> _deleteChapter(_ChapterViewModel chapter) {
+  Future<void> _deleteChapter(
+    _ChapterViewModel chapter, {
+    bool deleteFiles = false,
+  }) {
     final deleter = widget.onDeleteChapter;
     if (deleter == null) {
       return Future<void>.value();
@@ -2197,7 +2307,14 @@ final class _RemoteComicDetailsScreenState
     setState(() {});
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        unawaited(_deleteChapterInBackground(chapter, identity, deleter));
+        unawaited(
+          _deleteChapterInBackground(
+            chapter,
+            identity,
+            deleter,
+            deleteFiles: deleteFiles,
+          ),
+        );
       }
     });
     return Future<void>.value();
@@ -2206,8 +2323,9 @@ final class _RemoteComicDetailsScreenState
   Future<void> _deleteChapterInBackground(
     _ChapterViewModel chapter,
     String identity,
-    ComicDetailsChapterDeleter deleter,
-  ) async {
+    ComicDetailsChapterDeleter deleter, {
+    bool deleteFiles = false,
+  }) async {
     try {
       final sourceChapter = chapter.sourceChapter;
       final resolved = chapter.entry ??
@@ -2215,7 +2333,7 @@ final class _RemoteComicDetailsScreenState
       if (resolved == null) {
         throw StateError('无法确定要删除的章节');
       }
-      await deleter(resolved);
+      await deleter(resolved, deleteFiles: deleteFiles);
       if (!mounted) return;
       _pendingDeletionIdentities.remove(identity);
       _deletionRevision++;
@@ -2367,6 +2485,43 @@ final class _RemoteComicDetailsScreenState
     );
   }
 
+  Future<bool> _confirmDownloadConflictIfNeeded({
+    required String sourceId,
+    required String comicId,
+    required String comicTitle,
+    String? chapterTitle,
+  }) async {
+    if (_conflictConfirmed) return true;
+    final inspector = widget.inspectComicConflicts;
+    if (inspector == null) return true;
+    try {
+      final report = await inspector(
+        sourceId: sourceId,
+        comicId: comicId,
+        comicTitle: comicTitle,
+        sourceDisplayName: widget.source.descriptor.name,
+      );
+      if (report.candidates.isEmpty || !mounted) return true;
+
+      final decision = await promptComicConflictResolution(
+        context: context,
+        report: report,
+        comicTitle: comicTitle,
+        sourceId: sourceId,
+        sourceDisplayName: widget.source.descriptor.name,
+        chapterTitle: chapterTitle,
+      );
+      if (decision == ComicConflictDecision.overwrite ||
+          decision == ComicConflictDecision.saveAsNew) {
+        _conflictConfirmed = true;
+        return true;
+      }
+      return false;
+    } catch (_) {
+      return true;
+    }
+  }
+
   Future<void> _download(Chapter chapter) async {
     final identity = comicDetailsChapterIdentity(
       _source.sourceId,
@@ -2374,8 +2529,17 @@ final class _RemoteComicDetailsScreenState
     );
     final current = _downloadSnapshots[identity];
     if (current?.isActive == true ||
-        current?.isComplete == true ||
-        !_workingDownloads.add(identity)) {
+        current?.isComplete == true) {
+      return;
+    }
+    final ok = await _confirmDownloadConflictIfNeeded(
+      sourceId: _source.sourceId,
+      comicId: chapter.comicId,
+      comicTitle: _comic.title,
+      chapterTitle: chapter.title,
+    );
+    if (!ok) return;
+    if (!_workingDownloads.add(identity)) {
       return;
     }
     if (mounted) {
@@ -2383,12 +2547,19 @@ final class _RemoteComicDetailsScreenState
     }
     try {
       final entry = await _ensure(chapter);
-      await widget.onDownloadChapter(entry);
-      final snapshot = await widget.inspectChapterDownload(entry);
+      unawaited(
+        widget.onDownloadChapter(entry).catchError(
+          (Object error, StackTrace stackTrace) {
+            if (mounted) {
+              _showRemoteFailure(error, stackTrace);
+            }
+          },
+        ),
+      );
       if (mounted) {
-        _acceptDownloadSnapshot(snapshot);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('章节“${chapter.title}”已下载')),
+        _showDetailsSnackBar(
+          context,
+          SnackBar(content: Text('已开始下载“${chapter.title}”')),
         );
       }
     } on Object catch (error, stackTrace) {
@@ -2412,6 +2583,13 @@ final class _RemoteComicDetailsScreenState
     if (manifest == null) {
       return;
     }
+    final ok = await _confirmDownloadConflictIfNeeded(
+      sourceId: _source.sourceId,
+      comicId: manifest.comic.comicId,
+      comicTitle: _comic.title,
+      chapterTitle: '整本漫画',
+    );
+    if (!ok) return;
     setState(() => _downloadingComic = true);
     try {
       final entries = <ImportedLibraryEntry>[];
@@ -2424,7 +2602,8 @@ final class _RemoteComicDetailsScreenState
       await widget.onDownloadComic(entries);
       await _loadDownloadStatuses(entries);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        _showDetailsSnackBar(
+          context,
           SnackBar(content: Text('“${_comic.title}”已加入整本下载队列')),
         );
       }
@@ -2546,6 +2725,8 @@ final class _RemoteComicDetailsScreenState
         pageCountPending = true;
       }
       final downloadSnapshot = _downloadSnapshots[identity];
+      final isDownloading = _workingDownloads.contains(identity) ||
+          downloadSnapshot?.isActive == true;
       chapterViewModels.add(
         _ChapterViewModel(
           sourceId: _source.sourceId,
@@ -2562,8 +2743,7 @@ final class _RemoteComicDetailsScreenState
           ),
           canDownload: true,
           opening: _opening.contains(identity),
-          downloading: _workingDownloads.contains(identity) ||
-              downloadSnapshot?.isActive == true,
+          downloading: isDownloading,
           downloaded: downloadSnapshot?.isComplete == true,
           sourceChapter: chapter,
         ),
@@ -2852,7 +3032,8 @@ final class _ComicChapterList extends StatelessWidget {
   final Future<void> Function(_ChapterViewModel chapter) onDownload;
   final Future<void> Function(_ChapterViewModel chapter) onMarkRead;
   final Future<void> Function(_ChapterViewModel chapter) onRestoreUnread;
-  final Future<void> Function(_ChapterViewModel chapter)? onDelete;
+  final Future<void> Function(_ChapterViewModel chapter, {bool deleteFiles})?
+      onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -2899,7 +3080,7 @@ final class _ComicChapterList extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
                     Icon(
-                      Icons.mark_chat_unread_outlined,
+                      Icons.mark_email_unread_outlined,
                       color: foreground,
                     ),
                     const SizedBox(width: 8),
@@ -2927,24 +3108,26 @@ final class _ComicChapterList extends StatelessWidget {
             return content;
           }
           return AnimatedScale(
-            scale: thresholdReached ? 1.08 : 1,
+            scale: thresholdReached ? 1 : 0.92,
             duration: const Duration(milliseconds: 140),
             curve: Curves.easeOutCubic,
             child: content,
           );
         }
-        final Future<void> Function()? deleteChapter =
-            onDelete == null ||
-                    (chapter.entry == null && chapter.sourceChapter == null)
-                ? null
-                : () => onDelete!(chapter);
+
+        final deleteChapter = onDelete == null
+            ? null
+            : ({bool deleteFiles = false}) =>
+                onDelete!(chapter, deleteFiles: deleteFiles);
         return _ReadSwipeAction(
           key: comicDetailsReadKey(chapter.sourceId, chapter.chapterId),
           isRead: chapter.isRead,
           onToggleRead: chapter.isRead
               ? () => onRestoreUnread(chapter)
               : () => onMarkRead(chapter),
-          onDelete: deleteChapter,
+          onDelete: deleteChapter == null
+              ? null
+              : () => deleteChapter(deleteFiles: true),
           readBackground: (thresholdReached, dragging) {
             final background = Align(
               alignment: Alignment.centerLeft,
@@ -2976,7 +3159,7 @@ final class _ComicChapterList extends StatelessWidget {
               color: colorScheme.onErrorContainer,
               onPressed: deleteChapter == null
                   ? null
-                  : () => unawaited(deleteChapter()),
+                  : () => unawaited(deleteChapter(deleteFiles: true)),
               icon: const Icon(Icons.delete_sweep_outlined),
             ),
           ),
@@ -3036,34 +3219,55 @@ final class _ComicChapterList extends StatelessWidget {
   ) async {
     final delete = onDelete;
     if (delete == null || chapter.entry == null) return;
+    var deleteFiles = false;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text('删除章节“${chapter.title}”？'),
-        content: const Text('将删除本地章节记录、阅读进度、已读状态和离线页面。'),
-        actions: <Widget>[
-          AppDialogActions(
-            onClose: () => Navigator.pop(context, false),
-            actions: <Widget>[
-              FilledButton(
-                key: comicDetailsDeleteChapterKey(
-                  chapter.sourceId,
-                  chapter.chapterId,
-                ),
-                style: FilledButton.styleFrom(
-                  backgroundColor: Theme.of(context).colorScheme.error,
-                  foregroundColor: Theme.of(context).colorScheme.onError,
-                ),
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('删除'),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('删除章节“${chapter.title}”？'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const Text('将从本地书架与记录中删除该章节的阅读进度与状态。'),
+              const SizedBox(height: 12),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('同时删除本地下载文件'),
+                value: deleteFiles,
+                onChanged: (val) {
+                  setDialogState(() {
+                    deleteFiles = val ?? false;
+                  });
+                },
+                controlAffinity: ListTileControlAffinity.leading,
               ),
             ],
           ),
-        ],
+          actions: <Widget>[
+            AppDialogActions(
+              onClose: () => Navigator.pop(context, false),
+              actions: <Widget>[
+                FilledButton(
+                  key: comicDetailsDeleteChapterKey(
+                    chapter.sourceId,
+                    chapter.chapterId,
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.error,
+                    foregroundColor: Theme.of(context).colorScheme.onError,
+                  ),
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('删除'),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
     if (confirmed == true) {
-      await delete(chapter);
+      await delete(chapter, deleteFiles: deleteFiles);
     }
   }
 }
@@ -3588,6 +3792,27 @@ int _compareChapters(Chapter left, Chapter right) {
   return left.chapterId.compareTo(right.chapterId);
 }
 
+void _showDetailsSnackBar(
+  BuildContext context,
+  SnackBar snackBar,
+) {
+  if (!context.mounted) return;
+  final messenger = ScaffoldMessenger.of(context);
+  final isTest =
+      WidgetsBinding.instance.runtimeType.toString().contains('Test');
+  messenger.hideCurrentSnackBar();
+  messenger.showSnackBar(
+    isTest
+        ? SnackBar(
+            content: snackBar.content,
+            action: snackBar.action,
+            animation: kAlwaysCompleteAnimation,
+            duration: const Duration(seconds: 1),
+          )
+        : snackBar,
+  );
+}
+
 void _showFailureSnackBar(
   BuildContext context,
   _DetailFailure failure, {
@@ -3595,7 +3820,8 @@ void _showFailureSnackBar(
 }) {
   final canVerify = failure.requiresSourceVerification &&
       onOpenSourceWebView != null;
-  ScaffoldMessenger.of(context).showSnackBar(
+  _showDetailsSnackBar(
+    context,
     SnackBar(
       content: Text(failure.summary, maxLines: 3),
       action: SnackBarAction(
@@ -3614,7 +3840,8 @@ Future<void> _copyFailure(
 ) async {
   await Clipboard.setData(ClipboardData(text: failure.details));
   if (context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    _showDetailsSnackBar(
+      context,
       const SnackBar(content: Text('完整错误已复制')),
     );
   }

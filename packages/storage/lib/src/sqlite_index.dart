@@ -41,20 +41,36 @@ final class SqliteIndex implements CacheIndex {
             bytes INTEGER NOT NULL,
             checksum TEXT NOT NULL,
             created_us INTEGER NOT NULL,
-            touched_us INTEGER NOT NULL
+            touched_us INTEGER NOT NULL,
+            pinned INTEGER NOT NULL DEFAULT 0
           )
         ''');
         db.execute(
           'CREATE INDEX IF NOT EXISTS cache_entry_state_touch '
           'ON cache_entry(state, touched_us)',
         );
-        db.execute('PRAGMA user_version = 1');
+        db.execute('PRAGMA user_version = 2');
         db.execute('COMMIT');
       } on Object {
         db.execute('ROLLBACK');
         rethrow;
       }
-    } else if (version != 1) {
+    } else if (version == 1) {
+      // v2 adds the `pinned` protection flag for explicit offline downloads;
+      // existing rows default to unpinned so capacity trims keep working.
+      db.execute('BEGIN IMMEDIATE');
+      try {
+        db.execute(
+          'ALTER TABLE cache_entry '
+          'ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0',
+        );
+        db.execute('PRAGMA user_version = 2');
+        db.execute('COMMIT');
+      } on Object {
+        db.execute('ROLLBACK');
+        rethrow;
+      }
+    } else if (version != 2) {
       throw StateError('unsupported cache schema version: $version');
     }
   }
@@ -88,8 +104,8 @@ final class SqliteIndex implements CacheIndex {
   Future<void> put(CacheRec rec) async {
     _requireDb().execute('''
       INSERT INTO cache_entry (
-        key, download_json, state, path, bytes, checksum, created_us, touched_us
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        key, download_json, state, path, bytes, checksum, created_us, touched_us, pinned
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET
         download_json = excluded.download_json,
         state = excluded.state,
@@ -97,7 +113,8 @@ final class SqliteIndex implements CacheIndex {
         bytes = excluded.bytes,
         checksum = excluded.checksum,
         created_us = excluded.created_us,
-        touched_us = excluded.touched_us
+        touched_us = excluded.touched_us,
+        pinned = excluded.pinned
     ''', <Object?>[
       rec.key,
       jsonEncode(rec.id.toJson()),
@@ -107,6 +124,7 @@ final class SqliteIndex implements CacheIndex {
       rec.checksum,
       rec.createdUs,
       rec.touchedUs,
+      rec.pinned ? 1 : 0,
     ]);
   }
 
@@ -167,6 +185,7 @@ final class SqliteIndex implements CacheIndex {
       'checksum': row['checksum']! as String,
       'createdUs': row['created_us']! as int,
       'touchedUs': row['touched_us']! as int,
+      'pinned': row['pinned'] == 1,
     });
   }
 }

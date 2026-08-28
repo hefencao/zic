@@ -524,6 +524,35 @@ void main() {
     expect(store.values, isEmpty);
   });
 
+  test('a user cache limit updates the trim policy without eager eviction',
+      () async {
+    final artifacts = _FakeArtifactMaintenance();
+    final coordinator = ResourceCacheCoordinator(
+      responses: ResourceCacheManager(),
+      artifacts: artifacts,
+    );
+    addTearDown(coordinator.close);
+
+    final policy = ResourceCacheMaintenancePolicy.forArtifactLimitBytes(
+      128 * 1024 * 1024,
+    );
+    expect(policy.artifactMaxWeight, 128 * 1024 * 1024);
+    expect(policy.artifactTargetWeight, 96 * 1024 * 1024);
+
+    coordinator.updateMaintenancePolicy(policy);
+    expect(identical(coordinator.maintenancePolicy, policy), isTrue);
+    // Updating the policy only records it; the next trim enforces the limit.
+    expect(artifacts.trimCalls, 0);
+
+    await coordinator.trim();
+    expect(artifacts.trimCalls, 1);
+    expect(
+      artifacts.lastTrim?.maxBytes,
+      128 * 1024 * 1024,
+    );
+    expect(artifacts.lastTrim?.targetBytes, 96 * 1024 * 1024);
+  });
+
 
   test('coordinator trim releases transient persistence but preserves retained artwork',
       () async {
@@ -770,6 +799,8 @@ final class _MemoryResourceByteStore
 
 final class _FakeArtifactMaintenance implements ArtifactCacheMaintenance {
   int clearCalls = 0;
+  int trimCalls = 0;
+  ({int maxBytes, int targetBytes})? lastTrim;
 
   @override
   Future<ArtifactCacheUsage> inspectArtifacts() async =>
@@ -779,14 +810,17 @@ final class _FakeArtifactMaintenance implements ArtifactCacheMaintenance {
   Future<ArtifactCacheReport> trimArtifacts({
     required int maxBytes,
     required int targetBytes,
-  }) async =>
-      const ArtifactCacheReport(
-        beforeBytes: 12,
-        releasedBytes: 4,
-        remainingBytes: 8,
-        evictedEntries: 1,
-        skippedBusy: 0,
-      );
+  }) async {
+    trimCalls++;
+    lastTrim = (maxBytes: maxBytes, targetBytes: targetBytes);
+    return const ArtifactCacheReport(
+      beforeBytes: 12,
+      releasedBytes: 4,
+      remainingBytes: 8,
+      evictedEntries: 1,
+      skippedBusy: 0,
+    );
+  }
 
   @override
   Future<ArtifactCacheReport> clearArtifacts() async {

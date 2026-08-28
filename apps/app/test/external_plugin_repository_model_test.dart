@@ -206,4 +206,39 @@ void main() {
     expect(externalPluginMatchesLanguage(en, 'all'), isTrue);
   });
 
+  test('repository entry families collapse language variants', () {
+    final groups = groupMihonEntriesByLanguage(
+      <ExternalComicPluginCatalogEntry>[
+        _plugin(id: 'mihon:eu.kanade.tachiyomi.extension.en.mangadex',
+            language: 'en'),
+        _plugin(id: 'mihon:eu.kanade.tachiyomi.extension.zh.mangadex',
+            language: 'zh'),
+        _plugin(id: 'mihon:eu.kanade.tachiyomi.extension.id.asurascans',
+            language: 'id'),
+      ],
+      preferredLanguage: 'zh',
+    );
+    final mangadex = groups
+        .singleWhere((group) => group.groupKey.contains('mangadex'));
+    expect(
+      mangadex.defaultEntry.pluginId,
+      'mihon:eu.kanade.tachiyomi.extension.zh.mangadex',
+    );
+    expect(mangadex.otherLanguages, hasLength(1));
+  });
+
+  test('family key strips the language segment of extension packages', () {
+    expect(
+      mihonPluginFamilyKey(
+        _plugin(id: 'mihon:eu.kanade.tachiyomi.extension.pt_br.baozi'),
+      ),
+      'baozi',
+    );
+    expect(
+      mihonPluginFamilyKey(_plugin(id: 'com.example.reader.mangadex')),
+      // No `extension` segment: the display name is the family fallback.
+      'com.example.reader.mangadex',
+    );
+  });
+
 }

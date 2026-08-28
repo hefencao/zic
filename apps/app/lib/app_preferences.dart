@@ -16,6 +16,10 @@ const defaultNetworkUserAgent =
     'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 '
     '(KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36';
 
+const defaultCacheLimitMb = 512;
+const minCacheLimitMb = 64;
+const maxCacheLimitMb = 8192;
+
 @immutable
 final class ComicReaderSettings {
   const ComicReaderSettings({
@@ -161,6 +165,10 @@ final class AppPreferencesController extends ChangeNotifier {
   bool _zoomDecodeBoostEnabled = true;
   int _detailsPreviewMaxItemsPerRow = 4;
   String _networkUserAgent = defaultNetworkUserAgent;
+  String? _chapterDownloadDirectoryOverride;
+  String? _chapterDownloadDirectoryPendingMoveFrom;
+  int _cacheLimitMb = defaultCacheLimitMb;
+  Map<String, String> _sourceDownloadDirectories = <String, String>{};
   List<String> _sourceSearchHistory = <String>[];
   Set<String> _acknowledgedComicVersionNotices = <String>{};
   Map<String, ComicReaderSettings> _comicReaderSettings =
@@ -193,6 +201,37 @@ final class AppPreferencesController extends ChangeNotifier {
   bool get zoomDecodeBoostEnabled => _zoomDecodeBoostEnabled;
   int get detailsPreviewMaxItemsPerRow => _detailsPreviewMaxItemsPerRow;
   String get networkUserAgent => _networkUserAgent;
+
+  /// Absolute chapter-download store directory chosen by the user, or `null`
+  /// to keep using the default `<storage root>/offline_chapters` location.
+  ///
+  /// This is a small user choice only. The bytes and the download index stay
+  /// owned by the durable download composition; changing the value never
+  /// moves files by itself.
+  String? get chapterDownloadDirectoryOverride =>
+      _chapterDownloadDirectoryOverride;
+
+  /// Source directory of a chapter-download store move that has not been
+  /// confirmed complete yet. Startup finishes or discards it; it is not user
+  /// facing.
+  String? get chapterDownloadDirectoryPendingMoveFrom =>
+      _chapterDownloadDirectoryPendingMoveFrom;
+  int get cacheLimitMb => _cacheLimitMb;
+
+  /// Per-source physical download roots chosen by the user, keyed by the
+  /// external source identity (`venera:<key>` / `mihon:<id>`).
+  ///
+  /// A missing key keeps the effective default download directory. This only
+  /// steers where NEW artifacts are written; existing bytes stay readable at
+  /// their recorded location.
+  Map<String, String> get sourceDownloadDirectories =>
+      Map<String, String>.unmodifiable(_sourceDownloadDirectories);
+
+  String? sourceDownloadDirectoryFor(String sourceId) {
+    final directory = _sourceDownloadDirectories[sourceId];
+    if (directory == null || directory.trim().isEmpty) return null;
+    return directory;
+  }
   List<String> get sourceSearchHistory =>
       List<String>.unmodifiable(_sourceSearchHistory);
   Set<String> get acknowledgedComicVersionNotices =>
@@ -326,6 +365,21 @@ final class AppPreferencesController extends ChangeNotifier {
     _networkUserAgent = _networkUserAgentValue(
       values['networkUserAgent'],
       fallback: _networkUserAgent,
+    );
+    _chapterDownloadDirectoryOverride = _nullableTrimmedString(
+      values['chapterDownloadDirectoryOverride'],
+    );
+    _chapterDownloadDirectoryPendingMoveFrom = _nullableTrimmedString(
+      values['chapterDownloadDirectoryPendingMoveFrom'],
+    );
+    _cacheLimitMb = _intInRange(
+      values['cacheLimitMb'],
+      fallback: _cacheLimitMb,
+      min: minCacheLimitMb,
+      max: maxCacheLimitMb,
+    );
+    _sourceDownloadDirectories = _decodeDirectoryMap(
+      values['sourceDownloadDirectories'],
     );
     _sourceSearchHistory = _decodeSearchHistory(
       values['sourceSearchHistory'],
@@ -482,6 +536,52 @@ final class AppPreferencesController extends ChangeNotifier {
 
   void resetNetworkUserAgent() => setNetworkUserAgent(defaultNetworkUserAgent);
 
+  void setChapterDownloadDirectoryOverride(String? value) {
+    final normalized = _nullableTrimmedString(value);
+    if (_disposed || _chapterDownloadDirectoryOverride == normalized) return;
+    _chapterDownloadDirectoryOverride = normalized;
+    _changed();
+  }
+
+  void setChapterDownloadDirectoryPendingMoveFrom(String? value) {
+    final normalized = _nullableTrimmedString(value);
+    if (_disposed || _chapterDownloadDirectoryPendingMoveFrom == normalized) {
+      return;
+    }
+    _chapterDownloadDirectoryPendingMoveFrom = normalized;
+    _changed();
+  }
+
+  void setCacheLimitMb(int value) {
+    final clamped =
+        value.clamp(minCacheLimitMb, maxCacheLimitMb).toInt();
+    if (_disposed || _cacheLimitMb == clamped) return;
+    _cacheLimitMb = clamped;
+    _changed();
+  }
+
+  /// Sets or clears (null/empty) the physical download root of one source.
+  void setSourceDownloadDirectory(String sourceId, String? directory) {
+    if (_disposed) return;
+    final key = sourceId.trim();
+    if (key.isEmpty) return;
+    final normalized = _nullableTrimmedString(directory);
+    if (normalized == null) {
+      if (!_sourceDownloadDirectories.containsKey(key)) return;
+      _sourceDownloadDirectories = <String, String>{
+        ..._sourceDownloadDirectories,
+      }..remove(key);
+      _changed();
+      return;
+    }
+    if (_sourceDownloadDirectories[key] == normalized) return;
+    _sourceDownloadDirectories = <String, String>{
+      ..._sourceDownloadDirectories,
+      key: normalized,
+    };
+    _changed();
+  }
+
   void rememberSourceSearch(String value) {
     final normalized = value.trim();
     if (_disposed || normalized.isEmpty) return;
@@ -625,6 +725,11 @@ final class AppPreferencesController extends ChangeNotifier {
       'zoomDecodeBoost': _zoomDecodeBoostEnabled,
       'detailsPreviewMaxItemsPerRow': _detailsPreviewMaxItemsPerRow,
       'networkUserAgent': _networkUserAgent,
+      'chapterDownloadDirectoryOverride': _chapterDownloadDirectoryOverride,
+      'chapterDownloadDirectoryPendingMoveFrom':
+          _chapterDownloadDirectoryPendingMoveFrom,
+      'cacheLimitMb': _cacheLimitMb,
+      'sourceDownloadDirectories': _sourceDownloadDirectories,
       'sourceSearchHistory': _sourceSearchHistory,
       'acknowledgedComicVersionNotices':
           _acknowledgedComicVersionNotices.toList(growable: false),
@@ -700,6 +805,25 @@ String _networkUserAgentValue(Object? raw, {required String fallback}) {
   if (raw is! String) return fallback;
   final normalized = raw.trim();
   return normalized.isEmpty ? defaultNetworkUserAgent : normalized;
+}
+
+String? _nullableTrimmedString(Object? raw) {
+  if (raw is! String) return null;
+  final normalized = raw.trim();
+  return normalized.isEmpty ? null : normalized;
+}
+
+Map<String, String> _decodeDirectoryMap(Object? raw) {
+  if (raw is! Map) return <String, String>{};
+  final result = <String, String>{};
+  for (final entry in raw.entries) {
+    final key = entry.key;
+    if (key is! String || key.trim().isEmpty) continue;
+    final value = entry.value;
+    if (value is! String || value.trim().isEmpty) continue;
+    result[key] = value.trim();
+  }
+  return result;
 }
 
 
