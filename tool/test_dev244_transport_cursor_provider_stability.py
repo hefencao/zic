@@ -47,11 +47,11 @@ for token in (
     'endNetworkAttemptProgress',
 ):
     require(token in session, f'DownloadSession missing transient transport progress: {token}')
-require('session.beginNetworkAttemptProgress(response.rangeStart);' in job,
+require('session.beginNetworkAttemptProgress(' in job and 'response.rangeStart' in job,
         'DownloadJob must start transport cursor from the actual response range')
-require('session.advanceNetworkAttemptProgress(networkCursor)' in job,
+require('session.advanceNetworkAttemptProgress(' in job and 'networkCursor' in job,
         'DownloadJob must advance the one physical transport cursor')
-require('session.endNetworkAttemptProgress();' in job,
+require('session.endNetworkAttemptProgress(' in job,
         'transport cursor attempt lifetime must close with DownloadJob run')
 require('networkCursor = value;' in job and 'full-body-prefix-catchup' in job,
         'full-body prefix replay must expose current transport position without changing partial authority')

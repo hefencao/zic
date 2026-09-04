@@ -99,6 +99,28 @@ void main() {
         ),
       ],
       versionRelations: <ComicVersionRelation>[relation],
+      orphanedDownloadEntries: <ImportedLibraryEntry>[
+        ImportedLibraryEntry(chapter: chapter),
+      ],
+      chapterDownloads: const <HomeChapterDownloadSummary>[
+        HomeChapterDownloadSummary(
+          sourceId: 'fixture-source',
+          comicId: 'fixture-comic',
+          comicTitle: 'Fixture',
+          chapterId: 'fixture-chapter',
+          sourceRevision: 'fixture-r1',
+          title: 'Downloaded chapter',
+          completedPages: 1,
+          totalPages: 2,
+          receivedBytes: 128,
+          pinnedPages: 1,
+          totalBytes: 256,
+          pageProgressUnits: 1.5,
+          phase: 'downloading',
+          failure: 'interrupted',
+          started: true,
+        ),
+      ],
       libraryRevision: 42,
     );
     final store = HomeProjectionSnapshotStore.atPath(
@@ -121,11 +143,17 @@ void main() {
     expect(restored.readStates.single.isRead, isTrue);
     expect(restored.sourcePreferences.single.enabled, isFalse);
     expect(restored.versionRelations.single.pageMappings, hasLength(1));
+    expect(restored.orphanedDownloadEntries, hasLength(1));
+    expect(restored.chapterDownloads, hasLength(1));
+    expect(restored.chapterDownloads.single.phase, 'downloading');
+    expect(restored.chapterDownloads.single.pageProgressUnits, 1.5);
+    expect(restored.chapterDownloads.single.started, isTrue);
+    expect(restored.includesDownloadProjection, isTrue);
     expect(restored.libraryRevision, 42);
 
     final encoded = jsonDecode(await File(storePath(directory)).readAsString())
         as Map<Object?, Object?>;
-    expect(encoded['version'], 2);
+    expect(encoded['version'], 3);
     final firstEntry = (encoded['entries']! as List<Object?>).single
         as Map<Object?, Object?>;
     expect(
@@ -180,7 +208,7 @@ void main() {
     await store.write(restored);
     final compact = jsonDecode(await File(path).readAsString())
         as Map<Object?, Object?>;
-    expect(compact['version'], 2);
+    expect(compact['version'], 3);
     expect(
       ((compact['entries']! as List<Object?>).single
               as Map<Object?, Object?>)['chapter'],
@@ -193,6 +221,40 @@ void main() {
           .containsKey('pages'),
       isFalse,
     );
+  });
+
+  test('v2 compact snapshots remain readable and request a v3 rewrite',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-home-snapshot-v2-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final path = '${directory.path}/snapshot.json';
+    final v2Json = <String, Object?>{
+      'format': 'zic-home-projection',
+      'version': 2,
+      'entries': const <Object?>[],
+      'savedComics': const <Object?>[],
+      'categories': const <Object?>[],
+      'preferences': const <Object?>[],
+      'readStates': const <Object?>[],
+      'sourcePreferences': const <Object?>[],
+      'versionRelations': const <Object?>[],
+    };
+    await File(path).writeAsString(jsonEncode(v2Json));
+    final store = HomeProjectionSnapshotStore.atPath(path);
+
+    final restored = await store.read();
+
+    expect(restored, isNotNull);
+    expect(restored!.entriesAreCompact, isTrue);
+    expect(restored.includesDownloadProjection, isFalse);
+    expect(restored.chapterDownloads, isEmpty);
+    expect(restored.requiresRewrite, isTrue);
   });
 
   test('large Home snapshots are gzip-compressed without changing the model',

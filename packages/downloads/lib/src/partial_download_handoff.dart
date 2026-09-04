@@ -40,14 +40,22 @@ final class PartialDownloadHandoff {
   final Map<DownloadSession, Future<bool>> _stores =
       <DownloadSession, Future<bool>>{};
 
-  Future<void> restoreInto(DownloadSession session) async {
+  Future<void> restoreInto(
+    DownloadSession session, {
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
     if (session.committedLength > 0) return;
     await session.restore(verifyPromotedChecksum: false);
+    control?.throwIfCancelled();
     if (session.state == DownloadState.promoted ||
         session.artifact.committedLength > 0) {
       return;
     }
-    final candidate = await _restoreCandidate(session.id);
+    final candidate = await _restoreCandidate(
+      session.id,
+      control: control,
+    );
     if (candidate == null || candidate.entry.length <= 0) return;
     final entry = candidate.entry;
 
@@ -58,6 +66,7 @@ final class PartialDownloadHandoff {
           : entry.validators,
       totalLength: entry.totalLength,
     );
+    control?.throwIfCancelled();
     final writer = session.acquireWriter();
     var offset = 0;
     try {
@@ -66,6 +75,7 @@ final class PartialDownloadHandoff {
         writer,
         entry,
         priority: () => session.effectivePriority,
+        control: control,
       );
       if (offset != entry.length) {
         throw StateError(
@@ -73,11 +83,25 @@ final class PartialDownloadHandoff {
           '$offset/${entry.length}',
         );
       }
-    } on Object catch (error) {
-      await session.fail(writer, error);
-      rethrow;
+      control?.throwIfCancelled();
+      await session.pause(writer);
+      control?.throwIfCancelled();
+    } on Object catch (error, stackTrace) {
+      // pause() retires the writer in its finally block even when its flush or
+      // cache synchronization fails. Do not invoke fail() with a stale lease
+      // in that case, and never let cleanup replace the original restore
+      // error (especially a late cancellation after a successful pause).
+      if (session.hasWriter) {
+        try {
+          await session.fail(writer, error);
+        } on Object {
+          // Preserve the restore/pause error. The session's terminal path has
+          // already retired the writer; the next owner attempt can restore
+          // the durable prefix.
+        }
+      }
+      Error.throwWithStackTrace(error, stackTrace);
     }
-    await session.pause(writer);
     _record(
       session,
       action: candidate.equivalent ? 'restored-equivalent' : 'restored',
@@ -94,42 +118,84 @@ final class PartialDownloadHandoff {
     WriterLease writer,
     PartialDownloadEntry entry, {
     required int Function() priority,
+    TaskControl? control,
   }) async {
     final scheduler = readScheduler;
-    if (scheduler == null) {
-      var offset = 0;
-      await for (final chunk in entry.open(start: 0)) {
-        if (chunk.isEmpty) continue;
-        await session.append(writer, offset, chunk);
-        offset += chunk.length;
-      }
-      return offset;
-    }
-
     final iterator = StreamIterator<List<int>>(entry.open(start: 0));
     var offset = 0;
+    Object? primaryError;
+    StackTrace? primaryStack;
     try {
       while (true) {
-        final lease = await scheduler.acquire(priority: priority);
+        ArtifactCacheReadLease? lease;
         try {
-          if (!await iterator.moveNext()) break;
+          if (scheduler != null) {
+            lease = await scheduler.acquire(
+              priority: priority,
+              control: control,
+            );
+          }
+          if (!await _moveNextCancellable(iterator, control)) break;
           final chunk = iterator.current;
           if (chunk.isEmpty) continue;
+          control?.throwIfCancelled();
           await session.append(writer, offset, chunk);
           offset += chunk.length;
+          control?.throwIfCancelled();
         } finally {
-          lease.release();
+          lease?.release();
         }
       }
+    } on Object catch (error, stackTrace) {
+      primaryError = error;
+      primaryStack = stackTrace;
     } finally {
-      await iterator.cancel();
+      try {
+        await iterator.cancel();
+      } on Object catch (error, stackTrace) {
+        if (primaryError == null) {
+          Error.throwWithStackTrace(error, stackTrace);
+        }
+      }
+    }
+    if (primaryError != null) {
+      Error.throwWithStackTrace(primaryError, primaryStack!);
     }
     return offset;
   }
 
+  Future<bool> _moveNextCancellable(
+    StreamIterator<List<int>> iterator,
+    TaskControl? control,
+  ) async {
+    if (control == null) return iterator.moveNext();
+    control.throwIfCancelled();
+    try {
+      return await Future.any<bool>(<Future<bool>>[
+        iterator.moveNext(),
+        control.whenCancelled.then<bool>((_) {
+          throw const Failure(
+            code: ErrorCode.cancelled,
+            message: 'partial download restore was cancelled',
+          );
+        }),
+      ]);
+    } catch (error, stackTrace) {
+      if (control.cancelled) control.throwIfCancelled();
+      throw Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
 
-  Future<_PartialRestoreCandidate?> _restoreCandidate(DownloadId id) async {
-    final exact = await store.openPartialDownload(id);
+
+  Future<_PartialRestoreCandidate?> _restoreCandidate(
+    DownloadId id, {
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
+    final exact = await _awaitCancellable(
+      store.openPartialDownload(id),
+      control,
+    );
     if (exact != null && exact.length > 0) {
       return _PartialRestoreCandidate(
         entry: exact,
@@ -142,9 +208,13 @@ final class PartialDownloadHandoff {
     PartialDownloadEntry? selected;
     var checked = 0;
     for (final equivalent in candidates(id)) {
+      control?.throwIfCancelled();
       if (equivalent == id) continue;
       checked++;
-      final entry = await store.openPartialDownload(equivalent);
+      final entry = await _awaitCancellable(
+        store.openPartialDownload(equivalent),
+        control,
+      );
       if (entry == null || entry.length <= 0) continue;
       if (selected == null || entry.length > selected.length) {
         selected = entry;
@@ -156,6 +226,28 @@ final class PartialDownloadHandoff {
       equivalent: true,
       candidatesChecked: checked,
     );
+  }
+
+  static Future<T> _awaitCancellable<T>(
+    Future<T> operation,
+    TaskControl? control,
+  ) async {
+    if (control == null) return operation;
+    control.throwIfCancelled();
+    try {
+      return await Future.any<T>(<Future<T>>[
+        operation,
+        control.whenCancelled.then<T>((_) {
+          throw const Failure(
+            code: ErrorCode.cancelled,
+            message: 'partial download restore was cancelled',
+          );
+        }),
+      ]);
+    } catch (error, stackTrace) {
+      if (control.cancelled) control.throwIfCancelled();
+      throw Error.throwWithStackTrace(error, stackTrace);
+    }
   }
 
   /// Persists one unfinished authoritative prefix before its hot physical

@@ -742,6 +742,8 @@ final class _RuntimeBrowsableComicSource
         contentKindHint: _contentKind(page['contentKindHint']),
         animatedHint: _optionalBool(page['animatedHint']) ?? false,
         checksum: _optionalString(page['checksum'], 'checksum'),
+        checksumAlgorithm:
+            _optionalString(page['checksumAlgorithm'], 'checksumAlgorithm'),
       );
     }).toList(growable: false);
     if (pages.isEmpty) {

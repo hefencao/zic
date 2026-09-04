@@ -39,6 +39,40 @@ void main() {
         clock: FakeMonoClock(),
       );
 
+  test('late cancellation after seal still completes local promotion', () async {
+    final bytes = <int>[1, 2, 3, 4];
+    final session = createSession();
+    await session.restore();
+    await session.bindResponse(
+      validators: const Validators(etag: 'local-v1'),
+      totalLength: bytes.length,
+    );
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, bytes);
+    await session.pause(writer);
+
+    final control = CancelToken();
+    final completion = DownloadJob.completeWithoutTransport(
+      session: session,
+      control: control,
+    );
+    // The call has synchronously acquired the writer and entered seal; cancel
+    // while the asynchronous seal/promotion lifecycle is still in flight.
+    control.cancel();
+
+    await expectLater(
+      completion,
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.cancelled,
+      )),
+    );
+    expect(session.state, DownloadState.promoted);
+    expect(session.hasWriter, isFalse);
+    expect(await File(session.artifact.finalPath).readAsBytes(), bytes);
+  });
+
   test('resumes a durable partial with matching validators', () async {
     final bytes = <int>[
       ...'RIFF'.codeUnits,
@@ -397,6 +431,77 @@ void main() {
       ),
     );
     await transport.cancelled.future.timeout(const Duration(seconds: 1));
+    await transport.discarded.future.timeout(const Duration(seconds: 1));
+    expect(session.state, DownloadState.idle);
+  });
+
+  test('cancellation during uncontrolled open discards a late response', () async {
+    final session = createSession();
+    final transport = _LateOpenTransport();
+    final cancel = CancelToken();
+    final run = DownloadJob(
+      transport: transport,
+      session: session,
+      readStallTimeout: const Duration(seconds: 1),
+    ).run(cancel: cancel);
+
+    await transport.opened.future;
+    final runError = expectLater(
+      run,
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    cancel.cancel();
+    await runError;
+
+    transport.release(
+      ByteResponse(
+        bytes: const Stream<List<int>>.empty(),
+        statusCode: HttpStatus.ok,
+        rangeStart: 0,
+        totalLength: 1,
+        onDiscard: () async {
+          if (!transport.discarded.isCompleted) transport.discarded.complete();
+        },
+      ),
+    );
+    await transport.discarded.future.timeout(const Duration(seconds: 1));
+    expect(session.state, DownloadState.idle);
+  });
+
+  test('reset during open prevents a late response from acquiring a new writer',
+      () async {
+    final session = createSession();
+    final transport = _BlockingOpenTransport();
+    final run = DownloadJob(
+      transport: transport,
+      session: session,
+      readStallTimeout: Duration.zero,
+    ).run();
+
+    await transport.opened.future.timeout(const Duration(seconds: 1));
+    await session.reset();
+    transport.release();
+
+    await expectLater(
+      run,
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.staleRun,
+        ),
+      ),
+    );
+    await transport.discarded.future.timeout(const Duration(seconds: 1));
+    expect(session.state, DownloadState.idle);
+    expect(session.hasWriter, isFalse);
+    expect(session.committedLength, 0);
   });
 
   test('rejects a declared empty image response', () async {
@@ -413,7 +518,7 @@ void main() {
       ),
     );
 
-    expect(session.state, isNot(DownloadState.promoted));
+    expect(session.state, DownloadState.failed);
     expect(session.committedLength, 0);
   });
 
@@ -462,6 +567,35 @@ void main() {
     expect(result.state, DownloadState.promoted);
     expect(transport.requests, isEmpty);
     expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
+  });
+
+  test('revalidates an in-memory promoted artifact before reuse', () async {
+    final bytes = List<int>.generate(12, (index) => index + 1);
+    final session = createSession();
+    await session.restore();
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, bytes);
+    await session.seal(writer, expectedLength: bytes.length);
+    await session.promote();
+
+    final finalFile = File(session.artifact.finalPath);
+    final corrupted = await finalFile.readAsBytes();
+    corrupted[corrupted.length - 1] ^= 0xff;
+    await finalFile.writeAsBytes(corrupted, flush: true);
+
+    await expectLater(
+      DownloadJob(
+        transport: FakeTransport(bytes: bytes),
+        session: session,
+      ).run(),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.artifactCorruption,
+        ),
+      ),
+    );
   });
 
 
@@ -648,6 +782,36 @@ void main() {
     expect(session.artifact.hasOpenWriter, isFalse);
   });
 
+  test('cancellation still aborts an open when the stall watchdog is disabled',
+      () async {
+    final session = createSession();
+    final transport = _BlockingOpenTransport();
+    final token = CancelToken();
+    final run = DownloadJob(
+      transport: transport,
+      session: session,
+      readStallTimeout: Duration.zero,
+    ).run(cancel: token);
+
+    await transport.opened.future.timeout(const Duration(seconds: 1));
+    token.cancel();
+    await expectLater(
+      run.timeout(const Duration(seconds: 1)),
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+
+    transport.release();
+    await transport.discarded.future.timeout(const Duration(seconds: 1));
+    expect(session.state, DownloadState.idle);
+    expect(session.artifact.hasOpenWriter, isFalse);
+  });
+
   test('structural ANMF credit parks only after playable prefix floor',
       () async {
     final trace = MemoryTraceSink();
@@ -819,6 +983,95 @@ void main() {
     expect(transport.openCount, 1,
         reason: 'resume must continue the original response, not reopen it');
     await lane.idle();
+  });
+
+  test('demand withdrawal after resume grant releases the body permit again',
+      () async {
+    final trace = MemoryTraceSink();
+    final bytes = _flowAnimatedWebp(List<int>.filled(24, 48));
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'resume-demand-race',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('runtime://resume-demand-race.webp'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/resume-demand-race.webp',
+        finalPath: '${temp.path}/cache/resume-demand-race.webp',
+      ),
+      clock: FakeMonoClock(),
+      traceSink: trace,
+    );
+    session.observePlayablePrefixEvidence(
+      decodedPrefixFrames: 1,
+      sourceLength: 1,
+      firstPlayablePrefixBytes: 1,
+      firstFrameRequiredSourceLength: 0,
+    );
+    final transport = _ConsumerPacedBodyTransport(bytes, chunkSize: 31);
+    final lane = NetLane(
+      maxActive: 1,
+      reservedHighPrioritySlots: 1,
+      highPriorityThreshold: 1000,
+    );
+    late CancelToken firstToken;
+    final firstRun = Completer<void>();
+    lane.submitRanked(
+      key: 'resume-demand-race',
+      priority: 800,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      flowTargetFrames: 1,
+      task: (token) async {
+        firstToken = token;
+        try {
+          await DownloadJob(transport: transport, session: session).run(
+            cancel: token,
+          );
+        } finally {
+          firstRun.complete();
+        }
+      },
+    );
+
+    await _waitForFlowAction(trace, 'pseudo-parked', targetFrames: 1);
+    final blockerRelease = Completer<void>.sync();
+    final blockerStarted = Completer<void>();
+    lane.submitRanked(
+      key: 'resume-demand-blocker',
+      priority: 1000,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (_) {
+        blockerStarted.complete();
+        return blockerRelease.future;
+      },
+    );
+    await blockerStarted.future;
+
+    // Let the parked DownloadJob request its resume permit. Completing the
+    // blocker with a synchronous completer then grants that permit before the
+    // demand withdrawal below runs, reproducing the grant/withdrawal window.
+    firstToken.updateFlowTargetFrames(0);
+    await Future<void>.delayed(Duration.zero);
+    blockerRelease.complete();
+    lane.updateDemanded('resume-demand-race', false);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(lane.active, 0,
+        reason: 'a withdrawn resumed response must park without retaining its read permit');
+    expect(lane.transportLeases, 1,
+        reason: 'the retained response still owns its transport lease');
+
+    firstToken.cancel();
+    await firstRun.future.timeout(const Duration(seconds: 1));
+    await lane.idle();
+    expect(session.state, DownloadState.idle);
   });
 
   test('durable artifact body uses artifact scheduler instead of NetLane permit',
@@ -1203,9 +1456,58 @@ final class _BlockingDurableArtifactTransport implements Transport {
   }
 }
 
+final class _LateOpenTransport implements Transport {
+  final Completer<void> opened = Completer<void>();
+  final Completer<ByteResponse> response = Completer<ByteResponse>();
+  final Completer<void> discarded = Completer<void>();
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) {
+    if (!opened.isCompleted) opened.complete();
+    return response.future;
+  }
+
+  void release(ByteResponse value) => response.complete(value);
+}
+
+final class _BlockingOpenTransport implements Transport {
+  final Completer<void> opened = Completer<void>();
+  final Completer<ByteResponse> response = Completer<ByteResponse>();
+  final Completer<void> discarded = Completer<void>();
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) {
+    if (!opened.isCompleted) opened.complete();
+    return response.future;
+  }
+
+  void release() {
+    response.complete(
+      ByteResponse(
+        bytes: const Stream<List<int>>.empty(),
+        statusCode: HttpStatus.ok,
+        rangeStart: 0,
+        totalLength: 1,
+        onDiscard: () async {
+          if (!discarded.isCompleted) discarded.complete();
+        },
+      ),
+    );
+  }
+}
+
 final class _BlockingTransport implements Transport {
   final Completer<void> firstChunk = Completer<void>();
   final Completer<void> cancelled = Completer<void>();
+  final Completer<void> discarded = Completer<void>();
 
   @override
   Future<ByteResponse> open(
@@ -1228,6 +1530,9 @@ final class _BlockingTransport implements Transport {
       statusCode: HttpStatus.ok,
       rangeStart: 0,
       totalLength: 6,
+      onDiscard: () async {
+        if (!discarded.isCompleted) discarded.complete();
+      },
     );
   }
 }

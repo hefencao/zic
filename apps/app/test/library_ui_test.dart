@@ -8,6 +8,7 @@ import 'package:downloads/downloads.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resource_cache/resource_cache.dart';
+import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:zic/artwork_placeholder.dart';
 import 'package:zic/comic_details.dart' as details;
@@ -30,7 +31,12 @@ Widget _localDetailsScreen({
   required Future<void> Function(ImportedLibraryEntry chapter, bool isRead)
       onReadChanged,
   required Future<void> Function(ImportedLibraryEntry chapter) onOpenChapter,
+  details.ComicDetailsChapterDownloader? onDownloadChapter,
   details.ComicDetailsChapterDeleter? onDeleteChapter,
+  details.ComicDetailsDownloadActions downloadActions =
+      details.ComicDetailsDownloadActions.noop,
+  details.ComicDetailsComicDownloader? onDownloadComic,
+  details.ComicDetailsConflictInspector? inspectComicConflicts,
 }) {
   final snapshot = details.ComicDetailsLibrarySnapshot(
     chapters: comic.chapters,
@@ -62,12 +68,15 @@ Widget _localDetailsScreen({
       await onOpenChapter(await loadChapter());
       return null;
     },
-    onDownloadChapter: (_) async {},
+    onDownloadChapter:
+        onDownloadChapter ?? details.ComicDetailsDownloadActions.noop.downloadChapter,
     onDeleteChapter: onDeleteChapter,
     inspectChapterDownload: (chapter) async =>
         ChapterDownloadSnapshot.idle(chapter),
     downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
-    onDownloadComic: (_) async {},
+    onDownloadComic: onDownloadComic ?? (_) async {},
+    inspectComicConflicts: inspectComicConflicts,
+    downloadActions: downloadActions,
   );
 }
 
@@ -457,7 +466,7 @@ void main() {
     await _pumpUntilFound(tester, find.byKey(downloadManagerScreenKey));
 
     expect(find.byKey(downloadManagerScreenKey), findsOneWidget);
-    expect(find.text('暂无下载任务或离线章节'), findsOneWidget);
+    expect(find.text('暂无手动下载任务'), findsOneWidget);
   });
 
   testWidgets('custom sort keeps gallery view and drag-handle order',
@@ -1141,6 +1150,282 @@ void main() {
     await tester.tap(find.byKey(chapterReadKey('local-folder', 'chapter-2')));
     await tester.pump();
     expect(openedChapterId, 'chapter-2');
+  });
+
+  testWidgets('details crosses the durable boundary before download reads or writes',
+      (tester) async {
+    final chapter = ImportedChapterRecord(
+      directoryId: 'remote:durable-comic',
+      displayName: 'Durable boundary',
+      sourceId: 'remote:durable',
+      comicId: 'durable-comic',
+      comicTitle: 'Durable boundary',
+      chapterId: 'durable-chapter',
+      sourceRevision: 'r1',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.webp',
+          sourceId: 'https://example.test/durable/001.webp',
+          pageId: 'p1',
+          contentKindHint: ContentKindHint.webp,
+        ),
+      ],
+    );
+    final entry = ImportedLibraryEntry(chapter: chapter);
+    final calls = <String>[];
+    var durable = false;
+    final now = DateTime.utc(2026, 8, 31);
+    final placement = DownloadPlacement(
+      placementId: '${chapter.sourceId}\u0000${chapter.comicId}',
+      sourceId: chapter.sourceId,
+      comicId: chapter.comicId,
+      comicTitle: chapter.comicTitle,
+      mode: DownloadPlacementMode.incremental,
+      relativeDirectory: 'Durable boundary',
+      createdAt: now,
+      updatedAt: now,
+    );
+
+    Future<void> startDownload(ImportedLibraryEntry _) async {
+      expect(durable, isTrue);
+      calls.add('download');
+    }
+
+    final actions = details.ComicDetailsDownloadActions(
+      downloadChapter: startDownload,
+      stopChapter: (_) async {},
+      probeExisting: ({required sourceId, required comicId, chapterId}) async {
+        expect(durable, isTrue);
+        calls.add('probe');
+        return const DownloadExistenceReport(
+          liveRunIdentities: <String>[],
+          liveRunStarted: false,
+          indexedReadyPages: 0,
+          urlMatchedPages: 0,
+        );
+      },
+      wholeComicJob: (_, __) async => null,
+      cachedWholeComicJob: (_, __) => null,
+      toggleWholeComicPause: (_, __) async {},
+      inspectComicConflicts: ({
+        required sourceId,
+        sourceDisplayName,
+        required comicId,
+        required comicTitle,
+        knownPredecessorComicIds,
+        knownSuccessorComicIds,
+      }) async {
+        throw StateError('persisted placement should skip conflict inspection');
+      },
+      claimComicDirectory: ({
+        required sourceId,
+        required comicId,
+        required directoryName,
+        comicTitle,
+        mode = DownloadPlacementMode.createNew,
+        observedOwnerKey,
+      }) async {
+        throw StateError('persisted placement should not be replaced');
+      },
+      getDownloadPlacement: ({required sourceId, required comicId}) async {
+        expect(durable, isTrue);
+        calls.add('placement');
+        return placement;
+      },
+      inspectChapter: (_) async => ChapterDownloadSnapshot.idle(entry),
+      ensureDurableServices: () async {
+        calls.add('ensure');
+        durable = true;
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _localDetailsScreen(
+          comic: LibraryComic.fromEntries(<ImportedLibraryEntry>[entry]),
+          preference: ComicPreference.defaults(
+            sourceId: chapter.sourceId,
+            comicId: chapter.comicId,
+            sourceKind: ComicSourceKind.remote,
+          ),
+          readStates: const <String, ChapterReadState>{},
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (_) async {},
+          onDownloadChapter: startDownload,
+          downloadActions: actions,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _tapVisible(
+      tester,
+      find.byKey(
+        details.comicDetailsDownloadKey(
+          chapter.sourceId,
+          chapter.chapterId,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(calls, <String>['ensure', 'probe', 'placement', 'download']);
+  });
+
+  testWidgets('details reopens placement dialog for typed whole-comic conflict',
+      (tester) async {
+    final chapter = ImportedChapterRecord(
+      directoryId: 'remote:governance-comic',
+      displayName: '第 1 话',
+      sourceId: 'remote:governance',
+      comicId: 'governance-comic',
+      comicTitle: '治理漫画',
+      chapterId: 'governance-chapter',
+      sourceRevision: 'r1',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.webp',
+          sourceId: 'https://example.test/001.webp',
+          pageId: 'p1',
+          contentKindHint: ContentKindHint.webp,
+        ),
+      ],
+    );
+    final entry = ImportedLibraryEntry(chapter: chapter);
+    final now = DateTime.utc(2026, 8, 30);
+    final job = WholeComicQueueJobSnapshot(
+      jobId: 'remote:governance\u0000governance-comic',
+      sourceId: 'remote:governance',
+      comicId: 'governance-comic',
+      comicTitle: '治理漫画',
+      phase: WholeComicQueuePhase.requiresUserAction,
+      completedChapters: 0,
+      totalChapters: 1,
+      completedPageUnits: 0,
+      totalPages: 1,
+      activeChapterTitles: const <String>[],
+      createdAt: now,
+      updatedAt: now,
+      failure: 'download placement directory conflict',
+      userAction: const WholeComicQueueUserAction(
+        kind: WholeComicQueueUserActionKind.resolveDownloadPlacement,
+        message: 'download placement directory conflict',
+        chapterId: 'governance-chapter',
+        chapterTitle: '第 1 话',
+        directory: '治理漫画',
+        existingOwnerKey: 'old-source\u0000old-comic',
+        requestOwnerKey: 'remote:governance\u0000governance-comic',
+      ),
+    );
+    final oldPlacement = DownloadPlacement(
+      placementId: job.jobId,
+      sourceId: job.sourceId,
+      comicId: job.comicId,
+      comicTitle: job.comicTitle,
+      mode: DownloadPlacementMode.incremental,
+      relativeDirectory: '治理漫画',
+      createdAt: now,
+      updatedAt: now,
+    );
+    final candidate = ComicFolderCandidate(
+      directoryPath: '/downloads/治理漫画',
+      folderName: '治理漫画',
+      manifest: ComicFolderManifest(
+        sourceId: 'old-source',
+        comicId: 'old-comic',
+        comicTitle: '治理漫画',
+        updatedAt: now,
+      ),
+      isExactMatch: false,
+      isTitleMatch: true,
+      chapterCount: 1,
+      existingPageFilesCount: 1,
+    );
+    final report = ComicConflictReport(
+      candidates: <ComicFolderCandidate>[candidate],
+      hasDirectExactMatch: false,
+      hasTitleConflicts: true,
+      recommendedDirectoryName: '治理漫画 (remote_governance)',
+    );
+    var queued = false;
+    String? claimedDirectory;
+    DownloadPlacementMode? claimedMode;
+    String? claimedObservedOwner;
+    Future<ComicConflictReport> inspectConflicts({
+      required String sourceId,
+      String? sourceDisplayName,
+      required String comicId,
+      required String comicTitle,
+      Set<String>? knownPredecessorComicIds,
+      Set<String>? knownSuccessorComicIds,
+    }) async =>
+        report;
+    final actions = details.ComicDetailsDownloadActions(
+      downloadChapter: (_) async {},
+      stopChapter: (_) async {},
+      probeExisting: ({required sourceId, required comicId, chapterId}) async =>
+          const DownloadExistenceReport(
+        liveRunIdentities: <String>[],
+        liveRunStarted: false,
+        indexedReadyPages: 1,
+        urlMatchedPages: 0,
+      ),
+      wholeComicJob: (_, __) async => job,
+      cachedWholeComicJob: (_, __) => job,
+      toggleWholeComicPause: (_, __) async {},
+      inspectComicConflicts: inspectConflicts,
+      claimComicDirectory: ({
+        required sourceId,
+        required comicId,
+        required directoryName,
+        comicTitle,
+        mode = DownloadPlacementMode.createNew,
+        observedOwnerKey,
+      }) async {
+        claimedDirectory = directoryName;
+        claimedMode = mode;
+        claimedObservedOwner = observedOwnerKey;
+      },
+      getDownloadPlacement: ({required sourceId, required comicId}) async =>
+          oldPlacement,
+      inspectChapter: (_) async => ChapterDownloadSnapshot.idle(entry),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _localDetailsScreen(
+          comic: LibraryComic.fromEntries(<ImportedLibraryEntry>[entry]),
+          preference: ComicPreference.defaults(
+            sourceId: chapter.sourceId,
+            comicId: chapter.comicId,
+            sourceKind: ComicSourceKind.remote,
+          ),
+          readStates: const <String, ChapterReadState>{},
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (_) async {},
+          downloadActions: actions,
+          inspectComicConflicts: inspectConflicts,
+          onDownloadComic: (_) async {
+            queued = true;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _tapVisible(tester, find.byKey(details.comicDetailsDownloadAllKey));
+    await _pumpUntilFound(tester, find.text('下载任务处理'));
+
+    expect(find.text('下载任务处理'), findsOneWidget);
+    await _tapVisible(tester, find.text('新建任务（可展开对比）'));
+    await tester.pump(const Duration(milliseconds: 300));
+    final saveBtn = find.text('另存为新目录并新建任务');
+    await _tapVisible(tester, saveBtn);
+    await tester.pumpAndSettle();
+    expect(queued, isTrue);
+    expect(claimedDirectory, '治理漫画 (remote_governance)');
+    expect(claimedMode, DownloadPlacementMode.createNew);
+    expect(claimedObservedOwner, isNull);
   });
 }
 

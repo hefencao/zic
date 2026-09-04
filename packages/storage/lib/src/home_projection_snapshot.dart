@@ -6,11 +6,99 @@ import 'package:domain/domain.dart';
 
 const _homeProjectionSnapshotFormat = 'zic-home-projection';
 const _legacyHomeProjectionSnapshotVersion = 1;
-const _homeProjectionSnapshotVersion = 2;
+const _compactHomeProjectionSnapshotVersion = 2;
+const _homeProjectionSnapshotVersion = 3;
 const _compactPageSourcePrefix = 'zic-home-snapshot-page:';
 const _snapshotCompressionThreshold = 512 * 1024;
 
-/// The last Home projection that was known to be readable from SQLite.
+/// Storage-neutral, read-only download state used only by the Home startup
+/// accelerator. The downloads package remains the owner of live task state.
+final class HomeChapterDownloadSummary {
+  const HomeChapterDownloadSummary({
+    required this.sourceId,
+    required this.comicId,
+    required this.comicTitle,
+    required this.chapterId,
+    required this.sourceRevision,
+    required this.title,
+    required this.completedPages,
+    required this.totalPages,
+    required this.receivedBytes,
+    required this.pinnedPages,
+    required this.phase,
+    required this.started,
+    this.totalBytes,
+    this.pageProgressUnits,
+    this.failure,
+  });
+
+  final String sourceId;
+  final String comicId;
+  final String comicTitle;
+  final String chapterId;
+  final String sourceRevision;
+  final String title;
+  final int completedPages;
+  final int totalPages;
+  final int receivedBytes;
+  final int pinnedPages;
+  final int? totalBytes;
+  final double? pageProgressUnits;
+  final String phase;
+  final String? failure;
+  final bool started;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'sourceId': sourceId,
+        'comicId': comicId,
+        'comicTitle': comicTitle,
+        'chapterId': chapterId,
+        'sourceRevision': sourceRevision,
+        'title': title,
+        'completedPages': completedPages,
+        'totalPages': totalPages,
+        'receivedBytes': receivedBytes,
+        'pinnedPages': pinnedPages,
+        if (totalBytes != null) 'totalBytes': totalBytes,
+        if (pageProgressUnits != null)
+          'pageProgressUnits': pageProgressUnits,
+        'phase': phase,
+        if (failure != null) 'failure': failure,
+        'started': started,
+      };
+
+  factory HomeChapterDownloadSummary.fromJson(Object? value) {
+    final json = _requiredMap(value, 'chapter download summary');
+    final completedPages = _requiredNonNegativeInt(json, 'completedPages');
+    final totalPages = _requiredPositiveInt(json, 'totalPages');
+    final pinnedPages = _requiredNonNegativeInt(json, 'pinnedPages');
+    if (completedPages > totalPages || pinnedPages > totalPages) {
+      throw const FormatException(
+        'chapter download page counts exceed totalPages',
+      );
+    }
+    return HomeChapterDownloadSummary(
+      sourceId: _requiredString(json, 'sourceId'),
+      comicId: _requiredString(json, 'comicId'),
+      comicTitle: _requiredString(json, 'comicTitle'),
+      chapterId: _requiredString(json, 'chapterId'),
+      sourceRevision: _requiredString(json, 'sourceRevision'),
+      title: _requiredString(json, 'title'),
+      completedPages: completedPages,
+      totalPages: totalPages,
+      receivedBytes: _requiredNonNegativeInt(json, 'receivedBytes'),
+      pinnedPages: pinnedPages,
+      totalBytes: _optionalNonNegativeInt(json, 'totalBytes'),
+      pageProgressUnits:
+          _optionalNonNegativeDouble(json, 'pageProgressUnits'),
+      phase: _requiredString(json, 'phase'),
+      failure: _optionalLooseString(json, 'failure'),
+      started: _requiredBool(json, 'started'),
+    );
+  }
+}
+
+/// The last Home projection that was known to be readable from durable stores.
 ///
 /// This is a startup accelerator only. It is never a source of truth and is
 /// deliberately independent from the imported-library schema and WAL files.
@@ -23,9 +111,12 @@ final class HomeProjectionSnapshot {
     required this.readStates,
     required this.sourcePreferences,
     required this.versionRelations,
+    this.orphanedDownloadEntries = const <ImportedLibraryEntry>[],
+    this.chapterDownloads = const <HomeChapterDownloadSummary>[],
     this.libraryRevision,
     this.entriesAreCompact = false,
     this.storedCompressed = true,
+    this.includesDownloadProjection = true,
   });
 
   final List<ImportedLibraryEntry> entries;
@@ -35,12 +126,16 @@ final class HomeProjectionSnapshot {
   final List<ChapterReadState> readStates;
   final List<ComicSourcePreference> sourcePreferences;
   final List<ComicVersionRelation> versionRelations;
+  final List<ImportedLibraryEntry> orphanedDownloadEntries;
+  final List<HomeChapterDownloadSummary> chapterDownloads;
   final int? libraryRevision;
   final bool entriesAreCompact;
   final bool storedCompressed;
+  final bool includesDownloadProjection;
 
-  /// Legacy or oversized uncompressed snapshots need one durable rewrite.
-  bool get requiresRewrite => !entriesAreCompact || !storedCompressed;
+  /// Legacy, v2, or oversized uncompressed snapshots need one durable rewrite.
+  bool get requiresRewrite =>
+      !entriesAreCompact || !storedCompressed || !includesDownloadProjection;
 
   Map<String, Object?> toJson() => <String, Object?>{
         'format': _homeProjectionSnapshotFormat,
@@ -56,6 +151,11 @@ final class HomeProjectionSnapshot {
             .toList(),
         'versionRelations':
             versionRelations.map(_versionRelationToJson).toList(),
+        'orphanedDownloadEntries': orphanedDownloadEntries
+            .map(_entryToJson)
+            .toList(growable: false),
+        'chapterDownloads':
+            chapterDownloads.map((summary) => summary.toJson()).toList(),
         if (libraryRevision != null) 'libraryRevision': libraryRevision,
       };
 
@@ -68,10 +168,13 @@ final class HomeProjectionSnapshot {
     }
     final version = json['version'];
     final entries = _requiredList(json, 'entries');
-    final isCompact = version == _homeProjectionSnapshotVersion;
+    final isCompact = version == _compactHomeProjectionSnapshotVersion ||
+        version == _homeProjectionSnapshotVersion;
     if (version != _legacyHomeProjectionSnapshotVersion && !isCompact) {
       throw const FormatException('unsupported Home projection snapshot');
     }
+    final includesDownloadProjection =
+        version == _homeProjectionSnapshotVersion;
     return HomeProjectionSnapshot(
       entries: entries
           .map(isCompact ? _compactEntryFromJson : _entryFromJson)
@@ -94,9 +197,20 @@ final class HomeProjectionSnapshot {
       versionRelations: _requiredList(json, 'versionRelations')
           .map(_versionRelationFromJson)
           .toList(growable: false),
+      orphanedDownloadEntries: includesDownloadProjection
+          ? _requiredList(json, 'orphanedDownloadEntries')
+              .map(_entryFromJson)
+              .toList(growable: false)
+          : const <ImportedLibraryEntry>[],
+      chapterDownloads: includesDownloadProjection
+          ? _requiredList(json, 'chapterDownloads')
+              .map(HomeChapterDownloadSummary.fromJson)
+              .toList(growable: false)
+          : const <HomeChapterDownloadSummary>[],
       libraryRevision: _optionalNonNegativeInt(json, 'libraryRevision'),
       entriesAreCompact: isCompact,
       storedCompressed: storedCompressed,
+      includesDownloadProjection: includesDownloadProjection,
     );
   }
 }
@@ -263,6 +377,7 @@ final class HomeProjectionSnapshotStore {
         'entries=${snapshot.entries.length} '
         'saved=${snapshot.savedComics.length} '
         'readStates=${snapshot.readStates.length} '
+        'chapterDownloads=${snapshot.chapterDownloads.length} '
         'compact=${snapshot.entriesAreCompact} '
         'revision=${snapshot.libraryRevision ?? 'none'} '
         'durationMs=${startedAt.elapsedMilliseconds}',
@@ -284,6 +399,7 @@ final class HomeProjectionSnapshotStore {
       'entries=${snapshot.entries.length} '
       'saved=${snapshot.savedComics.length} '
       'readStates=${snapshot.readStates.length} '
+      'chapterDownloads=${snapshot.chapterDownloads.length} '
       'revision=${snapshot.libraryRevision ?? 'none'}',
     );
     final operation = _writeTail.then<void>((_) async {
@@ -341,6 +457,12 @@ bool _isGzip(List<int> bytes) =>
 void _snapshotLog(String message) {
   print('[zic-storage] $message');
 }
+
+Map<String, Object?> _entryToJson(ImportedLibraryEntry entry) =>
+    <String, Object?>{
+      'chapter': entry.chapter.toJson(),
+      if (entry.progress != null) 'progress': entry.progress!.toJson(),
+    };
 
 Map<String, Object?> _compactEntryToJson(ImportedLibraryEntry entry) =>
     <String, Object?>{
@@ -518,10 +640,40 @@ int? _optionalNonNegativeInt(Map<String, Object?> json, String key) {
   return integer;
 }
 
+int _requiredNonNegativeInt(Map<String, Object?> json, String key) {
+  final value = _optionalNonNegativeInt(json, key);
+  if (value == null) {
+    throw FormatException('$key must be a non-negative integer');
+  }
+  return value;
+}
+
 int _requiredPositiveInt(Map<String, Object?> json, String key) {
   final value = _optionalNonNegativeInt(json, key);
   if (value == null || value < 1) {
     throw FormatException('$key must be a positive integer');
+  }
+  return value;
+}
+
+double? _optionalNonNegativeDouble(
+  Map<String, Object?> json,
+  String key,
+) {
+  final value = json[key];
+  if (value == null) {
+    return null;
+  }
+  if (value is! num || value.isNaN || value.isInfinite || value < 0) {
+    throw FormatException('$key must be a non-negative number');
+  }
+  return value.toDouble();
+}
+
+bool _requiredBool(Map<String, Object?> json, String key) {
+  final value = json[key];
+  if (value is! bool) {
+    throw FormatException('$key must be a bool');
   }
   return value;
 }
@@ -548,6 +700,17 @@ String? _optionalString(Map<String, Object?> json, String key) {
   }
   if (value is! String || value.trim().isEmpty) {
     throw FormatException('$key must be null or a non-empty string');
+  }
+  return value;
+}
+
+String? _optionalLooseString(Map<String, Object?> json, String key) {
+  final value = json[key];
+  if (value == null) {
+    return null;
+  }
+  if (value is! String) {
+    throw FormatException('$key must be null or a string');
   }
   return value;
 }

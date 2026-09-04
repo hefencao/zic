@@ -113,6 +113,72 @@ void main() {
     expect(await reopened.lookupAuthoritative(oldId), isNotNull);
   });
 
+  test('checksum reuse includes algorithm and normalizes digest case', () {
+    final oldChapter = _chapter(
+      comicId: 'old-checksum',
+      revision: 'old',
+      urls: const <String>['https://cdn.invalid/old-page'],
+      checksums: const <String?>['AaBbCcDd'],
+      checksumAlgorithms: const <String?>['MD5'],
+    );
+    final sameAlgorithm = _chapter(
+      comicId: 'new-checksum',
+      revision: 'new',
+      urls: const <String>['https://cdn.invalid/new-page'],
+      checksums: const <String?>['aabbccdd'],
+      checksumAlgorithms: const <String?>['md5'],
+    );
+    final differentAlgorithm = _chapter(
+      comicId: 'new-checksum-sha',
+      revision: 'new',
+      urls: const <String>['https://cdn.invalid/new-page'],
+      checksums: const <String?>['aabbccdd'],
+      checksumAlgorithms: const <String?>['sha1'],
+    );
+
+    expect(
+      VerifiedArtifactReusePlan.match(
+        oldChapter: oldChapter,
+        newChapter: sameAlgorithm,
+      ).mappings,
+      hasLength(1),
+    );
+    expect(
+      VerifiedArtifactReusePlan.match(
+        oldChapter: oldChapter,
+        newChapter: differentAlgorithm,
+      ).mappings,
+      isEmpty,
+    );
+    expect(
+      verifiedPageIdentity(oldChapter.pages.single),
+      'checksum:md5:aabbccdd',
+    );
+  });
+
+  test('untyped checksums never create reuse aliases', () {
+    final oldChapter = _chapter(
+      comicId: 'old-untyped-checksum',
+      revision: 'old',
+      urls: const <String>['https://cdn.invalid/old-page'],
+      checksums: const <String?>['same-token'],
+    );
+    final newChapter = _chapter(
+      comicId: 'new-untyped-checksum',
+      revision: 'new',
+      urls: const <String>['https://cdn.invalid/new-page'],
+      checksums: const <String?>['same-token'],
+    );
+
+    expect(
+      VerifiedArtifactReusePlan.match(
+        oldChapter: oldChapter,
+        newChapter: newChapter,
+      ).mappings,
+      isEmpty,
+    );
+  });
+
   test('page index or title similarity alone never creates reuse aliases', () {
     final oldChapter = _chapter(
       comicId: 'old',
@@ -396,6 +462,8 @@ ChapterManifest _chapter({
   required String comicId,
   required String revision,
   required List<String> urls,
+  List<String?>? checksums,
+  List<String?>? checksumAlgorithms,
 }) {
   final chapterId = 'chapter-$revision';
   return ChapterManifest(
@@ -416,6 +484,8 @@ ChapterManifest _chapter({
           chapterId: chapterId,
           index: index,
           uri: Uri.parse(urls[index]),
+          checksum: checksums?[index],
+          checksumAlgorithm: checksumAlgorithms?[index],
         ),
     ],
     readingDirection: ReadingDirection.vertical,

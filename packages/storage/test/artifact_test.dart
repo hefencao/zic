@@ -47,6 +47,43 @@ void main() {
     expect(await File('${promoted.finalPath}.meta').exists(), isTrue);
   });
 
+  test('rejects symlinked artifact paths without touching the target',
+      () async {
+    if (Platform.isWindows) return;
+    final artifact = createArtifact();
+    final outside = File('${temp.path}/outside.bin');
+    await outside.writeAsBytes(<int>[4, 5, 6]);
+    await Link(artifact.partialPath).create(outside.path, recursive: true);
+
+    await expectLater(
+      artifact.restore(),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.artifactCorruption,
+      )),
+    );
+    expect(await outside.readAsBytes(), <int>[4, 5, 6]);
+  });
+
+  test('allows artifact paths under a symbolic-link ancestor mount point',
+      () async {
+    if (Platform.isWindows) return;
+    final realRoot = Directory('${temp.path}/real_mount/cache');
+    await realRoot.create(recursive: true);
+    final linkMount = Link('${temp.path}/link_mount');
+    await linkMount.create('${temp.path}/real_mount');
+    final artifact = Artifact(
+      partialPath: '${linkMount.path}/cache/partial/test.part',
+      finalPath: '${linkMount.path}/cache/final/test.bin',
+    );
+    await Directory('${linkMount.path}/cache/partial').create(recursive: true);
+    await File(artifact.partialPath).writeAsBytes(<int>[1, 2, 3]);
+    final snapshot = await artifact.restore();
+    expect(snapshot.state, ArtifactState.partial);
+    expect(snapshot.committedLength, 3);
+  });
+
   test('rejects non-contiguous append', () async {
     final artifact = createArtifact();
     await artifact.restore();
@@ -102,6 +139,64 @@ void main() {
     await artifact.seal(expectedLength: 4);
   });
 
+  test('append queued after reset cannot write into the deleted generation',
+      () async {
+    final artifact = createArtifact();
+    await artifact.restore();
+
+    final resetting = artifact.reset();
+    final lateAppend = artifact.append(0, <int>[1, 2, 3]);
+
+    await resetting;
+    await expectLater(
+      lateAppend,
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.invalidState,
+      )),
+    );
+    expect(artifact.committedLength, 0);
+    expect(await File(artifact.partialPath).exists(), isFalse);
+  });
+
+  test('rejects sealing an empty artifact', () async {
+    final artifact = createArtifact();
+    await artifact.restore();
+
+    await expectLater(
+      artifact.seal(expectedLength: 0),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.artifactCorruption,
+        ),
+      ),
+    );
+    expect(artifact.state, ArtifactState.partial);
+    expect(artifact.hasOpenWriter, isFalse);
+  });
+
+  test('rejects an empty promoted artifact during restore', () async {
+    final artifact = createArtifact();
+    await File(artifact.finalPath).parent.create(recursive: true);
+    await File(artifact.finalPath).writeAsBytes(<int>[]);
+
+    await expectLater(
+      artifact.restore(),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.artifactCorruption,
+        ),
+      ),
+    );
+    expect(artifact.state, ArtifactState.empty);
+    expect(artifact.hasOpenWriter, isFalse);
+  });
+
   test('partial append defers crc until seal outside the download hot path',
       () async {
     final artifact = createArtifact();
@@ -118,14 +213,13 @@ void main() {
     expect(sealed.checksum, 'cbf43926');
   });
 
-  test('readPrefix awaits the read before closing the file', () async {
+  test('readPrefix flushes an open partial writer before reading', () async {
     final artifact = createArtifact();
     await artifact.restore();
     await artifact.append(0, <int>[1, 2, 3, 4]);
-    await artifact.pause();
 
     expect(await artifact.readPrefix(3), <int>[1, 2, 3]);
-    await artifact.dispose();
+    await artifact.pause();
     expect(await File(artifact.partialPath).readAsBytes(), <int>[1, 2, 3, 4]);
   });
 
@@ -200,6 +294,27 @@ void main() {
     expect(await artifact.readBytes(), bytes);
   });
 
+  test('promoted restore removes a stale partial generation', () async {
+    final first = createArtifact();
+    await first.restore();
+    await first.append(0, <int>[1, 2, 3]);
+    await first.seal(expectedLength: 3);
+    await first.promote();
+    await first.dispose();
+
+    await File(first.partialPath).parent.create(recursive: true);
+    await File(first.partialPath).writeAsBytes(<int>[9]);
+    await File(first.metaPath).writeAsString('{"artifactState":"sealed"}');
+
+    final second = createArtifact();
+    final restored = await second.restore();
+
+    expect(restored.state, ArtifactState.promoted);
+    expect(await File(second.partialPath).exists(), isFalse);
+    expect(await File(second.metaPath).exists(), isFalse);
+    expect(await second.readBytes(), <int>[1, 2, 3]);
+  });
+
   test('fast promoted restore trusts atomic metadata and reads once', () async {
     final first = createArtifact();
     final bytes = List<int>.generate(1024, (index) => index & 0xff);
@@ -237,6 +352,51 @@ void main() {
     expect(await second.readBytes(), <int>[5, 4, 3, 2, 1]);
     expect(await second.readMeta(), containsPair('artifactState', 'ready'));
     expect(await second.readMeta(), containsPair('bytes', 5));
+  });
+
+  test('normal promoted restore repairs malformed metadata after rehash', () async {
+    final first = createArtifact();
+    await first.restore();
+    await first.append(0, <int>[8, 7, 6]);
+    await first.seal(expectedLength: 3);
+    await first.promote();
+    await first.dispose();
+    await File(first.finalMetaPath).writeAsString('{invalid');
+
+    final second = createArtifact();
+    final restored = await second.restore();
+
+    expect(restored.state, ArtifactState.promoted);
+    expect(restored.committedLength, 3);
+    expect(await second.readMeta(), containsPair('artifactState', 'ready'));
+    expect(await second.readMeta(), containsPair('bytes', 3));
+  });
+
+  test('rejects same-length promoted corruption despite matching metadata length',
+      () async {
+    final first = createArtifact();
+    await first.restore();
+    await first.writeMeta(<String, Object?>{'fixture': true});
+    await first.append(0, <int>[1, 2, 3, 4]);
+    await first.seal(expectedLength: 4);
+    await first.promote();
+    await first.dispose();
+    await File(first.finalPath).writeAsBytes(<int>[4, 3, 2, 1]);
+
+    final second = createArtifact();
+    await expectLater(
+      second.restore(verifyPromotedChecksum: false),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.artifactCorruption,
+        ),
+      ),
+    );
+    expect(second.state, ArtifactState.empty);
+    expect(second.committedLength, 0);
+    expect(second.hasOpenWriter, isFalse);
   });
 
   test('fast promoted restore falls back when metadata length is stale', () async {

@@ -15,7 +15,7 @@ HANDOFF = (ROOT / 'docs/NEXT_CHAT_HANDOFF.md').read_text(encoding='utf-8')
 
 for token in (
     'const int _validatorlessResumeProbeBytes = 64 * 1024;',
-    'response = await _openRange(probeStart, cancel);',
+    '_openRange(probeStart, cancel)',
     'response.isPartial &&',
     'response.rangeStart == probeStart',
     'response.totalLength == preservedTotalLength',
@@ -37,7 +37,7 @@ if 'session.artifact.readChunks(' not in JOB:
     raise SystemExit('dev.196 overlap proof does not read authoritative artifact bytes')
 
 resume_block = JOB[JOB.index('final preservedLength = session.committedLength;'):
-                   JOB.index('final writer = session.acquireWriter();')]
+                   JOB.index('session.acquireWriter(')]
 if 'session.reset()' in resume_block:
     raise SystemExit('dev.196 resume strategy can still reset playable partial')
 

@@ -6,6 +6,9 @@ import 'package:domain/domain.dart';
 import 'transport.dart';
 
 typedef TransportByteLoader = Future<Uint8List> Function();
+typedef ControlledTransportByteLoader = Future<Uint8List> Function({
+  TaskControl? control,
+});
 typedef TransportResponseLoader = Future<ByteResponse> Function({
   ByteRange? range,
   Validators? validators,
@@ -20,16 +23,19 @@ typedef ControlledTransportResponseLoader = Future<ByteResponse> Function({
 final class LoaderTransportSource {
   const LoaderTransportSource({
     this.loadBytes,
+    this.loadBytesControlled,
     this.openResponse,
     this.openControlledResponse,
     required this.revision,
   }) : assert(
           loadBytes != null ||
+              loadBytesControlled != null ||
               openResponse != null ||
               openControlledResponse != null,
         );
 
   final TransportByteLoader? loadBytes;
+  final ControlledTransportByteLoader? loadBytesControlled;
   final TransportResponseLoader? openResponse;
   final ControlledTransportResponseLoader? openControlledResponse;
   final String revision;
@@ -78,17 +84,31 @@ final class LoaderTransport implements ControlledTransport {
 
     final openControlledResponse = source.openControlledResponse;
     if (openControlledResponse != null) {
-      return openControlledResponse(
+      final response = await openControlledResponse(
         range: range,
         validators: validators,
         control: control,
       );
+      if (control?.cancelled == true) {
+        await response.discard(control: control);
+        control!.throwIfCancelled();
+      }
+      return response;
     }
     final openResponse = source.openResponse;
     if (openResponse != null) {
-      return openResponse(range: range, validators: validators);
+      final response = await openResponse(range: range, validators: validators);
+      if (control?.cancelled == true) {
+        await response.discard(control: control);
+        control!.throwIfCancelled();
+      }
+      return response;
     }
-    final bytes = await source.loadBytes!();
+    final controlledLoader = source.loadBytesControlled;
+    final bytes = controlledLoader != null
+        ? await controlledLoader(control: control)
+        : await source.loadBytes!();
+    control?.throwIfCancelled();
     final contentHash = _fnv64Bytes(bytes);
     final currentValidators = Validators(
       etag: '"${source.revision}-${bytes.length}-$contentHash"',

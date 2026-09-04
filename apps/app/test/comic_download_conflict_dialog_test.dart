@@ -26,18 +26,18 @@ void main() {
         recommendedDirectoryName: '航海王',
       );
 
-      final decision = await promptComicConflictResolution(
+      final result = await promptComicConflictResolutionResult(
         context: testContext,
         report: report,
         comicTitle: '航海王',
         sourceId: 'copymanga',
       );
 
-      expect(decision, ComicConflictDecision.overwrite);
+      expect(result.decision, ComicConflictDecision.overwrite);
       expect(find.byType(AlertDialog), findsNothing);
     });
 
-    testWidgets('single candidate directly shows comparison dialog and supports overwrite', (tester) async {
+    testWidgets('single exact match candidate shows task handling dialog and supports replace old task', (tester) async {
       late BuildContext testContext;
       await tester.pumpWidget(
         MaterialApp(
@@ -64,6 +64,7 @@ void main() {
         isTitleMatch: false,
         chapterCount: 0,
         existingPageFilesCount: 8,
+        versionRelation: ComicVersionRelationKind.sameVersion,
       );
 
       final report = ComicConflictReport(
@@ -73,8 +74,8 @@ void main() {
         recommendedDirectoryName: '航海王',
       );
 
-      Future<ComicConflictDecision>? decisionFuture;
-      decisionFuture = promptComicConflictResolution(
+      Future<ComicConflictResolutionResult>? decisionFuture;
+      decisionFuture = promptComicConflictResolutionResult(
         context: testContext,
         report: report,
         comicTitle: '航海王',
@@ -86,19 +87,151 @@ void main() {
       await tester.pumpAndSettle();
 
       // Comparison dialog is displayed directly
-      expect(find.text('对比本地文件与待下载内容'), findsOneWidget);
-      expect(find.text('本地已有目录'), findsOneWidget);
-      expect(find.text('本次待下载内容'), findsOneWidget);
-      expect(find.text('100% 完全匹配 (同源同ID)'), findsOneWidget);
-      expect(find.text('8 个图片文件 · 单章节图集'), findsOneWidget);
-      expect(find.text('第 1 话'), findsOneWidget);
+      expect(find.text('下载任务处理'), findsOneWidget);
+      expect(find.text('检测到同名已下载内容'), findsOneWidget);
+      expect(find.text('新建任务（可展开对比）'), findsOneWidget);
+      expect(find.text('新任务替换旧任务'), findsOneWidget);
 
-      // Tap overwrite
-      await tester.tap(find.text('覆盖并下载'));
+      // Tap overwrite / replace
+      await tester.tap(find.text('新任务替换旧任务'));
       await tester.pumpAndSettle();
 
-      final decision = await decisionFuture;
-      expect(decision, ComicConflictDecision.overwrite);
+      final result = await decisionFuture;
+      expect(result.decision, ComicConflictDecision.overwrite);
+    });
+
+    testWidgets('incoming is newer version defaults to replace old task and supports expand comparison', (tester) async {
+      late BuildContext testContext;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) {
+              testContext = context;
+              return const Scaffold(body: Text('Home'));
+            },
+          ),
+        ),
+      );
+
+      final candidate = ComicFolderCandidate(
+        directoryPath: '/downloads/航海王',
+        folderName: '航海王',
+        manifest: ComicFolderManifest(
+          sourceId: 'ehentai',
+          sourceDisplayName: 'E-Hentai',
+          comicId: '12345/old',
+          comicTitle: '航海王',
+          updatedAt: DateTime.utc(2026, 8, 20),
+        ),
+        isExactMatch: false,
+        isTitleMatch: true,
+        chapterCount: 0,
+        existingPageFilesCount: 20,
+        versionRelation: ComicVersionRelationKind.incomingIsNewer,
+      );
+
+      final report = ComicConflictReport(
+        candidates: <ComicFolderCandidate>[candidate],
+        hasDirectExactMatch: false,
+        hasTitleConflicts: true,
+        recommendedDirectoryName: '航海王',
+      );
+
+      Future<ComicConflictResolutionResult>? decisionFuture;
+      decisionFuture = promptComicConflictResolutionResult(
+        context: testContext,
+        report: report,
+        comicTitle: '航海王',
+        sourceId: 'ehentai',
+        sourceDisplayName: 'E-Hentai',
+        chapterTitle: '整本漫画',
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('下载任务处理'), findsOneWidget);
+      expect(find.text('发现新版本更新'), findsOneWidget);
+      expect(find.text('新任务替换旧任务'), findsOneWidget);
+
+      // Expand the comparison panel
+      await tester.tap(find.text('新建任务（可展开对比）'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('本地已有目录'), findsOneWidget);
+      expect(find.text('本次待下载内容'), findsOneWidget);
+      final saveAsNewFinder = find.text('另存为新目录并新建任务');
+      expect(saveAsNewFinder, findsOneWidget);
+      await tester.ensureVisible(saveAsNewFinder);
+      await tester.pumpAndSettle();
+
+      // Tap save as new
+      await tester.tap(saveAsNewFinder);
+      await tester.pumpAndSettle();
+
+      final result = await decisionFuture;
+      expect(result.decision, ComicConflictDecision.saveAsNew);
+    });
+
+    testWidgets('existing is newer version defaults to do nothing (cancel)', (tester) async {
+      late BuildContext testContext;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) {
+              testContext = context;
+              return const Scaffold(body: Text('Home'));
+            },
+          ),
+        ),
+      );
+
+      final candidate = ComicFolderCandidate(
+        directoryPath: '/downloads/航海王',
+        folderName: '航海王',
+        manifest: ComicFolderManifest(
+          sourceId: 'ehentai',
+          sourceDisplayName: 'E-Hentai',
+          comicId: '67890/new',
+          comicTitle: '航海王',
+          updatedAt: DateTime.utc(2026, 8, 28),
+        ),
+        isExactMatch: false,
+        isTitleMatch: true,
+        chapterCount: 0,
+        existingPageFilesCount: 30,
+        versionRelation: ComicVersionRelationKind.existingIsNewer,
+      );
+
+      final report = ComicConflictReport(
+        candidates: <ComicFolderCandidate>[candidate],
+        hasDirectExactMatch: false,
+        hasTitleConflicts: true,
+        recommendedDirectoryName: '航海王',
+      );
+
+      Future<ComicConflictResolutionResult>? decisionFuture;
+      decisionFuture = promptComicConflictResolutionResult(
+        context: testContext,
+        report: report,
+        comicTitle: '航海王',
+        sourceId: 'ehentai',
+        sourceDisplayName: 'E-Hentai',
+        chapterTitle: '整本漫画',
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('下载任务处理'), findsOneWidget);
+      expect(find.text('本地已存在更新版本'), findsOneWidget);
+      expect(find.text('保持现有版本（什么都不做）'), findsOneWidget);
+      expect(find.text('仍要替换为旧版本'), findsOneWidget);
+
+      // Default action: tap "保持现有版本（什么都不做）"
+      await tester.tap(find.text('保持现有版本（什么都不做）'));
+      await tester.pumpAndSettle();
+
+      final result = await decisionFuture;
+      expect(result.decision, ComicConflictDecision.cancel);
     });
 
     testWidgets('multiple candidates shows selection list with confidence, then diff comparison', (tester) async {
@@ -153,8 +286,8 @@ void main() {
         recommendedDirectoryName: '航海王 (拷贝漫画 2)',
       );
 
-      Future<ComicConflictDecision>? decisionFuture;
-      decisionFuture = promptComicConflictResolution(
+      Future<ComicConflictResolutionResult>? decisionFuture;
+      decisionFuture = promptComicConflictResolutionResult(
         context: testContext,
         report: report,
         comicTitle: '航海王',
@@ -170,20 +303,12 @@ void main() {
       expect(find.text('100% 完全匹配 (同源同ID)'), findsOneWidget);
       expect(find.text('85% 同名候选 (动漫之家)'), findsOneWidget);
 
-      // Select the first candidate
-      await tester.tap(find.text('航海王'));
+      // Choose "新建独立任务" directly
+      await tester.tap(find.text('新建独立任务'));
       await tester.pumpAndSettle();
 
-      // Now diff comparison dialog is shown for that candidate
-      expect(find.text('对比本地文件与待下载内容'), findsOneWidget);
-      expect(find.text('8 个图片文件 · 单章节图集'), findsOneWidget);
-
-      // Choose "另存为新目录"
-      await tester.tap(find.text('另存为新目录'));
-      await tester.pumpAndSettle();
-
-      final decision = await decisionFuture;
-      expect(decision, ComicConflictDecision.saveAsNew);
+      final result = await decisionFuture;
+      expect(result.decision, ComicConflictDecision.saveAsNew);
     });
   });
 }

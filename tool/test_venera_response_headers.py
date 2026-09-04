@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Compile the production Venera response-header adapter against nullable/non-null maps."""
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+
+kotlinc = shutil.which('kotlinc')
+java = shutil.which('java')
+if not kotlinc or not java:
+    print('SKIP: kotlinc/java are not installed for Venera response header helper execution')
+    raise SystemExit(0)
 
 root = Path(__file__).resolve().parents[1]
 source = (

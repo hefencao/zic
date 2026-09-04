@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:domain/domain.dart';
+
 /// Process-composition scheduler for persistent artifact read quanta.
 ///
 /// Reader sessions keep their normal download window and network lane. This
@@ -56,7 +58,14 @@ final class ArtifactCacheReadScheduler {
 
   Future<ArtifactCacheReadLease> acquire({
     required int Function() priority,
+    TaskControl? control,
   }) {
+    if (control?.cancelled == true) {
+      return Future<ArtifactCacheReadLease>.error(const Failure(
+        code: ErrorCode.cancelled,
+        message: 'artifact cache read was cancelled while waiting for a lease',
+      ));
+    }
     final currentPriority = priority();
     final foreground = _isForeground(currentPriority);
     if (_canStart(foreground)) {
@@ -65,13 +74,26 @@ final class ArtifactCacheReadScheduler {
       );
     }
     final completer = Completer<ArtifactCacheReadLease>();
-    _pending.add(
-      _PendingRead(
-        priority: priority,
-        sequence: _sequence++,
-        completer: completer,
-      ),
+    final pending = _PendingRead(
+      priority: priority,
+      sequence: _sequence++,
+      completer: completer,
+      control: control,
     );
+    _pending.add(pending);
+    if (control != null) {
+      unawaited(
+        control.whenCancelled.then<void>((_) {
+          if (completer.isCompleted || !_pending.remove(pending)) return;
+          completer.completeError(const Failure(
+            code: ErrorCode.cancelled,
+            message:
+                'artifact cache read was cancelled while waiting for a lease',
+          ));
+          _pump();
+        }),
+      );
+    }
     _pump();
     return completer.future;
   }
@@ -131,6 +153,19 @@ final class ArtifactCacheReadScheduler {
 
   void _pump() {
     while (_pending.isNotEmpty && _active < maxActive) {
+      for (final pending in _pending
+          .where((pending) => pending.control?.cancelled == true)
+          .toList(growable: false)) {
+        _pending.remove(pending);
+        if (!pending.completer.isCompleted) {
+          pending.completer.completeError(const Failure(
+            code: ErrorCode.cancelled,
+            message:
+                'artifact cache read was cancelled while waiting for a lease',
+          ));
+        }
+      }
+      if (_pending.isEmpty) break;
       _pending.sort((left, right) {
         final priority = right.currentPriority.compareTo(left.currentPriority);
         if (priority != 0) return priority;
@@ -183,11 +218,13 @@ final class _PendingRead {
     required this.priority,
     required this.sequence,
     required this.completer,
+    required this.control,
   });
 
   final int Function() priority;
   final int sequence;
   final Completer<ArtifactCacheReadLease> completer;
+  final TaskControl? control;
 
   int get currentPriority => priority();
 }

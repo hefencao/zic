@@ -57,9 +57,9 @@ for token in (
     require(chapter_test, token, 'multi-owner reuse behavior')
 
 for token in (
-    'final Set<DownloadId> _completedAutomaticCommits = <DownloadId>{};',
-    '_completedAutomaticCommits.contains(id) || _commits.containsKey(id)',
-    '_completedAutomaticCommits.add(id);',
+    '_completedAutomaticCommits =',
+    '_completedAutomaticCommits[id] == session.epoch',
+    '_completedAutomaticCommits[id] = epoch;',
 ):
     require(handoff, token, 'immutable automatic handoff dedupe')
 require(handoff_test, 'hasLength(1)', 'single automatic backend probe regression')

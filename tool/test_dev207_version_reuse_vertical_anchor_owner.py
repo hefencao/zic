@@ -22,13 +22,14 @@ for token in (
     "'stage': 'version-page-mapping-warmed'",
 ):
     require(migration, token, 'background confirmed-version reuse proof')
+demo_home = read('apps/app/lib/demo_home.dart') + read('apps/app/lib/demo_home_reader_route.dart')
 for token in (
     'await _restoreSourceVersionArtifactEquivalences(current);',
     '_scheduleVersionReuseWarmup(versionSource, current.chapter.comicId);',
 ):
-    require(read('apps/app/lib/demo_home.dart'), token, 'Reader persisted-map reuse composition')
+    require(demo_home, token, 'Reader persisted-map reuse composition')
 forbid(
-    read('apps/app/lib/demo_home.dart'),
+    demo_home,
     'await _prepareSourceVersionArtifactReuse(current);',
     'synchronous source-resolved Reader reuse preparation',
 )

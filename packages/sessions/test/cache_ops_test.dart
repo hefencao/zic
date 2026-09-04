@@ -44,9 +44,83 @@ void main() {
     expect(report.releasedBytes, 40);
     expect(report.evicted, 1);
     expect(report.skippedBusy, 1);
+    expect(report.skippedProtected, 0);
     expect(await index.get(old.key), isNull);
     expect(await index.get(protected.key), isNotNull);
     expect(await index.get(busy.key), isNotNull);
+  });
+
+  test('durable placement protects records even before pin repair commits',
+      () async {
+    final temp = await Directory.systemTemp.createTemp('cache_ops_placement_');
+    addTearDown(() => temp.delete(recursive: true));
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final registry = DownloadRegistry(
+      layout: CacheLayout(temp.path),
+      clock: FakeMonoClock(),
+      index: index,
+    );
+    addTearDown(registry.dispose);
+
+    final transient = _id('transient', comic: 'transient-comic');
+    final downloaded = _id('downloaded', comic: 'downloaded-comic');
+    await _writeReady(registry.get(transient), 30);
+    await _writeReady(registry.get(downloaded), 70);
+    await index.touch(downloaded.key, 1);
+    await index.touch(transient.key, 2);
+    await index.putPlacement(
+      DownloadPlacement(
+        placementId: 'source\u0000downloaded-comic',
+        sourceId: 'source',
+        comicId: 'downloaded-comic',
+        comicTitle: 'Downloaded',
+        mode: DownloadPlacementMode.createNew,
+        relativeDirectory: 'Downloaded',
+        storageRootId: temp.path,
+        createdAt: DateTime.utc(2024),
+        updatedAt: DateTime.utc(2024),
+      ),
+    );
+
+    final report = await CacheOps(
+      index: index,
+      registry: registry,
+      clock: FakeMonoClock(),
+    ).trim(const CacheLimits(maxBytes: 100, targetBytes: 60));
+
+    expect(report.releasedBytes, 0);
+    expect(report.evicted, 0);
+    expect(await index.get(transient.key), isNotNull);
+    expect(await index.get(downloaded.key), isNotNull);
+  });
+
+  test('snapshot eviction that removes nothing is not reported as evicted', () async {
+    final temp = await Directory.systemTemp.createTemp('cache_ops_stale_');
+    addTearDown(() => temp.delete(recursive: true));
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final registry = DownloadRegistry(
+      layout: CacheLayout(temp.path),
+      clock: FakeMonoClock(),
+      index: index,
+    );
+    addTearDown(registry.dispose);
+
+    final id = _id('stale');
+    await _writeReady(registry.get(id), 10);
+    final report = await CacheOps(
+      index: index,
+      registry: registry,
+      clock: FakeMonoClock(),
+      evictRecordWithSnapshot: (candidate, expected) async => 0,
+    ).clear();
+
+    expect(report.releasedBytes, 0);
+    expect(report.evicted, 0);
+    expect(await index.get(id.key), isNotNull);
   });
 
   test('trim and clear spare pinned offline downloads', () async {
@@ -106,10 +180,10 @@ Future<void> _writeReady(DownloadSession session, int count) async {
   await session.promote();
 }
 
-DownloadId _id(String page) => DownloadId(
+DownloadId _id(String page, {String comic = 'comic'}) => DownloadId(
       content: ContentId(
         sourceId: 'source',
-        comicId: 'comic',
+        comicId: comic,
         chapterId: 'chapter',
         pageId: page,
       ),

@@ -47,13 +47,13 @@ def main() -> None:
         "manifest.sourceId.startsWith('venera:')",
     )
     require(
-        "apps/app/lib/demo_home.dart",
+        "apps/app/lib/demo_home_reader_route.dart",
         "final legacyVenera = _hasLegacyVeneraLocators(entry.chapter)",
         "forceSourceRefresh: true",
         "Venera 章节仍包含已失效的运行时资源定位符",
     )
     ordered(
-        "apps/app/lib/demo_home.dart",
+        "apps/app/lib/demo_home_reader_route.dart",
         "if (_hasLegacyVeneraLocators(current.chapter))",
         "final byteLoaders =",
     )

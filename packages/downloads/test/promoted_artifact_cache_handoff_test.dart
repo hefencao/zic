@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -51,6 +52,57 @@ void main() {
     await DownloadJob(transport: transport, session: session).run();
     await handoff.drain(registry.sessions);
 
+    expect(session.state, DownloadState.promoted);
+    expect(backend.values[id], bytes);
+  });
+
+  test('a new physical epoch receives a fresh automatic handoff', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-promoted-cache-handoff-epoch-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final uri = Uri.parse('memory://promoted-page-epoch');
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'epoch-page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: uri,
+    );
+    final backend = _RecordingArtifactStore();
+    final cache = ArtifactCacheManager(backend: backend);
+    final handoff = PromotedArtifactCacheHandoff(cache: cache);
+    final registry = DownloadRegistry(
+      layout: CacheLayout(directory.path),
+      clock: SystemClock(),
+      onSessionCreated: handoff.observe,
+    );
+    addTearDown(() async {
+      handoff.detach();
+      await registry.dispose();
+    });
+    final session = registry.get(id);
+    var bytes = Uint8List.fromList(<int>[3, 1, 4, 1, 5]);
+    final transport = LoaderTransport(<Uri, LoaderTransportSource>{
+      uri: LoaderTransportSource(
+        revision: 'fixture-r1',
+        loadBytes: () async => bytes,
+      ),
+    });
+
+    await DownloadJob(transport: transport, session: session).run();
+    await handoff.drain(<DownloadSession>[session]);
+    expect(backend.values[id], bytes);
+
+    await session.evict();
+    backend.values.clear();
+    bytes = Uint8List.fromList(<int>[9, 2, 6, 5, 3]);
+
+    await DownloadJob(transport: transport, session: session).run();
+    await handoff.drain(<DownloadSession>[session]);
     expect(session.state, DownloadState.promoted);
     expect(backend.values[id], bytes);
   });
@@ -166,6 +218,66 @@ void main() {
       ),
       isTrue,
     );
+  });
+
+  test('does not repopulate an exact cache entry invalidated during replay',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-promoted-cache-handoff-invalidation-race-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final uri = Uri.parse('memory://resident-invalidation-race');
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'invalidation-race-page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: uri,
+    );
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x08, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
+    final replayStarted = Completer<void>();
+    final releaseReplay = Completer<void>();
+    final backend = _RecordingArtifactStore();
+    final cache = ArtifactCacheManager(backend: backend);
+    final handoff = PromotedArtifactCacheHandoff(
+      cache: cache,
+      residentReplaySource: (session, endExclusive) async {
+        replayStarted.complete();
+        await releaseReplay.future;
+        return Stream<List<int>>.value(bytes.sublist(0, endExclusive));
+      },
+    );
+    final registry = DownloadRegistry(
+      layout: CacheLayout(directory.path),
+      clock: SystemClock(),
+      onSessionCreated: handoff.observe,
+    );
+    addTearDown(() async {
+      if (!releaseReplay.isCompleted) releaseReplay.complete();
+      handoff.detach();
+      await registry.dispose();
+    });
+    final session = registry.get(id);
+
+    await DownloadJob(
+      transport: _ResidentTransport(bytes),
+      session: session,
+    ).run();
+    await handoff.settleAutomatic(session);
+
+    final persist = handoff.persist(session);
+    await replayStarted.future;
+    await cache.invalidate(id);
+    releaseReplay.complete();
+    await persist;
+
+    expect(backend.values, isEmpty);
   });
 
   test('skips materializing a session artifact already present durably',

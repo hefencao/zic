@@ -92,10 +92,26 @@ void main() {
     addTearDown(() => directory.delete(recursive: true));
     final id = _readerArtifactId('lazy-cache-page');
     final first = await PersistentChapterDownloadService.open(directory.path);
-    await first.storePromotedArtifact(
+    final originalBytes = Uint8List.fromList(<int>[2, 4, 6, 8]);
+    final firstWrite = first.storePromotedArtifact(
       id: id,
-      bytes: Uint8List.fromList(<int>[2, 4, 6, 8]),
+      bytes: originalBytes,
     );
+    await expectLater(
+      first.storePromotedArtifact(
+        id: id,
+        bytes: Uint8List.fromList(<int>[2, 4, 6, 9]),
+      ),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.artifactCorruption,
+        ),
+      ),
+    );
+    await firstWrite;
+    expect(await _readBackendArtifact(first, id), originalBytes);
     await first.close();
 
     final reopened =
@@ -119,6 +135,62 @@ void main() {
       <int>[4, 6],
     );
     expect(reopened.materializedSessionCount, 0);
+  });
+
+  test('compact home entries project progress from incrementally verified records',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-compact-download-progress-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(service.close);
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'compact-source',
+        comicId: 'compact-comic',
+        chapterId: 'compact-chapter',
+        pageId: 'page-1',
+      ),
+      sourceRevision: 'compact-r1',
+      canonicalUri: Uri.parse('https://example.test/page-1.webp'),
+    );
+    await service.storePromotedArtifact(
+      id: id,
+      bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
+    );
+    final compact = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'compact-directory',
+        displayName: '紧凑章节',
+        sourceId: 'compact-source',
+        comicId: 'compact-comic',
+        chapterId: 'compact-chapter',
+        sourceRevision: 'compact-r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: 'page-1',
+            sourceId: 'zic-home-snapshot-page:0',
+            contentKindHint: ContentKindHint.unknown,
+          ),
+          ImportedPageRecord(
+            displayName: 'page-2',
+            sourceId: 'zic-home-snapshot-page:1',
+            contentKindHint: ContentKindHint.unknown,
+          ),
+          ImportedPageRecord(
+            displayName: 'page-3',
+            sourceId: 'zic-home-snapshot-page:2',
+            contentKindHint: ContentKindHint.unknown,
+          ),
+        ],
+      ),
+    );
+
+    final snapshot = (await service.inspectMany(<ImportedLibraryEntry>[compact])).single;
+    expect(snapshot.completedPages, 1);
+    expect(snapshot.totalPages, 3);
+    expect(snapshot.receivedBytes, 4);
   });
 
   test('persistent partial artifact survives Reader service reopen without promotion',
@@ -182,6 +254,91 @@ void main() {
       expect(await service.openPartialDownload(id), isNull);
     }
     expect(service.materializedSessionCount, 0);
+  });
+
+  test('SAF partial store rejects an explicitly foreign existing owner', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-saf-partial-owner-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final storage = <String, Uint8List>{};
+    final saf = _MemorySafIo(storage);
+    final service = await PersistentChapterDownloadService.open(
+      directory.path,
+      safTreeIo: saf,
+      safTreeUri: 'content://tree/saf-partial-owner',
+    );
+    addTearDown(service.close);
+
+    final id = _readerArtifactId('saf-partial-owner');
+    final foreign = _readerArtifactId('saf-partial-foreign');
+    final relativePath = 'partial/${service.artifactStore.layoutFor(id).tokenFor(id)}.part';
+    final bytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
+    storage[relativePath] = Uint8List.fromList(bytes);
+    storage['$relativePath.meta'] = Uint8List.fromList(
+      utf8.encode(jsonEncode(<String, Object?>{
+        'downloadKey': foreign.key,
+        'download': foreign.toJson(),
+      })),
+    );
+
+    await expectLater(
+      service.storePartialDownload(
+        id: id,
+        entry: PartialDownloadEntry(
+          length: bytes.length,
+          validators: const Validators(etag: 'saf-partial'),
+          totalLength: 20,
+          open: ({required int start}) async* {
+            yield Uint8List.sublistView(bytes, start);
+          },
+        ),
+      ),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.artifactCorruption,
+      )),
+    );
+    expect(storage[relativePath], orderedEquals(bytes));
+  });
+
+  test('foreign partial metadata drops only the logical binding', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-partial-foreign-binding-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(service.close);
+    final id = _readerArtifactId('foreign-partial-target');
+    final foreign = _readerArtifactId('foreign-partial-owner');
+    final path = '${directory.path}/offline_chapters/partial.bin';
+    final bytes = Uint8List.fromList(<int>[5, 6, 7, 8]);
+    await File(path).parent.create(recursive: true);
+    await File(path).writeAsBytes(bytes);
+    await File('$path.meta').writeAsString(
+      jsonEncode(<String, Object?>{
+        'downloadKey': foreign.key,
+        'download': foreign.toJson(),
+      }),
+    );
+    await service.artifactStore.index.put(
+      CacheRec(
+        id: id,
+        state: CacheState.partial,
+        path: path,
+        bytes: bytes.length,
+        checksum: '',
+        createdUs: 1,
+        touchedUs: 1,
+        storageRootId: '${directory.path}/offline_chapters',
+      ),
+    );
+
+    expect(await service.openPartialDownload(id), isNull);
+    expect(await File(path).readAsBytes(), bytes);
+    expect(await File('$path.meta').exists(), isTrue);
+    expect(await service.artifactStore.index.get(id.key), isNull);
   });
 
   test('persistent artifact store survives Reader service reopen', () async {
@@ -550,7 +707,13 @@ void main() {
       (event) =>
           event.kind == TraceEventKind.artifactSource &&
           event.payload['stage'] == 'verified-transfer-acquire-alias' &&
-          event.identityHash == freshId.key,
+          event.identityHash ==
+              TraceEvent(
+                monotonicMicros: 0,
+                sessionId: 'test',
+                kind: TraceEventKind.artifactSource,
+                identityHash: freshId.key,
+              ).identityHash,
     );
     expect(alias.payload['action'], 'joined-existing-physical');
     expect(alias.payload['candidateOwners'], 2);
@@ -887,6 +1050,48 @@ void main() {
     expect(await service.isDownloaded(entry), isFalse);
   });
 
+  test('memory delete cannot be undone by a late page loader completion', () async {
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:delete-race',
+        displayName: '删除竞态',
+        sourceId: 'delete-race-source',
+        comicId: 'delete-race-comic',
+        comicTitle: '删除竞态测试',
+        chapterId: 'delete-race-chapter',
+        sourceRevision: 'delete-race-r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.bin',
+            sourceId: 'memory://delete-race-1',
+            pageId: 'delete-race-page-1',
+            contentKindHint: ContentKindHint.unknown,
+          ),
+        ],
+      ),
+    );
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    final service = MemoryChapterDownloadService(
+      pageLoader: (_, __) async {
+        entered.complete();
+        await release.future;
+        return Uint8List.fromList(<int>[1, 2, 3]);
+      },
+    );
+    addTearDown(service.close);
+
+    final run = service.download(entry);
+    await entered.future;
+    await service.delete(entry);
+    release.complete();
+    await run;
+
+    final snapshot = await service.inspect(entry);
+    expect(snapshot.phase, ChapterDownloadPhase.idle);
+    expect(snapshot.completedPages, 0);
+  });
+
   test(
       'memory download cancellation keeps partial progress and retry completes',
       () async {
@@ -1010,6 +1215,27 @@ void main() {
     expect(await composite.exists(localFile.path), isFalse);
   });
 
+  test('local artifact bytes never follows a symbolic link', () async {
+    if (Platform.isWindows) return;
+    final temp = await Directory.systemTemp.createTemp('local-bytes-link-test');
+    addTearDown(() => temp.delete(recursive: true));
+    final outside = File('${temp.path}/outside.bin');
+    await outside.writeAsBytes(const <int>[1, 2, 3]);
+    final link = Link('${temp.path}/cache.bin');
+    await link.create(outside.path);
+    final bytes = const LocalArtifactBytes();
+
+    expect(await bytes.exists(link.path), isFalse);
+    expect(await bytes.length(link.path), 0);
+    expect(await bytes.readChunks(link.path, start: 0).toList(), isEmpty);
+    await bytes.delete(link.path);
+    expect(
+      await FileSystemEntity.type(link.path, followLinks: false),
+      FileSystemEntityType.notFound,
+    );
+    expect(await outside.exists(), isTrue);
+  });
+
   test('sniffImageExtension detects known image headers correctly', () async {
     final temp = await Directory.systemTemp.createTemp('sniff-ext-test');
     addTearDown(() => temp.delete(recursive: true));
@@ -1037,6 +1263,35 @@ void main() {
     final binFile = File('${temp.path}/t.bin');
     await binFile.writeAsBytes(<int>[1, 2, 3, 4]);
     expect(await sniffImageExtension(binFile), 'bin');
+  });
+
+  test('scanExistingPages rejects non-image payloads with image extensions',
+      () async {
+    final root = await Directory.systemTemp.createTemp('scan-magic-test-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    final comicDir = Directory('${service.artifactStore.layout.root}/校验漫画');
+    await comicDir.create(recursive: true);
+    await File('${comicDir.path}/001.jpg').writeAsString(
+      '<html>not an image</html>',
+    );
+    await File('${comicDir.path}/002.jpg').writeAsBytes(<int>[
+      0xff,
+      0xd8,
+      0xff,
+      0xe0,
+      0x00,
+    ]);
+
+    final pages = await service.artifactStore.scanExistingPages(
+      comicTitle: '校验漫画',
+      chapterTitle: '单话',
+      isSingleChapter: true,
+    );
+    expect(pages.keys, contains(2));
+    expect(pages.keys, isNot(contains(1)));
   });
 
   test('PersistentChapterDownloadService discovers orphaned entries not in known set', () async {
@@ -1085,6 +1340,19 @@ void main() {
     expect(orphaned.first.chapter.chapterId, entry.chapter.chapterId);
     expect(orphaned.first.chapter.comicId, entry.chapter.comicId);
     expect(orphaned.first.chapter.sourceId, entry.chapter.sourceId);
+
+    final management = await service.inspectDownloadManagement(
+      const <ImportedLibraryEntry>[],
+    );
+    expect(management.orphanedEntries, hasLength(1));
+    expect(management.snapshots, hasLength(1));
+    expect(management.snapshots.single.isComplete, isTrue);
+
+    final knownManagement = await service.inspectDownloadManagement(
+      <ImportedLibraryEntry>[entry],
+    );
+    expect(knownManagement.orphanedEntries, isEmpty);
+    expect(knownManagement.snapshots.single.title, entry.chapter.displayName);
   });
 
   test('Structured download writes flat single-chapter and auto-migrates on multi-chapter transition', () async {
@@ -1175,6 +1443,2143 @@ void main() {
 
     await service.delete(entry2);
     expect(await service.isDownloaded(entry2), isFalse);
+  });
+
+  test('structured migration rejects a same-length changed indexed source', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'zic-structured-migration-corruption-',
+    );
+    addTearDown(() => temp.delete(recursive: true));
+
+    final memoryStorage = <String, Uint8List>{};
+    final service = await PersistentChapterDownloadService.open(
+      temp.path,
+      safTreeIo: _MemorySafIo(memoryStorage),
+      safTreeUri: 'content://tree/structured-migration-corruption',
+    );
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        loadBytes: (sourceId, uri) async => Uint8List.fromList(<int>[
+          0x89,
+          0x50,
+          0x4e,
+          0x47,
+          0x0d,
+          0x0a,
+          0x1a,
+          0x0a,
+        ]),
+      ),
+    );
+
+    ImportedLibraryEntry entry(String chapterId, int sequence, String pageId) =>
+        ImportedLibraryEntry(
+          chapter: ImportedChapterRecord(
+            directoryId: 'mihon:test:structured-corruption',
+            displayName: '第 $sequence 话',
+            sourceId: 'mihon:test',
+            comicId: 'structured-corruption',
+            comicTitle: '损坏迁移测试',
+            chapterId: chapterId,
+            sourceRevision: 'r1',
+            sequence: sequence,
+            pages: <ImportedPageRecord>[
+              ImportedPageRecord(
+                displayName: '001.png',
+                sourceId: 'mihon:resource:$pageId',
+                pageId: pageId,
+                contentKindHint: ContentKindHint.png,
+                byteLength: 8,
+              ),
+            ],
+          ),
+        );
+
+    final first = entry('ch-01', 1, 'page-1');
+    await service.download(first);
+    final sourcePath = '损坏迁移测试/001.png';
+    expect(memoryStorage[sourcePath], isNotNull);
+    memoryStorage[sourcePath] = Uint8List.fromList(<int>[
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+    ]);
+
+    final second = entry('ch-02', 2, 'page-2');
+    await expectLater(
+      service.download(second),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.artifactCorruption,
+        ),
+      ),
+    );
+    expect(memoryStorage[sourcePath], hasLength(8));
+    expect(memoryStorage.keys, isNot(contains('损坏迁移测试/第 1 话/001.png')));
+  });
+
+  test('unindexed files require an explicit overwrite and are never adopted by retry', () async {
+    final root = await Directory.systemTemp.createTemp('zic-incremental-download');
+    addTearDown(() => root.delete(recursive: true));
+
+    final memoryStorage = <String, Uint8List>{};
+    final memorySaf = _MemorySafIo(memoryStorage);
+
+    final webpBytes1 = Uint8List.fromList(<int>[0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4]);
+    final webpBytes2 = Uint8List.fromList(<int>[0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50, 9, 10, 11, 12]);
+
+    // Pre-populate page 1 on disk/SAF (e.g. 001.webp with valid webp header)
+    memoryStorage['[武器屋]海賊（ワンピース）/001.webp'] = webpBytes1;
+
+    final service = await PersistentChapterDownloadService.open(
+      root.path,
+      safTreeIo: memorySaf,
+      safTreeUri: 'content://tree/downloads',
+    );
+    addTearDown(service.close);
+    var networkCalls = 0;
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        loadBytes: (sourceId, uri) async {
+          networkCalls++;
+          return webpBytes2;
+        },
+      ),
+    );
+
+    // Chapter now has 2 pages: page 1 (already on disk) and page 2 (missing)
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:ehentai:gallery-1',
+        displayName: '单话',
+        sourceId: 'mihon:ehentai',
+        comicId: 'gallery-1',
+        comicTitle: '[武器屋]海賊（ワンピース）',
+        chapterId: 'ch-1',
+        sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'mihon:ehentai:p1',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: 16,
+          ),
+          ImportedPageRecord(
+            displayName: '002.webp',
+            sourceId: 'mihon:ehentai:p2',
+            pageId: 'p2',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: 16,
+          ),
+        ],
+      ),
+    );
+
+    await expectLater(
+      service.download(entry),
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.policy,
+        ),
+      ),
+    );
+    expect(memoryStorage['[武器屋]海賊（ワンピース）/001.webp'], webpBytes1);
+    // Ordinary download classifies only from incrementally persisted records.
+    // It may finish another page in the bounded transfer window before the
+    // conflicting target commit fails, but it must not enumerate the folder.
+    expect(networkCalls, 2);
+    expect(memorySaf.listCalls, 0);
+
+    await service.claimComicDirectory(
+      sourceId: entry.chapter.sourceId,
+      comicId: entry.chapter.comicId,
+      comicTitle: entry.chapter.comicTitle,
+      directoryName: '[武器屋]海賊（ワンピース）',
+      mode: DownloadPlacementMode.overwrite,
+    );
+    await service.retry(entry);
+    expect(await service.isDownloaded(entry), isTrue);
+    expect(networkCalls, 2);
+    expect(memorySaf.listCalls, 0);
+    expect(memoryStorage['[武器屋]海賊（ワンピース）/001.webp'], webpBytes2);
+    expect(memoryStorage['[武器屋]海賊（ワンピース）/002.webp'], webpBytes2);
+  });
+
+  test('retry consumes incremental checksum records without listing existing files', () async {
+    final root = await Directory.systemTemp.createTemp('zic-scan-cache-');
+    addTearDown(() => root.delete(recursive: true));
+
+    final memoryStorage = <String, Uint8List>{};
+    final memorySaf = _MemorySafIo(memoryStorage);
+    final webp1 = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00, //
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    final webp2 = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00, //
+      0x57, 0x45, 0x42, 0x50, 9, 10, 11, 12,
+    ]);
+    final traceEvents = <TraceEvent>[];
+    var networkCalls = 0;
+    final service = await PersistentChapterDownloadService.open(
+      root.path,
+      safTreeIo: memorySaf,
+      safTreeUri: 'content://tree/downloads',
+      traceSink: CallbackTraceSink(traceEvents.add),
+    );
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(loadBytes: (sourceId, uri) async {
+        networkCalls++;
+        return uri.toString().endsWith('p1') ? webp1 : webp2;
+      }),
+    );
+
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:ehentai:scan-cache',
+        displayName: '单话',
+        sourceId: 'mihon:ehentai',
+        comicId: 'gallery-1',
+        comicTitle: '[武器屋]海賊（ワンピース）',
+        chapterId: 'ch-1',
+        sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'mihon:ehentai:p1',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: 16,
+          ),
+          ImportedPageRecord(
+            displayName: '002.webp',
+            sourceId: 'mihon:ehentai:p2',
+            pageId: 'p2',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: 16,
+          ),
+        ],
+      ),
+    );
+
+    await service.download(entry);
+    expect(await service.isDownloaded(entry), isTrue);
+    expect(networkCalls, 2);
+    expect(memorySaf.listCalls, 0);
+    final pageReadsAfterFirstDownload = memorySaf.readPaths
+        .where((path) => path.endsWith('.webp'))
+        .length;
+    expect(
+      traceEvents.where(
+        (event) => event.payload['stage'] == 'chapter-run-scanned',
+      ),
+      isEmpty,
+    );
+
+    await service.retry(entry);
+    expect(networkCalls, 2);
+    expect(memorySaf.listCalls, 0);
+    expect(
+      memorySaf.readPaths
+          .where((path) => path.endsWith('.webp'))
+          .length,
+      pageReadsAfterFirstDownload,
+    );
+    expect(await service.isDownloaded(entry), isTrue);
+  });
+
+  test('chapter command reclaims a stalled physical run and still completes',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-stall-reclaim-');
+    addTearDown(() => root.delete(recursive: true));
+
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00, //
+      0x57, 0x45, 0x42, 0x50, 5, 6, 7, 8,
+    ]);
+    var openCalls = 0;
+    final traceEvents = <TraceEvent>[];
+
+    final service = await PersistentChapterDownloadService.open(
+      root.path,
+      pageStallTimeout: const Duration(milliseconds: 150),
+      traceSink: CallbackTraceSink(traceEvents.add),
+    );
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        openResponse: (sourceId, uri, {range, validators}) async {
+          openCalls++;
+          if (openCalls == 1) {
+            // First physical run goes silent forever: no bytes, no error, no
+            // terminal session state (a backgrounded plugin runtime).
+            final controller = StreamController<List<int>>();
+            return ByteResponse(
+              bytes: controller.stream,
+              statusCode: 200,
+              rangeStart: 0,
+              totalLength: webpBytes.length,
+            );
+          }
+          return ByteResponse(
+            bytes: Stream.value(webpBytes),
+            statusCode: 200,
+            rangeStart: 0,
+            totalLength: webpBytes.length,
+          );
+        },
+        loadBytes: (sourceId, uri) async => webpBytes,
+      ),
+    );
+
+    final uri = Uri.parse('mihon:ehentai:stall-page');
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:ehentai:stall',
+        displayName: '停摆章节',
+        sourceId: 'mihon:ehentai',
+        comicId: 'stall-comic',
+        comicTitle: '停摆回收测试',
+        chapterId: 'stall-ch',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: uri.toString(),
+            pageId: 'stall-page',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.length,
+          ),
+        ],
+      ),
+    );
+
+    // Stall → reclaim → fresh task → completes.
+    await service.download(entry);
+    expect(await service.isDownloaded(entry), isTrue);
+    expect(openCalls, greaterThanOrEqualTo(2));
+
+    // The stall trail must land in the injected sink.
+    final stages = traceEvents
+        .map((event) => event.payload['stage'] as String?)
+        .toSet();
+    expect(stages, contains('chapter-run-start'));
+    expect(stages, contains('page-promotion-stall-reclaim'));
+    expect(stages, contains('page-promotion-reclaim-rewait'));
+    expect(stages, contains('chapter-run-complete'));
+    expect(stages, isNot(contains('page-promotion-stall-gave-up')));
+    // The owner reacted to the stuck attempt through the same sink.
+    final kinds = traceEvents.map((event) => event.kind).toSet();
+    expect(
+      kinds.intersection(<TraceEventKind>{
+        TraceEventKind.taskFailed,
+        TraceEventKind.retryScheduled,
+        TraceEventKind.policyDecision,
+      }),
+      isNotEmpty,
+    );
+  });
+
+  test('cross-version page alias prefers the entry revision over a newer foreign record',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-alias-preference-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    final bytesOldRevision = Uint8List.fromList(List<int>.filled(100, 1));
+    final bytesEntryRevision = Uint8List.fromList(List<int>.filled(50, 2));
+    final content = const ContentId(
+      sourceId: 'mihon:ehentai',
+      comicId: 'alias-comic',
+      chapterId: 'alias-ch',
+      pageId: 'p1',
+    );
+    // The entry's revision re-resolved the page to a different URI, so the
+    // exact index key misses; a NEWER record under the superseded revision
+    // must still lose the alias against the entry-revision record.
+    final superseded = DownloadId(
+      content: content,
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/alias/a.webp'),
+    );
+    final entryRevision = DownloadId(
+      content: content,
+      sourceRevision: 'r2',
+      canonicalUri: Uri.parse('https://example.test/alias/b.webp'),
+    );
+    await service.storePromotedArtifact(id: entryRevision, bytes: bytesEntryRevision);
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    await service.storePromotedArtifact(id: superseded, bytes: bytesOldRevision);
+
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:ehentai:alias',
+        displayName: '别名章节',
+        sourceId: 'mihon:ehentai',
+        comicId: 'alias-comic',
+        comicTitle: '别名确定性测试',
+        chapterId: 'alias-ch',
+        sourceRevision: 'r2',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.test/alias/a.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: bytesOldRevision.length,
+          ),
+        ],
+      ),
+    );
+
+    final snapshot = await service.inspect(entry);
+    expect(snapshot.completedPages, 1);
+    expect(snapshot.receivedBytes, bytesEntryRevision.length);
+  });
+
+  test('invalid comic manifests block destructive directory reuse', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-invalid-comic-manifest-',
+    );
+    addTearDown(() async => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final entry = _entryForArtifact(_readerArtifactId('invalid-manifest'), byteLength: 1);
+    final comicDirectory = Directory('${service.artifactStore.layout.root}/缓存漫画');
+    await comicDirectory.create(recursive: true);
+    final manifest = File(
+      '${comicDirectory.path}/$comicManifestFileName',
+    );
+    await manifest.writeAsString('{not-json');
+
+    await expectLater(
+      service.artifactStore.resolveStructuredComicDirectory(entry),
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.artifactCorruption,
+        ),
+      ),
+    );
+    expect(await manifest.readAsString(), '{not-json');
+  });
+
+  test('adopting a same-length changed file requires matching content proof',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-adopt-integrity-test-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    final path = '${root.path}/page.bin';
+    final expected = Uint8List.fromList(<int>[1, 2, 3, 4]);
+    final changed = Uint8List.fromList(<int>[1, 2, 3, 5]);
+    await File(path).writeAsBytes(changed);
+    final checksum = (Crc32()..add(expected)).hex;
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'mihon:test-src',
+        comicId: 'comic-integrity',
+        chapterId: 'ch1',
+        pageId: 'p1',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/page.bin'),
+    );
+
+    await expectLater(
+      service.artifactStore.adoptExistingPageRecord(
+        id: id,
+        path: path,
+        bytes: expected.length,
+        checksum: checksum,
+      ),
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.artifactCorruption,
+        ),
+      ),
+    );
+    expect(await service.artifactStore.openArtifactStream(id), isNull);
+  });
+
+  test('cross-version shared physical file is preserved when one version is deleted', () async {
+    final tempDir = await Directory.systemTemp.createTemp('zic_delete_safety_test_');
+    addTearDown(() => tempDir.delete(recursive: true));
+
+    final memoryStorage = <String, Uint8List>{};
+    final safIo = _MemorySafIo(memoryStorage);
+
+    final composition = await PersistentDownloadComposition.open(
+      tempDir.path,
+      safTreeIo: safIo,
+      safTreeUri: 'content://tree/downloads',
+    );
+    addTearDown(composition.close);
+    final store = composition.artifactStore;
+
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x18, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
+    final checksum = (Crc32()..add(webpBytes)).hex;
+    final sharedPath = 'saf:content%3A%2F%2Ftree%2Fdownloads?path=test_comic%2F001.webp';
+    memoryStorage['test_comic/001.webp'] = webpBytes;
+
+    final idV1 = DownloadId(
+      content: const ContentId(
+        sourceId: 'mihon:ehentai',
+        comicId: 'v1',
+        chapterId: 'ch1',
+        pageId: '0',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/v1/0.webp'),
+    );
+    final idV2 = DownloadId(
+      content: const ContentId(
+        sourceId: 'mihon:ehentai',
+        comicId: 'v2',
+        chapterId: 'ch1',
+        pageId: '0',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/v2/0.webp'),
+    );
+
+    await store.adoptExistingPageRecord(
+      id: idV1,
+      path: sharedPath,
+      bytes: webpBytes.length,
+      checksum: checksum,
+    );
+    await store.adoptExistingPageRecord(
+      id: idV2,
+      path: sharedPath,
+      bytes: webpBytes.length,
+      checksum: checksum,
+    );
+
+    // Evict v1: physical file in memoryStorage must be preserved because v2 still references it
+    await store.evict(idV1);
+    expect(memoryStorage['test_comic/001.webp'], isNotNull);
+    expect(await store.openArtifactStream(idV2), isNotNull);
+    expect(await store.openArtifactStream(idV1), isNull);
+
+    // Evict v2: no other records reference the file, so physical file is now deleted
+    await store.evict(idV2);
+    expect(memoryStorage['test_comic/001.webp'], isNull);
+  });
+
+  test('evicting one bound session does not delete a shared physical artifact',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-shared-session-eviction-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final store = service.artifactStore;
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x18, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
+    final first = DownloadId(
+      content: const ContentId(
+        sourceId: 'mihon:ehentai',
+        comicId: 'shared-session-v1',
+        chapterId: 'ch1',
+        pageId: '0',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/shared/v1.webp'),
+    );
+    final second = DownloadId(
+      content: const ContentId(
+        sourceId: 'mihon:ehentai',
+        comicId: 'shared-session-v2',
+        chapterId: 'ch1',
+        pageId: '0',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/shared/v2.webp'),
+    );
+
+    await store.storePromotedArtifact(id: first, bytes: bytes);
+    final firstRecord = await store.index.get(first.key);
+    expect(firstRecord, isNotNull);
+    await store.adoptExistingPageRecord(
+      id: second,
+      path: firstRecord!.path,
+      bytes: firstRecord.bytes,
+      checksum: firstRecord.checksum,
+      artifactId: firstRecord.artifactId,
+      storageRootId: firstRecord.storageRootId,
+    );
+
+    await store.evict(first);
+
+    expect(await store.openArtifactStream(second), isNotNull);
+    expect(await File(firstRecord.path).readAsBytes(), bytes);
+  });
+
+  test('structured writer isolates versions and rejects forced path collision',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-structured-version-conflict-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final store = service.artifactStore;
+    final firstBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x10, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 1, 1, 1, 1,
+    ]);
+    final secondBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x10, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 2, 2, 2, 2,
+    ]);
+
+    ImportedLibraryEntry entry(String comicId, Uri uri) =>
+        ImportedLibraryEntry(
+          chapter: ImportedChapterRecord(
+            directoryId: 'mihon:ehentai:$comicId',
+            displayName: '画廊',
+            sourceId: 'mihon:ehentai',
+            comicId: comicId,
+            comicTitle: '同名多版本',
+            chapterId: '$comicId-chapter',
+            sourceRevision: '$comicId-r1',
+            pages: <ImportedPageRecord>[
+              ImportedPageRecord(
+                displayName: '001.webp',
+                sourceId: uri.toString(),
+                pageId: '$comicId-page',
+                contentKindHint: ContentKindHint.webp,
+                byteLength: firstBytes.length,
+              ),
+            ],
+          ),
+        );
+
+    DownloadId id(String comicId, Uri uri) => DownloadId(
+          content: ContentId(
+            sourceId: 'mihon:ehentai',
+            comicId: comicId,
+            chapterId: '$comicId-chapter',
+            pageId: '$comicId-page',
+          ),
+          sourceRevision: '$comicId-r1',
+          canonicalUri: uri,
+        );
+
+    final firstUri = Uri.parse('https://example.test/old/001.webp');
+    final secondUri = Uri.parse('https://example.test/new/001.webp');
+    final firstEntry = entry('old-gallery', firstUri);
+    final secondEntry = entry('new-gallery', secondUri);
+    final firstId = id('old-gallery', firstUri);
+    final secondId = id('new-gallery', secondUri);
+    final firstDirectory =
+        await store.resolveStructuredComicDirectory(firstEntry);
+    final secondDirectory =
+        await store.resolveStructuredComicDirectory(secondEntry);
+    expect(firstDirectory, '同名多版本');
+    expect(secondDirectory, isNot(firstDirectory));
+    await store.storePromotedArtifact(id: firstId, bytes: firstBytes);
+    await store.storePromotedArtifact(id: secondId, bytes: secondBytes);
+
+    await store.mirrorPromotedToSafIfConfigured(
+      firstId,
+      entry: firstEntry,
+      pageIndex: 1,
+      isSingleChapter: true,
+      comicDirectoryName: firstDirectory,
+    );
+    await expectLater(
+      store.mirrorPromotedToSafIfConfigured(
+        secondId,
+        entry: secondEntry,
+        pageIndex: 1,
+        isSingleChapter: true,
+        comicDirectoryName: firstDirectory,
+      ),
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.policy,
+        ),
+      ),
+    );
+
+    final exported = File(
+      '${store.layout.root}/$firstDirectory/001.webp',
+    );
+    expect(await exported.readAsBytes(), firstBytes);
+    await store.writeComicFolderManifest(
+      firstEntry,
+      comicDirectoryName: firstDirectory,
+    );
+    await expectLater(
+      store.verifyStructuredDestinationOwner(
+        secondEntry,
+        comicDirectoryName: firstDirectory,
+      ),
+      throwsA(isA<Failure>()),
+    );
+    final manifest = ComicFolderManifest.decode(
+      await File(
+        '${store.layout.root}/$firstDirectory/$comicManifestFileName',
+      ).readAsString(),
+    );
+    expect(manifest?.comicId, 'old-gallery');
+
+    await store.mirrorPromotedToSafIfConfigured(
+      secondId,
+      entry: secondEntry,
+      pageIndex: 1,
+      isSingleChapter: true,
+      comicDirectoryName: secondDirectory,
+    );
+    await store.writeComicFolderManifest(
+      secondEntry,
+      comicDirectoryName: secondDirectory,
+    );
+    expect(
+      await File(
+        '${store.layout.root}/$secondDirectory/001.webp',
+      ).readAsBytes(),
+      secondBytes,
+    );
+  });
+
+  test('delete cleanly clears chapter even if download session has active writer', () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-delete-busy-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    final uri = Uri.parse('https://example.test/delete-busy.webp');
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'test:comic',
+        displayName: '第一话',
+        sourceId: 'test',
+        comicId: 'comic',
+        comicTitle: '漫画',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: uri.toString(),
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: 100,
+          ),
+        ],
+      ),
+    );
+
+    // Simulate session having active writer
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'test',
+        comicId: 'comic',
+        chapterId: 'ch1',
+        pageId: 'p1',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: uri,
+    );
+    final session = service.transferRuntime.registry.get(id);
+    await session.restore();
+    session.acquireWriter();
+    expect(session.hasWriter, isTrue);
+
+    // Calling delete must gracefully reset the writer and successfully delete
+    await service.delete(entry);
+    expect(await service.isDownloaded(entry), isFalse);
+    expect(session.hasWriter, isFalse);
+  });
+
+  test('POSIX evict deletes SQLite index record cleanly', () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-posix-evict-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    final uri = Uri.parse('https://example.test/posix-evict.webp');
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'posix-source',
+        comicId: 'comic-1',
+        chapterId: 'ch1',
+        pageId: 'p1',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: uri,
+    );
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    await service.artifactStore.storePromotedArtifact(id: id, bytes: webpBytes);
+    final recBefore = await service.artifactStore.indexedRecords();
+    expect(recBefore.containsKey(id.key), isTrue);
+
+    await service.artifactStore.evict(id);
+    final recAfter = await service.artifactStore.indexedRecords();
+    expect(recAfter.containsKey(id.key), isFalse);
+  });
+
+  test('evict does not delete a binding from another storage root', () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-evict-root-');
+    final otherRoot = await Directory.systemTemp.createTemp('zic-test-evict-other-');
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+      if (await otherRoot.exists()) await otherRoot.delete(recursive: true);
+    });
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final id = _readerArtifactId('historical-root-binding');
+    final path = '${otherRoot.path}/final/historical.bin';
+    final bytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
+    await File(path).parent.create(recursive: true);
+    await File(path).writeAsBytes(bytes);
+    await service.artifactStore.index.put(
+      CacheRec(
+        id: id,
+        state: CacheState.ready,
+        path: path,
+        bytes: bytes.length,
+        checksum: (Crc32()..add(bytes)).hex,
+        createdUs: 1,
+        touchedUs: 1,
+        storageRootId: otherRoot.path,
+      ),
+    );
+
+    await service.artifactStore.evict(id);
+
+    expect(await File(path).readAsBytes(), bytes);
+    expect(await service.artifactStore.index.get(id.key), isNotNull);
+  });
+
+  test('probeExistingDownloads matches plugin family across sourceId variants', () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-probe-plugin-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    final uri = Uri.parse('https://example.test/probe-plugin.webp');
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'mihon:eu.kanade.tachiyomi.extension.zh.ehentai',
+        comicId: 'gallery-1',
+        chapterId: 'ch1',
+        pageId: 'p1',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: uri,
+    );
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    await service.artifactStore.storePromotedArtifact(id: id, bytes: webpBytes);
+
+    // Query with different exact sourceId but matching pluginId 'mihon'
+    final report = await service.probeExistingDownloads(
+      const DownloadExistenceQuery(
+        sourceId: 'mihon:eu.kanade.tachiyomi.extension.all.ehentai',
+        pluginId: 'mihon',
+        comicId: 'gallery-1',
+      ),
+    );
+    expect(report.indexedReadyPages, 1);
+  });
+
+  test('claimComicDirectory directs download to pre-claimed structured directory', () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-claim-dir-');
+    addTearDown(() => root.delete(recursive: true));
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(loadBytes: (_, __) async => webpBytes),
+    );
+
+    final uri = Uri.parse('https://example.test/claim-page.webp');
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:claim-comic',
+        displayName: '第一话',
+        sourceId: 'mihon:test-src',
+        comicId: 'comic-claim',
+        comicTitle: '通用漫画标题',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: uri.toString(),
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.length,
+          ),
+        ],
+      ),
+    );
+
+    // Explicitly pre-claim custom destination (as chosen in conflict dialog)
+    await service.claimComicDirectory(
+      sourceId: 'mihon:test-src',
+      comicId: 'comic-claim',
+      directoryName: '通用漫画标题 (自定义隔离目录)',
+    );
+
+    await service.download(entry);
+    final targetFile = File(
+      '${service.artifactStore.layout.root}/通用漫画标题 (自定义隔离目录)/001.webp',
+    );
+    expect(await targetFile.exists(), isTrue);
+  });
+
+  test('removed placement does not leave an in-process directory reservation',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-placement-refresh-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    await service.claimComicDirectory(
+      sourceId: 'mihon:source-a',
+      comicId: 'comic-a',
+      directoryName: '可复用目录',
+    );
+    await service.artifactStore.index.removePlacement(
+      sourceId: 'mihon:source-a',
+      comicId: 'comic-a',
+    );
+
+    await service.claimComicDirectory(
+      sourceId: 'mihon:source-b',
+      comicId: 'comic-b',
+      directoryName: '可复用目录',
+    );
+    expect(
+      (await service.getDownloadPlacement(
+        sourceId: 'mihon:source-b',
+        comicId: 'comic-b',
+      ))?.relativeDirectory,
+      '可复用目录',
+    );
+  });
+
+  test('pre-claimed source-specific directory survives service reopen', () async {
+    final root = await Directory.systemTemp.createTemp('zic-source-placement-');
+    addTearDown(() => root.delete(recursive: true));
+    final sourceRoot = '${root.path}/mihon-downloads';
+    const sourceId = 'mihon:test-src';
+    const comicId = 'comic-source-root';
+    const directoryName = '漫画重试标题 (mihon source)';
+
+    Future<PersistentChapterDownloadService> openService() =>
+        PersistentChapterDownloadService.open(
+          root.path,
+          layoutResolver: (id) => id.content.sourceId == sourceId
+              ? CacheLayout(sourceRoot)
+              : null,
+        );
+
+    var service = await openService();
+    await service.claimComicDirectory(
+      sourceId: sourceId,
+      comicId: comicId,
+      directoryName: directoryName,
+    );
+    await service.close();
+
+    service = await openService();
+    addTearDown(service.close);
+    final placement = await service.getDownloadPlacement(
+      sourceId: sourceId,
+      comicId: comicId,
+    );
+    expect(placement?.relativeDirectory, directoryName);
+    expect(placement?.storageRootId, sourceRoot);
+  });
+
+  test('persisted placement reserves an empty directory after restart', () async {
+    final root = await Directory.systemTemp.createTemp('zic-placement-reservation-');
+    addTearDown(() => root.delete(recursive: true));
+    var service = await PersistentChapterDownloadService.open(root.path);
+    await service.claimComicDirectory(
+      sourceId: 'mihon:source-a',
+      comicId: 'comic-a',
+      directoryName: '空目录保留',
+    );
+    await service.close();
+
+    service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    await expectLater(
+      service.claimComicDirectory(
+        sourceId: 'mihon:source-b',
+        comicId: 'comic-b',
+        directoryName: '空目录保留',
+      ),
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.policy,
+        ),
+      ),
+    );
+  });
+
+  test('deleted comic folder without records yields clean base directory on new download', () async {
+    final root = await Directory.systemTemp.createTemp('zic-placement-clean-');
+    addTearDown(() => root.delete(recursive: true));
+    var service = await PersistentChapterDownloadService.open(root.path);
+    await service.artifactStore.index.putPlacement(
+      DownloadPlacement(
+        placementId: 'venera:ehentai\u0000comic-v1',
+        sourceId: 'venera:ehentai',
+        comicId: 'comic-v1',
+        comicTitle: 'Ani Collections',
+        mode: DownloadPlacementMode.createNew,
+        relativeDirectory: 'Ani Collections (venera_ehentai-fff908ad)',
+        storageRootId: 'default',
+        createdAt: DateTime.now().toUtc(),
+        updatedAt: DateTime.now().toUtc(),
+      ),
+    );
+    await service.close();
+
+    service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'venera:comic-v2',
+        displayName: '第一话',
+        sourceId: 'venera:ehentai',
+        comicId: 'comic-v2',
+        comicTitle: 'Ani Collections',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.test/p1.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: 100,
+          ),
+        ],
+      ),
+    );
+
+    final resolvedDir = await service.artifactStore.resolveStructuredComicDirectory(entry);
+    expect(resolvedDir, equals('Ani Collections'));
+  });
+
+  test('legacy indexed records recover placement without scanning files on retry', () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-retry-dir-');
+    addTearDown(() => root.delete(recursive: true));
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    var service = await PersistentChapterDownloadService.open(root.path);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(loadBytes: (_, __) async => webpBytes),
+    );
+
+    final uri = Uri.parse('https://example.test/page1.webp');
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:comic-v2',
+        displayName: '第一话',
+        sourceId: 'mihon:test-src',
+        comicId: 'comic-v2',
+        comicTitle: '漫画重试标题',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: uri.toString(),
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.length,
+          ),
+        ],
+      ),
+    );
+
+    // Initial claim to isolated directory (e.g. from conflict resolution)
+    await service.claimComicDirectory(
+      sourceId: 'mihon:test-src',
+      comicId: 'comic-v2',
+      directoryName: '漫画重试标题 (mihon 2)',
+    );    await service.download(entry);
+    await service.artifactStore.index.removePlacement(
+      sourceId: entry.chapter.sourceId,
+      comicId: entry.chapter.comicId,
+    );
+    await service.close();
+
+    // Reopen service (simulating app restart)
+    service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    final resolvedDir = await service.artifactStore.resolveStructuredComicDirectory(entry);
+    expect(resolvedDir, '漫画重试标题 (mihon 2)');
+    final placement = await service.getDownloadPlacement(
+      sourceId: entry.chapter.sourceId,
+      comicId: entry.chapter.comicId,
+    );
+    expect(placement?.mode, DownloadPlacementMode.incremental);
+  });
+
+  test('cross-version verified equivalence reuses downloaded pages and computes progress', () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-cross-ver-');
+    addTearDown(() => root.delete(recursive: true));
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    var networkCalls = 0;
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(loadBytes: (_, __) async {
+        networkCalls++;
+        return webpBytes;
+      }),
+    );
+
+    // Version A: gallery 1001 with image key 7d8a9b1c
+    final uriA = Uri.parse('https://e-hentai.org/s/7d8a9b1c/1001-1');
+    final entryA = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:1001',
+        displayName: '第一话',
+        sourceId: 'mihon:ehentai',
+        comicId: '1001',
+        comicTitle: '多版本测试漫画',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: uriA.toString(),
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.length,
+          ),
+        ],
+      ),
+    );
+    await service.download(entryA);
+    expect(networkCalls, 1);
+
+    // Version B: gallery 2002 with SAME image key 7d8a9b1c
+    final uriB = Uri.parse('https://e-hentai.org/s/7d8a9b1c/2002-1');
+    final entryB = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:2002',
+        displayName: '第一话',
+        sourceId: 'mihon:ehentai',
+        comicId: '2002',
+        comicTitle: '多版本测试漫画',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: uriB.toString(),
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.length,
+          ),
+        ],
+      ),
+    );
+
+    // Snapshot should recognize Version B's page as already available via verified equivalence
+    final snapshotB = await service.inspect(entryB);
+    expect(snapshotB.completedPages, 1);
+    expect(snapshotB.receivedBytes, webpBytes.length);
+
+    // Downloading Version B should adopt the equivalent artifact with ZERO new network calls
+    await service.download(entryB);
+    expect(networkCalls, 1);
+    expect(await service.isDownloaded(entryB), isTrue);
+  });
+
+  test('DownloadPlacement overwrite mode allows overwriting structured directory with updated manifest', () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-placement-overwrite-');
+    addTearDown(() => root.delete(recursive: true));
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(loadBytes: (_, __) async => webpBytes),
+    );
+
+    // Initial download for Comic 1
+    final entry1 = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:c1',
+        displayName: '第一话',
+        sourceId: 'mihon:test-src',
+        comicId: 'c1',
+        comicTitle: '覆盖测试漫画',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.com/c1/1.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.length,
+          ),
+        ],
+      ),
+    );
+    await service.download(entry1);
+
+    // Now Comic 2 claims the same directory with DownloadPlacementMode.overwrite
+    final entry2 = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:c2',
+        displayName: '第一话',
+        sourceId: 'mihon:test-src',
+        comicId: 'c2',
+        comicTitle: '覆盖测试漫画',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.com/c2/1.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.length,
+          ),
+        ],
+      ),
+    );
+    await service.claimComicDirectory(
+      sourceId: 'mihon:test-src',
+      comicId: 'c2',
+      comicTitle: '覆盖测试漫画',
+      directoryName: '覆盖测试漫画',
+      mode: DownloadPlacementMode.overwrite,
+      observedOwnerKey: 'mihon:test-src\u0000c1',
+    );
+    // Download should succeed under overwrite placement without failure
+    await service.download(entry2);
+    expect(await service.isDownloaded(entry2), isTrue);
+  });
+
+  test('DownloadPlacement unauthorized collision throws Failure with policy code instead of artifactCorruption', () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-placement-collision-');
+    addTearDown(() => root.delete(recursive: true));
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(loadBytes: (_, __) async => webpBytes),
+    );
+
+    // Initial download for Comic 1 into '冲突漫画'
+    final entry1 = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:c1',
+        displayName: '第一话',
+        sourceId: 'mihon:src-a',
+        comicId: 'c1',
+        comicTitle: '冲突漫画',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.com/1.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.length,
+          ),
+        ],
+      ),
+    );
+    await service.download(entry1);
+
+    // Comic 2 forced into Comic 1's directory without overwrite permission
+    final entry2 = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:c2',
+        displayName: '第一话',
+        sourceId: 'mihon:src-b',
+        comicId: 'c2',
+        comicTitle: '冲突漫画',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.com/2.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.length,
+          ),
+        ],
+      ),
+    );
+
+    expect(
+      () => service.artifactStore.verifyStructuredDestinationOwner(
+        entry2,
+        comicDirectoryName: '冲突漫画',
+      ),
+      throwsA(
+        isA<Failure>().having((f) => f.code, 'code', ErrorCode.policy),
+      ),
+    );
+  });
+
+  test('multi-version shared downloads: deleting old version preserves shared files, deleting new version deletes only exclusive files', () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-multiversion-delete-');
+    addTearDown(() => root.delete(recursive: true));
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(loadBytes: (_, __) async => webpBytes),
+    );
+
+    // Version A: 10 pages (hex hashes '00000000000000000000000000000001' .. '00000000000000000000000000000010')
+    final entryA = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:comic-a',
+        displayName: '第一话',
+        sourceId: 'mihon:test-src',
+        comicId: 'comic-a',
+        comicTitle: '版本A',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: List.generate(
+          10,
+          (i) {
+            final hex = (i + 1).toRadixString(16).padLeft(32, '0');
+            return ImportedPageRecord(
+              displayName: '${(i + 1).toString().padLeft(3, '0')}.webp',
+              sourceId: 'https://example.com/a/$hex.webp',
+              pageId: 'p_${i + 1}',
+              contentKindHint: ContentKindHint.webp,
+              byteLength: webpBytes.length,
+            );
+          },
+        ),
+      ),
+    );
+
+    // Version B: 30 pages (pages 1..20 exclusive hashes, pages 21..30 match Version A hashes)
+    final entryB = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:comic-b',
+        displayName: '第一话',
+        sourceId: 'mihon:test-src',
+        comicId: 'comic-b',
+        comicTitle: '版本B',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: List.generate(
+          30,
+          (i) {
+            final pageNum = i + 1;
+            final hex = pageNum > 20
+                ? (pageNum - 20).toRadixString(16).padLeft(32, '0')
+                : (pageNum + 100).toRadixString(16).padLeft(32, '0');
+            return ImportedPageRecord(
+              displayName: '${pageNum.toString().padLeft(3, '0')}.webp',
+              sourceId: 'https://example.com/b/$hex.webp',
+              pageId: 'p_$pageNum',
+              contentKindHint: ContentKindHint.webp,
+              byteLength: webpBytes.length,
+            );
+          },
+        ),
+      ),
+    );
+
+    // 1. Download Version A
+    await service.download(entryA);
+    expect(await service.isDownloaded(entryA), isTrue);
+
+    // 2. Download Version B (should adopt 10 pages from Version A)
+    await service.download(entryB);
+    expect(await service.isDownloaded(entryB), isTrue);
+
+    // Check all 30 pages of Version B are readable
+    final manifestB = entryB.chapter.toManifest();
+    for (final p in manifestB.pages) {
+      final id = DownloadId(
+        content: ContentId(
+          sourceId: 'mihon:test-src',
+          comicId: 'comic-b',
+          chapterId: 'ch1',
+          pageId: p.pageId,
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: p.uri,
+      );
+      final stream = await service.artifactStore.openArtifactStream(id);
+      expect(stream, isNotNull, reason: 'Version B page ${p.pageId} should be readable');
+    }
+
+    // 3. Test deleting Version A: Version B must remain 100% complete and intact
+    await service.delete(entryA);
+    expect(await service.isDownloaded(entryA), isFalse);
+    expect(await service.isDownloaded(entryB), isTrue);
+
+    for (final p in manifestB.pages) {
+      final id = DownloadId(
+        content: ContentId(
+          sourceId: 'mihon:test-src',
+          comicId: 'comic-b',
+          chapterId: 'ch1',
+          pageId: p.pageId,
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: p.uri,
+      );
+      final stream = await service.artifactStore.openArtifactStream(id);
+      expect(stream, isNotNull, reason: 'Version B page ${p.pageId} must survive Version A deletion');
+    }
+  });
+
+  test('multi-version shared downloads: deleting new version deletes exclusive files and preserves old version', () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-multiversion-del-b-');
+    addTearDown(() => root.delete(recursive: true));
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(loadBytes: (_, __) async => webpBytes),
+    );
+
+    // Version A: 10 pages (hex hashes '00000000000000000000000000000001' .. '00000000000000000000000000000010')
+    final entryA = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:comic-a',
+        displayName: '第一话',
+        sourceId: 'mihon:test-src',
+        comicId: 'comic-a',
+        comicTitle: '版本A',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: List.generate(
+          10,
+          (i) {
+            final hex = (i + 1).toRadixString(16).padLeft(32, '0');
+            return ImportedPageRecord(
+              displayName: '${(i + 1).toString().padLeft(3, '0')}.webp',
+              sourceId: 'https://example.com/a/$hex.webp',
+              pageId: 'p_${i + 1}',
+              contentKindHint: ContentKindHint.webp,
+              byteLength: webpBytes.length,
+            );
+          },
+        ),
+      ),
+    );
+
+    // Version B: 30 pages (pages 1..20 exclusive hashes, pages 21..30 match Version A hashes)
+    final entryB = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:comic-b',
+        displayName: '第一话',
+        sourceId: 'mihon:test-src',
+        comicId: 'comic-b',
+        comicTitle: '版本B',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: List.generate(
+          30,
+          (i) {
+            final pageNum = i + 1;
+            final hex = pageNum > 20
+                ? (pageNum - 20).toRadixString(16).padLeft(32, '0')
+                : (pageNum + 100).toRadixString(16).padLeft(32, '0');
+            return ImportedPageRecord(
+              displayName: '${pageNum.toString().padLeft(3, '0')}.webp',
+              sourceId: 'https://example.com/b/$hex.webp',
+              pageId: 'p_$pageNum',
+              contentKindHint: ContentKindHint.webp,
+              byteLength: webpBytes.length,
+            );
+          },
+        ),
+      ),
+    );
+
+    // 1. Download both versions
+    await service.download(entryA);
+    await service.download(entryB);
+
+    // 2. Delete Version B
+    await service.delete(entryB);
+    expect(await service.isDownloaded(entryB), isFalse);
+    expect(await service.isDownloaded(entryA), isTrue);
+
+    // 3. Verify Version A is 100% complete and readable
+    final manifestA = entryA.chapter.toManifest();
+    for (final p in manifestA.pages) {
+      final id = DownloadId(
+        content: ContentId(
+          sourceId: 'mihon:test-src',
+          comicId: 'comic-a',
+          chapterId: 'ch1',
+          pageId: p.pageId,
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: p.uri,
+      );
+      final stream = await service.artifactStore.openArtifactStream(id);
+      expect(stream, isNotNull, reason: 'Version A page ${p.pageId} must survive Version B deletion');
+    }
+  });
+
+  test('overwrite claim replaces the displaced durable placement owner', () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-overwrite-placement-');
+    addTearDown(() => root.delete(recursive: true));
+    var service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    const oldSourceId = 'mihon:old-source';
+    const oldComicId = 'old-comic';
+    const newSourceId = 'mihon:new-source';
+    const newComicId = 'new-comic';
+    const directoryName = '测试漫画';
+    final oldOwner = '$oldSourceId\u0000$oldComicId';
+
+    await service.claimComicDirectory(
+      sourceId: oldSourceId,
+      comicId: oldComicId,
+      comicTitle: directoryName,
+      directoryName: directoryName,
+      mode: DownloadPlacementMode.createNew,
+    );
+    await service.claimComicDirectory(
+      sourceId: newSourceId,
+      comicId: newComicId,
+      comicTitle: directoryName,
+      directoryName: directoryName,
+      mode: DownloadPlacementMode.overwrite,
+      observedOwnerKey: oldOwner,
+    );
+
+    expect(
+      await service.getDownloadPlacement(
+        sourceId: oldSourceId,
+        comicId: oldComicId,
+      ),
+      isNull,
+    );
+    expect(
+      await service.getDownloadPlacement(
+        sourceId: newSourceId,
+        comicId: newComicId,
+      ),
+      isNotNull,
+    );
+
+    await service.close();
+    service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    expect(
+      await service.getDownloadPlacement(
+        sourceId: oldSourceId,
+        comicId: oldComicId,
+      ),
+      isNull,
+    );
+    expect(
+      await service.getDownloadPlacement(
+        sourceId: newSourceId,
+        comicId: newComicId,
+      ),
+      isNotNull,
+    );
+  });
+
+  test('overwrite mode refuses to replace a target still bound to another owner',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-overwrite-shared-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final oldBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 1, 1, 1, 1,
+    ]);
+    final newBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x16, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 2, 2, 2, 2, 2, 2,
+    ]);
+    final oldId = DownloadId(
+      content: const ContentId(
+        sourceId: 'mihon:old-source',
+        comicId: 'old-comic',
+        chapterId: 'ch1',
+        pageId: 'p1',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/old.webp'),
+    );
+    final otherId = DownloadId(
+      content: const ContentId(
+        sourceId: 'mihon:other-source',
+        comicId: 'other-comic',
+        chapterId: 'ch1',
+        pageId: 'p1',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/other.webp'),
+    );
+    final newId = DownloadId(
+      content: const ContentId(
+        sourceId: 'mihon:new-source',
+        comicId: 'new-comic',
+        chapterId: 'ch1',
+        pageId: 'p1',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/new.webp'),
+    );
+    final target = File('${root.path}/offline_chapters/共享漫画/001.webp');
+    await target.parent.create(recursive: true);
+    await target.writeAsBytes(oldBytes);
+    final oldChecksum = (Crc32()..add(oldBytes)).hex;
+    final newChecksum = (Crc32()..add(newBytes)).hex;
+    await service.artifactStore.index.put(
+      CacheRec(
+        id: oldId,
+        state: CacheState.ready,
+        path: target.path,
+        bytes: oldBytes.length,
+        checksum: oldChecksum,
+        checksumAlgorithm: 'crc32',
+        createdUs: 1,
+        touchedUs: 1,
+        artifactId: 'old-artifact',
+        storageRootId: root.path,
+      ),
+    );
+    await service.artifactStore.index.put(
+      CacheRec(
+        id: otherId,
+        state: CacheState.ready,
+        path: target.path,
+        bytes: oldBytes.length,
+        checksum: (Crc32()..add(<int>[9, 9, 9, 9])).hex,
+        checksumAlgorithm: 'crc32',
+        createdUs: 2,
+        touchedUs: 2,
+        artifactId: 'other-artifact',
+        storageRootId: root.path,
+      ),
+    );
+    final staging = File('${root.path}/staging/new.bin');
+    await staging.parent.create(recursive: true);
+    await staging.writeAsBytes(newBytes);
+    await service.artifactStore.adoptExistingPageRecord(
+      id: newId,
+      path: staging.path,
+      bytes: newBytes.length,
+      checksum: newChecksum,
+    );
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:new-comic',
+        displayName: '第一话',
+        sourceId: 'mihon:new-source',
+        comicId: 'new-comic',
+        comicTitle: '共享漫画',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.test/new.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+          ),
+        ],
+      ),
+    );
+    await service.claimComicDirectory(
+      sourceId: 'mihon:new-source',
+      comicId: 'new-comic',
+      comicTitle: '共享漫画',
+      directoryName: '共享漫画',
+      mode: DownloadPlacementMode.overwrite,
+      observedOwnerKey: 'mihon:old-source\u0000old-comic',
+    );
+
+    await expectLater(
+      service.artifactStore.mirrorPromotedToSafIfConfigured(
+        newId,
+        entry: entry,
+        pageIndex: 1,
+        isSingleChapter: true,
+        comicDirectoryName: '共享漫画',
+      ),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.policy,
+      )),
+    );
+    expect(await target.readAsBytes(), oldBytes);
+    expect(await service.artifactStore.index.get(otherId.key), isNotNull);
+  });
+
+  test('overwrite mode does not blindly adopt non-matching files from disk and overwrites cleanly', () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-overwrite-content-');
+    addTearDown(() => root.delete(recursive: true));
+    final oldBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 1, 1, 1, 1,
+    ]);
+    final newBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x16, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 2, 2, 2, 2, 2, 2,
+    ]);
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(loadBytes: (_, __) async => newBytes),
+    );
+
+    // Create old file in structured destination
+    final comicDir = Directory('${service.artifactStore.layout.root}/测试漫画');
+    await comicDir.create(recursive: true);
+    final oldFile = File('${comicDir.path}/001.webp');
+    await oldFile.writeAsBytes(oldBytes);
+
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:comic-overwrite',
+        displayName: '第一话',
+        sourceId: 'mihon:test-src',
+        comicId: 'comic-overwrite',
+        comicTitle: '测试漫画',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.com/1.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: newBytes.length,
+          ),
+        ],
+      ),
+    );
+
+    // Claim directory with overwrite mode
+    await service.claimComicDirectory(
+      sourceId: 'mihon:test-src',
+      comicId: 'comic-overwrite',
+      comicTitle: '测试漫画',
+      directoryName: '测试漫画',
+      mode: DownloadPlacementMode.overwrite,
+      observedOwnerKey: 'old-src\u0000old-comic',
+    );
+
+    // Download should overwrite old file and not blindly adopt old bytes
+    await service.download(entry);
+    expect(await service.isDownloaded(entry), isTrue);
+
+    final downloadedBytes = await oldFile.readAsBytes();
+    expect(downloadedBytes, equals(newBytes));
+  });
+
+  test('createNew mode materializes adopted sibling pages into its own target directory', () async {
+    final root = await Directory.systemTemp.createTemp('zic-test-createnew-materialize-');
+    addTearDown(() => root.delete(recursive: true));
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 9, 9, 9, 9,
+    ]);
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    var networkCalls = 0;
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(loadBytes: (_, __) async {
+        networkCalls++;
+        return webpBytes;
+      }),
+    );
+
+    final entryV1 = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:v1',
+        displayName: '第一话',
+        sourceId: 'mihon:test-src',
+        comicId: 'comic-v1',
+        comicTitle: '漫画V1',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.com/shared_0123456789abcdef0123456789abcdef.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.length,
+          ),
+        ],
+      ),
+    );
+
+    final entryV2 = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:v2',
+        displayName: '第一话',
+        sourceId: 'mihon:test-src',
+        comicId: 'comic-v2',
+        comicTitle: '漫画V2',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.com/shared_0123456789abcdef0123456789abcdef.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.length,
+          ),
+        ],
+      ),
+    );
+
+    service.claimComicDirectory(
+      sourceId: 'mihon:test-src',
+      comicId: 'comic-v1',
+      comicTitle: '漫画V1',
+      directoryName: '漫画V1',
+      mode: DownloadPlacementMode.createNew,
+    );
+    service.claimComicDirectory(
+      sourceId: 'mihon:test-src',
+      comicId: 'comic-v2',
+      comicTitle: '漫画V2',
+      directoryName: '漫画V2',
+      mode: DownloadPlacementMode.createNew,
+    );
+
+    await service.download(entryV1);
+    await service.download(entryV2);
+    expect(networkCalls, 1);
+
+    // Verify V2 file physically exists in 漫画V2 directory
+    final v2File = File('${service.artifactStore.layout.root}/漫画V2/001.webp');
+    expect(await v2File.exists(), isTrue);
+    expect(
+      await File('${service.artifactStore.layout.root}/漫画V2/000.webp').exists(),
+      isFalse,
+    );
+    expect(await v2File.readAsBytes(), webpBytes);
+
+    // Delete V1 and ensure V2 is still 100% readable and independent
+    await service.delete(entryV1);
+    expect(await service.isDownloaded(entryV2), isTrue);
+    expect(await v2File.exists(), isTrue);
+  });
+
+  test('SAF sibling materialization removes partial target when close fails',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-test-saf-materialize-close-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final safStorage = <String, Uint8List>{};
+    final safIo = _MemorySafIo(safStorage);
+    final service = await PersistentChapterDownloadService.open(
+      root.path,
+      safTreeIo: safIo,
+      safTreeUri: 'content://tree/downloads',
+    );
+    addTearDown(service.close);
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 7, 7, 7, 7,
+    ]);
+    final source = File('${root.path}/sibling.webp');
+    await source.writeAsBytes(bytes);
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'mihon:test-src',
+        comicId: 'comic-v1',
+        chapterId: 'ch1',
+        pageId: 'p1',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/shared.webp'),
+    );
+    final sibling = await service.artifactStore.adoptExistingPageRecord(
+      id: id,
+      path: source.path,
+      bytes: bytes.lengthInBytes,
+      checksum: (Crc32()..add(bytes)).hex,
+    );
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:comic-v2',
+        displayName: '第一话',
+        sourceId: 'mihon:test-src',
+        comicId: 'comic-v2',
+        comicTitle: '漫画V2',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.test/shared.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+          ),
+        ],
+      ),
+    );
+    service.claimComicDirectory(
+      sourceId: 'mihon:test-src',
+      comicId: 'comic-v2',
+      comicTitle: '漫画V2',
+      directoryName: '漫画V2',
+      mode: DownloadPlacementMode.createNew,
+    );
+
+    safIo.failNextClose = true;
+    await expectLater(
+      service.artifactStore.materializeSiblingToDestinationIfSeparate(
+        siblingRecord: sibling,
+        entry: entry,
+        pageNumber: 1,
+        isSingleChapter: true,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(safStorage.containsKey('漫画V2/001.webp'), isFalse);
+  });
+
+  test('storing reader cache for comic with existing download placement automatically pins page', () async {
+    final root = await Directory.systemTemp.createTemp('zic-auto-pin-test-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:auto-pin',
+        displayName: '第一话',
+        sourceId: 'mihon:test-src',
+        comicId: 'comic-auto-pin',
+        comicTitle: '自动转下载漫画',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.test/page1.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: 32,
+          ),
+        ],
+      ),
+    );
+
+    // Pre-claim download placement for this comic
+    service.claimComicDirectory(
+      sourceId: entry.chapter.sourceId,
+      comicId: entry.chapter.comicId,
+      comicTitle: entry.chapter.comicTitle,
+      directoryName: '自动转下载漫画',
+    );
+
+    final id = DownloadId(
+      content: ContentId(
+        sourceId: entry.chapter.sourceId,
+        comicId: entry.chapter.comicId,
+        chapterId: entry.chapter.chapterId,
+        pageId: entry.chapter.pages.first.pageId!,
+      ),
+      sourceRevision: entry.chapter.sourceRevision,
+      canonicalUri: Uri.parse('https://example.test/page1.webp'),
+    );
+
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x1a, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x4c,
+      0x0d, 0x00, 0x00, 0x00, 0x2f, 0x00, 0x00, 0x00,
+      0x00, 0x07, 0x08, 0x85, 0x88, 0x88, 0x08, 0x00,
+    ]);
+    await service.storePromotedArtifact(id: id, bytes: webpBytes);
+
+    final rec = await service.artifactStore.index.get(id.key);
+    expect(rec, isNotNull);
+    expect(rec!.pinned, isTrue);
+
+    // Snapshot correctly reports pinned page
+    final snapshot = await service.inspect(entry);
+    expect(snapshot.pinnedPages, equals(1));
+    expect(snapshot.isManualDownload, isTrue);
+  });
+
+  test('cross-version download with offset adopts predecessor pages in chronological order', () async {
+    final root = await Directory.systemTemp.createTemp('zic-offset-adopt-test-');
+    addTearDown(() => root.delete(recursive: true));
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    var networkCalls = 0;
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        loadBytes: (_, __) async {
+          networkCalls++;
+          return webpBytes;
+        },
+      ),
+    );
+
+    // Version Old: 3 pages (opaque URIs as in Venera/E-Hentai)
+    final entryOld = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'venera:old',
+        displayName: '第一话',
+        sourceId: 'venera:ehentai',
+        comicId: 'comic-old',
+        comicTitle: '漫画 旧版',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: List.generate(
+          3,
+          (i) => ImportedPageRecord(
+            displayName: '${(i + 1).toString().padLeft(3, '0')}.webp',
+            sourceId: 'venera-resource:old_token_$i',
+            pageId: 'p_${i + 1}',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.length,
+          ),
+        ),
+      ),
+    );
+
+    // Version New: 5 pages (pages 0,1 are new, pages 2,3,4 match old pages 0,1,2 with offset 2)
+    final entryNew = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'venera:new',
+        displayName: '第一话',
+        sourceId: 'venera:ehentai',
+        comicId: 'comic-new',
+        comicTitle: '漫画 新版',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: List.generate(
+          5,
+          (i) => ImportedPageRecord(
+            displayName: '${(i + 1).toString().padLeft(3, '0')}.webp',
+            sourceId: 'venera-resource:new_token_$i',
+            pageId: 'p_${i + 1}',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.length,
+          ),
+        ),
+      ),
+    );
+
+    service.updateVersionRelations(<ComicVersionRelation>[
+      const ComicVersionRelation(
+        sourceId: 'venera:ehentai',
+        predecessorComicId: 'comic-old',
+        successorComicId: 'comic-new',
+        predecessorTitle: '漫画 旧版',
+        pageMappings: <ComicVersionPageMapping>[
+          ComicVersionPageMapping(
+            predecessorChapterId: 'ch1',
+            successorChapterId: 'ch1',
+            successorOffset: 2,
+            predecessorPageCount: 3,
+            successorPageCount: 5,
+          ),
+        ],
+      ),
+    ]);
+
+    // Download old version first: 3 pages -> 3 network calls
+    await service.download(entryOld);
+    expect(await service.isDownloaded(entryOld), isTrue);
+    expect(networkCalls, 3);
+
+    // Download new version: only 2 new pages should hit network, 3 adopted!
+    await service.download(entryNew);
+    expect(await service.isDownloaded(entryNew), isTrue);
+    expect(networkCalls, 5); // 3 (old) + 2 (new) = 5 calls total!
+
+    // Verify all 5 pages of new version are readable
+    for (var i = 0; i < 5; i++) {
+      final page = await service.readPage(entryNew, i);
+      expect(page, isNotEmpty);
+    }
   });
 }
 
@@ -1311,6 +3716,9 @@ final class _MemorySafIo implements SafTreeIo {
   final Map<int, ({String path, int pos})> _handles =
       <int, ({String path, int pos})>{};
   int _nextHandle = 1;
+  int listCalls = 0;
+  final List<String> readPaths = <String>[];
+  bool failNextClose = false;
 
   @override
   Future<int?> open(String relativePath, {SafWriteMode? mode}) async {
@@ -1333,6 +3741,7 @@ final class _MemorySafIo implements SafTreeIo {
   Future<Uint8List> read(int handle, int length) async {
     final state = _handles[handle];
     if (state == null) throw StateError('invalid handle');
+    readPaths.add(state.path);
     final bytes = storage[state.path]!;
     final start = state.pos;
     final end = (start + length).clamp(0, bytes.lengthInBytes);
@@ -1369,6 +3778,10 @@ final class _MemorySafIo implements SafTreeIo {
   @override
   Future<void> close(int handle) async {
     _handles.remove(handle);
+    if (failNextClose) {
+      failNextClose = false;
+      throw StateError('simulated SAF close failure');
+    }
   }
 
   @override
@@ -1376,23 +3789,51 @@ final class _MemorySafIo implements SafTreeIo {
       storage.remove(relativePath) != null;
 
   @override
+  Future<bool> rename(String relativePath, String newRelativePath) async {
+    if (storage.containsKey(newRelativePath) ||
+        !storage.containsKey(relativePath)) {
+      return false;
+    }
+    storage[newRelativePath] = storage.remove(relativePath)!;
+    return true;
+  }
+
+  @override
   Future<bool> exists(String relativePath) async =>
       storage.containsKey(relativePath);
 
   @override
   Future<List<SafTreeFile>> list(String relativePath) async {
-    final dirs = <String>{};
+    listCalls++;
+    final prefix = relativePath.isEmpty ? '' : '$relativePath/';
+    final result = <SafTreeFile>[];
+    final seen = <String>{};
     for (final path in storage.keys) {
-      final segments = path.split('/');
-      if (segments.length > 1) {
-        dirs.add(segments.first);
+      if (prefix.isEmpty) {
+        final segments = path.split('/');
+        if (segments.length > 1 && seen.add(segments.first)) {
+          result.add(
+            SafTreeFile(name: segments.first, isDirectory: true, length: 0),
+          );
+        }
+      } else if (path.startsWith(prefix)) {
+        final sub = path.substring(prefix.length);
+        final segments = sub.split('/');
+        if (segments.length == 1 && seen.add(segments.first)) {
+          result.add(
+            SafTreeFile(
+              name: segments.first,
+              isDirectory: false,
+              length: storage[path]?.lengthInBytes ?? 0,
+            ),
+          );
+        } else if (segments.length > 1 && seen.add(segments.first)) {
+          result.add(
+            SafTreeFile(name: segments.first, isDirectory: true, length: 0),
+          );
+        }
       }
     }
-    return dirs
-        .map(
-          (d) => SafTreeFile(name: d, isDirectory: true, length: 0),
-        )
-        .toList();
+    return result;
   }
 }
-

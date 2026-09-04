@@ -29,6 +29,7 @@ final class ComicReaderSettings {
     this.adaptiveEnabled = true,
     this.adaptiveProfile,
     this.verticalLongPressZoom,
+    this.invertPageOrder,
   });
 
   static const Object _unset = Object();
@@ -39,6 +40,7 @@ final class ComicReaderSettings {
   final bool adaptiveEnabled;
   final AdaptiveReaderProfile? adaptiveProfile;
   final bool? verticalLongPressZoom;
+  final bool? invertPageOrder;
 
   ComicReaderSettings copyWith({
     bool? enabled,
@@ -47,6 +49,7 @@ final class ComicReaderSettings {
     bool? adaptiveEnabled,
     Object? adaptiveProfile = _unset,
     Object? verticalLongPressZoom = _unset,
+    Object? invertPageOrder = _unset,
   }) =>
       ComicReaderSettings(
         enabled: enabled ?? this.enabled,
@@ -63,6 +66,9 @@ final class ComicReaderSettings {
         verticalLongPressZoom: identical(verticalLongPressZoom, _unset)
             ? this.verticalLongPressZoom
             : verticalLongPressZoom as bool?,
+        invertPageOrder: identical(invertPageOrder, _unset)
+            ? this.invertPageOrder
+            : invertPageOrder as bool?,
       );
 
   @override
@@ -74,7 +80,8 @@ final class ComicReaderSettings {
           verticalStitchOverride == other.verticalStitchOverride &&
           adaptiveEnabled == other.adaptiveEnabled &&
           adaptiveProfile == other.adaptiveProfile &&
-          verticalLongPressZoom == other.verticalLongPressZoom;
+          verticalLongPressZoom == other.verticalLongPressZoom &&
+          invertPageOrder == other.invertPageOrder;
 
   @override
   int get hashCode => Object.hash(
@@ -84,6 +91,7 @@ final class ComicReaderSettings {
         adaptiveEnabled,
         adaptiveProfile,
         verticalLongPressZoom,
+        invertPageOrder,
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -97,6 +105,8 @@ final class ComicReaderSettings {
           'adaptiveProfile': adaptiveProfile!.toJson(),
         if (verticalLongPressZoom != null)
           'verticalLongPressZoom': verticalLongPressZoom,
+        if (invertPageOrder != null)
+          'invertPageOrder': invertPageOrder,
       };
 
   factory ComicReaderSettings.fromJson(Map<String, Object?> json) =>
@@ -114,6 +124,9 @@ final class ComicReaderSettings {
         adaptiveEnabled: _boolValue(json['adaptiveEnabled'], true),
         verticalLongPressZoom: json['verticalLongPressZoom'] is bool
             ? json['verticalLongPressZoom'] as bool
+            : null,
+        invertPageOrder: json['invertPageOrder'] is bool
+            ? json['invertPageOrder'] as bool
             : null,
         adaptiveProfile: json['adaptiveProfile'] is Map
             ? AdaptiveReaderProfile.fromJson(

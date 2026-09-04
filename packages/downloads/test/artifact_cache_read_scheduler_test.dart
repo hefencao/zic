@@ -74,6 +74,65 @@ void main() {
     later.release();
   });
 
+  test('cancelled control removes a pending local-read lease request', () async {
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 2);
+    final first = await scheduler.acquire(priority: () => 1000);
+    final second = await scheduler.acquire(priority: () => 1000);
+    final control = _TestTaskControl(priority: 1000);
+    final pending = scheduler.acquire(
+      priority: () => 1000,
+      control: control,
+    );
+
+    await Future<void>.delayed(Duration.zero);
+    expect(scheduler.pendingCount, 1);
+    control.cancel();
+
+    await expectLater(
+      pending,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect(scheduler.pendingCount, 0);
+
+    first.release();
+    second.release();
+  });
+
+  test('cancelled pending read is skipped during a simultaneous lease release',
+      () async {
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 2);
+    final blocker = await scheduler.acquire(priority: () => 1000);
+    final secondBlocker = await scheduler.acquire(priority: () => 1000);
+    final control = _TestTaskControl(priority: 400);
+    final pending = scheduler.acquire(
+      priority: () => 400,
+      control: control,
+    );
+
+    control.cancel();
+    blocker.release();
+    secondBlocker.release();
+
+    await expectLater(
+      pending,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect(scheduler.activeCount, 0);
+    expect(scheduler.pendingCount, 0);
+  });
+
   test('refresh promotes queued artifact without cancellation', () async {
     final scheduler = ArtifactCacheReadScheduler(maxActive: 3);
     final foreground = await scheduler.acquire(priority: () => 1000);
@@ -120,4 +179,23 @@ void main() {
     pressure.release();
     next.release();
   });
+}
+
+final class _TestTaskControl implements TaskControl {
+  _TestTaskControl({required this.priority});
+
+  final Completer<void> _cancelled = Completer<void>();
+
+  @override
+  int priority;
+
+  @override
+  bool get cancelled => _cancelled.isCompleted;
+
+  @override
+  Future<void> get whenCancelled => _cancelled.future;
+
+  void cancel() {
+    if (!_cancelled.isCompleted) _cancelled.complete();
+  }
 }

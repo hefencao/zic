@@ -133,6 +133,7 @@ final class PageAsset {
     this.contentKindHint = ContentKindHint.unknown,
     this.animatedHint = false,
     this.checksum,
+    this.checksumAlgorithm,
   });
 
   final String pageId;
@@ -145,6 +146,11 @@ final class PageAsset {
   final ContentKindHint contentKindHint;
   final bool animatedHint;
   final String? checksum;
+
+  /// Algorithm for [checksum]. Download artifacts use `crc32` internally;
+  /// source-provided hashes must declare their algorithm before they can be
+  /// used as a transport completion constraint.
+  final String? checksumAlgorithm;
 
   String get assetKey => '$chapterId/$pageId';
 }
@@ -169,6 +175,25 @@ final class ReadingProgress {
   final DateTime updatedAt;
 
   String get identity => '$sourceId\u0000$chapterId';
+
+  ReadingProgress copyWith({
+    String? sourceId,
+    String? comicId,
+    String? chapterId,
+    int? pageIndex,
+    double? subPageOffset,
+    ReaderMode? readerMode,
+    DateTime? updatedAt,
+  }) =>
+      ReadingProgress(
+        sourceId: sourceId ?? this.sourceId,
+        comicId: comicId ?? this.comicId,
+        chapterId: chapterId ?? this.chapterId,
+        pageIndex: pageIndex ?? this.pageIndex,
+        subPageOffset: subPageOffset ?? this.subPageOffset,
+        readerMode: readerMode ?? this.readerMode,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
 
   Map<String, Object> toJson() => <String, Object>{
         'sourceId': sourceId,

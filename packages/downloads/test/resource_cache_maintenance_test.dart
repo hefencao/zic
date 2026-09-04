@@ -16,8 +16,14 @@ void main() {
     final first = _entry('chapter-a');
     final second = _entry('chapter-b');
 
-    await service.download(first);
-    await service.download(second);
+    service.seedPages(
+      first,
+      <Uint8List?>[Uint8List(4)],
+    );
+    service.seedPages(
+      second,
+      <Uint8List?>[Uint8List(4)],
+    );
     expect(await service.inspectArtifacts(),
         isA<ArtifactCacheUsage>().having((usage) => usage.bytes, 'bytes', 8));
 
@@ -66,7 +72,10 @@ void main() {
       ),
     );
 
-    await service.download(entry);
+    service.seedPages(
+      entry,
+      <Uint8List?>[Uint8List(4), Uint8List(4)],
+    );
     final report = await service.trimArtifacts(maxBytes: 7, targetBytes: 4);
     expect(report.evictedEntries, 1);
     expect(report.remainingBytes, 4);
@@ -77,6 +86,48 @@ void main() {
     expect(snapshot.receivedBytes, 4);
     expect(snapshot.hasDurableBytes, isTrue);
     expect(await service.isDownloaded(entry), isFalse);
+  });
+
+  test('manual memory downloads survive cache clear and release placement last',
+      () async {
+    final service = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(4),
+    );
+    addTearDown(service.close);
+    final first = _entry('chapter-a');
+    final second = _entry('chapter-b');
+    await service.claimComicDirectory(
+      sourceId: 'cache-source',
+      comicId: 'cache-comic',
+      comicTitle: '缓存测试',
+      directoryName: '缓存测试',
+    );
+    await service.download(first);
+    await service.download(second);
+
+    final cleared = await service.clearArtifacts();
+    expect(cleared.releasedBytes, 0);
+    expect(cleared.remainingBytes, 8);
+    expect(cleared.skippedBusy, 2);
+    expect((await service.inspect(first)).pinnedPages, 1);
+    expect((await service.inspect(second)).pinnedPages, 1);
+
+    await service.delete(first);
+    expect(
+      await service.getDownloadPlacement(
+        sourceId: 'cache-source',
+        comicId: 'cache-comic',
+      ),
+      isNotNull,
+    );
+    await service.delete(second);
+    expect(
+      await service.getDownloadPlacement(
+        sourceId: 'cache-source',
+        comicId: 'cache-comic',
+      ),
+      isNull,
+    );
   });
 }
 

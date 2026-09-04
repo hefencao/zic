@@ -139,6 +139,303 @@ void main() {
     expect(shortCircuit.payload['committedLength'], bytes.length);
   });
 
+  test('failed local completion resets corrupt bytes before network fallback',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_local_completion_recovery_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final networkBytes = _ownerAnimatedWebp(<int>[64, 64, 64]);
+    final localBytes = List<int>.of(networkBytes)
+      ..[networkBytes.length - 1] ^= 0xff;
+    final expectedChecksum = (Crc32()..add(networkBytes)).hex;
+    final trace = MemoryTraceSink();
+    final transport = _CountingBytesTransport(networkBytes);
+    var prepareCalls = 0;
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      prepareDownload: (session) async {
+        prepareCalls++;
+        await session.bindResponse(
+          validators: const Validators(),
+          totalLength: localBytes.length,
+        );
+        final writer = session.acquireWriter();
+        await session.append(writer, 0, localBytes);
+        await session.pause(writer);
+      },
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('local-completion-recovery');
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-local-completion-recovery',
+      transportFor: (_) => transport,
+      traceSink: trace,
+    );
+    consumer.replaceDemands(
+      'reader-local-completion-recovery',
+      1,
+      <DownloadId, TransferDemand>{
+        id: TransferDemand(
+          priority: 780,
+          reason: 'test-local-completion-recovery',
+          expectedChecksum: expectedChecksum,
+        ),
+      },
+    );
+    await consumer.idle();
+
+    final session = registry.get(id);
+    expect(prepareCalls, 1);
+    expect(transport.opens, 1);
+    expect(session.state, DownloadState.promoted);
+    expect(session.hasWriter, isFalse);
+    expect(session.committedLength, networkBytes.length);
+    expect(owner.taskKeyFor(id), isNull);
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['action'] ==
+                'local-completion-failed-network-fallback',
+      ),
+      isTrue,
+    );
+  });
+
+  test('provider setup failures retry finitely and publish terminal failure',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_provider_setup_failure_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+    var lookups = 0;
+    var recoverySleeps = 0;
+    final id = _id('provider-setup-failure');
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-provider-setup-failure',
+      transportFor: (_) {
+        lookups++;
+        throw StateError('provider unavailable');
+      },
+      traceSink: const NoopTraceSink(),
+      retry: const RetryPolicy(
+        baseDelay: Duration.zero,
+        maxDelay: Duration.zero,
+      ),
+      sleep: (_) async {
+        recoverySleeps++;
+      },
+    );
+    consumer.replaceDemands(
+      'reader-provider-setup-failure',
+      1,
+      _desired(id, priority: 780),
+    );
+    await consumer.idle();
+
+    final session = registry.get(id);
+    expect(lookups, 5);
+    expect(recoverySleeps, 4);
+    expect(session.state, DownloadState.failed);
+    expect(session.snapshot.failure?.code, ErrorCode.network);
+    expect(session.hasWriter, isFalse);
+    expect(owner.taskKeyFor(id), isNull);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(lookups, 5, reason: 'unchanged demand must not hot-loop');
+  });
+
+  test('retry sleeper failure still reaches the bounded terminal outcome',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_retry_sleep_failure_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    var opens = 0;
+    final id = _id('retry-sleep-failure');
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-retry-sleep-failure',
+      transportFor: (_) => _FailingOpenTransport(() => opens++),
+      traceSink: const NoopTraceSink(),
+      retry: const RetryPolicy(
+        baseDelay: Duration.zero,
+        maxDelay: Duration.zero,
+      ),
+      sleep: (_) async {
+        throw StateError('retry clock failed');
+      },
+    );
+    consumer.replaceDemands(
+      'reader-retry-sleep-failure',
+      1,
+      _desired(id, priority: 780),
+    );
+
+    await consumer.idle().timeout(const Duration(seconds: 1));
+
+    expect(opens, greaterThanOrEqualTo(3));
+    expect(registry.get(id).state, DownloadState.failed);
+    expect(registry.get(id).snapshot.failure?.code, ErrorCode.network);
+  });
+
+  test('demand withdrawal during retry sleep does not start another attempt',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_retry_withdrawal_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final net = NetLane(maxActive: 1);
+    final sleepStarted = Completer<void>();
+    final releaseSleep = Completer<void>();
+    var opens = 0;
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: net,
+    );
+    addTearDown(() async {
+      if (!releaseSleep.isCompleted) releaseSleep.complete();
+      await owner.dispose();
+      await registry.dispose();
+    });
+    final id = _id('retry-withdrawal');
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-retry-withdrawal',
+      transportFor: (_) => _FailingOpenTransport(() => opens++),
+      traceSink: const NoopTraceSink(),
+      retry: const RetryPolicy(
+        baseDelay: Duration(seconds: 1),
+        maxDelay: Duration(seconds: 1),
+      ),
+      sleep: (_) {
+        if (!sleepStarted.isCompleted) sleepStarted.complete();
+        return releaseSleep.future;
+      },
+    );
+    consumer.replaceDemands(
+      'reader-retry-withdrawal',
+      1,
+      _desired(id, priority: 780),
+    );
+
+    await sleepStarted.future;
+    consumer.replaceDemands('reader-retry-withdrawal', 2, const {});
+    await net.idle().timeout(const Duration(seconds: 1));
+    releaseSleep.complete();
+
+    expect(opens, 1);
+    expect(owner.taskKeyFor(id), isNull);
+  });
+
+  test('authoritative progress cancels a stale recovery timer', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_retry_progress_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final net = NetLane(maxActive: 1);
+    final sleepStarted = Completer<void>();
+    final releaseSleep = Completer<void>();
+    var opens = 0;
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: net,
+    );
+    addTearDown(() async {
+      if (!releaseSleep.isCompleted) releaseSleep.complete();
+      await owner.dispose();
+      await registry.dispose();
+    });
+    final id = _id('retry-progress');
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-retry-progress',
+      transportFor: (_) => _FailingOpenTransport(() => opens++),
+      traceSink: const NoopTraceSink(),
+      retry: const RetryPolicy(
+        baseDelay: Duration(seconds: 1),
+        maxDelay: Duration(seconds: 1),
+      ),
+      sleep: (_) {
+        if (!sleepStarted.isCompleted) sleepStarted.complete();
+        return releaseSleep.future;
+      },
+    );
+    consumer.replaceDemands(
+      'reader-retry-progress',
+      1,
+      _desired(id, priority: 780),
+    );
+
+    await sleepStarted.future;
+    final session = registry.get(id);
+    await session.bindResponse(
+      validators: const Validators(),
+      totalLength: 1,
+    );
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1]);
+    await session.pause(writer);
+
+    releaseSleep.complete();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(opens, 1);
+
+    consumer.replaceDemands('reader-retry-progress', 2, const {});
+    await net.idle().timeout(const Duration(seconds: 1));
+  });
+
   test('cold local prepare hydrates physical partial before NetLane admission', () async {
     final temp = await Directory.systemTemp.createTemp(
       'transfer_owner_local_prepare_before_lane_',
@@ -226,6 +523,62 @@ void main() {
     expect(transport.opens, 0);
   });
 
+  test('cancelling the final demand cancels controlled local preparation', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_local_prepare_cancel_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final entered = Completer<void>();
+    final cancelled = Completer<void>();
+    var prepareCalls = 0;
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      prepareDownloadWithControl: (session, {required control}) async {
+        prepareCalls++;
+        entered.complete();
+        try {
+          await control.whenCancelled;
+        } finally {
+          if (!cancelled.isCompleted) cancelled.complete();
+        }
+      },
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('local-prepare-cancel');
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-local-prepare-cancel',
+      transportFor: (_) => _CountingBytesTransport('RIFF....WEBPcancel'.codeUnits),
+      traceSink: const NoopTraceSink(),
+    );
+    consumer.replaceDemands(
+      'reader-local-prepare-cancel',
+      1,
+      _desired(id, priority: 800),
+    );
+    await entered.future;
+
+    consumer.replaceDemands(
+      'reader-local-prepare-cancel',
+      2,
+      const <DownloadId, TransferDemand>{},
+    );
+    await cancelled.future.timeout(const Duration(seconds: 1));
+    expect(prepareCalls, 1);
+    expect(owner.taskKeyFor(id), isNull);
+    expect(owner.registry.get(id).state, DownloadState.idle);
+  });
+
   test('post-local network admission preserves higher demand priority', () async {
     final temp = await Directory.systemTemp.createTemp(
       'transfer_owner_local_prepare_priority_barrier_',
@@ -295,6 +648,130 @@ void main() {
     expect(openOrder, hasLength(2));
     expect(openOrder.first, high.canonicalUri);
     expect(openOrder.last, low.canonicalUri);
+  });
+
+  test('local preparation is retried after the physical session epoch resets',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_local_prepare_epoch_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final firstRelease = Completer<void>();
+    final secondEntered = Completer<void>();
+    var prepareCalls = 0;
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      prepareDownload: (_) async {
+        prepareCalls++;
+        if (prepareCalls == 1) {
+          await firstRelease.future;
+        } else {
+          secondEntered.complete();
+          await Future<void>.delayed(Duration.zero);
+        }
+      },
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('local-prepare-epoch');
+    final transport = _CountingBytesTransport('RIFF....WEBPepoch'.codeUnits);
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-local-prepare-epoch',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+    consumer.replaceDemands(
+      'reader-local-prepare-epoch',
+      1,
+      _desired(id, priority: 800),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    final session = registry.get(id);
+    await session.reset();
+    firstRelease.complete();
+    await secondEntered.future.timeout(const Duration(seconds: 1));
+
+    // The first preparation belonged to the discarded epoch. It must not
+    // suppress hydration for the new generation or manufacture a network task
+    // before the replacement preparation has returned.
+    expect(prepareCalls, 2);
+    expect(transport.opens, 0);
+    consumer.replaceDemands(
+      'reader-local-prepare-epoch',
+      2,
+      const <DownloadId, TransferDemand>{},
+    );
+  });
+
+  test('reentrant local preparation is coalesced before callback returns',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_local_prepare_reentrant_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final release = Completer<void>();
+    final entered = Completer<void>();
+    var prepareCalls = 0;
+    late DownloadTransferConsumer consumer;
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      prepareDownload: (_) async {
+        prepareCalls++;
+        if (prepareCalls == 1) {
+          // The callback runs synchronously until its first await. This
+          // refresh must observe the preparation slot already installed by
+          // the owner rather than recursively starting another hydration.
+          consumer.refreshScheduling();
+          entered.complete();
+          await release.future;
+        }
+      },
+    );
+    addTearDown(() async {
+      if (!release.isCompleted) release.complete();
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('local-prepare-reentrant');
+    final transport = _CountingBytesTransport('RIFF....WEBPreentrant'.codeUnits);
+    consumer = owner.attachConsumer(
+      scopeId: 'reader-local-prepare-reentrant',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+    consumer.replaceDemands(
+      'reader-local-prepare-reentrant',
+      1,
+      _desired(id, priority: 800),
+    );
+
+    await entered.future.timeout(const Duration(seconds: 1));
+    await Future<void>.delayed(Duration.zero);
+    expect(prepareCalls, 1);
+
+    release.complete();
+    await consumer.idle().timeout(const Duration(seconds: 2));
+    expect(prepareCalls, 1);
+    expect(registry.get(id).state, DownloadState.promoted);
   });
 
   test('failed local prepare falls back to provider once without prepare loop', () async {
@@ -909,6 +1386,22 @@ void main() {
     expect(owner.claimCount(id), 2);
     expect(registry.sessions, hasLength(1));
 
+    // Checksum proof is case/whitespace normalized at the physical owner
+    // boundary; a second consumer must not be rejected for spelling the same
+    // digest differently.
+    chapter.replaceDemands(
+      'chapter-checksum',
+      2,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 120,
+          reason: 'chapter-command',
+          expectedChecksum: ' CHECKSUM-A ',
+        ),
+      },
+    );
+    expect(owner.claimCount(id), 2);
+
     expect(
       () => conflicting.replaceDemands(
         'chapter-conflict',
@@ -1454,6 +1947,115 @@ void main() {
   });
 
 
+  test('a re-demand waits for cancelled task retirement before reopening',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_cancel_redemand_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('cancel-redemand');
+    final transport = _CancelThenSucceedTransport(
+      bytes: _ownerAnimatedWebp(<int>[24]),
+    );
+    final consumer = owner.attachConsumer(
+      scopeId: 'cancel-redemand-reader',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+    consumer.replaceDemands(
+      'cancel-redemand',
+      1,
+      _desired(id, priority: 700),
+    );
+    await transport.firstOpened.future.timeout(const Duration(seconds: 1));
+    final firstTaskKey = owner.taskKeyFor(id);
+    expect(firstTaskKey, isNotNull);
+    owner.net.cancel(firstTaskKey!);
+    await transport.firstCancelled.future.timeout(const Duration(seconds: 1));
+
+    // The old token is still active while its controlled open unwinds. A new
+    // demand must not revive that cancelled token or admit a second physical
+    // task beside it.
+    consumer.replaceDemands(
+      'cancel-redemand',
+      2,
+      _desired(id, priority: 1000),
+    );
+    expect(owner.taskKeyFor(id), firstTaskKey);
+    await consumer.idle().timeout(const Duration(seconds: 2));
+
+    expect(transport.opens, 2);
+    expect(registry.get(id).state, DownloadState.promoted);
+  });
+
+  test('reset during an admitted open cannot publish stale lifecycle failure',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_reset_during_open_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('reset-during-open');
+    final transport = _GateBytesTransport(_ownerAnimatedWebp(<int>[24]));
+    final consumer = owner.attachConsumer(
+      scopeId: 'reset-during-open-reader',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+    consumer.replaceDemands(
+      'reset-during-open-reader',
+      1,
+      _desired(id, priority: 800),
+    );
+    await transport.opened.future.timeout(const Duration(seconds: 1));
+
+    final session = registry.get(id);
+    await session.reset();
+    expect(session.state, DownloadState.idle);
+    expect(session.hasWriter, isFalse);
+    expect(session.snapshot.failure, isNull);
+
+    // The old open now completes against the reset generation. Its stale run
+    // must retire normally, after which the owner admits one fresh task for
+    // the still-demanded session.
+    transport.release.complete();
+    await consumer.idle().timeout(const Duration(seconds: 2));
+
+    expect(transport.opens, 2);
+    expect(session.state, DownloadState.promoted);
+    expect(session.snapshot.failure, isNull);
+    expect(session.hasWriter, isFalse);
+  });
+
   test(
       'task-retained transport survives provider consumer disposal on shared partial',
       () async {
@@ -1638,6 +2240,25 @@ Map<DownloadId, TransferDemand> _desired(
         flowTargetFrames: flowTargetFrames,
       ),
     };
+
+final class _FailingOpenTransport implements Transport {
+  _FailingOpenTransport(this.onOpen);
+
+  final void Function() onOpen;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    onOpen();
+    throw const Failure(
+      code: ErrorCode.network,
+      message: 'test transport open failure',
+    );
+  }
+}
 
 final class _GateBytesTransport implements Transport {
   _GateBytesTransport(this.bytes);
@@ -1893,6 +2514,54 @@ List<int> _ownerU32(int value) => <int>[
       (value >> 16) & 0xff,
       (value >> 24) & 0xff,
     ];
+
+
+final class _CancelThenSucceedTransport implements ControlledTransport {
+  _CancelThenSucceedTransport({required this.bytes});
+
+  final List<int> bytes;
+  final Completer<void> firstOpened = Completer<void>();
+  final Completer<void> firstCancelled = Completer<void>();
+  int opens = 0;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+  }) async {
+    final taskControl = control;
+    if (taskControl == null) {
+      throw StateError('physical scheduler must pass TaskControl');
+    }
+    opens++;
+    if (opens == 1) {
+      firstOpened.complete();
+      await taskControl.whenCancelled;
+      firstCancelled.complete();
+      throw const Failure(
+        code: ErrorCode.cancelled,
+        message: 'first provider attempt cancelled',
+      );
+    }
+    return ByteResponse(
+      bytes: Stream<List<int>>.value(bytes),
+      statusCode: 200,
+      rangeStart: 0,
+      totalLength: bytes.length,
+      rangeSupported: true,
+    );
+  }
+}
 
 
 final class _BlockedControlledTransport implements ControlledTransport {

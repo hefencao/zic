@@ -36,6 +36,7 @@ typedef UploadWork = Future<void> Function(
 );
 typedef Sleep = Future<void> Function(Duration delay);
 typedef DownloadPrepare = Future<void> Function(DownloadSession session);
+typedef DownloadPrepareWithControl = TransferPrepareWithControl;
 typedef DownloadObserve = void Function(DownloadSession session);
 typedef SourceKindObserve = void Function(DownloadId id, ContentKind kind);
 typedef DecodeRefillObserve = void Function(
@@ -74,6 +75,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     this.budgets,
     this.refillPolicy = const StagedDecodeRefillPolicy(),
     DownloadPrepare? prepareDownload,
+    DownloadPrepareWithControl? prepareDownloadWithControl,
     DownloadObserve? onDownloadObserved,
     this.onSourceKindObserved,
     this.onDecodeRefillObserved,
@@ -121,6 +123,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         registry: registry,
         clock: clock,
         prepareDownload: prepareDownload,
+        prepareDownloadWithControl: prepareDownloadWithControl,
         net: localNet,
       );
       _ownedDownloadTransferOwner = owner;

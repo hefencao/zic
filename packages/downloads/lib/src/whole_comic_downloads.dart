@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:catalog/catalog.dart';
+import 'package:domain/domain.dart';
+import 'package:storage/storage.dart';
 
 import 'chapter_downloads.dart';
 
@@ -9,10 +11,58 @@ enum WholeComicQueuePhase {
   queued,
   running,
   waitingForPolicy,
+  requiresUserAction,
   paused,
   complete,
   failed,
   cancelled,
+}
+
+enum WholeComicQueueUserActionKind { resolveDownloadPlacement }
+
+final class WholeComicQueueUserAction {
+  const WholeComicQueueUserAction({
+    required this.kind,
+    required this.message,
+    required this.chapterId,
+    required this.chapterTitle,
+    this.directory,
+    this.existingOwnerKey,
+    this.requestOwnerKey,
+  });
+
+  final WholeComicQueueUserActionKind kind;
+  final String message;
+  final String chapterId;
+  final String chapterTitle;
+  final String? directory;
+  final String? existingOwnerKey;
+  final String? requestOwnerKey;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'kind': kind.name,
+        'message': message,
+        'chapterId': chapterId,
+        'chapterTitle': chapterTitle,
+        'directory': directory,
+        'existingOwnerKey': existingOwnerKey,
+        'requestOwnerKey': requestOwnerKey,
+      };
+
+  factory WholeComicQueueUserAction.fromJson(Map<String, Object?> json) =>
+      WholeComicQueueUserAction(
+        kind: _enumByName(
+          WholeComicQueueUserActionKind.values,
+          json['kind'],
+          WholeComicQueueUserActionKind.resolveDownloadPlacement,
+        ),
+        message: _requiredString(json, 'message'),
+        chapterId: _requiredString(json, 'chapterId'),
+        chapterTitle: _requiredString(json, 'chapterTitle'),
+        directory: json['directory'] as String?,
+        existingOwnerKey: json['existingOwnerKey'] as String?,
+        requestOwnerKey: json['requestOwnerKey'] as String?,
+      );
 }
 
 enum WholeComicNetworkPolicy { any, unmetered }
@@ -141,10 +191,13 @@ final class WholeComicQueueJobSnapshot {
     required this.phase,
     required this.completedChapters,
     required this.totalChapters,
+    required this.completedPageUnits,
+    required this.totalPages,
     required this.activeChapterTitles,
     required this.createdAt,
     required this.updatedAt,
     this.failure,
+    this.userAction,
   });
 
   final String jobId;
@@ -154,10 +207,13 @@ final class WholeComicQueueJobSnapshot {
   final WholeComicQueuePhase phase;
   final int completedChapters;
   final int totalChapters;
+  final double completedPageUnits;
+  final int totalPages;
   final List<String> activeChapterTitles;
   final DateTime createdAt;
   final DateTime updatedAt;
   final String? failure;
+  final WholeComicQueueUserAction? userAction;
 
   String get comicIdentity => comicLibraryIdentity(sourceId, comicId);
   bool get isActive => phase == WholeComicQueuePhase.running;
@@ -169,10 +225,19 @@ final class WholeComicQueueJobSnapshot {
   bool get canRetry =>
       phase == WholeComicQueuePhase.failed ||
       phase == WholeComicQueuePhase.cancelled;
+  bool get requiresUserAction =>
+      phase == WholeComicQueuePhase.requiresUserAction && userAction != null;
+  bool get hasPendingWork =>
+      phase == WholeComicQueuePhase.queued ||
+      phase == WholeComicQueuePhase.running ||
+      phase == WholeComicQueuePhase.waitingForPolicy ||
+      phase == WholeComicQueuePhase.paused;
 
-  double get fraction => totalChapters == 0
+  int get completedPages => completedPageUnits.floor();
+
+  double get fraction => totalPages == 0
       ? 0
-      : (completedChapters / totalChapters).clamp(0, 1).toDouble();
+      : (completedPageUnits / totalPages).clamp(0, 1).toDouble();
 }
 
 final class WholeComicQueueSnapshot {
@@ -228,11 +293,17 @@ final class WholeComicDownloadQueue {
     WholeComicQueueStore? store,
     WholeComicQueueEnvironmentSource? environment,
     bool ownsEnvironment = false,
+    String? storageRootId,
   })  : _downloads = downloads,
+        _storageRootId = storageRootId ?? 'default',
         _store = store ?? MemoryWholeComicQueueStore(),
         _environment = environment ?? const StaticWholeComicQueueEnvironment(),
         _ownsEnvironment = environment == null || ownsEnvironment {
     _ready = _restore();
+    _downloadSubscription = _downloads.changes.listen(
+      _acceptChapterSnapshot,
+      onError: (Object _, StackTrace __) {},
+    );
     _environmentSubscription = _environment.changes.listen(
       (_) {
         _emit();
@@ -249,6 +320,10 @@ final class WholeComicDownloadQueue {
 
   final ChapterDownloadService _downloads;
   final WholeComicQueueStore _store;
+  /// Queue completion is scoped to the physical download authority. A root or
+  /// SAF tree change forces completed jobs back through reconciliation instead
+  /// of presenting bytes from the previous store as complete.
+  final String _storageRootId;
   final WholeComicQueueEnvironmentSource _environment;
   final bool _ownsEnvironment;
   final StreamController<WholeComicQueueSnapshot> _changes =
@@ -257,8 +332,12 @@ final class WholeComicDownloadQueue {
       <String, _WholeComicQueueJob>{};
   final Map<String, _ActiveQueueChapter> _active =
       <String, _ActiveQueueChapter>{};
+  final Map<String, ChapterDownloadSnapshot> _chapterSnapshots =
+      <String, ChapterDownloadSnapshot>{};
 
   late final Future<void> _ready;
+  late final StreamSubscription<ChapterDownloadSnapshot>
+      _downloadSubscription;
   late final StreamSubscription<WholeComicQueueEnvironment>
       _environmentSubscription;
   WholeComicQueuePolicy _policy = const WholeComicQueuePolicy();
@@ -272,11 +351,26 @@ final class WholeComicDownloadQueue {
   Stream<WholeComicQueueSnapshot> get changes => _changes.stream;
   WholeComicQueueSnapshot get snapshot => _snapshot();
 
+  void _acceptChapterSnapshot(ChapterDownloadSnapshot snapshot) {
+    if (_closed || _closing) return;
+    final covered = _jobs.values.any(
+      (job) => job.chapters.any(
+        (entry) => _chapterIdentity(entry) == snapshot.identity,
+      ),
+    );
+    if (!covered) return;
+    _chapterSnapshots[snapshot.identity] = snapshot;
+    _emit();
+  }
+
   Future<void> enqueue({
     required String sourceId,
     required String comicId,
     required String comicTitle,
     required Iterable<ImportedLibraryEntry> chapters,
+    String? placementDirectory,
+    DownloadPlacementMode? placementMode,
+    String? observedOwnerKey,
   }) async {
     await ready;
     _requireOpen();
@@ -314,6 +408,29 @@ final class WholeComicDownloadQueue {
       return;
     }
     final now = DateTime.now().toUtc();
+    final replacesPlacement =
+        placementDirectory != null || placementMode != null;
+    final effectivePlacementMode = replacesPlacement
+        ? placementMode ?? DownloadPlacementMode.createNew
+        : existing?.placementMode;
+    final effectiveObservedOwnerKey = replacesPlacement
+        ? observedOwnerKey
+        : existing?.observedOwnerKey;
+    if (effectivePlacementMode == DownloadPlacementMode.overwrite &&
+        effectiveObservedOwnerKey != null &&
+        effectiveObservedOwnerKey.contains('\u0000')) {
+      final parts = effectiveObservedOwnerKey.split('\u0000');
+      if (parts.length == 2) {
+        final displacedJobId = comicLibraryIdentity(parts[0], parts[1]);
+        if (displacedJobId != jobId && _jobs.containsKey(displacedJobId)) {
+          final displaced = _jobs[displacedJobId]!;
+          displaced.phase = WholeComicQueuePhase.cancelled;
+          displaced.touch();
+          await _cancelActiveForJob(displacedJobId);
+          _jobs.remove(displacedJobId);
+        }
+      }
+    }
     final job = _WholeComicQueueJob(
       jobId: jobId,
       sourceId: sourceId,
@@ -324,6 +441,12 @@ final class WholeComicDownloadQueue {
           existing?.completedChapterIdentities ?? <String>{},
       phase: WholeComicQueuePhase.queued,
       failure: null,
+      userAction: null,
+      placementDirectory: replacesPlacement
+          ? placementDirectory
+          : existing?.placementDirectory,
+      placementMode: effectivePlacementMode ?? DownloadPlacementMode.createNew,
+      observedOwnerKey: effectiveObservedOwnerKey,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     );
@@ -336,15 +459,40 @@ final class WholeComicDownloadQueue {
     _requestSchedule();
   }
 
+  /// The queue job covering this chapter (any phase), for the unified
+  /// existing-download lookup; null when no job covers it.
+  WholeComicQueueJobSnapshot? jobForChapter({
+    required String sourceId,
+    required String comicId,
+    required String chapterId,
+  }) {
+    for (final job in _jobs.values) {
+      final contains = job.chapters.any(
+        (entry) =>
+            entry.chapter.sourceId == sourceId &&
+            entry.chapter.comicId == comicId &&
+            entry.chapter.chapterId == chapterId,
+      );
+      if (!contains) continue;
+      return job.snapshot(
+        active: const <String>[],
+        chapterSnapshots: _chapterSnapshots,
+      );
+    }
+    return null;
+  }
+
   Future<void> pause(String jobId) async {
     await ready;
     final job = _requireJob(jobId);
     if (job.phase == WholeComicQueuePhase.complete ||
-        job.phase == WholeComicQueuePhase.cancelled) {
+        job.phase == WholeComicQueuePhase.cancelled ||
+        job.phase == WholeComicQueuePhase.requiresUserAction) {
       return;
     }
     job.phase = WholeComicQueuePhase.paused;
     job.failure = null;
+    job.userAction = null;
     job.touch();
     await _publish();
     await _cancelActiveForJob(jobId);
@@ -359,6 +507,7 @@ final class WholeComicDownloadQueue {
     }
     job.phase = WholeComicQueuePhase.queued;
     job.failure = null;
+    job.userAction = null;
     job.touch();
     await _publish();
     _requestSchedule();
@@ -384,6 +533,7 @@ final class WholeComicDownloadQueue {
         ? WholeComicQueuePhase.complete
         : WholeComicQueuePhase.queued;
     job.failure = null;
+    job.userAction = null;
     job.touch();
     await _publish();
     _requestSchedule();
@@ -398,6 +548,7 @@ final class WholeComicDownloadQueue {
     }
     job.phase = WholeComicQueuePhase.cancelled;
     job.failure = null;
+    job.userAction = null;
     job.touch();
     await _publish();
     await _cancelActiveForJob(jobId);
@@ -441,7 +592,17 @@ final class WholeComicDownloadQueue {
       }
     }
     await _cancelAllActive();
-    await _publish();
+    if (!_closed) {
+      await _publish();
+    }
+    try {
+      await _persistTail.timeout(const Duration(seconds: 10));
+    } on Object {
+      // A broken persistence sink must not make application teardown
+      // unbounded; the last successfully committed queue document remains
+      // authoritative for the next launch.
+    }
+    await _downloadSubscription.cancel();
     await _environmentSubscription.cancel();
     if (_ownsEnvironment) {
       await _environment.close();
@@ -455,6 +616,11 @@ final class WholeComicDownloadQueue {
   Future<void> _restore() async {
     final data = await _store.load();
     var changed = false;
+    final persistedRoot = data?['storageRootId'];
+    final rootChanged = data != null &&
+        ((persistedRoot is String && persistedRoot != _storageRootId) ||
+            (persistedRoot == null && _storageRootId != 'default'));
+    if (rootChanged) changed = true;
     if (data != null) {
       final rawPolicy = data['policy'];
       if (rawPolicy is Map<Object?, Object?>) {
@@ -466,13 +632,29 @@ final class WholeComicDownloadQueue {
       if (rawJobs is List<Object?>) {
         for (final rawJob in rawJobs) {
           if (rawJob is! Map<Object?, Object?>) {
+            changed = true;
             continue;
           }
-          final job = _WholeComicQueueJob.fromJson(
-            rawJob.cast<String, Object?>(),
-          );
+          final _WholeComicQueueJob job;
+          try {
+            job = _WholeComicQueueJob.fromJson(
+              rawJob.cast<String, Object?>(),
+            );
+          } on Object {
+            // Preserve a valid queue file even when one old job was malformed;
+            // the malformed record is quarantined by the JSON store on the
+            // next write instead of producing a restore/schedule hot loop.
+            changed = true;
+            continue;
+          }
           if (job.phase == WholeComicQueuePhase.running) {
             job.phase = WholeComicQueuePhase.queued;
+            changed = true;
+          }
+          if (rootChanged && job.phase == WholeComicQueuePhase.complete) {
+            job.phase = WholeComicQueuePhase.queued;
+            job.completedChapterIdentities.clear();
+            job.failure = null;
             changed = true;
           }
           _jobs[job.jobId] = job;
@@ -492,7 +674,8 @@ final class WholeComicDownloadQueue {
         continue;
       }
       if (job.phase == WholeComicQueuePhase.failed ||
-          job.phase == WholeComicQueuePhase.cancelled) {
+          job.phase == WholeComicQueuePhase.cancelled ||
+          job.phase == WholeComicQueuePhase.requiresUserAction) {
         continue;
       }
       final completedBefore = Set<String>.of(job.completedChapterIdentities);
@@ -563,6 +746,7 @@ final class WholeComicDownloadQueue {
         if (job.phase == WholeComicQueuePhase.complete ||
             job.phase == WholeComicQueuePhase.failed ||
             job.phase == WholeComicQueuePhase.cancelled ||
+            job.phase == WholeComicQueuePhase.requiresUserAction ||
             job.phase == WholeComicQueuePhase.paused) {
           continue;
         }
@@ -666,6 +850,26 @@ final class WholeComicDownloadQueue {
     final identity = _chapterIdentity(entry);
     Object? chapterFailure;
     try {
+      if (job.placementDirectory != null && job.placementDirectory!.isNotEmpty) {
+        await _downloads.claimComicDirectory(
+          sourceId: job.sourceId,
+          comicId: job.comicId,
+          comicTitle: job.comicTitle,
+          directoryName: job.placementDirectory!,
+          mode: job.placementMode ?? DownloadPlacementMode.createNew,
+          observedOwnerKey: job.observedOwnerKey,
+        );
+        // The queue waits for the placement transaction before it starts any
+        // page transfer. This closes the conflict-decision to write boundary
+        // and surfaces a failed SQLite commit as a job failure.
+        final claimed = await _downloads.getDownloadPlacement(
+          sourceId: job.sourceId,
+          comicId: job.comicId,
+        );
+        if (claimed == null) {
+          throw StateError('download placement claim was not persisted');
+        }
+      }
       final current = await _downloads.inspect(entry);
       if (!current.isComplete) {
         await _downloads.download(entry);
@@ -685,6 +889,19 @@ final class WholeComicDownloadQueue {
     if (chapterFailure != null &&
         !_closing &&
         job.phase == WholeComicQueuePhase.running) {
+      final userAction = _queueUserActionFor(chapterFailure, entry);
+      if (userAction != null) {
+        job.phase = WholeComicQueuePhase.requiresUserAction;
+        job.userAction = userAction;
+        job.failure = userAction.message;
+        job.failedChapterIdentities.remove(identity);
+        _active.remove(identity);
+        job.touch();
+        await _publish();
+        await _cancelActiveForJob(job.jobId);
+        _requestSchedule();
+        return;
+      }
       // One stale-manifest self-heal per chapter per session: a plugin
       // runtime restart invalidates persisted page URIs, and re-pulling the
       // chapter manifest from the source restores fresh ones.
@@ -697,10 +914,12 @@ final class WholeComicDownloadQueue {
       // turns failed once every chapter reached a terminal state (see the
       // completion check in _schedule).
       job.failedChapterIdentities.add(identity);
+      job.userAction = null;
       job.failure =
           '章节「${entry.chapter.displayName}」下载失败：${_describeChapterFailure(chapterFailure)}';
     }
     _active.remove(identity);
+    if (_closing || _closed) return;
     job.touch();
     await _publish();
     _requestSchedule();
@@ -752,6 +971,7 @@ final class WholeComicDownloadQueue {
       // projection backed by one artifact index read; avoid reopening and
       // scanning the same index once per chapter here.
       for (final snapshot in await _downloads.inspectMany(job.chapters)) {
+        _chapterSnapshots[snapshot.identity] = snapshot;
         if (snapshot.isComplete) {
           completed.add(snapshot.identity);
         }
@@ -761,7 +981,9 @@ final class WholeComicDownloadQueue {
       // service implementation whose bulk projection cannot complete.
       for (final entry in job.chapters) {
         try {
-          if ((await _downloads.inspect(entry)).isComplete) {
+          final snapshot = await _downloads.inspect(entry);
+          _chapterSnapshots[snapshot.identity] = snapshot;
+          if (snapshot.isComplete) {
             completed.add(_chapterIdentity(entry));
           }
         } on Object {
@@ -780,11 +1002,18 @@ final class WholeComicDownloadQueue {
         .toList(growable: false);
     await Future.wait<void>(
       active.map((item) async {
-        await _downloads.cancel(item.entry);
         try {
-          await item.run;
+          await _downloads.cancel(item.entry).timeout(
+            const Duration(seconds: 10),
+          );
         } on Object {
-          // The chapter task already published its terminal state.
+          // Keep the queue command bounded even if a source bridge is stuck.
+        }
+        try {
+          await item.run.timeout(const Duration(seconds: 10));
+        } on Object {
+          // Cancellation is bounded. The chapter task remains authoritative
+          // and will remove its active entry when its own transport exits.
         }
       }),
     );
@@ -794,9 +1023,15 @@ final class WholeComicDownloadQueue {
     final active = _active.values.toList(growable: false);
     await Future.wait<void>(
       active.map((item) async {
-        await _downloads.cancel(item.entry);
         try {
-          await item.run;
+          await _downloads.cancel(item.entry).timeout(
+            const Duration(seconds: 10),
+          );
+        } on Object {
+          // Closing must not wait forever on a broken source bridge.
+        }
+        try {
+          await item.run.timeout(const Duration(seconds: 10));
         } on Object {
           // Closing resumes the whole-comic job on the next launch.
         }
@@ -829,6 +1064,7 @@ final class WholeComicDownloadQueue {
             active: _active.values
                 .where((item) => item.jobId == job.jobId)
                 .map((item) => item.entry.chapter.displayName),
+            chapterSnapshots: _chapterSnapshots,
           ),
         )
         .toList(growable: false);
@@ -848,7 +1084,8 @@ final class WholeComicDownloadQueue {
   Future<void> _publish() async {
     _emit();
     final data = <String, Object?>{
-      'schema': 1,
+      'schema': 3,
+      'storageRootId': _storageRootId,
       'policy': _policy.toJson(),
       'jobs': _orderedJobs().map((job) => job.toJson()).toList(growable: false),
     };
@@ -885,6 +1122,10 @@ final class _WholeComicQueueJob {
     required this.createdAt,
     required this.updatedAt,
     this.failure,
+    this.userAction,
+    this.placementDirectory,
+    this.placementMode,
+    this.observedOwnerKey,
   });
 
   final String jobId;
@@ -903,13 +1144,35 @@ final class _WholeComicQueueJob {
   final Set<String> selfHealAttemptedIdentities = <String>{};
   WholeComicQueuePhase phase;
   String? failure;
+  WholeComicQueueUserAction? userAction;
+  final String? placementDirectory;
+  final DownloadPlacementMode? placementMode;
+  final String? observedOwnerKey;
   final DateTime createdAt;
   DateTime updatedAt;
 
   void touch() => updatedAt = DateTime.now().toUtc();
 
-  WholeComicQueueJobSnapshot snapshot({required Iterable<String> active}) =>
-      WholeComicQueueJobSnapshot(
+  WholeComicQueueJobSnapshot snapshot({
+    required Iterable<String> active,
+    required Map<String, ChapterDownloadSnapshot> chapterSnapshots,
+  }) {
+    var totalPages = 0;
+    var completedPageUnits = 0.0;
+    for (final entry in chapters) {
+      final pageCount = entry.chapter.pages.length;
+      totalPages += pageCount;
+      final identity = _chapterIdentity(entry);
+      final chapter = chapterSnapshots[identity];
+      if (chapter != null) {
+        completedPageUnits += chapter.completedPageUnits
+            .clamp(0, pageCount)
+            .toDouble();
+      } else if (completedChapterIdentities.contains(identity)) {
+        completedPageUnits += pageCount;
+      }
+    }
+    return WholeComicQueueJobSnapshot(
         jobId: jobId,
         sourceId: sourceId,
         comicId: comicId,
@@ -917,11 +1180,15 @@ final class _WholeComicQueueJob {
         phase: phase,
         completedChapters: completedChapterIdentities.length,
         totalChapters: chapters.length,
+        completedPageUnits: completedPageUnits,
+        totalPages: totalPages,
         activeChapterTitles: List<String>.unmodifiable(active),
         createdAt: createdAt,
         updatedAt: updatedAt,
         failure: failure,
+        userAction: userAction,
       );
+  }
 
   Map<String, Object?> toJson() => <String, Object?>{
         'jobId': jobId,
@@ -930,6 +1197,10 @@ final class _WholeComicQueueJob {
         'comicTitle': comicTitle,
         'phase': phase.name,
         'failure': failure,
+        'userAction': userAction?.toJson(),
+        'placementDirectory': placementDirectory,
+        'placementMode': placementMode?.name,
+        'observedOwnerKey': observedOwnerKey,
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
         'completedChapterIdentities':
@@ -957,6 +1228,21 @@ final class _WholeComicQueueJob {
       );
     }).toList(growable: false);
     final rawCompleted = json['completedChapterIdentities'];
+    final rawUserAction = json['userAction'];
+    final userAction = rawUserAction is Map<Object?, Object?>
+        ? WholeComicQueueUserAction.fromJson(
+            rawUserAction.cast<String, Object?>(),
+          )
+        : null;
+    var phase = _enumByName(
+      WholeComicQueuePhase.values,
+      json['phase'],
+      WholeComicQueuePhase.queued,
+    );
+    if (phase == WholeComicQueuePhase.requiresUserAction &&
+        userAction == null) {
+      phase = WholeComicQueuePhase.failed;
+    }
     return _WholeComicQueueJob(
       jobId: _requiredString(json, 'jobId'),
       sourceId: _requiredString(json, 'sourceId'),
@@ -966,12 +1252,18 @@ final class _WholeComicQueueJob {
       completedChapterIdentities: rawCompleted is List<Object?>
           ? rawCompleted.whereType<String>().toSet()
           : <String>{},
-      phase: _enumByName(
-        WholeComicQueuePhase.values,
-        json['phase'],
-        WholeComicQueuePhase.queued,
-      ),
+      phase: phase,
       failure: json['failure'] as String?,
+      userAction: userAction,
+      placementDirectory: json['placementDirectory'] as String?,
+      placementMode: json['placementMode'] == null
+          ? null
+          : _enumByName(
+              DownloadPlacementMode.values,
+              json['placementMode'],
+              DownloadPlacementMode.createNew,
+            ),
+      observedOwnerKey: json['observedOwnerKey'] as String?,
       createdAt: DateTime.parse(_requiredString(json, 'createdAt')).toUtc(),
       updatedAt: DateTime.parse(_requiredString(json, 'updatedAt')).toUtc(),
     )
@@ -985,9 +1277,33 @@ final class _WholeComicQueueJob {
 
 String _chapterIdentity(ImportedLibraryEntry entry) => chapterDownloadIdentity(
       entry.chapter.sourceId,
+      entry.chapter.comicId,
       entry.chapter.chapterId,
       entry.chapter.sourceRevision,
     );
+
+WholeComicQueueUserAction? _queueUserActionFor(
+  Object error,
+  ImportedLibraryEntry entry,
+) {
+  if (error is! Failure || error.code != ErrorCode.policy) {
+    return null;
+  }
+  String? detail(String key) {
+    final value = error.details[key];
+    return value is String && value.trim().isNotEmpty ? value : null;
+  }
+
+  return WholeComicQueueUserAction(
+    kind: WholeComicQueueUserActionKind.resolveDownloadPlacement,
+    message: error.message,
+    chapterId: entry.chapter.chapterId,
+    chapterTitle: entry.chapter.displayName,
+    directory: detail('directory'),
+    existingOwnerKey: detail('existingOwner'),
+    requestOwnerKey: detail('requestOwner'),
+  );
+}
 
 /// Maps raw runtime failures to user-actionable queue messages. A persisted
 /// page manifest can outlive the plugin runtime epoch that issued its

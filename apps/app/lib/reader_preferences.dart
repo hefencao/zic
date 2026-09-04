@@ -25,6 +25,7 @@ extension ReaderPreferenceProjection on AppPreferencesController {
       longPressZoomLimitToViewport: longPressZoomLimitToViewport,
       doubleTapZoomOrigin: doubleTapZoomOrigin,
       zoomDecodeBoost: zoomDecodeBoostEnabled,
+      invertPageOrderOverride: comic.invertPageOrder,
     );
   }
 
@@ -40,6 +41,7 @@ extension ReaderPreferenceProjection on AppPreferencesController {
       verticalLongPressZoom: settings.verticalLongPressZoomOverride,
       adaptiveEnabled: settings.comicAdaptiveEnabled,
       adaptiveProfile: settings.adaptiveProfile,
+      invertPageOrder: settings.invertPageOrderOverride,
     );
     if (comic == const ComicReaderSettings()) {
       clearComicReaderSettings(sourceId, comicId);

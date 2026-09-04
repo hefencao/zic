@@ -124,5 +124,63 @@ void main() {
       expect(decoded.isSingleChapter, isFalse);
       expect(decoded.updatedAt, now);
     });
+
+    test('manifest fingerprint is independent of nested map insertion order', () {
+      final first = ComicFolderManifest(
+        sourceId: 'source',
+        comicId: 'comic',
+        comicTitle: 'title',
+        chapterDirectories: const <String, String>{
+          'chapter-b': 'B',
+          'chapter-a': 'A',
+        },
+        chapterTitles: const <String, String>{
+          'chapter-b': 'Title B',
+          'chapter-a': 'Title A',
+        },
+        updatedAt: DateTime.utc(2026, 8, 27),
+      );
+      final second = ComicFolderManifest(
+        sourceId: 'source',
+        comicId: 'comic',
+        comicTitle: 'title',
+        chapterDirectories: const <String, String>{
+          'chapter-a': 'A',
+          'chapter-b': 'B',
+        },
+        chapterTitles: const <String, String>{
+          'chapter-a': 'Title A',
+          'chapter-b': 'Title B',
+        },
+        updatedAt: DateTime.utc(2026, 8, 27),
+      );
+
+      expect(first.computedFingerprint, second.computedFingerprint);
+      expect(
+        ComicFolderManifest(
+          sourceId: second.sourceId,
+          comicId: second.comicId,
+          comicTitle: second.comicTitle,
+          chapterDirectories: second.chapterDirectories,
+          chapterTitles: second.chapterTitles,
+          fingerprint: first.computedFingerprint,
+          updatedAt: second.updatedAt,
+        ).fingerprintValid,
+        isTrue,
+      );
+    });
+
+    test('parsePageIndexFromFileName parses various page file conventions', () {
+      expect(parsePageIndexFromFileName('001.webp'), 1);
+      expect(parsePageIndexFromFileName('008.webp'), 8);
+      expect(parsePageIndexFromFileName('12.jpg'), 12);
+      expect(parsePageIndexFromFileName('page_05.png'), 5);
+      expect(parsePageIndexFromFileName('p3.avif'), 3);
+      expect(parsePageIndexFromFileName('001_thumb.webp'), 1);
+      expect(parsePageIndexFromFileName('001 (1).webp'), 1);
+      expect(parsePageIndexFromFileName('.zic.json'), isNull);
+      expect(parsePageIndexFromFileName('cache.sqlite'), isNull);
+      expect(parsePageIndexFromFileName('manifest.json'), isNull);
+    });
   });
 }

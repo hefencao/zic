@@ -121,8 +121,10 @@ final class ByteResponse {
     Map<String, Object?> diagnostics = const <String, Object?>{},
     this.readDiagnostics,
     Future<void> Function()? onDiscard,
+    Future<void> Function({TaskControl? control})? onDiscardControlled,
   })  : diagnostics = Map<String, Object?>.unmodifiable(diagnostics),
         _onDiscard = onDiscard,
+        _onDiscardControlled = onDiscardControlled,
         assert(statusCode >= 100),
         assert(rangeStart >= 0),
         assert(totalLength == null || totalLength >= 0);
@@ -150,10 +152,20 @@ final class ByteResponse {
   final Map<String, Object?> diagnostics;
   final ByteResponseReadDiagnostics? readDiagnostics;
   final Future<void> Function()? _onDiscard;
+  final Future<void> Function({TaskControl? control})? _onDiscardControlled;
+  Future<void>? _discardFuture;
 
   bool get isPartial => statusCode == 206;
 
-  Future<void> discard() async {
+  Future<void> discard({TaskControl? control}) => _discardFuture ??=
+      _discardOnce(control: control);
+
+  Future<void> _discardOnce({required TaskControl? control}) async {
+    final controlled = _onDiscardControlled;
+    if (controlled != null) {
+      await controlled(control: control);
+      return;
+    }
     final callback = _onDiscard;
     if (callback != null) {
       await callback();

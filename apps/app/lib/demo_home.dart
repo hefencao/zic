@@ -192,9 +192,11 @@ final class _DemoHomeState extends State<DemoHome> {
   Completer<void>? _initialExternalSourcesPublished;
   Future<ExternalPluginController?>? _externalPluginLoading;
   Future<void>? _externalSourcesPublishing;
+  Future<void>? _durableAdoption;
   Future<void>? _externalSourceRefresh;
   bool _externalSourceRefreshPending = false;
   bool _suppressLibrarySessionRebuild = false;
+  bool _downloadManagerRouteOpen = false;
 
   bool _picking = false;
   bool _pickingFolder = false;
@@ -202,6 +204,7 @@ final class _DemoHomeState extends State<DemoHome> {
   bool _batchManagement = false;
   final Set<String> _managedComicIdentities = <String>{};
   final Set<String> _openingComicIdentities = <String>{};
+  final Set<String> _restoredComicKeys = <String>{};
   final Map<String, Future<void>> _versionReuseWarmups = <String, Future<void>>{};
   final Map<String, _DownloadCompletionKind> _downloadCompletionBadges =
       <String, _DownloadCompletionKind>{};
@@ -329,15 +332,13 @@ final class _DemoHomeState extends State<DemoHome> {
       final controller = await _ensureExternalPluginController();
       if (!mounted) return;
       if (controller != null) {
+        _activeExternalPlugins = controller;
+        _watchExternalPluginSources(controller);
         try {
           await controller.ready;
         } on Object {
           return;
         }
-      }
-      if (controller != null) {
-        _activeExternalPlugins = controller;
-        _watchExternalPluginSources(controller);
         _requestExternalSourceRefresh(controller);
         final refresh = _externalSourceRefresh;
         if (refresh != null) {
@@ -488,10 +489,44 @@ final class _DemoHomeState extends State<DemoHome> {
         !_isDeferredExternalSourceId(sourceId)) {
       return;
     }
-    await _ensureExternalSourcesPublished();
-    final published = _initialExternalSourcesPublished;
-    if (published != null && !published.isCompleted) {
-      await published.future;
+    unawaited(_ensureExternalSourcesPublished());
+    final initialPublished = _initialExternalSourcesPublished;
+    while (_sourceForId(sourceId) == null) {
+      final controller = _activeExternalPlugins;
+      final publishing = _externalSourcesPublishing;
+      if (controller == null && publishing == null) {
+        break;
+      }
+      final refresh = _externalSourceRefresh;
+      if (refresh != null) {
+        await refresh;
+        continue;
+      }
+      if (initialPublished != null &&
+          initialPublished.isCompleted &&
+          publishing == null) {
+        break;
+      }
+      final changeFuture = controller?.sourceChanges.first;
+      final readyFuture =
+          (initialPublished != null && !initialPublished.isCompleted)
+              ? initialPublished.future
+              : publishing;
+      if (changeFuture == null && readyFuture == null) {
+        break;
+      }
+      try {
+        await Future.any<dynamic>(<Future<dynamic>>[
+          if (changeFuture != null) changeFuture,
+          if (readyFuture != null) readyFuture,
+        ]);
+      } on Object {
+        break;
+      }
+      final pendingRefresh = _externalSourceRefresh;
+      if (pendingRefresh != null) {
+        await pendingRefresh;
+      }
     }
   }
 
@@ -560,6 +595,7 @@ final class _DemoHomeState extends State<DemoHome> {
         case WholeComicQueuePhase.queued:
         case WholeComicQueuePhase.running:
         case WholeComicQueuePhase.waitingForPolicy:
+        case WholeComicQueuePhase.requiresUserAction:
         case WholeComicQueuePhase.paused:
           break;
       }
@@ -822,37 +858,6 @@ final class _DemoHomeState extends State<DemoHome> {
     );
   }
 
-  Future<void> _openDownloadManager() async {
-    await _ensurePlatformEnvironment();
-    if (!mounted) return;
-    // The startup Home projection does not need a full artifact-index walk.
-    // Refresh only when the user explicitly opens the manager, where the
-    // complete per-chapter status is actually visible and useful.
-    await _refreshDownloadSnapshots(_libraryEntries);
-    if (!mounted) return;
-    final route = Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => DownloadManagerScreen(
-          entries: List<ImportedLibraryEntry>.unmodifiable(_libraryEntries),
-          downloads: _chapterDownloads,
-          wholeComicDownloads: _wholeComicDownloads,
-          initialSnapshots: List<ChapterDownloadSnapshot>.unmodifiable(
-            _downloadSnapshots.values,
-          ),
-          initialWholeComicSnapshot: _wholeComicQueueSnapshot,
-          cacheCoordinator: _cacheCoordinator,
-        ),
-      ),
-    );
-    unawaited(
-      route.then((_) async {
-        if (mounted) {
-          await _refreshDownloadSnapshots(_libraryEntries);
-        }
-      }),
-    );
-  }
-
   void _openSettings() {
     unawaited(
       Navigator.of(context).push(
@@ -890,9 +895,18 @@ final class _DemoHomeState extends State<DemoHome> {
       }
       final snapshot = _downloadSnapshots[chapterDownloadIdentity(
         entry.chapter.sourceId,
+        entry.chapter.comicId,
         entry.chapter.chapterId,
         entry.chapter.sourceRevision,
-      )];
+      )] ??
+          _downloadSnapshots.values
+              .where(
+                (s) =>
+                    s.sourceId == entry.chapter.sourceId &&
+                    s.comicId == entry.chapter.comicId &&
+                    s.chapterId == entry.chapter.chapterId,
+              )
+              .firstOrNull;
       if (snapshot != null) {
         snapshots.add(snapshot);
       }
@@ -902,29 +916,16 @@ final class _DemoHomeState extends State<DemoHome> {
       comic.sourceId,
       comic.comicId,
     );
-    final wholeComicActive = wholeJob?.isActive ?? false;
-
-    if (wholeComicActive) {
-      final entries = _libraryEntries.where(
-        (entry) =>
-            entry.chapter.sourceId == comic.sourceId &&
-            entry.chapter.comicId == comic.comicId,
+    if (wholeJob != null &&
+        wholeJob.hasPendingWork &&
+        wholeJob.totalPages > 0) {
+      return ComicDownloadProgress.active(
+        label: wholeJob.totalChapters > 0
+            ? '整本下载 (${wholeJob.completedChapters}/${wholeJob.totalChapters}章)'
+            : '整本下载',
+        completedPageUnits: wholeJob.completedPageUnits,
+        totalPages: wholeJob.totalPages,
       );
-      final totalPages = entries.fold<int>(
-        0,
-        (sum, entry) => sum + entry.chapter.pages.length,
-      );
-      if (totalPages > 0) {
-        final completedUnits = snapshots.fold<double>(
-          0,
-          (sum, snapshot) => sum + snapshot.completedPageUnits,
-        );
-        return ComicDownloadProgress.active(
-          label: '整本下载',
-          completedPageUnits: completedUnits,
-          totalPages: totalPages,
-        );
-      }
     }
 
     if (active.isNotEmpty) {
@@ -998,6 +999,7 @@ final class _DemoHomeState extends State<DemoHome> {
     if (entry.chapter.sourceId == 'local-folder') {
       return entry;
     }
+    await _waitForExternalSource(entry.chapter.sourceId);
     final source = _sourceForId(entry.chapter.sourceId);
     if (source == null) {
       throw StateError('漫画源 ${entry.chapter.sourceId} 当前不可用');
@@ -1266,103 +1268,19 @@ final class _DemoHomeState extends State<DemoHome> {
 
   Future<void> _openImportedChapter(
     ImportedLibraryEntry entry, {
-    bool refreshRemote = true,
+    bool? refreshRemote,
+    int? initialPageIndex,
   }) async {
     await _openImportedChapterLoader(
       () => Future<ImportedLibraryEntry>.value(entry),
       title: entry.chapter.displayName,
-      refreshRemote: refreshRemote,
-    );
-  }
-
-  Future<ReadingProgress?> _openImportedChapterLoader(
-    Future<ImportedLibraryEntry> Function() loadChapter, {
-    required String title,
-    bool refreshRemote = true,
-    int? initialPageIndex,
-  }) async {
-    if (!mounted) return null;
-    ReadingProgress? latestProgress;
-    Future<void> onProgressChanged(ReadingProgress progress) {
-      latestProgress = progress;
-      return _enqueueReaderProgress(progress);
-    }
-
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => DeferredReaderRoute<_PreparedImportedChapter>(
-          title: title,
-          load: () => _prepareImportedChapter(
-            loadChapter,
-            refreshRemote: refreshRemote,
-            initialPageIndex: initialPageIndex,
-          ),
-          builder: (_, prepared) => this._buildImportedChapterScreen(
-            prepared,
-            onProgressChanged: onProgressChanged,
-          ),
-        ),
-      ),
-    );
-    // Reader callbacks only enqueue durable checkpoints. The route owns its
-    // latest visible progress and publishes it to Home exactly once on return,
-    // without waiting for SQLite or a full library reload.
-    final progress = latestProgress;
-    if (progress != null) {
-      _librarySession.replaceProgress(progress);
-    }
-    return progress;
-  }
-
-  Future<_PreparedImportedChapter> _prepareImportedChapter(
-    Future<ImportedLibraryEntry> Function() loadChapter, {
-    required bool refreshRemote,
-    int? initialPageIndex,
-  }) async {
-    final entry = await _librarySession.hydrateEntry(await loadChapter());
-    final legacyVenera = _hasLegacyVeneraLocators(entry.chapter);
-    final current = legacyVenera
-        ? await _refreshRemoteEntry(entry, forceSourceRefresh: true)
-        : refreshRemote
-            ? await _refreshRemoteEntry(entry)
-            : entry;
-    if (_hasLegacyVeneraLocators(current.chapter)) {
-      throw StateError(
-        'Venera 章节仍包含已失效的运行时资源定位符，已阻止进入 Reader',
-      );
-    }
-    await _restoreSourceVersionArtifactEquivalences(current);
-    final versionSource = _sourceForId(current.chapter.sourceId);
-    if (versionSource != null) {
-      _scheduleVersionReuseWarmup(versionSource, current.chapter.comicId);
-    }
-    final hasOfflineBytes = current.chapter.sourceId != 'local-folder' &&
-        await _chapterDownloads.isDownloaded(current);
-    final source = _sourceForId(current.chapter.sourceId);
-    final byteLoaders = hasOfflineBytes
-        ? <String, LocalImageFileBytesLoader>{
-            for (var index = 0; index < current.chapter.pages.length; index++)
-              current.chapter.pages[index].sourceId: () =>
-                  _chapterDownloads.readPage(current, index),
-          }
-        : const <String, LocalImageFileBytesLoader>{};
-    final responseLoaders = hasOfflineBytes || source == null
-        ? const <String, ExternalPluginControlledResourceResponseLoader>{}
-        : <String, ExternalPluginControlledResourceResponseLoader>{
-            for (final page in current.chapter.pages)
-              page.sourceId: _sourceResources.pageControlledResponseLoaderFor(
-                current.chapter.sourceId,
-                Uri.parse(page.sourceId),
-              ),
-          };
-    unawaited(_markChapterReadForNavigation(current));
-    return (
-      entry: current,
-      byteLoaders: byteLoaders,
-      responseLoaders: responseLoaders,
+      refreshRemote: refreshRemote ??
+          (entry.chapter.sourceId != 'local-folder' &&
+              entry.chapter.pages.isEmpty),
       initialPageIndex: initialPageIndex,
     );
   }
+
 
   Future<EncodedResourceSource> _loadSourceBrowseCover(
     BrowsableComicSource source,
@@ -1500,12 +1418,6 @@ final class _DemoHomeState extends State<DemoHome> {
   bool _coverSourceAvailableForComic(LibraryComic comic) =>
       comic.sourceId == 'local-folder' || _sourceForId(comic.sourceId) != null;
 
-  bool _hasDetails(LibraryComic comic) {
-    return comic.hasSourceCatalog ||
-        comic.hasMultipleChapters ||
-        comic.chapters.any((entry) => entry.chapter.sourceId != 'local-folder');
-  }
-
   Future<void> _withComicRouteLock(
     LibraryComic comic,
     Future<void> Function() open,
@@ -1523,19 +1435,8 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<void> _openComicDetails(LibraryComic comic) =>
       _withComicRouteLock(comic, () => _pushComicDetails(comic));
 
-  Future<void> _openComic(LibraryComic comic) => _withComicRouteLock(
-        comic,
-        () async {
-          final resume = comic.resumeChapter;
-          if (resume == null ||
-              comic.hasMultipleChapters ||
-              comic.hasSourceCatalog) {
-            await _pushComicDetails(comic);
-            return;
-          }
-          await _openImportedChapter(resume);
-        },
-      );
+  Future<void> _openComic(LibraryComic comic) =>
+      _withComicRouteLock(comic, () => _openShelfComicDirectly(comic));
 
   Future<void> _removeComic(
     LibraryComic comic, {

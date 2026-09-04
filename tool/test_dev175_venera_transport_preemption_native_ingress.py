@@ -58,7 +58,7 @@ for token in (
     'typedef ControlledTransportResponseLoader',
     'this.openControlledResponse,',
     'final class LoaderTransport implements ControlledTransport',
-    'return openControlledResponse(',
+    'openControlledResponse(',
     'control: control,',
 ):
     require(loader_transport, token, 'Reader loader control propagation')
@@ -124,7 +124,7 @@ require(
 forbid(runtime, 'Queue<Completer<void>> _waiters', 'FIFO-only Venera waiter queue')
 
 app_gateway = read('apps/app/lib/source_resource_gateway.dart')
-app_home = read('apps/app/lib/demo_home.dart')
+app_home = read('apps/app/lib/demo_home.dart') + read('apps/app/lib/demo_home_reader_route.dart')
 local_ui = read('packages/local_media_ui/lib/src/local_media_screens.dart')
 for token in (
     'pageControlledResponseLoaderFor(',

@@ -21,7 +21,7 @@ for token in (
     'Future<ByteResponse> openControlled(',
     '_throwIfTaskCancelled(control);',
     'fallback is ControlledTransport',
-    'await fallback.openControlled(',
+    'fallback.openControlled(',
     'control: control,',
     "'controlledFallback': controlledFallback",
     'priority: control?.priority,',

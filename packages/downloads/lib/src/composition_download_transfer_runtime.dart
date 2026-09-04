@@ -27,6 +27,7 @@ final class CompositionDownloadTransferRuntime {
     required this.partialDownloadStore,
     required this.net,
     ArtifactCacheReadScheduler? localReadScheduler,
+    this.readStallTimeout = DownloadJob.defaultReadStallTimeout,
     this.maxIdlePromotedSessions = 8,
     this.maxIdlePartialSessions = 32,
     this.maxIdlePartialBytes = 256 * 1024 * 1024,
@@ -78,8 +79,16 @@ final class CompositionDownloadTransferRuntime {
       registry: registry,
       clock: clock,
       prepareDownload: partialDownloadHandoff?.restoreInto,
+      prepareDownloadWithControl: partialDownloadHandoff == null
+          ? null
+          : (session, {required control}) =>
+              partialDownloadHandoff!.restoreInto(
+                session,
+                control: control,
+              ),
       net: net,
       resolveTransferId: _resolveTransferIdForAcquire,
+      readStallTimeout: readStallTimeout,
     );
     _physicalTransferRetention = PhysicalTransferRetention(
       registry: registry,
@@ -100,6 +109,7 @@ final class CompositionDownloadTransferRuntime {
   final PartialDownloadStore? partialDownloadStore;
   final NetLane net;
   final ArtifactCacheReadScheduler localReadScheduler;
+  final Duration readStallTimeout;
   final int maxIdlePromotedSessions;
   final int maxIdlePartialSessions;
   final int maxIdlePartialBytes;
@@ -284,11 +294,23 @@ final class CompositionDownloadTransferRuntime {
             priority: () => priorityFor(session.id),
           );
 
+  DownloadResidentReplaySourceWithControl residentReplaySourceWithControl({
+    required int Function(DownloadId id) priorityFor,
+  }) =>
+      (session, endExclusive, {required control}) => _openResidentReplay(
+            session,
+            endExclusive,
+            priority: () => priorityFor(session.id),
+            control: control,
+          );
+
   Future<Stream<List<int>>> _openResidentReplay(
     DownloadSession session,
     int endExclusive, {
     required int Function() priority,
+    TaskControl? control,
   }) async {
+    control?.throwIfCancelled();
     if (_disposed) {
       throw StateError('composition transfer runtime is disposed');
     }
@@ -308,7 +330,8 @@ final class CompositionDownloadTransferRuntime {
 
     final cache = artifactCacheManager;
     if (cache != null) {
-      final lookup = await cache.lookup(session.id);
+      final lookup = await cache.lookup(session.id, control: control);
+      control?.throwIfCancelled();
       if (lookup != null) {
         final expectedTotal = session.totalLength;
         if ((expectedTotal == null || lookup.entry.length == expectedTotal) &&
@@ -319,6 +342,7 @@ final class CompositionDownloadTransferRuntime {
               endExclusive: endExclusive,
             ),
             priority: priority,
+            control: control,
           );
         }
       }
@@ -335,25 +359,35 @@ final class CompositionDownloadTransferRuntime {
     final chunks = await owner.openResidentReplay(
       session.id,
       endExclusive: endExclusive,
+      control: control,
     );
-    return _scheduledResidentReplay(chunks, priority: priority);
+    return _scheduledResidentReplay(
+      chunks,
+      priority: priority,
+      control: control,
+    );
   }
 
   Stream<List<int>> _scheduledResidentReplay(
     Stream<List<int>> chunks, {
     required int Function() priority,
+    TaskControl? control,
   }) async* {
     final iterator = StreamIterator<List<int>>(chunks);
     try {
       while (true) {
-        final lease = await localReadScheduler.acquire(priority: priority);
+        final lease = await localReadScheduler.acquire(
+          priority: priority,
+          control: control,
+        );
         final bool hasChunk;
         try {
-          hasChunk = await iterator.moveNext();
+          hasChunk = await _moveNextResidentReplayChunk(iterator, control);
         } finally {
           lease.release();
         }
         if (!hasChunk) break;
+        control?.throwIfCancelled();
         final chunk = iterator.current;
         if (chunk.isNotEmpty) yield chunk;
       }
@@ -362,8 +396,45 @@ final class CompositionDownloadTransferRuntime {
     }
   }
 
+  Future<bool> _moveNextResidentReplayChunk(
+    StreamIterator<List<int>> iterator,
+    TaskControl? control,
+  ) async {
+    if (control == null) return iterator.moveNext();
+    control.throwIfCancelled();
+    try {
+      return await Future.any<bool>(<Future<bool>>[
+        iterator.moveNext(),
+        control.whenCancelled.then<bool>((_) {
+          throw const Failure(
+            code: ErrorCode.cancelled,
+            message: 'resident replay was cancelled',
+          );
+        }),
+      ]);
+    } catch (error, stackTrace) {
+      if (control.cancelled) control.throwIfCancelled();
+      throw Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
   Future<void> settlePhysicalRetention() async {
     await _physicalTransferRetention?.settle();
+  }
+
+  /// Retires an idle transfer session after a durable owner has applied its
+  /// logical delete. This deliberately disposes only the in-memory physical
+  /// owner; persistent bytes are deleted (or retained for another binding) by
+  /// [ArtifactCacheBackend]. Calling the registry's evict primitive here would
+  /// blindly delete a shared staging final after the durable owner had kept it.
+  Future<void> retirePhysicalAfterDelete(DownloadId id) async {
+    final session = registry.find(id);
+    if (session == null || session.demanded || !session.canEvict) return;
+    final retired = registry.takeIdlePhysical(id);
+    if (retired != null) {
+      _physicalTransferRetention?.forget(retired);
+      await retired.dispose();
+    }
   }
 
   Future<void> persistPromoted(DownloadId id) async {

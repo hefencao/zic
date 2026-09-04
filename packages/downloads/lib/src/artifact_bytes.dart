@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -28,10 +29,18 @@ class LocalArtifactBytes implements ArtifactBytes {
   const LocalArtifactBytes();
 
   @override
-  Future<bool> exists(String path) async => File(path).exists();
+  Future<bool> exists(String path) async =>
+      await FileSystemEntity.type(path, followLinks: false) ==
+      FileSystemEntityType.file;
 
   @override
-  Future<int> length(String path) => File(path).length();
+  Future<int> length(String path) async {
+    if (await FileSystemEntity.type(path, followLinks: false) !=
+        FileSystemEntityType.file) {
+      return 0;
+    }
+    return File(path).length();
+  }
 
   @override
   Stream<Uint8List> readChunks(
@@ -40,6 +49,10 @@ class LocalArtifactBytes implements ArtifactBytes {
     int? endExclusive,
   }) async* {
     final file = File(path);
+    if (await FileSystemEntity.type(file.path, followLinks: false) !=
+        FileSystemEntityType.file) {
+      return;
+    }
     final raf = await file.open();
     try {
       var position = start;
@@ -59,7 +72,8 @@ class LocalArtifactBytes implements ArtifactBytes {
   @override
   Future<void> delete(String path) async {
     final file = File(path);
-    if (await file.exists()) {
+    if (await FileSystemEntity.type(file.path, followLinks: false) !=
+        FileSystemEntityType.notFound) {
       await file.delete();
     }
   }
@@ -85,9 +99,21 @@ abstract interface class SafTreeIo {
 
   Future<bool> delete(String relativePath);
 
+  /// Renames a file within the same SAF directory. Implementations should
+  /// perform the native provider operation without exposing a partially
+  /// written destination.
+  Future<bool> rename(String relativePath, String newRelativePath);
+
   Future<bool> exists(String relativePath);
 
   Future<List<SafTreeFile>> list(String relativePath);
+}
+
+/// Optional provider capability for replacing an existing document without
+/// deleting the old authority first. Implementations that cannot provide this
+/// guarantee must return false; callers then keep the old binding untouched.
+abstract interface class SafTreeAtomicReplace {
+  Future<bool> replace(String temporaryPath, String targetPath);
 }
 
 final class SafTreeFile {
@@ -112,31 +138,50 @@ enum SafWriteMode { read, writeAppend, writeTruncate }
   if (marker < 0) return null;
   final treeUri = Uri.decodeComponent(rest.substring(0, marker));
   final relativePath = Uri.decodeComponent(rest.substring(marker + 6));
+  if (!_isSafeSafRelativePath(relativePath)) return null;
   return (treeUri: treeUri, relativePath: relativePath);
 }
 
 String encodeSafRecordPath({
   required String treeUri,
   required String relativePath,
-}) =>
-    'saf:${Uri.encodeComponent(treeUri)}?path=${Uri.encodeComponent(relativePath)}';
+}) {
+  if (treeUri.trim().isEmpty || !_isSafeSafRelativePath(relativePath)) {
+    throw ArgumentError.value(relativePath, 'relativePath', 'must be a safe relative path');
+  }
+  return 'saf:${Uri.encodeComponent(treeUri)}?path=${Uri.encodeComponent(relativePath)}';
+}
+
+bool _isSafeSafRelativePath(String path) {
+  if (path.isEmpty || path.startsWith('/') || path.contains('\\')) {
+    return false;
+  }
+  final segments = path.split('/');
+  return segments.every((segment) => segment.isNotEmpty && segment != '.' && segment != '..');
+}
 
 class SafArtifactBytes implements ArtifactBytes {
-  SafArtifactBytes(this._io);
+  SafArtifactBytes(this._io, {this.treeUri});
 
   final SafTreeIo _io;
+  final String? treeUri;
+
+  bool _belongsToThisTree(String path) {
+    final parsed = parseSafRecordPath(path);
+    return parsed != null && (treeUri == null || parsed.treeUri == treeUri);
+  }
 
   @override
   Future<bool> exists(String path) async {
     final parsed = parseSafRecordPath(path);
-    if (parsed == null) return false;
+    if (parsed == null || !_belongsToThisTree(path)) return false;
     return _io.exists(parsed.relativePath);
   }
 
   @override
   Future<int> length(String path) async {
     final parsed = parseSafRecordPath(path);
-    if (parsed == null) return 0;
+    if (parsed == null || !_belongsToThisTree(path)) return 0;
     final handle = await _io.open(parsed.relativePath);
     if (handle == null) return 0;
     try {
@@ -153,7 +198,7 @@ class SafArtifactBytes implements ArtifactBytes {
     int? endExclusive,
   }) async* {
     final parsed = parseSafRecordPath(path);
-    if (parsed == null) return;
+    if (parsed == null || !_belongsToThisTree(path)) return;
     final handle = await _io.open(parsed.relativePath);
     if (handle == null) return;
     try {
@@ -175,7 +220,7 @@ class SafArtifactBytes implements ArtifactBytes {
   @override
   Future<void> delete(String path) async {
     final parsed = parseSafRecordPath(path);
-    if (parsed == null) return;
+    if (parsed == null || !_belongsToThisTree(path)) return;
     await _io.delete(parsed.relativePath);
   }
 }
@@ -191,79 +236,179 @@ class CompositeArtifactBytes implements ArtifactBytes {
   final ArtifactBytes local;
   final SafArtifactBytes? saf;
 
-  ArtifactBytes _target(String path) {
-    if (path.startsWith('saf:')) {
-      final safBytes = saf;
-      if (safBytes != null) return safBytes;
-    }
+  ArtifactBytes? _target(String path) {
+    if (path.startsWith('saf:')) return saf;
     return local;
   }
 
   @override
-  Future<bool> exists(String path) => _target(path).exists(path);
+  Future<bool> exists(String path) async =>
+      await _target(path)?.exists(path) ?? false;
 
   @override
-  Future<int> length(String path) => _target(path).length(path);
+  Future<int> length(String path) async =>
+      await _target(path)?.length(path) ?? 0;
 
   @override
   Stream<Uint8List> readChunks(
     String path, {
     required int start,
     int? endExclusive,
-  }) =>
-      _target(path).readChunks(
-        path,
-        start: start,
-        endExclusive: endExclusive,
-      );
+  }) async* {
+    final target = _target(path);
+    if (target == null) return;
+    yield* target.readChunks(
+      path,
+      start: start,
+      endExclusive: endExclusive,
+    );
+  }
 
   @override
-  Future<void> delete(String path) => _target(path).delete(path);
+  Future<void> delete(String path) async {
+    await _target(path)?.delete(path);
+  }
 }
 
-/// Copies [sourceFile] into the SAF tree at [relativePath], truncating any
-/// previous content. Used to mirror freshly promoted finals out of the local
-/// staging area.
+/// Copies [sourceFile] into the SAF tree at [relativePath]. The provider is
+/// never truncated in place: bytes are committed to a sibling temporary file,
+/// then renamed into place after the source has been fully read.
 Future<void> copyFileIntoSaf(
   SafTreeIo io,
   File sourceFile,
   String relativePath,
 ) async {
-  final handle = await io.open(relativePath, mode: SafWriteMode.writeTruncate);
-  if (handle == null) {
-    throw StateError('SAF tree refused create for $relativePath');
-  }
-  try {
-    final raf = await sourceFile.open();
+  await _writeSafAtomically(io, relativePath, (temporaryPath) async {
+    final handle = await io.open(
+      temporaryPath,
+      mode: SafWriteMode.writeTruncate,
+    );
+    if (handle == null) {
+      throw StateError('SAF tree refused create for $temporaryPath');
+    }
     try {
-      while (true) {
-        final chunk = await raf.read(512 * 1024);
-        if (chunk.isEmpty) break;
-        await io.write(handle, chunk);
+      final raf = await sourceFile.open();
+      try {
+        while (true) {
+          final chunk = await raf.read(512 * 1024);
+          if (chunk.isEmpty) break;
+          await io.write(handle, chunk);
+        }
+      } finally {
+        await raf.close();
       }
     } finally {
-      await raf.close();
+      await io.close(handle);
     }
-  } finally {
-    await io.close(handle);
-  }
+  });
 }
 
-/// Writes [bytes] directly into the SAF tree at [relativePath].
+/// Writes [bytes] into a committed SAF file without exposing a partially
+/// written final path to readers.
 Future<void> writeBytesToSaf(
   SafTreeIo io,
   String relativePath,
   Uint8List bytes,
 ) async {
-  final handle = await io.open(relativePath, mode: SafWriteMode.writeTruncate);
-  if (handle == null) {
-    throw StateError('SAF tree refused create for $relativePath');
+  await _writeSafAtomically(io, relativePath, (temporaryPath) async {
+    final handle = await io.open(
+      temporaryPath,
+      mode: SafWriteMode.writeTruncate,
+    );
+    if (handle == null) {
+      throw StateError('SAF tree refused create for $temporaryPath');
+    }
+    try {
+      await io.write(handle, bytes);
+    } finally {
+      await io.close(handle);
+    }
+  });
+}
+
+Future<void> commitSafTemporary(
+  SafTreeIo io,
+  String temporaryPath,
+  String targetPath,
+) async {
+  if (await io.rename(temporaryPath, targetPath)) return;
+  if (io is SafTreeAtomicReplace) {
+    final atomic = io as SafTreeAtomicReplace;
+    if (await atomic.replace(temporaryPath, targetPath)) return;
+    throw StateError(
+      'SAF provider cannot atomically replace $targetPath; old authority retained',
+    );
   }
+  // Test/local adapters predating the capability can still exercise the
+  // protocol. Production adapters implement SafTreeAtomicReplace and never
+  // enter this delete-then-rename compatibility path.
+  if (await io.exists(targetPath)) await io.delete(targetPath);
+  if (!await io.rename(temporaryPath, targetPath)) {
+    throw StateError('SAF tree refused commit for $targetPath');
+  }
+}
+
+Future<void> _writeSafAtomically(
+  SafTreeIo io,
+  String relativePath,
+  Future<void> Function(String temporaryPath) write,
+) async {
+  if (!_isSafeSafRelativePath(relativePath)) {
+    throw ArgumentError.value(relativePath, 'relativePath', 'must be safe');
+  }
+  final temporaryPath =
+      '$relativePath.zic-tmp-${DateTime.now().microsecondsSinceEpoch}';
   try {
-    await io.write(handle, bytes);
+    await write(temporaryPath);
+    await commitSafTemporary(io, temporaryPath, relativePath);
   } finally {
-    await io.close(handle);
+    if (await io.exists(temporaryPath)) {
+      await io.delete(temporaryPath);
+    }
   }
+}
+
+/// Sniffs the image format extension (webp, jpg, png, gif, avif) from header bytes.
+/// Falls back to 'bin' on unknown format.
+String sniffImageExtensionFromBytes(List<int> header) {
+  if (header.length >= 3 &&
+      header[0] == 0xff &&
+      header[1] == 0xd8 &&
+      header[2] == 0xff) {
+    return 'jpg';
+  }
+  if (header.length >= 8 &&
+      header[0] == 0x89 &&
+      header[1] == 0x50 &&
+      header[2] == 0x4e &&
+      header[3] == 0x47) {
+    return 'png';
+  }
+  if (header.length >= 12 &&
+      header[0] == 0x52 &&
+      header[1] == 0x49 &&
+      header[2] == 0x46 &&
+      header[3] == 0x46 &&
+      header[8] == 0x57 &&
+      header[9] == 0x45 &&
+      header[10] == 0x42 &&
+      header[11] == 0x50) {
+    return 'webp';
+  }
+  if (header.length >= 6 &&
+      header[0] == 0x47 &&
+      header[1] == 0x49 &&
+      header[2] == 0x46) {
+    return 'gif';
+  }
+  if (header.length >= 12 &&
+      header[4] == 0x66 &&
+      header[5] == 0x74 &&
+      header[6] == 0x79 &&
+      header[7] == 0x70) {
+    return 'avif';
+  }
+  return 'bin';
 }
 
 /// Sniffs the image format extension (webp, jpg, png, gif, avif) from the first
@@ -273,43 +418,7 @@ Future<String> sniffImageExtension(File file) async {
     final raf = await file.open(mode: FileMode.read);
     try {
       final header = await raf.read(32);
-      if (header.length >= 3 &&
-          header[0] == 0xff &&
-          header[1] == 0xd8 &&
-          header[2] == 0xff) {
-        return 'jpg';
-      }
-      if (header.length >= 8 &&
-          header[0] == 0x89 &&
-          header[1] == 0x50 &&
-          header[2] == 0x4e &&
-          header[3] == 0x47) {
-        return 'png';
-      }
-      if (header.length >= 12 &&
-          header[0] == 0x52 &&
-          header[1] == 0x49 &&
-          header[2] == 0x46 &&
-          header[3] == 0x46 &&
-          header[8] == 0x57 &&
-          header[9] == 0x45 &&
-          header[10] == 0x42 &&
-          header[11] == 0x50) {
-        return 'webp';
-      }
-      if (header.length >= 6 &&
-          header[0] == 0x47 &&
-          header[1] == 0x49 &&
-          header[2] == 0x46) {
-        return 'gif';
-      }
-      if (header.length >= 12 &&
-          header[4] == 0x66 &&
-          header[5] == 0x74 &&
-          header[6] == 0x79 &&
-          header[7] == 0x70) {
-        return 'avif';
-      }
+      return sniffImageExtensionFromBytes(header);
     } finally {
       await raf.close();
     }
@@ -317,5 +426,28 @@ Future<String> sniffImageExtension(File file) async {
     // Fall back to bin on read errors.
   }
   return 'bin';
+}
+
+Future<bool> isHtmlOrTextFile(File file) async {
+  try {
+    final raf = await file.open(mode: FileMode.read);
+    try {
+      final header = await raf.read(64);
+      if (header.isEmpty) return true;
+      final str = utf8.decode(header, allowMalformed: true).trimLeft().toLowerCase();
+      if (str.startsWith('<!doctype') ||
+          str.startsWith('<html') ||
+          str.startsWith('<?xml') ||
+          str.startsWith('<head') ||
+          str.startsWith('{"error"') ||
+          str.startsWith('509 bandwidth') ||
+          str.startsWith('error:')) {
+        return true;
+      }
+    } finally {
+      await raf.close();
+    }
+  } on Object {}
+  return false;
 }
 

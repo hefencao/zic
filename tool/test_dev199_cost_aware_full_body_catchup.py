@@ -41,7 +41,7 @@ for token in (
         raise SystemExit(f'dev.199 DownloadJob admission contract missing: {token}')
 
 for token in (
-    'void deferNetwork({required String reason})',
+    'void deferNetwork({required String reason',
     '_requireState(<DownloadState>{DownloadState.queued});',
     "'deferred': true",
 ):

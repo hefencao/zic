@@ -21,7 +21,7 @@ require(handoff, "import 'package:transport/transport.dart';", 'Validators impor
 for token in (
     'typedef PartialEquivalentCandidates = Iterable<DownloadId> Function(',
     'final PartialEquivalentCandidates? equivalentCandidates;',
-    'final exact = await store.openPartialDownload(id);',
+    'store.openPartialDownload(id)',
     'for (final equivalent in candidates(id)) {',
     'if (selected == null || entry.length > selected.length)',
     '? const Validators()',

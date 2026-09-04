@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:downloads/downloads.dart';
 import 'package:runtime_bridge/runtime_bridge.dart';
@@ -59,7 +60,28 @@ final class JsonWholeComicQueueStore implements WholeComicQueueStore {
   final String path;
 
   @override
-  Future<Map<String, Object?>?> load() => readJsonObjectFile(path);
+  Future<Map<String, Object?>?> load() async {
+    try {
+      return await readJsonObjectFile(path);
+    } on Object {
+      // Keep the corrupt document for diagnostics and let the queue restore
+      // its last valid in-memory default instead of retrying a broken parse on
+      // every scheduler turn. The quarantine is best effort and never masks
+      // the recoverable empty-queue state.
+      final source = File(path);
+      if (await source.exists()) {
+        final quarantine = File(
+          '$path.corrupt-${DateTime.now().microsecondsSinceEpoch}',
+        );
+        try {
+          await source.rename(quarantine.path);
+        } on Object {
+          // Another process may have quarantined it first.
+        }
+      }
+      return null;
+    }
+  }
 
   @override
   Future<void> save(Map<String, Object?> data) =>
@@ -74,12 +96,14 @@ WholeComicDownloadQueue createPersistentWholeComicDownloadQueue({
   required ChapterDownloadService downloads,
   WholeComicQueueEnvironmentSource? environment,
   bool ownsEnvironment = false,
+  String? storageRootId,
 }) =>
     WholeComicDownloadQueue(
       downloads: downloads,
       store: JsonWholeComicQueueStore(path),
       environment: environment,
       ownsEnvironment: ownsEnvironment,
+      storageRootId: storageRootId,
     );
 
 Future<WholeComicDownloadQueue> openPersistentWholeComicDownloadQueue({
@@ -87,12 +111,14 @@ Future<WholeComicDownloadQueue> openPersistentWholeComicDownloadQueue({
   required ChapterDownloadService downloads,
   WholeComicQueueEnvironmentSource? environment,
   bool ownsEnvironment = false,
+  String? storageRootId,
 }) async {
   final queue = createPersistentWholeComicDownloadQueue(
     path: path,
     downloads: downloads,
     environment: environment,
     ownsEnvironment: ownsEnvironment,
+    storageRootId: storageRootId,
   );
   await queue.ready;
   return queue;

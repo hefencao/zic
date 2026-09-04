@@ -11,6 +11,77 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 
+String _downloadEntryIdentity(ImportedLibraryEntry entry) =>
+    chapterDownloadIdentity(
+      entry.chapter.sourceId,
+      entry.chapter.comicId,
+      entry.chapter.chapterId,
+      entry.chapter.sourceRevision,
+    );
+
+HomeChapterDownloadSummary _downloadSummary(
+  ChapterDownloadSnapshot snapshot,
+) =>
+    HomeChapterDownloadSummary(
+      sourceId: snapshot.sourceId,
+      comicId: snapshot.comicId,
+      comicTitle: snapshot.comicTitle,
+      chapterId: snapshot.chapterId,
+      sourceRevision: snapshot.sourceRevision,
+      title: snapshot.title,
+      completedPages: snapshot.completedPages,
+      totalPages: snapshot.totalPages,
+      receivedBytes: snapshot.receivedBytes,
+      pinnedPages: snapshot.pinnedPages,
+      totalBytes: snapshot.totalBytes,
+      pageProgressUnits: snapshot.pageProgressUnits,
+      phase: snapshot.phase.name,
+      failure: snapshot.failure,
+      started: snapshot.started,
+    );
+
+ChapterDownloadSnapshot? _downloadSnapshot(
+  HomeChapterDownloadSummary summary,
+) {
+  ChapterDownloadPhase? phase;
+  for (final candidate in ChapterDownloadPhase.values) {
+    if (candidate.name == summary.phase) {
+      phase = candidate;
+      break;
+    }
+  }
+  if (phase == null) {
+    return null;
+  }
+  return ChapterDownloadSnapshot(
+    sourceId: summary.sourceId,
+    comicId: summary.comicId,
+    comicTitle: summary.comicTitle,
+    chapterId: summary.chapterId,
+    sourceRevision: summary.sourceRevision,
+    title: summary.title,
+    completedPages: summary.completedPages,
+    totalPages: summary.totalPages,
+    receivedBytes: summary.receivedBytes,
+    pinnedPages: summary.pinnedPages,
+    totalBytes: summary.totalBytes,
+    pageProgressUnits: summary.pageProgressUnits,
+    phase: phase,
+    failure: summary.failure,
+    started: summary.started,
+  );
+}
+
+bool _shouldPersistDownloadTransition(
+  ChapterDownloadSnapshot? previous,
+  ChapterDownloadSnapshot next,
+) =>
+    previous == null ||
+    previous.identity != next.identity ||
+    previous.phase != next.phase ||
+    previous.isManualDownload != next.isManualDownload ||
+    previous.hasAutoCache != next.hasAutoCache;
+
 /// Stable composition boundary between the bootstrap Home and durable app
 /// services. Updating this object does not rebuild MaterialApp or DemoHome;
 /// the existing Home session adopts the services in place.
@@ -23,6 +94,11 @@ final class HomeServiceHandoff extends ChangeNotifier {
   ExternalPluginController? externalPlugins;
   Future<ExternalPluginController?> Function()? externalPluginLoader;
   Future<void> Function()? platformEnvironmentLoader;
+
+  /// Opens and publishes the durable library/download composition on the
+  /// first explicit download action when startup intentionally used the
+  /// bootstrap projection.
+  Future<void> Function()? ensureCoreServices;
   String? storageRoot;
   bool persistHomeProjectionSnapshot = false;
 
@@ -47,6 +123,10 @@ final class HomeServiceHandoff extends ChangeNotifier {
     chapterDownloadRelay = relay;
   }
 
+  void setEnsureCoreServices(Future<void> Function()? callback) {
+    ensureCoreServices = callback;
+  }
+
   void setBootstrapCache(ResourceCacheCoordinator cache) {
     if (cacheCoordinator == null) {
       cacheCoordinator = cache;
@@ -67,6 +147,7 @@ final class HomeServiceHandoff extends ChangeNotifier {
     required Future<ExternalPluginController?> Function()?
         externalPluginLoader,
     required Future<void> Function()? platformEnvironmentLoader,
+    required Future<void> Function()? ensureCoreServices,
     required String? storageRoot,
     required bool persistHomeProjectionSnapshot,
   }) {
@@ -78,6 +159,7 @@ final class HomeServiceHandoff extends ChangeNotifier {
         !identical(this.externalPlugins, externalPlugins) ||
         this.externalPluginLoader != externalPluginLoader ||
         this.platformEnvironmentLoader != platformEnvironmentLoader ||
+        this.ensureCoreServices != ensureCoreServices ||
         this.storageRoot != storageRoot ||
         this.persistHomeProjectionSnapshot != persistHomeProjectionSnapshot;
     this.libraryStore = libraryStore;
@@ -88,6 +170,7 @@ final class HomeServiceHandoff extends ChangeNotifier {
     this.externalPlugins = externalPlugins;
     this.externalPluginLoader = externalPluginLoader;
     this.platformEnvironmentLoader = platformEnvironmentLoader;
+    this.ensureCoreServices = ensureCoreServices;
     this.storageRoot = storageRoot;
     this.persistHomeProjectionSnapshot = persistHomeProjectionSnapshot;
     if (changed) {
@@ -183,8 +266,12 @@ final class HomeLibrarySession extends ChangeNotifier {
   late Future<void> _ready;
   Future<void> get ready => _ready;
   Future<void>? _serviceAdoption;
+  Future<void>? _downloadProjectionRefresh;
+  ChapterDownloadService? _downloadProjectionRefreshService;
 
   List<ImportedLibraryEntry> _entries = const <ImportedLibraryEntry>[];
+  List<ImportedLibraryEntry> _orphanedDownloadEntries =
+      const <ImportedLibraryEntry>[];
   List<SavedComicRecord> _savedComics = const <SavedComicRecord>[];
   List<LibraryCategory> _categories = const <LibraryCategory>[];
   Map<String, ComicPreference> _preferences = const <String, ComicPreference>{};
@@ -218,6 +305,15 @@ final class HomeLibrarySession extends ChangeNotifier {
   List<ComicVersionRelation> get versionRelations => _versionRelations;
   Map<String, ChapterDownloadSnapshot> get downloadSnapshots =>
       _downloadSnapshots;
+  List<ImportedLibraryEntry> get downloadManagerEntries {
+    final byIdentity = <String, ImportedLibraryEntry>{
+      for (final entry in _entries) _downloadEntryIdentity(entry): entry,
+    };
+    for (final entry in _orphanedDownloadEntries) {
+      byIdentity.putIfAbsent(_downloadEntryIdentity(entry), () => entry);
+    }
+    return List<ImportedLibraryEntry>.unmodifiable(byIdentity.values);
+  }
   WholeComicQueueSnapshot get wholeComicQueueSnapshot =>
       _wholeComicQueueSnapshot;
   Listenable get downloadProjectionChanges => _downloadProjectionChanges;
@@ -413,6 +509,8 @@ final class HomeLibrarySession extends ChangeNotifier {
     this.library = library;
     this.chapterDownloads = chapterDownloads;
     this.wholeComicDownloads = wholeComicDownloads;
+    // Preserve the snapshot-projected orphan entries until the adopted
+    // service publishes its first authoritative download projection.
     ownsLibrary = false;
     ownsChapterDownloads = false;
     ownsWholeComicDownloads = false;
@@ -427,16 +525,41 @@ final class HomeLibrarySession extends ChangeNotifier {
     _wholeComicQueueSnapshot = wholeComicDownloads.snapshot;
 
     if (previousOwnsWholeComicDownloads) {
-      await previousWholeComicDownloads.close();
+      try {
+        await previousWholeComicDownloads.close();
+      } on Object {
+        // A busy superseded service must not abort the adoption: the swap
+        // above is already authoritative.
+        _homeLog('adopt-close-whole-comic-failed');
+      }
     }
     if (previousOwnsChapterDownloads) {
-      await previousChapterDownloads.close();
+      try {
+        await previousChapterDownloads.close();
+      } on Object {
+        _homeLog('adopt-close-chapter-downloads-failed');
+      }
     }
     if (previousOwnsLibrary) {
-      await previousLibrary.close();
+      try {
+        await previousLibrary.close();
+      } on Object {
+        _homeLog('adopt-close-library-failed');
+      }
     }
 
-    _ready = _reconcileAdoptedServices();
+    _ready = _reconcileAdoptedServices().then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stackTrace) {
+        // The composition swap is authoritative and irreversible: a failed
+        // reconcile must not split Home's bindings from the adopted services;
+        // ensureReady() retries the reconcile.
+        _homeLog('adopt-reconcile-failed errorType=${error.runtimeType}');
+        _error = error;
+        _loading = false;
+        _publish();
+      },
+    );
     await _ready;
   }
 
@@ -463,6 +586,7 @@ final class HomeLibrarySession extends ChangeNotifier {
         'services-handoff-complete mode=revision-fast-path '
         'entries=${_entries.length} saved=${_savedComics.length}',
       );
+      unawaited(_refreshDownloadSnapshotsAfterFrame(_entries));
       return;
     }
 
@@ -503,6 +627,21 @@ final class HomeLibrarySession extends ChangeNotifier {
     );
     _versionRelations =
         List<ComicVersionRelation>.unmodifiable(snapshot.versionRelations);
+    chapterDownloads.updateVersionRelations(_versionRelations);
+    _orphanedDownloadEntries = List<ImportedLibraryEntry>.unmodifiable(
+      snapshot.orphanedDownloadEntries,
+    );
+    final downloadSnapshots = <String, ChapterDownloadSnapshot>{};
+    for (final summary in snapshot.chapterDownloads) {
+      final downloadSnapshot = _downloadSnapshot(summary);
+      if (downloadSnapshot != null) {
+        downloadSnapshots[downloadSnapshot.identity] = downloadSnapshot;
+      }
+    }
+    _downloadSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
+      downloadSnapshots,
+    );
+    _downloadProjectionChanges.notifyListeners();
     _snapshotLibraryRevision = snapshot.libraryRevision;
     _snapshotRewriteNeeded = snapshot.requiresRewrite;
     _activeSourceId = _activeSourceIdForCurrentSources();
@@ -630,6 +769,7 @@ final class HomeLibrarySession extends ChangeNotifier {
         _preferences = Map<String, ComicPreference>.unmodifiable(preferences);
         _versionRelations =
             List<ComicVersionRelation>.unmodifiable(versionRelations);
+        chapterDownloads.updateVersionRelations(_versionRelations);
       }
       _error = null;
       _publish();
@@ -786,6 +926,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
       _versionRelations =
           List<ComicVersionRelation>.unmodifiable(versionRelations);
+      chapterDownloads.updateVersionRelations(_versionRelations);
     }
     _categories = List<LibraryCategory>.unmodifiable(categories);
     _preferences = Map<String, ComicPreference>.unmodifiable(seedPreferences);
@@ -852,6 +993,11 @@ final class HomeLibrarySession extends ChangeNotifier {
     return hydrated ?? entry;
   }
 
+  Future<List<ImportedLibraryEntry>> loadAuthoritativeEntries() async {
+    await ready;
+    return library.list();
+  }
+
   Future<void> upsertVersionRelation(ComicVersionRelation relation) async {
     final store = library is ComicVersionRelationStore
         ? library as ComicVersionRelationStore
@@ -887,6 +1033,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       );
     }
     _versionRelations = List<ComicVersionRelation>.unmodifiable(next);
+    chapterDownloads.updateVersionRelations(_versionRelations);
     _libraryProjectionRevision++;
     _publish();
     _scheduleSnapshotWrite();
@@ -1076,29 +1223,78 @@ final class HomeLibrarySession extends ChangeNotifier {
     if (_closed) {
       return;
     }
-    _downloadSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
-      <String, ChapterDownloadSnapshot>{
-        ..._downloadSnapshots,
-        snapshot.identity: snapshot,
-      },
-    );
+    ChapterDownloadSnapshot? previous;
+    final next = <String, ChapterDownloadSnapshot>{};
+    for (final entry in _downloadSnapshots.entries) {
+      if (entry.value.sourceId == snapshot.sourceId &&
+          entry.value.comicId == snapshot.comicId &&
+          entry.value.chapterId == snapshot.chapterId) {
+        previous = entry.value;
+        continue;
+      }
+      next[entry.key] = entry.value;
+    }
+    next[snapshot.identity] = snapshot;
+    _downloadSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(next);
     _downloadProjectionChanges.notifyListeners();
+    if (_shouldPersistDownloadTransition(previous, snapshot)) {
+      _scheduleSnapshotWrite();
+    }
   }
 
   Future<void> refreshDownloadSnapshots(
     Iterable<ImportedLibraryEntry> entries,
-  ) async {
+  ) {
+    final service = chapterDownloads;
+    final existing = _downloadProjectionRefresh;
+    if (existing != null &&
+        identical(service, _downloadProjectionRefreshService)) {
+      return existing;
+    }
     final requested = entries.toList(growable: false);
+    late final Future<void> refresh;
+    refresh = _refreshDownloadSnapshotsOnce(service, requested).whenComplete(() {
+      if (identical(_downloadProjectionRefresh, refresh)) {
+        _downloadProjectionRefresh = null;
+        _downloadProjectionRefreshService = null;
+      }
+    });
+    _downloadProjectionRefreshService = service;
+    _downloadProjectionRefresh = refresh;
+    return refresh;
+  }
+
+  Future<void> _refreshDownloadSnapshotsOnce(
+    ChapterDownloadService service,
+    List<ImportedLibraryEntry> requested,
+  ) async {
     final snapshots = <String, ChapterDownloadSnapshot>{};
+    var orphaned = const <ImportedLibraryEntry>[];
     final startedAt = _homeStartupClock.elapsedMilliseconds;
     _homeLog('download-snapshot-refresh-start entries=${requested.length}');
     try {
-      for (final snapshot in await chapterDownloads.inspectMany(requested)) {
-        snapshots[snapshot.identity] = snapshot;
+      final projectionReader = service is ChapterDownloadManagementProjectionReader
+          ? service as ChapterDownloadManagementProjectionReader
+          : null;
+      if (projectionReader != null) {
+        final projection =
+            await projectionReader.inspectDownloadManagement(requested);
+        orphaned = projection.orphanedEntries;
+        for (final snapshot in projection.snapshots) {
+          snapshots[snapshot.identity] = snapshot;
+        }
+      } else {
+        orphaned = await service.discoverOrphanedEntries(requested);
+        for (final snapshot in await service.inspectMany(
+          <ImportedLibraryEntry>[...requested, ...orphaned],
+        )) {
+          snapshots[snapshot.identity] = snapshot;
+        }
       }
       _homeLog(
         'download-snapshot-refresh-complete '
-        'entries=${requested.length} snapshots=${snapshots.length} '
+        'entries=${requested.length} orphaned=${orphaned.length} '
+        'snapshots=${snapshots.length} '
         'durationMs=${_homeStartupClock.elapsedMilliseconds - startedAt}',
       );
     } on Object {
@@ -1107,7 +1303,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       _homeLog('download-snapshot-refresh-bulk-failed');
       for (final entry in requested) {
         try {
-          final snapshot = await chapterDownloads.inspect(entry);
+          final snapshot = await service.inspect(entry);
           snapshots[snapshot.identity] = snapshot;
         } on Object {
           // A stale diagnostic record must not block the durable library.
@@ -1119,13 +1315,16 @@ final class HomeLibrarySession extends ChangeNotifier {
         'durationMs=${_homeStartupClock.elapsedMilliseconds - startedAt}',
       );
     }
-    if (_closed) {
+    if (_closed || !identical(service, chapterDownloads)) {
       return;
     }
+    _orphanedDownloadEntries =
+        List<ImportedLibraryEntry>.unmodifiable(orphaned);
     _downloadSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
       snapshots,
     );
     _downloadProjectionChanges.notifyListeners();
+    _scheduleSnapshotWrite();
   }
 
   Future<void> _refreshDownloadSnapshotsAfterFrame(
@@ -1258,6 +1457,17 @@ final class HomeLibrarySession extends ChangeNotifier {
         versionRelations: List<ComicVersionRelation>.unmodifiable(
           _versionRelations,
         ),
+        orphanedDownloadEntries: List<ImportedLibraryEntry>.unmodifiable(
+          _orphanedDownloadEntries,
+        ),
+        chapterDownloads: <HomeChapterDownloadSummary>[
+          ..._downloadSnapshots.values
+              .where(
+                (snapshot) =>
+                    snapshot.isManualDownload || snapshot.hasAutoCache,
+              )
+              .map(_downloadSummary),
+        ],
         libraryRevision: libraryRevision,
       );
       await store.write(snapshot);
@@ -1316,6 +1526,8 @@ final class HomeLibrarySession extends ChangeNotifier {
       'readStates=${snapshot.readStates.length} '
       'sourcePreferences=${snapshot.sourcePreferences.length} '
       'versionRelations=${snapshot.versionRelations.length} '
+      'orphanedDownloads=${snapshot.orphanedDownloadEntries.length} '
+      'chapterDownloads=${snapshot.chapterDownloads.length} '
       'revision=${snapshot.libraryRevision ?? 'none'}';
 }
 

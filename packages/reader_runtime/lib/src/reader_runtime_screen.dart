@@ -869,6 +869,18 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                         ),
                       ),
                     ),
+                    SwitchListTile(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('翻转阅读顺序'),
+                      subtitle: const Text('由旧到新正序阅读（末页作为第一话）'),
+                      value: draft.effectiveInvertPageOrder,
+                      onChanged: (value) => setSheetState(
+                        () => draft = draft.copyWith(
+                          invertPageOrderOverride: value,
+                        ),
+                      ),
+                    ),
                   ],
                   const SizedBox(height: 8),
                   Row(

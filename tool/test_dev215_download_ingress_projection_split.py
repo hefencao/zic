@@ -29,7 +29,7 @@ for token in (
     'Future<void> attachSynchronizedIngressProjection(',
     "message: 'late ingress projection requires synchronized attachment'",
     'final revision = _ingressProjectionRevision;',
-    'chunks = artifact.readChunks(endExclusive: targetLength);',
+    'artifact.readChunks(endExclusive: targetLength)',
     '_ingressProjections[projection.scopeId] = projection;',
 ):
     require(session, token, 'physical transfer / ingress projection split')

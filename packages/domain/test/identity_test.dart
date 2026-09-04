@@ -31,6 +31,34 @@ void main() {
   });
 
 
+  test('delimiters in identity fields cannot collide', () {
+    final first = DownloadId(
+      content: const ContentId(
+        sourceId: 'source/a',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'revision',
+      canonicalUri: Uri.parse('https://example.test/page'),
+    );
+    final second = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'a/comic',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'revision',
+      canonicalUri: Uri.parse('https://example.test/page'),
+    );
+
+    expect(first, isNot(second));
+    expect(first.key, isNot(second.key));
+    expect(first.content.key, isNot(second.content.key));
+    expect(first.legacyKey, second.legacyKey);
+  });
+
   test('download identity has a stable JSON round trip', () {
     final id = DownloadId(
       content: const ContentId(

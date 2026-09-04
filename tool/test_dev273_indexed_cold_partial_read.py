@@ -25,7 +25,7 @@ vm = re.search(r'^versionCode=(\d+)\s*$', props, re.M)
 req(vm is not None and int(vm.group(1)) >= 273, 'dev.273 Android version missing')
 
 chapter = text('packages/downloads/lib/src/chapter_downloads.dart')
-start = chapter.index('Future<PartialDownloadEntry?> openPartialDownload(DownloadId id) async')
+start = chapter.index('Future<PartialDownloadEntry?> _openPartialDownload(DownloadId id) async')
 end = chapter.index('\n  @override\n  Future<void> storePartialDownload', start)
 method = chapter[start:end]
 for marker in (
@@ -67,7 +67,8 @@ req(prepare < task_key, 'local preparation must stay before NetLane task creatio
 require(
     'packages/downloads/lib/src/partial_download_handoff.dart',
     'ArtifactCacheReadScheduler?',
-    'scheduler.acquire(priority: priority)',
+    'scheduler.acquire(',
+    'priority: priority,',
     'priority: () => session.effectivePriority',
 )
 

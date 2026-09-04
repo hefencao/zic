@@ -416,9 +416,7 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen> {
 
   /// Shows the storage-permission guide. Returns true when the user chose to
   /// open the system page (and has now returned), signalling a retry.
-  /// [manualOnly] skips the retry signal — used when there is no pending
-  /// change to re-apply and the user should simply pick again.
-  Future<bool> _offerAllFilesAccess({bool manualOnly = false}) async {
+  Future<bool> _offerAllFilesAccess() async {
     final retry = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(

@@ -21,16 +21,21 @@ internal object DeferredAndroidPlugins {
         "texture_bridge" to "dev.zic.texture.TextureBridgePlugin",
     )
 
+    @Volatile
+    private var rhttpNativeInitialized = false
+
     fun prepareRhttp(context: Context) {
-        // RhttpPlugin's native method is intentionally private and the plugin
-        // has no Dart method channel of its own. Invoke that lifecycle method
-        // reflectively so its JNI context setup remains off the UI thread.
-        val pluginType =
-            Class.forName("com.flutter_rust_bridge.rhttp.RhttpPlugin")
-        val plugin = pluginType.getDeclaredConstructor().newInstance()
-        val init = pluginType.getDeclaredMethod("initAndroid", Context::class.java)
-        init.isAccessible = true
-        init.invoke(plugin, context)
+        if (rhttpNativeInitialized) return
+        synchronized(this) {
+            if (rhttpNativeInitialized) return
+            val pluginType =
+                Class.forName("com.flutter_rust_bridge.rhttp.RhttpPlugin")
+            val plugin = pluginType.getDeclaredConstructor().newInstance()
+            val init = pluginType.getDeclaredMethod("initAndroid", Context::class.java)
+            init.isAccessible = true
+            init.invoke(plugin, context)
+            rhttpNativeInitialized = true
+        }
     }
 
     fun create(name: String): FlutterPlugin? {

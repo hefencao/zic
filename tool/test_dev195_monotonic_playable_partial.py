@@ -26,7 +26,7 @@ for token in (
 # There may still be reset() for a brand-new durable-cache ingress failure, but
 # ordinary partial resume fallback must not reset the playback authority.
 resume_block = JOB[JOB.index('final preservedLength = session.committedLength;'):
-                   JOB.index('final writer = session.acquireWriter();')]
+                   JOB.index('session.acquireWriter(')]
 if 'session.reset()' in resume_block:
     raise SystemExit('dev.195 resume fallback still resets an existing partial')
 

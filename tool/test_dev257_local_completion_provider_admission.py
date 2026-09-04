@@ -30,9 +30,9 @@ job = 'packages/sessions/lib/src/download_job.dart'
 require(
     job,
     'static Future<bool> completeWithoutTransport(',
-    'if (session.state == DownloadState.promoted) return true;',
+    'if (session.state == DownloadState.promoted)',
     'session.totalLength != session.committedLength',
-    'await session.promote();',
+    'await session.promote(',
     'if (await completeWithoutTransport(',
 )
 

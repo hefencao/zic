@@ -82,24 +82,49 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
           sourceId: current.chapter.sourceId,
           comicId: current.chapter.comicId,
         );
+    final initialSettings = widget.preferences.readerSessionSettingsFor(
+      current.chapter.sourceId,
+      current.chapter.comicId,
+    );
+    final shouldInvert = initialSettings.invertPageOrderOverride ?? false;
+    final totalPages = current.chapter.pages.length;
+    final recordForReader = shouldInvert && totalPages > 1
+        ? current.chapter.copyWith(
+            pages: current.chapter.pages.reversed.toList(growable: false),
+          )
+        : current.chapter;
+
+    int mapIndexForReader(int raw) =>
+        shouldInvert && totalPages > 1
+            ? (totalPages - 1 - raw).clamp(0, totalPages - 1)
+            : raw;
+    int mapIndexForStorage(int displayed) =>
+        shouldInvert && totalPages > 1
+            ? (totalPages - 1 - displayed).clamp(0, totalPages - 1)
+            : displayed;
+
     final pageIndex = prepared.initialPageIndex;
     final maxPageIndex = current.chapter.pages.isEmpty
         ? 0
         : current.chapter.pages.length - 1;
     final initialProgress = pageIndex == null
-        ? current.progress
+        ? (current.progress == null
+            ? null
+            : current.progress!.copyWith(
+                pageIndex: mapIndexForReader(current.progress!.pageIndex),
+              ))
         : ReadingProgress(
             sourceId: current.chapter.sourceId,
             comicId: current.chapter.comicId,
             chapterId: current.chapter.chapterId,
-            pageIndex: pageIndex.clamp(0, maxPageIndex).toInt(),
+            pageIndex: mapIndexForReader(pageIndex.clamp(0, maxPageIndex).toInt()),
             subPageOffset: 0,
             readerMode: current.progress?.readerMode ??
                 widget.preferences.defaultReaderMode,
             updatedAt: DateTime.now().toUtc(),
           );
     final screen = ImportedImageChapterScreen(
-      record: current.chapter,
+      record: recordForReader,
       byteLoaders: prepared.byteLoaders,
       responseLoaders: prepared.responseLoaders,
       initialProgress: initialProgress ??
@@ -112,12 +137,11 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
             readerMode: widget.preferences.defaultReaderMode,
             updatedAt: DateTime.now().toUtc(),
           ),
-      onProgressChanged: onProgressChanged,
-      initiallyImmersive: widget.preferences.readerStartsImmersive,
-      initialReaderSettings: widget.preferences.readerSessionSettingsFor(
-        current.chapter.sourceId,
-        current.chapter.comicId,
+      onProgressChanged: (p) => onProgressChanged(
+        p.copyWith(pageIndex: mapIndexForStorage(p.pageIndex)),
       ),
+      initiallyImmersive: widget.preferences.readerStartsImmersive,
+      initialReaderSettings: initialSettings,
       onReaderSettingsChanged: (settings) =>
           widget.preferences.saveReaderSessionSettings(
         current.chapter.sourceId,
@@ -169,6 +193,148 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
         return relations.isEmpty ? null : relations.first;
       },
       child: screen,
+    );
+  }
+
+  Future<ReadingProgress?> _openImportedChapterLoader(
+    Future<ImportedLibraryEntry> Function() loadChapter, {
+    required String title,
+    bool refreshRemote = true,
+    int? initialPageIndex,
+  }) async {
+    if (!mounted) return null;
+    ReadingProgress? latestProgress;
+    Future<void> onProgressChanged(ReadingProgress progress) {
+      latestProgress = progress;
+      return _enqueueReaderProgress(progress);
+    }
+    widget.debugTrace.record(
+      TraceEvent(
+        monotonicMicros: _traceClock.elapsedMicroseconds,
+        sessionId: 'reader-entry',
+        kind: TraceEventKind.readerObservation,
+        payload: <String, Object?>{
+          'stage': 'loader-push-start',
+          'title': title,
+          'refreshRemote': refreshRemote,
+          'initialPageIndex': initialPageIndex,
+        },
+      ),
+    );
+
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => DeferredReaderRoute<_PreparedImportedChapter>(
+          title: title,
+          load: () => _prepareImportedChapter(
+            loadChapter,
+            refreshRemote: refreshRemote,
+            initialPageIndex: initialPageIndex,
+          ),
+          builder: (_, prepared) => this._buildImportedChapterScreen(
+            prepared,
+            onProgressChanged: onProgressChanged,
+          ),
+        ),
+      ),
+    );
+    final progress = latestProgress;
+    if (progress != null) {
+      _librarySession.replaceProgress(progress);
+    }
+    return progress;
+  }
+
+  Future<_PreparedImportedChapter> _prepareImportedChapter(
+    Future<ImportedLibraryEntry> Function() loadChapter, {
+    required bool refreshRemote,
+    int? initialPageIndex,
+  }) async {
+    final totalWatch = Stopwatch()..start();
+    final rawEntry = await loadChapter();
+    final loadMs = totalWatch.elapsedMilliseconds;
+    final entry = await _librarySession.hydrateEntry(rawEntry);
+    final hydrateMs = totalWatch.elapsedMilliseconds - loadMs;
+    if (entry.chapter.sourceId != 'local-folder') {
+      await _waitForExternalSource(entry.chapter.sourceId);
+    }
+    final legacyVenera = _hasLegacyVeneraLocators(entry.chapter);
+    final remoteWatch = Stopwatch()..start();
+    final current = legacyVenera
+        ? await _refreshRemoteEntry(entry, forceSourceRefresh: true)
+        : refreshRemote
+            ? await _refreshRemoteEntry(entry)
+            : entry;
+    final remoteMs = remoteWatch.elapsedMilliseconds;
+    if (_hasLegacyVeneraLocators(current.chapter)) {
+      throw StateError(
+        'Venera 章节仍包含已失效的运行时资源定位符，已阻止进入 Reader',
+      );
+    }
+    final restoreWatch = Stopwatch()..start();
+    final restoredCount =
+        await _restoreSourceVersionArtifactEquivalences(current);
+    final restoreMs = restoreWatch.elapsedMilliseconds;
+    final versionSource = _sourceForId(current.chapter.sourceId);
+    if (versionSource != null) {
+      _scheduleVersionReuseWarmup(versionSource, current.chapter.comicId);
+    }
+    final isLocal = current.chapter.sourceId == 'local-folder';
+    final byteProbeWatch = Stopwatch()..start();
+    final byteLoaders = <String, LocalImageFileBytesLoader>{};
+    if (!isLocal) {
+      final readyIndices = await _chapterDownloads.readyPageIndices(current);
+      for (final index in readyIndices) {
+        if (index >= 0 && index < current.chapter.pages.length) {
+          final page = current.chapter.pages[index];
+          byteLoaders[page.sourceId] = () =>
+              _chapterDownloads.readPage(current, index);
+        }
+      }
+    }
+    final byteProbeMs = byteProbeWatch.elapsedMilliseconds;
+    final source = _sourceForId(current.chapter.sourceId);
+    final responseLoaders = source == null
+        ? const <String, ExternalPluginControlledResourceResponseLoader>{}
+        : <String, ExternalPluginControlledResourceResponseLoader>{
+            for (final page in current.chapter.pages)
+              if (!byteLoaders.containsKey(page.sourceId))
+                page.sourceId: _sourceResources.pageControlledResponseLoaderFor(
+                  current.chapter.sourceId,
+                  Uri.parse(page.sourceId),
+                ),
+          };
+    unawaited(_markChapterReadForNavigation(current));
+    final totalMs = totalWatch.elapsedMilliseconds;
+    widget.debugTrace.record(
+      TraceEvent(
+        monotonicMicros: _traceClock.elapsedMicroseconds,
+        sessionId: 'reader-entry',
+        kind: TraceEventKind.readerObservation,
+        payload: <String, Object?>{
+          'stage': 'reader-prepare-complete',
+          'sourceId': current.chapter.sourceId,
+          'comicId': current.chapter.comicId,
+          'chapterId': current.chapter.chapterId,
+          'refreshRemote': refreshRemote,
+          'totalPages': current.chapter.pages.length,
+          'localByteLoaders': byteLoaders.length,
+          'networkResponseLoaders': responseLoaders.length,
+          'loadChapterMs': loadMs,
+          'hydrateMs': hydrateMs,
+          'remoteRefreshMs': remoteMs,
+          'restoreEquivalencesMs': restoreMs,
+          'restoredEquivalencesCount': restoredCount,
+          'byteProbeMs': byteProbeMs,
+          'totalPrepareMs': totalMs,
+        },
+      ),
+    );
+    return (
+      entry: current,
+      byteLoaders: byteLoaders,
+      responseLoaders: responseLoaders,
+      initialPageIndex: initialPageIndex,
     );
   }
 }

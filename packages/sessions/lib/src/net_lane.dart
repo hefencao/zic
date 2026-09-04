@@ -14,6 +14,9 @@ final class CancelToken implements PriorityObservableTaskControl {
     bool demanded = true,
     Future<void> Function()? acquireResponseReadPermit,
     void Function(bool responseRetained)? releaseResponseReadPermit,
+    bool Function()? responseReadPermitHeld,
+    void Function()? markResponseOpening,
+    void Function()? markResponseOpened,
     MonoClock clock = const SystemClock(),
   })  : assert(flowTargetFrames >= 0),
         _priority = priority,
@@ -21,6 +24,9 @@ final class CancelToken implements PriorityObservableTaskControl {
         _demanded = demanded,
         _acquireResponseReadPermit = acquireResponseReadPermit,
         _releaseResponseReadPermit = releaseResponseReadPermit,
+        _responseReadPermitHeld = responseReadPermitHeld,
+        _markResponseOpening = markResponseOpening,
+        _markResponseOpened = markResponseOpened,
         _clock = clock,
         _activatedAtMicros = clock.nowMicros();
 
@@ -32,7 +38,11 @@ final class CancelToken implements PriorityObservableTaskControl {
   bool _demanded;
   final Future<void> Function()? _acquireResponseReadPermit;
   final void Function(bool responseRetained)? _releaseResponseReadPermit;
+  final bool Function()? _responseReadPermitHeld;
+  final void Function()? _markResponseOpening;
+  final void Function()? _markResponseOpened;
   Completer<void>? _flowChanged;
+  Completer<void>? _demandChanged;
   int? _restartCostStartedAtMicros;
   int _restartCostBytes = 0;
   TaskPreemptionSnapshot? _preemptionSnapshot;
@@ -51,6 +61,7 @@ final class CancelToken implements PriorityObservableTaskControl {
   Stream<int> get priorityChanges => _priorityChanges.stream;
   int get flowTargetFrames => _flowTargetFrames;
   bool get demanded => _demanded;
+  bool get responseReadPermitHeld => _responseReadPermitHeld?.call() ?? true;
 
   bool flowBlockedAt(int completedFrames) =>
       _flowTargetFrames > 0 && completedFrames >= _flowTargetFrames;
@@ -66,6 +77,7 @@ final class CancelToken implements PriorityObservableTaskControl {
     if (_demanded == demanded) return;
     _demanded = demanded;
     _wakeFlowWaiters();
+    _wakeDemandWaiters();
   }
 
   Future<void> waitForControlChangeOrTimeout(Duration timeout) async {
@@ -78,8 +90,42 @@ final class CancelToken implements PriorityObservableTaskControl {
     throwIfCancelled();
   }
 
+  /// Waits for a demanded-state transition without treating flow-credit
+  /// updates as an early completion. Physical transfer owners use this while
+  /// retrying so withdrawal of the final consumer can release an admitted task
+  /// promptly instead of retaining its transport lease for the full backoff.
+  Future<void> waitForDemandChangeOrTimeout(Duration timeout) async {
+    final wake = _demandChanged ??= Completer<void>();
+    await Future.any<void>(<Future<void>>[
+      wake.future,
+      whenCancelled,
+      Future<void>.delayed(timeout),
+    ]);
+    throwIfCancelled();
+  }
+
+  /// Completes when the demanded state changes. Unlike
+  /// [waitForDemandChangeOrTimeout], this future has no synthetic timeout and
+  /// is therefore safe to race against a caller-owned backoff/sleep hook.
+  Future<void> get whenDemandChanged =>
+      (_demandChanged ??= Completer<void>()).future;
+
   void releaseResponseReadPermit({bool responseRetained = true}) {
     _releaseResponseReadPermit?.call(responseRetained);
+  }
+
+  /// Records that the task is about to await a new transport response. An
+  /// inactive task in this phase can be cancelled safely: it does not yet own
+  /// a response body that a caller may be actively reading.
+  void markResponseOpening() {
+    _markResponseOpening?.call();
+  }
+
+  /// Records that an open completed and the task now owns a response body.
+  /// Transport-pressure reclamation leaves this body-read phase alone until
+  /// the task reaches an explicit retained-response parking boundary.
+  void markResponseOpened() {
+    _markResponseOpened?.call();
   }
 
   Future<void> acquireResponseReadPermit() async {
@@ -95,6 +141,12 @@ final class CancelToken implements PriorityObservableTaskControl {
   void _wakeFlowWaiters() {
     final wake = _flowChanged;
     _flowChanged = null;
+    if (wake != null && !wake.isCompleted) wake.complete();
+  }
+
+  void _wakeDemandWaiters() {
+    final wake = _demandChanged;
+    _demandChanged = null;
     if (wake != null && !wake.isCompleted) wake.complete();
   }
 
@@ -142,6 +194,7 @@ final class CancelToken implements PriorityObservableTaskControl {
     final wake = _flowChanged;
     _flowChanged = null;
     if (wake != null && !wake.isCompleted) wake.complete();
+    _wakeDemandWaiters();
     if (!_priorityChanges.isClosed) {
       unawaited(_priorityChanges.close());
     }
@@ -155,6 +208,7 @@ final class CancelToken implements PriorityObservableTaskControl {
     final wake = _flowChanged;
     _flowChanged = null;
     if (wake != null && !wake.isCompleted) wake.complete();
+    _wakeDemandWaiters();
     _cancelledSignal.complete();
   }
 
@@ -339,6 +393,7 @@ final class NetLane implements TaskLane {
   int get handoffActive => _core.handoffActive;
   int? priorityOf(String key) => _core.priorityOf(key);
   bool isActive(String key) => _core.isActive(key);
+  bool isCancelled(String key) => _core.isCancelled(key);
   NetPolicyRank? activePolicyRank(
     String key, {
     required int basePriority,
@@ -535,6 +590,7 @@ final class _Lane {
   int _transportLeasesActive = 0;
   int _batchDepth = 0;
   bool _pumpRequested = false;
+  bool _pumping = false;
   int _parkSeq = 0;
 
   int get queued => _pending.length;
@@ -588,6 +644,7 @@ final class _Lane {
   int transportLeasesForBucket(String bucket) =>
       _transportLeasesByBucket[bucket] ?? 0;
   bool isActive(String key) => _active.containsKey(key);
+  bool isCancelled(String key) => _active[key]?.token.cancelled ?? false;
   int? priorityOf(String key) =>
       _active[key]?.priority ?? _pending[key]?.priority;
 
@@ -617,7 +674,7 @@ final class _Lane {
   }
 
   void _requestPump() {
-    if (_batchDepth > 0) {
+    if (_batchDepth > 0 || _pumping) {
       _pumpRequested = true;
       return;
     }
@@ -636,29 +693,55 @@ final class _Lane {
   }) {
     assert(flowTargetFrames >= 0);
     final activeTask = _active[key];
-    if (activeTask != null) {
-      final increased = _updateActivePriority(activeTask, priority);
+    // Cancellation is intentionally retained until the LaneTask actually
+    // exits so its permits and transport lease remain accounted for. It must
+    // not, however, make an explicit resubmission disappear during that
+    // retirement window; let the pending branch queue/coalesce the successor
+    // behind the cancelled task.
+    if (activeTask != null && !activeTask.token.cancelled) {
+      final priorPriority = activeTask.priority;
+      final priorDemanded = activeTask.demanded;
+      final priorBucket = activeTask.bucket;
+      final priorBucketLimit = activeTask.bucketLimit;
+      final priorPreemptible = activeTask.preemptible;
+      _updateActiveBucket(activeTask, bucket, bucketLimit);
+      _updateActivePriority(activeTask, priority);
       activeTask
         ..preemptible = preemptible
         ..flowTargetFrames = flowTargetFrames
         ..demanded = demanded;
+      if (!demanded) _withdrawResumeWaiter(activeTask);
       activeTask.token.updateFlowTargetFrames(flowTargetFrames);
       activeTask.token.updateDemanded(demanded);
-      if (increased) _requestPump();
+      if (priorPriority != priority || priorDemanded != demanded ||
+          priorBucket != activeTask.bucket ||
+          priorBucketLimit != activeTask.bucketLimit ||
+          priorPreemptible != preemptible) {
+        _requestPump();
+      }
       return false;
     }
     final pending = _pending[key];
     if (pending != null) {
-      final increased = priority > pending.priority;
+      final priorPriority = pending.priority;
+      final priorDemanded = pending.demanded;
+      final priorBucket = pending.bucket;
+      final priorBucketLimit = pending.bucketLimit;
+      final priorPreemptible = pending.preemptible;
       _updatePendingPriority(pending, priority);
+      _updatePendingDemanded(pending, demanded);
       pending
         ..bucket = bucket
         ..bucketLimit = bucketLimit
         ..preemptible = preemptible
         ..flowTargetFrames = flowTargetFrames
-        ..demanded = demanded
         ..task = task;
-      if (increased) _requestPump();
+      if (priorPriority != priority || priorDemanded != demanded ||
+          priorBucket != pending.bucket ||
+          priorBucketLimit != pending.bucketLimit ||
+          priorPreemptible != preemptible) {
+        _requestPump();
+      }
       return false;
     }
     _pending[key] = _createPending(
@@ -713,6 +796,7 @@ final class _Lane {
     if (activeTask != null) {
       if (activeTask.demanded == demanded) return true;
       activeTask.demanded = demanded;
+      if (!demanded) _withdrawResumeWaiter(activeTask);
       activeTask.token.updateDemanded(demanded);
       // Demand membership does not own transport lifetime. An inactive
       // retained response keeps its transport lease until real lease pressure
@@ -723,7 +807,7 @@ final class _Lane {
     final pending = _pending[key];
     if (pending == null) return false;
     if (pending.demanded == demanded) return true;
-    pending.demanded = demanded;
+    _updatePendingDemanded(pending, demanded);
     _requestPump();
     return true;
   }
@@ -738,11 +822,43 @@ final class _Lane {
   void _updatePendingPriority(_Pending pending, int priority) {
     final previous = pending.priority;
     pending.priority = priority;
-    if (priority >= highPriorityThreshold &&
-        previous < highPriorityThreshold) {
-      pending.highPrioritySinceMicros = clock.nowMicros();
-    } else if (priority < highPriorityThreshold) {
+    if (!pending.demanded || priority < highPriorityThreshold) {
       pending.highPrioritySinceMicros = null;
+    } else if (previous < highPriorityThreshold) {
+      pending.highPrioritySinceMicros = clock.nowMicros();
+    }
+  }
+
+  void _updatePendingDemanded(_Pending pending, bool demanded) {
+    if (pending.demanded == demanded) return;
+    pending.demanded = demanded;
+    if (!demanded) {
+      pending.highPrioritySinceMicros = null;
+    } else if (pending.priority >= highPriorityThreshold) {
+      pending.highPrioritySinceMicros = clock.nowMicros();
+    }
+  }
+
+  void _updateActiveBucket(
+    _ActiveTask task,
+    String? bucket,
+    int? bucketLimit,
+  ) {
+    if (task.bucket == bucket && task.bucketLimit == bucketLimit) return;
+    if (task.responseReadPermitHeld) {
+      _decrementResponseReadPermit(task.bucket);
+    }
+    if (task.transportLeaseHeld) {
+      _decrementTransportLease(task.bucket);
+    }
+    task
+      ..bucket = bucket
+      ..bucketLimit = bucketLimit;
+    if (task.responseReadPermitHeld) {
+      _incrementResponseReadPermit(task.bucket);
+    }
+    if (task.transportLeaseHeld) {
+      _incrementTransportLease(task.bucket);
     }
   }
 
@@ -787,12 +903,14 @@ final class _Lane {
     int? bucketLimit,
     required LaneTask task,
   }) {
-    _active[key]?.token.cancel();
+    final active = _active[key];
+    final pending = _pending[key];
+    active?.token.cancel();
     _pending[key] = _createPending(
       key: key,
       priority: priority,
-      bucket: bucket,
-      bucketLimit: bucketLimit,
+      bucket: bucket ?? active?.bucket ?? pending?.bucket,
+      bucketLimit: bucketLimit ?? active?.bucketLimit ?? pending?.bucketLimit,
       task: task,
     );
     _requestPump();
@@ -806,18 +924,31 @@ final class _Lane {
     int? bucketLimit,
     required LaneTask task,
   }) {
+    final active = _active[key];
+    final pending = _pending[key];
     _pending[key] = _createPending(
       key: key,
       priority: priority,
-      bucket: bucket,
-      bucketLimit: bucketLimit,
+      bucket: bucket ?? active?.bucket ?? pending?.bucket,
+      bucketLimit: bucketLimit ?? active?.bucketLimit ?? pending?.bucketLimit,
       task: task,
     );
     _requestPump();
     return true;
   }
 
-  bool cancelQueued(String key) => _pending.remove(key) != null;
+  bool cancelQueued(String key) {
+    final removed = _pending.remove(key) != null;
+    if (removed) {
+      // Removing a queued task can expose another pending task to admission,
+      // and an idle waiter may already be observing this exact queue state.
+      // Keep cancellation on the same pump/notification boundary as every
+      // other lane mutation; active tasks still retain their permits until
+      // their actual completion callback retires them.
+      _requestPump();
+    }
+    return removed;
+  }
 
   bool cancel(String key) {
     final queued = cancelQueued(key);
@@ -856,11 +987,13 @@ final class _Lane {
 
   bool _containsAny(Set<String> keys) => keys.any((key) {
         if (_pending.containsKey(key)) return true;
-        final task = _active[key];
-        if (task == null) return false;
-        return task.responseReadPermitHeld ||
-            task.resumeRequested ||
-            task.token.cancelled;
+        // idleKeys is the exact-task retirement barrier, not a body-bandwidth
+        // availability query. Even after a task releases its read permit
+        // without retaining a response, its LaneTask may still be consuming a
+        // local body or running cleanup against the captured transport. Do not
+        // let an owner retire the task key (or close that transport) until the
+        // lane completion callback has removed the active entry.
+        return _active.containsKey(key);
       });
 
   bool _pendingBucketAvailable(
@@ -870,7 +1003,7 @@ final class _Lane {
     final bucket = pending.bucket;
     final limit = pending.bucketLimit;
     if (bucket == null || limit == null) return true;
-    final allowance = handoff ? 1 : 0;
+    final allowance = handoff ? reservedHighPrioritySlots : 0;
     return (_activeByBucket[bucket] ?? 0) < limit + allowance &&
         (_transportLeasesByBucket[bucket] ?? 0) < limit + allowance;
   }
@@ -888,6 +1021,22 @@ final class _Lane {
   }
 
   void _pump() {
+    if (_pumping) {
+      _pumpRequested = true;
+      return;
+    }
+    _pumping = true;
+    try {
+      do {
+        _pumpRequested = false;
+        _pumpPass();
+      } while (_pumpRequested && _batchDepth == 0);
+    } finally {
+      _pumping = false;
+    }
+  }
+
+  void _pumpPass() {
     while (true) {
       final handoffCapacity = maxActive + reservedHighPrioritySlots;
       final pendingEligible = _pending.values.where((pending) {
@@ -1000,6 +1149,10 @@ final class _Lane {
               token,
               responseRetained: responseRetained,
             ),
+        responseReadPermitHeld: () =>
+            _responseReadPermitHeld(next.key, token),
+        markResponseOpening: () => _markResponseOpening(next.key, token),
+        markResponseOpened: () => _markResponseOpened(next.key, token),
         clock: clock,
       );
       _active[next.key] = _ActiveTask(
@@ -1080,6 +1233,36 @@ final class _Lane {
     }
   }
 
+  bool _responseReadPermitHeld(String key, CancelToken token) {
+    final task = _active[key];
+    return task != null && identical(task.token, token) &&
+        task.responseReadPermitHeld;
+  }
+
+  void _withdrawResumeWaiter(_ActiveTask task) {
+    if (!task.resumeRequested) return;
+    task.resumeRequested = false;
+    final waiter = task.resumeCompleter;
+    task.resumeCompleter = null;
+    if (waiter != null && !waiter.isCompleted) waiter.complete();
+  }
+
+  void _markResponseOpening(String key, CancelToken token) {
+    final task = _active[key];
+    if (task == null || !identical(task.token, token) || token.cancelled) {
+      return;
+    }
+    task.responseOpened = false;
+  }
+
+  void _markResponseOpened(String key, CancelToken token) {
+    final task = _active[key];
+    if (task == null || !identical(task.token, token) || token.cancelled) {
+      return;
+    }
+    task.responseOpened = true;
+  }
+
   void _releaseResponseReadPermit(
     String key,
     CancelToken token, {
@@ -1116,7 +1299,14 @@ final class _Lane {
       token.throwIfCancelled();
       return;
     }
-    if (task.responseReadPermitHeld) return;
+    token.throwIfCancelled();
+    if (task.responseReadPermitHeld || !task.demanded) return;
+    if (!task.responseRetainedWhilePermitReleased) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'cannot reacquire a released response without retention',
+      );
+    }
     task
       ..resumeRequested = true
       ..resumeSeq = _seq++;
@@ -1174,14 +1364,11 @@ final class _Lane {
     for (final entry in _active.entries) {
       final task = entry.value;
       if (!task.transportLeaseHeld ||
-          (task.responseReadPermitHeld &&
-              (task.token.restartCostElapsedMicros > 0 ||
-                  task.token.restartCostBytes > 0)) ||
-          (!task.responseRetainedWhilePermitReleased &&
-              (task.token.restartCostElapsedMicros > 0 ||
-                  task.token.restartCostBytes > 0)) ||
           task.demanded ||
-          task.token.cancelled) {
+          task.token.cancelled ||
+          (task.responseReadPermitHeld && task.responseOpened) ||
+          (!task.responseReadPermitHeld &&
+              !task.responseRetainedWhilePermitReleased)) {
         continue;
       }
       if (bucketFull && task.bucket != bucket) continue;
@@ -1219,7 +1406,7 @@ final class _Lane {
     final bucket = task.bucket;
     final limit = task.bucketLimit;
     if (bucket == null || limit == null) return true;
-    final allowance = handoff ? 1 : 0;
+    final allowance = handoff ? reservedHighPrioritySlots : 0;
     return (_activeByBucket[bucket] ?? 0) < limit + allowance;
   }
 
@@ -1253,7 +1440,10 @@ final class _Lane {
     final eligibleAt = since + preemptionCandidateGrace.inMicroseconds;
     if (eligibleAt <= now) return;
     final scheduledAt = _preemptionWakeAtMicros;
-    if (scheduledAt != null && scheduledAt <= eligibleAt) return;
+    if (scheduledAt != null && scheduledAt <= eligibleAt &&
+        (_preemptionWake?.isActive ?? false)) {
+      return;
+    }
     _preemptionWake?.cancel();
     _preemptionWakeAtMicros = eligibleAt;
     _preemptionWake = Timer(
@@ -1270,6 +1460,7 @@ final class _Lane {
     _Pending? highest;
     for (final pending in _pending.values) {
       if (_active.containsKey(pending.key) ||
+          !pending.demanded ||
           pending.priority < highPriorityThreshold ||
           !_needsHandoff(pending)) {
         continue;
@@ -1367,6 +1558,7 @@ final class _Lane {
 
   bool _preemptLowestRunningFor(_Pending incoming) {
     if (_hasBodyPermitPreemptionInFlight ||
+        _hasRetentionEvictionInFlight ||
         !_preemptionCandidateReady(incoming)) {
       return false;
     }
@@ -1379,14 +1571,15 @@ final class _Lane {
         incomingBucketLimit != null &&
         (_transportLeasesByBucket[incomingBucket] ?? 0) >=
             incomingBucketLimit;
-    final readFull = _receivingActive >= maxActive || readBucketFull;
     final transportFull =
         _transportLeasesActive >= maxActive || transportBucketFull;
     _ActiveTask? lowest;
     var lowestRetentionPriority = 1 << 30;
     for (final task in _active.values) {
       if (!task.preemptible || task.token.cancelled) continue;
-      if (readFull && !task.responseReadPermitHeld) continue;
+      if (!task.responseReadPermitHeld) {
+        continue;
+      }
       if (transportFull && !task.transportLeaseHeld) continue;
       if ((readBucketFull || transportBucketFull) &&
           task.bucket != incomingBucket) {
@@ -1544,8 +1737,8 @@ final class _ActiveTask {
   });
 
   final CancelToken token;
-  final String? bucket;
-  final int? bucketLimit;
+  String? bucket;
+  int? bucketLimit;
   int priority;
   bool preemptible;
   int flowTargetFrames;
@@ -1553,6 +1746,7 @@ final class _ActiveTask {
   bool transportLeaseHeld;
   bool responseReadPermitHeld;
   bool responseRetainedWhilePermitReleased;
+  bool responseOpened = false;
   bool resumeRequested = false;
   int resumeSeq;
   int parkedSeq = 0;

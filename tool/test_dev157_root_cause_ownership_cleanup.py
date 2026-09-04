@@ -18,7 +18,7 @@ def forbid(text: str, token: str, owner: str) -> None:
 catalog_store = read('packages/catalog/lib/src/imported_library_store.dart')
 storage_store = read('packages/storage/lib/src/sqlite_imported_library_store.dart')
 writer = read('packages/storage/lib/src/sqlite_progress_writer.dart')
-home = read('apps/app/lib/demo_home.dart')
+home = read('apps/app/lib/demo_home.dart') + read('apps/app/lib/demo_home_reader_route.dart')
 session = read('apps/app/lib/home_library_session.dart')
 details = read('apps/app/lib/comic_details.dart')
 mihon = read('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt')

@@ -19,7 +19,7 @@ def forbid(text: str, token: str, label: str) -> None:
 catalog_store = read("packages/catalog/lib/src/imported_library_store.dart")
 sqlite_store = read("packages/storage/lib/src/sqlite_imported_library_store.dart")
 progress_writer = read("packages/storage/lib/src/sqlite_progress_writer.dart")
-home = read("apps/app/lib/demo_home.dart")
+home = read("apps/app/lib/demo_home.dart") + read("apps/app/lib/demo_home_reader_route.dart")
 home_session = read("apps/app/lib/home_library_session.dart")
 artwork = read("apps/app/lib/artwork_placeholder.dart")
 home_cover = read("apps/app/lib/home_widgets.dart")

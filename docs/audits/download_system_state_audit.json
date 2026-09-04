@@ -1,75 +1,54 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "audit_version": "1.6.0",
-  "last_updated": "2026-08-28T10:50:00+08:00",
+  "audit_version": "1.22.0",
+  "last_updated": "2026-09-04T13:08:00+08:00",
   "system": "zic-download-subsystem",
   "scope": "下载链路、下载管理、下载目录与设置",
   "summary": {
-    "total_issues": 12,
-    "critical_p0": 2,
-    "high_p1": 3,
-    "medium_p2": 7,
+    "total_issues": 13,
+    "critical_p0": 3,
+    "high_p1": 8,
+    "medium_p2": 2,
     "governance_status": "in_progress",
-    "resolved_count": 10,
+    "review_status": "completed_with_open_findings",
+    "resolved_count": 1,
     "deferred_count": 1,
-    "pending_count": 1
+    "pending_count": 1,
+    "in_progress_count": 10
+  },
+  "governance": {
+    "active_only": true,
+    "resolved_history": "已完成事项保留在 CHANGELOG、稳定文档历史段落和既有审计提交中，不继续占用活动状态表。",
+    "completion_rule": "只有生产调用、持久化恢复、冲突交互、跨版本删除、取消生命周期、物理文件完整性和回归验证同时闭合后才可标记 resolved。",
+    "reviewed_at": "2026-09-03T08:45:00+08:00",
+    "review_basis": "基于当前工作树完成的下载管理单向内存投影重构、实体标识防碰撞 Framing、按索引绝对路径恢复物理根、SQLite 索引约束修复，以及同漫画多版本更新（E-Hentai 等）任务处理交互重构；本轮验证覆盖全仓 Dart/Flutter 包测试（downloads 194 passed、sessions 272 passed、storage 98 passed、apps/app 182 passed），确认下载管理进入零全量扫描、Framing 防碰撞兼容、以及版本决策弹窗闭环。",
+    "closure_blockers": [
+      "下载根迁移仍是逐文件递归提交，SAF provider replace、manifest 与 placement 仍未形成跨进程原子所有权事务",
+      "同长度损坏、checksum 算法语义和版本级删除保护尚未闭合"
+    ]
+  },
+  "validation": {
+    "passed": [
+      "python3 tool/check_documentation.py",
+      "python3 tool/check_repo.py",
+      "packages/domain tests: 9 passed（含 identity framing、legacyKey 兼容与字段防碰撞验证）",
+      "packages/catalog tests: 66 passed",
+      "packages/storage tests: 99 passed（含 SQLite/CacheIndex/CacheScanner/DownloadDirectory/Artifact及祖先挂载点符号链接安全验证）",
+      "packages/transport tests: 15 passed",
+      "packages/pipeline_runtime tests: 19 passed（Flutter test）",
+      "packages/downloads tests: 195 passed（含 ChapterDownloadManagementProjection、版本关系判定、新任务替换旧任务置换与结构化落盘验证）",
+      "packages/sessions tests: 272 passed（含 startup_recovery_test 绝对路径恢复与 framing key 调度验证）",
+      "packages/storage_bridge tests: 6 passed",
+      "apps/app tests: 182 passed（含下载管理单向投影进入零扫描、local_image_preview framing 链路与「下载任务处理」对话框全交互回归）"
+    ],
+    "failed_or_unverified": [
+      "./tool/check.sh 在无关的 dev.142 floating search contract 处提前失败",
+      "完整 Android/Rust 构建因总检查提前失败而未验证",
+      "真实 SAF provider、跨进程并发覆盖和首次安装重启场景尚无设备回归证据"
+    ],
+    "code_changes_in_this_audit": true
   },
   "issues": [
-    {
-      "id": "DL-DIR-001",
-      "domain": "download_directory_and_settings",
-      "severity": "P0",
-      "title": "运行时切换至 SAF 目录服务重启失败降级为内存模式",
-      "locations": [
-        "apps/app/lib/app_runtime.dart:459-472"
-      ],
-      "root_cause": "_rebuildDownloadServices 缺少 saf:// 目标解析与 safTreeIo / safTreeUri 参数传递，直接将 saf:// URI 传入 PersistentDownloadComposition.open，底层尝试以 POSIX 路径创建目录并打开 SQLite 失败。",
-      "impact": "用户在设置页选择 SAF 目录后，提示“目录已更新，但下载服务重启失败”，下载服务静默降级为内存模式，导致后续下载无法落盘。",
-      "status": "resolved",
-      "remediation_applied": "在 _rebuildDownloadServices 中提取 safOverride，向 PersistentDownloadComposition.open 注入 _SafTreeIoAdapter(SafStore(treeUri: safOverride)) 与 safTreeUri，与启动期打开逻辑完全对称。"
-    },
-    {
-      "id": "DL-DIR-002",
-      "domain": "download_directory_and_settings",
-      "severity": "P0",
-      "title": "SAF 模式未绑定 SafArtifactBytes 导致读取即自毁删除索引",
-      "locations": [
-        "packages/downloads/lib/src/chapter_downloads.dart:685-691",
-        "packages/downloads/lib/src/chapter_downloads.dart:1020-1025",
-        "packages/downloads/lib/src/artifact_bytes.dart:169-209"
-      ],
-      "root_cause": "PersistentDownloadArtifactStore.open 在传入 safMirror 时未自动构建 SafArtifactBytes 绑定给 _bytes，仍使用 LocalArtifactBytes。openArtifactStream 校验 saf: 路径调用 File.exists 返回 false，进而触发 _invalidateIndexedArtifact 抹除 SQLite 索引记录。",
-      "impact": "SAF 镜像下载成功后，任何读取尝试（阅读器阅读、isDownloaded 检查）都会判定文件不存在并立即物理删除索引记录，导致下载文件永久丢失。",
-      "status": "resolved",
-      "remediation_applied": "新增 CompositeArtifactBytes 统一实现 saf: 与 local 路径自适应分发；PersistentDownloadArtifactStore.open 在挂载 safMirror 时自动绑定 CompositeArtifactBytes(saf: SafArtifactBytes(safMirror))；_invalidateIndexedArtifact 与 evict 改走 _bytes.delete 适配 SAF 远端删除。"
-    },
-    {
-      "id": "DL-DIR-003",
-      "domain": "download_directory_and_settings",
-      "severity": "P2",
-      "title": "跨 Scheme（POSIX ↔ SAF）迁移静默失效且无 UI 提示约束",
-      "locations": [
-        "apps/app/lib/app_settings_screen.dart:450-495"
-      ],
-      "root_cause": "changeChapterDownloadDirectory 对 safTarget 直接强行置 migrateFiles = false，设置对话框此前未禁用勾选，用户勾选后文件未被迁移容易造成困惑。",
-      "impact": "用户勾选迁移文件切换至 SAF 目录后，历史下载文件留在原处未被迁移，容易造成数据丢失误解。",
-      "status": "resolved",
-      "remediation_applied": "在 _confirmDownloadDirectoryChange 对话框中，当目标为 SAF 目录时自动禁用迁移复选框（锁定为 false），并显示诚实提示说明“SAF 目录暂不支持跨存储方案自动搬运文件；旧下载将保留在原目录”。"
-    },
-    {
-      "id": "DL-DIR-004",
-      "domain": "download_directory_and_settings",
-      "severity": "P2",
-      "title": "单插件独立下载目录与 SAF 模式不兼容",
-      "locations": [
-        "apps/app/lib/external_plugin_repository_screen.dart:345-370",
-        "apps/app/lib/app_runtime.dart:48-56"
-      ],
-      "root_cause": "DownloadRegistry.layoutResolver 仅支持 POSIX CacheLayout，无法支持针对特定插件使用独立 SAF Tree URI 的存储隔离。",
-      "impact": "在 SAF 全局模式下，单插件自定义目录若设置为 SAF 路径会导致 CacheLayout 抛异常或路径错乱。",
-      "status": "resolved",
-      "remediation_applied": "在插件管理设置独立目录时，显式拦截并拒绝 saf:// 路径并给出友好提示；在 sourceDownloadLayoutResolver 中过滤 saf:// 路径返回 null（回退默认 store），杜绝非法路径进入 CacheLayout。"
-    },
     {
       "id": "DL-DIR-005",
       "domain": "download_directory_and_settings",
@@ -77,15 +56,15 @@
       "title": "下载目录单/多章节按需结构化落盘、自愈迁移与同名冲突治理",
       "locations": [
         "packages/storage/lib/src/comic_folder_manifest.dart",
-        "packages/downloads/lib/src/comic_conflict_inspector.dart",
-        "packages/downloads/lib/src/chapter_downloads.dart:740-820,1470-1580,1705-1760",
-        "packages/downloads/lib/src/artifact_bytes.dart:235-255",
-        "apps/app/lib/comic_details.dart:980-1015,2235-2270"
+        "packages/storage/lib/src/download_placement.dart",
+        "packages/storage/lib/src/download_directory.dart",
+        "packages/downloads/lib/src/chapter_downloads.dart",
+        "packages/downloads/lib/src/whole_comic_downloads.dart",
+        "apps/app/lib/comic_details.dart"
       ],
-      "root_cause": "下载文件此前统一平铺在 final/ 目录下以 hash.bin 命名，外部文件管理器无法直接浏览；且单章节图集场景若嵌套章节子目录会增加冗余层级，删除章节时未提示清理已下载文件且遗留空目录。",
-      "impact": "用户在外部文件管理器/图库中层级冗余，删除章节时可能无意泄漏孤立的本地下载文件或遗留空目录。",
-      "status": "resolved",
-      "remediation_applied": "①引入 ComicFolderManifest（.zic.json）自描述元数据规范与跨平台安全字符清洗；②单章节图集优先平铺在漫画根目录下（<漫画名>/<页码>.<扩展名>），当后续变成多章节下载其他章节时，自动将历史首章节文件与索引平滑迁移至其专属章节子目录（<漫画名>/<章节名>/<页码>.<扩展名>）；③多源同名冲突时自动追加来源后缀（<漫画名> (<来源名>)/）；④删除章节时若存在已下载文件弹出确认提示「是否同时删除本地下载文件？」，确认后同步清理页面文件与空章节/漫画目录。"
+      "status": "in_progress",
+      "remediation_applied": "已落地 exact owner 目录、持久化 DownloadPlacement、单/多章节迁移、最终路径串行提交、详情页冲突决策和整本队列 placement 持久化；历史任务只可从唯一的已校验 CacheRec 路径恢复 placement，并排除内部 final/partial。manifest 已保存 generation/fingerprint、稳定章节目录映射与同名章节隔离，placement 同步保存最近提交 token；POSIX 写入使用目录锁并拒绝损坏 fingerprint。moveChapterDownloadStore 现递归迁移整个根，包括结构化漫画目录和 .zic.json。执行期 ErrorCode.policy 进入持久化 requiresUserAction，详情页会强制重新弹出冲突对比。",
+      "remaining_work": "递归目录迁移仍是逐文件落位后再重写索引，不是整库 staged/atomic commit，崩溃中间态可能分裂新旧根；manifest 字节与 placement token 也不是同一存储事务，SAF 路径没有跨进程目录锁。需要闭合跨根恢复协议、跨进程 owner 提交与 per-source/SAF root identity 的一致性证据。"
     },
     {
       "id": "DL-PIPE-001",
@@ -93,27 +72,11 @@
       "severity": "P1",
       "title": "章节内页面严格单页串行遍历下载（流水线与网络并发瓶颈）",
       "locations": [
-        "packages/downloads/lib/src/chapter_downloads.dart:1345-1374"
+        "packages/downloads/lib/src/chapter_downloads.dart"
       ],
-      "root_cause": "PersistentChapterDownloadService._runDownload 在 for 循环中逐页提交 replaceDemands 并 await consumer.idle()，导致物理网络并发与流水线能力未被利用。",
-      "impact": "多图漫画章节下载速度受网络往返时延（RTT）限制，下载吞吐率低。",
       "status": "deferred_standalone_milestone",
-      "governance_note": "该问题深度牵涉 Pipeline/NetLane 调度权威、FlowGate 流量门控、内存水位控制与阅读器并行加载边界。当前保持逐页串行现状，留待后续独立专项设计与严格基准评测，严禁混入常规修复以避免引入隐式控制流耦合与回归。",
-      "remediation_plan": "后续专项规划：在保障内存水位与 NetLane 流量门控严格解耦的前提下，设计章节内多页滑动窗口需求提交与落盘管道化模型。"
-    },
-    {
-      "id": "DL-PIPE-002",
-      "domain": "download_pipeline",
-      "severity": "P2",
-      "title": "直连传输对 302 重定向与 Set-Cookie 过度敏感拦截回退",
-      "locations": [
-        "packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart:137-149",
-        "packages/downloads/lib/src/source_resource_transport.dart:502-512"
-      ],
-      "root_cause": "RhttpSourceResourceDirectTransport 默认 redirectSettings: none，遇到 CDN 302 临时签名跳转即抛异常回退到插件运行时整体内存加载。",
-      "impact": "采用 CDN 跳转的图床每次下载先产生一次无谓的失败与重定向延迟，增加网络往返与内存压力。",
-      "status": "resolved",
-      "remediation_applied": "在 Rhttp 与 HttpClient 直连下载传输实现中，放行 200/206 成功响应携带的附带 Set-Cookie 头部，仅在未跟随的重定向（3xx）状态时回退至插件运行时，消除 CDN 临时鉴权与图片安全 Cookie 导致的无谓回退与时延。"
+      "governance_note": "该问题牵涉 Pipeline/NetLane 调度权威、FlowGate 与内存水位，保持独立专项，禁止混入目录一致性修复。",
+      "remediation_plan": "设计受 NetLane 约束的有界多页滑动窗口并以基准和内存水位验证。"
     },
     {
       "id": "DL-PIPE-003",
@@ -121,69 +84,168 @@
       "severity": "P2",
       "title": "SAF 模式下 Partial 临时分块仍占用内部私有存储",
       "locations": [
-        "packages/downloads/lib/src/chapter_downloads.dart:726-755"
+        "packages/downloads/lib/src/chapter_downloads.dart"
       ],
-      "root_cause": "SAF 仅在 promoted 后进行镜像拷贝，未完成的 partial 断点分块仍写入本地私有存储。",
-      "impact": "内部存储极度紧张的设备进行大批量下载时，仍可能因内部空间不足导致中间态失败。",
       "status": "pending",
-      "remediation_plan": "远期支持 SAF 流式直接写入或维持本地暂存并优化中间态水位淘汰。"
-    },
-    {
-      "id": "DL-MGR-001",
-      "domain": "download_management",
-      "severity": "P1",
-      "title": "单章独立下载与重试缺少 Token 过期自愈机制",
-      "locations": [
-        "apps/app/lib/demo_home_source_compat.dart:185-202"
-      ],
-      "root_cause": "refreshStaleChapter 仅在整本下载队列接入，单章下载（ChapterDownloadService）在插件重启后重试时直接失败，无法重新拉取 Manifest 自愈。",
-      "impact": "应用切后台重启后，用户在管理页单独重试失败章节时持续报错，必须退回详情页重新进入。",
-      "status": "resolved",
-      "remediation_applied": "在 _downloadChapter 中加入 must use a runtime token 异常捕获与 _refreshStaleQueueChapter 自动刷新重试机制，实现单章与整本自愈能力对齐。"
-    },
-    {
-      "id": "DL-MGR-002",
-      "domain": "download_management",
-      "severity": "P2",
-      "title": "游离离线内容在下载管理列表中不可见",
-      "locations": [
-        "apps/app/lib/download_manager.dart:78-85",
-        "apps/app/lib/demo_home.dart:828"
-      ],
-      "root_cause": "DownloadManagerScreen 的条目严格由书架 widget.entries 传入，未入书架即下载或被移出书架的离线章节无法在列表中展示与单项清理。",
-      "impact": "游离章节占用磁盘空间，用户在下载管理页无法查看具体来源与删除，只能全量清空缓存。",
-      "status": "resolved",
-      "remediation_applied": "在 ChapterDownloadService 接口与实现中落地 discoverOrphanedEntries 离线章节探测，并在 DownloadManagerScreen._reload() 中自动探测并合并未入书架/游离下载条目，实现游离离线内容可视化与单项清理支持。"
-    },
-    {
-      "id": "DL-MGR-003",
-      "domain": "download_management",
-      "severity": "P2",
-      "title": "漫画详情页单章下载同步 Await 阻塞交互",
-      "locations": [
-        "apps/app/lib/comic_details.dart:1174-1196",
-        "apps/app/lib/comic_details.dart:2389-2410"
-      ],
-      "root_cause": "_download 直接 await 整章所有页面下载完成，导致下载按钮长时间处于 loading 旋转，阻碍用户继续操作。",
-      "impact": "点击下载后按钮长时间处于 loading，无法即时感知后台排队与分块进度。",
-      "status": "resolved",
-      "remediation_applied": "将 _download 改为非阻塞异步发起下载（unawaited + catchError 提示），即时释放 UI 并给出已开始下载 SnackBar，依赖既有的 downloadChanges 流式更新下载快照与进度。"
+      "remaining_work": "评估 SAF 流式 partial 或内部暂存水位治理；不得让 encoded ingress 等待 decode/scale/composite 锁。"
     },
     {
       "id": "DL-DIR-006",
       "domain": "download_directory_and_settings",
       "severity": "P1",
-      "title": "同名/重加入漫画下载前缺少文件冲突探测与覆盖确认",
+      "title": "同名/多版本漫画下载冲突探测与下载任务处理交互治理",
       "locations": [
-        "packages/downloads/lib/src/comic_conflict_inspector.dart:52-164",
-        "packages/downloads/lib/src/chapter_downloads.dart:863-888",
-        "apps/app/lib/comic_details.dart:1184-1240",
-        "apps/app/lib/comic_details.dart:2473-2530"
+        "packages/downloads/lib/src/comic_conflict_inspector.dart",
+        "packages/downloads/lib/src/chapter_downloads.dart",
+        "packages/downloads/lib/src/whole_comic_downloads.dart",
+        "apps/app/lib/comic_details.dart",
+        "apps/app/lib/demo_home_source_compat.dart",
+        "apps/app/lib/comic_download_conflict_dialog.dart"
       ],
-      "root_cause": "下载前未调用 ComicConflictInspector 探测目标目录中的现有文件，当用户删除书架保留文件或同名漫画更新后重新下载时，直接覆盖已有文件且修改时间错乱。",
-      "impact": "同名漫画重加书架或远端章节更新重新下载时，静默覆盖历史已有文件，破坏本地已有数据一致性。",
+      "status": "in_progress",
+      "remediation_applied": "已打通 ComicVersionRelationKind（incomingIsNewer / existingIsNewer / sameVersion / unknown）与 knownPredecessorComicIds / knownSuccessorComicIds；探查时匹配已下载目录 manifest.comicId 与版本前驱/后继关系。弹窗重构为「下载任务处理」：新版发起下载时默认 FilledButton 为「新任务替换旧任务」，取消为副操作；本地已有新版时默认 FilledButton 为「保持现有版本（什么都不做）」，「仍要替换为旧版本」为副操作；底部收纳为「新建任务（可展开对比）」ExpansionTile，展开后展示对比卡片及「另存为新目录并新建任务」按钮。overwrite/saveAsNew 贯穿单章与整本执行，并在 WholeComicDownloadQueue 中实现新任务入队时自动取消并置换旧版本整本任务，PersistentChapterDownloadService 同步取消旧版本在途令牌，writeComicFolderManifest 隔离异版元数据继承；已在 apps/app 及 downloads 包补齐 widget 与单元测试回归。",
+      "remaining_work": "overwrite 的 SAF owner/manifest/placement 提交仍不具备跨进程事务替换能力；exact match 的 saveAsNew 可能仍使用原推荐目录；自定义冲突目录可能因无 title candidate 而不触发 forcePrompt；详情页整本任务回调仍有只按 comicId 而非 sourceId+comicId 识别的风险。"
+    },
+    {
+      "id": "DL-DIR-007",
+      "domain": "download_directory_and_settings",
+      "severity": "P1",
+      "title": "已有部分文件场景下的增量下载与文件复用治理",
+      "locations": [
+        "packages/downloads/lib/src/chapter_downloads.dart",
+        "packages/downloads/lib/src/artifact_cache_manager.dart",
+        "packages/storage/lib/src/cache_index.dart",
+        "packages/sessions/lib/src/download_job.dart"
+      ],
+      "status": "in_progress",
+      "remediation_applied": "普通下载与重试不再调用 scanExistingPages；本轮清除了代码更新中重新引入的物理目录枚举与未索引碰撞预扫，执行只按启动时 SQLite 中 ready+非空 CRC32 的记录分类。每页 seal/导出后立即增量持久化实际 bytes+CRC32，并发窗口中已完成的页可在授权 overwrite 重试时直接复用。显式 scanExistingPages 对 POSIX/SAF 候选统一执行图片魔数校验，即使扩展名看似图片也拒绝 HTML 或残损内容。无校验记录的历史文件在目标提交时按冲突处理，不能按页码、扩展名或长度收编。历史 placement 仅从唯一的已校验索引路径迁移。",
+      "remaining_work": "为库外或旧版本无 checksum 文件提供独立、显式、可取消的 repair/audit 操作；ready 读路径目前主要校验长度而非 checksum，同长度损坏无法及时发现；普通 IoTransport 尚未统一拒绝未知媒体内容；PageAsset.checksum 与 artifact CRC32 的算法语义未被协议明确区分。"
+    },
+    {
+      "id": "DL-DIR-009",
+      "domain": "download_directory_and_settings",
+      "severity": "P1",
+      "title": "阅读器在线缓存向离线下载提升与跨画册版本等价复用治理",
+      "locations": [
+        "packages/downloads/lib/src/artifact_cache_reuse.dart",
+        "packages/downloads/lib/src/chapter_downloads.dart"
+      ],
+      "status": "in_progress",
+      "remediation_applied": "verified checksum/image-key/content-hash 等价统一用于进度与执行；createNew 复用现在按 1-based 页码复制到本版本目录，支持 POSIX/SAF 交叉来源并在复制前后校验 bytes+CRC32，禁止为空或错误目标建立 ready 记录。",
+      "remaining_work": "将 artifact object、逻辑 version/page binding 与 export binding 正式拆表，避免继续由 CacheRec.path 同时表达三种所有权；需要保留 physical object generation 与 logical revision 的明确边界。"
+    },
+    {
+      "id": "DL-DIR-010",
+      "domain": "download_directory_and_settings",
+      "severity": "P1",
+      "title": "跨版本/等价复用下删除操作的物理文件引用保护治理",
+      "locations": [
+        "packages/downloads/lib/src/chapter_downloads.dart"
+      ],
+      "status": "in_progress",
+      "remediation_applied": "同一路径 CacheRec 删除已具备引用保护，createNew 等价页会物化自包含副本。",
+      "remaining_work": "引入 comic family 主干、版本页映射和 DeletePlan：删除旧版只移除绑定，删除新版只回收新版独有页；SAF 不得在仍有跨版本绑定时直接递归删除章节目录。"
+    },
+    {
+      "id": "DL-DIR-017",
+      "domain": "download_artifact_ownership",
+      "severity": "P0",
+      "title": "E-Hentai 多版本并发下载共用人类可读路径导致文件与 manifest 相互覆盖",
+      "locations": [
+        "packages/downloads/lib/src/chapter_downloads.dart",
+        "packages/downloads/lib/src/artifact_bytes.dart",
+        "packages/storage/lib/src/cache_index.dart",
+        "packages/storage/lib/src/download_placement.dart",
+        "packages/downloads/lib/src/whole_comic_downloads.dart"
+      ],
+      "status": "in_progress",
+      "remediation_applied": "目标路径串行锁、exact owner、持久化 placement、提交前 owner 复查、manifest generation/fingerprint、稳定章节目录映射、逐页 CRC32 记录、无扫描重试和跨版本自包含物化已接入；生产整本 enqueue 同步保存目录、模式与 observed owner。同进程旧 owner 认领仅可由精确匹配 observedOwnerKey 的 overwrite 替换。已落地 ContentId/DownloadId/DecodeId 长度前缀 Framing 编码（_frame(s) => '${s.length}:$s'），彻底杜绝由特殊字符和分隔符碰撞导致的不同实体被合并；SqliteIndex 启动时通过 _migrateDownloadIdentityKeys 自动兼容迁移旧 row；DownloadRegistry.restoreIndexed 对确定性 partial/final 路径基于 CacheRec.path 绝对路径推导旧 root 恢复物理文件，杜绝目录切换或插件级 layoutResolver 误绑新根；SqliteIndex.putPlacement 将主键/所有者归属修正为 (source_id, comic_id) 避免 placement_id 变更冲突；_putArtifactObject 增设 _artifactObjectDiffers 校验字节数与 CRC32，防止内容篡改与错误绑定。 补充治理：修复存储与下载权威层符号链接校验递归越界问题。在 Android 等 OS 下，内部私有存储根 /data/user/0 与外部存储 /storage/emulated/0 属于系统级软链/挂载点；此前 _rejectLink / _rejectPathLinks / _rejectDirectoryPathLinks / _rejectLocalPathLinks 无界遍历父级直至系统根 / 导致在真机上正常文件操作全量误判为 Failure(artifactCorruption)；现将符号链接校验范围严格收敛至下载存储自身管辖的目录树与直接容器内，并在 storage 补齐祖先挂载点软链回归测试。",
+      "remaining_work": "完成 artifact/binding 拆分和版本级 DeletePlan；manifest 字节与 placement generation/fingerprint 尚未形成单一跨进程事务，SAF owner 提交也没有跨进程锁；overwrite 后必须清理或迁移旧 CacheRec binding，避免旧 revision 继续指向新字节。上述事务边界闭合前不能关闭本 P0。"
+    },
+    {
+      "id": "DL-DIR-018",
+      "domain": "download_directory_and_settings",
+      "severity": "P0",
+      "title": "下载根目录递归迁移缺少整库 staged/atomic 提交",
+      "locations": [
+        "packages/storage/lib/src/download_directory.dart:115-181",
+        "packages/downloads/lib/src/chapter_downloads.dart:1385-1404",
+        "packages/downloads/lib/src/chapter_downloads.dart:1889-1924"
+      ],
+      "root_cause": "moveChapterDownloadStore 已改为递归搬迁整个下载根，结构化漫画目录、.zic.json、cache.sqlite 及内部 artifact 都会进入 moveTree；但当前仍逐文件 rename/copy 后才重写目标索引路径，没有整库 staging、提交标记和回滚边界。",
+      "impact": "正常迁移不再固定遗漏结构化目录；但进程在递归移动或索引重写之间崩溃时，新旧根仍可能各持一部分 authority，Reader、下载管理和冲突探测需要依赖幂等重入恢复，尚不能证明不会出现分裂或孤儿状态。",
+      "status": "in_progress",
+      "remediation_applied": "递归 moveTree 已覆盖整个下载根；跨文件系统复制使用同目录临时文件后 rename，重复目标只有字节完全一致才会收敛，结构化目录和 manifest 不再被固定遗漏。",
+      "remediation_plan": "将整个 store generation、迁移意图、文件校验和索引切换纳入统一 staged move plan；全部复制/校验完成后一次切换 authority，失败时保留旧根并可确定性回滚或续作。"
+    },
+    {
+      "id": "DL-DIR-019",
+      "domain": "download_artifact_ownership",
+      "severity": "P0",
+      "title": "SAF tree identity 已校验但 provider 替换与 owner 提交仍非强原子",
+      "locations": [
+        "packages/downloads/lib/src/artifact_bytes.dart:108-181",
+        "packages/downloads/lib/src/chapter_downloads.dart",
+        "apps/app/lib/saf_store.dart"
+      ],
+      "root_cause": "SafArtifactBytes 现会拒绝 treeUri 与当前 tree 不一致的 record，copy/write 也先写同目录临时文件再提交。生产 SafTreeAtomicReplace 通过 old-backup rename、temporary rename 和启动 recover 收敛，但通用 DocumentFile provider 不提供可证明的原子 replace，manifest/placement/index 也不在同一 provider 事务；兼容测试适配器仍保留 delete-then-rename fallback。",
+      "impact": "跨 tree 误读误删与直接 truncate 最终文件的旧风险已收口；但 provider rename 语义、跨进程并发和崩溃窗口仍可能让文件、manifest 与 SQLite binding 暂时指向不同 generation，尚缺真实设备证据证明恢复完整。",
+      "status": "in_progress",
+      "remediation_applied": "SAF record 读、长读和删除均校验 treeUri；页面、manifest 和复制目标采用临时文件提交，生产适配器实现 replace/recover，provider 拒绝替换时保留旧 authority。",
+      "remediation_plan": "把 SAF root generation 与队列/index binding 一起提交，建立跨进程 owner 序列化；对支持与不支持 rename 的真实 provider 做崩溃恢复验证，并移除生产路径中任何 delete-then-rename 可能性。"
+    },
+    {
+      "id": "DL-MGR-005",
+      "domain": "download_management",
+      "severity": "P1",
+      "title": "游离下载 revision 分组已收口但版本级删除计划未闭合",
+      "locations": [
+        "packages/downloads/lib/src/chapter_downloads.dart:3363-3406",
+        "packages/catalog/lib/src/imported_chapter.dart"
+      ],
+      "root_cause": "discoverOrphanedEntries、known key、inspectMany 章节分组现均包含 sourceRevision，同章多 revision 不再直接合并；剩余缺口是 synthetic orphan 和管理页删除仍只有逻辑 entry 语义，没有 physical generation、comic-family page mapping 与版本级 DeletePlan。",
+      "impact": "revision 投影与进度查询已能分开；但删除某个 orphan/revision 时仍无法先证明哪些 binding 或实体被其它版本覆盖，管理页不能可靠表达“只删记录”与“回收该版本独有页”的差异。",
+      "status": "in_progress",
+      "remediation_applied": "orphan discovery、known-entry 排除和 inspectMany 均按 sourceId+comicId+chapterId+sourceRevision 分组，synthetic entry 保留完整 revision identity。",
+      "remediation_plan": "在现有 revision 分组上增加 physical generation 与版本页映射，所有管理页删除先生成 DeletePlan，再分别执行 binding-only 删除和独有 artifact 回收。"
+    },
+    {
+      "id": "DL-MGR-006",
+      "domain": "download_management",
+      "severity": "P1",
+      "title": "下载管理首次进入卡顿与重复全量索引扫描治理",
+      "locations": [
+        "apps/app/lib/download_manager.dart",
+        "apps/app/lib/home_library_session.dart",
+        "packages/downloads/lib/src/chapter_downloads.dart"
+      ],
+      "root_cause": "Route 原先捕获启动初期的 bootstrap services，且在 post-frame _reload() 中每次进入都重复执行 library list、orphan discovery、inspectMany 与 cache usage，导致同一 SQLite 索引被重复读取最多 3 次，严重阻塞 UI 帧。",
+      "impact": "打开与退出下载管理页延迟数秒，页面在初始化完成前丢失部分未完成或已完成任务，或出现快照跳变。",
+      "status": "in_progress",
+      "remediation_applied": "在 HomeLibrarySession 中引入权威 DownloadManagerProjection，统一管理包含 orphan entries 的下载快照，Home 首帧后及 durable adoption 后后台 single-flight 刷新；PersistentChapterDownloadService 实现 ChapterDownloadManagementProjectionReader，底层通过单次 SQLite 索引快照一次性完成 orphan discovery 与 snapshot inspection。download_manager route 打开/重进/退出只订阅投影并完成 service identity rebind，缓存用量仅在进入自动缓存 Tab 时按需加载，彻底消除了进入卡顿与重复索引扫描。",
+      "remaining_work": "当下载管理页保持在前台且有外部后台任务频繁变化时，评估高频通知下的局部 Diff 刷新机制，避免在极端任务数量（上万条）下的全量列表重构开销。"
+    },
+    {
+      "id": "DL-DIR-020",
+      "domain": "download_directory_and_settings",
+      "severity": "P1",
+      "title": "下载冲突排查历史补丁、推测性死代码、UI侵入图算法与一次性测试清理治理",
+      "locations": [
+        "apps/app/android/app/src/main/kotlin/dev/zic/zic/DeferredAndroidPlugins.kt",
+        "apps/app/android/app/src/main/kotlin/dev/zic/zic/MainActivity.kt",
+        "apps/app/lib/comic_download_conflict_dialog.dart",
+        "apps/app/lib/comic_details.dart",
+        "apps/app/lib/download_manager.dart",
+        "packages/downloads/lib/src/chapter_downloads.dart",
+        "apps/app/test/comic_download_conflict_dialog_test.dart",
+        "apps/app/test/chapter_downloads_test.dart",
+        "packages/downloads/test/chapter_downloads_test.dart"
+      ],
+      "root_cause": "前序排查下载目录名冲突期间引入了大量推测性补丁（多层文件锁、UI层版本图BFS寻路打分、未调用的flipComicPageOrder、启动期全量SAF递归扫描safRecover以及异常吞咽掩盖缺陷）。真实根因已确认为SQLite cache_records残留历史旧comicId索引行。针对该根因，系统应提醒用户是否迁移或删除相应记录与文件，而非在UI层堆砌复杂候选比对、任意评分与偷偷改名。",
+      "impact": "造成多处代码与测试膨胀，UI层职责混淆（在Widget State中做版本图寻路打分）、MainActivity启动期SAF递归扫描带来I/O阻塞风险，且产生无生产调用的死代码与脆弱的一次性UI测试。",
       "status": "resolved",
-      "remediation_applied": "ComicConflictInspector 增加 SAF 与 POSIX 双模式探测及 hasExistingFiles / matchingCandidate 判定；ChapterDownloadService 暴露 inspectComicConflicts 接口并在 PersistentChapterDownloadService / PersistentDownloadArtifactStore 落地；详情页在触发单章/整本下载前进行同名目录/文件探测并弹窗确认覆盖（「发现同名下载文件」），确认后才允许覆盖，彻底根除静默覆盖风险。"
+      "remediation_applied": "完成暂存区全量代码与测试审查，建立四维清理清单并写入状态治理表；已完成清理：①确认并保持移除flipComicPageOrder等推测性死逻辑；②移除promptComicConflictResolution冗余死方法，并将对话框组件测试平滑迁移至promptComicConflictResolutionResult；③移除MainActivity全量SAF递归扫描safRecover；④回滚DeferredAndroidPlugins异常吞咽；⑤清除demo_home_source_compat中的UI层版本图BFS寻路队列，并在downloads权威层自动按_versionRelations解析前驱/后继；⑥精简一次性UI与微交互测试，全仓分析与全量门禁check.sh 100%通过。",
+      "remaining_work": ""
     }
   ]
 }

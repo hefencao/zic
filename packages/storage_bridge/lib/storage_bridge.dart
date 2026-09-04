@@ -12,8 +12,11 @@ export 'package:storage/storage.dart'
     show
         CacheLayout,
         ChapterDownloadStoreMoveReport,
+        LazyImportedLibraryStore,
+        HomeChapterDownloadSummary,
         HomeProjectionSnapshot,
         HomeProjectionSnapshotStore,
+        buildComicDirectoryName,
         chapterDownloadStoreHasContent,
         defaultChapterDownloadDirectory,
         isSameDirectoryPath,
@@ -137,9 +140,9 @@ Future<bool> chapterDownloadIndexExists(String directory) =>
 ///
 /// The settings flow records the intended target plus the previous store
 /// location before touching any bytes, so a crash mid-move is repaired here,
-/// before any service opens the stores. A move failure is reported but never
-/// blocks startup; opening the store at the target then degrades exactly like
-/// any other durable-storage failure.
+/// before any service opens the stores. A move failure is propagated to the
+/// startup caller, which may still open the target in degraded mode while
+/// retaining the pending marker for the next retry.
 Future<String> settleChapterDownloadDirectory({
   required String storageRoot,
   required String? configuredOverride,
@@ -162,39 +165,34 @@ Future<String> settleChapterDownloadDirectory({
 
   if (pendingMoveFrom != null &&
       !samePath(pendingMoveFrom, target) &&
-      chapterDownloadStoreHasContent(pendingMoveFrom)) {
-    try {
-      final report = await moveChapterDownloadStore(
-        from: pendingMoveFrom,
-        to: target,
-      );
-      print(
-        '[zic-storage] chapter-download move completed '
-        'from=$pendingMoveFrom to=$target files=${report.movedFileCount} '
-        'records=${report.rewrittenRecordCount}',
-      );
-    } on Object catch (error) {
-      print('[zic-storage] chapter-download move failed: $error');
-    }
+      (chapterDownloadStoreHasContent(pendingMoveFrom) ||
+          chapterDownloadStoreHasContent(target))) {
+    final report = await moveChapterDownloadStore(
+      from: pendingMoveFrom,
+      to: target,
+    );
+    print(
+      '[zic-storage] chapter-download move completed '
+      'from=$pendingMoveFrom to=$target files=${report.movedFileCount} '
+      'records=${report.rewrittenRecordCount}',
+    );
   } else if (!samePath(defaultDirectory, target) &&
       chapterDownloadStoreHasContent(defaultDirectory) &&
       !await File('$target/cache.sqlite').exists()) {
     // An override is configured while the default location still owns the
     // only complete copy of the store (for example a crash before the move
-    // started). Bring the store to the configured location.
-    try {
-      final report = await moveChapterDownloadStore(
-        from: defaultDirectory,
-        to: target,
-      );
-      print(
-        '[zic-storage] chapter-download default-location adoption completed '
-        'to=$target files=${report.movedFileCount} '
-        'records=${report.rewrittenRecordCount}',
-      );
-    } on Object catch (error) {
-      print('[zic-storage] chapter-download move failed: $error');
-    }
+    // started). Bring the store to the configured location. Let failures
+    // reach startup so the pending intent remains durable and the source can
+    // be reopened as the authoritative recovery side.
+    final report = await moveChapterDownloadStore(
+      from: defaultDirectory,
+      to: target,
+    );
+    print(
+      '[zic-storage] chapter-download default-location adoption completed '
+      'to=$target files=${report.movedFileCount} '
+      'records=${report.rewrittenRecordCount}',
+    );
   }
   return target;
 }
@@ -230,10 +228,18 @@ Future<void> writeJsonObjectFile(
 ) async {
   final file = File(path);
   await file.parent.create(recursive: true);
-  final temporary = File('$path.tmp');
-  await temporary.writeAsString(jsonEncode(data), flush: true);
-  if (await file.exists()) {
-    await file.delete();
+  final temporary = File(
+    '$path.tmp-${DateTime.now().microsecondsSinceEpoch}',
+  );
+  try {
+    await temporary.writeAsString(jsonEncode(data), flush: true);
+    // POSIX/Android rename replaces the directory entry atomically. Never
+    // delete the previous queue/preferences authority first: if the commit
+    // cannot be completed, readers keep the last complete JSON document.
+    await temporary.rename(path);
+  } finally {
+    if (await temporary.exists()) {
+      await temporary.delete();
+    }
   }
-  await temporary.rename(path);
 }

@@ -51,7 +51,7 @@ forbid(
     'confirmed successor hidden by canonical alias collapse',
 )
 
-home = read('apps/app/lib/demo_home.dart')
+home = read('apps/app/lib/demo_home.dart') + read('apps/app/lib/demo_home_reader_route.dart')
 for token in (
     'await _restoreSourceVersionArtifactEquivalences(current);',
     '_scheduleVersionReuseWarmup(versionSource, current.chapter.comicId);',

@@ -28,7 +28,20 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     }
   }
 
-  Future<void> _adoptDurableServices() async {
+  Future<void> _adoptDurableServices() {
+    final existing = _durableAdoption;
+    if (existing != null) return existing;
+    late final Future<void> adoption;
+    adoption = _adoptDurableServicesOnce().whenComplete(() {
+      if (identical(_durableAdoption, adoption)) {
+        _durableAdoption = null;
+      }
+    });
+    _durableAdoption = adoption;
+    return adoption;
+  }
+
+  Future<void> _adoptDurableServicesOnce() async {
     final library = _incomingLibraryStore;
     final chapterDownloads = _incomingChapterDownloads;
     final wholeComicDownloads = _incomingWholeComicDownloads;
@@ -66,22 +79,13 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
                   ? chapterDownloads as ArtifactCacheMaintenance
                   : null),
         );
-    _activeExternalPlugins = _incomingExternalPlugins;
+    _activeExternalPlugins =
+        _incomingExternalPlugins ?? _activeExternalPlugins;
     final sources = _buildCachedSources(
       cacheCoordinator,
       externalPlugins: _activeExternalPlugins,
     );
 
-    _sourceResources.unbindFrom(previousChapterDownloads);
-    _sourceResources.bindTo(chapterDownloads);
-    _library = library;
-    _chapterDownloads = chapterDownloads;
-    _downloadComposition = downloadComposition;
-    _readerArtifactCache = readerArtifactCache;
-    _wholeComicDownloads = wholeComicDownloads;
-    _cacheCoordinator = cacheCoordinator;
-    _ownsCacheCoordinator = suppliedCache == null;
-    _sources = sources;
     try {
       await _librarySession.adoptServices(
         library: library,
@@ -92,8 +96,22 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
       );
     } on Object catch (error) {
       debugPrint('durable Home service handoff failed: $error');
+      // Session adoption is all-or-nothing: on failure every binding still
+      // points at the previous composition, so there is nothing to roll back.
       return;
     }
+    // Swap Home's bindings only after the session adopted, so Home and the
+    // session can never disagree about which composition is authoritative.
+    _sourceResources.unbindFrom(previousChapterDownloads);
+    _sourceResources.bindTo(chapterDownloads);
+    _library = library;
+    _chapterDownloads = chapterDownloads;
+    _downloadComposition = downloadComposition;
+    _readerArtifactCache = readerArtifactCache;
+    _wholeComicDownloads = wholeComicDownloads;
+    _cacheCoordinator = cacheCoordinator;
+    _ownsCacheCoordinator = suppliedCache == null;
+    _sources = sources;
     if (previousOwnsCacheCoordinator &&
         !identical(previousCacheCoordinator, _cacheCoordinator) &&
         !identical(

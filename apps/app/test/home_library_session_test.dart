@@ -479,9 +479,9 @@ void main() {
     });
 
     for (var attempt = 0;
-        attempt < 20 && session.entries.isEmpty;
+        attempt < 100 && session.entries.isEmpty;
         attempt++) {
-      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 5));
     }
     expect(session.entries.single.chapter.displayName, 'Old chapter');
 
@@ -492,12 +492,12 @@ void main() {
     expect(session.entries.single.chapter.displayName, 'Current chapter');
 
     HomeProjectionSnapshot? persisted;
-    for (var attempt = 0; attempt < 20; attempt++) {
+    for (var attempt = 0; attempt < 100; attempt++) {
       persisted = await snapshotStore.read();
       if (persisted?.entries.single.chapter.displayName == 'Current chapter') {
         break;
       }
-      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(const Duration(milliseconds: 5));
     }
     expect(persisted?.entries.single.chapter.displayName, 'Current chapter');
   });
@@ -605,6 +605,23 @@ void main() {
         readStates: const <ChapterReadState>[],
         sourcePreferences: const <ComicSourcePreference>[],
         versionRelations: const <ComicVersionRelation>[],
+        chapterDownloads: <HomeChapterDownloadSummary>[
+          HomeChapterDownloadSummary(
+            sourceId: chapter.sourceId,
+            comicId: chapter.comicId,
+            comicTitle: chapter.comicTitle,
+            chapterId: chapter.chapterId,
+            sourceRevision: chapter.sourceRevision,
+            title: chapter.displayName,
+            completedPages: 1,
+            totalPages: 1,
+            receivedBytes: 4,
+            pinnedPages: 1,
+            totalBytes: 4,
+            phase: 'complete',
+            started: true,
+          ),
+        ],
       ),
     );
     final memory = MemoryImportedLibraryStore();
@@ -636,6 +653,11 @@ void main() {
     await session.ready;
 
     expect(session.entries.single.chapter.displayName, 'Bootstrap chapter');
+    expect(session.downloadSnapshots, hasLength(1));
+    expect(
+      session.downloadSnapshots.values.single.phase,
+      ChapterDownloadPhase.complete,
+    );
     expect(library.listCalls, 0);
   });
 
@@ -672,6 +694,23 @@ void main() {
         readStates: const <ChapterReadState>[],
         sourcePreferences: const <ComicSourcePreference>[],
         versionRelations: const <ComicVersionRelation>[],
+        chapterDownloads: <HomeChapterDownloadSummary>[
+          HomeChapterDownloadSummary(
+            sourceId: chapter.sourceId,
+            comicId: chapter.comicId,
+            comicTitle: chapter.comicTitle,
+            chapterId: chapter.chapterId,
+            sourceRevision: chapter.sourceRevision,
+            title: chapter.displayName,
+            completedPages: 1,
+            totalPages: 1,
+            receivedBytes: 4,
+            pinnedPages: 1,
+            totalBytes: 4,
+            phase: 'complete',
+            started: true,
+          ),
+        ],
         libraryRevision: 7,
       ),
     );
@@ -693,6 +732,7 @@ void main() {
       pageLoader: (_, __) async => Uint8List(1),
     );
     final durableQueue = WholeComicDownloadQueue(downloads: durableDownloads);
+    final primaryFrame = Completer<void>();
     final session = HomeLibrarySession(
       library: bootstrapLibrary,
       snapshotStore: snapshotStore,
@@ -703,8 +743,12 @@ void main() {
       ownsLibrary: true,
       ownsChapterDownloads: true,
       ownsWholeComicDownloads: true,
+      waitForPrimaryFrame: () => primaryFrame.future,
     );
     addTearDown(() async {
+      if (!primaryFrame.isCompleted) {
+        primaryFrame.complete();
+      }
       await session.close();
       session.dispose();
       await durableQueue.close();
@@ -713,6 +757,11 @@ void main() {
     });
 
     await session.ready;
+    expect(
+      session.downloadSnapshots.values.single.phase,
+      ChapterDownloadPhase.complete,
+    );
+
     await session.adoptServices(
       library: durableLibrary,
       chapterDownloads: durableDownloads,
@@ -722,8 +771,35 @@ void main() {
     );
 
     expect(session.entries.single.chapter.displayName, 'Handoff chapter');
+    expect(
+      session.downloadSnapshots.values.single.phase,
+      ChapterDownloadPhase.complete,
+    );
     expect(durableLibrary.listCalls, 0);
     expect(session.loading, isFalse);
+
+    primaryFrame.complete();
+    for (var attempt = 0;
+        attempt < 20 &&
+            session.downloadSnapshots.values.single.phase !=
+                ChapterDownloadPhase.idle;
+        attempt++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(
+      session.downloadSnapshots.values.single.phase,
+      ChapterDownloadPhase.idle,
+    );
+
+    HomeProjectionSnapshot? persisted;
+    for (var attempt = 0; attempt < 100; attempt++) {
+      persisted = await snapshotStore.read();
+      if (persisted?.chapterDownloads.isEmpty == true) {
+        break;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(persisted?.chapterDownloads, isEmpty);
   });
 
 }

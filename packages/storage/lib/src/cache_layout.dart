@@ -14,15 +14,22 @@ final class CacheLayout {
   String get finalDir => '${Directory(root).path}${Platform.pathSeparator}final';
   String get dbPath => '${Directory(root).path}${Platform.pathSeparator}cache.sqlite';
 
-  Artifact artifactFor(DownloadId id) {
-    final token = tokenFor(id);
-    return Artifact(
-      partialPath: '$partialDir${Platform.pathSeparator}$token.part',
-      finalPath: '$finalDir${Platform.pathSeparator}$token.bin',
-    );
-  }
+  Artifact artifactFor(DownloadId id) => _artifactForToken(tokenFor(id));
+
+  /// Returns the pre-v2 artifact location used by older cache roots. Recovery
+  /// may probe this path for an indexed record, but new writes always use
+  /// [artifactFor] so delimiter collisions cannot select the same filename.
+  Artifact legacyArtifactFor(DownloadId id) =>
+      _artifactForToken(legacyTokenFor(id));
 
   String tokenFor(DownloadId id) => _fnv64(id.key);
+
+  String legacyTokenFor(DownloadId id) => _fnv64(id.legacyKey);
+
+  Artifact _artifactForToken(String token) => Artifact(
+        partialPath: '$partialDir${Platform.pathSeparator}$token.part',
+        finalPath: '$finalDir${Platform.pathSeparator}$token.bin',
+      );
 }
 
 String _fnv64(String value) {

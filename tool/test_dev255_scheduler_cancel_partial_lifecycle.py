@@ -35,12 +35,12 @@ require(
 require(
     'packages/sessions/lib/src/download_job.dart',
     'Future<void> _finishWriterAfterAttemptError(',
-    'if (error is Failure && error.code == ErrorCode.cancelled)',
+    '(error is Failure && error.code == ErrorCode.cancelled)',
     'await session.pause(writer);',
     'await session.fail(writer, error);',
 )
 job = read('packages/sessions/lib/src/download_job.dart')
-if job.count('await _finishWriterAfterAttemptError(writer, error);') < 3:
+if job.count('await _finishWriterAfterAttemptError(') < 3:
     raise SystemExit('DownloadJob must route all three attempt-error closures through the typed cancellation helper')
 
 require(

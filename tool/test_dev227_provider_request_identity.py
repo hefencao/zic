@@ -23,9 +23,9 @@ for token in (
     'this.requestUri,',
     'final Uri? requestUri;',
     'Uri get _requestUri => requestUri ?? session.id.canonicalUri;',
-    'return controlled.openControlled(\n        _requestUri,',
-    'return transport.open(\n      _requestUri,',
-    'return transport.open(_requestUri);',
+    'controlled.openControlled(\n          _requestUri,',
+    'transport.open(\n        _requestUri,',
+    'transport.open(_requestUri)',
 ):
     require(job, token, 'provider exact request URI in DownloadJob')
 

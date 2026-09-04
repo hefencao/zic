@@ -139,6 +139,44 @@ void main() {
     await closed;
   });
 
+  test('source replacement cannot reuse an in-flight old request plan', () async {
+    final gate = Completer<ComicResourceRequest>();
+    final firstSource = _FixtureSource(
+      request: ComicResourceRequest(uri: Uri.parse('https://fixture/old')),
+      resolveGate: gate,
+    );
+    final replacementSource = _FixtureSource(
+      request: ComicResourceRequest(uri: Uri.parse('https://fixture/new')),
+    );
+    Uri? opened;
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (request) async {
+        opened = request.uri;
+        return ByteResponse(
+          bytes: Stream<List<int>>.value(<int>[1, 2, 3]),
+          statusCode: HttpStatus.ok,
+          rangeStart: 0,
+          totalLength: 3,
+        );
+      },
+    );
+    addTearDown(pool.close);
+
+    final pending = pool
+        .loaderFor(firstSource, Uri.parse('venera-resource:replacement-plan'))();
+    await Future<void>.delayed(Duration.zero);
+    pool.loaderFor(
+      replacementSource,
+      Uri.parse('venera-resource:replacement-plan-new'),
+    );
+    gate.complete(firstSource.request);
+
+    final response = await pending;
+    expect(await _collect(response.bytes), <int>[1, 2, 3]);
+    expect(opened, Uri.parse('https://fixture/new'));
+    expect(replacementSource.resolveCalls, 1);
+  });
+
   test('default UA reaches directOpen when source omits it', () async {
     ComicResourceRequest? opened;
     final source = _FixtureSource(
@@ -551,11 +589,13 @@ final class _FixtureSource
   _FixtureSource({
     required this.request,
     this.retryRequest,
+    this.resolveGate,
     Uint8List? runtimeBytes,
   }) : runtimeBytes = runtimeBytes ?? Uint8List(0);
 
   final ComicResourceRequest request;
   final ComicResourceRequest? retryRequest;
+  final Completer<ComicResourceRequest>? resolveGate;
   final Uint8List runtimeBytes;
   int resolveCalls = 0;
   int retryCalls = 0;
@@ -584,6 +624,8 @@ final class _FixtureSource
   }) async {
     resolveCalls++;
     lastResolveControl = control;
+    final gate = resolveGate;
+    if (gate != null) return gate.future;
     return request;
   }
 

@@ -1012,8 +1012,6 @@ def check_compile_regressions() -> None:
             fail(f'artifact cache manager is incomplete: {required}')
     for required in (
         'required ArtifactCacheManager cache',
-        '_cache.lookup(id)',
-        '_cache.readForegroundLookup(lookup)',
         "'consumer': 'session-copy'",
         '_chunkedBytes(',
         'chunkSize: promotedArtifactReadChunkBytes',
@@ -1022,6 +1020,13 @@ def check_compile_regressions() -> None:
     ):
         if required not in artifact_cache_transport:
             fail(f'artifact cache transport cold-open path is incomplete: {required}')
+    if (
+        '_cache.lookup(id)' not in artifact_cache_transport and
+        '_cache.lookup(id, control: control)' not in artifact_cache_transport
+    ):
+        fail('artifact cache transport cold-open path is incomplete: cache lookup')
+    if '_cache.readForegroundLookup(' not in artifact_cache_transport:
+        fail('artifact cache transport cold-open path is incomplete: foreground read')
     for required in (
         'routes memory before backend and validates exact length',
         'joins concurrent foreground materialization in the manager',
@@ -1830,7 +1835,8 @@ def check_compile_regressions() -> None:
         '_chapters[_identity(entry)]',
         'DownloadJob(',
         'DownloadState.promoted',
-        'offline_chapters',
+        ('offline_chapters' if 'offline_chapters' in downloads
+         else 'defaultChapterDownloadDirectory'),
         '_terminalPhases',
     ):
         if required not in downloads:
@@ -2165,10 +2171,27 @@ def check_compile_regressions() -> None:
     ).read_text(encoding='utf-8')
     for required in (
         'library.listAllChapterReadStates()',
-        'chapterDownloads.inspectMany(requested)',
+        'ChapterDownloadManagementProjectionReader',
+        'projectionReader.inspectDownloadManagement(requested)',
+        'snapshot.chapterDownloads',
+        'snapshot.orphanedDownloadEntries',
+        'chapterDownloads: <HomeChapterDownloadSummary>[',
     ):
         if required not in home_library_session:
             fail(f'Home startup bulk projection is incomplete: {required}')
+
+    home_projection_snapshot = (
+        ROOT / 'packages/storage/lib/src/home_projection_snapshot.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'const _homeProjectionSnapshotVersion = 3;',
+        'final class HomeChapterDownloadSummary',
+        "'orphanedDownloadEntries':",
+        "'chapterDownloads':",
+        'includesDownloadProjection',
+    ):
+        if required not in home_projection_snapshot:
+            fail(f'Home download snapshot accelerator is incomplete: {required}')
 
     external_plugin_catalog = (
         ROOT / 'packages/catalog/lib/src/external_plugin_catalog.dart'
@@ -2392,7 +2415,9 @@ def check_compile_regressions() -> None:
         'ChapterDownloadSnapshot',
         'color: Theme.of(context).colorScheme.surface',
         "label: '下载整本'",
-        'loading: downloadingComic',
+        # whole-comic control merged: starting = ring around pause core.
+        'Icons.pause, size: 14',
+        "'整本下载中'",
         '_readingProgressLabel',
     ):
         if required not in details:

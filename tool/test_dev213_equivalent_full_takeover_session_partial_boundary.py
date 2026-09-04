@@ -29,7 +29,7 @@ build = int(build_match.group(1))
 cache = read('packages/downloads/lib/src/artifact_cache_manager.dart')
 for token in (
     'Iterable<DownloadId> directEquivalents(DownloadId id)',
-    'await backend.storePromotedArtifact(id: id, bytes: bytes);',
+    'await backend.storePromotedArtifact(id: id,',
 ):
     require(cache, token, 'verified artifact equivalence')
 if build >= 228:
@@ -191,7 +191,7 @@ else:
 reuse = read('packages/downloads/lib/src/artifact_cache_reuse.dart')
 if build >= 229:
     handoff = read('packages/downloads/lib/src/partial_download_handoff.dart')
-    require(handoff, 'final exact = await store.openPartialDownload(id);', 'exact cold partial priority')
+    require(handoff, 'store.openPartialDownload(id)', 'exact cold partial priority')
     require(handoff, 'for (final equivalent in candidates(id)) {', 'verified cold partial fallback')
     require(handoff, '? const Validators()', 'cross-version validator clearing')
     forbid(reuse, 'applyDurablePartials', 'retired durable partial copy')

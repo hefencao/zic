@@ -380,6 +380,27 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       if (currentMapping != null &&
           _versionPageMappingIsFresh(currentMapping, revalidationNow)) {
         verifiedMappings++;
+        final artifactCache = _readerArtifactCache;
+        if (artifactCache != null) {
+          final predecessorEntry = _exactChapterEntry(
+            source.sourceId,
+            predecessorChapter.chapterId,
+          ) ?? await _library.get(source.sourceId, predecessorChapter.chapterId);
+          final successorEntry = _exactChapterEntry(
+            source.sourceId,
+            matchedSuccessorChapter.chapterId,
+          ) ?? await _library.get(source.sourceId, matchedSuccessorChapter.chapterId);
+          if (predecessorEntry != null && successorEntry != null) {
+            final pHydrated = await _librarySession.hydrateEntry(predecessorEntry);
+            final sHydrated = await _librarySession.hydrateEntry(successorEntry);
+            final plan = VerifiedArtifactReusePlan.fromVerifiedOffset(
+              sourceChapter: pHydrated.chapter.toManifest(),
+              targetChapter: sHydrated.chapter.toManifest(),
+              targetOffsetFromSource: currentMapping.successorOffset,
+            );
+            registeredEquivalentPages += plan.registerEquivalences(artifactCache);
+          }
+        }
         continue;
       }
       final predecessorEntry = await _loadVersionChapterEntry(
@@ -425,6 +446,8 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           mapping,
         ),
       );
+      _restoredComicKeys.remove('${relation.sourceId}\u0000${relation.successorComicId}');
+      _restoredComicKeys.remove('${relation.sourceId}\u0000${relation.predecessorComicId}');
       await _librarySession.upsertVersionRelation(updatedRelation);
     }
     widget.debugTrace.record(
@@ -522,6 +545,8 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   Future<int> _restoreSourceVersionArtifactEquivalences(
     ImportedLibraryEntry current,
   ) async {
+    final comicKey = '${current.chapter.sourceId}\u0000${current.chapter.comicId}';
+    if (_restoredComicKeys.contains(comicKey)) return 0;
     final artifactCache = _readerArtifactCache;
     if (artifactCache == null) return 0;
     final relations = _sourceVersionRelationsForComic(
@@ -547,24 +572,56 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         final sourceEntryHint = _exactChapterEntry(
           current.chapter.sourceId,
           sourceChapterId,
-        );
-        if (sourceEntryHint == null) continue;
-        final sourceEntry = await _librarySession.hydrateEntry(sourceEntryHint);
+        ) ?? await _library.get(current.chapter.sourceId, sourceChapterId);
+        ChapterManifest sourceManifest;
+        if (sourceEntryHint != null) {
+          final sourceEntry = await _librarySession.hydrateEntry(sourceEntryHint);
+          sourceManifest = sourceEntry.chapter.toManifest();
+        } else {
+          final otherComicId = currentIsSuccessor
+              ? relation.predecessorComicId
+              : relation.successorComicId;
+          final otherPageCount = currentIsSuccessor
+              ? mapping.predecessorPageCount
+              : mapping.successorPageCount;
+          sourceManifest = ChapterManifest(
+            sourceId: current.chapter.sourceId,
+            comicId: otherComicId,
+            chapter: Chapter(
+              chapterId: sourceChapterId,
+              comicId: otherComicId,
+              title: '',
+              sequence: 0,
+              pageCount: otherPageCount,
+              sourceRevision: '0',
+            ),
+            readingDirection: current.chapter.readingDirection,
+            pages: <PageAsset>[
+              for (var i = 0; i < otherPageCount; i++)
+                PageAsset(
+                  pageId: 'page-$i',
+                  chapterId: sourceChapterId,
+                  index: i,
+                  uri: Uri.parse('venera-resource:synthetic-$i'),
+                ),
+            ],
+          );
+        }
         if (currentIsSuccessor &&
             (mapping.successorPageCount != current.chapter.pages.length ||
                 mapping.predecessorPageCount !=
-                    sourceEntry.chapter.pages.length)) {
+                    sourceManifest.pages.length)) {
           continue;
         }
         if (currentIsPredecessor &&
             (mapping.predecessorPageCount != current.chapter.pages.length ||
                 mapping.successorPageCount !=
-                    sourceEntry.chapter.pages.length)) {
+                    sourceManifest.pages.length)) {
           continue;
         }
         mappings++;
         final plan = VerifiedArtifactReusePlan.fromVerifiedOffset(
-          sourceChapter: sourceEntry.chapter.toManifest(),
+          sourceChapter: sourceManifest,
           targetChapter: current.chapter.toManifest(),
           targetOffsetFromSource: currentIsSuccessor
               ? mapping.successorOffset
@@ -587,6 +644,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         },
       ),
     );
+    _restoredComicKeys.add(comicKey);
     return reused;
   }
 
@@ -1176,7 +1234,9 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     SourceComicSummary summary, {
     bool resolveCanonicalAlias = true,
   }) async {
-    final existing = resolveCanonicalAlias
+    final shouldResolveCanonicalAlias = resolveCanonicalAlias &&
+        !_sourceSupportsVersionEntry(source);
+    final existing = shouldResolveCanonicalAlias
         ? _libraryComicForSourceIdentity(source.sourceId, summary.comicId)
         : _exactLibraryComicForSourceIdentity(
             source.sourceId,

@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
+import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
@@ -42,10 +44,20 @@ final class ComicSourceResourceGateway {
     _requireOpen();
     return ChapterResourceAccess(
       loadBytes: loadPageBytes,
+      loadBytesControlled: loadPageBytesControlled,
       openResponse: (sourceId, uri, {range, validators}) =>
           pageResponseLoaderFor(sourceId, uri)(
         range: range,
         validators: validators,
+      ),
+      openControlledResponse: (sourceId, uri, {
+        range,
+        validators,
+        control,
+      }) => pageControlledResponseLoaderFor(sourceId, uri)(
+        range: range,
+        validators: validators,
+        control: control,
       ),
     );
   }
@@ -74,6 +86,19 @@ final class ComicSourceResourceGateway {
   Future<Uint8List> loadPageBytes(String sourceId, Uri uri) {
     _requireOpen();
     return _collectResponse(pageResponseLoaderFor(sourceId, uri));
+  }
+
+  Future<Uint8List> loadPageBytesControlled(
+    String sourceId,
+    Uri uri, {
+    TaskControl? control,
+  }) {
+    _requireOpen();
+    final loader = pageControlledResponseLoaderFor(sourceId, uri);
+    return _collectResponse(
+      () => loader(control: control),
+      control: control,
+    );
   }
 
   Future<Uint8List> loadArtworkBytes({
@@ -174,7 +199,7 @@ final class ComicSourceResourceGateway {
   Future<Uint8List> _collectArtworkResponse(
     ExternalPluginResourceResponseLoader loader,
   ) async {
-    final bytes = await _collectResponse(loader);
+    final bytes = await _collectResponse(() => loader());
     if (!_looksLikeEncodedImage(bytes)) {
       throw const FormatException('source artwork response is not an image');
     }
@@ -182,18 +207,49 @@ final class ComicSourceResourceGateway {
   }
 
   Future<Uint8List> _collectResponse(
-    ExternalPluginResourceResponseLoader loader,
-  ) async {
+    Future<ByteResponse> Function() loader, {
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
     final response = await loader();
     final builder = BytesBuilder(copy: false);
+    final iterator = StreamIterator<List<int>>(response.bytes);
+    var done = false;
     try {
-      await for (final chunk in response.bytes) {
-        builder.add(chunk);
+      while (true) {
+        control?.throwIfCancelled();
+        final next = control == null
+            ? await iterator.moveNext()
+            : await Future.any<Object>(<Future<Object>>[
+                iterator.moveNext().then<Object>(_GatewayNextChunk.new),
+                control.whenCancelled.then<Object>(
+                  (_) => const _GatewayResponseCancelled(),
+                ),
+              ]).then<bool>((value) {
+                if (value is _GatewayResponseCancelled) {
+                  throw const Failure(
+                    code: ErrorCode.cancelled,
+                    message: 'source response collection was cancelled',
+                  );
+                }
+                return (value as _GatewayNextChunk).available;
+              });
+        if (!next) {
+          done = true;
+          break;
+        }
+        builder.add(iterator.current);
       }
+      control?.throwIfCancelled();
       return builder.takeBytes();
     } on Object {
-      await response.discard();
+      await iterator.cancel();
+      await response.discard(control: control);
       rethrow;
+    } finally {
+      if (!done) {
+        await iterator.cancel();
+      }
     }
   }
 
@@ -280,6 +336,16 @@ String _artworkBaseUri(Uri uri) {
   final suffix = value.substring(marker + 1);
   if (!suffix.startsWith('x=') && !suffix.startsWith('y=')) return value;
   return value.substring(0, marker);
+}
+
+final class _GatewayNextChunk {
+  const _GatewayNextChunk(this.available);
+
+  final bool available;
+}
+
+final class _GatewayResponseCancelled {
+  const _GatewayResponseCancelled();
 }
 
 bool _looksLikeEncodedImage(Uint8List bytes) {

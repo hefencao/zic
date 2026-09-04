@@ -77,6 +77,206 @@ Key comicDetailsPreviewItemKey(int index) =>
 String comicDetailsChapterIdentity(String sourceId, String chapterId) =>
     '$sourceId\u0000$chapterId';
 
+/// The download operations the details screens need, resolved once by the
+/// composition owner. Screens render from this object instead of threading
+/// per-operation callbacks, so adding a capability happens in one place.
+class ComicDetailsDownloadActions {
+  const ComicDetailsDownloadActions({
+    required this.downloadChapter,
+    required this.stopChapter,
+    required this.probeExisting,
+    required this.wholeComicJob,
+    required this.cachedWholeComicJob,
+    required this.toggleWholeComicPause,
+    required this.inspectComicConflicts,
+    required this.claimComicDirectory,
+    required this.getDownloadPlacement,
+    required this.inspectChapter,
+    this.ensureDurableServices,
+  });
+
+  /// Starts (or resumes) a chapter download.
+  final Future<void> Function(ImportedLibraryEntry entry) downloadChapter;
+
+  /// Stops every run of the chapter (all revisions).
+  final Future<void> Function(ImportedLibraryEntry entry) stopChapter;
+
+  /// Pre-claims the target structured directory for a comic to honor explicit
+  /// conflict decisions (e.g. save-as-new or overwrite choice).
+  final Future<void> Function({
+    required String sourceId,
+    required String comicId,
+    required String directoryName,
+    String? comicTitle,
+    DownloadPlacementMode mode,
+    String? observedOwnerKey,
+  }) claimComicDirectory;
+
+  /// Retrieves the persisted placement record for the specified comic.
+  final Future<DownloadPlacement?> Function({
+    required String sourceId,
+    required String comicId,
+  }) getDownloadPlacement;
+
+  /// Unified existing-download lookup. [chapterId] narrows the report to one
+  /// chapter; omit it for a comic-scoped probe.
+  final Future<DownloadExistenceReport> Function({
+    required String sourceId,
+    required String comicId,
+    String? chapterId,
+  }) probeExisting;
+
+  /// The whole-comic job covering the comic, or null (async, queue-ready).
+  final Future<WholeComicQueueJobSnapshot?> Function(
+    String sourceId,
+    String comicId,
+  ) wholeComicJob;
+
+  /// Synchronous read over the latest cached queue snapshot — for build
+  /// methods that cannot await (pause-button visibility).
+  final WholeComicQueueJobSnapshot? Function(
+    String sourceId,
+    String comicId,
+  ) cachedWholeComicJob;
+
+  /// Pauses a running whole-comic job, resumes a paused one.
+  final Future<void> Function(String sourceId, String comicId)
+      toggleWholeComicPause;
+
+  /// Comic-level directory conflict inspection for the comparison stage.
+  final Future<ComicConflictReport> Function({
+    required String sourceId,
+    String? sourceDisplayName,
+    required String comicId,
+    required String comicTitle,
+    Set<String>? knownPredecessorComicIds,
+    Set<String>? knownSuccessorComicIds,
+  }) inspectComicConflicts;
+
+  /// Authoritative per-chapter snapshot (live session + index projection).
+  final Future<ChapterDownloadSnapshot> Function(ImportedLibraryEntry entry)
+      inspectChapter;
+
+  /// Crosses the bootstrap-to-durable boundary before conflict probes or
+  /// queue mutations, so the UI never decides against a stale memory store.
+  final Future<void> Function()? ensureDurableServices;
+
+  /// A no-op instance for UI-only constructions (widget tests, previews)
+  /// that never drive downloads.
+  static const ComicDetailsDownloadActions noop = ComicDetailsDownloadActions(
+    downloadChapter: _noopChapter,
+    stopChapter: _noopChapter,
+    probeExisting: _noopProbe,
+    wholeComicJob: _noopWholeComicJob,
+    cachedWholeComicJob: _noopCachedWholeComicJob,
+    toggleWholeComicPause: _noopToggle,
+    inspectComicConflicts: _noopInspectComicConflicts,
+    claimComicDirectory: _noopClaimComicDirectory,
+    getDownloadPlacement: _noopGetDownloadPlacement,
+    inspectChapter: _noopInspectChapter,
+    ensureDurableServices: null,
+  );
+
+  static Future<void> _noopClaimComicDirectory({
+    required String sourceId,
+    required String comicId,
+    required String directoryName,
+    String? comicTitle,
+    DownloadPlacementMode mode = DownloadPlacementMode.createNew,
+    String? observedOwnerKey,
+  }) async {}
+
+  static Future<DownloadPlacement?> _noopGetDownloadPlacement({
+    required String sourceId,
+    required String comicId,
+  }) async =>
+      null;
+
+  static Future<void> _noopChapter(ImportedLibraryEntry entry) async {}
+
+  static Future<DownloadExistenceReport> _noopProbe({
+    required String sourceId,
+    required String comicId,
+    String? chapterId,
+  }) async =>
+      const DownloadExistenceReport(
+        liveRunIdentities: <String>[],
+        liveRunStarted: false,
+        indexedReadyPages: 0,
+        urlMatchedPages: 0,
+      );
+
+  static Future<WholeComicQueueJobSnapshot?> _noopWholeComicJob(
+    String sourceId,
+    String comicId,
+  ) async =>
+      null;
+
+  static WholeComicQueueJobSnapshot? _noopCachedWholeComicJob(
+    String sourceId,
+    String comicId,
+  ) =>
+      null;
+
+  static Future<void> _noopToggle(String sourceId, String comicId) async {}
+
+  static Future<ComicConflictReport> _noopInspectComicConflicts({
+    required String sourceId,
+    String? sourceDisplayName,
+    required String comicId,
+    required String comicTitle,
+    Set<String>? knownPredecessorComicIds,
+    Set<String>? knownSuccessorComicIds,
+  }) async =>
+      const ComicConflictReport(
+        candidates: <ComicFolderCandidate>[],
+        hasDirectExactMatch: false,
+        hasTitleConflicts: false,
+        recommendedDirectoryName: '',
+      );
+
+  static Future<ChapterDownloadSnapshot> _noopInspectChapter(
+    ImportedLibraryEntry entry,
+  ) async =>
+      ChapterDownloadSnapshot.idle(entry);
+}
+
+typedef ComicDetailsChapterStopper = Future<void> Function(
+  ImportedLibraryEntry entry,
+);
+
+typedef ComicDetailsWholeComicPauseToggler = Future<void> Function();
+
+/// Unified existing-download probe result for the download gate: the
+/// service-level existence report plus the parent whole-comic job when one
+/// covers the chapter.
+class ComicDetailsExistingDownloadProbe {
+  const ComicDetailsExistingDownloadProbe({
+    required this.report,
+    this.wholeComicJob,
+  });
+
+  final DownloadExistenceReport report;
+  final WholeComicQueueJobSnapshot? wholeComicJob;
+
+  bool get activeWholeComicJob {
+    final phase = wholeComicJob?.phase;
+    return phase == WholeComicQueuePhase.running ||
+        phase == WholeComicQueuePhase.queued ||
+        phase == WholeComicQueuePhase.paused ||
+        phase == WholeComicQueuePhase.waitingForPolicy;
+  }
+}
+
+typedef ComicDetailsExistingDownloadProbeFetcher
+    = Future<ComicDetailsExistingDownloadProbe?> Function(
+  ImportedLibraryEntry entry,
+);
+
+/// Returns true when a whole-comic download job already exists for the
+/// comic (any active phase).
+typedef ComicDetailsWholeComicJobChecker = Future<bool> Function();
+
 /// Stable chapter-row identity shared with the source browser.
 ///
 /// Only the source-owned chapter identity participates here. Metadata such as
@@ -88,8 +288,14 @@ Key comicDetailsChapterKey(String sourceId, String chapterId) =>
 Key comicDetailsReadKey(String sourceId, String chapterId) =>
     ValueKey<String>('chapter-read:$sourceId\u0000$chapterId');
 
+Key comicDetailsStopDownloadKey(String sourceId, String chapterId) =>
+    ValueKey<String>('comic-details-stop-download:$sourceId\u0000$chapterId');
+
 Key comicDetailsDownloadKey(String sourceId, String chapterId) =>
     ValueKey<String>('chapter-download:$sourceId\u0000$chapterId');
+
+Key comicDetailsWholeComicPauseKey() =>
+    const ValueKey<String>('comic-details-whole-comic-pause');
 
 Key comicDetailsDeleteChapterKey(String sourceId, String chapterId) =>
     ValueKey<String>('chapter-delete:$sourceId\u0000$chapterId');
@@ -195,6 +401,8 @@ typedef ComicDetailsConflictInspector = Future<ComicConflictReport> Function({
   required String comicId,
   required String comicTitle,
   String? sourceDisplayName,
+  Set<String>? knownPredecessorComicIds,
+  Set<String>? knownSuccessorComicIds,
 });
 
 typedef ComicDetailsComicPersister = Future<void> Function(
@@ -440,6 +648,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     required this.onDownloadComic,
     this.inspectChapterDownloads,
     this.inspectComicConflicts,
+    this.downloadActions = ComicDetailsDownloadActions.noop,
     this.source,
     this.ensureSourceChapter,
     this.onOpenSourceWebView,
@@ -470,6 +679,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final Stream<ChapterDownloadSnapshot> downloadChanges;
   final ComicDetailsComicDownloader onDownloadComic;
   final ComicDetailsConflictInspector? inspectComicConflicts;
+  final ComicDetailsDownloadActions downloadActions;
   final BrowsableComicSource? source;
   final ComicDetailsChapterEnsurer? ensureSourceChapter;
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
@@ -518,6 +728,136 @@ Map<String, ChapterReadState> _projectChapterReadStateByIdentity(
       updatedAt: DateTime.now().toUtc(),
     ),
   };
+}
+
+Future<bool> _confirmComicDownloadConflict({
+  required BuildContext context,
+  required bool mounted,
+  required ComicDetailsDownloadActions downloadActions,
+  required ComicDetailsConflictInspector? inspector,
+  required String sourceId,
+  required String comicId,
+  required String comicTitle,
+  String? sourceDisplayName,
+  String? chapterTitle,
+  bool forcePrompt = false,
+  required bool conflictConfirmed,
+  required void Function() markConflictConfirmed,
+  required TraceSink traceSink,
+  required Stopwatch traceClock,
+}) async {
+  if (!forcePrompt && conflictConfirmed) return true;
+  if (!forcePrompt) {
+    final existingPlacement = await downloadActions.getDownloadPlacement(
+      sourceId: sourceId,
+      comicId: comicId,
+    );
+    if (existingPlacement != null) {
+      markConflictConfirmed();
+      return true;
+    }
+  }
+  if (inspector == null) return true;
+  final report = await inspector(
+    sourceId: sourceId,
+    comicId: comicId,
+    comicTitle: comicTitle,
+    sourceDisplayName: sourceDisplayName,
+  );
+  if (!mounted) return false;
+  final conflictingCandidates = report.candidates
+      .where((c) => c.hasExistingContent && !c.isExactMatch)
+      .toList();
+  traceSink.record(
+    TraceEvent(
+      monotonicMicros: traceClock.elapsedMicroseconds,
+      sessionId: 'comic-details:$sourceId',
+      kind: TraceEventKind.downloadState,
+      payload: <String, Object?>{
+        'stage': 'conflict-inspection',
+        'comicId': comicId,
+        'comicTitle': comicTitle,
+        'candidates': report.candidates.map((c) => c.folderName).toList(),
+        'conflicting': conflictingCandidates.map((c) => c.folderName).toList(),
+        'recommendedDirectory': report.recommendedDirectoryName,
+      },
+    ),
+  );
+  if (conflictingCandidates.isEmpty) {
+    if (!forcePrompt) return true;
+    final base = report.recommendedDirectoryName.isEmpty
+        ? buildComicDirectoryName(comicTitle: comicTitle)
+        : report.recommendedDirectoryName;
+    final fallbackDirectory =
+        '$base (copy ${DateTime.now().microsecondsSinceEpoch})';
+    await downloadActions.claimComicDirectory(
+      sourceId: sourceId,
+      comicId: comicId,
+      comicTitle: comicTitle,
+      directoryName: fallbackDirectory,
+      mode: DownloadPlacementMode.createNew,
+    );
+    markConflictConfirmed();
+    return true;
+  }
+
+  final filteredReport = ComicConflictReport(
+    candidates: List<ComicFolderCandidate>.unmodifiable(conflictingCandidates),
+    hasDirectExactMatch: report.hasDirectExactMatch,
+    hasTitleConflicts: conflictingCandidates.isNotEmpty,
+    recommendedDirectoryName: report.recommendedDirectoryName,
+  );
+  final result = await promptComicConflictResolutionResult(
+    context: context,
+    report: filteredReport,
+    comicTitle: comicTitle,
+    sourceId: sourceId,
+    sourceDisplayName: sourceDisplayName,
+    chapterTitle: chapterTitle,
+  );
+  traceSink.record(
+    TraceEvent(
+      monotonicMicros: traceClock.elapsedMicroseconds,
+      sessionId: 'comic-details:$sourceId',
+      kind: TraceEventKind.downloadState,
+      payload: <String, Object?>{
+        'stage': 'conflict-decision',
+        'comicId': comicId,
+        'decision': result.decision.name,
+        'targetDirectory': result.targetDirectoryName,
+      },
+    ),
+  );
+  if (result.decision == ComicConflictDecision.overwrite ||
+      result.decision == ComicConflictDecision.saveAsNew) {
+    if (result.targetDirectoryName != null &&
+        result.targetDirectoryName!.isNotEmpty) {
+      final mode = result.decision == ComicConflictDecision.overwrite
+          ? DownloadPlacementMode.overwrite
+          : DownloadPlacementMode.createNew;
+      final chosenCandidate = result.decision == ComicConflictDecision.overwrite
+          ? report.candidates
+                  .where((c) => c.folderName == result.targetDirectoryName)
+                  .firstOrNull ??
+              report.matchingCandidate
+          : null;
+      final manifest = chosenCandidate?.manifest;
+      final observedOwner = manifest == null
+          ? null
+          : '${manifest.sourceId}\u0000${manifest.comicId}';
+      await downloadActions.claimComicDirectory(
+        sourceId: sourceId,
+        comicId: comicId,
+        comicTitle: comicTitle,
+        directoryName: result.targetDirectoryName!,
+        mode: mode,
+        observedOwnerKey: observedOwner,
+      );
+    }
+    markConflictConfirmed();
+    return true;
+  }
+  return false;
 }
 
 final class _LocalComicDetailsScreenState
@@ -595,9 +935,10 @@ final class _LocalComicDetailsScreenState
   }
 
   void _acceptDownloadSnapshot(ChapterDownloadSnapshot snapshot) {
-    if (!mounted ||
-        snapshot.sourceId != widget.comic.sourceId ||
-        snapshot.comicId != widget.comic.comicId) {
+    // Match source+chapter only: snapshot.comicId is the runtime locator and
+    // differs from the library comicId for mihon, which dropped every mihon
+    // snapshot here.
+    if (!mounted || snapshot.sourceId != widget.comic.sourceId) {
       return;
     }
     setState(() {
@@ -1160,7 +1501,22 @@ final class _LocalComicDetailsScreenState
   }
 
   Future<void> _openPreviewPage(int pageIndex) async {
-    final chapters = _library.sourceChapters.toList(growable: false)
+    final manifest = _library.sourceManifest;
+    final Iterable<Chapter> sourceChapters = manifest?.chapters ??
+        (_library.sourceChapters.isNotEmpty
+            ? _library.sourceChapters
+            : _library.chapters.map<Chapter>(
+                (e) => Chapter(
+                  comicId: e.chapter.comicId,
+                  chapterId: e.chapter.chapterId,
+                  title: e.chapter.displayName,
+                  sequence: e.chapter.sequence,
+                  pageCount: e.chapter.pages.length,
+                  sourceRevision: e.chapter.sourceRevision,
+                  publishedAt: e.chapter.importedAt,
+                ),
+              ));
+    final List<Chapter> chapters = sourceChapters.toList(growable: false)
       ..sort(_compareChapters);
     if (chapters.isEmpty) return;
     var remaining = pageIndex < 0 ? 0 : pageIndex;
@@ -1170,7 +1526,7 @@ final class _LocalComicDetailsScreenState
         await _openChapter(
           sourceId: widget.comic.sourceId,
           chapterId: chapter.chapterId,
-          title: chapter.title,
+          title: chapter.title.isEmpty ? widget.comic.title : chapter.title,
           sourceChapter: chapter,
           existing: _entryFor(widget.comic.sourceId, chapter),
           initialPageIndex: remaining,
@@ -1187,7 +1543,7 @@ final class _LocalComicDetailsScreenState
     await _openChapter(
       sourceId: widget.comic.sourceId,
       chapterId: chapter.chapterId,
-      title: chapter.title,
+      title: chapter.title.isEmpty ? widget.comic.title : chapter.title,
       sourceChapter: chapter,
       existing: _entryFor(widget.comic.sourceId, chapter),
       initialPageIndex: count > 0 ? count - 1 : remaining,
@@ -1199,37 +1555,24 @@ final class _LocalComicDetailsScreenState
     required String comicId,
     required String comicTitle,
     String? chapterTitle,
-  }) async {
-    if (_conflictConfirmed) return true;
-    final inspector = widget.inspectComicConflicts;
-    if (inspector == null) return true;
-    try {
-      final report = await inspector(
+    bool forcePrompt = false,
+  }) =>
+      _confirmComicDownloadConflict(
+        context: context,
+        mounted: mounted,
+        downloadActions: widget.downloadActions,
+        inspector: widget.inspectComicConflicts,
         sourceId: sourceId,
         comicId: comicId,
         comicTitle: comicTitle,
         sourceDisplayName: widget.source?.descriptor.name,
-      );
-      if (report.candidates.isEmpty || !mounted) return true;
-
-      final decision = await promptComicConflictResolution(
-        context: context,
-        report: report,
-        comicTitle: comicTitle,
-        sourceId: sourceId,
-        sourceDisplayName: widget.source?.descriptor.name,
         chapterTitle: chapterTitle,
+        forcePrompt: forcePrompt,
+        conflictConfirmed: _conflictConfirmed,
+        markConflictConfirmed: () => _conflictConfirmed = true,
+        traceSink: widget.traceSink,
+        traceClock: _traceClock,
       );
-      if (decision == ComicConflictDecision.overwrite ||
-          decision == ComicConflictDecision.saveAsNew) {
-        _conflictConfirmed = true;
-        return true;
-      }
-      return false;
-    } catch (_) {
-      return true;
-    }
-  }
 
   Future<void> _download(_ChapterViewModel chapter) async {
     final identity = comicDetailsChapterIdentity(
@@ -1242,19 +1585,123 @@ final class _LocalComicDetailsScreenState
         current?.isComplete == true) {
       return;
     }
-    final ok = await _confirmDownloadConflictIfNeeded(
-      sourceId: chapter.sourceId,
-      comicId: chapter.entry?.chapter.comicId ?? widget.comic.comicId,
-      comicTitle: chapter.entry?.chapter.comicTitle ?? widget.comic.title,
-      chapterTitle: chapter.title,
-    );
-    if (!ok) return;
+    // The lock is taken before the conflict dialog awaits: two taps used to
+    // pass the guard together and open two dialogs.
     setState(() => _workingDownloads.add(identity));
     try {
+      await widget.downloadActions.ensureDurableServices?.call();
       final entry = chapter.entry ?? await _ensure(chapter.sourceChapter!);
+      final probe = await widget.downloadActions.probeExisting(
+        sourceId: entry.chapter.sourceId,
+        comicId: entry.chapter.comicId,
+        chapterId: entry.chapter.chapterId,
+      );
+      void recordGate(String decision) {
+        try {
+          widget.traceSink.record(
+            TraceEvent(
+              monotonicMicros: _traceClock.elapsedMicroseconds,
+              sessionId: 'comic-details-download-gate',
+              kind: TraceEventKind.downloadState,
+              identityHash: identity,
+              payload: <String, Object?>{
+                'decision': decision,
+                'liveRun': probe.liveRun,
+                'indexedReadyPages': probe.indexedReadyPages,
+                'wholeComicJob': widget.downloadActions
+                    .cachedWholeComicJob(
+                      entry.chapter.sourceId,
+                      entry.chapter.comicId,
+                    )
+                    ?.phase
+                    .name,
+              },
+            ),
+          );
+        } on Object {}
+      }
+
+      final wholeComicJob = widget.downloadActions
+          .cachedWholeComicJob(
+            entry.chapter.sourceId,
+            entry.chapter.comicId,
+          );
+      final activeWholeComicJob = wholeComicJob != null &&
+          (wholeComicJob.phase == WholeComicQueuePhase.running ||
+              wholeComicJob.phase == WholeComicQueuePhase.queued ||
+              wholeComicJob.phase == WholeComicQueuePhase.paused ||
+              wholeComicJob.phase ==
+                  WholeComicQueuePhase.waitingForPolicy);
+      if (probe.liveRun || activeWholeComicJob) {
+        recordGate('blocked-active-task');
+        if (mounted) {
+          _showDetailsSnackBar(
+            context,
+            const SnackBar(content: Text('已存在相同的下载任务')),
+          );
+        }
+        return;
+      }
+      final placement = await widget.downloadActions.getDownloadPlacement(
+        sourceId: entry.chapter.sourceId,
+        comicId: entry.chapter.comicId,
+      );
+      final skipConflictDialog = placement != null;
+      recordGate(skipConflictDialog ? 'resume-incremental' : 'fresh-download');
+      widget.traceSink.record(
+        TraceEvent(
+          monotonicMicros: _traceClock.elapsedMicroseconds,
+          sessionId: 'comic-details:${entry.chapter.sourceId}',
+          kind: TraceEventKind.downloadState,
+          identityHash: identity,
+          payload: <String, Object?>{
+            'stage': 'details-placement-check',
+            'comicId': entry.chapter.comicId,
+            'hasPlacement': placement != null,
+            'placementDirectory': placement?.relativeDirectory,
+            'placementMode': placement?.mode.name,
+            'skipConflictDialog': skipConflictDialog,
+          },
+        ),
+      );
+      if (!skipConflictDialog) {
+        final ok = await _confirmDownloadConflictIfNeeded(
+          sourceId: chapter.sourceId,
+          comicId: chapter.entry?.chapter.comicId ?? widget.comic.comicId,
+          comicTitle: chapter.entry?.chapter.comicTitle ?? widget.comic.title,
+          chapterTitle: chapter.title,
+        );
+        if (!ok) return;
+      }
       unawaited(
         widget.onDownloadChapter(entry).catchError(
-          (Object error, StackTrace stackTrace) {
+          (Object error, StackTrace stackTrace) async {
+            final text = error.toString().toLowerCase();
+            final isConflict = (error is Failure && error.code == ErrorCode.policy) ||
+                text.contains('conflict') ||
+                text.contains('belongs to another comic') ||
+                text.contains('owned by');
+            if (mounted && isConflict) {
+              final ok = await _confirmDownloadConflictIfNeeded(
+                sourceId: chapter.sourceId,
+                comicId: chapter.entry?.chapter.comicId ?? widget.comic.comicId,
+                comicTitle: chapter.entry?.chapter.comicTitle ?? widget.comic.title,
+                chapterTitle: chapter.title,
+                forcePrompt: true,
+              );
+              if (ok && mounted) {
+                unawaited(
+                  widget.onDownloadChapter(entry).catchError(
+                    (Object retryError, StackTrace retryTrace) {
+                      if (mounted) {
+                        _showLocalFailure(retryError, retryTrace);
+                      }
+                    },
+                  ),
+                );
+                return;
+              }
+            }
             if (mounted) {
               _showLocalFailure(error, stackTrace);
             }
@@ -1280,19 +1727,99 @@ final class _LocalComicDetailsScreenState
     }
   }
 
+  Future<void> _stopChapter(_ChapterViewModel chapter) async {
+    try {
+      final entry = chapter.entry ??
+          (chapter.sourceChapter == null
+              ? null
+              : await _ensure(chapter.sourceChapter!));
+      if (entry == null) return;
+      await widget.downloadActions.stopChapter(entry);
+    } on Object catch (error, stackTrace) {
+      if (mounted) {
+        _showLocalFailure(error, stackTrace);
+      }
+    }
+  }
+
   Future<void> _downloadComic() async {
     if (_downloadingComic) {
       return;
     }
-    final ok = await _confirmDownloadConflictIfNeeded(
-      sourceId: widget.comic.sourceId,
-      comicId: widget.comic.comicId,
-      comicTitle: widget.comic.title,
-      chapterTitle: '整本漫画',
-    );
-    if (!ok) return;
+    // Same lock-before-dialog contract as _download.
     setState(() => _downloadingComic = true);
     try {
+      await widget.downloadActions.ensureDurableServices?.call();
+      final comicJob = await widget.downloadActions.wholeComicJob(
+        widget.comic.sourceId,
+        widget.comic.comicId,
+      );
+      final requiresPlacementResolution =
+          comicJob?.requiresUserAction == true;
+      final jobExists = comicJob != null && !requiresPlacementResolution;
+      var skipConflictDialog = false;
+      if (jobExists) {
+        try {
+          widget.traceSink.record(
+            TraceEvent(
+              monotonicMicros: _traceClock.elapsedMicroseconds,
+              sessionId: 'comic-details-download-gate',
+              kind: TraceEventKind.downloadState,
+              identityHash: widget.comic.comicId,
+              payload: <String, Object?>{
+                'decision': 'blocked-active-whole-comic-job',
+                'scope': 'whole-comic',
+              },
+            ),
+          );
+        } on Object {}
+        if (mounted) {
+          _showDetailsSnackBar(
+            context,
+            const SnackBar(content: Text('该漫画的整本下载任务已存在')),
+          );
+        }
+        return;
+      }
+      final comicProbe = await widget.downloadActions.probeExisting(
+        sourceId: widget.comic.sourceId,
+        comicId: widget.comic.comicId,
+      );
+      final placement = await widget.downloadActions.getDownloadPlacement(
+        sourceId: widget.comic.sourceId,
+        comicId: widget.comic.comicId,
+      );
+      skipConflictDialog =
+          placement != null && !requiresPlacementResolution;
+      try {
+        widget.traceSink.record(
+          TraceEvent(
+            monotonicMicros: _traceClock.elapsedMicroseconds,
+            sessionId: 'comic-details-download-gate',
+            kind: TraceEventKind.downloadState,
+            identityHash: widget.comic.comicId,
+            payload: <String, Object?>{
+              'decision': requiresPlacementResolution
+                  ? 'requires-user-action'
+                  : skipConflictDialog
+                      ? 'resume-incremental'
+                      : 'fresh-download',
+              'scope': 'whole-comic',
+              'indexedReadyPages': comicProbe.indexedReadyPages,
+            },
+          ),
+        );
+      } on Object {}
+      if (!skipConflictDialog) {
+        final ok = await _confirmDownloadConflictIfNeeded(
+          sourceId: widget.comic.sourceId,
+          comicId: widget.comic.comicId,
+          comicTitle: widget.comic.title,
+          chapterTitle: '整本漫画',
+          forcePrompt: requiresPlacementResolution,
+        );
+        if (!ok) return;
+      }
       final entries = <ImportedLibraryEntry>[];
       final seen = <String>{};
       for (final chapter in _library.sourceChapters) {
@@ -1309,13 +1836,44 @@ final class _LocalComicDetailsScreenState
       if (entries.isEmpty) {
         throw StateError('没有可下载的章节');
       }
-      await widget.onDownloadComic(entries);
-      await _loadDownloadStatuses(entries);
-      if (mounted) {
-        _showDetailsSnackBar(
-          context,
-          SnackBar(content: Text('“${widget.comic.title}”已加入整本下载队列')),
-        );
+      try {
+        await widget.onDownloadComic(entries);
+        await _loadDownloadStatuses(entries);
+        if (mounted) {
+          _showDetailsSnackBar(
+            context,
+            SnackBar(content: Text('“${widget.comic.title}”已加入整本下载队列')),
+          );
+        }
+      } on Object catch (error, stackTrace) {
+        final text = error.toString().toLowerCase();
+        final isConflict = (error is Failure && error.code == ErrorCode.policy) ||
+            text.contains('conflict') ||
+            text.contains('belongs to another comic') ||
+            text.contains('owned by');
+        if (mounted && isConflict) {
+          final ok = await _confirmDownloadConflictIfNeeded(
+            sourceId: widget.comic.sourceId,
+            comicId: widget.comic.comicId,
+            comicTitle: widget.comic.title,
+            chapterTitle: '整本漫画',
+            forcePrompt: true,
+          );
+          if (ok && mounted) {
+            await widget.onDownloadComic(entries);
+            await _loadDownloadStatuses(entries);
+            if (mounted) {
+              _showDetailsSnackBar(
+                context,
+                SnackBar(content: Text('“${widget.comic.title}”已加入整本下载队列')),
+              );
+            }
+            return;
+          }
+        }
+        if (mounted) {
+          _showLocalFailure(error, stackTrace);
+        }
       }
     } on Object catch (error, stackTrace) {
       if (mounted) {
@@ -1329,6 +1887,22 @@ final class _LocalComicDetailsScreenState
   }
 
   void _showLocalFailure(Object error, StackTrace stackTrace) {
+    try {
+      widget.traceSink.record(
+        TraceEvent(
+          monotonicMicros: _traceClock.elapsedMicroseconds,
+          sessionId: 'comic-details',
+          kind: TraceEventKind.taskFailed,
+          identityHash: widget.comic.comicId,
+          payload: <String, Object?>{
+            'stage': 'comic-details-failure',
+            'error': error.toString(),
+            'errorType': error.runtimeType.toString(),
+            'stackTrace': stackTrace.toString(),
+          },
+        ),
+      );
+    } on Object {}
     final failure = _DetailFailure.capture(error, stackTrace);
     _showFailureSnackBar(
       context,
@@ -1406,6 +1980,8 @@ final class _LocalComicDetailsScreenState
           opening: _opening.contains(identity),
           downloading: _workingDownloads.contains(identity) ||
               _downloadSnapshots[identity]?.isActive == true,
+          downloadStarted:
+              _downloadSnapshots[identity]?.started == true,
           downloaded: _downloadSnapshots[identity]?.isComplete == true,
         ),
       );
@@ -1434,6 +2010,8 @@ final class _LocalComicDetailsScreenState
           opening: _opening.contains(identity),
           downloading: _workingDownloads.contains(identity) ||
               _downloadSnapshots[identity]?.isActive == true,
+          downloadStarted:
+              _downloadSnapshots[identity]?.started == true,
           downloaded: _downloadSnapshots[identity]?.isComplete == true,
         ),
       );
@@ -1523,6 +2101,18 @@ final class _LocalComicDetailsScreenState
       downloadingComic: _downloadingComic,
       onDownloadComic:
           comic.sourceId == 'local-folder' ? null : _downloadComic,
+      onToggleWholeComicPause: () => widget.downloadActions
+          .toggleWholeComicPause(comic.sourceId, comic.comicId),
+      wholeComicPausable: widget.downloadActions.cachedWholeComicJob(
+                  comic.sourceId,
+                  comic.comicId,
+                )?.phase ==
+            WholeComicQueuePhase.running,
+      wholeComicPaused: widget.downloadActions.cachedWholeComicJob(
+                  comic.sourceId,
+                  comic.comicId,
+                )?.phase ==
+            WholeComicQueuePhase.paused,
       onReverse: () => setState(() => _descending = !_descending),
       loadVersionState: widget.loadVersionState,
       onViewVersion: widget.onViewVersion,
@@ -1537,6 +2127,7 @@ final class _LocalComicDetailsScreenState
         onMarkRead: _markRead,
         onRestoreUnread: _restoreUnread,
         onDelete: widget.onDeleteChapter == null ? null : _deleteChapter,
+        onStop: _stopChapter,
       ),
       previewSection: detailsManifest?.preview != null ||
               previewLoader != null
@@ -1588,6 +2179,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     required this.onDownloadComic,
     this.inspectChapterDownloads,
     this.inspectComicConflicts,
+    this.downloadActions = ComicDetailsDownloadActions.noop,
     this.artworkIdentity,
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
@@ -1622,6 +2214,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final Stream<ChapterDownloadSnapshot> downloadChanges;
   final ComicDetailsComicDownloader onDownloadComic;
   final ComicDetailsConflictInspector? inspectComicConflicts;
+  final ComicDetailsDownloadActions downloadActions;
   final String? artworkIdentity;
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
@@ -1744,6 +2337,21 @@ final class _RemoteComicDetailsScreenState
   void dispose() {
     unawaited(_downloadSubscription?.cancel());
     super.dispose();
+  }
+
+  Future<void> _stopChapter(_ChapterViewModel chapter) async {
+    try {
+      final entry = chapter.entry ??
+          (chapter.sourceChapter == null
+              ? null
+              : await _ensure(chapter.sourceChapter!));
+      if (entry == null) return;
+      await widget.downloadActions.stopChapter(entry);
+    } on Object catch (error, stackTrace) {
+      if (mounted) {
+        _showRemoteFailure(error, stackTrace);
+      }
+    }
   }
 
   void _acceptDownloadSnapshot(ChapterDownloadSnapshot snapshot) {
@@ -2459,9 +3067,22 @@ final class _RemoteComicDetailsScreenState
 
   Future<void> _openPreviewPage(int pageIndex) async {
     final sourceManifest = _manifest ?? _library.sourceManifest;
-    final chapters = (sourceManifest?.chapters ?? const <Chapter>[]).toList(
-      growable: false,
-    )..sort(_compareChapters);
+    final Iterable<Chapter> sourceChapters = sourceManifest?.chapters ??
+        (_library.sourceChapters.isNotEmpty
+            ? _library.sourceChapters
+            : _library.chapters.map<Chapter>(
+                (e) => Chapter(
+                  comicId: e.chapter.comicId,
+                  chapterId: e.chapter.chapterId,
+                  title: e.chapter.displayName,
+                  sequence: e.chapter.sequence,
+                  pageCount: e.chapter.pages.length,
+                  sourceRevision: e.chapter.sourceRevision,
+                  publishedAt: e.chapter.importedAt,
+                ),
+              ));
+    final List<Chapter> chapters = sourceChapters.toList(growable: false)
+      ..sort(_compareChapters);
     if (chapters.isEmpty) return;
     var remaining = pageIndex < 0 ? 0 : pageIndex;
     for (final chapter in chapters) {
@@ -2490,37 +3111,24 @@ final class _RemoteComicDetailsScreenState
     required String comicId,
     required String comicTitle,
     String? chapterTitle,
-  }) async {
-    if (_conflictConfirmed) return true;
-    final inspector = widget.inspectComicConflicts;
-    if (inspector == null) return true;
-    try {
-      final report = await inspector(
+    bool forcePrompt = false,
+  }) =>
+      _confirmComicDownloadConflict(
+        context: context,
+        mounted: mounted,
+        downloadActions: widget.downloadActions,
+        inspector: widget.inspectComicConflicts,
         sourceId: sourceId,
         comicId: comicId,
         comicTitle: comicTitle,
         sourceDisplayName: widget.source.descriptor.name,
-      );
-      if (report.candidates.isEmpty || !mounted) return true;
-
-      final decision = await promptComicConflictResolution(
-        context: context,
-        report: report,
-        comicTitle: comicTitle,
-        sourceId: sourceId,
-        sourceDisplayName: widget.source.descriptor.name,
         chapterTitle: chapterTitle,
+        forcePrompt: forcePrompt,
+        conflictConfirmed: _conflictConfirmed,
+        markConflictConfirmed: () => _conflictConfirmed = true,
+        traceSink: widget.traceSink,
+        traceClock: _traceClock,
       );
-      if (decision == ComicConflictDecision.overwrite ||
-          decision == ComicConflictDecision.saveAsNew) {
-        _conflictConfirmed = true;
-        return true;
-      }
-      return false;
-    } catch (_) {
-      return true;
-    }
-  }
 
   Future<void> _download(Chapter chapter) async {
     final identity = comicDetailsChapterIdentity(
@@ -2532,13 +3140,8 @@ final class _RemoteComicDetailsScreenState
         current?.isComplete == true) {
       return;
     }
-    final ok = await _confirmDownloadConflictIfNeeded(
-      sourceId: _source.sourceId,
-      comicId: chapter.comicId,
-      comicTitle: _comic.title,
-      chapterTitle: chapter.title,
-    );
-    if (!ok) return;
+    // Lock before the dialog: two taps used to pass the guard together and
+    // open two dialogs.
     if (!_workingDownloads.add(identity)) {
       return;
     }
@@ -2546,10 +3149,103 @@ final class _RemoteComicDetailsScreenState
       setState(() {});
     }
     try {
+      await widget.downloadActions.ensureDurableServices?.call();
       final entry = await _ensure(chapter);
+      final probe = await widget.downloadActions.probeExisting(
+        sourceId: entry.chapter.sourceId,
+        comicId: entry.chapter.comicId,
+        chapterId: entry.chapter.chapterId,
+      );
+      void recordGate(String decision) {
+        try {
+          widget.traceSink.record(
+            TraceEvent(
+              monotonicMicros: _traceClock.elapsedMicroseconds,
+              sessionId: 'comic-details-download-gate',
+              kind: TraceEventKind.downloadState,
+              identityHash: identity,
+              payload: <String, Object?>{
+                'decision': decision,
+                'liveRun': probe.liveRun,
+                'indexedReadyPages': probe.indexedReadyPages,
+                'wholeComicJob': widget.downloadActions
+                    .cachedWholeComicJob(
+                      entry.chapter.sourceId,
+                      entry.chapter.comicId,
+                    )
+                    ?.phase
+                    .name,
+              },
+            ),
+          );
+        } on Object {}
+      }
+
+      final wholeComicJob = widget.downloadActions
+          .cachedWholeComicJob(
+            entry.chapter.sourceId,
+            entry.chapter.comicId,
+          );
+      final activeWholeComicJob = wholeComicJob != null &&
+          (wholeComicJob.phase == WholeComicQueuePhase.running ||
+              wholeComicJob.phase == WholeComicQueuePhase.queued ||
+              wholeComicJob.phase == WholeComicQueuePhase.paused ||
+              wholeComicJob.phase ==
+                  WholeComicQueuePhase.waitingForPolicy);
+      if (probe.liveRun || activeWholeComicJob) {
+        recordGate('blocked-active-task');
+        if (mounted) {
+          _showDetailsSnackBar(
+            context,
+            const SnackBar(content: Text('已存在相同的下载任务')),
+          );
+        }
+        return;
+      }
+      final placement = await widget.downloadActions.getDownloadPlacement(
+        sourceId: entry.chapter.sourceId,
+        comicId: entry.chapter.comicId,
+      );
+      final skipConflictDialog = placement != null;
+      recordGate(skipConflictDialog ? 'resume-incremental' : 'fresh-download');
+      if (!skipConflictDialog) {
+        final ok = await _confirmDownloadConflictIfNeeded(
+          sourceId: _source.sourceId,
+          comicId: chapter.comicId,
+          comicTitle: _comic.title,
+          chapterTitle: chapter.title,
+        );
+        if (!ok) return;
+      }
       unawaited(
         widget.onDownloadChapter(entry).catchError(
-          (Object error, StackTrace stackTrace) {
+          (Object error, StackTrace stackTrace) async {
+            final text = error.toString().toLowerCase();
+            final isConflict = (error is Failure && error.code == ErrorCode.policy) ||
+                text.contains('conflict') ||
+                text.contains('belongs to another comic') ||
+                text.contains('owned by');
+            if (mounted && isConflict) {
+              final ok = await _confirmDownloadConflictIfNeeded(
+                sourceId: _source.sourceId,
+                comicId: chapter.comicId,
+                comicTitle: _comic.title,
+                chapterTitle: chapter.title,
+                forcePrompt: true,
+              );
+              if (ok && mounted) {
+                unawaited(
+                  widget.onDownloadChapter(entry).catchError(
+                    (Object retryError, StackTrace retryTrace) {
+                      if (mounted) {
+                        _showRemoteFailure(retryError, retryTrace);
+                      }
+                    },
+                  ),
+                );
+                return;
+              }
+            }
             if (mounted) {
               _showRemoteFailure(error, stackTrace);
             }
@@ -2583,15 +3279,80 @@ final class _RemoteComicDetailsScreenState
     if (manifest == null) {
       return;
     }
-    final ok = await _confirmDownloadConflictIfNeeded(
-      sourceId: _source.sourceId,
-      comicId: manifest.comic.comicId,
-      comicTitle: _comic.title,
-      chapterTitle: '整本漫画',
-    );
-    if (!ok) return;
+    // Lock before the dialog (same double-dialog trap as _download).
     setState(() => _downloadingComic = true);
     try {
+      await widget.downloadActions.ensureDurableServices?.call();
+      final comicJob = await widget.downloadActions.wholeComicJob(
+        manifest.comic.sourceId,
+        manifest.comic.comicId,
+      );
+      final requiresPlacementResolution =
+          comicJob?.requiresUserAction == true;
+      final jobExists = comicJob != null && !requiresPlacementResolution;
+      var skipConflictDialog = false;
+      if (jobExists) {
+        try {
+          widget.traceSink.record(
+            TraceEvent(
+              monotonicMicros: _traceClock.elapsedMicroseconds,
+              sessionId: 'comic-details-download-gate',
+              kind: TraceEventKind.downloadState,
+              identityHash: manifest.comic.comicId,
+              payload: <String, Object?>{
+                'decision': 'blocked-active-whole-comic-job',
+                'scope': 'whole-comic',
+              },
+            ),
+          );
+        } on Object {}
+        if (mounted) {
+          _showDetailsSnackBar(
+            context,
+            const SnackBar(content: Text('该漫画的整本下载任务已存在')),
+          );
+        }
+        return;
+      }
+      final comicProbe = await widget.downloadActions.probeExisting(
+        sourceId: _source.sourceId,
+        comicId: manifest.comic.comicId,
+      );
+      final placement = await widget.downloadActions.getDownloadPlacement(
+        sourceId: _source.sourceId,
+        comicId: manifest.comic.comicId,
+      );
+      skipConflictDialog =
+          placement != null && !requiresPlacementResolution;
+      try {
+        widget.traceSink.record(
+          TraceEvent(
+            monotonicMicros: _traceClock.elapsedMicroseconds,
+            sessionId: 'comic-details-download-gate',
+            kind: TraceEventKind.downloadState,
+            identityHash: manifest.comic.comicId,
+            payload: <String, Object?>{
+              'decision': requiresPlacementResolution
+                  ? 'requires-user-action'
+                  : skipConflictDialog
+                      ? 'resume-incremental'
+                      : 'fresh-download',
+              'scope': 'whole-comic',
+              'indexedReadyPages': comicProbe.indexedReadyPages,
+            },
+          ),
+        );
+      } on Object {}
+      if (!skipConflictDialog) {
+        final ok = await _confirmDownloadConflictIfNeeded(
+          sourceId: _source.sourceId,
+          comicId: manifest.comic.comicId,
+          comicTitle: _comic.title,
+          chapterTitle: '整本漫画',
+          forcePrompt: requiresPlacementResolution,
+        );
+        if (!ok) return;
+      }
       final entries = <ImportedLibraryEntry>[];
       for (final chapter in manifest.chapters) {
         entries.add(await _ensure(chapter));
@@ -2599,13 +3360,44 @@ final class _RemoteComicDetailsScreenState
       if (entries.isEmpty) {
         throw StateError('没有可下载的章节');
       }
-      await widget.onDownloadComic(entries);
-      await _loadDownloadStatuses(entries);
-      if (mounted) {
-        _showDetailsSnackBar(
-          context,
-          SnackBar(content: Text('“${_comic.title}”已加入整本下载队列')),
-        );
+      try {
+        await widget.onDownloadComic(entries);
+        await _loadDownloadStatuses(entries);
+        if (mounted) {
+          _showDetailsSnackBar(
+            context,
+            SnackBar(content: Text('“${_comic.title}”已加入整本下载队列')),
+          );
+        }
+      } on Object catch (error, stackTrace) {
+        final text = error.toString().toLowerCase();
+        final isConflict = (error is Failure && error.code == ErrorCode.policy) ||
+            text.contains('conflict') ||
+            text.contains('belongs to another comic') ||
+            text.contains('owned by');
+        if (mounted && isConflict) {
+          final ok = await _confirmDownloadConflictIfNeeded(
+            sourceId: _source.sourceId,
+            comicId: manifest.comic.comicId,
+            comicTitle: _comic.title,
+            chapterTitle: '整本漫画',
+            forcePrompt: true,
+          );
+          if (ok && mounted) {
+            await widget.onDownloadComic(entries);
+            await _loadDownloadStatuses(entries);
+            if (mounted) {
+              _showDetailsSnackBar(
+                context,
+                SnackBar(content: Text('“${_comic.title}”已加入整本下载队列')),
+              );
+            }
+            return;
+          }
+        }
+        if (mounted) {
+          _showRemoteFailure(error, stackTrace);
+        }
       }
     } on Object catch (error, stackTrace) {
       if (mounted) {
@@ -2619,6 +3411,22 @@ final class _RemoteComicDetailsScreenState
   }
 
   void _showRemoteFailure(Object error, StackTrace stackTrace) {
+    try {
+      widget.traceSink.record(
+        TraceEvent(
+          monotonicMicros: _traceClock.elapsedMicroseconds,
+          sessionId: 'comic-details',
+          kind: TraceEventKind.taskFailed,
+          identityHash: _comic.comicId,
+          payload: <String, Object?>{
+            'stage': 'comic-details-failure',
+            'error': error.toString(),
+            'errorType': error.runtimeType.toString(),
+            'stackTrace': stackTrace.toString(),
+          },
+        ),
+      );
+    } on Object {}
     final failure = _DetailFailure.capture(error, stackTrace);
     _showFailureSnackBar(
       context,
@@ -2744,6 +3552,7 @@ final class _RemoteComicDetailsScreenState
           canDownload: true,
           opening: _opening.contains(identity),
           downloading: isDownloading,
+          downloadStarted: downloadSnapshot?.started == true,
           downloaded: downloadSnapshot?.isComplete == true,
           sourceChapter: chapter,
         ),
@@ -2786,6 +3595,18 @@ final class _RemoteComicDetailsScreenState
           : _continueReading,
       downloadingComic: _downloadingComic,
       onDownloadComic: _downloadComic,
+      onToggleWholeComicPause: () => widget.downloadActions
+          .toggleWholeComicPause(comic.sourceId, comic.comicId),
+      wholeComicPausable: widget.downloadActions.cachedWholeComicJob(
+                  comic.sourceId,
+                  comic.comicId,
+                )?.phase ==
+            WholeComicQueuePhase.running,
+      wholeComicPaused: widget.downloadActions.cachedWholeComicJob(
+                  comic.sourceId,
+                  comic.comicId,
+                )?.phase ==
+            WholeComicQueuePhase.paused,
       onReverse: () => setState(() => _descending = !_descending),
       chapterCount: ordered.length,
       pageCount: knownPageCount,
@@ -2797,6 +3618,7 @@ final class _RemoteComicDetailsScreenState
         onMarkRead: _markRead,
         onRestoreUnread: _restoreUnread,
         onDelete: widget.onDeleteChapter == null ? null : _deleteChapter,
+        onStop: _stopChapter,
       ),
       previewSection: detailsManifest?.preview != null ||
               previewLoader != null
@@ -2841,6 +3663,9 @@ final class _ComicDetailsHeader extends StatelessWidget {
     this.onSearchMetadata,
     required this.downloadingComic,
     required this.onDownloadComic,
+    this.onToggleWholeComicPause,
+    this.wholeComicPausable = false,
+    this.wholeComicPaused = false,
   });
 
   final String title;
@@ -2855,6 +3680,9 @@ final class _ComicDetailsHeader extends StatelessWidget {
   final ComicDetailsMetadataSearch? onSearchMetadata;
   final bool downloadingComic;
   final Future<void> Function()? onDownloadComic;
+  final Future<void> Function()? onToggleWholeComicPause;
+  final bool wholeComicPausable;
+  final bool wholeComicPaused;
 
   @override
   Widget build(BuildContext context) {
@@ -2888,9 +3716,11 @@ final class _ComicDetailsHeader extends StatelessWidget {
                     children: <Widget>[
                       _PreferenceButton(
                         key: comicDetailsLikedKey,
-                        icon: preference.liked
-                            ? Icons.favorite
-                            : Icons.favorite_border,
+                        icon: Icon(
+                            preference.liked
+                                ? Icons.favorite
+                                : Icons.favorite_border,
+                          ),
                         label: preference.liked ? '取消喜欢' : '喜欢',
                         selected: preference.liked,
                         onPressed: () => unawaited(
@@ -2901,9 +3731,11 @@ final class _ComicDetailsHeader extends StatelessWidget {
                       ),
                       _PreferenceButton(
                         key: comicDetailsShelfKey,
-                        icon: preference.inShelf
-                            ? Icons.library_add_check
-                            : Icons.library_add_outlined,
+                        icon: Icon(
+                            preference.inShelf
+                                ? Icons.library_add_check
+                                : Icons.library_add_outlined,
+                          ),
                         label: preference.inShelf ? '移出书架' : '加入书架',
                         selected: preference.inShelf,
                         onPressed: () => unawaited(
@@ -2916,9 +3748,11 @@ final class _ComicDetailsHeader extends StatelessWidget {
                       ),
                       _PreferenceButton(
                         key: comicDetailsCollectedKey,
-                        icon: preference.collected
-                            ? Icons.bookmark
-                            : Icons.bookmark_border,
+                        icon: Icon(
+                            preference.collected
+                                ? Icons.bookmark
+                                : Icons.bookmark_border,
+                          ),
                         label: preference.collected ? '取消收藏' : '收藏',
                         selected: preference.collected,
                         onPressed: () => unawaited(
@@ -2929,16 +3763,49 @@ final class _ComicDetailsHeader extends StatelessWidget {
                           ),
                         ),
                       ),
-                      if (onDownloadComic != null)
+                      if (onDownloadComic != null &&
+                          !downloadingComic &&
+                          !wholeComicPausable)
                         _PreferenceButton(
                           key: comicDetailsDownloadAllKey,
-                          icon: Icons.download_for_offline_outlined,
+                          icon: const Icon(Icons.download_for_offline_outlined),
                           label: '下载整本',
                           selected: false,
-                          loading: downloadingComic,
-                          onPressed: downloadingComic
+                          onPressed: () => unawaited(onDownloadComic!()),
+                        ),
+                      if (downloadingComic || wholeComicPausable)
+                        _PreferenceButton(
+                          key: comicDetailsWholeComicPauseKey(),
+                          // Starting: pause core inside a spinner ring, one
+                          // control. Running: pause. Paused: resume.
+                          icon: downloadingComic && !wholeComicPausable
+                              ? Stack(
+                                  alignment: Alignment.center,
+                                  children: <Widget>[
+                                    const SizedBox.square(
+                                      dimension: 30,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.5,
+                                      ),
+                                    ),
+                                    const Icon(Icons.pause, size: 14),
+                                  ],
+                                )
+                              : Icon(
+                                  wholeComicPaused
+                                      ? Icons.play_circle_outline
+                                      : Icons.pause_circle_outline,
+                                ),
+                          label: downloadingComic && !wholeComicPausable
+                              ? '整本下载中'
+                              : wholeComicPaused
+                                  ? '继续整本'
+                                  : '暂停整本',
+                          selected: wholeComicPaused,
+                          onPressed: onToggleWholeComicPause == null
                               ? null
-                              : () => unawaited(onDownloadComic!()),
+                              : () =>
+                                  unawaited(onToggleWholeComicPause!()),
                         ),
                     ],
                   ),
@@ -3025,6 +3892,7 @@ final class _ComicChapterList extends StatelessWidget {
     required this.onMarkRead,
     required this.onRestoreUnread,
     this.onDelete,
+    this.onStop,
   });
 
   final List<_ChapterViewModel> chapters;
@@ -3034,6 +3902,7 @@ final class _ComicChapterList extends StatelessWidget {
   final Future<void> Function(_ChapterViewModel chapter) onRestoreUnread;
   final Future<void> Function(_ChapterViewModel chapter, {bool deleteFiles})?
       onDelete;
+  final Future<void> Function(_ChapterViewModel chapter)? onStop;
 
   @override
   Widget build(BuildContext context) {
@@ -3184,28 +4053,54 @@ final class _ComicChapterList extends StatelessWidget {
               onLongPress: deleteChapter == null || chapter.entry == null
                   ? null
                   : () => unawaited(_confirmDelete(context, chapter)),
-              trailing: chapter.canDownload
-                  ? IconButton(
-                      key: comicDetailsDownloadKey(
-                        chapter.sourceId,
-                        chapter.chapterId,
-                      ),
-                      tooltip: chapter.downloaded ? '${chapter.title} 已下载' : '下载 ${chapter.title}',
-                      onPressed: chapter.downloading || chapter.downloaded
-                          ? null
-                          : () => unawaited(onDownload(chapter)),
-                      icon: chapter.downloading
-                          ? const SizedBox.square(
-                              dimension: 22,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : Icon(
-                              chapter.downloaded
-                                  ? Icons.download_done
-                                  : Icons.download_outlined,
-                            ),
-                    )
-                  : const Icon(Icons.chevron_right),
+              trailing: !chapter.canDownload
+                  ? const Icon(Icons.chevron_right)
+                  : chapter.downloading
+                      ? IconButton(
+                          key: comicDetailsStopDownloadKey(
+                            chapter.sourceId,
+                            chapter.chapterId,
+                          ),
+                          tooltip: chapter.downloadStarted
+                              ? '停止下载 ${chapter.title}'
+                              : '取消下载 ${chapter.title}',
+                          onPressed: onStop == null
+                              ? null
+                              : () {
+                                  final stop = onStop!;
+                                  unawaited(stop(chapter));
+                                },
+                          icon: chapter.downloadStarted
+                              ? const Icon(Icons.stop_circle_outlined)
+                              : Stack(
+                                  alignment: Alignment.center,
+                                  children: <Widget>[
+                                    const SizedBox.square(
+                                      dimension: 30,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2.5,
+                                      ),
+                                    ),
+                                    const Icon(Icons.stop, size: 14),
+                                  ],
+                                ),
+                        )
+                      : IconButton(
+                          key: comicDetailsDownloadKey(
+                            chapter.sourceId,
+                            chapter.chapterId,
+                          ),
+                          tooltip:
+                              chapter.downloaded ? '${chapter.title} 已下载' : '下载 ${chapter.title}',
+                          onPressed: chapter.downloaded
+                              ? null
+                              : () => unawaited(onDownload(chapter)),
+                          icon: Icon(
+                            chapter.downloaded
+                                ? Icons.download_done
+                                : Icons.download_outlined,
+                          ),
+                        ),
             ),
           ),
         );
@@ -3285,6 +4180,7 @@ final class _ChapterViewModel {
     required this.canDownload,
     required this.opening,
     required this.downloading,
+    this.downloadStarted = false,
     required this.downloaded,
     this.sourceChapter,
   });
@@ -3300,6 +4196,7 @@ final class _ChapterViewModel {
   final bool canDownload;
   final bool opening;
   final bool downloading;
+  final bool downloadStarted;
   final bool downloaded;
   final Chapter? sourceChapter;
 }
@@ -3547,15 +4444,13 @@ final class _PreferenceButton extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onPressed,
-    this.loading = false,
     super.key,
   });
 
-  final IconData icon;
+  final Widget icon;
   final String label;
   final bool selected;
   final VoidCallback? onPressed;
-  final bool loading;
 
   @override
   Widget build(BuildContext context) {
@@ -3565,12 +4460,7 @@ final class _PreferenceButton extends StatelessWidget {
         tooltip: label,
         isSelected: selected,
         onPressed: onPressed,
-        icon: loading
-            ? const SizedBox.square(
-                dimension: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            : Icon(icon),
+        icon: icon,
       ),
     );
   }
@@ -3797,20 +4687,25 @@ void _showDetailsSnackBar(
   SnackBar snackBar,
 ) {
   if (!context.mounted) return;
-  final messenger = ScaffoldMessenger.of(context);
-  final isTest =
-      WidgetsBinding.instance.runtimeType.toString().contains('Test');
-  messenger.hideCurrentSnackBar();
-  messenger.showSnackBar(
-    isTest
-        ? SnackBar(
-            content: snackBar.content,
-            action: snackBar.action,
-            animation: kAlwaysCompleteAnimation,
-            duration: const Duration(seconds: 1),
-          )
-        : snackBar,
-  );
+  try {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    final isTest =
+        WidgetsBinding.instance.runtimeType.toString().contains('Test');
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      isTest
+          ? SnackBar(
+              content: snackBar.content,
+              action: snackBar.action,
+              animation: kAlwaysCompleteAnimation,
+              duration: const Duration(seconds: 1),
+            )
+          : snackBar,
+    );
+  } on Object {
+    // Ignore transient unmounted scaffold messenger assertions.
+  }
 }
 
 void _showFailureSnackBar(

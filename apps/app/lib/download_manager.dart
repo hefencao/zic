@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:resource_cache/resource_cache.dart';
 
 import 'package:downloads/downloads.dart';
+import 'package:telemetry/telemetry.dart';
 
 import 'dialog_actions.dart';
 
@@ -14,13 +15,22 @@ const downloadManagerRefreshKey = ValueKey<String>('download-manager-refresh');
 const downloadQueuePolicyKey = ValueKey<String>('download-queue-policy');
 const downloadCacheTrimKey = ValueKey<String>('download-cache-trim');
 const downloadCacheClearKey = ValueKey<String>('download-cache-clear');
+const downloadManagerTabManualKey = ValueKey<String>('download-tab-manual');
+const downloadManagerTabCacheKey = ValueKey<String>('download-tab-cache');
+const downloadManagerBottomNavKey = ValueKey<String>('download-manager-bottom-nav');
 
 Key downloadManagerTaskKey(String identity) =>
     ValueKey<String>('download-task:$identity');
+Key downloadManagerAutoCacheTaskKey(String identity) =>
+    ValueKey<String>('auto-cache-task:$identity');
 Key downloadManagerCancelKey(String identity) =>
     ValueKey<String>('download-cancel:$identity');
 Key downloadManagerRetryKey(String identity) =>
     ValueKey<String>('download-retry:$identity');
+Key downloadManagerConvertKey(String identity) =>
+    ValueKey<String>('download-convert:$identity');
+Key downloadManagerClearCacheKey(String identity) =>
+    ValueKey<String>('download-clear-cache:$identity');
 Key downloadManagerDeleteKey(String identity) =>
     ValueKey<String>('download-delete:$identity');
 Key downloadManagerCopyErrorKey(String identity) =>
@@ -38,6 +48,38 @@ Key wholeComicQueueRetryKey(String jobId) =>
 Key wholeComicQueueRemoveKey(String jobId) =>
     ValueKey<String>('whole-comic-queue-remove:$jobId');
 
+enum DownloadManagerTab {
+  manual,
+  autoCache,
+}
+
+final class DownloadManagerServices {
+  const DownloadManagerServices({
+    required this.downloads,
+    required this.wholeComicDownloads,
+    this.cacheCoordinator,
+  });
+
+  final ChapterDownloadService downloads;
+  final WholeComicDownloadQueue wholeComicDownloads;
+  final ResourceCacheCoordinator? cacheCoordinator;
+}
+
+
+final class DownloadManagerProjection {
+  const DownloadManagerProjection({
+    required this.entries,
+    required this.snapshots,
+    required this.wholeComicSnapshot,
+    this.versionRelations = const <ComicVersionRelation>[],
+  });
+
+  final List<ImportedLibraryEntry> entries;
+  final List<ChapterDownloadSnapshot> snapshots;
+  final WholeComicQueueSnapshot wholeComicSnapshot;
+  final List<ComicVersionRelation> versionRelations;
+}
+
 final class DownloadManagerScreen extends StatefulWidget {
   const DownloadManagerScreen({
     required this.entries,
@@ -46,15 +88,31 @@ final class DownloadManagerScreen extends StatefulWidget {
     this.initialSnapshots = const <ChapterDownloadSnapshot>[],
     this.initialWholeComicSnapshot,
     this.cacheCoordinator,
+    this.hydrateEntry,
+    this.loadAllEntries,
+    this.resolveServices,
+    this.projectionChanges,
+    this.readProjection,
+    this.refreshProjection,
+    this.traceSink = const NoopTraceSink(),
+    this.versionRelations = const <ComicVersionRelation>[],
     super.key,
   });
 
   final List<ImportedLibraryEntry> entries;
   final ChapterDownloadService downloads;
+  final TraceSink traceSink;
   final WholeComicDownloadQueue wholeComicDownloads;
   final List<ChapterDownloadSnapshot> initialSnapshots;
   final WholeComicQueueSnapshot? initialWholeComicSnapshot;
   final ResourceCacheCoordinator? cacheCoordinator;
+  final Future<ImportedLibraryEntry> Function(ImportedLibraryEntry)? hydrateEntry;
+  final Future<List<ImportedLibraryEntry>> Function()? loadAllEntries;
+  final Future<DownloadManagerServices> Function()? resolveServices;
+  final Listenable? projectionChanges;
+  final DownloadManagerProjection Function()? readProjection;
+  final Future<void> Function()? refreshProjection;
+  final List<ComicVersionRelation> versionRelations;
 
   @override
   State<DownloadManagerScreen> createState() => _DownloadManagerScreenState();
@@ -63,36 +121,109 @@ final class DownloadManagerScreen extends StatefulWidget {
 final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   final Map<String, ImportedLibraryEntry> _entries =
       <String, ImportedLibraryEntry>{};
+  final Map<String, String> _entryIdentityByChapter = <String, String>{};
   final Map<String, ChapterDownloadSnapshot> _snapshots =
       <String, ChapterDownloadSnapshot>{};
   StreamSubscription<ChapterDownloadSnapshot>? _subscription;
   StreamSubscription<WholeComicQueueSnapshot>? _wholeComicSubscription;
+  late ChapterDownloadService _downloads;
+  late WholeComicDownloadQueue _wholeComicDownloads;
+  ResourceCacheCoordinator? _cacheCoordinator;
   late WholeComicQueueSnapshot _wholeComicSnapshot;
+  Future<void>? _servicesResolution;
+  Future<void>? _cacheUsageRefresh;
+  ResourceCacheCoordinator? _cacheUsageRefreshCoordinator;
+  bool _servicesResolved = false;
   bool _loading = false;
   bool _cacheBusy = false;
   ResourceCacheUsage? _cacheUsage;
+  DownloadManagerTab _selectedTab = DownloadManagerTab.manual;
+
+  final MonoClock _traceClock = const SystemClock();
+  late final int _openedAtMicros;
+
+  void _recordTrace(String stage, {Map<String, Object?> payload = const {}}) {
+    try {
+      widget.traceSink.record(
+        traceEvent(
+          clock: _traceClock,
+          sessionId: 'download-manager',
+          kind: TraceEventKind.downloadState,
+          payload: <String, Object?>{
+            'stage': stage,
+            'routeElapsedUs': _traceClock.nowMicros() - _openedAtMicros,
+            ...payload,
+          },
+        ),
+      );
+    } on Object {
+      // Diagnostics must never affect the download manager route.
+    }
+  }
+
+  void _rememberEntry(ImportedLibraryEntry entry) {
+    final identity = _identity(entry);
+    _entries[identity] = entry;
+    _entryIdentityByChapter.putIfAbsent(
+      _chapterIdentity(
+        entry.chapter.sourceId,
+        entry.chapter.comicId,
+        entry.chapter.chapterId,
+      ),
+      () => identity,
+    );
+  }
+
+  void _replaceEntries(Iterable<ImportedLibraryEntry> entries) {
+    _entries.clear();
+    _entryIdentityByChapter.clear();
+    for (final entry in entries) {
+      _rememberEntry(entry);
+    }
+  }
+
+  String _matchingEntryIdentity(ChapterDownloadSnapshot snapshot) =>
+      _entryIdentityByChapter[
+        _chapterIdentity(
+          snapshot.sourceId,
+          snapshot.comicId,
+          snapshot.chapterId,
+        )
+      ] ??
+      snapshot.identity;
+
+  /// In-flight action locks, keyed by `task identity:action` and taken
+  /// synchronously in the tap handler. Keys are per ACTION, not per task:
+  /// an identity-wide lock used to swallow the stop tap for as long as a
+  /// retry kept running, which forced users to leave and reopen this page
+  /// just to stop a download.
+  final Set<String> _busyActionKeys = <String>{};
+
+  bool _isActionBusy(String identity, String actionKey) =>
+      _busyActionKeys.contains('$identity:$actionKey');
 
   @override
   void initState() {
     super.initState();
-    for (final entry in widget.entries) {
-      _entries[_identity(entry)] = entry;
-    }
+    _openedAtMicros = _traceClock.nowMicros();
+    _recordTrace('manager-init');
+    _downloads = widget.downloads;
+    _wholeComicDownloads = widget.wholeComicDownloads;
+    _cacheCoordinator = widget.cacheCoordinator;
+    _replaceEntries(widget.entries);
     for (final snapshot in widget.initialSnapshots) {
-      if (_entries.containsKey(snapshot.identity)) {
-        _snapshots[snapshot.identity] = snapshot;
+      final matchingKey = _matchingEntryIdentity(snapshot);
+      if (_entries.containsKey(matchingKey)) {
+        _snapshots[matchingKey] = snapshot;
       }
     }
-    _subscription = widget.downloads.changes.listen(_acceptSnapshot);
+    _subscription = _listenToDownloads(_downloads);
     _wholeComicSnapshot =
-        widget.initialWholeComicSnapshot ?? widget.wholeComicDownloads.snapshot;
-    _wholeComicSubscription = widget.wholeComicDownloads.changes.listen(
-      (snapshot) {
-        if (mounted) {
-          setState(() => _wholeComicSnapshot = snapshot);
-        }
-      },
+        widget.initialWholeComicSnapshot ?? _wholeComicDownloads.snapshot;
+    _wholeComicSubscription = _listenToWholeComicDownloads(
+      _wholeComicDownloads,
     );
+    widget.projectionChanges?.addListener(_handleProjectionChanged);
     // Route-first ownership: the download screen must paint from the already
     // projected Home/queue snapshot before any durable/cache inspection starts.
     // Microtasks run before the next frame, so doing filesystem-backed
@@ -101,36 +232,196 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       if (!mounted) {
         return;
       }
+      _recordTrace('manager-first-frame');
       unawaited(_refreshAfterFirstFrame());
     });
   }
 
   @override
   void dispose() {
+    widget.projectionChanges?.removeListener(_handleProjectionChanged);
     unawaited(_subscription?.cancel());
     unawaited(_wholeComicSubscription?.cancel());
     super.dispose();
   }
 
+  Future<void> _resolveServices() {
+    if (_servicesResolved || widget.resolveServices == null) {
+      return Future<void>.value();
+    }
+    final existing = _servicesResolution;
+    if (existing != null) {
+      return existing;
+    }
+    late final Future<void> resolution;
+    resolution = _resolveServicesOnce().whenComplete(() {
+      if (identical(_servicesResolution, resolution)) {
+        _servicesResolution = null;
+      }
+    });
+    _servicesResolution = resolution;
+    return resolution;
+  }
+
+  Future<void> _resolveServicesOnce() async {
+    final resolver = widget.resolveServices;
+    if (resolver == null) {
+      return;
+    }
+    _recordTrace('service-resolve-start');
+    final startedAt = _traceClock.nowMicros();
+    final services = await resolver();
+    _recordTrace(
+      'service-resolve-complete',
+      payload: <String, Object?>{
+        'durationUs': _traceClock.nowMicros() - startedAt,
+      },
+    );
+    if (!mounted) {
+      return;
+    }
+    _adoptServices(services);
+    _servicesResolved = true;
+  }
+
+  void _adoptServices(DownloadManagerServices services) {
+    final downloadsChanged = !identical(_downloads, services.downloads);
+    final wholeComicChanged =
+        !identical(_wholeComicDownloads, services.wholeComicDownloads);
+    final cacheChanged =
+        !identical(_cacheCoordinator, services.cacheCoordinator);
+    if (!downloadsChanged && !wholeComicChanged && !cacheChanged) {
+      return;
+    }
+    final oldDownloadSubscription = _subscription;
+    final oldWholeComicSubscription = _wholeComicSubscription;
+    _downloads = services.downloads;
+    _wholeComicDownloads = services.wholeComicDownloads;
+    _cacheCoordinator = services.cacheCoordinator;
+    if (downloadsChanged) {
+      unawaited(oldDownloadSubscription?.cancel());
+      _subscription = _listenToDownloads(_downloads);
+    }
+    if (wholeComicChanged) {
+      unawaited(oldWholeComicSubscription?.cancel());
+      _wholeComicSubscription = _listenToWholeComicDownloads(
+        _wholeComicDownloads,
+      );
+    }
+    setState(() {
+      if (wholeComicChanged) {
+        _wholeComicSnapshot = _wholeComicDownloads.snapshot;
+      }
+      if (cacheChanged) {
+        _cacheUsage = null;
+      }
+    });
+    if (cacheChanged && _selectedTab == DownloadManagerTab.autoCache) {
+      unawaited(_refreshCacheUsage());
+    }
+  }
+
+  StreamSubscription<ChapterDownloadSnapshot> _listenToDownloads(
+    ChapterDownloadService downloads,
+  ) =>
+      downloads.changes.listen((snapshot) {
+        if (identical(downloads, _downloads)) {
+          _acceptSnapshot(snapshot);
+        }
+      });
+
+  StreamSubscription<WholeComicQueueSnapshot> _listenToWholeComicDownloads(
+    WholeComicDownloadQueue wholeComicDownloads,
+  ) =>
+      wholeComicDownloads.changes.listen((snapshot) {
+        if (mounted && identical(wholeComicDownloads, _wholeComicDownloads)) {
+          setState(() => _wholeComicSnapshot = snapshot);
+        }
+      });
+
   void _acceptSnapshot(ChapterDownloadSnapshot snapshot) {
     if (!mounted) {
       return;
     }
-    setState(() => _snapshots[snapshot.identity] = snapshot);
+    final matchingKey = _matchingEntryIdentity(snapshot);
+    setState(() {
+      _snapshots[matchingKey] = snapshot;
+      if (matchingKey != snapshot.identity) {
+        _snapshots[snapshot.identity] = snapshot;
+      }
+    });
+  }
+
+  void _handleProjectionChanged() {
+    final readProjection = widget.readProjection;
+    if (!mounted || readProjection == null) {
+      return;
+    }
+    final startedAt = _traceClock.nowMicros();
+    final projection = readProjection();
+    _adoptProjection(projection);
+    _recordTrace(
+      'projection-changed',
+      payload: <String, Object?>{
+        'entries': projection.entries.length,
+        'snapshots': projection.snapshots.length,
+        'durationUs': _traceClock.nowMicros() - startedAt,
+      },
+    );
+  }
+
+  void _adoptProjection(DownloadManagerProjection projection) {
+    setState(() {
+      _replaceEntries(projection.entries);
+      _snapshots
+        ..clear()
+        ..addEntries(
+          projection.snapshots.map(
+            (snapshot) => MapEntry(snapshot.identity, snapshot),
+          ),
+        );
+      _wholeComicSnapshot = projection.wholeComicSnapshot;
+    });
   }
 
   Future<void> _refreshAfterFirstFrame() async {
-    final queueReady = widget.wholeComicDownloads.ready.then((_) {
-      if (mounted) {
-        setState(() {
-          _wholeComicSnapshot = widget.wholeComicDownloads.snapshot;
-        });
+    _recordTrace('post-frame-refresh-start');
+    if (widget.readProjection == null) {
+      await _reload();
+      _recordTrace('post-frame-refresh-complete');
+      return;
+    }
+    try {
+      await _resolveServices();
+      if (!mounted) {
+        return;
       }
-    });
-    await Future.wait<void>(<Future<void>>[
-      queueReady,
-      _reload(),
-    ]);
+      _handleProjectionChanged();
+      _refreshWholeComicSnapshotWhenReady();
+      _recordTrace('post-frame-refresh-complete');
+    } on Object catch (error) {
+      if (mounted) {
+        _showError(error);
+      }
+    }
+  }
+
+  void _refreshWholeComicSnapshotWhenReady() {
+    final queue = _wholeComicDownloads;
+    unawaited(
+      queue.ready.then<void>(
+        (_) {
+          if (mounted && identical(queue, _wholeComicDownloads)) {
+            setState(() => _wholeComicSnapshot = queue.snapshot);
+          }
+        },
+        onError: (Object error, StackTrace stackTrace) {
+          if (mounted && identical(queue, _wholeComicDownloads)) {
+            _showError(error);
+          }
+        },
+      ),
+    );
   }
 
   Future<void> _reload() async {
@@ -138,22 +429,68 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       setState(() => _loading = true);
     }
     try {
-      final usageFuture = widget.cacheCoordinator?.inspect();
-      final orphaned =
-          await widget.downloads.discoverOrphanedEntries(_entries.values);
-      for (final entry in orphaned) {
-        _entries[_identity(entry)] = entry;
-      }
-      final snapshots = await widget.downloads.inspectMany(_entries.values);
-      final usage = usageFuture == null ? null : await usageFuture;
+      await _resolveServices();
       if (!mounted) {
         return;
       }
-      setState(() {
-        for (final snapshot in snapshots) {
-          _snapshots[snapshot.identity] = snapshot;
+      final queue = _wholeComicDownloads;
+      final inspectCache = _selectedTab == DownloadManagerTab.autoCache;
+      final cacheRefresh = inspectCache
+          ? _refreshCacheUsage()
+          : Future<void>.value();
+      List<ChapterDownloadSnapshot>? snapshots;
+      final refreshProjection = widget.refreshProjection;
+      if (refreshProjection != null) {
+        await refreshProjection();
+        if (!mounted) {
+          return;
         }
-        _cacheUsage = usage;
+        _handleProjectionChanged();
+      } else {
+        final loadedEntries = await widget.loadAllEntries?.call();
+        if (loadedEntries != null) {
+          for (final entry in loadedEntries) {
+            _rememberEntry(entry);
+          }
+        }
+        final projectionReader =
+            _downloads is ChapterDownloadManagementProjectionReader
+                ? _downloads as ChapterDownloadManagementProjectionReader
+                : null;
+        if (projectionReader != null) {
+          final projection =
+              await projectionReader.inspectDownloadManagement(_entries.values);
+          for (final entry in projection.orphanedEntries) {
+            _rememberEntry(entry);
+          }
+          snapshots = projection.snapshots;
+        } else {
+          final orphaned =
+              await _downloads.discoverOrphanedEntries(_entries.values);
+          for (final entry in orphaned) {
+            _rememberEntry(entry);
+          }
+          snapshots = await _downloads.inspectMany(_entries.values);
+        }
+      }
+      await cacheRefresh;
+      await queue.ready;
+      if (!mounted || !identical(queue, _wholeComicDownloads)) {
+        return;
+      }
+      setState(() {
+        if (snapshots != null) {
+          // Rebuild, never upsert: superseded-revision snapshots surviving
+          // here feed the dedup stale progress.
+          _snapshots
+            ..clear()
+            ..addEntries(
+              snapshots.map(
+                (snapshot) => MapEntry(snapshot.identity, snapshot),
+              ),
+            );
+        }
+        _wholeComicSnapshot = queue.snapshot;
       });
     } on Object catch (error) {
       if (mounted) {
@@ -166,10 +503,55 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     }
   }
 
-  List<ChapterDownloadSnapshot> get _visibleSnapshots {
-    final values = _snapshots.values.where((snapshot) {
-      return snapshot.phase != ChapterDownloadPhase.idle ||
+  Future<void> _refreshCacheUsage() {
+    final coordinator = _cacheCoordinator;
+    if (coordinator == null) {
+      return Future<void>.value();
+    }
+    final existing = _cacheUsageRefresh;
+    if (existing != null &&
+        identical(coordinator, _cacheUsageRefreshCoordinator)) {
+      return existing;
+    }
+    late final Future<void> refresh;
+    refresh = _refreshCacheUsageOnce(coordinator).whenComplete(() {
+      if (identical(_cacheUsageRefresh, refresh)) {
+        _cacheUsageRefresh = null;
+        _cacheUsageRefreshCoordinator = null;
+      }
+    });
+    _cacheUsageRefreshCoordinator = coordinator;
+    _cacheUsageRefresh = refresh;
+    return refresh;
+  }
+
+  Future<void> _refreshCacheUsageOnce(
+    ResourceCacheCoordinator coordinator,
+  ) async {
+    try {
+      final usage = await coordinator.inspect();
+      if (mounted && identical(coordinator, _cacheCoordinator)) {
+        setState(() => _cacheUsage = usage);
+      }
+    } on Object catch (error) {
+      if (mounted) {
+        _showError(error);
+      }
+    }
+  }
+
+  List<ChapterDownloadSnapshot> get _allDedupedSnapshots {
+    final deduped = <String, ChapterDownloadSnapshot>{};
+    for (final snapshot in _snapshots.values) {
+      final key = '${snapshot.sourceId}\u0000${snapshot.comicId}\u0000${snapshot.chapterId}';
+      final existing = deduped[key];
+      deduped[key] =
+          existing == null ? snapshot : _preferRowSnapshot(existing, snapshot);
+    }
+    final values = deduped.values.where((snapshot) {
+      final visible = snapshot.phase != ChapterDownloadPhase.idle ||
           snapshot.hasDurableBytes;
+      return visible;
     }).toList(growable: false);
     values.sort((left, right) {
       final phase = _phasePriority(left.phase).compareTo(
@@ -187,21 +569,144 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     return values;
   }
 
-  ImportedLibraryEntry? _entryFor(ChapterDownloadSnapshot snapshot) =>
-      _entries[snapshot.identity];
+
+  List<ChapterDownloadSnapshot> get _manualSnapshots {
+    return _allDedupedSnapshots
+        .where((snapshot) => snapshot.isManualDownload)
+        .toList(growable: false);
+  }
+
+  List<ChapterDownloadSnapshot> get _autoCacheSnapshots {
+    final manualIdentities = {
+      for (final snapshot in _manualSnapshots) snapshot.identity,
+    };
+    return _allDedupedSnapshots
+        .where((snapshot) =>
+            !manualIdentities.contains(snapshot.identity) &&
+            (snapshot.hasAutoCache ||
+                !snapshot.isManualDownload ||
+                !_isLibraryEntry(snapshot)))
+        .toList(growable: false);
+  }
+
+  bool _isLibraryEntry(ChapterDownloadSnapshot snapshot) {
+    final entry = _entryFor(snapshot);
+    return entry != null && !entry.chapter.directoryId.startsWith('orphaned:');
+  }
+
+  ImportedLibraryEntry? _entryFor(ChapterDownloadSnapshot snapshot) {
+    final exact = _entries[snapshot.identity];
+    if (exact != null) {
+      return exact;
+    }
+    final identity = _entryIdentityByChapter[
+      _chapterIdentity(
+        snapshot.sourceId,
+        snapshot.comicId,
+        snapshot.chapterId,
+      )
+    ];
+    return identity == null ? null : _entries[identity];
+  }
+
+  /// Row display when several revisions of one chapter coexist: library-bound
+  /// entries win first over orphans, then entry-bound snapshot wins over stale,
+  /// then manual download status, then activity/completion, then page count.
+  ChapterDownloadSnapshot _preferRowSnapshot(
+    ChapterDownloadSnapshot current,
+    ChapterDownloadSnapshot candidate,
+  ) {
+    final candidateIsLibrary = _isLibraryEntry(candidate);
+    final currentIsLibrary = _isLibraryEntry(current);
+    if (candidateIsLibrary != currentIsLibrary) {
+      return candidateIsLibrary ? candidate : current;
+    }
+    final candidateBound = _entries.containsKey(candidate.identity);
+    final currentBound = _entries.containsKey(current.identity);
+    if (candidateBound != currentBound) {
+      return candidateBound ? candidate : current;
+    }
+    if (candidate.isManualDownload != current.isManualDownload) {
+      return candidate.isManualDownload ? candidate : current;
+    }
+    if (candidate.isActive != current.isActive) {
+      return candidate.isActive ? candidate : current;
+    }
+    if (candidate.isComplete != current.isComplete) {
+      return candidate.isComplete ? candidate : current;
+    }
+    return candidate.completedPages > current.completedPages
+        ? candidate
+        : current;
+  }
 
   Future<void> _act(
     ChapterDownloadSnapshot snapshot,
+    Future<void> Function(ImportedLibraryEntry entry) action, {
+    required String actionKey,
+  }) async {
+    final lockKey = '${snapshot.identity}:$actionKey';
+    final blocked = _busyActionKeys.contains(lockKey);
+    try {
+      widget.traceSink.record(
+        traceEvent(
+          clock: _traceClock,
+          sessionId: 'download-manager',
+          kind: TraceEventKind.downloadState,
+          identityHash: snapshot.identity,
+          payload: <String, Object?>{
+            'stage': 'manager-action',
+            'action': actionKey,
+            'phase': snapshot.phase.name,
+            'started': snapshot.started,
+            'blocked': blocked,
+          },
+        ),
+      );
+    } on Object {
+      // Diagnostics must never change action behavior.
+    }
+    if (blocked) {
+      return;
+    }
+    setState(() {
+      _busyActionKeys.add(lockKey);
+    });
+    try {
+      await _performTaskAction(snapshot, action);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busyActionKeys.remove(lockKey);
+        });
+      } else {
+        _busyActionKeys.remove(lockKey);
+      }
+    }
+  }
+
+  Future<void> _performTaskAction(
+    ChapterDownloadSnapshot snapshot,
     Future<void> Function(ImportedLibraryEntry entry) action,
   ) async {
-    final entry = _entryFor(snapshot);
-    if (entry == null) {
+    final initialEntry = _entryFor(snapshot);
+    if (initialEntry == null) {
       _showError(StateError('下载任务对应的章节记录已不存在'));
       return;
     }
+    var entry = initialEntry;
+    if (widget.hydrateEntry != null) {
+      try {
+        final hydrated = await widget.hydrateEntry!(initialEntry);
+        entry = hydrated;
+        _rememberEntry(hydrated);
+      } on Object {
+        // Fall back to the projection entry when hydration is unavailable.
+      }
+    }
     try {
       await action(entry);
-      final next = await widget.downloads.inspect(entry);
+      final next = await _downloads.inspect(entry);
       _acceptSnapshot(next);
     } on Object catch (error) {
       if (mounted) {
@@ -210,27 +715,57 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     }
   }
 
+  Future<void> _convertCacheToDownload(ChapterDownloadSnapshot snapshot) async {
+    await _act(snapshot, _downloads.download, actionKey: 'convert');
+    if (mounted) {
+      setState(() {
+        _selectedTab = DownloadManagerTab.manual;
+      });
+    }
+  }
+
   Future<void> _delete(ChapterDownloadSnapshot snapshot) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('删除离线章节？'),
-        content: Text('将删除“${snapshot.title}”的离线页面，阅读记录不会被删除。'),
-        actions: <Widget>[
-          AppDialogActions(
-            onClose: () => Navigator.pop(context, false),
-            actions: <Widget>[
-              FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('删除'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true && mounted) {
-      await _act(snapshot, widget.downloads.delete);
+    final lockKey = '${snapshot.identity}:delete';
+    if (_busyActionKeys.contains(lockKey)) {
+      return;
+    }
+    if (_entryFor(snapshot) == null) {
+      _showError(StateError('下载任务对应的章节记录已不存在'));
+      return;
+    }
+    setState(() {
+      _busyActionKeys.add(lockKey);
+    });
+    try {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('删除离线章节？'),
+          content: Text('将删除“${snapshot.title}”的离线页面，阅读记录不会被删除。'),
+          actions: <Widget>[
+            AppDialogActions(
+              onClose: () => Navigator.pop(context, false),
+              actions: <Widget>[
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('删除'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+      if (confirmed == true && mounted) {
+        await _performTaskAction(snapshot, _downloads.delete);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busyActionKeys.remove(lockKey);
+        });
+      } else {
+        _busyActionKeys.remove(lockKey);
+      }
     }
   }
 
@@ -250,7 +785,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   }
 
   Future<void> _trimCache() async {
-    final maintenance = widget.cacheCoordinator;
+    final maintenance = _cacheCoordinator;
     if (maintenance == null || _cacheBusy) {
       return;
     }
@@ -281,7 +816,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   }
 
   Future<void> _clearCache() async {
-    final maintenance = widget.cacheCoordinator;
+    final maintenance = _cacheCoordinator;
     if (maintenance == null || _cacheBusy) {
       return;
     }
@@ -428,7 +963,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       return;
     }
     try {
-      await widget.wholeComicDownloads.updatePolicy(selected);
+      await _wholeComicDownloads.updatePolicy(selected);
     } on Object catch (error) {
       if (mounted) {
         _showError(error);
@@ -448,18 +983,18 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final snapshots = _visibleSnapshots;
     return Scaffold(
       key: downloadManagerScreenKey,
       appBar: AppBar(
         title: const Text('下载管理'),
         actions: <Widget>[
-          IconButton(
-            key: downloadQueuePolicyKey,
-            tooltip: '整本下载队列策略',
-            onPressed: () => unawaited(_editQueuePolicy()),
-            icon: const Icon(Icons.tune),
-          ),
+          if (_selectedTab == DownloadManagerTab.manual)
+            IconButton(
+              key: downloadQueuePolicyKey,
+              tooltip: '整本下载队列策略',
+              onPressed: () => unawaited(_editQueuePolicy()),
+              icon: const Icon(Icons.tune),
+            ),
           IconButton(
             key: downloadManagerRefreshKey,
             tooltip: '刷新下载状态',
@@ -475,87 +1010,164 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       ),
       body: RefreshIndicator(
         onRefresh: _reload,
-        child: snapshots.isEmpty &&
-                _wholeComicSnapshot.jobs.isEmpty &&
-                widget.cacheCoordinator == null
-            ? ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                children: const <Widget>[
-                  SizedBox(height: 160),
-                  Icon(Icons.download_done_outlined, size: 48),
-                  SizedBox(height: 12),
-                  Center(child: Text('暂无下载任务或离线章节')),
-                ],
-              )
-            : ListView(
-                physics: const AlwaysScrollableScrollPhysics(),
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                children: <Widget>[
-                  if (widget.cacheCoordinator != null) ...<Widget>[
-                    _DownloadCacheSummary(
-                      usage: _cacheUsage,
-                      busy: _cacheBusy,
-                      onTrim: _trimCache,
-                      onClear: _clearCache,
-                    ),
-                    const Divider(height: 24),
-                  ],
-                  if (snapshots.isEmpty &&
-                      _wholeComicSnapshot.jobs.isEmpty) ...<Widget>[
-                    const SizedBox(height: 72),
-                    const Icon(Icons.download_done_outlined, size: 48),
-                    const SizedBox(height: 12),
-                    const Center(child: Text('暂无下载任务或离线章节')),
-                    const SizedBox(height: 72),
-                  ],
-                  if (_wholeComicSnapshot.jobs.isNotEmpty) ...<Widget>[
-                    const _DownloadSectionHeader(title: '整本下载队列'),
-                    for (final job in _wholeComicSnapshot.jobs)
-                      _WholeComicQueueTile(
-                        key: wholeComicQueueJobKey(job.jobId),
-                        job: job,
-                        onPause: () => _queueAction(
-                          () => widget.wholeComicDownloads.pause(job.jobId),
-                        ),
-                        onResume: () => _queueAction(
-                          () => widget.wholeComicDownloads.resume(job.jobId),
-                        ),
-                        onCancel: () => _queueAction(
-                          () => widget.wholeComicDownloads.cancel(job.jobId),
-                        ),
-                        onRetry: () => _queueAction(
-                          () => widget.wholeComicDownloads.retry(job.jobId),
-                        ),
-                        onRemove: () => _queueAction(
-                          () => widget.wholeComicDownloads.remove(job.jobId),
-                        ),
-                      ),
-                    const Divider(height: 24),
-                  ],
-                  if (snapshots.isNotEmpty) ...<Widget>[
-                    const _DownloadSectionHeader(title: '下载任务与页面 artifact'),
-                    for (var index = 0;
-                        index < snapshots.length;
-                        index++) ...<Widget>[
-                      if (index > 0) const Divider(height: 1),
-                      _DownloadTaskTile(
-                        key: downloadManagerTaskKey(snapshots[index].identity),
-                        snapshot: snapshots[index],
-                        onCancel: () => _act(
-                          snapshots[index],
-                          widget.downloads.cancel,
-                        ),
-                        onRetry: () => _act(
-                          snapshots[index],
-                          widget.downloads.retry,
-                        ),
-                        onDelete: () => _delete(snapshots[index]),
-                      ),
-                    ],
-                  ],
-                ],
-              ),
+        child: _selectedTab == DownloadManagerTab.manual
+            ? _buildManualTab(context)
+            : _buildAutoCacheTab(context),
       ),
+      bottomNavigationBar: NavigationBar(
+        key: downloadManagerBottomNavKey,
+        selectedIndex: _selectedTab.index,
+        onDestinationSelected: (index) {
+          final selected = DownloadManagerTab.values[index];
+          setState(() => _selectedTab = selected);
+          if (selected == DownloadManagerTab.autoCache &&
+              _cacheUsage == null) {
+            unawaited(_refreshCacheUsage());
+          }
+        },
+        destinations: const <NavigationDestination>[
+          NavigationDestination(
+            key: downloadManagerTabManualKey,
+            icon: Icon(Icons.download_outlined),
+            selectedIcon: Icon(Icons.download),
+            label: '手动下载任务',
+          ),
+          NavigationDestination(
+            key: downloadManagerTabCacheKey,
+            icon: Icon(Icons.cached_outlined),
+            selectedIcon: Icon(Icons.cached),
+            label: '页面自动缓存',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildManualTab(BuildContext context) {
+    final manualSnapshots = _manualSnapshots;
+    final wholeJobs = _wholeComicSnapshot.jobs;
+    if (manualSnapshots.isEmpty && wholeJobs.isEmpty) {
+      return ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: const <Widget>[
+          SizedBox(height: 160),
+          Icon(Icons.download_done_outlined, size: 48),
+          SizedBox(height: 12),
+          Center(child: Text('暂无手动下载任务')),
+        ],
+      );
+    }
+    final itemCount = (wholeJobs.isNotEmpty ? 2 + wholeJobs.length : 0) +
+        (manualSnapshots.isNotEmpty ? 1 + manualSnapshots.length * 2 - 1 : 0);
+    return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        if (wholeJobs.isNotEmpty) {
+          if (index == 0) {
+            return const _DownloadSectionHeader(title: '整本下载队列');
+          }
+          if (index <= wholeJobs.length) {
+            final job = wholeJobs[index - 1];
+            return _WholeComicQueueTile(
+              key: wholeComicQueueJobKey(job.jobId),
+              job: job,
+              onPause: () => _queueAction(
+                () => _wholeComicDownloads.pause(job.jobId),
+              ),
+              onResume: () => _queueAction(
+                () => _wholeComicDownloads.resume(job.jobId),
+              ),
+              onCancel: () => _queueAction(
+                () => _wholeComicDownloads.cancel(job.jobId),
+              ),
+              onRetry: () => _queueAction(
+                () => _wholeComicDownloads.retry(job.jobId),
+              ),
+              onRemove: () => _queueAction(
+                () => _wholeComicDownloads.remove(job.jobId),
+              ),
+            );
+          }
+          if (index == wholeJobs.length + 1) {
+            return const Divider(height: 24);
+          }
+        }
+        final manualIndex = index - (wholeJobs.isNotEmpty ? wholeJobs.length + 2 : 0);
+        if (manualIndex == 0) {
+          return const _DownloadSectionHeader(title: '下载任务与离线章节');
+        }
+        final snapshotIndex = (manualIndex - 1) ~/ 2;
+        if ((manualIndex - 1).isOdd) {
+          return const Divider(height: 1);
+        }
+        final snapshot = manualSnapshots[snapshotIndex];
+        return _DownloadTaskTile(
+          key: downloadManagerTaskKey(snapshot.identity),
+          snapshot: snapshot,
+          isCancellingOrRetrying: _isActionBusy(snapshot.identity, 'stop') ||
+              _isActionBusy(snapshot.identity, 'retry'),
+          isDeleting: _isActionBusy(snapshot.identity, 'delete'),
+          onCancel: () => _act(snapshot, _downloads.cancel, actionKey: 'stop'),
+          onRetry: () => _act(snapshot, _downloads.retry, actionKey: 'retry'),
+          onDelete: () => _delete(snapshot),
+        );
+      },
+    );
+  }
+
+  Widget _buildAutoCacheTab(BuildContext context) {
+    final autoCacheSnapshots = _autoCacheSnapshots;
+    final hasSummary = _cacheCoordinator != null;
+    final hasItems = autoCacheSnapshots.isNotEmpty;
+    final itemCount = (hasSummary ? 2 : 0) +
+        (hasItems ? autoCacheSnapshots.length * 2 : 5);
+    return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: itemCount,
+      itemBuilder: (context, index) {
+        if (hasSummary) {
+          if (index == 0) {
+            return _DownloadCacheSummary(
+              usage: _cacheUsage,
+              busy: _cacheBusy,
+              onTrim: _trimCache,
+              onClear: _clearCache,
+            );
+          }
+          if (index == 1) {
+            return const Divider(height: 24);
+          }
+        }
+        final contentIndex = index - (hasSummary ? 2 : 0);
+        if (!hasItems) {
+          return switch (contentIndex) {
+            0 => const SizedBox(height: 72),
+            1 => const Icon(Icons.cached_outlined, size: 48),
+            2 => const SizedBox(height: 12),
+            3 => const Center(child: Text('暂无页面自动缓存')),
+            _ => const SizedBox(height: 72),
+          };
+        }
+        if (contentIndex == 0) {
+          return const _DownloadSectionHeader(title: '页面自动缓存章节');
+        }
+        final itemIndex = (contentIndex - 1) ~/ 2;
+        if ((contentIndex - 1).isOdd) {
+          return const Divider(height: 1);
+        }
+        final snapshot = autoCacheSnapshots[itemIndex];
+        return _AutoCacheTaskTile(
+          key: downloadManagerAutoCacheTaskKey(snapshot.identity),
+          snapshot: snapshot,
+          isDeleting: _isActionBusy(snapshot.identity, 'delete'),
+          isConverting: _isActionBusy(snapshot.identity, 'convert'),
+          onDelete: () => _delete(snapshot),
+          onConvert: () => _convertCacheToDownload(snapshot),
+        );
+      },
     );
   }
 }
@@ -744,9 +1356,14 @@ final class _WholeComicQueueTile extends StatelessWidget {
             const SizedBox(height: 6),
             LinearProgressIndicator(
               value: job.phase == WholeComicQueuePhase.running &&
-                      job.completedChapters == 0
+                      job.completedPageUnits == 0
                   ? null
                   : job.fraction,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${job.completedPages}/${job.totalPages} 页',
+              style: Theme.of(context).textTheme.bodySmall,
             ),
           ],
           if (failure != null && failure.trim().isNotEmpty) ...<Widget>[
@@ -766,6 +1383,8 @@ final class _WholeComicQueueTile extends StatelessWidget {
 final class _DownloadTaskTile extends StatelessWidget {
   const _DownloadTaskTile({
     required this.snapshot,
+    this.isCancellingOrRetrying = false,
+    this.isDeleting = false,
     required this.onCancel,
     required this.onRetry,
     required this.onDelete,
@@ -773,6 +1392,8 @@ final class _DownloadTaskTile extends StatelessWidget {
   });
 
   final ChapterDownloadSnapshot snapshot;
+  final bool isCancellingOrRetrying;
+  final bool isDeleting;
   final VoidCallback onCancel;
   final VoidCallback onRetry;
   final VoidCallback onDelete;
@@ -805,12 +1426,45 @@ final class _DownloadTaskTile extends StatelessWidget {
                   ],
                 ),
               ),
-              if (snapshot.phase == ChapterDownloadPhase.downloading)
+              if (snapshot.phase == ChapterDownloadPhase.downloading &&
+                  !snapshot.started)
                 IconButton(
                   key: downloadManagerCancelKey(snapshot.identity),
                   tooltip: '取消下载',
                   onPressed: onCancel,
+                  icon: Stack(
+                    alignment: Alignment.center,
+                    children: <Widget>[
+                      const SizedBox.square(
+                        dimension: 30,
+                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                      ),
+                      const Icon(Icons.stop, size: 14),
+                    ],
+                  ),
+                )
+              else if (snapshot.phase == ChapterDownloadPhase.downloading)
+                IconButton(
+                  key: downloadManagerCancelKey(snapshot.identity),
+                  tooltip: '停止下载',
+                  onPressed: onCancel,
                   icon: const Icon(Icons.stop_circle_outlined),
+                )
+              else if (isCancellingOrRetrying)
+                IconButton(
+                  key: downloadManagerCancelKey(snapshot.identity),
+                  tooltip: '处理中…',
+                  onPressed: null,
+                  icon: Stack(
+                    alignment: Alignment.center,
+                    children: <Widget>[
+                      const SizedBox.square(
+                        dimension: 30,
+                        child: CircularProgressIndicator(strokeWidth: 2.5),
+                      ),
+                      const Icon(Icons.stop, size: 14),
+                    ],
+                  ),
                 )
               else if (snapshot.phase == ChapterDownloadPhase.failed ||
                   snapshot.phase == ChapterDownloadPhase.cancelled ||
@@ -826,13 +1480,22 @@ final class _DownloadTaskTile extends StatelessWidget {
                   icon: const Icon(Icons.refresh),
                 ),
               const SizedBox(width: 12),
-              IconButton(
-                key: downloadManagerDeleteKey(snapshot.identity),
-                tooltip: '删除离线章节',
-                color: Theme.of(context).colorScheme.error,
-                onPressed: onDelete,
-                icon: const Icon(Icons.delete_outline),
-              ),
+              if (isDeleting)
+                const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: SizedBox.square(
+                    dimension: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else
+                IconButton(
+                  key: downloadManagerDeleteKey(snapshot.identity),
+                  tooltip: '删除离线章节',
+                  color: Theme.of(context).colorScheme.error,
+                  onPressed: isCancellingOrRetrying ? null : onDelete,
+                  icon: const Icon(Icons.delete_outline),
+                ),
             ],
           ),
           if (snapshot.phase != ChapterDownloadPhase.complete) ...<Widget>[
@@ -848,9 +1511,13 @@ final class _DownloadTaskTile extends StatelessWidget {
           ] else
             const SizedBox(height: 4),
           Text(
-            '${snapshot.completedPages}/${snapshot.totalPages} 页'
-            ' · ${_formatBytes(snapshot.receivedBytes)}'
-            '${snapshot.totalBytes == null ? '' : ' / ${_formatBytes(snapshot.totalBytes!)}'}',
+            snapshot.pinnedPages > 0 && snapshot.autoCachedPages > 0
+                ? '${snapshot.pinnedPages} 页已固定下载 · ${snapshot.autoCachedPages} 页自动缓存（共 ${snapshot.completedPages}/${snapshot.totalPages} 页）'
+                    ' · ${_formatBytes(snapshot.receivedBytes)}'
+                    '${snapshot.totalBytes == null ? '' : ' / ${_formatBytes(snapshot.totalBytes!)}'}'
+                : '${snapshot.completedPages}/${snapshot.totalPages} 页'
+                    ' · ${_formatBytes(snapshot.receivedBytes)}'
+                    '${snapshot.totalBytes == null ? '' : ' / ${_formatBytes(snapshot.totalBytes!)}'}',
             style: Theme.of(context).textTheme.bodySmall,
           ),
           if (failure != null && failure.trim().isNotEmpty) ...<Widget>[
@@ -884,11 +1551,106 @@ final class _DownloadTaskTile extends StatelessWidget {
   }
 }
 
+final class _AutoCacheTaskTile extends StatelessWidget {
+  const _AutoCacheTaskTile({
+    required this.snapshot,
+    this.isDeleting = false,
+    this.isConverting = false,
+    required this.onDelete,
+    this.onConvert,
+    super.key,
+  });
+
+  final ChapterDownloadSnapshot snapshot;
+  final bool isDeleting;
+  final bool isConverting;
+  final VoidCallback onDelete;
+  final VoidCallback? onConvert;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      snapshot.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+                    Text(
+                      '${snapshot.comicTitle} · ${snapshot.sourceId} · 页面自动缓存',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              if (isConverting)
+                const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: SizedBox.square(
+                    dimension: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else if (onConvert != null)
+                IconButton(
+                  key: downloadManagerConvertKey(snapshot.identity),
+                  tooltip: '转为下载任务',
+                  color: Theme.of(context).colorScheme.primary,
+                  onPressed: onConvert,
+                  icon: const Icon(Icons.download_outlined),
+                ),
+              if (isDeleting)
+                const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: SizedBox.square(
+                    dimension: 24,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else
+                IconButton(
+                  key: downloadManagerClearCacheKey(snapshot.identity),
+                  tooltip: '清除本章缓存',
+                  color: Theme.of(context).colorScheme.error,
+                  onPressed: onDelete,
+                  icon: const Icon(Icons.delete_outline),
+                ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            snapshot.pinnedPages > 0
+                ? '${snapshot.pinnedPages} 页已固定下载 · ${snapshot.autoCachedPages} 页自动缓存（共 ${snapshot.completedPages}/${snapshot.totalPages} 页）'
+                    ' · ${_formatBytes(snapshot.receivedBytes)}'
+                : '${snapshot.autoCachedPages > 0 ? snapshot.autoCachedPages : snapshot.completedPages}/${snapshot.totalPages} 页已缓存'
+                    ' · ${_formatBytes(snapshot.receivedBytes)}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 String _identity(ImportedLibraryEntry entry) => chapterDownloadIdentity(
       entry.chapter.sourceId,
+      entry.chapter.comicId,
       entry.chapter.chapterId,
       entry.chapter.sourceRevision,
     );
+
+String _chapterIdentity(String sourceId, String comicId, String chapterId) =>
+    '$sourceId\u0000$comicId\u0000$chapterId';
 
 int _phasePriority(ChapterDownloadPhase phase) => switch (phase) {
       ChapterDownloadPhase.downloading => 0,
@@ -903,13 +1665,14 @@ String _phaseLabel(ChapterDownloadPhase phase) => switch (phase) {
       ChapterDownloadPhase.downloading => '下载中',
       ChapterDownloadPhase.complete => '已下载',
       ChapterDownloadPhase.failed => '下载失败',
-      ChapterDownloadPhase.cancelled => '已取消',
+      ChapterDownloadPhase.cancelled => '已停止',
     };
 
 String _wholeQueuePhaseLabel(WholeComicQueuePhase phase) => switch (phase) {
       WholeComicQueuePhase.queued => '排队中',
       WholeComicQueuePhase.running => '下载中',
       WholeComicQueuePhase.waitingForPolicy => '等待策略条件',
+      WholeComicQueuePhase.requiresUserAction => '等待处理目录冲突',
       WholeComicQueuePhase.paused => '已暂停',
       WholeComicQueuePhase.complete => '已完成',
       WholeComicQueuePhase.failed => '失败',

@@ -45,6 +45,7 @@ ChapterManifest parseChapterManifest(String source) {
         ),
         animatedHint: (value['animatedHint'] as bool?) ?? false,
         checksum: value['checksum'] as String?,
+        checksumAlgorithm: value['checksumAlgorithm'] as String?,
       ),
     );
   }

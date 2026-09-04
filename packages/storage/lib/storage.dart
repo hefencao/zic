@@ -6,6 +6,7 @@ export 'src/cache_scanner.dart';
 export 'src/comic_folder_manifest.dart';
 export 'src/crc32.dart';
 export 'src/download_directory.dart';
+export 'src/download_placement.dart';
 export 'src/ephemeral_workspace.dart';
 export 'src/file_resource_cache_byte_store.dart';
 export 'src/home_projection_snapshot.dart';

@@ -26,6 +26,17 @@ final class LazyImportedLibraryStore
 
   ImportedLibraryStore get _active => _durable ?? _memory;
 
+  /// Materializes the SQLite store used by the runtime handoff.
+  ///
+  /// The bootstrap Home and the durable composition must share one library
+  /// owner. Opening a second SQLite handle for the same path would make a
+  /// first-install handoff race with memory promotion and could lose writes.
+  /// This method therefore exposes the single-flight durable instance instead
+  /// of requiring the app runtime to open a second store.
+  Future<ImportedLibraryStore> ensureDurable() => _ensureDurable();
+
+  bool get isDurable => _durable != null;
+
   @override
   Future<int?> get libraryProjectionRevision async {
     // The memory-only bootstrap has no durable revision to compare. Returning

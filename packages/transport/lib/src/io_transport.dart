@@ -1,10 +1,11 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:domain/domain.dart';
 
 import 'transport.dart';
 
-final class IoTransport implements Transport {
+final class IoTransport implements ControlledTransport {
   IoTransport({HttpTransport? http, FileTransport? file})
       : http = http ?? HttpTransport(),
         file = file ?? const FileTransport();
@@ -17,17 +18,29 @@ final class IoTransport implements Transport {
     Uri uri, {
     ByteRange? range,
     Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
   }) {
+    control?.throwIfCancelled();
     return switch (uri.scheme) {
-      'http' || 'https' => http.open(
+      'http' || 'https' => http.openControlled(
           uri,
           range: range,
           validators: validators,
+          control: control,
         ),
-      'file' => file.open(
+      'file' => file.openControlled(
           uri,
           range: range,
           validators: validators,
+          control: control,
         ),
       _ => throw Failure(
           code: ErrorCode.source,
@@ -39,7 +52,7 @@ final class IoTransport implements Transport {
   void close({bool force = false}) => http.close(force: force);
 }
 
-final class HttpTransport implements Transport {
+final class HttpTransport implements ControlledTransport {
   HttpTransport({
     HttpClient? client,
     Duration connectionTimeout = const Duration(seconds: 15),
@@ -64,12 +77,28 @@ final class HttpTransport implements Transport {
     Uri uri, {
     ByteRange? range,
     Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
   }) async {
     try {
-      return await _open(uri, range: range, validators: validators);
+      control?.throwIfCancelled();
+      return await _open(
+        uri,
+        range: range,
+        validators: validators,
+        control: control,
+      );
     } on Failure {
       rethrow;
     } on SocketException catch (error) {
+      if (control?.cancelled == true) control!.throwIfCancelled();
       final osError = error.osError;
       final osDetails = osError == null
           ? ''
@@ -80,6 +109,7 @@ final class HttpTransport implements Transport {
         cause: error,
       );
     } on HttpException catch (error) {
+      if (control?.cancelled == true) control!.throwIfCancelled();
       throw Failure(
         code: ErrorCode.network,
         message: 'HTTP transport failure for $uri: ${error.message}',
@@ -92,6 +122,7 @@ final class HttpTransport implements Transport {
     Uri uri, {
     ByteRange? range,
     Validators? validators,
+    TaskControl? control,
   }) async {
     if (uri.scheme != 'http' && uri.scheme != 'https') {
       throw Failure(
@@ -102,6 +133,10 @@ final class HttpTransport implements Transport {
     range?.validate();
 
     final request = await _client.getUrl(uri);
+    control?.throwIfCancelled();
+    final cancellation = control?.whenCancelled.then<void>((_) {
+      request.abort();
+    });
     final userAgent = _nonEmpty(_fixedUserAgent) ?? _nonEmpty(_userAgentProvider?.call());
     if (userAgent != null) {
       request.headers.set(HttpHeaders.userAgentHeader, userAgent);
@@ -117,10 +152,21 @@ final class HttpTransport implements Transport {
       }
     }
 
-    final response = await request.close();
+    late final HttpClientResponse response;
+    try {
+      response = await request.close();
+    } finally {
+      // The cancellation subscription is intentionally detached after the
+      // request has been closed; it is only a request-open abort hook.
+      unawaited(cancellation);
+    }
+    if (control?.cancelled == true) {
+      await _drainHttpResponse(response, control: control);
+      control!.throwIfCancelled();
+    }
     if (response.statusCode != HttpStatus.ok &&
         response.statusCode != HttpStatus.partialContent) {
-      await response.drain<void>();
+      await _drainHttpResponse(response, control: control);
       throw Failure(
         code: ErrorCode.network,
         message: 'HTTP ${response.statusCode} for $uri',
@@ -131,7 +177,7 @@ final class HttpTransport implements Transport {
       response.headers.value(HttpHeaders.contentRangeHeader),
     );
     if (response.statusCode == HttpStatus.partialContent && parsedRange == null) {
-      await response.drain<void>();
+      await _drainHttpResponse(response, control: control);
       throw const Failure(
         code: ErrorCode.resumeRejected,
         message: '206 response is missing a valid Content-Range header',
@@ -140,7 +186,9 @@ final class HttpTransport implements Transport {
 
     final etag = response.headers.value(HttpHeaders.etagHeader);
     final modifiedValue = response.headers.value(HttpHeaders.lastModifiedHeader);
-    final modified = modifiedValue == null ? null : HttpDate.parse(modifiedValue);
+    // Ignore a malformed optional validator rather than returning a live
+    // response whose body was never handed to a caller or drained.
+    final modified = _tryParseHttpDate(modifiedValue);
     final totalLength = parsedRange?.total ??
         (response.contentLength >= 0 ? response.contentLength : null);
     final acceptsRanges =
@@ -155,7 +203,15 @@ final class HttpTransport implements Transport {
       rangeSupported:
           acceptsRanges || response.statusCode == HttpStatus.partialContent,
       flowControl: ByteResponseFlowControl.streamBackpressure,
-      onDiscard: () => response.drain<void>(),
+      onDiscard: () async {
+        await _drainHttpResponse(response);
+      },
+      onDiscardControlled: ({TaskControl? control}) async {
+        if (control?.cancelled == true) {
+          request.abort();
+        }
+        await _drainHttpResponse(response, control: control);
+      },
     );
   }
 
@@ -166,7 +222,7 @@ final class HttpTransport implements Transport {
   }
 }
 
-final class FileTransport implements Transport {
+final class FileTransport implements ControlledTransport {
   const FileTransport();
 
   @override
@@ -174,7 +230,17 @@ final class FileTransport implements Transport {
     Uri uri, {
     ByteRange? range,
     Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
   }) async {
+    control?.throwIfCancelled();
     if (uri.scheme != 'file') {
       throw Failure(
         code: ErrorCode.source,
@@ -205,8 +271,14 @@ final class FileTransport implements Transport {
         ? length
         : (requestedEnd + 1 > length ? length : requestedEnd + 1);
 
+    control?.throwIfCancelled();
     return ByteResponse(
-      bytes: _readFileChunks(file, start, endExclusive),
+      bytes: _readFileChunks(
+        file,
+        start,
+        endExclusive,
+        control: control,
+      ),
       statusCode: canServeRange ? HttpStatus.partialContent : HttpStatus.ok,
       rangeStart: start,
       totalLength: length,
@@ -220,13 +292,15 @@ final class FileTransport implements Transport {
 Stream<List<int>> _readFileChunks(
   File file,
   int start,
-  int endExclusive,
-) async* {
+  int endExclusive, {
+  TaskControl? control,
+}) async* {
   final reader = await file.open();
   try {
     await reader.setPosition(start);
     var remaining = endExclusive - start;
     while (remaining > 0) {
+      control?.throwIfCancelled();
       final chunk = await reader.read(
         remaining < defaultTransportChunkBytes
             ? remaining
@@ -258,16 +332,44 @@ _ContentRange? _parseContentRange(String? value) {
   if (match == null) {
     return null;
   }
-  final start = int.parse(match.group(1)!);
-  final end = int.parse(match.group(2)!);
-  if (end < start) {
+  final int start;
+  final int end;
+  final int? total;
+  try {
+    start = int.parse(match.group(1)!);
+    end = int.parse(match.group(2)!);
+    final totalValue = match.group(3)!;
+    total = totalValue == '*' ? null : int.parse(totalValue);
+  } on FormatException {
     return null;
   }
-  final totalValue = match.group(3)!;
-  return _ContentRange(
-    start: start,
-    total: totalValue == '*' ? null : int.parse(totalValue),
-  );
+  if (end < start || (total != null && total <= end)) {
+    return null;
+  }
+  return _ContentRange(start: start, total: total);
+}
+
+Future<void> _drainHttpResponse(
+  HttpClientResponse response, {
+  TaskControl? control,
+}) async {
+  final iterator = StreamIterator<List<int>>(response);
+  try {
+    while (await iterator.moveNext()) {
+      control?.throwIfCancelled();
+    }
+  } finally {
+    await iterator.cancel();
+  }
+}
+
+DateTime? _tryParseHttpDate(String? value) {
+  if (value == null || value.isEmpty) return null;
+  try {
+    return HttpDate.parse(value);
+  } on FormatException {
+    return null;
+  }
 }
 
 String? _nonEmpty(String? value) {

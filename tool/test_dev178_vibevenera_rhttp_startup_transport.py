@@ -36,7 +36,7 @@ for token in (
     'prewarmPlatformSourceResourceTransport()',
     'rhttp.Rhttp.init()',
     'rhttp.RhttpClient.create(',
-    'rhttp.RedirectSettings.none()',
+    'rhttp.RedirectSettings.',
     'keepAliveTimeout: Duration(seconds: 60)',
     'client.requestStream(',
     'final cancelToken = rhttp.CancelToken();',

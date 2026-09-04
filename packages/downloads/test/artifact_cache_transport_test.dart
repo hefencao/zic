@@ -63,6 +63,95 @@ void main() {
     expect(read.payload['completed'], isTrue);
   });
 
+  test('retained local-source bytes remain memory-only provenance', () async {
+    final uri = Uri.parse('file:///fixture/page.bin');
+    final id = _downloadId(uri, 'local-page');
+    final bytes = Uint8List.fromList(<int>[7, 1, 8, 2]);
+    final cache = ArtifactCacheManager(
+      backend: _MemoryArtifactStore(<DownloadId, Uint8List>{}),
+    );
+    final transport = ArtifactCacheTransport(
+      cache: cache,
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => _RecordingTransport(bytes),
+    );
+
+    final response = await transport.open(uri);
+    expect(await _collect(response), bytes);
+
+    final lookup = await cache.lookup(id);
+    expect(lookup?.tier, ArtifactCacheTier.memory);
+    expect(lookup?.durable, isFalse);
+  });
+
+  test('cancelling retained local-origin bytes discards the source response',
+      () async {
+    final uri = Uri.parse('file:///fixture/cancel-retained-page.bin');
+    final id = _downloadId(uri, 'cancel-retained-page');
+    final bodyStarted = Completer<void>();
+    final body = StreamController<List<int>>(
+      onListen: () {
+        if (!bodyStarted.isCompleted) bodyStarted.complete();
+      },
+    );
+    addTearDown(() async {
+      if (!body.isClosed) await body.close();
+    });
+    final fallback = _DiscardTrackingTransport(body);
+    final transport = ArtifactCacheTransport(
+      cache: ArtifactCacheManager(
+        backend: _MemoryArtifactStore(<DownloadId, Uint8List>{}),
+      ),
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+    );
+
+    final response = await transport.open(uri);
+    final subscription = response.bytes.listen((_) {});
+    await bodyStarted.future;
+    await subscription.cancel();
+
+    await fallback.discarded.future.timeout(const Duration(seconds: 1));
+    expect(fallback.opens, 1);
+  });
+
+  test('cancelling a traced origin stream discards the source response',
+      () async {
+    final uri = Uri.parse('https://example.invalid/cancel-traced-page.bin');
+    final id = _downloadId(uri, 'cancel-traced-page');
+    final bodyStarted = Completer<void>();
+    final body = StreamController<List<int>>(
+      onListen: () {
+        if (!bodyStarted.isCompleted) bodyStarted.complete();
+      },
+    );
+    addTearDown(() async {
+      if (!body.isClosed) await body.close();
+    });
+    final fallback = _DiscardTrackingTransport(body);
+    final trace = MemoryTraceSink();
+    final transport = ArtifactCacheTransport(
+      cache: ArtifactCacheManager(
+        backend: _MemoryArtifactStore(<DownloadId, Uint8List>{}),
+      ),
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+      clock: _Clock(),
+      traceSink: trace,
+    );
+
+    final response = await transport.open(uri);
+    final subscription = response.bytes.listen((_) {});
+    await bodyStarted.future;
+    await subscription.cancel();
+
+    await fallback.discarded.future.timeout(const Duration(seconds: 1));
+    final read = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.sourceRead,
+    );
+    expect(read.payload['completed'], isFalse);
+  });
+
   test('streams a large promoted artifact in cooperative chunks', () async {
     final uri = Uri.parse('https://example.invalid/large-page.bin');
     final id = _downloadId(uri, 'page-large');
@@ -153,6 +242,98 @@ void main() {
     expect(read.payload['readSchedulerAcquires'], 2);
     expect(read.payload['readSchedulerForegroundAcquires'], 0);
     expect(read.payload['readSchedulerMaxWaitMicros'], isA<int>());
+  });
+
+  test('cancelled cache stream does not remain queued for a local-read lease',
+      () async {
+    final uri = Uri.parse('https://example.invalid/cancelled-local-read.bin');
+    final id = _downloadId(uri, 'page-cancelled-local-read');
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 2);
+    final blockerA = await scheduler.acquire(priority: () => 1000);
+    final blockerB = await scheduler.acquire(priority: () => 1000);
+    final control = _MutableTaskControl(priority: 400);
+    final transport = ArtifactCacheTransport(
+      cache: ArtifactCacheManager(
+        backend: _StreamingArtifactStore(
+          id,
+          Uint8List(promotedArtifactReadChunkBytes),
+        ),
+      ),
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
+      readScheduler: scheduler,
+      demandPriority: (_) => 400,
+    );
+
+    final response = await transport.openControlled(uri, control: control);
+    final iterator = StreamIterator<List<int>>(response.bytes);
+    final read = iterator.moveNext();
+    await Future<void>.delayed(Duration.zero);
+    expect(scheduler.pendingCount, 1);
+
+    control.cancel();
+    await expectLater(
+      read,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect(scheduler.pendingCount, 0);
+
+    blockerA.release();
+    blockerB.release();
+    await iterator.cancel();
+  });
+
+  test('cancellation aborts an already-admitted cache body read', () async {
+    final uri = Uri.parse('https://example.invalid/cancelled-admitted-read.bin');
+    final id = _downloadId(uri, 'page-cancelled-admitted-read');
+    final control = _MutableTaskControl(priority: 400);
+    final bodyCancelled = Completer<void>();
+    final body = StreamController<List<int>>(
+      onCancel: () {
+        if (!bodyCancelled.isCompleted) bodyCancelled.complete();
+      },
+    );
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 2);
+    final transport = ArtifactCacheTransport(
+      cache: ArtifactCacheManager(
+        backend: _CancellableStreamingArtifactStore(
+          id,
+          body.stream,
+        ),
+      ),
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
+      readScheduler: scheduler,
+      demandPriority: (_) => 400,
+    );
+
+    final response = await transport.openControlled(uri, control: control);
+    final iterator = StreamIterator<List<int>>(response.bytes);
+    final read = iterator.moveNext();
+    await Future<void>.delayed(Duration.zero);
+    expect(scheduler.activeCount, 1);
+
+    control.cancel();
+    await expectLater(
+      read,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    await bodyCancelled.future.timeout(const Duration(seconds: 1));
+    expect(scheduler.activeCount, 0);
+    await iterator.cancel();
+    await body.close();
   });
 
   test('foreground artifact stream keeps its scheduler lease across chunks',
@@ -455,7 +636,7 @@ void main() {
     );
   });
 
-  test('completed immutable local origin is hot across Reader sessions',
+  test('completed immutable local origin is hot across Reader sessions without durable provenance',
       () async {
     final uri = Uri.parse('content://reader/page-restore.webp');
     final id = _downloadId(uri, 'page-local-hot');
@@ -485,7 +666,7 @@ void main() {
       traceSink: trace,
     );
     final restored = await second.open(uri);
-    expect(restored.disposition, ByteResponseDisposition.durableImmutable);
+    expect(restored.disposition, ByteResponseDisposition.staged);
     expect(
       await restored.bytes.map((chunk) => chunk.length).toList(),
       <int>[4096],
@@ -697,6 +878,32 @@ final class _StreamingArtifactStore implements ArtifactCacheBackend {
   Future<void> invalidateArtifact(DownloadId id) async {}
 }
 
+final class _CancellableStreamingArtifactStore
+    implements ArtifactCacheBackend {
+  _CancellableStreamingArtifactStore(this.id, this.body);
+
+  final DownloadId id;
+  final Stream<List<int>> body;
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
+    if (id != this.id) return null;
+    return ArtifactCacheStreamEntry(
+      length: 1,
+      open: ({required int start, int? endExclusive}) => body,
+    );
+  }
+
+  @override
+  Future<void> storePromotedArtifact({
+    required DownloadId id,
+    required Uint8List bytes,
+  }) async {}
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {}
+}
+
 final class _ThrowingArtifactStore implements ArtifactCacheBackend {
   @override
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
@@ -794,6 +1001,33 @@ final class _RecordingTransport implements Transport {
       rangeStart: 0,
       totalLength: body.lengthInBytes,
       diagnostics: diagnostics,
+    );
+  }
+}
+
+final class _DiscardTrackingTransport implements Transport {
+  _DiscardTrackingTransport(this.body);
+
+  final StreamController<List<int>> body;
+  final Completer<void> discarded = Completer<void>();
+  int opens = 0;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    opens++;
+    return ByteResponse(
+      bytes: body.stream,
+      statusCode: 200,
+      rangeStart: 0,
+      totalLength: 1,
+      onDiscardControlled: ({TaskControl? control}) async {
+        if (!discarded.isCompleted) discarded.complete();
+        if (!body.isClosed) await body.close();
+      },
     );
   }
 }

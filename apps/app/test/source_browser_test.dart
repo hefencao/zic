@@ -2197,6 +2197,10 @@ void main() {
       'fixture-active',
       'fixture-active-chapter',
     );
+    final stopDownloadKey = details.comicDetailsStopDownloadKey(
+      'fixture-active',
+      'fixture-active-chapter',
+    );
     await _pumpUntilFound(tester, find.byKey(downloadKey));
     await _tapVisible(tester, find.byKey(downloadKey));
     for (var frame = 0; frame < 80 && !pageStarted.isCompleted; frame++) {
@@ -2206,8 +2210,8 @@ void main() {
     await tester.pump();
     expect(
       find.descendant(
-        of: find.byKey(downloadKey),
-        matching: find.byType(CircularProgressIndicator),
+        of: find.byKey(stopDownloadKey),
+        matching: find.byIcon(Icons.stop_circle_outlined),
       ),
       findsOneWidget,
     );
@@ -2227,8 +2231,8 @@ void main() {
     await _pumpUntilFound(
       tester,
       find.descendant(
-        of: find.byKey(downloadKey),
-        matching: find.byType(CircularProgressIndicator),
+        of: find.byKey(stopDownloadKey),
+        matching: find.byIcon(Icons.stop_circle_outlined),
       ),
     );
 

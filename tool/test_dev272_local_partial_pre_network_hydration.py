@@ -27,10 +27,10 @@ owner = read(owner_path)
 require(
     owner_path,
     'final Map<DownloadId, Future<void>> _localPreparations',
-    'final Map<DownloadId, DownloadSession> _locallyPreparedSessions',
+    '_locallyPreparedSessions',
     'void _startLocalPreparation(',
     'Future<void> _runLocalPreparation(',
-    'await prepare(session);',
+    'prepare!(session);',
     "'stage': 'physical-local-prepare'",
     "'action': 'local-hydration-failed-network-fallback'",
     "'action': completedLocally",
@@ -41,15 +41,15 @@ require(
 ensure_start = owner.index('void _ensureDownloadTask(')
 run_start = owner.index('Future<void> _runDownload(', ensure_start)
 ensure = owner[ensure_start:run_start]
-req('_startLocalPreparation(id, session, prepare);' in ensure,
+req('_startLocalPreparation(' in ensure,
     'fresh cold physical session must start local preparation from _ensureDownloadTask')
 req("final taskKey = 'transfer:${++_taskSequence}:${id.key}';" in ensure,
     'network task creation marker missing')
-req(ensure.index('_startLocalPreparation(id, session, prepare);') <
+req(ensure.index('_startLocalPreparation(') <
     ensure.index("final taskKey = 'transfer:${++_taskSequence}:${id.key}';"),
     'local preparation must start before NetLane task creation')
 run = owner[run_start:]
-req('await prepare(session);' not in run.split('bool _scheduleDownloadRetry(', 1)[0],
+req('prepare(session);' not in run.split('bool _scheduleDownloadRetry(', 1)[0],
     '_runDownload must not re-own cold local prepare behind NetLane admission')
 req('prepareDownload' not in run.split('bool _scheduleDownloadRetry(', 1)[0],
     'provider/network attempt must not invoke local durable prepare')
@@ -67,9 +67,10 @@ require(
     'packages/downloads/lib/src/partial_download_handoff.dart',
     'final ArtifactCacheReadScheduler? readScheduler;',
     'priority: () => session.effectivePriority',
-    'final lease = await scheduler.acquire(priority: priority);',
-    'await iterator.moveNext()',
-    'lease.release();',
+    'lease = await scheduler.acquire(',
+    'priority: priority,',
+    '_moveNextCancellable(iterator',
+    'lease?.release();',
 )
 require(
     'packages/downloads/lib/src/composition_download_transfer_runtime.dart',

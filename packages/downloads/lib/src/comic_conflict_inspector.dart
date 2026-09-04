@@ -1,8 +1,24 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:storage/storage.dart';
 
 import 'artifact_bytes.dart';
+
+/// Represents the version relationship between a download target and an existing local folder.
+enum ComicVersionRelationKind {
+  /// Incoming download is a newer version (successor) of the existing local download.
+  incomingIsNewer,
+
+  /// Existing local download is already a newer version (successor) of the incoming download.
+  existingIsNewer,
+
+  /// Exact same version (same sourceId and comicId).
+  sameVersion,
+
+  /// Title-matched or unknown version relation.
+  unknown,
+}
 
 /// Represents a candidate comic directory found in the target download root.
 final class ComicFolderCandidate {
@@ -10,15 +26,21 @@ final class ComicFolderCandidate {
     required this.directoryPath,
     required this.folderName,
     this.manifest,
+    this.hasManifestFile = false,
     required this.isExactMatch,
     required this.isTitleMatch,
     required this.chapterCount,
     required this.existingPageFilesCount,
+    this.versionRelation = ComicVersionRelationKind.unknown,
   });
 
   final String directoryPath;
   final String folderName;
   final ComicFolderManifest? manifest;
+
+  /// Whether a `.zic.json` entry exists, including when its contents are
+  /// malformed and therefore cannot be decoded as [manifest].
+  final bool hasManifestFile;
 
   /// Whether this folder belongs to the exact same (sourceId, comicId).
   final bool isExactMatch;
@@ -30,9 +52,15 @@ final class ComicFolderCandidate {
   final int chapterCount;
   final int existingPageFilesCount;
 
+  final ComicVersionRelationKind versionRelation;
+
   /// Confidence score between 0.0 and 1.0.
   double get confidenceScore {
     if (isExactMatch) return 1.0;
+    if (versionRelation == ComicVersionRelationKind.incomingIsNewer ||
+        versionRelation == ComicVersionRelationKind.existingIsNewer) {
+      return 0.95;
+    }
     if (manifest != null && isTitleMatch) return 0.85;
     if (isTitleMatch) return 0.70;
     return 0.50;
@@ -41,6 +69,12 @@ final class ComicFolderCandidate {
   /// Human-readable confidence description.
   String get confidenceLabel {
     if (isExactMatch) return '完全匹配 (同源同ID)';
+    if (versionRelation == ComicVersionRelationKind.incomingIsNewer) {
+      return '历史版本 (可更新替换)';
+    }
+    if (versionRelation == ComicVersionRelationKind.existingIsNewer) {
+      return '较新版本 (已存在)';
+    }
     if (manifest?.sourceDisplayName != null &&
         manifest!.sourceDisplayName!.isNotEmpty) {
       return '同名候选 (${manifest!.sourceDisplayName})';
@@ -50,7 +84,10 @@ final class ComicFolderCandidate {
   }
 
   bool get hasExistingContent =>
-      existingPageFilesCount > 0 || chapterCount > 0 || manifest != null;
+      existingPageFilesCount > 0 ||
+      chapterCount > 0 ||
+      manifest != null ||
+      hasManifestFile;
 }
 
 /// Normalizes a comic title for flexible similarity comparison by removing
@@ -121,6 +158,9 @@ Future<ComicConflictReport> inspectPosixComicConflicts({
   String? sourceDisplayName,
   required String comicId,
   required String comicTitle,
+  Set<String>? knownPredecessorComicIds,
+  Set<String>? knownSuccessorComicIds,
+  Map<String, ({String sourceId, String comicId})>? knownDirectoryOwners,
 }) async {
   final root = Directory(rootDirectory);
   if (!await root.exists()) {
@@ -148,7 +188,8 @@ Future<ComicConflictReport> inspectPosixComicConflicts({
     final manifestFile = File(
       '${entity.path}${Platform.pathSeparator}$comicManifestFileName',
     );
-    if (await manifestFile.exists()) {
+    final hasManifestFile = await manifestFile.exists();
+    if (hasManifestFile) {
       try {
         final content = await manifestFile.readAsString();
         manifest = ComicFolderManifest.decode(content);
@@ -157,9 +198,28 @@ Future<ComicConflictReport> inspectPosixComicConflicts({
       }
     }
 
-    final isExactMatch = manifest != null &&
-        manifest.sourceId == sourceId &&
-        manifest.comicId == comicId;
+    final knownOwner = knownDirectoryOwners?[folderName];
+    final ownerSourceId = manifest?.sourceId ?? knownOwner?.sourceId;
+    final ownerComicId = manifest?.comicId ?? knownOwner?.comicId;
+
+    final isExactMatch = ownerSourceId == sourceId && ownerComicId == comicId;
+
+    ComicVersionRelationKind versionRelation;
+    if (isExactMatch) {
+      versionRelation = ComicVersionRelationKind.sameVersion;
+    } else if (ownerComicId != null &&
+        (knownPredecessorComicIds?.contains(ownerComicId) == true ||
+            (ownerSourceId == sourceId &&
+                knownPredecessorComicIds?.contains(ownerComicId) == true))) {
+      versionRelation = ComicVersionRelationKind.incomingIsNewer;
+    } else if (ownerComicId != null &&
+        (knownSuccessorComicIds?.contains(ownerComicId) == true ||
+            (ownerSourceId == sourceId &&
+                knownSuccessorComicIds?.contains(ownerComicId) == true))) {
+      versionRelation = ComicVersionRelationKind.existingIsNewer;
+    } else {
+      versionRelation = ComicVersionRelationKind.unknown;
+    }
 
     var chapterCount = 0;
     var pageCount = 0;
@@ -167,14 +227,13 @@ Future<ComicConflictReport> inspectPosixComicConflicts({
       await for (final sub in entity.list(followLinks: false)) {
         if (sub is Directory) {
           chapterCount++;
-          var subCount = 0;
           await for (final page in sub.list(followLinks: false)) {
-            if (page is File && !page.path.endsWith(comicManifestFileName)) {
-              subCount++;
-              if (subCount >= 20) break;
+            if (page is File &&
+                !page.path.endsWith(comicManifestFileName) &&
+                !page.path.endsWith('cache.sqlite')) {
+              pageCount++;
             }
           }
-          pageCount += subCount;
         } else if (sub is File &&
             !sub.path.endsWith(comicManifestFileName) &&
             !sub.path.endsWith('cache.sqlite')) {
@@ -190,10 +249,14 @@ Future<ComicConflictReport> inspectPosixComicConflicts({
         directoryPath: entity.path,
         folderName: folderName,
         manifest: manifest,
+        hasManifestFile: hasManifestFile,
         isExactMatch: isExactMatch,
         isTitleMatch: !isExactMatch,
-        chapterCount: chapterCount,
+        chapterCount: chapterCount > 0
+            ? chapterCount
+            : (manifest?.chapters.length ?? 0),
         existingPageFilesCount: pageCount,
+        versionRelation: versionRelation,
       ),
     );
   }
@@ -201,9 +264,15 @@ Future<ComicConflictReport> inspectPosixComicConflicts({
   final hasDirectExactMatch = candidates.any((c) => c.isExactMatch);
   final hasTitleConflicts = candidates.any((c) => c.isTitleMatch);
 
+  final cleanName = buildComicDirectoryName(comicTitle: comicTitle);
+  final cleanCandidate = candidates.where((c) => c.folderName == cleanName).firstOrNull;
+  final cleanOccupiedByOther = cleanCandidate != null &&
+      cleanCandidate.hasExistingContent &&
+      !cleanCandidate.isExactMatch;
+
   String recommendedDirectory;
-  if (candidates.isEmpty || hasDirectExactMatch) {
-    recommendedDirectory = buildComicDirectoryName(comicTitle: comicTitle);
+  if (!cleanOccupiedByOther || hasDirectExactMatch) {
+    recommendedDirectory = cleanName;
   } else {
     final suffix = sourceDisplayName ?? sourceId;
     recommendedDirectory = buildComicDirectoryName(
@@ -237,6 +306,9 @@ Future<ComicConflictReport> inspectSafComicConflicts({
   String? sourceDisplayName,
   required String comicId,
   required String comicTitle,
+  Set<String>? knownPredecessorComicIds,
+  Set<String>? knownSuccessorComicIds,
+  Map<String, ({String sourceId, String comicId})>? knownDirectoryOwners,
 }) async {
   final cleanName = buildComicDirectoryName(comicTitle: comicTitle);
   final candidates = <ComicFolderCandidate>[];
@@ -274,20 +346,20 @@ Future<ComicConflictReport> inspectSafComicConflicts({
     final manifestPath = '$folderName/$comicManifestFileName';
     ComicFolderManifest? manifest;
     var exists = false;
+    var hasManifestFile = false;
     var pageCount = 0;
     var chapterCount = 0;
 
     if (await safIo.exists(manifestPath)) {
       exists = true;
+      hasManifestFile = true;
       try {
         final handle = await safIo.open(manifestPath, mode: SafWriteMode.read);
         if (handle != null) {
           final len = await safIo.length(handle) ?? 0;
           final bytes = await safIo.read(handle, len);
           await safIo.close(handle);
-          manifest = ComicFolderManifest.decode(
-            String.fromCharCodes(bytes),
-          );
+          manifest = ComicFolderManifest.decode(utf8.decode(bytes));
         }
       } catch (_) {}
     }
@@ -298,7 +370,16 @@ Future<ComicConflictReport> inspectSafComicConflicts({
       for (final sub in subEntries) {
         if (sub.isDirectory) {
           chapterCount++;
-        } else if (!sub.name.endsWith(comicManifestFileName)) {
+          final chapterEntries = await safIo.list('$folderName/${sub.name}');
+          for (final page in chapterEntries) {
+            if (!page.isDirectory &&
+                !page.name.endsWith(comicManifestFileName) &&
+                !page.name.endsWith('cache.sqlite')) {
+              pageCount++;
+            }
+          }
+        } else if (!sub.name.endsWith(comicManifestFileName) &&
+            !sub.name.endsWith('cache.sqlite')) {
           pageCount++;
         }
       }
@@ -307,22 +388,40 @@ Future<ComicConflictReport> inspectSafComicConflicts({
     }
 
     if (exists) {
-      final isExactMatch = manifest != null &&
-          manifest.sourceId == sourceId &&
-          manifest.comicId == comicId;
+      final knownOwner = knownDirectoryOwners?[folderName];
+      final ownerSourceId = manifest?.sourceId ?? knownOwner?.sourceId;
+      final ownerComicId = manifest?.comicId ?? knownOwner?.comicId;
+
+      final isExactMatch = ownerSourceId == sourceId && ownerComicId == comicId;
+      ComicVersionRelationKind versionRelation;
+      if (isExactMatch) {
+        versionRelation = ComicVersionRelationKind.sameVersion;
+      } else if (ownerComicId != null &&
+          (knownPredecessorComicIds?.contains(ownerComicId) == true ||
+              (ownerSourceId == sourceId &&
+                  knownPredecessorComicIds?.contains(ownerComicId) == true))) {
+        versionRelation = ComicVersionRelationKind.incomingIsNewer;
+      } else if (ownerComicId != null &&
+          (knownSuccessorComicIds?.contains(ownerComicId) == true ||
+              (ownerSourceId == sourceId &&
+                  knownSuccessorComicIds?.contains(ownerComicId) == true))) {
+        versionRelation = ComicVersionRelationKind.existingIsNewer;
+      } else {
+        versionRelation = ComicVersionRelationKind.unknown;
+      }
       candidates.add(
         ComicFolderCandidate(
           directoryPath: 'saf://$safTreeUri/$folderName',
           folderName: folderName,
           manifest: manifest,
+          hasManifestFile: hasManifestFile,
           isExactMatch: isExactMatch,
           isTitleMatch: !isExactMatch,
           chapterCount: chapterCount > 0
               ? chapterCount
               : (manifest?.chapters.length ?? 0),
-          existingPageFilesCount: pageCount > 0
-              ? pageCount
-              : (manifest?.chapters.length ?? 0),
+          existingPageFilesCount: pageCount,
+          versionRelation: versionRelation,
         ),
       );
     }
@@ -331,9 +430,14 @@ Future<ComicConflictReport> inspectSafComicConflicts({
   final hasDirectExactMatch = candidates.any((c) => c.isExactMatch);
   final hasTitleConflicts = candidates.any((c) => c.isTitleMatch);
 
+  final cleanCandidate = candidates.where((c) => c.folderName == cleanName).firstOrNull;
+  final cleanOccupiedByOther = cleanCandidate != null &&
+      cleanCandidate.hasExistingContent &&
+      !cleanCandidate.isExactMatch;
+
   String recommendedDirectory;
-  if (candidates.isEmpty || hasDirectExactMatch) {
-    recommendedDirectory = buildComicDirectoryName(comicTitle: comicTitle);
+  if (!cleanOccupiedByOther || hasDirectExactMatch) {
+    recommendedDirectory = cleanName;
   } else {
     final suffix = sourceDisplayName ?? sourceId;
     recommendedDirectory = buildComicDirectoryName(

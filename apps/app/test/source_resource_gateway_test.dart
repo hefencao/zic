@@ -331,6 +331,21 @@ void main() {
     );
     expect(source.loads, 0);
   });
+
+  test('pageControlledResponseLoaderFor throws StateError when source is unavailable', () {
+    final gateway = ComicSourceResourceGateway(
+      sourceForId: (_) => null,
+    );
+    addTearDown(gateway.close);
+
+    expect(
+      () => gateway.pageControlledResponseLoaderFor(
+        'venera:missing',
+        Uri.parse('venera-resource:page-1'),
+      ),
+      throwsStateError,
+    );
+  });
 }
 
 final class _Source implements BrowsableComicSource {
@@ -372,6 +387,50 @@ final class _Source implements BrowsableComicSource {
 
 final class _RecordingDownloads
     implements ChapterDownloadService, ConfigurableChapterResourceAccess {
+
+  @override
+  Future<DownloadExistenceReport> probeExistingDownloads(
+    DownloadExistenceQuery query,
+  ) async =>
+      const DownloadExistenceReport(
+        liveRunIdentities: <String>[],
+        liveRunStarted: false,
+        indexedReadyPages: 0,
+        urlMatchedPages: 0,
+      );
+
+  @override
+  Future<ChapterFileStateReport> inspectChapterFileState(
+    ImportedLibraryEntry entry,
+  ) async =>
+      const ChapterFileStateReport(
+        manifestPages: 1,
+        indexReadyPages: 0,
+        diskPages: 0,
+        diskBytes: 0,
+      );
+
+  @override
+  Future<void> claimComicDirectory({
+    required String sourceId,
+    required String comicId,
+    required String directoryName,
+    String? comicTitle,
+    DownloadPlacementMode mode = DownloadPlacementMode.createNew,
+    String? observedOwnerKey,
+    ComicPageOrder pageOrder = ComicPageOrder.auto,
+  }) async {}
+
+  @override
+  void updateVersionRelations(List<ComicVersionRelation> relations) {}
+
+  @override
+  Future<DownloadPlacement?> getDownloadPlacement({
+    required String sourceId,
+    required String comicId,
+  }) async =>
+      null;
+
   ChapterResourceAccess? access;
 
   @override
@@ -414,11 +473,19 @@ final class _RecordingDownloads
   Future<bool> isDownloaded(ImportedLibraryEntry entry) async => false;
 
   @override
+  Future<Set<int>> readyPageIndices(ImportedLibraryEntry entry) async => const <int>{};
+
+  @override
+  Future<bool> hasReadyPage(ImportedLibraryEntry entry, int pageIndex) async => false;
+
+  @override
   Future<ComicConflictReport> inspectComicConflicts({
     required String sourceId,
     String? sourceDisplayName,
     required String comicId,
     required String comicTitle,
+    Set<String>? knownPredecessorComicIds,
+    Set<String>? knownSuccessorComicIds,
   }) async =>
       ComicConflictReport(
         candidates: const <ComicFolderCandidate>[],

@@ -44,7 +44,11 @@ final class PromotedArtifactCacheHandoff {
       <DownloadSession, DownloadSnapshotListener>{};
   final Map<DownloadId, Future<void>> _commits =
       <DownloadId, Future<void>>{};
-  final Set<DownloadId> _completedAutomaticCommits = <DownloadId>{};
+  // Automatic handoff is one-shot only for one immutable physical epoch. A
+  // reset can deliberately create a new generation under the same exact id;
+  // retaining a plain id here would suppress the new generation's handoff.
+  final Map<DownloadId, SourceEpoch> _completedAutomaticCommits =
+      <DownloadId, SourceEpoch>{};
 
   void observe(DownloadSession session) {
     if (_listeners.containsKey(session)) {
@@ -91,7 +95,7 @@ final class PromotedArtifactCacheHandoff {
       if (pending == null) break;
       await pending;
     }
-    return _completedAutomaticCommits.contains(session.id);
+    return _completedAutomaticCommits[session.id] == session.epoch;
   }
 
   /// Ensures a promoted transfer has a durable cache-owned body.
@@ -133,7 +137,8 @@ final class PromotedArtifactCacheHandoff {
 
   void _submit(DownloadSession session) {
     final id = session.id;
-    if (_completedAutomaticCommits.contains(id) || _commits.containsKey(id)) {
+    if (_completedAutomaticCommits[id] == session.epoch ||
+        _commits.containsKey(id)) {
       return;
     }
     final tracked = _runCommit(session);
@@ -143,7 +148,9 @@ final class PromotedArtifactCacheHandoff {
 
   Future<void> _runCommit(DownloadSession session) async {
     final id = session.id;
+    final startedEpoch = session.epoch;
     try {
+      final epoch = startedEpoch;
       final targets = requiredExactTargets?.call(session).toSet() ??
           <DownloadId>{};
       if (targets.isEmpty) {
@@ -157,7 +164,9 @@ final class PromotedArtifactCacheHandoff {
           );
         }
       }
-      _completedAutomaticCommits.add(id);
+      if (session.state == DownloadState.promoted && session.epoch == epoch) {
+        _completedAutomaticCommits[id] = epoch;
+      }
     } on Object catch (error, stackTrace) {
       try {
         onError?.call(error, stackTrace);
@@ -166,6 +175,16 @@ final class PromotedArtifactCacheHandoff {
       }
     } finally {
       _commits.remove(id);
+      // A new physical epoch may have been promoted while the previous
+      // generation's handoff was still draining. Its promotion snapshot was
+      // intentionally coalesced by [_commits]; resubmit it now rather than
+      // leaving the new immutable body without an automatic handoff.
+      if (_listeners.containsKey(session) &&
+          session.epoch != startedEpoch &&
+          session.state == DownloadState.promoted &&
+          _completedAutomaticCommits[id] != session.epoch) {
+        _submit(session);
+      }
     }
   }
 
@@ -177,6 +196,7 @@ final class PromotedArtifactCacheHandoff {
     if (session.state != DownloadState.promoted) {
       return;
     }
+    final expectedEpoch = session.epoch;
     final startedAtMicros = clock?.nowMicros();
     if (session.residentBodyBacked) {
       final expectedLength = session.committedLength;
@@ -224,13 +244,23 @@ final class PromotedArtifactCacheHandoff {
           );
           return;
         }
+        final expectedCacheGeneration = cache.generationFor(targetId);
         final read = await cache.readForegroundLookup(lookup);
         if (read.bytes.lengthInBytes != expectedLength) {
           throw StateError(
             'resident cache replay length changed for ${targetId.key}',
           );
         }
-        await cache.storePromotedArtifact(id: targetId, bytes: read.bytes);
+        if (session.state != DownloadState.promoted ||
+            session.epoch != expectedEpoch) {
+          return;
+        }
+        final stored = await cache.storePromotedArtifactIfGeneration(
+          id: targetId,
+          bytes: read.bytes,
+          expectedGeneration: expectedCacheGeneration,
+        );
+        if (!stored) return;
         _recordCommit(
           session,
           targetId: targetId,
@@ -267,6 +297,7 @@ final class PromotedArtifactCacheHandoff {
           '${session.id.key}',
         );
       }
+      final expectedCacheGeneration = cache.generationFor(targetId);
       final builder = BytesBuilder(copy: false);
       var received = 0;
       await for (final chunk in await replay(session, expectedLength)) {
@@ -286,7 +317,16 @@ final class PromotedArtifactCacheHandoff {
           '${bytes.lengthInBytes}/$expectedLength',
         );
       }
-      await cache.storePromotedArtifact(id: targetId, bytes: bytes);
+      if (session.state != DownloadState.promoted ||
+          session.epoch != expectedEpoch) {
+        return;
+      }
+      final stored = await cache.storePromotedArtifactIfGeneration(
+        id: targetId,
+        bytes: bytes,
+        expectedGeneration: expectedCacheGeneration,
+      );
+      if (!stored) return;
       _recordCommit(
         session,
         targetId: targetId,
@@ -339,11 +379,22 @@ final class PromotedArtifactCacheHandoff {
         return;
       }
     }
+    final expectedCacheGeneration = cache.generationFor(targetId);
     final builder = BytesBuilder(copy: false);
     await for (final chunk in session.artifact.readChunks()) {
       builder.add(chunk);
     }
     final bytes = builder.takeBytes();
+    if (session.state != DownloadState.promoted ||
+        session.epoch != expectedEpoch) {
+      return;
+    }
+    if (bytes.lengthInBytes != expectedLength) {
+      throw StateError(
+        'promoted artifact changed while handing off ${session.id.key}: '
+        '${bytes.lengthInBytes}/$expectedLength',
+      );
+    }
     if (bytes.isEmpty) {
       _recordCommit(
         session,
@@ -354,10 +405,12 @@ final class PromotedArtifactCacheHandoff {
       );
       return;
     }
-    await cache.storePromotedArtifact(
+    final stored = await cache.storePromotedArtifactIfGeneration(
       id: targetId,
       bytes: bytes,
+      expectedGeneration: expectedCacheGeneration,
     );
+    if (!stored) return;
     _recordCommit(
       session,
       targetId: targetId,

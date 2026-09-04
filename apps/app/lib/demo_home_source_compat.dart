@@ -153,18 +153,24 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
   Future<Uint8List> _loadChapterPageBytes(
     ImportedLibraryEntry entry,
     int pageIndex,
-  ) {
+  ) async {
     final pages = entry.chapter.pages;
     if (pageIndex < 0 || pageIndex >= pages.length) {
       throw RangeError.index(pageIndex, pages, 'pageIndex');
     }
     final page = pages[pageIndex];
+    if (entry.chapter.sourceId != 'local-folder') {
+      await _waitForExternalSource(entry.chapter.sourceId);
+    }
     final source = _sourceForId(entry.chapter.sourceId);
     final uri = Uri.tryParse(page.sourceId);
     if (source != null && uri != null) {
       return _loadSourcePageBytes(entry.chapter.sourceId, uri);
     }
-    return readLocalImageSource(page.sourceId);
+    if (entry.chapter.sourceId == 'local-folder') {
+      return readLocalImageSource(page.sourceId);
+    }
+    throw StateError('漫画源 ${entry.chapter.sourceId} 当前不可用，无法加载页面 $pageIndex');
   }
 
   Future<ChapterDownloadSnapshot> _inspectChapterDownload(
@@ -182,7 +188,121 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     return _chapterDownloads.inspectMany(hydrated);
   }
 
+  Future<ComicConflictReport> _inspectComicConflictsForDetails({
+    required String sourceId,
+    String? sourceDisplayName,
+    required String comicId,
+    required String comicTitle,
+    Set<String>? knownPredecessorComicIds,
+    Set<String>? knownSuccessorComicIds,
+  }) async {
+    // The comparison consumes the unified queries: a live run for this comic
+    // short-circuits the dialog (the guard blocks the download anyway), and
+    // the report is computed only when no active task covers it.
+    final probe = await _chapterDownloads.probeExistingDownloads(
+      DownloadExistenceQuery(sourceId: sourceId, comicId: comicId),
+    );
+    if (probe.liveRun) {
+      return const ComicConflictReport(
+        candidates: <ComicFolderCandidate>[],
+        hasDirectExactMatch: false,
+        hasTitleConflicts: false,
+        recommendedDirectoryName: '',
+      );
+    }
+    return _chapterDownloads.inspectComicConflicts(
+      sourceId: sourceId,
+      sourceDisplayName: sourceDisplayName,
+      comicId: comicId,
+      comicTitle: comicTitle,
+      knownPredecessorComicIds: knownPredecessorComicIds,
+      knownSuccessorComicIds: knownSuccessorComicIds,
+    );
+  }
+
+  details.ComicDetailsDownloadActions get _detailsDownloadActions =>
+      details.ComicDetailsDownloadActions(
+        downloadChapter: _downloadChapter,
+        stopChapter: _stopChapterDownload,
+        probeExisting: ({required sourceId, required comicId, chapterId}) =>
+            _chapterDownloads.probeExistingDownloads(
+          DownloadExistenceQuery(
+            sourceId: sourceId,
+            comicId: comicId,
+            chapterId: chapterId,
+          ),
+        ),
+        wholeComicJob: (sourceId, comicId) async {
+          await _wholeComicDownloads.ready;
+          return _wholeComicQueueSnapshot.jobs
+              .where(
+                (job) =>
+                    job.sourceId == sourceId && job.comicId == comicId,
+              )
+              .firstOrNull;
+        },
+        cachedWholeComicJob: (sourceId, comicId) =>
+            _wholeComicQueueSnapshot.jobs
+                .where(
+                  (job) =>
+                      job.sourceId == sourceId && job.comicId == comicId,
+                )
+                .firstOrNull,
+        toggleWholeComicPause: _toggleWholeComicPause,
+        inspectComicConflicts: _inspectComicConflictsForDetails,
+        claimComicDirectory: ({
+          required sourceId,
+          required comicId,
+          required directoryName,
+          comicTitle,
+          mode = DownloadPlacementMode.createNew,
+          observedOwnerKey,
+        }) =>
+            _chapterDownloads.claimComicDirectory(
+              sourceId: sourceId,
+              comicId: comicId,
+              directoryName: directoryName,
+              comicTitle: comicTitle,
+              mode: mode,
+              observedOwnerKey: observedOwnerKey,
+            ),
+        getDownloadPlacement: ({required sourceId, required comicId}) =>
+            _chapterDownloads.getDownloadPlacement(
+              sourceId: sourceId,
+              comicId: comicId,
+            ),
+        inspectChapter: (entry) => _chapterDownloads.inspect(entry),
+        ensureDurableServices: () async {
+          await _serviceHandoff?.ensureCoreServices?.call();
+          await _adoptDurableServices();
+        },
+      );
+
+  Future<void> _stopChapterDownload(ImportedLibraryEntry entry) async {
+    await _chapterDownloads.cancel(entry);
+    await _refreshDownloadSnapshots(_libraryEntries);
+  }
+
+  Future<void> _toggleWholeComicPause(
+    String sourceId,
+    String comicId,
+  ) async {
+    for (final job in _wholeComicQueueSnapshot.jobs) {
+      if (job.sourceId != sourceId || job.comicId != comicId) continue;
+      if (job.phase == WholeComicQueuePhase.running) {
+        await _wholeComicDownloads.pause(job.jobId);
+        return;
+      }
+      if (job.phase == WholeComicQueuePhase.paused) {
+        await _wholeComicDownloads.resume(job.jobId);
+        return;
+      }
+    }
+  }
+
   Future<void> _downloadChapter(ImportedLibraryEntry entry) async {
+    await _serviceHandoff?.ensureCoreServices?.call();
+    await _adoptDurableServices();
     final hydrated = await _librarySession.hydrateEntry(entry);
     var current = _hasLegacyVeneraLocators(hydrated.chapter)
         ? await _refreshRemoteEntry(
@@ -191,13 +311,26 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           )
         : hydrated;
     try {
+      // A conflict dialog claims placement synchronously for legacy UI
+      // callbacks, but its SQLite commit is asynchronous. Awaiting the
+      // readback here closes the claim-to-download race (including a failed
+      // cross-process CAS) before any artifact is written.
+      await _chapterDownloads.getDownloadPlacement(
+        sourceId: current.chapter.sourceId,
+        comicId: current.chapter.comicId,
+      );
       await _chapterDownloads.download(current);
     } on Object catch (error) {
-      if (error.toString().contains('must use a runtime token')) {
+      // Stale persisted page URIs fail inside the plugin runtime; only
+      // message matching crosses that boundary. A bare 'token' substring
+      // used to match unrelated failures and silently refresh-redownload.
+      final message = error.toString();
+      if (message.contains('must use a runtime token') ||
+          message.contains('token expired')) {
         final refreshed = await _refreshStaleQueueChapter(current);
         if (refreshed != null) {
           current = refreshed;
-          await _chapterDownloads.download(current);
+          await _chapterDownloads.retry(current);
         } else {
           rethrow;
         }
@@ -233,6 +366,8 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     String comicIdentity,
     Iterable<ImportedLibraryEntry> entries,
   ) async {
+    await _serviceHandoff?.ensureCoreServices?.call();
+    await _adoptDurableServices();
     final chapters = <ImportedLibraryEntry>[];
     for (final entry in entries) {
       final hydrated = await _librarySession.hydrateEntry(entry);
@@ -249,15 +384,33 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
       throw StateError('没有可下载的章节');
     }
     final first = chapters.first.chapter;
+    final existingJob = _wholeComicQueueSnapshot.jobs.where(
+      (job) =>
+          job.sourceId == first.sourceId && job.comicId == first.comicId,
+    ).firstOrNull;
+    if (existingJob != null &&
+        (existingJob.phase == WholeComicQueuePhase.running ||
+            existingJob.phase == WholeComicQueuePhase.queued ||
+            existingJob.phase == WholeComicQueuePhase.paused ||
+            existingJob.phase == WholeComicQueuePhase.waitingForPolicy)) {
+      throw StateError('该漫画的整本下载任务已在队列中');
+    }
     if (comicIdentity != comicLibraryIdentity(first.sourceId, first.comicId)) {
       throw StateError('整本下载身份与章节所有者不一致');
     }
     await _ensurePlatformEnvironment();
+    final placement = await _chapterDownloads.getDownloadPlacement(
+      sourceId: first.sourceId,
+      comicId: first.comicId,
+    );
     await _wholeComicDownloads.enqueue(
       sourceId: first.sourceId,
       comicId: first.comicId,
       comicTitle: first.comicTitle,
       chapters: chapters,
+      placementDirectory: placement?.relativeDirectory,
+      placementMode: placement?.mode,
+      observedOwnerKey: placement?.observedOwnerKey,
     );
     _trackWholeComicDownloadCompletion(first.sourceId, first.comicId);
     _librarySession.refreshWholeComicSnapshot();
@@ -313,12 +466,35 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
         deferUntilAfterFrame: true,
       );
     }
-    final local = resolveCanonicalAlias
+    final shouldResolveCanonicalAlias = resolveCanonicalAlias &&
+        !_sourceSupportsVersionEntry(source);
+    final local = shouldResolveCanonicalAlias
         ? _libraryComicForSourceIdentity(source.sourceId, comic.comicId)
         : _exactLibraryComicForSourceIdentity(
             source.sourceId,
             comic.comicId,
           );
+    try {
+      widget.debugTrace.record(
+        TraceEvent(
+          monotonicMicros: _traceClock.elapsedMicroseconds,
+          sessionId: 'source-catalog:${source.sourceId}',
+          kind: TraceEventKind.sourceReady,
+          identityHash: comic.comicId,
+          payload: <String, Object?>{
+            'stage': 'open-source-comic-entry',
+            'sourceId': source.sourceId,
+            'requestedComicId': comic.comicId,
+            'comicTitle': comic.title,
+            'resolveCanonicalAlias': resolveCanonicalAlias,
+            'supportsVersionEntry': _sourceSupportsVersionEntry(source),
+            'shouldResolveCanonicalAlias': shouldResolveCanonicalAlias,
+            'localMatched': local != null,
+            'localComicId': local?.comicId,
+          },
+        ),
+      );
+    } on Object {}
     if (local != null) {
       if (local.comicId != comic.comicId) {
         widget.debugTrace.record(
@@ -393,6 +569,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               resolveCanonicalAlias: resolveCanonicalAlias,
             ),
             ensureSourceChapter: _ensureSourceChapter,
+            downloadActions: _detailsDownloadActions,
             persistComic: _persistRemoteComic,
             onPreferenceChanged: _savePreference,
             onReadChanged: _setChapterRead,
@@ -412,7 +589,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             onDeleteChapter: _deleteChapter,
             inspectChapterDownload: _inspectChapterDownload,
             inspectChapterDownloads: _inspectChapterDownloads,
-            inspectComicConflicts: _chapterDownloads.inspectComicConflicts,
+            inspectComicConflicts: _inspectComicConflictsForDetails,
             downloadChanges: _chapterDownloads.changes,
             onDownloadComic: (entries) =>
                 _downloadComicEntries(identity, entries),
@@ -518,6 +695,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           ),
           source: source,
           ensureSourceChapter: source == null ? null : _ensureSourceChapter,
+          downloadActions: _detailsDownloadActions,
           onPreferenceChanged: (preference) async {
             await _savePreference(preference);
             final retained = preference.inShelf ||
@@ -553,7 +731,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           onDeleteChapter: _deleteChapter,
           inspectChapterDownload: _inspectChapterDownload,
           inspectChapterDownloads: _inspectChapterDownloads,
-          inspectComicConflicts: _chapterDownloads.inspectComicConflicts,
+          inspectComicConflicts: _inspectComicConflictsForDetails,
           downloadChanges: _chapterDownloads.changes,
           onDownloadComic: (entries) => _downloadComicEntries(
             comicLibraryIdentity(comic.sourceId, comic.comicId),
@@ -609,4 +787,178 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     );
   }
 
+  Future<void> _openDownloadManager() async {
+    if (_downloadManagerRouteOpen) {
+      return;
+    }
+    _downloadManagerRouteOpen = true;
+    try {
+      widget.debugTrace.record(
+        TraceEvent(
+          monotonicMicros: _traceClock.elapsedMicroseconds,
+          sessionId: 'download-manager',
+          kind: TraceEventKind.downloadState,
+          payload: const <String, Object?>{
+            'stage': 'route-open-start',
+          },
+        ),
+      );
+    } on Object {
+      // Diagnostics must never affect navigation.
+    }
+    DownloadManagerProjection readProjection() => DownloadManagerProjection(
+          entries: _librarySession.downloadManagerEntries,
+          snapshots: List<ChapterDownloadSnapshot>.unmodifiable(
+            _downloadSnapshots.values,
+          ),
+          wholeComicSnapshot: _wholeComicQueueSnapshot,
+          versionRelations: _librarySession.versionRelations,
+        );
+    final initialProjection = readProjection();
+    try {
+      widget.debugTrace.record(
+        TraceEvent(
+          monotonicMicros: _traceClock.elapsedMicroseconds,
+          sessionId: 'download-manager',
+          kind: TraceEventKind.downloadState,
+          payload: <String, Object?>{
+            'stage': 'route-open-projection-ready',
+            'entries': initialProjection.entries.length,
+            'snapshots': initialProjection.snapshots.length,
+            'wholeComicJobs': initialProjection.wholeComicSnapshot.jobs.length,
+          },
+        ),
+      );
+    } on Object {
+      // Diagnostics must never affect navigation.
+    }
+    final route = Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => DownloadManagerScreen(
+          entries: initialProjection.entries,
+          downloads: _chapterDownloads,
+          wholeComicDownloads: _wholeComicDownloads,
+          initialSnapshots: initialProjection.snapshots,
+          initialWholeComicSnapshot: initialProjection.wholeComicSnapshot,
+          versionRelations: initialProjection.versionRelations,
+          cacheCoordinator: _cacheCoordinator,
+          hydrateEntry: _librarySession.hydrateEntry,
+          projectionChanges: _librarySession.downloadProjectionChanges,
+          readProjection: readProjection,
+          refreshProjection: () =>
+              _librarySession.refreshDownloadSnapshots(_libraryEntries),
+          resolveServices: () async {
+            await _serviceHandoff?.ensureCoreServices?.call();
+            await _adoptDurableServices();
+            return DownloadManagerServices(
+              downloads: _chapterDownloads,
+              wholeComicDownloads: _wholeComicDownloads,
+              cacheCoordinator: _cacheCoordinator,
+            );
+          },
+          traceSink: widget.debugTrace,
+        ),
+      ),
+    );
+    unawaited(
+      route.then((_) {
+        _downloadManagerRouteOpen = false;
+        try {
+          widget.debugTrace.record(
+            TraceEvent(
+              monotonicMicros: _traceClock.elapsedMicroseconds,
+              sessionId: 'download-manager',
+              kind: TraceEventKind.downloadState,
+              payload: const <String, Object?>{
+                'stage': 'route-closed',
+              },
+            ),
+          );
+        } on Object {
+          // Diagnostics must never affect navigation.
+        }
+      }),
+    );
+  }
+
+  Future<void> _openShelfComicDirectly(LibraryComic comic) async {
+    final isMultiChapter =
+        comic.hasMultipleChapters || comic.sourceChapters.length > 1;
+    final resume = comic.resumeChapter;
+    final targetChapter = resume ??
+        (comic.chapters.length == 1 && comic.chapters.single.chapter.pages.isNotEmpty
+            ? comic.chapters.single
+            : null);
+    widget.debugTrace.record(
+      TraceEvent(
+        monotonicMicros: _traceClock.elapsedMicroseconds,
+        sessionId: 'reader-entry',
+        kind: TraceEventKind.readerObservation,
+        payload: <String, Object?>{
+          'stage': 'shelf-comic-tap',
+          'sourceId': comic.sourceId,
+          'comicId': comic.comicId,
+          'title': comic.title,
+          'isMultiChapter': isMultiChapter,
+          'hasResume': resume != null,
+          'resumeChapterId': resume?.chapter.chapterId,
+          'chaptersCount': comic.chapters.length,
+          'sourceChaptersCount': comic.sourceChapters.length,
+          'routeChoice': isMultiChapter
+              ? 'multi-chapter-details'
+              : (targetChapter != null
+                  ? (resume != null ? 'resume-local' : 'single-chapter-local')
+                  : 'single-chapter-remote'),
+        },
+      ),
+    );
+    if (isMultiChapter) {
+      await _pushComicDetails(comic);
+      return;
+    }
+    if (targetChapter != null) {
+      await _openImportedChapter(targetChapter);
+      return;
+    }
+    if (comic.sourceChapters.length == 1) {
+      if (comic.sourceId != 'local-folder') {
+        await _waitForExternalSource(comic.sourceId);
+      }
+      final source = _sourceForId(comic.sourceId);
+      if (source != null) {
+        final chapter = comic.sourceChapters.single;
+        await _openImportedChapterLoader(
+          () async {
+            final manifest = await _loadCompatibleSourceChapter(
+              source,
+              chapter.chapterId,
+            );
+            final comicModel = Comic(
+              comicId: comic.comicId,
+              sourceId: comic.sourceId,
+              title: comic.title,
+              authors: comic.authors,
+              tags: comic.tags,
+              coverUri: comic.coverSourceId == null
+                  ? null
+                  : Uri.tryParse(comic.coverSourceId!),
+              description: comic.description,
+              readingDirection: comic.readingDirection,
+            );
+            final imported = ImportedChapterRecord.remote(
+              comic: comicModel,
+              manifest: manifest,
+              importedAt: DateTime.now().toUtc(),
+            );
+            return _librarySession.upsertChapter(imported);
+          },
+          title: chapter.title.isEmpty
+              ? comic.title
+              : chapter.title,
+        );
+        return;
+      }
+    }
+    await _pushComicDetails(comic);
+  }
 }

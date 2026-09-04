@@ -1,9 +1,31 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:domain/domain.dart';
 import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  test('response discard is idempotent', () async {
+    var discards = 0;
+    final response = ByteResponse(
+      bytes: const Stream<List<int>>.empty(),
+      statusCode: HttpStatus.ok,
+      rangeStart: 0,
+      totalLength: 0,
+      onDiscard: () async {
+        discards++;
+      },
+    );
+
+    await Future.wait<void>(<Future<void>>[
+      response.discard(),
+      response.discard(),
+    ]);
+
+    expect(discards, 1);
+  });
+
   test('HTTP transport exposes range and validators', () async {
     final bytes = List<int>.generate(16, (index) => index);
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -48,6 +70,46 @@ void main() {
     expect(await response.bytes.expand((chunk) => chunk).toList(), bytes.sublist(5));
   });
 
+  test('HTTP open reports cancellation when request aborts', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestSeen = Completer<void>();
+    final serving = server.listen((request) async {
+      if (!requestSeen.isCompleted) requestSeen.complete();
+      await Future<void>.delayed(const Duration(seconds: 1));
+      try {
+        request.response
+          ..statusCode = HttpStatus.ok
+          ..add(<int>[1]);
+        await request.response.close();
+      } on Object {
+        // The client is expected to abort this response.
+      }
+    });
+    addTearDown(serving.cancel);
+    addTearDown(() => server.close(force: true));
+
+    final transport = HttpTransport();
+    addTearDown(transport.close);
+    final control = _TestTaskControl();
+    final pending = transport.openControlled(
+      Uri.parse('http://127.0.0.1:${server.port}/slow'),
+      control: control,
+    );
+    await requestSeen.future;
+    control.cancel();
+
+    await expectLater(
+      pending,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+  });
+
   test('dynamic user-agent provider is read per request', () async {
     var userAgent = 'fixture-ua-one';
     final seen = <String?>[];
@@ -71,4 +133,21 @@ void main() {
 
     expect(seen, <String?>['fixture-ua-one', 'fixture-ua-two']);
   });
+}
+
+final class _TestTaskControl implements TaskControl {
+  final Completer<void> _cancelled = Completer<void>();
+
+  @override
+  bool get cancelled => _cancelled.isCompleted;
+
+  @override
+  Future<void> get whenCancelled => _cancelled.future;
+
+  @override
+  int get priority => 0;
+
+  void cancel() {
+    if (!_cancelled.isCompleted) _cancelled.complete();
+  }
 }

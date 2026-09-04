@@ -122,23 +122,14 @@ mod android {
         if !needed {
             return Ok(false);
         }
-        if ANativeWindow_setBuffersGeometry(
-            window,
-            width,
-            height,
-            WINDOW_FORMAT_RGBA_8888,
-        ) == 0
-        {
+        if ANativeWindow_setBuffersGeometry(window, width, height, WINDOW_FORMAT_RGBA_8888) == 0 {
             Ok(true)
         } else {
             Err(BLIT_CONFIG_FAILED)
         }
     }
 
-    unsafe fn lock_window(
-        window: *mut ANativeWindow,
-        buffer: &mut ANativeWindowBuffer,
-    ) -> bool {
+    unsafe fn lock_window(window: *mut ANativeWindow, buffer: &mut ANativeWindowBuffer) -> bool {
         ANativeWindow_lock(window, buffer, std::ptr::null_mut()) == 0
     }
 
@@ -207,12 +198,7 @@ mod android {
             return BLIT_SURFACE_FAILED;
         }
         let window = WindowOwner(window);
-        let mut reconfigured = match configure_if_needed(
-            window.0,
-            width_i32,
-            height_i32,
-            false,
-        ) {
+        let mut reconfigured = match configure_if_needed(window.0, width_i32, height_i32, false) {
             Ok(value) => value,
             Err(status) => return status,
         };

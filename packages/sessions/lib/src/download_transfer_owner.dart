@@ -19,6 +19,9 @@ typedef TransferIdentityResolver = DownloadId Function(DownloadId exactId);
 
 DownloadId _identityTransferId(DownloadId id) => id;
 
+String? _normalizeExpectedChecksum(String? checksum) =>
+    checksum?.trim().toLowerCase();
+
 enum TransferCompletionIntent {
   opportunistic,
   required,
@@ -60,6 +63,10 @@ final class TransferDemand {
 }
 
 typedef TransferPrepare = Future<void> Function(DownloadSession session);
+typedef TransferPrepareWithControl = Future<void> Function(
+  DownloadSession session, {
+  required TaskControl control,
+});
 typedef TransferSleep = Future<void> Function(Duration delay);
 
 Future<void> _defaultTransferSleep(Duration delay) =>
@@ -76,18 +83,23 @@ final class DownloadTransferOwner {
     required this.registry,
     required this.clock,
     this.prepareDownload,
+    this.prepareDownloadWithControl,
     required this.net,
     this.resolveTransferId = _identityTransferId,
     this.rankPolicy = const TransferRankPolicy(),
+    this.readStallTimeout = DownloadJob.defaultReadStallTimeout,
   });
 
   final DownloadRegistry registry;
   final MonoClock clock;
   final TransferPrepare? prepareDownload;
+  final TransferPrepareWithControl? prepareDownloadWithControl;
   final NetLane net;
   final Completer<void> _disposedCompleter = Completer<void>();
   final TransferIdentityResolver resolveTransferId;
   final TransferRankPolicy rankPolicy;
+
+  final Duration readStallTimeout;
 
   final Map<DownloadId, Map<String, _TransferClaim>> _claims =
       <DownloadId, Map<String, _TransferClaim>>{};
@@ -98,8 +110,10 @@ final class DownloadTransferOwner {
   // generation performs this initialization at most once.
   final Map<DownloadId, Future<void>> _localPreparations =
       <DownloadId, Future<void>>{};
-  final Map<DownloadId, DownloadSession> _locallyPreparedSessions =
-      <DownloadId, DownloadSession>{};
+  final Map<DownloadId, _LocalPreparationControl>
+      _localPreparationControls = <DownloadId, _LocalPreparationControl>{};
+  final Map<DownloadId, SourceEpoch> _locallyPreparedSessions =
+      <DownloadId, SourceEpoch>{};
   // Local preparation may finish out of demand-priority order. Network/source
   // admission must not inherit that completion order: a lower-priority item
   // that finished its local phase waits while a higher-priority demanded
@@ -111,7 +125,10 @@ final class DownloadTransferOwner {
   final Set<DownloadId> _preparedAdmissionDeferrals = <DownloadId>{};
   final Map<DownloadId, int> _downloadRetryRounds = <DownloadId, int>{};
   final Set<DownloadId> _downloadRetryPending = <DownloadId>{};
+  final Map<DownloadId, Completer<void>> _downloadRetryWaiters =
+      <DownloadId, Completer<void>>{};
   final Set<DownloadId> _downloadTerminalFailures = <DownloadId>{};
+  final Map<DownloadId, String> _ensureSkipReasons = <DownloadId, String>{};
   final Map<DownloadId, int> _downloadDeferredAtLength = <DownloadId, int>{};
   // The physical session owns bytes/writer state, while the source provider is
   // only a lease for one currently executing NetLane task. A later preferred
@@ -121,8 +138,15 @@ final class DownloadTransferOwner {
   final Map<DownloadId, int> _progressLengths = <DownloadId, int>{};
   final Map<DownloadId, DownloadSnapshotListener> _sessionListeners =
       <DownloadId, DownloadSnapshotListener>{};
+  final Map<DownloadId, DownloadSession> _sessionListenerSessions =
+      <DownloadId, DownloadSession>{};
   final Set<DownloadTransferConsumer> _consumers =
       <DownloadTransferConsumer>{};
+  // Retirement barriers belong to one admitted lane task, not to the logical
+  // DownloadId. A new task for the same physical session may be admitted in
+  // the gap between the old lane entry retiring and its waiter continuation;
+  // keying this set by DownloadId can then suppress the new task's barrier.
+  final Set<String> _taskRetirementWaits = <String>{};
   int _taskSequence = 0;
   int _claimSequence = 0;
   bool _disposed = false;
@@ -166,6 +190,22 @@ final class DownloadTransferOwner {
     final physicalId = registry.resolvePhysicalId(id);
     final session = registry.findExact(physicalId);
     if (session == null ||
+        !session.canEvict ||
+        (_claims[physicalId]?.isNotEmpty ?? false) ||
+        session.demanded ||
+        session.activeRun ||
+        session.hasWriter ||
+        _localPreparations.containsKey(physicalId)) {
+      return false;
+    }
+    // A final snapshot can arrive before the session's serialized index write
+    // has completed. Settle that tail before removing the registry entry, then
+    // re-check all ownership conditions because a new claim may have arrived
+    // while the await was in flight.
+    await session.settleCacheMutations();
+    if (_disposed ||
+        !identical(registry.findExact(physicalId), session) ||
+        !session.canEvict ||
         (_claims[physicalId]?.isNotEmpty ?? false) ||
         session.demanded ||
         session.activeRun ||
@@ -185,14 +225,16 @@ final class DownloadTransferOwner {
     if (!identical(retired, session)) return false;
 
     final listener = _sessionListeners.remove(physicalId);
+    final watchedSession = _sessionListenerSessions.remove(physicalId);
     if (listener != null) {
-      session.removeSnapshotListener(listener);
+      (watchedSession ?? session).removeSnapshotListener(listener);
     }
     _progressLengths.remove(physicalId);
     _localPreparations.remove(physicalId);
     _locallyPreparedSessions.remove(physicalId);
     _preparedNetworkAdmissions.remove(physicalId);
     _preparedAdmissionDeferrals.remove(physicalId);
+    _cancelDownloadRetry(physicalId);
     _retireDownloadTracking(physicalId, session);
     await session.dispose();
     return true;
@@ -208,7 +250,9 @@ final class DownloadTransferOwner {
   Future<Stream<List<int>>> openResidentReplay(
     DownloadId id, {
     required int endExclusive,
+    TaskControl? control,
   }) async {
+    control?.throwIfCancelled();
     if (_disposed) {
       throw StateError('download transfer owner is disposed');
     }
@@ -238,11 +282,27 @@ final class DownloadTransferOwner {
     }
     final sourceId = claim.exactId;
     final resumeValidators = session.resumeValidatorsFor(sourceId.canonicalUri);
-    final response = await claim.consumer.transportFor(sourceId.canonicalUri).open(
-          sourceId.canonicalUri,
-          range: ByteRange(start: 0, end: endExclusive - 1),
-          validators: resumeValidators.canResume ? resumeValidators : null,
-        );
+    final transport = claim.consumer.transportFor(sourceId.canonicalUri);
+    final pendingResponse = transport is ControlledTransport
+        ? transport.openControlled(
+            sourceId.canonicalUri,
+            range: ByteRange(start: 0, end: endExclusive - 1),
+            validators: resumeValidators.canResume ? resumeValidators : null,
+            control: control,
+          )
+        : transport.open(
+            sourceId.canonicalUri,
+            range: ByteRange(start: 0, end: endExclusive - 1),
+            validators: resumeValidators.canResume ? resumeValidators : null,
+          );
+    final response = await _awaitResidentResponse(
+      pendingResponse,
+      control,
+    );
+    if (control?.cancelled == true) {
+      await response.discard(control: control);
+      control!.throwIfCancelled();
+    }
     try {
       if (response.rangeStart != 0) {
         throw Failure(
@@ -268,21 +328,72 @@ final class DownloadTransferOwner {
         );
       }
     } on Object {
-      await response.discard();
+      await response.discard(control: control);
       rethrow;
     }
-    return _boundedResidentReplay(response, endExclusive, id);
+    final body = _ResidentReplayBody(response, control: control);
+    if (control != null) {
+      unawaited(
+        control.whenCancelled.then<void>((_) async {
+          try {
+            await body.discard();
+          } on Object {
+            // The replay owner will surface the cancellation; cleanup must not
+            // replace it with a late response-discard failure.
+          }
+        }),
+      );
+    }
+    return _boundedResidentReplay(
+      body,
+      endExclusive,
+      id,
+      control: control,
+    );
+  }
+
+  Future<ByteResponse> _awaitResidentResponse(
+    Future<ByteResponse> pending,
+    TaskControl? control,
+  ) async {
+    if (control == null) return pending;
+    control.throwIfCancelled();
+    try {
+      return await Future.any<ByteResponse>(<Future<ByteResponse>>[
+        pending,
+        control.whenCancelled.then<ByteResponse>((_) {
+          throw const Failure(
+            code: ErrorCode.cancelled,
+            message: 'resident replay was cancelled while opening',
+          );
+        }),
+      ]);
+    } catch (error, stackTrace) {
+      if (control.cancelled) {
+        unawaited(
+          pending.then<void>(
+            (response) => response.discard(control: control),
+            onError: (Object _, StackTrace __) {},
+          ),
+        );
+        control.throwIfCancelled();
+      }
+      throw Error.throwWithStackTrace(error, stackTrace);
+    }
   }
 
   Stream<List<int>> _boundedResidentReplay(
-    ByteResponse response,
+    _ResidentReplayBody body,
     int endExclusive,
-    DownloadId id,
-  ) async* {
+    DownloadId id, {
+    TaskControl? control,
+  }) async* {
     var emitted = 0;
-    final iterator = StreamIterator<List<int>>(response.bytes);
+    final iterator = StreamIterator<List<int>>(body.response.bytes);
     try {
-      while (emitted < endExclusive && await iterator.moveNext()) {
+      while (emitted < endExclusive &&
+          await _moveNextResidentChunk(iterator, control)) {
+        control?.throwIfCancelled();
         final chunk = iterator.current;
         if (chunk.isEmpty) continue;
         final remaining = endExclusive - emitted;
@@ -300,8 +411,42 @@ final class DownloadTransferOwner {
         );
       }
     } finally {
-      await iterator.cancel();
-      await response.discard();
+      // Both operations are cleanup for the bounded replay. Keep them
+      // best-effort and independent so a subscription close failure cannot
+      // mask cancellation, a short-body corruption error, or a source read
+      // failure; the response still receives its discard attempt.
+      try {
+        await iterator.cancel();
+      } on Object {
+        // Preserve the replay result.
+      }
+      try {
+        await body.discard();
+      } on Object {
+        // Preserve the replay result.
+      }
+    }
+  }
+
+  Future<bool> _moveNextResidentChunk(
+    StreamIterator<List<int>> iterator,
+    TaskControl? control,
+  ) async {
+    if (control == null) return iterator.moveNext();
+    control.throwIfCancelled();
+    try {
+      return await Future.any<bool>(<Future<bool>>[
+        iterator.moveNext(),
+        control.whenCancelled.then<bool>((_) {
+          throw const Failure(
+            code: ErrorCode.cancelled,
+            message: 'resident replay was cancelled',
+          );
+        }),
+      ]);
+    } catch (error, stackTrace) {
+      if (control.cancelled) control.throwIfCancelled();
+      throw Error.throwWithStackTrace(error, stackTrace);
     }
   }
 
@@ -346,6 +491,9 @@ final class DownloadTransferOwner {
     }
     final keys = _networkTaskKeys.values.toList(growable: false);
     final preparations = _localPreparations.values.toList(growable: false);
+    for (final control in _localPreparationControls.values) {
+      control.cancel();
+    }
     for (final consumer in _consumers.toList(growable: false)) {
       _detachClaims(consumer, consumerDisposing: true);
       consumer._disposed = true;
@@ -363,18 +511,26 @@ final class DownloadTransferOwner {
     ]);
     _networkTaskKeys.clear();
     _localPreparations.clear();
+    _localPreparationControls.clear();
     _locallyPreparedSessions.clear();
     _preparedNetworkAdmissions.clear();
     _preparedAdmissionDeferrals.clear();
+    for (final waiter in _downloadRetryWaiters.values) {
+      if (!waiter.isCompleted) waiter.complete();
+    }
+    _downloadRetryWaiters.clear();
     _downloadRetryRounds.clear();
     _downloadRetryPending.clear();
     _downloadTerminalFailures.clear();
     _downloadDeferredAtLength.clear();
     _activeProviderLeases.clear();
+    _taskRetirementWaits.clear();
     for (final entry in _sessionListeners.entries) {
-      registry.find(entry.key)?.removeSnapshotListener(entry.value);
+      _sessionListenerSessions[entry.key]
+          ?.removeSnapshotListener(entry.value);
     }
     _sessionListeners.clear();
+    _sessionListenerSessions.clear();
     _progressLengths.clear();
     _claims.clear();
   }
@@ -438,17 +594,27 @@ final class DownloadTransferOwner {
     final normalized = <DownloadId, _ConsumerPhysicalDemand>{};
     for (final entry in desired.entries) {
       final physicalId = resolveTransferId(entry.key);
+      final rawDemand = entry.value;
       final candidate = _ConsumerPhysicalDemand(
         exactId: entry.key,
-        demand: entry.value,
+        demand: TransferDemand(
+          priority: rawDemand.priority,
+          reason: rawDemand.reason,
+          flowTargetFrames: rawDemand.flowTargetFrames,
+          expectedChecksum:
+              _normalizeExpectedChecksum(rawDemand.expectedChecksum),
+          completionIntent: rawDemand.completionIntent,
+        ),
       );
       final existing = normalized[physicalId];
       if (existing == null) {
         normalized[physicalId] = candidate;
         continue;
       }
-      final leftChecksum = existing.demand.expectedChecksum;
-      final rightChecksum = candidate.demand.expectedChecksum;
+      final leftChecksum =
+          _normalizeExpectedChecksum(existing.demand.expectedChecksum);
+      final rightChecksum =
+          _normalizeExpectedChecksum(candidate.demand.expectedChecksum);
       if (leftChecksum != null &&
           rightChecksum != null &&
           leftChecksum != rightChecksum) {
@@ -484,13 +650,15 @@ final class DownloadTransferOwner {
     Map<DownloadId, _ConsumerPhysicalDemand> desired,
   ) {
     for (final entry in desired.entries) {
-      final checksum = entry.value.demand.expectedChecksum;
+      final checksum =
+          _normalizeExpectedChecksum(entry.value.demand.expectedChecksum);
       if (checksum == null) continue;
       final byScope = _claims[entry.key];
       if (byScope == null) continue;
       for (final claim in byScope.values) {
         if (identical(claim.consumer, consumer)) continue;
-        final other = claim.demand.expectedChecksum;
+        final other =
+            _normalizeExpectedChecksum(claim.demand.expectedChecksum);
         if (other != null && other != checksum) {
           throw StateError(
             'conflicting checksums for physical transfer ${entry.key.key}: '
@@ -515,7 +683,8 @@ final class DownloadTransferOwner {
     // path. Pure reason/priority/frame-target migration keeps the same physical
     // claim and only updates scheduling state.
     if (prior.exactId != next.exactId ||
-        prior.demand.expectedChecksum != next.demand.expectedChecksum ||
+        _normalizeExpectedChecksum(prior.demand.expectedChecksum) !=
+            _normalizeExpectedChecksum(next.demand.expectedChecksum) ||
         prior.demand.completionIntent != next.demand.completionIntent) {
       return false;
     }
@@ -551,11 +720,12 @@ final class DownloadTransferOwner {
     final session = registry.get(id);
     _watchSession(session);
     final byScope = _claims.putIfAbsent(id, () => <String, _TransferClaim>{});
-    final checksum = demand.expectedChecksum;
+    final checksum = _normalizeExpectedChecksum(demand.expectedChecksum);
     if (checksum != null) {
       for (final claim in byScope.values) {
         if (identical(claim.consumer, consumer)) continue;
-        final other = claim.demand.expectedChecksum;
+        final other =
+            _normalizeExpectedChecksum(claim.demand.expectedChecksum);
         if (other != null && other != checksum) {
           throw StateError(
             'conflicting checksums for physical transfer ${id.key}: '
@@ -594,14 +764,18 @@ final class DownloadTransferOwner {
     DownloadSession session,
     TransferDemand demand,
   ) {
+    _localPreparationControls[id]?.updatePriority(session.effectivePriority);
     // A flow frame proof describes bytes already present in the physical
     // partial, not the policy target that happened to trigger suspension.
     // Demand/role changes therefore never invalidate it. A later positive
     // frame target at or below the proven frame floor is already satisfied;
     // target=0 remains foreground-unlimited and continues scheduling.
     if (!session.activeRun) {
-      _downloadRetryRounds.remove(id);
-      _downloadRetryPending.remove(id);
+      // A scheduling-only claim update can race the recovery sleeper. Cancel
+      // the waiter itself, not just its bookkeeping; otherwise the old timer
+      // can wake after a fresh attempt has already completed and reopen a
+      // retired physical session.
+      _cancelDownloadRetry(id);
       _downloadTerminalFailures.remove(id);
       final deferredAtLength = _downloadDeferredAtLength[id];
       final deferredStillMatches = deferredAtLength == session.committedLength;
@@ -633,7 +807,17 @@ final class DownloadTransferOwner {
   }) {
     final byScope = _claims[id];
     final claim = byScope?.remove(consumer.scopeId);
-    claim?.lease.detach();
+    // A stale detach must not change scheduling for another consumer that may
+    // have already replaced this claim. This can occur when a teardown and a
+    // demand reconciliation cross an asynchronous task-retirement boundary.
+    if (claim == null) return;
+    // A recovery sleeper captures the consumer that supplied its retry policy.
+    // If that claim is replaced or detached, wake the sleeper so it cannot
+    // keep the physical session waiting on a disposed consumer's backoff hook.
+    // Task retirement will admit the replacement attempt from the remaining
+    // current claims.
+    _cancelDownloadRetry(id);
+    claim.lease.detach();
     if (byScope != null && byScope.isEmpty) {
       _claims.remove(id);
     }
@@ -653,7 +837,10 @@ final class DownloadTransferOwner {
       // Losing the final Reader/other consumer claim never cancels an already
       // admitted task. It becomes rank-zero inactive physical work. DownloadJob
       // parks the same live response at its next safe body-read boundary and
-      // releases only the bounded NetLane read permit.
+      // releases only the bounded NetLane read permit. Keep this path even if
+      // the registry entry disappeared during a concurrent retirement race;
+      // dropping the owner key while the lane task is still active would
+      // orphan its provider/transport cleanup.
       net.updateDemanded(taskKey, false);
       _migrateDownloadPriority(
         id,
@@ -671,6 +858,8 @@ final class DownloadTransferOwner {
     if (session == null || !session.demanded) {
       _preparedNetworkAdmissions.remove(id);
       _preparedAdmissionDeferrals.remove(id);
+      _localPreparationControls[id]?.cancel();
+      _cancelDownloadRetry(id);
     }
     _drainPreparedNetworkAdmissions();
   }
@@ -767,8 +956,15 @@ final class DownloadTransferOwner {
         if (preparation != null) waits.add(preparation);
       }
       if (waits.isNotEmpty) {
+        // A flow-satisfied job may intentionally retain its live response after
+        // releasing the body-read permit. Its lane key remains non-idle until
+        // the physical response is retired, so key-idle alone cannot wake this
+        // consumer when decoder evidence has already satisfied its target.
+        // Poll the owner-side proof while still retaining the physical idle
+        // barrier for ordinary completion and disposal.
         await Future.any<void>(<Future<void>>[
           Future.wait<void>(waits),
+          Future<void>.delayed(const Duration(milliseconds: 20)),
           consumer.whenDisposed,
           _disposedCompleter.future,
         ]);
@@ -793,14 +989,18 @@ final class DownloadTransferOwner {
               preferred.demand.flowTargetFrames,
               session,
             );
+        final taskRetiring = _networkTaskKeys.containsKey(id) &&
+            !flowSatisfiedForCurrentClaims &&
+            session.state != DownloadState.disposed;
         if (_downloadRetryPending.contains(id) ||
             (!deferredForCurrentClaims &&
                 !flowSatisfiedForCurrentClaims &&
-                session.state != DownloadState.promoted &&
-                session.state != DownloadState.failed &&
-                session.state != DownloadState.disposed &&
-                !_downloadTerminalFailures.contains(id) &&
-                (_networkTaskKeys.containsKey(id) || session.demanded))) {
+                (taskRetiring ||
+                    (session.state != DownloadState.promoted &&
+                        session.state != DownloadState.failed &&
+                        session.state != DownloadState.disposed &&
+                        !_downloadTerminalFailures.contains(id) &&
+                        session.demanded)))) {
           pending = true;
           break;
         }
@@ -859,6 +1059,10 @@ final class DownloadTransferOwner {
       // or active. Policy revisions only migrate its priority; they must not
       // manufacture a second task key for the same DownloadSession.
       if (net.priorityOf(existingTaskKey) != null) {
+        if (net.isCancelled(existingTaskKey)) {
+          _waitForTaskRetirement(id, session, existingTaskKey);
+          return;
+        }
         net.updateDemanded(existingTaskKey, true);
         _migrateDownloadPriority(
           id,
@@ -886,7 +1090,26 @@ final class DownloadTransferOwner {
       _drainPreparedNetworkAdmissions();
       return;
     }
-    if (_localPreparations.containsKey(id)) return;
+    if (_localPreparations.containsKey(id)) {
+      // Transition-gated so a healthy (millisecond) preparation stays silent;
+      // a preparation that persists across scheduling refreshes is visible.
+      const reason = 'local-preparing';
+      if (_ensureSkipReasons[id] != reason) {
+        _ensureSkipReasons[id] = reason;
+        _record(
+          claim,
+          kind: TraceEventKind.policyDecision,
+          id: id,
+          payload: <String, Object?>{
+            'stage': 'download-task-skip',
+            'reasons': reason,
+            'state': session.state.name,
+            'committedLength': session.committedLength,
+          },
+        );
+      }
+      return;
+    }
     if (_disposed ||
         session.state == DownloadState.promoted ||
         session.state == DownloadState.disposed ||
@@ -901,13 +1124,54 @@ final class DownloadTransferOwner {
               preservedLength: session.committedLength,
             )) ||
         (_downloadRetryRounds[id] ?? 0) > _maxDownloadRetryRounds) {
+      // Only a CHANGED skip reason set is recorded, else active transfers
+      // spam the trace.
+      final reasons = <String>[
+        if (_disposed) 'disposed',
+        if (session.state == DownloadState.promoted) 'promoted',
+        if (session.state == DownloadState.disposed) 'session-disposed',
+        if (session.activeRun) 'active-run',
+        if (session.hasWriter) 'has-writer',
+        if (_downloadRetryPending.contains(id)) 'retry-pending',
+        if (_downloadTerminalFailures.contains(id)) 'terminal-failure',
+        if (_downloadDeferredAtLength[id] == session.committedLength &&
+            !_allowsCostlyFullBodyCatchup(
+              id: id,
+              priority: effectivePriority,
+              preservedLength: session.committedLength,
+            ))
+          'deferred-at-length',
+        if ((_downloadRetryRounds[id] ?? 0) > _maxDownloadRetryRounds)
+          'retry-rounds-exhausted',
+      ].join('+');
+      if (_ensureSkipReasons[id] != reasons) {
+        _ensureSkipReasons[id] = reasons;
+        _record(
+          claim,
+          kind: TraceEventKind.policyDecision,
+          id: id,
+          payload: <String, Object?>{
+            'stage': 'download-task-skip',
+            'reasons': reasons,
+            'state': session.state.name,
+            'committedLength': session.committedLength,
+          },
+        );
+      }
       return;
     }
+    _ensureSkipReasons.remove(id);
     final prepare = prepareDownload;
-    if (prepare != null &&
+    final prepareWithControl = prepareDownloadWithControl;
+    if ((prepare != null || prepareWithControl != null) &&
         session.committedLength == 0 &&
-        !identical(_locallyPreparedSessions[id], session)) {
-      _startLocalPreparation(id, session, prepare);
+        _locallyPreparedSessions[id] != session.epoch) {
+      _startLocalPreparation(
+        id,
+        session,
+        prepare: prepare,
+        prepareWithControl: prepareWithControl,
+      );
       return;
     }
     final taskKey = 'transfer:${++_taskSequence}:${id.key}';
@@ -925,26 +1189,46 @@ final class DownloadTransferOwner {
 
   void _startLocalPreparation(
     DownloadId id,
-    DownloadSession session,
-    TransferPrepare prepare,
-  ) {
+    DownloadSession session, {
+    required TransferPrepare? prepare,
+    required TransferPrepareWithControl? prepareWithControl,
+  }) {
     if (_localPreparations.containsKey(id)) return;
     final initialClaim = _preferredClaim(id);
+    final control = _LocalPreparationControl(
+      priority: session.effectivePriority,
+    );
+    _localPreparationControls[id] = control;
     final startedAtMicros = clock.nowMicros();
+    // Install the preparation slot before invoking the callback. Preparation
+    // is an async boundary, but its first part runs synchronously; a custom
+    // prepare hook can therefore re-enter refreshScheduling/reconcile before
+    // this method reaches its final assignment. The placeholder makes that
+    // re-entry observe the existing preparation instead of starting a second
+    // local hydration for the same physical generation.
+    final slot = Completer<void>();
+    _localPreparations[id] = slot.future;
     late final Future<void> tracked;
     tracked = _runLocalPreparation(
       id,
       session,
-      prepare,
+      prepare: prepare,
+      prepareWithControl: prepareWithControl,
+      control: control,
       initialClaim: initialClaim,
       startedAtMicros: startedAtMicros,
     ).whenComplete(() {
+      if (!slot.isCompleted) slot.complete();
       if (identical(_localPreparations[id], tracked)) {
         _localPreparations.remove(id);
       }
+      if (identical(_localPreparationControls[id], control)) {
+        _localPreparationControls.remove(id);
+      }
       if (!_disposed &&
           identical(registry.findExact(id), session) &&
-          session.demanded) {
+          session.demanded &&
+          !control.cancelled) {
         _preparedNetworkAdmissions[id] = session;
       } else {
         _preparedNetworkAdmissions.remove(id);
@@ -1017,23 +1301,44 @@ final class DownloadTransferOwner {
 
   Future<void> _runLocalPreparation(
     DownloadId id,
-    DownloadSession session,
-    TransferPrepare prepare, {
+    DownloadSession session, {
+    required TransferPrepare? prepare,
+    required TransferPrepareWithControl? prepareWithControl,
+    required _LocalPreparationControl control,
     required _TransferClaim? initialClaim,
     required int startedAtMicros,
   }) async {
+    final preparationEpoch = session.epoch;
     Object? prepareError;
     try {
-      await prepare(session);
+      control.throwIfCancelled();
+      final controlled = prepareWithControl;
+      if (controlled != null) {
+        await controlled(session, control: control);
+      } else {
+        await prepare!(session);
+      }
+      control.throwIfCancelled();
+      if (session.epoch != preparationEpoch) return;
     } on Object catch (error) {
+      if (control.cancelled) {
+        // Cancellation withdraws local preparation ownership. The physical
+        // partial remains resumable; a demand that returns after this future
+        // retires will start a fresh preparation/admission pass.
+        return;
+      }
       // Durable local state is an acceleration/fallback input, not network
       // admission authority. If local hydration fails, keep the authoritative
       // physical session and allow the normal provider path to recover it.
       prepareError = error;
     }
 
-    if (!identical(registry.findExact(id), session)) return;
-    _locallyPreparedSessions[id] = session;
+    if (control.cancelled ||
+        session.epoch != preparationEpoch ||
+        !identical(registry.findExact(id), session)) {
+      return;
+    }
+    _locallyPreparedSessions[id] = preparationEpoch;
     final claim = _preferredClaim(id) ?? initialClaim;
     if (prepareError != null) {
       _record(
@@ -1053,21 +1358,49 @@ final class DownloadTransferOwner {
       return;
     }
 
+    if (control.cancelled) return;
     var completedLocally = false;
     try {
       completedLocally = await DownloadJob.completeWithoutTransport(
         session: session,
         expectedChecksum: _expectedChecksum(id),
+        control: control,
       );
+      if (session.epoch != preparationEpoch) return;
     } on Object catch (error) {
+      if (control.cancelled) return;
+      if (session.epoch != preparationEpoch) return;
+      Object? recoveryError;
+      try {
+        // A full local partial that fails seal/checksum cannot be offered to
+        // completeWithoutTransport again: doing so only repeats the same
+        // deterministic failure and never reaches the provider. Retire that
+        // corrupt generation before the normal post-prepare network admission.
+        await session.reset();
+        // This reset intentionally discards the already-attempted local
+        // generation so the next admission is the provider fallback, not a
+        // second pass through the same corrupt durable partial.
+        _locallyPreparedSessions[id] = session.epoch;
+      } on Object catch (resetError) {
+        recoveryError = resetError;
+        _downloadTerminalFailures.add(id);
+        try {
+          await session.failWithoutWriter(resetError);
+        } on Object {
+          // Preserve the terminal marker even if durable cleanup also failed.
+        }
+      }
       _record(
         claim,
         kind: TraceEventKind.artifactSource,
         id: id,
         payload: <String, Object?>{
           'stage': 'physical-local-prepare',
-          'action': 'local-completion-failed-network-fallback',
+          'action': recoveryError == null
+              ? 'local-completion-failed-network-fallback'
+              : 'local-completion-recovery-failed-terminal',
           'error': '$error',
+          if (recoveryError != null) 'recoveryError': '$recoveryError',
           'committedLength': session.committedLength,
           'demanded': session.demanded,
           'prepareMicros':
@@ -1109,13 +1442,26 @@ final class DownloadTransferOwner {
     // explicitly retired/replaced. Never let a stale lane entry begin a
     // second run against the authoritative DownloadSession.
     if (_networkTaskKeys[id] != taskKey) return;
+    final taskEpoch = session.epoch;
     var claim = _preferredClaim(id);
-    if (claim == null) return;
+    if (claim == null) {
+      _cancelDownloadRetry(id);
+      _downloadTerminalFailures.remove(id);
+      if (_networkTaskKeys[id] == taskKey) {
+        // Keep the owner key until NetLane has retired the task. A new claim
+        // may arrive in the small interval between this future completing and
+        // the lane releasing its permits; removing it here would allow two
+        // physical task identities for one session during that interval.
+        _waitForTaskRetirement(id, session, taskKey);
+      }
+      return;
+    }
     _ActiveProviderLease? providerLease;
     try {
       if (await DownloadJob.completeWithoutTransport(
         session: session,
         expectedChecksum: _expectedChecksum(id),
+        control: token,
       )) {
         _record(
           claim,
@@ -1131,6 +1477,12 @@ final class DownloadTransferOwner {
         );
         return;
       }
+      // A reset may have completed while the transportless completion check
+      // was awaiting local I/O. Retire this lane task and let its normal
+      // retirement barrier schedule a fresh attempt for the new generation;
+      // continuing here could bind a provider response to the cleared
+      // DownloadSession.
+      if (session.epoch != taskEpoch) return;
       token.throwIfCancelled();
       final currentClaim = _preferredClaim(id);
       if (currentClaim == null || !session.demanded) return;
@@ -1186,6 +1538,12 @@ final class DownloadTransferOwner {
       );
       for (var attempt = 1; ; attempt++) {
         token.throwIfCancelled();
+        // Demand withdrawal parks an already-admitted physical task; it must
+        // not let a retry timer wake up and start a fresh provider request
+        // while the session has no consumer claim. The current attempt may
+        // still finish/park according to its response capability, but the
+        // retry loop itself has no reason to open another response.
+        if (!token.demanded || !session.demanded) return;
         final attemptStartedAtMicros = clock.nowMicros();
         try {
           await DownloadJob(
@@ -1193,6 +1551,7 @@ final class DownloadTransferOwner {
             session: session,
             requestUri: sourceId.canonicalUri,
             attachLegacyDemand: false,
+            readStallTimeout: readStallTimeout,
             allowFullBodyCatchup: (preservedLength) =>
                 _allowsCostlyFullBodyCatchup(
               id: id,
@@ -1203,8 +1562,7 @@ final class DownloadTransferOwner {
             expectedChecksum: _expectedChecksum(id),
             cancel: token,
           );
-          _downloadRetryRounds.remove(id);
-          _downloadRetryPending.remove(id);
+          _cancelDownloadRetry(id);
           _downloadTerminalFailures.remove(id);
           _downloadDeferredAtLength.remove(id);
           return;
@@ -1223,8 +1581,28 @@ final class DownloadTransferOwner {
           }
           return;
         } on Object catch (error) {
-          if (!provider.retry.allows(error, attempt)) {
-            if (error is Failure && error.code == ErrorCode.cancelled) {
+          final failure = error is Failure
+              ? error
+              : Failure(
+                  code: ErrorCode.network,
+                  message: 'download attempt failed for ${id.key}: $error',
+                  cause: error,
+                );
+          // A transport failure can race a lane preemption. Once the lane has
+          // cancelled this attempt, do not turn the preemption into a
+          // session-terminal failure or schedule a replacement retry here.
+          // Preserve the lane decision in the trace before returning; the
+          // cancellation flag is already set when the preemption/eviction
+          // snapshot is attached, so the lower branch cannot observe it.
+          if (session.epoch != taskEpoch || _isStaleLifecycleFailure(failure)) {
+            return;
+          }
+          if (token.cancelled) {
+            _recordLaneCancellation(claim, id, session, token);
+            return;
+          }
+          if (!provider.retry.allows(failure, attempt)) {
+            if (failure.code == ErrorCode.cancelled) {
               final preemption = token.preemptionSnapshot;
               if (preemption != null) {
                 _record(
@@ -1274,7 +1652,7 @@ final class DownloadTransferOwner {
             _recordError(
               claim,
               id,
-              error,
+              failure,
               details: <String, Object?>{
                 'attempt': attempt,
                 'executionMicros': (failedAtMicros - attemptStartedAtMicros)
@@ -1282,17 +1660,23 @@ final class DownloadTransferOwner {
                     .toInt(),
               },
             );
-            if (session.demanded && error is Failure) {
-              final retryScheduled = error.code == ErrorCode.network &&
-                  _scheduleDownloadRetry(id, session, error);
+            if (session.demanded && !token.cancelled) {
+              final retryScheduled = failure.code == ErrorCode.network &&
+                  _scheduleDownloadRetry(id, session, failure);
               if (!retryScheduled) {
                 _downloadTerminalFailures.add(id);
               }
-            } else if (session.demanded) {
-              _downloadTerminalFailures.add(id);
+            }
+            if (_downloadTerminalFailures.contains(id) && !token.cancelled) {
+              // Terminal task outcome (no further retry): publish the failure
+              // on the session. Demand holders wait for a terminal state; a
+              // session left queued here would stall them until an inactivity
+              // timeout instead of surfacing the real error.
+              await session.failWithoutWriter(failure);
             }
             return;
           }
+          if (!token.demanded || !session.demanded) return;
           final delay = provider.retry.delayAfter(attempt);
           _record(
             claim,
@@ -1306,7 +1690,46 @@ final class DownloadTransferOwner {
             },
           );
           await _sleepOrCancel(delay, token, provider.sleep);
+          if (!token.demanded || !session.demanded) return;
         }
+      }
+    } on Object catch (error, stackTrace) {
+      final failedClaim = _preferredClaim(id) ?? claim;
+      final failure = error is Failure
+          ? error
+          : Failure(
+              code: ErrorCode.network,
+              message: 'download transfer setup failed for ${id.key}: $error',
+              cause: error,
+            );
+      if (session.epoch != taskEpoch || _isStaleLifecycleFailure(failure)) {
+        return;
+      }
+      if (failure.code == ErrorCode.cancelled || token.cancelled) {
+        if (token.cancelled) {
+          _recordLaneCancellation(failedClaim, id, session, token);
+        }
+        return;
+      }
+      if (failedClaim != null) {
+        _recordError(
+          failedClaim,
+          id,
+          failure,
+          details: <String, Object?>{
+            'stage': 'transfer-setup',
+            'stack': '$stackTrace',
+          },
+        );
+      }
+      if (token.cancelled) return;
+      final retryScheduled = failedClaim != null &&
+          session.demanded &&
+          failure.code == ErrorCode.network &&
+          _scheduleDownloadRetry(id, session, failure);
+      if (session.demanded && !retryScheduled && !token.cancelled) {
+        _downloadTerminalFailures.add(id);
+        await session.failWithoutWriter(failure);
       }
     } finally {
       if (providerLease != null &&
@@ -1314,19 +1737,12 @@ final class DownloadTransferOwner {
         _activeProviderLeases.remove(id);
       }
       if (_networkTaskKeys[id] == taskKey) {
-        _networkTaskKeys.remove(id);
-      }
-      if (!session.demanded && !session.activeRun) {
-        _retireDownloadTracking(id, session);
-      } else if (session.demanded &&
-          !_downloadTerminalFailures.contains(id) &&
-          session.state != DownloadState.promoted &&
-          session.state != DownloadState.disposed) {
-        scheduleMicrotask(() {
-          if (!_disposed && session.demanded) {
-            _ensureDownloadTask(id, session);
-          }
-        });
+        // Defer key retirement until NetLane has observed task completion.
+        // In particular, cancellation/preemption can complete _runDownload
+        // before the lane callback releases its transport/read permits. The
+        // same barrier is needed for successful and terminal tasks so callers
+        // never observe a retired session with a still-live owner key.
+        _waitForTaskRetirement(id, session, taskKey);
       }
     }
   }
@@ -1360,21 +1776,62 @@ final class DownloadTransferOwner {
         'error': '$failure',
       },
     );
+    final waiter = Completer<void>();
+    _downloadRetryWaiters[id] = waiter;
     unawaited(() async {
-      await claim.consumer.sleep(delay);
-      await Future<void>.delayed(Duration.zero);
+      var ownsWaiter = false;
+      try {
+        await Future.any<void>(<Future<void>>[
+          claim.consumer.sleep(delay),
+          waiter.future,
+          _disposedCompleter.future,
+        ]);
+      } on Object {
+        // A retry-sleep hook is advisory. The physical owner must not expose
+        // an unhandled provider-policy error or keep a retry permanently
+        // pending because a custom sleeper failed; the continuation below
+        // immediately schedules the next bounded attempt.
+      } finally {
+        ownsWaiter = identical(_downloadRetryWaiters[id], waiter);
+        if (ownsWaiter) {
+          _downloadRetryWaiters.remove(id);
+          _downloadRetryPending.remove(id);
+        }
+      }
+      if (!ownsWaiter || _disposed || waiter.isCompleted ||
+          !session.demanded) {
+        return;
+      }
+      // A consumer-provided sleeper is advisory. If it fails, do not leave a
+      // demanded session with neither a retry waiter nor a replacement task;
+      // the bounded retry-round counter still prevents an immediate hot loop.
+      // Fall through to the next attempt without backoff in that case.
       _downloadRetryPending.remove(id);
-      if (_disposed || !session.demanded) return;
+      await Future<void>.delayed(Duration.zero);
+      if (_disposed || waiter.isCompleted || !session.demanded) return;
       _ensureDownloadTask(id, session);
     }());
     return true;
+  }
+
+  void _cancelDownloadRetry(DownloadId id) {
+    final waiter = _downloadRetryWaiters.remove(id);
+    if (waiter != null && !waiter.isCompleted) waiter.complete();
+    _downloadRetryPending.remove(id);
+    _downloadRetryRounds.remove(id);
   }
 
 
 
   void _watchSession(DownloadSession session) {
     final id = session.id;
-    if (_sessionListeners.containsKey(id)) return;
+    final watched = _sessionListenerSessions[id];
+    if (identical(watched, session)) return;
+    final priorListener = _sessionListeners.remove(id);
+    if (priorListener != null) {
+      (watched ?? session).removeSnapshotListener(priorListener);
+    }
+    _sessionListenerSessions[id] = session;
     _progressLengths[id] = session.committedLength;
     void listener(DownloadSnapshot snapshot) {
       final prior = _progressLengths[id] ?? 0;
@@ -1382,8 +1839,10 @@ final class DownloadTransferOwner {
         _progressLengths[id] = snapshot.committedLength;
       }
       if (snapshot.committedLength > prior) {
-        _downloadRetryRounds.remove(id);
-        _downloadRetryPending.remove(id);
+        // Fresh authoritative bytes make the pending recovery timer stale.
+        // Clear the timer's waiter as well as its bookkeeping; otherwise the
+        // old sleep can wake after progress and reopen a duplicate attempt.
+        _cancelDownloadRetry(id);
         _downloadTerminalFailures.remove(id);
       }
     }
@@ -1392,9 +1851,9 @@ final class DownloadTransferOwner {
   }
 
   void _retireDownloadTracking(DownloadId id, DownloadSession? session) {
-    _downloadRetryRounds.remove(id);
-    _downloadRetryPending.remove(id);
+    _cancelDownloadRetry(id);
     _downloadTerminalFailures.remove(id);
+    _ensureSkipReasons.remove(id);
     final deferredAtLength = _downloadDeferredAtLength[id];
     final preserveDeferred = session != null &&
         session.state == DownloadState.idle &&
@@ -1402,6 +1861,40 @@ final class DownloadTransferOwner {
     if (!preserveDeferred) {
       _downloadDeferredAtLength.remove(id);
     }
+  }
+
+  void _waitForTaskRetirement(
+    DownloadId id,
+    DownloadSession session,
+    String taskKey,
+  ) {
+    if (!_taskRetirementWaits.add(taskKey)) return;
+    unawaited(() async {
+      try {
+        await net.idleKeys(<String>[taskKey]);
+      } finally {
+        _taskRetirementWaits.remove(taskKey);
+      }
+      if (_networkTaskKeys[id] == taskKey) {
+        _networkTaskKeys.remove(id);
+      }
+      if (!session.demanded && !session.activeRun &&
+          identical(registry.findExact(id), session)) {
+        _retireDownloadTracking(id, session);
+      }
+      if (_disposed ||
+          (_networkTaskKeys[id] != null &&
+              _networkTaskKeys[id] != taskKey) ||
+          _downloadRetryPending.contains(id) ||
+          !identical(registry.findExact(id), session) ||
+          !session.demanded ||
+          _downloadTerminalFailures.contains(id) ||
+          session.state == DownloadState.promoted ||
+          session.state == DownloadState.disposed) {
+        return;
+      }
+      _ensureDownloadTask(id, session);
+    }());
   }
 
   void _migrateDownloadPriority(
@@ -1439,7 +1932,8 @@ final class DownloadTransferOwner {
   String? _expectedChecksum(DownloadId id) {
     String? checksum;
     for (final claim in _claims[id]?.values ?? const <_TransferClaim>[]) {
-      final candidate = claim.demand.expectedChecksum;
+      final candidate =
+          _normalizeExpectedChecksum(claim.demand.expectedChecksum);
       if (candidate == null) continue;
       if (checksum != null && checksum != candidate) {
         throw StateError('conflicting checksums for physical transfer ${id.key}');
@@ -1491,28 +1985,76 @@ final class DownloadTransferOwner {
       token.throwIfCancelled();
       return;
     }
-    if (identical(sleep, _defaultTransferSleep)) {
-      final completer = Completer<void>();
-      final timer = Timer(delay, () {
-        if (!completer.isCompleted) completer.complete();
-      });
-      void onCancel() {
-        timer.cancel();
-        if (!completer.isCompleted) completer.complete();
-      }
-      unawaited(token.whenCancelled.then((_) => onCancel()));
-      try {
-        await completer.future;
-      } finally {
-        timer.cancel();
-      }
-    } else {
-      await Future.any<void>(<Future<void>>[
+    // Install the wake future before checking the current state. Otherwise a
+    // demand withdrawal between the check and getter access could be missed,
+    // leaving a custom backoff hook asleep after its final consumer left.
+    final demandChanged = token.whenDemandChanged;
+    if (!token.demanded) return;
+    final waits = <Future<void>>[
+      if (identical(sleep, _defaultTransferSleep))
+        Future<void>.delayed(delay)
+      else
         sleep(delay),
-        token.whenCancelled,
-      ]);
-    }
+      token.whenCancelled,
+      demandChanged,
+    ];
+    await Future.any<void>(waits);
     token.throwIfCancelled();
+  }
+
+  bool _isStaleLifecycleFailure(Failure failure) =>
+      failure.code == ErrorCode.staleEpoch ||
+      failure.code == ErrorCode.staleWriter ||
+      failure.code == ErrorCode.staleRun;
+
+  void _recordLaneCancellation(
+    _TransferClaim? claim,
+    DownloadId id,
+    DownloadSession session,
+    CancelToken token,
+  ) {
+    final preemption = token.preemptionSnapshot;
+    final eviction = token.retentionEvictionSnapshot;
+    if (preemption == null && eviction == null) return;
+    final effectiveClaim = _preferredClaim(id) ?? claim;
+    if (preemption != null) {
+      _record(
+        effectiveClaim,
+        kind: TraceEventKind.downloadPreempted,
+        id: id,
+        payload: <String, Object?>{
+          'incomingPriority': preemption.incomingPriority,
+          'basePriority': preemption.basePriority,
+          'retentionPriority': preemption.retentionPriority,
+          'retentionBonus': preemption.retentionBonus,
+          'restartCostElapsedMicros': preemption.restartCostElapsedMicros,
+          'restartCostBytes': preemption.restartCostBytes,
+          'incomingWaitMicros': preemption.incomingWaitMicros,
+          'preemptionReason': preemption.reason,
+          'committedLength': session.committedLength,
+          'partialPreserved': session.committedLength > 0,
+          'partialState': session.state.name,
+        },
+      );
+      return;
+    }
+    final retention = eviction!;
+    _record(
+      effectiveClaim,
+      kind: TraceEventKind.downloadEvicted,
+      id: id,
+      payload: <String, Object?>{
+        'basePriority': retention.basePriority,
+        'retentionPriority': retention.retentionPriority,
+        'retentionBonus': retention.retentionBonus,
+        'restartCostElapsedMicros': retention.restartCostElapsedMicros,
+        'restartCostBytes': retention.restartCostBytes,
+        'evictionReason': retention.reason,
+        'committedLength': session.committedLength,
+        'partialPreserved': session.committedLength > 0,
+        'partialState': session.state.name,
+      },
+    );
   }
 
   void _record(
@@ -1619,6 +2161,49 @@ final class DownloadTransferConsumer {
   Future<void> idle() => owner._idleFor(this);
 
   Future<void> dispose() => owner._disposeConsumer(this);
+}
+
+final class _ResidentReplayBody {
+  _ResidentReplayBody(this.response, {required this.control});
+
+  final ByteResponse response;
+  final TaskControl? control;
+  Future<void>? _discardFuture;
+
+  Future<void> discard() => _discardFuture ??=
+      response.discard(control: control);
+}
+
+final class _LocalPreparationControl implements TaskControl {
+  _LocalPreparationControl({required this.priority});
+
+  final Completer<void> _cancelledSignal = Completer<void>();
+
+  @override
+  int priority;
+
+  @override
+  bool get cancelled => _cancelledSignal.isCompleted;
+
+  @override
+  Future<void> get whenCancelled => _cancelledSignal.future;
+
+  void updatePriority(int value) {
+    priority = value;
+  }
+
+  void cancel() {
+    if (!_cancelledSignal.isCompleted) _cancelledSignal.complete();
+  }
+
+  void throwIfCancelled() {
+    if (cancelled) {
+      throw const Failure(
+        code: ErrorCode.cancelled,
+        message: 'local transfer preparation was cancelled',
+      );
+    }
+  }
 }
 
 final class _ActiveProviderLease {

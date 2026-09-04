@@ -9,6 +9,7 @@ final class ArtifactCacheStreamEntry {
     required this.length,
     required this.open,
     this.readAll,
+    this.readAllControlled,
   });
 
   final int length;
@@ -17,6 +18,12 @@ final class ArtifactCacheStreamEntry {
     int? endExclusive,
   }) open;
   final Future<Uint8List> Function()? readAll;
+
+  /// Optional backend-owned full read that can abort its underlying stream
+  /// from the caller's scheduler control. When absent, the manager may still
+  /// stop awaiting [readAll], but the backend operation remains uncontrolled.
+  final Future<Uint8List> Function({required TaskControl control})?
+      readAllControlled;
 }
 
 

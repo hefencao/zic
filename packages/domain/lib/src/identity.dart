@@ -17,7 +17,16 @@ final class ContentId {
   final String chapterId;
   final String pageId;
 
-  String get key => '$sourceId/$comicId/$chapterId/$pageId';
+  /// Collision-free framed identity used for new in-memory and persisted
+  /// keys. Field contents are length-prefixed, so delimiters in source or
+  /// provider identifiers cannot merge two distinct ContentIds.
+  String get key =>
+      'content:v2${_frame(sourceId)}${_frame(comicId)}'
+      '${_frame(chapterId)}${_frame(pageId)}';
+
+  /// The pre-v2 key used by cache metadata and older SQLite rows. Readers of
+  /// durable state may accept it only as a compatibility lookup key.
+  String get legacyKey => '$sourceId/$comicId/$chapterId/$pageId';
 
   Map<String, Object> toJson() => <String, Object>{
         'sourceId': sourceId,
@@ -60,8 +69,15 @@ final class DownloadId {
   final String sourceRevision;
   final Uri canonicalUri;
 
+  /// Collision-free framed identity used for new keys.
   String get key =>
-      '${content.key}|$sourceRevision|${canonicalUri.toString()}';
+      'download:v2${_frame(content.sourceId)}${_frame(content.comicId)}'
+      '${_frame(content.chapterId)}${_frame(content.pageId)}'
+      '${_frame(sourceRevision)}${_frame(canonicalUri.toString())}';
+
+  /// The pre-v2 key used by older cache/index records.
+  String get legacyKey =>
+      '${content.legacyKey}|$sourceRevision|${canonicalUri.toString()}';
 
   Map<String, Object> toJson() => <String, Object>{
         'content': content.toJson(),
@@ -113,7 +129,12 @@ final class DecodeId {
   final RendererKind renderer;
 
   String get key =>
-      '${download.key}|${physicalWidth}x$physicalHeight|'
+      'decode:v2${_frame(download.key)}${_frame(physicalWidth.toString())}'
+      '${_frame(physicalHeight.toString())}${_frame(pixelFormat.name)}'
+      '${_frame(renderer.name)}';
+
+  String get legacyKey =>
+      '${download.legacyKey}|${physicalWidth}x$physicalHeight|'
       '${pixelFormat.name}|${renderer.name}';
 
   @override
@@ -162,6 +183,8 @@ final class ResourceId {
   @override
   String toString() => 'ResourceId(${kind.name}:$key)';
 }
+
+String _frame(String value) => '${value.length}:$value';
 
 int alignPhysicalDimension(int value, {int alignment = 8}) {
   if (value <= 0) {

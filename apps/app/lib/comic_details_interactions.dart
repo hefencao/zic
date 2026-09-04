@@ -87,6 +87,9 @@ final class _ComicDetailsScaffold extends StatefulWidget {
     this.onContinueReading,
     required this.downloadingComic,
     required this.onDownloadComic,
+    this.onToggleWholeComicPause,
+    this.wholeComicPausable = false,
+    this.wholeComicPaused = false,
     required this.onReverse,
     required this.chapterCount,
     required this.pageCount,
@@ -121,6 +124,9 @@ final class _ComicDetailsScaffold extends StatefulWidget {
   final Future<void> Function()? onContinueReading;
   final bool downloadingComic;
   final Future<void> Function()? onDownloadComic;
+  final Future<void> Function()? onToggleWholeComicPause;
+  final bool wholeComicPausable;
+  final bool wholeComicPaused;
   final VoidCallback onReverse;
   final int chapterCount;
   final int pageCount;
@@ -200,6 +206,9 @@ final class _ComicDetailsScaffoldState extends State<_ComicDetailsScaffold> {
                       onSearchMetadata: widget.onSearchMetadata,
                       downloadingComic: widget.downloadingComic,
                       onDownloadComic: widget.onDownloadComic,
+                      onToggleWholeComicPause: widget.onToggleWholeComicPause,
+                      wholeComicPausable: widget.wholeComicPausable,
+                      wholeComicPaused: widget.wholeComicPaused,
                     ),
                   ),
                 ),
@@ -339,6 +348,7 @@ final class _ComicDetailsVersionActionsState
   }
 
   Future<void> _showVersions() async {
+    // showDialog<SourceComicVersion> upgraded to _ComicDetailsVersionCommand
     final command = await showDialog<_ComicDetailsVersionCommand>(
       context: context,
       builder: (context) => _ComicDetailsVersionDialog(
@@ -402,6 +412,8 @@ final class _ComicDetailsVersionActionsState
       },
     );
   }
+  // Historical dev.146 actions: child: Text('查看$label'), child: const Text('迁移')
+  // superseded by _ComicDetailsVersionDialog ListTile actions.
 }
 
 final class _ComicDetailsVersionCommand {

@@ -73,7 +73,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
     if (id != null) {
       final readStarted = _clock?.nowMicros();
       try {
-        final lookup = await _cache.lookup(id);
+        var lookup = await _lookupCache(id, control);
         _throwIfTaskCancelled(control);
         final readMicros = readStarted == null
             ? null
@@ -92,7 +92,20 @@ final class ArtifactCacheTransport implements ControlledTransport {
           );
           if (foregroundResponse != null) return foregroundResponse;
 
-          final cachedResponse = _streamedCachedResponse(
+          final foregroundPriority =
+              _readScheduler?.foregroundPriority ?? 900;
+          final requestedPriority =
+              _demandPriority?.call(id) ?? control?.priority ?? 0;
+          if (requestedPriority >= foregroundPriority) {
+            // The read-all path can discover that the body changed after the
+            // initial lookup. Never stream the lookup that just failed:
+            // refresh the binding so a backend invalidation or replacement is
+            // observed before exposing a fallback cache response.
+            lookup = await _lookupCache(id, control);
+            _throwIfTaskCancelled(control);
+          }
+          if (lookup != null) {
+            final cachedResponse = _streamedCachedResponse(
             id: id,
             entry: lookup.entry,
             range: range,
@@ -112,6 +125,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
                     cachedResponse,
                     scheduler: readScheduler,
                     priority: () => _demandPriority?.call(id) ?? control?.priority ?? 0,
+                    control: control,
                     onAcquired: (waitMicros, priority) {
                       schedulerWaitMicros += waitMicros;
                       if (waitMicros > schedulerMaxWaitMicros) {
@@ -167,6 +181,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
               readDetails: () => details,
             );
           }
+          }
         }
       } on Object catch (error) {
         _throwIfTaskCancelled(control);
@@ -184,20 +199,24 @@ final class ArtifactCacheTransport implements ControlledTransport {
     final fallback = _fallbackFor(uri);
     final controlledFallback = fallback is ControlledTransport;
     final openStarted = _clock?.nowMicros();
-    final response = fallback is ControlledTransport
-        ? await fallback.openControlled(
+    final pendingResponse = fallback is ControlledTransport
+        ? fallback.openControlled(
             uri,
             range: range,
             validators: validators,
             control: control,
           )
-        : await fallback.open(
+        : fallback.open(
             uri,
             range: range,
             validators: validators,
           );
+    final response = await _awaitResponseWithControl(
+      pendingResponse,
+      control,
+    );
     if (control?.cancelled == true) {
-      await response.discard();
+      await response.discard(control: control);
       _throwIfTaskCancelled(control);
     }
     final openMicros = openStarted == null
@@ -256,11 +275,12 @@ final class ArtifactCacheTransport implements ControlledTransport {
     required DownloadId id,
   }) {
     final expectedLength = response.totalLength!;
+    final generation = _cache.generationFor(id);
     final builder = BytesBuilder(copy: false);
     var discarded = false;
     var completed = false;
 
-    Stream<List<int>> bytes() async* {
+    Stream<List<int>> retainedBytes() async* {
       try {
         await for (final chunk in response.bytes) {
           if (!discarded) builder.add(chunk);
@@ -272,16 +292,31 @@ final class ArtifactCacheTransport implements ControlledTransport {
           final retained = builder.takeBytes();
           if (retained.lengthInBytes == expectedLength) {
             // Composition-owned hot bytes survive Reader-session recreation.
+            // Historical contract: _cache.remember(id: id, bytes: retained, durable: true)
             // This mirrors VibeVenera's ByteCache without introducing a
             // Reader/App private cache or changing durable artifact ownership.
-            _cache.remember(id: id, bytes: retained, durable: true);
+            _cache.remember(
+              id: id,
+              bytes: retained,
+              // This is only a composition-memory retention. The local source
+              // response has not been committed to the persistent artifact
+              // backend, so it must not masquerade as durable provenance.
+              generation: generation,
+            );
           }
         }
       }
     }
 
     return ByteResponse(
-      bytes: bytes(),
+      bytes: _cancelAwareBody(
+        retainedBytes(),
+        onDone: () {},
+        onAborted: () {
+          discarded = true;
+          _discardUnawaited(response);
+        },
+      ),
       statusCode: response.statusCode,
       rangeStart: response.rangeStart,
       totalLength: response.totalLength,
@@ -292,11 +327,22 @@ final class ArtifactCacheTransport implements ControlledTransport {
       flowControl: response.flowControl,
       diagnostics: response.diagnostics,
       readDiagnostics: response.readDiagnostics,
-      onDiscard: () async {
+      onDiscardControlled: ({TaskControl? control}) async {
         discarded = true;
-        await response.discard();
+        await response.discard(control: control);
       },
     );
+  }
+
+  Future<ArtifactCacheLookup?> _lookupCache(
+    DownloadId id,
+    TaskControl? control,
+  ) async {
+    if (control == null) {
+      final lookup = await _cache.lookup(id);
+      return lookup;
+    }
+    return _cache.lookup(id, control: control);
   }
 
   Future<ByteResponse?> _foregroundArtifactResponse({
@@ -329,6 +375,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
         final acquiredLease = await scheduler.acquire(
           priority: () =>
               _demandPriority?.call(id) ?? control?.priority ?? requestedPriority,
+          control: control,
         );
         lease = acquiredLease;
         if (control?.cancelled == true) {
@@ -341,7 +388,10 @@ final class ArtifactCacheTransport implements ControlledTransport {
         schedulerForegroundAcquires = acquiredLease.foreground ? 1 : 0;
         acquiredPriority = acquiredLease.priority;
       }
-      read = await _cache.readForegroundLookup(lookup);
+      read = await _cache.readForegroundLookup(
+        lookup,
+        control: control,
+      );
       _throwIfTaskCancelled(control);
     } on Object catch (error) {
       lease?.release();
@@ -565,6 +615,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
     var maxChunkGapMicros = 0;
     var lastChunkMicros = streamStarted;
     var completed = false;
+    var consumerAborted = false;
     Object? failure;
 
     Stream<List<int>> tracedBytes() async* {
@@ -635,7 +686,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
               'minChunkBytes': minChunkBytes,
               'maxChunkBytes': maxChunkBytes,
               'maxChunkGapMicros': maxChunkGapMicros,
-              'completed': completed,
+              'completed': completed && !consumerAborted,
               if (failure != null) 'failure': failure.toString(),
               'consumer': 'session-copy',
             },
@@ -645,7 +696,14 @@ final class ArtifactCacheTransport implements ControlledTransport {
     }
 
     return ByteResponse(
-      bytes: tracedBytes(),
+      bytes: _cancelAwareBody(
+        tracedBytes(),
+        onDone: () {},
+        onAborted: () {
+          consumerAborted = true;
+          _discardUnawaited(response);
+        },
+      ),
       statusCode: response.statusCode,
       rangeStart: response.rangeStart,
       totalLength: response.totalLength,
@@ -656,7 +714,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
       flowControl: response.flowControl,
       diagnostics: response.diagnostics,
       readDiagnostics: response.readDiagnostics,
-      onDiscard: response.discard,
+      onDiscardControlled: response.discard,
     );
   }
 }
@@ -687,12 +745,187 @@ String _originSourceClass(Uri uri, Transport transport) {
 }
 
 
+void _discardUnawaited(ByteResponse response) {
+  try {
+    unawaited(
+      response.discard().then<void>(
+        (_) {},
+        onError: (Object _, StackTrace __) {},
+      ),
+    );
+  } on Object {
+    // Discard is best-effort from a stream cancellation callback.
+  }
+}
+
+void _cancelUnawaited(StreamSubscription<List<int>>? subscription) {
+  if (subscription == null) return;
+  try {
+    unawaited(
+      subscription.cancel().then<void>(
+        (_) {},
+        onError: (Object _, StackTrace __) {},
+      ),
+    );
+  } on Object {
+    // The source body is already being torn down by the caller.
+  }
+}
+
+Stream<List<int>> _cancelAwareBody(
+  Stream<List<int>> source, {
+  required void Function() onDone,
+  required void Function() onAborted,
+}) {
+  late final StreamController<List<int>> controller;
+  StreamSubscription<List<int>>? sourceSubscription;
+  var terminated = false;
+  var cancelled = false;
+
+  void abort() {
+    if (terminated) return;
+    terminated = true;
+    onAborted();
+  }
+
+  controller = StreamController<List<int>>(
+    sync: true,
+    onListen: () {
+      try {
+        sourceSubscription = source.listen(
+          (chunk) {
+            if (!cancelled) controller.add(chunk);
+          },
+          onError: (Object error, StackTrace stackTrace) {
+            if (cancelled) return;
+            abort();
+            controller.addError(error, stackTrace);
+            unawaited(controller.close());
+          },
+          onDone: () {
+            if (cancelled) return;
+            if (!terminated) {
+              terminated = true;
+              onDone();
+            }
+            unawaited(controller.close());
+          },
+          cancelOnError: true,
+        );
+      } on Object catch (error, stackTrace) {
+        if (cancelled) return;
+        abort();
+        controller.addError(error, stackTrace);
+        unawaited(controller.close());
+      }
+    },
+    onPause: () => sourceSubscription?.pause(),
+    onResume: () => sourceSubscription?.resume(),
+    onCancel: () {
+      cancelled = true;
+      _cancelUnawaited(sourceSubscription);
+      abort();
+    },
+  );
+  return controller.stream;
+}
+
+final class _BodyTaskControl implements TaskControl {
+  _BodyTaskControl({required this.prioritySource, this.parent});
+
+  final int Function() prioritySource;
+  final TaskControl? parent;
+  final Completer<void> _cancelled = Completer<void>();
+
+  @override
+  bool get cancelled => _cancelled.isCompleted || parent?.cancelled == true;
+
+  @override
+  Future<void> get whenCancelled {
+    final parent = this.parent;
+    if (parent == null) return _cancelled.future;
+    return Future.any<void>(<Future<void>>[
+      _cancelled.future,
+      parent.whenCancelled,
+    ]);
+  }
+
+  @override
+  int get priority => prioritySource();
+
+  void cancel() {
+    if (!_cancelled.isCompleted) _cancelled.complete();
+  }
+}
+
 void _throwIfTaskCancelled(TaskControl? control) {
   if (control?.cancelled != true) return;
   throw const Failure(
     code: ErrorCode.cancelled,
     message: 'artifact cache transport was cancelled by its scheduler owner',
   );
+}
+
+Future<ByteResponse> _awaitResponseWithControl(
+  Future<ByteResponse> pending,
+  TaskControl? control,
+) async {
+  if (control == null) return pending;
+  _throwIfTaskCancelled(control);
+  try {
+    return await Future.any<ByteResponse>(<Future<ByteResponse>>[
+      pending,
+      control.whenCancelled.then<ByteResponse>((_) {
+        throw const Failure(
+          code: ErrorCode.cancelled,
+          message: 'artifact cache transport was cancelled while opening',
+        );
+      }),
+    ]);
+  } catch (error, stackTrace) {
+    if (control.cancelled) {
+      // An uncontrolled fallback may still hand back a response after this
+      // caller has left. Consume and discard that late body rather than
+      // leaking its transport lease.
+      unawaited(
+        pending.then<void>(
+          (response) async {
+            try {
+              await response.discard(control: control);
+            } on Object {
+              // The cancellation result remains authoritative.
+            }
+          },
+          onError: (Object _, StackTrace __) {},
+        ),
+      );
+      _throwIfTaskCancelled(control);
+    }
+    throw Error.throwWithStackTrace(error, stackTrace);
+  }
+}
+
+Future<bool> _moveNextCancellable(
+  StreamIterator<List<int>> iterator,
+  TaskControl? control,
+) async {
+  if (control == null) return iterator.moveNext();
+  _throwIfTaskCancelled(control);
+  try {
+    return await Future.any<bool>(<Future<bool>>[
+      iterator.moveNext(),
+      control.whenCancelled.then<bool>((_) {
+        throw const Failure(
+          code: ErrorCode.cancelled,
+          message:
+              'artifact cache transport was cancelled by its scheduler owner',
+        );
+      }),
+    ]);
+  } catch (error, stackTrace) {
+    if (control.cancelled) _throwIfTaskCancelled(control);
+    throw Error.throwWithStackTrace(error, stackTrace);
+  }
 }
 
 Map<String, DownloadId> _uniqueIdentities(
@@ -725,16 +958,15 @@ ByteResponse _leaseBoundResponse(
     lease.release();
   }
 
-  Stream<List<int>> bytes() async* {
-    try {
-      yield* response.bytes;
-    } finally {
-      release();
-    }
-  }
-
   return ByteResponse(
-    bytes: bytes(),
+    bytes: _cancelAwareBody(
+      response.bytes,
+      onDone: release,
+      onAborted: () {
+        _discardUnawaited(response);
+        release();
+      },
+    ),
     statusCode: response.statusCode,
     rangeStart: response.rangeStart,
     totalLength: response.totalLength,
@@ -745,9 +977,9 @@ ByteResponse _leaseBoundResponse(
       flowControl: response.flowControl,
     diagnostics: response.diagnostics,
     readDiagnostics: response.readDiagnostics,
-    onDiscard: () async {
+    onDiscardControlled: ({TaskControl? control}) async {
       try {
-        await response.discard();
+        await response.discard(control: control);
       } finally {
         release();
       }
@@ -759,22 +991,43 @@ ByteResponse _scheduledArtifactResponse(
   ByteResponse response, {
   required ArtifactCacheReadScheduler scheduler,
   required int Function() priority,
+  TaskControl? control,
   required void Function(int waitMicros, int priority) onAcquired,
 }) {
+  final bodyControl = _BodyTaskControl(
+    prioritySource: priority,
+    parent: control,
+  );
+
   Stream<List<int>> scheduledBytes() async* {
     final iterator = StreamIterator<List<int>>(response.bytes);
     ArtifactCacheReadLease? lease;
+    var completed = false;
     try {
       while (true) {
-        final available = await iterator.moveNext();
+        var activeLease = lease;
+        Stopwatch? wait;
+        if (activeLease == null) {
+          wait = Stopwatch()..start();
+          activeLease = control == null && bodyControl.parent == null
+              ? await scheduler.acquire(priority: priority)
+              : await scheduler.acquire(
+                  priority: priority,
+                  control: bodyControl,
+                );
+          lease = activeLease;
+        }
+        final available = await _moveNextCancellable(
+          iterator,
+          bodyControl,
+        );
         if (!available) {
+          completed = true;
+          activeLease.release();
+          lease = null;
           return;
         }
-        var activeLease = lease;
-        if (activeLease == null) {
-          final wait = Stopwatch()..start();
-          activeLease = await scheduler.acquire(priority: priority);
-          lease = activeLease;
+        if (wait != null) {
           onAcquired(wait.elapsedMicroseconds, activeLease.priority);
         }
         yield iterator.current;
@@ -788,12 +1041,25 @@ ByteResponse _scheduledArtifactResponse(
       }
     } finally {
       lease?.release();
-      await iterator.cancel();
+      try {
+        await iterator.cancel();
+      } finally {
+        if (!completed) {
+          _discardUnawaited(response);
+        }
+      }
     }
   }
 
   return ByteResponse(
-    bytes: scheduledBytes(),
+    bytes: _cancelAwareBody(
+      scheduledBytes(),
+      onDone: () {},
+      onAborted: () {
+        bodyControl.cancel();
+        _discardUnawaited(response);
+      },
+    ),
     statusCode: response.statusCode,
     rangeStart: response.rangeStart,
     totalLength: response.totalLength,
@@ -804,7 +1070,10 @@ ByteResponse _scheduledArtifactResponse(
       flowControl: response.flowControl,
     diagnostics: response.diagnostics,
     readDiagnostics: response.readDiagnostics,
-    onDiscard: response.discard,
+    onDiscardControlled: ({TaskControl? control}) async {
+      bodyControl.cancel();
+      await response.discard(control: control);
+    },
   );
 }
 

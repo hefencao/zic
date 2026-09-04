@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:domain/domain.dart';
 import 'package:sessions/sessions.dart';
 import 'package:test/test.dart';
 import 'package:testkit/testkit.dart';
@@ -83,6 +84,511 @@ void main() {
     await lane.idle();
     expect(values, isEmpty);
   });
+  test('cancelQueued wakes idle waiters for a non-demanded pending task', () async {
+    final lane = NetLane(maxActive: 1);
+    lane.submitRanked(
+      key: 'parked',
+      priority: 1,
+      bucket: 'test',
+      bucketLimit: 1,
+      demanded: false,
+      task: (_) async {},
+    );
+
+    final idle = lane.idle();
+    expect(lane.cancelQueued('parked'), isTrue);
+    await idle;
+    expect(lane.isIdle, isTrue);
+  });
+
+  test('submit demand changes wake a previously parked pending task', () async {
+    final lane = NetLane(maxActive: 1);
+    final started = Completer<void>();
+    lane.submitRanked(
+      key: 'parked',
+      priority: 100,
+      bucket: 'test',
+      bucketLimit: 1,
+      demanded: false,
+      task: (_) async => started.complete(),
+    );
+
+    lane.submitRanked(
+      key: 'parked',
+      priority: 100,
+      bucket: 'test',
+      bucketLimit: 1,
+      demanded: true,
+      task: (_) async => started.complete(),
+    );
+
+    await started.future.timeout(const Duration(seconds: 1));
+    await lane.idle();
+  });
+
+  test('reactivated high-priority pending work gets a fresh grace window',
+      () async {
+    final lane = NetLane(
+      maxActive: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+      preemptionCandidateGrace: const Duration(milliseconds: 80),
+    );
+    final activeCancelled = Completer<void>();
+    late CancelToken activeToken;
+    lane.submitRanked(
+      key: 'active',
+      priority: 0,
+      bucket: 'test',
+      bucketLimit: 1,
+      task: (token) async {
+        activeToken = token;
+        await token.whenCancelled;
+        activeCancelled.complete();
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    lane.submitRanked(
+      key: 'candidate',
+      priority: 1000,
+      bucket: 'test',
+      bucketLimit: 1,
+      demanded: false,
+      task: (_) async {},
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(lane.updateDemanded('candidate', true), isTrue);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(activeToken.cancelled, isFalse);
+
+    await activeCancelled.future.timeout(const Duration(seconds: 1));
+    await lane.idle();
+  });
+
+  test('cancelled preemption wake cannot strand a later high-priority task',
+      () async {
+    final lane = NetLane(
+      maxActive: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+      preemptionCandidateGrace: const Duration(milliseconds: 80),
+    );
+    final activeCancelled = Completer<void>();
+    final activeStarted = Completer<void>();
+    lane.submitRanked(
+      key: 'active',
+      priority: 0,
+      bucket: 'source:active',
+      bucketLimit: 1,
+      task: (token) async {
+        activeStarted.complete();
+        await token.whenCancelled;
+        activeCancelled.complete();
+      },
+    );
+    await activeStarted.future;
+
+    // Batch the two candidates so the initially highest one owns the first
+    // wake. Removing it then moves the earlier-aged candidate into that wake.
+    lane.batch(() {
+      lane.submitRanked(
+        key: 'candidate-a',
+        priority: 1000,
+        bucket: 'source:a',
+        bucketLimit: 1,
+        task: (_) async {},
+      );
+      lane.submitRanked(
+        key: 'candidate-b',
+        priority: 1100,
+        bucket: 'source:b',
+        bucketLimit: 1,
+        task: (_) async {},
+      );
+    });
+    expect(lane.cancelQueued('candidate-b'), isTrue);
+    expect(lane.cancelQueued('candidate-a'), isTrue);
+
+    // The previous candidate's timer was cancelled while the active task was
+    // still running. A new candidate must install a new wake rather than
+    // trusting the stale scheduled timestamp.
+    lane.submitRanked(
+      key: 'candidate-c',
+      priority: 1000,
+      bucket: 'source:c',
+      bucketLimit: 1,
+      task: (_) async {},
+    );
+
+    await activeCancelled.future.timeout(const Duration(seconds: 1));
+    await lane.idle();
+  });
+
+  test('ranked duplicate bucket changes wake blocked admission', () async {
+    final lane = NetLane(maxActive: 2);
+    final activeStarted = Completer<void>();
+    final pendingStarted = Completer<void>();
+    final release = Completer<void>();
+
+    lane.submitRanked(
+      key: 'active',
+      priority: 100,
+      bucket: 'source:a',
+      bucketLimit: 1,
+      task: (_) async {
+        activeStarted.complete();
+        await release.future;
+      },
+    );
+    await activeStarted.future;
+    lane.submitRanked(
+      key: 'pending',
+      priority: 90,
+      bucket: 'source:a',
+      bucketLimit: 1,
+      task: (_) async => pendingStarted.complete(),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(pendingStarted.isCompleted, isFalse);
+
+    // The duplicate update moves the already-admitted task out of the full
+    // source bucket. Admission must be recomputed even though its priority
+    // and demand did not change.
+    lane.submitRanked(
+      key: 'active',
+      priority: 100,
+      bucket: 'source:b',
+      bucketLimit: 1,
+      task: (_) async {},
+    );
+
+    await pendingStarted.future.timeout(const Duration(seconds: 1));
+    release.complete();
+    await lane.idle();
+  });
+
+  test('non-demanded high-priority pending work never preempts active work',
+      () async {
+    final lane = NetLane(maxActive: 1, highPriorityThreshold: 1000);
+    final release = Completer<void>();
+    late CancelToken activeToken;
+    lane.submitRanked(
+      key: 'active',
+      priority: 100,
+      bucket: 'test',
+      bucketLimit: 1,
+      task: (token) async {
+        activeToken = token;
+        await release.future;
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    lane.submitRanked(
+      key: 'parked-high',
+      priority: 1000,
+      bucket: 'test',
+      bucketLimit: 1,
+      demanded: false,
+      task: (_) async {},
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(activeToken.cancelled, isFalse);
+    expect(lane.queued, 1);
+
+    release.complete();
+    await lane.idleKeys(const <String>{'active'});
+    expect(lane.cancelQueued('parked-high'), isTrue);
+    await lane.idle();
+  });
+
+  test('active submit priority downgrade re-runs blocked preemption policy',
+      () async {
+    final lane = NetLane(
+      maxActive: 1,
+      highPriorityThreshold: 800,
+      preemptionThreshold: 40,
+    );
+    final incumbentCancelled = Completer<void>();
+    final incomingStarted = Completer<void>();
+
+    lane.submitRanked(
+      key: 'incumbent',
+      priority: 820,
+      bucket: 'test',
+      bucketLimit: 1,
+      task: (token) async {
+        await token.whenCancelled;
+        incumbentCancelled.complete();
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    lane.submitRanked(
+      key: 'incoming',
+      priority: 850,
+      bucket: 'test',
+      bucketLimit: 1,
+      task: (_) async => incomingStarted.complete(),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(incumbentCancelled.isCompleted, isFalse);
+    expect(incomingStarted.isCompleted, isFalse);
+
+    lane.submitRanked(
+      key: 'incumbent',
+      priority: 700,
+      bucket: 'test',
+      bucketLimit: 1,
+      task: (_) async {},
+    );
+
+    await incumbentCancelled.future.timeout(const Duration(seconds: 1));
+    await incomingStarted.future.timeout(const Duration(seconds: 1));
+    await lane.idle();
+  });
+
+  test('active duplicate submission updates preemption eligibility', () async {
+    final lane = NetLane(
+      maxActive: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+    );
+    final activeStarted = Completer<void>();
+    final activeCancelled = Completer<void>();
+    final pendingStarted = Completer<void>();
+    late CancelToken activeToken;
+
+    lane.submitRanked(
+      key: 'active',
+      priority: 0,
+      bucket: 'source:test',
+      bucketLimit: 1,
+      preemptible: false,
+      task: (token) async {
+        activeToken = token;
+        activeStarted.complete();
+        try {
+          await token.whenCancelled;
+        } finally {
+          activeCancelled.complete();
+        }
+      },
+    );
+    await activeStarted.future;
+    lane.submitRanked(
+      key: 'pending',
+      priority: 1000,
+      bucket: 'source:other',
+      bucketLimit: 1,
+      task: (_) async => pendingStarted.complete(),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(activeToken.cancelled, isFalse);
+    expect(pendingStarted.isCompleted, isFalse);
+
+    // This is a scheduling mutation even though rank, demand, and bucket are
+    // unchanged. The newly preemptible incumbent must wake the blocked high
+    // priority admission scan.
+    lane.submitRanked(
+      key: 'active',
+      priority: 0,
+      bucket: 'source:test',
+      bucketLimit: 1,
+      preemptible: true,
+      task: (_) async {},
+    );
+
+    await activeCancelled.future.timeout(const Duration(seconds: 1));
+    await lane.idle();
+    expect(pendingStarted.isCompleted, isTrue);
+  });
+
+  test('active duplicate submission updates bucket lease accounting', () async {
+    final lane = NetLane(maxActive: 1);
+    final started = Completer<CancelToken>();
+
+    lane.submitRanked(
+      key: 'transfer',
+      priority: 100,
+      bucket: 'old-source',
+      bucketLimit: 1,
+      task: (token) async {
+        started.complete(token);
+        await token.whenCancelled;
+      },
+    );
+    final token = await started.future;
+
+    lane.submitRanked(
+      key: 'transfer',
+      priority: 200,
+      bucket: 'new-source',
+      bucketLimit: 2,
+      task: (_) async {},
+    );
+
+    expect(lane.activeForBucket('old-source'), 0);
+    expect(lane.transportLeasesForBucket('old-source'), 0);
+    expect(lane.activeForBucket('new-source'), 1);
+    expect(lane.transportLeasesForBucket('new-source'), 1);
+    expect(lane.priorityOf('transfer'), 200);
+
+    token.cancel();
+    await lane.idle();
+    expect(lane.activeForBucket('new-source'), 0);
+    expect(lane.transportLeasesForBucket('new-source'), 0);
+  });
+
+  test('reserved handoff bucket headroom follows the configured slot count',
+      () async {
+    final lane = NetLane(
+      maxActive: 1,
+      reservedHighPrioritySlots: 2,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+    );
+    final releases = <Completer<void>>[
+      Completer<void>(),
+      Completer<void>(),
+      Completer<void>(),
+    ];
+    final started = <String>[];
+
+    lane.submitRanked(
+      key: 'normal',
+      priority: 700,
+      bucket: 'test',
+      bucketLimit: 1,
+      task: (_) async {
+        started.add('normal');
+        await releases[0].future;
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    for (var index = 1; index < 3; index++) {
+      lane.submitRanked(
+        key: 'current-$index',
+        priority: 1000,
+        bucket: 'test',
+        bucketLimit: 1,
+        task: (_) async {
+          started.add('current-$index');
+          await releases[index].future;
+        },
+      );
+    }
+    await Future<void>.delayed(Duration.zero);
+
+    expect(started, <String>['normal', 'current-1', 'current-2']);
+    expect(lane.active, 3);
+    expect(lane.activeForBucket('test'), 3);
+    expect(lane.handoffActive, 2);
+
+    for (final release in releases) {
+      release.complete();
+    }
+    await lane.idle();
+  });
+
+  test('withdrawing demand wakes a pending parked-response resume', () async {
+    final lane = NetLane(
+      maxActive: 1,
+      reservedHighPrioritySlots: 1,
+      highPriorityThreshold: 1000,
+    );
+    final parkedStarted = Completer<CancelToken>();
+    final requestResume = Completer<void>();
+    final resumeReturned = Completer<bool>();
+    final blockerStarted = Completer<CancelToken>();
+
+    lane.submitRanked(
+      key: 'parked',
+      priority: 700,
+      bucket: 'test',
+      bucketLimit: 1,
+      task: (token) async {
+        parkedStarted.complete(token);
+        token.releaseResponseReadPermit();
+        await requestResume.future;
+        await token.acquireResponseReadPermit();
+        resumeReturned.complete(token.responseReadPermitHeld);
+        await token.whenCancelled;
+      },
+    );
+    final parked = await parkedStarted.future;
+
+    lane.submitRanked(
+      key: 'handoff-blocker',
+      priority: 1000,
+      bucket: 'test',
+      bucketLimit: 1,
+      task: (token) async {
+        blockerStarted.complete(token);
+        await token.whenCancelled;
+      },
+    );
+    await blockerStarted.future;
+
+    // The parked task is already waiting in acquireResponseReadPermit, while
+    // the reserved handoff owns the only body-read permit. A final-demand
+    // withdrawal must wake the waiter; otherwise the lane can never grant it
+    // because _grantResponseReadPermit rejects non-demanded tasks.
+    requestResume.complete();
+    await Future<void>.delayed(Duration.zero);
+    expect(lane.updateDemanded('parked', false), isTrue);
+    expect(await resumeReturned.future.timeout(const Duration(seconds: 1)),
+        isFalse);
+
+    parked.cancel();
+    lane.cancel('handoff-blocker');
+    await lane.idle();
+  });
+
+  test('demanded parked responses are not high-priority preemption victims',
+      () async {
+    final lane = NetLane(
+      maxActive: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+    );
+    final parkedStarted = Completer<CancelToken>();
+    final incomingStarted = Completer<void>();
+
+    lane.submitRanked(
+      key: 'parked-demanded',
+      priority: 700,
+      bucket: 'test',
+      bucketLimit: 1,
+      task: (token) async {
+        parkedStarted.complete(token);
+        await token.whenCancelled;
+      },
+    );
+    final parked = await parkedStarted.future;
+    parked.releaseResponseReadPermit();
+
+    lane.submitRanked(
+      key: 'incoming-current',
+      priority: 1000,
+      bucket: 'test',
+      bucketLimit: 1,
+      task: (_) async => incomingStarted.complete(),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(parked.cancelled, isFalse);
+    expect(incomingStarted.isCompleted, isFalse);
+    expect(lane.queued, 1);
+
+    parked.cancel();
+    await lane.idle();
+    expect(incomingStarted.isCompleted, isTrue);
+  });
+
   test('replace cancels active work and runs the replacement next', () async {
     final lane = DecodeLane(maxActive: 1);
     final started = Completer<void>();
@@ -116,6 +622,36 @@ void main() {
     expect(values, <String>['old', 'new']);
   });
 
+
+  test('resubmission during cancelled task retirement queues a successor',
+      () async {
+    final lane = NetLane(maxActive: 1);
+    final started = Completer<CancelToken>();
+    final replacementStarted = Completer<void>();
+
+    lane.submit(
+      key: 'same',
+      priority: 1,
+      task: (token) async {
+        started.complete(token);
+        await token.whenCancelled;
+      },
+    );
+    final token = await started.future;
+
+    token.cancel();
+    expect(
+      lane.submit(
+        key: 'same',
+        priority: 2,
+        task: (_) async => replacementStarted.complete(),
+      ),
+      isTrue,
+    );
+
+    await replacementStarted.future.timeout(const Duration(seconds: 1));
+    await lane.idle();
+  });
 
   test('follow queues one successor without cancelling active work', () async {
     final lane = UploadLane(maxActive: 1);
@@ -338,6 +874,93 @@ void main() {
 
     release.complete();
     await lane.idle();
+  });
+
+  test('a non-retained response cannot leave a reacquire waiter stranded',
+      () async {
+    final lane = NetLane(maxActive: 1);
+    final started = Completer<CancelToken>();
+
+    lane.submitRanked(
+      key: 'non-retained',
+      priority: 700,
+      bucket: 'local',
+      bucketLimit: 1,
+      task: (token) async {
+        started.complete(token);
+        token.releaseResponseReadPermit(responseRetained: false);
+        await expectLater(
+          token.acquireResponseReadPermit(),
+          throwsA(isA<Failure>().having(
+            (error) => error.code,
+            'code',
+            ErrorCode.invalidState,
+          )),
+        );
+      },
+    );
+
+    await started.future;
+    await lane.idle();
+  });
+
+  test('idleKeys waits for non-retained task retirement', () async {
+    final lane = NetLane(maxActive: 1);
+    final started = Completer<CancelToken>();
+    final release = Completer<void>();
+
+    lane.submitRanked(
+      key: 'non-retained-active',
+      priority: 700,
+      bucket: 'local',
+      bucketLimit: 5,
+      task: (token) async {
+        started.complete(token);
+        token.releaseResponseReadPermit(responseRetained: false);
+        await release.future;
+      },
+    );
+    await started.future;
+
+    var retired = false;
+    final idle = lane.idleKeys(const <String>{'non-retained-active'}).then<void>((_) {
+      retired = true;
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(retired, isFalse);
+
+    release.complete();
+    await idle;
+    expect(retired, isTrue);
+  });
+
+  test('idleKeys waits for parked response retirement', () async {
+    final lane = NetLane(maxActive: 1);
+    final started = Completer<CancelToken>();
+
+    lane.submitRanked(
+      key: 'parked',
+      priority: 700,
+      bucket: 'local',
+      bucketLimit: 5,
+      task: (token) async {
+        started.complete(token);
+        await token.whenCancelled;
+      },
+    );
+    final token = await started.future;
+    token.releaseResponseReadPermit();
+
+    var retired = false;
+    final idle = lane.idleKeys(const <String>{'parked'}).then<void>((_) {
+      retired = true;
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(retired, isFalse);
+
+    token.cancel();
+    await idle;
+    expect(retired, isTrue);
   });
 
   test('idleKeys ignores work owned by another Reader', () async {
@@ -1372,6 +1995,44 @@ void _dev123NetLaneTests() {
     second.cancel();
     await lane.idle();
     expect(thirdStarted, isTrue);
+  });
+
+  test('transport pressure does not cancel withdrawn active body reads',
+      () async {
+    final lane = NetLane(maxActive: 1);
+    final activeStarted = Completer<CancelToken>();
+    final activeRelease = Completer<void>();
+    final incomingStarted = Completer<void>();
+
+    lane.submitRanked(
+      key: 'withdrawn-reading',
+      priority: 700,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (token) async {
+        activeStarted.complete(token);
+        await activeRelease.future;
+      },
+    );
+    final active = await activeStarted.future;
+    active.markResponseOpened();
+    lane.updateDemanded('withdrawn-reading', false);
+
+    lane.submitRanked(
+      key: 'incoming-demanded',
+      priority: 800,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (_) async => incomingStarted.complete(),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(active.cancelled, isFalse);
+    expect(incomingStarted.isCompleted, isFalse);
+
+    activeRelease.complete();
+    await incomingStarted.future.timeout(const Duration(seconds: 1));
+    await lane.idle();
   });
 
   test('transport pressure reclaims only inactive parked response', () async {

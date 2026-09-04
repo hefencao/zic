@@ -53,9 +53,9 @@ require(
 require(
     "packages/downloads/lib/src/composition_download_transfer_runtime.dart",
     "DownloadResidentReplaySource residentReplaySource(",
-    "await cache.lookup(session.id)",
+    "await cache.lookup(session.id",
     "owner.openResidentReplay(",
-    "localReadScheduler.acquire(priority: priority)",
+    "localReadScheduler.acquire(",
     "resident replay requires the current physical session",
 )
 require(

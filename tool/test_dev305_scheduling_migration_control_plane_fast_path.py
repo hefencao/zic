@@ -36,7 +36,7 @@ require(transfer, 'bool _tryUpdateExistingClaimScheduling(',
         'existing physical claim fast path')
 for token in (
     'prior.exactId != next.exactId',
-    'prior.demand.expectedChecksum != next.demand.expectedChecksum',
+    'prior.demand.expectedChecksum',
     'prior.demand.completionIntent != next.demand.completionIntent',
     '_refreshClaimScheduling(id, session, next.demand);',
 ):

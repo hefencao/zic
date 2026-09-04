@@ -40,6 +40,37 @@ void main() {
     }
   });
 
+  test('restore preserves an explicitly foreign colliding partial artifact',
+      () async {
+    final foreign = _idWithSource('foreign-source');
+    final partial = File(session.artifact.partialPath);
+    await partial.parent.create(recursive: true);
+    final bytes = <int>[9, 8, 7, 6];
+    await partial.writeAsBytes(bytes);
+    await File('${partial.path}.meta').writeAsString(
+      jsonEncode(<String, Object?>{'download': foreign.toJson()}),
+    );
+
+    final colliding = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: partial.path,
+        finalPath: session.artifact.finalPath,
+      ),
+      clock: FakeMonoClock(),
+    );
+    await expectLater(
+      colliding.restore(),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.artifactCorruption,
+      )),
+    );
+    expect(await partial.readAsBytes(), orderedEquals(bytes));
+    await colliding.dispose();
+  });
+
   test('writer is exclusive', () {
     final writer = session.acquireWriter();
     expect(writer.epoch, const SourceEpoch(0));
@@ -51,6 +82,185 @@ void main() {
         ErrorCode.writerBusy,
       )),
     );
+  });
+
+  test('append failure retires a session writer when the sink cannot open',
+      () async {
+    final writer = session.acquireWriter();
+    final partialDirectory = Directory(
+      File(session.artifact.partialPath).parent.path,
+    );
+    await partialDirectory.delete(recursive: true);
+    await File(partialDirectory.path).writeAsString('not a directory');
+
+    await expectLater(
+      session.append(writer, 0, <int>[1, 2, 3]),
+      throwsA(isNotNull),
+    );
+
+    expect(session.hasWriter, isFalse);
+    expect(session.state, DownloadState.failed);
+    expect(session.artifact.hasOpenWriter, isFalse);
+  });
+
+  test('unscoped completion cannot acquire a writer during an active run',
+      () async {
+    final writer = session.acquireWriter();
+    await session.bindResponse(
+      validators: const Validators(),
+      totalLength: 3,
+      validatorRequestUri: session.id.canonicalUri,
+    );
+    await session.append(writer, 0, <int>[1, 2, 3]);
+    await session.pause(writer);
+
+    final run = session.beginRun();
+    await expectLater(
+      DownloadJob.completeWithoutTransport(session: session),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.sessionBusy,
+      )),
+    );
+    session.endRun(run);
+  });
+
+  test('unscoped promotion cannot mutate an active run', () async {
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1, 2, 3]);
+    await session.seal(writer, expectedLength: 3);
+
+    final run = session.beginRun();
+    await expectLater(
+      session.promote(),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.sessionBusy,
+      )),
+    );
+    session.endRun(run);
+  });
+
+  test('writer admission is blocked while restore is synchronizing cache',
+      () async {
+    final index = _BlockingCacheIndex();
+    await index.open();
+    final partialPath = '${temp.path}/restore-race/partial/page.webp';
+    await (File(partialPath)..createSync(recursive: true)).writeAsBytes(<int>[1]);
+    final raced = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: partialPath,
+        finalPath: '${temp.path}/restore-race/cache/page.webp',
+      ),
+      clock: FakeMonoClock(),
+      index: index,
+    );
+    final restoring = raced.restore();
+    await index.getStarted.future;
+
+    final observations = <DownloadSnapshot>[];
+    void listener(DownloadSnapshot snapshot) {
+      observations.add(snapshot);
+    }
+    raced.addSnapshotListener(listener);
+    expect(observations, hasLength(1));
+    expect(raced.canEvict, isFalse);
+    final demandLease = raced.attachDemand(scopeId: 'reader', priority: 1000);
+    expect(raced.effectivePriority, equals(1000));
+    demandLease.detach();
+    final projection = DownloadIngressProjection(
+      scopeId: 'reader-projection',
+      ingress: Ingress(factory: _TestSourceFactory(), maxBytes: 1024),
+    );
+    final attaching = raced.attachSynchronizedIngressProjection(projection);
+    expect(attaching, isA<Future<void>>());
+    expect(
+      raced.acquireWriter,
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.sessionBusy,
+      )),
+    );
+    await expectLater(
+      raced.dispose(),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.sessionBusy,
+      )),
+    );
+    await expectLater(
+      raced.reset(),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.sessionBusy,
+      )),
+    );
+
+    index.releaseGet.complete();
+    await restoring;
+    await attaching;
+    raced.removeSnapshotListener(listener);
+    await raced.dispose();
+    await index.close();
+  });
+
+  test('empty session attachIngressProjection succeeds without sessionBusy', () async {
+    final session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/empty-test/partial/page.webp',
+        finalPath: '${temp.path}/empty-test/cache/page.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    expect(session.committedLength, equals(0));
+    final demandLease = session.attachDemand(scopeId: 'reader', priority: 1000);
+    expect(session.effectivePriority, equals(1000));
+    final projection = DownloadIngressProjection(
+      scopeId: 'reader-empty-projection',
+      ingress: Ingress(factory: _TestSourceFactory(), maxBytes: 1024),
+    );
+    session.attachIngressProjection(projection);
+    expect(session.snapshot.ingressProjectionCount, equals(1));
+
+    demandLease.detach();
+    projection.detach();
+    await session.dispose();
+  });
+
+  test('physical aliases cannot be rebound to a different session', () {
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/aliases'),
+      clock: FakeMonoClock(),
+    );
+    addTearDown(registry.dispose);
+    DownloadId idWithPage(String pageId) => DownloadId(
+          content: ContentId(
+            sourceId: 'source',
+            comicId: 'comic',
+            chapterId: 'chapter',
+            pageId: pageId,
+          ),
+          sourceRevision: 'r1',
+          canonicalUri: Uri.parse('https://example.test/$pageId.webp'),
+        );
+    final first = registry.get(idWithPage('alias-first'));
+    final logical = idWithPage('alias-logical');
+    final second = registry.get(idWithPage('alias-second'));
+
+    registry.aliasPhysical(id: logical, target: first.id);
+    registry.aliasPhysical(id: logical, target: first.id);
+    expect(
+      () => registry.aliasPhysical(id: logical, target: second.id),
+      throwsStateError,
+    );
+    expect(registry.resolvePhysicalId(logical), first.id);
   });
 
   test('reset rejects late chunks from the old epoch', () async {
@@ -77,6 +287,387 @@ void main() {
     await session.append(writer, 0, <int>[1, 2, 3]);
     await session.seal(writer, expectedLength: 3);
     expect(session.state, DownloadState.sealed);
+  });
+
+  test('reset reentrancy cannot publish an old append after epoch advance',
+      () async {
+    final projection = DownloadIngressProjection(
+      scopeId: 'reentrant-reset',
+      ingress: Ingress(factory: _TestSourceFactory(), maxBytes: 1024),
+    );
+    session.attachIngressProjection(projection);
+    Future<void>? resetting;
+    var resetStarted = false;
+    projection.addSourceListener((snapshot) {
+      if (!resetStarted && snapshot.length >= 12) {
+        resetStarted = true;
+        resetting = session.reset();
+      }
+    });
+
+    final writer = session.acquireWriter();
+    await expectLater(
+      session.append(writer, 0, 'RIFF....WEBP'.codeUnits),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.staleEpoch,
+      )),
+    );
+    await resetting;
+
+    expect(session.state, DownloadState.idle);
+    expect(session.contentKind, ContentKind.unknown);
+    expect(session.hasWriter, isFalse);
+    expect(session.committedLength, 0);
+  });
+
+  test('promotion failure retires the sealed writer lifecycle', () async {
+    await File('${temp.path}/cache').writeAsString('not a directory');
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1, 2, 3]);
+    await session.seal(writer, expectedLength: 3);
+
+    await expectLater(session.promote(), throwsA(isA<FileSystemException>()));
+
+    expect(session.state, DownloadState.failed);
+    expect(session.hasWriter, isFalse);
+    expect(session.artifact.hasOpenWriter, isFalse);
+  });
+
+  test('seal validation failure retires the writer lifecycle', () async {
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1, 2, 3]);
+
+    await expectLater(
+      session.seal(writer, expectedLength: 3, expectedChecksum: '00000000'),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.checksumMismatch,
+      )),
+    );
+    expect(session.hasWriter, isFalse);
+    expect(session.state, DownloadState.failed);
+    expect(session.artifact.hasOpenWriter, isFalse);
+
+    final retry = session.acquireWriter();
+    await session.fail(retry, const Failure(
+      code: ErrorCode.cancelled,
+      message: 'test cleanup',
+    ));
+  });
+
+  test('promotion rejects an explicit foreign final sidecar', () async {
+    final foreign = Artifact(
+      partialPath: session.artifact.partialPath,
+      finalPath: session.artifact.finalPath,
+    );
+    await foreign.restore();
+    await foreign.writeMeta(<String, Object?>{
+      'downloadKey': 'foreign-download',
+    });
+    await foreign.append(0, <int>[1, 2, 3]);
+    await foreign.seal(expectedLength: 3);
+    await foreign.promote();
+    await foreign.dispose();
+
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1, 2, 3]);
+    await session.seal(writer, expectedLength: 3);
+
+    await expectLater(
+      session.promote(),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.artifactCorruption,
+      )),
+    );
+    expect(session.state, DownloadState.failed);
+    expect(session.hasWriter, isFalse);
+    expect(
+      jsonDecode(await File(session.artifact.finalMetaPath).readAsString())
+          ['downloadKey'],
+      'foreign-download',
+    );
+  });
+
+  test('projection failure after artifact seal retires the writer lifecycle',
+      () async {
+    final projection = DownloadIngressProjection(
+      scopeId: 'disposed-projection',
+      ingress: Ingress(factory: _TestSourceFactory(), maxBytes: 1024),
+    );
+    session.attachIngressProjection(projection);
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1, 2, 3]);
+    projection.ingress.dispose();
+
+    await expectLater(
+      session.seal(writer, expectedLength: 3),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.invalidState,
+      )),
+    );
+
+    expect(session.state, DownloadState.failed);
+    expect(session.hasWriter, isFalse);
+    expect(session.artifact.state, ArtifactState.sealed);
+    expect(session.artifact.hasOpenWriter, isFalse);
+  });
+
+  test('restore failure cannot leave the session advertising old promotion',
+      () async {
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1, 2, 3, 4]);
+    await session.seal(writer, expectedLength: 4);
+    await session.promote();
+
+    await File(session.artifact.finalPath).writeAsBytes(<int>[4, 3, 2, 1]);
+
+    await expectLater(
+      session.restore(),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.artifactCorruption,
+      )),
+    );
+
+    expect(session.state, DownloadState.failed);
+    expect(session.snapshot.failure?.code, ErrorCode.artifactCorruption);
+    expect(session.hasWriter, isFalse);
+    expect(session.artifact.state, ArtifactState.empty);
+    expect(session.artifact.committedLength, 0);
+    expect(
+      await File(session.artifact.finalPath).readAsBytes(),
+      <int>[4, 3, 2, 1],
+    );
+  });
+
+  test('registry does not retire a session while projection attachment is pending',
+      () async {
+    final clock = FakeMonoClock();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/registry-pending-cache'),
+      clock: clock,
+    );
+    final physical = downloads.get(_id());
+    await physical.restore();
+    final writer = physical.acquireWriter();
+    await physical.append(writer, 0, <int>[1, 2, 3]);
+    await physical.pause(writer);
+    physical.detach();
+
+    final projection = DownloadIngressProjection(
+      scopeId: 'registry-pending',
+      ingress: Ingress(
+        factory: _TestSourceFactory(),
+        maxBytes: 1024,
+      ),
+    );
+    final attaching = physical.attachSynchronizedIngressProjection(projection);
+
+    expect(physical.canEvict, isFalse);
+    expect(downloads.takeIdlePhysical(physical.id), isNull);
+    physical.detachIngressProjection(projection.scopeId);
+    await expectLater(
+      attaching,
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.cancelled,
+      )),
+    );
+
+    final retired = downloads.takeIdlePhysical(physical.id);
+    expect(retired, same(physical));
+    await retired!.dispose();
+    await downloads.dispose();
+  });
+
+  test('detaching a pending projection invalidates its late replay', () async {
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1, 2, 3]);
+    await session.pause(writer);
+
+    final projection = DownloadIngressProjection(
+      scopeId: 'pending-detach',
+      ingress: Ingress(factory: _TestSourceFactory(), maxBytes: 1024),
+    );
+    final attaching = session.attachSynchronizedIngressProjection(projection);
+
+    expect(session.canEvict, isFalse);
+    expect(await session.resetIfIdle(removeCacheRecord: false), isFalse);
+    expect(
+      session.dispose,
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.sessionBusy,
+      )),
+    );
+    expect(session.detachIngressProjection(projection.scopeId), isTrue);
+
+    await expectLater(
+      attaching,
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.cancelled,
+      )),
+    );
+    expect(session.canEvict, isTrue);
+  });
+
+  test('dispose invalidates a completion awaiting cache synchronization',
+      () async {
+    final index = _BlockingCacheIndex();
+    await index.open();
+    final raced = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/raced.webp',
+        finalPath: '${temp.path}/cache/raced.webp',
+      ),
+      clock: FakeMonoClock(),
+      index: index,
+    );
+    await raced.restore();
+
+    final writer = raced.acquireWriter();
+    await raced.append(writer, 0, <int>[1, 2, 3]);
+    final sealing = raced.seal(writer, expectedLength: 3);
+    await index.getStarted.future;
+
+    final sealingExpectation = expectLater(
+      sealing,
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        anyOf(ErrorCode.invalidState, ErrorCode.staleEpoch),
+      )),
+    );
+    final disposing = raced.dispose();
+    await Future<void>.delayed(Duration.zero);
+    expect(raced.state, isNot(DownloadState.disposed));
+    index.releaseGet.complete();
+    await disposing;
+    await sealingExpectation;
+    expect(await index.delegate.get(_id().key), isNull);
+    await index.close();
+  });
+
+  test('idle reset holds its lifecycle boundary through owner cleanup',
+      () async {
+    await session.restore();
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1, 2, 3]);
+    await session.pause(writer);
+
+    final entered = Completer<void>();
+    final release = Completer<void>();
+    final resetting = session.resetIfIdleAndRun<bool>(
+      removeCacheRecord: false,
+      operation: () async {
+        entered.complete();
+        await release.future;
+        expect(
+          () => session.beginRun(),
+          throwsA(isA<Failure>().having(
+            (error) => error.code,
+            'code',
+            ErrorCode.sessionBusy,
+          )),
+        );
+        return true;
+      },
+    );
+
+    await entered.future;
+    release.complete();
+    expect(await resetting, isTrue);
+    final run = session.beginRun();
+    session.endRun(run);
+  });
+
+  test('reset boundary removes a cache row written by stale synchronization',
+      () async {
+    final index = _BlockingPutCacheIndex();
+    await index.open();
+    final raced = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/stale-sync.webp',
+        finalPath: '${temp.path}/cache/stale-sync.webp',
+      ),
+      clock: FakeMonoClock(),
+      index: index,
+    );
+    await raced.restore();
+
+    final writer = raced.acquireWriter();
+    await raced.append(writer, 0, <int>[1, 2, 3]);
+    final pausing = raced.pause(writer);
+    await index.putStarted.future;
+
+    final resetting = raced.resetIfIdle(removeCacheRecord: false);
+    index.releasePut.complete();
+
+    await expectLater(
+      pausing,
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.staleEpoch,
+      )),
+    );
+    expect(await resetting, isTrue);
+    expect(await index.delegate.get(_id().key), isNull);
+
+    await raced.dispose();
+    await index.close();
+  });
+
+  test('stale synchronization cleanup accepts SQLite artifact-id normalization',
+      () async {
+    final index = _BlockingPutCacheIndex(SqliteIndex.memory());
+    await index.open();
+    final raced = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/sqlite-stale-sync.webp',
+        finalPath: '${temp.path}/cache/sqlite-stale-sync.webp',
+      ),
+      clock: FakeMonoClock(),
+      index: index,
+    );
+    await raced.restore();
+
+    final writer = raced.acquireWriter();
+    await raced.append(writer, 0, <int>[1, 2, 3]);
+    final pausing = raced.pause(writer);
+    await index.putStarted.future;
+
+    final resetting = raced.resetIfIdle(removeCacheRecord: false);
+    index.releasePut.complete();
+
+    await expectLater(
+      pausing,
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.staleEpoch,
+      )),
+    );
+    expect(await resetting, isTrue);
+    expect(await index.delegate.get(_id().key), isNull);
+
+    await raced.dispose();
+    await index.close();
   });
 
   test('consumer demand claims use max priority and detach independently', () {
@@ -558,6 +1149,48 @@ void main() {
     sources.dispose();
   });
 
+  test('disposing an ingress registry cancels resident replay attachment', () async {
+    final bytes = <int>[...'RIFF....WEBP'.codeUnits, 1, 2, 3, 4, 5, 6];
+    session.beginResidentImmutableIngress(
+      validators: const Validators(),
+      totalLength: bytes.length,
+    );
+    session.appendResidentImmutableIngress(0, bytes);
+    session.sealResidentImmutableIngress();
+
+    final replayStarted = Completer<void>();
+    final replayCancelled = Completer<void>();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-resident-cancel',
+      residentReplaySourceWithControl:
+          (physical, endExclusive, {required control}) async {
+        expect(physical, same(session));
+        replayStarted.complete();
+        try {
+          await control.whenCancelled;
+        } finally {
+          replayCancelled.complete();
+        }
+        return Stream<List<int>>.value(bytes.sublist(0, endExclusive));
+      },
+    );
+
+    final projection = ingresses.get(session);
+    await replayStarted.future;
+    ingresses.dispose();
+    await replayCancelled.future.timeout(const Duration(seconds: 1));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(projection.source, isNull);
+    expect(session.snapshot.ingressProjectionCount, 0);
+    sources.dispose();
+  });
+
   test('cancelled writer attempt preserves partial without failed state', () async {
     final writer = session.acquireWriter();
     await session.append(writer, 0, <int>[1, 2, 3, 4]);
@@ -624,6 +1257,21 @@ void main() {
     expect(commits.first.payload['bytes'], 80 * 1024);
     expect(commits.last.payload['chunks'], 1);
     expect(commits.last.payload['bytes'], 1024);
+  });
+
+  test('restore rejects an active transport run', () {
+    final run = session.beginRun();
+
+    expect(
+      session.restore,
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.sessionBusy,
+      )),
+    );
+
+    session.endRun(run);
   });
 
   test('run lease serializes active transport work', () {
@@ -828,7 +1476,7 @@ void main() {
     expect(restored.totalLength, isNull);
   });
 
-  test('explicit different download owner invalidates the partial', () async {
+  test('explicit different download owner preserves the foreign partial', () async {
     await session.dispose();
     final partial = File('${temp.path}/partial/page.webp');
     await partial.parent.create(recursive: true);
@@ -845,11 +1493,95 @@ void main() {
       ),
       clock: FakeMonoClock(),
     );
-    final restored = await session.restore();
+    await expectLater(
+      session.restore(),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.artifactCorruption,
+      )),
+    );
 
-    expect(restored.committedLength, 0);
-    expect(restored.validators.isEmpty, isTrue);
-    expect(restored.totalLength, isNull);
+    expect(await partial.readAsBytes(), <int>[1, 2, 3, 4]);
+    expect(session.committedLength, 4);
+    expect(session.validators.isEmpty, isTrue);
+    expect(session.totalLength, isNull);
+  });
+
+  test('does not expose a promoted body claimed by another download', () async {
+    await session.dispose();
+    final partialPath = '${temp.path}/partial/page.webp';
+    final finalPath = '${temp.path}/cache/page.webp';
+    final foreign = Artifact(
+      partialPath: partialPath,
+      finalPath: finalPath,
+    );
+    await foreign.restore();
+    await foreign.writeMeta(<String, Object?>{
+      'downloadKey': 'different-owner',
+    });
+    await foreign.append(0, <int>[1, 2, 3, 4]);
+    await foreign.seal(expectedLength: 4);
+    await foreign.promote();
+    await foreign.dispose();
+
+    session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: partialPath,
+        finalPath: finalPath,
+      ),
+      clock: FakeMonoClock(),
+    );
+
+    await expectLater(
+      session.restore(),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.artifactCorruption,
+      )),
+    );
+    // Ownership rejection happens before Artifact.restore binds the final
+    // file, so a failed collision check cannot leave foreign bytes exposed as
+    // this session's promoted state.
+    expect(session.artifact.state, ArtifactState.empty);
+    expect(session.artifact.committedLength, 0);
+    expect(await File(finalPath).readAsBytes(), <int>[1, 2, 3, 4]);
+  });
+
+  test('does not promote a final body with a foreign crash-recovery sidecar',
+      () async {
+    await session.dispose();
+    final partialPath = '${temp.path}/partial/page.webp';
+    final finalPath = '${temp.path}/cache/page.webp';
+    await File(finalPath).parent.create(recursive: true);
+    await File(finalPath).writeAsBytes(<int>[1, 2, 3, 4]);
+    await File(partialPath).parent.create(recursive: true);
+    await File('$partialPath.meta').writeAsString(
+      '{"downloadKey":"different-owner"}',
+    );
+
+    session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: partialPath,
+        finalPath: finalPath,
+      ),
+      clock: FakeMonoClock(),
+    );
+
+    await expectLater(
+      session.restore(),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.artifactCorruption,
+      )),
+    );
+    expect(session.artifact.state, ArtifactState.empty);
+    expect(session.artifact.committedLength, 0);
+    expect(await File(finalPath).readAsBytes(), <int>[1, 2, 3, 4]);
   });
 
   test('playable-prefix evidence strengthens within one physical generation',
@@ -968,6 +1700,125 @@ DownloadId _idWithSource(String sourceId) => DownloadId(
       sourceRevision: 'r1',
       canonicalUri: Uri.parse('https://example.test/page.webp'),
     );
+
+final class _BlockingPutCacheIndex implements CacheIndex {
+  _BlockingPutCacheIndex([CacheIndex? delegate])
+      : delegate = delegate ?? MemIndex();
+
+  final CacheIndex delegate;
+  final Completer<void> putStarted = Completer<void>();
+  final Completer<void> releasePut = Completer<void>();
+  bool _blockNextPut = true;
+
+  @override
+  Future<void> open() => delegate.open();
+
+  @override
+  Future<CacheRec?> get(String key) => delegate.get(key);
+
+  @override
+  Future<List<CacheRec>> list({CacheState? state}) => delegate.list(state: state);
+
+  @override
+  Future<void> put(CacheRec rec) async {
+    if (_blockNextPut) {
+      _blockNextPut = false;
+      putStarted.complete();
+      await releasePut.future;
+    }
+    await delegate.put(rec);
+  }
+
+  @override
+  Future<void> remove(String key) => delegate.remove(key);
+
+  @override
+  Future<void> touch(String key, int touchedUs) =>
+      delegate.touch(key, touchedUs);
+
+  @override
+  Future<int> totalBytes({CacheState? state}) =>
+      delegate.totalBytes(state: state);
+
+  @override
+  Future<DownloadPlacement?> getPlacement({
+    required String sourceId,
+    required String comicId,
+  }) => delegate.getPlacement(sourceId: sourceId, comicId: comicId);
+
+  @override
+  Future<List<DownloadPlacement>> listPlacements() => delegate.listPlacements();
+
+  @override
+  Future<void> putPlacement(DownloadPlacement placement) =>
+      delegate.putPlacement(placement);
+
+  @override
+  Future<void> removePlacement({
+    required String sourceId,
+    required String comicId,
+  }) => delegate.removePlacement(sourceId: sourceId, comicId: comicId);
+
+  @override
+  Future<void> close() => delegate.close();
+}
+
+final class _BlockingCacheIndex implements CacheIndex {
+  final MemIndex delegate = MemIndex();
+  final Completer<void> getStarted = Completer<void>();
+  final Completer<void> releaseGet = Completer<void>();
+
+  @override
+  Future<void> open() => delegate.open();
+
+  @override
+  Future<CacheRec?> get(String key) async {
+    if (!getStarted.isCompleted) {
+      getStarted.complete();
+      await releaseGet.future;
+    }
+    return delegate.get(key);
+  }
+
+  @override
+  Future<List<CacheRec>> list({CacheState? state}) => delegate.list(state: state);
+
+  @override
+  Future<void> put(CacheRec rec) => delegate.put(rec);
+
+  @override
+  Future<void> remove(String key) => delegate.remove(key);
+
+  @override
+  Future<void> touch(String key, int touchedUs) =>
+      delegate.touch(key, touchedUs);
+
+  @override
+  Future<int> totalBytes({CacheState? state}) =>
+      delegate.totalBytes(state: state);
+
+  @override
+  Future<DownloadPlacement?> getPlacement({
+    required String sourceId,
+    required String comicId,
+  }) => delegate.getPlacement(sourceId: sourceId, comicId: comicId);
+
+  @override
+  Future<List<DownloadPlacement>> listPlacements() => delegate.listPlacements();
+
+  @override
+  Future<void> putPlacement(DownloadPlacement placement) =>
+      delegate.putPlacement(placement);
+
+  @override
+  Future<void> removePlacement({
+    required String sourceId,
+    required String comicId,
+  }) => delegate.removePlacement(sourceId: sourceId, comicId: comicId);
+
+  @override
+  Future<void> close() => delegate.close();
+}
 
 final class _TestSourceFactory implements SourceFactory {
   @override

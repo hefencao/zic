@@ -1,5 +1,7 @@
 export 'package:catalog/catalog.dart' show ComicResourceRequest;
 export 'package:domain/domain.dart' show ErrorCode, Failure, TaskControl;
+export 'package:storage/storage.dart'
+    show ComicPageOrder, DownloadPlacement, DownloadPlacementMode;
 export 'package:transport/transport.dart' show ByteResponse, ByteResponseFlowControl, ByteResponseReadDiagnostics, Validators;
 
 export 'src/artifact_cache_reuse.dart';
@@ -12,12 +14,15 @@ export 'src/artifact_bytes.dart'
         LocalArtifactBytes,
         SafArtifactBytes,
         SafTreeIo,
+        SafTreeAtomicReplace,
         SafTreeFile,
         SafWriteMode,
         copyFileIntoSaf,
+        writeBytesToSaf,
         encodeSafRecordPath,
         parseSafRecordPath,
-        sniffImageExtension;
+        sniffImageExtension,
+        sniffImageExtensionFromBytes;
 export 'src/artifact_cache_store.dart';
 export 'src/artifact_cache_transport.dart';
 export 'src/composition_download_transfer_runtime.dart';

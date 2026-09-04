@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'download_placement.dart';
+
 /// Filename of the self-describing comic metadata manifest stored in each
 /// downloaded comic directory.
 const String comicManifestFileName = '.zic.json';
@@ -107,6 +109,36 @@ String buildPageRelativePath({
   return '$comicDir/$chapterDir/$pageFileName';
 }
 
+/// Parses the 1-based page number from an image filename like `001.webp`, `1.jpg`, `page_001.png`.
+/// Returns null if the filename does not represent a valid page image.
+int? parsePageIndexFromFileName(String fileName) {
+  var name = fileName;
+  final lastSlash = name.lastIndexOf('/');
+  if (lastSlash >= 0) {
+    name = name.substring(lastSlash + 1);
+  }
+  final lastBackslash = name.lastIndexOf(r'\');
+  if (lastBackslash >= 0) {
+    name = name.substring(lastBackslash + 1);
+  }
+  final lastDot = name.lastIndexOf('.');
+  if (lastDot <= 0) return null;
+  final ext = name.substring(lastDot + 1).toLowerCase();
+  const validExtensions = {'webp', 'jpg', 'jpeg', 'png', 'gif', 'avif', 'bin'};
+  if (!validExtensions.contains(ext)) return null;
+
+  final base = name.substring(0, lastDot);
+  final digitMatch = RegExp(r'^(?:page_?|p)?(\d+)$', caseSensitive: false).firstMatch(base);
+  if (digitMatch != null) {
+    return int.tryParse(digitMatch.group(1)!);
+  }
+  final prefixMatch = RegExp(r'^(\d+)[_\s\-]').firstMatch(base);
+  if (prefixMatch != null) {
+    return int.tryParse(prefixMatch.group(1)!);
+  }
+  return null;
+}
+
 /// Returns true if [folderName] already ends with or includes `(sourceName)`,
 /// allowing the UI to avoid duplicate badges like `[拷贝漫画] 航海王 (拷贝漫画)`.
 bool hasSourceSuffixInFolderName(String folderName, String sourceName) {
@@ -128,6 +160,12 @@ final class ComicFolderManifest {
     required this.comicId,
     required this.comicTitle,
     this.chapters = const <String>[],
+    this.chapterDirectories = const <String, String>{},
+    this.chapterTitles = const <String, String>{},
+    this.chapterSequences = const <String, int>{},
+    this.generation = 0,
+    this.fingerprint,
+    this.pageOrder = ComicPageOrder.auto,
     required this.updatedAt,
   });
 
@@ -137,9 +175,55 @@ final class ComicFolderManifest {
   final String comicId;
   final String comicTitle;
   final List<String> chapters;
+
+  /// Stable chapter-id to export-directory mapping. Older manifests omit this
+  /// data and continue to use the title-derived directory convention.
+  final Map<String, String> chapterDirectories;
+  final Map<String, String> chapterTitles;
+  final Map<String, int> chapterSequences;
+
+  /// Monotonic manifest generation. Writers use it to detect stale export
+  /// ownership observations before committing a replacement.
+  final int generation;
+
+  /// Fingerprint of manifest ownership/content excluding this field.
+  final String? fingerprint;
+  final ComicPageOrder pageOrder;
   final DateTime updatedAt;
 
   bool get isSingleChapter => chapters.length <= 1;
+
+  ComicFolderManifest copyWith({
+    String? format,
+    String? sourceId,
+    String? sourceDisplayName,
+    String? comicId,
+    String? comicTitle,
+    List<String>? chapters,
+    Map<String, String>? chapterDirectories,
+    Map<String, String>? chapterTitles,
+    Map<String, int>? chapterSequences,
+    int? generation,
+    String? fingerprint,
+    ComicPageOrder? pageOrder,
+    DateTime? updatedAt,
+  }) {
+    return ComicFolderManifest(
+      format: format ?? this.format,
+      sourceId: sourceId ?? this.sourceId,
+      sourceDisplayName: sourceDisplayName ?? this.sourceDisplayName,
+      comicId: comicId ?? this.comicId,
+      comicTitle: comicTitle ?? this.comicTitle,
+      chapters: chapters ?? this.chapters,
+      chapterDirectories: chapterDirectories ?? this.chapterDirectories,
+      chapterTitles: chapterTitles ?? this.chapterTitles,
+      chapterSequences: chapterSequences ?? this.chapterSequences,
+      generation: generation ?? this.generation,
+      fingerprint: fingerprint ?? this.fingerprint,
+      pageOrder: pageOrder ?? this.pageOrder,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'format': format,
@@ -148,12 +232,24 @@ final class ComicFolderManifest {
           'sourceDisplayName': sourceDisplayName,
         'comicId': comicId,
         'comicTitle': comicTitle,
-        if (chapters.isNotEmpty)
-          'chapters': chapters,
+        if (chapters.isNotEmpty) 'chapters': chapters,
+        if (chapterDirectories.isNotEmpty)
+          'chapterDirectories': chapterDirectories,
+        if (chapterTitles.isNotEmpty) 'chapterTitles': chapterTitles,
+        if (chapterSequences.isNotEmpty)
+          'chapterSequences': chapterSequences,
+        'generation': generation,
+        if (fingerprint != null) 'fingerprint': fingerprint,
+        if (pageOrder != ComicPageOrder.auto) 'pageOrder': pageOrder.name,
         'updatedAt': updatedAt.toUtc().toIso8601String(),
       };
 
   factory ComicFolderManifest.fromJson(Map<String, dynamic> json) {
+    final orderName = json['pageOrder'] as String?;
+    final pageOrder = ComicPageOrder.values.firstWhere(
+      (p) => p.name == orderName,
+      orElse: () => ComicPageOrder.auto,
+    );
     return ComicFolderManifest(
       format: (json['format'] as String?) ?? comicManifestFormatV1,
       sourceId: (json['sourceId'] as String?) ?? '',
@@ -164,12 +260,34 @@ final class ComicFolderManifest {
               ?.map((e) => e.toString())
               .toList(growable: false) ??
           const <String>[],
+      chapterDirectories: _stringMap(json['chapterDirectories']),
+      chapterTitles: _stringMap(json['chapterTitles']),
+      chapterSequences: _intMap(json['chapterSequences']),
+      generation: (json['generation'] as num?)?.toInt() ?? 0,
+      fingerprint: json['fingerprint'] as String?,
+      pageOrder: pageOrder,
       updatedAt: json['updatedAt'] is String
           ? DateTime.tryParse(json['updatedAt'] as String)?.toUtc() ??
               DateTime.fromMillisecondsSinceEpoch(0, isUtc: true)
           : DateTime.fromMillisecondsSinceEpoch(0, isUtc: true),
     );
   }
+
+  /// Fingerprint calculated from the serialized manifest without the stored
+  /// fingerprint field. It is stable across map iteration and can be used as
+  /// a compare-and-swap token for the export directory owner.
+  String get computedFingerprint {
+    final value = Map<String, dynamic>.from(toJson())..remove('fingerprint');
+    var hash = 0xcbf29ce4;
+    for (final byte in utf8.encode(jsonEncode(_canonicalizeJson(value)))) {
+      hash ^= byte;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return hash.toRadixString(16).padLeft(8, '0');
+  }
+
+  bool get fingerprintValid =>
+      fingerprint == null || fingerprint == computedFingerprint;
 
   String encode() => const JsonEncoder.withIndent('  ').convert(toJson());
 
@@ -189,4 +307,39 @@ final class ComicFolderManifest {
     }
     return null;
   }
+}
+
+Object? _canonicalizeJson(Object? value) {
+  if (value is Map) {
+    final entries = <String, Object?>{
+      for (final entry in value.entries)
+        if (entry.key is String) entry.key as String: entry.value,
+    };
+    final keys = entries.keys.toList()..sort();
+    return <String, Object?>{
+      for (final key in keys) key: _canonicalizeJson(entries[key]),
+    };
+  }
+  if (value is List) {
+    return value.map(_canonicalizeJson).toList(growable: false);
+  }
+  return value;
+}
+
+Map<String, String> _stringMap(Object? value) {
+  if (value is! Map) return const <String, String>{};
+  return <String, String>{
+    for (final entry in value.entries)
+      if (entry.key is String && entry.value is String)
+        entry.key as String: entry.value as String,
+  };
+}
+
+Map<String, int> _intMap(Object? value) {
+  if (value is! Map) return const <String, int>{};
+  return <String, int>{
+    for (final entry in value.entries)
+      if (entry.key is String && entry.value is int)
+        entry.key as String: entry.value as int,
+  };
 }

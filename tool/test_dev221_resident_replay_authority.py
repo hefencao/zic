@@ -16,12 +16,12 @@ pipe=read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 test=read('packages/sessions/test/download_session_test.dart')
 live=read('packages/sessions/test/live_coordinator_test.dart')
 if version >= 292:
-    for token in ('typedef DownloadResidentReplayChunks', 'typedef DownloadResidentReplaySource', 'residentReplayChunks', 'if (_residentBodyBacked)', 'chunks = await replay(targetLength);', 'chunks = artifact.readChunks(endExclusive: targetLength);'):
+    for token in ('typedef DownloadResidentReplayChunks', 'typedef DownloadResidentReplaySource', 'residentReplayChunks', 'if (_residentBodyBacked)', 'await replay(targetLength)', 'artifact.readChunks(endExclusive: targetLength)'):
         req(session, token, 'physical/replay split')
     for token in ('DownloadResidentReplaySource? residentReplaySource', 'session.residentBodyBacked', 'return replay(session, endExclusive);'):
         req(registry, token, 'Reader-local replay authority injection')
     runtime=read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
-    for token in ('DownloadResidentReplaySource residentReplaySource(', 'await cache.lookup(session.id)', 'owner.openResidentReplay(', 'localReadScheduler.acquire('):
+    for token in ('DownloadResidentReplaySource residentReplaySource(', 'await cache.lookup(session.id', 'owner.openResidentReplay(', 'localReadScheduler.acquire('):
         req(runtime, token, 'composition replay routing')
     forbid(pipe, '_openResidentReplaySource(', 'Pipeline-private resident replay backend selector')
     req(pipe, '_transferRuntime.residentReplaySource(', 'Pipeline composition replay capability')

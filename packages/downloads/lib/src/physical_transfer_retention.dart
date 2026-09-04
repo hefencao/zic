@@ -75,6 +75,12 @@ final class PhysicalTransferRetention {
     }
   }
 
+  /// Drops the retention observer for a session that was explicitly deleted
+  /// rather than evicted by this retention policy.
+  void forget(DownloadSession session) {
+    _forget(session);
+  }
+
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;

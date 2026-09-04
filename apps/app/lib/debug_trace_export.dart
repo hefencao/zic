@@ -25,9 +25,12 @@ Future<String?> exportDebugTraceDocument({
   if (location == null) {
     return null;
   }
+  final mimeType = suggestedName.endsWith('.txt') || suggestedName.endsWith('.log')
+      ? 'text/plain'
+      : 'application/x-ndjson';
   await XFile.fromData(
     bytes,
-    mimeType: 'application/x-ndjson',
+    mimeType: mimeType,
     name: suggestedName,
   ).saveTo(location.path);
   return location.path;

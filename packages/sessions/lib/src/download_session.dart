@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
@@ -38,10 +41,70 @@ typedef DownloadResidentReplaySource = Future<Stream<List<int>>> Function(
   int endExclusive,
 );
 
+typedef DownloadResidentReplayChunksWithControl =
+    Future<Stream<List<int>>> Function(
+  int endExclusive, {
+  required TaskControl control,
+});
+typedef DownloadResidentReplaySourceWithControl =
+    Future<Stream<List<int>>> Function(
+  DownloadSession session,
+  int endExclusive, {
+  required TaskControl control,
+});
+
+Stream<List<int>> _replayChunks(
+  Stream<List<int>> chunks, {
+  TaskControl? control,
+}) async* {
+  if (control == null) {
+    yield* chunks;
+    return;
+  }
+  final iterator = StreamIterator<List<int>>(chunks);
+  try {
+    while (await _moveNextReplayChunk(iterator, control)) {
+      control.throwIfCancelled();
+      yield iterator.current;
+    }
+  } finally {
+    // Cancellation is a best-effort transport/ingress cleanup boundary. Do
+    // not let a stream subscription's late close error mask the authoritative
+    // stale-epoch or cancellation result from the replay itself.
+    try {
+      await iterator.cancel();
+    } on Object {
+      // The projection/owner will surface the original replay failure.
+    }
+  }
+}
+
+Future<bool> _moveNextReplayChunk(
+  StreamIterator<List<int>> iterator,
+  TaskControl control,
+) async {
+  control.throwIfCancelled();
+  try {
+    return await Future.any<bool>(<Future<bool>>[
+      iterator.moveNext(),
+      control.whenCancelled.then<bool>((_) {
+        throw const Failure(
+          code: ErrorCode.cancelled,
+          message: 'Reader ingress replay was cancelled',
+        );
+      }),
+    ]);
+  } catch (error, stackTrace) {
+    if (control.cancelled) control.throwIfCancelled();
+    throw Error.throwWithStackTrace(error, stackTrace);
+  }
+}
+
 final class RunLease {
-  const RunLease._(this.id);
+  const RunLease._(this.id, this.epoch);
 
   final int id;
+  final SourceEpoch epoch;
 }
 
 final class DownloadDemandLease {
@@ -149,6 +212,7 @@ final class DownloadSession {
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'download',
     this.index,
+    this.storageRootId = 'default',
     bool initiallyDemanded = true,
   }) : _legacyDemanded = initiallyDemanded;
 
@@ -158,6 +222,7 @@ final class DownloadSession {
   final TraceSink traceSink;
   final String sessionId;
   final CacheIndex? index;
+  final String storageRootId;
 
   DownloadState _state = DownloadState.idle;
   SourceEpoch _epoch = const SourceEpoch(0);
@@ -201,7 +266,12 @@ final class DownloadSession {
   int _pendingMaxArtifactWriteMicros = 0;
   final Map<String, DownloadIngressProjection> _ingressProjections =
       <String, DownloadIngressProjection>{};
+  final Map<String, Object> _pendingIngressAttachments = <String, Object>{};
   int _ingressProjectionRevision = 0;
+  Future<void> _cacheMutationTail = Future<void>.value();
+  bool _resetting = false;
+  bool _disposing = false;
+  bool _restoring = false;
   final Set<DownloadSnapshotListener> _snapshotListeners =
       <DownloadSnapshotListener>{};
 
@@ -268,7 +338,13 @@ final class DownloadSession {
   }
   bool get activeRun => _run != null;
   bool get canEvict =>
-      _writer == null && _run == null && _state != DownloadState.disposed;
+      _writer == null &&
+      _run == null &&
+      !_resetting &&
+      !_disposing &&
+      !_restoring &&
+      _pendingIngressAttachments.isEmpty &&
+      _state != DownloadState.disposed;
 
   DownloadSnapshot get snapshot => DownloadSnapshot(
         id: id,
@@ -298,7 +374,16 @@ final class DownloadSession {
     DownloadSnapshotListener listener, {
     bool fireImmediately = true,
   }) {
-    _requireNotDisposed();
+    // Observation is independent of restore/reset/disposing. In particular,
+    // the composition owner may attach a terminal-state waiter while local
+    // preparation is restoring the session. Only a disposed session can no
+    // longer publish a meaningful snapshot.
+    if (_state == DownloadState.disposed) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'download session is disposed',
+      );
+    }
     _snapshotListeners.add(listener);
     if (fireImmediately) {
       try {
@@ -315,16 +400,37 @@ final class DownloadSession {
 
   RunLease beginRun() {
     _requireNotDisposed();
-    if (_run != null) {
+    if (_run != null ||
+        _resetting ||
+        _disposing ||
+        _restoring ||
+        _pendingIngressAttachments.isNotEmpty) {
       throw const Failure(
         code: ErrorCode.sessionBusy,
         message: 'download already has an active transport run',
       );
     }
-    final lease = RunLease._(++_runSeq);
+    final lease = RunLease._(++_runSeq, _epoch);
     _run = lease;
     _notifySnapshot();
     return lease;
+  }
+
+  /// Returns whether [lease] still owns the current physical generation.
+  ///
+  /// A reset may intentionally leave the old run registered until its
+  /// transport finally exits, so checking only [activeRun] is insufficient:
+  /// an old open could otherwise acquire a writer in the freshly reset
+  /// generation and repopulate a session that the caller explicitly cleared.
+  bool isCurrentRun(RunLease lease) =>
+      identical(_run, lease) && _epoch == lease.epoch;
+
+  void requireRun(RunLease lease) {
+    if (isCurrentRun(lease)) return;
+    throw const Failure(
+      code: ErrorCode.staleRun,
+      message: 'run lease is no longer authoritative for this generation',
+    );
   }
 
   void endRun(RunLease lease) {
@@ -340,23 +446,90 @@ final class DownloadSession {
 
   Future<DownloadSnapshot> restore({
     bool verifyPromotedChecksum = true,
+    RunLease? expectedRun,
   }) async {
     _requireNotDisposed();
-    _ingressProjectionRevision++;
-    _residentLength = null;
-    _residentBodyBacked = false;
-    _residentBodyAuthority = null;
+    if (_restoring) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'download restore is already active',
+      );
+    }
+    if (expectedRun != null) {
+      requireRun(expectedRun);
+    }
+    if (_writer != null ||
+        (_run != null && !identical(_run, expectedRun)) ||
+        _resetting ||
+        _disposing) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'cannot restore while download work is active',
+      );
+    }
+    final epoch = _epoch;
+    _restoring = true;
+    try {
+      return await _restore(
+        verifyPromotedChecksum: verifyPromotedChecksum,
+        expectedEpoch: epoch,
+      );
+    } catch (error) {
+      // Artifact.restore and the following ownership/cache reconciliation are
+      // asynchronous. If either fails, do not leave the session advertising
+      // the state from before this restore (for example, promoted after a
+      // same-length checksum mismatch reset the Artifact to empty). Preserve
+      // the physical files for a later recovery/owner decision, but make the
+      // in-memory lifecycle terminal and explicit.
+      if (_epoch == epoch &&
+          _state != DownloadState.disposed &&
+          !_resetting &&
+          !_disposing) {
+        _markLifecycleFailure(error, operation: 'restore');
+      }
+      rethrow;
+    } finally {
+      _restoring = false;
+    }
+  }
+
+  Future<DownloadSnapshot> _restore({
+    required bool verifyPromotedChecksum,
+    required SourceEpoch expectedEpoch,
+  }) async {
     if (_writer != null) {
       throw const Failure(
         code: ErrorCode.writerBusy,
         message: 'cannot restore while a writer is active',
       );
     }
+    final epoch = expectedEpoch;
+    _ingressProjectionRevision++;
+    _residentLength = null;
+    _residentBodyBacked = false;
+    _residentBodyAuthority = null;
+    // Artifact.restore must not first bind a final file that explicitly
+    // belongs to another DownloadId. Preflight the ready sidecar while the
+    // Artifact is still empty so a collision cannot leave its in-memory state
+    // promoted after this restore fails. The post-restore check below remains
+    // a defense for a sidecar that changes during the preflight/restore gap.
+    final promotedMeta = await _readPromotedMetaForOwnership();
+    _requireEpoch(epoch);
+    if (promotedMeta != null &&
+        _metaExplicitlyClaimsDifferentOwner(promotedMeta)) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'promoted artifact metadata belongs to another download',
+      );
+    }
     final restored = await artifact.restore(
       verifyPromotedChecksum: verifyPromotedChecksum,
     );
+    _requireEpoch(epoch);
+    final restoredPrefix = await artifact.readPrefix(_sourceMetadataPrefixLength);
+    _requireEpoch(epoch);
     _prefix = List<int>.of(
-      await artifact.readPrefix(_sourceMetadataPrefixLength),
+      restoredPrefix,
       growable: true,
     );
     _contentKind = sniffContent(
@@ -368,9 +541,27 @@ final class DownloadSession {
     _networkStartLength = restored.committedLength;
 
     if (restored.state == ArtifactState.promoted) {
+      // The deterministic artifact path is not an ownership proof: a stale
+      // file (or a hash collision) can leave a valid, same-length promoted
+      // body at this path. When a ready sidecar explicitly identifies another
+      // DownloadId, never expose that body through this session. Leave the
+      // physical files untouched so the owner of the other artifact can still
+      // recover them; the caller can report the collision/corruption and
+      // choose a new placement.
+      final promotedMeta = await artifact.readMeta();
+      _requireEpoch(epoch);
+      if (promotedMeta != null &&
+          _metaExplicitlyClaimsDifferentOwner(promotedMeta)) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'promoted artifact metadata belongs to another download',
+        );
+      }
       await _restoreIngressIfNeeded(sealed: true);
+      _requireEpoch(epoch);
       _state = DownloadState.promoted;
-      await _syncCache(CacheState.ready);
+      await _syncCache(CacheState.ready, expectedEpoch: epoch);
+      _requireEpoch(epoch);
       _notifySnapshot();
       return snapshot;
     }
@@ -380,6 +571,7 @@ final class DownloadSession {
       var wrongOwner = false;
       try {
         final meta = await artifact.readMeta();
+        _requireEpoch(epoch);
         if (meta != null) {
           if (_metaMatches(meta)) {
             final rawValidators = meta['validators'];
@@ -420,19 +612,23 @@ final class DownloadSession {
         _validatorRequestUri = null;
         _totalLength = null;
         if (wrongOwner) {
-          await _restartArtifact();
-          _prefix = <int>[];
-          _sourceCanvasWidth = null;
-          _sourceCanvasHeight = null;
-          _contentKind = ContentKind.unknown;
+          // The deterministic partial path is not an ownership proof. Do not
+          // reset it here: an explicit foreign sidecar may be the valid owner
+          // of a hash-colliding artifact, and reset would truncate its bytes.
+          throw const Failure(
+            code: ErrorCode.artifactCorruption,
+            message: 'partial artifact metadata belongs to another download',
+          );
         }
       }
     }
 
     await _restoreIngressIfNeeded(sealed: false);
+    _requireEpoch(epoch);
     _state = DownloadState.idle;
     _failure = null;
-    await _syncCache(CacheState.partial);
+    await _syncCache(CacheState.partial, expectedEpoch: epoch);
+    _requireEpoch(epoch);
     _notifySnapshot();
     return snapshot;
   }
@@ -443,8 +639,14 @@ final class DownloadSession {
   /// request may have to re-read an old prefix before it can append new
   /// authoritative bytes. Reader progress can therefore expose re-downloads
   /// without inventing a second partial owner.
-  void beginNetworkAttemptProgress(int startOffset) {
+  void beginNetworkAttemptProgress(
+    int startOffset, {
+    RunLease? expectedRun,
+  }) {
     _requireNotDisposed();
+    if (expectedRun != null) {
+      requireRun(expectedRun);
+    }
     if (startOffset < 0) {
       throw ArgumentError.value(
         startOffset,
@@ -462,8 +664,12 @@ final class DownloadSession {
   void advanceNetworkAttemptProgress(
     int absoluteOffset, {
     bool force = false,
+    RunLease? expectedRun,
   }) {
     _requireNotDisposed();
+    if (expectedRun != null) {
+      requireRun(expectedRun);
+    }
     if (!_networkAttemptActive) {
       return;
     }
@@ -486,7 +692,10 @@ final class DownloadSession {
     }
   }
 
-  void endNetworkAttemptProgress() {
+  void endNetworkAttemptProgress({RunLease? expectedRun}) {
+    if (expectedRun != null && !isCurrentRun(expectedRun)) {
+      return;
+    }
     if (!_networkAttemptActive) {
       return;
     }
@@ -512,8 +721,10 @@ final class DownloadSession {
     Uri? validatorRequestUri,
   }) async {
     _requireNotDisposed();
+    final epoch = _epoch;
     if (artifact.state == ArtifactState.empty) {
       await artifact.restore();
+      _requireEpoch(epoch);
     }
     _ingressProjectionRevision++;
     _validators = validators;
@@ -533,7 +744,9 @@ final class DownloadSession {
         'validatorRequestUri': _validatorRequestUri.toString(),
       if (totalLength != null) 'totalLength': totalLength,
     });
-    await _syncCache(CacheState.partial);
+    _requireEpoch(epoch);
+    await _syncCache(CacheState.partial, expectedEpoch: epoch);
+    _requireEpoch(epoch);
     _notifySnapshot();
   }
 
@@ -544,7 +757,6 @@ final class DownloadSession {
     ByteResponseBodyAuthority bodyAuthority = ByteResponseBodyAuthority.source,
   }) {
     _requireNotDisposed();
-    _ingressProjectionRevision++;
     _requireState(<DownloadState>{
       DownloadState.idle,
       DownloadState.queued,
@@ -557,6 +769,7 @@ final class DownloadSession {
         'resident immutable sources must contain image bytes',
       );
     }
+    _ingressProjectionRevision++;
     _residentBodyBacked = true;
     _residentBodyAuthority = bodyAuthority;
     _residentLength = 0;
@@ -571,7 +784,10 @@ final class DownloadSession {
     _sourceCanvasHeight = null;
     _contentKind = ContentKind.unknown;
     _failure = null;
-    _resetIngressProjections(_epoch);
+    _resetPlayablePrefixEvidence();
+    final epoch = _epoch;
+    _resetIngressProjections(epoch);
+    _requireEpoch(epoch);
     _expectIngressLength(totalLength);
     _state = DownloadState.receiving;
     _recordTrace(
@@ -586,11 +802,11 @@ final class DownloadSession {
       },
     );
     _notifySnapshot();
+    _requireEpoch(epoch);
   }
 
   void appendResidentImmutableIngress(int offset, List<int> bytes) {
     _requireNotDisposed();
-    _ingressProjectionRevision++;
     if (!_residentBodyBacked || _state != DownloadState.receiving) {
       throw const Failure(
         code: ErrorCode.invalidState,
@@ -603,9 +819,12 @@ final class DownloadSession {
         message: 'expected resident offset ${_residentLength ?? 0}, got $offset',
       );
     }
+    _ingressProjectionRevision++;
     final chunk = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
     final ingressStarted = clock.nowMicros();
-    _appendIngress(_epoch, offset, chunk);
+    final epoch = _epoch;
+    _appendIngress(epoch, offset, chunk);
+    _requireEpoch(epoch);
     final nativeIngressMicros =
         (clock.nowMicros() - ingressStarted).clamp(0, 1 << 62).toInt();
     _residentLength = offset + chunk.length;
@@ -615,11 +834,11 @@ final class DownloadSession {
     );
     _appendSourceMetadataPrefix(offset, chunk);
     _recordCommittedChunk(chunk.length);
+    _requireEpoch(epoch);
   }
 
   DownloadSnapshot sealResidentImmutableIngress() {
     _requireNotDisposed();
-    _ingressProjectionRevision++;
     if (!_residentBodyBacked || _state != DownloadState.receiving) {
       throw const Failure(
         code: ErrorCode.invalidState,
@@ -633,14 +852,18 @@ final class DownloadSession {
         message: 'resident immutable length $committedLength does not match $expected',
       );
     }
-    _sealIngressProjections(_epoch);
-    _contentKind = sniffContent(_prefix, finalChunk: true);
-    if (committedLength <= 0 || _contentKind == ContentKind.unknown) {
+    final contentKind = sniffContent(_prefix, finalChunk: true);
+    if (committedLength <= 0 || contentKind == ContentKind.unknown) {
       throw const Failure(
         code: ErrorCode.artifactCorruption,
         message: 'resident immutable source has no recognizable image body',
       );
     }
+    _ingressProjectionRevision++;
+    final epoch = _epoch;
+    _sealIngressProjections(epoch);
+    _requireEpoch(epoch);
+    _contentKind = contentKind;
     _state = DownloadState.promoted;
     _flushCommittedTrace();
     _recordTrace(TraceEventKind.artifactPromoted, <String, Object?>{
@@ -652,11 +875,13 @@ final class DownloadSession {
       if (residentSource != null) 'residentSource': residentSource,
     });
     _notifySnapshot();
+    _requireEpoch(epoch);
     return snapshot;
   }
 
-  WriterLease acquireWriter() {
-    _requireNotDisposed();
+  WriterLease acquireWriter({RunLease? expectedRun}) {
+    _requireNotLifecycleBusy();
+    _requireMutationRun(expectedRun);
     if (_writer != null) {
       throw const Failure(
         code: ErrorCode.writerBusy,
@@ -684,28 +909,52 @@ final class DownloadSession {
       <String, Object?>{'state': _state.name},
     );
     _notifySnapshot();
+    _requireWriter(lease);
     return lease;
   }
 
   Future<void> append(WriterLease lease, int offset, List<int> bytes) async {
     _requireWriter(lease);
+    final epoch = lease.epoch;
     _ingressProjectionRevision++;
     final chunk = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
-    final artifactStarted = clock.nowMicros();
-    final artifactWrite = artifact.appendOwned(offset, chunk);
-    final ingressStarted = clock.nowMicros();
-    _appendIngress(lease.epoch, offset, chunk);
-    final nativeIngressMicros =
-        (clock.nowMicros() - ingressStarted).clamp(0, 1 << 62).toInt();
-    await artifactWrite;
-    final artifactWriteMicros =
-        (clock.nowMicros() - artifactStarted).clamp(0, 1 << 62).toInt();
-    _recordIngressTiming(
-      nativeIngressMicros: nativeIngressMicros,
-      artifactWriteMicros: artifactWriteMicros,
-    );
-    _appendSourceMetadataPrefix(offset, chunk);
-    _recordCommittedChunk(chunk.length);
+    try {
+      final artifactStarted = clock.nowMicros();
+      final artifactWrite = artifact.appendOwned(offset, chunk);
+      await artifactWrite;
+      // Reset/eviction may have advanced the physical epoch while the artifact
+      // write was awaiting disk I/O. Do not publish a stale completion into
+      // Reader projections or session metadata after that boundary.
+      _requireWriter(lease);
+      final artifactWriteMicros =
+          (clock.nowMicros() - artifactStarted).clamp(0, 1 << 62).toInt();
+      final ingressStarted = clock.nowMicros();
+      _appendIngress(epoch, offset, chunk);
+      _requireWriter(lease);
+      final nativeIngressMicros =
+          (clock.nowMicros() - ingressStarted).clamp(0, 1 << 62).toInt();
+      _recordIngressTiming(
+        nativeIngressMicros: nativeIngressMicros,
+        artifactWriteMicros: artifactWriteMicros,
+      );
+      _appendSourceMetadataPrefix(offset, chunk);
+      _recordCommittedChunk(chunk.length);
+      _requireWriter(lease);
+    } on Object catch (error, stackTrace) {
+      // A direct session consumer may observe an artifact or ingress failure
+      // without going through DownloadJob's attempt cleanup. Retire this
+      // writer here as well; otherwise a failed sink/open leaves the logical
+      // session writer-busy forever even though the artifact has no open sink.
+      if (identical(_writer, lease) && _epoch == epoch) {
+        try {
+          await fail(lease, error);
+        } on Object {
+          // Preserve the append failure. fail() clears the writer in its
+          // finally block even when the best-effort artifact pause fails.
+        }
+      }
+      Error.throwWithStackTrace(error, stackTrace);
+    }
   }
 
   Future<DownloadSnapshot> seal(
@@ -714,12 +963,58 @@ final class DownloadSession {
     String? expectedChecksum,
   }) async {
     _requireWriter(lease);
+    final epoch = lease.epoch;
     _ingressProjectionRevision++;
-    final sealed = await artifact.seal(
-      expectedLength: expectedLength,
-      expectedChecksum: expectedChecksum,
-    );
-    _sealIngressProjections(lease.epoch);
+    final ArtifactSnapshot sealed;
+    try {
+      sealed = await artifact.seal(
+        expectedLength: expectedLength,
+        expectedChecksum: expectedChecksum,
+      );
+    } on Object catch (error) {
+      // Artifact.seal closes the IOSink before validating length/checksum and
+      // can therefore fail with no usable writer left behind. Retire the
+      // session writer lifecycle here as well; otherwise a direct caller that
+      // does not route the error through DownloadJob remains permanently
+      // blocked by writerBusy even though the partial is resumable.
+      await _retireWriterAfterSealError(lease, error);
+      rethrow;
+    }
+    // The artifact operation is asynchronous; reject a seal that completed
+    // after reset/eviction advanced the writer epoch.
+    _requireWriter(lease);
+    try {
+      _sealIngressProjections(lease.epoch);
+      _requireWriter(lease);
+    } on Object catch (error) {
+      // Artifact.seal has already closed the IOSink and moved the artifact to
+      // its sealed state. If a Reader-local projection fails while receiving
+      // that terminal edge, leaving [_writer] installed makes the physical
+      // session look like it still owns a partial writer and strands every
+      // later retry behind writerBusy. Retire the writer lifecycle here while
+      // preserving the original projection failure; the next owner attempt
+      // can restore the sealed partial and rebuild its projections.
+      if (identical(_writer, lease) &&
+          _epoch == epoch &&
+          artifact.state == ArtifactState.sealed) {
+        _writer = null;
+        _state = DownloadState.failed;
+        _failure = error is Failure
+            ? error
+            : Failure(code: ErrorCode.source, message: '$error', cause: error);
+        _flushCommittedTrace();
+        _recordTrace(
+          TraceEventKind.downloadState,
+          <String, Object?>{
+            'state': _state.name,
+            'operation': 'seal-projection',
+            'error': '$_failure',
+          },
+        );
+        _notifySnapshot();
+      }
+      rethrow;
+    }
     _writer = null;
     _state = DownloadState.sealed;
     _contentKind = sniffContent(_prefix, finalChunk: true);
@@ -733,14 +1028,78 @@ final class DownloadSession {
       },
     );
     _notifySnapshot();
-    await _syncCache(CacheState.partial);
+    await _syncCache(CacheState.partial, expectedEpoch: epoch);
+    _requireEpoch(epoch);
     return snapshot;
   }
 
-  Future<DownloadSnapshot> promote() async {
+  Future<void> _retireWriterAfterSealError(
+    WriterLease lease,
+    Object error,
+  ) async {
+    if (!identical(_writer, lease) || _epoch != lease.epoch) {
+      return;
+    }
+    _writer = null;
+    _state = DownloadState.failed;
+    _failure = error is Failure
+        ? error
+        : Failure(code: ErrorCode.network, message: '$error', cause: error);
+    _flushCommittedTrace();
+    _recordTrace(
+      TraceEventKind.downloadState,
+      <String, Object?>{
+        'state': _state.name,
+        'operation': 'seal',
+        'error': '$_failure',
+      },
+    );
+    _notifySnapshot();
+    try {
+      await _syncCache(CacheState.partial, expectedEpoch: lease.epoch);
+    } on Object {
+      // Preserve the original seal failure. A later owner attempt can restore
+      // the durable partial and reconcile its cache record.
+    }
+  }
+
+  Future<DownloadSnapshot> promote({RunLease? expectedRun}) async {
+    _requireMutationRun(expectedRun);
     _requireState(<DownloadState>{DownloadState.sealed});
+    final epoch = _epoch;
     _ingressProjectionRevision++;
-    final promoted = await artifact.promote();
+    final ArtifactSnapshot promoted;
+    try {
+      // A deterministic final path is not an ownership proof. Before an
+      // existing same-content target is adopted by Artifact.promote, reject
+      // an explicit ready/partial sidecar belonging to another DownloadId;
+      // otherwise a hash/path collision could overwrite the other owner's
+      // metadata while leaving its bytes apparently intact.
+      final existingMeta = await _readPromotedMetaForOwnership();
+      _requireEpoch(epoch);
+      if (existingMeta != null &&
+          _metaExplicitlyClaimsDifferentOwner(existingMeta)) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'final artifact metadata belongs to another download',
+        );
+      }
+      promoted = await artifact.promote();
+    } on Object catch (error) {
+      if (_epoch != epoch || _state == DownloadState.disposed) rethrow;
+      _state = DownloadState.failed;
+      _failure = error is Failure
+          ? error
+          : Failure(code: ErrorCode.network, message: '$error', cause: error);
+      _flushCommittedTrace();
+      _recordTrace(
+        TraceEventKind.downloadState,
+        <String, Object?>{'state': _state.name, 'error': '$_failure'},
+      );
+      _notifySnapshot();
+      rethrow;
+    }
+    _requireEpoch(epoch);
     _state = DownloadState.promoted;
     _recordTrace(
       TraceEventKind.artifactPromoted,
@@ -750,7 +1109,8 @@ final class DownloadSession {
       },
     );
     _notifySnapshot();
-    await _syncCache(CacheState.ready);
+    await _syncCache(CacheState.ready, expectedEpoch: epoch);
+    _requireEpoch(epoch);
     return snapshot;
   }
 
@@ -762,15 +1122,21 @@ final class DownloadSession {
   /// outside this primitive.
   Future<DownloadSnapshot> pause(WriterLease lease) async {
     _requireWriter(lease);
+    final epoch = lease.epoch;
     try {
       await artifact.pause();
+      _requireWriter(lease);
     } finally {
-      _writer = null;
-      _state = DownloadState.idle;
-      _failure = null;
+      if (identical(_writer, lease)) {
+        _writer = null;
+        _state = DownloadState.idle;
+        _failure = null;
+      }
     }
+    _requireEpoch(epoch);
     _flushCommittedTrace();
-    await _syncCache(CacheState.partial);
+    await _syncCache(CacheState.partial, expectedEpoch: epoch);
+    _requireEpoch(epoch);
     _notifySnapshot();
     return snapshot;
   }
@@ -785,27 +1151,69 @@ final class DownloadSession {
       await pause(lease);
       return;
     }
+    final epoch = lease.epoch;
     try {
       await artifact.pause();
+      _requireWriter(lease);
     } finally {
-      _writer = null;
-      _state = DownloadState.failed;
-      _failure = error is Failure
-          ? error
-          : Failure(code: ErrorCode.network, message: '$error', cause: error);
+      if (identical(_writer, lease)) {
+        _writer = null;
+        _state = DownloadState.failed;
+        _failure = error is Failure
+            ? error
+            : Failure(code: ErrorCode.network, message: '$error', cause: error);
+      }
     }
+    _requireEpoch(epoch);
     _flushCommittedTrace();
     _recordTrace(
       TraceEventKind.downloadState,
       <String, Object?>{'state': _state.name, 'error': '$_failure'},
     );
     _notifySnapshot();
-    await _syncCache(CacheState.partial);
+    await _syncCache(CacheState.partial, expectedEpoch: epoch);
+    _requireEpoch(epoch);
+  }
+
+  /// Terminal failure for a task that exited without a writer (open /
+  /// request-plan rejection). MUST publish `failed`: demand holders wait for
+  /// a terminal state — a session left `queued` stalls them until the
+  /// inactivity timeout instead of surfacing the real error.
+  Future<void> failWithoutWriter(Object error) async {
+    _requireNotDisposed();
+    if (_state == DownloadState.promoted ||
+        _state == DownloadState.disposed) {
+      // Promoted/disposed are authoritative terminal facts that must not be
+      // overwritten.
+      return;
+    }
+    final writer = _writer;
+    if (writer != null) {
+      // Setup failures can happen after a writer was acquired but before the
+      // transport owns the attempt. Route them through the same pause/fail
+      // lifecycle so no sink or partial writer is stranded.
+      await fail(writer, error);
+      return;
+    }
+    if (_state == DownloadState.failed && _failure != null) {
+      return;
+    }
+    _state = DownloadState.failed;
+    _failure = error is Failure
+        ? error
+        : Failure(code: ErrorCode.network, message: '$error', cause: error);
+    _flushCommittedTrace();
+    _recordTrace(
+      TraceEventKind.downloadState,
+      <String, Object?>{'state': _state.name, 'error': '$_failure'},
+    );
+    _notifySnapshot();
   }
 
   /// Legacy single-consumer demand used by direct DownloadJob callers.
   /// Reader/prefetch/download composition should use [attachDemand] instead.
   void attach() {
+    _requireNotDisposed();
     if (_legacyDemanded) {
       return;
     }
@@ -872,8 +1280,13 @@ final class DownloadSession {
     _notifySnapshot();
   }
 
-  void deferNetwork({required String reason}) {
+  void deferNetwork({required String reason, RunLease? expectedRun}) {
     _requireNotDisposed();
+    if (expectedRun != null) {
+      requireRun(expectedRun);
+    } else if (!_runActivityIsCurrent()) {
+      return;
+    }
     _requireState(<DownloadState>{DownloadState.queued});
     _flushCommittedTrace();
     _state = DownloadState.idle;
@@ -940,7 +1353,13 @@ final class DownloadSession {
   void observeNetworkFlowFrameProof({
     required int completedFrames,
     required int committedLengthAtProof,
+    RunLease? expectedRun,
   }) {
+    if (expectedRun != null) {
+      requireRun(expectedRun);
+    } else if (!_runActivityIsCurrent()) {
+      return;
+    }
     if (completedFrames <= 0 || committedLengthAtProof <= 0) return;
     if (completedFrames < _networkFlowSatisfiedFrames) return;
     if (completedFrames == _networkFlowSatisfiedFrames &&
@@ -964,7 +1383,13 @@ final class DownloadSession {
     bool? responseRetained,
     bool? responseReadPermitHeld,
     bool? demanded,
+    RunLease? expectedRun,
   }) {
+    if (expectedRun != null) {
+      requireRun(expectedRun);
+    } else if (!_runActivityIsCurrent()) {
+      return;
+    }
     _recordTrace(
       TraceEventKind.artifactSource,
       <String, Object?>{
@@ -999,7 +1424,13 @@ final class DownloadSession {
     bool? responseReadPermitHeld,
     bool? demanded,
     String? bodyAuthority,
+    RunLease? expectedRun,
   }) {
+    if (expectedRun != null) {
+      requireRun(expectedRun);
+    } else if (!_runActivityIsCurrent()) {
+      return;
+    }
     _recordTrace(
       TraceEventKind.artifactSource,
       <String, Object?>{
@@ -1020,7 +1451,13 @@ final class DownloadSession {
     String? strategy,
     bool playablePrefixPreserved = false,
     Map<String, Object?> diagnostics = const <String, Object?>{},
+    RunLease? expectedRun,
   }) {
+    if (expectedRun != null) {
+      requireRun(expectedRun);
+    } else if (!_runActivityIsCurrent()) {
+      return;
+    }
     _recordTrace(
       restarted
           ? TraceEventKind.resumeRestarted
@@ -1052,8 +1489,71 @@ final class DownloadSession {
     _notifySnapshot();
   }
 
-  Future<void> reset() async {
+  Future<void> reset({bool removeCacheRecord = true}) async {
     _requireNotDisposed();
+    if (_resetting ||
+        _disposing ||
+        _restoring ||
+        _pendingIngressAttachments.isNotEmpty) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'download session lifecycle operation is already active',
+      );
+    }
+    _resetting = true;
+    try {
+      await _resetClaimed(removeCacheRecord: removeCacheRecord);
+    } finally {
+      _resetting = false;
+    }
+  }
+
+  /// Resets an idle session without deleting a promoted final file.
+  ///
+  /// Cache owners use this after removing one logical index binding whose
+  /// physical file may still be referenced by another binding. The check and
+  /// transition to [_resetting] happen synchronously, so a new run cannot
+  /// start between the idle check and the reset operation.
+  Future<bool> resetIfIdle({bool removeCacheRecord = true}) async {
+    return await resetIfIdleAndRun<bool>(
+          removeCacheRecord: removeCacheRecord,
+          operation: () async => true,
+        ) ??
+        false;
+  }
+
+  /// Resets an idle session while holding the lifecycle boundary through
+  /// [operation]. Cache owners use this for check/remove/delete sequences: a
+  /// plain [resetIfIdle] releases [_resetting] before the caller's next
+  /// asynchronous index/byte mutation, allowing a new demand to acquire the
+  /// session in that gap.
+  Future<T?> resetIfIdleAndRun<T>({
+    required Future<T> Function() operation,
+    bool removeCacheRecord = true,
+  }) async {
+    if (_state == DownloadState.disposed ||
+        _resetting ||
+        _disposing ||
+        _restoring ||
+        _pendingIngressAttachments.isNotEmpty ||
+        _writer != null ||
+        _run != null) {
+      return null;
+    }
+    // Claim the lifecycle boundary before the first await. beginRun() does
+    // not wait on an asynchronous reset, so checking first and delegating to
+    // reset() would leave a check-to-reset window in which a new run could
+    // acquire this physical session.
+    _resetting = true;
+    try {
+      await _resetClaimed(removeCacheRecord: removeCacheRecord);
+      return await operation();
+    } finally {
+      _resetting = false;
+    }
+  }
+
+  Future<void> _resetClaimed({required bool removeCacheRecord}) async {
     _ingressProjectionRevision++;
     _flushCommittedTrace();
     _writer = null;
@@ -1075,9 +1575,23 @@ final class DownloadSession {
     _sourceCanvasHeight = null;
     _failure = null;
     _resetPlayablePrefixEvidence();
-    await _restartArtifact();
-    _state = DownloadState.idle;
-    await index?.remove(id.key);
+    try {
+      await _restartArtifact();
+      _state = DownloadState.idle;
+      // Establish a cache synchronization boundary even when the caller has
+      // already removed the index binding. In particular, a stale _syncCache
+      // operation may have passed its epoch check immediately before this
+      // reset and can otherwise repopulate a logically deleted row during
+      // resetIfIdle(removeCacheRecord: false).
+      await _enqueueCacheMutation<void>(() async {
+        if (removeCacheRecord) {
+          await index?.remove(id.key);
+        }
+      });
+    } on Object catch (error) {
+      _markLifecycleFailure(error, operation: 'reset');
+      rethrow;
+    }
     _recordTrace(
       TraceEventKind.downloadState,
       <String, Object?>{'state': _state.name, 'reset': true},
@@ -1087,7 +1601,12 @@ final class DownloadSession {
 
   Future<int> evict() async {
     _requireNotDisposed();
-    _ingressProjectionRevision++;
+    if (_resetting || _disposing) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'download session lifecycle operation is already active',
+      );
+    }
     _flushCommittedTrace();
     if (!canEvict) {
       throw const Failure(
@@ -1095,33 +1614,44 @@ final class DownloadSession {
         message: 'cannot evict while a writer is active',
       );
     }
-    final released = artifact.committedLength;
-    _epoch = _epoch.next();
-    _resetIngressProjections(_epoch);
-    await artifact.deleteAll();
-    _state = DownloadState.idle;
-    _validators = const Validators();
-    _validatorRequestUri = null;
-    _totalLength = null;
-    _networkStartLength = 0;
-    _networkAttemptActive = false;
-    _networkCursorLength = 0;
-    _networkCursorPublishedLength = 0;
-    _residentLength = null;
-    _residentBodyBacked = false;
-    _residentBodyAuthority = null;
-    _contentKind = ContentKind.unknown;
-    _prefix = <int>[];
-    _sourceCanvasWidth = null;
-    _sourceCanvasHeight = null;
-    _resetPlayablePrefixEvidence();
-    await index?.remove(id.key);
-    _recordTrace(
-      TraceEventKind.downloadState,
-      <String, Object?>{'state': _state.name, 'evictedBytes': released},
-    );
-    _notifySnapshot();
-    return released;
+    _ingressProjectionRevision++;
+    _resetting = true;
+    try {
+      final released = artifact.committedLength;
+      _epoch = _epoch.next();
+      _resetIngressProjections(_epoch);
+      await artifact.deleteAll();
+      _state = DownloadState.idle;
+      _validators = const Validators();
+      _validatorRequestUri = null;
+      _totalLength = null;
+      _networkStartLength = 0;
+      _networkAttemptActive = false;
+      _networkCursorLength = 0;
+      _networkCursorPublishedLength = 0;
+      _residentLength = null;
+      _residentBodyBacked = false;
+      _residentBodyAuthority = null;
+      _contentKind = ContentKind.unknown;
+      _prefix = <int>[];
+      _sourceCanvasWidth = null;
+      _sourceCanvasHeight = null;
+      _resetPlayablePrefixEvidence();
+      await _enqueueCacheMutation<void>(() async {
+        await index?.remove(id.key);
+      });
+      _recordTrace(
+        TraceEventKind.downloadState,
+        <String, Object?>{'state': _state.name, 'evictedBytes': released},
+      );
+      _notifySnapshot();
+      return released;
+    } on Object catch (error) {
+      _markLifecycleFailure(error, operation: 'evict');
+      rethrow;
+    } finally {
+      _resetting = false;
+    }
   }
 
   void _resetPlayablePrefixEvidence() {
@@ -1132,9 +1662,24 @@ final class DownloadSession {
     _networkFlowProofLength = 0;
   }
 
+  /// Waits until cache/index synchronization already queued by this session
+  /// has settled. Composition owners use this before removing an idle physical
+  /// session from the registry, so a newly-created same-id generation cannot
+  /// race a stale index write from the retired generation.
+  Future<void> settleCacheMutations() => _cacheMutationTail;
+
   Future<void> dispose() async {
     if (_state == DownloadState.disposed) {
       return;
+    }
+    if (_resetting ||
+        _disposing ||
+        _restoring ||
+        _pendingIngressAttachments.isNotEmpty) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'download session lifecycle operation is already active',
+      );
     }
     _flushCommittedTrace();
     if (_writer != null || _run != null) {
@@ -1143,13 +1688,40 @@ final class DownloadSession {
         message: 'cannot dispose while work is active',
       );
     }
-    _ingressProjections.clear();
-    _demandPriorities.clear();
-    _legacyDemanded = false;
-    await artifact.dispose();
-    _state = DownloadState.disposed;
-    _notifySnapshot();
-    _snapshotListeners.clear();
+    _disposing = true;
+    try {
+      // Disposal is a lifecycle boundary just like reset/eviction. Advance
+      // the epoch before any awaited artifact/index work so late restore,
+      // append, seal, promote, or replay completions cannot publish after the
+      // session has begun closing.
+      _ingressProjectionRevision++;
+      _epoch = _epoch.next();
+      // Session disposal owns the final physical lifecycle boundary. Detach
+      // projection listeners before resetting the native ingresses so a late
+      // observer cannot retain Reader callbacks or re-enter a session that is
+      // already closing.
+      for (final projection in _ingressProjections.values) {
+        projection.detach();
+      }
+      // The Reader/source-pool owner disposes the native ingress separately.
+      // Resetting it here is both unnecessary and unsafe when that owner has
+      // already retired the ingress during a replacement race; disposal must
+      // remain idempotent at this boundary.
+      _ingressProjections.clear();
+      _demandPriorities.clear();
+      _legacyDemanded = false;
+      // Cache synchronization is a separate serialized persistence tail. Do
+      // not close the artifact/session while a prior index operation can still
+      // touch the cache backend; the epoch guard above turns that operation
+      // into a no-op, and awaiting the tail establishes the shutdown boundary.
+      await _cacheMutationTail;
+      await artifact.dispose();
+      _state = DownloadState.disposed;
+      _notifySnapshot();
+      _snapshotListeners.clear();
+    } finally {
+      _disposing = false;
+    }
   }
 
   void _recordIngressTiming({
@@ -1183,22 +1755,30 @@ final class DownloadSession {
     int maxBytes, {
     DownloadResidentReplayChunks? residentReplayChunks,
   }) async {
+    _requireNotDisposed();
+    final epoch = _epoch;
     if (maxBytes <= 0 || committedLength <= 0) return Uint8List(0);
     final end = maxBytes < committedLength ? maxBytes : committedLength;
     if (end <= _prefix.length) {
+      _requireEpoch(epoch);
       return Uint8List.fromList(_prefix.sublist(0, end));
     }
     if (!_residentBodyBacked) {
-      return Uint8List.fromList(await artifact.readPrefix(end));
+      final result = await artifact.readPrefix(end);
+      _requireEpoch(epoch);
+      return Uint8List.fromList(result);
     }
     final replay = residentReplayChunks;
     if (replay == null) {
+      _requireEpoch(epoch);
       return readIngressPrefix(end);
     }
     final chunks = await replay(end);
+    _requireEpoch(epoch);
     final builder = BytesBuilder(copy: false);
     var remaining = end;
     await for (final rawChunk in chunks) {
+      _requireEpoch(epoch);
       if (remaining <= 0) break;
       final chunk = rawChunk is Uint8List
           ? rawChunk
@@ -1211,6 +1791,7 @@ final class DownloadSession {
         remaining = 0;
       }
     }
+    _requireEpoch(epoch);
     final result = builder.takeBytes();
     if (result.length != end) {
       throw Failure(
@@ -1238,6 +1819,36 @@ final class DownloadSession {
     _prefix.addAll(chunk.sublist(skip, skip + take));
     _contentKind = sniffContent(_prefix);
     _refreshSourceCanvasFromPrefix();
+  }
+
+  Future<Map<String, Object?>?> _readPromotedMetaForOwnership() async {
+    final finalFile = File(artifact.finalPath);
+    if (!await finalFile.exists()) return null;
+    for (final path in <String>[
+      artifact.finalMetaPath,
+      '${artifact.finalMetaPath}.tmp',
+      // A crash after the partial-to-final rename but before the ready-sidecar
+      // rename can leave the old partial sidecar as the only ownership proof.
+      // Inspect it before Artifact.restore can promote that metadata.
+      artifact.metaPath,
+    ]) {
+      try {
+        final raw = jsonDecode(await File(path).readAsString());
+        if (raw is Map) {
+          return Map<String, Object?>.from(raw);
+        }
+      } on FileSystemException {
+        // A sidecar may disappear during promotion; Artifact.restore owns the
+        // authoritative retry/recovery behavior for that race.
+      } on FormatException {
+        // Malformed metadata is not an ownership proof. Artifact.restore will
+        // rehash the body and apply its normal metadata recovery policy.
+      } on TypeError {
+        // A JSON value with non-string keys is malformed metadata, not a
+        // foreign ownership claim.
+      }
+    }
+    return null;
   }
 
   void _refreshSourceCanvasFromPrefix() {
@@ -1329,8 +1940,11 @@ final class DownloadSession {
   Future<void> attachSynchronizedIngressProjection(
     DownloadIngressProjection projection, {
     DownloadResidentReplayChunks? residentReplayChunks,
+    DownloadResidentReplayChunksWithControl? controlledResidentReplayChunks,
+    TaskControl? control,
   }) async {
     _requireNotDisposed();
+    control?.throwIfCancelled();
     final existing = _ingressProjections[projection.scopeId];
     if (existing != null && !identical(existing, projection)) {
       throw ArgumentError.value(
@@ -1340,7 +1954,15 @@ final class DownloadSession {
       );
     }
     if (identical(existing, projection)) return;
+    if (_pendingIngressAttachments.containsKey(projection.scopeId)) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'Reader ingress projection attachment is already active',
+      );
+    }
 
+    final attachmentToken = Object();
+    _pendingIngressAttachments[projection.scopeId] = attachmentToken;
     projection.beginSynchronizedReplay();
     try {
       // A new Reader must not wait for a multi-megabyte physical WebP partial
@@ -1358,6 +1980,16 @@ final class DownloadSession {
           committedLength > 0) {
         while (true) {
           _requireNotDisposed();
+          control?.throwIfCancelled();
+          if (!identical(
+            _pendingIngressAttachments[projection.scopeId],
+            attachmentToken,
+          )) {
+            throw const Failure(
+              code: ErrorCode.cancelled,
+              message: 'Reader ingress projection attachment was withdrawn',
+            );
+          }
           final epoch = _epoch;
           final targetLength = committedLength;
           final publishFloor = playableFlowPrefixFloorBytes(
@@ -1371,11 +2003,25 @@ final class DownloadSession {
           final before = projection.snapshot;
           await projection.rebuild(
             epoch: epoch,
-            chunks: artifact.readChunks(endExclusive: publishLength),
+            chunks: _replayEpochChunks(
+              epoch,
+              artifact.readChunks(endExclusive: publishLength),
+              control: control,
+            ),
             sealed: (_state == DownloadState.sealed ||
                     _state == DownloadState.promoted) &&
                 publishLength == targetLength,
           );
+          control?.throwIfCancelled();
+          if (!identical(
+            _pendingIngressAttachments[projection.scopeId],
+            attachmentToken,
+          )) {
+            throw const Failure(
+              code: ErrorCode.cancelled,
+              message: 'Reader ingress projection attachment was withdrawn',
+            );
+          }
           // Growth preserves the prefix. Reset/replacement does not. If the
           // physical epoch changed or truncated below the replayed prefix, retry
           // against the new generation before exposing any source.
@@ -1405,6 +2051,16 @@ final class DownloadSession {
       }
       while (true) {
         _requireNotDisposed();
+        control?.throwIfCancelled();
+        if (!identical(
+          _pendingIngressAttachments[projection.scopeId],
+          attachmentToken,
+        )) {
+          throw const Failure(
+            code: ErrorCode.cancelled,
+            message: 'Reader ingress projection attachment was withdrawn',
+          );
+        }
         final revision = _ingressProjectionRevision;
         final epoch = _epoch;
         final targetLength = committedLength;
@@ -1429,10 +2085,15 @@ final class DownloadSession {
             current.failure == null;
         if (canAppendSuffix) {
           var offset = current.length;
-          await for (final chunk in artifact.readChunks(
-            start: offset,
-            endExclusive: targetLength,
+          await for (final chunk in _replayEpochChunks(
+            epoch,
+            artifact.readChunks(
+              start: offset,
+              endExclusive: targetLength,
+            ),
+            control: control,
           )) {
+            control?.throwIfCancelled();
             projection.append(epoch: epoch, offset: offset, bytes: chunk);
             offset += chunk.length;
           }
@@ -1449,9 +2110,24 @@ final class DownloadSession {
                 message: 'resident-cache projection replay requires durable byte authority',
               );
             }
-            chunks = await replay(targetLength);
+            final controlledReplay = controlledResidentReplayChunks;
+            final residentChunks = controlledReplay != null && control != null
+                ? await controlledReplay(
+                    targetLength,
+                    control: control,
+                  )
+                : await replay(targetLength);
+            chunks = _replayEpochChunks(
+              epoch,
+              residentChunks,
+              control: control,
+            );
           } else {
-            chunks = artifact.readChunks(endExclusive: targetLength);
+            chunks = _replayEpochChunks(
+              epoch,
+              artifact.readChunks(endExclusive: targetLength),
+              control: control,
+            );
           }
           await projection.rebuild(
             epoch: epoch,
@@ -1460,6 +2136,7 @@ final class DownloadSession {
           );
           projection.expectLength(totalLength);
         }
+        control?.throwIfCancelled();
         _traceIngressProjection(projection.scopeId, before, projection.snapshot);
 
         final stillSealed = _state == DownloadState.sealed ||
@@ -1487,11 +2164,21 @@ final class DownloadSession {
           );
         }
 
+        control?.throwIfCancelled();
         // No await after the state check: later physical mutations see this
         // projection in the live fan-out before they can append/reset/seal it.
         // A WebP source may already be published at a decoder-usable prefix;
         // joining fan-out here closes the catch-up phase without changing byte
         // ownership or replacing that source.
+        if (!identical(
+          _pendingIngressAttachments[projection.scopeId],
+          attachmentToken,
+        )) {
+          throw const Failure(
+            code: ErrorCode.cancelled,
+            message: 'Reader ingress projection attachment was withdrawn',
+          );
+        }
         _ingressProjections[projection.scopeId] = projection;
         projection.finishSynchronizedReplay();
         _notifySnapshot();
@@ -1502,18 +2189,32 @@ final class DownloadSession {
       // prefix may already have been published; the registry projects failure
       // onto that same Reader-local source rather than silently replacing it.
       rethrow;
+    } finally {
+      if (identical(
+        _pendingIngressAttachments[projection.scopeId],
+        attachmentToken,
+      )) {
+        _pendingIngressAttachments.remove(projection.scopeId);
+      }
     }
   }
 
   bool detachIngressProjection(String scopeId) {
     final removed = _ingressProjections.remove(scopeId);
-    if (removed == null) return false;
+    final pending = _pendingIngressAttachments.remove(scopeId);
+    if (removed == null && pending == null) return false;
+    // A synchronized attachment may be between its replay awaits. Advance
+    // the same revision used by append/reset/seal so a detach cannot be
+    // followed by a stale replay inserting the projection again.
+    _ingressProjectionRevision++;
     _notifySnapshot();
     return true;
   }
 
   Future<void> _restoreIngressIfNeeded({required bool sealed}) async {
-    for (final projection in _ingressProjections.values) {
+    for (final projection in List<DownloadIngressProjection>.of(
+      _ingressProjections.values,
+    )) {
       final current = projection.snapshot;
       final expectedLength = artifact.committedLength;
       final alreadyAuthoritative =
@@ -1532,22 +2233,39 @@ final class DownloadSession {
     required bool sealed,
   }) async {
     final before = projection.snapshot;
+    final epoch = _epoch;
     await projection.rebuild(
-      epoch: _epoch,
-      chunks: artifact.readChunks(),
+      epoch: epoch,
+      chunks: _replayEpochChunks(epoch, artifact.readChunks()),
       sealed: sealed,
     );
+    _requireEpoch(epoch);
     _traceIngressProjection(projection.scopeId, before, projection.snapshot);
   }
 
+  Stream<List<int>> _replayEpochChunks(
+    SourceEpoch epoch,
+    Stream<List<int>> chunks, {
+    TaskControl? control,
+  }) async* {
+    await for (final chunk in _replayChunks(chunks, control: control)) {
+      _requireEpoch(epoch);
+      yield chunk;
+    }
+  }
+
   void _expectIngressLength(int? length) {
-    for (final projection in _ingressProjections.values) {
+    for (final projection in List<DownloadIngressProjection>.of(
+      _ingressProjections.values,
+    )) {
       projection.expectLength(length);
     }
   }
 
   void _resetIngressProjections(SourceEpoch epoch) {
-    for (final projection in _ingressProjections.values) {
+    for (final projection in List<DownloadIngressProjection>.of(
+      _ingressProjections.values,
+    )) {
       final before = projection.snapshot;
       projection.reset(epoch);
       _traceIngressProjection(projection.scopeId, before, projection.snapshot);
@@ -1555,7 +2273,9 @@ final class DownloadSession {
   }
 
   void _sealIngressProjections(SourceEpoch epoch) {
-    for (final projection in _ingressProjections.values) {
+    for (final projection in List<DownloadIngressProjection>.of(
+      _ingressProjections.values,
+    )) {
       final before = projection.snapshot;
       projection.seal(epoch);
       _traceIngressProjection(projection.scopeId, before, projection.snapshot);
@@ -1563,7 +2283,9 @@ final class DownloadSession {
   }
 
   void _appendIngress(SourceEpoch epoch, int offset, List<int> bytes) {
-    for (final projection in _ingressProjections.values) {
+    for (final projection in List<DownloadIngressProjection>.of(
+      _ingressProjections.values,
+    )) {
       final before = projection.snapshot;
       projection.append(epoch: epoch, offset: offset, bytes: bytes);
       _traceIngressProjection(projection.scopeId, before, projection.snapshot);
@@ -1616,44 +2338,97 @@ final class DownloadSession {
 
   bool _metaExplicitlyClaimsDifferentOwner(Map<String, Object?> meta) {
     final key = meta['downloadKey'];
-    if (key is String) {
-      return key != id.key;
-    }
+    if (key == id.key) return false;
     final raw = meta['download'];
-    if (raw is! Map) {
-      return false;
+    if (raw is Map) {
+      try {
+        // The structured identity is authoritative across the v1 delimiter
+        // key and the framed v2 key. This keeps older metadata for the same
+        // DownloadId from being mistaken for a foreign artifact after a key
+        // format migration.
+        return DownloadId.fromJson(Map<String, Object?>.from(raw)) != id;
+      } on Object {
+        // Malformed network metadata is not proof that the media bytes belong
+        // to another DownloadId. Preserve the authoritative partial.
+        return false;
+      }
     }
-    try {
-      return DownloadId.fromJson(Map<String, Object?>.from(raw)) != id;
-    } on Object {
-      // Malformed network metadata is not proof that the media bytes belong to
-      // another DownloadId. Preserve the authoritative partial.
-      return false;
-    }
+    if (key is String) return true;
+    return false;
   }
 
-  Future<void> _syncCache(CacheState state) async {
-    final cache = index;
-    if (cache == null ||
-        artifact.state == ArtifactState.empty ||
-        (state == CacheState.partial && artifact.committedLength == 0)) {
-      return;
-    }
-    final now = DateTime.now().toUtc().microsecondsSinceEpoch;
-    final existing = await cache.get(id.key);
-    await cache.put(
-      CacheRec(
-        id: id,
-        state: state,
-        path: state == CacheState.ready
-            ? artifact.finalPath
-            : artifact.partialPath,
-        bytes: artifact.committedLength,
-        checksum: artifact.checksum,
-        createdUs: existing?.createdUs ?? now,
-        touchedUs: now,
-      ),
+  Future<void> _syncCache(
+    CacheState state, {
+    required SourceEpoch expectedEpoch,
+  }) => _enqueueCacheMutation<void>(() async {
+        if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
+          return;
+        }
+        final cache = index;
+        if (cache == null ||
+            artifact.state == ArtifactState.empty ||
+            (state == CacheState.partial && artifact.committedLength == 0)) {
+          return;
+        }
+        final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+        final existing = await cache.get(id.key);
+        if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
+          return;
+        }
+        final written = CacheRec(
+          id: id,
+          state: state,
+          path: state == CacheState.ready
+              ? artifact.finalPath
+              : artifact.partialPath,
+          bytes: artifact.committedLength,
+          checksum: artifact.checksum,
+          createdUs: existing?.createdUs ?? now,
+          touchedUs: now,
+          pinned: existing?.pinned ?? false,
+          checksumAlgorithm: existing?.checksumAlgorithm ?? 'crc32',
+          artifactId: existing?.artifactId ?? '',
+          storageRootId: storageRootId,
+        );
+        await cache.put(written);
+        if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
+          // The lifecycle boundary can advance while the backend put is in
+          // flight. A pre-put epoch check cannot prevent that stale write;
+          // remove only the exact row this operation wrote so a newer
+          // binding for the same logical key is not blindly deleted.
+          final current = await cache.get(id.key);
+          if (current != null && _sameCacheRecord(current, written)) {
+            await cache.remove(id.key);
+          }
+        }
+      });
+
+  bool _sameCacheRecord(CacheRec first, CacheRec second) =>
+      first.id == second.id &&
+      first.state == second.state &&
+      first.path == second.path &&
+      first.bytes == second.bytes &&
+      first.checksum.trim().toLowerCase() ==
+          second.checksum.trim().toLowerCase() &&
+      first.createdUs == second.createdUs &&
+      first.touchedUs == second.touchedUs &&
+      first.pinned == second.pinned &&
+      first.checksumAlgorithm.trim().toLowerCase() ==
+          second.checksumAlgorithm.trim().toLowerCase() &&
+      first.effectiveArtifactId == second.effectiveArtifactId &&
+      first.storageRootId == second.storageRootId;
+
+  Future<T> _enqueueCacheMutation<T>(Future<T> Function() operation) {
+    final previous = _cacheMutationTail;
+    final current = previous.then<T>(
+      (_) => operation(),
+      onError: (Object _, StackTrace __) => operation(),
     );
+    _cacheMutationTail = current.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return current;
   }
 
   Future<void> _restartArtifact() async {
@@ -1661,8 +2436,67 @@ final class DownloadSession {
     await artifact.restore();
   }
 
+  void _markLifecycleFailure(Object error, {required String operation}) {
+    _state = DownloadState.failed;
+    _failure = error is Failure
+        ? error
+        : Failure(code: ErrorCode.network, message: '$error', cause: error);
+    _flushCommittedTrace();
+    _recordTrace(
+      TraceEventKind.downloadState,
+      <String, Object?>{
+        'state': _state.name,
+        'operation': operation,
+        'error': '$_failure',
+      },
+    );
+    _notifySnapshot();
+  }
+
+  bool _runActivityIsCurrent() {
+    final run = _run;
+    return run == null || run.epoch == _epoch;
+  }
+
+  void _requireEpoch(SourceEpoch expected) {
+    if (_state == DownloadState.disposed) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'download session is disposed',
+      );
+    }
+    if (_epoch != expected) {
+      _recordTrace(
+        TraceEventKind.staleWorkRejected,
+        <String, Object?>{'epoch': expected.value},
+      );
+      throw const Failure(
+        code: ErrorCode.staleEpoch,
+        message: 'download operation completed for a stale epoch',
+      );
+    }
+  }
+
+  void _requireMutationRun(RunLease? expectedRun) {
+    if (expectedRun != null) {
+      requireRun(expectedRun);
+      return;
+    }
+    if (_run != null) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'download has an active transport run',
+      );
+    }
+  }
+
   void _requireWriter(WriterLease lease) {
-    _requireNotDisposed();
+    if (_state == DownloadState.disposed) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'download session is disposed',
+      );
+    }
     try {
       _epoch.requireMatch(lease.epoch);
     } on Failure {
@@ -1695,10 +2529,20 @@ final class DownloadSession {
   }
 
   void _requireNotDisposed() {
-    if (_state == DownloadState.disposed) {
+    if (_state == DownloadState.disposed || _disposing) {
       throw const Failure(
         code: ErrorCode.invalidState,
         message: 'download session is disposed',
+      );
+    }
+  }
+
+  void _requireNotLifecycleBusy() {
+    _requireNotDisposed();
+    if (_resetting || _disposing || _restoring) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'download session lifecycle operation is already active',
       );
     }
   }

@@ -304,13 +304,7 @@ extension _DemoHomeViews on _DemoHomeState {
                     : null,
                 downloadProgress: _downloadProgressForComic(comic),
                 onTap: () => unawaited(_openComic(comic)),
-                onLongPress: () {
-                  if (resume == null || _hasDetails(comic)) {
-                    unawaited(_openComicDetails(comic));
-                  } else {
-                    unawaited(_openImportedChapter(resume));
-                  }
-                },
+                onLongPress: () => unawaited(_openComicDetails(comic)),
               ),
             ),
           );
@@ -856,14 +850,7 @@ extension _DemoHomeViews on _DemoHomeState {
         onTap: () => _handleShelfTap(comic),
         onLongPress: _manageShelf
             ? () => _startBatchSelection(comic)
-            : () {
-                final resume = comic.resumeChapter;
-                if (resume == null || _hasDetails(comic)) {
-                  unawaited(_openComicDetails(comic));
-                } else {
-                  unawaited(_openImportedChapter(resume));
-                }
-              },
+            : () => unawaited(_openComicDetails(comic)),
       ),
     );
     Widget tile = card;
@@ -1003,14 +990,7 @@ extension _DemoHomeViews on _DemoHomeState {
           onTap: () => _handleShelfTap(comic),
           onLongPress: _manageShelf
               ? () => _startBatchSelection(comic)
-              : () {
-                  final resume = comic.resumeChapter;
-                  if (resume == null || _hasDetails(comic)) {
-                    unawaited(_openComicDetails(comic));
-                  } else {
-                    unawaited(_openImportedChapter(resume));
-                  }
-                },
+              : () => unawaited(_openComicDetails(comic)),
           trailing: _manageShelf && !_batchManagement
               ? Row(
                   mainAxisSize: MainAxisSize.min,

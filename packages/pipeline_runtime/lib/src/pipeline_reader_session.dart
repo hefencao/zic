@@ -26,6 +26,34 @@ typedef PipelineArtifactBytesLoader = Future<Uint8List> Function(
   MediaLoadToken token,
 );
 
+final class _MediaLoadTaskControl implements TaskControl {
+  _MediaLoadTaskControl(this.token);
+
+  final MediaLoadToken token;
+
+  @override
+  bool get cancelled => token.isCancelled;
+
+  @override
+  Future<void> get whenCancelled => token.whenCancelled;
+
+  // Direct presentation reads do not own scheduler ranking. Keep this below
+  // the network task ranks while still exposing the complete cancellation
+  // signal to controlled transports.
+  @override
+  int get priority => -1;
+}
+
+final class _DirectNextChunk {
+  const _DirectNextChunk(this.available);
+
+  final bool available;
+}
+
+final class _DirectCancelled {
+  const _DirectCancelled();
+}
+
 const Duration _readerSessionRetentionDuration = Duration(minutes: 2);
 const int _maxRetainedReaderSessions = 1;
 
@@ -498,10 +526,15 @@ final class PipelineReaderSession {
     _residentReplaySource = _transferRuntime.residentReplaySource(
       priorityFor: _artifactReadPriority,
     );
+    _residentReplaySourceWithControl =
+        _transferRuntime.residentReplaySourceWithControl(
+      priorityFor: _artifactReadPriority,
+    );
     _ingresses = DownloadIngressProjectionRegistry(
       sources: _streamingSources,
       scopePrefix: 'reader:$sessionId',
       residentReplaySource: _residentReplaySource,
+      residentReplaySourceWithControl: _residentReplaySourceWithControl,
     );
     _downloads = _transferRuntime.registry;
     _downloadTransfer = _transferRuntime.attachConsumer(
@@ -608,6 +641,8 @@ final class PipelineReaderSession {
   late final DownloadRegistry _downloads;
   late final DownloadTransferConsumer _downloadTransfer;
   late final DownloadResidentReplaySource _residentReplaySource;
+  late final DownloadResidentReplaySourceWithControl
+      _residentReplaySourceWithControl;
   late final DecodeRegistry _decodes;
   late final UploadRegistry _uploads;
   late final FrameBudgeter _frameBudgets;
@@ -1505,7 +1540,10 @@ final class PipelineReaderSession {
         cache != null) {
       final readStarted = clock.nowMicros();
       try {
-        final cached = await cache.readForeground(id);
+        final cached = await cache.readForeground(
+          id,
+          control: _MediaLoadTaskControl(token),
+        );
         token.throwIfCancelled();
         if (cached != null) {
           final readMicros = clock.nowMicros() - readStarted;
@@ -1577,6 +1615,7 @@ final class PipelineReaderSession {
             id: id,
             length: session.artifact.committedLength,
             loader: () => _transferRuntime.readArtifact(session.artifact),
+            control: _MediaLoadTaskControl(token),
           );
     final Uint8List bytes;
     if (cacheRead != null) {
@@ -1612,27 +1651,37 @@ final class PipelineReaderSession {
     MediaLoadToken token,
   ) async {
     final started = clock.nowMicros();
+    final cache = _artifactCacheManager;
+    final cacheGeneration = cache?.generationFor(id);
     final resumeValidators = session.resumeValidatorsFor(asset.uri);
-    final response = await _baseTransportFor(asset.uri).open(
+    final control = _MediaLoadTaskControl(token);
+    final response = await _openDirectImmutableSourceResponse(
       asset.uri,
       validators: resumeValidators.canResume ? resumeValidators : null,
+      control: control,
     );
     if (resumeValidators.canResume &&
         !resumeValidators.matches(response.validators)) {
-      await response.discard();
+      await response.discard(control: control);
       throw const Failure(
         code: ErrorCode.artifactCorruption,
         message: 'direct immutable image source revision changed',
       );
     }
     final builder = BytesBuilder(copy: false);
+    final iterator = StreamIterator<List<int>>(response.bytes);
     try {
-      await for (final chunk in response.bytes) {
+      while (await _moveNextDirectImmutableSource(iterator, control)) {
+        final chunk = iterator.current;
         token.throwIfCancelled();
         if (chunk.isNotEmpty) builder.add(chunk);
       }
     } finally {
-      await response.discard();
+      try {
+        await iterator.cancel();
+      } finally {
+        await response.discard(control: control);
+      }
     }
     token.throwIfCancelled();
     final bytes = builder.takeBytes();
@@ -1654,7 +1703,15 @@ final class PipelineReaderSession {
     // rapid keep-alive eviction/remount cycles during fast continuous
     // scrolling do not repeat the same source read. Promotion still owns the
     // durable artifact; a later promotion remember() supersedes this entry.
-    _artifactCacheManager?.remember(id: id, bytes: bytes);
+    // A read that began before invalidation must not repopulate the memory
+    // tier after that invalidation, and a cancelled presentation must not
+    // retain bytes after its consumer has withdrawn.
+    control.throwIfCancelled();
+    cache?.remember(
+      id: id,
+      bytes: bytes,
+      generation: cacheGeneration,
+    );
     _recordPresentationCacheRead(
       asset: asset,
       id: id,
@@ -1667,6 +1724,100 @@ final class PipelineReaderSession {
       sessionState: session.state.name,
     );
     return bytes;
+  }
+
+  Future<ByteResponse> _openDirectImmutableSourceResponse(
+    Uri uri, {
+    required Validators? validators,
+    required TaskControl control,
+  }) async {
+    final transport = _baseTransportFor(uri);
+    final controlled = transport is ControlledTransport ? transport : null;
+    control.throwIfCancelled();
+    final pending = controlled == null
+        ? Future<ByteResponse>.sync(
+            () => transport.open(uri, validators: validators),
+          )
+        : Future<ByteResponse>.sync(
+            () => controlled.openControlled(
+              uri,
+              validators: validators,
+              control: control,
+            ),
+          );
+    try {
+      return await Future.any<ByteResponse>(<Future<ByteResponse>>[
+        pending,
+        control.whenCancelled.then<ByteResponse>((_) {
+          throw const Failure(
+            code: ErrorCode.cancelled,
+            message: 'direct immutable source read was cancelled',
+          );
+        }),
+      ]);
+    } catch (error, stackTrace) {
+      if (control.cancelled) {
+        // An uncontrolled loader may finish after the presentation request has
+        // already been cancelled. Do not leave its late response subscribed;
+        // controlled transports use the same discard boundary for symmetry.
+        unawaited(
+          pending.then<void>(
+            (response) => response.discard(control: control),
+            onError: (Object _, StackTrace __) {},
+          ),
+        );
+        control.throwIfCancelled();
+      }
+      throw Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  Future<bool> _moveNextDirectImmutableSource(
+    StreamIterator<List<int>> iterator,
+    TaskControl control,
+  ) async {
+    control.throwIfCancelled();
+    final result = await Future.any<Object>(<Future<Object>>[
+      _moveNextDirectImmutableSourceWithWatchdog(iterator).then<Object>(
+            _DirectNextChunk.new,
+          ),
+      control.whenCancelled.then<Object>((_) => const _DirectCancelled()),
+    ]);
+    if (result is _DirectCancelled) {
+      await iterator.cancel();
+      control.throwIfCancelled();
+    }
+    return (result as _DirectNextChunk).available;
+  }
+
+  Future<bool> _moveNextDirectImmutableSourceWithWatchdog(
+    StreamIterator<List<int>> iterator,
+  ) {
+    final timeout = DownloadJob.defaultReadStallTimeout;
+    if (timeout <= Duration.zero) return iterator.moveNext();
+    final watchdog = Completer<Never>();
+    final timer = Timer(timeout, () {
+      if (!watchdog.isCompleted) {
+        watchdog.completeError(const Failure(
+          code: ErrorCode.network,
+          message:
+              'direct immutable source body read stalled: no bytes within the read stall window',
+        ));
+      }
+    });
+    return Future.any<bool>(<Future<bool>>[
+      Future<bool>.sync(iterator.moveNext),
+      watchdog.future,
+    ]).then<bool>((available) {
+      timer.cancel();
+      return available;
+    }, onError: (Object error, StackTrace stackTrace) async {
+      timer.cancel();
+      if (watchdog.isCompleted) {
+        await iterator.cancel();
+      }
+      throw Error.throwWithStackTrace(error, stackTrace);
+    });
   }
 
   bool _isDirectImmutableLocalUri(Uri uri) {

@@ -20,8 +20,8 @@ for token in (
     'final LinkedHashMap<DownloadId, LinkedHashSet<DownloadId>> _equivalents',
     'void linkEquivalent({',
     'Iterable<DownloadId> _lookupCandidates(DownloadId id) sync* {',
-    '_lookupCandidatesInOrder(id, _lookupCandidates(id))',
-    'Future<ArtifactCacheLookup?> lookupAuthoritative(DownloadId id)',
+    '_lookupCandidatesInOrder(id, _lookupCandidates(id)',
+    'Future<ArtifactCacheLookup?> lookupAuthoritative(',
     'int get equivalenceCount => _equivalenceOrder.length;',
 ):
     require(manager, token, 'verified artifact equivalence fallback')

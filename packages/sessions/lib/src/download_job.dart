@@ -29,10 +29,19 @@ final class DownloadJob {
     this.requestUri,
     this.allowFullBodyCatchup,
     this.attachLegacyDemand = true,
+    this.readStallTimeout = defaultReadStallTimeout,
   });
+
+  /// Bounds one network body read and one transport open. A response that
+  /// stops delivering bytes forever (a dead socket or a suspended plugin
+  /// runtime) would otherwise hold the admitted task open indefinitely: the
+  /// watchdog aborts the read/open with a network failure so the owner's
+  /// retry machinery and demand changes can take over.
+  static const Duration defaultReadStallTimeout = Duration(seconds: 6);
 
   final Transport transport;
   final DownloadSession session;
+  final Duration readStallTimeout;
 
   /// Exact source request identity selected by the active consumer.
   ///
@@ -54,9 +63,37 @@ final class DownloadJob {
     final lease = session.beginRun();
     try {
       cancel?.throwIfCancelled();
-      await _run(expectedChecksum: expectedChecksum, cancel: cancel);
+      await _run(
+        expectedChecksum: expectedChecksum,
+        cancel: cancel,
+        runLease: lease,
+      );
+    } on Object catch (error) {
+      // The body/writer path owns its own partial cleanup. Before a writer is
+      // acquired, however, setup failures (including open cancellation) can
+      // otherwise leave queue()'s state visible forever. Return a cancelled
+      // attempt to the idle/resumable state, and publish non-cancellation
+      // setup failures as terminal for this attempt. Preserve the original
+      // error if this best-effort lifecycle publication also fails.
+      if (session.isCurrentRun(lease) &&
+          session.state == DownloadState.queued &&
+          !session.hasWriter) {
+        try {
+          final cancelled = cancel?.cancelled == true ||
+              (error is Failure && error.code == ErrorCode.cancelled);
+          if (cancelled) {
+            session.deferNetwork(reason: 'download-attempt-cancelled');
+          } else {
+            await session.failWithoutWriter(error);
+          }
+        } on Object {
+          // The attempt error remains authoritative; the owner will recover a
+          // session whose lifecycle publication could not be completed.
+        }
+      }
+      rethrow;
     } finally {
-      session.endNetworkAttemptProgress();
+      session.endNetworkAttemptProgress(expectedRun: lease);
       session.endRun(lease);
     }
     return session.snapshot;
@@ -65,40 +102,88 @@ final class DownloadJob {
   static Future<bool> completeWithoutTransport({
     required DownloadSession session,
     String? expectedChecksum,
+    TaskControl? control,
+    RunLease? expectedRun,
   }) async {
-    if (session.state == DownloadState.promoted) return true;
+    control?.throwIfCancelled();
+    if (session.state == DownloadState.promoted) {
+      // An in-memory promoted state is not, by itself, a proof that the
+      // persisted final file is still the bytes that were sealed. Resident
+      // bodies have no local Artifact to rehash; persisted promotions must
+      // re-enter restore so the ready sidecar and same-length file are
+      // verified before a later run reuses them.
+      if (session.residentBodyBacked) return true;
+      final restored = await session.restore(expectedRun: expectedRun);
+      control?.throwIfCancelled();
+      return restored.state == DownloadState.promoted;
+    }
     if (session.committedLength <= 0 ||
-        session.totalLength != session.committedLength) {
+        session.totalLength != session.committedLength ||
+        session.artifact.state != ArtifactState.partial) {
       return false;
     }
-    final writer = session.acquireWriter();
-    await session.seal(
-      writer,
-      expectedLength: session.totalLength,
-      expectedChecksum: expectedChecksum,
-    );
-    await session.promote();
-    return true;
+    control?.throwIfCancelled();
+    final writer = session.acquireWriter(expectedRun: expectedRun);
+    try {
+      await session.seal(
+        writer,
+        expectedLength: session.totalLength,
+        expectedChecksum: expectedChecksum,
+      );
+      // Once seal has committed the artifact and cleared the writer, a
+      // cancellation must not strand the session in DownloadState.sealed.
+      // Finish the short seal-to-promote transaction, then report a late
+      // cancellation from the already terminal promoted state.
+      await session.promote(expectedRun: expectedRun);
+      control?.throwIfCancelled();
+      return true;
+    } on Object catch (error) {
+      // Seal/checksum failures can occur before the writer is cleared. Use
+      // the same writer terminal path as a network attempt so no sink or
+      // lease survives a failed transport-less completion.
+      try {
+        await session.fail(writer, error);
+      } on Object {
+        // Preserve the original completion error; the session will be
+        // reclaimed by its owner if the secondary cleanup also fails.
+      }
+      rethrow;
+    }
   }
 
   Future<void> _run({
     String? expectedChecksum,
     CancelToken? cancel,
+    required RunLease runLease,
   }) async {
     cancel?.throwIfCancelled();
+    session.requireRun(runLease);
     if (await completeWithoutTransport(
       session: session,
       expectedChecksum: expectedChecksum,
+      control: cancel,
+      expectedRun: runLease,
     )) {
+      session.requireRun(runLease);
       return;
     }
-    await session.restore();
+    await session.restore(expectedRun: runLease);
+    session.requireRun(runLease);
+    cancel?.throwIfCancelled();
+    session.requireRun(runLease);
+    if (session.state == DownloadState.promoted) {
+      return;
+    }
     if (await completeWithoutTransport(
       session: session,
       expectedChecksum: expectedChecksum,
+      control: cancel,
+      expectedRun: runLease,
     )) {
+      session.requireRun(runLease);
       return;
     }
+    session.requireRun(runLease);
 
     if (attachLegacyDemand) {
       session.attach();
@@ -116,7 +201,20 @@ final class DownloadJob {
     var probeStart = 0;
     var probeBytes = 0;
     ByteResponse response;
+    _DownloadResponseLifetime? responseOwner;
+    Future<ByteResponse> openResponse(
+      Future<ByteResponse> Function() open,
+    ) async {
+      final opened = await _openForRun(
+        open,
+        runLease: runLease,
+        cancel: cancel,
+      );
+      responseOwner = _DownloadResponseLifetime(opened, control: cancel);
+      return opened;
+    }
     cancel?.throwIfCancelled();
+    try {
     if (start > 0 && !resumeValidators.canResume) {
       if (preservedTotalLength != null &&
           preservedTotalLength >= start) {
@@ -124,8 +222,14 @@ final class DownloadJob {
             ? start
             : _validatorlessResumeProbeBytes;
         probeStart = start - probeBytes;
-        response = await _openRange(probeStart, cancel);
-        await _discardIfCancelled(cancel, response);
+        response = await openResponse(
+          () => _openRange(probeStart, cancel),
+        );
+        await _discardIfCancelledForRun(
+          cancel,
+          response,
+          runLease: runLease,
+        );
         final usableProbe = response.isPartial &&
             response.rangeStart == probeStart &&
             response.totalLength == preservedTotalLength;
@@ -134,8 +238,10 @@ final class DownloadJob {
         } else if (response.statusCode == 200 && response.rangeStart == 0) {
           await _deferCostlyFullBodyCatchupIfNeeded(
             preservedLength: preservedLength,
+            runLease: runLease,
             cancel: cancel,
             response: response,
+            responseOwner: responseOwner,
             diagnostics: <String, Object?>{
               'resumeProbeStart': probeStart,
               'resumeProbeBytes': probeBytes,
@@ -162,10 +268,11 @@ final class DownloadJob {
           );
         } else {
           final probeStatusCode = response.statusCode;
-          await response.discard();
+          await responseOwner!.discard();
           cancel?.throwIfCancelled();
           await _deferCostlyFullBodyCatchupIfNeeded(
             preservedLength: preservedLength,
+            runLease: runLease,
             cancel: cancel,
             diagnostics: <String, Object?>{
               'resumeProbeStart': probeStart,
@@ -174,7 +281,9 @@ final class DownloadJob {
               'resumeProbeAccepted': false,
             },
           );
-          response = await _open(0, cancel);
+          response = await openResponse(
+            () => _open(0, cancel),
+          );
           fullBodyCatchup = true;
           session.recordResume(
             restarted: true,
@@ -194,13 +303,16 @@ final class DownloadJob {
       } else {
         await _deferCostlyFullBodyCatchupIfNeeded(
           preservedLength: preservedLength,
+          runLease: runLease,
           cancel: cancel,
           diagnostics: <String, Object?>{
             'resumeProbeAttempted': false,
             if (providerValidatorMismatch) 'providerValidatorMismatch': true,
           },
         );
-        response = await _open(0, cancel);
+        response = await openResponse(
+          () => _open(0, cancel),
+        );
         fullBodyCatchup = true;
         session.recordResume(
           restarted: true,
@@ -214,15 +326,23 @@ final class DownloadJob {
         );
       }
     } else {
-      response = await _open(start, cancel);
-      await _discardIfCancelled(cancel, response);
+      response = await openResponse(
+        () => _open(start, cancel),
+      );
+      await _discardIfCancelledForRun(
+        cancel,
+        response,
+        runLease: runLease,
+      );
       if (start > 0 &&
           response.disposition == ByteResponseDisposition.durableImmutable) {
         if (response.statusCode == 200 && response.rangeStart == 0) {
           await _deferCostlyFullBodyCatchupIfNeeded(
             preservedLength: preservedLength,
+            runLease: runLease,
             cancel: cancel,
             response: response,
+            responseOwner: responseOwner,
             diagnostics: const <String, Object?>{
               'strongRangeRejected': true,
               'fullBodyResponseReused': true,
@@ -240,16 +360,19 @@ final class DownloadJob {
             },
           );
         } else {
-          await response.discard();
+          await responseOwner!.discard();
           cancel?.throwIfCancelled();
           await _deferCostlyFullBodyCatchupIfNeeded(
             preservedLength: preservedLength,
+            runLease: runLease,
             cancel: cancel,
             diagnostics: const <String, Object?>{
               'strongRangeRejected': true,
             },
           );
-          response = await _open(0, cancel);
+          response = await openResponse(
+            () => _open(0, cancel),
+          );
           fullBodyCatchup = true;
           session.recordResume(
             restarted: true,
@@ -284,8 +407,10 @@ final class DownloadJob {
           if (response.statusCode == 200 && response.rangeStart == 0) {
             await _deferCostlyFullBodyCatchupIfNeeded(
               preservedLength: preservedLength,
+              runLease: runLease,
               cancel: cancel,
               response: response,
+              responseOwner: responseOwner,
               diagnostics: const <String, Object?>{
                 'strongRangeRejected': true,
                 'fullBodyResponseReused': true,
@@ -303,16 +428,19 @@ final class DownloadJob {
               },
             );
           } else {
-            await response.discard();
+            await responseOwner!.discard();
             cancel?.throwIfCancelled();
             await _deferCostlyFullBodyCatchupIfNeeded(
               preservedLength: preservedLength,
+              runLease: runLease,
               cancel: cancel,
               diagnostics: const <String, Object?>{
                 'strongRangeRejected': true,
               },
             );
-            response = await _open(0, cancel);
+            response = await openResponse(
+              () => _open(0, cancel),
+            );
             fullBodyCatchup = true;
             session.recordResume(
               restarted: true,
@@ -328,10 +456,14 @@ final class DownloadJob {
         }
       }
     }
-    await _discardIfCancelled(cancel, response);
+    await _discardIfCancelledForRun(
+      cancel,
+      response,
+      runLease: runLease,
+    );
 
     if ((start == 0 || fullBodyCatchup) && response.rangeStart != 0) {
-      await response.discard();
+      await responseOwner!.discard();
       throw const Failure(
         code: ErrorCode.resumeRejected,
         message: 'full response did not start at offset zero',
@@ -339,14 +471,27 @@ final class DownloadJob {
     }
 
     if (start == 0 && response.totalLength == 0) {
-      await response.discard();
+      await responseOwner!.discard();
       throw const Failure(
         code: ErrorCode.artifactCorruption,
         message: 'image response body is empty',
       );
     }
+    } catch (error) {
+      await _discardAfterAbort(responseOwner?.discard);
+      rethrow;
+    }
 
-    session.beginNetworkAttemptProgress(response.rangeStart);
+    final responseLifetime = responseOwner!;
+    try {
+      session.beginNetworkAttemptProgress(
+        response.rangeStart,
+        expectedRun: runLease,
+      );
+    } on Object {
+      await _discardAfterAbort(responseLifetime.discard);
+      rethrow;
+    }
     var networkCursor = response.rangeStart;
     final _ResponseReadGate? flowGate =
         response.flowControl != ByteResponseFlowControl.none &&
@@ -354,6 +499,7 @@ final class DownloadJob {
             ? _ResponseReadGate(
                 session: session,
                 cancel: cancel,
+                runLease: runLease,
                 capability: response.flowControl,
                 rangeSupported: response.rangeSupported,
               )
@@ -376,36 +522,67 @@ final class DownloadJob {
           bodyAuthority: response.bodyAuthority.name,
         );
       }
-      session.beginResidentImmutableIngress(
-        validators: response.validators,
-        totalLength: response.totalLength!,
-        validatorRequestUri: _requestUri,
-        bodyAuthority: response.bodyAuthority,
-      );
       var residentOffset = 0;
       final residentIterator = StreamIterator<List<int>>(response.bytes);
       try {
-        while (await _moveNext(residentIterator, cancel)) {
+        session.beginResidentImmutableIngress(
+          validators: response.validators,
+          totalLength: response.totalLength!,
+          validatorRequestUri: _requestUri,
+          bodyAuthority: response.bodyAuthority,
+        );
+        while (true) {
+          final available = await _moveNext(
+            residentIterator,
+            cancel,
+            onAbort: responseLifetime.discard,
+          );
+          session.requireRun(runLease);
+          if (!available) break;
           final chunk = residentIterator.current;
           if (chunk.isEmpty) continue;
           session.appendResidentImmutableIngress(residentOffset, chunk);
           residentOffset += chunk.length;
           networkCursor += chunk.length;
-          session.advanceNetworkAttemptProgress(networkCursor);
+          session.advanceNetworkAttemptProgress(
+            networkCursor,
+            expectedRun: runLease,
+          );
           await Future<void>.value();
+          session.requireRun(runLease);
         }
         session.sealResidentImmutableIngress();
         return;
-      } catch (_) {
-        await residentIterator.cancel();
-        await session.reset();
+      } catch (error) {
+        await _cancelIteratorAndDiscard(
+          residentIterator,
+          responseLifetime.discard,
+        );
+        if (session.isCurrentRun(runLease)) {
+          await session.reset();
+        }
         rethrow;
+      } finally {
+        try {
+          await residentIterator.cancel();
+        } on Object {
+          // The response is already fully consumed on success. A best-effort
+          // iterator close must not turn a promoted resident body into a
+          // failed download; error paths already perform discard cleanup.
+        }
       }
     }
 
+    session.requireRun(runLease);
     cancel?.beginRestartCost();
 
-    final writer = session.acquireWriter();
+    late final WriterLease writer;
+    try {
+      writer = session.acquireWriter(expectedRun: runLease);
+    } catch (error) {
+      await _discardAfterAbort(responseLifetime.discard);
+      rethrow;
+    }
     var offset = session.committedLength;
     final iterator = StreamIterator<List<int>>(response.bytes);
     List<int> catchupRemainder = const <int>[];
@@ -425,8 +602,12 @@ final class DownloadJob {
           onDuplicateBytes: (value) {
             duplicatePrefixBytes = value;
             networkCursor = probeStart + value;
-            session.advanceNetworkAttemptProgress(networkCursor);
+            session.advanceNetworkAttemptProgress(
+              networkCursor,
+              expectedRun: runLease,
+            );
           },
+          onAbort: responseLifetime.discard,
         );
       } catch (error) {
         session.recordResume(
@@ -442,12 +623,24 @@ final class DownloadJob {
             if (providerValidatorMismatch) 'providerValidatorMismatch': true,
           },
         );
-        await iterator.cancel();
-        await _finishWriterAfterAttemptError(writer, error);
+        await _cancelIteratorAndDiscard(
+          iterator,
+          responseLifetime.discard,
+        );
+        await _finishWriterAfterAttemptError(
+          writer,
+          error,
+          runLease: runLease,
+          cancelled: cancel?.cancelled == true,
+        );
         rethrow;
       }
       networkCursor = probeStart + probeBytes + catchupRemainder.length;
-      session.advanceNetworkAttemptProgress(networkCursor, force: true);
+      session.advanceNetworkAttemptProgress(
+        networkCursor,
+        force: true,
+        expectedRun: runLease,
+      );
       session.recordResume(
         restarted: false,
         strategy: 'validatorless-range-probe',
@@ -476,9 +669,13 @@ final class DownloadJob {
             duplicatePrefixBytes = value;
             restartCostBytes = value;
             networkCursor = value;
-            session.advanceNetworkAttemptProgress(networkCursor);
+            session.advanceNetworkAttemptProgress(
+              networkCursor,
+              expectedRun: runLease,
+            );
             cancel?.recordRestartCostBytes(restartCostBytes);
           },
+          onAbort: responseLifetime.discard,
         );
       } catch (error) {
         session.recordResume(
@@ -490,8 +687,16 @@ final class DownloadJob {
             if (providerValidatorMismatch) 'providerValidatorMismatch': true,
           },
         );
-        await iterator.cancel();
-        await _finishWriterAfterAttemptError(writer, error);
+        await _cancelIteratorAndDiscard(
+          iterator,
+          responseLifetime.discard,
+        );
+        await _finishWriterAfterAttemptError(
+          writer,
+          error,
+          runLease: runLease,
+          cancelled: cancel?.cancelled == true,
+        );
         rethrow;
       }
       session.recordResume(
@@ -505,23 +710,22 @@ final class DownloadJob {
       if (catchupRemainder.isNotEmpty) {
         restartCostBytes += catchupRemainder.length;
         networkCursor = preservedLength + catchupRemainder.length;
-        session.advanceNetworkAttemptProgress(networkCursor, force: true);
+        session.advanceNetworkAttemptProgress(
+          networkCursor,
+          force: true,
+          expectedRun: runLease,
+        );
         cancel?.recordRestartCostBytes(restartCostBytes);
       } else {
         networkCursor = preservedLength;
-        session.advanceNetworkAttemptProgress(networkCursor, force: true);
+        session.advanceNetworkAttemptProgress(
+          networkCursor,
+          force: true,
+          expectedRun: runLease,
+        );
       }
     }
 
-    if (catchupRemainder.isNotEmpty) {
-      flowGate?.addAuthoritativeBytes(catchupRemainder);
-    }
-
-    await session.bindResponse(
-      validators: response.validators,
-      totalLength: response.totalLength,
-      validatorRequestUri: _requestUri,
-    );
     final pending = BytesBuilder(copy: false);
     if (catchupRemainder.isNotEmpty) {
       pending.add(catchupRemainder);
@@ -531,10 +735,20 @@ final class DownloadJob {
       if (pending.length == 0) return;
       final bytes = pending.takeBytes();
       await session.append(writer, offset, bytes);
+      session.requireRun(runLease);
       offset += bytes.length;
       flushTarget = sourceProgressQuantumBytes;
     }
     try {
+      if (catchupRemainder.isNotEmpty) {
+        flowGate?.addAuthoritativeBytes(catchupRemainder);
+      }
+      await session.bindResponse(
+        validators: response.validators,
+        totalLength: response.totalLength,
+        validatorRequestUri: _requestUri,
+      );
+      session.requireRun(runLease);
       while (true) {
         if (flowGate != null &&
             (flowGate.needsArtifactSynchronization ||
@@ -547,7 +761,9 @@ final class DownloadJob {
           cancel,
           flowGate: flowGate,
           networkCursor: networkCursor,
+          onAbort: responseLifetime.discard,
         );
+        session.requireRun(runLease);
         if (!available) break;
         final chunk = iterator.current;
         if (chunk.isEmpty) continue;
@@ -557,13 +773,18 @@ final class DownloadJob {
           cancel?.recordRestartCostBytes(restartCostBytes);
         }
         networkCursor += chunk.length;
-        session.advanceNetworkAttemptProgress(networkCursor);
+        session.advanceNetworkAttemptProgress(
+          networkCursor,
+          expectedRun: runLease,
+        );
         pending.add(chunk);
         if (pending.length >= flushTarget || offset == 0) {
           await flushPending();
+          session.requireRun(runLease);
         }
       }
       await flushPending();
+      session.requireRun(runLease);
       if (offset <= 0) {
         throw const Failure(
           code: ErrorCode.artifactCorruption,
@@ -575,7 +796,8 @@ final class DownloadJob {
         expectedLength: response.totalLength,
         expectedChecksum: expectedChecksum,
       );
-      await session.promote();
+      session.requireRun(runLease);
+      await session.promote(expectedRun: runLease);
     } catch (error) {
       // Preserve bytes already delivered by the transport so resume semantics
       // remain independent of the transport's arbitrary chunk size.
@@ -585,27 +807,63 @@ final class DownloadJob {
         // The original failure remains authoritative; session.fail closes the
         // writer and records the recoverable partial state below.
       }
-      await iterator.cancel();
-      await _finishWriterAfterAttemptError(writer, error);
+      await _cancelIteratorAndDiscard(
+        iterator,
+        responseLifetime.discard,
+      );
+      await _finishWriterAfterAttemptError(
+        writer,
+        error,
+        runLease: runLease,
+        cancelled: cancel?.cancelled == true,
+      );
       rethrow;
+    } finally {
+      // Reaching the end of the body normally closes the stream subscription,
+      // but make that lifetime boundary explicit for transports whose stream
+      // owns a native response handle. Cancellation/error cleanup above is
+      // idempotent, so a second close is harmless and best-effort.
+      try {
+        await iterator.cancel();
+      } on Object {
+        // Preserve the download result; the response discard path owns error
+        // reporting for aborted attempts.
+      }
     }
   }
 
-
   Future<void> _finishWriterAfterAttemptError(
     WriterLease writer,
-    Object error,
-  ) async {
+    Object error, {
+    required RunLease runLease,
+    bool cancelled = false,
+  }) async {
     if (!session.hasWriter) return;
-    if (error is Failure && error.code == ErrorCode.cancelled) {
-      // Scheduler/lifecycle cancellation ends only this transport attempt.
-      // It is not evidence that the authoritative encoded partial failed.
-      // Preserve committed bytes as an idle resumable partial; composition
-      // policy alone decides whether/when another network attempt runs.
-      await session.pause(writer);
-      return;
+    try {
+      session.requireRun(runLease);
+    } on Failure catch (stale) {
+      if (stale.code == ErrorCode.staleRun) return;
+      rethrow;
     }
-    await session.fail(writer, error);
+    try {
+      if (cancelled || (error is Failure && error.code == ErrorCode.cancelled)) {
+        // Scheduler/lifecycle cancellation ends only this transport attempt.
+        // It is not evidence that the authoritative encoded partial failed.
+        // Preserve committed bytes as an idle resumable partial; composition
+        // policy alone decides whether/when another network attempt runs.
+        await session.pause(writer);
+        return;
+      }
+      await session.fail(writer, error);
+    } on Failure catch (failure) {
+      // A concurrent reset owns the writer cleanup and invalidates this run.
+      // Do not replace the transport error with a stale cleanup error.
+      if (failure.code == ErrorCode.staleRun &&
+          !session.isCurrentRun(runLease)) {
+        return;
+      }
+      rethrow;
+    }
   }
 
   Future<List<int>> _verifyArtifactOverlap({
@@ -616,6 +874,7 @@ final class DownloadJob {
     CancelToken? cancel,
     _ResponseReadGate? flowGate,
     int Function()? networkCursor,
+    Future<void> Function()? onAbort,
   }) async {
     final expectedLength = preservedLength - probeStart;
     if (expectedLength <= 0 || expectedLength > _validatorlessResumeProbeBytes) {
@@ -624,15 +883,11 @@ final class DownloadJob {
         message: 'validatorless resume probe has an invalid overlap range',
       );
     }
-    final expectedBuilder = BytesBuilder(copy: false);
-    await for (final chunk in session.artifact.readChunks(
-      chunkSize: _validatorlessResumeProbeBytes,
+    final expected = await _readExistingArtifact(
       start: probeStart,
       endExclusive: preservedLength,
-    )) {
-      expectedBuilder.add(chunk);
-    }
-    final expected = expectedBuilder.takeBytes();
+      cancel: cancel,
+    );
     if (expected.length != expectedLength) {
       throw const Failure(
         code: ErrorCode.resumeRejected,
@@ -647,6 +902,7 @@ final class DownloadJob {
         cancel,
         flowGate: flowGate,
         networkCursor: networkCursor?.call() ?? 0,
+        onAbort: onAbort,
       );
       if (!available) {
         throw const Failure(
@@ -689,19 +945,19 @@ final class DownloadJob {
     CancelToken? cancel,
     _ResponseReadGate? flowGate,
     int Function()? networkCursor,
+    Future<void> Function()? onAbort,
   }) async {
     if (preservedLength <= 0) {
       return const <int>[];
     }
     var targetChecksum = expectedChecksum;
     if (targetChecksum.isEmpty) {
-      final diskCrc = Crc32();
-      await for (final chunk in session.artifact.readChunks(
+      final preserved = await _readExistingArtifact(
         start: 0,
         endExclusive: preservedLength,
-      )) {
-        diskCrc.add(chunk);
-      }
+        cancel: cancel,
+      );
+      final diskCrc = Crc32()..add(preserved);
       targetChecksum = diskCrc.hex;
     }
     if (targetChecksum.isEmpty) {
@@ -726,6 +982,7 @@ final class DownloadJob {
         cancel,
         flowGate: flowGate,
         networkCursor: networkCursor?.call() ?? 0,
+        onAbort: onAbort,
       );
       if (!available) {
         throw const Failure(
@@ -760,10 +1017,61 @@ final class DownloadJob {
   }
 
 
+  Future<Uint8List> _readExistingArtifact({
+    required int start,
+    required int endExclusive,
+    CancelToken? cancel,
+  }) async {
+    final iterator = StreamIterator<List<int>>(
+      session.artifact.readChunks(
+        start: start,
+        endExclusive: endExclusive,
+      ),
+    );
+    final builder = BytesBuilder(copy: false);
+    try {
+      while (true) {
+        bool available;
+        if (cancel == null) {
+          available = await iterator.moveNext();
+        } else {
+          cancel.throwIfCancelled();
+          try {
+            available = await Future.any<bool>(<Future<bool>>[
+              iterator.moveNext(),
+              cancel.whenCancelled.then<bool>((_) {
+                throw const Failure(
+                  code: ErrorCode.cancelled,
+                  message: 'existing partial read was cancelled',
+                );
+              }),
+            ]);
+          } catch (error, stackTrace) {
+            if (cancel.cancelled) cancel.throwIfCancelled();
+            throw Error.throwWithStackTrace(error, stackTrace);
+          }
+        }
+        if (!available) break;
+        cancel?.throwIfCancelled();
+        builder.add(iterator.current);
+      }
+    } finally {
+      try {
+        await iterator.cancel();
+      } on Object {
+        // Preserve the body/cancellation failure; the iterator's generator
+        // still receives its best-effort close request.
+      }
+    }
+    return builder.takeBytes();
+  }
+
   Future<void> _deferCostlyFullBodyCatchupIfNeeded({
     required int preservedLength,
+    required RunLease runLease,
     CancelToken? cancel,
     ByteResponse? response,
+    _DownloadResponseLifetime? responseOwner,
     Map<String, Object?> diagnostics = const <String, Object?>{},
   }) async {
     final allowed = allowFullBodyCatchup?.call(preservedLength) ?? true;
@@ -771,8 +1079,9 @@ final class DownloadJob {
       return;
     }
     if (response != null) {
-      await response.discard();
+      await (responseOwner?.discard() ?? response.discard(control: cancel));
     }
+    session.requireRun(runLease);
     session.recordResume(
       restarted: true,
       strategy: 'full-body-prefix-catchup-deferred',
@@ -793,23 +1102,99 @@ final class DownloadJob {
     CancelToken? cancel, {
     _ResponseReadGate? flowGate,
     int networkCursor = 0,
+    Future<void> Function()? onAbort,
   }) async {
     if (flowGate != null) {
       await flowGate.waitBeforeRead(networkCursor: networkCursor);
     }
     if (cancel == null) {
-      return iterator.moveNext();
+      return _moveNextWithStallWatchdog(iterator, onAbort: onAbort);
     }
     cancel.throwIfCancelled();
-    final result = await Future.any<Object>(<Future<Object>>[
-      iterator.moveNext().then<Object>(_NextChunk.new),
-      cancel.whenCancelled.then<Object>((_) => const _DownloadCancelled()),
-    ]);
+    final Object result;
+    try {
+      result = await Future.any<Object>(<Future<Object>>[
+        _moveNextWithStallWatchdog(iterator, onAbort: onAbort)
+            .then<Object>(_NextChunk.new),
+        cancel.whenCancelled.then<Object>((_) => const _DownloadCancelled()),
+      ]);
+    } catch (error, stackTrace) {
+      // If the body and cancellation complete in the same turn, cancellation
+      // remains the owner-visible outcome. The caller's attempt cleanup still
+      // cancels/discards the iterator, while this conversion prevents a late
+      // body exception from masking the scheduler cancellation.
+      if (cancel.cancelled) cancel.throwIfCancelled();
+      throw Error.throwWithStackTrace(error, stackTrace);
+    }
     if (result is _DownloadCancelled) {
-      await iterator.cancel();
+      await _cancelIteratorAndDiscard(iterator, onAbort);
       cancel.throwIfCancelled();
     }
     return (result as _NextChunk).available;
+  }
+
+  /// One body read, raced against the read-stall watchdog. The watchdog only
+  /// covers the read itself — flow-control parking happens before it in
+  /// [waitBeforeRead] and may legitimately wait.
+  Future<bool> _moveNextWithStallWatchdog(
+    StreamIterator<List<int>> iterator, {
+    Future<void> Function()? onAbort,
+  }) {
+    if (readStallTimeout <= Duration.zero) {
+      return iterator.moveNext();
+    }
+    final watchdog = Completer<Never>();
+    final timer = Timer(readStallTimeout, () {
+      if (!watchdog.isCompleted) {
+        watchdog.completeError(const Failure(
+          code: ErrorCode.network,
+          message: 'body read stalled: no bytes within the read stall window',
+        ));
+      }
+    });
+    return Future.any<bool>(<Future<bool>>[
+      Future<bool>.sync(iterator.moveNext),
+      watchdog.future,
+    ]).then<bool>((available) {
+      timer.cancel();
+      return available;
+    }, onError: (Object error, StackTrace stackTrace) async {
+      timer.cancel();
+      if (watchdog.isCompleted) {
+        // The watchdog won the race: the read never returned. Cancel the
+        // abandoned subscription before propagating so the response cannot
+        // leak past the task exit.
+        await _cancelIteratorAndDiscard(iterator, onAbort);
+      }
+      throw Error.throwWithStackTrace(error, stackTrace);
+    });
+  }
+
+  Future<void> _cancelIteratorAndDiscard(
+    StreamIterator<List<int>> iterator,
+    Future<void> Function()? discard,
+  ) async {
+    try {
+      await iterator.cancel();
+    } on Object {
+      // Iterator cancellation is best-effort cleanup. Preserve the original
+      // body/cancellation/watchdog failure while still attempting response
+      // discard below.
+    }
+    await _discardAfterAbort(discard);
+  }
+
+  Future<void> _discardAfterAbort(
+    Future<void> Function()? discard,
+  ) async {
+    if (discard == null) return;
+    try {
+      await discard();
+    } on Object {
+      // Preserve the cancellation/watchdog/body failure that caused this
+      // cleanup. A later owner retry can observe a transport-discard error if
+      // the response implementation reports it independently.
+    }
   }
 
   Future<void> _discardIfCancelled(
@@ -817,9 +1202,37 @@ final class DownloadJob {
     ByteResponse response,
   ) async {
     if (cancel?.cancelled ?? false) {
-      await response.discard();
+      await _discardAfterAbort(
+        () => response.discard(control: cancel),
+      );
       cancel!.throwIfCancelled();
     }
+  }
+
+  Future<void> _discardIfCancelledForRun(
+    CancelToken? cancel,
+    ByteResponse response, {
+    required RunLease runLease,
+  }) async {
+    await _discardIfCancelled(cancel, response);
+    session.requireRun(runLease);
+  }
+
+  Future<ByteResponse> _openForRun(
+    Future<ByteResponse> Function() open, {
+    required RunLease runLease,
+    CancelToken? cancel,
+  }) async {
+    final response = await open();
+    try {
+      session.requireRun(runLease);
+    } on Object {
+      await _discardAfterAbort(
+        () => response.discard(control: cancel),
+      );
+      rethrow;
+    }
+    return response;
   }
 
   Future<ByteResponse> _openRange(int start, CancelToken? cancel) {
@@ -828,15 +1241,21 @@ final class DownloadJob {
         : null;
     final range = ByteRange(start: start);
     if (controlled != null) {
-      return controlled.openControlled(
-        _requestUri,
-        range: range,
+      return _openWithStallWatchdog(
+        () => controlled.openControlled(
+          _requestUri,
+          range: range,
+          control: cancel,
+        ),
         control: cancel,
       );
     }
-    return transport.open(
-      _requestUri,
-      range: range,
+    return _openWithStallWatchdog(
+      () => transport.open(
+        _requestUri,
+        range: range,
+      ),
+      control: cancel,
     );
   }
 
@@ -847,26 +1266,143 @@ final class DownloadJob {
     final validators = session.resumeValidatorsFor(_requestUri);
     if (start > 0 && validators.canResume) {
       if (controlled != null) {
-        return controlled.openControlled(
-          _requestUri,
-          range: ByteRange(start: start),
-          validators: validators,
+        return _openWithStallWatchdog(
+          () => controlled.openControlled(
+            _requestUri,
+            range: ByteRange(start: start),
+            validators: validators,
+            control: cancel,
+          ),
           control: cancel,
         );
       }
-      return transport.open(
-        _requestUri,
-        range: ByteRange(start: start),
-        validators: validators,
-      );
-    }
-    if (controlled != null) {
-      return controlled.openControlled(
-        _requestUri,
+      return _openWithStallWatchdog(
+        () => transport.open(
+          _requestUri,
+          range: ByteRange(start: start),
+          validators: validators,
+        ),
         control: cancel,
       );
     }
-    return transport.open(_requestUri);
+    if (controlled != null) {
+      return _openWithStallWatchdog(
+        () => controlled.openControlled(
+          _requestUri,
+          control: cancel,
+        ),
+        control: cancel,
+      );
+    }
+    return _openWithStallWatchdog(
+      () => transport.open(_requestUri),
+      control: cancel,
+    );
+  }
+
+  /// Bounds one transport open with the same read-stall window. A suspended
+  /// plugin runtime or a dead socket blocks the request **before** any body
+  /// read starts, so the read watchdog alone never fires there; without this
+  /// bound the admitted task sits in open() forever, keeps its NetLane task
+  /// key and blocks every retry from being admitted.
+  Future<ByteResponse> _openWithStallWatchdog(
+    Future<ByteResponse> Function() open, {
+    CancelToken? control,
+  }) {
+    control?.throwIfCancelled();
+    control?.markResponseOpening();
+    final pending = Future<ByteResponse>.sync(open);
+    if (readStallTimeout <= Duration.zero) {
+      if (control == null) {
+        return pending.then<ByteResponse>((response) {
+          control?.markResponseOpened();
+          return response;
+        });
+      }
+      return Future.any<ByteResponse>(<Future<ByteResponse>>[
+        pending,
+        control.whenCancelled.then<ByteResponse>((_) {
+          throw const Failure(
+            code: ErrorCode.cancelled,
+            message: 'transport open was cancelled',
+          );
+        }),
+      ]).then<ByteResponse>((response) {
+        control.markResponseOpened();
+        return response;
+      }, onError: (Object error, StackTrace stackTrace) async {
+        if (control.cancelled) {
+          // An uncontrolled open may complete after the caller has already
+          // abandoned this attempt. It still owns a response if it eventually
+          // succeeds, so discard that late response rather than leaking the
+          // underlying socket/stream when the watchdog is disabled.
+          unawaited(
+            pending.then<void>(
+              (response) async {
+                try {
+                  await response.discard(control: control);
+                } on Object {
+                  // The cancellation error remains authoritative.
+                }
+              },
+              onError: (Object _, StackTrace __) {},
+            ),
+          );
+          control.throwIfCancelled();
+        }
+        throw Error.throwWithStackTrace(error, stackTrace);
+      });
+    }
+    final watchdog = Completer<Never>();
+    final timer = Timer(readStallTimeout, () {
+      if (!watchdog.isCompleted) {
+        watchdog.completeError(const Failure(
+          code: ErrorCode.network,
+          message:
+              'transport open stalled: no response within the read stall window',
+        ));
+      }
+    });
+    final waits = <Future<ByteResponse>>[
+      pending,
+      watchdog.future,
+    ];
+    if (control != null) {
+      waits.add(control.whenCancelled.then<ByteResponse>((_) {
+        throw const Failure(
+          code: ErrorCode.cancelled,
+          message: 'transport open was cancelled',
+        );
+      }));
+    }
+    return Future.any<ByteResponse>(waits).then<ByteResponse>((response) {
+      timer.cancel();
+      control?.markResponseOpened();
+      return response;
+    }, onError: (Object error, StackTrace stackTrace) async {
+      timer.cancel();
+      if (watchdog.isCompleted || control?.cancelled == true) {
+        // The open may still complete long after the watchdog or cancellation
+        // gave up; discard the late response so the underlying request cannot
+        // leak.
+        unawaited(
+          pending.then<void>(
+            (response) async {
+              try {
+                await response.discard(control: control);
+              } on Object {
+                // The watchdog/cancellation error remains authoritative.
+              }
+            },
+            onError: (Object _, StackTrace __) {},
+          ),
+        );
+      }
+      if (control?.cancelled == true) {
+        control!.throwIfCancelled();
+      }
+      throw Error.throwWithStackTrace(error, stackTrace);
+    });
   }
 }
 
@@ -874,12 +1410,14 @@ final class _ResponseReadGate {
   _ResponseReadGate({
     required this.session,
     required this.cancel,
+    required this.runLease,
     required this.capability,
     required this.rangeSupported,
   }) : _authoritativeCatchupFloor = session.committedLength;
 
   final DownloadSession session;
   final CancelToken? cancel;
+  final RunLease runLease;
   final ByteResponseFlowControl capability;
   final bool rangeSupported;
   final int _authoritativeCatchupFloor;
@@ -921,26 +1459,73 @@ final class _ResponseReadGate {
   }
 
   Future<void> _ensureInitialized() async {
+    session.requireRun(runLease);
     if (_tracker != null || _initializing) return;
+    final control = cancel;
+    if (control == null) return;
     _initializing = true;
+    final iterator = StreamIterator<List<int>>(
+      session.artifact.readChunks(
+        endExclusive: session.committedLength,
+      ),
+    );
     try {
       final tracker = WebpFramePrefixTracker();
-      await for (final chunk in session.artifact.readChunks(
-        endExclusive: session.committedLength,
-      )) {
-        tracker.add(chunk);
+      while (true) {
+        control.throwIfCancelled();
+        final Object result;
+        try {
+          result = await Future.any<Object>(<Future<Object>>[
+            iterator.moveNext().then<Object>((available) => available),
+            control.whenCancelled.then<Object>((_) {
+              throw const Failure(
+                code: ErrorCode.cancelled,
+                message: 'flow-control artifact read was cancelled',
+              );
+            }),
+            control.whenDemandChanged.then<Object>(
+              (_) => const _FlowDemandChanged(),
+            ),
+          ]);
+        } catch (error, stackTrace) {
+          if (control.cancelled) control.throwIfCancelled();
+          throw Error.throwWithStackTrace(error, stackTrace);
+        }
+        session.requireRun(runLease);
+        if (result is _FlowDemandChanged) return;
+        final available = result as bool;
+        if (!available) break;
+        control.throwIfCancelled();
+        // A demanded-state withdrawal is a parking transition, not task
+        // cancellation. Do not finish scanning a potentially large persisted
+        // prefix while still holding the response-read permit; abandon this
+        // provisional tracker and let waitBeforeRead release the permit.
+        if (!control.demanded || control.flowTargetFrames <= 0) return;
+        session.requireRun(runLease);
+        tracker.add(iterator.current);
       }
+      session.requireRun(runLease);
       _tracker = tracker;
     } finally {
+      try {
+        await iterator.cancel();
+      } on Object {
+        // Preserve the body/cancellation failure that caused this local
+        // replay to stop; the iterator still received its best-effort close.
+      }
       _initializing = false;
     }
   }
 
   Future<void> waitBeforeRead({required int networkCursor}) async {
     final control = cancel;
-    if (control == null) return;
+    if (control == null) {
+      session.requireRun(runLease);
+      return;
+    }
 
     while (true) {
+      session.requireRun(runLease);
       control.throwIfCancelled();
       final demandParked = !control.demanded;
       var flowParked = false;
@@ -948,6 +1533,11 @@ final class _ResponseReadGate {
       if (!demandParked && control.flowTargetFrames > 0 &&
           networkCursor >= _authoritativeCatchupFloor) {
         await _ensureInitialized();
+        session.requireRun(runLease);
+        // Demand withdrawal may have interrupted the provisional artifact
+        // scan. Re-evaluate it after the await rather than returning to the
+        // body-read path with the stale pre-scan value.
+        if (!control.demanded) continue;
         tracker = _tracker;
         flowParked = tracker != null &&
             !tracker.unsupported &&
@@ -956,6 +1546,21 @@ final class _ResponseReadGate {
       if (!demandParked && !flowParked) {
         if (_paused) {
           await control.acquireResponseReadPermit();
+          session.requireRun(runLease);
+          // Demand may have been withdrawn while the resume waiter was
+          // pending. NetLane completes that waiter to wake this task, but it
+          // must not let a demand reattachment race make the task continue
+          // without actually holding a body-read permit.
+          if (!control.demanded || !control.responseReadPermitHeld) {
+            // Demand can be withdrawn after NetLane grants the resume waiter
+            // but before this continuation observes that grant. Return the
+            // retained response to the parked state instead of carrying the
+            // body-read permit while waiting for a future reattachment.
+            if (!control.demanded && control.responseReadPermitHeld) {
+              control.releaseResponseReadPermit(responseRetained: true);
+            }
+            continue;
+          }
           _paused = false;
           session.recordFlowControl(
             action: capability == ByteResponseFlowControl.streamBackpressure
@@ -1030,12 +1635,25 @@ final class _ResponseReadGate {
       // changes are polled because decoder need-more-data can strengthen the
       // playable-prefix floor without a second scheduler owner.
       await control.waitForControlChangeOrTimeout(_flowEvidencePollInterval);
+      session.requireRun(runLease);
     }
   }
 
   void addAuthoritativeBytes(List<int> bytes) {
+    session.requireRun(runLease);
     _tracker?.add(bytes);
   }
+}
+
+final class _DownloadResponseLifetime {
+  _DownloadResponseLifetime(this.response, {required this.control});
+
+  final ByteResponse response;
+  final TaskControl? control;
+  Future<void>? _discardFuture;
+
+  Future<void> discard() => _discardFuture ??=
+      response.discard(control: control);
 }
 
 final class _NextChunk {
@@ -1046,4 +1664,8 @@ final class _NextChunk {
 
 final class _DownloadCancelled {
   const _DownloadCancelled();
+}
+
+final class _FlowDemandChanged {
+  const _FlowDemandChanged();
 }

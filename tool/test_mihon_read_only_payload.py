@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Compile and execute the production Mihon read-only APK staging helper."""
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+
+kotlinc = shutil.which('kotlinc')
+java = shutil.which('java')
+if not kotlinc or not java:
+    print('SKIP: kotlinc/java are not installed for Mihon read-only APK staging')
+    raise SystemExit(0)
 
 root = Path(__file__).resolve().parents[1]
 source = (

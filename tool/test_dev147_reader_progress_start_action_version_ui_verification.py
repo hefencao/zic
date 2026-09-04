@@ -125,9 +125,9 @@ for token in (
     'final class ComicDetailsVersionState',
     'List<SourceComicVersion> successors',
     'List<SourceComicVersion> predecessors',
-    "final label = successor ? '新版本' : '旧版本';",
-    "child: Text('查看$label')",
-    "child: const Text('迁移')",
+    "title: Text(showPredecessors ? '旧版本' : '新版本')",
+    'onTap: () => Navigator.pop(',
+    'icon: const Icon(Icons.compare_arrows)',
     'showDialog<SourceComicVersion>',
 ):
     require(details, token, 'Vibe-style version detail UI')
@@ -181,7 +181,7 @@ for token in (
     "details separates same-source version view and migration",
     "find.byKey(details.comicDetailsVersionViewKey)",
     "find.byKey(details.comicDetailsVersionMigrateKey)",
-    "find.text('查看新版本')",
+    "find.text('新版本')",
     "find.text('有新版本'), findsNothing",
 ):
     require(source_test, token, 'version UI owner test')

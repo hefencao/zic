@@ -6,6 +6,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/native/libwebp.lock"
 MODE="${ZIC_WEBP_HOST_MODE:-release}"
 LINK="${ZIC_WEBP_HOST_LINK:-shared}"
+if [[ ! -w "$ROOT" ]] || [[ -e "$ROOT/.deps" && ! -w "$ROOT/.deps" ]]; then
+  export ZIC_DEPS_DIR="${ZIC_DEPS_DIR:-/tmp/zic-deps}"
+fi
 DEPS="${ZIC_DEPS_DIR:-$ROOT/.deps}"
 PREFIX="$DEPS/install/libwebp/host/$WEBP_VERSION/$MODE/$LINK"
 FIXTURE="$ROOT/native/media_core/testdata/animated.webp"

@@ -346,9 +346,9 @@ void main() {
       final presented = trace.events.firstWhere(
         (event) => event.kind == TraceEventKind.framePresented,
       );
-      expect(decodeStarted.identityHash, startsWith(identity.key));
-      expect(decoded.identityHash, startsWith(identity.key));
-      expect(presented.identityHash, startsWith(identity.key));
+      expect(decodeStarted.identityHash, contains(identity.key));
+      expect(decoded.identityHash, contains(identity.key));
+      expect(presented.identityHash, contains(identity.key));
       expect(decodeStarted.revision, 11);
       expect(decoded.revision, 11);
       expect(presented.revision, 11);

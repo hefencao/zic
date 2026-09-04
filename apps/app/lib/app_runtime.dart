@@ -92,6 +92,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
   late final HomeServiceHandoff _serviceHandoff;
   _AppServices? _services;
   Timer? _servicesStartupTimer;
+  Future<void>? _servicesOpening;
   bool _homeMounted = false;
   bool _disposed = false;
 
@@ -142,7 +143,8 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     _serviceHandoff = HomeServiceHandoff()
       ..setBootstrapLibrary(_bootstrapLibrary)
       ..setBootstrapCache(_bootstrapCache)
-      ..setChapterDownloadRelay(changeChapterDownloadDirectory);
+      ..setChapterDownloadRelay(changeChapterDownloadDirectory)
+      ..setEnsureCoreServices(_ensureDurableServices);
     // Begin both small durable reads before durable services are opened.
     // HomeLibrarySession joins the in-flight snapshot read later, while
     // preferences can finish before the durable composition is adopted.
@@ -228,8 +230,44 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     });
   }
 
-  Future<void> _openDurableServices() async {
+  Future<void> _ensureDurableServices() async {
     if (_disposed) return;
+    if (_services?.hasCoreServices == true) return;
+    await _openDurableServices(forceDurable: true);
+    if (_services?.hasCoreServices != true) {
+      throw StateError('durable download services are unavailable');
+    }
+  }
+
+  Future<void> _openDurableServices({bool forceDurable = false}) async {
+    if (_disposed || _services?.hasCoreServices == true) {
+      return Future<void>.value();
+    }
+    final existing = _servicesOpening;
+    if (existing != null) {
+      await existing;
+      // A first-frame background open may have intentionally observed an
+      // empty install and returned the bootstrap-only composition. An
+      // explicit download arriving during that window must upgrade the same
+      // handoff to a forced durable open rather than surfacing a transient
+      // "services unavailable" error.
+      if (forceDurable && _services?.hasCoreServices != true && !_disposed) {
+        return _openDurableServices(forceDurable: true);
+      }
+      return;
+    }
+    late final Future<void> opening;
+    opening = _openDurableServicesOnce(forceDurable: forceDurable).whenComplete(() {
+      if (identical(_servicesOpening, opening)) {
+        _servicesOpening = null;
+      }
+    });
+    _servicesOpening = opening;
+    await opening;
+  }
+
+  Future<void> _openDurableServicesOnce({bool forceDurable = false}) async {
+    if (_disposed || _services?.hasCoreServices == true) return;
     _startupLog('services-open-start');
     _startupTelemetry.servicesOpenStarted();
     final services = await _openServices(
@@ -237,7 +275,10 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       _preferences,
       storageRoot: _storageRoot,
       preferencesReady: _preferencesReady,
+      bootstrapLibrary: _bootstrapLibrary,
+      forceDurable: forceDurable,
       responseCache: _serviceHandoff.cacheCoordinator?.responses,
+      debugTrace: _debugTrace,
     );
     if (_disposed) {
       if (services.hasCoreServices) {
@@ -281,6 +322,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       externalPlugins: services.externalPlugins,
       externalPluginLoader: () => _ensureExternalPlugins(services),
       platformEnvironmentLoader: services.ensurePlatformEnvironment,
+      ensureCoreServices: _ensureDurableServices,
       storageRoot: services.storageRoot,
       persistHomeProjectionSnapshot: true,
     );
@@ -310,8 +352,15 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     String? directory,
     required bool migrateFiles,
   }) async {
-    final services = _services;
     final root = await _storageRoot;
+    if (_services?.hasCoreServices != true) {
+      try {
+        await _ensureDurableServices();
+      } on Object {
+        return '存储尚未就绪，请稍后重试';
+      }
+    }
+    final services = _services;
     if (services == null) {
       return '存储尚未就绪，请稍后重试';
     }
@@ -442,16 +491,30 @@ final class _BootstrapAppState extends State<_BootstrapApp>
         debugPrint('chapter-download move failed: $error');
       }
     }
+    // If the move failed before the source index was moved, reopening the
+    // target would create a fresh cache.sqlite there. That empty database
+    // would then conflict with the source database on the next startup retry,
+    // permanently stranding the pending move. Keep the source authoritative
+    // until recovery moves it successfully; if the source index is already
+    // gone, the target is the only authoritative side after a partial move.
+    final rebuildDirectory = moveError == null
+        ? target
+        : pendingFrom != null &&
+                await chapterDownloadIndexExists(pendingFrom)
+            ? pendingFrom
+            : target;
     final rebuildError = await _rebuildDownloadServices(
       storageRoot: root,
-      downloadDirectory: target,
+      downloadDirectory: rebuildDirectory,
       previous: services,
     );
     if (rebuildError != null) {
       _publishDegradedServices(storageRoot: root);
       return '目录已更新，但下载服务重启失败：$rebuildError';
     }
-    _preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+    if (moveError == null) {
+      _preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+    }
     return moveError == null ? null : '目录已切换，但部分文件迁移失败：$moveError';
   }
 
@@ -478,6 +541,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
             ? null
             : _SafTreeIoAdapter(SafStore(treeUri: safOverride)),
         safTreeUri: safOverride,
+        traceSink: _debugTrace,
       );
       final cacheCoordinator = createAppResourceCache(
         storageRoot: storageRoot,
@@ -496,6 +560,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
         downloads: composition.chapterDownloads,
         environment: platformEnvironment,
         ownsEnvironment: true,
+        storageRootId: composition.artifactStore.storageRootId,
       );
       final services = _AppServices(
         libraryStore: previous.libraryStore,
@@ -525,6 +590,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
         externalPlugins: services.externalPlugins,
         externalPluginLoader: () => _ensureExternalPlugins(services),
         platformEnvironmentLoader: services.ensurePlatformEnvironment,
+        ensureCoreServices: _ensureDurableServices,
         storageRoot: services.storageRoot,
         persistHomeProjectionSnapshot: true,
       );
@@ -788,7 +854,8 @@ final class _AppServices {
 /// Binds the app-side SAF channel client to the downloads package's
 /// transport interface. Lives here because platform channels are an app
 /// concern; the package stays testable with fakes.
-class _SafTreeIoAdapter implements SafTreeIo {
+class _SafTreeIoAdapter
+    implements SafTreeIo, SafTreeAtomicReplace {
   _SafTreeIoAdapter(this._store);
 
   final SafStore _store;
@@ -829,6 +896,14 @@ class _SafTreeIoAdapter implements SafTreeIo {
   Future<bool> exists(String relativePath) => _store.exists(relativePath);
 
   @override
+  Future<bool> rename(String relativePath, String newRelativePath) =>
+      _store.rename(relativePath, newRelativePath);
+
+  @override
+  Future<bool> replace(String relativePath, String newRelativePath) =>
+      _store.replace(relativePath, newRelativePath);
+
+  @override
   Future<int?> length(int handle) => _store.length(handle);
 
   @override
@@ -851,7 +926,10 @@ Future<_AppServices> _openServices(
   AppPreferencesController preferences, {
   Future<String>? storageRoot,
   Future<void>? preferencesReady,
+  ImportedLibraryStore? bootstrapLibrary,
   ResourceCacheManager? responseCache,
+  TraceSink? debugTrace,
+  bool forceDurable = false,
 }) async {
   ImportedLibraryStore? libraryStore;
   ManagedChapterDownloadService? chapterDownloads;
@@ -859,6 +937,7 @@ Future<_AppServices> _openServices(
   WholeComicDownloadQueue? wholeComicDownloads;
   ResourceCacheCoordinator? cacheCoordinator;
   String? resolvedStorageRoot;
+  var ownsLibraryStore = true;
   try {
     final openedAt = telemetry.nowMicros();
     var stageStarted = telemetry.nowMicros();
@@ -899,12 +978,40 @@ Future<_AppServices> _openServices(
     // open the stores, then resolve the effective download directory for this
     // launch. The default-location probe above stays valid; an override only
     // adds one extra cheap file existence check below.
-    final chapterDownloadDirectory = await settleChapterDownloadDirectory(
-      storageRoot: root,
-      configuredOverride: preferences.chapterDownloadDirectoryOverride,
-      pendingMoveFrom: preferences.chapterDownloadDirectoryPendingMoveFrom,
-    );
-    preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+    final configuredChapterDownloadDirectory =
+        preferences.chapterDownloadDirectoryOverride ??
+        defaultChapterDownloadDirectory(root);
+    late final String chapterDownloadDirectory;
+    var chapterDownloadMoveSettled = true;
+    try {
+      chapterDownloadDirectory = await settleChapterDownloadDirectory(
+        storageRoot: root,
+        configuredOverride: preferences.chapterDownloadDirectoryOverride,
+        pendingMoveFrom: preferences.chapterDownloadDirectoryPendingMoveFrom,
+      );
+    } on Object catch (error) {
+      // Keep the intent marker when recovery could not finish. The target is
+      // still usable for startup, while the next launch gets another chance
+      // to complete the source-to-target move.
+      chapterDownloadMoveSettled = false;
+      final pendingSource =
+          preferences.chapterDownloadDirectoryPendingMoveFrom;
+      // A preflight failure leaves the source store authoritative. Reopen it
+      // when its index is still present; otherwise the destination already
+      // owns the moved index and is the only usable recovery side.
+      final sourceHasIndex = pendingSource != null &&
+          await chapterDownloadIndexExists(pendingSource);
+      chapterDownloadDirectory = sourceHasIndex
+          ? pendingSource
+          : configuredChapterDownloadDirectory;
+      debugPrint(
+        'chapter-download move recovery failed: $error; '
+        'using $chapterDownloadDirectory while retaining retry marker',
+      );
+    }
+    if (chapterDownloadMoveSettled) {
+      preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
+    }
     _startupLog(
       'chapter-download-directory-resolved path=$chapterDownloadDirectory',
     );
@@ -920,15 +1027,24 @@ Future<_AppServices> _openServices(
       'durationMs=${durableStateClock.elapsedMilliseconds} '
       'exists=$hasDurableState',
     );
-    if (!hasDurableState) {
+    if (!hasDurableState && !forceDurable) {
       _startupLog('durable-state-absent');
       return _AppServices(storageRoot: root);
     }
 
     stageStarted = telemetry.nowMicros();
     _startupLog('library-store-open-start');
-    libraryStore = await openImportedLibraryStore(root);
-    _startupLog('library-store-open-complete');
+    final bootstrap = bootstrapLibrary;
+    if (bootstrap is LazyImportedLibraryStore) {
+      libraryStore = await bootstrap.ensureDurable();
+      ownsLibraryStore = false;
+    } else {
+      libraryStore = await openImportedLibraryStore(root);
+    }
+    _startupLog(
+      'library-store-open-complete '
+      'sharedBootstrap=${bootstrap is LazyImportedLibraryStore}',
+    );
     telemetry.serviceReady('library-store', startedAtMicros: stageStarted);
     stageStarted = telemetry.nowMicros();
     _startupLog('download-composition-open-start');
@@ -945,6 +1061,7 @@ Future<_AppServices> _openServices(
           ? null
           : _SafTreeIoAdapter(SafStore(treeUri: safOverride)),
       safTreeUri: safOverride,
+      traceSink: debugTrace,
     );
     _startupLog('download-composition-open-complete');
     chapterDownloads = downloadComposition.chapterDownloads;
@@ -974,6 +1091,7 @@ Future<_AppServices> _openServices(
       downloads: chapterDownloads,
       environment: platformEnvironment,
       ownsEnvironment: true,
+      storageRootId: downloadComposition.artifactStore.storageRootId,
     );
     telemetry.serviceReady('whole-comic-queue', startedAtMicros: stageStarted);
     final services = _AppServices(
@@ -1014,7 +1132,9 @@ Future<_AppServices> _openServices(
     } else {
       await chapterDownloads?.close();
     }
-    await libraryStore?.close();
+    if (ownsLibraryStore) {
+      await libraryStore?.close();
+    }
     // External source management is independent from the core library and
     // download stores. If one of those stores cannot open (for example while
     // recovering a cross-version schema), keep the resolved root so the

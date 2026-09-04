@@ -1908,7 +1908,10 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final categories = _displaySections();
     return AnimatedBuilder(
       animation: _aggregateSearch,
-      builder: (context, child) => Material(
+      builder: (context, child) => GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onVerticalDragStart: (_) => _collapseSearch(),
+        child: Material(
         key: comicSourceSearchHistoryKey,
         elevation: 6,
         borderRadius: BorderRadius.circular(24),
@@ -2017,7 +2020,8 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
           ),
         ),
       ),
-    );
+    ),
+  );
   }
 
   Widget _refreshableStatus(Widget child) {
@@ -3471,6 +3475,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     required this.downloadChanges,
     required this.onDownloadComic,
     this.inspectChapterDownloads,
+    this.downloadActions = details.ComicDetailsDownloadActions.noop,
     this.inspectComicConflicts,
     this.artworkIdentity,
     this.onOpenSourceWebView,
@@ -3505,6 +3510,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final details.ComicDetailsChapterDownloadBulkInspector?
       inspectChapterDownloads;
   final details.ComicDetailsConflictInspector? inspectComicConflicts;
+  final details.ComicDetailsDownloadActions downloadActions;
   final Stream<ChapterDownloadSnapshot> downloadChanges;
   final details.ComicDetailsComicDownloader onDownloadComic;
   final String? artworkIdentity;
@@ -3541,6 +3547,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       inspectComicConflicts: inspectComicConflicts,
       downloadChanges: downloadChanges,
       onDownloadComic: onDownloadComic,
+      downloadActions: downloadActions,
       artworkIdentity: artworkIdentity,
       onOpenSourceWebView: onOpenSourceWebView,
       onOpenSourceSettings: onOpenSourceSettings,

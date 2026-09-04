@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+
+kotlinc = shutil.which('kotlinc')
+java = shutil.which('java')
+if not kotlinc or not java:
+    print('SKIP: kotlinc/java are not installed for Mihon ABI routing')
+    raise SystemExit(0)
 
 root = Path(__file__).resolve().parents[1]
 source = (

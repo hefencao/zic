@@ -24,7 +24,7 @@ require('packages/sessions/lib/src/net_lane.dart',
         'int _batchDepth = 0;',
         'bool _pumpRequested = false;',
         'void _requestPump()',
-        'if (_batchDepth > 0)',
+        'if (_batchDepth > 0',
         '_core.batch(action)')
 require('packages/sessions/lib/src/live_coordinator.dart',
         'net.batch(() {', 'decode.batch(() {', 'upload.batch(() {',

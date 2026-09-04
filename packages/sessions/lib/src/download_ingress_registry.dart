@@ -10,10 +10,12 @@ final class _IngressProjectionEntry {
   _IngressProjectionEntry({
     required this.session,
     required this.projection,
+    this.control,
   });
 
   DownloadSession session;
   final DownloadIngressProjection projection;
+  final _IngressAttachmentControl? control;
   Future<void>? attachment;
   bool active = true;
 }
@@ -37,11 +39,14 @@ final class DownloadIngressProjectionRegistry {
     required this.sources,
     required this.scopePrefix,
     this.residentReplaySource,
+    this.residentReplaySourceWithControl,
   });
 
   final SourcePool sources;
   final String scopePrefix;
   final DownloadResidentReplaySource? residentReplaySource;
+  final DownloadResidentReplaySourceWithControl?
+      residentReplaySourceWithControl;
   final Map<DownloadId, _IngressProjectionEntry> _entries =
       <DownloadId, _IngressProjectionEntry>{};
 
@@ -74,6 +79,7 @@ final class DownloadIngressProjectionRegistry {
         return existing.projection;
       }
       existing.active = false;
+      existing.control?.cancel();
       existing.session.detachIngressProjection(existing.projection.scopeId);
       existing.projection.detach();
       _entries.remove(session.id);
@@ -87,9 +93,13 @@ final class DownloadIngressProjectionRegistry {
       scopeId: '$scopePrefix:physical:${session.sessionId}',
       ingress: sources.get(session.id),
     );
+    final attachmentControl = session.committedLength == 0
+        ? null
+        : _IngressAttachmentControl();
     final entry = _IngressProjectionEntry(
       session: session,
       projection: projection,
+      control: attachmentControl,
     );
     // Publish the local projection before starting a late replay. DecodeSession
     // may safely enter waitingSource against this empty projection while the
@@ -109,6 +119,7 @@ final class DownloadIngressProjectionRegistry {
 
     final attachment = session.attachSynchronizedIngressProjection(
       projection,
+      control: attachmentControl,
       residentReplayChunks: session.residentBodyBacked
           ? (endExclusive) {
               final replay = residentReplaySource;
@@ -121,6 +132,17 @@ final class DownloadIngressProjectionRegistry {
               return replay(session, endExclusive);
             }
           : null,
+      controlledResidentReplayChunks:
+          session.residentBodyBacked &&
+                  residentReplaySourceWithControl != null
+              ? (endExclusive, {required control}) {
+                  return residentReplaySourceWithControl!(
+                    session,
+                    endExclusive,
+                    control: control,
+                  );
+                }
+              : null,
     );
     entry.attachment = attachment;
     unawaited(
@@ -160,6 +182,7 @@ final class DownloadIngressProjectionRegistry {
     if (entry == null || !identical(entry.session, session)) return;
     _entries.remove(session.id);
     entry.active = false;
+    entry.control?.cancel();
     session.detachIngressProjection(entry.projection.scopeId);
     entry.projection.detach();
   }
@@ -174,8 +197,26 @@ final class DownloadIngressProjectionRegistry {
     _entries.clear();
     for (final entry in entries) {
       entry.active = false;
+      entry.control?.cancel();
       entry.session.detachIngressProjection(entry.projection.scopeId);
       entry.projection.detach();
     }
+  }
+}
+
+final class _IngressAttachmentControl implements TaskControl {
+  final Completer<void> _cancelledSignal = Completer<void>();
+
+  @override
+  bool get cancelled => _cancelledSignal.isCompleted;
+
+  @override
+  Future<void> get whenCancelled => _cancelledSignal.future;
+
+  @override
+  int get priority => 0;
+
+  void cancel() {
+    if (!_cancelledSignal.isCompleted) _cancelledSignal.complete();
   }
 }

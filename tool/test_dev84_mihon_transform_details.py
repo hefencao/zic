@@ -64,7 +64,7 @@ for token in (
     '_ExpandableTagRow(',
     'tags: sourceMetadata.tags',
     "label: '下载整本'",
-    'loading: downloadingComic',
+    'downloadingComic: _downloadingComic',
     "label: const Text('继续')",
     "阅读历史 · $progressLabel",
     '_knownPageCount(chapter, entry)',

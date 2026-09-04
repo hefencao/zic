@@ -102,28 +102,91 @@ manager = read('apps/app/lib/download_manager.dart')
 for token in (
     'this.initialSnapshots = const <ChapterDownloadSnapshot>[]',
     'this.initialWholeComicSnapshot,',
+    'this.resolveServices,',
+    'this.projectionChanges,',
+    'this.readProjection,',
+    'this.refreshProjection,',
     'bool _loading = false;',
     'WidgetsBinding.instance.addPostFrameCallback',
     'unawaited(_refreshAfterFirstFrame());',
-    'widget.downloads.inspectMany(_entries.values)',
+    'widget.projectionChanges?.addListener(_handleProjectionChanged);',
+    'if (widget.readProjection == null)',
+    'await _resolveServices();',
+    '_downloads.inspectMany(_entries.values)',
+    '_entryIdentityByChapter',
+    'ListView.builder(',
 ):
     require(manager, token, 'route-first download manager')
-for token in ('scheduleMicrotask(_reload)', '_entries.values.map(widget.downloads.inspect)'):
+for token in (
+    'scheduleMicrotask(_reload)',
+    '_entries.values.map(widget.downloads.inspect)',
+    '_entries.values.map(_downloads.inspect)',
+    '_entries.keys.firstWhere(',
+):
     forbid(manager, token, 'pre-frame per-entry inspection')
 
-home = read('apps/app/lib/demo_home.dart')
+home = '\n'.join((
+    read('apps/app/lib/demo_home.dart'),
+    read('apps/app/lib/demo_home_source_compat.dart'),
+))
 for token in (
-    'initialSnapshots: List<ChapterDownloadSnapshot>.unmodifiable(',
-    '_downloadSnapshots.values,',
-    'initialWholeComicSnapshot: _wholeComicQueueSnapshot,',
+    'final initialProjection = readProjection();',
+    'initialSnapshots: initialProjection.snapshots,',
+    'initialWholeComicSnapshot: initialProjection.wholeComicSnapshot,',
+    'projectionChanges: _librarySession.downloadProjectionChanges,',
+    'readProjection: readProjection,',
+    'refreshProjection: () =>',
+    'resolveServices: () async {',
+    'await _serviceHandoff?.ensureCoreServices?.call();',
+    'await _adoptDurableServices();',
 ):
     require(home, token, 'Home download projection handoff')
+
+home_manager = read('apps/app/lib/demo_home_source_compat.dart')
+manager_open = home_manager[home_manager.index('Future<void> _openDownloadManager()'):]
+for token in (
+    'loadAllEntries:',
+    'await _refreshDownloadSnapshots(_libraryEntries);',
+):
+    forbid(manager_open, token, 'download-manager route storage ownership')
+
+home_session = read('apps/app/lib/home_library_session.dart')
+for token in (
+    'List<ImportedLibraryEntry> get downloadManagerEntries',
+    'ChapterDownloadManagementProjectionReader',
+    'inspectDownloadManagement(requested)',
+    "unawaited(_refreshDownloadSnapshotsAfterFrame(_entries));",
+):
+    require(home_session, token, 'Home-owned download management projection')
+
+downloads = read('packages/downloads/lib/src/chapter_downloads.dart')
+persistent_start = downloads.index('final class PersistentChapterDownloadService')
+management_start = downloads.index(
+    'Future<ChapterDownloadManagementProjection> inspectDownloadManagement(',
+    persistent_start,
+)
+management_end = downloads.index(
+    'List<ImportedLibraryEntry> _discoverOrphanedEntriesFromRecords(',
+    management_start,
+)
+management = downloads[management_start:management_end]
+if management.count('artifactStore.indexedRecords()') != 1:
+    raise SystemExit(
+        'persistent download-management projection must read the artifact index exactly once'
+    )
 
 manager_test = read('apps/app/test/chapter_downloads_test.dart')
 for token in (
     'download manager paints before durable bulk refresh completes',
     'expect(find.byKey(downloadManagerScreenKey), findsOneWidget);',
     'expect(releaseRefresh.isCompleted, isFalse);',
+    'expect(taskList.childrenDelegate, isA<SliverChildBuilderDelegate>());',
+    'download manager keeps persisted Home projection visible during handoff',
+    'expect(releaseServices.isCompleted, isFalse);',
+    'download manager adopts durable projection without reopening or route scan',
+    'resolveServices: () async {',
+    'expect(task, findsOneWidget);',
+    'expect(durableView.inspectManyStarted, isFalse);',
 ):
     require(manager_test, token, 'route-first widget regression')
 

@@ -28,9 +28,9 @@ void main() {
         id.canonicalUri: LoaderTransportSource(
           revision: 'local-r1',
           openControlledResponse: ({range, validators, control}) async {
-            // Only the physical transfer owns a TaskControl. The presentation
-            // direct read opens without one.
-            if (control != null) {
+            // The physical transfer owns the network-ranked CancelToken;
+            // presentation now supplies its own cancellation-only control.
+            if (control != null && control.priority >= 0) {
               return ByteResponse(
                 bytes: _neverEndingBody(),
                 statusCode: 200,

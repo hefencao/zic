@@ -2,6 +2,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ ! -w "$ROOT" ]] || [[ -e "$ROOT/.deps" && ! -w "$ROOT/.deps" ]]; then
+  export ZIC_DEPS_DIR="${ZIC_DEPS_DIR:-/tmp/zic-deps}"
+  export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/tmp/target}"
+fi
 REQUIRE_TOOLCHAINS=0
 if [[ "${1:-}" == "--require-toolchains" ]]; then
   REQUIRE_TOOLCHAINS=1

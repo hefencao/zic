@@ -26,6 +26,11 @@ typedef SourceResourceDirectOpen = Future<ByteResponse> Function(
   ComicResourceRequest request,
 );
 
+typedef SourceResourceControlledDirectOpen = Future<ByteResponse> Function(
+  ComicResourceRequest request, {
+  TaskControl? control,
+});
+
 /// Platform-owned direct media transport used after the source has resolved
 /// an immutable request plan.
 ///
@@ -45,14 +50,21 @@ final class ExternalPluginResourceTransportPool {
   ExternalPluginResourceTransportPool({
     SourceResourceDirectTransport? directTransport,
     SourceResourceDirectOpen? directOpen,
+    SourceResourceControlledDirectOpen? controlledDirectOpen,
     String Function()? defaultUserAgentProvider,
-  })  : assert(directTransport == null || directOpen == null),
+  })  : assert(
+          directTransport == null ||
+              (directOpen == null && controlledDirectOpen == null),
+        ),
+        assert(directOpen == null || controlledDirectOpen == null),
         _directTransport = directTransport,
         _directOpen = directOpen,
+        _controlledDirectOpen = controlledDirectOpen,
         _defaultUserAgentProvider = defaultUserAgentProvider;
 
   final SourceResourceDirectTransport? _directTransport;
   final SourceResourceDirectOpen? _directOpen;
+  final SourceResourceControlledDirectOpen? _controlledDirectOpen;
   final String Function()? _defaultUserAgentProvider;
   final Map<String, _SourceResourceTransport> _transports =
       <String, _SourceResourceTransport>{};
@@ -97,6 +109,7 @@ final class ExternalPluginResourceTransportPool {
         source,
         _directTransport,
         _directOpen,
+        _controlledDirectOpen,
         _defaultUserAgentProvider,
       ),
     );
@@ -118,6 +131,7 @@ final class _SourceResourceTransport implements ControlledTransport {
     this._source,
     this._directTransport,
     this._directOpen,
+    this._controlledDirectOpen,
     this._defaultUserAgentProvider,
   ) {
     _client.connectionTimeout = const Duration(seconds: 15);
@@ -130,6 +144,7 @@ final class _SourceResourceTransport implements ControlledTransport {
   BrowsableComicSource _source;
   final SourceResourceDirectTransport? _directTransport;
   final SourceResourceDirectOpen? _directOpen;
+  final SourceResourceControlledDirectOpen? _controlledDirectOpen;
   final String Function()? _defaultUserAgentProvider;
   final HttpClient _client = HttpClient();
   final Map<Uri, Future<ComicResourceRequest>> _requestLoads =
@@ -137,14 +152,20 @@ final class _SourceResourceTransport implements ControlledTransport {
   final LinkedHashMap<Uri, _RequestPlanEntry> _requestPlans =
       LinkedHashMap<Uri, _RequestPlanEntry>();
   final Set<Uri> _failedStreams = <Uri>{};
+  int _sourceRevision = 0;
 
   void updateSource(BrowsableComicSource source) {
     if (identical(_source, source)) return;
     _source = source;
+    _sourceRevision++;
     // Authentication/settings may have changed with the wrapper. Keep the
     // shared HttpClient and active response streams, but do not reuse plans
-    // resolved by the previous runtime instance.
+    // resolved by the previous runtime instance. In-flight resolution futures
+    // cannot be cancelled through the source contract, so detach them and
+    // prevent their late completion from repopulating the new source's cache.
+    _requestLoads.clear();
     _requestPlans.clear();
+    _failedStreams.clear();
   }
 
   @override
@@ -327,11 +348,15 @@ final class _SourceResourceTransport implements ControlledTransport {
         cacheHit: false,
       );
     }
+    final sourceRevision = _sourceRevision;
     if (control != null) {
       final request = await (controlled != null
           ? controlled.resolveResourceControlled(locator, control: control)
           : resolvable!.resolveResource(locator));
       _throwIfTaskCancelled(control);
+      if (_sourceRevision != sourceRevision) {
+        return _resolve(locator, control: control);
+      }
       _remember(locator, request);
       return (request: request, cacheHit: false);
     }
@@ -340,7 +365,9 @@ final class _SourceResourceTransport implements ControlledTransport {
             ? controlled.resolveResourceControlled(locator)
             : resolvable!.resolveResource(locator))
         .then((request) {
-      _remember(locator, request);
+      if (_sourceRevision == sourceRevision) {
+        _remember(locator, request);
+      }
       return request;
     }).whenComplete(() {
       if (identical(_requestLoads[locator], load)) {
@@ -348,7 +375,11 @@ final class _SourceResourceTransport implements ControlledTransport {
       }
     });
     _requestLoads[locator] = load;
-    return (request: await load, cacheHit: false);
+    final request = await load;
+    if (_sourceRevision != sourceRevision) {
+      return _resolve(locator);
+    }
+    return (request: request, cacheHit: false);
   }
 
   ComicResourceRequest? _cached(Uri locator) {
@@ -448,7 +479,16 @@ final class _SourceResourceTransport implements ControlledTransport {
         control: control,
       );
       if (control?.cancelled == true) {
-        await response.discard();
+        await response.discard(control: control);
+        _throwIfTaskCancelled(control);
+      }
+      return response;
+    }
+    final controlledDirectOpen = _controlledDirectOpen;
+    if (controlledDirectOpen != null) {
+      final response = await controlledDirectOpen(effective, control: control);
+      if (control?.cancelled == true) {
+        await response.discard(control: control);
         _throwIfTaskCancelled(control);
       }
       return response;
@@ -457,7 +497,7 @@ final class _SourceResourceTransport implements ControlledTransport {
     if (directOpen != null) {
       final response = await directOpen(effective);
       if (control?.cancelled == true) {
-        await response.discard();
+        await response.discard(control: control);
         _throwIfTaskCancelled(control);
       }
       return response;
@@ -620,13 +660,15 @@ final class _SourceResourceTransport implements ControlledTransport {
         'sourceRetryUsed': retryUsed,
       },
       readDiagnostics: response.readDiagnostics,
-      onDiscard: response.discard,
+      onDiscardControlled: response.discard,
     );
   }
 
   void close() {
+    _sourceRevision++;
     _requestLoads.clear();
     _requestPlans.clear();
+    _failedStreams.clear();
     _client.close(force: true);
   }
 }
@@ -968,11 +1010,19 @@ _ParsedContentRange? _parseContentRange(String? value) {
   if (value == null) return null;
   final match = RegExp(r'^bytes (\d+)-(\d+)/(\d+|\*)$').firstMatch(value);
   if (match == null) return null;
-  final start = int.parse(match.group(1)!);
-  final end = int.parse(match.group(2)!);
-  if (end < start) return null;
-  final total = match.group(3)!;
-  return _ParsedContentRange(start, total == '*' ? null : int.parse(total));
+  final int start;
+  final int end;
+  final int? total;
+  try {
+    start = int.parse(match.group(1)!);
+    end = int.parse(match.group(2)!);
+    final totalValue = match.group(3)!;
+    total = totalValue == '*' ? null : int.parse(totalValue);
+  } on FormatException {
+    return null;
+  }
+  if (end < start || (total != null && total <= end)) return null;
+  return _ParsedContentRange(start, total);
 }
 
 String _fnv(Uint8List bytes) {

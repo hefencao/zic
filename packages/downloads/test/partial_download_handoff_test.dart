@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -160,6 +161,67 @@ void main() {
     expect(backend.partial.containsKey(newId), isFalse);
     expect(backend.partial.containsKey(oldId), isTrue);
   });
+  test('cancelling partial restore aborts body and preserves durable source',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'partial-restore-cancel-',
+    );
+    addTearDown(() async => root.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'cancel',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/cancel.webp'),
+    );
+    final bytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
+    final opened = Completer<void>();
+    final cancelled = Completer<void>();
+    final controller = StreamController<List<int>>(
+      onListen: opened.complete,
+      onCancel: cancelled.complete,
+    );
+    addTearDown(controller.close);
+    final backend = _PartialStore(
+      streamFor: (_) => controller.stream,
+    );
+    backend.partial[id] = _StoredPartial(
+      bytes: bytes,
+      validators: const Validators(etag: 'durable'),
+      totalLength: 16,
+    );
+    final handoff = PartialDownloadHandoff(store: backend);
+    final registry = DownloadRegistry(
+      layout: CacheLayout(root.path),
+      clock: SystemClock(),
+    );
+    addTearDown(registry.dispose);
+    final session = registry.get(id);
+    final control = CancelToken(priority: 900);
+    final restore = handoff.restoreInto(session, control: control);
+
+    await opened.future.timeout(const Duration(seconds: 1));
+    control.cancel();
+    await expectLater(
+      restore,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    await cancelled.future.timeout(const Duration(seconds: 1));
+
+    expect(session.state, DownloadState.idle);
+    expect(session.committedLength, 0);
+    expect(backend.partial[id]?.bytes, bytes);
+  });
+
   test('cold partial hydration uses the shared persistent read scheduler', () async {
     final root = await Directory.systemTemp.createTemp('partial-read-scheduler-');
     addTearDown(() async => root.delete(recursive: true));
@@ -205,9 +267,10 @@ void main() {
 }
 
 final class _PartialStore implements PartialDownloadStore {
-  _PartialStore({this.onRead});
+  _PartialStore({this.onRead, this.streamFor});
 
   final void Function()? onRead;
+  final Stream<List<int>> Function(Uint8List bytes)? streamFor;
   final Map<DownloadId, _StoredPartial> partial =
       <DownloadId, _StoredPartial>{};
 
@@ -219,9 +282,19 @@ final class _PartialStore implements PartialDownloadStore {
       length: stored.bytes.lengthInBytes,
       validators: stored.validators,
       totalLength: stored.totalLength,
-      open: ({required int start}) async* {
-        onRead?.call();
-        yield Uint8List.sublistView(stored.bytes, start);
+      open: ({required int start}) {
+        final selected = streamFor;
+        if (selected != null) {
+          return selected(Uint8List.sublistView(stored.bytes, start));
+        }
+        final controller = StreamController<List<int>>(sync: true);
+        controller.onListen = () {
+          onRead?.call();
+          controller
+            ..add(Uint8List.sublistView(stored.bytes, start))
+            ..close();
+        };
+        return controller.stream;
       },
     );
   }

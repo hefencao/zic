@@ -31,6 +31,25 @@ Future<String> resolveChapterDownloadDirectory(
   bool create = true,
 }) async {
   final parent = Directory(_stripTrailingSeparator(pickedDirectory));
+  _rejectDirectoryPathLinks(parent.path);
+  final parentType = FileSystemEntity.typeSync(
+    parent.path,
+    followLinks: false,
+  );
+  if (parentType == FileSystemEntityType.link) {
+    throw StateError(
+      'chapter-download directory resolver does not support a symbolic-link parent: '
+      '${parent.path}',
+    );
+  }
+  if (parentType != FileSystemEntityType.notFound &&
+      parentType != FileSystemEntityType.directory) {
+    throw ArgumentError.value(
+      pickedDirectory,
+      'pickedDirectory',
+      'must be a directory',
+    );
+  }
   if (!parent.existsSync()) {
     if (!create) return parent.path;
     await parent.create(recursive: true);
@@ -46,6 +65,17 @@ Future<String> resolveChapterDownloadDirectory(
     final candidate = Directory(
       '${parent.path}${Platform.pathSeparator}$candidateName',
     );
+    _rejectDirectoryPathLinks(candidate.path);
+    final candidateType = FileSystemEntity.typeSync(
+      candidate.path,
+      followLinks: false,
+    );
+    if (candidateType == FileSystemEntityType.link) {
+      throw StateError(
+        'chapter-download directory resolver does not support a symbolic-link '
+        'candidate: ${candidate.path}',
+      );
+    }
     if (!candidate.existsSync()) {
       if (!create) return candidate.path;
       await candidate.create(recursive: true);
@@ -65,6 +95,7 @@ Future<String> resolveChapterDownloadDirectory(
 /// denying ordinary file writes; this probe fails fast with the underlying
 /// error instead of letting a later store open degrade to memory mode.
 Future<void> probeChapterDownloadDirectoryWritable(String directory) async {
+  _rejectDirectoryPathLinks(directory);
   final probe = File(
     '${_stripTrailingSeparator(directory)}'
     '${Platform.pathSeparator}.zic-write-probe',
@@ -75,18 +106,15 @@ Future<void> probeChapterDownloadDirectoryWritable(String directory) async {
 
 /// Returns whether [directory] already holds chapter-download store content.
 bool chapterDownloadStoreHasContent(String directory) {
+  final type = FileSystemEntity.typeSync(directory, followLinks: false);
+  if (type == FileSystemEntityType.notFound) return false;
+  if (type != FileSystemEntityType.directory) return true;
   final root = Directory(directory);
-  if (!root.existsSync()) return false;
-  if (File('${root.path}${Platform.pathSeparator}cache.sqlite').existsSync()) {
-    return true;
-  }
-  for (final name in const <String>['partial', 'final']) {
-    final dir = Directory('${root.path}${Platform.pathSeparator}$name');
-    if (dir.existsSync() && dir.listSync(followLinks: false).isNotEmpty) {
-      return true;
-    }
-  }
-  return false;
+  // Structured comic directories and `.zic.json` are part of the same store,
+  // not disposable export files. A recursive move must therefore treat any
+  // non-empty entry as authoritative content, including an interrupted temp
+  // marker that needs recovery on the next attempt.
+  return root.listSync(followLinks: false).isNotEmpty;
 }
 
 /// Result of a completed chapter-download store move.
@@ -116,15 +144,10 @@ Future<ChapterDownloadStoreMoveReport> moveChapterDownloadStore({
   required String from,
   required String to,
 }) async {
-  final source = _stripTrailingSeparator(from);
-  final target = _stripTrailingSeparator(to);
-  if (!_containsStore(source)) {
-    throw ArgumentError.value(
-      from,
-      'from',
-      'chapter-download store has no movable content',
-    );
-  }
+  final source = _normalizeDirectoryPath(from);
+  final target = _normalizeDirectoryPath(to);
+  _rejectDirectoryPathLinks(source);
+  _rejectDirectoryPathLinks(target);
   if (isSameOrNestedDirectoryPath(source, target)) {
     throw ArgumentError.value(
       to,
@@ -134,47 +157,209 @@ Future<ChapterDownloadStoreMoveReport> moveChapterDownloadStore({
   }
   final sourceRoot = Directory(source);
   final targetRoot = Directory(target);
-  await targetRoot.create(recursive: true);
+  final sourceHasContent = _containsStore(source);
+  final targetHasContent = _containsStore(target);
+  if (!sourceHasContent && !targetHasContent) {
+    throw ArgumentError.value(
+      from,
+      'from',
+      'chapter-download store has no movable content',
+    );
+  }
+  if (FileSystemEntity.typeSync(source, followLinks: false) ==
+      FileSystemEntityType.link) {
+    throw StateError(
+      'download-store move does not support a symbolic-link source: $source',
+    );
+  }
+  if (FileSystemEntity.typeSync(target, followLinks: false) ==
+      FileSystemEntityType.link) {
+    throw StateError(
+      'download-store move does not support a symbolic-link target: $target',
+    );
+  }
 
   var movedFiles = 0;
+  Future<bool> sameFileContents(File first, File second) async {
+    if (!await first.exists() || !await second.exists()) return false;
+    if (await first.length() != await second.length()) return false;
+    final left = await first.open();
+    final right = await second.open();
+    try {
+      while (true) {
+        final leftChunk = await left.read(512 * 1024);
+        final rightChunk = await right.read(leftChunk.length);
+        if (leftChunk.length != rightChunk.length) return false;
+        for (var index = 0; index < leftChunk.length; index++) {
+          if (leftChunk[index] != rightChunk[index]) return false;
+        }
+        if (leftChunk.isEmpty) return true;
+      }
+    } finally {
+      await left.close();
+      await right.close();
+    }
+  }
+
   Future<void> moveFile(File file, File destination) async {
-    if (!file.existsSync()) return;
+    if (!await file.exists()) return;
     await destination.parent.create(recursive: true);
+    if (await destination.exists()) {
+      if (await sameFileContents(file, destination)) {
+        await file.delete();
+        movedFiles++;
+        return;
+      }
+      throw StateError(
+        'download-store move found different files at ${destination.path}',
+      );
+    }
     try {
       await file.rename(destination.path);
     } on FileSystemException {
-      // Cross-volume moves cannot rename; fall back to a staged copy so a
-      // crash mid-copy never leaves a truncated file at the destination:
-      // bytes land at `*.zic-move-tmp` first and are renamed into place only
-      // after the copy completed. A leftover tmp file is harmless and is
-      // overwritten by the next idempotent attempt.
-      final staged = File('${destination.path}.zic-move-tmp');
-      await file.copy(staged.path);
-      await staged.rename(destination.path);
-      await file.delete();
+      final staged = File(
+        '${destination.path}.zic-move-tmp-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      try {
+        await file.copy(staged.path);
+        await staged.rename(destination.path);
+        await file.delete();
+      } finally {
+        if (await staged.exists()) await staged.delete();
+      }
     }
     movedFiles++;
   }
 
-  final separator = Platform.pathSeparator;
-  for (final suffix in const <String>['', '-wal', '-shm', '-journal']) {
-    await moveFile(
-      File('${sourceRoot.path}${separator}cache.sqlite$suffix'),
-      File('${targetRoot.path}${separator}cache.sqlite$suffix'),
-    );
-  }
-  for (final name in const <String>['partial', 'final']) {
-    final sourceDir = Directory('${sourceRoot.path}$separator$name');
-    if (!sourceDir.existsSync()) continue;
-    final targetDir = Directory('${targetRoot.path}$separator$name');
-    await targetDir.create(recursive: true);
-    await for (final entity in sourceDir.list(followLinks: false)) {
-      if (entity is! File) continue;
-      final name = entity.path.substring(sourceDir.path.length + 1);
-      await moveFile(entity, File('${targetDir.path}$separator$name'));
+  Future<void> validateTree(
+    Directory current,
+    Directory destination,
+  ) async {
+    if (!await current.exists()) return;
+    await for (final entity in current.list(followLinks: false)) {
+      final name = entity.path.substring(current.path.length + 1);
+      final destinationPath =
+          '${destination.path}${Platform.pathSeparator}$name';
+      if (entity is Link) {
+        throw StateError(
+          'download-store move does not support symbolic links: ${entity.path}',
+        );
+      }
+      if (entity is Directory) {
+        final destinationType = FileSystemEntity.typeSync(
+          destinationPath,
+          followLinks: false,
+        );
+        if (destinationType == FileSystemEntityType.link) {
+          throw StateError(
+            'download-store move does not support a symbolic-link target: '
+            '$destinationPath',
+          );
+        }
+        if (destinationType != FileSystemEntityType.notFound &&
+            destinationType != FileSystemEntityType.directory) {
+          throw StateError(
+            'download-store move found a file where a directory is required '
+            'at $destinationPath',
+          );
+        }
+        await validateTree(entity, Directory(destinationPath));
+      } else if (entity is File) {
+        final destinationType = FileSystemEntity.typeSync(
+          destinationPath,
+          followLinks: false,
+        );
+        if (destinationType == FileSystemEntityType.link) {
+          throw StateError(
+            'download-store move does not support a symbolic-link target: '
+            '$destinationPath',
+          );
+        }
+        if (destinationType != FileSystemEntityType.notFound &&
+            destinationType != FileSystemEntityType.file) {
+          throw StateError(
+            'download-store move found a directory where a file is required '
+            'at $destinationPath',
+          );
+        }
+        final destinationFile = File(destinationPath);
+        if (await destinationFile.exists() &&
+            !await sameFileContents(entity, destinationFile)) {
+          throw StateError(
+            'download-store move found different files at $destinationPath',
+          );
+        }
+      } else {
+        throw StateError(
+          'download-store move found unsupported entry: ${entity.path}',
+        );
+      }
     }
   }
 
+  Future<void> moveTree(Directory current, Directory destination) async {
+    if (!await current.exists()) return;
+    await destination.create(recursive: true);
+    await for (final entity in current.list(followLinks: false)) {
+      final name = entity.path.substring(current.path.length + 1);
+      final targetEntity = '${destination.path}${Platform.pathSeparator}$name';
+      if (entity is File) {
+        await moveFile(entity, File(targetEntity));
+      } else if (entity is Directory) {
+        await moveTree(entity, Directory(targetEntity));
+        if (await entity.exists() &&
+            (await entity.list(followLinks: false).isEmpty)) {
+          await entity.delete();
+        }
+      } else if (entity is Link) {
+        // Never silently leave a symlink behind while the index is rewritten.
+        // A symlink may point outside the store, so following or copying it
+        // would make migration unsafe; retain the pending marker and require
+        // an explicit cleanup before retrying.
+        throw StateError(
+          'download-store move does not support symbolic links: ${entity.path}',
+        );
+      } else {
+        throw StateError(
+          'download-store move found unsupported entry: ${entity.path}',
+        );
+      }
+    }
+    if (await current.exists() &&
+        (await current.list(followLinks: false).isEmpty)) {
+      await current.delete();
+    }
+  }
+
+  if (sourceHasContent) {
+    // Validate the whole tree before creating the destination or moving any
+    // entry. Unsupported entries and deterministic conflicts therefore leave
+    // the pending-move source untouched, allowing startup to reopen it while
+    // retaining the retry marker.
+    final sourceType = FileSystemEntity.typeSync(
+      source,
+      followLinks: false,
+    );
+    if (sourceType != FileSystemEntityType.directory) {
+      throw StateError(
+        'download-store move source is not a directory: $source',
+      );
+    }
+    final targetType = FileSystemEntity.typeSync(
+      target,
+      followLinks: false,
+    );
+    if (targetType != FileSystemEntityType.notFound &&
+        targetType != FileSystemEntityType.directory) {
+      throw StateError(
+        'download-store move target is not a directory: $target',
+      );
+    }
+    await validateTree(sourceRoot, targetRoot);
+    await moveTree(sourceRoot, targetRoot);
+  }
+
+  final separator = Platform.pathSeparator;
   final rewrittenRecords = _rewriteIndexPaths(
     dbPath: '${targetRoot.path}${separator}cache.sqlite',
     oldPrefix: source,
@@ -191,7 +376,7 @@ bool _containsStore(String directory) =>
 
 /// Compares two directory paths after removing trailing separators.
 bool isSameDirectoryPath(String a, String b) =>
-    _stripTrailingSeparator(a) == _stripTrailingSeparator(b);
+    _comparisonPath(a) == _comparisonPath(b);
 
 /// Returns whether the two paths are equal or one contains the other.
 ///
@@ -199,13 +384,48 @@ bool isSameDirectoryPath(String a, String b) =>
 /// and target stores ambiguous, so callers refuse this relation up front.
 bool isSameOrNestedDirectoryPath(String a, String b) {
   final separator = Platform.pathSeparator;
-  final left = _withTrailingSeparator(_stripTrailingSeparator(a), separator);
-  final right = _withTrailingSeparator(_stripTrailingSeparator(b), separator);
+  final left = _withTrailingSeparator(_comparisonPath(a), separator);
+  final right = _withTrailingSeparator(_comparisonPath(b), separator);
   return left == right || right.startsWith(left) || left.startsWith(right);
+}
+
+String _comparisonPath(String path) {
+  final normalized = _normalizeDirectoryPath(path);
+  return Platform.isWindows ? normalized.toLowerCase() : normalized;
+}
+
+String _normalizeDirectoryPath(String path) {
+  final absolute = Directory(path).absolute.path;
+  final separator = Platform.pathSeparator;
+  final prefix = absolute.startsWith(separator) ? separator : '';
+  final parts = absolute.split(separator);
+  final normalized = <String>[];
+  for (final part in parts) {
+    if (part.isEmpty || part == '.') continue;
+    if (part == '..') {
+      if (normalized.isNotEmpty && normalized.last != '..') {
+        normalized.removeLast();
+      }
+      continue;
+    }
+    normalized.add(part);
+  }
+  final result = normalized.join(separator);
+  if (prefix.isNotEmpty) return '$prefix$result';
+  return result.isEmpty ? '.' : result;
 }
 
 String _withTrailingSeparator(String path, String separator) =>
     path.endsWith(separator) ? path : '$path$separator';
+
+void _rejectDirectoryPathLinks(String path) {
+  if (FileSystemEntity.typeSync(path, followLinks: false) ==
+      FileSystemEntityType.link) {
+    throw StateError(
+      'chapter-download directory path contains a symbolic link: $path',
+    );
+  }
+}
 
 String _stripTrailingSeparator(String path) {
   var result = path;
@@ -229,8 +449,14 @@ int _rewriteIndexPaths({
     try {
       final rows = db.select('SELECT key, path FROM cache_entry');
       var rewritten = 0;
+      final cacheHasRoot = db
+          .select('PRAGMA table_info(cache_entry)')
+          .any((row) => row['name'] == 'storage_root_id');
       final statement = db.prepare(
-        'UPDATE cache_entry SET path = ? WHERE key = ?',
+        cacheHasRoot
+            ? 'UPDATE cache_entry SET path = ?, storage_root_id = ? '
+                'WHERE key = ?'
+            : 'UPDATE cache_entry SET path = ? WHERE key = ?',
       );
       try {
         for (final row in rows) {
@@ -241,11 +467,47 @@ int _rewriteIndexPaths({
             continue;
           }
           final updated = newPrefix + path.substring(oldPrefix.length);
-          statement.execute(<Object?>[updated, key]);
+          statement.execute(
+            cacheHasRoot
+                ? <Object?>[updated, newPrefix, key]
+                : <Object?>[updated, key],
+          );
           rewritten++;
         }
       } finally {
         statement.dispose();
+      }
+      final artifactTable = db.select(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'artifact_object'",
+      );
+      if (artifactTable.isNotEmpty) {
+        final rows = db.select(
+          'SELECT artifact_id, path FROM artifact_object',
+        );
+        for (final row in rows) {
+          final path = row['path']! as String;
+          if (path == oldPrefix || path.startsWith('$oldPrefix$separator')) {
+            final updated = newPrefix + path.substring(oldPrefix.length);
+            db.execute(
+              'UPDATE artifact_object SET path = ?, storage_root_id = ? '
+              'WHERE artifact_id = ?',
+              <Object?>[updated, newPrefix, row['artifact_id']! as String],
+            );
+          }
+        }
+      }
+      // The placement table is scoped to this SQLite store as well. Keeping
+      // its root identity in sync prevents a queue opened after migration
+      // from treating a moved placement as belonging to the old authority.
+      final placementTable = db.select(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'download_placement'",
+      );
+      if (placementTable.isNotEmpty) {
+        db.execute(
+          'UPDATE download_placement SET storage_root_id = ? '
+          'WHERE storage_root_id = ? OR storage_root_id = ?',
+          <Object?>[newPrefix, oldPrefix, 'default'],
+        );
       }
       db.execute('COMMIT');
       return rewritten;

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:domain/domain.dart';
 import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
@@ -74,6 +76,17 @@ final class DownloadRegistry {
     if (!_sessions.containsKey(resolvedTarget)) {
       throw StateError('physical alias target has no existing session');
     }
+    final existingTarget = _physicalAliases[id];
+    if (existingTarget != null) {
+      final resolvedExistingTarget = resolvePhysicalId(id);
+      if (resolvedExistingTarget != resolvedTarget) {
+        throw StateError(
+          'cannot rebind physical alias ${id.key} from '
+          '${resolvedExistingTarget.key} to ${resolvedTarget.key}',
+        );
+      }
+      return;
+    }
     if (id == resolvedTarget) {
       _physicalAliases.remove(id);
       return;
@@ -83,28 +96,61 @@ final class DownloadRegistry {
 
   DownloadSession get(DownloadId id) {
     final physicalId = resolvePhysicalId(id);
-    return _sessions.putIfAbsent(physicalId, () {
-      final effectiveLayout =
-          layoutResolver?.call(physicalId) ?? layout;
-      final session = DownloadSession(
-        id: physicalId,
-        artifact: effectiveLayout.artifactFor(physicalId),
-        clock: clock,
-        traceSink: traceSink,
-        sessionId: 'download:${layout.tokenFor(physicalId)}',
-        index: index,
-        initiallyDemanded: false,
-      );
-      try {
-        onSessionCreated?.call(session);
-      } on Object {
-        // Lifecycle observers must not break authoritative session creation.
-      }
-      return session;
-    });
+    return _sessions.putIfAbsent(
+      physicalId,
+      () => _createSession(
+        physicalId,
+        artifact: layoutFor(physicalId).artifactFor(physicalId),
+        storageRootId: layoutFor(physicalId).root,
+      ),
+    );
+  }
+
+  DownloadSession _createSession(
+    DownloadId physicalId, {
+    required Artifact artifact,
+    required String storageRootId,
+  }) {
+    final session = DownloadSession(
+      id: physicalId,
+      artifact: artifact,
+      clock: clock,
+      traceSink: traceSink,
+      sessionId: 'download:${layout.tokenFor(physicalId)}',
+      index: index,
+      storageRootId: storageRootId,
+      initiallyDemanded: false,
+    );
+    try {
+      onSessionCreated?.call(session);
+    } on Object {
+      // Lifecycle observers must not break authoritative session creation.
+    }
+    return session;
   }
 
   DownloadSession? find(DownloadId id) => _sessions[resolvePhysicalId(id)];
+
+  /// Returns the physical layout selected for a new artifact generation.
+  /// Existing indexed rows remain authoritative through their absolute path;
+  /// callers use this only when creating structured output or a new session.
+  CacheLayout layoutFor(DownloadId id) => layoutResolver?.call(id) ?? layout;
+
+  /// Resolves a source-scoped root for structured comic metadata before a
+  /// concrete page identity exists. Source layout resolvers are intentionally
+  /// keyed by source id, so the synthetic identity never owns bytes.
+  CacheLayout layoutForSource(String sourceId) => layoutFor(
+        DownloadId(
+          content: ContentId(
+            sourceId: sourceId,
+            comicId: '',
+            chapterId: '',
+            pageId: '',
+          ),
+          sourceRevision: '',
+          canonicalUri: Uri.parse('about:blank'),
+        ),
+      );
 
   /// Removes an idle physical session from the registry without choosing any
   /// persistence policy.
@@ -117,6 +163,7 @@ final class DownloadRegistry {
     final physicalId = resolvePhysicalId(id);
     final session = _sessions[physicalId];
     if (session == null ||
+        !session.canEvict ||
         session.demanded ||
         session.activeRun ||
         session.hasWriter ||
@@ -151,10 +198,59 @@ final class DownloadRegistry {
     }
     var restored = 0;
     for (final rec in await cache.list()) {
-      await get(rec.id).restore();
+      final physicalId = resolvePhysicalId(rec.id);
+      final artifact = _artifactForIndexedRecord(rec, physicalId);
+      if (artifact == null) {
+        // Indexed export/SAF bindings are already durable outside the
+        // session-owned partial/final workspace. Do not create a synthetic
+        // local Artifact for them: restore/evict would otherwise operate on a
+        // different path and leave the indexed bytes orphaned.
+        continue;
+      }
+      final session = _sessions.putIfAbsent(
+        physicalId,
+        () => _createSession(
+          physicalId,
+          artifact: artifact,
+          // The record's root id is the durable binding metadata. It is not a
+          // path resolver, but retaining it on the recovered session keeps a
+          // later cache write from silently changing the recorded ownership.
+          storageRootId: rec.storageRootId,
+        ),
+      );
+      await session.restore();
       restored++;
     }
     return restored;
+  }
+
+  Artifact? _artifactForIndexedRecord(CacheRec record, DownloadId id) {
+    final indexedPath = File(record.path).absolute.path;
+    final indexedFile = File(indexedPath);
+    final parent = indexedFile.parent;
+    final parts = parent.path
+        .split(Platform.pathSeparator)
+        .where((part) => part.isNotEmpty)
+        .toList(growable: false);
+    final parentName = parts.isEmpty ? null : parts.last;
+    if (parentName != 'partial' && parentName != 'final') return null;
+
+    final root = parent.parent.path;
+    final layout = CacheLayout(root);
+    for (final candidate in <Artifact>[
+      layout.artifactFor(id),
+      layout.legacyArtifactFor(id),
+    ]) {
+      if (File(candidate.partialPath).absolute.path == indexedPath ||
+          File(candidate.finalPath).absolute.path == indexedPath) {
+        return candidate;
+      }
+    }
+    // An indexed path outside the deterministic artifact layout must not be
+    // treated as a root merely because one of its parent directories is named
+    // `partial`/`final`. The caller will fall back to the configured layout;
+    // higher-level owners remain responsible for arbitrary export bindings.
+    return null;
   }
 
   Future<int> evict(DownloadId id) async {
@@ -165,7 +261,23 @@ final class DownloadRegistry {
       if (record == null) {
         return 0;
       }
-      session = get(physicalId);
+      // The indexed path may belong to a historical layout resolver root.
+      // Creating a fresh session here would bind the deletion to the current
+      // write root, remove the index row, and leave the historical bytes
+      // orphaned (or delete an unrelated current-root file). The persistent
+      // artifact owner must delete a cold indexed record by its exact path.
+      final artifact = _artifactForIndexedRecord(record, physicalId);
+      if (artifact == null) {
+        return 0;
+      }
+      session = _sessions.putIfAbsent(
+        physicalId,
+        () => _createSession(
+          physicalId,
+          artifact: artifact,
+          storageRootId: record.storageRootId,
+        ),
+      );
     }
     if (session.artifact.state == ArtifactState.empty) {
       await session.restore();

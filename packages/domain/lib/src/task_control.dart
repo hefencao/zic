@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'errors.dart';
+
 /// Cross-layer control plane for cancellable, priority-bearing work.
 ///
 /// The scheduler owns implementations. Transport/source/runtime layers may
@@ -17,4 +19,15 @@ abstract interface class TaskControl {
 /// priority or create a second scheduler.
 abstract interface class PriorityObservableTaskControl implements TaskControl {
   Stream<int> get priorityChanges;
+}
+
+extension TaskControlCancellation on TaskControl {
+  void throwIfCancelled() {
+    if (cancelled) {
+      throw const Failure(
+        code: ErrorCode.cancelled,
+        message: 'task cancelled',
+      );
+    }
+  }
 }

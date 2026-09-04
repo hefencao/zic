@@ -23,6 +23,7 @@ final class ReaderSessionSettings {
     this.longPressZoomLimitToViewport = true,
     this.doubleTapZoomOrigin = ReaderDoubleTapZoomOrigin.center,
     this.zoomDecodeBoost = true,
+    this.invertPageOrderOverride,
   });
 
   static const Object _unset = Object();
@@ -35,6 +36,9 @@ final class ReaderSessionSettings {
   final bool globalAdaptiveEnabled;
   final bool comicAdaptiveEnabled;
   final AdaptiveReaderProfile? adaptiveProfile;
+  final bool? invertPageOrderOverride;
+
+  bool get effectiveInvertPageOrder => invertPageOrderOverride ?? false;
 
   /// Double-tap zoom stages, ordered ascending. Two stages: the first
   /// double-tap enters [zoomStages[0]], the second [zoomStages[1]], the third
@@ -114,6 +118,7 @@ final class ReaderSessionSettings {
     bool? longPressZoomLimitToViewport,
     ReaderDoubleTapZoomOrigin? doubleTapZoomOrigin,
     bool? zoomDecodeBoost,
+    Object? invertPageOrderOverride = _unset,
   }) =>
       ReaderSessionSettings(
         comicSpecificEnabled:
@@ -149,6 +154,9 @@ final class ReaderSessionSettings {
             longPressZoomLimitToViewport ?? this.longPressZoomLimitToViewport,
         doubleTapZoomOrigin: doubleTapZoomOrigin ?? this.doubleTapZoomOrigin,
         zoomDecodeBoost: zoomDecodeBoost ?? this.zoomDecodeBoost,
+        invertPageOrderOverride: identical(invertPageOrderOverride, _unset)
+            ? this.invertPageOrderOverride
+            : invertPageOrderOverride as bool?,
       );
 
   @override
@@ -171,7 +179,8 @@ final class ReaderSessionSettings {
           longPressZoomPanRatio == other.longPressZoomPanRatio &&
           longPressZoomLimitToViewport == other.longPressZoomLimitToViewport &&
           doubleTapZoomOrigin == other.doubleTapZoomOrigin &&
-          zoomDecodeBoost == other.zoomDecodeBoost;
+          zoomDecodeBoost == other.zoomDecodeBoost &&
+          invertPageOrderOverride == other.invertPageOrderOverride;
 
   @override
   int get hashCode => Object.hash(
@@ -191,6 +200,7 @@ final class ReaderSessionSettings {
         longPressZoomLimitToViewport,
         doubleTapZoomOrigin,
         zoomDecodeBoost,
+        invertPageOrderOverride,
       );
 
   static bool _sameStages(List<double> a, List<double> b) {

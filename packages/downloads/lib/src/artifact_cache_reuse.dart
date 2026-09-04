@@ -1,4 +1,5 @@
 import 'package:domain/domain.dart';
+import 'package:storage/storage.dart' show CacheRec;
 
 import 'artifact_cache_manager.dart';
 import 'reader_page_identity.dart';
@@ -73,11 +74,10 @@ final class VerifiedArtifactReusePlan {
       final overlap = targetEnd - targetStart;
       final anchorTargets = overlap == 1
           ? <int>[targetStart]
-          : <int>{
-              targetStart,
-              targetStart + overlap ~/ 2,
+          : <int>[
               targetEnd - 1,
-            }.toList(growable: false);
+              targetStart,
+            ];
       final sourceIdentities = await Future.wait(
         anchorTargets.map(
           (targetIndex) =>
@@ -237,7 +237,7 @@ final class VerifiedArtifactReusePlan {
 Map<String, PageAsset> _uniquePages(ChapterManifest chapter) {
   final candidates = <String, List<PageAsset>>{};
   for (final page in chapter.pages) {
-    final identity = _verifiedPageIdentity(page);
+    final identity = verifiedPageIdentity(page);
     if (identity == null) continue;
     candidates.putIfAbsent(identity, () => <PageAsset>[]).add(page);
   }
@@ -247,20 +247,65 @@ Map<String, PageAsset> _uniquePages(ChapterManifest chapter) {
   };
 }
 
-String? _verifiedPageIdentity(PageAsset page) {
+/// Computes all content-based verified identities for a page asset (checksum,
+/// E-Hentai image key, and URI content hash).
+Iterable<String> verifiedPageIdentities(PageAsset page) sync* {
   final checksum = page.checksum?.trim().toLowerCase();
-  if (checksum != null && checksum.isNotEmpty) {
-    return 'checksum:$checksum';
+  final algorithm = page.checksumAlgorithm?.trim().toLowerCase();
+  // A digest without its algorithm is not a stable content identity: source
+  // adapters have historically used the same field for MD5, SHA and opaque
+  // provider tokens. Do not create a cross-version alias from an untyped
+  // value ('checksum:$checksum'); strong URI/image identities below remain available.
+  if (checksum != null && checksum.isNotEmpty &&
+      algorithm != null && algorithm.isNotEmpty) {
+    yield 'checksum:$algorithm:$checksum';
   }
   final segments = page.uri.pathSegments;
   final marker = segments.indexOf('s');
   if (marker >= 0 && marker + 1 < segments.length) {
     final imageKey = segments[marker + 1].trim().toLowerCase();
-    if (imageKey.isNotEmpty) return 'eh:$imageKey';
+    if (imageKey.isNotEmpty) {
+      yield 'eh:$imageKey';
+    }
   }
   final hash = RegExp(r'[a-fA-F0-9]{32,64}')
       .firstMatch(page.uri.toString())
       ?.group(0)
       ?.toLowerCase();
-  return hash == null ? null : 'hash:$hash';
+  if (hash != null) {
+    yield 'hash:$hash';
+  }
 }
+
+/// Primary verified identity for a page asset.
+String? verifiedPageIdentity(PageAsset page) =>
+    verifiedPageIdentities(page).firstOrNull;
+
+/// Computes all content-based verified identities for an indexed cache record.
+Iterable<String> verifiedRecordIdentities(CacheRec record) sync* {
+  final checksum = record.checksum.trim().toLowerCase();
+  final algorithm = record.checksumAlgorithm.trim().toLowerCase();
+  if (checksum.isNotEmpty && algorithm.isNotEmpty) {
+    yield 'checksum:$algorithm:$checksum';
+  }
+  final uri = record.id.canonicalUri;
+  final segments = uri.pathSegments;
+  final marker = segments.indexOf('s');
+  if (marker >= 0 && marker + 1 < segments.length) {
+    final imageKey = segments[marker + 1].trim().toLowerCase();
+    if (imageKey.isNotEmpty) {
+      yield 'eh:$imageKey';
+    }
+  }
+  final hash = RegExp(r'[a-fA-F0-9]{32,64}')
+      .firstMatch(uri.toString())
+      ?.group(0)
+      ?.toLowerCase();
+  if (hash != null) {
+    yield 'hash:$hash';
+  }
+}
+
+/// Primary verified identity for a cache record.
+String? verifiedRecordIdentity(CacheRec record) =>
+    verifiedRecordIdentities(record).firstOrNull;

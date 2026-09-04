@@ -56,8 +56,164 @@ void main() {
 
       await index.remove(id.key);
       expect(await index.get(id.key), isNull);
+
+      final placement = DownloadPlacement(
+        placementId: 'source\u0000comic',
+        sourceId: 'source',
+        comicId: 'comic',
+        comicTitle: '漫画测试',
+        mode: DownloadPlacementMode.createNew,
+        relativeDirectory: '漫画测试',
+        createdAt: DateTime.now().toUtc(),
+        updatedAt: DateTime.now().toUtc(),
+      );
+      await index.putPlacement(placement);
+      final retrieved = await index.getPlacement(sourceId: 'source', comicId: 'comic');
+      expect(retrieved, isNotNull);
+      expect(retrieved!.relativeDirectory, '漫画测试');
+      expect(retrieved.mode, DownloadPlacementMode.createNew);
+      expect(await index.listPlacements(), hasLength(1));
+      await expectLater(
+        index.putPlacement(placement.copyWith(relativeDirectory: '另一个目录')),
+        throwsA(isA<StateError>()),
+      );
+      expect(
+        (await index.getPlacement(sourceId: 'source', comicId: 'comic'))
+            ?.relativeDirectory,
+        '漫画测试',
+      );
+
+      final committedPlacement = placement.copyWith(
+        generation: 1,
+        fingerprint: 'fingerprint-a',
+      );
+      await index.putPlacement(committedPlacement);
+      await expectLater(
+        index.putPlacement(
+          committedPlacement.copyWith(
+            fingerprint: 'fingerprint-b',
+            updatedAt: DateTime.now().toUtc().add(const Duration(days: 1)),
+          ),
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(
+        (await index.getPlacement(sourceId: 'source', comicId: 'comic'))
+            ?.fingerprint,
+        'fingerprint-a',
+      );
+
+      await index.putPlacement(
+        committedPlacement.copyWith(
+          placementId: 'source\u0000comic-v2',
+          generation: 2,
+          fingerprint: 'fingerprint-c',
+        ),
+      );
+      final replacedPlacement =
+          await index.getPlacement(sourceId: 'source', comicId: 'comic');
+      expect(replacedPlacement?.placementId, 'source\u0000comic-v2');
+      expect(replacedPlacement?.generation, 2);
+      expect(await index.listPlacements(), hasLength(1));
+
+      await index.removePlacement(sourceId: 'source', comicId: 'comic');
+      expect(await index.getPlacement(sourceId: 'source', comicId: 'comic'), isNull);
+    });
+
+    test('${fixture.key} index separates identities that shared a legacy key', () async {
+      final first = DownloadId(
+        content: const ContentId(
+          sourceId: 'source/a',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'page',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://example.test/page'),
+      );
+      final second = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'a/comic',
+          chapterId: 'chapter',
+          pageId: 'page',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://example.test/page'),
+      );
+      expect(first.legacyKey, second.legacyKey);
+      expect(first.key, isNot(second.key));
+
+      final index = fixture.value();
+      await index.open();
+      addTearDown(index.close);
+      await index.put(
+        CacheRec(
+          id: first,
+          state: CacheState.partial,
+          path: '/tmp/first.part',
+          bytes: 1,
+          checksum: '00000001',
+          createdUs: 1,
+          touchedUs: 1,
+        ),
+      );
+      await index.put(
+        CacheRec(
+          id: second,
+          state: CacheState.partial,
+          path: '/tmp/second.part',
+          bytes: 2,
+          checksum: '00000002',
+          createdUs: 2,
+          touchedUs: 2,
+        ),
+      );
+
+      expect((await index.get(first.key))?.path, '/tmp/first.part');
+      expect((await index.get(second.key))?.path, '/tmp/second.part');
+      expect(await index.list(), hasLength(2));
     });
   }
+
+  test('sqlite rejects conflicting ready bindings for one artifact identity', () async {
+    final index = SqliteIndex.memory();
+    await index.open();
+    addTearDown(index.close);
+    final first = CacheRec(
+      id: id,
+      state: CacheState.ready,
+      path: '/tmp/shared-a.bin',
+      bytes: 3,
+      checksum: '01020304',
+      createdUs: 1,
+      touchedUs: 1,
+      artifactId: 'shared-artifact',
+    );
+    final second = CacheRec(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'other-page',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://example.test/other.webp'),
+      ),
+      state: CacheState.ready,
+      path: '/tmp/shared-b.bin',
+      bytes: 4,
+      checksum: '05060708',
+      createdUs: 2,
+      touchedUs: 2,
+      artifactId: 'shared-artifact',
+    );
+    await index.put(first);
+    await expectLater(index.put(second), throwsA(isA<StateError>()));
+    expect((await index.get(first.key))?.checksum, '01020304');
+    expect(await index.get(second.key), isNull);
+  });
 }
 void runCacheSchemaV2Tests() {
   test('v1 cache databases migrate to v2 and keep records readable', () async {
@@ -95,7 +251,7 @@ void runCacheSchemaV2Tests() {
       '(key, download_json, state, path, bytes, checksum, created_us, touched_us) '
       'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
       <Object?>[
-        id.key,
+        id.legacyKey,
         jsonEncode(id.toJson()),
         'ready',
         '${temp.path}/final/legacy.bin',
@@ -138,5 +294,20 @@ void runCacheSchemaV2Tests() {
     );
     expect((await index.get(pinnedId.key))!.pinned, isTrue);
     expect(await index.totalBytes(), 133);
+
+    final placement = DownloadPlacement(
+      placementId: 'p-order',
+      sourceId: 'source',
+      comicId: 'comic',
+      comicTitle: 'title',
+      mode: DownloadPlacementMode.incremental,
+      relativeDirectory: 'dir',
+      pageOrder: ComicPageOrder.chronological,
+      createdAt: DateTime.now().toUtc(),
+      updatedAt: DateTime.now().toUtc(),
+    );
+    await index.putPlacement(placement);
+    final read = await index.getPlacement(sourceId: 'source', comicId: 'comic');
+    expect(read?.pageOrder, ComicPageOrder.chronological);
   });
 }

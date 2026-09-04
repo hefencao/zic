@@ -183,6 +183,97 @@ void main() {
         ]),
       );
     });
+
+    test('multi-chapter comic directory with pages in chapter subdirectories accurately counts all pages', () async {
+      final temp = await Directory.systemTemp.createTemp('conflict-multichapter-test');
+      addTearDown(() => temp.delete(recursive: true));
+
+      final ch1 = Directory('${temp.path}/航海王/第 1 话');
+      await ch1.create(recursive: true);
+      for (var i = 1; i <= 50; i++) {
+        await File('${ch1.path}/$i.webp').writeAsBytes(<int>[1, 2]);
+      }
+
+      final ch2 = Directory('${temp.path}/航海王/第 2 话');
+      await ch2.create(recursive: true);
+      for (var i = 1; i <= 72; i++) {
+        await File('${ch2.path}/$i.webp').writeAsBytes(<int>[1, 2]);
+      }
+
+      // 1. Test POSIX
+      final posixReport = await inspectPosixComicConflicts(
+        rootDirectory: temp.path,
+        sourceId: 'mihon:test',
+        comicId: 'onepiece',
+        comicTitle: '航海王',
+      );
+      expect(posixReport.candidates.length, 1);
+      expect(posixReport.candidates.first.chapterCount, 2);
+      expect(posixReport.candidates.first.existingPageFilesCount, 122);
+
+      // 2. Test SAF
+      final fakeSaf = _FakeSafTreeIo();
+      for (var i = 1; i <= 50; i++) {
+        fakeSaf.files['航海王/第 1 话/$i.webp'] = <int>[1, 2];
+      }
+      for (var i = 1; i <= 72; i++) {
+        fakeSaf.files['航海王/第 2 话/$i.webp'] = <int>[1, 2];
+      }
+      final safReport = await inspectSafComicConflicts(
+        safIo: fakeSaf,
+        safTreeUri: 'content://tree/test',
+        sourceId: 'mihon:test',
+        comicId: 'onepiece',
+        comicTitle: '航海王',
+      );
+      expect(safReport.candidates.length, 1);
+      expect(safReport.candidates.first.chapterCount, 2);
+      expect(safReport.candidates.first.existingPageFilesCount, 122);
+    });
+
+    test('detects predecessor version as incomingIsNewer and successor as existingIsNewer', () async {
+      final temp = await Directory.systemTemp.createTemp('conflict-test-version');
+      addTearDown(() => temp.delete(recursive: true));
+
+      final comicDir = Directory('${temp.path}/航海王');
+      await comicDir.create(recursive: true);
+
+      final manifest = ComicFolderManifest(
+        sourceId: 'ehentai',
+        sourceDisplayName: 'E-Hentai',
+        comicId: '12345/old',
+        comicTitle: '航海王',
+        updatedAt: DateTime.utc(2026, 8, 20),
+      );
+      final manifestFile = File('${comicDir.path}/$comicManifestFileName');
+      await manifestFile.writeAsString(manifest.encode());
+
+      // 1. Current download is 67890/new, with 12345/old known as predecessor
+      final newerReport = await inspectPosixComicConflicts(
+        rootDirectory: temp.path,
+        sourceId: 'ehentai',
+        sourceDisplayName: 'E-Hentai',
+        comicId: '67890/new',
+        comicTitle: '航海王',
+        knownPredecessorComicIds: const <String>{'12345/old'},
+      );
+      expect(newerReport.candidates.length, 1);
+      expect(newerReport.candidates.first.versionRelation, ComicVersionRelationKind.incomingIsNewer);
+      expect(newerReport.candidates.first.confidenceScore, 0.95);
+
+      // 2. Current download is 12345/old, but local has 12345/old which is predecessor to 67890/new
+      final olderReport = await inspectPosixComicConflicts(
+        rootDirectory: temp.path,
+        sourceId: 'ehentai',
+        sourceDisplayName: 'E-Hentai',
+        comicId: '10000/earliest',
+        comicTitle: '航海王',
+        knownSuccessorComicIds: const <String>{'12345/old'},
+      );
+      expect(olderReport.candidates.length, 1);
+      expect(olderReport.candidates.first.versionRelation, ComicVersionRelationKind.existingIsNewer);
+      expect(olderReport.candidates.first.confidenceScore, 0.95);
+    });
   });
 }
 
@@ -216,6 +307,15 @@ final class _FakeSafTreeIo implements SafTreeIo {
   @override
   Future<bool> delete(String relativePath) async {
     return files.remove(relativePath) != null;
+  }
+
+  @override
+  Future<bool> rename(String relativePath, String newRelativePath) async {
+    if (files.containsKey(newRelativePath) || !files.containsKey(relativePath)) {
+      return false;
+    }
+    files[newRelativePath] = files.remove(relativePath)!;
+    return true;
   }
 
   @override

@@ -48,7 +48,12 @@ final class Artifact {
   Crc32 _crc = Crc32();
   bool _checksumDirty = false;
   int _committed = 0;
-  Future<void> _writeTail = Future<void>.value();
+
+  // Every file-mutating operation is serialized through one tail. In
+  // particular, reset/dispose cannot delete a file while an append or metadata
+  // rename that was started earlier is still in flight, and operations started
+  // after the boundary are ordered after the new artifact state.
+  Future<void> _mutationTail = Future<void>.value();
 
   ArtifactState get state => _state;
   int get committedLength => _committed;
@@ -70,22 +75,59 @@ final class Artifact {
 
   Future<ArtifactSnapshot> restore({
     bool verifyPromotedChecksum = true,
+  }) => _enqueueMutation(
+        () => _restore(
+          verifyPromotedChecksum: verifyPromotedChecksum,
+        ),
+      );
+
+  Future<ArtifactSnapshot> _restore({
+    required bool verifyPromotedChecksum,
   }) async {
     _requireNotDisposed();
-    await _closeWriter();
+    try {
+      await _closeWriter();
+      await _rejectArtifactLinks();
 
-    final finalFile = File(finalPath);
+      final finalFile = File(finalPath);
     if (await finalFile.exists()) {
-      final restoredFromMeta = !verifyPromotedChecksum &&
-          await _restorePromotedFromMeta(finalFile);
+      // A ready sidecar is only a checksum claim, not proof that the data file
+      // still has the claimed bytes. Even callers that request the historical
+      // fast path must verify a same-length file before treating it as ready;
+      // otherwise a silent in-place overwrite is promoted as a new artifact.
+      final restoredFromMeta = await _restorePromotedFromMeta(finalFile);
       if (!restoredFromMeta) {
         await _rehash(finalFile);
-        if (!verifyPromotedChecksum) {
-          await _repairFinalMetaAfterVerification();
+        if (_committed <= 0) {
+          throw const Failure(
+            code: ErrorCode.artifactCorruption,
+            message: 'promoted artifact is empty',
+          );
         }
+        // A valid body with a stale or malformed sidecar is still a promoted
+        // artifact, but leaving the sidecar unrepaired would make the next
+        // recovery depend on another full rehash and could leave the ready
+        // proof invalid indefinitely. The body has just been verified above,
+        // so refresh the sidecar for both the normal and historical fast-path
+        // callers.
+        await _repairFinalMetaAfterVerification();
+      }
+      if (_committed <= 0) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'promoted artifact is empty',
+        );
       }
       _state = ArtifactState.promoted;
       await _recoverFinalMeta();
+      // A crash after an idempotent same-content promotion can leave both
+      // the final body and the old partial body/sidecars. Once the final body
+      // has been verified, the partial generation is stale and must not remain
+      // as an orphan that a later resume could mistake for writable state.
+      for (final path in <String>[partialPath, metaPath, '$metaPath.tmp']) {
+        final stale = File(path);
+        if (await stale.exists()) await stale.delete();
+      }
       return snapshot;
     }
 
@@ -100,8 +142,20 @@ final class Artifact {
     _crc = Crc32();
     _checksumDirty = false;
     _committed = 0;
-    _state = ArtifactState.partial;
-    return snapshot;
+      _state = ArtifactState.partial;
+      return snapshot;
+    } catch (_) {
+      // A failed restore must not leave the in-memory artifact claiming the
+      // bytes that caused the failure. Keep the physical files untouched for
+      // recovery/diagnostics, but make a subsequent owner decision start from
+      // an explicit empty state with no stale writer/checksum evidence.
+      _sink = null;
+      _crc = Crc32();
+      _checksumDirty = false;
+      _committed = 0;
+      _state = ArtifactState.empty;
+      rethrow;
+    }
   }
 
   Future<void> append(int offset, List<int> bytes) =>
@@ -111,14 +165,8 @@ final class Artifact {
   ///
   /// DownloadSession uses this path to share one immutable chunk between the
   /// buffered artifact writer and native ingress without a second Dart copy.
-  Future<void> appendOwned(int offset, Uint8List bytes) {
-    final operation = _writeTail.then<void>((_) => _append(offset, bytes));
-    _writeTail = operation.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace __) {},
-    );
-    return operation;
-  }
+  Future<void> appendOwned(int offset, Uint8List bytes) =>
+      _enqueueMutation(() => _append(offset, bytes));
 
   Future<void> _append(int offset, List<int> bytes) async {
     _requireState(ArtifactState.partial);
@@ -132,20 +180,37 @@ final class Artifact {
       return;
     }
     final writer = await _writer();
-    writer.add(bytes);
+    try {
+      writer.add(bytes);
+    } on Object catch (error, stackTrace) {
+      // A sink can fail after accepting part of a chunk. Retire it before the
+      // error escapes so callers cannot leave the Artifact permanently
+      // writer-busy; restore/re-hash remains the authority for any bytes that
+      // made it to disk before the write failed.
+      try {
+        await _closeWriter();
+        await _rehash(File(partialPath));
+      } on Object {
+        // Preserve the original write failure. A later restore can recover
+        // the physical prefix if closing or re-hashing also fails.
+      }
+      Error.throwWithStackTrace(error, stackTrace);
+    }
     _committed += bytes.length;
     _checksumDirty = true;
   }
 
-  Future<void> flush() async {
-    _requireNotDisposed();
-    await _writeTail;
-    await _sink?.flush();
-  }
+  Future<void> flush() => _enqueueMutation(() async {
+        _requireNotDisposed();
+        await _sink?.flush();
+      });
 
-  Future<void> pause() async {
+  Future<void> pause() => _enqueueMutation(_pause);
+
+  Future<void> _pause() async {
     _requireState(ArtifactState.partial);
-    await flush();
+    // _closeWriter flushes before closing and, unlike a separate flush call,
+    // still closes the sink when that flush fails.
     await _closeWriter();
     await _refreshMeta(state: 'partial');
   }
@@ -153,15 +218,32 @@ final class Artifact {
   Future<ArtifactSnapshot> seal({
     int? expectedLength,
     String? expectedChecksum,
+  }) => _enqueueMutation(
+        () => _seal(
+          expectedLength: expectedLength,
+          expectedChecksum: expectedChecksum,
+        ),
+      );
+
+  Future<ArtifactSnapshot> _seal({
+    required int? expectedLength,
+    required String? expectedChecksum,
   }) async {
     _requireState(ArtifactState.partial);
-    await flush();
+    // _closeWriter owns the flush/close pair so a failed flush cannot leave
+    // the append sink open across a failed seal.
     await _closeWriter();
 
     if (_checksumDirty) {
       await _rehash(File(partialPath));
     }
 
+    if (_committed <= 0) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'cannot seal an empty artifact',
+      );
+    }
     if (expectedLength != null && expectedLength != _committed) {
       throw Failure(
         code: ErrorCode.artifactCorruption,
@@ -180,8 +262,17 @@ final class Artifact {
     return snapshot;
   }
 
-  Future<ArtifactSnapshot> promote() async {
+  Future<ArtifactSnapshot> promote() => _enqueueMutation(_promote);
+
+  Future<ArtifactSnapshot> _promote() async {
     _requireState(ArtifactState.sealed);
+    await _rejectArtifactLinks();
+    if (_committed <= 0) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'cannot promote an empty artifact',
+      );
+    }
     final partial = File(partialPath);
     final target = File(finalPath);
     await target.parent.create(recursive: true);
@@ -283,6 +374,11 @@ final class Artifact {
   }
 
   Future<List<int>> readPrefix([int maxBytes = 12]) async {
+    // Unlike metadata reads, a prefix can race an open IOSink. Queue a real
+    // flush so callers cannot observe a shorter durable file merely because
+    // the preceding append completed after writer.add() but before the sink
+    // delivered its buffered bytes to the filesystem.
+    await flush();
     _requireNotDisposed();
     if (maxBytes <= 0) return const <int>[];
     final reader = await _openReadableDataFile();
@@ -313,6 +409,7 @@ final class Artifact {
     final alternate =
         _state == ArtifactState.promoted ? partialPath : finalPath;
     for (final path in <String>[preferred, alternate]) {
+      await _rejectLink(path);
       try {
         return await File(path).open(mode: FileMode.read);
       } on FileSystemException {
@@ -325,6 +422,7 @@ final class Artifact {
   }
 
   Future<Map<String, Object?>?> readMeta() async {
+    await _mutationTail;
     _requireNotDisposed();
     if (_state == ArtifactState.promoted) {
       final ready = await _readJson(File(finalMetaPath));
@@ -339,7 +437,10 @@ final class Artifact {
     return _readJson(File(metaPath));
   }
 
-  Future<void> writeMeta(Map<String, Object?> value) async {
+  Future<void> writeMeta(Map<String, Object?> value) =>
+      _enqueueMutation(() => _writeMeta(value));
+
+  Future<void> _writeMeta(Map<String, Object?> value) async {
     _requireNotDisposed();
     final now = DateTime.now().toUtc().microsecondsSinceEpoch;
     await _writeJson(
@@ -354,7 +455,10 @@ final class Artifact {
     );
   }
 
-  Future<void> reset({bool deleteFinal = false}) async {
+  Future<void> reset({bool deleteFinal = false}) =>
+      _enqueueMutation(() => _reset(deleteFinal: deleteFinal));
+
+  Future<void> _reset({required bool deleteFinal}) async {
     _requireNotDisposed();
     await _closeWriter();
     for (final path in <String>[
@@ -365,6 +469,7 @@ final class Artifact {
       if (deleteFinal) finalMetaPath,
       if (deleteFinal) '$finalMetaPath.tmp',
     ]) {
+      await _rejectLink(path);
       final file = File(path);
       if (await file.exists()) {
         await file.delete();
@@ -378,7 +483,9 @@ final class Artifact {
 
   Future<void> deleteAll() => reset(deleteFinal: true);
 
-  Future<void> dispose() async {
+  Future<void> dispose() => _enqueueMutation(_dispose);
+
+  Future<void> _dispose() async {
     if (_state == ArtifactState.disposed) {
       return;
     }
@@ -434,6 +541,7 @@ final class Artifact {
   }
 
   Future<Map<String, Object?>?> _readJson(File file) async {
+    await _rejectLink(file.path);
     if (!await file.exists()) {
       return null;
     }
@@ -459,11 +567,15 @@ final class Artifact {
   Future<void> _writeJson(File target, Map<String, Object?> value) async {
     await target.parent.create(recursive: true);
     final temp = File('${target.path}.tmp');
+    await _rejectLink(target.path);
+    await _rejectLink(temp.path);
     await temp.writeAsString(jsonEncode(value), flush: true);
     await _replaceFile(temp, target);
   }
 
   Future<void> _replaceFile(File source, File target) async {
+    await _rejectLink(source.path);
+    await _rejectLink(target.path);
     try {
       await source.rename(target.path);
     } on FileSystemException {
@@ -474,7 +586,10 @@ final class Artifact {
     }
   }
 
-  Future<bool> _restorePromotedFromMeta(File file) async {
+  Future<bool> _restorePromotedFromMeta(
+    File file, {
+    bool verifyChecksum = true,
+  }) async {
     final Map<String, Object?>? metadata;
     try {
       metadata = await _readJson(File(finalMetaPath)) ??
@@ -493,6 +608,16 @@ final class Artifact {
       return false;
     }
     if (await file.length() != bytes) return false;
+    if (verifyChecksum) {
+      await _rehash(file);
+      if (checksum.toLowerCase() != this.checksum) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'promoted artifact checksum does not match its metadata',
+        );
+      }
+      return true;
+    }
     _crc = Crc32.fromHex(checksum);
     _checksumDirty = false;
     _committed = bytes;
@@ -567,6 +692,7 @@ final class Artifact {
     if (existing != null) {
       return existing;
     }
+    await _rejectLink(partialPath);
     final partial = File(partialPath);
     await partial.parent.create(recursive: true);
     final length = await partial.exists() ? await partial.length() : 0;
@@ -581,13 +707,72 @@ final class Artifact {
     return writer;
   }
 
+  Future<T> _enqueueMutation<T>(Future<T> Function() operation) {
+    final previous = _mutationTail;
+    final current = previous.then<T>(
+      (_) => operation(),
+      onError: (Object _, StackTrace __) => operation(),
+    );
+    _mutationTail = current.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return current;
+  }
+
+  Future<void> _rejectArtifactLinks() async {
+    for (final path in <String>[
+      partialPath,
+      finalPath,
+      metaPath,
+      finalMetaPath,
+      '$metaPath.tmp',
+      '$finalMetaPath.tmp',
+    ]) {
+      await _rejectLink(path);
+    }
+  }
+
+  Future<void> _rejectLink(String path) async {
+    final type = await FileSystemEntity.type(path, followLinks: false);
+    if (type == FileSystemEntityType.link) {
+      throw Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'artifact path must not contain a symlink: $path',
+      );
+    }
+    final parent = File(path).parent.path;
+    final parentType = await FileSystemEntity.type(parent, followLinks: false);
+    if (parentType == FileSystemEntityType.link) {
+      throw Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'artifact path must not contain a symlink: $path',
+      );
+    }
+  }
+
   Future<void> _closeWriter() async {
-    await _writeTail;
+    Object? firstError;
+    StackTrace? firstStack;
     final writer = _sink;
     _sink = null;
     if (writer != null) {
-      await writer.flush();
-      await writer.close();
+      try {
+        await writer.flush();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStack ??= stackTrace;
+      }
+      try {
+        await writer.close();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStack ??= stackTrace;
+      }
+    }
+    final error = firstError;
+    if (error != null) {
+      Error.throwWithStackTrace(error, firstStack!);
     }
   }
 

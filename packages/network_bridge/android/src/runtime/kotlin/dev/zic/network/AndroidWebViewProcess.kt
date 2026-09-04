@@ -21,6 +21,14 @@ object AndroidWebViewProcess {
             .replace(Regex("[^A-Za-z0-9_.-]"), "_")
             .trim('_')
         require(normalized.isNotEmpty()) { "WebView data-directory suffix is empty" }
-        WebView.setDataDirectorySuffix(normalized)
+        try {
+            WebView.setDataDirectorySuffix(normalized)
+        } catch (_: IllegalStateException) {
+            // The suffix is process-global and set-once. When the service is
+            // re-created inside a process whose WebView provider is already
+            // initialized (client restart loop, engine already booted), the
+            // current suffix is already authoritative — throwing here would
+            // crash-loop the whole plugin runtime process.
+        }
     }
 }

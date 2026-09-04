@@ -29,6 +29,8 @@ final class CacheOps {
     required this.clock,
     this.traceSink = const NoopTraceSink(),
     this.policy = const CachePolicy(),
+    this.evictRecord,
+    this.evictRecordWithSnapshot,
   });
 
   final CacheIndex index;
@@ -37,13 +39,25 @@ final class CacheOps {
   final TraceSink traceSink;
   final CachePolicy policy;
 
+  /// Optional owner-side DeletePlan. When present, physical cleanup and
+  /// binding removal are performed by the artifact owner rather than by the
+  /// raw session registry, so shared artifacts cannot be deleted by one
+  /// logical binding.
+  final Future<int> Function(DownloadId id)? evictRecord;
+
+  /// Snapshot-aware owner callback used to close the check-to-delete window
+  /// after the policy plan has yielded. The owner must compare [expected]
+  /// again inside its serialized mutation boundary before removing bytes.
+  final Future<int> Function(DownloadId id, CacheRec expected)?
+      evictRecordWithSnapshot;
+
   Future<CacheReport> trim(
     CacheLimits limits, {
     Set<DownloadId> protected = const <DownloadId>{},
   }) async {
     final records = await index.list();
     final protectedKeys = protected.map((id) => id.key).toSet()
-      ..addAll(_pinnedKeys(records));
+      ..addAll(await _pinnedKeys(records));
     final busyKeys = <String>{
       for (final session in registry.sessions)
         if (!session.canEvict) session.id.key,
@@ -56,6 +70,9 @@ final class CacheOps {
     return _apply(
       records: plan.candidates,
       requestedBytes: plan.plannedBytes,
+      // Keep busy records out of this set so the report does not count them
+      // as both protected and busy. The policy still receives the union above
+      // and therefore never schedules them as candidates.
       protectedKeys: protectedKeys,
       initialSkippedBusy: records
           .where((record) => busyKeys.contains(record.key))
@@ -68,7 +85,7 @@ final class CacheOps {
   }) async {
     final records = await index.list();
     final protectedKeys = protected.map((id) => id.key).toSet()
-      ..addAll(_pinnedKeys(records));
+      ..addAll(await _pinnedKeys(records));
     return _apply(
       records: records,
       requestedBytes: records.fold<int>(0, (sum, rec) => sum + rec.bytes),
@@ -78,8 +95,20 @@ final class CacheOps {
 
   /// Explicitly downloaded chapters survive capacity trims and cache clears;
   /// only a per-chapter delete may remove them.
-  Set<String> _pinnedKeys(Iterable<CacheRec> records) =>
-      <String>{for (final record in records) if (record.pinned) record.key};
+  Future<Set<String>> _pinnedKeys(Iterable<CacheRec> records) async {
+    final placements = await index.listPlacements();
+    final owners = <String>{
+      for (final placement in placements) placement.ownerKey,
+    };
+    return <String>{
+      for (final record in records)
+        if (record.pinned ||
+            owners.contains(
+              '${record.id.content.sourceId}\u0000${record.id.content.comicId}',
+            ))
+          record.key,
+    };
+  }
 
   Future<CacheReport> _apply({
     required Iterable<CacheRec> records,
@@ -91,10 +120,19 @@ final class CacheOps {
     var evicted = 0;
     var skippedBusy = initialSkippedBusy;
     var skippedProtected = 0;
+    var skippedStale = 0;
 
     for (final record in records) {
       if (protectedKeys.contains(record.key)) {
         skippedProtected++;
+        continue;
+      }
+      // The policy plan is made from a snapshot. A read touch, rebinding,
+      // pin change, or replacement may have happened before this candidate is
+      // reached; never pass the stale logical key to an owner-side deleter.
+      final current = await index.get(record.key);
+      if (current == null || !_sameEvictionRecord(record, current)) {
+        skippedStale++;
         continue;
       }
       final session = registry.find(record.id);
@@ -103,8 +141,14 @@ final class CacheOps {
         continue;
       }
       try {
-        released += await registry.evict(record.id);
-        evicted++;
+        final removed = await (evictRecordWithSnapshot?.call(
+              record.id,
+              record,
+            ) ??
+            evictRecord?.call(record.id) ??
+            registry.evict(record.id));
+        released += removed;
+        if (removed > 0) evicted++;
       } on Failure catch (error) {
         if (error.code == ErrorCode.writerBusy ||
             error.code == ErrorCode.sessionBusy) {
@@ -127,6 +171,7 @@ final class CacheOps {
           'evicted': evicted,
           'skippedBusy': skippedBusy,
           'skippedProtected': skippedProtected,
+          'skippedStale': skippedStale,
           'remainingBytes': remaining,
         },
       ),
@@ -140,4 +185,19 @@ final class CacheOps {
       remainingBytes: remaining,
     );
   }
+
+  bool _sameEvictionRecord(CacheRec first, CacheRec second) =>
+      first.id == second.id &&
+      first.state == second.state &&
+      first.path == second.path &&
+      first.bytes == second.bytes &&
+      first.checksum.trim().toLowerCase() ==
+          second.checksum.trim().toLowerCase() &&
+      first.createdUs == second.createdUs &&
+      first.touchedUs == second.touchedUs &&
+      first.pinned == second.pinned &&
+      first.checksumAlgorithm.trim().toLowerCase() ==
+          second.checksumAlgorithm.trim().toLowerCase() &&
+      first.effectiveArtifactId == second.effectiveArtifactId &&
+      first.storageRootId == second.storageRootId;
 }

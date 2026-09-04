@@ -25,8 +25,8 @@ for token in (
     'final int equivalenceMaxEntries;',
     'LinkedHashMap<DownloadId, LinkedHashSet<DownloadId>> _equivalents',
     'void linkEquivalent({',
-    'Future<ArtifactCacheLookup?> lookupAuthoritative(DownloadId id)',
-    '_lookupCandidatesInOrder(id, <DownloadId>[id])',
+    'Future<ArtifactCacheLookup?> lookupAuthoritative(',
+    '_lookupCandidatesInOrder(id, <DownloadId>[id]',
 ):
     require(manager, token, 'equivalence-only artifact cache')
 for token in (

@@ -43,9 +43,13 @@ require(
     'apps/app/lib/demo_home.dart',
     'userAgentProvider: () => widget.preferences.networkUserAgent',
     'defaultUserAgentProvider: () => widget.preferences.networkUserAgent',
+)
+require(
+    'apps/app/lib/demo_home_reader_route.dart',
     '_sourceResources.pageControlledResponseLoaderFor(',
 )
 forbid('apps/app/lib/demo_home.dart', '_sourceResources.responseLoaderFor(')
+forbid('apps/app/lib/demo_home_reader_route.dart', '_sourceResources.responseLoaderFor(')
 require(
     'apps/app/lib/demo_home_source_compat.dart',
     'effectiveUserAgent = request.userAgent?.trim().isNotEmpty == true',
@@ -61,7 +65,7 @@ require(
 require(
     'packages/downloads/lib/src/source_resource_transport.dart',
     "'sourceClientStateRequired': true",
-    'response.isRedirect || response.cookies.isNotEmpty',
+    'if (response.isRedirect) {',
     'request.followRedirects = false;',
     'final response = await directOpen(effective);',
     '_applyDefaultUserAgent(',
@@ -187,6 +191,7 @@ for path in ROOT.rglob('*.dart'):
     if any(token in text for token in ('.pageResponseLoaderFor(', '.pageControlledResponseLoaderFor(')) and rel not in {
         'apps/app/lib/source_resource_gateway.dart',
         'apps/app/lib/demo_home.dart',
+        'apps/app/lib/demo_home_reader_route.dart',
     }:
         raise SystemExit(f'FAIL: page-body transport escaped Reader/download composition: {rel}')
 
