@@ -993,6 +993,7 @@ final class DownloadTransferOwner {
             !flowSatisfiedForCurrentClaims &&
             session.state != DownloadState.disposed;
         if (_downloadRetryPending.contains(id) ||
+            _localPreparations.containsKey(id) ||
             (!deferredForCurrentClaims &&
                 !flowSatisfiedForCurrentClaims &&
                 (taskRetiring ||

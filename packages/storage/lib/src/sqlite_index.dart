@@ -14,6 +14,11 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
 
   final String? path;
   sql.Database? _db;
+  Map<String, CacheRec>? _cachedEntries;
+
+  void _invalidateCache() {
+    _cachedEntries = null;
+  }
 
   @override
   Future<void> open() async {
@@ -145,6 +150,10 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
 
   @override
   Future<CacheRec?> get(String key) async {
+    final cached = _cachedEntries;
+    if (cached != null) {
+      return cached[key];
+    }
     final rows = _requireDb().select(
       'SELECT * FROM cache_entry WHERE key = ? LIMIT 1',
       <Object?>[key],
@@ -157,6 +166,15 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
 
   @override
   Future<List<CacheRec>> list({CacheState? state}) async {
+    final cached = _cachedEntries;
+    if (cached != null) {
+      if (state == null) {
+        return cached.values.toList(growable: false);
+      }
+      return cached.values
+          .where((rec) => rec.state == state)
+          .toList(growable: false);
+    }
     final rows = state == null
         ? _requireDb().select(
             'SELECT * FROM cache_entry ORDER BY key',
@@ -165,7 +183,13 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
             'SELECT * FROM cache_entry WHERE state = ? ORDER BY key',
             <Object?>[state.name],
           );
-    return rows.map(_read).toList(growable: false);
+    final list = rows.map(_read).toList(growable: false);
+    if (state == null) {
+      _cachedEntries = <String, CacheRec>{
+        for (final rec in list) rec.key: rec,
+      };
+    }
+    return list;
   }
 
   @override
@@ -177,6 +201,7 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       _putArtifactObject(db, rec, artifactId);
       _putBinding(db, rec, artifactId);
       db.execute('COMMIT');
+      _invalidateCache();
     } on Object {
       db.execute('ROLLBACK');
       rethrow;
@@ -207,6 +232,7 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
         }
       }
       db.execute('COMMIT');
+      _invalidateCache();
     } on Object {
       db.execute('ROLLBACK');
       rethrow;
@@ -243,6 +269,7 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
         }
       }
       db.execute('COMMIT');
+      _invalidateCache();
     } on Object {
       db.execute('ROLLBACK');
       rethrow;
@@ -255,10 +282,23 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       'UPDATE cache_entry SET touched_us = ? WHERE key = ?',
       <Object?>[touchedUs, key],
     );
+    final cached = _cachedEntries;
+    if (cached != null && cached.containsKey(key)) {
+      cached[key] = cached[key]!.copyWith(touchedUs: touchedUs);
+    }
   }
 
   @override
   Future<int> totalBytes({CacheState? state}) async {
+    final cached = _cachedEntries;
+    if (cached != null) {
+      if (state == null) {
+        return cached.values.fold<int>(0, (sum, rec) => sum + rec.bytes);
+      }
+      return cached.values
+          .where((rec) => rec.state == state)
+          .fold<int>(0, (sum, rec) => sum + rec.bytes);
+    }
     final rows = state == null
         ? _requireDb().select(
             'SELECT COALESCE(SUM(bytes), 0) AS total FROM cache_entry',
@@ -409,6 +449,7 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
 
   @override
   Future<void> close() async {
+    _invalidateCache();
     _db?.dispose();
     _db = null;
   }

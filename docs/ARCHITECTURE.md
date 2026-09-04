@@ -301,7 +301,7 @@ Reader 页面变化产生的 `ReadingProgress` 由 `reader_runtime` 串行合并
 缓存分为两个权威平面：
 
 - `ResourceCacheCoordinator.responses`：封面、搜索、详情和章节元数据，使用稳定 namespace/identity/revision、weight、TTL 和 in-flight join；external artwork 使用 source-confirmed canonical comic identity + role，raw runtime locator 不参与 durable artwork 分区；
-- `ArtifactCacheManager`：Reader 不可变页面 artifact，默认热字节 10 项/256 MiB、alias 上限 8192，并连接持久 backend。
+- `ArtifactCacheManager`：Reader 不可变页面 artifact，默认热字节 10 项/256 MiB、alias 上限 8192，并连接持久 backend。底层 `SqliteIndex` 与 `PersistentDownloadArtifactStore` 维护内存快照并对 `readyPageIndices` 与 `indexedRecords` 提供 O(1) 探查；只读流探查与打开采用 O(1) 元数据校验，流式读取时执行完整 CRC-32 校验，杜绝进入 Reader 时的全量文件重读阻塞。
 
 封面 URL/token 不是稳定 comic identity；verified checksum、来源 page key、内容 hash 或用户确认迁移才可登记 artifact equivalence。App/Reader 不得创建私有图片字节 LRU，也不得让 cache hit 共享 cursor、timer 或 decode identity。
 

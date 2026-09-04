@@ -234,6 +234,26 @@ void main() {
     await session.dispose();
   });
 
+  test('beginRun succeeds while attachSynchronizedIngressProjection is active', () async {
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1, 2, 3]);
+    await session.pause(writer);
+
+    final projection = DownloadIngressProjection(
+      scopeId: 'reader-pending-run',
+      ingress: Ingress(factory: _TestSourceFactory(), maxBytes: 1024),
+    );
+    final attaching = session.attachSynchronizedIngressProjection(projection);
+    expect(attaching, isA<Future<void>>());
+
+    final run = session.beginRun();
+    expect(session.activeRun, isTrue);
+    session.endRun(run);
+
+    await attaching;
+    session.detachIngressProjection(projection.scopeId);
+  });
+
   test('physical aliases cannot be rebound to a different session', () {
     final registry = DownloadRegistry(
       layout: CacheLayout('${temp.path}/aliases'),

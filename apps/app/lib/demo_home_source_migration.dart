@@ -446,9 +446,11 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           mapping,
         ),
       );
-      _restoredComicKeys.remove('${relation.sourceId}\u0000${relation.successorComicId}');
-      _restoredComicKeys.remove('${relation.sourceId}\u0000${relation.predecessorComicId}');
       await _librarySession.upsertVersionRelation(updatedRelation);
+    }
+    if (_readerArtifactCache != null) {
+      _restoredComicKeys.add('${relation.sourceId}\u0000${relation.successorComicId}');
+      _restoredComicKeys.add('${relation.sourceId}\u0000${relation.predecessorComicId}');
     }
     widget.debugTrace.record(
       TraceEvent(
@@ -471,7 +473,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     BrowsableComicSource source,
     String comicId, {
     bool refreshVersions = true,
-    bool deferUntilAfterFrame = false,
+    bool deferUntilAfterFrame = true,
   }) {
     if (deferUntilAfterFrame) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -482,6 +484,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
               source,
               comicId,
               refreshVersions: refreshVersions,
+              deferUntilAfterFrame: false,
             );
           }
         });
@@ -555,6 +558,8 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     );
     var reused = 0;
     var mappings = 0;
+    final targetManifest = current.chapter.toManifest();
+    final cachedManifests = <String, ChapterManifest>{};
     for (final relation in relations) {
       final currentIsSuccessor =
           relation.successorComicId == current.chapter.comicId;
@@ -569,43 +574,46 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         final sourceChapterId = currentIsSuccessor
             ? mapping.predecessorChapterId
             : mapping.successorChapterId;
-        final sourceEntryHint = _exactChapterEntry(
-          current.chapter.sourceId,
-          sourceChapterId,
-        ) ?? await _library.get(current.chapter.sourceId, sourceChapterId);
-        ChapterManifest sourceManifest;
-        if (sourceEntryHint != null) {
-          final sourceEntry = await _librarySession.hydrateEntry(sourceEntryHint);
-          sourceManifest = sourceEntry.chapter.toManifest();
-        } else {
-          final otherComicId = currentIsSuccessor
-              ? relation.predecessorComicId
-              : relation.successorComicId;
-          final otherPageCount = currentIsSuccessor
-              ? mapping.predecessorPageCount
-              : mapping.successorPageCount;
-          sourceManifest = ChapterManifest(
-            sourceId: current.chapter.sourceId,
-            comicId: otherComicId,
-            chapter: Chapter(
-              chapterId: sourceChapterId,
+        var sourceManifest = cachedManifests[sourceChapterId];
+        if (sourceManifest == null) {
+          final sourceEntryHint = _exactChapterEntry(
+            current.chapter.sourceId,
+            sourceChapterId,
+          ) ?? await _library.get(current.chapter.sourceId, sourceChapterId);
+          if (sourceEntryHint != null) {
+            final sourceEntry = await _librarySession.hydrateEntry(sourceEntryHint);
+            sourceManifest = sourceEntry.chapter.toManifest();
+          } else {
+            final otherComicId = currentIsSuccessor
+                ? relation.predecessorComicId
+                : relation.successorComicId;
+            final otherPageCount = currentIsSuccessor
+                ? mapping.predecessorPageCount
+                : mapping.successorPageCount;
+            sourceManifest = ChapterManifest(
+              sourceId: current.chapter.sourceId,
               comicId: otherComicId,
-              title: '',
-              sequence: 0,
-              pageCount: otherPageCount,
-              sourceRevision: '0',
-            ),
-            readingDirection: current.chapter.readingDirection,
-            pages: <PageAsset>[
-              for (var i = 0; i < otherPageCount; i++)
-                PageAsset(
-                  pageId: 'page-$i',
-                  chapterId: sourceChapterId,
-                  index: i,
-                  uri: Uri.parse('venera-resource:synthetic-$i'),
-                ),
-            ],
-          );
+              chapter: Chapter(
+                chapterId: sourceChapterId,
+                comicId: otherComicId,
+                title: '',
+                sequence: 0,
+                pageCount: otherPageCount,
+                sourceRevision: '0',
+              ),
+              readingDirection: current.chapter.readingDirection,
+              pages: <PageAsset>[
+                for (var i = 0; i < otherPageCount; i++)
+                  PageAsset(
+                    pageId: 'page-$i',
+                    chapterId: sourceChapterId,
+                    index: i,
+                    uri: Uri.parse('venera-resource:synthetic-$i'),
+                  ),
+              ],
+            );
+          }
+          cachedManifests[sourceChapterId] = sourceManifest;
         }
         if (currentIsSuccessor &&
             (mapping.successorPageCount != current.chapter.pages.length ||
@@ -622,7 +630,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         mappings++;
         final plan = VerifiedArtifactReusePlan.fromVerifiedOffset(
           sourceChapter: sourceManifest,
-          targetChapter: current.chapter.toManifest(),
+          targetChapter: targetManifest,
           targetOffsetFromSource: currentIsSuccessor
               ? mapping.successorOffset
               : -mapping.successorOffset,

@@ -403,8 +403,7 @@ final class DownloadSession {
     if (_run != null ||
         _resetting ||
         _disposing ||
-        _restoring ||
-        _pendingIngressAttachments.isNotEmpty) {
+        _restoring) {
       throw const Failure(
         code: ErrorCode.sessionBusy,
         message: 'download already has an active transport run',

@@ -184,7 +184,7 @@
 - 长按聚合入口恢复来源列表未变化时最近一次聚合结果及查询标题；切换当前来源只退出结果页并关闭搜索框聚合模式，避免结果页显示“请输入关键词开始聚合搜索”或重复请求。
 - 同源版本入口会在后台版本刷新后二次发布当前详情与已打开面板。中间迁移图标现为真实命令，仅存在非当前 canonical predecessor 时可用并进入对比。同源替换对已验证且已下载的页面在替换旧记录前写入目标 exact DownloadId，跨重启也不需重下；对比提示已改为“已验证页面复用，未匹配旧文件保留”。
 - 详情预览保留完整 URI 作为单项绘制身份，但 artwork role/cache key 使用去 `@x/y` 的 base URI，同一原图的不同裁剪共享一份编码字节；Venera `loadThumbnails` 的首批与游标分页不再重复消费 `loadInfo` 缩略图；折叠与展开共用按原顺序生成的等面积布局；实际行内含横图时最多 2 张、纯竖图时最多 3 张；只在相邻三个候选内做最小局部重排，并受阅读设置的 1–8 项上限约束（默认 4）。完整行按全部媒体宽度反算尺寸，预览图片区不再叠加 Card 和水平 padding；稀疏末行最多放大到参考完整行面积的 2.4 倍；折叠高度取第一行，展开图片区域不超过屏幕高度 90%，居中箭头控制展开；点击预览项会将索引传入既有 Reader 路由；Venera `@x/y` 预览 URI 在保留绘制身份的同时按既有约定以去裁剪 URL 调用 `onThumbnailLoad`，封面、预览和来源缩略图失败时统一使用稳定伪随机的柔和纯色占位；预览绘制只显示 `@x/y` 指定的原图区域。
-- ArtifactCacheManager 默认热字节 10 项/256 MiB，持久 backend只以exact DownloadId写入；verified equivalence仅提供direct lookup/acquire proof，不存在directed hard alias/rekey；foreground read join保持。
+- ArtifactCacheManager 默认热字节 10 项/256 MiB，持久 backend只以exact DownloadId写入；verified equivalence仅提供direct lookup/acquire proof，不存在directed hard alias/rekey；foreground read join保持。SqliteIndex 与 PersistentDownloadArtifactStore 维护内存快照并提供 O(1) 探查，_openArtifactStreamExact 采用 O(1) 元数据与长度校验，只读流消费时执行流式 CRC-32 校验。
 - Reader encoded window 为前 7/后 3；decode 角色为前 2/后 1；动态 holder 最大水位为 7/5/3/2。
 - transition 覆盖率达到阈值后独立取得一帧，再恢复 current/neighbor staged refill；不存在 DownloadFlowGate、startup-buffer 或 holder-depth 网络资格门控。
 - 页面网络由共享 NetLane 唯一调度：normal 5、current 高优先级保留槽 1、priority migration/preemption；local bucket 2、remote bucket 5。

@@ -1242,7 +1242,8 @@ final class PersistentDownloadArtifactStore
   }) async {
     _requireOpen();
     final chapters = <String>{};
-    for (final record in await _index.list()) {
+    final records = await indexedRecords();
+    for (final record in records.values) {
       final content = record.id.content;
       if (content.sourceId == sourceId &&
           content.comicId == comicId &&
@@ -3752,11 +3753,6 @@ final class PersistentDownloadArtifactStore
       return null;
     }
     if (record.checksumAlgorithm.toLowerCase() != 'crc32') {
-      await _invalidateIndexedArtifact(id, record: record);
-      return null;
-    }
-    final proof = await _artifactProof(file);
-    if (!_proofMatchesRecord(proof, record)) {
       await _invalidateIndexedArtifact(id, record: record);
       return null;
     }
@@ -6272,6 +6268,21 @@ final class PersistentChapterDownloadService
     final total = manifest.pages.length;
     if (total == 0) return const <int>{};
     final indexedRecords = await artifactStore.indexedRecords();
+    final ready = <int>{};
+    final missing = <int>[];
+    for (var i = 0; i < total; i++) {
+      final page = manifest.pages[i];
+      final id = _downloadId(manifest, page);
+      final rec = indexedRecords[id.key];
+      if (rec != null && artifactStore._isVerifiedReadyRecord(rec)) {
+        ready.add(i);
+      } else {
+        missing.add(i);
+      }
+    }
+    if (missing.isEmpty) {
+      return ready;
+    }
     final recordsByPage = <String, CacheRec>{};
     final recordsByVerifiedIdentity = <String, CacheRec>{};
     for (final rec in indexedRecords.values) {
@@ -6285,8 +6296,7 @@ final class PersistentChapterDownloadService
         recordsByVerifiedIdentity.putIfAbsent(verifiedId, () => rec);
       }
     }
-    final ready = <int>{};
-    for (var i = 0; i < total; i++) {
+    for (final i in missing) {
       final page = manifest.pages[i];
       final id = _downloadId(manifest, page);
       final exactIndexed = indexedRecords[id.key] ?? recordsByPage[page.pageId];
