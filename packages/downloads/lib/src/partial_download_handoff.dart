@@ -46,7 +46,10 @@ final class PartialDownloadHandoff {
   }) async {
     control?.throwIfCancelled();
     if (session.committedLength > 0) return;
-    await session.restore(verifyPromotedChecksum: false);
+    await session.restore(
+      verifyPromotedChecksum: false,
+      control: control,
+    );
     control?.throwIfCancelled();
     if (session.state == DownloadState.promoted ||
         session.artifact.committedLength > 0) {

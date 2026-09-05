@@ -587,6 +587,7 @@ final class PipelineReaderSession {
       onDownloadObserved: _observeDownloadSession,
       onSourceKindObserved: _handleSourceKindObserved,
       onDecodeRefillObserved: _handleDecodeRefillObserved,
+      onMemoryPressureObserved: _handleMemoryPressureObserved,
       net: pageDownloadLane,
       downloadBucketFor: _profile.downloadBucket,
       downloadBucketLimitFor: _downloadBucketLimit,
@@ -2035,6 +2036,14 @@ final class PipelineReaderSession {
         planRevision: demandRevision,
         stage: decision.stage,
       );
+    });
+  }
+
+  void _handleMemoryPressureObserved(bool isPressured) {
+    _ingresses.observeMemoryPressure(isPressured);
+    scheduleMicrotask(() {
+      if (_disposed) return;
+      _binding?.observeMemoryPressure(isPressured: isPressured);
     });
   }
 

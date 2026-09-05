@@ -147,6 +147,50 @@ void main() {
     expect(plan.uploads.values.single.priority, 1000);
   });
 
+  test('page jump keeps only foreground-current resource demand', () {
+    final obs = ReaderObs(
+      sessionId: 'jump',
+      currentIndex: 5,
+      stableIndex: 5,
+      interaction: Interaction.jumping,
+      logicalPosition: 5,
+      velocity: 0,
+      currentCoverage: Coverage(
+        pageIndex: 5,
+        assetKey: 'chapter/p5',
+        fraction: 1,
+      ),
+      direction: ReadingDirection.ltr,
+      timestamp: DateTime.utc(2026, 8, 11),
+      monotonicMicros: 2,
+    );
+    final window = const RoleResolver(
+      forwardEncodedPages: 7,
+      backwardEncodedPages: 3,
+      forwardDecodePages: 2,
+      backwardDecodePages: 1,
+    ).resolve(chapter, obs, previousCurrentIndex: 1);
+    final plan = const HeuristicPolicy().createPlan(
+      revision: 2,
+      chapter: chapter,
+      observation: obs,
+      window: window,
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+    );
+
+    expect(window.roles, <int, PageRole>{5: PageRole.current});
+    expect(window.retainedIndex, isNull);
+    expect(plan.downloads, hasLength(1));
+    expect(plan.decodes, hasLength(1));
+    expect(plan.uploads, hasLength(1));
+    expect(plan.downloads.values.single.priority, 1000);
+    expect(plan.decodes.values.single.priority, 1000);
+    expect(plan.uploads.values.single.priority, 1000);
+  });
+
   test('source streaming profile keeps far pages download-only', () {
     final longChapter = ChapterManifest(
       sourceId: 'venera:fixture',

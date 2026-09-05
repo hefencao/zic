@@ -11,13 +11,16 @@ final class _IngressProjectionEntry {
     required this.session,
     required this.projection,
     this.control,
-  });
+  }) : completer = Completer<void>();
 
   DownloadSession session;
   final DownloadIngressProjection projection;
   final _IngressAttachmentControl? control;
+  final Completer<void> completer;
   Future<void>? attachment;
   bool active = true;
+
+  int get priority => control?.priority ?? session.effectivePriority;
 }
 
 /// Reader-local registry for native ingress projections.
@@ -49,13 +52,26 @@ final class DownloadIngressProjectionRegistry {
       residentReplaySourceWithControl;
   final Map<DownloadId, _IngressProjectionEntry> _entries =
       <DownloadId, _IngressProjectionEntry>{};
+  final List<_IngressProjectionEntry> _pendingReplays =
+      <_IngressProjectionEntry>[];
+  final Set<_IngressProjectionEntry> _activeReplays =
+      <_IngressProjectionEntry>{};
+  bool _isMemoryPressured = false;
 
   Iterable<DownloadIngressProjection> get projections =>
       _entries.values.map((entry) => entry.projection);
 
+  void observeMemoryPressure(bool isPressured) {
+    if (_isMemoryPressured == isPressured) return;
+    _isMemoryPressured = isPressured;
+    _pumpReplays();
+  }
+
   DownloadIngressProjection attach(DownloadSession session) {
     final existing = _entries[session.id];
     if (existing != null && identical(existing.session, session)) {
+      existing.control?.updatePriority(session.effectivePriority);
+      _pumpReplays();
       return existing.projection;
     }
     if (existing != null) {
@@ -64,6 +80,7 @@ final class DownloadIngressProjectionRegistry {
       // generation under the sealed immutable exception below.
       final snapshot = existing.projection.snapshot;
       if (existing.attachment == null &&
+          !_pendingReplays.contains(existing) &&
           snapshot.sealed &&
           snapshot.sourceReady &&
           snapshot.failure == null) {
@@ -78,8 +95,13 @@ final class DownloadIngressProjectionRegistry {
         existing.attachment = null;
         return existing.projection;
       }
+      _pendingReplays.remove(existing);
+      _activeReplays.remove(existing);
       existing.active = false;
       existing.control?.cancel();
+      if (!existing.completer.isCompleted) {
+        existing.completer.complete();
+      }
       existing.session.detachIngressProjection(existing.projection.scopeId);
       existing.projection.detach();
       _entries.remove(session.id);
@@ -95,7 +117,7 @@ final class DownloadIngressProjectionRegistry {
     );
     final attachmentControl = session.committedLength == 0
         ? null
-        : _IngressAttachmentControl();
+        : _IngressAttachmentControl(priority: session.effectivePriority);
     final entry = _IngressProjectionEntry(
       session: session,
       projection: projection,
@@ -109,6 +131,7 @@ final class DownloadIngressProjectionRegistry {
     if (session.committedLength == 0) {
       try {
         session.attachIngressProjection(projection);
+        entry.completer.complete();
       } on Object {
         _entries.remove(session.id);
         projection.detach();
@@ -116,6 +139,112 @@ final class DownloadIngressProjectionRegistry {
       }
       return projection;
     }
+
+    _pendingReplays.add(entry);
+    _pumpReplays();
+    return projection;
+  }
+
+  DownloadIngressProjection get(DownloadSession session) => attach(session);
+
+  DownloadIngressProjection? find(DownloadId id) => _entries[id]?.projection;
+
+  Future<void> settled(DownloadId id) {
+    final entry = _entries[id];
+    if (entry == null) return Future<void>.value();
+    if (entry.attachment == null && _pendingReplays.contains(entry)) {
+      _pendingReplays.remove(entry);
+      _startReplay(entry);
+    }
+    return entry.completer.future;
+  }
+
+  void updatePriority(DownloadSession session) {
+    final entry = _entries[session.id];
+    if (entry != null && identical(entry.session, session)) {
+      entry.control?.updatePriority(session.effectivePriority);
+      _pumpReplays();
+    }
+  }
+
+  void detach(DownloadSession session) {
+    final entry = _entries[session.id];
+    if (entry == null || !identical(entry.session, session)) return;
+    _entries.remove(session.id);
+    _pendingReplays.remove(entry);
+    _activeReplays.remove(entry);
+    entry.active = false;
+    entry.control?.cancel();
+    if (!entry.completer.isCompleted) {
+      entry.completer.complete();
+    }
+    session.detachIngressProjection(entry.projection.scopeId);
+    entry.projection.detach();
+    _pumpReplays();
+  }
+
+  /// Releases only Reader-local projection ownership.
+  ///
+  /// It intentionally does not enumerate or dispose the composition physical
+  /// DownloadRegistry. Any in-flight late-join future self-cleans its physical
+  /// fan-out when it observes [active] becoming false.
+  void dispose() {
+    final entries = _entries.values.toList(growable: false);
+    _entries.clear();
+    _pendingReplays.clear();
+    _activeReplays.clear();
+    for (final entry in entries) {
+      entry.active = false;
+      entry.control?.cancel();
+      if (!entry.completer.isCompleted) {
+        entry.completer.complete();
+      }
+      entry.session.detachIngressProjection(entry.projection.scopeId);
+      entry.projection.detach();
+    }
+  }
+
+  void _pumpReplays() {
+    if (_pendingReplays.isEmpty) return;
+
+    _pendingReplays.sort((a, b) => b.priority.compareTo(a.priority));
+
+    final activeForeground =
+        _activeReplays.where((e) => e.priority >= 1000).length;
+    final activeBackground = _activeReplays.length - activeForeground;
+
+    final toStart = <_IngressProjectionEntry>[];
+    for (final entry in _pendingReplays) {
+      if (!entry.active) continue;
+      final priority = entry.priority;
+      if (priority >= 1000) {
+        toStart.add(entry);
+      } else if (priority >= 780) {
+        if (activeForeground == 0 && (activeBackground + toStart.length) < 1) {
+          toStart.add(entry);
+        }
+      } else {
+        if (!_isMemoryPressured &&
+            activeForeground == 0 &&
+            (activeBackground + toStart.length) < 1) {
+          toStart.add(entry);
+        }
+      }
+    }
+
+    for (final entry in toStart) {
+      _pendingReplays.remove(entry);
+      _startReplay(entry);
+    }
+  }
+
+  void _startReplay(_IngressProjectionEntry entry) {
+    if (!entry.active) return;
+    _activeReplays.add(entry);
+
+    final session = entry.session;
+    final projection = entry.projection;
+    final attachmentControl = entry.control;
 
     final attachment = session.attachSynchronizedIngressProjection(
       projection,
@@ -153,8 +282,14 @@ final class DownloadIngressProjectionRegistry {
         if (!entry.active || !identical(_entries[session.id], entry)) {
           session.detachIngressProjection(projection.scopeId);
         }
+        if (!entry.completer.isCompleted) {
+          entry.completer.complete();
+        }
       }).catchError((Object error, StackTrace stackTrace) {
         if (!entry.active || !identical(_entries[session.id], entry)) {
+          if (!entry.completer.isCompleted) {
+            entry.completer.complete();
+          }
           return;
         }
         final failure = error is Failure
@@ -165,46 +300,29 @@ final class DownloadIngressProjectionRegistry {
                 cause: error,
               );
         projection.fail(failure);
+        if (!entry.completer.isCompleted) {
+          entry.completer.completeError(failure, stackTrace);
+        }
+      }).whenComplete(() {
+        _activeReplays.remove(entry);
+        _pumpReplays();
       }),
     );
-    return projection;
-  }
-
-  DownloadIngressProjection get(DownloadSession session) => attach(session);
-
-  DownloadIngressProjection? find(DownloadId id) => _entries[id]?.projection;
-
-  Future<void> settled(DownloadId id) =>
-      _entries[id]?.attachment ?? Future<void>.value();
-
-  void detach(DownloadSession session) {
-    final entry = _entries[session.id];
-    if (entry == null || !identical(entry.session, session)) return;
-    _entries.remove(session.id);
-    entry.active = false;
-    entry.control?.cancel();
-    session.detachIngressProjection(entry.projection.scopeId);
-    entry.projection.detach();
-  }
-
-  /// Releases only Reader-local projection ownership.
-  ///
-  /// It intentionally does not enumerate or dispose the composition physical
-  /// DownloadRegistry. Any in-flight late-join future self-cleans its physical
-  /// fan-out when it observes [active] becoming false.
-  void dispose() {
-    final entries = _entries.values.toList(growable: false);
-    _entries.clear();
-    for (final entry in entries) {
-      entry.active = false;
-      entry.control?.cancel();
-      entry.session.detachIngressProjection(entry.projection.scopeId);
-      entry.projection.detach();
-    }
   }
 }
 
 final class _IngressAttachmentControl implements TaskControl {
+  _IngressAttachmentControl({int priority = 0}) : _priority = priority;
+
+  int _priority;
+
+  @override
+  int get priority => _priority;
+
+  void updatePriority(int priority) {
+    _priority = priority;
+  }
+
   final Completer<void> _cancelledSignal = Completer<void>();
 
   @override
@@ -212,9 +330,6 @@ final class _IngressAttachmentControl implements TaskControl {
 
   @override
   Future<void> get whenCancelled => _cancelledSignal.future;
-
-  @override
-  int get priority => 0;
 
   void cancel() {
     if (!_cancelledSignal.isCompleted) _cancelledSignal.complete();

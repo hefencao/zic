@@ -162,6 +162,117 @@ bool webpPrefixDeclaresAnimation(Uint8List bytes) {
   return false;
 }
 
+/// Estimates a generous playable prefix byte target based on available WebP
+/// prefix headers, canvas dimensions, and initial frame chunk sizes.
+///
+/// Returns a generous byte length (aligned to [minQuantum] and clamped to [totalLength])
+/// to allow decoding the initial frame(s) in a single read without splitting into micro-chunks.
+int estimateWebpPlayablePrefixBytes(
+  Uint8List bytes, {
+  int? totalLength,
+  int minQuantum = 256 * 1024,
+}) {
+  if (minQuantum <= 0) minQuantum = 256 * 1024;
+  if (bytes.length < 20 ||
+      ascii.decode(bytes.sublist(0, 4), allowInvalid: true) != 'RIFF' ||
+      ascii.decode(bytes.sublist(8, 12), allowInvalid: true) != 'WEBP') {
+    if (totalLength != null && totalLength > 0 && totalLength < minQuantum) {
+      return totalLength;
+    }
+    return minQuantum;
+  }
+
+  final data = ByteData.sublistView(bytes);
+  var offset = 12;
+  int? canvasWidth;
+  int? canvasHeight;
+  var isAnimated = false;
+  int? firstFrameChunkEnd;
+
+  while (offset + 8 <= bytes.length) {
+    final tag = ascii.decode(
+      bytes.sublist(offset, offset + 4),
+      allowInvalid: true,
+    );
+    final length = data.getUint32(offset + 4, Endian.little);
+    final dataOffset = offset + 8;
+    final dataEnd = dataOffset + length;
+
+    if (tag == 'VP8X' && length >= 10) {
+      if (dataOffset + 10 <= bytes.length) {
+        if ((bytes[dataOffset] & 0x02) != 0) {
+          isAnimated = true;
+        }
+        canvasWidth = 1 +
+            bytes[dataOffset + 4] +
+            (bytes[dataOffset + 5] << 8) +
+            (bytes[dataOffset + 6] << 16);
+        canvasHeight = 1 +
+            bytes[dataOffset + 7] +
+            (bytes[dataOffset + 8] << 8) +
+            (bytes[dataOffset + 9] << 16);
+      }
+    } else if (tag == 'ANIM') {
+      isAnimated = true;
+    } else if (tag == 'ANMF') {
+      isAnimated = true;
+      firstFrameChunkEnd ??= dataEnd;
+    } else if (tag == 'VP8 ') {
+      firstFrameChunkEnd ??= dataEnd;
+      if (dataOffset + 10 <= bytes.length) {
+        if (bytes[dataOffset + 3] == 0x9d &&
+            bytes[dataOffset + 4] == 0x01 &&
+            bytes[dataOffset + 5] == 0x2a) {
+          canvasWidth = data.getUint16(dataOffset + 6, Endian.little) & 0x3fff;
+          canvasHeight = data.getUint16(dataOffset + 8, Endian.little) & 0x3fff;
+        }
+      }
+    } else if (tag == 'VP8L') {
+      firstFrameChunkEnd ??= dataEnd;
+      if (dataOffset + 5 <= bytes.length && bytes[dataOffset] == 0x2f) {
+        final b1 = bytes[dataOffset + 1];
+        final b2 = bytes[dataOffset + 2];
+        final b3 = bytes[dataOffset + 3];
+        final b4 = bytes[dataOffset + 4];
+        canvasWidth = 1 + b1 + ((b2 & 0x3f) << 8);
+        canvasHeight = 1 + (b2 >> 6) + (b3 << 2) + ((b4 & 0x0f) << 10);
+      }
+    }
+
+    if (dataEnd > bytes.length) break;
+    offset = dataEnd + (length.isOdd ? 1 : 0);
+  }
+
+  var estimate = minQuantum;
+  if (isAnimated) {
+    if (firstFrameChunkEnd != null) {
+      final frame0Bytes = firstFrameChunkEnd;
+      estimate = frame0Bytes > minQuantum ? frame0Bytes : minQuantum;
+    } else if (canvasWidth != null && canvasHeight != null && canvasWidth > 0 && canvasHeight > 0) {
+      final resolutionEstimate = (canvasWidth * canvasHeight * 0.65).round();
+      if (resolutionEstimate > estimate) {
+        estimate = resolutionEstimate;
+      }
+    }
+  } else {
+    if (firstFrameChunkEnd != null) {
+      estimate = firstFrameChunkEnd > minQuantum ? firstFrameChunkEnd : minQuantum;
+    } else if (canvasWidth != null && canvasHeight != null && canvasWidth > 0 && canvasHeight > 0) {
+      final resolutionEstimate = (canvasWidth * canvasHeight * 0.35).round();
+      if (resolutionEstimate > estimate) {
+        estimate = resolutionEstimate;
+      }
+    }
+  }
+
+  estimate = ((estimate + minQuantum - 1) ~/ minQuantum) * minQuantum;
+
+  if (totalLength != null && totalLength > 0 && estimate > totalLength) {
+    estimate = totalLength;
+  }
+  return estimate > 0 ? estimate : minQuantum;
+}
+
 WebpInfo _checked(int width, int height) {
   if (width <= 0 || height <= 0 || width > 16383 || height > 16383) {
     throw const FormatException('invalid WebP canvas dimensions');

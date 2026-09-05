@@ -1832,8 +1832,7 @@ def check_compile_regressions() -> None:
         'final class MemoryChapterDownloadService',
         'final class PersistentChapterDownloadService',
         'ChapterPageLoader',
-        '_chapters[_identity(entry)]',
-        'DownloadJob(',
+        'storePromotedArtifact(',
         'DownloadState.promoted',
         ('offline_chapters' if 'offline_chapters' in downloads
          else 'defaultChapterDownloadDirectory'),

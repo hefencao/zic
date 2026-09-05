@@ -874,7 +874,7 @@ final class MemoryChapterDownloadService
         const chunkSize = promotedArtifactReadChunkBytes;
         for (var offset = start; offset < end; offset += chunkSize) {
           final chunkEnd = (offset + chunkSize).clamp(offset, end).toInt();
-          yield Uint8List.fromList(bytes.sublist(offset, chunkEnd));
+          yield Uint8List.sublistView(bytes, offset, chunkEnd);
         }
       },
       readAll: () async => Uint8List.fromList(bytes),
@@ -4271,12 +4271,13 @@ final class PersistentDownloadArtifactStore
     }
     final ownedBytes = Uint8List.fromList(bytes);
     final checksum = Crc32()..add(ownedBytes);
+    final checksumHex = checksum.hex;
     final active = _artifactWrites[id];
     if (active != null) {
       final proof = _artifactWriteProofs[id];
       if (proof == null ||
           proof.length != ownedBytes.lengthInBytes ||
-          proof.checksum != checksum.hex) {
+          proof.checksum != checksumHex) {
         return Future<void>.error(const Failure(
           code: ErrorCode.artifactCorruption,
           message: 'concurrent artifact writes contain different content',
@@ -4286,12 +4287,12 @@ final class PersistentDownloadArtifactStore
     }
     final run = _serializeArtifactMutation(
       id,
-      () => _storePromotedArtifact(id, ownedBytes),
+      () => _storePromotedArtifact(id, ownedBytes, checksumHex: checksumHex),
     );
     _artifactWrites[id] = run;
     _artifactWriteProofs[id] = (
       length: ownedBytes.lengthInBytes,
-      checksum: checksum.hex,
+      checksum: checksumHex,
     );
     return run.whenComplete(() {
       if (identical(_artifactWrites[id], run)) {
@@ -4301,7 +4302,11 @@ final class PersistentDownloadArtifactStore
     });
   }
 
-  Future<void> _storePromotedArtifact(DownloadId id, Uint8List bytes) async {
+  Future<void> _storePromotedArtifact(
+    DownloadId id,
+    Uint8List bytes, {
+    String? checksumHex,
+  }) async {
     final session = _registry.get(id);
     if (session.activeRun || session.hasWriter) {
       throw const Failure(
@@ -4310,10 +4315,10 @@ final class PersistentDownloadArtifactStore
       );
     }
     await session.restore();
+    final effectiveChecksum = checksumHex ?? (Crc32()..add(bytes)).hex;
     if (session.state == DownloadState.promoted) {
-      final checksum = Crc32()..add(bytes);
       if (session.committedLength != bytes.lengthInBytes ||
-          session.artifact.checksum != checksum.hex) {
+          session.artifact.checksum != effectiveChecksum) {
         throw const Failure(
           code: ErrorCode.artifactCorruption,
           message: 'promoted artifact already contains different content',
@@ -4321,13 +4326,28 @@ final class PersistentDownloadArtifactStore
       }
       return;
     }
-    final transport = LoaderTransport(<Uri, LoaderTransportSource>{
-      id.canonicalUri: LoaderTransportSource(
-        revision: 'reader-cache:${id.sourceRevision}',
-        loadBytes: () async => bytes,
-      ),
-    });
-    await DownloadJob(transport: transport, session: session).run();
+    final runLease = session.beginRun();
+    try {
+      final writer = session.acquireWriter(expectedRun: runLease);
+      try {
+        await session.append(writer, 0, bytes);
+        await session.seal(
+          writer,
+          expectedLength: bytes.lengthInBytes,
+          expectedChecksum: effectiveChecksum,
+        );
+      } catch (error) {
+        if (session.hasWriter) {
+          try {
+            await session.fail(writer, error);
+          } catch (_) {}
+        }
+        rethrow;
+      }
+      await session.promote(expectedRun: runLease);
+    } finally {
+      session.endRun(runLease);
+    }
     final placement = await _index.getPlacement(
       sourceId: id.content.sourceId,
       comicId: id.content.comicId,

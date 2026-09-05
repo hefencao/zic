@@ -385,7 +385,7 @@ void main() {
 
     final second = createArtifact();
     await expectLater(
-      second.restore(verifyPromotedChecksum: false),
+      second.restore(verifyPromotedChecksum: true),
       throwsA(
         isA<Failure>().having(
           (error) => error.code,

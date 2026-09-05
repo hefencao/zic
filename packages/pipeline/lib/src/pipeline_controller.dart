@@ -159,6 +159,21 @@ final class PipelineController {
     return true;
   }
 
+  bool _memoryPressure = false;
+
+  bool observeMemoryPressure({required bool isPressured}) {
+    if (_memoryPressure == isPressured) return false;
+    _memoryPressure = isPressured;
+    if (_memoryPressure && _animatedFlowStage > 1) {
+      _animatedFlowStage = 1;
+      final observation = _lastObservation;
+      if (observation != null) {
+        _replan(observation, force: true);
+      }
+    }
+    return true;
+  }
+
   /// Raises animated-WebP transport frame credits from completed decode
   /// waterline evidence. The callback is revision-scoped so stale work from a
   /// previous page/session cannot increase the new current's body flow.
@@ -174,8 +189,11 @@ final class PipelineController {
         !_animatedFlowActiveFor(current)) {
       return false;
     }
-    final requested = policy.animatedPrefetchPolicy
+    var requested = policy.animatedPrefetchPolicy
         .expansionStageForWaterline(stage);
+    if (_memoryPressure && requested > 1) {
+      requested = 1;
+    }
     if (requested <= _animatedFlowStage) return false;
     _animatedFlowStage = requested;
     _replan(observation, force: true);

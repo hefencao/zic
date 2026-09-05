@@ -629,8 +629,8 @@ void main() {
       'reader-prepare-priority',
       1,
       <DownloadId, TransferDemand>{
-        high: const TransferDemand(priority: 1000, reason: 'current'),
-        low: const TransferDemand(priority: 820, reason: 'next'),
+        high: const TransferDemand(priority: 850, reason: 'next'),
+        low: const TransferDemand(priority: 820, reason: 'next2'),
       },
     );
 
@@ -648,6 +648,63 @@ void main() {
     expect(openOrder, hasLength(2));
     expect(openOrder.first, high.canonicalUri);
     expect(openOrder.last, low.canonicalUri);
+  });
+
+  test('foreground local preparation runs exclusively without background competition', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_fg_exclusive_prepare_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final foreground = _id('fg-prepare-exclusive');
+    final background = _id('bg-prepare-exclusive');
+    final fgRelease = Completer<void>();
+    final bgEntered = Completer<void>();
+    var bgPreparedCount = 0;
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 2),
+      prepareDownload: (session) async {
+        if (session.id == foreground) {
+          await fgRelease.future;
+        } else if (session.id == background) {
+          if (!bgEntered.isCompleted) bgEntered.complete();
+          bgPreparedCount++;
+        }
+      },
+    );
+    addTearDown(() async {
+      if (!fgRelease.isCompleted) fgRelease.complete();
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-fg-exclusive',
+      transportFor: (uri) => _CountingBytesTransport('RIFF....WEBPpriority'.codeUnits),
+      traceSink: const NoopTraceSink(),
+    );
+    consumer.replaceDemands(
+      'reader-fg-exclusive',
+      1,
+      <DownloadId, TransferDemand>{
+        foreground: const TransferDemand(priority: 1000, reason: 'current'),
+        background: const TransferDemand(priority: 820, reason: 'next'),
+      },
+    );
+
+    await Future<void>.delayed(Duration.zero);
+    expect(bgPreparedCount, equals(0));
+    expect(bgEntered.isCompleted, isFalse);
+
+    fgRelease.complete();
+    await bgEntered.future;
+    expect(bgPreparedCount, equals(1));
   });
 
   test('local preparation is retried after the physical session epoch resets',

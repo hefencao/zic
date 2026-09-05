@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 /// Streaming RIFF/WebP frame-boundary tracker used only for network flow credit.
 ///
 /// This parser does not decode WebP and never decides animation semantics. It
@@ -90,6 +88,8 @@ final class WebpFramePrefixTracker {
   }
 
   static int _uint32le(List<int> bytes, int offset) =>
-      ByteData.sublistView(Uint8List.fromList(bytes), offset, offset + 4)
-          .getUint32(0, Endian.little);
+      (bytes[offset]) |
+      (bytes[offset + 1] << 8) |
+      (bytes[offset + 2] << 16) |
+      (bytes[offset + 3] << 24);
 }

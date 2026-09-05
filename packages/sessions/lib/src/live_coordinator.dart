@@ -79,6 +79,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     DownloadObserve? onDownloadObserved,
     this.onSourceKindObserved,
     this.onDecodeRefillObserved,
+    this.onMemoryPressureObserved,
     DownloadTransferConsumer? downloadTransfer,
     NetLane? net,
     DecodeLane? decode,
@@ -154,6 +155,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final DownloadObserve? onDownloadObserved;
   final SourceKindObserve? onSourceKindObserved;
   final DecodeRefillObserve? onDecodeRefillObserved;
+  final void Function(bool isPressured)? onMemoryPressureObserved;
   late final DownloadTransferConsumer _downloadTransfer;
   DownloadTransferOwner? _ownedDownloadTransferOwner;
   late final NetLane net;
@@ -454,6 +456,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       final observed = _observedDownloadSessions[entry.key];
       if (session != null && !identical(observed, session)) {
         _observeDownloadIdentity(sessionId, entry.key, session);
+        if (_sourceWatches.containsKey(entry.key)) {
+          _watchSource(sessionId, entry.key, session);
+        }
       }
     }
   }
@@ -469,7 +474,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     } on Object {
       // Reader-local observers cannot break physical transfer ownership.
     }
-    _watchSource(sessionId, id, session);
   }
 
   void _clearSourceKind(DownloadId id) {
@@ -626,6 +630,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       ...diff.added.entries,
       ...diff.changed.entries,
     ]) {
+      final downloadSession = _observedDownloadSessions[entry.key.download] ??
+          this.registry.find(entry.key.download);
+      if (downloadSession != null) {
+        _watchSource(sessionId, entry.key.download, downloadSession);
+      }
       _decodes[entry.key] = entry.value;
       final demandRevision = _revision;
       _decodeDemandRevisions[entry.key] = demandRevision;
@@ -644,11 +653,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       if (onDecode == null && decodes == null) {
         continue;
       }
-      final registry = decodes;
+      final decodeRegistry = decodes;
       final pendingSourceWake = _hasPendingSourceRevision(entry.key);
-      final before = registry?.find(entry.key)?.snapshot;
+      final before = decodeRegistry?.find(entry.key)?.snapshot;
       final preparedDepth = uploads?.preparedDepth(entry.key) ?? 0;
-      if (registry != null &&
+      if (decodeRegistry != null &&
           !pendingSourceWake &&
           !_decodeNeedsFill(
             before,
@@ -1191,6 +1200,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       ...diff.added.entries,
       ...diff.changed.entries,
     ]) {
+      final downloadSession = _observedDownloadSessions[entry.key.download] ??
+          this.registry.find(entry.key.download);
+      if (downloadSession != null) {
+        _watchSource(sessionId, entry.key.download, downloadSession);
+      }
       _uploads[entry.key] = entry.value;
       final demandRevision = _revision;
       _uploadDemandRevisions[entry.key] = demandRevision;
@@ -1364,6 +1378,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       decodeDemands: _decodes,
       uploadDemands: _uploads,
     );
+    final isPressured = report.decodedFreed > 0 ||
+        report.outputFreed > 0 ||
+        report.decodedAfter >=
+            (budgeter.limits.decodedBytes -
+                budgeter.limits.currentDecodedReserve);
+    onMemoryPressureObserved?.call(isPressured);
     if (report.decodedFreed == 0 && report.outputFreed == 0) {
       return;
     }

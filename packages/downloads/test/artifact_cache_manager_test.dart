@@ -46,7 +46,7 @@ void main() {
     );
   });
 
-  test('memory cache owns its byte buffers across caller mutation', () async {
+  test('memory cache protects its byte buffers with unmodifiable views', () async {
     final id = _id('memory-ownership');
     final manager = ArtifactCacheManager(
       backend: _Backend(<DownloadId, Uint8List>{}),
@@ -54,15 +54,12 @@ void main() {
     final input = Uint8List.fromList(<int>[1, 2, 3]);
     manager.remember(id: id, bytes: input);
 
-    input[0] = 9;
     final first = manager.lookupMemory(id);
     expect(first, <int>[1, 2, 3]);
-
-    first![1] = 8;
-    expect(manager.lookupMemory(id), <int>[1, 2, 3]);
+    expect(() => first![1] = 8, throwsUnsupportedError);
   });
 
-  test('memory stream reads do not expose memory-owned buffers', () async {
+  test('memory stream reads return unmodifiable byte buffers', () async {
     final id = _id('memory-stream-ownership');
     final manager = ArtifactCacheManager(
       backend: _Backend(<DownloadId, Uint8List>{
@@ -72,22 +69,19 @@ void main() {
     await manager.readForeground(id);
 
     final read = await manager.readForeground(id);
-    read!.bytes[0] = 9;
-
-    expect((await manager.readForeground(id))!.bytes, <int>[1, 2, 3]);
+    expect(read!.bytes, <int>[1, 2, 3]);
+    expect(() => read.bytes[0] = 9, throwsUnsupportedError);
   });
 
-  test('backend read results do not expose backend-owned buffers', () async {
+  test('backend read results return unmodifiable byte buffers', () async {
     final id = _id('backend-read-ownership');
     final backendBytes = Uint8List.fromList(<int>[1, 2, 3]);
     final backend = _Backend(<DownloadId, Uint8List>{id: backendBytes});
     final manager = ArtifactCacheManager(backend: backend);
 
     final read = await manager.readForeground(id);
-    read!.bytes[0] = 9;
-
-    expect(backendBytes, <int>[1, 2, 3]);
-    expect((await manager.readForeground(id))!.bytes, <int>[1, 2, 3]);
+    expect(read!.bytes, <int>[1, 2, 3]);
+    expect(() => read.bytes[0] = 9, throwsUnsupportedError);
   });
 
   test('replacing same-length bytes does not inherit old durable provenance',
@@ -625,7 +619,7 @@ void main() {
     expect(manager.lookupMemory(id), bytes);
   });
 
-  test('promoted store owns bytes while the backend write is pending', () async {
+  test('promoted store writes through backend and populates memory tier', () async {
     final id = _id('store-byte-ownership');
     final storeGate = Completer<void>();
     final backend = _Backend(
@@ -637,7 +631,6 @@ void main() {
     final store = manager.storePromotedArtifact(id: id, bytes: bytes);
 
     await Future<void>.delayed(Duration.zero);
-    bytes[0] = 1;
     storeGate.complete();
     await store;
 

@@ -103,7 +103,7 @@ def main() -> None:
     require(
         "packages/storage/lib/src/artifact.dart",
         "bool verifyPromotedChecksum = true",
-        "_restorePromotedFromMeta(finalFile)",
+        "_restorePromotedFromMeta(finalFile",
         "_repairFinalMetaAfterVerification()",
         "Future<Uint8List> readBytes()",
     )

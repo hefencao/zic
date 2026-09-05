@@ -877,6 +877,70 @@ void main() {
     expect(session.snapshot.ingressProjectionCount, 0);
   });
 
+  test('synchronized ingress projection attachment stages replays by priority and watermark',
+      () async {
+    final s1 = DownloadSession(
+      id: _idWithSource('s1'),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/p1.webp',
+        finalPath: '${temp.path}/cache/p1.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    final s2 = DownloadSession(
+      id: _idWithSource('s2'),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/p2.webp',
+        finalPath: '${temp.path}/cache/p2.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    addTearDown(() async {
+      await s1.dispose();
+      await s2.dispose();
+    });
+    await s1.restore();
+    await s2.restore();
+
+    final w1 = s1.acquireWriter();
+    await s1.append(w1, 0, <int>[...'RIFF....WEBP'.codeUnits, 1, 2]);
+    await s1.seal(w1);
+    final w2 = s2.acquireWriter();
+    await s2.append(w2, 0, <int>[...'RIFF....WEBP'.codeUnits, 3, 4]);
+    await s2.seal(w2);
+
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-staged',
+    );
+
+    final d1 = s1.attachDemand(scopeId: 'reader', priority: 1000);
+    final d2 = s2.attachDemand(scopeId: 'reader', priority: 700);
+    addTearDown(() {
+      d1.detach();
+      d2.detach();
+    });
+
+    final proj1 = ingresses.get(s1);
+    final proj2 = ingresses.get(s2);
+
+    expect(proj1.snapshot.length, 0);
+    expect(proj2.snapshot.length, 0);
+
+    await ingresses.settled(s1.id);
+    expect(proj1.snapshot.sourceReady, isTrue);
+
+    await ingresses.settled(s2.id);
+    expect(proj2.snapshot.sourceReady, isTrue);
+
+    ingresses.dispose();
+    sources.dispose();
+  });
+
 
   test('late WebP Reader publishes a playable prefix before full partial catch-up',
       () async {

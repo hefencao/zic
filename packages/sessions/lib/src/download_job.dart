@@ -104,6 +104,7 @@ final class DownloadJob {
     String? expectedChecksum,
     TaskControl? control,
     RunLease? expectedRun,
+    bool verifyPromotedChecksum = true,
   }) async {
     control?.throwIfCancelled();
     if (session.state == DownloadState.promoted) {
@@ -113,7 +114,11 @@ final class DownloadJob {
       // re-enter restore so the ready sidecar and same-length file are
       // verified before a later run reuses them.
       if (session.residentBodyBacked) return true;
-      final restored = await session.restore(expectedRun: expectedRun);
+      final restored = await session.restore(
+        verifyPromotedChecksum: verifyPromotedChecksum,
+        expectedRun: expectedRun,
+        control: control,
+      );
       control?.throwIfCancelled();
       return restored.state == DownloadState.promoted;
     }
@@ -167,7 +172,11 @@ final class DownloadJob {
       session.requireRun(runLease);
       return;
     }
-    await session.restore(expectedRun: runLease);
+    await session.restore(
+      verifyPromotedChecksum: false,
+      expectedRun: runLease,
+      control: cancel,
+    );
     session.requireRun(runLease);
     cancel?.throwIfCancelled();
     session.requireRun(runLease);

@@ -65,6 +65,9 @@ final class RoleResolver {
       // follows scrub end restores the normal encoded/decode windows.
       return RoleWindow(roles);
     }
+    if (observation.interaction == Interaction.jumping) {
+      return RoleWindow(roles);
+    }
     final retainedIndex = previousCurrentIndex != null &&
         previousCurrentIndex >= 0 &&
         previousCurrentIndex < chapter.pages.length &&

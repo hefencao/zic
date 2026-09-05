@@ -82,6 +82,17 @@ void main() {
 
     expect(parseWebpPrefixInfo(prefix), isNull);
     expect(webpPrefixDeclaresAnimation(prefix), isFalse);
+    expect(estimateWebpPlayablePrefixBytes(prefix), 256 * 1024);
   });
 
+  test('estimateWebpPlayablePrefixBytes calculates generous threshold for animated webp', () {
+    final bytes = File(
+      '../../native/media_core/testdata/partial_blend.webp',
+    ).readAsBytesSync();
+    final estimate = estimateWebpPlayablePrefixBytes(
+      bytes,
+      totalLength: bytes.length,
+    );
+    expect(estimate, bytes.length);
+  });
 }

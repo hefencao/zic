@@ -27,6 +27,7 @@ final class LoaderTransportSource {
     this.openResponse,
     this.openControlledResponse,
     required this.revision,
+    this.contentHash,
   }) : assert(
           loadBytes != null ||
               loadBytesControlled != null ||
@@ -39,6 +40,7 @@ final class LoaderTransportSource {
   final TransportResponseLoader? openResponse;
   final ControlledTransportResponseLoader? openControlledResponse;
   final String revision;
+  final String? contentHash;
 }
 
 /// Adapts platform-owned or in-memory byte loaders to the same range/resume
@@ -109,7 +111,7 @@ final class LoaderTransport implements ControlledTransport {
         ? await controlledLoader(control: control)
         : await source.loadBytes!();
     control?.throwIfCancelled();
-    final contentHash = _fnv64Bytes(bytes);
+    final contentHash = source.contentHash ?? _fnv64Bytes(bytes);
     final currentValidators = Validators(
       etag: '"${source.revision}-${bytes.length}-$contentHash"',
     );

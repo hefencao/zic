@@ -108,8 +108,15 @@ final class DownloadTransferOwner {
   // partial/artifact restore is local I/O and may publish Reader-local ingress
   // before a source/network transport lease is available. One physical session
   // generation performs this initialization at most once.
+  static const int _maxActiveLocalPreparations = 2;
+  static const int _foregroundLocalPriority = 900;
+  static const int _maxBackgroundLocalWhileForeground = 0;
+
   final Map<DownloadId, Future<void>> _localPreparations =
       <DownloadId, Future<void>>{};
+  final Map<DownloadId, _PendingLocalPreparation> _pendingLocalPreparations =
+      <DownloadId, _PendingLocalPreparation>{};
+  final Set<DownloadId> _activeLocalPreparations = <DownloadId>{};
   final Map<DownloadId, _LocalPreparationControl>
       _localPreparationControls = <DownloadId, _LocalPreparationControl>{};
   final Map<DownloadId, SourceEpoch> _locallyPreparedSessions =
@@ -510,6 +517,11 @@ final class DownloadTransferOwner {
       ...preparations,
     ]);
     _networkTaskKeys.clear();
+    for (final pending in _pendingLocalPreparations.values) {
+      if (!pending.slot.isCompleted) pending.slot.complete();
+    }
+    _pendingLocalPreparations.clear();
+    _activeLocalPreparations.clear();
     _localPreparations.clear();
     _localPreparationControls.clear();
     _locallyPreparedSessions.clear();
@@ -582,6 +594,14 @@ final class DownloadTransferOwner {
     consumer._demands
       ..clear()
       ..addAll(desired);
+    toSchedule.sort((a, b) {
+      final pa = normalized[a]?.demand.priority ?? 0;
+      final pb = normalized[b]?.demand.priority ?? 0;
+      if (pa != pb) return pb.compareTo(pa);
+      final sa = _preferredClaim(a)?.sequence ?? (1 << 62);
+      final sb = _preferredClaim(b)?.sequence ?? (1 << 62);
+      return sa.compareTo(sb);
+    });
     for (final physicalId in toSchedule) {
       _ensureDownloadTask(physicalId, registry.get(physicalId));
     }
@@ -765,6 +785,7 @@ final class DownloadTransferOwner {
     TransferDemand demand,
   ) {
     _localPreparationControls[id]?.updatePriority(session.effectivePriority);
+    _pumpLocalPreparations();
     // A flow frame proof describes bytes already present in the physical
     // partial, not the policy target that happened to trigger suspension.
     // Demand/role changes therefore never invalidate it. A later positive
@@ -861,6 +882,7 @@ final class DownloadTransferOwner {
       _localPreparationControls[id]?.cancel();
       _cancelDownloadRetry(id);
     }
+    _pumpLocalPreparations();
     _drainPreparedNetworkAdmissions();
   }
 
@@ -1194,50 +1216,131 @@ final class DownloadTransferOwner {
     required TransferPrepare? prepare,
     required TransferPrepareWithControl? prepareWithControl,
   }) {
-    if (_localPreparations.containsKey(id)) return;
+    if (_localPreparations.containsKey(id) ||
+        _pendingLocalPreparations.containsKey(id)) {
+      return;
+    }
     final initialClaim = _preferredClaim(id);
     final control = _LocalPreparationControl(
       priority: session.effectivePriority,
     );
     _localPreparationControls[id] = control;
     final startedAtMicros = clock.nowMicros();
-    // Install the preparation slot before invoking the callback. Preparation
-    // is an async boundary, but its first part runs synchronously; a custom
-    // prepare hook can therefore re-enter refreshScheduling/reconcile before
-    // this method reaches its final assignment. The placeholder makes that
-    // re-entry observe the existing preparation instead of starting a second
-    // local hydration for the same physical generation.
     final slot = Completer<void>();
     _localPreparations[id] = slot.future;
-    late final Future<void> tracked;
-    tracked = _runLocalPreparation(
-      id,
-      session,
+    final pending = _PendingLocalPreparation(
+      id: id,
+      session: session,
       prepare: prepare,
       prepareWithControl: prepareWithControl,
-      control: control,
       initialClaim: initialClaim,
+      control: control,
       startedAtMicros: startedAtMicros,
-    ).whenComplete(() {
-      if (!slot.isCompleted) slot.complete();
-      if (identical(_localPreparations[id], tracked)) {
+      slot: slot,
+    );
+    _pendingLocalPreparations[id] = pending;
+    _pumpLocalPreparations();
+  }
+
+  void _pumpLocalPreparations() {
+    if (_disposed) return;
+    _pendingLocalPreparations.removeWhere((id, pending) {
+      if (pending.control.cancelled ||
+          !identical(registry.findExact(id), pending.session) ||
+          !pending.session.demanded) {
+        if (!pending.slot.isCompleted) pending.slot.complete();
         _localPreparations.remove(id);
-      }
-      if (identical(_localPreparationControls[id], control)) {
         _localPreparationControls.remove(id);
+        return true;
       }
-      if (!_disposed &&
-          identical(registry.findExact(id), session) &&
-          session.demanded &&
-          !control.cancelled) {
-        _preparedNetworkAdmissions[id] = session;
-      } else {
-        _preparedNetworkAdmissions.remove(id);
-        _preparedAdmissionDeferrals.remove(id);
-      }
-      _drainPreparedNetworkAdmissions();
+      return false;
     });
-    _localPreparations[id] = tracked;
+    if (_pendingLocalPreparations.isEmpty) return;
+
+    while (_activeLocalPreparations.length < _maxActiveLocalPreparations) {
+      final candidates = _pendingLocalPreparations.values.toList(growable: false)
+        ..sort((left, right) {
+          final priority = right.session.effectivePriority
+              .compareTo(left.session.effectivePriority);
+          if (priority != 0) return priority;
+          final leftSequence =
+              _preferredClaim(left.id)?.sequence ?? (1 << 62);
+          final rightSequence =
+              _preferredClaim(right.id)?.sequence ?? (1 << 62);
+          return leftSequence.compareTo(rightSequence);
+        });
+      if (candidates.isEmpty) break;
+
+      var activeForeground = 0;
+      var activeBackground = 0;
+      for (final activeId in _activeLocalPreparations) {
+        final activeSession = registry.findExact(activeId);
+        if (activeSession != null &&
+            activeSession.effectivePriority >= _foregroundLocalPriority) {
+          activeForeground++;
+        } else {
+          activeBackground++;
+        }
+      }
+
+      final hasForegroundPressure = activeForeground > 0 ||
+          candidates.any(
+              (c) => c.session.effectivePriority >= _foregroundLocalPriority);
+
+      _PendingLocalPreparation? selected;
+      for (final candidate in candidates) {
+        final isForeground =
+            candidate.session.effectivePriority >= _foregroundLocalPriority;
+        if (isForeground) {
+          selected = candidate;
+          break;
+        } else if (!hasForegroundPressure ||
+            activeBackground < _maxBackgroundLocalWhileForeground) {
+          selected = candidate;
+          break;
+        }
+      }
+      if (selected == null) break;
+      final target = selected;
+
+      _pendingLocalPreparations.remove(target.id);
+      _activeLocalPreparations.add(target.id);
+
+      late final Future<void> tracked;
+      tracked = _runLocalPreparation(
+        target.id,
+        target.session,
+        prepare: target.prepare,
+        prepareWithControl: target.prepareWithControl,
+        control: target.control,
+        initialClaim: target.initialClaim,
+        startedAtMicros: target.startedAtMicros,
+      ).whenComplete(() {
+        final id = target.id;
+        final session = target.session;
+        final control = target.control;
+        if (!target.slot.isCompleted) target.slot.complete();
+        _activeLocalPreparations.remove(id);
+        if (identical(_localPreparations[id], tracked)) {
+          _localPreparations.remove(id);
+        }
+        if (identical(_localPreparationControls[id], control)) {
+          _localPreparationControls.remove(id);
+        }
+        if (!_disposed &&
+            identical(registry.findExact(id), session) &&
+            session.demanded &&
+            !control.cancelled) {
+          _preparedNetworkAdmissions[id] = session;
+        } else {
+          _preparedNetworkAdmissions.remove(id);
+          _preparedAdmissionDeferrals.remove(id);
+        }
+        _pumpLocalPreparations();
+        _drainPreparedNetworkAdmissions();
+      });
+      _localPreparations[target.id] = tracked;
+    }
   }
 
   void _drainPreparedNetworkAdmissions() {
@@ -1366,6 +1469,7 @@ final class DownloadTransferOwner {
         session: session,
         expectedChecksum: _expectedChecksum(id),
         control: control,
+        verifyPromotedChecksum: false,
       );
       if (session.epoch != preparationEpoch) return;
     } on Object catch (error) {
@@ -1463,6 +1567,7 @@ final class DownloadTransferOwner {
         session: session,
         expectedChecksum: _expectedChecksum(id),
         control: token,
+        verifyPromotedChecksum: false,
       )) {
         _record(
           claim,
@@ -2262,4 +2367,26 @@ final class _TransferClaim {
   String sessionId;
   int revision;
   final int sequence;
+}
+
+final class _PendingLocalPreparation {
+  _PendingLocalPreparation({
+    required this.id,
+    required this.session,
+    required this.prepare,
+    required this.prepareWithControl,
+    required this.initialClaim,
+    required this.control,
+    required this.startedAtMicros,
+    required this.slot,
+  });
+
+  final DownloadId id;
+  final DownloadSession session;
+  final TransferPrepare? prepare;
+  final TransferPrepareWithControl? prepareWithControl;
+  final _TransferClaim? initialClaim;
+  final _LocalPreparationControl control;
+  final int startedAtMicros;
+  final Completer<void> slot;
 }

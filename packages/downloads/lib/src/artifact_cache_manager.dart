@@ -118,9 +118,9 @@ final class ArtifactCacheManager {
       return null;
     }
     _memory[selected] = bytes;
-    // Uint8List is mutable. Keep the memory-tier value private so a caller
-    // cannot corrupt a later cache hit by modifying the returned buffer.
-    return Uint8List.fromList(bytes);
+    // Uint8List is mutable. Return an unmodifiable view so callers
+    // cannot mutate the cached memory tier buffer in-place.
+    return bytes.asUnmodifiableView();
   }
 
   Future<ArtifactCacheLookup?> lookup(
@@ -305,10 +305,7 @@ final class ArtifactCacheManager {
     if (bytes.isEmpty) {
       throw StateError('cannot store an empty promoted artifact for ${id.key}');
     }
-    // The backend write may be asynchronous. Own a stable byte snapshot so a
-    // caller cannot mutate the buffer after this method returns to the event
-    // loop but before the backend has consumed it.
-    final ownedBytes = Uint8List.fromList(bytes);
+    final ownedBytes = bytes.asUnmodifiableView();
     final generation = _advanceMutationGeneration(id);
     _invalidateMemoryExact(id);
     await _serializeMutation(id, () async {
@@ -351,7 +348,7 @@ final class ArtifactCacheManager {
       _invalidateMemoryExact(id);
       return;
     }
-    final ownedBytes = Uint8List.fromList(bytes);
+    final ownedBytes = bytes.asUnmodifiableView();
     final key = _ArtifactByteKey(id, ownedBytes.lengthInBytes);
     for (final stale in _memory.keys
         .where((candidate) => candidate.id == id && candidate != key)
@@ -483,10 +480,7 @@ final class ArtifactCacheManager {
     tracked = Future<Uint8List>.sync(
       () => loader(operationControl),
     ).then<Uint8List>((bytes) async {
-      // Backends and local loaders may return a buffer that they still own.
-      // Keep the shared result independent from that buffer before retaining
-      // or handing it to another consumer.
-      final ownedBytes = Uint8List.fromList(bytes);
+      final ownedBytes = bytes.asUnmodifiableView();
       if (ownedBytes.isEmpty || ownedBytes.lengthInBytes != length) {
         await _invalidateAfterInvalidRead(
           id,
@@ -647,10 +641,10 @@ final class ArtifactCacheManager {
             final chunkEnd = (offset + promotedArtifactReadChunkBytes)
                 .clamp(offset, end)
                 .toInt();
-            yield Uint8List.fromList(bytes.sublist(offset, chunkEnd));
+            yield Uint8List.sublistView(bytes, offset, chunkEnd);
           }
         },
-        readAll: () async => Uint8List.fromList(bytes),
+        readAll: () async => bytes.asUnmodifiableView(),
       );
 
   static Future<Uint8List> _collect(

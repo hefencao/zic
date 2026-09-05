@@ -95,7 +95,9 @@ final class Artifact {
       // still has the claimed bytes. Even callers that request the historical
       // fast path must verify a same-length file before treating it as ready;
       // otherwise a silent in-place overwrite is promoted as a new artifact.
-      final restoredFromMeta = await _restorePromotedFromMeta(finalFile);
+      final restoredFromMeta = await _restorePromotedFromMeta(finalFile,
+        verifyChecksum: verifyPromotedChecksum,
+      );
       if (!restoredFromMeta) {
         await _rehash(finalFile);
         if (_committed <= 0) {

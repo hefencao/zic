@@ -322,10 +322,27 @@ final class DownloadSession {
   /// transport flow control. Decoder success is strongest; before success, a
   /// decoder need-more-data lower bound raises the unresolved fallback.
   int playableFlowPrefixFloorBytes({required int unresolvedFloorBytes}) {
-    if (_firstPlayablePrefixBytes > 0) return _firstPlayablePrefixBytes;
-    return _firstFrameRequiredPrefixBytes > unresolvedFloorBytes
-        ? _firstFrameRequiredPrefixBytes
-        : unresolvedFloorBytes;
+    var floor = unresolvedFloorBytes;
+    if (_prefix.isNotEmpty) {
+      final estimated = estimateWebpPlayablePrefixBytes(
+        Uint8List.fromList(_prefix),
+        totalLength: _totalLength ?? committedLength,
+        minQuantum: unresolvedFloorBytes,
+      );
+      if (estimated > floor) {
+        floor = estimated;
+      }
+    }
+    if (_firstPlayablePrefixBytes > 0) {
+      if (floor > unresolvedFloorBytes && _firstPlayablePrefixBytes > floor) {
+        return floor;
+      }
+      return _firstPlayablePrefixBytes;
+    }
+    if (_firstFrameRequiredPrefixBytes > floor) {
+      return _firstFrameRequiredPrefixBytes;
+    }
+    return floor;
   }
 
   bool get hasWriter => _writer != null;
@@ -446,6 +463,7 @@ final class DownloadSession {
   Future<DownloadSnapshot> restore({
     bool verifyPromotedChecksum = true,
     RunLease? expectedRun,
+    TaskControl? control,
   }) async {
     _requireNotDisposed();
     if (_restoring) {
@@ -472,6 +490,7 @@ final class DownloadSession {
       return await _restore(
         verifyPromotedChecksum: verifyPromotedChecksum,
         expectedEpoch: epoch,
+        control: control,
       );
     } catch (error) {
       // Artifact.restore and the following ownership/cache reconciliation are
@@ -495,6 +514,7 @@ final class DownloadSession {
   Future<DownloadSnapshot> _restore({
     required bool verifyPromotedChecksum,
     required SourceEpoch expectedEpoch,
+    TaskControl? control,
   }) async {
     if (_writer != null) {
       throw const Failure(
@@ -1991,8 +2011,12 @@ final class DownloadSession {
           }
           final epoch = _epoch;
           final targetLength = committedLength;
+          final initialQuantum = webpDecodePrefixQuantumBytesFor(id);
+          final initialProbeLength = initialQuantum < targetLength
+              ? initialQuantum
+              : targetLength;
           final publishFloor = playableFlowPrefixFloorBytes(
-            unresolvedFloorBytes: webpDecodePrefixQuantumBytesFor(id),
+            unresolvedFloorBytes: initialQuantum,
           );
           final publishLength = publishFloor < targetLength
               ? publishFloor
@@ -2004,12 +2028,17 @@ final class DownloadSession {
             epoch: epoch,
             chunks: _replayEpochChunks(
               epoch,
-              artifact.readChunks(endExclusive: publishLength),
+              artifact.readChunks(
+                chunkSize: initialProbeLength > 0
+                    ? initialProbeLength
+                    : 256 * 1024,
+                endExclusive: initialProbeLength,
+              ),
               control: control,
             ),
             sealed: (_state == DownloadState.sealed ||
                     _state == DownloadState.promoted) &&
-                publishLength == targetLength,
+                initialProbeLength == targetLength,
           );
           control?.throwIfCancelled();
           if (!identical(
@@ -2024,7 +2053,7 @@ final class DownloadSession {
           // Growth preserves the prefix. Reset/replacement does not. If the
           // physical epoch changed or truncated below the replayed prefix, retry
           // against the new generation before exposing any source.
-          if (_epoch != epoch || committedLength < publishLength) {
+          if (_epoch != epoch || committedLength < initialProbeLength) {
             continue;
           }
           projection.publishSynchronizedReplayPrefix();
@@ -2038,13 +2067,43 @@ final class DownloadSession {
             <String, Object?>{
               'stage': 'reader-ingress-late-join',
               'action': 'playable-prefix-published',
-              'publishLength': publishLength,
+              'publishLength': initialProbeLength,
               'physicalCommittedLength': committedLength,
               'firstPlayablePrefixBytes': _firstPlayablePrefixBytes,
               'firstFrameRequiredPrefixBytes':
                   _firstFrameRequiredPrefixBytes,
             },
           );
+          if (publishLength > initialProbeLength) {
+            var offset = initialProbeLength;
+            final remainingToPublish = publishLength - offset;
+            if (remainingToPublish > 0) {
+              await for (final chunk in _replayEpochChunks(
+                epoch,
+                artifact.readChunks(
+                  chunkSize: remainingToPublish,
+                  start: offset,
+                  endExclusive: publishLength,
+                ),
+                control: control,
+              )) {
+                control?.throwIfCancelled();
+                projection.append(epoch: epoch, offset: offset, bytes: chunk);
+                offset += chunk.length;
+              }
+            }
+            if ((_state == DownloadState.sealed ||
+                    _state == DownloadState.promoted) &&
+                publishLength == targetLength) {
+              projection.seal(epoch);
+            }
+            _requireEpoch(epoch);
+            _traceIngressProjection(
+              projection.scopeId,
+              before,
+              projection.snapshot,
+            );
+          }
           break;
         }
       }
@@ -2084,17 +2143,21 @@ final class DownloadSession {
             current.failure == null;
         if (canAppendSuffix) {
           var offset = current.length;
-          await for (final chunk in _replayEpochChunks(
-            epoch,
-            artifact.readChunks(
-              start: offset,
-              endExclusive: targetLength,
-            ),
-            control: control,
-          )) {
-            control?.throwIfCancelled();
-            projection.append(epoch: epoch, offset: offset, bytes: chunk);
-            offset += chunk.length;
+          final remainingSuffix = targetLength - offset;
+          if (remainingSuffix > 0) {
+            await for (final chunk in _replayEpochChunks(
+              epoch,
+              artifact.readChunks(
+                chunkSize: remainingSuffix > 0 ? remainingSuffix : 256 * 1024,
+                start: offset,
+                endExclusive: targetLength,
+              ),
+              control: control,
+            )) {
+              control?.throwIfCancelled();
+              projection.append(epoch: epoch, offset: offset, bytes: chunk);
+              offset += chunk.length;
+            }
           }
           if (sealed) {
             projection.seal(epoch);
@@ -2223,19 +2286,121 @@ final class DownloadSession {
           current.sealed == sealed &&
           current.failure == null;
       if (alreadyAuthoritative) continue;
-      await _rebuildIngressProjection(projection, sealed: sealed);
+      await _rebuildIngressProjection(
+        projection,
+        sealed: sealed,
+      );
     }
   }
 
   Future<void> _rebuildIngressProjection(
     DownloadIngressProjection projection, {
     required bool sealed,
+    TaskControl? control,
   }) async {
     final before = projection.snapshot;
     final epoch = _epoch;
+    final targetLength = artifact.committedLength;
+    if (!_residentBodyBacked &&
+        _contentKind == ContentKind.webp &&
+        targetLength > 0) {
+      final initialQuantum = webpDecodePrefixQuantumBytesFor(id);
+      final initialProbeLength = initialQuantum < targetLength
+          ? initialQuantum
+          : targetLength;
+      final publishFloor = playableFlowPrefixFloorBytes(
+        unresolvedFloorBytes: initialQuantum,
+      );
+      final publishLength =
+          publishFloor < targetLength ? publishFloor : targetLength;
+      await projection.rebuild(
+        epoch: epoch,
+        chunks: _replayEpochChunks(
+          epoch,
+          artifact.readChunks(
+            chunkSize: initialProbeLength > 0
+                ? initialProbeLength
+                : 256 * 1024,
+            endExclusive: initialProbeLength,
+          ),
+          control: control,
+        ),
+        sealed: sealed && initialProbeLength == targetLength,
+      );
+      _requireEpoch(epoch);
+      _traceIngressProjection(projection.scopeId, before, projection.snapshot);
+      if (publishLength > initialProbeLength) {
+        var offset = initialProbeLength;
+        final remainingToPublish = publishLength - offset;
+        if (remainingToPublish > 0) {
+          await for (final chunk in _replayEpochChunks(
+            epoch,
+            artifact.readChunks(
+              chunkSize: remainingToPublish > 0
+                  ? remainingToPublish
+                  : 256 * 1024,
+              start: offset,
+              endExclusive: publishLength,
+            ),
+            control: control,
+          )) {
+            control?.throwIfCancelled();
+            projection.append(epoch: epoch, offset: offset, bytes: chunk);
+            offset += chunk.length;
+          }
+        }
+        if (sealed && publishLength == targetLength) {
+          projection.seal(epoch);
+        }
+        _requireEpoch(epoch);
+        _traceIngressProjection(
+          projection.scopeId,
+          before,
+          projection.snapshot,
+        );
+      }
+      if (publishLength < targetLength) {
+        var offset = publishLength;
+        final remainingToTarget = targetLength - offset;
+        if (remainingToTarget > 0) {
+          await for (final chunk in _replayEpochChunks(
+            epoch,
+            artifact.readChunks(
+              chunkSize: remainingToTarget > 0
+                  ? remainingToTarget
+                  : 256 * 1024,
+              start: offset,
+              endExclusive: targetLength,
+            ),
+            control: control,
+          )) {
+            control?.throwIfCancelled();
+            projection.append(epoch: epoch, offset: offset, bytes: chunk);
+            offset += chunk.length;
+          }
+        }
+        if (sealed) {
+          projection.seal(epoch);
+        }
+        _requireEpoch(epoch);
+        _traceIngressProjection(
+          projection.scopeId,
+          before,
+          projection.snapshot,
+        );
+      }
+      return;
+    }
     await projection.rebuild(
       epoch: epoch,
-      chunks: _replayEpochChunks(epoch, artifact.readChunks()),
+      chunks: _replayEpochChunks(
+        epoch,
+        artifact.readChunks(
+          chunkSize: targetLength > 0 ? targetLength : 256 * 1024,
+          endExclusive: targetLength,
+        ),
+        control: control,
+      ),
       sealed: sealed,
     );
     _requireEpoch(epoch);

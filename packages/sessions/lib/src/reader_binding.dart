@@ -119,6 +119,11 @@ final class ReaderBinding {
     );
   }
 
+  bool observeMemoryPressure({required bool isPressured}) {
+    if (_detached) return false;
+    return pipeline.observeMemoryPressure(isPressured: isPressured);
+  }
+
   void updateDecodeTarget(DecodeTarget target) {
     if (_detached) {
       throw StateError('reader binding is detached');

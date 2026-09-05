@@ -114,4 +114,18 @@ void main() {
       <int>[defaultTransportChunkBytes, defaultTransportChunkBytes, 5],
     );
   });
+
+  test('loader transport respects explicit contentHash without recalculation', () async {
+    final bytes = Uint8List.fromList(<int>[1, 2, 3]);
+    final transport = LoaderTransport(<Uri, LoaderTransportSource>{
+      uri: LoaderTransportSource(
+        revision: 'r-explicit',
+        contentHash: 'known-hash-1234',
+        loadBytes: () async => bytes,
+      ),
+    });
+
+    final response = await transport.open(uri);
+    expect(response.validators.etag, '"r-explicit-3-known-hash-1234"');
+  });
 }
