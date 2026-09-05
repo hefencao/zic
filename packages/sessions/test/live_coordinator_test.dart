@@ -1322,7 +1322,10 @@ void main() {
     // The directed source-wake test below covers the operational path. This
     // regression guard keeps the VibeVenera producer/consumer contract
     // explicit: LiveCoordinator has no startup-buffer eligibility gate.
-    final source = File('lib/src/live_coordinator.dart').readAsStringSync();
+    final path = File('lib/src/live_coordinator.dart').existsSync()
+        ? 'lib/src/live_coordinator.dart'
+        : 'packages/sessions/lib/src/live_coordinator.dart';
+    final source = File(path).readAsStringSync();
     expect(source, isNot(contains('decode-startup-deferred')));
     expect(source, isNot(contains('_startupBufferingCurrent')));
     expect(source, isNot(contains('isStartupBuffering')));

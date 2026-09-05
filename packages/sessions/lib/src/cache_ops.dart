@@ -122,7 +122,12 @@ final class CacheOps {
     var skippedProtected = 0;
     var skippedStale = 0;
 
+    var step = 0;
     for (final record in records) {
+      step++;
+      if (step % 20 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
       if (protectedKeys.contains(record.key)) {
         skippedProtected++;
         continue;

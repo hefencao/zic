@@ -322,6 +322,9 @@ final class DownloadSession {
   /// transport flow control. Decoder success is strongest; before success, a
   /// decoder need-more-data lower bound raises the unresolved fallback.
   int playableFlowPrefixFloorBytes({required int unresolvedFloorBytes}) {
+    if (_firstPlayablePrefixBytes > 0) {
+      return _firstPlayablePrefixBytes;
+    }
     var floor = unresolvedFloorBytes;
     if (_prefix.isNotEmpty) {
       final estimated = estimateWebpPlayablePrefixBytes(
@@ -332,12 +335,6 @@ final class DownloadSession {
       if (estimated > floor) {
         floor = estimated;
       }
-    }
-    if (_firstPlayablePrefixBytes > 0) {
-      if (floor > unresolvedFloorBytes && _firstPlayablePrefixBytes > floor) {
-        return floor;
-      }
-      return _firstPlayablePrefixBytes;
     }
     if (_firstFrameRequiredPrefixBytes > floor) {
       return _firstFrameRequiredPrefixBytes;
@@ -516,6 +513,7 @@ final class DownloadSession {
     required SourceEpoch expectedEpoch,
     TaskControl? control,
   }) async {
+    control?.throwIfCancelled();
     if (_writer != null) {
       throw const Failure(
         code: ErrorCode.writerBusy,
@@ -534,6 +532,7 @@ final class DownloadSession {
     // a defense for a sidecar that changes during the preflight/restore gap.
     final promotedMeta = await _readPromotedMetaForOwnership();
     _requireEpoch(epoch);
+    control?.throwIfCancelled();
     if (promotedMeta != null &&
         _metaExplicitlyClaimsDifferentOwner(promotedMeta)) {
       throw const Failure(
@@ -545,8 +544,10 @@ final class DownloadSession {
       verifyPromotedChecksum: verifyPromotedChecksum,
     );
     _requireEpoch(epoch);
+    control?.throwIfCancelled();
     final restoredPrefix = await artifact.readPrefix(_sourceMetadataPrefixLength);
     _requireEpoch(epoch);
+    control?.throwIfCancelled();
     _prefix = List<int>.of(
       restoredPrefix,
       growable: true,
@@ -569,6 +570,7 @@ final class DownloadSession {
       // choose a new placement.
       final promotedMeta = await artifact.readMeta();
       _requireEpoch(epoch);
+      control?.throwIfCancelled();
       if (promotedMeta != null &&
           _metaExplicitlyClaimsDifferentOwner(promotedMeta)) {
         throw const Failure(
@@ -578,6 +580,7 @@ final class DownloadSession {
       }
       await _restoreIngressIfNeeded(sealed: true);
       _requireEpoch(epoch);
+      control?.throwIfCancelled();
       _state = DownloadState.promoted;
       await _syncCache(CacheState.ready, expectedEpoch: epoch);
       _requireEpoch(epoch);
@@ -591,6 +594,7 @@ final class DownloadSession {
       try {
         final meta = await artifact.readMeta();
         _requireEpoch(epoch);
+        control?.throwIfCancelled();
         if (meta != null) {
           if (_metaMatches(meta)) {
             final rawValidators = meta['validators'];
@@ -644,6 +648,7 @@ final class DownloadSession {
 
     await _restoreIngressIfNeeded(sealed: false);
     _requireEpoch(epoch);
+    control?.throwIfCancelled();
     _state = DownloadState.idle;
     _failure = null;
     await _syncCache(CacheState.partial, expectedEpoch: epoch);
@@ -2081,7 +2086,7 @@ final class DownloadSession {
               await for (final chunk in _replayEpochChunks(
                 epoch,
                 artifact.readChunks(
-                  chunkSize: remainingToPublish,
+                  chunkSize: 256 * 1024,
                   start: offset,
                   endExclusive: publishLength,
                 ),
@@ -2148,7 +2153,7 @@ final class DownloadSession {
             await for (final chunk in _replayEpochChunks(
               epoch,
               artifact.readChunks(
-                chunkSize: remainingSuffix > 0 ? remainingSuffix : 256 * 1024,
+                chunkSize: 256 * 1024,
                 start: offset,
                 endExclusive: targetLength,
               ),
@@ -2187,7 +2192,10 @@ final class DownloadSession {
           } else {
             chunks = _replayEpochChunks(
               epoch,
-              artifact.readChunks(endExclusive: targetLength),
+              artifact.readChunks(
+                chunkSize: 256 * 1024,
+                endExclusive: targetLength,
+              ),
               control: control,
             );
           }
@@ -2336,9 +2344,7 @@ final class DownloadSession {
           await for (final chunk in _replayEpochChunks(
             epoch,
             artifact.readChunks(
-              chunkSize: remainingToPublish > 0
-                  ? remainingToPublish
-                  : 256 * 1024,
+              chunkSize: 256 * 1024,
               start: offset,
               endExclusive: publishLength,
             ),
@@ -2366,9 +2372,7 @@ final class DownloadSession {
           await for (final chunk in _replayEpochChunks(
             epoch,
             artifact.readChunks(
-              chunkSize: remainingToTarget > 0
-                  ? remainingToTarget
-                  : 256 * 1024,
+              chunkSize: 256 * 1024,
               start: offset,
               endExclusive: targetLength,
             ),
@@ -2396,7 +2400,7 @@ final class DownloadSession {
       chunks: _replayEpochChunks(
         epoch,
         artifact.readChunks(
-          chunkSize: targetLength > 0 ? targetLength : 256 * 1024,
+          chunkSize: 256 * 1024,
           endExclusive: targetLength,
         ),
         control: control,

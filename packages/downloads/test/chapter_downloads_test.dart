@@ -137,6 +137,41 @@ void main() {
     expect(reopened.materializedSessionCount, 0);
   });
 
+  test('storePromotedArtifact replaces interrupted partial session', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-partial-promoted-store-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(service.close);
+
+    final id = _readerArtifactId('interrupted-partial-page');
+    final partialBytes = Uint8List.fromList(<int>[1, 2]);
+    await service.artifactStore.storePartialDownload(
+      id: id,
+      entry: PartialDownloadEntry(
+        length: partialBytes.lengthInBytes,
+        validators: const Validators(etag: '"partial-v1"'),
+        totalLength: 10,
+        open: ({required int start}) async* {
+          yield Uint8List.sublistView(partialBytes, start);
+        },
+      ),
+    );
+    final beforeStore = await service.openPartialDownload(id);
+    expect(beforeStore, isNotNull);
+    expect(beforeStore!.length, 2);
+    expect(await service.openArtifactStream(id), isNull);
+
+    final fullBytes = Uint8List.fromList(<int>[1, 2, 3, 4, 5]);
+    await service.storePromotedArtifact(id: id, bytes: fullBytes);
+
+    expect(await _readBackendArtifact(service, id), fullBytes);
+    final promotedStream = await service.openArtifactStream(id);
+    expect(promotedStream, isNotNull);
+    expect(promotedStream!.length, 5);
+  });
+
   test('compact home entries project progress from incrementally verified records',
       () async {
     final directory = await Directory.systemTemp.createTemp(
@@ -3580,6 +3615,86 @@ void main() {
       final page = await service.readPage(entryNew, i);
       expect(page, isNotEmpty);
     }
+  });
+
+  test('unpinned auto-cached chapter snapshot remains idle and hasAutoCache true', () async {
+    final root = await Directory.systemTemp.createTemp('zic-autocache-idle-test-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'lib:ch1',
+        displayName: '第一话',
+        sourceId: 'src1',
+        comicId: 'comic1',
+        comicTitle: '漫画1',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.test/1.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: 100,
+          ),
+          ImportedPageRecord(
+            displayName: '002.webp',
+            sourceId: 'https://example.test/2.webp',
+            pageId: 'p2',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: 100,
+          ),
+        ],
+      ),
+    );
+
+    final p1Id = DownloadId(
+      content: const ContentId(
+        sourceId: 'src1',
+        comicId: 'comic1',
+        chapterId: 'ch1',
+        pageId: 'p1',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/1.webp'),
+    );
+    final p2Id = DownloadId(
+      content: const ContentId(
+        sourceId: 'src1',
+        comicId: 'comic1',
+        chapterId: 'ch1',
+        pageId: 'p2',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/2.webp'),
+    );
+
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+
+    await service.storePromotedArtifact(id: p1Id, bytes: webpBytes);
+    await service.storePromotedArtifact(id: p2Id, bytes: webpBytes);
+
+    final snapshot = await service.inspect(entry);
+    expect(snapshot.completedPages, 2);
+    expect(snapshot.totalPages, 2);
+    expect(snapshot.pinnedPages, 0);
+    expect(snapshot.autoCachedPages, 2);
+    expect(snapshot.phase, ChapterDownloadPhase.idle);
+    expect(snapshot.isManualDownload, isFalse);
+    expect(snapshot.hasAutoCache, isTrue);
+
+    // After initiating explicit manual download, it transitions to complete and manual
+    await service.download(entry);
+    final manualSnapshot = await service.inspect(entry);
+    expect(manualSnapshot.phase, ChapterDownloadPhase.complete);
+    expect(manualSnapshot.isManualDownload, isTrue);
+    expect(manualSnapshot.hasAutoCache, isFalse);
   });
 }
 

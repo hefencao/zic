@@ -641,7 +641,7 @@ final class ArtifactCacheManager {
             final chunkEnd = (offset + promotedArtifactReadChunkBytes)
                 .clamp(offset, end)
                 .toInt();
-            yield Uint8List.sublistView(bytes, offset, chunkEnd);
+            yield Uint8List.sublistView(bytes, offset, chunkEnd).asUnmodifiableView();
           }
         },
         readAll: () async => bytes.asUnmodifiableView(),

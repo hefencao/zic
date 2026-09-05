@@ -301,7 +301,7 @@ final class DownloadIngressProjectionRegistry {
               );
         projection.fail(failure);
         if (!entry.completer.isCompleted) {
-          entry.completer.completeError(failure, stackTrace);
+          entry.completer.complete();
         }
       }).whenComplete(() {
         _activeReplays.remove(entry);

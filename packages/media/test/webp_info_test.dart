@@ -4,11 +4,17 @@ import 'dart:typed_data';
 import 'package:media/media.dart';
 import 'package:test/test.dart';
 
+File _fixture(String relativePath) {
+  for (final prefix in <String>['', '../../', 'packages/media/../../']) {
+    final candidate = File('$prefix$relativePath');
+    if (candidate.existsSync()) return candidate;
+  }
+  return File(relativePath);
+}
+
 void main() {
   test('reads VP8X canvas from the partial-blend fixture', () {
-    final bytes = File(
-      '../../native/media_core/testdata/partial_blend.webp',
-    ).readAsBytesSync();
+    final bytes = _fixture('native/media_core/testdata/partial_blend.webp').readAsBytesSync();
 
     final info = parseWebpInfo(bytes);
 
@@ -39,9 +45,7 @@ void main() {
   });
 
   test('reads animated canvas metadata from an incomplete WebP prefix', () {
-    final bytes = File(
-      '../../native/media_core/testdata/partial_blend.webp',
-    ).readAsBytesSync();
+    final bytes = _fixture('native/media_core/testdata/partial_blend.webp').readAsBytesSync();
     final prefix = Uint8List.fromList(bytes.sublist(0, 30));
 
     final info = parseWebpPrefixInfo(prefix);
@@ -86,9 +90,7 @@ void main() {
   });
 
   test('estimateWebpPlayablePrefixBytes calculates generous threshold for animated webp', () {
-    final bytes = File(
-      '../../native/media_core/testdata/partial_blend.webp',
-    ).readAsBytesSync();
+    final bytes = _fixture('native/media_core/testdata/partial_blend.webp').readAsBytesSync();
     final estimate = estimateWebpPlayablePrefixBytes(
       bytes,
       totalLength: bytes.length,

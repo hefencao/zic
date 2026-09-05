@@ -201,7 +201,10 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       _putArtifactObject(db, rec, artifactId);
       _putBinding(db, rec, artifactId);
       db.execute('COMMIT');
-      _invalidateCache();
+      final cached = _cachedEntries;
+      if (cached != null) {
+        cached[rec.key] = rec;
+      }
     } on Object {
       db.execute('ROLLBACK');
       rethrow;
@@ -232,7 +235,10 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
         }
       }
       db.execute('COMMIT');
-      _invalidateCache();
+      final cached = _cachedEntries;
+      if (cached != null) {
+        cached.remove(key);
+      }
     } on Object {
       db.execute('ROLLBACK');
       rethrow;
@@ -445,6 +451,35 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       'DELETE FROM download_placement WHERE source_id = ? AND comic_id = ?',
       <Object?>[sourceId, comicId],
     );
+  }
+
+  @override
+  Future<bool> isPathOrArtifactReferenced({
+    required String path,
+    required String artifactId,
+    String? excludingKey,
+  }) async {
+    final cached = _cachedEntries;
+    final effectiveTargetArtifactId =
+        artifactId.isEmpty ? defaultArtifactIdForPath(path) : artifactId;
+    if (cached != null) {
+      return cached.values.any(
+        (r) =>
+            r.key != excludingKey &&
+            (r.path == path ||
+                r.effectiveArtifactId == effectiveTargetArtifactId),
+      );
+    }
+    final db = _requireDb();
+    final rows = db.select(
+      'SELECT 1 FROM cache_entry WHERE (path = ? OR artifact_id = ?) AND key != ? LIMIT 1',
+      <Object?>[
+        path,
+        effectiveTargetArtifactId,
+        excludingKey ?? '',
+      ],
+    );
+    return rows.isNotEmpty;
   }
 
   @override

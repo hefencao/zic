@@ -647,6 +647,7 @@ final class MemoryChapterDownloadService
     }
     final completedPages = _storedPageCount(pages);
     final receivedBytes = _storedPageBytes(pages);
+    final isPinned = _pinnedIdentities.contains(identity);
     final snapshot = ChapterDownloadSnapshot(
       sourceId: entry.chapter.sourceId,
       comicId: entry.chapter.comicId,
@@ -658,10 +659,10 @@ final class MemoryChapterDownloadService
       totalPages: entry.chapter.pages.length,
       receivedBytes: receivedBytes,
       pinnedPages:
-          _pinnedIdentities.contains(identity) ? completedPages : 0,
+          isPinned ? completedPages : 0,
       totalBytes: _declaredTotalBytes(entry) ??
           (completedPages == entry.chapter.pages.length ? receivedBytes : null),
-      phase: completedPages == entry.chapter.pages.length
+      phase: completedPages == entry.chapter.pages.length && isPinned
           ? ChapterDownloadPhase.complete
           : ChapterDownloadPhase.idle,
     );
@@ -874,10 +875,10 @@ final class MemoryChapterDownloadService
         const chunkSize = promotedArtifactReadChunkBytes;
         for (var offset = start; offset < end; offset += chunkSize) {
           final chunkEnd = (offset + chunkSize).clamp(offset, end).toInt();
-          yield Uint8List.sublistView(bytes, offset, chunkEnd);
+          yield Uint8List.sublistView(bytes, offset, chunkEnd).asUnmodifiableView();
         }
       },
-      readAll: () async => Uint8List.fromList(bytes),
+      readAll: () async => bytes.asUnmodifiableView(),
     );
   }
 
@@ -3626,8 +3627,10 @@ final class PersistentDownloadArtifactStore
         !session.hasWriter &&
         session.state != DownloadState.disposed) {
       final finalPath = session.artifact.finalPath;
-      final shared = (await _index.list()).any(
-        (candidate) => candidate.path == finalPath,
+      final shared = await _index.isPathOrArtifactReferenced(
+        path: finalPath,
+        artifactId: '',
+        excludingKey: id.key,
       );
       if (shared) {
         await session.resetIfIdle(removeCacheRecord: false);
@@ -4149,12 +4152,11 @@ final class PersistentDownloadArtifactStore
       }
       await _index.put(record);
       if (previous != null && previous.path != recordPath) {
-        final previousStillReferenced = (await _index.list()).any(
-          (candidate) =>
-              candidate.key != id.key &&
-              (candidate.path == previous.path ||
-                  candidate.effectiveArtifactId ==
-                      previous.effectiveArtifactId),
+        final previousStillReferenced =
+            await _index.isPathOrArtifactReferenced(
+          path: previous.path,
+          artifactId: previous.effectiveArtifactId,
+          excludingKey: id.key,
         );
         final previousSaf = parseSafRecordPath(previous.path);
         if (!previousStillReferenced && previousSaf == null) {
@@ -4326,6 +4328,9 @@ final class PersistentDownloadArtifactStore
       }
       return;
     }
+    if (session.committedLength > 0) {
+      await session.reset(removeCacheRecord: false);
+    }
     final runLease = session.beginRun();
     try {
       final writer = session.acquireWriter(expectedRun: runLease);
@@ -4450,7 +4455,11 @@ final class PersistentDownloadArtifactStore
       final current = initial;
       await _index.remove(id.key);
       if (await _index.get(id.key) != null) return false;
-      final remaining = await _index.list();
+      final isReferencedByOther = await _index.isPathOrArtifactReferenced(
+        path: current.path,
+        artifactId: current.effectiveArtifactId,
+        excludingKey: id.key,
+      );
       if (await _index.get(id.key) != null) return false;
       final activeAfterRemoval = _registry.find(id);
       if (activeAfterRemoval != null &&
@@ -4471,11 +4480,6 @@ final class PersistentDownloadArtifactStore
         // bytes untouched rather than resetting it after its row was removed.
         return false;
       }
-      final isReferencedByOther = remaining.any(
-        (r) => r.key != id.key &&
-            (r.path == current.path ||
-                r.effectiveArtifactId == current.effectiveArtifactId),
-      );
       if (isReferencedByOther) return false;
       await _bytes.delete(current.path);
       await _deleteArtifactSidecar(current.path);
@@ -6204,13 +6208,16 @@ final class PersistentChapterDownloadService
         _runs.keys.any((k) => k.startsWith(_chapterDownloadPrefix(entry)));
     final runStarted = _startedRuns.contains(identity) ||
         _startedRunsKeysAnyPrefix(entry);
+    final isExplicitlyTracked =
+        pinnedPages > 0 || runStarted || _terminalPhases.containsKey(identity);
     final resolvedPhase = phase ??
         _terminalPhases[identity] ??
         (hasActiveRun
             ? ChapterDownloadPhase.downloading
             : (exactCompletedPages == effectivePages.length &&
                     effectivePages.isNotEmpty &&
-                    !_deletedIdentities.contains(identity))
+                    !_deletedIdentities.contains(identity) &&
+                    isExplicitlyTracked)
                 ? ChapterDownloadPhase.complete
                 : _cancelled.contains(identity)
                     ? ChapterDownloadPhase.cancelled

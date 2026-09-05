@@ -166,6 +166,12 @@ abstract interface class CacheIndex {
     required String comicId,
   });
 
+  Future<bool> isPathOrArtifactReferenced({
+    required String path,
+    required String artifactId,
+    String? excludingKey,
+  });
+
   Future<void> close();
 }
 
@@ -292,6 +298,23 @@ final class MemIndex implements CacheIndex, CacheBindingOperations {
   }) async {
     _requireOpen();
     _placements.remove('$sourceId\u0000$comicId');
+  }
+
+  @override
+  Future<bool> isPathOrArtifactReferenced({
+    required String path,
+    required String artifactId,
+    String? excludingKey,
+  }) async {
+    _requireOpen();
+    final effectiveTargetArtifactId =
+        artifactId.isEmpty ? defaultArtifactIdForPath(path) : artifactId;
+    return _records.values.any(
+      (r) =>
+          r.key != excludingKey &&
+          (r.path == path ||
+              r.effectiveArtifactId == effectiveTargetArtifactId),
+    );
   }
 
   @override

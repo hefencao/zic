@@ -1844,6 +1844,18 @@ final class _BlockingPutCacheIndex implements CacheIndex {
   }) => delegate.removePlacement(sourceId: sourceId, comicId: comicId);
 
   @override
+  Future<bool> isPathOrArtifactReferenced({
+    required String path,
+    required String artifactId,
+    String? excludingKey,
+  }) =>
+      delegate.isPathOrArtifactReferenced(
+        path: path,
+        artifactId: artifactId,
+        excludingKey: excludingKey,
+      );
+
+  @override
   Future<void> close() => delegate.close();
 }
 
@@ -1899,6 +1911,18 @@ final class _BlockingCacheIndex implements CacheIndex {
     required String sourceId,
     required String comicId,
   }) => delegate.removePlacement(sourceId: sourceId, comicId: comicId);
+
+  @override
+  Future<bool> isPathOrArtifactReferenced({
+    required String path,
+    required String artifactId,
+    String? excludingKey,
+  }) =>
+      delegate.isPathOrArtifactReferenced(
+        path: path,
+        artifactId: artifactId,
+        excludingKey: excludingKey,
+      );
 
   @override
   Future<void> close() => delegate.close();
