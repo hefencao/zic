@@ -813,7 +813,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             _downloadSnapshots.values,
           ),
           wholeComicSnapshot: _wholeComicQueueSnapshot,
-          versionRelations: _librarySession.versionRelations,
+          versionBaselines: _librarySession.versionBaselines,
         );
     final initialProjection = readProjection();
     try {
@@ -841,7 +841,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           wholeComicDownloads: _wholeComicDownloads,
           initialSnapshots: initialProjection.snapshots,
           initialWholeComicSnapshot: initialProjection.wholeComicSnapshot,
-          versionRelations: initialProjection.versionRelations,
+          versionBaselines: initialProjection.versionBaselines,
           cacheCoordinator: _cacheCoordinator,
           hydrateEntry: _librarySession.hydrateEntry,
           projectionChanges: _librarySession.downloadProjectionChanges,

@@ -422,7 +422,7 @@ final class _RecordingDownloads
   }) async {}
 
   @override
-  void updateVersionRelations(List<ComicVersionRelation> relations) {}
+  void updateVersionBaselines(List<ComicVersionRelation> relations) {}
 
   @override
   Future<DownloadPlacement?> getDownloadPlacement({

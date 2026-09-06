@@ -174,9 +174,9 @@ abstract interface class ChapterDownloadService {
     ComicPageOrder pageOrder = ComicPageOrder.auto,
   });
 
-  /// Updates live confirmed version relations so chapter download runs can
-  /// adopt equivalent pages across predecessor/successor versions.
-  void updateVersionRelations(List<ComicVersionRelation> relations);
+  /// Updates direct predecessor -> current download-head mappings. Historical
+  /// version traversal belongs to the library baseline resolver, not downloads.
+  void updateVersionBaselines(List<ComicVersionRelation> relations);
 
   /// Retrieves the persisted placement record for the specified comic.
   Future<DownloadPlacement?> getDownloadPlacement({
@@ -744,7 +744,7 @@ final class MemoryChapterDownloadService
   }
 
   @override
-  void updateVersionRelations(List<ComicVersionRelation> relations) {}
+  void updateVersionBaselines(List<ComicVersionRelation> relations) {}
 
   @override
   Future<DownloadPlacement?> getDownloadPlacement({
@@ -1089,10 +1089,11 @@ final class PersistentDownloadArtifactStore
   final TraceSink _traceSink;
   final MonoClock _clock;
 
-  List<ComicVersionRelation> _versionRelations = const <ComicVersionRelation>[];
+  List<ComicVersionRelation> _downloadHeadRelations =
+      const <ComicVersionRelation>[];
 
-  void updateVersionRelations(List<ComicVersionRelation> relations) {
-    _versionRelations = relations;
+  void updateVersionBaselines(List<ComicVersionRelation> relations) {
+    _downloadHeadRelations = List<ComicVersionRelation>.unmodifiable(relations);
   }
 
   static Future<PersistentDownloadArtifactStore> open(
@@ -1544,13 +1545,13 @@ final class PersistentDownloadArtifactStore
     _requireOpen();
     final preds = <String>{
       ...?knownPredecessorComicIds,
-      for (final rel in _versionRelations)
+      for (final rel in _downloadHeadRelations)
         if (rel.sourceId == sourceId && rel.successorComicId == comicId)
           rel.predecessorComicId,
     };
     final succs = <String>{
       ...?knownSuccessorComicIds,
-      for (final rel in _versionRelations)
+      for (final rel in _downloadHeadRelations)
         if (rel.sourceId == sourceId && rel.predecessorComicId == comicId)
           rel.successorComicId,
     };
@@ -2811,25 +2812,43 @@ final class PersistentDownloadArtifactStore
       mapping.successorPageCount ==
           mapping.predecessorPageCount + mapping.successorOffset;
 
-  bool _hasVerifiedFrontPrependEvidence(ImportedLibraryEntry entry) {
+  List<({
+    ComicVersionRelation relation,
+    ComicVersionPageMapping mapping,
+  })> _downloadBaselinePredecessorMappings(ImportedLibraryEntry entry) {
     final chapter = entry.chapter;
-    for (final relation in _versionRelations) {
-      if (relation.sourceId != chapter.sourceId) continue;
+    final matches = <({
+      ComicVersionRelation relation,
+      ComicVersionPageMapping mapping,
+    })>[];
+    for (final relation in _downloadHeadRelations) {
+      if (relation.sourceId != chapter.sourceId ||
+          relation.successorComicId != chapter.comicId) {
+        continue;
+      }
       for (final mapping in relation.pageMappings) {
-        if (!_mappingIsPureFrontPrepend(mapping)) continue;
-        final matchesSuccessor =
-            relation.successorComicId == chapter.comicId &&
-                mapping.successorChapterId == chapter.chapterId &&
-                mapping.successorPageCount == chapter.pages.length;
-        final matchesPredecessor =
-            relation.predecessorComicId == chapter.comicId &&
-                mapping.predecessorChapterId == chapter.chapterId &&
-                mapping.predecessorPageCount == chapter.pages.length;
-        if (matchesSuccessor || matchesPredecessor) return true;
+        if (mapping.successorChapterId == chapter.chapterId &&
+            mapping.successorPageCount == chapter.pages.length) {
+          matches.add((relation: relation, mapping: mapping));
+        }
       }
     }
-    return false;
+    matches.sort((left, right) {
+      final pages = right.mapping.predecessorPageCount.compareTo(
+        left.mapping.predecessorPageCount,
+      );
+      if (pages != 0) return pages;
+      return left.relation.predecessorComicId.compareTo(
+        right.relation.predecessorComicId,
+      );
+    });
+    return matches;
   }
+
+  bool _hasVerifiedFrontPrependEvidence(ImportedLibraryEntry entry) =>
+      _downloadBaselinePredecessorMappings(entry).any(
+        (candidate) => _mappingIsPureFrontPrepend(candidate.mapping),
+      );
 
   Future<DownloadPlacement> freezeExportPageOrder(
     ImportedLibraryEntry entry,
@@ -2870,86 +2889,42 @@ final class PersistentDownloadArtifactStore
     ImportedLibraryEntry entry,
   ) async {
     final chapter = entry.chapter;
-    final queue = <({
-      String comicId,
-      String chapterId,
-      int indexDelta,
-      int pageCount,
-    })>[
-      (
-        comicId: chapter.comicId,
-        chapterId: chapter.chapterId,
-        indexDelta: 0,
-        pageCount: chapter.pages.length,
-      ),
-    ];
-    final visited = <String>{};
-    while (queue.isNotEmpty) {
-      final node = queue.removeAt(0);
-      final key = '${node.comicId}\u0000${node.chapterId}';
-      if (!visited.add(key)) continue;
-      if (node.comicId != chapter.comicId ||
-          node.chapterId != chapter.chapterId) {
-        final placement = await _index.getPlacement(
-          sourceId: chapter.sourceId,
-          comicId: node.comicId,
-        );
-        if (placement?.pageOrder == ComicPageOrder.chronological) {
-          final bindings = await _index.listExportPageBindings(
-            sourceId: chapter.sourceId,
-            comicId: node.comicId,
-            chapterId: node.chapterId,
-          );
-          if (bindings.length == node.pageCount) {
-            final byIndex = <int, int>{
-              for (final binding in bindings)
-                binding.logicalIndex: binding.exportOrdinal,
-            };
-            final complete = byIndex.length == node.pageCount &&
-                Iterable<int>.generate(node.pageCount).every(byIndex.containsKey);
-            if (complete) {
-              final inherited = <int, int>{};
-              for (var currentIndex = 0;
-                  currentIndex < chapter.pages.length;
-                  currentIndex++) {
-                final anchorIndex = currentIndex + node.indexDelta;
-                final ordinal = byIndex[anchorIndex];
-                if (ordinal != null) inherited[currentIndex] = ordinal;
-              }
-              if (inherited.isNotEmpty) return inherited;
-            }
-          }
-        }
+    var best = const <int, int>{};
+    for (final candidate in _downloadBaselinePredecessorMappings(entry)) {
+      final mapping = candidate.mapping;
+      if (!_mappingIsPureFrontPrepend(mapping)) continue;
+      final predecessorComicId = candidate.relation.predecessorComicId;
+      final placement = await _index.getPlacement(
+        sourceId: chapter.sourceId,
+        comicId: predecessorComicId,
+      );
+      if (placement?.pageOrder != ComicPageOrder.chronological) continue;
+      final bindings = await _index.listExportPageBindings(
+        sourceId: chapter.sourceId,
+        comicId: predecessorComicId,
+        chapterId: mapping.predecessorChapterId,
+      );
+      if (bindings.length != mapping.predecessorPageCount) continue;
+      final byIndex = <int, int>{
+        for (final binding in bindings)
+          binding.logicalIndex: binding.exportOrdinal,
+      };
+      if (byIndex.length != mapping.predecessorPageCount ||
+          !Iterable<int>.generate(mapping.predecessorPageCount)
+              .every(byIndex.containsKey)) {
+        continue;
       }
-
-      for (final relation in _versionRelations) {
-        if (relation.sourceId != chapter.sourceId) continue;
-        for (final mapping in relation.pageMappings) {
-          if (!_mappingIsPureFrontPrepend(mapping)) continue;
-          if (relation.successorComicId == node.comicId &&
-              mapping.successorChapterId == node.chapterId &&
-              mapping.successorPageCount == node.pageCount) {
-            queue.add((
-              comicId: relation.predecessorComicId,
-              chapterId: mapping.predecessorChapterId,
-              indexDelta: node.indexDelta - mapping.successorOffset,
-              pageCount: mapping.predecessorPageCount,
-            ));
-          }
-          if (relation.predecessorComicId == node.comicId &&
-              mapping.predecessorChapterId == node.chapterId &&
-              mapping.predecessorPageCount == node.pageCount) {
-            queue.add((
-              comicId: relation.successorComicId,
-              chapterId: mapping.successorChapterId,
-              indexDelta: node.indexDelta + mapping.successorOffset,
-              pageCount: mapping.successorPageCount,
-            ));
-          }
-        }
+      final inherited = <int, int>{};
+      for (var currentIndex = 0;
+          currentIndex < chapter.pages.length;
+          currentIndex++) {
+        final predecessorIndex = currentIndex - mapping.successorOffset;
+        final ordinal = byIndex[predecessorIndex];
+        if (ordinal != null) inherited[currentIndex] = ordinal;
       }
+      if (inherited.length > best.length) best = inherited;
     }
-    return const <int, int>{};
+    return best;
   }
 
   Future<Map<String, int>> ensureExportPageOrdinals(
@@ -4072,7 +4047,7 @@ final class PersistentDownloadArtifactStore
       }
     }
 
-    for (final rel in _versionRelations) {
+    for (final rel in _downloadHeadRelations) {
       final isSucc = rel.successorComicId == id.content.comicId;
       final isPred = rel.predecessorComicId == id.content.comicId;
       if (!isSucc && !isPred) continue;
@@ -5344,13 +5319,9 @@ final class PersistentChapterDownloadService
     _resourceAccess = access;
   }
 
-  List<ComicVersionRelation> _versionRelations =
-      const <ComicVersionRelation>[];
-
   @override
-  void updateVersionRelations(List<ComicVersionRelation> relations) {
-    _versionRelations = relations;
-    artifactStore.updateVersionRelations(relations);
+  void updateVersionBaselines(List<ComicVersionRelation> relations) {
+    artifactStore.updateVersionBaselines(relations);
   }
 
   @override
@@ -5563,28 +5534,8 @@ final class PersistentChapterDownloadService
               comicDirectoryName: structuredComicDirectory,
             );
 
-      ComicVersionRelation? versionRelation;
-      ComicVersionRelation? successorRelation;
-      for (final rel in _versionRelations) {
-        if (rel.sourceId == entry.chapter.sourceId) {
-          if (rel.successorComicId == entry.chapter.comicId) {
-            versionRelation = rel;
-          }
-          if (rel.predecessorComicId == entry.chapter.comicId) {
-            successorRelation = rel;
-          }
-        }
-      }
-      final mapping = versionRelation?.pageMappings.firstOrNull;
-      final successorOffset = mapping?.successorOffset ?? 0;
-      final predecessorComicId = versionRelation?.predecessorComicId;
-      final predecessorChapterId = mapping?.predecessorChapterId;
-      final predecessorPageCount = mapping?.predecessorPageCount ?? 0;
-
-      final succMapping = successorRelation?.pageMappings.firstOrNull;
-      final succOffset = succMapping?.successorOffset ?? 0;
-      final succComicId = successorRelation?.successorComicId;
-      final succChapterId = succMapping?.successorChapterId;
+      final baselinePredecessors =
+          artifactStore._downloadBaselinePredecessorMappings(entry);
 
       var placement = await artifactStore.resolveDownloadPlacement(entry);
       placement = await artifactStore.freezeExportPageOrder(
@@ -5711,56 +5662,34 @@ final class PersistentChapterDownloadService
             break;
           }
         }
-        if (siblingRecord == null &&
-            predecessorComicId != null &&
-            successorOffset > 0) {
-          if (pageIndex >= successorOffset) {
-            final predIndex = pageIndex - successorOffset;
-            final predTotal = predecessorPageCount > 0
-                ? predecessorPageCount
-                : (manifest.pages.length - successorOffset);
+        if (siblingRecord == null) {
+          for (final baseline in baselinePredecessors) {
+            final mapping = baseline.mapping;
+            if (mapping.successorOffset < 0 ||
+                pageIndex < mapping.successorOffset) {
+              continue;
+            }
+            final predecessorIndex = pageIndex - mapping.successorOffset;
+            if (predecessorIndex >= mapping.predecessorPageCount) continue;
             for (final candidate in indexedRecords.values) {
               if (!artifactStore._isVerifiedReadyRecord(candidate)) continue;
               if (candidate.id.content.sourceId == entry.chapter.sourceId &&
-                  candidate.id.content.comicId == predecessorComicId &&
-                  (predecessorChapterId == null ||
-                      candidate.id.content.chapterId == predecessorChapterId)) {
+                  candidate.id.content.comicId ==
+                      baseline.relation.predecessorComicId &&
+                  candidate.id.content.chapterId ==
+                      mapping.predecessorChapterId) {
                 final parsedNum = parsePageIndexFromFileName(candidate.path);
-                if (parsedNum != null) {
-                  final matchesReverse =
-                      parsedNum == (predTotal - predIndex);
-                  final matchesNormal = parsedNum == (predIndex + 1);
-                  if (matchesReverse || matchesNormal) {
-                    siblingRecord = candidate;
-                    break;
-                  }
-                }
-              }
-            }
-          }
-        }
-        if (siblingRecord == null &&
-            succComicId != null &&
-            succOffset > 0) {
-          final succIndex = pageIndex + succOffset;
-          final succTotal = manifest.pages.length + succOffset;
-          for (final candidate in indexedRecords.values) {
-            if (!artifactStore._isVerifiedReadyRecord(candidate)) continue;
-            if (candidate.id.content.sourceId == entry.chapter.sourceId &&
-                candidate.id.content.comicId == succComicId &&
-                (succChapterId == null ||
-                    candidate.id.content.chapterId == succChapterId)) {
-              final parsedNum = parsePageIndexFromFileName(candidate.path);
-              if (parsedNum != null) {
+                if (parsedNum == null) continue;
                 final matchesReverse =
-                    parsedNum == (succTotal - succIndex);
-                final matchesNormal = parsedNum == (succIndex + 1);
+                    parsedNum == (mapping.predecessorPageCount - predecessorIndex);
+                final matchesNormal = parsedNum == (predecessorIndex + 1);
                 if (matchesReverse || matchesNormal) {
                   siblingRecord = candidate;
                   break;
                 }
               }
             }
+            if (siblingRecord != null) break;
           }
         }
         if (siblingRecord == null) {
@@ -5803,8 +5732,8 @@ final class PersistentChapterDownloadService
             'page': pageIndex,
             'targetPageNumber': targetPageNumber,
             'bytes': siblingRecord.bytes,
-            if (predecessorComicId != null)
-              'predecessorComicId': predecessorComicId,
+            if (siblingRecord.id.content.comicId != entry.chapter.comicId)
+              'baselineComicId': siblingRecord.id.content.comicId,
           });
           progress.schedule();
           continue;

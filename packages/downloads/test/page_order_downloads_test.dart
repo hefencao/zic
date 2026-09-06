@@ -142,7 +142,7 @@ void main() {
     );
     expect(unrelatedFrozen.pageOrder, ComicPageOrder.origin);
 
-    service.updateVersionRelations(<ComicVersionRelation>[
+    service.updateVersionBaselines(<ComicVersionRelation>[
       const ComicVersionRelation(
         sourceId: 'venera:ehentai',
         predecessorComicId: 'old',
@@ -288,8 +288,8 @@ void main() {
           ),
         );
 
-    service.updateVersionRelations(
-      const <ComicVersionRelation>[
+    final baselines = resolveComicVersionBaselines(
+      relations: const <ComicVersionRelation>[
         ComicVersionRelation(
           sourceId: 'source',
           predecessorComicId: 'old',
@@ -319,7 +319,18 @@ void main() {
           ],
         ),
       ],
+      manualDownloadComics: const <ComicVersionIdentity>[
+        ComicVersionIdentity(sourceId: 'source', comicId: 'old'),
+        ComicVersionIdentity(sourceId: 'source', comicId: 'new'),
+      ],
     );
+    expect(baselines.downloadHeadRelations, hasLength(2));
+    final oldToHead = baselines.downloadHeadRelations.singleWhere(
+      (relation) => relation.predecessorComicId == 'old',
+    );
+    expect(oldToHead.successorComicId, 'new');
+    expect(oldToHead.pageMappings.single.successorOffset, 3);
+    service.updateVersionBaselines(baselines.downloadHeadRelations);
 
     final old = entry('old', 3);
     await service.claimComicDirectory(

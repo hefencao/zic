@@ -193,30 +193,18 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     String sourceId,
     String comicId,
   ) {
-    final currentKey = _canonicalComicKey(sourceId, comicId);
-    DateTime? latest;
-    for (final relation in _versionRelations) {
-      if (relation.sourceId != sourceId ||
-          relation.successorComicId.isEmpty ||
-          relation.predecessorComicId == relation.successorComicId) {
-        continue;
-      }
-      final predecessorMatches = relation.predecessorComicId == comicId ||
-          _canonicalComicKey(sourceId, relation.predecessorComicId) ==
-              currentKey;
-      final successorIsCurrent = relation.successorComicId == comicId ||
-          _canonicalComicKey(sourceId, relation.successorComicId) ==
-              currentKey;
-      if (!predecessorMatches || successorIsCurrent) continue;
-      final discoveredAt = relation.discoveredAt;
-      if (discoveredAt != null &&
-          (latest == null || discoveredAt.isAfter(latest))) {
-        latest = discoveredAt;
-      } else if (discoveredAt == null && latest == null) {
-        latest = DateTime.fromMicrosecondsSinceEpoch(1, isUtc: true);
-      }
+    final family = _librarySession.versionBaselines.familyFor(
+      sourceId,
+      comicId,
+    );
+    if (family == null ||
+        family.shelfHeadComicId != comicId ||
+        family.latestKnownComicId == null ||
+        family.latestKnownComicId == family.shelfHeadComicId) {
+      return null;
     }
-    return latest;
+    return family.latestKnownDiscoveredAt ??
+        DateTime.fromMicrosecondsSinceEpoch(1, isUtc: true);
   }
 
   DateTime? _sourceUpdateAtForComic(LibraryComic comic) {
@@ -815,26 +803,41 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   ) async {
     final active = _sourceForId(source.sourceId) ?? source;
     if (_sourceSupportsVersionEntry(active)) {
-      try {
-        final state = await _loadSourceVersionState(
-          active,
-          summary.title,
-          summary.comicId,
-        );
-        if (state.successors.isNotEmpty && mounted) {
-          await _viewSourceVersion(
+      var latest = _librarySession.versionBaselines.latestKnownHeadFor(
+        active.sourceId,
+        summary.comicId,
+      );
+      if (latest == null || latest == summary.comicId) {
+        try {
+          await _loadSourceVersionState(
             active,
+            summary.title,
             summary.comicId,
-            state.successors.first,
           );
-          return;
-        }
-      } on Object catch (error) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('读取同源更新失败，将打开当前版本：$error')),
+          latest = _librarySession.versionBaselines.latestKnownHeadFor(
+            active.sourceId,
+            summary.comicId,
           );
+        } on Object catch (error) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('读取同源更新失败，将打开当前版本：$error')),
+            );
+          }
         }
+      }
+      if (latest != null && latest != summary.comicId && mounted) {
+        await _viewSourceVersion(
+          active,
+          summary.comicId,
+          SourceComicVersion(
+            sourceId: active.sourceId,
+            comicId: latest,
+            title: summary.title,
+            generation: 0,
+          ),
+        );
+        return;
       }
     }
     if (mounted) {

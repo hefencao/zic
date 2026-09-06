@@ -3582,7 +3582,7 @@ void main() {
       ),
     );
 
-    service.updateVersionRelations(<ComicVersionRelation>[
+    service.updateVersionBaselines(<ComicVersionRelation>[
       const ComicVersionRelation(
         sourceId: 'venera:ehentai',
         predecessorComicId: 'comic-old',

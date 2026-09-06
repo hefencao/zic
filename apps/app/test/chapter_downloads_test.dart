@@ -886,13 +886,16 @@ void main() {
           downloads: service,
           wholeComicDownloads: queue,
           initialSnapshots: snapshots,
-          versionRelations: const <ComicVersionRelation>[
-            ComicVersionRelation(
-              sourceId: 'version-manager-source',
-              predecessorComicId: 'old',
-              successorComicId: 'new',
-            ),
-          ],
+          versionBaselines: _downloadVersionBaselines(
+            const <ComicVersionRelation>[
+                        ComicVersionRelation(
+                          sourceId: 'version-manager-source',
+                          predecessorComicId: 'old',
+                          successorComicId: 'new',
+                        ),
+                      ],
+            snapshots,
+          ),
         ),
       ),
     );
@@ -910,7 +913,7 @@ void main() {
   });
 
   testWidgets(
-      'download manager selects transitive highest explicit successor through mapped chapter ids',
+      'download manager consumes projected download head across mapped chapter ids',
       (tester) async {
     final old = _versionedDownloadEntry(
       comicId: 'old',
@@ -938,36 +941,39 @@ void main() {
           downloads: service,
           wholeComicDownloads: queue,
           initialSnapshots: snapshots,
-          versionRelations: const <ComicVersionRelation>[
-            ComicVersionRelation(
-              sourceId: 'version-manager-source',
-              predecessorComicId: 'old',
-              successorComicId: 'middle',
-              pageMappings: <ComicVersionPageMapping>[
-                ComicVersionPageMapping(
-                  predecessorChapterId: 'old-ch',
-                  successorChapterId: 'middle-ch',
-                  predecessorPageCount: 1,
-                  successorPageCount: 2,
-                  successorOffset: 1,
-                ),
-              ],
-            ),
-            ComicVersionRelation(
-              sourceId: 'version-manager-source',
-              predecessorComicId: 'middle',
-              successorComicId: 'new',
-              pageMappings: <ComicVersionPageMapping>[
-                ComicVersionPageMapping(
-                  predecessorChapterId: 'middle-ch',
-                  successorChapterId: 'new-ch',
-                  predecessorPageCount: 2,
-                  successorPageCount: 3,
-                  successorOffset: 1,
-                ),
-              ],
-            ),
-          ],
+          versionBaselines: _downloadVersionBaselines(
+            const <ComicVersionRelation>[
+                        ComicVersionRelation(
+                          sourceId: 'version-manager-source',
+                          predecessorComicId: 'old',
+                          successorComicId: 'middle',
+                          pageMappings: <ComicVersionPageMapping>[
+                            ComicVersionPageMapping(
+                              predecessorChapterId: 'old-ch',
+                              successorChapterId: 'middle-ch',
+                              predecessorPageCount: 1,
+                              successorPageCount: 2,
+                              successorOffset: 1,
+                            ),
+                          ],
+                        ),
+                        ComicVersionRelation(
+                          sourceId: 'version-manager-source',
+                          predecessorComicId: 'middle',
+                          successorComicId: 'new',
+                          pageMappings: <ComicVersionPageMapping>[
+                            ComicVersionPageMapping(
+                              predecessorChapterId: 'middle-ch',
+                              successorChapterId: 'new-ch',
+                              predecessorPageCount: 2,
+                              successorPageCount: 3,
+                              successorOffset: 1,
+                            ),
+                          ],
+                        ),
+                      ],
+            snapshots,
+          ),
         ),
       ),
     );
@@ -1013,22 +1019,25 @@ void main() {
           downloads: service,
           wholeComicDownloads: queue,
           initialSnapshots: snapshots,
-          versionRelations: const <ComicVersionRelation>[
-            ComicVersionRelation(
-              sourceId: 'version-manager-source',
-              predecessorComicId: 'mapped-old',
-              successorComicId: 'mapped-new',
-              pageMappings: <ComicVersionPageMapping>[
-                ComicVersionPageMapping(
-                  predecessorChapterId: 'other-old-ch',
-                  successorChapterId: 'other-new-ch',
-                  predecessorPageCount: 1,
-                  successorPageCount: 2,
-                  successorOffset: 1,
-                ),
-              ],
-            ),
-          ],
+          versionBaselines: _downloadVersionBaselines(
+            const <ComicVersionRelation>[
+                        ComicVersionRelation(
+                          sourceId: 'version-manager-source',
+                          predecessorComicId: 'mapped-old',
+                          successorComicId: 'mapped-new',
+                          pageMappings: <ComicVersionPageMapping>[
+                            ComicVersionPageMapping(
+                              predecessorChapterId: 'other-old-ch',
+                              successorChapterId: 'other-new-ch',
+                              predecessorPageCount: 1,
+                              successorPageCount: 2,
+                              successorOffset: 1,
+                            ),
+                          ],
+                        ),
+                      ],
+            snapshots,
+          ),
         ),
       ),
     );
@@ -1082,13 +1091,16 @@ void main() {
           downloads: service,
           wholeComicDownloads: queue,
           initialSnapshots: snapshots,
-          versionRelations: const <ComicVersionRelation>[
-            ComicVersionRelation(
-              sourceId: 'version-manager-source',
-              predecessorComicId: 'cache-old',
-              successorComicId: 'cache-new',
-            ),
-          ],
+          versionBaselines: _downloadVersionBaselines(
+            const <ComicVersionRelation>[
+                        ComicVersionRelation(
+                          sourceId: 'version-manager-source',
+                          predecessorComicId: 'cache-old',
+                          successorComicId: 'cache-new',
+                        ),
+                      ],
+            snapshots,
+          ),
         ),
       ),
     );
@@ -1109,6 +1121,22 @@ void main() {
   });
 
 }
+
+ComicVersionBaselineProjection _downloadVersionBaselines(
+  Iterable<ComicVersionRelation> relations,
+  Iterable<ChapterDownloadSnapshot> snapshots,
+) =>
+    resolveComicVersionBaselines(
+      relations: relations,
+      manualDownloadComics: <ComicVersionIdentity>[
+        for (final snapshot in snapshots)
+          if (snapshot.isManualDownload)
+            ComicVersionIdentity(
+              sourceId: snapshot.sourceId,
+              comicId: snapshot.comicId,
+            ),
+      ],
+    );
 
 final class _BlockingInspectManyDownloadService
     implements ChapterDownloadService {
@@ -1146,8 +1174,8 @@ final class _BlockingInspectManyDownloadService
       );
 
   @override
-  void updateVersionRelations(List<ComicVersionRelation> relations) =>
-      _delegate.updateVersionRelations(relations);
+  void updateVersionBaselines(List<ComicVersionRelation> relations) =>
+      _delegate.updateVersionBaselines(relations);
 
   @override
   Future<DownloadPlacement?> getDownloadPlacement({

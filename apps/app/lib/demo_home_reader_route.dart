@@ -12,14 +12,14 @@ final class _ReaderComicVersionNoticeGate extends StatefulWidget {
     required this.sourceId,
     required this.comicId,
     required this.preferences,
-    required this.loadSuccessor,
+    required this.loadLatestComicId,
     required this.child,
   });
 
   final String sourceId;
   final String comicId;
   final AppPreferencesController preferences;
-  final Future<ComicVersionRelation?> Function() loadSuccessor;
+  final Future<String?> Function() loadLatestComicId;
   final Widget child;
 
   @override
@@ -36,12 +36,12 @@ final class _ReaderComicVersionNoticeGateState
   }
 
   Future<void> _check() async {
-    final relation = await widget.loadSuccessor();
-    if (!mounted || relation == null) return;
+    final latestComicId = await widget.loadLatestComicId();
+    if (!mounted || latestComicId == null) return;
     if (widget.preferences.hasAcknowledgedComicVersionNotice(
       widget.sourceId,
       widget.comicId,
-      relation.successorComicId,
+      latestComicId,
     )) {
       return;
     }
@@ -52,7 +52,7 @@ final class _ReaderComicVersionNoticeGateState
       widget.preferences.acknowledgeComicVersionNotice(
         widget.sourceId,
         widget.comicId,
-        relation.successorComicId,
+        latestComicId,
       );
       messenger.showSnackBar(
         const SnackBar(
@@ -183,14 +183,14 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       sourceId: current.chapter.sourceId,
       comicId: current.chapter.comicId,
       preferences: widget.preferences,
-      loadSuccessor: () async {
-        final store = _comicVersionRelationStore();
-        if (store == null) return null;
-        final relations = await store.listComicVersionSuccessors(
+      loadLatestComicId: () async {
+        final latest = _librarySession.versionBaselines.latestKnownHeadFor(
           current.chapter.sourceId,
           current.chapter.comicId,
         );
-        return relations.isEmpty ? null : relations.first;
+        return latest == null || latest == current.chapter.comicId
+            ? null
+            : latest;
       },
       child: screen,
     );

@@ -10,10 +10,11 @@ This document is normative for the detailed download/storage behavior. `docs/SPE
 2. `DownloadPlacement.pageOrder` MUST describe only user-visible export layout.
 3. Durable page placement MUST NOT be recomputed from a global `N-index` rule when a newer comic version changes page count.
 4. Unopened or unmaterialized comic versions MUST NOT create per-page artifact/export bindings solely because a version relation was discovered.
-5. Compact verified version-edge mappings MAY be composed lazily when a version is actually cached/downloaded. If compact proof is insufficient, automatic reuse MUST be skipped rather than expanded speculatively.
+5. Historical `ComicVersionRelation` edges MAY remain compact provenance, but Reader, DownloadManager, ExportLayout and download execution MUST NOT traverse them at runtime. A version-state owner MUST project explicit `latestKnownHead`, `shelfHead` and `downloadHead`; discovering a newer version MUST change only `latestKnownHead` until shelf/manual-download state explicitly adopts that version.
 6. `ComicPageOrder.auto` MUST freeze before first structured page materialization. It MAY resolve to `chronological` only for a single-chapter comic with verified pure-front-prepend evidence; otherwise it MUST resolve to `origin`. Source/plugin names are not ordering evidence.
 7. Materialized export pages MUST have sparse durable positive ordinals. An existing logical page's ordinal MUST NOT change during ordinary incremental/version reuse; a front-prepended page MAY only consume a new ordinal above the existing maximum. A change that would move an existing slot MUST fail as a policy conflict until an explicit export relayout is requested.
-8. Verified version traversal MAY cross unmaterialized intermediate versions but MUST NOT create their per-page bindings. Only an already-materialized compatible anchor may contribute ordinals.
+8. A unique verified historical path MAY be composed once into a direct predecessor→current-head mapping. Downstream consumers MUST receive that direct mapping, not the path. Ambiguous branches/paths MUST skip automatic folding/reuse. Only an already-materialized compatible predecessor anchor may contribute ordinals, and unmaterialized intermediates MUST remain row-free.
+9. `shelfHead` MUST be derived from adopted shelf/library state; `downloadHead` MUST be derived only from explicit manual-download state. Auto-cache-only or merely discovered successors MUST NOT become either head.
 
 ## 2. Metadata, artifacts and replicas
 

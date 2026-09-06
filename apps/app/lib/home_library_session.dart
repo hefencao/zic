@@ -281,6 +281,8 @@ final class HomeLibrarySession extends ChangeNotifier {
       const <String, ComicSourcePreference>{};
   List<ComicVersionRelation> _versionRelations =
       const <ComicVersionRelation>[];
+  ComicVersionBaselineProjection _versionBaselines =
+      ComicVersionBaselineProjection.empty;
   Map<String, ChapterDownloadSnapshot> _downloadSnapshots =
       const <String, ChapterDownloadSnapshot>{};
   late WholeComicQueueSnapshot _wholeComicQueueSnapshot;
@@ -303,6 +305,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   Map<String, ComicSourcePreference> get sourcePreferences =>
       _sourcePreferences;
   List<ComicVersionRelation> get versionRelations => _versionRelations;
+  ComicVersionBaselineProjection get versionBaselines => _versionBaselines;
   Map<String, ChapterDownloadSnapshot> get downloadSnapshots =>
       _downloadSnapshots;
   List<ImportedLibraryEntry> get downloadManagerEntries {
@@ -327,6 +330,33 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
     _activeSourceId = value;
     _publish();
+  }
+
+  void _recomputeVersionBaselines() {
+    _versionBaselines = resolveComicVersionBaselines(
+      relations: _versionRelations,
+      shelfComics: <ComicVersionIdentity>[
+        for (final preference in _preferences.values)
+          if (preference.inShelf)
+            ComicVersionIdentity(
+              sourceId: preference.sourceId,
+              comicId: preference.comicId,
+            ),
+      ],
+      manualDownloadComics: <ComicVersionIdentity>[
+        for (final snapshot in _downloadSnapshots.values)
+          if (snapshot.isManualDownload)
+            ComicVersionIdentity(
+              sourceId: snapshot.sourceId,
+              comicId: snapshot.comicId,
+            ),
+      ],
+    );
+    // Downloads consume only direct predecessor -> current download-head
+    // mappings. Historical relations remain library provenance.
+    chapterDownloads.updateVersionBaselines(
+      _versionBaselines.downloadHeadRelations,
+    );
   }
 
   List<BrowsableComicSource> get enabledSources {
@@ -509,6 +539,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     this.library = library;
     this.chapterDownloads = chapterDownloads;
     this.wholeComicDownloads = wholeComicDownloads;
+    _recomputeVersionBaselines();
     // Preserve the snapshot-projected orphan entries until the adopted
     // service publishes its first authoritative download projection.
     ownsLibrary = false;
@@ -627,7 +658,6 @@ final class HomeLibrarySession extends ChangeNotifier {
     );
     _versionRelations =
         List<ComicVersionRelation>.unmodifiable(snapshot.versionRelations);
-    chapterDownloads.updateVersionRelations(_versionRelations);
     _orphanedDownloadEntries = List<ImportedLibraryEntry>.unmodifiable(
       snapshot.orphanedDownloadEntries,
     );
@@ -641,6 +671,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _downloadSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
       downloadSnapshots,
     );
+    _recomputeVersionBaselines();
     _downloadProjectionChanges.notifyListeners();
     _snapshotLibraryRevision = snapshot.libraryRevision;
     _snapshotRewriteNeeded = snapshot.requiresRewrite;
@@ -769,7 +800,7 @@ final class HomeLibrarySession extends ChangeNotifier {
         _preferences = Map<String, ComicPreference>.unmodifiable(preferences);
         _versionRelations =
             List<ComicVersionRelation>.unmodifiable(versionRelations);
-        chapterDownloads.updateVersionRelations(_versionRelations);
+        _recomputeVersionBaselines();
       }
       _error = null;
       _publish();
@@ -926,13 +957,14 @@ final class HomeLibrarySession extends ChangeNotifier {
       _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
       _versionRelations =
           List<ComicVersionRelation>.unmodifiable(versionRelations);
-      chapterDownloads.updateVersionRelations(_versionRelations);
+      _recomputeVersionBaselines();
     }
     _categories = List<LibraryCategory>.unmodifiable(categories);
     _preferences = Map<String, ComicPreference>.unmodifiable(seedPreferences);
     _readStates = Map<String, ChapterReadState>.unmodifiable(seedReadStates);
     _sourcePreferences =
         Map<String, ComicSourcePreference>.unmodifiable(seedSourcePreferences);
+    _recomputeVersionBaselines();
     _activeSourceId = nextActiveSourceId;
     _error = null;
     _loading = false;
@@ -1033,7 +1065,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       );
     }
     _versionRelations = List<ComicVersionRelation>.unmodifiable(next);
-    chapterDownloads.updateVersionRelations(_versionRelations);
+    _recomputeVersionBaselines();
     _libraryProjectionRevision++;
     _publish();
     _scheduleSnapshotWrite();
@@ -1046,6 +1078,7 @@ final class HomeLibrarySession extends ChangeNotifier {
         preference.identity: preference,
       },
     );
+    _recomputeVersionBaselines();
     _libraryProjectionRevision++;
     _publish();
     _scheduleSnapshotWrite();
@@ -1236,6 +1269,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
     next[snapshot.identity] = snapshot;
     _downloadSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(next);
+    _recomputeVersionBaselines();
     _downloadProjectionChanges.notifyListeners();
     if (_shouldPersistDownloadTransition(previous, snapshot)) {
       _scheduleSnapshotWrite();
@@ -1323,6 +1357,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _downloadSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
       snapshots,
     );
+    _recomputeVersionBaselines();
     _downloadProjectionChanges.notifyListeners();
     _scheduleSnapshotWrite();
   }

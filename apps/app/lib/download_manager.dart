@@ -71,163 +71,68 @@ final class DownloadManagerProjection {
     required this.entries,
     required this.snapshots,
     required this.wholeComicSnapshot,
-    this.versionRelations = const <ComicVersionRelation>[],
+    this.versionBaselines = ComicVersionBaselineProjection.empty,
   });
 
   final List<ImportedLibraryEntry> entries;
   final List<ChapterDownloadSnapshot> snapshots;
   final WholeComicQueueSnapshot wholeComicSnapshot;
-  final List<ComicVersionRelation> versionRelations;
+  final ComicVersionBaselineProjection versionBaselines;
 }
 
 
-final class _DownloadVersionGraph {
-  _DownloadVersionGraph(Iterable<ComicVersionRelation> relations)
-      : _relations = List<ComicVersionRelation>.unmodifiable(relations) {
-    final directed = <String, Set<String>>{};
-    final allNodes = <String>{};
-    for (final relation in _relations) {
-      final predecessor = _comicNode(
-        relation.sourceId,
-        relation.predecessorComicId,
-      );
-      final successor = _comicNode(
-        relation.sourceId,
-        relation.successorComicId,
-      );
-      allNodes
-        ..add(predecessor)
-        ..add(successor);
-      directed.putIfAbsent(predecessor, () => <String>{}).add(successor);
-    }
-
-    // Version metadata is compact (relations/pageMappings only). Precompute
-    // transitive reachability once so a long manual-download list never runs a
-    // graph search for each comparison during every widget rebuild.
-    for (final start in allNodes) {
-      final reachable = <String>{};
-      final pending = <String>[start];
-      while (pending.isNotEmpty) {
-        final node = pending.removeLast();
-        for (final successor in directed[node] ?? const <String>{}) {
-          if (reachable.add(successor)) pending.add(successor);
-        }
-      }
-      _reachableSuccessors[start] = reachable;
+final class _DownloadVersionBaselineIndex {
+  _DownloadVersionBaselineIndex(this._projection) {
+    for (final relation in _projection.downloadHeadRelations) {
+      _directByMember[
+        _comicKey(relation.sourceId, relation.predecessorComicId)
+      ] = relation;
     }
   }
 
-  final List<ComicVersionRelation> _relations;
-  final Map<String, String> _chapterFamilyMemo = <String, String>{};
-  final Map<String, Set<String>> _reachableSuccessors =
-      <String, Set<String>>{};
+  final ComicVersionBaselineProjection _projection;
+  final Map<String, ComicVersionRelation> _directByMember =
+      <String, ComicVersionRelation>{};
 
-  static String _comicNode(String sourceId, String comicId) =>
-      '$sourceId\u0000comic:$comicId';
+  static String _comicKey(String sourceId, String comicId) =>
+      '$sourceId\u0000$comicId';
 
-  static String _chapterNode(
-    String sourceId,
-    String comicId,
-    String chapterId,
-  ) =>
-      '$sourceId\u0000comic:$comicId\u0000chapter:$chapterId';
-
-  static ({String sourceId, String comicId, String chapterId}) _parseChapterNode(
-    String node,
-  ) {
-    final first = node.indexOf('\u0000comic:');
-    final second = node.indexOf('\u0000chapter:', first + 1);
-    return (
-      sourceId: node.substring(0, first),
-      comicId: node.substring(first + '\u0000comic:'.length, second),
-      chapterId: node.substring(second + '\u0000chapter:'.length),
-    );
-  }
-
-  String chapterFamilyKey(
+  String chapterBaselineKey(
     String sourceId,
     String comicId,
     String chapterId,
   ) {
-    final start = _chapterNode(sourceId, comicId, chapterId);
-    final cached = _chapterFamilyMemo[start];
-    if (cached != null) return cached;
-
-    final component = <String>{};
-    final pending = <String>[start];
-    while (pending.isNotEmpty) {
-      final node = pending.removeLast();
-      if (!component.add(node)) continue;
-      final current = _parseChapterNode(node);
-      for (final relation in _relations) {
-        if (relation.sourceId != current.sourceId) continue;
-        if (relation.predecessorComicId == current.comicId) {
-          if (relation.pageMappings.isEmpty) {
-            pending.add(
-              _chapterNode(
-                current.sourceId,
-                relation.successorComicId,
-                current.chapterId,
-              ),
-            );
-          } else {
-            for (final mapping in relation.pageMappings) {
-              if (mapping.predecessorChapterId == current.chapterId) {
-                pending.add(
-                  _chapterNode(
-                    current.sourceId,
-                    relation.successorComicId,
-                    mapping.successorChapterId,
-                  ),
-                );
-              }
-            }
-          }
-        }
-        if (relation.successorComicId == current.comicId) {
-          if (relation.pageMappings.isEmpty) {
-            pending.add(
-              _chapterNode(
-                current.sourceId,
-                relation.predecessorComicId,
-                current.chapterId,
-              ),
-            );
-          } else {
-            for (final mapping in relation.pageMappings) {
-              if (mapping.successorChapterId == current.chapterId) {
-                pending.add(
-                  _chapterNode(
-                    current.sourceId,
-                    relation.predecessorComicId,
-                    mapping.predecessorChapterId,
-                  ),
-                );
-              }
-            }
-          }
-        }
+    final head = _projection.downloadHeadFor(sourceId, comicId);
+    if (head == null) {
+      return '$sourceId\u0000$comicId\u0000$chapterId';
+    }
+    if (comicId == head) {
+      return '$sourceId\u0000$head\u0000$chapterId';
+    }
+    final direct = _directByMember[_comicKey(sourceId, comicId)];
+    if (direct == null || direct.successorComicId != head) {
+      // The historical path was ambiguous or could not be composed. Keep the
+      // old task exact rather than teaching Presentation to traverse history.
+      return '$sourceId\u0000$comicId\u0000$chapterId';
+    }
+    if (direct.pageMappings.isEmpty) {
+      // Compatibility for legacy version relations that predate chapter
+      // mappings: same raw chapter id is the only allowed fallback.
+      return '$sourceId\u0000$head\u0000$chapterId';
+    }
+    for (final mapping in direct.pageMappings) {
+      if (mapping.predecessorChapterId == chapterId) {
+        return '$sourceId\u0000$head\u0000${mapping.successorChapterId}';
       }
     }
-    final ordered = component.toList()..sort();
-    final canonical = ordered.first;
-    for (final node in component) {
-      _chapterFamilyMemo[node] = canonical;
-    }
-    return canonical;
+    return '$sourceId\u0000$comicId\u0000$chapterId';
   }
 
-  bool isSuccessor({
-    required String sourceId,
-    required String candidateComicId,
-    required String currentComicId,
-  }) {
-    if (candidateComicId == currentComicId) return false;
-    final start = _comicNode(sourceId, currentComicId);
-    final target = _comicNode(sourceId, candidateComicId);
-    return _reachableSuccessors[start]?.contains(target) ?? false;
-  }
+  bool isDownloadHead(ChapterDownloadSnapshot snapshot) =>
+      _projection.downloadHeadFor(snapshot.sourceId, snapshot.comicId) ==
+          snapshot.comicId;
 }
+
 
 final class DownloadManagerScreen extends StatefulWidget {
   const DownloadManagerScreen({
@@ -244,7 +149,7 @@ final class DownloadManagerScreen extends StatefulWidget {
     this.readProjection,
     this.refreshProjection,
     this.traceSink = const NoopTraceSink(),
-    this.versionRelations = const <ComicVersionRelation>[],
+    this.versionBaselines = ComicVersionBaselineProjection.empty,
     super.key,
   });
 
@@ -261,7 +166,7 @@ final class DownloadManagerScreen extends StatefulWidget {
   final Listenable? projectionChanges;
   final DownloadManagerProjection Function()? readProjection;
   final Future<void> Function()? refreshProjection;
-  final List<ComicVersionRelation> versionRelations;
+  final ComicVersionBaselineProjection versionBaselines;
 
   @override
   State<DownloadManagerScreen> createState() => _DownloadManagerScreenState();
@@ -287,7 +192,8 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   bool _cacheBusy = false;
   ResourceCacheUsage? _cacheUsage;
   DownloadManagerTab _selectedTab = DownloadManagerTab.manual;
-  _DownloadVersionGraph _versionGraph = _DownloadVersionGraph(const <ComicVersionRelation>[]);
+  _DownloadVersionBaselineIndex _versionBaselines =
+      _DownloadVersionBaselineIndex(ComicVersionBaselineProjection.empty);
 
   final MonoClock _traceClock = const SystemClock();
   late final int _openedAtMicros;
@@ -360,7 +266,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     _downloads = widget.downloads;
     _wholeComicDownloads = widget.wholeComicDownloads;
     _cacheCoordinator = widget.cacheCoordinator;
-    _versionGraph = _DownloadVersionGraph(widget.versionRelations);
+    _versionBaselines = _DownloadVersionBaselineIndex(widget.versionBaselines);
     _replaceEntries(widget.entries);
     for (final snapshot in widget.initialSnapshots) {
       final matchingKey = _matchingEntryIdentity(snapshot);
@@ -524,7 +430,8 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   void _adoptProjection(DownloadManagerProjection projection) {
     setState(() {
       _replaceEntries(projection.entries);
-      _versionGraph = _DownloadVersionGraph(projection.versionRelations);
+      _versionBaselines =
+          _DownloadVersionBaselineIndex(projection.versionBaselines);
       _snapshots
         ..clear()
         ..addEntries(
@@ -700,7 +607,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
               !snapshot.hasDurableBytes)) {
         continue;
       }
-      final key = _versionGraph.chapterFamilyKey(
+      final key = _versionBaselines.chapterBaselineKey(
         snapshot.sourceId,
         snapshot.comicId,
         snapshot.chapterId,
@@ -808,18 +715,10 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     ChapterDownloadSnapshot current,
     ChapterDownloadSnapshot candidate,
   ) {
-    final candidateIsSuccessor = _versionGraph.isSuccessor(
-      sourceId: candidate.sourceId,
-      candidateComicId: candidate.comicId,
-      currentComicId: current.comicId,
-    );
-    final currentIsSuccessor = _versionGraph.isSuccessor(
-      sourceId: current.sourceId,
-      candidateComicId: current.comicId,
-      currentComicId: candidate.comicId,
-    );
-    if (candidateIsSuccessor != currentIsSuccessor) {
-      return candidateIsSuccessor ? candidate : current;
+    final candidateIsHead = _versionBaselines.isDownloadHead(candidate);
+    final currentIsHead = _versionBaselines.isDownloadHead(current);
+    if (candidateIsHead != currentIsHead) {
+      return candidateIsHead ? candidate : current;
     }
     return _preferRowSnapshot(current, candidate);
   }

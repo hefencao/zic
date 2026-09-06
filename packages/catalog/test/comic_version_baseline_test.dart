@@ -1,0 +1,138 @@
+import 'package:catalog/catalog.dart';
+import 'package:test/test.dart';
+
+void main() {
+  ComicVersionPageMapping mapping(
+    String predecessorChapter,
+    String successorChapter,
+    int predecessorCount,
+    int successorCount,
+    int offset,
+  ) =>
+      ComicVersionPageMapping(
+        predecessorChapterId: predecessorChapter,
+        successorChapterId: successorChapter,
+        predecessorPageCount: predecessorCount,
+        successorPageCount: successorCount,
+        successorOffset: offset,
+        verifiedAt: DateTime.utc(2026, 9, 1),
+      );
+
+  test('resolves distinct latest shelf and download heads without moving newer history backward', () {
+    final projection = resolveComicVersionBaselines(
+      relations: <ComicVersionRelation>[
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'A',
+          successorComicId: 'B',
+          pageMappings: <ComicVersionPageMapping>[
+            mapping('a', 'b', 3, 4, 1),
+          ],
+        ),
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'B',
+          successorComicId: 'C',
+          pageMappings: <ComicVersionPageMapping>[
+            mapping('b', 'c', 4, 6, 2),
+          ],
+        ),
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'C',
+          successorComicId: 'D',
+          pageMappings: <ComicVersionPageMapping>[
+            mapping('c', 'd', 6, 7, 1),
+          ],
+        ),
+      ],
+      shelfComics: const <ComicVersionIdentity>[
+        ComicVersionIdentity(sourceId: 's', comicId: 'C'),
+      ],
+      manualDownloadComics: const <ComicVersionIdentity>[
+        ComicVersionIdentity(sourceId: 's', comicId: 'A'),
+        ComicVersionIdentity(sourceId: 's', comicId: 'C'),
+      ],
+    );
+
+    expect(projection.latestKnownHeadFor('s', 'A'), 'D');
+    expect(projection.shelfHeadFor('s', 'A'), 'C');
+    expect(projection.downloadHeadFor('s', 'A'), 'C');
+    expect(projection.downloadHeadFor('s', 'D'), isNull);
+    final directA = projection.downloadHeadRelations.singleWhere(
+      (relation) => relation.predecessorComicId == 'A',
+    );
+    expect(directA.successorComicId, 'C');
+    expect(directA.pageMappings.single.predecessorChapterId, 'a');
+    expect(directA.pageMappings.single.successorChapterId, 'c');
+    expect(directA.pageMappings.single.successorOffset, 3);
+    expect(
+      projection.downloadHeadRelations.any(
+        (relation) => relation.predecessorComicId == 'D',
+      ),
+      isFalse,
+    );
+  });
+
+  test('does not invent a latest head for an ambiguous branch', () {
+    final projection = resolveComicVersionBaselines(
+      relations: const <ComicVersionRelation>[
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'A',
+          successorComicId: 'B',
+        ),
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'A',
+          successorComicId: 'C',
+        ),
+      ],
+      shelfComics: const <ComicVersionIdentity>[
+        ComicVersionIdentity(sourceId: 's', comicId: 'A'),
+      ],
+    );
+
+    expect(projection.latestKnownHeadFor('s', 'A'), isNull);
+    expect(projection.shelfHeadFor('s', 'A'), 'A');
+  });
+
+  test('ambiguous historical paths do not produce a direct download reuse proof', () {
+    final projection = resolveComicVersionBaselines(
+      relations: const <ComicVersionRelation>[
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'A',
+          successorComicId: 'B1',
+        ),
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'A',
+          successorComicId: 'B2',
+        ),
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'B1',
+          successorComicId: 'C',
+        ),
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'B2',
+          successorComicId: 'C',
+        ),
+      ],
+      manualDownloadComics: const <ComicVersionIdentity>[
+        ComicVersionIdentity(sourceId: 's', comicId: 'A'),
+        ComicVersionIdentity(sourceId: 's', comicId: 'C'),
+      ],
+    );
+
+    expect(projection.downloadHeadFor('s', 'A'), 'C');
+    expect(
+      projection.downloadHeadRelations.any(
+        (relation) => relation.predecessorComicId == 'A',
+      ),
+      isFalse,
+    );
+  });
+}

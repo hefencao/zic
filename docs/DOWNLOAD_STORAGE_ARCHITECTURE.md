@@ -22,9 +22,9 @@ The design MUST preserve these properties simultaneously:
 
 The target model has seven separate authorities.
 
-### 2.1 VersionGraph
+### 2.1 VersionHistory + VersionBaselineResolver
 
-Owns only source-confirmed/verified version relations and compact chapter mapping proofs.
+`VersionHistory` owns only source-confirmed/verified predecessor/successor provenance and compact chapter mapping proofs. `VersionBaselineResolver` is the runtime convergence point that projects that history onto explicit heads; consumers do not traverse the historical graph.
 
 For affine predecessor/successor relationships it stores edge facts such as:
 
@@ -35,7 +35,9 @@ For affine predecessor/successor relationships it stores edge facts such as:
 
 It does not own files, downloads, Reader order, export slots, or cache retention.
 
-Unopened/unmaterialized versions therefore create only O(V) compact relation state. They do not create page bindings or export rows.
+The resolver maintains three distinct facts per unambiguous family: `latestKnownHead` (source-confirmed newest candidate), `shelfHead` (the version actually adopted by shelf/library state), and `downloadHead` (the highest version actually carrying explicit manual-download state). Discovering a newer source version changes only `latestKnownHead`; it MUST NOT silently move shelf or download ownership.
+
+Historical multi-hop edges are allowed only as provenance. When a relevant materialized predecessor can be uniquely verified against the current shelf/download head, the resolver composes that path once into a direct predecessor→head mapping. Ambiguous branches or multiple historical paths disable automatic folding/reuse rather than teaching Reader/download/UI to search the graph. Unopened/unmaterialized versions therefore create only O(V) compact relation state and no page bindings/export rows.
 
 ### 2.2 ArtifactRepository
 
@@ -109,7 +111,7 @@ The layout persists only slots that actually exist in the user-visible export. I
 
 `auto` is unresolved intent, not a long-lived physical rule. Before the first structured page materialization it freezes to `chronological` only for a confirmed single-chapter comic with a verified pure-front-prepend page mapping; all other cases freeze to `origin`. Provider/source names and `N-index` arithmetic are not evidence.
 
-For predecessor/successor reuse the layout is rebased lazily through verified VersionGraph edges only when a relevant version is actually materialized. Traversal may use compact relations across unmaterialized intermediate versions, but it only reads an already-materialized ordinal anchor and never creates intermediate page rows. Existing stable slots remain stable whenever the verified relation permits that; front-prepended pages allocate ordinals after the existing maximum. A layout mutation that would move an existing slot is rejected as policy and requires an explicit export relayout migration.
+For predecessor reuse the layout consumes only direct predecessor→current-download-head mappings produced by `VersionBaselineResolver`. Historical intermediate versions may participate while that direct proof is composed, but ExportLayout itself never traverses them and never creates their page rows. If several predecessors have materialized bindings, the closest compatible/most-complete actual anchor is preferred; relation iteration order is not authority. Existing stable slots remain stable whenever the verified direct mapping permits that; front-prepended pages allocate ordinals after the existing maximum. A layout mutation that would move an existing slot is rejected as policy and requires an explicit export relayout migration.
 
 A logical Reader page and an export slot are distinct:
 
@@ -343,7 +345,7 @@ The migration is intentionally incremental and each functional boundary should b
 4. Introduce StorageRoot + AccessLocator modeling and direct/SAF same-root capability proof.
 5. Move durable download metadata authority to App-private SQLite while retaining compatibility migration from existing stores.
 6. Split logical artifact binding from physical replica location/health.
-7. Replace persistent N-dependent page numbering with sparse materialized ExportLayout + compact VersionGraph rebasing.
+7. Replace persistent N-dependent page numbering with sparse materialized ExportLayout + direct VersionBaseline mappings; historical version edges remain provenance only.
 8. Replace whole-store directory moves with per-replica, resumable migration and retained multi-root reads.
 
 Each phase must keep compatibility with the preceding durable representation until its own migration is complete.

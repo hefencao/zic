@@ -272,6 +272,47 @@ void main() {
     expect(session.versionRelations.single.predecessorComicId, 'old-gallery');
     expect(session.versionRelations.single.pageMappings, hasLength(1));
 
+    // Shelf/download heads are materialized facts, not aliases for the newest
+    // discovered source version.
+    session.replacePreference(
+      ComicPreference.defaults(
+        sourceId: 'venera:ehentai',
+        comicId: 'new-gallery',
+        sourceKind: ComicSourceKind.remote,
+      ),
+    );
+    session.acceptDownloadSnapshot(
+      const ChapterDownloadSnapshot(
+        sourceId: 'venera:ehentai',
+        comicId: 'old-gallery',
+        comicTitle: 'Fixture',
+        chapterId: 'old-chapter',
+        sourceRevision: 'r1',
+        title: 'Old',
+        completedPages: 1,
+        totalPages: 1,
+        receivedBytes: 1,
+        pinnedPages: 1,
+        phase: ChapterDownloadPhase.complete,
+        started: true,
+      ),
+    );
+    expect(
+      session.versionBaselines.latestKnownHeadFor(
+        'venera:ehentai',
+        'old-gallery',
+      ),
+      'new-gallery',
+    );
+    expect(
+      session.versionBaselines.shelfHeadFor('venera:ehentai', 'old-gallery'),
+      'new-gallery',
+    );
+    expect(
+      session.versionBaselines.downloadHeadFor('venera:ehentai', 'old-gallery'),
+      'old-gallery',
+    );
+
     await session.upsertVersionRelation(
       ComicVersionRelation(
         sourceId: 'venera:ehentai',
@@ -281,6 +322,41 @@ void main() {
       ),
     );
     expect(session.versionRelations, hasLength(2));
+    expect(
+      session.versionBaselines.latestKnownHeadFor(
+        'venera:ehentai',
+        'old-gallery',
+      ),
+      'newest-gallery',
+    );
+    expect(
+      session.versionBaselines.shelfHeadFor('venera:ehentai', 'old-gallery'),
+      'new-gallery',
+    );
+    expect(
+      session.versionBaselines.downloadHeadFor('venera:ehentai', 'old-gallery'),
+      'old-gallery',
+    );
+    session.acceptDownloadSnapshot(
+      const ChapterDownloadSnapshot(
+        sourceId: 'venera:ehentai',
+        comicId: 'newest-gallery',
+        comicTitle: 'Fixture',
+        chapterId: 'newest-chapter',
+        sourceRevision: 'r1',
+        title: 'Newest',
+        completedPages: 1,
+        totalPages: 1,
+        receivedBytes: 1,
+        pinnedPages: 1,
+        phase: ChapterDownloadPhase.complete,
+        started: true,
+      ),
+    );
+    expect(
+      session.versionBaselines.downloadHeadFor('venera:ehentai', 'old-gallery'),
+      'newest-gallery',
+    );
     final durable = await library.listAllComicVersionRelations();
     expect(durable, hasLength(2));
   });
