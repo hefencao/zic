@@ -227,6 +227,11 @@ final class ArtifactCacheTransport implements ControlledTransport {
     _throwIfTaskCancelled(control);
     final fallback = _fallbackFor(uri);
     final controlledFallback = fallback is ControlledTransport;
+    final selfBoundedFallback = fallback is SelfBoundedOpenTransport &&
+        fallback.selfBoundsOpen(uri);
+    if (selfBoundedFallback && control is OpenPhaseReportingTaskControl) {
+      control.markOpenSelfBounded();
+    }
     final openStarted = _clock?.nowMicros();
     final pendingResponse = fallback is ControlledTransport
         ? fallback.openControlled(

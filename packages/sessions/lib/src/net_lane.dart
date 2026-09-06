@@ -7,7 +7,8 @@ import 'package:telemetry/telemetry.dart';
 typedef LaneTask = Future<void> Function(CancelToken token);
 typedef LaneError = void Function(String key, Object error, StackTrace stack);
 
-final class CancelToken implements PriorityObservableTaskControl {
+final class CancelToken
+    implements PriorityObservableTaskControl, OpenPhaseReportingTaskControl {
   CancelToken({
     int priority = 0,
     int flowTargetFrames = 0,
@@ -43,6 +44,7 @@ final class CancelToken implements PriorityObservableTaskControl {
   final void Function()? _markResponseOpened;
   Completer<void>? _flowChanged;
   Completer<void>? _demandChanged;
+  Completer<void>? _openSelfBounded;
   int? _restartCostStartedAtMicros;
   int _restartCostBytes = 0;
   TaskPreemptionSnapshot? _preemptionSnapshot;
@@ -118,7 +120,17 @@ final class CancelToken implements PriorityObservableTaskControl {
   /// inactive task in this phase can be cancelled safely: it does not yet own
   /// a response body that a caller may be actively reading.
   void markResponseOpening() {
+    _openSelfBounded = Completer<void>();
     _markResponseOpening?.call();
+  }
+
+  Future<void> get whenOpenSelfBounded =>
+      (_openSelfBounded ??= Completer<void>()).future;
+
+  @override
+  void markOpenSelfBounded() {
+    final signal = _openSelfBounded;
+    if (signal != null && !signal.isCompleted) signal.complete();
   }
 
   /// Records that an open completed and the task now owns a response body.

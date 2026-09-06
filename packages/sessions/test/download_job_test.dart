@@ -564,6 +564,54 @@ void main() {
     expect(result.committedLength, 3);
   });
 
+  test('wrapper can hand off the open watchdog after its local phase',
+      () async {
+    final session = createSession();
+    final transport = _PhaseDelegatingOpenTransport(
+      localDelay: const Duration(milliseconds: 30),
+      originDelay: const Duration(milliseconds: 140),
+      body: const <int>[1, 2, 3],
+    );
+
+    final result = await DownloadJob(
+      transport: transport,
+      session: session,
+      readStallTimeout: const Duration(milliseconds: 80),
+    ).run(cancel: CancelToken());
+
+    expect(result.state, DownloadState.promoted);
+    expect(result.committedLength, 3);
+    expect(transport.handoffs, 1);
+  });
+
+  test('wrapper open handoff does not disable the body-read watchdog',
+      () async {
+    final session = createSession();
+    final transport = _PhaseDelegatingOpenTransport(
+      localDelay: const Duration(milliseconds: 10),
+      originDelay: const Duration(milliseconds: 10),
+      stalledBody: true,
+    );
+
+    await expectLater(
+      DownloadJob(
+        transport: transport,
+        session: session,
+        readStallTimeout: const Duration(milliseconds: 80),
+      ).run(cancel: CancelToken()),
+      throwsA(
+        isA<Failure>()
+            .having((error) => error.code, 'code', ErrorCode.network)
+            .having(
+              (error) => error.message,
+              'message',
+              contains('body read stalled'),
+            ),
+      ),
+    );
+    expect(transport.handoffs, 1);
+  });
+
   test('self-bounded open does not disable the body-read stall watchdog',
       () async {
     final session = createSession();
@@ -1638,6 +1686,62 @@ final class _BlockingOpenTransport implements Transport {
           if (!discarded.isCompleted) discarded.complete();
         },
       ),
+    );
+  }
+}
+
+final class _PhaseDelegatingOpenTransport implements ControlledTransport {
+  _PhaseDelegatingOpenTransport({
+    required this.localDelay,
+    required this.originDelay,
+    this.body = const <int>[],
+    this.stalledBody = false,
+  });
+
+  final Duration localDelay;
+  final Duration originDelay;
+  final List<int> body;
+  final bool stalledBody;
+  int handoffs = 0;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+  }) async {
+    await Future<void>.delayed(localDelay);
+    control?.throwIfCancelled();
+    if (control is OpenPhaseReportingTaskControl) {
+      handoffs++;
+      control.markOpenSelfBounded();
+    }
+    await Future<void>.delayed(originDelay);
+    control?.throwIfCancelled();
+    if (stalledBody) {
+      final controller = StreamController<List<int>>();
+      return ByteResponse(
+        bytes: controller.stream,
+        statusCode: HttpStatus.ok,
+        rangeStart: 0,
+        totalLength: 1,
+        onDiscard: controller.close,
+      );
+    }
+    return ByteResponse(
+      bytes: Stream<List<int>>.value(body),
+      statusCode: HttpStatus.ok,
+      rangeStart: 0,
+      totalLength: body.length,
     );
   }
 }

@@ -8,10 +8,73 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:media/media.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
+import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  test(
+    'Reader cache miss hands a long source open to the proven lower deadline',
+    () async {
+      final uri = Uri.parse('https://example.invalid/reader-slow-open.jpg');
+      final chapter = _chapter(uri: uri);
+      final id = readerPageDownloadId(chapter, chapter.pages.single);
+      final cache = ArtifactCacheManager(backend: const _Backend());
+      final transferRuntime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: cache,
+        partialDownloadStore: null,
+        net: NetLane(maxActive: 1),
+        readStallTimeout: const Duration(milliseconds: 80),
+      );
+      var opens = 0;
+      final factory = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _FreshFactory(),
+      ).withTransferRuntime(transferRuntime).withLoaderSources(
+        <Uri, LoaderTransportSource>{
+          uri: LoaderTransportSource(
+            revision: 'slow-r1',
+            selfBoundedOpen: true,
+            openControlledResponse: ({range, validators, control}) async {
+              opens++;
+              await Future<void>.delayed(const Duration(milliseconds: 180));
+              control?.throwIfCancelled();
+              return ByteResponse(
+                bytes: Stream<List<int>>.value(<int>[1, 2, 3]),
+                statusCode: 200,
+                rangeStart: 0,
+                totalLength: 3,
+              );
+            },
+          ),
+        },
+      );
+      final reader = factory.create(
+        chapter: chapter,
+        sessionId: 'reader-cache-phase-handoff',
+      );
+
+      try {
+        reader.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+        reader.accept(_observation(reader.sessionId, chapter));
+
+        final deadline = DateTime.now().add(const Duration(seconds: 2));
+        while (transferRuntime.registry.find(id)?.state !=
+            DownloadState.promoted) {
+          if (DateTime.now().isAfter(deadline)) {
+            fail('Reader physical transfer did not promote after slow source open');
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+
+        expect(opens, 1);
+        expect(transferRuntime.registry.find(id)?.committedLength, 3);
+      } finally {
+        await reader.dispose().timeout(const Duration(seconds: 5));
+        await transferRuntime.dispose().timeout(const Duration(seconds: 5));
+      }
+    },
+  );
+
   test(
     'presentation loadBytes reads immutable local sources before promotion',
     () async {

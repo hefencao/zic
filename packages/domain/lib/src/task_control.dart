@@ -21,6 +21,15 @@ abstract interface class PriorityObservableTaskControl implements TaskControl {
   Stream<int> get priorityChanges;
 }
 
+/// Optional scheduler-owned reporting seam for transport open phases.
+///
+/// Lower layers may only report that the current open has entered a phase whose
+/// own finite deadline is already proven. This does not let them set timeout
+/// values, retry policy, priority or admission.
+abstract interface class OpenPhaseReportingTaskControl implements TaskControl {
+  void markOpenSelfBounded();
+}
+
 extension TaskControlCancellation on TaskControl {
   void throwIfCancelled() {
     if (cancelled) {

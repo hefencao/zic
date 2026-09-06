@@ -1336,6 +1336,7 @@ final class DownloadJob {
   }) {
     control?.throwIfCancelled();
     control?.markResponseOpening();
+    final openSelfBounded = control?.whenOpenSelfBounded;
     final pending = Future<ByteResponse>.sync(open);
     final openIsSelfBounded = transport is SelfBoundedOpenTransport &&
         (transport as SelfBoundedOpenTransport).selfBoundsOpen(_requestUri);
@@ -1390,6 +1391,11 @@ final class DownloadJob {
         ));
       }
     });
+    if (openSelfBounded != null) {
+      unawaited(openSelfBounded.then<void>((_) {
+        timer.cancel();
+      }));
+    }
     final waits = <Future<ByteResponse>>[
       pending,
       watchdog.future,

@@ -1,13 +1,136 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
+import 'package:sessions/sessions.dart';
+import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  test('Reader cache lookup hang keeps the generic open watchdog',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-reader-cache-open-watchdog-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final uri = Uri.parse('https://example.invalid/cache-lookup-hang.bin');
+    final id = _downloadId(uri, 'cache-lookup-hang');
+    final registry = DownloadRegistry(
+      layout: CacheLayout(directory.path),
+      clock: const SystemClock(),
+    );
+    addTearDown(registry.dispose);
+    final fallback = _SelfBoundedRecordingTransport(
+      Uint8List.fromList(<int>[1, 2, 3]),
+      delay: const Duration(milliseconds: 180),
+    );
+    final transport = ArtifactCacheTransport(
+      cache: ArtifactCacheManager(backend: _BlockingLookupArtifactStore()),
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+    );
+
+    await expectLater(
+      DownloadJob(
+        transport: transport,
+        session: registry.get(id),
+        readStallTimeout: const Duration(milliseconds: 80),
+      ).run(cancel: CancelToken()),
+      throwsA(
+        isA<Failure>()
+            .having((error) => error.code, 'code', ErrorCode.network)
+            .having(
+              (error) => error.message,
+              'message',
+              contains('transport open stalled'),
+            ),
+      ),
+    );
+    expect(fallback.opens, 0);
+  });
+
+  test('Reader cache miss keeps the generic watchdog for an unbounded origin',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-reader-unbounded-origin-watchdog-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final uri = Uri.parse('https://example.invalid/cache-miss-hung-origin.bin');
+    final id = _downloadId(uri, 'cache-miss-hung-origin');
+    final registry = DownloadRegistry(
+      layout: CacheLayout(directory.path),
+      clock: const SystemClock(),
+    );
+    addTearDown(registry.dispose);
+    final fallback = _BlockingControlledTransport();
+    final transport = ArtifactCacheTransport(
+      cache: ArtifactCacheManager(
+        backend: _MemoryArtifactStore(<DownloadId, Uint8List>{}),
+      ),
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+    );
+
+    await expectLater(
+      DownloadJob(
+        transport: transport,
+        session: registry.get(id),
+        readStallTimeout: const Duration(milliseconds: 80),
+      ).run(cancel: CancelToken()),
+      throwsA(
+        isA<Failure>()
+            .having((error) => error.code, 'code', ErrorCode.network)
+            .having(
+              (error) => error.message,
+              'message',
+              contains('transport open stalled'),
+            ),
+      ),
+    ).timeout(const Duration(seconds: 1));
+    expect(fallback.opens, 1);
+  });
+
+  test('Reader cache miss hands open timeout to a self-bounded origin',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-reader-origin-open-watchdog-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final uri = Uri.parse('https://example.invalid/cache-miss-slow-origin.bin');
+    final id = _downloadId(uri, 'cache-miss-slow-origin');
+    final registry = DownloadRegistry(
+      layout: CacheLayout(directory.path),
+      clock: const SystemClock(),
+    );
+    addTearDown(registry.dispose);
+    final fallback = _SelfBoundedRecordingTransport(
+      Uint8List.fromList(<int>[1, 2, 3]),
+      delay: const Duration(milliseconds: 180),
+    );
+    final transport = ArtifactCacheTransport(
+      cache: ArtifactCacheManager(
+        backend: _MemoryArtifactStore(<DownloadId, Uint8List>{}),
+      ),
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+    );
+
+    final result = await DownloadJob(
+      transport: transport,
+      session: registry.get(id),
+      readStallTimeout: const Duration(milliseconds: 80),
+    ).run(cancel: CancelToken());
+
+    expect(result.state, DownloadState.promoted);
+    expect(result.committedLength, 3);
+    expect(fallback.opens, 1);
+    expect(fallback.lastControl, isNotNull);
+  });
+
   test('serves an exact promoted artifact without opening the source',
       () async {
     final uri = Uri.parse('https://example.invalid/page.bin');
@@ -1096,6 +1219,88 @@ final class _TypedBodyFailureArtifactStore implements ArtifactCacheBackend {
   @override
   Future<void> invalidateArtifact(DownloadId id) async {
     invalidations++;
+  }
+}
+
+final class _BlockingLookupArtifactStore implements ArtifactCacheBackend {
+  final Completer<ArtifactCacheStreamEntry?> pending =
+      Completer<ArtifactCacheStreamEntry?>();
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) =>
+      pending.future;
+
+  @override
+  Future<void> storePromotedArtifact({
+    required DownloadId id,
+    required Uint8List bytes,
+  }) async {}
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {}
+}
+
+final class _BlockingControlledTransport implements ControlledTransport {
+  final Completer<ByteResponse> pending = Completer<ByteResponse>();
+  int opens = 0;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+  }) {
+    opens++;
+    return pending.future;
+  }
+}
+
+final class _SelfBoundedRecordingTransport
+    implements ControlledTransport, SelfBoundedOpenTransport {
+  _SelfBoundedRecordingTransport(this.body, {required this.delay});
+
+  final Uint8List body;
+  final Duration delay;
+  int opens = 0;
+  TaskControl? lastControl;
+
+  @override
+  bool selfBoundsOpen(Uri uri) => true;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+  }) async {
+    opens++;
+    lastControl = control;
+    await Future<void>.delayed(delay);
+    control?.throwIfCancelled();
+    return ByteResponse(
+      bytes: Stream<List<int>>.value(body),
+      statusCode: HttpStatus.ok,
+      rangeStart: 0,
+      totalLength: body.length,
+    );
   }
 }
 
