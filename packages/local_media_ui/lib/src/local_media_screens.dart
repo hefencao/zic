@@ -99,6 +99,11 @@ final class ImportedImageChapterScreen extends StatelessWidget {
       final uri = chapter.pages[index].uri;
       final loader = byteLoaders[page.sourceId];
       final responseLoader = responseLoaders[page.sourceId];
+      if (loader != null && responseLoader != null) {
+        throw StateError(
+          'page source composition must choose local bytes or origin response, not both',
+        );
+      }
       sources[uri] = LoaderTransportSource(
         revision: '${record.sourceRevision}:$index',
         loadBytes: loader,
