@@ -523,6 +523,44 @@ void main() {
     expect(session.state, DownloadState.idle);
   });
 
+  test('generic open timeout aborts only the current controlled attempt',
+      () async {
+    final session = createSession();
+    final transport = _GateControlledOpenTransport();
+    final schedulerControl = CancelToken(priority: 900);
+
+    final run = DownloadJob(
+      transport: transport,
+      session: session,
+      readStallTimeout: const Duration(milliseconds: 80),
+    ).run(cancel: schedulerControl);
+    await transport.entered.future.timeout(const Duration(seconds: 1));
+    expect(transport.priorityObservable, isTrue);
+    expect(transport.observedPriority, 900);
+    schedulerControl.updatePriority(950);
+    await Future<void>.delayed(Duration.zero);
+    expect(transport.observedPriorityChanges, contains(950));
+
+    await expectLater(
+      run,
+      throwsA(
+        isA<Failure>()
+            .having((error) => error.code, 'code', ErrorCode.network)
+            .having(
+              (error) => error.message,
+              'message',
+              contains('transport open stalled'),
+            ),
+      ),
+    );
+
+    expect(schedulerControl.cancelled, isFalse,
+        reason: 'watchdog timeout is an attempt failure, not scheduler cancel');
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(transport.attemptObservedCancellation, isTrue);
+    expect(transport.continuedAfterGate, isFalse);
+  });
+
   test('ordinary transport open still times out on the generic stall window',
       () async {
     final session = createSession();
@@ -1686,6 +1724,63 @@ final class _BlockingOpenTransport implements Transport {
           if (!discarded.isCompleted) discarded.complete();
         },
       ),
+    );
+  }
+}
+
+final class _GateControlledOpenTransport implements ControlledTransport {
+  final Completer<void> release = Completer<void>();
+  final Completer<void> entered = Completer<void>();
+  bool attemptObservedCancellation = false;
+  bool continuedAfterGate = false;
+  bool priorityObservable = false;
+  int? observedPriority;
+  final List<int> observedPriorityChanges = <int>[];
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+  }) async {
+    StreamSubscription<int>? prioritySubscription;
+    if (control is PriorityObservableTaskControl) {
+      priorityObservable = true;
+      observedPriority = control.priority;
+      prioritySubscription = control.priorityChanges.listen(
+        observedPriorityChanges.add,
+      );
+    }
+    if (!entered.isCompleted) entered.complete();
+    if (control == null) {
+      await release.future;
+    } else {
+      await Future.any<void>(<Future<void>>[
+        release.future,
+        control.whenCancelled,
+      ]);
+      if (control.cancelled) {
+        attemptObservedCancellation = true;
+        await prioritySubscription?.cancel();
+        control.throwIfCancelled();
+      }
+    }
+    await prioritySubscription?.cancel();
+    continuedAfterGate = true;
+    return ByteResponse(
+      bytes: Stream<List<int>>.value(<int>[1, 2, 3]),
+      statusCode: HttpStatus.ok,
+      rangeStart: 0,
+      totalLength: 3,
     );
   }
 }

@@ -1267,16 +1267,16 @@ final class DownloadJob {
     final range = ByteRange(start: start);
     if (controlled != null) {
       return _openWithStallWatchdog(
-        () => controlled.openControlled(
+        (openControl) => controlled.openControlled(
           _requestUri,
           range: range,
-          control: cancel,
+          control: openControl,
         ),
         control: cancel,
       );
     }
     return _openWithStallWatchdog(
-      () => transport.open(
+      (_) => transport.open(
         _requestUri,
         range: range,
       ),
@@ -1292,17 +1292,17 @@ final class DownloadJob {
     if (start > 0 && validators.canResume) {
       if (controlled != null) {
         return _openWithStallWatchdog(
-          () => controlled.openControlled(
+          (openControl) => controlled.openControlled(
             _requestUri,
             range: ByteRange(start: start),
             validators: validators,
-            control: cancel,
+            control: openControl,
           ),
           control: cancel,
         );
       }
       return _openWithStallWatchdog(
-        () => transport.open(
+        (_) => transport.open(
           _requestUri,
           range: ByteRange(start: start),
           validators: validators,
@@ -1312,15 +1312,15 @@ final class DownloadJob {
     }
     if (controlled != null) {
       return _openWithStallWatchdog(
-        () => controlled.openControlled(
+        (openControl) => controlled.openControlled(
           _requestUri,
-          control: cancel,
+          control: openControl,
         ),
         control: cancel,
       );
     }
     return _openWithStallWatchdog(
-      () => transport.open(_requestUri),
+      (_) => transport.open(_requestUri),
       control: cancel,
     );
   }
@@ -1331,13 +1331,14 @@ final class DownloadJob {
   /// bound the admitted task sits in open() forever, keeps its NetLane task
   /// key and blocks every retry from being admitted.
   Future<ByteResponse> _openWithStallWatchdog(
-    Future<ByteResponse> Function() open, {
+    Future<ByteResponse> Function(TaskControl? openControl) open, {
     CancelToken? control,
   }) {
     control?.throwIfCancelled();
     control?.markResponseOpening();
-    final openSelfBounded = control?.whenOpenSelfBounded;
-    final pending = Future<ByteResponse>.sync(open);
+    final attemptControl =
+        control == null ? null : _OpenAttemptTaskControl(control);
+    final pending = Future<ByteResponse>.sync(() => open(attemptControl));
     final openIsSelfBounded = transport is SelfBoundedOpenTransport &&
         (transport as SelfBoundedOpenTransport).selfBoundsOpen(_requestUri);
     if (readStallTimeout <= Duration.zero || openIsSelfBounded) {
@@ -1360,10 +1361,6 @@ final class DownloadJob {
         return response;
       }, onError: (Object error, StackTrace stackTrace) async {
         if (control.cancelled) {
-          // An uncontrolled open may complete after the caller has already
-          // abandoned this attempt. It still owns a response if it eventually
-          // succeeds, so discard that late response rather than leaking the
-          // underlying socket/stream when the watchdog is disabled.
           unawaited(
             pending.then<void>(
               (response) async {
@@ -1381,61 +1378,111 @@ final class DownloadJob {
         throw Error.throwWithStackTrace(error, stackTrace);
       });
     }
-    final watchdog = Completer<Never>();
-    final timer = Timer(readStallTimeout, () {
-      if (!watchdog.isCompleted) {
-        watchdog.completeError(const Failure(
-          code: ErrorCode.network,
-          message:
-              'transport open stalled: no response within the read stall window',
-        ));
+
+    final result = Completer<ByteResponse>();
+    late final Timer timer;
+
+    void discardLate(ByteResponse response) {
+      unawaited(() async {
+        try {
+          await response.discard(control: control);
+        } on Object {
+          // The already-published timeout/cancellation result is authoritative.
+        }
+      }());
+    }
+
+    pending.then<void>((response) {
+      if (result.isCompleted) {
+        discardLate(response);
+        return;
       }
-    });
-    if (openSelfBounded != null) {
-      unawaited(openSelfBounded.then<void>((_) {
-        timer.cancel();
-      }));
-    }
-    final waits = <Future<ByteResponse>>[
-      pending,
-      watchdog.future,
-    ];
-    if (control != null) {
-      waits.add(control.whenCancelled.then<ByteResponse>((_) {
-        throw const Failure(
-          code: ErrorCode.cancelled,
-          message: 'transport open was cancelled',
-        );
-      }));
-    }
-    return Future.any<ByteResponse>(waits).then<ByteResponse>((response) {
       timer.cancel();
       control?.markResponseOpened();
-      return response;
-    }, onError: (Object error, StackTrace stackTrace) async {
+      result.complete(response);
+    }, onError: (Object error, StackTrace stackTrace) {
+      if (result.isCompleted) return;
       timer.cancel();
-      if (watchdog.isCompleted || control?.cancelled == true) {
-        // The open may still complete long after the watchdog or cancellation
-        // gave up; discard the late response so the underlying request cannot
-        // leak.
-        unawaited(
-          pending.then<void>(
-            (response) async {
-              try {
-                await response.discard(control: control);
-              } on Object {
-                // The watchdog/cancellation error remains authoritative.
-              }
-            },
-            onError: (Object _, StackTrace __) {},
-          ),
-        );
-      }
       if (control?.cancelled == true) {
-        control!.throwIfCancelled();
+        result.completeError(
+          const Failure(
+            code: ErrorCode.cancelled,
+            message: 'transport open was cancelled',
+          ),
+          stackTrace,
+        );
+        return;
       }
-      throw Error.throwWithStackTrace(error, stackTrace);
+      result.completeError(error, stackTrace);
     });
+
+    timer = Timer(readStallTimeout, () {
+      if (result.isCompleted) return;
+      result.completeError(const Failure(
+        code: ErrorCode.network,
+        message:
+            'transport open stalled: no response within the read stall window',
+      ));
+      // This abort belongs only to the open attempt. Do not cancel the real
+      // scheduler token: the physical owner must still observe a network
+      // failure and retain authority to retry the same demand.
+      attemptControl?.abortAttempt();
+    });
+
+    final phaseHandoff = attemptControl?.whenOpenSelfBounded;
+    if (phaseHandoff != null) {
+      unawaited(phaseHandoff.then<void>((_) {
+        if (!result.isCompleted) timer.cancel();
+      }));
+    }
+    if (control != null) {
+      unawaited(control.whenCancelled.then<void>((_) {
+        if (result.isCompleted) return;
+        timer.cancel();
+        result.completeError(const Failure(
+          code: ErrorCode.cancelled,
+          message: 'transport open was cancelled',
+        ));
+      }));
+    }
+
+    return result.future.whenComplete(timer.cancel);
+  }
+
+}
+
+final class _OpenAttemptTaskControl
+    implements PriorityObservableTaskControl, OpenPhaseReportingTaskControl {
+  _OpenAttemptTaskControl(this._scheduler);
+
+  final CancelToken _scheduler;
+  final Completer<void> _aborted = Completer<void>();
+  final Completer<void> _openSelfBounded = Completer<void>();
+
+  @override
+  bool get cancelled => _scheduler.cancelled || _aborted.isCompleted;
+
+  @override
+  Future<void> get whenCancelled => Future.any<void>(<Future<void>>[
+        _scheduler.whenCancelled,
+        _aborted.future,
+      ]);
+
+  @override
+  int get priority => _scheduler.priority;
+
+  @override
+  Stream<int> get priorityChanges => _scheduler.priorityChanges;
+
+  Future<void> get whenOpenSelfBounded => _openSelfBounded.future;
+
+  @override
+  void markOpenSelfBounded() {
+    if (!_openSelfBounded.isCompleted) _openSelfBounded.complete();
+  }
+
+  void abortAttempt() {
+    if (!_aborted.isCompleted) _aborted.complete();
   }
 }
 

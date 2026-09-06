@@ -28,8 +28,9 @@ void main() {
       Uint8List.fromList(<int>[1, 2, 3]),
       delay: const Duration(milliseconds: 180),
     );
+    final backend = _BlockingLookupArtifactStore();
     final transport = ArtifactCacheTransport(
-      cache: ArtifactCacheManager(backend: _BlockingLookupArtifactStore()),
+      cache: ArtifactCacheManager(backend: backend),
       identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
       fallbackFor: (_) => fallback,
     );
@@ -50,6 +51,13 @@ void main() {
             ),
       ),
     );
+    expect(fallback.opens, 0);
+
+    // The timed-out local lookup may physically finish later, but it no longer
+    // owns the attempt and must not cross into an origin open after the NetLane
+    // task has already returned its slot.
+    backend.pending.complete(null);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
     expect(fallback.opens, 0);
   });
 

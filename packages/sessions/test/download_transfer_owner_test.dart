@@ -214,6 +214,54 @@ void main() {
     );
   });
 
+  test('open watchdog aborts one attempt and owner retries the demand',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_open_watchdog_retry_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final transport = _CancelThenSucceedTransport(
+      bytes: _ownerAnimatedWebp(<int>[64, 64, 64]),
+    );
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      readStallTimeout: const Duration(milliseconds: 60),
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+    final id = _id('open-watchdog-retry');
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-open-watchdog-retry',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+      retry: const RetryPolicy(
+        baseDelay: Duration.zero,
+        maxDelay: Duration.zero,
+      ),
+    );
+
+    consumer.replaceDemands(
+      'reader-open-watchdog-retry',
+      1,
+      _desired(id, priority: 900),
+    );
+    await consumer.idle().timeout(const Duration(seconds: 2));
+
+    expect(transport.opens, 2);
+    expect(transport.firstCancelled.isCompleted, isTrue);
+    expect(registry.get(id).state, DownloadState.promoted);
+    expect(registry.get(id).snapshot.failure, isNull);
+  });
+
   test('provider setup failures retry finitely and publish terminal failure',
       () async {
     final temp = await Directory.systemTemp.createTemp(
