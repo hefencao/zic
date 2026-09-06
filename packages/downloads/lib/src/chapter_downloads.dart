@@ -5941,14 +5941,26 @@ final class PersistentChapterDownloadService
     Timer? stallTimer;
     void armStall() {
       final completer = round;
+      final baseline = session.snapshot;
       stallTimer?.cancel();
       stallTimer = Timer(_pageStallTimeout, () {
-        if (!completer.isCompleted) {
-          completer.completeError(const Failure(
-            code: ErrorCode.network,
-            message: _promotionStallMessage,
-          ));
+        if (completer.isCompleted) {
+          return;
         }
+        final current = session.snapshot;
+        final transportProgressed =
+            current.networkAttemptSequence == baseline.networkAttemptSequence &&
+                current.networkCursorLength > baseline.networkCursorLength;
+        final artifactProgressed =
+            current.committedLength > baseline.committedLength;
+        if (transportProgressed || artifactProgressed) {
+          armStall();
+          return;
+        }
+        completer.completeError(const Failure(
+          code: ErrorCode.network,
+          message: _promotionStallMessage,
+        ));
       });
     }
 

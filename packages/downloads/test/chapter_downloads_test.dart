@@ -1778,6 +1778,74 @@ void main() {
     expect(await service.isDownloaded(entry), isTrue);
   });
 
+  test('chapter stall window resets on sub-quantum network progress', () async {
+    final root = await Directory.systemTemp.createTemp('zic-stall-progress-');
+    addTearDown(() => root.delete(recursive: true));
+
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46,
+      0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50,
+      0x56, 0x50, 0x38, 0x20,
+    ]);
+    final chunks = <List<int>>[
+      webpBytes.sublist(0, 4),
+      webpBytes.sublist(4, 8),
+      webpBytes.sublist(8, 12),
+      webpBytes.sublist(12, 16),
+    ];
+    final service = await PersistentChapterDownloadService.open(
+      root.path,
+      pageStallTimeout: const Duration(milliseconds: 250),
+    );
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        openResponse: (sourceId, uri, {range, validators}) async {
+          Stream<List<int>> body() async* {
+            for (final chunk in chunks) {
+              await Future<void>.delayed(const Duration(milliseconds: 100));
+              yield chunk;
+            }
+          }
+
+          return ByteResponse(
+            bytes: body(),
+            statusCode: HttpStatus.ok,
+            rangeStart: 0,
+            totalLength: webpBytes.length,
+          );
+        },
+        loadBytes: (sourceId, uri) async => webpBytes,
+      ),
+    );
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'stall-progress',
+        displayName: '持续慢流',
+        sourceId: 'mihon:test',
+        comicId: 'stall-progress-comic',
+        comicTitle: '持续慢流测试',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'mihon:test:stall-progress-page',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+          ),
+        ],
+      ),
+    );
+
+    await service.download(entry);
+
+    final snapshot = await service.inspect(entry);
+    expect(snapshot.phase, ChapterDownloadPhase.complete);
+    expect(snapshot.receivedBytes, webpBytes.length);
+  });
+
   test('chapter command reclaims a stalled physical run and still completes',
       () async {
     final root = await Directory.systemTemp.createTemp('zic-stall-reclaim-');
