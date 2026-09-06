@@ -439,6 +439,36 @@ void main() {
     expect(session.artifact.hasOpenWriter, isFalse);
   });
 
+  test('cancelled restore remains idle and resumable', () async {
+    await session.restore();
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1, 2, 3, 4]);
+    await session.pause(writer);
+    final committedBefore = session.committedLength;
+    final control = CancelToken()..cancel();
+
+    await expectLater(
+      session.restore(control: control),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+
+    expect(session.state, DownloadState.idle);
+    expect(session.snapshot.failure, isNull);
+    expect(session.committedLength, committedBefore);
+    expect(session.artifact.state, ArtifactState.partial);
+    expect(session.hasWriter, isFalse);
+
+    final restored = await session.restore();
+    expect(restored.state, DownloadState.idle);
+    expect(restored.committedLength, committedBefore);
+  });
+
   test('restore failure cannot leave the session advertising old promotion',
       () async {
     final writer = session.acquireWriter();

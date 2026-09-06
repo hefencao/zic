@@ -490,17 +490,34 @@ final class DownloadSession {
         control: control,
       );
     } catch (error) {
-      // Artifact.restore and the following ownership/cache reconciliation are
-      // asynchronous. If either fails, do not leave the session advertising
-      // the state from before this restore (for example, promoted after a
-      // same-length checksum mismatch reset the Artifact to empty). Preserve
-      // the physical files for a later recovery/owner decision, but make the
-      // in-memory lifecycle terminal and explicit.
+      // Restore participates in scheduler-owned local preparation. A cancelled
+      // control only withdraws that attempt; it is not evidence that the
+      // physical artifact is invalid. Re-enter through restore on the next
+      // demand instead of publishing a transient terminal failure. Any
+      // partially reconciled artifact state remains durable and authoritative.
+      // Genuine restore failures still become explicit terminal lifecycle
+      // failures so a stale promoted/partial projection cannot survive them.
       if (_epoch == epoch &&
           _state != DownloadState.disposed &&
           !_resetting &&
           !_disposing) {
-        _markLifecycleFailure(error, operation: 'restore');
+        if (error is Failure && error.code == ErrorCode.cancelled) {
+          _state = DownloadState.idle;
+          _failure = null;
+          _flushCommittedTrace();
+          _recordTrace(
+            TraceEventKind.downloadState,
+            <String, Object?>{
+              'state': _state.name,
+              'deferred': true,
+              'reason': 'restore-cancelled',
+              'committedLength': committedLength,
+            },
+          );
+          _notifySnapshot();
+        } else {
+          _markLifecycleFailure(error, operation: 'restore');
+        }
       }
       rethrow;
     } finally {
