@@ -6,6 +6,8 @@ import 'package:domain/domain.dart';
 
 import 'artifact_cache_store.dart';
 
+typedef ArtifactEquivalentResolver = Iterable<DownloadId> Function(DownloadId id);
+
 /// Composition-owned multi-level router for immutable Reader page artifacts.
 final class ArtifactCacheManager {
   ArtifactCacheManager({
@@ -13,14 +15,17 @@ final class ArtifactCacheManager {
     this.memoryMaxEntries = 10,
     this.memoryMaxBytes = 256 * 1024 * 1024,
     this.equivalenceMaxEntries = 8192,
+    this.equivalenceResolverMaxEntries = 64,
   })  : assert(memoryMaxEntries > 0),
         assert(memoryMaxBytes > 0),
-        assert(equivalenceMaxEntries > 0);
+        assert(equivalenceMaxEntries > 0),
+        assert(equivalenceResolverMaxEntries > 0);
 
   final ArtifactCacheBackend backend;
   final int memoryMaxEntries;
   final int memoryMaxBytes;
   final int equivalenceMaxEntries;
+  final int equivalenceResolverMaxEntries;
   final LinkedHashMap<_ArtifactByteKey, Uint8List> _memory =
       LinkedHashMap<_ArtifactByteKey, Uint8List>();
   final Map<_ArtifactByteKey, _InFlightArtifactRead> _inFlight =
@@ -33,11 +38,16 @@ final class ArtifactCacheManager {
       LinkedHashMap<DownloadId, LinkedHashSet<DownloadId>>();
   final LinkedHashSet<_ArtifactEquivalencePair> _equivalenceOrder =
       LinkedHashSet<_ArtifactEquivalencePair>();
+  final LinkedHashMap<String, ArtifactEquivalentResolver>
+      _equivalenceResolvers =
+      LinkedHashMap<String, ArtifactEquivalentResolver>();
   int _memoryBytes = 0;
 
   int get memoryEntryCount => _memory.length;
   int get memoryBytes => _memoryBytes;
   int get equivalenceCount => _equivalenceOrder.length;
+  int get equivalenceResolverCount => _equivalenceResolvers.length;
+  bool hasEquivalentResolver(String key) => _equivalenceResolvers.containsKey(key);
 
   /// Returns the current exact-identity mutation generation. A caller that
   /// starts a source-backed hot-byte retention operation may pass this value
@@ -45,10 +55,43 @@ final class ArtifactCacheManager {
   /// explicit invalidation cannot repopulate the memory tier afterward.
   int generationFor(DownloadId id) => _mutationGenerations[id] ?? 0;
 
-  Iterable<DownloadId> directEquivalents(DownloadId id) =>
-      List<DownloadId>.unmodifiable(
-        _equivalents[id] ?? const <DownloadId>{},
-      );
+  Iterable<DownloadId> directEquivalents(DownloadId id) {
+    final resolved = <DownloadId>{};
+    final explicit = _equivalents[id];
+    if (explicit != null) {
+      resolved.addAll(explicit.where((candidate) => candidate != id));
+    }
+    for (final resolver in _equivalenceResolvers.values) {
+      for (final candidate in resolver(id)) {
+        if (candidate != id) resolved.add(candidate);
+      }
+    }
+    return List<DownloadId>.unmodifiable(resolved);
+  }
+
+  /// Registers one bounded lazy direct-equivalence resolver.
+  ///
+  /// This is for compact verified relations whose candidate can be derived
+  /// from the queried exact identity without materializing every page pair up
+  /// front. Resolvers only participate in fallback lookup/direct-equivalent
+  /// discovery; authoritative exact lookup and exact writes still bypass them.
+  void registerEquivalentResolver({
+    required String key,
+    required ArtifactEquivalentResolver resolver,
+  }) {
+    if (key.isEmpty) {
+      throw ArgumentError.value(key, 'key', 'must not be empty');
+    }
+    _equivalenceResolvers.remove(key);
+    _equivalenceResolvers[key] = resolver;
+    while (_equivalenceResolvers.length > equivalenceResolverMaxEntries) {
+      _equivalenceResolvers.remove(_equivalenceResolvers.keys.first);
+    }
+  }
+
+  void removeEquivalentResolver(String key) {
+    _equivalenceResolvers.remove(key);
+  }
 
   /// Registers a source-verified immutable-artifact equivalence.
   ///
@@ -87,11 +130,7 @@ final class ArtifactCacheManager {
 
   Iterable<DownloadId> _lookupCandidates(DownloadId id) sync* {
     yield id;
-    final equivalents = _equivalents[id];
-    if (equivalents == null) return;
-    for (final equivalent in equivalents) {
-      if (equivalent != id) yield equivalent;
-    }
+    yield* directEquivalents(id);
   }
 
   Uint8List? lookupMemory(DownloadId id, {int? length}) {
@@ -419,6 +458,7 @@ final class ArtifactCacheManager {
     _durableMemory.clear();
     _equivalents.clear();
     _equivalenceOrder.clear();
+    _equivalenceResolvers.clear();
     _memoryBytes = 0;
   }
 

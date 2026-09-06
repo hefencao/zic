@@ -8,6 +8,78 @@ typedef VerifiedPageReuseIdentityResolver = Future<String?> Function(
   PageAsset page,
 );
 
+/// Compact target-chapter -> verified source-version fallback resolver.
+///
+/// The target chapter builds one exact page locator index. Each verified
+/// version relation contributes a source-manifest reference plus an affine
+/// offset; source DownloadIds are materialized only for pages that are
+/// actually queried. This removes the V×P DownloadId/hash/set edge expansion.
+/// The current caller may still hydrate source manifests themselves; that is a
+/// separate library-locator cost, not hidden by this resolver.
+final class VerifiedArtifactReuseResolver {
+  VerifiedArtifactReuseResolver({required this.targetChapter})
+      : _targetIndexes = <_ExactPageLocator, int>{
+          for (final page in targetChapter.pages)
+            _ExactPageLocator(page.pageId, page.uri): page.index,
+        };
+
+  final ChapterManifest targetChapter;
+  final Map<_ExactPageLocator, int> _targetIndexes;
+  final List<_VerifiedOffsetSource> _sources = <_VerifiedOffsetSource>[];
+  int _eligiblePageCount = 0;
+
+  int get relationCount => _sources.length;
+  int get eligiblePageCount => _eligiblePageCount;
+
+  int addVerifiedOffset({
+    required ChapterManifest sourceChapter,
+    required int targetOffsetFromSource,
+  }) {
+    final targetStart = targetOffsetFromSource > 0
+        ? targetOffsetFromSource
+        : 0;
+    final sourceStart = targetOffsetFromSource < 0
+        ? -targetOffsetFromSource
+        : 0;
+    final overlap = _min(
+      sourceChapter.pages.length - sourceStart,
+      targetChapter.pages.length - targetStart,
+    );
+    if (overlap <= 0) return 0;
+    _sources.add(
+      _VerifiedOffsetSource(
+        chapter: sourceChapter,
+        targetOffsetFromSource: targetOffsetFromSource,
+      ),
+    );
+    _eligiblePageCount += overlap;
+    return overlap;
+  }
+
+  Iterable<DownloadId> resolve(DownloadId id) sync* {
+    final chapter = targetChapter;
+    if (id.content.sourceId != chapter.sourceId ||
+        id.content.comicId != chapter.comicId ||
+        id.content.chapterId != chapter.chapter.chapterId ||
+        id.sourceRevision != chapter.chapter.sourceRevision) {
+      return;
+    }
+    final targetIndex =
+        _targetIndexes[_ExactPageLocator(id.content.pageId, id.canonicalUri)];
+    if (targetIndex == null) return;
+    for (final source in _sources) {
+      final sourceIndex = targetIndex - source.targetOffsetFromSource;
+      if (sourceIndex < 0 || sourceIndex >= source.chapter.pages.length) {
+        continue;
+      }
+      yield readerPageDownloadId(
+        source.chapter,
+        source.chapter.pages[sourceIndex],
+      );
+    }
+  }
+}
+
 /// Verified page-artifact reuse between two explicitly related comic versions.
 ///
 /// The planner never uses title, author, sequence or raw page index alone. A
@@ -34,6 +106,70 @@ final class VerifiedArtifactReusePlan {
       ] = readerPageDownloadId(oldChapter, oldPage);
     }
     return VerifiedArtifactReusePlan._(mappings);
+  }
+
+  /// Proves one compact target-index offset without materializing page pairs.
+  ///
+  /// A direct source identity match is preferred. If opaque source locators do
+  /// not expose one, the same bounded related-version anchor proof used by
+  /// [matchResolvedRelated] is applied. The returned value is
+  /// `targetIndex - sourceIndex`.
+  static Future<int?> matchResolvedRelatedOffset({
+    required ChapterManifest sourceChapter,
+    required ChapterManifest targetChapter,
+    required VerifiedPageReuseIdentityResolver resolveIdentity,
+  }) async {
+    final sourceByIdentity = _uniquePageIndexes(sourceChapter);
+    final targetByIdentity = _uniquePageIndexes(targetChapter);
+    final directOffsets = <int>{};
+    for (final entry in targetByIdentity.entries) {
+      final sourceIndex = sourceByIdentity[entry.key];
+      if (sourceIndex == null) continue;
+      directOffsets.add(entry.value - sourceIndex);
+      if (directOffsets.length > 1) return null;
+    }
+    if (directOffsets.isNotEmpty) return directOffsets.single;
+    if (sourceChapter.pages.isEmpty || targetChapter.pages.isEmpty) return null;
+
+    final sourcePages = sourceChapter.pages;
+    final targetPages = targetChapter.pages;
+    final shifts = <int>{
+      sourcePages.length - targetPages.length,
+      0,
+    };
+    for (final shift in shifts) {
+      final targetStart = shift < 0 ? -shift : 0;
+      final targetEndCandidate = sourcePages.length - shift;
+      final targetEnd = targetEndCandidate < targetPages.length
+          ? targetEndCandidate
+          : targetPages.length;
+      if (targetStart >= targetEnd) continue;
+      final overlap = targetEnd - targetStart;
+      final anchorTargets = overlap == 1
+          ? <int>[targetStart]
+          : <int>[targetEnd - 1, targetStart];
+      final sourceIdentities = await Future.wait(
+        anchorTargets.map(
+          (targetIndex) =>
+              resolveIdentity(sourcePages[targetIndex + shift]),
+        ),
+      );
+      if (sourceIdentities.any((identity) => identity == null)) continue;
+      final targetIdentities = await Future.wait(
+        anchorTargets.map((index) => resolveIdentity(targetPages[index])),
+      );
+      var matches = 0;
+      for (var index = 0; index < anchorTargets.length; index++) {
+        final sourceIdentity = sourceIdentities[index];
+        final targetIdentity = targetIdentities[index];
+        if (sourceIdentity != null && sourceIdentity == targetIdentity) {
+          matches++;
+        }
+      }
+      final required = anchorTargets.length == 1 ? 1 : 2;
+      if (matches >= required) return -shift;
+    }
+    return null;
   }
 
   /// Builds a target-version -> source-version verified page mapping for two
@@ -232,6 +368,46 @@ final class VerifiedArtifactReusePlan {
     }
     return materialized;
   }
+}
+
+final class _VerifiedOffsetSource {
+  const _VerifiedOffsetSource({
+    required this.chapter,
+    required this.targetOffsetFromSource,
+  });
+
+  final ChapterManifest chapter;
+  final int targetOffsetFromSource;
+}
+
+final class _ExactPageLocator {
+  const _ExactPageLocator(this.pageId, this.uri);
+
+  final String pageId;
+  final Uri uri;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is _ExactPageLocator && pageId == other.pageId && uri == other.uri;
+
+  @override
+  int get hashCode => Object.hash(pageId, uri);
+}
+
+int _min(int first, int second) => first < second ? first : second;
+
+Map<String, int> _uniquePageIndexes(ChapterManifest chapter) {
+  final candidates = <String, List<int>>{};
+  for (final page in chapter.pages) {
+    final identity = verifiedPageIdentity(page);
+    if (identity == null) continue;
+    candidates.putIfAbsent(identity, () => <int>[]).add(page.index);
+  }
+  return <String, int>{
+    for (final entry in candidates.entries)
+      if (entry.value.length == 1) entry.key: entry.value.single,
+  };
 }
 
 Map<String, PageAsset> _uniquePages(ChapterManifest chapter) {

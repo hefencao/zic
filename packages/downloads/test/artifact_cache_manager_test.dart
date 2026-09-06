@@ -773,6 +773,61 @@ void main() {
     expect((await manager.readForeground(oldId))?.bytes, <int>[3, 2, 1]);
   });
 
+  test('lazy equivalent resolver participates only in fallback lookup', () async {
+    final target = _id('lazy-target');
+    final source = _id('lazy-source');
+    final backend = _Backend(<DownloadId, Uint8List>{
+      source: Uint8List.fromList(<int>[7, 8, 9]),
+    });
+    final manager = ArtifactCacheManager(backend: backend);
+
+    manager.registerEquivalentResolver(
+      key: 'chapter-a',
+      resolver: (id) => id == target ? <DownloadId>[source] : const <DownloadId>[],
+    );
+
+    expect(manager.equivalenceCount, 0);
+    expect(manager.equivalenceResolverCount, 1);
+    expect(manager.directEquivalents(target), <DownloadId>[source]);
+    expect((await manager.lookup(target))?.storageId, source);
+    expect(await manager.lookupAuthoritative(target), isNull);
+
+    await manager.storePromotedArtifact(
+      id: target,
+      bytes: Uint8List.fromList(<int>[1, 2, 3]),
+    );
+    expect((await manager.lookup(target))?.storageId, target);
+    expect(backend.values[source], <int>[7, 8, 9]);
+  });
+
+  test('lazy equivalent resolver groups are bounded and replaceable', () {
+    final first = _id('lazy-first');
+    final second = _id('lazy-second');
+    final source = _id('lazy-source');
+    final manager = ArtifactCacheManager(
+      backend: _Backend(<DownloadId, Uint8List>{}),
+      equivalenceResolverMaxEntries: 1,
+    );
+
+    manager.registerEquivalentResolver(
+      key: 'first',
+      resolver: (id) => id == first ? <DownloadId>[source] : const <DownloadId>[],
+    );
+    manager.registerEquivalentResolver(
+      key: 'second',
+      resolver: (id) => id == second ? <DownloadId>[source] : const <DownloadId>[],
+    );
+
+    expect(manager.equivalenceResolverCount, 1);
+    expect(manager.hasEquivalentResolver('first'), isFalse);
+    expect(manager.hasEquivalentResolver('second'), isTrue);
+    expect(manager.directEquivalents(first), isEmpty);
+    expect(manager.directEquivalents(second), <DownloadId>[source]);
+    manager.clearMemory();
+    expect(manager.hasEquivalentResolver('second'), isFalse);
+    expect(manager.equivalenceResolverCount, 0);
+  });
+
   test('equivalence capacity evicts the oldest proof without moving artifacts',
       () async {
     final first = _id('first-proof');

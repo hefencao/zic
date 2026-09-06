@@ -364,6 +364,104 @@ void main() {
     );
   });
 
+  test('compact persisted offset resolves only queried target pages', () async {
+    final older = _chapter(
+      comicId: 'older-compact',
+      revision: 'older',
+      urls: const <String>[
+        'venera-resource:older-0',
+        'venera-resource:older-1',
+        'venera-resource:older-2',
+      ],
+    );
+    final newer = _chapter(
+      comicId: 'newer-compact',
+      revision: 'newer',
+      urls: const <String>[
+        'venera-resource:new-cover',
+        'venera-resource:newer-0',
+        'venera-resource:newer-1',
+        'venera-resource:newer-2',
+      ],
+    );
+    final oldSecond = readerPageDownloadId(older, older.pages[1]);
+    final newSecond = readerPageDownloadId(newer, newer.pages[2]);
+    final backend = _Backend(<DownloadId, Uint8List>{
+      oldSecond: Uint8List.fromList(<int>[4, 2]),
+    });
+    final cache = ArtifactCacheManager(backend: backend);
+    final resolver = VerifiedArtifactReuseResolver(targetChapter: newer);
+
+    expect(
+      resolver.addVerifiedOffset(
+        sourceChapter: older,
+        targetOffsetFromSource: 1,
+      ),
+      3,
+    );
+    cache.registerEquivalentResolver(
+      key: 'newer-compact',
+      resolver: resolver.resolve,
+    );
+
+    expect(resolver.relationCount, 1);
+    expect(resolver.eligiblePageCount, 3);
+    expect(cache.equivalenceCount, 0,
+        reason: 'compact relations must not materialize page-pair edges');
+    expect(cache.directEquivalents(newSecond), <DownloadId>[oldSecond]);
+    expect((await cache.readForeground(newSecond))?.bytes, <int>[4, 2]);
+    expect(
+      cache.directEquivalents(
+        DownloadId(
+          content: newSecond.content,
+          sourceRevision: newSecond.sourceRevision,
+          canonicalUri: Uri.parse('venera-resource:changed'),
+        ),
+      ),
+      isEmpty,
+      reason: 'the current target identity must still match exactly',
+    );
+  });
+
+  test('compact related proof returns an affine offset without page pairs',
+      () async {
+    final older = _chapter(
+      comicId: 'older-proof',
+      revision: 'older',
+      urls: const <String>[
+        'venera-resource:older-0',
+        'venera-resource:older-1',
+        'venera-resource:older-2',
+      ],
+    );
+    final newer = _chapter(
+      comicId: 'newer-proof',
+      revision: 'newer',
+      urls: const <String>[
+        'venera-resource:new-cover',
+        'venera-resource:newer-0',
+        'venera-resource:newer-1',
+        'venera-resource:newer-2',
+      ],
+    );
+    final identities = <String, String>{
+      'venera-resource:older-0': 'eh:a',
+      'venera-resource:older-1': 'eh:b',
+      'venera-resource:older-2': 'eh:c',
+      'venera-resource:newer-0': 'eh:a',
+      'venera-resource:newer-1': 'eh:b',
+      'venera-resource:newer-2': 'eh:c',
+    };
+
+    final offset = await VerifiedArtifactReusePlan.matchResolvedRelatedOffset(
+      sourceChapter: older,
+      targetChapter: newer,
+      resolveIdentity: (page) async => identities[page.uri.toString()],
+    );
+
+    expect(offset, 1);
+  });
+
   test('persisted offset registers symmetric future-artifact equivalence',
       () async {
     final older = _chapter(
