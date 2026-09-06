@@ -161,6 +161,16 @@ abstract interface class CacheIndex {
 
   Future<void> putPlacement(DownloadPlacement placement);
 
+  Future<List<ExportPageBinding>> listExportPageBindings({
+    required String sourceId,
+    required String comicId,
+    required String chapterId,
+  });
+
+  Future<void> putExportPageBindings(
+    Iterable<ExportPageBinding> bindings,
+  );
+
   Future<void> removePlacement({
     required String sourceId,
     required String comicId,
@@ -179,6 +189,8 @@ final class MemIndex implements CacheIndex, CacheBindingOperations {
   final Map<String, CacheRec> _records = <String, CacheRec>{};
   final Map<String, DownloadPlacement> _placements =
       <String, DownloadPlacement>{};
+  final Map<String, ExportPageBinding> _exportPageBindings =
+      <String, ExportPageBinding>{};
   bool _closed = true;
 
   @override
@@ -292,12 +304,75 @@ final class MemIndex implements CacheIndex, CacheBindingOperations {
       first.fingerprint == second.fingerprint;
 
   @override
+  Future<List<ExportPageBinding>> listExportPageBindings({
+    required String sourceId,
+    required String comicId,
+    required String chapterId,
+  }) async {
+    _requireOpen();
+    final prefix = '$sourceId\u0000$comicId\u0000$chapterId\u0000';
+    final result = _exportPageBindings.entries
+        .where((entry) => entry.key.startsWith(prefix))
+        .map((entry) => entry.value)
+        .toList(growable: false)
+      ..sort((left, right) => left.exportOrdinal.compareTo(right.exportOrdinal));
+    return result;
+  }
+
+  @override
+  Future<void> putExportPageBindings(
+    Iterable<ExportPageBinding> bindings,
+  ) async {
+    _requireOpen();
+    final values = bindings.toList(growable: false);
+    if (values.isEmpty) return;
+    final next = Map<String, ExportPageBinding>.of(_exportPageBindings);
+    for (final binding in values) {
+      if (binding.sourceId.isEmpty ||
+          binding.comicId.isEmpty ||
+          binding.chapterId.isEmpty ||
+          binding.pageId.isEmpty ||
+          binding.logicalIndex < 0 ||
+          binding.exportOrdinal <= 0) {
+        throw ArgumentError('invalid export page binding');
+      }
+      final key = '${binding.ownerKey}\u0000${binding.pageId}';
+      final existing = next[key];
+      if (existing != null &&
+          existing.exportOrdinal != binding.exportOrdinal) {
+        throw StateError(
+          'export ordinal is immutable for '
+          '${binding.sourceId}:${binding.comicId}:${binding.chapterId}:${binding.pageId}',
+        );
+      }
+      for (final candidate in next.values) {
+        if (candidate.sourceId == binding.sourceId &&
+            candidate.comicId == binding.comicId &&
+            candidate.chapterId == binding.chapterId &&
+            candidate.pageId != binding.pageId &&
+            candidate.exportOrdinal == binding.exportOrdinal) {
+          throw StateError(
+            'export ordinal ${binding.exportOrdinal} is already bound to '
+            '${candidate.pageId}',
+          );
+        }
+      }
+      next[key] = binding;
+    }
+    _exportPageBindings
+      ..clear()
+      ..addAll(next);
+  }
+
+  @override
   Future<void> removePlacement({
     required String sourceId,
     required String comicId,
   }) async {
     _requireOpen();
     _placements.remove('$sourceId\u0000$comicId');
+    final prefix = '$sourceId\u0000$comicId\u0000';
+    _exportPageBindings.removeWhere((key, _) => key.startsWith(prefix));
   }
 
   @override

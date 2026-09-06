@@ -105,9 +105,11 @@ Owns the human-readable manual-download directory, its placement policy, and its
 
 `DownloadPlacement.pageOrder` is an export-layout policy only. Reader never consumes it to reorder logical pages.
 
-The layout persists only slots that actually exist in the user-visible export. It does not expand every historical version into page rows.
+The layout persists only slots that actually exist in the user-visible export. It does not expand every historical version into page rows. Production schema 6 stores these sparse slots as `export_page_binding`: logical page identity and logical index are separate from an immutable positive `exportOrdinal`.
 
-For predecessor/successor reuse the layout is rebased through verified VersionGraph edges only when a relevant version is actually materialized. Existing stable slots remain stable whenever the verified relation permits that.
+`auto` is unresolved intent, not a long-lived physical rule. Before the first structured page materialization it freezes to `chronological` only for a confirmed single-chapter comic with a verified pure-front-prepend page mapping; all other cases freeze to `origin`. Provider/source names and `N-index` arithmetic are not evidence.
+
+For predecessor/successor reuse the layout is rebased lazily through verified VersionGraph edges only when a relevant version is actually materialized. Traversal may use compact relations across unmaterialized intermediate versions, but it only reads an already-materialized ordinal anchor and never creates intermediate page rows. Existing stable slots remain stable whenever the verified relation permits that; front-prepended pages allocate ordinals after the existing maximum. A layout mutation that would move an existing slot is rejected as policy and requires an explicit export relayout migration.
 
 A logical Reader page and an export slot are distinct:
 

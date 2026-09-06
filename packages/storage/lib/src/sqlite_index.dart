@@ -36,7 +36,7 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
     db.execute('PRAGMA foreign_keys = ON');
     db.execute('PRAGMA journal_mode = WAL');
     final version = db.select('PRAGMA user_version').first.values.first as int;
-    if (version > 5) {
+    if (version > 6) {
       throw StateError('unsupported cache schema version: $version');
     }
     db.execute('BEGIN IMMEDIATE');
@@ -127,6 +127,24 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
         'ON download_placement(source_id, comic_id)',
       );
       db.execute('''
+        CREATE TABLE IF NOT EXISTS export_page_binding (
+          source_id TEXT NOT NULL,
+          comic_id TEXT NOT NULL,
+          chapter_id TEXT NOT NULL,
+          page_id TEXT NOT NULL,
+          logical_index INTEGER NOT NULL,
+          export_ordinal INTEGER NOT NULL,
+          placement_generation INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (source_id, comic_id, chapter_id, page_id),
+          CHECK (logical_index >= 0),
+          CHECK (export_ordinal > 0)
+        )
+      ''');
+      db.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS export_page_binding_ordinal '
+        'ON export_page_binding(source_id, comic_id, chapter_id, export_ordinal)',
+      );
+      db.execute('''
         CREATE TABLE IF NOT EXISTS artifact_object (
           artifact_id TEXT NOT NULL PRIMARY KEY,
           path TEXT NOT NULL,
@@ -140,7 +158,7 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       ''');
       _backfillArtifactObjects(db);
       _migrateDownloadIdentityKeys(db);
-      db.execute('PRAGMA user_version = 5');
+      db.execute('PRAGMA user_version = 6');
       db.execute('COMMIT');
     } on Object {
       db.execute('ROLLBACK');
@@ -443,14 +461,133 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       first.fingerprint == second.fingerprint;
 
   @override
+  Future<List<ExportPageBinding>> listExportPageBindings({
+    required String sourceId,
+    required String comicId,
+    required String chapterId,
+  }) async {
+    final rows = _requireDb().select(
+      'SELECT source_id, comic_id, chapter_id, page_id, logical_index, '
+      'export_ordinal, placement_generation FROM export_page_binding '
+      'WHERE source_id = ? AND comic_id = ? AND chapter_id = ? '
+      'ORDER BY export_ordinal',
+      <Object?>[sourceId, comicId, chapterId],
+    );
+    return rows
+        .map(
+          (row) => ExportPageBinding(
+            sourceId: row['source_id']! as String,
+            comicId: row['comic_id']! as String,
+            chapterId: row['chapter_id']! as String,
+            pageId: row['page_id']! as String,
+            logicalIndex: row['logical_index']! as int,
+            exportOrdinal: row['export_ordinal']! as int,
+            placementGeneration: row['placement_generation']! as int,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  @override
+  Future<void> putExportPageBindings(
+    Iterable<ExportPageBinding> bindings,
+  ) async {
+    final values = bindings.toList(growable: false);
+    if (values.isEmpty) return;
+    final db = _requireDb();
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      for (final binding in values) {
+        if (binding.sourceId.isEmpty ||
+            binding.comicId.isEmpty ||
+            binding.chapterId.isEmpty ||
+            binding.pageId.isEmpty ||
+            binding.logicalIndex < 0 ||
+            binding.exportOrdinal <= 0) {
+          throw ArgumentError('invalid export page binding');
+        }
+        final existing = db.select(
+          'SELECT export_ordinal FROM export_page_binding '
+          'WHERE source_id = ? AND comic_id = ? AND chapter_id = ? '
+          'AND page_id = ? LIMIT 1',
+          <Object?>[
+            binding.sourceId,
+            binding.comicId,
+            binding.chapterId,
+            binding.pageId,
+          ],
+        );
+        if (existing.isNotEmpty &&
+            existing.first['export_ordinal'] != binding.exportOrdinal) {
+          throw StateError(
+            'export ordinal is immutable for '
+            '${binding.sourceId}:${binding.comicId}:${binding.chapterId}:${binding.pageId}',
+          );
+        }
+        final ordinalOwner = db.select(
+          'SELECT page_id FROM export_page_binding '
+          'WHERE source_id = ? AND comic_id = ? AND chapter_id = ? '
+          'AND export_ordinal = ? AND page_id != ? LIMIT 1',
+          <Object?>[
+            binding.sourceId,
+            binding.comicId,
+            binding.chapterId,
+            binding.exportOrdinal,
+            binding.pageId,
+          ],
+        );
+        if (ordinalOwner.isNotEmpty) {
+          throw StateError(
+            'export ordinal ${binding.exportOrdinal} is already bound to '
+            '${ordinalOwner.first['page_id']}',
+          );
+        }
+        db.execute('''
+          INSERT INTO export_page_binding (
+            source_id, comic_id, chapter_id, page_id, logical_index,
+            export_ordinal, placement_generation
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(source_id, comic_id, chapter_id, page_id) DO UPDATE SET
+            logical_index = excluded.logical_index,
+            placement_generation = excluded.placement_generation
+        ''', <Object?>[
+          binding.sourceId,
+          binding.comicId,
+          binding.chapterId,
+          binding.pageId,
+          binding.logicalIndex,
+          binding.exportOrdinal,
+          binding.placementGeneration,
+        ]);
+      }
+      db.execute('COMMIT');
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  @override
   Future<void> removePlacement({
     required String sourceId,
     required String comicId,
   }) async {
-    _requireDb().execute(
-      'DELETE FROM download_placement WHERE source_id = ? AND comic_id = ?',
-      <Object?>[sourceId, comicId],
-    );
+    final db = _requireDb();
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      db.execute(
+        'DELETE FROM export_page_binding WHERE source_id = ? AND comic_id = ?',
+        <Object?>[sourceId, comicId],
+      );
+      db.execute(
+        'DELETE FROM download_placement WHERE source_id = ? AND comic_id = ?',
+        <Object?>[sourceId, comicId],
+      );
+      db.execute('COMMIT');
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
   }
 
   @override

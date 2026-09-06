@@ -16,7 +16,8 @@ enum DownloadPlacementMode {
 
 /// Page ordering used when formatting page filenames within structured directories.
 enum ComicPageOrder {
-  /// Determined automatically based on single-chapter status, source, and version offset.
+  /// Unresolved export-layout intent. It must be frozen to [chronological] or
+  /// [origin] before the first structured page is materialized.
   auto,
 
   /// True chronological order (oldest page = 001, newest = N), appending
@@ -25,6 +26,54 @@ enum ComicPageOrder {
 
   /// Gallery manifest order (page 1 of gallery = 001).
   origin,
+}
+
+/// Sparse durable mapping from one logical page to its user-visible export
+/// ordinal. Bindings are created only for a comic/chapter that actually enters
+/// export materialization; unopened versions never receive per-page rows.
+final class ExportPageBinding {
+  const ExportPageBinding({
+    required this.sourceId,
+    required this.comicId,
+    required this.chapterId,
+    required this.pageId,
+    required this.logicalIndex,
+    required this.exportOrdinal,
+    this.placementGeneration = 0,
+  });
+
+  final String sourceId;
+  final String comicId;
+  final String chapterId;
+  final String pageId;
+  final int logicalIndex;
+  final int exportOrdinal;
+  final int placementGeneration;
+
+  String get ownerKey => '$sourceId\u0000$comicId\u0000$chapterId';
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ExportPageBinding &&
+          sourceId == other.sourceId &&
+          comicId == other.comicId &&
+          chapterId == other.chapterId &&
+          pageId == other.pageId &&
+          logicalIndex == other.logicalIndex &&
+          exportOrdinal == other.exportOrdinal &&
+          placementGeneration == other.placementGeneration;
+
+  @override
+  int get hashCode => Object.hash(
+        sourceId,
+        comicId,
+        chapterId,
+        pageId,
+        logicalIndex,
+        exportOrdinal,
+        placementGeneration,
+      );
 }
 
 /// Immutable placement contract for a comic download task, defining its
@@ -184,7 +233,8 @@ final class DownloadPlacement {
           comicFamilyId == other.comicFamilyId &&
           observedOwnerKey == other.observedOwnerKey &&
           generation == other.generation &&
-          fingerprint == other.fingerprint;
+          fingerprint == other.fingerprint &&
+          pageOrder == other.pageOrder;
 
   @override
   int get hashCode => Object.hash(
@@ -199,6 +249,7 @@ final class DownloadPlacement {
         observedOwnerKey,
         generation,
         fingerprint,
+        pageOrder,
       );
 
   @override

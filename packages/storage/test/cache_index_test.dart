@@ -310,4 +310,138 @@ void runCacheSchemaV2Tests() {
     final read = await index.getPlacement(sourceId: 'source', comicId: 'comic');
     expect(read?.pageOrder, ComicPageOrder.chronological);
   });
+  test('memory export page bindings enforce the same sparse ordinal contract',
+      () async {
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    const first = ExportPageBinding(
+      sourceId: 'source',
+      comicId: 'comic',
+      chapterId: 'chapter',
+      pageId: 'page-a',
+      logicalIndex: 2,
+      exportOrdinal: 3,
+    );
+    await index.putExportPageBindings(const <ExportPageBinding>[first]);
+    expect(
+      await index.listExportPageBindings(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+      ),
+      const <ExportPageBinding>[first],
+    );
+    await expectLater(
+      index.putExportPageBindings(
+        const <ExportPageBinding>[
+          ExportPageBinding(
+            sourceId: 'source',
+            comicId: 'comic',
+            chapterId: 'chapter',
+            pageId: 'page-a',
+            logicalIndex: 4,
+            exportOrdinal: 9,
+          ),
+        ],
+      ),
+      throwsStateError,
+    );
+  });
+
+  test('sqlite export page bindings persist sparse immutable ordinals', () async {
+    final directory = await Directory.systemTemp.createTemp('export-binding-');
+    addTearDown(() => directory.delete(recursive: true));
+    final dbPath = '${directory.path}/export-binding.sqlite';
+    final index = SqliteIndex(dbPath);
+    await index.open();
+    final bindings = <ExportPageBinding>[
+      const ExportPageBinding(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'old-a',
+        logicalIndex: 2,
+        exportOrdinal: 3,
+        placementGeneration: 4,
+      ),
+      const ExportPageBinding(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'old-b',
+        logicalIndex: 3,
+        exportOrdinal: 2,
+        placementGeneration: 4,
+      ),
+    ];
+    await index.putExportPageBindings(bindings);
+    await index.close();
+
+    final reopened = SqliteIndex(dbPath);
+    await reopened.open();
+    addTearDown(reopened.close);
+    final restored = await reopened.listExportPageBindings(
+      sourceId: 'source',
+      comicId: 'comic',
+      chapterId: 'chapter',
+    );
+    expect(restored, <ExportPageBinding>[bindings[1], bindings[0]]);
+
+    await reopened.putExportPageBindings(<ExportPageBinding>[
+      const ExportPageBinding(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'old-a',
+        logicalIndex: 4,
+        exportOrdinal: 3,
+        placementGeneration: 5,
+      ),
+    ]);
+    expect(
+      (await reopened.listExportPageBindings(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+      ))
+          .singleWhere((binding) => binding.pageId == 'old-a')
+          .logicalIndex,
+      4,
+    );
+
+    await expectLater(
+      reopened.putExportPageBindings(<ExportPageBinding>[
+        const ExportPageBinding(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'old-a',
+          logicalIndex: 4,
+          exportOrdinal: 7,
+        ),
+      ]),
+      throwsStateError,
+    );
+  });
+
+  test('DownloadPlacement equality includes export page order', () {
+    final now = DateTime.utc(2026, 9, 6);
+    final origin = DownloadPlacement(
+      placementId: 'p',
+      sourceId: 'source',
+      comicId: 'comic',
+      comicTitle: 'title',
+      mode: DownloadPlacementMode.incremental,
+      relativeDirectory: 'dir',
+      pageOrder: ComicPageOrder.origin,
+      createdAt: now,
+      updatedAt: now,
+    );
+    expect(
+      origin,
+      isNot(origin.copyWith(pageOrder: ComicPageOrder.chronological)),
+    );
+  });
+
 }

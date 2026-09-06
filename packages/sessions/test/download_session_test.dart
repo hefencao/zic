@@ -1838,6 +1838,24 @@ final class _BlockingPutCacheIndex implements CacheIndex {
       delegate.putPlacement(placement);
 
   @override
+  Future<List<ExportPageBinding>> listExportPageBindings({
+    required String sourceId,
+    required String comicId,
+    required String chapterId,
+  }) =>
+      delegate.listExportPageBindings(
+        sourceId: sourceId,
+        comicId: comicId,
+        chapterId: chapterId,
+      );
+
+  @override
+  Future<void> putExportPageBindings(
+    Iterable<ExportPageBinding> bindings,
+  ) =>
+      delegate.putExportPageBindings(bindings);
+
+  @override
   Future<void> removePlacement({
     required String sourceId,
     required String comicId,
@@ -1905,6 +1923,24 @@ final class _BlockingCacheIndex implements CacheIndex {
   @override
   Future<void> putPlacement(DownloadPlacement placement) =>
       delegate.putPlacement(placement);
+
+  @override
+  Future<List<ExportPageBinding>> listExportPageBindings({
+    required String sourceId,
+    required String comicId,
+    required String chapterId,
+  }) =>
+      delegate.listExportPageBindings(
+        sourceId: sourceId,
+        comicId: comicId,
+        chapterId: chapterId,
+      );
+
+  @override
+  Future<void> putExportPageBindings(
+    Iterable<ExportPageBinding> bindings,
+  ) =>
+      delegate.putExportPageBindings(bindings);
 
   @override
   Future<void> removePlacement({

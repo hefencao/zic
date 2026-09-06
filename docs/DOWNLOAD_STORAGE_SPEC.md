@@ -11,6 +11,9 @@ This document is normative for the detailed download/storage behavior. `docs/SPE
 3. Durable page placement MUST NOT be recomputed from a global `N-index` rule when a newer comic version changes page count.
 4. Unopened or unmaterialized comic versions MUST NOT create per-page artifact/export bindings solely because a version relation was discovered.
 5. Compact verified version-edge mappings MAY be composed lazily when a version is actually cached/downloaded. If compact proof is insufficient, automatic reuse MUST be skipped rather than expanded speculatively.
+6. `ComicPageOrder.auto` MUST freeze before first structured page materialization. It MAY resolve to `chronological` only for a single-chapter comic with verified pure-front-prepend evidence; otherwise it MUST resolve to `origin`. Source/plugin names are not ordering evidence.
+7. Materialized export pages MUST have sparse durable positive ordinals. An existing logical page's ordinal MUST NOT change during ordinary incremental/version reuse; a front-prepended page MAY only consume a new ordinal above the existing maximum. A change that would move an existing slot MUST fail as a policy conflict until an explicit export relayout is requested.
+8. Verified version traversal MAY cross unmaterialized intermediate versions but MUST NOT create their per-page bindings. Only an already-materialized compatible anchor may contribute ordinals.
 
 ## 2. Metadata, artifacts and replicas
 

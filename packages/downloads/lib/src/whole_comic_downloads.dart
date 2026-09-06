@@ -371,6 +371,7 @@ final class WholeComicDownloadQueue {
     String? placementDirectory,
     DownloadPlacementMode? placementMode,
     String? observedOwnerKey,
+    ComicPageOrder pageOrder = ComicPageOrder.auto,
   }) async {
     await ready;
     _requireOpen();
@@ -416,6 +417,9 @@ final class WholeComicDownloadQueue {
     final effectiveObservedOwnerKey = replacesPlacement
         ? observedOwnerKey
         : existing?.observedOwnerKey;
+    final effectivePageOrder = pageOrder != ComicPageOrder.auto
+        ? pageOrder
+        : (existing?.pageOrder ?? ComicPageOrder.auto);
     if (effectivePlacementMode == DownloadPlacementMode.overwrite &&
         effectiveObservedOwnerKey != null &&
         effectiveObservedOwnerKey.contains('\u0000')) {
@@ -447,6 +451,7 @@ final class WholeComicDownloadQueue {
           : existing?.placementDirectory,
       placementMode: effectivePlacementMode ?? DownloadPlacementMode.createNew,
       observedOwnerKey: effectiveObservedOwnerKey,
+      pageOrder: effectivePageOrder,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     );
@@ -858,6 +863,7 @@ final class WholeComicDownloadQueue {
           directoryName: job.placementDirectory!,
           mode: job.placementMode ?? DownloadPlacementMode.createNew,
           observedOwnerKey: job.observedOwnerKey,
+          pageOrder: job.pageOrder,
         );
         // The queue waits for the placement transaction before it starts any
         // page transfer. This closes the conflict-decision to write boundary
@@ -1126,6 +1132,7 @@ final class _WholeComicQueueJob {
     this.placementDirectory,
     this.placementMode,
     this.observedOwnerKey,
+    this.pageOrder = ComicPageOrder.auto,
   });
 
   final String jobId;
@@ -1148,6 +1155,7 @@ final class _WholeComicQueueJob {
   final String? placementDirectory;
   final DownloadPlacementMode? placementMode;
   final String? observedOwnerKey;
+  final ComicPageOrder pageOrder;
   final DateTime createdAt;
   DateTime updatedAt;
 
@@ -1201,6 +1209,7 @@ final class _WholeComicQueueJob {
         'placementDirectory': placementDirectory,
         'placementMode': placementMode?.name,
         'observedOwnerKey': observedOwnerKey,
+        if (pageOrder != ComicPageOrder.auto) 'pageOrder': pageOrder.name,
         'createdAt': createdAt.toIso8601String(),
         'updatedAt': updatedAt.toIso8601String(),
         'completedChapterIdentities':
@@ -1264,6 +1273,11 @@ final class _WholeComicQueueJob {
               DownloadPlacementMode.createNew,
             ),
       observedOwnerKey: json['observedOwnerKey'] as String?,
+      pageOrder: _enumByName(
+        ComicPageOrder.values,
+        json['pageOrder'],
+        ComicPageOrder.auto,
+      ),
       createdAt: DateTime.parse(_requiredString(json, 'createdAt')).toUtc(),
       updatedAt: DateTime.parse(_requiredString(json, 'updatedAt')).toUtc(),
     )

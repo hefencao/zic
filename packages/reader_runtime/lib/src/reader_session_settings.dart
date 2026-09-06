@@ -38,7 +38,8 @@ final class ReaderSessionSettings {
   final AdaptiveReaderProfile? adaptiveProfile;
   final bool? invertPageOrderOverride;
 
-  bool get effectiveInvertPageOrder => invertPageOrderOverride ?? false;
+  bool get effectiveInvertPageOrder =>
+      comicSpecificEnabled && (invertPageOrderOverride ?? false);
 
   /// Double-tap zoom stages, ordered ascending. Two stages: the first
   /// double-tap enters [zoomStages[0]], the second [zoomStages[1]], the third

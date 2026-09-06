@@ -2540,19 +2540,39 @@ final class PersistentDownloadArtifactStore
       return placement;
     }
 
-    if (activeClaim != null && isSessionClaim) {
+    if (activeClaim != null) {
       final directory = _requireSafeComicDirectoryName(
         activeClaim.relativeDirectory,
       );
-      final normalized = activeClaim.storageRootId == currentRootId &&
-              directory == activeClaim.relativeDirectory
-          ? activeClaim
-          : activeClaim.copyWith(
+      var effectiveClaim = activeClaim;
+      if (effectiveClaim.pageOrder == ComicPageOrder.auto) {
+        final diskManifest = await _readComicFolderManifest(
+          directory,
+          rootLayout: entry.chapter.pages.isEmpty
+              ? layoutForSource(entry.chapter.sourceId)
+              : _layoutForEntryPage(entry, 0),
+        );
+        if (diskManifest?.pageOrder != null &&
+            diskManifest!.pageOrder != ComicPageOrder.auto) {
+          effectiveClaim = effectiveClaim.copyWith(
+            pageOrder: diskManifest.pageOrder,
+          );
+        }
+      }
+      final bindingChanged = activeClaim.storageRootId != currentRootId ||
+          directory != activeClaim.relativeDirectory ||
+          effectiveClaim.pageOrder != activeClaim.pageOrder;
+      final normalized = bindingChanged
+          ? effectiveClaim.copyWith(
               relativeDirectory: directory,
               storageRootId: currentRootId,
               generation: activeClaim.generation + 1,
-            );
-      await _persistPlacement(normalized);
+              updatedAt: DateTime.now().toUtc(),
+            )
+          : effectiveClaim;
+      if (bindingChanged) {
+        await _persistPlacement(normalized);
+      }
       _claimedPlacementsByOwner[owner] = normalized;
       _structuredDirectoriesByOwner[owner] = normalized.relativeDirectory;
       _structuredOwnersByDirectory[
@@ -2606,6 +2626,16 @@ final class PersistentDownloadArtifactStore
             ? await safTreeIo!.exists(directory)
             : await Directory('$root/$directory').exists();
         if (dirExists) {
+          final diskManifest = await _readComicFolderManifest(
+            directory,
+            rootLayout: entry.chapter.pages.isEmpty
+                ? layoutForSource(entry.chapter.sourceId)
+                : _layoutForEntryPage(entry, 0),
+          );
+          final effectivePageOrder = diskManifest?.pageOrder != null &&
+                  diskManifest!.pageOrder != ComicPageOrder.auto
+              ? diskManifest.pageOrder
+              : ComicPageOrder.auto;
           final migrated = DownloadPlacement(
             placementId: owner,
             sourceId: entry.chapter.sourceId,
@@ -2614,6 +2644,7 @@ final class PersistentDownloadArtifactStore
             mode: DownloadPlacementMode.incremental,
             relativeDirectory: _requireSafeComicDirectoryName(directory),
             storageRootId: currentRootId,
+            pageOrder: effectivePageOrder,
             createdAt: DateTime.now().toUtc(),
             updatedAt: DateTime.now().toUtc(),
           );
@@ -2731,6 +2762,10 @@ final class PersistentDownloadArtifactStore
           ),
         );
         if (accepted) {
+          final effectivePageOrder = diskManifest?.pageOrder != null &&
+                  diskManifest!.pageOrder != ComicPageOrder.auto
+              ? diskManifest.pageOrder
+              : ComicPageOrder.auto;
           final placement = DownloadPlacement(
             placementId: owner,
             sourceId: entry.chapter.sourceId,
@@ -2739,7 +2774,7 @@ final class PersistentDownloadArtifactStore
             mode: DownloadPlacementMode.createNew,
             relativeDirectory: candidate,
             storageRootId: currentRootId,
-            pageOrder: activeClaim?.pageOrder ?? ComicPageOrder.auto,
+            pageOrder: effectivePageOrder,
             createdAt: DateTime.now().toUtc(),
             updatedAt: DateTime.now().toUtc(),
           );
@@ -2771,20 +2806,344 @@ final class PersistentDownloadArtifactStore
     return placement.relativeDirectory;
   }
 
-  bool isReversePageOrder({
-    required DownloadPlacement placement,
-    required ImportedLibraryEntry entry,
-    int successorOffset = 0,
-    bool hasPredecessor = false,
-  }) {
-    if (placement.pageOrder == ComicPageOrder.chronological) return true;
-    if (placement.pageOrder == ComicPageOrder.origin) return false;
-    final isSingleChapter = entry.chapter.sequence <= 1;
-    final sourceId = entry.chapter.sourceId.toLowerCase();
-    final isEHentaiOrVenera =
-        sourceId.contains('ehentai') || sourceId.contains('venera');
-    return (isSingleChapter || isEHentaiOrVenera) &&
-        (successorOffset > 0 || hasPredecessor);
+  bool _mappingIsPureFrontPrepend(ComicVersionPageMapping mapping) =>
+      mapping.successorOffset > 0 &&
+      mapping.successorPageCount ==
+          mapping.predecessorPageCount + mapping.successorOffset;
+
+  bool _hasVerifiedFrontPrependEvidence(ImportedLibraryEntry entry) {
+    final chapter = entry.chapter;
+    for (final relation in _versionRelations) {
+      if (relation.sourceId != chapter.sourceId) continue;
+      for (final mapping in relation.pageMappings) {
+        if (!_mappingIsPureFrontPrepend(mapping)) continue;
+        final matchesSuccessor =
+            relation.successorComicId == chapter.comicId &&
+                mapping.successorChapterId == chapter.chapterId &&
+                mapping.successorPageCount == chapter.pages.length;
+        final matchesPredecessor =
+            relation.predecessorComicId == chapter.comicId &&
+                mapping.predecessorChapterId == chapter.chapterId &&
+                mapping.predecessorPageCount == chapter.pages.length;
+        if (matchesSuccessor || matchesPredecessor) return true;
+      }
+    }
+    return false;
+  }
+
+  Future<DownloadPlacement> freezeExportPageOrder(
+    ImportedLibraryEntry entry,
+    DownloadPlacement placement, {
+    required bool isSingleChapter,
+  }) async {
+    if (placement.pageOrder != ComicPageOrder.auto) return placement;
+    final resolved = isSingleChapter && _hasVerifiedFrontPrependEvidence(entry)
+        ? ComicPageOrder.chronological
+        : ComicPageOrder.origin;
+    return resolveDownloadPlacement(
+      entry,
+      requestedPlacement: placement.copyWith(
+        pageOrder: resolved,
+        generation: placement.generation + 1,
+        updatedAt: DateTime.now().toUtc(),
+      ),
+    );
+  }
+
+  bool _recordBelongsToExportPlacement(
+    CacheRec record,
+    DownloadPlacement placement,
+  ) {
+    final parsed = parseSafRecordPath(record.path);
+    if (parsed != null) {
+      return parsed.relativePath == placement.relativeDirectory ||
+          parsed.relativePath.startsWith('${placement.relativeDirectory}/');
+    }
+    final root = placement.storageRootId == 'default'
+        ? layoutFor(record.id).root
+        : placement.storageRootId;
+    final prefix = '$root/${placement.relativeDirectory}';
+    return record.path == prefix || record.path.startsWith('$prefix/');
+  }
+
+  Future<Map<int, int>> _inheritedChronologicalOrdinals(
+    ImportedLibraryEntry entry,
+  ) async {
+    final chapter = entry.chapter;
+    final queue = <({
+      String comicId,
+      String chapterId,
+      int indexDelta,
+      int pageCount,
+    })>[
+      (
+        comicId: chapter.comicId,
+        chapterId: chapter.chapterId,
+        indexDelta: 0,
+        pageCount: chapter.pages.length,
+      ),
+    ];
+    final visited = <String>{};
+    while (queue.isNotEmpty) {
+      final node = queue.removeAt(0);
+      final key = '${node.comicId}\u0000${node.chapterId}';
+      if (!visited.add(key)) continue;
+      if (node.comicId != chapter.comicId ||
+          node.chapterId != chapter.chapterId) {
+        final placement = await _index.getPlacement(
+          sourceId: chapter.sourceId,
+          comicId: node.comicId,
+        );
+        if (placement?.pageOrder == ComicPageOrder.chronological) {
+          final bindings = await _index.listExportPageBindings(
+            sourceId: chapter.sourceId,
+            comicId: node.comicId,
+            chapterId: node.chapterId,
+          );
+          if (bindings.length == node.pageCount) {
+            final byIndex = <int, int>{
+              for (final binding in bindings)
+                binding.logicalIndex: binding.exportOrdinal,
+            };
+            final complete = byIndex.length == node.pageCount &&
+                Iterable<int>.generate(node.pageCount).every(byIndex.containsKey);
+            if (complete) {
+              final inherited = <int, int>{};
+              for (var currentIndex = 0;
+                  currentIndex < chapter.pages.length;
+                  currentIndex++) {
+                final anchorIndex = currentIndex + node.indexDelta;
+                final ordinal = byIndex[anchorIndex];
+                if (ordinal != null) inherited[currentIndex] = ordinal;
+              }
+              if (inherited.isNotEmpty) return inherited;
+            }
+          }
+        }
+      }
+
+      for (final relation in _versionRelations) {
+        if (relation.sourceId != chapter.sourceId) continue;
+        for (final mapping in relation.pageMappings) {
+          if (!_mappingIsPureFrontPrepend(mapping)) continue;
+          if (relation.successorComicId == node.comicId &&
+              mapping.successorChapterId == node.chapterId &&
+              mapping.successorPageCount == node.pageCount) {
+            queue.add((
+              comicId: relation.predecessorComicId,
+              chapterId: mapping.predecessorChapterId,
+              indexDelta: node.indexDelta - mapping.successorOffset,
+              pageCount: mapping.predecessorPageCount,
+            ));
+          }
+          if (relation.predecessorComicId == node.comicId &&
+              mapping.predecessorChapterId == node.chapterId &&
+              mapping.predecessorPageCount == node.pageCount) {
+            queue.add((
+              comicId: relation.successorComicId,
+              chapterId: mapping.successorChapterId,
+              indexDelta: node.indexDelta + mapping.successorOffset,
+              pageCount: mapping.successorPageCount,
+            ));
+          }
+        }
+      }
+    }
+    return const <int, int>{};
+  }
+
+  Future<Map<String, int>> ensureExportPageOrdinals(
+    ImportedLibraryEntry entry,
+    DownloadPlacement placement,
+  ) async {
+    if (placement.pageOrder == ComicPageOrder.auto) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'export page order must be frozen before page materialization',
+      );
+    }
+    final chapter = entry.chapter;
+    final pages = chapter.pages;
+    final pageIndexById = <String, int>{
+      for (var index = 0; index < pages.length; index++)
+        pages[index].stablePageId: index,
+    };
+    final durable = await _index.listExportPageBindings(
+      sourceId: chapter.sourceId,
+      comicId: chapter.comicId,
+      chapterId: chapter.chapterId,
+    );
+    final bindingsByPage = <String, ExportPageBinding>{
+      for (final binding in durable) binding.pageId: binding,
+    };
+
+    // Compatibility migration: if structured files predate export bindings,
+    // preserve their already-visible ordinals instead of renumbering them.
+    final indexed = await _index.list();
+    for (final record in indexed) {
+      if (record.id.content.sourceId != chapter.sourceId ||
+          record.id.content.comicId != chapter.comicId ||
+          record.id.content.chapterId != chapter.chapterId ||
+          !_recordBelongsToExportPlacement(record, placement)) {
+        continue;
+      }
+      final logicalIndex = pageIndexById[record.id.content.pageId];
+      if (logicalIndex == null ||
+          bindingsByPage.containsKey(record.id.content.pageId)) {
+        continue;
+      }
+      final ordinal = parsePageIndexFromFileName(record.path);
+      if (ordinal == null || ordinal <= 0) continue;
+      bindingsByPage[record.id.content.pageId] = ExportPageBinding(
+        sourceId: chapter.sourceId,
+        comicId: chapter.comicId,
+        chapterId: chapter.chapterId,
+        pageId: record.id.content.pageId,
+        logicalIndex: logicalIndex,
+        exportOrdinal: ordinal,
+        placementGeneration: placement.generation,
+      );
+    }
+
+    if (placement.pageOrder == ComicPageOrder.chronological &&
+        bindingsByPage.values.every(
+          (binding) => !pageIndexById.containsKey(binding.pageId),
+        )) {
+      final inherited = await _inheritedChronologicalOrdinals(entry);
+      for (final inheritedEntry in inherited.entries) {
+        final pageId = pages[inheritedEntry.key].stablePageId;
+        bindingsByPage.putIfAbsent(
+          pageId,
+          () => ExportPageBinding(
+            sourceId: chapter.sourceId,
+            comicId: chapter.comicId,
+            chapterId: chapter.chapterId,
+            pageId: pageId,
+            logicalIndex: inheritedEntry.key,
+            exportOrdinal: inheritedEntry.value,
+            placementGeneration: placement.generation,
+          ),
+        );
+      }
+    }
+
+    final usedOrdinals = <int>{
+      for (final binding in bindingsByPage.values) binding.exportOrdinal,
+    };
+    final currentBindings = <int, ExportPageBinding>{};
+    for (var index = 0; index < pages.length; index++) {
+      final binding = bindingsByPage[pages[index].stablePageId];
+      if (binding != null) currentBindings[index] = binding;
+    }
+
+    if (placement.pageOrder == ComicPageOrder.origin) {
+      for (var index = 0; index < pages.length; index++) {
+        final expectedOrdinal = index + 1;
+        final existing = currentBindings[index];
+        if (existing != null && existing.exportOrdinal != expectedOrdinal) {
+          throw Failure(
+            code: ErrorCode.policy,
+            message: 'origin export layout changed and requires explicit relayout',
+            details: <String, Object?>{
+              'pageId': pages[index].stablePageId,
+              'existingOrdinal': existing.exportOrdinal,
+              'expectedOrdinal': expectedOrdinal,
+            },
+          );
+        }
+        if (existing == null && usedOrdinals.contains(expectedOrdinal)) {
+          throw Failure(
+            code: ErrorCode.policy,
+            message: 'origin export ordinal is occupied by a stale page binding',
+            details: <String, Object?>{'exportOrdinal': expectedOrdinal},
+          );
+        }
+        currentBindings[index] = ExportPageBinding(
+          sourceId: chapter.sourceId,
+          comicId: chapter.comicId,
+          chapterId: chapter.chapterId,
+          pageId: pages[index].stablePageId,
+          logicalIndex: index,
+          exportOrdinal: expectedOrdinal,
+          placementGeneration: placement.generation,
+        );
+        usedOrdinals.add(expectedOrdinal);
+      }
+    } else {
+      final orderedExistingIndexes = currentBindings.keys.toList()..sort();
+      for (var cursor = 1; cursor < orderedExistingIndexes.length; cursor++) {
+        final previous = currentBindings[orderedExistingIndexes[cursor - 1]]!;
+        final next = currentBindings[orderedExistingIndexes[cursor]]!;
+        if (previous.exportOrdinal <= next.exportOrdinal) {
+          throw const Failure(
+            code: ErrorCode.policy,
+            message: 'chronological export bindings are not reverse-monotonic',
+          );
+        }
+      }
+      if (currentBindings.isEmpty) {
+        var ordinal = 1;
+        for (var index = pages.length - 1; index >= 0; index--) {
+          currentBindings[index] = ExportPageBinding(
+            sourceId: chapter.sourceId,
+            comicId: chapter.comicId,
+            chapterId: chapter.chapterId,
+            pageId: pages[index].stablePageId,
+            logicalIndex: index,
+            exportOrdinal: ordinal++,
+            placementGeneration: placement.generation,
+          );
+        }
+      } else {
+        final firstExisting = currentBindings.keys.reduce(
+          (left, right) => left < right ? left : right,
+        );
+        for (var index = firstExisting; index < pages.length; index++) {
+          if (!currentBindings.containsKey(index)) {
+            throw Failure(
+              code: ErrorCode.policy,
+              message: 'chronological export changed outside a front-prepend prefix',
+              details: <String, Object?>{'logicalIndex': index},
+            );
+          }
+        }
+        var nextOrdinal = usedOrdinals.isEmpty
+            ? 1
+            : usedOrdinals.reduce((left, right) => left > right ? left : right) + 1;
+        for (var index = firstExisting - 1; index >= 0; index--) {
+          final existing = currentBindings[index];
+          if (existing != null) continue;
+          currentBindings[index] = ExportPageBinding(
+            sourceId: chapter.sourceId,
+            comicId: chapter.comicId,
+            chapterId: chapter.chapterId,
+            pageId: pages[index].stablePageId,
+            logicalIndex: index,
+            exportOrdinal: nextOrdinal++,
+            placementGeneration: placement.generation,
+          );
+        }
+      }
+      // Refresh logical indexes after a front-prepend without changing ordinal.
+      for (var index = 0; index < pages.length; index++) {
+        final binding = currentBindings[index]!;
+        currentBindings[index] = ExportPageBinding(
+          sourceId: binding.sourceId,
+          comicId: binding.comicId,
+          chapterId: binding.chapterId,
+          pageId: binding.pageId,
+          logicalIndex: index,
+          exportOrdinal: binding.exportOrdinal,
+          placementGeneration: placement.generation,
+        );
+      }
+    }
+
+    await _index.putExportPageBindings(currentBindings.values);
+    return <String, int>{
+      for (final entry in currentBindings.entries)
+        pages[entry.key].stablePageId: entry.value.exportOrdinal,
+    };
   }
 
   /// Resolves a chapter export directory without allowing two chapters with
@@ -2907,6 +3266,9 @@ final class PersistentDownloadArtifactStore
         _structuredDirectoryKey(rootId, clean)
       ] = owner;
       final previousOwnerPlacement = _claimedPlacementsByOwner[owner];
+      final effectivePageOrder = pageOrder != ComicPageOrder.auto
+          ? pageOrder
+          : (previousOwnerPlacement?.pageOrder ?? ComicPageOrder.auto);
       final placement = DownloadPlacement(
         placementId: owner,
         sourceId: sourceId,
@@ -2917,7 +3279,7 @@ final class PersistentDownloadArtifactStore
         storageRootId: rootId,
         observedOwnerKey: observedOwnerKey,
         generation: (previousOwnerPlacement?.generation ?? -1) + 1,
-        pageOrder: pageOrder,
+        pageOrder: effectivePageOrder,
         createdAt: DateTime.now().toUtc(),
         updatedAt: DateTime.now().toUtc(),
       );
@@ -3126,6 +3488,7 @@ final class PersistentDownloadArtifactStore
         chapterTitles: titles,
         chapterSequences: sequences,
         generation: (isSameComic ? previous.generation : placement.generation) + 1,
+        pageOrder: placement.pageOrder,
         updatedAt: DateTime.now(),
       );
       final manifest = ComicFolderManifest(
@@ -3140,6 +3503,7 @@ final class PersistentDownloadArtifactStore
         chapterSequences: draft.chapterSequences,
         generation: draft.generation,
         fingerprint: draft.computedFingerprint,
+        pageOrder: draft.pageOrder,
         updatedAt: draft.updatedAt,
       );
       final safIo = safTreeIo;
@@ -5222,22 +5586,16 @@ final class PersistentChapterDownloadService
       final succComicId = successorRelation?.successorComicId;
       final succChapterId = succMapping?.successorChapterId;
 
-      final placement = await artifactStore.resolveDownloadPlacement(entry);
-      final isReversePageOrder = artifactStore.isReversePageOrder(
-        placement: placement,
-        entry: entry,
-        successorOffset: successorOffset,
-        hasPredecessor: predecessorComicId != null,
+      var placement = await artifactStore.resolveDownloadPlacement(entry);
+      placement = await artifactStore.freezeExportPageOrder(
+        entry,
+        placement,
+        isSingleChapter: isSingleChapter,
       );
-      if (placement.pageOrder == ComicPageOrder.auto && isReversePageOrder) {
-        final committedPlacement = placement.copyWith(
-          pageOrder: ComicPageOrder.chronological,
-        );
-        await artifactStore.resolveDownloadPlacement(
-          entry,
-          requestedPlacement: committedPlacement,
-        );
-      }
+      final exportOrdinals = await artifactStore.ensureExportPageOrdinals(
+        entry,
+        placement,
+      );
       await artifactStore.writeComicFolderManifest(
         entry,
         comicDirectoryName: structuredComicDirectory,
@@ -5274,9 +5632,14 @@ final class PersistentChapterDownloadService
 
       for (var pageIndex = 0; pageIndex < manifest.pages.length; pageIndex++) {
         final page = manifest.pages[pageIndex];
-        final targetPageNumber = isReversePageOrder
-            ? (manifest.pages.length - pageIndex)
-            : (pageIndex + 1);
+        final logicalPageId = entry.chapter.pages[pageIndex].stablePageId;
+        final targetPageNumber = exportOrdinals[logicalPageId];
+        if (targetPageNumber == null) {
+          throw Failure(
+            code: ErrorCode.invalidState,
+            message: 'missing frozen export ordinal for $logicalPageId',
+          );
+        }
         token.throwIfCancelled();
         final id = _downloadId(manifest, page);
         var record = indexedRecords[id.key];

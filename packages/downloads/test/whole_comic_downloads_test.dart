@@ -697,4 +697,74 @@ void main() {
     expect(storedJob['placementDirectory'], '新目录');
     expect(storedJob['placementMode'], 'createNew');
   });
+
+  test('queue restores pageOrder into the placement claim', () async {
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    addTearDown(downloads.close);
+    final store = MemoryWholeComicQueueStore();
+    final blockedEnvironment = MutableWholeComicQueueEnvironment(
+      const WholeComicQueueEnvironment(
+        networkAvailable: true,
+        unmetered: false,
+        charging: true,
+      ),
+    );
+    addTearDown(blockedEnvironment.close);
+    final first = WholeComicDownloadQueue(
+      downloads: downloads,
+      store: store,
+      environment: blockedEnvironment,
+    );
+    await first.ready;
+    await first.updatePolicy(
+      const WholeComicQueuePolicy(
+        network: WholeComicNetworkPolicy.unmetered,
+      ),
+    );
+    await first.enqueue(
+      sourceId: 'queue-source',
+      comicId: 'queue-comic',
+      comicTitle: '逆序漫画',
+      chapters: <ImportedLibraryEntry>[_entry(1)],
+      placementDirectory: '逆序漫画',
+      pageOrder: ComicPageOrder.chronological,
+    );
+    await _waitForJob(
+      first,
+      (job) => job.phase == WholeComicQueuePhase.waitingForPolicy,
+    );
+    final stored = await store.load();
+    final storedJobs = stored!['jobs'] as List<Object?>;
+    final storedJob = storedJobs.single as Map<String, Object?>;
+    expect(storedJob['pageOrder'], 'chronological');
+    await first.close();
+
+    final allowedEnvironment = MutableWholeComicQueueEnvironment(
+      const WholeComicQueueEnvironment(
+        networkAvailable: true,
+        unmetered: true,
+        charging: true,
+      ),
+    );
+    addTearDown(allowedEnvironment.close);
+    final restored = WholeComicDownloadQueue(
+      downloads: downloads,
+      store: store,
+      environment: allowedEnvironment,
+    );
+    addTearDown(restored.close);
+    await restored.ready;
+    await _waitForJob(
+      restored,
+      (job) => job.phase == WholeComicQueuePhase.complete,
+    );
+    final placement = await downloads.getDownloadPlacement(
+      sourceId: 'queue-source',
+      comicId: 'queue-comic',
+    );
+    expect(placement?.relativeDirectory, '逆序漫画');
+    expect(placement?.pageOrder, ComicPageOrder.chronological);
+  });
 }

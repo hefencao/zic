@@ -411,6 +411,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
       placementDirectory: placement?.relativeDirectory,
       placementMode: placement?.mode,
       observedOwnerKey: placement?.observedOwnerKey,
+      pageOrder: placement?.pageOrder ?? ComicPageOrder.auto,
     );
     _trackWholeComicDownloadCompletion(first.sourceId, first.comicId);
     _librarySession.refreshWholeComicSnapshot();

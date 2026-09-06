@@ -86,7 +86,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       current.chapter.sourceId,
       current.chapter.comicId,
     );
-    final shouldInvert = initialSettings.invertPageOrderOverride ?? false;
+    final shouldInvert = initialSettings.effectiveInvertPageOrder;
     final totalPages = current.chapter.pages.length;
     final recordForReader = shouldInvert && totalPages > 1
         ? current.chapter.copyWith(
