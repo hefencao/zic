@@ -1846,7 +1846,7 @@ void main() {
     expect(snapshot.receivedBytes, webpBytes.length);
   });
 
-  test('chapter command reclaims a stalled physical run and still completes',
+  test('chapter command lets the physical owner retry a stalled body',
       () async {
     final root = await Directory.systemTemp.createTemp('zic-stall-reclaim-');
     addTearDown(() => root.delete(recursive: true));
@@ -1860,7 +1860,7 @@ void main() {
 
     final service = await PersistentChapterDownloadService.open(
       root.path,
-      pageStallTimeout: const Duration(milliseconds: 150),
+      pageStallTimeout: const Duration(milliseconds: 400),
       traceSink: CallbackTraceSink(traceEvents.add),
     );
     addTearDown(service.close);
@@ -1912,7 +1912,7 @@ void main() {
       ),
     );
 
-    // Stall → reclaim → fresh task → completes.
+    // Body stall → DownloadJob attempt cleanup → owner retry → completes.
     await service.download(entry);
     expect(await service.isDownloaded(entry), isTrue);
     expect(openCalls, greaterThanOrEqualTo(2));
@@ -1922,20 +1922,13 @@ void main() {
         .map((event) => event.payload['stage'] as String?)
         .toSet();
     expect(stages, contains('chapter-run-start'));
-    expect(stages, contains('page-promotion-stall-reclaim'));
-    expect(stages, contains('page-promotion-reclaim-rewait'));
+    expect(stages, isNot(contains('page-promotion-stall-reclaim')));
+    expect(stages, isNot(contains('page-promotion-reclaim-rewait')));
     expect(stages, contains('chapter-run-complete'));
     expect(stages, isNot(contains('page-promotion-stall-gave-up')));
     // The owner reacted to the stuck attempt through the same sink.
     final kinds = traceEvents.map((event) => event.kind).toSet();
-    expect(
-      kinds.intersection(<TraceEventKind>{
-        TraceEventKind.taskFailed,
-        TraceEventKind.retryScheduled,
-        TraceEventKind.policyDecision,
-      }),
-      isNotEmpty,
-    );
+    expect(kinds, contains(TraceEventKind.retryScheduled));
   });
 
   test('cross-version page alias prefers the entry revision over a newer foreign record',

@@ -29,6 +29,7 @@ final class DownloadJob {
     this.requestUri,
     this.allowFullBodyCatchup,
     this.attachLegacyDemand = true,
+    this.publishAttemptFailures = true,
     this.readStallTimeout = defaultReadStallTimeout,
   });
 
@@ -42,6 +43,11 @@ final class DownloadJob {
   final Transport transport;
   final DownloadSession session;
   final Duration readStallTimeout;
+
+  /// Whether this job publishes one transport attempt failure as terminal
+  /// session state. Composition-owned transfers disable this so the physical
+  /// owner can exhaust its retry policy before consumers observe `failed`.
+  final bool publishAttemptFailures;
 
   /// Exact source request identity selected by the active consumer.
   ///
@@ -81,8 +87,13 @@ final class DownloadJob {
         try {
           final cancelled = cancel?.cancelled == true ||
               (error is Failure && error.code == ErrorCode.cancelled);
-          if (cancelled) {
-            session.deferNetwork(reason: 'download-attempt-cancelled');
+          if (cancelled || !publishAttemptFailures) {
+            session.deferNetwork(
+              reason: cancelled
+                  ? 'download-attempt-cancelled'
+                  : 'download-attempt-failed-owner-managed',
+              expectedRun: lease,
+            );
           } else {
             await session.failWithoutWriter(error);
           }
@@ -859,11 +870,13 @@ final class DownloadJob {
       rethrow;
     }
     try {
-      if (cancelled || (error is Failure && error.code == ErrorCode.cancelled)) {
-        // Scheduler/lifecycle cancellation ends only this transport attempt.
-        // It is not evidence that the authoritative encoded partial failed.
-        // Preserve committed bytes as an idle resumable partial; composition
-        // policy alone decides whether/when another network attempt runs.
+      if (cancelled ||
+          !publishAttemptFailures ||
+          (error is Failure && error.code == ErrorCode.cancelled)) {
+        // Scheduler/lifecycle cancellation and owner-managed attempt failure
+        // end only this transport attempt. Preserve the authoritative partial
+        // as resumable; the physical owner alone decides whether retries are
+        // exhausted and when consumers may observe terminal `failed`.
         await session.pause(writer);
         return;
       }

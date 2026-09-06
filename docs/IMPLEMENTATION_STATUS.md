@@ -198,7 +198,7 @@
 ## 当前开放问题
 
 - 需在 dev.180 真机复测快速前后跨页：current N→N+1后N必须立即进入previous下载角色（首位priority780）与后1decode窗，同时可保留last output；反向切页同理。大跳页后远离7/3的旧current只能保output，不得继续生成download/decode。继续记录current pressure/preemption，但本轮不再改其策略。
-- 需继续验证下载管理入口首帧与Reader source wait：下载管理仍须route-first；dev.182后current origin应保持`controlledFallback=true + priority=1000`，source growth由DownloadJob 16/64KiB单一framing产生。若`openMicros/sourceWait`仍秒级，再拆Venera request-plan/runtime与HTTP-open，不恢复transport 64/256KiB buffer或缩预下载窗口。
+- 需继续验证下载管理入口首帧与Reader source wait：下载管理仍须route-first；dev.182后current origin应保持`controlledFallback=true + priority=1000`，source growth由DownloadJob 16/64KiB单一framing产生。若`openMicros/sourceWait`仍秒级，再拆Venera request-plan/runtime与HTTP-open，不恢复transport 64/256KiB buffer或缩预下载窗口。 显式chapter download的attempt terminality已收口：composition-owned DownloadJob失败只回到idle/resumable，由DownloadTransferOwner完成既有retry并仅在耗尽后发布failed；page-promotion watchdog在lower queued-open/network-body watchdog有效时让权，避免同窗reset竞速。
 - 需用 dev.165 真机确认 Reader route返回后 Home history立即接收 final progress，不依赖详情页或整库 reload；连续 Reader route不得串用 final progress。
 - 需用 dev.167 真机复现 source browse → details → back：browse metadata/background refresh不得令未变化的 card cover重新走 loader；raw locator变化但 canonical identity不变时 card State必须保留。retained cover压力验证继续沿 dev.166规则执行。
 - 需验证 Home updates（未入书架漫画不出现，已入书架且有 source update signal 出现）；对同一外部漫画执行 browse→details→history，确认 canonical `artwork-v2` durable cover 被后两者直接命中。

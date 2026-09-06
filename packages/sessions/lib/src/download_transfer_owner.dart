@@ -1657,6 +1657,7 @@ final class DownloadTransferOwner {
             session: session,
             requestUri: sourceId.canonicalUri,
             attachLegacyDemand: false,
+            publishAttemptFailures: false,
             readStallTimeout: readStallTimeout,
             allowFullBodyCatchup: (preservedLength) =>
                 _allowsCostlyFullBodyCatchup(

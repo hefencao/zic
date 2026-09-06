@@ -5953,7 +5953,13 @@ final class PersistentChapterDownloadService
                 current.networkCursorLength > baseline.networkCursorLength;
         final artifactProgressed =
             current.committedLength > baseline.committedLength;
-        if (transportProgressed || artifactProgressed) {
+        final lowerAttemptOwnsStall = current.activeRun &&
+            transferRuntime.readStallTimeout > Duration.zero &&
+            (current.state == DownloadState.queued ||
+                current.networkAttemptActive);
+        if (transportProgressed ||
+            artifactProgressed ||
+            lowerAttemptOwnsStall) {
           armStall();
           return;
         }

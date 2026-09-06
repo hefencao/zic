@@ -58,7 +58,7 @@ This document is normative for the detailed download/storage behavior. `docs/SPE
 5. Reader ingress publication MUST remain ordered from byte zero even if network append advances farther than Reader-local replay.
 6. A local loader/transport MUST NOT concatenate an unrelated remote stream after it has already emitted bytes.
 7. Strong-validator range resume and validatorless overlap proof remain the only normal continuity authorities. URI/provider scope MUST be respected.
-8. A page-promotion stall window MUST measure continuous lack of physical progress, not total page duration. Real-time transport cursor or committed-length growth MUST refresh the window even when the growth is below the normal snapshot/trace publication quantum; this check MUST NOT require higher-frequency snapshot publication.
+8. A page-promotion stall window MUST measure continuous lack of physical progress, not total page duration. Real-time transport cursor or committed-length growth MUST refresh the window even when the growth is below the normal snapshot/trace publication quantum; this check MUST NOT require higher-frequency snapshot publication. For composition-owned transfers, one `DownloadJob` attempt failure MUST preserve an idle/resumable partial while `DownloadTransferOwner` still owns retry; only retry exhaustion may become consumer-visible terminal failure. While the lower physical run is in bounded transport-open or active body-read phase, the page watchdog MUST yield to that lower stall authority instead of racing it with `session.reset()`; owner-level reclaim remains for no-lower-phase/no-progress stalls.
 
 ## 7. Read failure feedback
 
