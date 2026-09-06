@@ -1178,6 +1178,10 @@ final class _BlockingInspectManyDownloadService
       _delegate.updateVersionBaselines(relations);
 
   @override
+  void updateCacheVersionRelations(List<ComicVersionRelation> relations) =>
+      _delegate.updateCacheVersionRelations(relations);
+
+  @override
   Future<DownloadPlacement?> getDownloadPlacement({
     required String sourceId,
     required String comicId,

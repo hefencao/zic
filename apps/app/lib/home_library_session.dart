@@ -352,11 +352,13 @@ final class HomeLibrarySession extends ChangeNotifier {
             ),
       ],
     );
-    // Downloads consume only direct predecessor -> current download-head
-    // mappings. Historical relations remain library provenance.
+    // Manual/export consumers receive only direct predecessor -> current
+    // download-head mappings. Artifact cache reuse is independent from manual
+    // adoption and keeps the full source-verified relation set.
     chapterDownloads.updateVersionBaselines(
       _versionBaselines.downloadHeadRelations,
     );
+    chapterDownloads.updateCacheVersionRelations(_versionRelations);
   }
 
   List<BrowsableComicSource> get enabledSources {

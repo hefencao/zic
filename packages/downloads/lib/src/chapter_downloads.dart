@@ -174,9 +174,15 @@ abstract interface class ChapterDownloadService {
     ComicPageOrder pageOrder = ComicPageOrder.auto,
   });
 
-  /// Updates direct predecessor -> current download-head mappings. Historical
-  /// version traversal belongs to the library baseline resolver, not downloads.
+  /// Updates direct predecessor -> current download-head mappings used only by
+  /// manual download/export placement. Historical traversal stays upstream.
   void updateVersionBaselines(List<ComicVersionRelation> relations);
+
+  /// Updates source-verified version relations available to immutable artifact
+  /// cache reuse. Cache residency is independent from manual download-head
+  /// adoption and must not duplicate bytes merely because a version was not
+  /// explicitly downloaded.
+  void updateCacheVersionRelations(List<ComicVersionRelation> relations);
 
   /// Retrieves the persisted placement record for the specified comic.
   Future<DownloadPlacement?> getDownloadPlacement({
@@ -747,6 +753,9 @@ final class MemoryChapterDownloadService
   void updateVersionBaselines(List<ComicVersionRelation> relations) {}
 
   @override
+  void updateCacheVersionRelations(List<ComicVersionRelation> relations) {}
+
+  @override
   Future<DownloadPlacement?> getDownloadPlacement({
     required String sourceId,
     required String comicId,
@@ -1091,9 +1100,15 @@ final class PersistentDownloadArtifactStore
 
   List<ComicVersionRelation> _downloadHeadRelations =
       const <ComicVersionRelation>[];
+  List<ComicVersionRelation> _cacheVersionRelations =
+      const <ComicVersionRelation>[];
 
   void updateVersionBaselines(List<ComicVersionRelation> relations) {
     _downloadHeadRelations = List<ComicVersionRelation>.unmodifiable(relations);
+  }
+
+  void updateCacheVersionRelations(List<ComicVersionRelation> relations) {
+    _cacheVersionRelations = List<ComicVersionRelation>.unmodifiable(relations);
   }
 
   static Future<PersistentDownloadArtifactStore> open(
@@ -4047,7 +4062,7 @@ final class PersistentDownloadArtifactStore
       }
     }
 
-    for (final rel in _downloadHeadRelations) {
+    for (final rel in _cacheVersionRelations) {
       final isSucc = rel.successorComicId == id.content.comicId;
       final isPred = rel.predecessorComicId == id.content.comicId;
       if (!isSucc && !isPred) continue;
@@ -5322,6 +5337,11 @@ final class PersistentChapterDownloadService
   @override
   void updateVersionBaselines(List<ComicVersionRelation> relations) {
     artifactStore.updateVersionBaselines(relations);
+  }
+
+  @override
+  void updateCacheVersionRelations(List<ComicVersionRelation> relations) {
+    artifactStore.updateCacheVersionRelations(relations);
   }
 
   @override

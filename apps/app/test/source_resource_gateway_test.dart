@@ -425,6 +425,9 @@ final class _RecordingDownloads
   void updateVersionBaselines(List<ComicVersionRelation> relations) {}
 
   @override
+  void updateCacheVersionRelations(List<ComicVersionRelation> relations) {}
+
+  @override
   Future<DownloadPlacement?> getDownloadPlacement({
     required String sourceId,
     required String comicId,
