@@ -3664,14 +3664,24 @@ final class PersistentDownloadArtifactStore
     if (_artifactWrites.containsKey(id)) return null;
     final active = _registry.find(id);
     if (active != null && (active.activeRun || active.hasWriter)) return null;
-    final exact = await _openArtifactStreamExact(id);
+    ArtifactReadFailure? lastReadFailure;
+    Future<ArtifactCacheStreamEntry?> tryOpenExact(DownloadId candidate) async {
+      try {
+        return await _openArtifactStreamExact(candidate);
+      } on ArtifactReadFailure catch (error) {
+        lastReadFailure ??= error;
+        return null;
+      }
+    }
+
+    final exact = await tryOpenExact(id);
     if (exact != null) return exact;
 
     final allRecords = await _index.list();
     for (final cand in allRecords) {
       if (!_isVerifiedReadyRecord(cand)) continue;
       if (cand.id.canonicalUri == id.canonicalUri) {
-        final stream = await _openArtifactStreamExact(cand.id);
+        final stream = await tryOpenExact(cand.id);
         if (stream != null) return stream;
       }
     }
@@ -3692,7 +3702,7 @@ final class PersistentDownloadArtifactStore
         if (!_isVerifiedReadyRecord(cand)) continue;
         if (cand.id.content.sourceId == id.content.sourceId &&
             verifiedRecordIdentities(cand).any(idVerified.contains)) {
-          final stream = await _openArtifactStreamExact(cand.id);
+          final stream = await tryOpenExact(cand.id);
           if (stream != null) return stream;
         }
       }
@@ -3717,14 +3727,88 @@ final class PersistentDownloadArtifactStore
               cand.id.content.chapterId == otherChapter) {
             if (cand.id.content.pageId == id.content.pageId ||
                 cand.id.canonicalUri == id.canonicalUri) {
-              final stream = await _openArtifactStreamExact(cand.id);
+              final stream = await tryOpenExact(cand.id);
               if (stream != null) return stream;
             }
           }
         }
       }
     }
+    if (lastReadFailure != null) {
+      throw lastReadFailure!;
+    }
     return null;
+  }
+
+  ArtifactReadFailure _enrichArtifactReadFailure(
+    CacheRec record,
+    ArtifactReadFailure failure,
+  ) =>
+      failure.replicaId == null
+          ? failure.withReplicaId(record.effectiveArtifactId)
+          : failure;
+
+  Future<bool> _artifactRecordExists(CacheRec record) async {
+    try {
+      return await _bytes.exists(record.path);
+    } on ArtifactReadFailure catch (error) {
+      throw _enrichArtifactReadFailure(record, error);
+    } on Object catch (error) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.ioFailure,
+        accessLocator: record.path,
+        replicaId: record.effectiveArtifactId,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        cause: error,
+      );
+    }
+  }
+
+  Future<int> _artifactRecordLength(CacheRec record) async {
+    try {
+      return await _bytes.length(record.path);
+    } on ArtifactReadFailure catch (error) {
+      throw _enrichArtifactReadFailure(record, error);
+    } on Object catch (error) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.ioFailure,
+        accessLocator: record.path,
+        replicaId: record.effectiveArtifactId,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        cause: error,
+      );
+    }
+  }
+
+  Stream<Uint8List> _readArtifactRecord(
+    CacheRec record, {
+    required int start,
+    int? endExclusive,
+  }) async* {
+    var emitted = 0;
+    try {
+      await for (final chunk in _bytes.readChunks(
+        record.path,
+        start: start,
+        endExclusive: endExclusive,
+      )) {
+        emitted += chunk.length;
+        yield chunk;
+      }
+    } on ArtifactReadFailure catch (error) {
+      throw _enrichArtifactReadFailure(record, error);
+    } on Object catch (error) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.ioFailure,
+        accessLocator: record.path,
+        replicaId: record.effectiveArtifactId,
+        failedOffset: start + emitted,
+        bytesEmitted: emitted,
+        cause: error,
+      );
+    }
   }
 
   Future<ArtifactCacheStreamEntry?> _openArtifactStreamExact(DownloadId id) async {
@@ -3747,14 +3831,35 @@ final class PersistentDownloadArtifactStore
       // tree is selected again.
       return null;
     }
-    if (record.bytes <= 0 || !await _bytes.exists(file)) {
+    if (record.bytes <= 0) {
       await _invalidateIndexedArtifact(id, record: record);
       return null;
     }
-    final length = await _bytes.length(file);
+    final exists = await _artifactRecordExists(record);
+    if (!exists) {
+      await _invalidateIndexedArtifact(id, record: record);
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.missing,
+        accessLocator: file,
+        replicaId: record.effectiveArtifactId,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        expectedLength: record.bytes,
+        observedLength: 0,
+      );
+    }
+    final length = await _artifactRecordLength(record);
     if (length <= 0 || length != record.bytes) {
       await _invalidateIndexedArtifact(id, record: record);
-      return null;
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.lengthChanged,
+        accessLocator: file,
+        replicaId: record.effectiveArtifactId,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        expectedLength: record.bytes,
+        observedLength: length,
+      );
     }
     if (record.checksumAlgorithm.toLowerCase() != 'crc32') {
       await _invalidateIndexedArtifact(id, record: record);
@@ -3764,8 +3869,8 @@ final class PersistentDownloadArtifactStore
     await _index.touch(id.key, touchedUs);
     return ArtifactCacheStreamEntry(
       length: length,
-      open: ({required int start, int? endExclusive}) => _bytes.readChunks(
-        file,
+      open: ({required int start, int? endExclusive}) => _readArtifactRecord(
+        record,
         start: start,
         endExclusive: endExclusive,
       ),

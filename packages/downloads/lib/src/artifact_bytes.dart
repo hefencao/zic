@@ -98,17 +98,38 @@ class LocalArtifactBytes implements ArtifactBytes {
   const LocalArtifactBytes();
 
   @override
-  Future<bool> exists(String path) async =>
-      await FileSystemEntity.type(path, followLinks: false) ==
-      FileSystemEntityType.file;
+  Future<bool> exists(String path) async {
+    try {
+      return await FileSystemEntity.type(path, followLinks: false) ==
+          FileSystemEntityType.file;
+    } on FileSystemException catch (error) {
+      throw ArtifactReadFailure(
+        kind: _fileReadFailureKind(error),
+        accessLocator: path,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        cause: error,
+      );
+    }
+  }
 
   @override
   Future<int> length(String path) async {
-    if (await FileSystemEntity.type(path, followLinks: false) !=
-        FileSystemEntityType.file) {
-      return 0;
+    try {
+      if (await FileSystemEntity.type(path, followLinks: false) !=
+          FileSystemEntityType.file) {
+        return 0;
+      }
+      return await File(path).length();
+    } on FileSystemException catch (error) {
+      throw ArtifactReadFailure(
+        kind: _fileReadFailureKind(error),
+        accessLocator: path,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        cause: error,
+      );
     }
-    return File(path).length();
   }
 
   @override
@@ -284,19 +305,60 @@ class SafArtifactBytes implements ArtifactBytes {
   Future<bool> exists(String path) async {
     final parsed = parseSafRecordPath(path);
     if (parsed == null || !_belongsToThisTree(path)) return false;
-    return _io.exists(parsed.relativePath);
+    try {
+      return await _io.exists(parsed.relativePath);
+    } on SafTreeAccessFailure catch (error) {
+      throw ArtifactReadFailure(
+        kind: error.kind,
+        accessLocator: path,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        cause: error.cause ?? error,
+      );
+    } on Object catch (error) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.ioFailure,
+        accessLocator: path,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        cause: error,
+      );
+    }
   }
 
   @override
   Future<int> length(String path) async {
     final parsed = parseSafRecordPath(path);
     if (parsed == null || !_belongsToThisTree(path)) return 0;
-    final handle = await _io.open(parsed.relativePath);
-    if (handle == null) return 0;
+    int? handle;
     try {
+      handle = await _io.open(parsed.relativePath);
+      if (handle == null) return 0;
       return await _io.length(handle) ?? 0;
+    } on SafTreeAccessFailure catch (error) {
+      throw ArtifactReadFailure(
+        kind: error.kind,
+        accessLocator: path,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        cause: error.cause ?? error,
+      );
+    } on Object catch (error) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.ioFailure,
+        accessLocator: path,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        cause: error,
+      );
     } finally {
-      await _io.close(handle);
+      if (handle != null) {
+        try {
+          await _io.close(handle);
+        } on Object {
+          // Probe cleanup cannot change the already observed length result.
+        }
+      }
     }
   }
 
