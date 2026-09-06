@@ -34,7 +34,6 @@
 - 参数不变：previous3/next7、body5/3/2/1、normal5+current reserved1。
 - 09:37 dev.278 真机Trace确认两条独立退化。其一，本地same-exact immutable图片每次Reader re-entry仅因DownloadSession object重建就批量`physical-generation-changed`，热decode/upload被失效；dev.279把sealed Reader-local projection定义为独立encoded generation，只有projection真正变化才invalidate；same-exact sealed热重入应记录`sealed-source-generation-preserved`且invalidated upload/decode均为0。其二，App冷启动虽恢复`persistentMappings=5`，cold partial仍全为`committedLength=0` miss；composition hot partial新增paused/detached lifecycle durable checkpoint，实际store owner仍为downloads层。
 # zic Implementation Status
-
 - Deferred gallery prewarm now observes an in-flight authoritative textureacquire and the Reader drops the idle intent when UploadSession owns a readyframe; this prevents a lazy upload create from being followed by a duplicateSurfaceProducer create. The bounded pool and UI-priority idle handoff remainunchanged; profile Android verification is still required.
 
 ## 当前发布候选
@@ -218,3 +217,4 @@
 | Android debug/release split APK | Verified-toolchain/device：release arm64 split APK 已构建并以 `adb install -r` 覆盖安装验证；未卸载、未清理 App 数据。|
 | 设备性能与生命周期 | Implemented；待设备复验 |
 | Verified-device / 主题加载背景 | 无新增结论；本轮 paged/vertical control no-op 在 enqueue 边界去重，transfer projection 在 Flutter frame 忙时让出 UI；不改变 playback/freeze 语义，待 profile Android 真机复测 `readerFrameTiming`、PageView cadence、`outputPrepareMicros` 与 `textureLeaseReused`。主题/AMOLED 加载背景 Verified-static：首帧背景跟随有效主题，AMOLED 深色开关持久化且深色 surface/scaffold/canvas 使用纯黑。 |
+Download storage boundary refactor baseline (2026-09-06): the accepted target architecture is documented in `docs/DOWNLOAD_STORAGE_ARCHITECTURE.md` with normative behavior in `docs/DOWNLOAD_STORAGE_SPEC.md`. Production still uses several transitional representations: download-root-coupled metadata in direct mode, `CacheRec.path` as a logical/physical combined record, SAF/direct as mutually selected modes rather than proven aliases, full-prefix copy during durable partial restore, and Pipeline-factory-owned construction of shared page lanes. These are migration targets, not new architecture authority. Refactoring must proceed by independent functional commits, preserving current durable compatibility and existing user data at every phase.
