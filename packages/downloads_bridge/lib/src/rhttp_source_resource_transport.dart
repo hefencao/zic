@@ -40,10 +40,16 @@ Future<void> prewarmPlatformSourceResourceTransport() async {
 /// `downloads`. This adapter only executes one already-normalized HTTP request
 /// through a reusable Rust/reqwest client.
 final class RhttpSourceResourceDirectTransport
-    implements SourceResourceDirectTransport {
-  RhttpSourceResourceDirectTransport({this.preparePlatform});
+    implements
+        SourceResourceDirectTransport,
+        SelfBoundedSourceResourceDirectTransport {
+  RhttpSourceResourceDirectTransport({
+    this.preparePlatform,
+    this.responseHeaderTimeout = const Duration(seconds: 15),
+  });
 
   final Future<void> Function()? preparePlatform;
+  final Duration responseHeaderTimeout;
   Future<rhttp.RhttpClient?>? _clientFuture;
   bool _closed = false;
 
@@ -83,7 +89,13 @@ final class RhttpSourceResourceDirectTransport
     TaskControl? control,
   }) async {
     _throwIfCancelled(control);
-    final client = await _client();
+    final client = await _client().timeout(
+      responseHeaderTimeout,
+      onTimeout: () => throw const Failure(
+        code: ErrorCode.network,
+        message: 'source media client initialization timed out',
+      ),
+    );
     _throwIfCancelled(control);
     if (client == null) {
       throw Failure(
@@ -108,16 +120,27 @@ final class RhttpSourceResourceDirectTransport
         : null;
     late final rhttp.HttpStreamResponse response;
     try {
-      response = await client.requestStream(
-        method: rhttp.HttpMethod(request.method),
-        url: request.uri.toString(),
-        headers: rhttp.HttpHeaders.rawMap(request.headers),
-        body: body == null || body.isEmpty
-            ? null
-            : rhttp.HttpBody.bytes(Uint8List.fromList(body)),
-        cancelToken: cancelToken,
-        onReceiveProgress: readDiagnostics?.recordReceiveProgress,
-      );
+      response = await client
+          .requestStream(
+            method: rhttp.HttpMethod(request.method),
+            url: request.uri.toString(),
+            headers: rhttp.HttpHeaders.rawMap(request.headers),
+            body: body == null || body.isEmpty
+                ? null
+                : rhttp.HttpBody.bytes(Uint8List.fromList(body)),
+            cancelToken: cancelToken,
+            onReceiveProgress: readDiagnostics?.recordReceiveProgress,
+          )
+          .timeout(
+            responseHeaderTimeout,
+            onTimeout: () {
+              cancelToken.cancel();
+              throw Failure(
+                code: ErrorCode.network,
+                message: 'source media response headers timed out for ${request.uri}',
+              );
+            },
+          );
     } on rhttp.RhttpCancelException catch (error) {
       throw Failure(
         code: ErrorCode.cancelled,

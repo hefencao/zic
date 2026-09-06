@@ -575,6 +575,13 @@ abstract interface class ControlledResolvableComicResourceSource {
   });
 }
 
+/// Optional capability for source adapters that already bound every resource
+/// plan/load invocation with their own runtime deadline. A null value means the
+/// wrapper cannot prove that guarantee for its current source.
+abstract interface class BoundedComicResourceSource {
+  Duration? get resourceOperationTimeout;
+}
+
 /// Optional companion capability for source-defined failure recovery.
 ///
 /// The initial request remains streamable by the host. Only after that request

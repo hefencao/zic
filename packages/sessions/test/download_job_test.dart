@@ -523,6 +523,70 @@ void main() {
     expect(session.state, DownloadState.idle);
   });
 
+  test('ordinary transport open still times out on the generic stall window',
+      () async {
+    final session = createSession();
+    final transport = _BlockingOpenTransport();
+
+    await expectLater(
+      DownloadJob(
+        transport: transport,
+        session: session,
+        readStallTimeout: const Duration(milliseconds: 80),
+      ).run(),
+      throwsA(
+        isA<Failure>()
+            .having((error) => error.code, 'code', ErrorCode.network)
+            .having(
+              (error) => error.message,
+              'message',
+              contains('transport open stalled'),
+            ),
+      ),
+    );
+  });
+
+  test('self-bounded transport open may outlive the generic stall window',
+      () async {
+    final session = createSession();
+    final transport = _SelfBoundedDelayedOpenTransport(
+      openDelay: const Duration(milliseconds: 180),
+      body: const <int>[1, 2, 3],
+    );
+
+    final result = await DownloadJob(
+      transport: transport,
+      session: session,
+      readStallTimeout: const Duration(milliseconds: 80),
+    ).run();
+
+    expect(result.state, DownloadState.promoted);
+    expect(result.committedLength, 3);
+  });
+
+  test('self-bounded open does not disable the body-read stall watchdog',
+      () async {
+    final session = createSession();
+    final transport = _SelfBoundedStalledBodyTransport();
+
+    await expectLater(
+      DownloadJob(
+        transport: transport,
+        session: session,
+        readStallTimeout: const Duration(milliseconds: 80),
+      ).run(),
+      throwsA(
+        isA<Failure>()
+            .having((error) => error.code, 'code', ErrorCode.network)
+            .having(
+              (error) => error.message,
+              'message',
+              contains('body read stalled'),
+            ),
+      ),
+    );
+  });
+
   test('reset during open prevents a late response from acquiring a new writer',
       () async {
     final session = createSession();
@@ -1574,6 +1638,77 @@ final class _BlockingOpenTransport implements Transport {
           if (!discarded.isCompleted) discarded.complete();
         },
       ),
+    );
+  }
+}
+
+final class _SelfBoundedDelayedOpenTransport
+    implements ControlledTransport, SelfBoundedOpenTransport {
+  _SelfBoundedDelayedOpenTransport({
+    required this.openDelay,
+    required this.body,
+  });
+
+  final Duration openDelay;
+  final List<int> body;
+
+  @override
+  bool selfBoundsOpen(Uri uri) => true;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+  }) async {
+    await Future<void>.delayed(openDelay);
+    control?.throwIfCancelled();
+    return ByteResponse(
+      bytes: Stream<List<int>>.value(body),
+      statusCode: HttpStatus.ok,
+      rangeStart: 0,
+      totalLength: body.length,
+    );
+  }
+}
+
+final class _SelfBoundedStalledBodyTransport
+    implements ControlledTransport, SelfBoundedOpenTransport {
+  @override
+  bool selfBoundsOpen(Uri uri) => true;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+  }) async {
+    final controller = StreamController<List<int>>();
+    control?.whenCancelled.then((_) => controller.close());
+    return ByteResponse(
+      bytes: controller.stream,
+      statusCode: HttpStatus.ok,
+      rangeStart: 0,
+      totalLength: 1,
+      onDiscard: controller.close,
     );
   }
 }

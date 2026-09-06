@@ -336,6 +336,8 @@ typedef ChapterResourceControlledTransport = Future<ByteResponse> Function(
   TaskControl? control,
 });
 
+typedef ChapterResourceOpenBound = bool Function(String sourceId, Uri uri);
+
 /// Atomic source-resource binding used by application composition.
 ///
 /// The complete-byte loader remains a compatibility fallback for sources that
@@ -348,6 +350,7 @@ final class ChapterResourceAccess {
     this.loadBytesControlled,
     this.openResponse,
     this.openControlledResponse,
+    this.selfBoundsOpen,
   }) {
     if (loadBytes == null &&
         loadBytesControlled == null &&
@@ -361,6 +364,7 @@ final class ChapterResourceAccess {
   final ChapterResourceControlledLoader? loadBytesControlled;
   final ChapterResourceTransport? openResponse;
   final ChapterResourceControlledTransport? openControlledResponse;
+  final ChapterResourceOpenBound? selfBoundsOpen;
 }
 
 abstract interface class ConfigurableChapterResourceAccess {
@@ -6091,6 +6095,8 @@ final class PersistentChapterDownloadService
                   validators: validators,
                   control: control,
                 ),
+        selfBoundedOpen:
+            access?.selfBoundsOpen?.call(manifest.sourceId, page.uri) ?? false,
         loadBytesControlled: controlledLoader == null
             ? null
             : ({TaskControl? control}) => controlledLoader(

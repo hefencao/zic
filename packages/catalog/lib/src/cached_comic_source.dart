@@ -96,6 +96,7 @@ final class CachedBrowsableComicSource
         RefreshableChapterComicSource,
         ResolvableComicResourceSource,
         ControlledResolvableComicResourceSource,
+        BoundedComicResourceSource,
         RetryableComicResourceSource,
         ControlledRetryableComicResourceSource,
         ControlledComicResourceSource {
@@ -726,6 +727,14 @@ final class CachedBrowsableComicSource
         : null;
     return controlled?.loadResourceControlled(uri, control: control) ??
         source.loadResource(uri);
+  }
+
+  @override
+  Duration? get resourceOperationTimeout {
+    final bounded = source is BoundedComicResourceSource
+        ? source as BoundedComicResourceSource
+        : null;
+    return bounded?.resourceOperationTimeout;
   }
 
   @override

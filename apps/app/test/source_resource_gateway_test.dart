@@ -34,6 +34,31 @@ void main() {
     expect(downloads.access, isNull);
   });
 
+  test('gateway forwards only proven source-open bounds to chapter access',
+      () async {
+    final locator = Uri.parse('venera-resource:bounded');
+    final source = _ResolvedSource(
+      resolvedUri: Uri.parse('https://example.invalid/bounded.webp'),
+      bytes: Uint8List.fromList(<int>[1, 2, 3]),
+      resourceOperationTimeout: const Duration(seconds: 55),
+    );
+    final downloads = _RecordingDownloads();
+    final gateway = ComicSourceResourceGateway(
+      sourceForId: (sourceId) => sourceId == source.sourceId ? source : null,
+      directTransport: _SelfBoundedDirectTransport(),
+    );
+    addTearDown(gateway.close);
+
+    gateway.bindTo(downloads);
+    final bound = downloads.access?.selfBoundsOpen;
+    expect(bound, isNotNull);
+    expect(bound!(source.sourceId, locator), isTrue);
+    expect(
+      bound(source.sourceId, Uri.parse('venera-resource://7')),
+      isFalse,
+    );
+  });
+
   test('artwork cache coalesces one source request-plan resolution', () async {
     final locator = Uri.parse('mihon:resource:cover');
     final source = _ResolvedSource(
@@ -506,11 +531,20 @@ final class _RecordingDownloads
 }
 
 final class _ResolvedSource
-    implements BrowsableComicSource, ResolvableComicResourceSource {
-  _ResolvedSource({required this.resolvedUri, required this.bytes});
+    implements
+        BrowsableComicSource,
+        ResolvableComicResourceSource,
+        BoundedComicResourceSource {
+  _ResolvedSource({
+    required this.resolvedUri,
+    required this.bytes,
+    this.resourceOperationTimeout,
+  });
 
   final Uri resolvedUri;
   final Uint8List bytes;
+  @override
+  final Duration? resourceOperationTimeout;
   int resolveCalls = 0;
   int loads = 0;
 
@@ -602,4 +636,22 @@ final class _ImageSource
   @override
   Future<ChapterManifest> loadChapter(String chapterId) =>
       throw UnimplementedError();
+}
+
+final class _SelfBoundedDirectTransport
+    implements SelfBoundedSourceResourceDirectTransport {
+  @override
+  Future<ByteResponse> open(
+    ComicResourceRequest request, {
+    TaskControl? control,
+  }) async =>
+      ByteResponse(
+        bytes: Stream<List<int>>.value(<int>[1, 2, 3]),
+        statusCode: HttpStatus.ok,
+        rangeStart: 0,
+        totalLength: 3,
+      );
+
+  @override
+  void close() {}
 }

@@ -152,6 +152,7 @@ final class ExternalPluginRuntimeSession
         (descriptor) => _RuntimeBrowsableComicSource(
           format: plugin.format,
           descriptor: descriptor,
+          resourceOperationTimeout: _limits.invocationTimeout,
           invoke: _invoke,
           resolveResourceInvoke: _resolveResourceInvocation,
         ),
@@ -378,11 +379,13 @@ final class _RuntimeBrowsableComicSource
         SectionedBrowsableComicSource,
         FilterableBrowsableComicSource,
         ResolvableComicResourceSource, ControlledResolvableComicResourceSource,
+        BoundedComicResourceSource,
         RetryableComicResourceSource, ControlledRetryableComicResourceSource,
         ControlledComicResourceSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
     required ExternalPluginRuntimeSourceDescriptor descriptor,
+    required Duration resourceOperationTimeout,
     required _RuntimeInvoke invoke,
     required _RuntimeResolveResourceInvoke resolveResourceInvoke,
   })  : _format = format,
@@ -390,6 +393,7 @@ final class _RuntimeBrowsableComicSource
         _supportsComicPreview = descriptor.supportsComicPreview,
         _supportsComicComments = descriptor.supportsComicComments,
         _externalId = descriptor.externalId,
+        _resourceOperationTimeout = resourceOperationTimeout,
         _invoke = invoke,
         _resolveResourceInvoke = resolveResourceInvoke,
         sourceId = '${_sourcePrefix(format)}${descriptor.externalId}',
@@ -403,6 +407,10 @@ final class _RuntimeBrowsableComicSource
         );
 
   final ExternalComicPluginFormat _format;
+  final Duration _resourceOperationTimeout;
+
+  @override
+  Duration get resourceOperationTimeout => _resourceOperationTimeout;
   final String? _browserUserAgent;
   final bool _supportsComicPreview;
   final bool _supportsComicComments;

@@ -1931,6 +1931,72 @@ void main() {
     expect(kinds, contains(TraceEventKind.retryScheduled));
   });
 
+  test('chapter page waiter yields to a self-bounded long transport open',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-self-bounded-open-');
+    addTearDown(() => root.delete(recursive: true));
+
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 5, 6, 7, 8,
+    ]);
+    var openCalls = 0;
+    final traceEvents = <TraceEvent>[];
+    final service = await PersistentChapterDownloadService.open(
+      root.path,
+      pageStallTimeout: const Duration(milliseconds: 100),
+      traceSink: CallbackTraceSink(traceEvents.add),
+    );
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        openResponse: (sourceId, uri, {range, validators}) async {
+          openCalls++;
+          await Future<void>.delayed(const Duration(milliseconds: 350));
+          return ByteResponse(
+            bytes: Stream<List<int>>.value(webpBytes),
+            statusCode: HttpStatus.ok,
+            rangeStart: 0,
+            totalLength: webpBytes.length,
+          );
+        },
+        selfBoundsOpen: (sourceId, uri) => true,
+      ),
+    );
+
+    final uri = Uri.parse('venera-resource:self-bounded-page');
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'venera:self-bounded',
+        displayName: '长 request-plan 章节',
+        sourceId: 'venera:self-bounded',
+        comicId: 'self-bounded-comic',
+        comicTitle: '长 request-plan 测试',
+        chapterId: 'self-bounded-ch',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: uri.toString(),
+            pageId: 'self-bounded-page',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.length,
+          ),
+        ],
+      ),
+    );
+
+    await service.download(entry);
+
+    expect(await service.isDownloaded(entry), isTrue);
+    expect(openCalls, 1);
+    final stages = traceEvents
+        .map((event) => event.payload['stage'] as String?)
+        .toSet();
+    expect(stages, isNot(contains('page-promotion-stall-reclaim')));
+    expect(stages, isNot(contains('page-promotion-stall-gave-up')));
+  });
+
   test('cross-version page alias prefers the entry revision over a newer foreign record',
       () async {
     final root = await Directory.systemTemp.createTemp('zic-alias-preference-');

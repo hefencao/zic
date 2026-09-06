@@ -9,6 +9,30 @@ import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  test('source transport self-bounds open only with both proven owners', () {
+    final locator = Uri.parse('venera-resource:bounded');
+    final request = ComicResourceRequest(
+      uri: Uri.parse('https://fixture/bounded'),
+    );
+    final boundedSource = _BoundedFixtureSource(request: request);
+    final unboundedSource = _FixtureSource(request: request);
+    final boundedPool = ExternalPluginResourceTransportPool(
+      directTransport: _FixtureBoundedDirectTransport(),
+    );
+    final unboundedDirectPool = ExternalPluginResourceTransportPool(
+      directTransport: _FixtureDirectTransport(),
+    );
+    addTearDown(boundedPool.close);
+    addTearDown(unboundedDirectPool.close);
+
+    expect(boundedPool.selfBoundsOpenFor(boundedSource, locator), isTrue);
+    expect(boundedPool.selfBoundsOpenFor(unboundedSource, locator), isFalse);
+    expect(
+      unboundedDirectPool.selfBoundsOpenFor(boundedSource, locator),
+      isFalse,
+    );
+  });
+
   test('resolved source request exposes the first chunk before completion',
       () async {
     final body = _ControlledBody();
@@ -578,7 +602,19 @@ final class _FixtureDirectTransport implements SourceResourceDirectTransport {
   }
 }
 
-final class _FixtureSource
+final class _FixtureBoundedDirectTransport extends _FixtureDirectTransport
+    implements SelfBoundedSourceResourceDirectTransport {}
+
+
+final class _BoundedFixtureSource extends _FixtureSource
+    implements BoundedComicResourceSource {
+  _BoundedFixtureSource({required super.request});
+
+  @override
+  Duration get resourceOperationTimeout => const Duration(seconds: 30);
+}
+
+class _FixtureSource
     implements
         BrowsableComicSource,
         ResolvableComicResourceSource,

@@ -28,6 +28,7 @@ final class LoaderTransportSource {
     this.openControlledResponse,
     required this.revision,
     this.contentHash,
+    this.selfBoundedOpen = false,
   }) : assert(
           loadBytes != null ||
               loadBytesControlled != null ||
@@ -41,11 +42,13 @@ final class LoaderTransportSource {
   final ControlledTransportResponseLoader? openControlledResponse;
   final String revision;
   final String? contentHash;
+  final bool selfBoundedOpen;
 }
 
 /// Adapts platform-owned or in-memory byte loaders to the same range/resume
 /// contract used by Reader download sessions.
-final class LoaderTransport implements ControlledTransport {
+final class LoaderTransport
+    implements ControlledTransport, SelfBoundedOpenTransport {
   LoaderTransport(Map<Uri, LoaderTransportSource> sources)
       : _sources = Map<String, LoaderTransportSource>.unmodifiable(
           sources.map(
@@ -59,6 +62,10 @@ final class LoaderTransport implements ControlledTransport {
   final Map<String, LoaderTransportSource> _sources;
 
   bool contains(Uri uri) => _sources.containsKey(uri.toString());
+
+  @override
+  bool selfBoundsOpen(Uri uri) =>
+      _sources[uri.toString()]?.selfBoundedOpen ?? false;
 
   @override
   Future<ByteResponse> open(

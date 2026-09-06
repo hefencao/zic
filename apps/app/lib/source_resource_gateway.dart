@@ -59,6 +59,7 @@ final class ComicSourceResourceGateway {
         validators: validators,
         control: control,
       ),
+      selfBoundsOpen: pageOpenSelfBoundedFor,
     );
   }
 
@@ -256,6 +257,14 @@ final class ComicSourceResourceGateway {
   /// Raw page-body streaming escape hatch. This intentionally bypasses the
   /// response cache because Reader/chapter bytes are owned by DownloadSession
   /// and artifact storage. Metadata/artwork callers must use cached APIs above.
+  bool pageOpenSelfBoundedFor(String sourceId, Uri uri) {
+    _requireOpen();
+    if (isLegacyVeneraRuntimeLocator(uri.toString())) {
+      return false;
+    }
+    return _transports.selfBoundsOpenFor(_requireSource(sourceId, uri), uri);
+  }
+
   ExternalPluginControlledResourceResponseLoader
       pageControlledResponseLoaderFor(
     String sourceId,

@@ -197,6 +197,14 @@ abstract interface class ControlledTransport implements Transport {
   });
 }
 
+/// Optional capability for transports whose [open] lifecycle is already
+/// bounded by lower-level owners. Download scheduling may omit its generic
+/// open watchdog for matching URIs, but cancellation and body-read watchdogs
+/// remain owned by the caller.
+abstract interface class SelfBoundedOpenTransport implements Transport {
+  bool selfBoundsOpen(Uri uri);
+}
+
 void requireResumeResponse({
   required int expectedStart,
   required Validators expectedValidators,

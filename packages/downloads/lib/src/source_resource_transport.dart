@@ -46,6 +46,11 @@ abstract interface class SourceResourceDirectTransport {
   void close();
 }
 
+/// Direct media transport whose client/open stage has its own finite deadline.
+/// Body inactivity remains a downstream DownloadJob concern.
+abstract interface class SelfBoundedSourceResourceDirectTransport
+    implements SourceResourceDirectTransport {}
+
 final class ExternalPluginResourceTransportPool {
   ExternalPluginResourceTransportPool({
     SourceResourceDirectTransport? directTransport,
@@ -80,6 +85,9 @@ final class ExternalPluginResourceTransportPool {
           validators: validators,
         );
   }
+
+  bool selfBoundsOpenFor(BrowsableComicSource source, Uri locator) =>
+      _transportFor(source).selfBoundsOpen(locator);
 
   ExternalPluginControlledResourceResponseLoader controlledLoaderFor(
     BrowsableComicSource source,
@@ -126,7 +134,8 @@ final class ExternalPluginResourceTransportPool {
   }
 }
 
-final class _SourceResourceTransport implements ControlledTransport {
+final class _SourceResourceTransport
+    implements ControlledTransport, SelfBoundedOpenTransport {
   _SourceResourceTransport(
     this._source,
     this._directTransport,
@@ -166,6 +175,18 @@ final class _SourceResourceTransport implements ControlledTransport {
     _requestLoads.clear();
     _requestPlans.clear();
     _failedStreams.clear();
+  }
+
+  @override
+  bool selfBoundsOpen(Uri uri) {
+    final source = _source;
+    final operationTimeout = source is BoundedComicResourceSource
+        ? (source as BoundedComicResourceSource).resourceOperationTimeout
+        : null;
+    final direct = _directTransport;
+    return operationTimeout != null &&
+        operationTimeout > Duration.zero &&
+        direct is SelfBoundedSourceResourceDirectTransport;
   }
 
   @override

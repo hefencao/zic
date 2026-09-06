@@ -136,6 +136,10 @@ void main() {
 
     expect(source.sourceId, 'venera:fixture');
     expect(source.descriptor.name, 'Fixture');
+    expect(
+      (source as BoundedComicResourceSource).resourceOperationTimeout,
+      const Duration(seconds: 15),
+    );
     final page = await source.browse(query: 'query', offset: 0, limit: 24);
     expect(page.items.single.comicId, 'comic-1');
     expect(page.items.single.sourceId, source.sourceId);

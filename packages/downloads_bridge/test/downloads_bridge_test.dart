@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -8,6 +9,31 @@ import 'package:downloads_bridge/downloads_bridge.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('rhttp direct source open owns a finite pre-header deadline', () async {
+    final neverReady = Completer<void>();
+    final transport = RhttpSourceResourceDirectTransport(
+      preparePlatform: () => neverReady.future,
+      responseHeaderTimeout: const Duration(milliseconds: 30),
+    );
+    addTearDown(transport.close);
+
+    expect(transport, isA<SelfBoundedSourceResourceDirectTransport>());
+    await expectLater(
+      transport.open(
+        ComicResourceRequest(uri: Uri.parse('https://example.invalid/page')),
+      ),
+      throwsA(
+        isA<Failure>()
+            .having((error) => error.code, 'code', ErrorCode.network)
+            .having(
+              (error) => error.message,
+              'message',
+              contains('client initialization timed out'),
+            ),
+      ),
+    );
+  });
+
   test('JSON queue adapter restores policy and pending chapters', () async {
     final directory = await Directory.systemTemp.createTemp('zic-whole-queue-');
     addTearDown(() => directory.delete(recursive: true));

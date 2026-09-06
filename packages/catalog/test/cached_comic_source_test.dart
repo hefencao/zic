@@ -6,6 +6,18 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('cached source preserves resource-operation timeout capability', () {
+    final raw = _BoundedCountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+
+    expect(
+      source.resourceOperationTimeout,
+      const Duration(seconds: 23),
+    );
+  });
+
   test('catalog metadata shares one cache manager', () async {
     final raw = _CountingSource();
     final cache = ResourceCacheManager();
@@ -480,7 +492,13 @@ ComicCommentPage _commentPage(String content) => ComicCommentPage(
       ],
     );
 
-final class _CountingSource implements
+final class _BoundedCountingSource extends _CountingSource
+    implements BoundedComicResourceSource {
+  @override
+  Duration get resourceOperationTimeout => const Duration(seconds: 23);
+}
+
+class _CountingSource implements
         BrowsableComicSource,
         ComicWebUriSource,
         CanonicalComicIdentitySource,

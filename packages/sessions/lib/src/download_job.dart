@@ -33,11 +33,10 @@ final class DownloadJob {
     this.readStallTimeout = defaultReadStallTimeout,
   });
 
-  /// Bounds one network body read and one transport open. A response that
-  /// stops delivering bytes forever (a dead socket or a suspended plugin
-  /// runtime) would otherwise hold the admitted task open indefinitely: the
-  /// watchdog aborts the read/open with a network failure so the owner's
-  /// retry machinery and demand changes can take over.
+  /// Bounds every network body read and any transport open that does not
+  /// prove its own finite lower-level deadline. A self-bounded open may use a
+  /// longer source/runtime deadline, but body inactivity always keeps this
+  /// watchdog so a dead response cannot hold an admitted task indefinitely.
   static const Duration defaultReadStallTimeout = Duration(seconds: 6);
 
   final Transport transport;
@@ -1338,7 +1337,9 @@ final class DownloadJob {
     control?.throwIfCancelled();
     control?.markResponseOpening();
     final pending = Future<ByteResponse>.sync(open);
-    if (readStallTimeout <= Duration.zero) {
+    final openIsSelfBounded = transport is SelfBoundedOpenTransport &&
+        (transport as SelfBoundedOpenTransport).selfBoundsOpen(_requestUri);
+    if (readStallTimeout <= Duration.zero || openIsSelfBounded) {
       if (control == null) {
         return pending.then<ByteResponse>((response) {
           control?.markResponseOpened();
