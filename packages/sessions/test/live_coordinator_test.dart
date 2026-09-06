@@ -1281,8 +1281,10 @@ void main() {
     expect(frameDecoded.revision, 1);
     expect(uploadDemand.revision, 1);
     expect(uploadStarted.revision, 1);
-    expect(decodeDemand.identityHash, decodeId.key);
-    expect(uploadDemand.identityHash, decodeId.key);
+    expect(decodeDemand.identityHash, decodeStarted.identityHash);
+    expect(decodeDemand.identityHash, frameDecoded.identityHash);
+    expect(decodeDemand.identityHash, uploadDemand.identityHash);
+    expect(decodeDemand.identityHash, uploadStarted.identityHash);
     expect(decodeDemand.monotonicMicros, lessThan(decodeStarted.monotonicMicros));
     expect(decodeStarted.monotonicMicros, lessThan(frameDecoded.monotonicMicros));
 
