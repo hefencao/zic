@@ -81,26 +81,34 @@ final class ArtifactCacheTransport implements ControlledTransport {
                 .clamp(0, 1 << 62)
                 .toInt();
         if (lookup != null) {
-          final foregroundResponse = await _foregroundArtifactResponse(
-            lookup: lookup,
-            uri: uri,
-            range: range,
-            validators: validators,
-            revision: revision,
-            openMicros: readMicros,
-            control: control,
-          );
+          // Only an already-resident memory artifact may take the foreground
+          // materialization path. Persistent artifacts must stay lazy: their
+          // first Reader chunk comes directly from ArtifactCacheStreamEntry.open
+          // instead of waiting for readAll()/full-body collection first.
+          final foregroundMemoryCandidate =
+              lookup.tier == ArtifactCacheTier.memory;
+          final foregroundResponse = foregroundMemoryCandidate
+              ? await _foregroundArtifactResponse(
+                  lookup: lookup,
+                  uri: uri,
+                  range: range,
+                  validators: validators,
+                  revision: revision,
+                  openMicros: readMicros,
+                  control: control,
+                )
+              : null;
           if (foregroundResponse != null) return foregroundResponse;
 
           final foregroundPriority =
               _readScheduler?.foregroundPriority ?? 900;
           final requestedPriority =
               _demandPriority?.call(id) ?? control?.priority ?? 0;
-          if (requestedPriority >= foregroundPriority) {
-            // The read-all path can discover that the body changed after the
-            // initial lookup. Never stream the lookup that just failed:
-            // refresh the binding so a backend invalidation or replacement is
-            // observed before exposing a fallback cache response.
+          if (foregroundMemoryCandidate &&
+              requestedPriority >= foregroundPriority) {
+            // A stale memory-generation read can fail after the initial lookup.
+            // Refresh only that attempted memory binding. Persistent lookups
+            // were not consumed yet and must not be reopened before streaming.
             lookup = await _lookupCache(id, control);
             _throwIfTaskCancelled(control);
           }

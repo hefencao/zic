@@ -405,13 +405,62 @@ void main() {
     await iterator.cancel();
   });
 
-  test('foreground read-all populates and reuses the shared byte cache',
+  test('foreground persistent stream stays lazy and leaves hot byte cache cold',
       () async {
-    final uri = Uri.parse('https://example.invalid/hot-page.bin');
-    final id = _downloadId(uri, 'page-hot');
+    final uri = Uri.parse('https://example.invalid/cold-stream-page.bin');
+    final id = _downloadId(uri, 'page-cold-stream');
     final bytes = Uint8List(promotedArtifactReadChunkBytes + 17);
     final cache = _StreamingArtifactStore(id, bytes, exposeReadAll: true);
     final manager = ArtifactCacheManager(backend: cache);
+    final trace = MemoryTraceSink();
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 3);
+    final transport = ArtifactCacheTransport(
+      cache: manager,
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => _RecordingTransport(Uint8List(0)),
+      readScheduler: scheduler,
+      demandPriority: (_) => 1000,
+      clock: _Clock(),
+      traceSink: trace,
+    );
+
+    final firstResponse = await transport.open(uri);
+    // Opening a cold foreground artifact must not start or materialize its body.
+    expect(cache.readAllCalls, 0);
+    expect(scheduler.activeForegroundCount, 0);
+    final first = await firstResponse.bytes.map((chunk) => chunk.length).toList();
+    final secondResponse = await transport.open(uri);
+    final second =
+        await secondResponse.bytes.map((chunk) => chunk.length).toList();
+
+    expect(first, <int>[promotedArtifactReadChunkBytes, 17]);
+    expect(second, <int>[promotedArtifactReadChunkBytes, 17]);
+    expect(cache.readAllCalls, 0);
+    expect(cache.streamOpens, 2);
+    expect(manager.memoryEntryCount, 0);
+    final sources = trace.events
+        .where((event) => event.kind == TraceEventKind.artifactSource)
+        .map((event) => event.payload['source'])
+        .toList();
+    expect(sources, <Object?>['artifact-cache-stream', 'artifact-cache-stream']);
+    final reads = trace.events
+        .where((event) => event.kind == TraceEventKind.sourceRead)
+        .toList();
+    expect(reads, hasLength(2));
+    expect(reads[0].payload['cacheTier'], ArtifactCacheTier.persistent.name);
+    expect(reads[0].payload['memoryCacheHit'], isFalse);
+    expect(reads[0].payload['readSchedulerAcquires'], 1);
+    expect(reads[0].payload['readSchedulerForegroundAcquires'], 1);
+  });
+
+  test('foreground memory artifact keeps the direct hot-byte fast path',
+      () async {
+    final uri = Uri.parse('https://example.invalid/hot-memory-page.bin');
+    final id = _downloadId(uri, 'page-hot-memory');
+    final bytes = Uint8List(promotedArtifactReadChunkBytes + 17);
+    final backend = _MemoryArtifactStore(<DownloadId, Uint8List>{});
+    final manager = ArtifactCacheManager(backend: backend);
+    await manager.storePromotedArtifact(id: id, bytes: bytes);
     final trace = MemoryTraceSink();
     final transport = ArtifactCacheTransport(
       cache: manager,
@@ -423,47 +472,24 @@ void main() {
       traceSink: trace,
     );
 
-    final firstResponse = await transport.open(uri);
-    final first = await firstResponse.bytes.map((chunk) => chunk.length).toList();
-    final secondResponse = await transport.open(uri);
-    final second =
-        await secondResponse.bytes.map((chunk) => chunk.length).toList();
+    final response = await transport.open(uri);
+    final chunks = await response.bytes.map((chunk) => chunk.length).toList();
 
-    expect(
-      firstResponse.disposition,
-      ByteResponseDisposition.durableImmutable,
-    );
-    expect(
-      secondResponse.disposition,
-      ByteResponseDisposition.durableImmutable,
-    );
-
-    expect(first, <int>[promotedArtifactReadChunkBytes, 17]);
-    expect(second, <int>[bytes.lengthInBytes]);
-    expect(cache.readAllCalls, 1);
-    expect(cache.streamOpens, 1);
+    expect(chunks, <int>[bytes.lengthInBytes]);
     expect(manager.memoryEntryCount, 1);
-    final sources = trace.events
-        .where((event) => event.kind == TraceEventKind.artifactSource)
-        .map((event) => event.payload['source'])
-        .toList();
-    expect(sources, <Object?>['artifact-read-all', 'artifact-byte-cache']);
-    final reads = trace.events
-        .where((event) => event.kind == TraceEventKind.sourceRead)
-        .toList();
-    expect(reads[0].payload['artifactReadMode'], 'read-all');
-    expect(reads[0].payload['deliveryMode'], 'startup-segmented');
-    expect(
-      reads[0].payload['startupChunkBytes'],
-      promotedArtifactReadChunkBytes,
+    expect(backend.reads, 0);
+    final source = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.artifactSource,
     );
-    expect(reads[0].payload['readSchedulerLeaseThroughStream'], isTrue);
-    expect(reads[1].payload['artifactReadMode'], 'memory-hit');
-    expect(reads[1].payload['deliveryMode'], 'memory-direct');
-    expect(reads[1].payload['readSchedulerAcquires'], 1);
+    expect(source.payload['source'], 'artifact-byte-cache');
+    final read = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.sourceRead,
+    );
+    expect(read.payload['artifactReadMode'], 'memory-hit');
+    expect(read.payload['deliveryMode'], 'memory-direct');
   });
 
-  test('foreground read-all holds its scheduler lease until body drains',
+  test('foreground persistent stream acquires its scheduler lease lazily',
       () async {
     final uri = Uri.parse('https://example.invalid/lease-body.bin');
     final id = _downloadId(uri, 'page-lease-body');
@@ -479,7 +505,8 @@ void main() {
     );
 
     final response = await transport.open(uri);
-    expect(scheduler.activeForegroundCount, 1);
+    expect(cache.readAllCalls, 0);
+    expect(scheduler.activeForegroundCount, 0);
     final iterator = StreamIterator<List<int>>(response.bytes);
     expect(await iterator.moveNext(), isTrue);
     expect(iterator.current.length, promotedArtifactReadChunkBytes);
@@ -491,7 +518,7 @@ void main() {
     expect(scheduler.activeForegroundCount, 0);
   });
 
-  test('read-all failure falls back to the artifact stream, not origin',
+  test('foreground persistent stream ignores a failing read-all capability',
       () async {
     final uri = Uri.parse('https://example.invalid/read-all-failure.bin');
     final id = _downloadId(uri, 'page-read-all-failure');
@@ -516,12 +543,15 @@ void main() {
 
     expect(await _collect(await transport.open(uri)), <int>[1, 2, 3, 4]);
     expect(fallback.opens, 0);
-    expect(cache.readAllCalls, 1);
-    final failure = trace.events.singleWhere(
-      (event) => event.kind == TraceEventKind.taskFailed,
+    expect(cache.readAllCalls, 0);
+    expect(
+      trace.events.where((event) => event.kind == TraceEventKind.taskFailed),
+      isEmpty,
     );
-    expect(failure.payload['lane'], 'artifact-cache-read-all');
-    expect(failure.payload['fallback'], 'artifact-cache-stream');
+    final source = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.artifactSource,
+    );
+    expect(source.payload['source'], 'artifact-cache-stream');
   });
 
   test('serves resumable ranges only for matching cache validators',
