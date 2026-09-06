@@ -8,6 +8,32 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zic/download_manager.dart';
 
+ImportedLibraryEntry _versionedDownloadEntry({
+  required String comicId,
+  required String chapterId,
+  required String title,
+}) =>
+    ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:$comicId:$chapterId',
+        displayName: title,
+        sourceId: 'version-manager-source',
+        comicId: comicId,
+        comicTitle: '版本漫画 $comicId',
+        chapterId: chapterId,
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.bin',
+            sourceId: 'memory://$comicId/$chapterId/1',
+            pageId: '$comicId-$chapterId-page-1',
+            contentKindHint: ContentKindHint.unknown,
+            byteLength: 4,
+          ),
+        ],
+      ),
+    );
+
 void main() {
   testWidgets('download manager paints before durable bulk refresh completes',
       (tester) async {
@@ -826,6 +852,257 @@ void main() {
     expect(find.byKey(downloadManagerTabManualKey), findsOneWidget);
     expect(find.text('待转缓存章节'), findsOneWidget);
 
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(service.close());
+  });
+
+
+  testWidgets(
+      'download manager keeps an explicitly downloaded predecessor when successor was never started',
+      (tester) async {
+    final old = _versionedDownloadEntry(
+      comicId: 'old',
+      chapterId: 'shared-chapter',
+      title: '旧版手动章节',
+    );
+    final newest = _versionedDownloadEntry(
+      comicId: 'new',
+      chapterId: 'shared-chapter',
+      title: '新版未下载章节',
+    );
+    final service = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(4),
+    );
+    await service.download(old);
+    final snapshots = await service.inspectMany(<ImportedLibraryEntry>[old, newest]);
+    final queue = WholeComicDownloadQueue(downloads: service);
+    await queue.ready;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: <ImportedLibraryEntry>[old, newest],
+          downloads: service,
+          wholeComicDownloads: queue,
+          initialSnapshots: snapshots,
+          versionRelations: const <ComicVersionRelation>[
+            ComicVersionRelation(
+              sourceId: 'version-manager-source',
+              predecessorComicId: 'old',
+              successorComicId: 'new',
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final oldSnapshot = snapshots.firstWhere((s) => s.comicId == 'old');
+    final newSnapshot = snapshots.firstWhere((s) => s.comicId == 'new');
+    expect(find.byKey(downloadManagerTaskKey(oldSnapshot.identity)), findsOneWidget);
+    expect(find.byKey(downloadManagerTaskKey(newSnapshot.identity)), findsNothing);
+    expect(find.text('旧版手动章节'), findsOneWidget);
+    expect(find.text('新版未下载章节'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(service.close());
+  });
+
+  testWidgets(
+      'download manager selects transitive highest explicit successor through mapped chapter ids',
+      (tester) async {
+    final old = _versionedDownloadEntry(
+      comicId: 'old',
+      chapterId: 'old-ch',
+      title: '旧版已下载',
+    );
+    final newest = _versionedDownloadEntry(
+      comicId: 'new',
+      chapterId: 'new-ch',
+      title: '新版已下载',
+    );
+    final service = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(4),
+    );
+    await service.download(old);
+    await service.download(newest);
+    final snapshots = await service.inspectMany(<ImportedLibraryEntry>[old, newest]);
+    final queue = WholeComicDownloadQueue(downloads: service);
+    await queue.ready;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: <ImportedLibraryEntry>[old, newest],
+          downloads: service,
+          wholeComicDownloads: queue,
+          initialSnapshots: snapshots,
+          versionRelations: const <ComicVersionRelation>[
+            ComicVersionRelation(
+              sourceId: 'version-manager-source',
+              predecessorComicId: 'old',
+              successorComicId: 'middle',
+              pageMappings: <ComicVersionPageMapping>[
+                ComicVersionPageMapping(
+                  predecessorChapterId: 'old-ch',
+                  successorChapterId: 'middle-ch',
+                  predecessorPageCount: 1,
+                  successorPageCount: 2,
+                  successorOffset: 1,
+                ),
+              ],
+            ),
+            ComicVersionRelation(
+              sourceId: 'version-manager-source',
+              predecessorComicId: 'middle',
+              successorComicId: 'new',
+              pageMappings: <ComicVersionPageMapping>[
+                ComicVersionPageMapping(
+                  predecessorChapterId: 'middle-ch',
+                  successorChapterId: 'new-ch',
+                  predecessorPageCount: 2,
+                  successorPageCount: 3,
+                  successorOffset: 1,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final oldSnapshot = snapshots.firstWhere((s) => s.comicId == 'old');
+    final newSnapshot = snapshots.firstWhere((s) => s.comicId == 'new');
+    expect(find.byKey(downloadManagerTaskKey(oldSnapshot.identity)), findsNothing);
+    expect(find.byKey(downloadManagerTaskKey(newSnapshot.identity)), findsOneWidget);
+    expect(find.text('旧版已下载'), findsNothing);
+    expect(find.text('新版已下载'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(service.close());
+  });
+
+  testWidgets(
+      'download manager does not merge same raw chapter id when explicit mapping points elsewhere',
+      (tester) async {
+    final old = _versionedDownloadEntry(
+      comicId: 'mapped-old',
+      chapterId: 'shared-unmapped',
+      title: '旧版未映射章节',
+    );
+    final newest = _versionedDownloadEntry(
+      comicId: 'mapped-new',
+      chapterId: 'shared-unmapped',
+      title: '新版未映射章节',
+    );
+    final service = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(4),
+    );
+    await service.download(old);
+    await service.download(newest);
+    final snapshots = await service.inspectMany(<ImportedLibraryEntry>[old, newest]);
+    final queue = WholeComicDownloadQueue(downloads: service);
+    await queue.ready;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: <ImportedLibraryEntry>[old, newest],
+          downloads: service,
+          wholeComicDownloads: queue,
+          initialSnapshots: snapshots,
+          versionRelations: const <ComicVersionRelation>[
+            ComicVersionRelation(
+              sourceId: 'version-manager-source',
+              predecessorComicId: 'mapped-old',
+              successorComicId: 'mapped-new',
+              pageMappings: <ComicVersionPageMapping>[
+                ComicVersionPageMapping(
+                  predecessorChapterId: 'other-old-ch',
+                  successorChapterId: 'other-new-ch',
+                  predecessorPageCount: 1,
+                  successorPageCount: 2,
+                  successorOffset: 1,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('旧版未映射章节'), findsOneWidget);
+    expect(find.text('新版未映射章节'), findsOneWidget);
+    for (final snapshot in snapshots) {
+      expect(find.byKey(downloadManagerTaskKey(snapshot.identity)), findsOneWidget);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(service.close());
+  });
+
+  testWidgets('download manager keeps auto-cache rows exact across comic versions',
+      (tester) async {
+    final old = _versionedDownloadEntry(
+      comicId: 'cache-old',
+      chapterId: 'same-ch',
+      title: '旧版缓存',
+    );
+    final newest = _versionedDownloadEntry(
+      comicId: 'cache-new',
+      chapterId: 'same-ch',
+      title: '新版缓存',
+    );
+    final service = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(4),
+    );
+    service.seedPages(
+      old,
+      <Uint8List?>[Uint8List(4)],
+      pinnedPages: 0,
+      phase: ChapterDownloadPhase.idle,
+    );
+    service.seedPages(
+      newest,
+      <Uint8List?>[Uint8List(4)],
+      pinnedPages: 0,
+      phase: ChapterDownloadPhase.idle,
+    );
+    final snapshots = await service.inspectMany(<ImportedLibraryEntry>[old, newest]);
+    final queue = WholeComicDownloadQueue(downloads: service);
+    await queue.ready;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: <ImportedLibraryEntry>[old, newest],
+          downloads: service,
+          wholeComicDownloads: queue,
+          initialSnapshots: snapshots,
+          versionRelations: const <ComicVersionRelation>[
+            ComicVersionRelation(
+              sourceId: 'version-manager-source',
+              predecessorComicId: 'cache-old',
+              successorComicId: 'cache-new',
+            ),
+          ],
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(downloadManagerTabCacheKey));
+    await tester.pump();
+
+    expect(find.text('旧版缓存'), findsOneWidget);
+    expect(find.text('新版缓存'), findsOneWidget);
+    for (final snapshot in snapshots) {
+      expect(
+        find.byKey(downloadManagerAutoCacheTaskKey(snapshot.identity)),
+        findsOneWidget,
+      );
+    }
     await tester.pumpWidget(const SizedBox.shrink());
     unawaited(queue.close());
     unawaited(service.close());

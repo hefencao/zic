@@ -80,6 +80,155 @@ final class DownloadManagerProjection {
   final List<ComicVersionRelation> versionRelations;
 }
 
+
+final class _DownloadVersionGraph {
+  _DownloadVersionGraph(Iterable<ComicVersionRelation> relations)
+      : _relations = List<ComicVersionRelation>.unmodifiable(relations) {
+    final directed = <String, Set<String>>{};
+    final allNodes = <String>{};
+    for (final relation in _relations) {
+      final predecessor = _comicNode(
+        relation.sourceId,
+        relation.predecessorComicId,
+      );
+      final successor = _comicNode(
+        relation.sourceId,
+        relation.successorComicId,
+      );
+      allNodes
+        ..add(predecessor)
+        ..add(successor);
+      directed.putIfAbsent(predecessor, () => <String>{}).add(successor);
+    }
+
+    // Version metadata is compact (relations/pageMappings only). Precompute
+    // transitive reachability once so a long manual-download list never runs a
+    // graph search for each comparison during every widget rebuild.
+    for (final start in allNodes) {
+      final reachable = <String>{};
+      final pending = <String>[start];
+      while (pending.isNotEmpty) {
+        final node = pending.removeLast();
+        for (final successor in directed[node] ?? const <String>{}) {
+          if (reachable.add(successor)) pending.add(successor);
+        }
+      }
+      _reachableSuccessors[start] = reachable;
+    }
+  }
+
+  final List<ComicVersionRelation> _relations;
+  final Map<String, String> _chapterFamilyMemo = <String, String>{};
+  final Map<String, Set<String>> _reachableSuccessors =
+      <String, Set<String>>{};
+
+  static String _comicNode(String sourceId, String comicId) =>
+      '$sourceId\u0000comic:$comicId';
+
+  static String _chapterNode(
+    String sourceId,
+    String comicId,
+    String chapterId,
+  ) =>
+      '$sourceId\u0000comic:$comicId\u0000chapter:$chapterId';
+
+  static ({String sourceId, String comicId, String chapterId}) _parseChapterNode(
+    String node,
+  ) {
+    final first = node.indexOf('\u0000comic:');
+    final second = node.indexOf('\u0000chapter:', first + 1);
+    return (
+      sourceId: node.substring(0, first),
+      comicId: node.substring(first + '\u0000comic:'.length, second),
+      chapterId: node.substring(second + '\u0000chapter:'.length),
+    );
+  }
+
+  String chapterFamilyKey(
+    String sourceId,
+    String comicId,
+    String chapterId,
+  ) {
+    final start = _chapterNode(sourceId, comicId, chapterId);
+    final cached = _chapterFamilyMemo[start];
+    if (cached != null) return cached;
+
+    final component = <String>{};
+    final pending = <String>[start];
+    while (pending.isNotEmpty) {
+      final node = pending.removeLast();
+      if (!component.add(node)) continue;
+      final current = _parseChapterNode(node);
+      for (final relation in _relations) {
+        if (relation.sourceId != current.sourceId) continue;
+        if (relation.predecessorComicId == current.comicId) {
+          if (relation.pageMappings.isEmpty) {
+            pending.add(
+              _chapterNode(
+                current.sourceId,
+                relation.successorComicId,
+                current.chapterId,
+              ),
+            );
+          } else {
+            for (final mapping in relation.pageMappings) {
+              if (mapping.predecessorChapterId == current.chapterId) {
+                pending.add(
+                  _chapterNode(
+                    current.sourceId,
+                    relation.successorComicId,
+                    mapping.successorChapterId,
+                  ),
+                );
+              }
+            }
+          }
+        }
+        if (relation.successorComicId == current.comicId) {
+          if (relation.pageMappings.isEmpty) {
+            pending.add(
+              _chapterNode(
+                current.sourceId,
+                relation.predecessorComicId,
+                current.chapterId,
+              ),
+            );
+          } else {
+            for (final mapping in relation.pageMappings) {
+              if (mapping.successorChapterId == current.chapterId) {
+                pending.add(
+                  _chapterNode(
+                    current.sourceId,
+                    relation.predecessorComicId,
+                    mapping.predecessorChapterId,
+                  ),
+                );
+              }
+            }
+          }
+        }
+      }
+    }
+    final ordered = component.toList()..sort();
+    final canonical = ordered.first;
+    for (final node in component) {
+      _chapterFamilyMemo[node] = canonical;
+    }
+    return canonical;
+  }
+
+  bool isSuccessor({
+    required String sourceId,
+    required String candidateComicId,
+    required String currentComicId,
+  }) {
+    if (candidateComicId == currentComicId) return false;
+    final start = _comicNode(sourceId, currentComicId);
+    final target = _comicNode(sourceId, candidateComicId);
+    return _reachableSuccessors[start]?.contains(target) ?? false;
+  }
+}
+
 final class DownloadManagerScreen extends StatefulWidget {
   const DownloadManagerScreen({
     required this.entries,
@@ -138,6 +287,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   bool _cacheBusy = false;
   ResourceCacheUsage? _cacheUsage;
   DownloadManagerTab _selectedTab = DownloadManagerTab.manual;
+  _DownloadVersionGraph _versionGraph = _DownloadVersionGraph(const <ComicVersionRelation>[]);
 
   final MonoClock _traceClock = const SystemClock();
   late final int _openedAtMicros;
@@ -210,6 +360,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     _downloads = widget.downloads;
     _wholeComicDownloads = widget.wholeComicDownloads;
     _cacheCoordinator = widget.cacheCoordinator;
+    _versionGraph = _DownloadVersionGraph(widget.versionRelations);
     _replaceEntries(widget.entries);
     for (final snapshot in widget.initialSnapshots) {
       final matchingKey = _matchingEntryIdentity(snapshot);
@@ -373,6 +524,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   void _adoptProjection(DownloadManagerProjection projection) {
     setState(() {
       _replaceEntries(projection.entries);
+      _versionGraph = _DownloadVersionGraph(projection.versionRelations);
       _snapshots
         ..clear()
         ..addEntries(
@@ -540,53 +692,65 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     }
   }
 
-  List<ChapterDownloadSnapshot> get _allDedupedSnapshots {
+  List<ChapterDownloadSnapshot> get _manualSnapshots {
     final deduped = <String, ChapterDownloadSnapshot>{};
     for (final snapshot in _snapshots.values) {
-      final key = '${snapshot.sourceId}\u0000${snapshot.comicId}\u0000${snapshot.chapterId}';
+      if (!snapshot.isManualDownload ||
+          (snapshot.phase == ChapterDownloadPhase.idle &&
+              !snapshot.hasDurableBytes)) {
+        continue;
+      }
+      final key = _versionGraph.chapterFamilyKey(
+        snapshot.sourceId,
+        snapshot.comicId,
+        snapshot.chapterId,
+      );
       final existing = deduped[key];
-      deduped[key] =
-          existing == null ? snapshot : _preferRowSnapshot(existing, snapshot);
+      deduped[key] = existing == null
+          ? snapshot
+          : _preferManualFamilySnapshot(existing, snapshot);
     }
-    final values = deduped.values.where((snapshot) {
-      final visible = snapshot.phase != ChapterDownloadPhase.idle ||
-          snapshot.hasDurableBytes;
-      return visible;
-    }).toList(growable: false);
+    final values = deduped.values.toList(growable: false);
+    _sortSnapshots(values);
+    return values;
+  }
+
+  void _sortSnapshots(List<ChapterDownloadSnapshot> values) {
     values.sort((left, right) {
       final phase = _phasePriority(left.phase).compareTo(
         _phasePriority(right.phase),
       );
-      if (phase != 0) {
-        return phase;
-      }
+      if (phase != 0) return phase;
       final comic = left.comicId.compareTo(right.comicId);
-      if (comic != 0) {
-        return comic;
-      }
+      if (comic != 0) return comic;
       return left.title.compareTo(right.title);
     });
-    return values;
-  }
-
-
-  List<ChapterDownloadSnapshot> get _manualSnapshots {
-    return _allDedupedSnapshots
-        .where((snapshot) => snapshot.isManualDownload)
-        .toList(growable: false);
   }
 
   List<ChapterDownloadSnapshot> get _autoCacheSnapshots {
     final manualIdentities = {
       for (final snapshot in _manualSnapshots) snapshot.identity,
     };
-    return _allDedupedSnapshots
-        .where((snapshot) =>
-            !manualIdentities.contains(snapshot.identity) &&
-            (snapshot.hasAutoCache ||
-                !snapshot.isManualDownload ||
-                !_isLibraryEntry(snapshot)))
+    final cacheAll = _snapshots.values.where(
+      (snapshot) =>
+          !snapshot.isManualDownload &&
+          (snapshot.hasAutoCache || !_isLibraryEntry(snapshot)) &&
+          (snapshot.phase != ChapterDownloadPhase.idle ||
+              snapshot.hasDurableBytes),
+    );
+    final deduped = <String, ChapterDownloadSnapshot>{};
+    for (final snapshot in cacheAll) {
+      final key =
+          '${snapshot.sourceId}\u0000${snapshot.comicId}\u0000${snapshot.chapterId}';
+      final existing = deduped[key];
+      deduped[key] =
+          existing == null ? snapshot : _preferRowSnapshot(existing, snapshot);
+    }
+    final values = deduped.values
+        .where((snapshot) => !manualIdentities.contains(snapshot.identity))
         .toList(growable: false);
+    _sortSnapshots(values);
+    return values;
   }
 
   bool _isLibraryEntry(ChapterDownloadSnapshot snapshot) {
@@ -638,6 +802,26 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     return candidate.completedPages > current.completedPages
         ? candidate
         : current;
+  }
+
+  ChapterDownloadSnapshot _preferManualFamilySnapshot(
+    ChapterDownloadSnapshot current,
+    ChapterDownloadSnapshot candidate,
+  ) {
+    final candidateIsSuccessor = _versionGraph.isSuccessor(
+      sourceId: candidate.sourceId,
+      candidateComicId: candidate.comicId,
+      currentComicId: current.comicId,
+    );
+    final currentIsSuccessor = _versionGraph.isSuccessor(
+      sourceId: current.sourceId,
+      candidateComicId: current.comicId,
+      currentComicId: candidate.comicId,
+    );
+    if (candidateIsSuccessor != currentIsSuccessor) {
+      return candidateIsSuccessor ? candidate : current;
+    }
+    return _preferRowSnapshot(current, candidate);
   }
 
   Future<void> _act(
