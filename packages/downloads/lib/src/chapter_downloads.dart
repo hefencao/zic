@@ -1078,6 +1078,34 @@ final class MemoryChapterDownloadService
 /// persistent SQLite/file representation used by [ArtifactCacheManager] and
 /// [PartialDownloadStore]. Explicit chapter commands and Reader consumers
 /// share a separate [CompositionDownloadTransferRuntime].
+final class _ArtifactAccessRecord {
+  const _ArtifactAccessRecord({
+    required this.artifactId,
+    required this.accessLocator,
+    required this.bytes,
+    required this.checksum,
+    required this.checksumAlgorithm,
+    required this.storageRootId,
+  });
+
+  factory _ArtifactAccessRecord.fromBinding(CacheRec record) =>
+      _ArtifactAccessRecord(
+        artifactId: record.effectiveArtifactId,
+        accessLocator: record.path,
+        bytes: record.bytes,
+        checksum: record.checksum,
+        checksumAlgorithm: record.checksumAlgorithm,
+        storageRootId: record.storageRootId,
+      );
+
+  final String artifactId;
+  final String accessLocator;
+  final int bytes;
+  final String checksum;
+  final String checksumAlgorithm;
+  final String storageRootId;
+}
+
 final class PersistentDownloadArtifactStore
     implements
         ArtifactCacheBackend,
@@ -4091,24 +4119,47 @@ final class PersistentDownloadArtifactStore
     return null;
   }
 
+  Future<_ArtifactAccessRecord> _resolveArtifactAccess(CacheRec record) async {
+    final fallback = _ArtifactAccessRecord.fromBinding(record);
+    final object = await _index.getArtifactObject(record.effectiveArtifactId);
+    if (object == null ||
+        object.accessLocator.isEmpty ||
+        object.artifactId != record.effectiveArtifactId ||
+        object.bytes != record.bytes ||
+        object.checksum.trim().toLowerCase() !=
+            record.checksum.trim().toLowerCase() ||
+        object.checksumAlgorithm.trim().toLowerCase() !=
+            record.checksumAlgorithm.trim().toLowerCase()) {
+      return fallback;
+    }
+    return _ArtifactAccessRecord(
+      artifactId: object.artifactId,
+      accessLocator: object.accessLocator,
+      bytes: object.bytes,
+      checksum: object.checksum,
+      checksumAlgorithm: object.checksumAlgorithm,
+      storageRootId: object.storageRootId,
+    );
+  }
+
   ArtifactReadFailure _enrichArtifactReadFailure(
-    CacheRec record,
+    _ArtifactAccessRecord access,
     ArtifactReadFailure failure,
   ) =>
       failure.replicaId == null
-          ? failure.withReplicaId(record.effectiveArtifactId)
+          ? failure.withReplicaId(access.artifactId)
           : failure;
 
-  Future<bool> _artifactRecordExists(CacheRec record) async {
+  Future<bool> _artifactRecordExists(_ArtifactAccessRecord access) async {
     try {
-      return await _bytes.exists(record.path);
+      return await _bytes.exists(access.accessLocator);
     } on ArtifactReadFailure catch (error) {
-      throw _enrichArtifactReadFailure(record, error);
+      throw _enrichArtifactReadFailure(access, error);
     } on Object catch (error) {
       throw ArtifactReadFailure(
         kind: ArtifactReadFailureKind.ioFailure,
-        accessLocator: record.path,
-        replicaId: record.effectiveArtifactId,
+        accessLocator: access.accessLocator,
+        replicaId: access.artifactId,
         failedOffset: 0,
         bytesEmitted: 0,
         cause: error,
@@ -4116,16 +4167,16 @@ final class PersistentDownloadArtifactStore
     }
   }
 
-  Future<int> _artifactRecordLength(CacheRec record) async {
+  Future<int> _artifactRecordLength(_ArtifactAccessRecord access) async {
     try {
-      return await _bytes.length(record.path);
+      return await _bytes.length(access.accessLocator);
     } on ArtifactReadFailure catch (error) {
-      throw _enrichArtifactReadFailure(record, error);
+      throw _enrichArtifactReadFailure(access, error);
     } on Object catch (error) {
       throw ArtifactReadFailure(
         kind: ArtifactReadFailureKind.ioFailure,
-        accessLocator: record.path,
-        replicaId: record.effectiveArtifactId,
+        accessLocator: access.accessLocator,
+        replicaId: access.artifactId,
         failedOffset: 0,
         bytesEmitted: 0,
         cause: error,
@@ -4134,14 +4185,14 @@ final class PersistentDownloadArtifactStore
   }
 
   Stream<Uint8List> _readArtifactRecord(
-    CacheRec record, {
+    _ArtifactAccessRecord access, {
     required int start,
     int? endExclusive,
   }) async* {
     var emitted = 0;
     try {
       await for (final chunk in _bytes.readChunks(
-        record.path,
+        access.accessLocator,
         start: start,
         endExclusive: endExclusive,
       )) {
@@ -4149,12 +4200,12 @@ final class PersistentDownloadArtifactStore
         yield chunk;
       }
     } on ArtifactReadFailure catch (error) {
-      throw _enrichArtifactReadFailure(record, error);
+      throw _enrichArtifactReadFailure(access, error);
     } on Object catch (error) {
       throw ArtifactReadFailure(
         kind: ArtifactReadFailureKind.ioFailure,
-        accessLocator: record.path,
-        replicaId: record.effectiveArtifactId,
+        accessLocator: access.accessLocator,
+        replicaId: access.artifactId,
         failedOffset: start + emitted,
         bytesEmitted: emitted,
         cause: error,
@@ -4169,9 +4220,10 @@ final class PersistentDownloadArtifactStore
         record.id != id) {
       return null;
     }
-    final file = record.path;
+    final access = await _resolveArtifactAccess(record);
+    final file = access.accessLocator;
     final parsed = parseSafRecordPath(file);
-    if (!_recordBelongsToCurrentRoot(id, record)) {
+    if (!_artifactAccessBelongsToCurrentRoot(id, access)) {
       // A root switch must not invalidate a binding that belongs to another
       // still-recoverable store. Reconcile it only when that root is selected.
       return null;
@@ -4182,37 +4234,49 @@ final class PersistentDownloadArtifactStore
       // tree is selected again.
       return null;
     }
-    if (record.bytes <= 0) {
+    if (access.bytes <= 0) {
       await _invalidateIndexedArtifact(id, record: record);
       return null;
     }
-    final exists = await _artifactRecordExists(record);
+    final exists = await _artifactRecordExists(access);
     if (!exists) {
-      await _invalidateIndexedArtifact(id, record: record);
+      await _invalidateIndexedArtifact(
+        id,
+        record: record,
+        physicalPath: file,
+        physicalArtifactId: access.artifactId,
+        physicalStorageRootId: access.storageRootId,
+      );
       throw ArtifactReadFailure(
         kind: ArtifactReadFailureKind.missing,
         accessLocator: file,
-        replicaId: record.effectiveArtifactId,
+        replicaId: access.artifactId,
         failedOffset: 0,
         bytesEmitted: 0,
-        expectedLength: record.bytes,
+        expectedLength: access.bytes,
         observedLength: 0,
       );
     }
-    final length = await _artifactRecordLength(record);
-    if (length <= 0 || length != record.bytes) {
-      await _invalidateIndexedArtifact(id, record: record);
+    final length = await _artifactRecordLength(access);
+    if (length <= 0 || length != access.bytes) {
+      await _invalidateIndexedArtifact(
+        id,
+        record: record,
+        physicalPath: file,
+        physicalArtifactId: access.artifactId,
+        physicalStorageRootId: access.storageRootId,
+      );
       throw ArtifactReadFailure(
         kind: ArtifactReadFailureKind.lengthChanged,
         accessLocator: file,
-        replicaId: record.effectiveArtifactId,
+        replicaId: access.artifactId,
         failedOffset: 0,
         bytesEmitted: 0,
-        expectedLength: record.bytes,
+        expectedLength: access.bytes,
         observedLength: length,
       );
     }
-    if (record.checksumAlgorithm.toLowerCase() != 'crc32') {
+    if (access.checksumAlgorithm.toLowerCase() != 'crc32') {
       await _invalidateIndexedArtifact(id, record: record);
       return null;
     }
@@ -4221,34 +4285,34 @@ final class PersistentDownloadArtifactStore
     return ArtifactCacheStreamEntry(
       length: length,
       open: ({required int start, int? endExclusive}) => _readArtifactRecord(
-        record,
+        access,
         start: start,
         endExclusive: endExclusive,
       ),
       readAll: () => _readArtifactAllVerified(
-        file,
+        access,
         length,
-        record.checksum.trim().toLowerCase(),
+        access.checksum.trim().toLowerCase(),
       ),
       readAllControlled: ({required control}) =>
           _readArtifactAllControlled(
-            file,
+            access,
             length,
-            record.checksum.trim().toLowerCase(),
+            access.checksum.trim().toLowerCase(),
             control,
           ),
     );
   }
 
   Future<Uint8List> _readArtifactAllVerified(
-    String file,
+    _ArtifactAccessRecord access,
     int length,
     String expectedChecksum,
   ) async {
     final builder = BytesBuilder(copy: false);
     final crc = Crc32();
     await for (final chunk
-        in _bytes.readChunks(file, start: 0, endExclusive: length)) {
+        in _readArtifactRecord(access, start: 0, endExclusive: length)) {
       builder.add(chunk);
       crc.add(chunk);
     }
@@ -4256,21 +4320,22 @@ final class PersistentDownloadArtifactStore
     if (bytes.lengthInBytes != length || crc.hex != expectedChecksum) {
       throw Failure(
         code: ErrorCode.artifactCorruption,
-        message: 'artifact cache body changed while reading $file',
+        message:
+            'artifact cache body changed while reading ${access.accessLocator}',
       );
     }
     return bytes;
   }
 
   Future<Uint8List> _readArtifactAllControlled(
-    String file,
+    _ArtifactAccessRecord access,
     int length,
     String expectedChecksum,
     TaskControl control,
   ) async {
     control.throwIfCancelled();
     final iterator = StreamIterator<List<int>>(
-      _bytes.readChunks(file, start: 0, endExclusive: length),
+      _readArtifactRecord(access, start: 0, endExclusive: length),
     );
     final builder = BytesBuilder(copy: false);
     final crc = Crc32();
@@ -4300,7 +4365,8 @@ final class PersistentDownloadArtifactStore
     if (bytes.lengthInBytes != length || crc.hex != expectedChecksum) {
       throw Failure(
         code: ErrorCode.artifactCorruption,
-        message: 'artifact cache body changed while reading $file',
+        message:
+            'artifact cache body changed while reading ${access.accessLocator}',
       );
     }
     return bytes;
@@ -4327,17 +4393,27 @@ final class PersistentDownloadArtifactStore
     }
   }
 
-  bool _recordBelongsToCurrentRoot(DownloadId id, CacheRec record) {
-    final parsed = parseSafRecordPath(record.path);
+  bool _recordBelongsToCurrentRoot(DownloadId id, CacheRec record) =>
+      _artifactAccessBelongsToCurrentRoot(
+        id,
+        _ArtifactAccessRecord.fromBinding(record),
+      );
+
+  bool _artifactAccessBelongsToCurrentRoot(
+    DownloadId id,
+    _ArtifactAccessRecord access,
+  ) {
+    final parsed = parseSafRecordPath(access.accessLocator);
     if (parsed != null) {
       return safTreeUri != null && parsed.treeUri == safTreeUri;
     }
-    if (record.storageRootId == 'default' || record.storageRootId.isEmpty) {
+    if (access.storageRootId == 'default' || access.storageRootId.isEmpty) {
       return true;
     }
     final root = layoutFor(id).root;
-    return record.storageRootId == root &&
-        (record.path == root || record.path.startsWith('$root/'));
+    return access.storageRootId == root &&
+        (access.accessLocator == root ||
+            access.accessLocator.startsWith('$root/'));
   }
 
   @override
@@ -4868,6 +4944,9 @@ final class PersistentDownloadArtifactStore
   Future<bool> _invalidateIndexedArtifact(
     DownloadId id, {
     CacheRec? record,
+    String? physicalPath,
+    String? physicalArtifactId,
+    String? physicalStorageRootId,
   }) async {
     final snapshot = await _index.get(id.key);
     if (snapshot == null) return false;
@@ -4876,27 +4955,38 @@ final class PersistentDownloadArtifactStore
       // remove a newer binding that reused the same logical key.
       return false;
     }
-    if (!_recordBelongsToCurrentRoot(id, snapshot)) {
+    final physicalAccess = _ArtifactAccessRecord(
+      artifactId: physicalArtifactId ?? snapshot.effectiveArtifactId,
+      accessLocator: physicalPath ?? snapshot.path,
+      bytes: snapshot.bytes,
+      checksum: snapshot.checksum,
+      checksumAlgorithm: snapshot.checksumAlgorithm,
+      storageRootId: physicalStorageRootId ?? snapshot.storageRootId,
+    );
+    if (!_artifactAccessBelongsToCurrentRoot(id, physicalAccess)) {
       // A store opened after a root change may still contain historical
       // bindings. The current owner must not remove bytes belonging to that
       // other root; reconciliation occurs only when that root is selected.
       return false;
     }
-    // Physical paths can be shared by multiple logical records. Coordinate
+    // Physical locators can be shared by multiple logical records. Coordinate
     // invalidation with adoption, structured materialization, and mirroring on
-    // the physical path; otherwise a new binding can be installed after the
-    // reference scan below but before the bytes are deleted. Treat the current
-    // row as the expected snapshot even when the caller did not supply one so
-    // a rebind while waiting can only make this operation a no-op.
+    // the actual artifact-object locator; the compatibility binding path may
+    // already be stale after an immutable object rebind.
     return _serializeStructuredWrite(
-      snapshot.path,
-      () => _invalidateIndexedArtifactLocked(id, record: snapshot),
+      physicalAccess.accessLocator,
+      () => _invalidateIndexedArtifactLocked(
+        id,
+        record: snapshot,
+        physicalAccess: physicalAccess,
+      ),
     );
   }
 
   Future<bool> _invalidateIndexedArtifactLocked(
     DownloadId id, {
     required CacheRec record,
+    required _ArtifactAccessRecord physicalAccess,
   }) async {
     final initial = await _index.get(id.key);
     if (initial == null) return false;
@@ -4913,8 +5003,8 @@ final class PersistentDownloadArtifactStore
       await _index.remove(id.key);
       if (await _index.get(id.key) != null) return false;
       final isReferencedByOther = await _index.isPathOrArtifactReferenced(
-        path: current.path,
-        artifactId: current.effectiveArtifactId,
+        path: physicalAccess.accessLocator,
+        artifactId: physicalAccess.artifactId,
         excludingKey: id.key,
       );
       if (await _index.get(id.key) != null) return false;
@@ -4938,8 +5028,8 @@ final class PersistentDownloadArtifactStore
         return false;
       }
       if (isReferencedByOther) return false;
-      await _bytes.delete(current.path);
-      await _deleteArtifactSidecar(current.path);
+      await _bytes.delete(physicalAccess.accessLocator);
+      await _deleteArtifactSidecar(physicalAccess.accessLocator);
       return true;
     }
 

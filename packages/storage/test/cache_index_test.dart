@@ -176,6 +176,53 @@ void main() {
     });
   }
 
+  test('sqlite artifact_object locator is independent from logical binding path',
+      () async {
+    final index = SqliteIndex.memory();
+    await index.open();
+    addTearDown(index.close);
+    final first = CacheRec(
+      id: id,
+      state: CacheState.ready,
+      path: '/tmp/shared-old.bin',
+      bytes: 3,
+      checksum: '01020304',
+      createdUs: 1,
+      touchedUs: 1,
+      artifactId: 'shared-locator-artifact',
+      storageRootId: '/tmp',
+    );
+    final second = CacheRec(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'locator-successor',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://example.test/locator-successor.webp'),
+      ),
+      state: CacheState.ready,
+      path: '/tmp/shared-current.bin',
+      bytes: 3,
+      checksum: '01020304',
+      createdUs: 2,
+      touchedUs: 2,
+      artifactId: 'shared-locator-artifact',
+      storageRootId: '/tmp',
+    );
+    await index.put(first);
+    await index.put(second);
+
+    expect((await index.get(first.key))!.path, '/tmp/shared-old.bin');
+    final object = await index.getArtifactObject('shared-locator-artifact');
+    expect(object, isNotNull);
+    expect(object!.accessLocator, '/tmp/shared-current.bin');
+    expect(object.bytes, 3);
+    expect(object.checksum, '01020304');
+  });
+
   test('sqlite rejects conflicting ready bindings for one artifact identity', () async {
     final index = SqliteIndex.memory();
     await index.open();
@@ -269,6 +316,10 @@ void runCacheSchemaV2Tests() {
     final record = await index.get(id.key);
     expect(record, isNotNull);
     expect(record!.pinned, isFalse);
+    final legacyObject = await index.getArtifactObject(record.effectiveArtifactId);
+    expect(legacyObject, isNotNull);
+    expect(legacyObject!.accessLocator, record.path);
+    expect(legacyObject.storageRootId, record.storageRootId);
 
     final pinnedId = DownloadId(
       content: ContentId(

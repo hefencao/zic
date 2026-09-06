@@ -182,6 +182,27 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
     return _read(rows.first);
   }
 
+  Future<ArtifactObjectRecord?> getArtifactObject(String artifactId) async {
+    final normalized = artifactId.trim();
+    if (normalized.isEmpty) return null;
+    final rows = _requireDb().select(
+      'SELECT artifact_id, path, bytes, checksum, checksum_algorithm, '
+      'storage_root_id '
+      'FROM artifact_object WHERE artifact_id = ? LIMIT 1',
+      <Object?>[normalized],
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return ArtifactObjectRecord(
+      artifactId: row['artifact_id']! as String,
+      accessLocator: row['path']! as String,
+      bytes: row['bytes']! as int,
+      checksum: row['checksum']! as String,
+      checksumAlgorithm: (row['checksum_algorithm'] as String?) ?? 'crc32',
+      storageRootId: (row['storage_root_id'] as String?) ?? 'default',
+    );
+  }
+
   @override
   Future<List<CacheRec>> list({CacheState? state}) async {
     final cached = _cachedEntries;

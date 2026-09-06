@@ -3,9 +3,212 @@ import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
+import 'package:storage/storage.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('shared artifact reads through artifact_object locator when binding path is stale', () async {
+    final root = await Directory.systemTemp.createTemp('zic-artifact-object-read-');
+    addTearDown(() => root.delete(recursive: true));
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    await Directory(layout.finalDir).create(recursive: true);
+    final bytes = Uint8List.fromList(<int>[1, 3, 3, 7, 9]);
+    final checksum = (Crc32()..add(bytes)).hex;
+    final firstId = _id('artifact-object-old-binding');
+    final secondId = _id('artifact-object-new-binding');
+    final historicalRoot = '${root.path}/historical-root';
+    final stalePath = '$historicalRoot/stale.bin';
+    final authoritativePath = '${layout.finalDir}/authoritative.bin';
+    await File(authoritativePath).writeAsBytes(bytes, flush: true);
+
+    final index = SqliteIndex(layout.dbPath);
+    await index.open();
+    await index.put(
+      CacheRec(
+        id: firstId,
+        state: CacheState.ready,
+        path: stalePath,
+        bytes: bytes.length,
+        checksum: checksum,
+        createdUs: 1,
+        touchedUs: 1,
+        artifactId: 'shared-artifact-object',
+        storageRootId: historicalRoot,
+      ),
+    );
+    await index.put(
+      CacheRec(
+        id: secondId,
+        state: CacheState.ready,
+        path: authoritativePath,
+        bytes: bytes.length,
+        checksum: checksum,
+        createdUs: 2,
+        touchedUs: 2,
+        artifactId: 'shared-artifact-object',
+        storageRootId: layout.root,
+      ),
+    );
+    await index.close();
+
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    final entry = await store.openArtifactStream(firstId);
+    expect(entry, isNotNull);
+    final read = <int>[];
+    await for (final chunk in entry!.open(start: 0)) {
+      read.addAll(chunk);
+    }
+    expect(read, bytes);
+    expect((await store.indexedRecords()).containsKey(firstId.key), isTrue);
+  });
+
+  test('structural failure deletes authoritative artifact_object locator, not stale binding path',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-artifact-object-cleanup-');
+    addTearDown(() => root.delete(recursive: true));
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    await Directory(layout.finalDir).create(recursive: true);
+    final expected = Uint8List.fromList(<int>[2, 4, 6, 8, 10, 12]);
+    final checksum = (Crc32()..add(expected)).hex;
+    final firstId = _id('artifact-object-cleanup-old');
+    final secondId = _id('artifact-object-cleanup-current');
+    final stalePath = '${layout.finalDir}/stale-binding.bin';
+    final authoritativePath = '${layout.finalDir}/authoritative-corrupt.bin';
+    await File(stalePath).writeAsBytes(<int>[99], flush: true);
+    await File(authoritativePath).writeAsBytes(<int>[2, 4, 6], flush: true);
+
+    final index = SqliteIndex(layout.dbPath);
+    await index.open();
+    await index.put(
+      CacheRec(
+        id: firstId,
+        state: CacheState.ready,
+        path: stalePath,
+        bytes: expected.length,
+        checksum: checksum,
+        createdUs: 1,
+        touchedUs: 1,
+        artifactId: 'cleanup-artifact-object',
+        storageRootId: layout.root,
+      ),
+    );
+    await index.put(
+      CacheRec(
+        id: secondId,
+        state: CacheState.ready,
+        path: authoritativePath,
+        bytes: expected.length,
+        checksum: checksum,
+        createdUs: 2,
+        touchedUs: 2,
+        artifactId: 'cleanup-artifact-object',
+        storageRootId: layout.root,
+      ),
+    );
+    await index.remove(secondId.key);
+    final object = await index.getArtifactObject('cleanup-artifact-object');
+    expect(object?.accessLocator, authoritativePath);
+    await index.close();
+
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    await expectLater(
+      store.openArtifactStream(firstId),
+      throwsA(
+        isA<ArtifactReadFailure>()
+            .having(
+              (failure) => failure.kind,
+              'kind',
+              ArtifactReadFailureKind.lengthChanged,
+            )
+            .having(
+              (failure) => failure.accessLocator,
+              'accessLocator',
+              authoritativePath,
+            ),
+      ),
+    );
+    expect((await store.indexedRecords()).containsKey(firstId.key), isFalse);
+    expect(await File(authoritativePath).exists(), isFalse);
+    expect(await File(stalePath).exists(), isTrue,
+        reason: 'logical compatibility path is not physical object authority');
+  });
+
+  test('accessDenied on artifact_object locator preserves logical binding', () async {
+    final root = await Directory.systemTemp.createTemp('zic-artifact-object-denied-');
+    addTearDown(() => root.delete(recursive: true));
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    await Directory(layout.finalDir).create(recursive: true);
+    final bytes = Uint8List.fromList(<int>[5, 4, 3, 2, 1]);
+    final checksum = (Crc32()..add(bytes)).hex;
+    final firstId = _id('artifact-object-denied-old');
+    final secondId = _id('artifact-object-denied-current');
+    final stalePath = '${layout.finalDir}/denied-stale.bin';
+    final authoritativePath = '${layout.finalDir}/denied-authoritative.bin';
+    await File(authoritativePath).writeAsBytes(bytes, flush: true);
+
+    final index = SqliteIndex(layout.dbPath);
+    await index.open();
+    await index.put(
+      CacheRec(
+        id: firstId,
+        state: CacheState.ready,
+        path: stalePath,
+        bytes: bytes.length,
+        checksum: checksum,
+        createdUs: 1,
+        touchedUs: 1,
+        artifactId: 'denied-artifact-object',
+        storageRootId: layout.root,
+      ),
+    );
+    await index.put(
+      CacheRec(
+        id: secondId,
+        state: CacheState.ready,
+        path: authoritativePath,
+        bytes: bytes.length,
+        checksum: checksum,
+        createdUs: 2,
+        touchedUs: 2,
+        artifactId: 'denied-artifact-object',
+        storageRootId: layout.root,
+      ),
+    );
+    await index.remove(secondId.key);
+    await index.close();
+
+    final denied = await PersistentDownloadArtifactStore.open(
+      root.path,
+      bytes: const _AccessDeniedArtifactBytes(),
+    );
+    addTearDown(denied.close);
+    await expectLater(
+      denied.openArtifactStream(firstId),
+      throwsA(
+        isA<ArtifactReadFailure>()
+            .having(
+              (failure) => failure.kind,
+              'kind',
+              ArtifactReadFailureKind.accessDenied,
+            )
+            .having(
+              (failure) => failure.accessLocator,
+              'accessLocator',
+              authoritativePath,
+            )
+            .having(
+              (failure) => failure.replicaId,
+              'replicaId',
+              'denied-artifact-object',
+            ),
+      ),
+    );
+    expect((await denied.indexedRecords()).containsKey(firstId.key), isTrue);
+    expect(await File(authoritativePath).exists(), isTrue);
+  });
+
   test('persistent preflight reports lengthChanged with replica identity', () async {
     final root = await Directory.systemTemp.createTemp('zic-replica-length-');
     final store = await PersistentDownloadArtifactStore.open(root.path);

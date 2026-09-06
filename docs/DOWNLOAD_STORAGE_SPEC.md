@@ -19,7 +19,7 @@ This document is normative for the detailed download/storage behavior. `docs/SPE
 ## 2. Metadata, artifacts and replicas
 
 1. Long-term durable metadata authority MUST live in App-private storage and MUST NOT require moving the metadata database when the user's default export root changes.
-2. Logical `DownloadId` binding and physical replica location MUST be separate authorities.
+2. Logical `DownloadId` binding and physical replica location MUST be separate authorities. During migration, when an existing `artifact_object` row has the same `artifact_id`, byte length, checksum and checksum namespace as its logical binding, its physical locator/root MUST be preferred over the compatibility `cache_entry.path`; a proof mismatch MUST fall back conservatively rather than redirect bytes. Structural invalidation MUST act on the resolved physical locator, while access-only failure MUST preserve the logical binding/artifact identity.
 3. A logical artifact MAY have multiple replicas on private, direct POSIX or SAF roots.
 4. Access failure on one locator MUST NOT invalidate another locator or the logical artifact.
 5. A sealed artifact is immutable. Automatic-cache/manual-export distinction MUST be expressed by retention/export binding rather than requiring duplicate bytes.

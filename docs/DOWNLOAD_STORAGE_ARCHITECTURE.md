@@ -76,7 +76,7 @@ artifact_replica
   health
 ```
 
-`CacheRec.path` is therefore a compatibility representation, not the desired long-term authority.
+`CacheRec.path` is therefore a compatibility representation, not the desired long-term authority. Production schema 6 already persists one `artifact_object` row per immutable `artifact_id`; the first Root/Access migration step now consumes that row as the current single physical `accessLocator + storageRootId + seal proof` authority whenever its byte-length/checksum proof agrees with the logical binding. `cache_entry.path` remains a legacy fallback only. This is deliberately not yet `artifact_replica`: one artifact still has at most one indexed object locator, and locator health / Direct+SAF aliases remain future state.
 
 ### 2.3 StorageRootRegistry
 

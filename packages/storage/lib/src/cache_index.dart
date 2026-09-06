@@ -127,6 +127,31 @@ final class CacheRec {
   }
 }
 
+/// Physical immutable-object metadata projected separately from a logical
+/// DownloadId binding. [accessLocator] still maps to the compatibility SQL
+/// `path` column, but callers consume it as physical access authority.
+final class ArtifactObjectRecord {
+  const ArtifactObjectRecord({
+    required this.artifactId,
+    required this.accessLocator,
+    required this.bytes,
+    required this.checksum,
+    required this.checksumAlgorithm,
+    required this.storageRootId,
+  });
+
+  final String artifactId;
+
+  /// Opaque locator for the current physical object. The durable SQL column
+  /// remains named `path` for schema compatibility; consumers must not treat
+  /// this locator as logical DownloadId identity.
+  final String accessLocator;
+  final int bytes;
+  final String checksum;
+  final String checksumAlgorithm;
+  final String storageRootId;
+}
+
 /// Optional transactional binding capability. A path may be shared by
 /// verified logical identities, but an explicit overwrite must replace the
 /// old logical bindings in the same SQLite transaction as the new one.
