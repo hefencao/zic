@@ -1827,24 +1827,17 @@ final class PersistentDownloadArtifactStore
     if (rec == null || parseSafRecordPath(rec.path) != null) return;
     final local = File(rec.path);
     if (rec.bytes <= 0 || !await local.exists()) return;
-    var ext = await sniffImageExtension(local);
-    if (ext == 'bin' &&
-        entry != null &&
-        pageIndex != null &&
-        pageIndex > 0 &&
-        pageIndex <= entry.chapter.pages.length) {
-      final page = entry.chapter.pages[pageIndex - 1];
-      if (page.contentKindHint != ContentKindHint.unknown) {
-        ext = page.contentKindHint.name;
-      }
-    }
-    if (ext == 'bin' && await isHtmlOrTextFile(local)) {
+    final ext = await sniffImageExtension(local);
+    if (entry != null && pageIndex != null && ext == 'bin') {
+      final obviousText = await isHtmlOrTextFile(local);
       try {
         await local.delete();
       } on Object {}
       throw Failure(
         code: ErrorCode.artifactCorruption,
-        message: 'downloaded page payload is HTML or non-image text: ${local.path}',
+        message: obviousText
+            ? 'downloaded page payload is HTML or non-image text: ${local.path}'
+            : 'downloaded page payload has no supported image signature: ${local.path}',
       );
     }
     final token = _registry.layout.tokenFor(id);

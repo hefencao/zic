@@ -611,51 +611,67 @@ Future<void> _writeSafAtomically(
   }
 }
 
-/// Sniffs the image format extension (webp, jpg, png, gif, avif) from header bytes.
-/// Falls back to 'bin' on unknown format.
+/// Sniffs the image format extension supported by ZIC's image presentation
+/// stack from bounded header bytes. Falls back to `bin` when no supported
+/// signature is present; callers must not infer image validity from a filename.
 String sniffImageExtensionFromBytes(List<int> header) {
-  if (header.length >= 3 &&
-      header[0] == 0xff &&
-      header[1] == 0xd8 &&
-      header[2] == 0xff) {
-    return 'jpg';
+  bool at(int offset, List<int> signature) {
+    if (offset < 0 || header.length < offset + signature.length) return false;
+    for (var index = 0; index < signature.length; index++) {
+      if (header[offset + index] != signature[index]) return false;
+    }
+    return true;
   }
-  if (header.length >= 8 &&
-      header[0] == 0x89 &&
-      header[1] == 0x50 &&
-      header[2] == 0x4e &&
-      header[3] == 0x47) {
+
+  String fourCc(int offset) =>
+      String.fromCharCodes(header.sublist(offset, offset + 4)).toLowerCase();
+
+  if (at(0, const <int>[0xff, 0xd8, 0xff])) return 'jpg';
+  if (at(0, const <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
     return 'png';
   }
   if (header.length >= 12 &&
-      header[0] == 0x52 &&
-      header[1] == 0x49 &&
-      header[2] == 0x46 &&
-      header[3] == 0x46 &&
-      header[8] == 0x57 &&
-      header[9] == 0x45 &&
-      header[10] == 0x42 &&
-      header[11] == 0x50) {
+      at(0, const <int>[0x52, 0x49, 0x46, 0x46]) &&
+      at(8, const <int>[0x57, 0x45, 0x42, 0x50])) {
     return 'webp';
   }
-  if (header.length >= 6 &&
-      header[0] == 0x47 &&
-      header[1] == 0x49 &&
-      header[2] == 0x46) {
+  if (at(0, const <int>[0x47, 0x49, 0x46, 0x38, 0x37, 0x61]) ||
+      at(0, const <int>[0x47, 0x49, 0x46, 0x38, 0x39, 0x61])) {
     return 'gif';
   }
-  if (header.length >= 12 &&
-      header[4] == 0x66 &&
-      header[5] == 0x74 &&
-      header[6] == 0x79 &&
-      header[7] == 0x70) {
-    return 'avif';
+  if (at(0, const <int>[0x42, 0x4d])) return 'bmp';
+  if (at(0, const <int>[0x49, 0x49, 0x2a, 0x00]) ||
+      at(0, const <int>[0x4d, 0x4d, 0x00, 0x2a])) {
+    return 'tiff';
+  }
+  if (at(0, const <int>[0x00, 0x00, 0x01, 0x00])) return 'ico';
+
+  if (header.length >= 12 && at(4, const <int>[0x66, 0x74, 0x79, 0x70])) {
+    final brands = <String>{};
+    for (var offset = 8; offset + 4 <= header.length; offset += 4) {
+      brands.add(fourCc(offset));
+    }
+    if (brands.any(const <String>{'avif', 'avis'}.contains)) return 'avif';
+    if (brands.any(
+      const <String>{
+        'heic',
+        'heix',
+        'hevc',
+        'hevx',
+        'heim',
+        'heis',
+        'mif1',
+        'msf1',
+      }.contains,
+    )) {
+      return 'heif';
+    }
   }
   return 'bin';
 }
 
-/// Sniffs the image format extension (webp, jpg, png, gif, avif) from the first
-/// 32 bytes of [file]. Falls back to 'bin' on failure or unknown format.
+/// Sniffs a supported image extension from the first 32 bytes of [file].
+/// Falls back to `bin` on read failure or unknown/unsupported format.
 Future<String> sniffImageExtension(File file) async {
   try {
     final raf = await file.open(mode: FileMode.read);

@@ -911,7 +911,10 @@ void main() {
       'zic-plugin-chapter-download-',
     );
     addTearDown(() => directory.delete(recursive: true));
-    final bytes = Uint8List.fromList(<int>[82, 73, 70, 70, 1, 2, 3]);
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
     final requested = <Uri>[];
     final entry = ImportedLibraryEntry(
       chapter: ImportedChapterRecord(
@@ -993,16 +996,20 @@ void main() {
         },
         openResponse: (sourceId, uri, {range, validators}) async {
           scheduleMicrotask(() async {
-            controller.add(<int>[1, 2, 3]);
+            controller.add(<int>[
+              0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+            ]);
             await release.future;
-            controller.add(<int>[4, 5, 6]);
+            controller.add(<int>[
+              0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+            ]);
             await controller.close();
           });
           return ByteResponse(
             bytes: controller.stream,
             statusCode: HttpStatus.ok,
             rangeStart: 0,
-            totalLength: 6,
+            totalLength: 16,
             validators: const Validators(etag: '"stream"'),
             rangeSupported: true,
           );
@@ -1015,7 +1022,7 @@ void main() {
       events.add(snapshot);
       if (!partial.isCompleted &&
           snapshot.phase == ChapterDownloadPhase.downloading &&
-          snapshot.receivedBytes == 3) {
+          snapshot.receivedBytes == 8) {
         partial.complete(snapshot);
       }
     });
@@ -1023,13 +1030,13 @@ void main() {
 
     final run = service.download(entry);
     final live = await partial.future.timeout(const Duration(seconds: 2));
-    expect(live.totalBytes, 6);
+    expect(live.totalBytes, 16);
     expect(live.fraction, closeTo(0.5, 0.001));
 
     release.complete();
     await run;
     expect(events.last.phase, ChapterDownloadPhase.complete);
-    expect(events.last.receivedBytes, 6);
+    expect(events.last.receivedBytes, 16);
     expect(events.last.fraction, 1);
     expect(completeByteFallbackCalled, isFalse);
   });
@@ -1051,7 +1058,7 @@ void main() {
             sourceId: 'memory://progress-1',
             pageId: 'progress-page-1',
             contentKindHint: ContentKindHint.unknown,
-            byteLength: 3,
+            byteLength: 16,
           ),
           ImportedPageRecord(
             displayName: '2.bin',
@@ -1295,6 +1302,39 @@ void main() {
     await gifFile.writeAsBytes(<int>[0x47, 0x49, 0x46, 0x38, 0x39, 0x61]);
     expect(await sniffImageExtension(gifFile), 'gif');
 
+    final bmpFile = File('${temp.path}/t.bmp');
+    await bmpFile.writeAsBytes(<int>[0x42, 0x4d, 1, 2, 3, 4]);
+    expect(await sniffImageExtension(bmpFile), 'bmp');
+
+    final tiffFile = File('${temp.path}/t.tiff');
+    await tiffFile.writeAsBytes(<int>[0x49, 0x49, 0x2a, 0x00, 1, 2]);
+    expect(await sniffImageExtension(tiffFile), 'tiff');
+
+    final icoFile = File('${temp.path}/t.ico');
+    await icoFile.writeAsBytes(<int>[0x00, 0x00, 0x01, 0x00, 1, 2]);
+    expect(await sniffImageExtension(icoFile), 'ico');
+
+    final avifFile = File('${temp.path}/t.avif');
+    await avifFile.writeAsBytes(<int>[
+      0, 0, 0, 24, ...'ftyp'.codeUnits, ...'avif'.codeUnits,
+      0, 0, 0, 0, ...'mif1'.codeUnits,
+    ]);
+    expect(await sniffImageExtension(avifFile), 'avif');
+
+    final heifFile = File('${temp.path}/t.heif');
+    await heifFile.writeAsBytes(<int>[
+      0, 0, 0, 24, ...'ftyp'.codeUnits, ...'heic'.codeUnits,
+      0, 0, 0, 0, ...'mif1'.codeUnits,
+    ]);
+    expect(await sniffImageExtension(heifFile), 'heif');
+
+    final genericFtyp = File('${temp.path}/video.bin');
+    await genericFtyp.writeAsBytes(<int>[
+      0, 0, 0, 24, ...'ftyp'.codeUnits, ...'mp42'.codeUnits,
+      0, 0, 0, 0, ...'isom'.codeUnits,
+    ]);
+    expect(await sniffImageExtension(genericFtyp), 'bin');
+
     final binFile = File('${temp.path}/t.bin');
     await binFile.writeAsBytes(<int>[1, 2, 3, 4]);
     expect(await sniffImageExtension(binFile), 'bin');
@@ -1337,7 +1377,10 @@ void main() {
     addTearDown(service.close);
     service.setChapterResourceAccess(
       ChapterResourceAccess(
-        loadBytes: (sourceId, uri) async => Uint8List.fromList(<int>[1, 2, 3]),
+        loadBytes: (sourceId, uri) async => Uint8List.fromList(<int>[
+          0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+          0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+        ]),
       ),
     );
 
@@ -3695,6 +3738,117 @@ void main() {
     expect(manualSnapshot.phase, ChapterDownloadPhase.complete);
     expect(manualSnapshot.isManualDownload, isTrue);
     expect(manualSnapshot.hasAutoCache, isFalse);
+  });
+
+  test('structured materialization sniffs image bytes when hint is unknown',
+      () async {
+    final root = await Directory.systemTemp.createTemp('unknown-image-sniff-test-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'lib:unknown-image',
+        displayName: '第一话',
+        sourceId: 'venera:ehentai',
+        comicId: 'unknown-image-comic',
+        comicTitle: '未知格式漫画',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.bin',
+            sourceId: 'https://example.test/unknown-image',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.unknown,
+            byteLength: webpBytes.length,
+          ),
+        ],
+      ),
+    );
+    final id = DownloadId(
+      content: ContentId(
+        sourceId: entry.chapter.sourceId,
+        comicId: entry.chapter.comicId,
+        chapterId: entry.chapter.chapterId,
+        pageId: 'p1',
+      ),
+      sourceRevision: entry.chapter.sourceRevision,
+      canonicalUri: Uri.parse('https://example.test/unknown-image'),
+    );
+    await service.storePromotedArtifact(id: id, bytes: webpBytes);
+    await service.artifactStore.mirrorPromotedToSafIfConfigured(
+      id,
+      entry: entry,
+      pageIndex: 1,
+      isSingleChapter: true,
+    );
+
+    final record = await service.artifactStore.index.get(id.key);
+    expect(record, isNotNull);
+    expect(record!.path, endsWith('/未知格式漫画/001.webp'));
+    expect(await File(record.path).readAsBytes(), webpBytes);
+  });
+
+  test('mirrorPromotedToSafIfConfigured rejects non-image .bin payload for structured download', () async {
+    final root = await Directory.systemTemp.createTemp('bin-reject-test-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'lib:ch1',
+        displayName: '第一话',
+        sourceId: 'venera:ehentai',
+        comicId: 'comic1',
+        comicTitle: '测试漫画',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.test/1.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.unknown,
+            byteLength: 20,
+          ),
+        ],
+      ),
+    );
+
+    final id = DownloadId(
+      content: ContentId(
+        sourceId: entry.chapter.sourceId,
+        comicId: entry.chapter.comicId,
+        chapterId: entry.chapter.chapterId,
+        pageId: 'p1',
+      ),
+      sourceRevision: entry.chapter.sourceRevision,
+      canonicalUri: Uri.parse('https://example.test/1.webp'),
+    );
+
+    await service.artifactStore.storePromotedArtifact(
+      id: id,
+      bytes: Uint8List.fromList(<int>[0x00, 0x01, 0x02, 0x03, 0x04]),
+    );
+    await service.transferRuntime.persistPromoted(id);
+
+    await expectLater(
+      service.artifactStore.mirrorPromotedToSafIfConfigured(
+        id,
+        entry: entry,
+        pageIndex: 1,
+        isSingleChapter: true,
+      ),
+      throwsA(isA<Failure>().having((f) => f.code, 'code', ErrorCode.artifactCorruption)),
+    );
+    final rec = await service.artifactStore.index.get(id.key);
+    expect(rec != null && await File(rec.path).exists(), isFalse);
   });
 }
 
