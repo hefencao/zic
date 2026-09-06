@@ -279,20 +279,12 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
     if (versionSource != null) {
       _scheduleVersionReuseWarmup(versionSource, current.chapter.comicId);
     }
-    final isLocal = current.chapter.sourceId == 'local-folder';
-    final byteProbeWatch = Stopwatch()..start();
+    // Persistent remote bytes are owned by ArtifactCacheTransport. Do not
+    // pre-probe the chapter index or register a full-page readPage() loader:
+    // that capability bypasses the streaming artifact response path and makes
+    // large SAF/POSIX foreground pages wait for complete Uint8List materialization.
     final byteLoaders = <String, LocalImageFileBytesLoader>{};
-    if (!isLocal) {
-      final readyIndices = await _chapterDownloads.readyPageIndices(current);
-      for (final index in readyIndices) {
-        if (index >= 0 && index < current.chapter.pages.length) {
-          final page = current.chapter.pages[index];
-          byteLoaders[page.sourceId] = () =>
-              _chapterDownloads.readPage(current, index);
-        }
-      }
-    }
-    final byteProbeMs = byteProbeWatch.elapsedMilliseconds;
+    const byteProbeMs = 0;
     final source = _sourceForId(current.chapter.sourceId);
     final responseLoaders = source == null
         ? const <String, ExternalPluginControlledResourceResponseLoader>{}
