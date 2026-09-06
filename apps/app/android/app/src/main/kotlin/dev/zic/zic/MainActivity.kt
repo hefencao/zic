@@ -188,6 +188,31 @@ class MainActivity : FlutterActivity() {
             Thread(runnable, "zic-saf").apply { isDaemon = true }
         }
 
+    private data class SafBridgeFailure(
+        val code: String,
+        val message: String,
+    )
+
+    private fun safBridgeFailure(error: Throwable): SafBridgeFailure {
+        val code = when (error) {
+            is SecurityException -> "saf-access-denied"
+            is java.io.FileNotFoundException -> "saf-missing"
+            is android.system.ErrnoException -> when (error.errno) {
+                android.system.OsConstants.EACCES,
+                android.system.OsConstants.EPERM -> "saf-access-denied"
+                android.system.OsConstants.ENOENT -> "saf-missing"
+                else -> "saf-io-failure"
+            }
+            is IllegalStateException -> if (error.message == "tree unavailable") {
+                "saf-stale-locator"
+            } else {
+                "saf-io-failure"
+            }
+            else -> "saf-io-failure"
+        }
+        return SafBridgeFailure(code, error.message ?: error.javaClass.simpleName)
+    }
+
     /**
      * SAF byte bridge. All DocumentFile/ContentResolver work runs on
      * [safExecutor]; results are posted back to the platform thread because
@@ -195,39 +220,47 @@ class MainActivity : FlutterActivity() {
      */
     private fun handleSaf(call: MethodCall, result: MethodChannel.Result) {
         safExecutor.execute {
-            var reply: Pair<Boolean, Any?>? = null  // ok to payload/error pair
-            try {
-                reply = when (call.method) {
+            val reply: Pair<Boolean, Any?> = try {
+                when (call.method) {
                     "safOpen" -> runCatching { safOpen(call) }
-                        .fold({ true to it }, { false to (it.message ?: "safOpen failed") })
+                        .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safRead" -> runCatching { safRead(call) }
-                        .fold({ true to it }, { false to (it.message ?: "safRead failed") })
+                        .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safWrite" -> runCatching { safWrite(call) }
-                        .fold({ true to null }, { false to (it.message ?: "safWrite failed") })
+                        .fold({ true to null }, { false to safBridgeFailure(it) })
                     "safSeek" -> runCatching { safSeek(call) }
-                        .fold({ true to null }, { false to (it.message ?: "safSeek failed") })
+                        .fold({ true to null }, { false to safBridgeFailure(it) })
                     "safLength" -> runCatching { safLength(call) }
-                        .fold({ true to it }, { false to (it.message ?: "safLength failed") })
+                        .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safClose" -> runCatching { safClose(call) }
-                        .fold({ true to null }, { false to (it.message ?: "safClose failed") })
+                        .fold({ true to null }, { false to safBridgeFailure(it) })
                     "safDelete" -> runCatching { safDelete(call) }
-                        .fold({ true to it }, { false to (it.message ?: "safDelete failed") })
+                        .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safRename" -> runCatching { safRename(call) }
-                        .fold({ true to it }, { false to (it.message ?: "safRename failed") })
+                        .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safReplace" -> runCatching { safReplace(call) }
-                        .fold({ true to it }, { false to (it.message ?: "safReplace failed") })
+                        .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safExists" -> runCatching { safExists(call) }
-                        .fold({ true to it }, { false to (it.message ?: "safExists failed") })
+                        .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safList" -> runCatching { safList(call) }
-                        .fold({ true to it }, { false to (it.message ?: "safList failed") })
+                        .fold({ true to it }, { false to safBridgeFailure(it) })
                     else -> false to "notImplemented"
                 }
             } catch (error: Throwable) {
-                reply = false to (error.message ?: error.javaClass.simpleName)
+                false to safBridgeFailure(error)
             }
-            val (ok, payload) = reply!!
+            val (ok, payload) = reply
             mainHandler.post {
-                if (ok) result.success(payload) else result.error("saf-error", payload as? String ?: "$payload", null)
+                if (ok) {
+                    result.success(payload)
+                } else {
+                    val failure = payload as? SafBridgeFailure
+                    result.error(
+                        failure?.code ?: "saf-io-failure",
+                        failure?.message ?: "$payload",
+                        null,
+                    )
+                }
             }
         }
     }
@@ -271,7 +304,7 @@ class MainActivity : FlutterActivity() {
         val target: androidx.documentfile.provider.DocumentFile =
             if (relativePath.isEmpty()) root else resolvePath(root, relativePath)
                 ?: run {
-                    if (mode == "read") throw IllegalStateException("missing $relativePath")
+                    if (mode == "read") throw java.io.FileNotFoundException("missing $relativePath")
                     var dir = root
                     val segments = relativePath.split('/').filter { it.isNotEmpty() }
                     for (i in segments.indices) {

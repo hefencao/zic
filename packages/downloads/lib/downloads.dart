@@ -10,10 +10,13 @@ export 'src/artifact_cache_read_scheduler.dart';
 export 'src/artifact_bytes.dart'
     show
         ArtifactBytes,
+        ArtifactReadFailure,
+        ArtifactReadFailureKind,
         CompositeArtifactBytes,
         LocalArtifactBytes,
         SafArtifactBytes,
         SafTreeIo,
+        SafTreeAccessFailure,
         SafTreeAtomicReplace,
         SafTreeFile,
         SafWriteMode,

@@ -861,31 +861,55 @@ class _SafTreeIoAdapter
 
   final SafStore _store;
 
+  Future<T> _readOperation<T>(
+    String operation,
+    Future<T> Function() action,
+  ) async {
+    try {
+      return await action();
+    } on PlatformException catch (error) {
+      throw SafTreeAccessFailure(
+        kind: switch (error.code) {
+          'saf-access-denied' => ArtifactReadFailureKind.accessDenied,
+          'saf-missing' => ArtifactReadFailureKind.missing,
+          'saf-stale-locator' => ArtifactReadFailureKind.staleLocator,
+          _ => ArtifactReadFailureKind.ioFailure,
+        },
+        operation: operation,
+        cause: error,
+      );
+    }
+  }
+
   @override
   Future<int?> open(
     String relativePath, {
     SafWriteMode mode = SafWriteMode.read,
   }) {
-    return _store.open(
-      relativePath,
-      mode: switch (mode) {
-        SafWriteMode.read => SafMode.read,
-        SafWriteMode.writeAppend => SafMode.writeAppend,
-        SafWriteMode.writeTruncate => SafMode.writeTruncate,
-      },
-    );
+    Future<int?> operation() => _store.open(
+          relativePath,
+          mode: switch (mode) {
+            SafWriteMode.read => SafMode.read,
+            SafWriteMode.writeAppend => SafMode.writeAppend,
+            SafWriteMode.writeTruncate => SafMode.writeTruncate,
+          },
+        );
+    return mode == SafWriteMode.read
+        ? _readOperation<int?>('open', operation)
+        : operation();
   }
 
   @override
   Future<Uint8List> read(int handle, int length) =>
-      _store.read(handle, length);
+      _readOperation<Uint8List>('read', () => _store.read(handle, length));
 
   @override
   Future<void> write(int handle, Uint8List bytes) =>
       _store.write(handle, bytes);
 
   @override
-  Future<void> seek(int handle, int position) => _store.seek(handle, position);
+  Future<void> seek(int handle, int position) =>
+      _readOperation<void>('seek', () => _store.seek(handle, position));
 
   @override
   Future<void> close(int handle) => _store.close(handle);
@@ -894,7 +918,8 @@ class _SafTreeIoAdapter
   Future<bool> delete(String relativePath) => _store.delete(relativePath);
 
   @override
-  Future<bool> exists(String relativePath) => _store.exists(relativePath);
+  Future<bool> exists(String relativePath) =>
+      _readOperation<bool>('exists', () => _store.exists(relativePath));
 
   @override
   Future<bool> rename(String relativePath, String newRelativePath) =>
@@ -905,7 +930,8 @@ class _SafTreeIoAdapter
       _store.replace(relativePath, newRelativePath);
 
   @override
-  Future<int?> length(int handle) => _store.length(handle);
+  Future<int?> length(int handle) =>
+      _readOperation<int?>('length', () => _store.length(handle));
 
   @override
   Future<List<SafTreeFile>> list(String relativePath) async {

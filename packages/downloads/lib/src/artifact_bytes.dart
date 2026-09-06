@@ -4,6 +4,75 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+enum ArtifactReadFailureKind {
+  accessDenied,
+  missing,
+  staleLocator,
+  shortRead,
+  lengthChanged,
+  ioFailure,
+}
+
+/// Typed failure emitted by one physical artifact access path.
+///
+/// [bytesEmitted] is relative to the current read request, while
+/// [failedOffset] is the absolute artifact offset. Replica identity is optional
+/// until the storage-root migration gives every physical copy a first-class id.
+final class ArtifactReadFailure implements Exception {
+  const ArtifactReadFailure({
+    required this.kind,
+    required this.accessLocator,
+    required this.failedOffset,
+    required this.bytesEmitted,
+    this.replicaId,
+    this.expectedLength,
+    this.observedLength,
+    this.cause,
+  });
+
+  final ArtifactReadFailureKind kind;
+  final String accessLocator;
+  final String? replicaId;
+  final int failedOffset;
+  final int bytesEmitted;
+  final int? expectedLength;
+  final int? observedLength;
+  final Object? cause;
+
+  ArtifactReadFailure withReplicaId(String value) => ArtifactReadFailure(
+        kind: kind,
+        accessLocator: accessLocator,
+        replicaId: value,
+        failedOffset: failedOffset,
+        bytesEmitted: bytesEmitted,
+        expectedLength: expectedLength,
+        observedLength: observedLength,
+        cause: cause,
+      );
+
+  @override
+  String toString() => 'ArtifactReadFailure(${kind.name}, '
+      'locator=$accessLocator, offset=$failedOffset, emitted=$bytesEmitted)';
+}
+
+/// Platform-neutral failure that a [SafTreeIo] adapter may throw before the
+/// byte-access layer has enough locator/offset context to build
+/// [ArtifactReadFailure].
+final class SafTreeAccessFailure implements Exception {
+  const SafTreeAccessFailure({
+    required this.kind,
+    required this.operation,
+    this.cause,
+  });
+
+  final ArtifactReadFailureKind kind;
+  final String operation;
+  final Object? cause;
+
+  @override
+  String toString() => 'SafTreeAccessFailure(${kind.name}, $operation)';
+}
+
 /// Byte-level access to one durable artifact record.
 ///
 /// The default implementation serves POSIX files under the store directory;
@@ -49,23 +118,63 @@ class LocalArtifactBytes implements ArtifactBytes {
     int? endExclusive,
   }) async* {
     final file = File(path);
-    if (await FileSystemEntity.type(file.path, followLinks: false) !=
-        FileSystemEntityType.file) {
-      return;
-    }
-    final raf = await file.open();
+    var position = start;
     try {
-      var position = start;
-      final end = endExclusive ?? await file.length();
-      await raf.setPosition(position);
-      while (position < end) {
-        final chunk = await raf.read(min(end - position, 512 * 1024));
-        if (chunk.isEmpty) break;
-        position += chunk.length;
-        yield chunk;
+      final type = await FileSystemEntity.type(file.path, followLinks: false);
+      if (type != FileSystemEntityType.file) {
+        if (type == FileSystemEntityType.notFound) {
+          throw ArtifactReadFailure(
+            kind: ArtifactReadFailureKind.missing,
+            accessLocator: path,
+            failedOffset: start,
+            bytesEmitted: 0,
+          );
+        }
+        // Symlinks and non-file entries remain unreadable by policy. Preserve
+        // the historical empty-stream behavior until Root/Access migration can
+        // represent them explicitly instead of following an unsafe locator.
+        return;
       }
-    } finally {
-      await raf.close();
+      final raf = await file.open();
+      try {
+        final end = endExclusive ?? await file.length();
+        await raf.setPosition(position);
+        while (position < end) {
+          final chunk = await raf.read(min(end - position, 512 * 1024));
+          if (chunk.isEmpty) {
+            throw ArtifactReadFailure(
+              kind: ArtifactReadFailureKind.shortRead,
+              accessLocator: path,
+              failedOffset: position,
+              bytesEmitted: position - start,
+              expectedLength: end - start,
+              observedLength: position - start,
+            );
+          }
+          position += chunk.length;
+          yield chunk;
+        }
+      } finally {
+        await raf.close();
+      }
+    } on ArtifactReadFailure {
+      rethrow;
+    } on FileSystemException catch (error) {
+      throw ArtifactReadFailure(
+        kind: _fileReadFailureKind(error),
+        accessLocator: path,
+        failedOffset: position,
+        bytesEmitted: position - start,
+        cause: error,
+      );
+    } on OSError catch (error) {
+      throw ArtifactReadFailure(
+        kind: _osReadFailureKind(error.errorCode),
+        accessLocator: path,
+        failedOffset: position,
+        bytesEmitted: position - start,
+        cause: error,
+      );
     }
   }
 
@@ -198,22 +307,75 @@ class SafArtifactBytes implements ArtifactBytes {
     int? endExclusive,
   }) async* {
     final parsed = parseSafRecordPath(path);
-    if (parsed == null || !_belongsToThisTree(path)) return;
-    final handle = await _io.open(parsed.relativePath);
-    if (handle == null) return;
+    if (parsed == null || !_belongsToThisTree(path)) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.staleLocator,
+        accessLocator: path,
+        failedOffset: start,
+        bytesEmitted: 0,
+      );
+    }
+    var position = start;
+    int? handle;
     try {
-      var position = start;
+      handle = await _io.open(parsed.relativePath);
+      if (handle == null) {
+        throw ArtifactReadFailure(
+          kind: ArtifactReadFailureKind.staleLocator,
+          accessLocator: path,
+          failedOffset: start,
+          bytesEmitted: 0,
+        );
+      }
       await _io.seek(handle, position);
       while (endExclusive == null || position < endExclusive) {
         final remaining =
             endExclusive == null ? 512 * 1024 : endExclusive - position;
         final chunk = await _io.read(handle, remaining.clamp(0, 512 * 1024));
-        if (chunk.isEmpty) break;
+        if (chunk.isEmpty) {
+          if (endExclusive != null && position < endExclusive) {
+            throw ArtifactReadFailure(
+              kind: ArtifactReadFailureKind.shortRead,
+              accessLocator: path,
+              failedOffset: position,
+              bytesEmitted: position - start,
+              expectedLength: endExclusive - start,
+              observedLength: position - start,
+            );
+          }
+          break;
+        }
         position += chunk.length;
         yield chunk;
       }
+    } on ArtifactReadFailure {
+      rethrow;
+    } on SafTreeAccessFailure catch (error) {
+      throw ArtifactReadFailure(
+        kind: error.kind,
+        accessLocator: path,
+        failedOffset: position,
+        bytesEmitted: position - start,
+        cause: error.cause ?? error,
+      );
+    } on Object catch (error) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.ioFailure,
+        accessLocator: path,
+        failedOffset: position,
+        bytesEmitted: position - start,
+        cause: error,
+      );
     } finally {
-      await _io.close(handle);
+      if (handle != null) {
+        try {
+          await _io.close(handle);
+        } on Object {
+          // Closing a consumed descriptor is cleanup, not evidence that bytes
+          // already emitted became invalid. The next access will classify a
+          // real open/read failure if the locator is no longer usable.
+        }
+      }
     }
   }
 
@@ -256,7 +418,14 @@ class CompositeArtifactBytes implements ArtifactBytes {
     int? endExclusive,
   }) async* {
     final target = _target(path);
-    if (target == null) return;
+    if (target == null) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.staleLocator,
+        accessLocator: path,
+        failedOffset: start,
+        bytesEmitted: 0,
+      );
+    }
     yield* target.readChunks(
       path,
       start: start,
@@ -273,6 +442,18 @@ class CompositeArtifactBytes implements ArtifactBytes {
 /// Copies [sourceFile] into the SAF tree at [relativePath]. The provider is
 /// never truncated in place: bytes are committed to a sibling temporary file,
 /// then renamed into place after the source has been fully read.
+ArtifactReadFailureKind _fileReadFailureKind(FileSystemException error) =>
+    _osReadFailureKind(error.osError?.errorCode);
+
+ArtifactReadFailureKind _osReadFailureKind(int? errorCode) {
+  return switch (errorCode) {
+    1 || 5 || 13 => ArtifactReadFailureKind.accessDenied,
+    2 || 3 => ArtifactReadFailureKind.missing,
+    116 => ArtifactReadFailureKind.staleLocator,
+    _ => ArtifactReadFailureKind.ioFailure,
+  };
+}
+
 Future<void> copyFileIntoSaf(
   SafTreeIo io,
   File sourceFile,
