@@ -536,7 +536,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
         directory: safOverride == null ? downloadDirectory : null,
         layoutResolver: sourceDownloadLayoutResolver(_preferences),
         userAgentProvider: () => _preferences.networkUserAgent,
-        transferNet: defaultLocalMediaPipelineFactory.pageDownloadLane,
+        transferNet: defaultDownloadResourceCoordinator.networkLane,
         safTreeIo: safOverride == null
             ? null
             : _SafTreeIoAdapter(SafStore(treeUri: safOverride)),
@@ -1056,7 +1056,7 @@ Future<_AppServices> _openServices(
       directory: safOverride == null ? chapterDownloadDirectory : null,
       layoutResolver: sourceDownloadLayoutResolver(preferences),
       userAgentProvider: () => preferences.networkUserAgent,
-      transferNet: defaultLocalMediaPipelineFactory.pageDownloadLane,
+      transferNet: defaultDownloadResourceCoordinator.networkLane,
       safTreeIo: safOverride == null
           ? null
           : _SafTreeIoAdapter(SafStore(treeUri: safOverride)),
