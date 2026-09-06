@@ -26,11 +26,14 @@ This document is normative for the detailed download/storage behavior. `docs/SPE
 
 ## 3. Storage roots and Android access
 
-1. SAF and direct filesystem paths MAY coexist as access locators for the same physical root only after an implementation-owned proof confirms they address the same directory.
-2. Generic/unproven `content://` providers MUST remain SAF-only.
-3. When direct and SAF locators are both healthy for one root, direct access SHOULD be the preferred data-plane path and SAF SHOULD remain an available fallback.
-4. Switching preferred access for the same physical root MUST NOT copy bytes.
-5. `accessDenied` MUST degrade the affected access locator, not delete replica/artifact metadata.
+1. SAF and direct filesystem paths MAY coexist as access locators for the same physical root only after an implementation-owned bidirectional proof confirms they address the same directory; URI/path resemblance or provider naming MUST NOT be sufficient.
+2. On Android 11+, a Direct candidate used for alias proof MUST require the current `Environment.isExternalStorageManager()` grant. A permission-settings launch is not itself evidence that the grant exists.
+3. A proof canary MUST be created exclusively through Direct access, MUST be read with the exact expected token through SAF before SAF is allowed to mutate it, MUST then be rewritten through SAF and read back through Direct, and MUST be cleaned up. The probe MUST NOT overwrite a pre-existing user file.
+4. Generic/unproven `content://` providers MUST remain SAF-only. The current candidate mapper is intentionally limited to the system ExternalStorageProvider `primary:` tree; removable/UUID volumes remain SAF-only until an explicit volume mapping is implemented.
+5. Successful alias proof MAY be cached only as process-local capability while locator health is not durable. It MUST NOT by itself switch current artifact I/O, change the selected root, or migrate bytes.
+6. When direct and SAF locators are both healthy for one root, direct access SHOULD be the preferred data-plane path and SAF SHOULD remain an available fallback.
+7. Switching preferred access for the same physical root MUST NOT copy bytes.
+8. `accessDenied` MUST degrade the affected access locator, not delete replica/artifact metadata.
 
 ## 4. Cache and export placement
 

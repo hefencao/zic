@@ -99,7 +99,7 @@ SafAccess(treeUri=content://...)
 
 when ZIC has positively proved both locators address the same physical root.
 
-Access failure and replica failure are separate facts. `EACCES` may disable DirectAccess while the SAF locator remains usable; it must not by itself invalidate the artifact.
+Access failure and replica failure are separate facts. `EACCES` may disable DirectAccess while the SAF locator remains usable; it must not by itself invalidate the artifact. Root/Access phase 2 now exposes an ephemeral `StorageRootAccessAliasProof`: Android first requires the real `Environment.isExternalStorageManager()` grant and only derives a Direct candidate for the system ExternalStorageProvider `primary:` tree. Identity is then proven by a random hidden canary created atomically with Direct `O_CREAT|O_EXCL`, read through SAF, rewritten through SAF only after the exact Direct token matches, and read back through Direct before cleanup. URI/path resemblance alone is never proof. Generic providers and removable/UUID volumes remain SAF-only. The proof is started after durable services open, cached only after success for the process lifetime, and is not yet used to switch artifact I/O or migrate bytes.
 
 ### 2.4 ExportLayout
 
@@ -342,7 +342,7 @@ The migration is intentionally incremental and each functional boundary should b
 1. Move shared transfer/read scheduling ownership out of Pipeline factory construction into an App-level resource composition owner without changing scheduling policy.
 2. Make persistent artifact Reader hits truly stream from `ArtifactCacheStreamEntry.open()`; remove the full-page `readPage -> Uint8List` local fast path for remote pages.
 3. Make durable partials adoptable as the active spool and allow ordered local replay + network suffix concurrency.
-4. Introduce StorageRoot + AccessLocator modeling and direct/SAF same-root capability proof.
+4. Introduce StorageRoot + AccessLocator modeling and direct/SAF same-root capability proof. The ephemeral alias-proof seam is implemented; durable root registry/health and data-plane selection remain pending.
 5. Move durable download metadata authority to App-private SQLite while retaining compatibility migration from existing stores.
 6. Split logical artifact binding from physical replica location/health.
 7. Replace persistent N-dependent page numbering with sparse materialized ExportLayout + direct VersionBaseline mappings; historical version edges remain provenance only.

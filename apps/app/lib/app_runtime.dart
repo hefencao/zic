@@ -21,6 +21,7 @@ import 'demo_home.dart';
 import 'home_library_session.dart';
 import 'resettable_single_flight.dart';
 import 'saf_store.dart';
+import 'storage_root_access.dart';
 import 'startup_platform.dart';
 import 'webp_demo.dart';
 
@@ -62,6 +63,16 @@ final Stopwatch _startupClock = Stopwatch()..start();
 void _startupLog(String message) => debugPrint(
       '[zic-startup] elapsedMs=${_startupClock.elapsedMilliseconds} $message',
     );
+
+Future<StorageRootAccessAliasProof?> _probeStorageRootAccessAlias(
+  String treeUri,
+) async {
+  final proof = await probeAndroidStorageRootAccessAlias(treeUri);
+  if (proof != null) {
+    _startupLog('storage-root-access-alias-proven direct=${proof.direct.path}');
+  }
+  return proof;
+}
 
 final class _BootstrapApp extends StatefulWidget {
   const _BootstrapApp({
@@ -571,6 +582,9 @@ final class _BootstrapAppState extends State<_BootstrapApp>
         cacheCoordinator: cacheCoordinator,
         platformEnvironment: platformEnvironment,
         storageRoot: storageRoot,
+        storageRootAccessAliasProof: safOverride == null
+          ? null
+          : _probeStorageRootAccessAlias(safOverride),
       );
       // An optional plugin host open may still be in flight on the replaced
       // instance. Settle it so its controller is not stranded unpublished.
@@ -679,6 +693,7 @@ final class _AppServices {
     this.cacheCoordinator,
     this.platformEnvironment,
     this.storageRoot,
+    this.storageRootAccessAliasProof,
   });
 
   final ImportedLibraryStore? libraryStore;
@@ -688,6 +703,7 @@ final class _AppServices {
   final ResourceCacheCoordinator? cacheCoordinator;
   final PlatformWholeComicQueueEnvironment? platformEnvironment;
   final String? storageRoot;
+  final Future<StorageRootAccessAliasProof?>? storageRootAccessAliasProof;
 
   bool get hasCoreServices =>
       libraryStore != null ||
@@ -1130,6 +1146,9 @@ Future<_AppServices> _openServices(
       cacheCoordinator: cacheCoordinator,
       platformEnvironment: platformEnvironment,
       storageRoot: root,
+      storageRootAccessAliasProof: safOverride == null
+          ? null
+          : _probeStorageRootAccessAlias(safOverride),
     );
     telemetry.servicesReady(startedAtMicros: openedAt);
     _startupLog('durable-services-ready');

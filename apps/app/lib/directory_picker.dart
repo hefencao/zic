@@ -19,11 +19,11 @@ class SafDirectoryUnsupportedError implements Exception {
 
 /// Opens the platform directory picker.
 ///
-/// Android uses a native SAF `ACTION_OPEN_DOCUMENT_TREE` session and —
-/// mirroring Venera — converts the returned tree URI into a plain POSIX path
-/// so the SQLite index and artifact files keep using dart:io. The
-/// persistable URI grant is taken so the location stays valid across
-/// launches.
+/// Android uses a native SAF `ACTION_OPEN_DOCUMENT_TREE` session and keeps the
+/// returned tree URI as the durable access locator. The persistable URI grant
+/// is taken so the location stays valid across launches. A separately proven
+/// Direct alias may exist for the same physical root, but the picker never
+/// converts a tree URI into a POSIX path by assumption.
 ///
 /// The Android host blocks automatic plugin registration, so platform
 /// channels must be attached before first use. Without this, pickers throw a

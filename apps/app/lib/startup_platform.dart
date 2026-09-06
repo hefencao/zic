@@ -93,3 +93,104 @@ Future<bool> openAllFilesAccessSettings() async {
     return false;
   }
 }
+
+/// Returns Android's actual MANAGE_EXTERNAL_STORAGE grant state.
+///
+/// Android versions before API 30 return false because this capability is
+/// specifically the modern All-files-access authority used for SAF/Direct
+/// alias proof.
+Future<bool> allFilesAccessGranted() async {
+  if (kIsWeb || !Platform.isAndroid) return false;
+  try {
+    return await startupPlatformChannel.invokeMethod<bool>(
+          'allFilesAccessGranted',
+        ) ??
+        false;
+  } on MissingPluginException {
+    return false;
+  } on PlatformException {
+    return false;
+  }
+}
+
+/// Returns a Direct-access candidate only for a system primary-storage SAF
+/// tree while All-files-access is currently granted. The path is still only a
+/// candidate; callers must prove SAF↔Direct physical identity before treating
+/// both locators as aliases.
+Future<String?> directPathForSafTree(String treeUri) async {
+  if (kIsWeb || !Platform.isAndroid || treeUri.trim().isEmpty) return null;
+  try {
+    return await startupPlatformChannel.invokeMethod<String>(
+      'directPathForSafTree',
+      <String, Object?>{'treeUri': treeUri},
+    );
+  } on MissingPluginException {
+    return null;
+  } on PlatformException {
+    return null;
+  }
+}
+
+Future<bool> createDirectProbeFileExclusive({
+  required String directPath,
+  required String relativeName,
+  required Uint8List bytes,
+}) async {
+  if (kIsWeb || !Platform.isAndroid) return false;
+  try {
+    return await startupPlatformChannel.invokeMethod<bool>(
+          'createDirectProbeFileExclusive',
+          <String, Object?>{
+            'directPath': directPath,
+            'relativeName': relativeName,
+            'bytes': bytes,
+          },
+        ) ??
+        false;
+  } on MissingPluginException {
+    return false;
+  } on PlatformException {
+    return false;
+  }
+}
+
+Future<Uint8List?> readDirectProbeFile({
+  required String directPath,
+  required String relativeName,
+}) async {
+  if (kIsWeb || !Platform.isAndroid) return null;
+  try {
+    return await startupPlatformChannel.invokeMethod<Uint8List>(
+      'readDirectProbeFile',
+      <String, Object?>{
+        'directPath': directPath,
+        'relativeName': relativeName,
+      },
+    );
+  } on MissingPluginException {
+    return null;
+  } on PlatformException {
+    return null;
+  }
+}
+
+Future<bool> deleteDirectProbeFile({
+  required String directPath,
+  required String relativeName,
+}) async {
+  if (kIsWeb || !Platform.isAndroid) return false;
+  try {
+    return await startupPlatformChannel.invokeMethod<bool>(
+          'deleteDirectProbeFile',
+          <String, Object?>{
+            'directPath': directPath,
+            'relativeName': relativeName,
+          },
+        ) ??
+        false;
+  } on MissingPluginException {
+    return false;
+  } on PlatformException {
+    return false;
+  }
+}

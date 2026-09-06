@@ -4,11 +4,16 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.provider.DocumentsContract
 import android.provider.Settings
+import android.system.Os
+import android.system.OsConstants
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -16,6 +21,7 @@ import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -514,11 +520,126 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun allFilesAccessGranted(): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            Environment.isExternalStorageManager()
+
+    private fun directPathForSafTree(treeUri: String): String? {
+        if (!allFilesAccessGranted()) return null
+        val uri = runCatching { Uri.parse(treeUri) }.getOrNull() ?: return null
+        if (uri.scheme != "content" ||
+            uri.authority != "com.android.externalstorage.documents") {
+            return null
+        }
+        val documentId = runCatching {
+            DocumentsContract.getTreeDocumentId(uri)
+        }.getOrNull() ?: return null
+        val separator = documentId.indexOf(':')
+        if (separator < 0 ||
+            !documentId.substring(0, separator).equals("primary", ignoreCase = true)) {
+            // UUID/removable volumes need StorageVolume-backed mapping in a
+            // later boundary. Never guess /storage/<uuid> here.
+            return null
+        }
+        val relative = documentId.substring(separator + 1)
+        val segments = relative.split('/').filter { it.isNotEmpty() }
+        if (segments.any { it == "." || it == ".." }) return null
+        return runCatching {
+            @Suppress("DEPRECATION")
+            val root = Environment.getExternalStorageDirectory().canonicalFile
+            val candidate = segments.fold(root) { current, segment ->
+                File(current, segment)
+            }.canonicalFile
+            val rootPrefix = root.path + File.separator
+            if (candidate != root && !candidate.path.startsWith(rootPrefix)) {
+                null
+            } else if (!candidate.isDirectory) {
+                null
+            } else {
+                candidate.absolutePath
+            }
+        }.getOrNull()
+    }
+
+    private fun directProbeTarget(call: MethodCall): File? {
+        if (!allFilesAccessGranted()) return null
+        val rootPath = call.argument<String>("directPath")?.trim() ?: return null
+        val relativeName = call.argument<String>("relativeName") ?: return null
+        if (!relativeName.startsWith(".zic-root-proof-") ||
+            relativeName.contains('/') ||
+            relativeName.contains('\\') ||
+            relativeName == "." ||
+            relativeName == "..") {
+            return null
+        }
+        val root = runCatching { File(rootPath).canonicalFile }.getOrNull() ?: return null
+        if (!root.isDirectory) return null
+        val target = runCatching { File(root, relativeName).canonicalFile }.getOrNull() ?: return null
+        return if (target.parentFile == root) target else null
+    }
+
+    private fun createDirectProbeFileExclusive(call: MethodCall): Boolean {
+        val target = directProbeTarget(call) ?: return false
+        val bytes = call.argument<ByteArray>("bytes") ?: return false
+        var created = false
+        return try {
+            val descriptor = Os.open(
+                target.path,
+                OsConstants.O_CREAT or OsConstants.O_EXCL or OsConstants.O_WRONLY,
+                0x180, // 0600
+            )
+            created = true
+            FileOutputStream(descriptor).use { stream ->
+                stream.write(bytes)
+                stream.fd.sync()
+            }
+            true
+        } catch (_: Throwable) {
+            if (created) runCatching { target.delete() }
+            false
+        }
+    }
+
+    private fun readDirectProbeFile(call: MethodCall): ByteArray? {
+        val target = directProbeTarget(call) ?: return null
+        return runCatching {
+            if (!target.isFile || target.length() > 512L) null else target.readBytes()
+        }.getOrNull()
+    }
+
+    private fun deleteDirectProbeFile(call: MethodCall): Boolean {
+        val target = directProbeTarget(call) ?: return false
+        return runCatching { !target.exists() || target.delete() }.getOrDefault(false)
+    }
+
     private fun handleStartup(call: MethodCall, result: MethodChannel.Result) {
         val method = call.method
         if (method == "applicationSupportPath") {
             Log.i(TAG, "startup-applicationSupportPath")
             result.success(applicationContext.filesDir.absolutePath)
+            return
+        }
+        if (method == "allFilesAccessGranted") {
+            result.success(allFilesAccessGranted())
+            return
+        }
+        if (method == "directPathForSafTree") {
+            val treeUri = call.argument<String>("treeUri")?.trim()
+            result.success(
+                if (treeUri.isNullOrEmpty()) null else directPathForSafTree(treeUri),
+            )
+            return
+        }
+        if (method == "createDirectProbeFileExclusive") {
+            result.success(createDirectProbeFileExclusive(call))
+            return
+        }
+        if (method == "readDirectProbeFile") {
+            result.success(readDirectProbeFile(call))
+            return
+        }
+        if (method == "deleteDirectProbeFile") {
+            result.success(deleteDirectProbeFile(call))
             return
         }
         if (method == "pickDownloadDirectory") {

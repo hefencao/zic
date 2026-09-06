@@ -13,3 +13,4 @@ export 'src/home_projection_snapshot.dart';
 export 'src/lazy_imported_library_store.dart';
 export 'src/sqlite_imported_library_store.dart';
 export 'src/sqlite_index.dart';
+export 'src/storage_root_access.dart';

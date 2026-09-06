@@ -11,6 +11,11 @@ import 'package:storage/storage.dart';
 export 'package:storage/storage.dart'
     show
         CacheLayout,
+        DirectStorageAccessLocator,
+        SafStorageAccessLocator,
+        StorageRootAccessAliasProof,
+        StorageRootAliasProbeIo,
+        proveStorageRootAccessAlias,
         ChapterDownloadStoreMoveReport,
         LazyImportedLibraryStore,
         HomeChapterDownloadSummary,
