@@ -58,10 +58,12 @@ This document is normative for the detailed download/storage behavior. `docs/SPE
 ## 7. Read failure feedback
 
 1. Storage read failure MUST be reported with typed cause, access/replica identity, failed offset, and emitted-byte count.
-2. Before bytes are emitted, another proven access locator or replica MAY be tried immediately.
-3. After bytes are emitted, only a proven access path/replica for the same immutable artifact MAY continue from the exact offset without returning to TransferCoordinator.
-4. Origin/network fallback after emitted local bytes MUST re-enter DownloadSession/DownloadJob resume continuity logic.
-5. Normal sealed reads MUST NOT compute whole-file CRC32 on every Reader access. Length/access metadata is the normal hot-path check; explicit repair/audit and materialization/seal boundaries own full checksum work.
+2. Before bytes are emitted, another proven access locator or replica MAY be tried immediately. A cache/repository failure that occurs before any body is exposed MAY fall back to origin in the same transport open.
+3. After bytes are emitted, only a proven access path/replica for the same immutable artifact MAY continue from the exact offset without returning to TransferCoordinator. ArtifactCacheTransport MUST NOT splice an origin body behind that committed local prefix.
+4. Origin/network fallback after emitted local bytes MUST re-enter DownloadSession/DownloadJob on a later Transfer attempt. The failing persistent read MAY be quarantined for the current transport lifetime so that retry selects origin rather than reopening the same replica.
+5. `missing`, `staleLocator`, `shortRead`, and `lengthChanged` MUST invalidate the affected durable binding. `accessDenied` and generic `ioFailure` MUST NOT by themselves delete the binding or physical artifact.
+6. Resetting an ephemeral resident artifact-cache projection after body failure MUST NOT delete the external durable cache binding.
+7. Normal sealed reads MUST NOT compute whole-file CRC32 on every Reader access. Length/access metadata is the normal hot-path check; explicit repair/audit and materialization/seal boundaries own full checksum work.
 
 ## 8. Cross-consumer resource scheduling
 

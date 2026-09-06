@@ -73,6 +73,55 @@ void main() {
     expect(await File(session.artifact.finalPath).readAsBytes(), bytes);
   });
 
+  test('artifact-cache resident failure resets transfer without deleting cache binding',
+      () async {
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final session = DownloadSession(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'resident-failure',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://example.test/resident-failure.webp'),
+      ),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/resident-failure.webp',
+        finalPath: '${temp.path}/cache/resident-failure.webp',
+      ),
+      clock: FakeMonoClock(),
+      index: index,
+    );
+    final durableBinding = CacheRec(
+      id: session.id,
+      state: CacheState.ready,
+      path: '/external/durable/page.webp',
+      bytes: 6,
+      checksum: '12345678',
+      createdUs: 1,
+      touchedUs: 1,
+      artifactId: 'external-replica',
+      storageRootId: 'external-root',
+    );
+    await index.put(durableBinding);
+
+    await expectLater(
+      DownloadJob(
+        transport: _FailingDurableArtifactTransport(),
+        session: session,
+      ).run(),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(session.state, DownloadState.idle);
+    expect(session.residentBodyBacked, isFalse);
+    expect(await index.get(session.id.key), durableBinding);
+  });
+
   test('resumes a durable partial with matching validators', () async {
     final bytes = <int>[
       ...'RIFF'.codeUnits,
@@ -1418,6 +1467,31 @@ final class _ConsumerPacedBodyTransport implements Transport {
       rangeSupported: rangeSupported,
       flowControl: ByteResponseFlowControl.consumerPacing,
       validators: const Validators(etag: 'pseudo-flow-v1'),
+    );
+  }
+}
+
+final class _FailingDurableArtifactTransport implements Transport {
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    Stream<List<int>> body() async* {
+      yield const <int>[1, 2, 3];
+      throw StateError('durable artifact body failed');
+    }
+
+    return ByteResponse(
+      bytes: body(),
+      statusCode: HttpStatus.ok,
+      rangeStart: 0,
+      totalLength: 6,
+      rangeSupported: true,
+      disposition: ByteResponseDisposition.durableImmutable,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      validators: const Validators(etag: 'artifact-cache-failure-v1'),
     );
   }
 }

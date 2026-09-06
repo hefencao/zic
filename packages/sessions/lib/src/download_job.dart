@@ -568,7 +568,11 @@ final class DownloadJob {
           responseLifetime.discard,
         );
         if (session.isCurrentRun(runLease)) {
-          await session.reset();
+          // The resident body came from an external durable artifact-cache
+          // authority. Reset only this ephemeral transfer projection; deleting
+          // the session cache record here could erase a persistent replica
+          // binding whose failure is merely access-related and recoverable.
+          await session.reset(removeCacheRecord: false);
         }
         rethrow;
       } finally {

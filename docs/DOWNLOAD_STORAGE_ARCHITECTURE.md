@@ -292,12 +292,11 @@ staleLocator
 shortRead
 lengthChanged
 ioFailure
-integrityFailure
 ```
 
 The report includes replica/access identity, failed offset, and number of bytes already emitted.
 
-Before any bytes are emitted, another proven access locator/replica may be tried directly.
+Before any bytes are emitted, another proven access locator/replica may be tried directly. If repository/cache lookup itself fails before a response body is exposed, ArtifactCacheTransport may fall back to origin in that same open operation.
 
 After bytes are emitted:
 
@@ -305,7 +304,7 @@ After bytes are emitted:
 - another sealed replica of the same artifact may continue at the exact offset;
 - origin/network continuation must return to TransferCoordinator resume/continuity logic rather than being concatenated inside a Loader/UI adapter.
 
-Permission/access failure never alone invalidates the artifact. Physical absence or length mismatch invalidates the affected replica. Full checksum repair is explicit cold-path work, not a normal Reader hot-read requirement.
+Permission/access failure never alone invalidates the artifact. `missing`, `staleLocator`, `shortRead`, and `lengthChanged` invalidate the affected durable binding; `accessDenied` and generic `ioFailure` preserve it for later access recovery. Once a persistent body fails after exposure, the current ArtifactCacheTransport quarantines that logical read path for its remaining lifetime so the next Transfer attempt goes to origin instead of reopening the same failed replica. This quarantine never concatenates the origin onto the already-emitted local prefix. Full checksum repair is explicit cold-path work, not a normal Reader hot-read requirement.
 
 ## 9. Reader and manual-download resource sharing
 

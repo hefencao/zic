@@ -666,6 +666,93 @@ void main() {
     );
   });
 
+  test('typed cache preflight failure falls back before local bytes are exposed', () async {
+    final uri = Uri.parse('https://example.invalid/typed-preflight.bin');
+    final id = _downloadId(uri, 'page-typed-preflight');
+    final fallback = _RecordingTransport(Uint8List.fromList(<int>[7, 8]));
+    final transport = ArtifactCacheTransport(
+      cache: ArtifactCacheManager(
+        backend: _TypedPreflightFailureArtifactStore(id),
+      ),
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+    );
+
+    expect(await _collect(await transport.open(uri)), <int>[7, 8]);
+    expect(fallback.opens, 1);
+  });
+
+  test('mid-stream typed cache failure never splices origin into committed prefix',
+      () async {
+    final uri = Uri.parse('https://example.invalid/typed-midstream.bin');
+    final id = _downloadId(uri, 'page-typed-midstream');
+    final cache = _TypedBodyFailureArtifactStore(
+      id,
+      kind: ArtifactReadFailureKind.shortRead,
+    );
+    final fallback = _RecordingTransport(Uint8List.fromList(<int>[9, 10, 11]));
+    final transport = ArtifactCacheTransport(
+      cache: ArtifactCacheManager(backend: cache),
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+    );
+
+    final first = await transport.open(uri);
+    final delivered = <int>[];
+    Object? failure;
+    try {
+      await for (final chunk in first.bytes) {
+        delivered.addAll(chunk);
+      }
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(delivered, <int>[1, 2, 3]);
+    expect(failure, isA<ArtifactReadFailure>());
+    expect(fallback.opens, 0);
+    await Future<void>.delayed(Duration.zero);
+    expect(cache.invalidations, 1);
+
+    expect(await _collect(await transport.open(uri)), <int>[9, 10, 11]);
+    expect(fallback.opens, 1);
+    expect(cache.streamOpens, 1);
+  });
+
+  test('access denied cache failure is bypassed without invalidating durable binding',
+      () async {
+    final uri = Uri.parse('https://example.invalid/access-denied.bin');
+    final id = _downloadId(uri, 'page-access-denied');
+    final cache = _TypedBodyFailureArtifactStore(
+      id,
+      kind: ArtifactReadFailureKind.accessDenied,
+      emitPrefix: false,
+    );
+    final fallback = _RecordingTransport(Uint8List.fromList(<int>[4, 5]));
+    final transport = ArtifactCacheTransport(
+      cache: ArtifactCacheManager(backend: cache),
+      identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+      fallbackFor: (_) => fallback,
+    );
+
+    await expectLater(
+      _collect(await transport.open(uri)),
+      throwsA(
+        isA<ArtifactReadFailure>().having(
+          (error) => error.kind,
+          'kind',
+          ArtifactReadFailureKind.accessDenied,
+        ),
+      ),
+    );
+    expect(cache.invalidations, 0);
+    expect(fallback.opens, 0);
+
+    expect(await _collect(await transport.open(uri)), <int>[4, 5]);
+    expect(cache.invalidations, 0);
+    expect(fallback.opens, 1);
+  });
+
   test('completed immutable local origin is hot across Reader sessions without durable provenance',
       () async {
     final uri = Uri.parse('content://reader/page-restore.webp');
@@ -932,6 +1019,84 @@ final class _CancellableStreamingArtifactStore
 
   @override
   Future<void> invalidateArtifact(DownloadId id) async {}
+}
+
+final class _TypedPreflightFailureArtifactStore
+    implements ArtifactCacheBackend {
+  _TypedPreflightFailureArtifactStore(this.id);
+
+  final DownloadId id;
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
+    if (id != this.id) return null;
+    throw const ArtifactReadFailure(
+      kind: ArtifactReadFailureKind.missing,
+      accessLocator: '/missing/page.webp',
+      failedOffset: 0,
+      bytesEmitted: 0,
+    );
+  }
+
+  @override
+  Future<void> storePromotedArtifact({
+    required DownloadId id,
+    required Uint8List bytes,
+  }) async {}
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {}
+}
+
+final class _TypedBodyFailureArtifactStore implements ArtifactCacheBackend {
+  _TypedBodyFailureArtifactStore(
+    this.id, {
+    required this.kind,
+    this.emitPrefix = true,
+  });
+
+  final DownloadId id;
+  final ArtifactReadFailureKind kind;
+  final bool emitPrefix;
+  int streamOpens = 0;
+  int invalidations = 0;
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
+    if (id != this.id) return null;
+    streamOpens++;
+    return ArtifactCacheStreamEntry(
+      length: 6,
+      open: ({required int start, int? endExclusive}) async* {
+        var emitted = 0;
+        if (emitPrefix) {
+          const prefix = <int>[1, 2, 3];
+          emitted = prefix.length;
+          yield Uint8List.fromList(prefix);
+        }
+        throw ArtifactReadFailure(
+          kind: kind,
+          accessLocator: '/fixture/page.webp',
+          replicaId: 'fixture-replica',
+          failedOffset: start + emitted,
+          bytesEmitted: emitted,
+          expectedLength: 6,
+          observedLength: emitted,
+        );
+      },
+    );
+  }
+
+  @override
+  Future<void> storePromotedArtifact({
+    required DownloadId id,
+    required Uint8List bytes,
+  }) async {}
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {
+    invalidations++;
+  }
 }
 
 final class _ThrowingArtifactStore implements ArtifactCacheBackend {

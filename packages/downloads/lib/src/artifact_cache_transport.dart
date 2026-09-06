@@ -5,6 +5,7 @@ import 'package:domain/domain.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
+import 'artifact_bytes.dart';
 import 'artifact_cache_manager.dart';
 import 'artifact_cache_read_scheduler.dart';
 import 'artifact_cache_store.dart';
@@ -47,6 +48,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
   final TraceSink _traceSink;
   final String _sessionId;
   final int Function()? _demandRevision;
+  final Set<DownloadId> _persistentReadBypass = <DownloadId>{};
 
   @override
   Future<ByteResponse> open(
@@ -70,7 +72,9 @@ final class ArtifactCacheTransport implements ControlledTransport {
     final verifiedEquivalentCandidates = id == null
         ? 0
         : _cache.directEquivalents(id).length;
-    if (id != null) {
+    final persistentReadBypassed =
+        id != null && _persistentReadBypass.contains(id);
+    if (id != null && !persistentReadBypassed) {
       final readStarted = _clock?.nowMicros();
       try {
         var lookup = await _lookupCache(id, control);
@@ -170,8 +174,25 @@ final class ArtifactCacheTransport implements ControlledTransport {
               priority: acquiredPriority,
               details: details,
             );
+            final storageId = lookup.storageId;
+            final observedResponse = lookup.tier == ArtifactCacheTier.persistent
+                ? _observePersistentReadFailure(
+                    response,
+                    onFailure: (error, _) {
+                      if (error is! ArtifactReadFailure) return;
+                      _persistentReadBypass.add(id);
+                      if (_shouldInvalidateFailedReplica(error.kind)) {
+                        unawaited(
+                          _cache.invalidate(storageId).catchError(
+                                (Object _, StackTrace _) {},
+                              ),
+                        );
+                      }
+                    },
+                  )
+                : response;
             return _traceResponse(
-              response,
+              observedResponse,
               source: source,
               sourceClass: 'persistent-artifact',
               id: id,
@@ -257,6 +278,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
         'controlledFallback': controlledFallback,
         if (id != null)
           'verifiedEquivalentCandidates': verifiedEquivalentCandidates,
+        if (persistentReadBypassed) 'persistentReadBypassed': true,
         ...response.diagnostics,
       },
     );
@@ -488,6 +510,46 @@ final class ArtifactCacheTransport implements ControlledTransport {
       readDetails: () => details,
     );
   }
+
+  bool _shouldInvalidateFailedReplica(ArtifactReadFailureKind kind) =>
+      kind == ArtifactReadFailureKind.missing ||
+      kind == ArtifactReadFailureKind.staleLocator ||
+      kind == ArtifactReadFailureKind.shortRead ||
+      kind == ArtifactReadFailureKind.lengthChanged;
+
+  ByteResponse _observePersistentReadFailure(
+    ByteResponse response, {
+    required void Function(Object error, int bytesEmitted) onFailure,
+  }) {
+    var bytesEmitted = 0;
+    Stream<List<int>> body() async* {
+      try {
+        await for (final chunk in response.bytes) {
+          bytesEmitted += chunk.length;
+          yield chunk;
+        }
+      } on Object catch (error) {
+        onFailure(error, bytesEmitted);
+        rethrow;
+      }
+    }
+
+    return ByteResponse(
+      bytes: body(),
+      statusCode: response.statusCode,
+      rangeStart: response.rangeStart,
+      totalLength: response.totalLength,
+      validators: response.validators,
+      rangeSupported: response.rangeSupported,
+      disposition: response.disposition,
+      bodyAuthority: response.bodyAuthority,
+      flowControl: response.flowControl,
+      diagnostics: response.diagnostics,
+      readDiagnostics: response.readDiagnostics,
+      onDiscardControlled: response.discard,
+    );
+  }
+
   void _recordForegroundReadFailure({
     required DownloadId id,
     required Uri uri,
