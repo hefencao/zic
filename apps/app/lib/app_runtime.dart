@@ -537,6 +537,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
         layoutResolver: sourceDownloadLayoutResolver(_preferences),
         userAgentProvider: () => _preferences.networkUserAgent,
         transferNet: defaultDownloadResourceCoordinator.networkLane,
+        localReadScheduler: defaultDownloadResourceCoordinator.localReadScheduler,
         safTreeIo: safOverride == null
             ? null
             : _SafTreeIoAdapter(SafStore(treeUri: safOverride)),
@@ -1057,6 +1058,7 @@ Future<_AppServices> _openServices(
       layoutResolver: sourceDownloadLayoutResolver(preferences),
       userAgentProvider: () => preferences.networkUserAgent,
       transferNet: defaultDownloadResourceCoordinator.networkLane,
+      localReadScheduler: defaultDownloadResourceCoordinator.localReadScheduler,
       safTreeIo: safOverride == null
           ? null
           : _SafTreeIoAdapter(SafStore(treeUri: safOverride)),

@@ -11,6 +11,7 @@ final defaultDownloadResourceCoordinator = DownloadResourceCoordinator();
 
 final defaultLocalMediaPipelineFactory = PipelineReaderSessionFactory(
   mediaRuntimeFactory: _defaultNativeMediaRuntimeFactory,
+  artifactReadScheduler: defaultDownloadResourceCoordinator.localReadScheduler,
   pageDownloadLane: defaultDownloadResourceCoordinator.networkLane,
 );
 

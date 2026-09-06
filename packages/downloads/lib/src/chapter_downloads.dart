@@ -14,6 +14,7 @@ import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
 import 'artifact_cache_manager.dart';
+import 'artifact_cache_read_scheduler.dart';
 import 'artifact_cache_reuse.dart';
 import 'artifact_cache_store.dart';
 import 'comic_conflict_inspector.dart';
@@ -4639,6 +4640,7 @@ final class PersistentDownloadComposition
     CacheLayout? Function(DownloadId id)? layoutResolver,
     String Function()? userAgentProvider,
     NetLane? transferNet,
+    ArtifactCacheReadScheduler? localReadScheduler,
     SafTreeIo? safTreeIo,
     String? safTreeUri,
     Duration pageStallTimeout =
@@ -4650,6 +4652,7 @@ final class PersistentDownloadComposition
       directory: directory,
       layoutResolver: layoutResolver,
       transferNet: transferNet,
+      localReadScheduler: localReadScheduler,
       safTreeIo: safTreeIo,
       safTreeUri: safTreeUri,
       stallTimeout: pageStallTimeout,
@@ -4708,6 +4711,7 @@ Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
   String? directory,
   CacheLayout? Function(DownloadId id)? layoutResolver,
   NetLane? transferNet,
+  ArtifactCacheReadScheduler? localReadScheduler,
   SafTreeIo? safTreeIo,
   String? safTreeUri,
   Duration stallTimeout = PersistentChapterDownloadService.defaultPageStallTimeout,
@@ -4735,6 +4739,7 @@ Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
           highPriorityThreshold: 1000,
           preemptionThreshold: 40,
         ),
+    localReadScheduler: localReadScheduler,
     readStallTimeout: stallTimeout,
   );
   return (
@@ -4790,6 +4795,7 @@ final class PersistentChapterDownloadService
     CacheLayout? Function(DownloadId id)? layoutResolver,
     String Function()? userAgentProvider,
     NetLane? transferNet,
+    ArtifactCacheReadScheduler? localReadScheduler,
     SafTreeIo? safTreeIo,
     String? safTreeUri,
     Duration pageStallTimeout = defaultPageStallTimeout,
@@ -4800,6 +4806,7 @@ final class PersistentChapterDownloadService
       directory: directory,
       layoutResolver: layoutResolver,
       transferNet: transferNet,
+      localReadScheduler: localReadScheduler,
       safTreeIo: safTreeIo,
       safTreeUri: safTreeUri,
       stallTimeout: pageStallTimeout,

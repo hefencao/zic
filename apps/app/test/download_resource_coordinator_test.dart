@@ -11,5 +11,12 @@ void main() {
       isTrue,
     );
     expect(defaultDownloadResourceCoordinator.networkLane.maxActive, 5);
+    expect(
+      identical(
+        defaultLocalMediaPipelineFactory.artifactReadScheduler,
+        defaultDownloadResourceCoordinator.localReadScheduler,
+      ),
+      isTrue,
+    );
   });
 }

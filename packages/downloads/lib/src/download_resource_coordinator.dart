@@ -1,14 +1,19 @@
 import 'package:sessions/sessions.dart';
 
+import 'artifact_cache_read_scheduler.dart';
+
 /// Application-composition owner for cross-consumer download resources.
 ///
-/// Phase one owns the process-wide network lane used by both Reader transfer
-/// demands and explicit download commands. Local-read/write/migration capacity
-/// will move behind this boundary in later storage refactor phases; they remain
-/// separate physical resources and must not be folded into this lane.
+/// Owns the process-wide network lane and persistent-artifact local-read lane
+/// used by both Reader transfer demands and explicit download commands. Storage
+/// write/migration capacity will move behind this boundary in later refactor
+/// phases; separate physical resources must not be folded into one semaphore.
 final class DownloadResourceCoordinator {
-  DownloadResourceCoordinator({NetLane? networkLane})
-      : networkLane = networkLane ??
+  DownloadResourceCoordinator({
+    NetLane? networkLane,
+    ArtifactCacheReadScheduler? localReadScheduler,
+  })  : localReadScheduler = localReadScheduler ?? ArtifactCacheReadScheduler(),
+        networkLane = networkLane ??
             NetLane(
               maxActive: 5,
               reservedHighPrioritySlots: 1,
@@ -18,4 +23,5 @@ final class DownloadResourceCoordinator {
             );
 
   final NetLane networkLane;
+  final ArtifactCacheReadScheduler localReadScheduler;
 }
