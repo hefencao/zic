@@ -811,6 +811,10 @@ final class DownloadTransferOwner {
     }
     final taskKey = _networkTaskKeys[id];
     if (taskKey != null) {
+      final wasInactive = net.demandedOf(taskKey) == false;
+      final inactiveDiagnostics = wasInactive
+          ? _netTaskDiagnosticPayload(taskKey)
+          : const <String, Object?>{};
       net.updateDemanded(taskKey, true);
       _migrateDownloadPriority(
         id,
@@ -818,6 +822,19 @@ final class DownloadTransferOwner {
         session.effectivePriority,
         reason: session.demandCount > 1 ? 'consumer-aggregate' : 'demand-role',
       );
+      if (wasInactive) {
+        _record(
+          _preferredClaim(id),
+          kind: TraceEventKind.policyDecision,
+          id: id,
+          payload: <String, Object?>{
+            'stage': 'inactive-retention-reattached',
+            'committedLength': session.committedLength,
+            'physicalOwner': true,
+            ...inactiveDiagnostics,
+          },
+        );
+      }
     }
   }
 
@@ -868,6 +885,19 @@ final class DownloadTransferOwner {
         taskKey,
         0,
         reason: 'inactive-physical-retention',
+      );
+      _record(
+        claim,
+        sessionId: sessionId,
+        kind: TraceEventKind.policyDecision,
+        id: id,
+        payload: <String, Object?>{
+          'stage': 'inactive-retention-enter',
+          'committedLength': session?.committedLength ?? 0,
+          if (session != null) 'partialState': session.state.name,
+          'physicalOwner': true,
+          ..._netTaskDiagnosticPayload(taskKey),
+        },
       );
     } else {
       if (taskKey != null) {
@@ -1717,6 +1747,7 @@ final class DownloadTransferOwner {
                   kind: TraceEventKind.downloadPreempted,
                   id: id,
                   payload: <String, Object?>{
+                    ..._netTaskDiagnosticPayload(_networkTaskKeys[id]),
                     'incomingPriority': preemption.incomingPriority,
                     'basePriority': preemption.basePriority,
                     'retentionPriority': preemption.retentionPriority,
@@ -1739,6 +1770,7 @@ final class DownloadTransferOwner {
                     kind: TraceEventKind.downloadEvicted,
                     id: id,
                     payload: <String, Object?>{
+                      ..._netTaskDiagnosticPayload(_networkTaskKeys[id]),
                       'basePriority': eviction.basePriority,
                       'retentionPriority': eviction.retentionPriority,
                       'retentionBonus': eviction.retentionBonus,
@@ -2036,6 +2068,33 @@ final class DownloadTransferOwner {
     );
   }
 
+  Map<String, Object?> _netTaskDiagnosticPayload(String? taskKey) {
+    if (taskKey == null) return const <String, Object?>{};
+    final snapshot = net.diagnosticSnapshotOf(taskKey);
+    if (snapshot == null) return const <String, Object?>{};
+    final phase = snapshot.responseOpening
+        ? 'opening'
+        : snapshot.responseOpened
+            ? snapshot.responseReadPermitHeld
+                ? 'body'
+                : snapshot.responseRetainedWhilePermitReleased
+                    ? 'parked'
+                    : 'body-released'
+            : 'setup';
+    return <String, Object?>{
+      'networkPhase': phase,
+      'taskActiveMicros': snapshot.activeElapsedMicros,
+      'responseOpeningMicros': snapshot.responseOpeningElapsedMicros,
+      'inactiveMicros': snapshot.inactiveElapsedMicros,
+      'responseOpened': snapshot.responseOpened,
+      'responseReadPermitHeld': snapshot.responseReadPermitHeld,
+      'transportLeaseHeld': snapshot.transportLeaseHeld,
+      'responseRetained': snapshot.responseRetainedWhilePermitReleased,
+      'restartCostElapsedMicros': snapshot.restartCostElapsedMicros,
+      'restartCostBytes': snapshot.restartCostBytes,
+    };
+  }
+
   String? _expectedChecksum(DownloadId id) {
     String? checksum;
     for (final claim in _claims[id]?.values ?? const <_TransferClaim>[]) {
@@ -2130,6 +2189,7 @@ final class DownloadTransferOwner {
         kind: TraceEventKind.downloadPreempted,
         id: id,
         payload: <String, Object?>{
+          ..._netTaskDiagnosticPayload(_networkTaskKeys[id]),
           'incomingPriority': preemption.incomingPriority,
           'basePriority': preemption.basePriority,
           'retentionPriority': preemption.retentionPriority,
@@ -2151,6 +2211,7 @@ final class DownloadTransferOwner {
       kind: TraceEventKind.downloadEvicted,
       id: id,
       payload: <String, Object?>{
+        ..._netTaskDiagnosticPayload(_networkTaskKeys[id]),
         'basePriority': retention.basePriority,
         'retentionPriority': retention.retentionPriority,
         'retentionBonus': retention.retentionBonus,

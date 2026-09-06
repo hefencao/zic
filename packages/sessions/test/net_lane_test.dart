@@ -1528,6 +1528,68 @@ void _dev123NetLaneTests() {
   });
 
 
+  test('diagnostic snapshot observes inactive opening without changing policy',
+      () async {
+    final clock = FakeMonoClock();
+    final lane = NetLane(maxActive: 1, clock: clock);
+    final started = Completer<CancelToken>();
+    final release = Completer<void>();
+
+    lane.submitRanked(
+      key: 'diagnostic-opening',
+      priority: 820,
+      bucket: 'remote:a',
+      bucketLimit: 1,
+      task: (token) async {
+        started.complete(token);
+        await release.future;
+      },
+    );
+    final token = await started.future;
+    var snapshot = lane.diagnosticSnapshotOf('diagnostic-opening')!;
+    expect(snapshot.demanded, isTrue);
+    expect(snapshot.responseOpening, isFalse);
+    expect(snapshot.responseOpened, isFalse);
+    expect(snapshot.activeElapsedMicros, 0);
+
+    token.markResponseOpening();
+    clock.advance(const Duration(milliseconds: 400));
+    snapshot = lane.diagnosticSnapshotOf('diagnostic-opening')!;
+    expect(snapshot.responseOpening, isTrue);
+    expect(snapshot.responseOpeningElapsedMicros, 400000);
+    expect(snapshot.restartCostElapsedMicros, 0);
+
+    lane.updateDemanded('diagnostic-opening', false);
+    clock.advance(const Duration(milliseconds: 1500));
+    snapshot = lane.diagnosticSnapshotOf('diagnostic-opening')!;
+    expect(snapshot.demanded, isFalse);
+    expect(snapshot.responseOpening, isTrue);
+    expect(snapshot.responseOpened, isFalse);
+    expect(snapshot.activeElapsedMicros, 1900000);
+    expect(snapshot.responseOpeningElapsedMicros, 1900000);
+    expect(snapshot.inactiveElapsedMicros, 1500000);
+    expect(lane.priorityOf('diagnostic-opening'), 820,
+        reason: 'diagnostics must not mutate scheduler rank');
+
+    token.markResponseOpened();
+    token.releaseResponseReadPermit();
+    snapshot = lane.diagnosticSnapshotOf('diagnostic-opening')!;
+    expect(snapshot.responseOpening, isFalse);
+    expect(snapshot.responseOpened, isTrue);
+    expect(snapshot.responseReadPermitHeld, isFalse);
+    expect(snapshot.responseRetainedWhilePermitReleased, isTrue);
+    expect(snapshot.responseOpeningElapsedMicros, 1900000);
+
+    lane.updateDemanded('diagnostic-opening', true);
+    snapshot = lane.diagnosticSnapshotOf('diagnostic-opening')!;
+    expect(snapshot.demanded, isTrue);
+    expect(snapshot.inactiveElapsedMicros, 0);
+
+    release.complete();
+    await lane.idle();
+    expect(lane.diagnosticSnapshotOf('diagnostic-opening'), isNull);
+  });
+
   test('restart-cost retention changes victim choice but not admission rank',
       () async {
     final clock = FakeMonoClock();

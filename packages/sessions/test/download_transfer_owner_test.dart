@@ -999,10 +999,11 @@ void main() {
 
     final id = _id('turn-out-back');
     final transport = _BlockedControlledTransport();
+    final trace = MemoryTraceSink();
     final reader = owner.attachConsumer(
       scopeId: 'reader-turn-out-back',
       transportFor: (_) => transport,
-      traceSink: const NoopTraceSink(),
+      traceSink: trace,
     );
 
     reader.replaceDemands('reader-turn-out-back', 1, _desired(id, priority: 820));
@@ -1020,6 +1021,14 @@ void main() {
     expect(net.isActive(firstKey), isTrue);
     expect(net.demandedOf(firstKey), isFalse);
     expect(transport.cancelled.isCompleted, isFalse);
+    final retentionEntered = trace.events.lastWhere(
+      (event) =>
+          event.kind == TraceEventKind.policyDecision &&
+          event.payload['stage'] == 'inactive-retention-enter',
+    );
+    expect(retentionEntered.payload['networkPhase'], 'opening');
+    expect(retentionEntered.payload['responseOpened'], isFalse);
+    expect(retentionEntered.payload['transportLeaseHeld'], isTrue);
 
     reader.replaceDemands('reader-turn-out-back', 3, _desired(id, priority: 800));
     expect(owner.taskKeyFor(id), firstKey);
@@ -1027,6 +1036,14 @@ void main() {
     expect(net.demandedOf(firstKey), isTrue);
     expect(net.priorityOf(firstKey), 800);
     expect(transport.cancelled.isCompleted, isFalse);
+    final retentionReattached = trace.events.lastWhere(
+      (event) =>
+          event.kind == TraceEventKind.policyDecision &&
+          event.payload['stage'] == 'inactive-retention-reattached',
+    );
+    expect(retentionReattached.payload['networkPhase'], 'opening');
+    expect(retentionReattached.payload['responseOpened'], isFalse);
+    expect(retentionReattached.payload['inactiveMicros'], isA<int>());
 
     // Disposal is the explicit lifetime boundary for this consumer-bound
     // transport; ordinary working-set churn above never cancelled it.

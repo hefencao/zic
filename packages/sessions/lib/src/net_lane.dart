@@ -29,7 +29,9 @@ final class CancelToken
         _markResponseOpening = markResponseOpening,
         _markResponseOpened = markResponseOpened,
         _clock = clock,
-        _activatedAtMicros = clock.nowMicros();
+        _activatedAtMicros = clock.nowMicros() {
+    if (!demanded) _inactiveSinceMicros = _activatedAtMicros;
+  }
 
   final MonoClock _clock;
   final int _activatedAtMicros;
@@ -47,6 +49,9 @@ final class CancelToken
   Completer<void>? _openSelfBounded;
   int? _restartCostStartedAtMicros;
   int _restartCostBytes = 0;
+  int? _responseOpeningStartedAtMicros;
+  int? _responseOpenedAtMicros;
+  int? _inactiveSinceMicros;
   TaskPreemptionSnapshot? _preemptionSnapshot;
   TaskRetentionEvictionSnapshot? _retentionEvictionSnapshot;
   final Completer<void> _cancelledSignal = Completer<void>();
@@ -77,6 +82,7 @@ final class CancelToken
 
   void updateDemanded(bool demanded) {
     if (_demanded == demanded) return;
+    _inactiveSinceMicros = demanded ? null : _clock.nowMicros();
     _demanded = demanded;
     _wakeFlowWaiters();
     _wakeDemandWaiters();
@@ -120,6 +126,8 @@ final class CancelToken
   /// inactive task in this phase can be cancelled safely: it does not yet own
   /// a response body that a caller may be actively reading.
   void markResponseOpening() {
+    _responseOpeningStartedAtMicros = _clock.nowMicros();
+    _responseOpenedAtMicros = null;
     _openSelfBounded = Completer<void>();
     _markResponseOpening?.call();
   }
@@ -137,6 +145,7 @@ final class CancelToken
   /// Transport-pressure reclamation leaves this body-read phase alone until
   /// the task reaches an explicit retained-response parking boundary.
   void markResponseOpened() {
+    _responseOpenedAtMicros = _clock.nowMicros();
     _markResponseOpened?.call();
   }
 
@@ -161,6 +170,26 @@ final class CancelToken
     _demandChanged = null;
     if (wake != null && !wake.isCompleted) wake.complete();
   }
+
+  int get activeElapsedMicros =>
+      (_clock.nowMicros() - _activatedAtMicros).clamp(0, 1 << 62).toInt();
+
+  int get responseOpeningElapsedMicros {
+    final startedAt = _responseOpeningStartedAtMicros;
+    if (startedAt == null) return 0;
+    final endedAt = _responseOpenedAtMicros ?? _clock.nowMicros();
+    return (endedAt - startedAt).clamp(0, 1 << 62).toInt();
+  }
+
+  int get inactiveElapsedMicros {
+    final startedAt = _inactiveSinceMicros;
+    if (startedAt == null) return 0;
+    return (_clock.nowMicros() - startedAt).clamp(0, 1 << 62).toInt();
+  }
+
+  bool get responseOpening =>
+      _responseOpeningStartedAtMicros != null && _responseOpenedAtMicros == null;
+  bool get responseOpened => _responseOpenedAtMicros != null;
 
   int get restartCostElapsedMicros {
     final startedAt = _restartCostStartedAtMicros;
@@ -275,6 +304,38 @@ final class TaskRetentionEvictionSnapshot {
   final int restartCostElapsedMicros;
   final int restartCostBytes;
   final String reason;
+}
+
+/// Read-only facts about one active network task.
+///
+/// This snapshot exists for diagnostics and trace attribution only. Scheduling,
+/// retry and retention policy must continue to use NetLane-owned state directly.
+final class NetTaskDiagnosticSnapshot {
+  const NetTaskDiagnosticSnapshot({
+    required this.demanded,
+    required this.transportLeaseHeld,
+    required this.responseReadPermitHeld,
+    required this.responseRetainedWhilePermitReleased,
+    required this.responseOpening,
+    required this.responseOpened,
+    required this.activeElapsedMicros,
+    required this.responseOpeningElapsedMicros,
+    required this.inactiveElapsedMicros,
+    required this.restartCostElapsedMicros,
+    required this.restartCostBytes,
+  });
+
+  final bool demanded;
+  final bool transportLeaseHeld;
+  final bool responseReadPermitHeld;
+  final bool responseRetainedWhilePermitReleased;
+  final bool responseOpening;
+  final bool responseOpened;
+  final int activeElapsedMicros;
+  final int responseOpeningElapsedMicros;
+  final int inactiveElapsedMicros;
+  final int restartCostElapsedMicros;
+  final int restartCostBytes;
 }
 
 /// Scheduler-owned effective rank for one active network task.
@@ -424,6 +485,8 @@ final class NetLane implements TaskLane {
       _core.responseReadPermitHeldOf(key);
   bool? transportLeaseHeldOf(String key) =>
       _core.transportLeaseHeldOf(key);
+  NetTaskDiagnosticSnapshot? diagnosticSnapshotOf(String key) =>
+      _core.diagnosticSnapshotOf(key);
 
   @override
   bool replace({required String key, required int priority, required LaneTask task}) =>
@@ -830,6 +893,24 @@ final class _Lane {
       _active[key]?.responseReadPermitHeld;
   bool? transportLeaseHeldOf(String key) =>
       _active[key]?.transportLeaseHeld;
+  NetTaskDiagnosticSnapshot? diagnosticSnapshotOf(String key) {
+    final task = _active[key];
+    if (task == null) return null;
+    return NetTaskDiagnosticSnapshot(
+      demanded: task.demanded,
+      transportLeaseHeld: task.transportLeaseHeld,
+      responseReadPermitHeld: task.responseReadPermitHeld,
+      responseRetainedWhilePermitReleased:
+          task.responseRetainedWhilePermitReleased,
+      responseOpening: task.token.responseOpening,
+      responseOpened: task.token.responseOpened,
+      activeElapsedMicros: task.token.activeElapsedMicros,
+      responseOpeningElapsedMicros: task.token.responseOpeningElapsedMicros,
+      inactiveElapsedMicros: task.token.inactiveElapsedMicros,
+      restartCostElapsedMicros: task.token.restartCostElapsedMicros,
+      restartCostBytes: task.token.restartCostBytes,
+    );
+  }
 
   void _updatePendingPriority(_Pending pending, int priority) {
     final previous = pending.priority;
