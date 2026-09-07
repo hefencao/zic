@@ -667,6 +667,67 @@ void main() {
     expect((await manager.readForeground(id))?.bytes, <int>[4, 5, 6]);
   });
 
+  test('session read reselects promoted bytes after generation handoff',
+      () async {
+    final id = _id('session-read-generation-handoff');
+    final backend = _Backend(<DownloadId, Uint8List>{});
+    final manager = ArtifactCacheManager(backend: backend);
+    final oldReadGate = Completer<Uint8List>();
+    final promoted = Uint8List.fromList(<int>[4, 5, 6]);
+
+    final read = manager.readSessionArtifact(
+      id: id,
+      length: promoted.lengthInBytes,
+      loader: () => oldReadGate.future,
+    );
+    final readExpectation = expectLater(
+      read,
+      completion(
+        isA<ArtifactCacheRead>()
+            .having((value) => value.bytes, 'bytes', promoted)
+            .having((value) => value.durable, 'durable', isTrue),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    await manager.storePromotedArtifact(id: id, bytes: promoted);
+    await readExpectation;
+    expect(backend.values[id], promoted);
+  });
+
+  test('session read does not retry cancellation without generation change',
+      () async {
+    final id = _id('session-read-source-cancel');
+    final manager = ArtifactCacheManager(
+      backend: _Backend(<DownloadId, Uint8List>{}),
+    );
+    var loads = 0;
+
+    await expectLater(
+      manager.readSessionArtifact(
+        id: id,
+        length: 3,
+        loader: () async {
+          loads++;
+          throw const Failure(
+            code: ErrorCode.cancelled,
+            message: 'source cancelled without cache authority change',
+          );
+        },
+      ),
+      throwsA(
+        isA<Failure>()
+            .having((failure) => failure.code, 'code', ErrorCode.cancelled)
+            .having(
+              (failure) => failure.message,
+              'message',
+              'source cancelled without cache authority change',
+            ),
+      ),
+    );
+    expect(loads, 1);
+  });
+
   test('verified equivalence reuses a different exact URL artifact', () async {
     final oldId = _versionId('old', 'https://e-hentai.org/g/1/old/001.jpg');
     final newId = _versionId('new', 'https://e-hentai.org/g/2/new/001.jpg');

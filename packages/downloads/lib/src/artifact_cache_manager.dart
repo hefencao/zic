@@ -314,13 +314,38 @@ final class ArtifactCacheManager {
     required int length,
     required Future<Uint8List> Function() loader,
     TaskControl? control,
-  }) => _readJoined(
-        id: id,
-        length: length,
-        durable: false,
-        loader: (_) => Future<Uint8List>.sync(loader),
-        control: control,
-      );
+  }) async {
+    // A promoted-session read can overlap the durable cache handoff for the
+    // same exact identity. That handoff advances the cache generation and
+    // deliberately cancels old in-flight reads so stale bytes cannot be
+    // retained. For an active caller this is an authority switch, not media
+    // failure: re-enter the joined read after the mutation barrier so the new
+    // durable memory/backend generation can satisfy the same byte request.
+    // Caller cancellation remains terminal and is never retried.
+    for (var attempt = 0; attempt < 3; attempt++) {
+      final generation = generationFor(id);
+      try {
+        return await _readJoined(
+          id: id,
+          length: length,
+          durable: false,
+          loader: (_) => Future<Uint8List>.sync(loader),
+          control: control,
+        );
+      } on Failure catch (error) {
+        if (control?.cancelled == true) {
+          control!.throwIfCancelled();
+        }
+        final authorityChanged = generationFor(id) != generation;
+        if (error.code != ErrorCode.cancelled ||
+            !authorityChanged ||
+            attempt == 2) {
+          rethrow;
+        }
+      }
+    }
+    throw StateError('unreachable artifact session read retry state');
+  }
 
   /// Stores bytes only if no exact-identity mutation has started since
   /// [expectedGeneration] was observed. The generation check and the call to

@@ -175,16 +175,23 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
         _requestStreamingWebpPrefix(stream, snapshot);
         return;
       }
-      // A bound transfer session is enough to start presentation loading.
-      // Pipeline loadBytes owns every remaining wait (promotion, artifact
-      // read or validated immutable direct source), so waiting for sealed/
-      // promoted here would only add queue latency for pages that become
-      // visible during fast continuous scrolling.
-      if (!_fallbackLoadStarted &&
-          (snapshot.state == PipelinePageTransferState.queued ||
+      final transferActive =
+          snapshot.state == PipelinePageTransferState.queued ||
               snapshot.state == PipelinePageTransferState.receiving ||
               snapshot.state == PipelinePageTransferState.sealed ||
-              snapshot.state == PipelinePageTransferState.promoted)) {
+              snapshot.state == PipelinePageTransferState.promoted;
+      final knownWebpAwaitingClassification =
+          _detectedFormat.isWebp &&
+              (kind == null || kind == PipelinePageContentKind.unknown);
+      // A known WebP already has a Pipeline streaming/native presentation
+      // path. During the short interval before transport sniffing resolves
+      // `kind`, starting loadBytes() would materialize the same full artifact
+      // into the presentation byte cache in parallel with that stream. Wait
+      // for classification instead. If the source later explicitly resolves
+      // to fallback/gif, the normal full-body path below remains available.
+      if (!_fallbackLoadStarted &&
+          transferActive &&
+          !knownWebpAwaitingClassification) {
         _fallbackLoadStarted = true;
         unawaited(_load());
       }

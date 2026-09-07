@@ -1,9 +1,12 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:local_media_ui/local_media_ui.dart';
 import 'package:transport/transport.dart';
 import 'package:zic/media_load_token.dart';
 import 'package:zic/reader_runtime.dart';
@@ -78,7 +81,76 @@ void main() {
       }
     },
   );
+
+
+  testWidgets(
+    'known WebP stream never falls back to persistent read-all while kind is unresolved',
+    (tester) async {
+      final bytes = _tinyWebp();
+      final record = ImportedChapterRecord(
+        directoryId: 'remote:comic',
+        displayName: 'Chapter',
+        sourceId: 'source',
+        comicId: 'known-webp-comic',
+        comicTitle: 'Comic',
+        chapterId: 'known-webp-chapter',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: 'page.webp',
+            sourceId: 'memory://known-webp-page.webp',
+            pageId: 'page-0',
+            mediaFormat: 'webp',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: bytes.lengthInBytes,
+          ),
+        ],
+      );
+      final chapter = record.toManifest();
+      final id = readerPageDownloadId(chapter, chapter.pages.single);
+      final store = _ArtifactStore(<DownloadId, Uint8List>{id: bytes});
+
+      try {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ImportedImageChapterScreen(
+              record: record,
+              pipelineFactory: defaultLocalMediaPipelineFactory
+                  .withArtifactCacheManager(
+                    ArtifactCacheManager(backend: store),
+                  ),
+            ),
+          ),
+        );
+        final elapsed = Stopwatch()..start();
+        while (elapsed.elapsed < const Duration(seconds: 3) &&
+            store.streamChunks == 0 &&
+            store.readAlls == 0) {
+          await tester.pump(const Duration(milliseconds: 1));
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 2)),
+          );
+        }
+        expect(
+          store.readAlls,
+          0,
+          reason: 'known WebP presentation must stay on Pipeline streaming bytes',
+        );
+        expect(store.streamChunks, greaterThan(0));
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(minutes: 2));
+      }
+    },
+  );
 }
+
+Uint8List _tinyWebp() => base64Decode(
+      'UklGRoQAAABXRUJQVlA4WAoAAAACAAAAAQAAAQAAQU5JTQYAAAAAAAAAAgBB'
+      'Tk1GKAAAAAAAAAAAAAEAAAEAADwAAAJWUDhMDwAAAC8BQAAABxD9j/4HIqL/'
+      'AQBBTk1GKAAAAAAAAAAAAAEAAAEAAFoAAABWUDhMDwAAAC8BQAAAB9D/iP4H'
+      'IqL/AQA=',
+    );
 
 ChapterManifest _chapter() => ChapterManifest(
       sourceId: 'source',
@@ -159,6 +231,8 @@ final class _ArtifactStore implements ArtifactCacheBackend {
 
   final Map<DownloadId, Uint8List> values;
   int reads = 0;
+  int streamChunks = 0;
+  int readAlls = 0;
 
 
   @override
@@ -170,9 +244,13 @@ final class _ArtifactStore implements ArtifactCacheBackend {
       length: bytes.lengthInBytes,
       open: ({required int start, int? endExclusive}) async* {
         final end = endExclusive ?? bytes.lengthInBytes;
+        streamChunks++;
         yield Uint8List.sublistView(bytes, start, end);
       },
-      readAll: () async => bytes,
+      readAll: () async {
+        readAlls++;
+        return bytes;
+      },
     );
   }
 
