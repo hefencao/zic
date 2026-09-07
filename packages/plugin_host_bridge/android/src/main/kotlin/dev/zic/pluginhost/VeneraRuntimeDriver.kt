@@ -505,7 +505,7 @@ private class VeneraNativeBridge(
             executor.execute {
                 val startedAt = SystemClock.elapsedRealtime()
                 val response = runCatching {
-                    require(executeMessage.optString("method") in setOf("http", "http_binary")) {
+                    require(executeMessage.optString("method") in setOf("http", "http_binary", "http_image_binary")) {
                         "Venera asynchronous bridge only supports HTTP"
                     }
                     if (cancelled.contains(transportRequestId)) {
@@ -554,7 +554,8 @@ private class VeneraNativeBridge(
 
     private fun execute(message: JSONObject): Any? = when (message.getString("method")) {
         "http" -> http(message)
-        "http_binary" -> httpBinary(message)
+        "http_binary" -> httpBinary(message, requireImage = false)
+        "http_image_binary" -> httpBinary(message, requireImage = true)
         "cookie" -> cookie(message)
         "load_data" -> loadData(message)
         "save_data" -> saveData(message)
@@ -626,13 +627,34 @@ private class VeneraNativeBridge(
     private fun http(message: JSONObject): Any =
         performHttp(message).toWire(message.optBoolean("bytes"))
 
-    private fun httpBinary(message: JSONObject): Any {
+    private fun httpBinary(message: JSONObject, requireImage: Boolean): Any {
         val response = performHttp(message)
         val result = JSONObject()
             .put("status", response.status)
             .put("headers", response.headers)
         if (response.status in 200..299) {
-            result.put("nativeBytesToken", retainNativeBytes(response.body))
+            if (!requireImage) {
+                // Public Network.fetchBinary is a general binary API. Image
+                // semantics belong only to the private loadResource fast path.
+                result.put("nativeBytesToken", retainNativeBytes(response.body))
+                return result
+            }
+            val encodedImage = hasVeneraEncodedImageSignature(response.body)
+            result
+                .put("encodedImage", encodedImage)
+                .put("bodyLength", response.body.size)
+            // Invalid image bodies must stay outside the native-byte token
+            // registry. The Venera source still owns semantic image recovery
+            // through onLoadFailed; retaining an HTML/error body here would
+            // both leak a token and report a successful image operation.
+            if (encodedImage) {
+                result.put("nativeBytesToken", retainNativeBytes(response.body))
+            } else {
+                networkCache.invalidate(
+                    namespace = networkCacheNamespace,
+                    url = message.getString("url"),
+                )
+            }
         }
         return result
     }
@@ -1411,6 +1433,11 @@ internal class VeneraHttpCacheStore {
     }
 
     @Synchronized
+    fun invalidate(namespace: VeneraHttpCacheNamespace, url: String) {
+        remove(VeneraHttpCacheKey(namespace, url))
+    }
+
+    @Synchronized
     fun clear() {
         entries.clear()
         size = 0
@@ -1454,6 +1481,54 @@ private fun URL.veneraEffectivePort(): Int = when {
     defaultPort >= 0 -> defaultPort
     protocol.equals("https", ignoreCase = true) -> 443
     else -> 80
+}
+
+private fun hasVeneraEncodedImageSignature(bytes: ByteArray): Boolean {
+    fun matches(offset: Int, vararg signature: Int): Boolean {
+        if (offset < 0 || offset + signature.size > bytes.size) return false
+        return signature.indices.all { index ->
+            (bytes[offset + index].toInt() and 0xff) == signature[index]
+        }
+    }
+
+    fun ascii(offset: Int, value: String): Boolean {
+        if (offset < 0 || offset + value.length > bytes.size) return false
+        return value.indices.all { index ->
+            (bytes[offset + index].toInt() and 0xff) == value[index].code
+        }
+    }
+
+    if (matches(0, 0xff, 0xd8, 0xff)) return true
+    if (matches(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return true
+    if (ascii(0, "RIFF") && ascii(8, "WEBP")) return true
+    if (ascii(0, "GIF87a") || ascii(0, "GIF89a")) return true
+    if (matches(0, 0x42, 0x4d)) return true
+    if (matches(0, 0x49, 0x49, 0x2a, 0x00) || matches(0, 0x4d, 0x4d, 0x00, 0x2a)) {
+        return true
+    }
+    if (matches(0, 0x00, 0x00, 0x01, 0x00)) return true
+    if (ascii(4, "ftyp") && bytes.size >= 12) {
+        val brands = LinkedHashSet<String>()
+        fun brandAt(offset: Int): String = buildString(4) {
+            for (index in offset until offset + 4) {
+                append((bytes[index].toInt() and 0xff).toChar().lowercaseChar())
+            }
+        }
+        brands.add(brandAt(8))
+        var offset = 16
+        while (offset + 4 <= minOf(bytes.size, 64)) {
+            brands.add(brandAt(offset))
+            offset += 4
+        }
+        if (brands.any { it == "avif" || it == "avis" }) return true
+        if (brands.any {
+                it in setOf("heic", "heix", "hevc", "hevx", "heim", "heis", "mif1", "msf1")
+            }
+        ) {
+            return true
+        }
+    }
+    return false
 }
 
 private const val VENERA_HTTP_MAX_REDIRECTS = 8
@@ -1521,6 +1596,7 @@ async function __zicResolveFreshResourceConfig(uri,source){const key=String(uri)
 async function __zicResolveHttpArtworkConfig(uri,source){const key=String(uri),baseKey=key.split('@',1)[0],retained=__zicResourceConfigs.get(key);if(retained){__zicRememberResourceConfig(key,retained);return retained}const pending=__zicResourceResolutions.get(key);if(pending)return pending;const resolution=(async()=>{let override={};if(typeof source.comic?.onThumbnailLoad==='function'){try{override=await Promise.resolve(source.comic.onThumbnailLoad(baseKey))||{}}catch(_){override={}}}else if(typeof source.comic?.onImageLoad==='function'){try{override=await Promise.resolve(source.comic.onImageLoad(baseKey,null,null))||{}}catch(_){override={}}}return __zicRememberResourceConfig(key,{url:override.url||baseKey,method:override.method||'GET',headers:override.headers||{},data:override.data,onResponse:override.onResponse,onLoadFailed:override.onLoadFailed,modifyImage:override.modifyImage})})();__zicResourceResolutions.set(key,resolution);try{return await resolution}finally{if(__zicResourceResolutions.get(key)===resolution)__zicResourceResolutions.delete(key)}}
 function __zicDescribeResourceRequest(config){const method=String(config.method||'GET').toUpperCase(),headers={...(config.headers||{})};if(!Object.keys(headers).some(key=>String(key).toLowerCase()==='accept-encoding'))headers['Accept-Encoding']='identity';if(!Object.keys(headers).some(key=>String(key).toLowerCase()==='cookie')){try{const cookies=Network.getCookies(String(config.url||''))||[];if(Array.isArray(cookies)&&cookies.length)headers.Cookie=cookies.map(cookie=>String(cookie.name)+'='+String(cookie.value)).join('; ')}catch(_){}}const requiresRuntimeTransform=typeof config.onResponse==='function'||(typeof config.modifyImage==='string'&&config.modifyImage.trim().length>0);return {url:String(config.url||''),method,headers,body:__zicNetworkPayload(method,config.data),requiresRuntimeTransform}}
 async function __zicRetryResourceConfig(uri,source){const key=String(uri);let active=__zicResourceConfigs.get(key);if(!active&&key.startsWith('venera-resource:'))active=await __zicResolveResourceConfig(key,source);if(!active||typeof active.onLoadFailed!=='function')return {available:false};const retry=await Promise.resolve(active.onLoadFailed());if(!retry)return {available:false};active=__zicRememberResourceConfig(key,{url:retry.url||active.url,method:retry.method||'GET',headers:retry.headers||{},data:retry.data,onResponse:retry.onResponse,onLoadFailed:retry.onLoadFailed,modifyImage:retry.modifyImage});return {available:true,request:__zicDescribeResourceRequest(active)}}
+function __zicHasEncodedImageSignature(value){const b=value instanceof ArrayBuffer?new Uint8Array(value):ArrayBuffer.isView(value)?new Uint8Array(value.buffer,value.byteOffset,value.byteLength):null;if(!b)return false;const m=(o,a)=>o>=0&&o+a.length<=b.length&&a.every((v,i)=>b[o+i]===v),s=(o,v)=>o>=0&&o+v.length<=b.length&&Array.from(v).every((c,i)=>b[o+i]===c.charCodeAt(0));if(m(0,[255,216,255])||m(0,[137,80,78,71,13,10,26,10])||(s(0,'RIFF')&&s(8,'WEBP'))||s(0,'GIF87a')||s(0,'GIF89a')||m(0,[66,77])||m(0,[73,73,42,0])||m(0,[77,77,0,42])||m(0,[0,0,1,0]))return true;if(s(4,'ftyp')&&b.length>=12){const four=o=>String.fromCharCode(...b.subarray(o,o+4)).toLowerCase(),brands=new Set([four(8)]);for(let o=16;o+4<=Math.min(b.length,64);o+=4)brands.add(four(o));for(const x of ['avif','avis','heic','heix','hevc','hevx','heim','heis','mif1','msf1'])if(brands.has(x))return true}return false}
 function __zicDecode(value) {
   if (value && value.__zicType === 'bytes') {
     const raw = atob(value.base64); const bytes = new Uint8Array(raw.length);
@@ -1583,7 +1659,7 @@ function sendMessage(message) {
     throw error;
   }
   if(message.method==='delay')return __zicDelay(message.time,requestId);
-  const networkCall=message.method==='http'||message.method==='http_binary';
+  const networkCall=message.method==='http'||message.method==='http_binary'||message.method==='http_image_binary';
   if(networkCall&&typeof ZicNative.requestAsync==='function'){
     const networkStarted=__zicNowMicros();
     const asyncResult=__zicRequestAsync(message).then(value=>{if(requestId){const metric=__zicBridgeMetric(requestId);metric.networkMicros+=Math.max(0,__zicNowMicros()-networkStarted);metric.networkCalls++;if(__zicBridgeCacheHit(value))metric.networkCacheHits++;else metric.networkOriginCalls++}return value},error=>{if(requestId){const metric=__zicBridgeMetric(requestId);metric.networkMicros+=Math.max(0,__zicNowMicros()-networkStarted);metric.networkCalls++;metric.networkOriginCalls++}throw error});
@@ -1640,6 +1716,10 @@ const Network = {
   getCookies(url){return sendMessage({method:'cookie',function:'get',url})},
   deleteCookies(url){return sendMessage({method:'cookie',function:'delete',url})},
 };
+// Host-private image-body fast path: public Network.fetchBinary remains a
+// general binary API, while final image loading can reject 2xx HTML/error
+// bodies before native-token publication and re-enter source onLoadFailed.
+async function __zicFetchImageBinary(method,url,headers,data){return sendMessage({method:'http_image_binary',http_method:method,url,headers:headers||{},data:__zicNetworkPayload(method,data)})}
 async function fetch(url,options={}) {
   const result=await Network.fetchBytes(options.method||'GET',url,options.headers||{},options.body);
   return {ok:result.status>=200&&result.status<300,status:result.status,statusText:'',headers:result.headers,
@@ -1847,7 +1927,7 @@ async function __zicOperation(request){
   if(isResource){config=await __zicResolveResourceConfig(uri,source)}
   else if(/^https?:\/\//i.test(uri)){config=await __zicResolveHttpArtworkConfig(uri,source)}
   else throw new Error('Venera resource URI must be a source locator or HTTP(S) URL');
-  let active=config;for(let attempt=0;attempt<2;attempt++){try{const needsJsBytes=typeof active.onResponse==='function'||(typeof active.modifyImage==='string'&&active.modifyImage.trim());if(!needsJsBytes){const direct=await Network.fetchBinary(active.method||'GET',active.url,active.headers||{},active.data);if(direct.status<200||direct.status>=300)throw new Error('Venera resource HTTP '+direct.status);if(!direct.nativeBytesToken)throw new Error('Venera native resource payload is unavailable');return {__zicNativeBytesToken:direct.nativeBytesToken}}const response=await Network.fetchBytes(active.method||'GET',active.url,active.headers||{},active.data);if(response.status<200||response.status>=300)throw new Error('Venera resource HTTP '+response.status);let bytes=response.body;if(typeof active.onResponse==='function')bytes=await active.onResponse(bytes);if(typeof active.modifyImage==='string'&&active.modifyImage.trim()){const key=sendMessage({method:'image',function:'decode',data:bytes});try{const modifier=(0,eval)(String(active.modifyImage)+'\n;(typeof modifyImage==="function"?modifyImage:null)');if(typeof modifier!=='function')throw new Error('Venera modifyImage script defines no modifyImage function');const transformed=await Promise.resolve(modifier(new Image(key)));if(!transformed||typeof transformed.key!=='number')throw new Error('Venera modifyImage returned no Image');bytes=sendMessage({method:'image',function:'encode',key:transformed.key})}finally{sendMessage({method:'image',function:'disposeAll'})}}return bytes}catch(error){if(attempt||typeof active.onLoadFailed!=='function')throw error;const retry=await active.onLoadFailed();if(!retry)throw error;active={url:retry.url||active.url,method:retry.method||'GET',headers:retry.headers||{},data:retry.data,onResponse:retry.onResponse,onLoadFailed:retry.onLoadFailed,modifyImage:retry.modifyImage}}}throw new Error('Venera resource retry exhausted')
+  let active=config;for(let attempt=0;attempt<2;attempt++){try{const needsJsBytes=typeof active.onResponse==='function'||(typeof active.modifyImage==='string'&&active.modifyImage.trim());if(!needsJsBytes){const direct=await __zicFetchImageBinary(active.method||'GET',active.url,active.headers||{},active.data);if(direct.status<200||direct.status>=300)throw new Error('Venera resource HTTP '+direct.status);if(direct.encodedImage===false)throw new Error('Venera resource returned non-image bytes');if(!direct.nativeBytesToken)throw new Error('Venera native resource payload is unavailable');return {__zicNativeBytesToken:direct.nativeBytesToken}}const response=await Network.fetchBytes(active.method||'GET',active.url,active.headers||{},active.data);if(response.status<200||response.status>=300)throw new Error('Venera resource HTTP '+response.status);let bytes=response.body;if(typeof active.onResponse==='function')bytes=await active.onResponse(bytes);if(typeof active.modifyImage==='string'&&active.modifyImage.trim()){const key=sendMessage({method:'image',function:'decode',data:bytes});try{const modifier=(0,eval)(String(active.modifyImage)+'\n;(typeof modifyImage==="function"?modifyImage:null)');if(typeof modifier!=='function')throw new Error('Venera modifyImage script defines no modifyImage function');const transformed=await Promise.resolve(modifier(new Image(key)));if(!transformed||typeof transformed.key!=='number')throw new Error('Venera modifyImage returned no Image');bytes=sendMessage({method:'image',function:'encode',key:transformed.key})}finally{sendMessage({method:'image',function:'disposeAll'})}}if(!__zicHasEncodedImageSignature(bytes))throw new Error('Venera resource returned non-image bytes');return bytes}catch(error){if(attempt||typeof active.onLoadFailed!=='function')throw error;const retry=await active.onLoadFailed();if(!retry)throw error;active={url:retry.url||active.url,method:retry.method||'GET',headers:retry.headers||{},data:retry.data,onResponse:retry.onResponse,onLoadFailed:retry.onLoadFailed,modifyImage:retry.modifyImage}}}throw new Error('Venera resource retry exhausted')
  }
  throw new Error('Unsupported Venera operation');
 }

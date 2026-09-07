@@ -7,16 +7,22 @@ SOURCE = ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/plu
 text = SOURCE.read_text(encoding='utf-8')
 
 required = (
-    '"http_binary" -> httpBinary(message)',
+    '"http_binary" -> httpBinary(message, requireImage = false)',
+    '"http_image_binary" -> httpBinary(message, requireImage = true)',
     'fun takeNativeBytes(token: String): ByteArray?',
     'private fun retainNativeBytes(bytes: ByteArray): String',
     'VENERA_MAX_NATIVE_BYTE_PAYLOADS',
+    'hasVeneraEncodedImageSignature(response.body)',
+    '.put("encodedImage", encodedImage)',
+    'networkCache.invalidate(',
     'function __zicNetworkPayload(method,data)',
     'function __zicDescribeResourceRequest(config)',
     'async function __zicRetryResourceConfig(uri,source)',
     "if(request.operation==='retryResource')",
     'fetchBinary:async(method,url,headers,data)',
+    "async function __zicFetchImageBinary(method,url,headers,data){return sendMessage({method:'http_image_binary'",
     "return {__zicNativeBytesToken:direct.nativeBytesToken}",
+    "if(direct.encodedImage===false)throw new Error('Venera resource returned non-image bytes')",
     'if (method in setOf("GET", "HEAD")) {',
     'bodyBytes = ByteArray(0)',
     'forwardHeaders.removeVeneraHeader("content-length")',
@@ -39,8 +45,10 @@ for token in ('VENERA_RESOLVER_RPC_TIMEOUT_SECONDS = 55L', 'veneraResolverHttpCa
 
 load_resource = text.split("if(request.operation==='loadResource')", 1)[1]
 load_resource = load_resource.split("throw new Error('Unsupported Venera operation')", 1)[0]
-if load_resource.find('Network.fetchBinary') > load_resource.find('Network.fetchBytes'):
-    raise SystemExit('Venera direct binary path must precede the JS byte fallback')
+if load_resource.find('__zicFetchImageBinary') > load_resource.find('Network.fetchBytes'):
+    raise SystemExit('Venera image binary path must precede the JS byte fallback')
+if "fetchBinary:async(method,url,headers,data)=>sendMessage({method:'http_binary'" not in text:
+    raise SystemExit('public Venera fetchBinary was narrowed away from generic http_binary')
 if "typeof active.onResponse==='function'" not in load_resource:
     raise SystemExit('Venera transformed responses lost the JS compatibility path')
 if "typeof active.modifyImage==='string'" not in load_resource:

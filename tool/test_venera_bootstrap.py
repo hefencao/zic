@@ -91,7 +91,7 @@ async function checkDirectCoverResource(){
  let seen=null;
  ZicNative.request=raw=>{
    const message=__zicDecode(JSON.parse(raw));seen=message;
-   if(message.method!=='http_binary')throw new Error('unexpected direct cover bridge method '+message.method);
+   if(message.method!=='http_image_binary')throw new Error('unexpected direct cover bridge method '+message.method);
    return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{'content-type':'image/jpeg'},nativeBytesToken:'cover-token'})});
  };
  globalThis.__zicSource={comic:{}};
@@ -184,7 +184,7 @@ async function checkChapterResourceCanBeReadAgain(){
  let requests=0,configs=0;
  ZicNative.request=raw=>{
    const message=__zicDecode(JSON.parse(raw));
-   if(message.method!=='http_binary')throw new Error('unexpected resource bridge method '+message.method);
+   if(message.method!=='http_image_binary')throw new Error('unexpected resource bridge method '+message.method);
    requests++;
    return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},nativeBytesToken:'resource-token-'+requests})});
  };
@@ -210,7 +210,7 @@ async function checkLegacyChapterResourceToken(){
  let requests=0;
  ZicNative.request=raw=>{
    const message=__zicDecode(JSON.parse(raw));
-   if(message.method!=='http_binary')throw new Error('unexpected legacy token bridge method '+message.method);
+   if(message.method!=='http_image_binary')throw new Error('unexpected legacy token bridge method '+message.method);
    requests++;
    return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},nativeBytesToken:'legacy-token'})});
  };
@@ -227,7 +227,7 @@ async function checkStreamableOnLoadFailedConfig(){
  ZicNative.request=raw=>{
    const message=__zicDecode(JSON.parse(raw));
    if(message.method==='cookie'&&message.function==='get')return JSON.stringify({ok:true,value:__zicEncode([])});
-   if(message.method==='http'||message.method==='http_binary')nativeCalls++;
+   if(message.method==='http'||message.method==='http_binary'||message.method==='http_image_binary')nativeCalls++;
    throw new Error('request-plan operation unexpectedly invoked native '+message.method);
  };
  globalThis.__zicSource={comic:{
@@ -249,13 +249,41 @@ async function checkStreamableOnLoadFailedConfig(){
  if(failedCalls!==1||nativeCalls!==0)throw new Error('retryResource invoked the wrong path '+JSON.stringify({failedCalls,nativeCalls}));
 }
 
+async function checkNonImageBodyUsesSourceRecovery(){
+ const locator='venera-resource:'+__zicB64({v:1,image:'semantic-retry',comicId:'comic',epId:'ep'});
+ let failedCalls=0,requests=0;
+ ZicNative.request=raw=>{
+   const message=__zicDecode(JSON.parse(raw));
+   if(message.method==='cookie'&&message.function==='get')return JSON.stringify({ok:true,value:__zicEncode([])});
+   if(message.method!=='http_image_binary')throw new Error('unexpected semantic-retry bridge method '+message.method);
+   requests++;
+   if(requests===1){
+     if(message.url!=='https://cdn.invalid/bad')throw new Error('first semantic-retry URL mismatch '+message.url);
+     return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{'content-type':'text/html'},encodedImage:false,bodyLength:27})});
+   }
+   if(message.url!=='https://cdn.invalid/good.webp')throw new Error('replacement semantic-retry URL mismatch '+message.url);
+   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{'content-type':'image/webp'},encodedImage:true,bodyLength:128,nativeBytesToken:'semantic-retry-token'})});
+ };
+ globalThis.__zicSource={comic:{
+   onImageLoad:async()=>({
+     url:'https://cdn.invalid/bad',
+     onLoadFailed:async()=>{
+       failedCalls++;
+       return {url:'https://cdn.invalid/good.webp'};
+     },
+   }),
+ }};
+ const loaded=await __zicOperation({operation:'loadResource',arguments:{uri:locator}});
+ if(loaded?.__zicNativeBytesToken!=='semantic-retry-token'||failedCalls!==1||requests!==2)throw new Error('200 non-image body did not use exactly one source semantic recovery '+JSON.stringify({loaded,failedCalls,requests}));
+}
+
 async function checkChapterImageConfigIsDeferred(){
  const comicId='venera:comic:'+__zicB64({id:'deferred-comic',title:'Deferred'});
  const chapter=__zicChapterMessage(comicId,'ep-deferred','Deferred episode',0);
  let configs=0,requests=0;
  ZicNative.request=raw=>{
    const message=__zicDecode(JSON.parse(raw));
-   if(message.method!=='http_binary')throw new Error('unexpected deferred bridge method '+message.method);
+   if(message.method!=='http_image_binary')throw new Error('unexpected deferred bridge method '+message.method);
    requests++;
    return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},nativeBytesToken:'deferred-token'})});
  };
@@ -440,7 +468,7 @@ async function checkInvokeRequestLifecycle(){
  globalThis.__zicSource={comic:{onImageLoad:async()=>({url:'https://cdn.invalid/image.jpg',method:'GET',data:'must-not-cross-get'})}};
  ZicNative.request=raw=>{
    const message=__zicDecode(JSON.parse(raw));
-   if(message.method!=='http_binary')throw new Error('unexpected invoke lifecycle method '+message.method);
+   if(message.method!=='http_image_binary')throw new Error('unexpected invoke lifecycle method '+message.method);
    seenRequestId=message.requestId;
    if(message.data!==undefined)throw new Error('GET resource data crossed the bridge');
    return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},nativeBytesToken:'invoke-token'})});
@@ -451,7 +479,7 @@ async function checkInvokeRequestLifecycle(){
  if(seenRequestId!=='invoke-lifecycle'||completed?.requestId!=='invoke-lifecycle'||finished!=='invoke-lifecycle')throw new Error('invoke lifecycle did not retain the request id '+JSON.stringify({seenRequestId,completed,finished}));
 }
 
-(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkRequestScopedDelayCancellation();await checkAsyncNetworkBridgeAndActivationGate();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkNonImageBodyUsesSourceRecovery();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkRequestScopedDelayCancellation();await checkAsyncNetworkBridgeAndActivationGate();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)
