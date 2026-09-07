@@ -55,7 +55,7 @@ This document is normative for the detailed download/storage behavior. `docs/SPE
 ## 6. Partial and network continuity
 
 1. A partial is a mutable contiguous transfer spool and MUST NOT be treated as a sealed immutable artifact.
-2. Restoring a durable partial SHOULD adopt/reopen the existing spool rather than copy the whole prefix into a second ephemeral artifact when the backend permits it.
+2. Restoring a durable partial SHOULD adopt/reopen the existing spool rather than copy the whole prefix into a second ephemeral artifact when the backend permits it. Exact POSIX adoption MUST preserve the existing physical `DownloadSession` identity/epoch/demand/Reader-ingress ownership, MUST use the durable artifact's own index/root, MUST prove a non-link exact indexed length before switching backing, and MUST hold an exclusive busy lease that blocks trim/clear/invalidate/second adoption until that session releases the backing. Adoption MAY defer whole-file checksum work until seal; SAF, verified-equivalent, and non-capable backends MUST retain the bounded streaming-copy fallback.
 3. Local prefix replay and network suffix acquisition MAY run concurrently under the same physical DownloadSession.
 4. Network append MUST only extend the authoritative contiguous committed boundary.
 5. Reader ingress publication MUST remain ordered from byte zero even if network append advances farther than Reader-local replay.

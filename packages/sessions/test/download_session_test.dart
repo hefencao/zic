@@ -71,6 +71,64 @@ void main() {
     await colliding.dispose();
   });
 
+  test('durable backing adoption preserves session and ordered Reader ingress',
+      () async {
+    final durablePartial = '${temp.path}/durable/partial/page.webp';
+    final durableFinal = '${temp.path}/durable/final/page.webp';
+    final durableWriter = Artifact(
+      partialPath: durablePartial,
+      finalPath: durableFinal,
+    );
+    await durableWriter.restore();
+    final prefix = List<int>.generate(48, (index) => index & 0xff);
+    await durableWriter.append(0, prefix);
+    await durableWriter.pause();
+    await durableWriter.dispose();
+    final durableArtifact = Artifact(
+      partialPath: durablePartial,
+      finalPath: durableFinal,
+    );
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    var released = 0;
+    final projection = DownloadIngressProjection(
+      scopeId: 'adopt-reader',
+      ingress: Ingress(factory: _TestSourceFactory(), maxBytes: 1024),
+    );
+    await session.attachSynchronizedIngressProjection(projection);
+    final originalEpoch = session.epoch;
+
+    await session.adoptDurablePartialBacking(
+      artifact: durableArtifact,
+      index: index,
+      storageRootId: '${temp.path}/durable',
+      expectedLength: prefix.length,
+      validators: const Validators(etag: 'durable-v1'),
+      totalLength: 64,
+      releaseBacking: () => released++,
+    );
+
+    expect(session.epoch, originalEpoch);
+    expect(session.artifact, same(durableArtifact));
+    expect(session.committedLength, prefix.length);
+    expect(session.networkStartLength, prefix.length);
+    expect(session.networkCursorLength, 0);
+    expect(projection.snapshot.epoch, originalEpoch);
+    expect(projection.snapshot.length, prefix.length);
+    expect(projection.snapshot.failure, isNull);
+
+    final writer = session.acquireWriter();
+    final suffix = List<int>.generate(16, (index) => 0x80 + index);
+    await session.append(writer, prefix.length, suffix);
+    expect(session.committedLength, 64);
+    expect(projection.snapshot.length, 64);
+    expect(projection.snapshot.failure, isNull);
+    await session.pause(writer);
+    await session.dispose();
+    expect(released, 1);
+  });
+
   test('writer is exclusive', () {
     final writer = session.acquireWriter();
     expect(writer.epoch, const SourceEpoch(0));

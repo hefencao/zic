@@ -224,6 +224,12 @@ final class DownloadRegistry {
     return restored;
   }
 
+  /// Resolves only deterministic session-owned POSIX artifact layouts for an
+  /// existing indexed binding. Arbitrary exports/SAF paths remain outside the
+  /// mutable DownloadSession backing contract.
+  Artifact? artifactForIndexedRecord(CacheRec record) =>
+      _artifactForIndexedRecord(record, resolvePhysicalId(record.id));
+
   Artifact? _artifactForIndexedRecord(CacheRec record, DownloadId id) {
     final indexedPath = File(record.path).absolute.path;
     final indexedFile = File(indexedPath);

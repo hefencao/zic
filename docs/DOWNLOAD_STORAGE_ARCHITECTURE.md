@@ -271,7 +271,7 @@ adopt durable spool at length L
 ordered Reader ingress       append same spool
 ```
 
-Local replay does not have to finish before network suffix transfer starts. Network append may advance `committedLength` while Reader-local ingress is still publishing an earlier prefix. Ingress publication remains strictly ordered.
+Target architecture permits local replay to finish after network suffix transfer starts: network append may advance `committedLength` while Reader-local ingress is still publishing an earlier prefix, and ingress publication remains strictly ordered. Current production implements the preceding exact-POSIX zero-copy spool adoption and same-spool Range resume, but still completes local ingress replay inside local preparation before NetLane admission; replay/suffix concurrency remains a later subphase.
 
 No UI/transport wrapper may concatenate a failed local response with an unrelated remote response after bytes have already been emitted.
 
@@ -341,7 +341,7 @@ The migration is intentionally incremental and each functional boundary should b
 
 1. Move shared transfer/read scheduling ownership out of Pipeline factory construction into an App-level resource composition owner without changing scheduling policy.
 2. Make persistent artifact Reader hits truly stream from `ArtifactCacheStreamEntry.open()`; remove the full-page `readPage -> Uint8List` local fast path for remote pages.
-3. Make durable partials adoptable as the active spool and allow ordered local replay + network suffix concurrency.
+3. Make durable partials adoptable as the active spool and allow ordered local replay + network suffix concurrency. Exact POSIX active-spool adoption is implemented; SAF/non-capable backends retain streaming-copy fallback, while replay/suffix concurrency remains pending.
 4. Introduce StorageRoot + AccessLocator modeling and direct/SAF same-root capability proof. The ephemeral alias-proof seam is implemented; durable root registry/health and data-plane selection remain pending.
 5. Move durable download metadata authority to App-private SQLite while retaining compatibility migration from existing stores.
 6. Split logical artifact binding from physical replica location/health.

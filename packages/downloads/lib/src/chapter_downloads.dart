@@ -1218,6 +1218,7 @@ final class PersistentDownloadArtifactStore
       _artifactWriteProofs = <DownloadId, ({int length, String checksum})>{};
   final Map<DownloadId, Future<void>> _artifactMutationTails =
       <DownloadId, Future<void>>{};
+  final Set<DownloadId> _borrowedPartialIds = <DownloadId>{};
   final Map<String, Future<void>> _structuredWriteTails =
       <String, Future<void>>{};
   final Map<String, String> _structuredDirectoriesByOwner = <String, String>{};
@@ -3976,6 +3977,12 @@ final class PersistentDownloadArtifactStore
       _serializeArtifactMutation(id, () => _evictUnserialized(id));
 
   Future<void> _evictUnserialized(DownloadId id) async {
+    if (_borrowedPartialIds.contains(id)) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'durable partial is borrowed by the active transfer owner',
+      );
+    }
     var session = _registry.find(id);
     if (session != null && (session.activeRun || session.hasWriter)) {
       for (var i = 0; i < 20; i++) {
@@ -4422,7 +4429,9 @@ final class PersistentDownloadArtifactStore
 
   Future<PartialDownloadEntry?> _openPartialDownload(DownloadId id) async {
     _requireOpen();
-    if (_artifactWrites.containsKey(id)) return null;
+    if (_artifactWrites.containsKey(id) || _borrowedPartialIds.contains(id)) {
+      return null;
+    }
     final active = _registry.find(id);
     if (active != null && (active.activeRun || active.hasWriter)) return null;
 
@@ -4510,6 +4519,7 @@ final class PersistentDownloadArtifactStore
     }
     final touchedUs = DateTime.now().toUtc().microsecondsSinceEpoch;
     await _index.touch(id.key, touchedUs);
+    final adoptionExpected = record.copyWith(touchedUs: touchedUs);
     return PartialDownloadEntry(
       length: length,
       validators: resume.validators,
@@ -4519,8 +4529,86 @@ final class PersistentDownloadArtifactStore
         length: length,
         start: start,
       ),
+      adoptInto: (session, {TaskControl? control}) =>
+          _adoptIndexedPosixPartial(
+        session,
+        expected: adoptionExpected,
+        control: control,
+      ),
     );
   }
+
+  Future<bool> _adoptIndexedPosixPartial(
+    DownloadSession target, {
+    required CacheRec expected,
+    TaskControl? control,
+  }) =>
+      _serializeArtifactMutation(expected.id, () async {
+        _requireOpen();
+        control?.throwIfCancelled();
+        final id = expected.id;
+        if (target.id != id || _borrowedPartialIds.contains(id)) return false;
+        final current = await _index.get(id.key);
+        if (current == null ||
+            current.state != CacheState.partial ||
+            !_sameIndexedRecord(expected, current) ||
+            parseSafRecordPath(current.path) != null ||
+            !_recordBelongsToCurrentRoot(id, current)) {
+          return false;
+        }
+        final file = File(current.path);
+        if (!await file.exists() || await file.length() != current.bytes) {
+          return false;
+        }
+        final resume = await _readIndexedPartialResumeState(current.path, id);
+        if (resume.explicitDifferentOwner) return false;
+        final adoptedArtifact = _registry.artifactForIndexedRecord(current);
+        if (adoptedArtifact == null) return false;
+
+        final donor = _registry.find(id);
+        if (donor != null) {
+          if (!donor.canEvict ||
+              donor.demanded ||
+              donor.activeRun ||
+              donor.hasWriter) {
+            return false;
+          }
+          await donor.settleCacheMutations();
+          control?.throwIfCancelled();
+          if (!identical(_registry.find(id), donor) ||
+              !donor.canEvict ||
+              donor.demanded ||
+              donor.activeRun ||
+              donor.hasWriter) {
+            return false;
+          }
+          final taken = _registry.takeIdlePhysical(id);
+          if (!identical(taken, donor)) return false;
+          await donor.dispose();
+        }
+
+        _borrowedPartialIds.add(id);
+        try {
+          await target.adoptDurablePartialBacking(
+            artifact: adoptedArtifact,
+            index: _index,
+            storageRootId: current.storageRootId,
+            expectedLength: current.bytes,
+            validators: resume.validators,
+            totalLength: resume.totalLength,
+            releaseBacking: () {
+              _borrowedPartialIds.remove(id);
+            },
+            control: control,
+          );
+          return true;
+        } catch (_) {
+          if (!target.hasBorrowedDurableSpool) {
+            _borrowedPartialIds.remove(id);
+          }
+          rethrow;
+        }
+      });
 
   Future<_IndexedPartialResumeState> _readSafPartialResumeState(
     String path,
@@ -4718,6 +4806,12 @@ final class PersistentDownloadArtifactStore
     required PartialDownloadEntry entry,
   }) async {
     _requireOpen();
+    if (_borrowedPartialIds.contains(id)) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'durable partial is borrowed by the active transfer owner',
+      );
+    }
     if (entry.length <= 0) return;
     if (safTreeIo != null && safTreeUri != null) {
       await _storePartialDownloadInSaf(id, entry);
@@ -4766,6 +4860,12 @@ final class PersistentDownloadArtifactStore
 
   Future<void> _invalidatePartialDownload(DownloadId id) async {
     _requireOpen();
+    if (_borrowedPartialIds.contains(id)) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'durable partial is borrowed by the active transfer owner',
+      );
+    }
     var session = _registry.find(id);
     if (session != null && (session.activeRun || session.hasWriter)) {
       throw const Failure(
@@ -4903,6 +5003,12 @@ final class PersistentDownloadArtifactStore
         id,
         () async {
           _requireOpen();
+          if (_borrowedPartialIds.contains(id)) {
+            throw const Failure(
+              code: ErrorCode.sessionBusy,
+              message: 'durable artifact is borrowed by the active transfer owner',
+            );
+          }
           final record = await _index.get(id.key);
           final deletedPhysical = await _invalidateIndexedArtifact(
             id,
@@ -4921,6 +5027,12 @@ final class PersistentDownloadArtifactStore
       _serializeArtifactMutation(
         id,
         () async {
+          if (_borrowedPartialIds.contains(id)) {
+            throw const Failure(
+              code: ErrorCode.sessionBusy,
+              message: 'durable artifact is borrowed by the active transfer owner',
+            );
+          }
           final record = await _index.get(id.key);
           if (record == null ||
               (expected != null && !_sameIndexedRecord(expected, record))) {
@@ -4948,6 +5060,11 @@ final class PersistentDownloadArtifactStore
     String? physicalArtifactId,
     String? physicalStorageRootId,
   }) async {
+    // The persistent registry deliberately does not retain a second mutable
+    // DownloadSession while composition owns this durable spool. Centralize
+    // the borrowed guard here so stale-read cleanup cannot delete the backing
+    // behind the active physical owner even when it bypasses public clear/evict.
+    if (_borrowedPartialIds.contains(id)) return false;
     final snapshot = await _index.get(id.key);
     if (snapshot == null) return false;
     if (record != null && !_sameIndexedRecord(record, snapshot)) {
@@ -5107,6 +5224,7 @@ final class PersistentDownloadArtifactStore
     final before = await _index.totalBytes();
     final report = await _cacheOps.trim(
       CacheLimits(maxBytes: maxBytes, targetBytes: targetBytes),
+      busy: _borrowedPartialIds,
     );
     return ArtifactCacheReport(
       beforeBytes: before,
@@ -5121,7 +5239,9 @@ final class PersistentDownloadArtifactStore
   Future<ArtifactCacheReport> clearArtifacts() async {
     _requireOpen();
     final before = await _index.totalBytes();
-    final report = await _cacheOps.clear();
+    final report = await _cacheOps.clear(
+      busy: _borrowedPartialIds,
+    );
     return ArtifactCacheReport(
       beforeBytes: before,
       releasedBytes: report.releasedBytes,
@@ -5133,6 +5253,11 @@ final class PersistentDownloadArtifactStore
 
   Future<void> close() async {
     if (_closed) return;
+    if (_borrowedPartialIds.isNotEmpty) {
+      throw StateError(
+        'cannot close persistent artifact store with borrowed durable partials',
+      );
+    }
     _closed = true;
     // Public methods reject new work after _closed, but operations that were
     // already admitted can still enqueue a per-id/path tail while their

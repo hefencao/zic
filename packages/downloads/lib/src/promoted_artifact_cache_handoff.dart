@@ -198,6 +198,38 @@ final class PromotedArtifactCacheHandoff {
     }
     final expectedEpoch = session.epoch;
     final startedAtMicros = clock?.nowMicros();
+    if (session.hasBorrowedDurableSpool && targetId == session.id) {
+      // DownloadSession publishes promoted before its serialized CacheIndex
+      // projection is enqueued. Yield one event turn so that same promotion
+      // continuation can enqueue ready-state persistence, then wait for the
+      // session tail. The durable spool itself is already the final body;
+      // reading it into Uint8List merely to store it back into the same backend
+      // would defeat zero-copy adoption.
+      await Future<void>.delayed(Duration.zero);
+      await session.settleCacheMutations();
+      if (session.state != DownloadState.promoted ||
+          session.epoch != expectedEpoch) {
+        return;
+      }
+      final exactDurable = await cache.containsBackendExact(
+        id: targetId,
+        expectedLength: session.committedLength,
+      );
+      if (!exactDurable) {
+        throw StateError(
+          'adopted durable spool was not indexed after promotion for '
+          '${session.id.key}',
+        );
+      }
+      _recordCommit(
+        session,
+        targetId: targetId,
+        action: 'skip-adopted-durable',
+        bytes: session.committedLength,
+        startedAtMicros: startedAtMicros,
+      );
+      return;
+    }
     if (session.residentBodyBacked) {
       final expectedLength = session.committedLength;
       if (expectedLength <= 0) {

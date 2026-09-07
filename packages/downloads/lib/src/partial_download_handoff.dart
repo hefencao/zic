@@ -62,6 +62,22 @@ final class PartialDownloadHandoff {
     if (candidate == null || candidate.entry.length <= 0) return;
     final entry = candidate.entry;
 
+    final adoptInto = entry.adoptInto;
+    if (!candidate.equivalent && adoptInto != null) {
+      final startedAtMicros = clock?.nowMicros();
+      final adopted = await adoptInto(session, control: control);
+      control?.throwIfCancelled();
+      if (adopted) {
+        _record(
+          session,
+          action: 'adopted',
+          bytes: session.committedLength,
+          startedAtMicros: startedAtMicros,
+        );
+        return;
+      }
+    }
+
     final startedAtMicros = clock?.nowMicros();
     await session.bindResponse(
       validators: candidate.equivalent
@@ -278,6 +294,17 @@ final class PartialDownloadHandoff {
     required String reason,
   }) async {
     if (session.state == DownloadState.promoted || session.residentBodyBacked) {
+      return true;
+    }
+    if (session.hasBorrowedDurableSpool) {
+      await session.settleCacheMutations();
+      _record(
+        session,
+        action: 'retained-adopted',
+        bytes: session.committedLength,
+        startedAtMicros: clock?.nowMicros(),
+        reason: reason,
+      );
       return true;
     }
     final length = session.artifact.committedLength;

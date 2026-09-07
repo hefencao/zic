@@ -97,6 +97,24 @@ void main() {
     );
   });
 
+  test('adopts indexed partial length without eager whole-file checksum', () async {
+    final first = createArtifact();
+    await first.restore();
+    await first.append(0, List<int>.generate(4096, (index) => index & 0xff));
+    await first.pause();
+    await first.dispose();
+
+    final second = createArtifact();
+    final adopted = await second.adoptExistingPartial(expectedLength: 4096);
+
+    expect(adopted.state, ArtifactState.partial);
+    expect(adopted.committedLength, 4096);
+    expect(adopted.checksum, isEmpty);
+    await second.append(4096, <int>[1, 2, 3, 4]);
+    final sealed = await second.seal(expectedLength: 4100);
+    expect(sealed.checksum, isNotEmpty);
+  });
+
   test('restores a durable partial prefix', () async {
     final first = createArtifact();
     await first.restore();

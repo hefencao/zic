@@ -11,6 +11,104 @@ import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  test('persistent POSIX partial is adopted as the active spool without copying',
+      () async {
+    final durableRoot =
+        await Directory.systemTemp.createTemp('partial-adopt-durable-');
+    final hotRoot = await Directory.systemTemp.createTemp('partial-adopt-hot-');
+    addTearDown(() async {
+      await durableRoot.delete(recursive: true);
+      await hotRoot.delete(recursive: true);
+    });
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'adopt',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/adopt.webp'),
+    );
+    final bytes = Uint8List.fromList(
+      List<int>.generate(8192, (index) => index & 0xff),
+    );
+    final store = await PersistentDownloadArtifactStore.open(durableRoot.path);
+    final hot = DownloadRegistry(
+      layout: CacheLayout(hotRoot.path),
+      clock: SystemClock(),
+    );
+    addTearDown(() async {
+      await hot.dispose();
+      await store.close();
+    });
+    await store.storePartialDownload(
+      id: id,
+      entry: PartialDownloadEntry(
+        length: bytes.lengthInBytes,
+        validators: const Validators(etag: 'adopt-etag'),
+        totalLength: bytes.lengthInBytes + 4096,
+        open: ({required int start}) =>
+            Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+      ),
+    );
+    final record = await store.index.get(id.key);
+    expect(record, isNotNull);
+    final durablePath = record!.path;
+    expect(
+      durablePath,
+      contains('${Platform.pathSeparator}partial${Platform.pathSeparator}'),
+    );
+
+    final session = hot.get(id);
+    await PartialDownloadHandoff(store: store).restoreInto(session);
+
+    expect(session.committedLength, bytes.lengthInBytes);
+    expect(session.validators.etag, 'adopt-etag');
+    expect(session.totalLength, bytes.lengthInBytes + 4096);
+    expect(
+      session.artifact.partialPath,
+      durablePath,
+      reason: 'the physical session must append the durable spool itself',
+    );
+    expect(await session.artifact.readBytes(), bytes);
+
+    final whileBorrowed = await store.clearArtifacts();
+    expect(whileBorrowed.evictedEntries, 0);
+    expect(whileBorrowed.skippedBusy, 1);
+    expect(await store.index.get(id.key), isNotNull);
+    expect(await File(durablePath).exists(), isTrue);
+
+    final backend = _CountingArtifactBackend(store);
+    final cache = ArtifactCacheManager(backend: backend);
+    final promoted = PromotedArtifactCacheHandoff(cache: cache)..observe(session);
+    final suffix = Uint8List.fromList(
+      List<int>.generate(4096, (index) => (index + 17) & 0xff),
+    );
+    final writer = session.acquireWriter();
+    await session.append(writer, bytes.lengthInBytes, suffix);
+    await session.seal(
+      writer,
+      expectedLength: bytes.lengthInBytes + suffix.lengthInBytes,
+    );
+    await session.promote();
+    expect(await promoted.settleAutomatic(session), isTrue);
+    expect(
+      backend.storeCalls,
+      0,
+      reason: 'adopted durable final must not be copied back into its backend',
+    );
+    final ready = await store.index.get(id.key);
+    expect(ready?.state, CacheState.ready);
+    expect(ready?.path, session.artifact.finalPath);
+
+    await hot.dispose();
+    final afterRelease = await store.clearArtifacts();
+    expect(afterRelease.evictedEntries, 1);
+    expect(afterRelease.skippedBusy, 0);
+    expect(await store.index.get(id.key), isNull);
+  });
+
   test('partial survives Reader-session workspace replacement without promotion',
       () async {
     final firstRoot = await Directory.systemTemp.createTemp('partial-source-');
@@ -65,6 +163,102 @@ void main() {
     expect(restored.validators.etag, 'reader-etag');
     expect(restored.totalLength, 1024);
     expect(await restored.artifact.readBytes(), bytes);
+  });
+
+  test('composition transfer resumes network suffix on the adopted durable spool',
+      () async {
+    final durableRoot =
+        await Directory.systemTemp.createTemp('partial-adopt-resume-');
+    addTearDown(() async => durableRoot.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'resume',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/resume.png'),
+    );
+    final fullBytes = Uint8List.fromList(<int>[
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      ...List<int>.generate(56, (index) => (index + 31) & 0xff),
+    ]);
+    const prefixLength = 24;
+    const validators = Validators(etag: 'resume-v1');
+    final store = await PersistentDownloadArtifactStore.open(durableRoot.path);
+    final backend = _CountingArtifactBackend(store);
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: store,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      if (runtime.hasConsumers) {
+        for (final consumer in runtime.owner.consumers.toList(growable: false)) {
+          await consumer.dispose();
+        }
+      }
+      await runtime.dispose();
+      await store.close();
+    });
+    await store.storePartialDownload(
+      id: id,
+      entry: PartialDownloadEntry(
+        length: prefixLength,
+        validators: validators,
+        totalLength: fullBytes.lengthInBytes,
+        open: ({required int start}) => Stream<List<int>>.value(
+          Uint8List.sublistView(fullBytes, start, prefixLength),
+        ),
+      ),
+    );
+    final durableRecord = await store.index.get(id.key);
+    expect(durableRecord, isNotNull);
+    final transport = _RangeSuffixTransport(
+      fullBytes,
+      validators: validators,
+    );
+    final consumer = runtime.attachConsumer(
+      scopeId: 'zero-copy-resume',
+      transportFor: (_) => transport,
+      consumerTraceSink: const NoopTraceSink(),
+    );
+
+    consumer.replaceDemands(
+      'zero-copy-resume',
+      1,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 1000,
+          reason: 'zero-copy-resume',
+          completionIntent: TransferCompletionIntent.required,
+        ),
+      },
+    );
+    await consumer.idle();
+
+    final session = runtime.registry.findExact(id);
+    expect(session, isNotNull);
+    expect(session!.state, DownloadState.promoted);
+    expect(session.committedLength, fullBytes.lengthInBytes);
+    expect(transport.rangeStarts, <int>[prefixLength]);
+    expect(transport.validatorsSeen, hasLength(1));
+    expect(transport.validatorsSeen.single?.etag, 'resume-v1');
+    expect(
+      session.artifact.finalPath,
+      CacheLayout(
+        defaultChapterDownloadDirectory(durableRoot.path),
+      ).artifactFor(id).finalPath,
+    );
+    expect(await session.artifact.readBytes(), fullBytes);
+    expect(await runtime.artifactCacheHandoff!.settleAutomatic(session), isTrue);
+    expect(backend.storeCalls, 0);
+
+    final ready = await store.index.get(id.key);
+    expect(ready?.state, CacheState.ready);
+    expect(ready?.bytes, fullBytes.lengthInBytes);
+    await consumer.dispose();
   });
 
   test('physical partial never persists validators from an aliased provider',
@@ -264,6 +458,58 @@ void main() {
     expect(session.committedLength, bytes.lengthInBytes);
   });
 
+}
+
+final class _RangeSuffixTransport implements Transport {
+  _RangeSuffixTransport(this.bytes, {required this.validators});
+
+  final Uint8List bytes;
+  final Validators validators;
+  final List<int> rangeStarts = <int>[];
+  final List<Validators?> validatorsSeen = <Validators?>[];
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    final start = range?.start ?? 0;
+    rangeStarts.add(start);
+    validatorsSeen.add(validators);
+    return ByteResponse(
+      bytes: Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+      statusCode: start > 0 ? 206 : 200,
+      rangeStart: start,
+      totalLength: bytes.lengthInBytes,
+      validators: this.validators,
+      rangeSupported: true,
+    );
+  }
+}
+
+final class _CountingArtifactBackend implements ArtifactCacheBackend {
+  _CountingArtifactBackend(this.delegate);
+
+  final ArtifactCacheBackend delegate;
+  int storeCalls = 0;
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) =>
+      delegate.openArtifactStream(id);
+
+  @override
+  Future<void> storePromotedArtifact({
+    required DownloadId id,
+    required Uint8List bytes,
+  }) {
+    storeCalls++;
+    return delegate.storePromotedArtifact(id: id, bytes: bytes);
+  }
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) =>
+      delegate.invalidateArtifact(id);
 }
 
 final class _PartialStore implements PartialDownloadStore {

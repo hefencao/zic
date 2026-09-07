@@ -81,6 +81,60 @@ final class Artifact {
         ),
       );
 
+  /// Opens an already-indexed mutable partial without hashing its whole body.
+  ///
+  /// This is deliberately narrower than [restore]: the caller must already own
+  /// a durable partial binding and provide its exact indexed length. The body
+  /// remains unsealed and its checksum stays dirty, so [seal] performs the
+  /// authoritative whole-file CRC before promotion. This lets a transfer adopt
+  /// a large durable spool without an O(prefix) read before network resume.
+  Future<ArtifactSnapshot> adoptExistingPartial({
+    required int expectedLength,
+  }) => _enqueueMutation(
+        () => _adoptExistingPartial(expectedLength: expectedLength),
+      );
+
+  Future<ArtifactSnapshot> _adoptExistingPartial({
+    required int expectedLength,
+  }) async {
+    _requireNotDisposed();
+    if (_state != ArtifactState.empty) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'existing partial adoption requires an empty artifact handle',
+      );
+    }
+    if (expectedLength <= 0) {
+      throw ArgumentError.value(
+        expectedLength,
+        'expectedLength',
+        'must be positive',
+      );
+    }
+    await _closeWriter();
+    await _rejectArtifactLinks();
+    final partial = File(partialPath);
+    if (!await partial.exists()) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'indexed partial disappeared before adoption',
+      );
+    }
+    final actualLength = await partial.length();
+    if (actualLength != expectedLength) {
+      throw Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'indexed partial length changed before adoption: '
+            '$actualLength/$expectedLength',
+      );
+    }
+    _crc = Crc32();
+    _checksumDirty = true;
+    _committed = actualLength;
+    _state = ArtifactState.partial;
+    return snapshot;
+  }
+
   Future<ArtifactSnapshot> _restore({
     required bool verifyPromotedChecksum,
   }) async {

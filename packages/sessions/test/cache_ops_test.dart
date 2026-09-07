@@ -96,6 +96,40 @@ void main() {
     expect(await index.get(downloaded.key), isNotNull);
   });
 
+  test('external busy ownership protects a record from trim and clear', () async {
+    final temp = await Directory.systemTemp.createTemp('cache_ops_external_busy_');
+    addTearDown(() => temp.delete(recursive: true));
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final registry = DownloadRegistry(
+      layout: CacheLayout(temp.path),
+      clock: FakeMonoClock(),
+      index: index,
+    );
+    addTearDown(registry.dispose);
+    final id = _id('borrowed');
+    await _writeReady(registry.get(id), 40);
+    final ops = CacheOps(
+      index: index,
+      registry: registry,
+      clock: FakeMonoClock(),
+    );
+
+    final trim = await ops.trim(
+      const CacheLimits(maxBytes: 1, targetBytes: 0),
+      busy: <DownloadId>{id},
+    );
+    expect(trim.evicted, 0);
+    expect(trim.skippedBusy, 1);
+    expect(await index.get(id.key), isNotNull);
+
+    final clear = await ops.clear(busy: <DownloadId>{id});
+    expect(clear.evicted, 0);
+    expect(clear.skippedBusy, 1);
+    expect(await index.get(id.key), isNotNull);
+  });
+
   test('snapshot eviction that removes nothing is not reported as evicted', () async {
     final temp = await Directory.systemTemp.createTemp('cache_ops_stale_');
     addTearDown(() => temp.delete(recursive: true));

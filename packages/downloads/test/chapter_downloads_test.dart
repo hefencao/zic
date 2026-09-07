@@ -338,6 +338,43 @@ void main() {
     expect(storage[relativePath], orderedEquals(bytes));
   });
 
+  test('SAF partial stays stream-backed and never exposes POSIX adoption',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-saf-partial-stream-fallback-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final storage = <String, Uint8List>{};
+    final service = await PersistentChapterDownloadService.open(
+      directory.path,
+      safTreeIo: _MemorySafIo(storage),
+      safTreeUri: 'content://tree/saf-partial-stream-fallback',
+    );
+    addTearDown(service.close);
+    final id = _readerArtifactId('saf-partial-stream-fallback');
+    final bytes = Uint8List.fromList(<int>[1, 2, 3, 4, 5, 6]);
+
+    await service.storePartialDownload(
+      id: id,
+      entry: PartialDownloadEntry(
+        length: bytes.lengthInBytes,
+        validators: const Validators(etag: 'saf-stream-v1'),
+        totalLength: 12,
+        open: ({required int start}) =>
+            Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+      ),
+    );
+    final partial = await service.openPartialDownload(id);
+
+    expect(partial, isNotNull);
+    expect(partial!.adoptInto, isNull);
+    final restored = <int>[];
+    await for (final chunk in partial.open(start: 0)) {
+      restored.addAll(chunk);
+    }
+    expect(restored, bytes);
+  });
+
   test('foreign partial metadata drops only the logical binding', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-partial-foreign-binding-',

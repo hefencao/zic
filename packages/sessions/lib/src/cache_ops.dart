@@ -54,6 +54,7 @@ final class CacheOps {
   Future<CacheReport> trim(
     CacheLimits limits, {
     Set<DownloadId> protected = const <DownloadId>{},
+    Set<DownloadId> busy = const <DownloadId>{},
   }) async {
     final records = await index.list();
     final protectedKeys = protected.map((id) => id.key).toSet()
@@ -61,6 +62,7 @@ final class CacheOps {
     final busyKeys = <String>{
       for (final session in registry.sessions)
         if (!session.canEvict) session.id.key,
+      for (final id in busy) id.key,
     };
     final plan = policy.plan(
       records: records,
@@ -74,6 +76,7 @@ final class CacheOps {
       // as both protected and busy. The policy still receives the union above
       // and therefore never schedules them as candidates.
       protectedKeys: protectedKeys,
+      busyKeys: busyKeys,
       initialSkippedBusy: records
           .where((record) => busyKeys.contains(record.key))
           .length,
@@ -82,14 +85,21 @@ final class CacheOps {
 
   Future<CacheReport> clear({
     Set<DownloadId> protected = const <DownloadId>{},
+    Set<DownloadId> busy = const <DownloadId>{},
   }) async {
     final records = await index.list();
     final protectedKeys = protected.map((id) => id.key).toSet()
       ..addAll(await _pinnedKeys(records));
+    final busyKeys = <String>{
+      for (final session in registry.sessions)
+        if (!session.canEvict) session.id.key,
+      for (final id in busy) id.key,
+    };
     return _apply(
       records: records,
       requestedBytes: records.fold<int>(0, (sum, rec) => sum + rec.bytes),
       protectedKeys: protectedKeys,
+      busyKeys: busyKeys,
     );
   }
 
@@ -114,6 +124,7 @@ final class CacheOps {
     required Iterable<CacheRec> records,
     required int requestedBytes,
     required Set<String> protectedKeys,
+    Set<String> busyKeys = const <String>{},
     int initialSkippedBusy = 0,
   }) async {
     var released = 0;
@@ -127,6 +138,10 @@ final class CacheOps {
       step++;
       if (step % 20 == 0) {
         await Future<void>.delayed(Duration.zero);
+      }
+      if (busyKeys.contains(record.key)) {
+        skippedBusy++;
+        continue;
       }
       if (protectedKeys.contains(record.key)) {
         skippedProtected++;

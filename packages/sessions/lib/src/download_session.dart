@@ -207,22 +207,31 @@ final class DownloadSnapshot {
 final class DownloadSession {
   DownloadSession({
     required this.id,
-    required this.artifact,
+    required Artifact artifact,
     required this.clock,
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'download',
-    this.index,
-    this.storageRootId = 'default',
+    CacheIndex? index,
+    String storageRootId = 'default',
     bool initiallyDemanded = true,
-  }) : _legacyDemanded = initiallyDemanded;
+  })  : _artifact = artifact,
+        _index = index,
+        _storageRootId = storageRootId,
+        _legacyDemanded = initiallyDemanded;
 
   final DownloadId id;
-  final Artifact artifact;
+  Artifact _artifact;
   final MonoClock clock;
   final TraceSink traceSink;
   final String sessionId;
-  final CacheIndex? index;
-  final String storageRootId;
+  CacheIndex? _index;
+  String _storageRootId;
+  void Function()? _borrowedBackingRelease;
+
+  Artifact get artifact => _artifact;
+  CacheIndex? get index => _index;
+  String get storageRootId => _storageRootId;
+  bool get hasBorrowedDurableSpool => _borrowedBackingRelease != null;
 
   DownloadState _state = DownloadState.idle;
   SourceEpoch _epoch = const SourceEpoch(0);
@@ -455,6 +464,114 @@ final class DownloadSession {
     }
     _run = null;
     _notifySnapshot();
+  }
+
+  /// Rebinds this still-empty physical session to one verified durable POSIX
+  /// partial while preserving session identity, demand leases and Reader ingress.
+  ///
+  /// The backing is exclusive until [dispose] invokes the release callback. Reset
+  /// and network append continue to operate on the adopted durable artifact and
+  /// its original index/root; no second mutable spool is created.
+  Future<DownloadSnapshot> adoptDurablePartialBacking({
+    required Artifact artifact,
+    required CacheIndex index,
+    required String storageRootId,
+    required int expectedLength,
+    required Validators validators,
+    required int? totalLength,
+    required void Function() releaseBacking,
+    TaskControl? control,
+  }) async {
+    _requireNotDisposed();
+    control?.throwIfCancelled();
+    if (_borrowedBackingRelease != null ||
+        committedLength != 0 ||
+        _writer != null ||
+        _run != null ||
+        _resetting ||
+        _disposing ||
+        _restoring ||
+        _pendingIngressAttachments.isNotEmpty ||
+        (_state != DownloadState.idle && _state != DownloadState.failed)) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'durable partial adoption requires an idle empty session',
+      );
+    }
+    final epoch = _epoch;
+    _restoring = true;
+    var backingCommitted = false;
+    try {
+      final adopted = await artifact.adoptExistingPartial(
+        expectedLength: expectedLength,
+      );
+      _requireEpoch(epoch);
+      control?.throwIfCancelled();
+      final restoredPrefix =
+          await artifact.readPrefix(_sourceMetadataPrefixLength);
+      _requireEpoch(epoch);
+      control?.throwIfCancelled();
+
+      final previousArtifact = _artifact;
+      _artifact = artifact;
+      _index = index;
+      _storageRootId = storageRootId;
+      _borrowedBackingRelease = releaseBacking;
+      backingCommitted = true;
+      await previousArtifact.dispose();
+
+      _ingressProjectionRevision++;
+      _residentLength = null;
+      _residentBodyBacked = false;
+      _residentBodyAuthority = null;
+      _validators = validators;
+      _validatorRequestUri =
+          validators.isEmpty ? null : id.canonicalUri;
+      _totalLength = totalLength;
+      _networkStartLength = adopted.committedLength;
+      _networkAttemptActive = false;
+      // A durable local prefix is committed transfer state, not evidence that
+      // the next transport attempt already consumed those bytes. Keep the
+      // transient transport cursor at its reset value until DownloadJob starts
+      // a real provider attempt and publishes that attempt's cursor.
+      _networkCursorLength = 0;
+      _networkCursorPublishedLength = 0;
+      _prefix = List<int>.of(restoredPrefix, growable: true);
+      _contentKind = sniffContent(_prefix, finalChunk: false);
+      _refreshSourceCanvasFromPrefix();
+      _failure = null;
+      _resetPlayablePrefixEvidence();
+      _state = DownloadState.idle;
+      _expectIngressLength(totalLength);
+      await _restoreIngressIfNeeded(sealed: false);
+      _requireEpoch(epoch);
+      control?.throwIfCancelled();
+      await _syncCache(CacheState.partial, expectedEpoch: epoch);
+      _requireEpoch(epoch);
+      _recordTrace(
+        TraceEventKind.artifactSource,
+        <String, Object?>{
+          'stage': 'durable-partial-adoption',
+          'action': 'adopted-posix-spool',
+          'committedLength': adopted.committedLength,
+          'storageRootId': storageRootId,
+        },
+      );
+      _notifySnapshot();
+      return snapshot;
+    } catch (error) {
+      if (!backingCommitted) {
+        try {
+          await artifact.dispose();
+        } on Object {
+          // Preserve the adoption failure; no session state references this
+          // candidate backing yet.
+        }
+      }
+      rethrow;
+    } finally {
+      _restoring = false;
+    }
   }
 
   Future<DownloadSnapshot> restore({
@@ -1757,6 +1874,11 @@ final class DownloadSession {
       // into a no-op, and awaiting the tail establishes the shutdown boundary.
       await _cacheMutationTail;
       await artifact.dispose();
+      final releaseBacking = _borrowedBackingRelease;
+      if (releaseBacking != null) {
+        releaseBacking();
+        _borrowedBackingRelease = null;
+      }
       _state = DownloadState.disposed;
       _notifySnapshot();
       _snapshotListeners.clear();
