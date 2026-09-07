@@ -43,29 +43,24 @@ final class DownloadIngressProjectionRegistry {
     required this.scopePrefix,
     this.residentReplaySource,
     this.residentReplaySourceWithControl,
-  });
+    this.maxActiveReplays = 2,
+  }) : assert(maxActiveReplays > 0);
 
   final SourcePool sources;
   final String scopePrefix;
   final DownloadResidentReplaySource? residentReplaySource;
   final DownloadResidentReplaySourceWithControl?
       residentReplaySourceWithControl;
+  final int maxActiveReplays;
   final Map<DownloadId, _IngressProjectionEntry> _entries =
       <DownloadId, _IngressProjectionEntry>{};
   final List<_IngressProjectionEntry> _pendingReplays =
       <_IngressProjectionEntry>[];
   final Set<_IngressProjectionEntry> _activeReplays =
       <_IngressProjectionEntry>{};
-  bool _isMemoryPressured = false;
 
   Iterable<DownloadIngressProjection> get projections =>
       _entries.values.map((entry) => entry.projection);
-
-  void observeMemoryPressure(bool isPressured) {
-    if (_isMemoryPressured == isPressured) return;
-    _isMemoryPressured = isPressured;
-    _pumpReplays();
-  }
 
   DownloadIngressProjection attach(DownloadSession session) {
     final existing = _entries[session.id];
@@ -152,10 +147,7 @@ final class DownloadIngressProjectionRegistry {
   Future<void> settled(DownloadId id) {
     final entry = _entries[id];
     if (entry == null) return Future<void>.value();
-    if (entry.attachment == null && _pendingReplays.contains(entry)) {
-      _pendingReplays.remove(entry);
-      _startReplay(entry);
-    }
+    _pumpReplays();
     return entry.completer.future;
   }
 
@@ -183,6 +175,24 @@ final class DownloadIngressProjectionRegistry {
     _pumpReplays();
   }
 
+  /// Releases this Reader's encoded-source ownership for one physical page.
+  ///
+  /// Physical transfer/download retention is independent and may continue in
+  /// the composition owner. This boundary is used when Pipeline no longer has
+  /// any decode/upload demand for the page; it must not be inferred from a
+  /// DownloadDemand priority or viewport-role threshold.
+  void release(DownloadSession session) {
+    final id = session.id;
+    final entry = _entries[id];
+    if (entry != null && !identical(entry.session, session)) {
+      return;
+    }
+    detach(session);
+    if (_entries[id] == null) {
+      sources.remove(id);
+    }
+  }
+
   /// Releases only Reader-local projection ownership.
   ///
   /// It intentionally does not enumerate or dispose the composition physical
@@ -205,35 +215,25 @@ final class DownloadIngressProjectionRegistry {
   }
 
   void _pumpReplays() {
-    if (_pendingReplays.isEmpty) return;
-
-    _pendingReplays.sort((a, b) => b.priority.compareTo(a.priority));
-
-    final activeForeground =
-        _activeReplays.where((e) => e.priority >= 1000).length;
-    final activeBackground = _activeReplays.length - activeForeground;
-
-    final toStart = <_IngressProjectionEntry>[];
-    for (final entry in _pendingReplays) {
-      if (!entry.active) continue;
-      final priority = entry.priority;
-      if (priority >= 1000) {
-        toStart.add(entry);
-      } else if (priority >= 780) {
-        if (activeForeground == 0 && (activeBackground + toStart.length) < 1) {
-          toStart.add(entry);
-        }
-      } else {
-        if (!_isMemoryPressured &&
-            activeForeground == 0 &&
-            (activeBackground + toStart.length) < 1) {
-          toStart.add(entry);
-        }
-      }
+    if (_pendingReplays.isEmpty ||
+        _activeReplays.length >= maxActiveReplays) {
+      return;
     }
 
-    for (final entry in toStart) {
-      _pendingReplays.remove(entry);
+    _pendingReplays.sort((a, b) {
+      final priority = b.priority.compareTo(a.priority);
+      if (priority != 0) return priority;
+      return a.session.id.key.compareTo(b.session.id.key);
+    });
+
+    while (_activeReplays.length < maxActiveReplays &&
+        _pendingReplays.isNotEmpty) {
+      final index = _pendingReplays.indexWhere((entry) => entry.active);
+      if (index < 0) {
+        _pendingReplays.clear();
+        return;
+      }
+      final entry = _pendingReplays.removeAt(index);
       _startReplay(entry);
     }
   }

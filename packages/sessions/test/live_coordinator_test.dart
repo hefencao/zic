@@ -84,6 +84,117 @@ void main() {
   });
 
 
+  test('Reader-local source follows media demand rather than download-window retention', () async {
+    final temp = await Directory.systemTemp.createTemp('live_source_lifetime_test_');
+    addTearDown(() async => temp.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'source-lifetime',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/source-lifetime.webp'),
+    );
+    final decodeId = DecodeId(
+      download: id,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'source-lifetime',
+    );
+    final coordinator = LiveCoordinator(
+      registry: registry,
+      ingresses: ingresses,
+      transportFor: (_) =>
+          FakeTransport(bytes: <int>[...'RIFF....WEBPsource'.codeUnits]),
+      clock: clock,
+      onDecode: (_, _, _) async {},
+      net: NetLane(maxActive: 1),
+      decode: DecodeLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      ingresses.dispose();
+      sources.dispose();
+      await registry.dispose();
+    });
+
+    final withMedia = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        id: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'source-lifetime',
+          expirationRevision: 2,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        decodeId: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'source-lifetime',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{
+        ResourceId.download(id),
+        ResourceId.decode(decodeId),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: withMedia,
+        diff: DemandDiff.between(DemandPlan.empty(), withMedia),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await coordinator.idle();
+    expect(ingresses.find(id), isNotNull);
+    expect(sources.find(id), isNotNull);
+    expect(registry.find(id), isNotNull);
+
+    final downloadOnly = DemandPlan(
+      revision: 2,
+      downloads: withMedia.downloads,
+      decodes: const <DecodeId, DecodeDemand>{},
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{ResourceId.download(id)},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: downloadOnly,
+        diff: DemandDiff.between(withMedia, downloadOnly),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.next2}),
+      ),
+    );
+
+    expect(coordinator.demands, contains(id));
+    expect(registry.find(id), isNotNull,
+        reason: 'encoded transfer retention is independent from Reader media');
+    expect(ingresses.find(id), isNull);
+    expect(sources.find(id), isNull);
+  });
+
   test('download priority migration does not re-observe physical identity', () async {
     final temp = await Directory.systemTemp.createTemp('live_identity_observe_test_');
     addTearDown(() async => temp.delete(recursive: true));

@@ -420,7 +420,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     for (final id in diff.removed) {
       _downloads.remove(id);
       _observedDownloadSessions.remove(id);
-      _clearSourceKind(id);
     }
     final scheduled = <MapEntry<DownloadId, DownloadDemand>>[
       ...diff.added.entries,
@@ -484,6 +483,34 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     } on Object {
       // Cost observers cannot break source/decode ownership.
     }
+  }
+
+  void _releaseSourceIfUnused(DownloadId id) {
+    if (_decodes.keys.any((candidate) => candidate.download == id) ||
+        _uploads.keys.any((candidate) => candidate.download == id) ||
+        (uploads?.hasRetainableStaticOutputForDownload(id) ?? false)) {
+      return;
+    }
+    final binding = _sourceWatches.remove(id);
+    _sourceRevisions.remove(id);
+    _sourceWakeLengths.remove(id);
+    _sourceRebindWakes.remove(id);
+    _clearSourceKind(id);
+    if (binding == null) return;
+    binding.projection.removeSourceListener(binding.listener);
+    for (final decodeId in _decodeSourceRevisions.keys
+        .where((candidate) => candidate.download == id)
+        .toList(growable: false)) {
+      _decodeSourceRevisions.remove(decodeId);
+    }
+    // Native cursors and UploadSessions hold concrete source/decode generation
+    // ownership. Once no demand or retained static output authorizes that
+    // media generation, retire the full dependent chain before disposing the
+    // Reader-local ingress; otherwise stale cursors can pin encoded bytes or
+    // be reused against a later physical generation.
+    uploads?.invalidateForDownload(id);
+    decodes?.invalidateForDownload(id);
+    ingresses?.release(binding.session);
   }
 
   void _watchSource(
@@ -617,7 +644,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     String sessionId,
     MapDiff<DecodeId, DecodeDemand> diff,
   ) {
+    final removedDownloads = <DownloadId>{};
     for (final id in diff.removed) {
+      removedDownloads.add(id.download);
       _decodes.remove(id);
       _decodeDemandRevisions.remove(id);
       _decodeSourceRevisions.remove(id);
@@ -690,6 +719,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           submittedAtMicros: submittedAtMicros,
         ),
       );
+    }
+    for (final id in removedDownloads) {
+      _releaseSourceIfUnused(id);
     }
   }
 
@@ -1179,7 +1211,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     String sessionId,
     MapDiff<DecodeId, UploadDemand> diff,
   ) {
+    final removedDownloads = <DownloadId>{};
     for (final id in diff.removed) {
+      removedDownloads.add(id.download);
       _uploads.remove(id);
       _uploadDemandRevisions.remove(id);
       upload.cancel(id.key);
@@ -1268,6 +1302,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         follow: diff.changed.containsKey(entry.key),
         demandRevision: demandRevision,
       );
+    }
+    for (final id in removedDownloads) {
+      _releaseSourceIfUnused(id);
     }
   }
 
@@ -1384,6 +1421,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             (budgeter.limits.decodedBytes -
                 budgeter.limits.currentDecodedReserve);
     onMemoryPressureObserved?.call(isPressured);
+    if (report.decodedFreed > 0 || report.outputFreed > 0) {
+      for (final id in _sourceWatches.keys.toList(growable: false)) {
+        _releaseSourceIfUnused(id);
+      }
+    }
     if (report.decodedFreed == 0 && report.outputFreed == 0) {
       return;
     }

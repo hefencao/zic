@@ -779,9 +779,10 @@ void main() {
     expect(openOrder.last, low.canonicalUri);
   });
 
-  test('foreground local preparation runs exclusively without background competition', () async {
+  test('local preparation bounds operations without a foreground eligibility gate',
+      () async {
     final temp = await Directory.systemTemp.createTemp(
-      'transfer_owner_fg_exclusive_prepare_',
+      'transfer_owner_bounded_prepare_',
     );
     addTearDown(() async => temp.delete(recursive: true));
     final clock = _Clock();
@@ -789,51 +790,76 @@ void main() {
       layout: CacheLayout('${temp.path}/cache'),
       clock: clock,
     );
-    final foreground = _id('fg-prepare-exclusive');
-    final background = _id('bg-prepare-exclusive');
+    final foreground = _id('fg-prepare-bounded');
+    final background1 = _id('bg1-prepare-bounded');
+    final background2 = _id('bg2-prepare-bounded');
+    final fgEntered = Completer<void>();
+    final bg1Entered = Completer<void>();
+    final bg2Entered = Completer<void>();
     final fgRelease = Completer<void>();
-    final bgEntered = Completer<void>();
-    var bgPreparedCount = 0;
+    final bg1Release = Completer<void>();
+    var activePreparations = 0;
+    var maxActivePreparations = 0;
     final owner = DownloadTransferOwner(
       registry: registry,
       clock: clock,
-      net: NetLane(maxActive: 2),
+      net: NetLane(maxActive: 3),
       prepareDownload: (session) async {
-        if (session.id == foreground) {
-          await fgRelease.future;
-        } else if (session.id == background) {
-          if (!bgEntered.isCompleted) bgEntered.complete();
-          bgPreparedCount++;
+        activePreparations++;
+        if (activePreparations > maxActivePreparations) {
+          maxActivePreparations = activePreparations;
+        }
+        try {
+          if (session.id == foreground) {
+            if (!fgEntered.isCompleted) fgEntered.complete();
+            await fgRelease.future;
+          } else if (session.id == background1) {
+            if (!bg1Entered.isCompleted) bg1Entered.complete();
+            await bg1Release.future;
+          } else if (session.id == background2) {
+            if (!bg2Entered.isCompleted) bg2Entered.complete();
+          }
+        } finally {
+          activePreparations--;
         }
       },
     );
     addTearDown(() async {
       if (!fgRelease.isCompleted) fgRelease.complete();
+      if (!bg1Release.isCompleted) bg1Release.complete();
       await owner.dispose();
       await registry.dispose();
     });
 
     final consumer = owner.attachConsumer(
-      scopeId: 'reader-fg-exclusive',
-      transportFor: (uri) => _CountingBytesTransport('RIFF....WEBPpriority'.codeUnits),
+      scopeId: 'reader-bounded-prepare',
+      transportFor: (uri) =>
+          _CountingBytesTransport('RIFF....WEBPpriority'.codeUnits),
       traceSink: const NoopTraceSink(),
     );
     consumer.replaceDemands(
-      'reader-fg-exclusive',
+      'reader-bounded-prepare',
       1,
       <DownloadId, TransferDemand>{
         foreground: const TransferDemand(priority: 1000, reason: 'current'),
-        background: const TransferDemand(priority: 820, reason: 'next'),
+        background1: const TransferDemand(priority: 820, reason: 'next'),
+        background2: const TransferDemand(priority: 810, reason: 'next2'),
       },
     );
 
-    await Future<void>.delayed(Duration.zero);
-    expect(bgPreparedCount, equals(0));
-    expect(bgEntered.isCompleted, isFalse);
+    await fgEntered.future;
+    await bg1Entered.future;
+    expect(bg2Entered.isCompleted, isFalse);
+    expect(maxActivePreparations, equals(2));
+
+    bg1Release.complete();
+    await bg2Entered.future;
+    expect(fgRelease.isCompleted, isFalse,
+        reason: 'lower-priority work must not require current to finish first');
+    expect(maxActivePreparations, equals(2));
 
     fgRelease.complete();
-    await bgEntered.future;
-    expect(bgPreparedCount, equals(1));
+    await consumer.idle();
   });
 
   test('local preparation is retried after the physical session epoch resets',

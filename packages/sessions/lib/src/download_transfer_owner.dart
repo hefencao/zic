@@ -108,9 +108,10 @@ final class DownloadTransferOwner {
   // partial/artifact restore is local I/O and may publish Reader-local ingress
   // before a source/network transport lease is available. One physical session
   // generation performs this initialization at most once.
+  // Local preparation is an operation-lifetime bound, not a page-eligibility
+  // policy. Persistent body I/O is scheduled separately per chunk by the
+  // composition-owned ArtifactCacheReadScheduler.
   static const int _maxActiveLocalPreparations = 2;
-  static const int _foregroundLocalPriority = 900;
-  static const int _maxBackgroundLocalWhileForeground = 0;
 
   final Map<DownloadId, Future<void>> _localPreparations =
       <DownloadId, Future<void>>{};
@@ -1394,37 +1395,7 @@ final class DownloadTransferOwner {
         });
       if (candidates.isEmpty) break;
 
-      var activeForeground = 0;
-      var activeBackground = 0;
-      for (final activeId in _activeLocalPreparations) {
-        final activeSession = registry.findExact(activeId);
-        if (activeSession != null &&
-            activeSession.effectivePriority >= _foregroundLocalPriority) {
-          activeForeground++;
-        } else {
-          activeBackground++;
-        }
-      }
-
-      final hasForegroundPressure = activeForeground > 0 ||
-          candidates.any(
-              (c) => c.session.effectivePriority >= _foregroundLocalPriority);
-
-      _PendingLocalPreparation? selected;
-      for (final candidate in candidates) {
-        final isForeground =
-            candidate.session.effectivePriority >= _foregroundLocalPriority;
-        if (isForeground) {
-          selected = candidate;
-          break;
-        } else if (!hasForegroundPressure ||
-            activeBackground < _maxBackgroundLocalWhileForeground) {
-          selected = candidate;
-          break;
-        }
-      }
-      if (selected == null) break;
-      final target = selected;
+      final target = candidates.first;
 
       _pendingLocalPreparations.remove(target.id);
       _activeLocalPreparations.add(target.id);

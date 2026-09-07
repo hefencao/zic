@@ -42,6 +42,15 @@ final class UploadRegistry {
 
   UploadSession? find(DecodeId id) => _sessions[id];
 
+  bool hasRetainableStaticOutputForDownload(DownloadId id) {
+    for (final entry in _sessions.entries) {
+      if (entry.key.download == id && entry.value.hasRetainableStaticOutput) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   void addListener(UploadRegistryListener listener) {
     _listeners.add(listener);
   }

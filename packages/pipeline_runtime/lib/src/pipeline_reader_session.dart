@@ -2039,7 +2039,6 @@ final class PipelineReaderSession {
       _loaderTransport.contains(uri) ? _transportFor(uri) : null;
 
   void _observeDownloadSession(DownloadSession session) {
-    _ingresses.attach(session);
     if (_outputPrewarmSnapshotListeners.containsKey(session)) return;
     late final DownloadSnapshotListener listener;
     listener = (snapshot) {
@@ -2140,7 +2139,6 @@ final class PipelineReaderSession {
   }
 
   void _handleMemoryPressureObserved(bool isPressured) {
-    _ingresses.observeMemoryPressure(isPressured);
     scheduleMicrotask(() {
       if (_disposed) return;
       _binding?.observeMemoryPressure(isPressured: isPressured);

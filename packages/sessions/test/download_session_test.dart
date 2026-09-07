@@ -984,6 +984,99 @@ void main() {
     expect(session.snapshot.ingressProjectionCount, 0);
   });
 
+  test('Reader ingress replay queue is bounded and priority ordered without role gates',
+      () async {
+    Future<DownloadSession> resident(String name) async {
+      final current = DownloadSession(
+        id: _idWithSource(name),
+        artifact: Artifact(
+          partialPath: '${temp.path}/partial/$name.webp',
+          finalPath: '${temp.path}/cache/$name.webp',
+        ),
+        clock: FakeMonoClock(),
+      );
+      await current.restore();
+      final bytes = <int>[...'RIFF....WEBP$name'.codeUnits];
+      current.beginResidentImmutableIngress(
+        validators: const Validators(),
+        totalLength: bytes.length,
+        bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      );
+      current.appendResidentImmutableIngress(0, bytes);
+      current.sealResidentImmutableIngress();
+      return current;
+    }
+
+    final blocker = await resident('replay-blocker');
+    final low = await resident('replay-low');
+    final high = await resident('replay-high');
+    addTearDown(() async {
+      await blocker.dispose();
+      await low.dispose();
+      await high.dispose();
+    });
+    final blockerDemand = blocker.attachDemand(scopeId: 'reader', priority: 500);
+    final lowDemand = low.attachDemand(scopeId: 'reader', priority: 100);
+    final highDemand = high.attachDemand(scopeId: 'reader', priority: 900);
+    addTearDown(() {
+      blockerDemand.detach();
+      lowDemand.detach();
+      highDemand.detach();
+    });
+
+    final blockerRelease = Completer<void>();
+    final highRelease = Completer<void>();
+    final starts = <DownloadId>[];
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-bounded-replay',
+      maxActiveReplays: 1,
+      residentReplaySourceWithControl:
+          (physical, endExclusive, {required control}) async {
+        starts.add(physical.id);
+        if (physical.id == blocker.id) {
+          await blockerRelease.future;
+        } else if (physical.id == high.id) {
+          await highRelease.future;
+        }
+        control.throwIfCancelled();
+        final bytes = <int>[...'RIFF....WEBP${physical.id.content.pageId}'.codeUnits];
+        return Stream<List<int>>.value(
+          bytes.sublist(0, endExclusive.clamp(0, bytes.length).toInt()),
+        );
+      },
+    );
+    addTearDown(() {
+      ingresses.dispose();
+      sources.dispose();
+    });
+
+    ingresses.get(blocker);
+    await Future<void>.delayed(Duration.zero);
+    expect(starts, <DownloadId>[blocker.id]);
+
+    ingresses.get(low);
+    ingresses.get(high);
+    await Future<void>.delayed(Duration.zero);
+    expect(starts, <DownloadId>[blocker.id]);
+
+    blockerRelease.complete();
+    while (starts.length < 2) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(starts[1], high.id,
+        reason: 'pending replay order follows demand priority, not page-role thresholds');
+    expect(starts, isNot(contains(low.id)));
+
+    highRelease.complete();
+    await ingresses.settled(low.id);
+    expect(starts, <DownloadId>[blocker.id, high.id, low.id]);
+  });
+
   test('synchronized ingress projection attachment stages replays by priority and watermark',
       () async {
     final s1 = DownloadSession(
@@ -1153,6 +1246,41 @@ void main() {
     expect(secondProjection.snapshot.sourceReady, isFalse);
     expect(secondSession.snapshot.ingressProjectionCount, 1);
     expect(firstSession.snapshot.ingressProjectionCount, 0);
+
+    ingresses.dispose();
+    sources.dispose();
+    await retired!.dispose();
+    await downloads.dispose();
+  });
+
+  test('releasing a retired same-id physical session cannot remove the replacement source', () async {
+    final clock = FakeMonoClock();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/release-generation-cache'),
+      clock: clock,
+    );
+    final id = _id();
+    final first = downloads.get(id);
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-release-generation',
+    );
+    ingresses.get(first);
+    final retired = downloads.takeIdlePhysical(id);
+    expect(retired, same(first));
+
+    final second = downloads.get(id);
+    final replacement = ingresses.get(second);
+    expect(sources.find(id), isNotNull);
+
+    ingresses.release(first);
+    expect(ingresses.find(id), same(replacement));
+    expect(sources.find(id), isNotNull,
+        reason: 'a late old-generation release must not erase the replacement source');
 
     ingresses.dispose();
     sources.dispose();

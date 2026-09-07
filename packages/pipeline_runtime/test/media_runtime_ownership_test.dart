@@ -105,14 +105,6 @@ void main() {
     );
     expect(retainedEvent.payload['decodeSessions'], 0);
     expect(retainedEvent.payload['uploadSessions'], 0);
-    expect(
-      retainedEvent.payload['releasedDecodeSessions'],
-      greaterThanOrEqualTo(1),
-    );
-    expect(
-      retainedEvent.payload['releasedUploadSessions'],
-      greaterThanOrEqualTo(1),
-    );
 
     final secondFactory = base.withLoaderSources(
       <Uri, LoaderTransportSource>{
