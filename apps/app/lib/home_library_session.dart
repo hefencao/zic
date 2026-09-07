@@ -1033,6 +1033,28 @@ final class HomeLibrarySession extends ChangeNotifier {
   }
 
   Future<void> upsertVersionRelation(ComicVersionRelation relation) async {
+    await _persistVersionRelation(relation);
+    replaceVersionRelation(relation);
+  }
+
+  /// Persists derived page-reuse evidence without publishing a Home mutation.
+  ///
+  /// Page mappings change cache/download reuse authority, but do not change the
+  /// visible version family/head projection. Publishing them through the broad
+  /// Home ChangeNotifier caused every background mapping write to rebuild the
+  /// covered Home route and enqueue another full projection snapshot write.
+  Future<void> upsertVersionRelationDerivedState(
+    ComicVersionRelation relation,
+  ) async {
+    await _persistVersionRelation(relation);
+    _replaceVersionRelation(
+      relation,
+      publishHome: false,
+      writeSnapshot: false,
+    );
+  }
+
+  Future<void> _persistVersionRelation(ComicVersionRelation relation) async {
     final store = library is ComicVersionRelationStore
         ? library as ComicVersionRelationStore
         : null;
@@ -1040,10 +1062,21 @@ final class HomeLibrarySession extends ChangeNotifier {
       throw StateError('library does not persist comic version relations');
     }
     await store.saveComicVersionRelation(relation);
-    replaceVersionRelation(relation);
   }
 
   void replaceVersionRelation(ComicVersionRelation relation) {
+    _replaceVersionRelation(
+      relation,
+      publishHome: true,
+      writeSnapshot: true,
+    );
+  }
+
+  void _replaceVersionRelation(
+    ComicVersionRelation relation, {
+    required bool publishHome,
+    required bool writeSnapshot,
+  }) {
     final next = _versionRelations.toList(growable: true);
     final index = next.indexWhere(
       (current) =>
@@ -1069,8 +1102,12 @@ final class HomeLibrarySession extends ChangeNotifier {
     _versionRelations = List<ComicVersionRelation>.unmodifiable(next);
     _recomputeVersionBaselines();
     _libraryProjectionRevision++;
-    _publish();
-    _scheduleSnapshotWrite();
+    if (publishHome) {
+      _publish();
+    }
+    if (writeSnapshot) {
+      _scheduleSnapshotWrite();
+    }
   }
 
   void replacePreference(ComicPreference preference) {

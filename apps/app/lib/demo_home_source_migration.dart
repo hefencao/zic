@@ -378,7 +378,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           mapping,
         ),
       );
-      await _librarySession.upsertVersionRelation(updatedRelation);
+      await _librarySession.upsertVersionRelationDerivedState(updatedRelation);
     }
     widget.debugTrace.record(
       TraceEvent(

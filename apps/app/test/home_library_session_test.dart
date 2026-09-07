@@ -52,6 +52,69 @@ void main() {
     expect(notifications, 1);
   });
 
+  test('derived version page mappings do not broadcast Home projection',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    await session.ready;
+    final discoveredAt = DateTime.utc(2026, 9, 7);
+    await session.upsertVersionRelation(
+      ComicVersionRelation(
+        sourceId: 'venera:ehentai',
+        predecessorComicId: 'old-gallery',
+        successorComicId: 'new-gallery',
+        predecessorTitle: 'Old',
+        discoveredAt: discoveredAt,
+      ),
+    );
+
+    var notifications = 0;
+    session.addListener(() => notifications++);
+    await session.upsertVersionRelationDerivedState(
+      ComicVersionRelation(
+        sourceId: 'venera:ehentai',
+        predecessorComicId: 'old-gallery',
+        successorComicId: 'new-gallery',
+        predecessorTitle: 'Old',
+        discoveredAt: discoveredAt,
+        pageMappings: const <ComicVersionPageMapping>[
+          ComicVersionPageMapping(
+            predecessorChapterId: 'old-chapter',
+            successorChapterId: 'new-chapter',
+            predecessorPageCount: 424,
+            successorPageCount: 425,
+            successorOffset: 1,
+          ),
+        ],
+      ),
+    );
+
+    expect(notifications, 0);
+    expect(session.versionRelations.single.pageMappings, hasLength(1));
+    final persisted = await library.listComicVersionSuccessors(
+      'venera:ehentai',
+      'old-gallery',
+    );
+    expect(persisted.single.pageMappings, hasLength(1));
+  });
+
   test('download projection changes do not rebuild the library projection',
       () async {
     final library = MemoryImportedLibraryStore();
