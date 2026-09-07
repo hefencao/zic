@@ -5781,17 +5781,24 @@ final class PersistentDownloadArtifactStore
         _isVerifiedReadyRecord(record) &&
         record.id == id &&
         record.bytes > 0) {
-      final stream = await _openArtifactStream(id);
+      ArtifactCacheStreamEntry? stream;
+      try {
+        stream = await _openArtifactStreamExact(id);
+      } on ArtifactReadFailure catch (error) {
+        if (!_isStructuralReplicaFailure(error.kind)) rethrow;
+        stream = null;
+      }
       if (stream != null) {
         final validators = Validators(etag: '"${stream.length}-${id.key}"');
         return PartialDownloadEntry(
           length: stream.length,
           validators: validators,
           totalLength: stream.length,
-          open: ({required int start}) => stream.open(
+          open: ({required int start}) => stream!.open(
             start: start,
             endExclusive: stream.length,
           ),
+          exactDurableFinal: true,
         );
       }
     }

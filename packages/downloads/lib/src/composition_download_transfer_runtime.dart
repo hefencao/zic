@@ -40,6 +40,17 @@ final class CompositionDownloadTransferRuntime {
         ) {
     final cache = artifactCacheManager;
     final partialStore = partialDownloadStore;
+    if (partialStore != null) {
+      partialDownloadHandoff = PartialDownloadHandoff(
+        store: partialStore,
+        equivalentCandidates: cache?.directEquivalents,
+        onError: (error, stackTrace) {},
+        clock: clock,
+        readScheduler: localReadScheduler,
+        traceSink: traceHub,
+        sessionId: 'composition-transfer-owner',
+      );
+    }
     if (cache != null) {
       artifactCacheHandoff = PromotedArtifactCacheHandoff(
         cache: cache,
@@ -53,17 +64,7 @@ final class CompositionDownloadTransferRuntime {
         ),
         requiredExactTargets: (session) =>
             owner.requiredExactDurableTargets(session.id),
-      );
-    }
-    if (partialStore != null) {
-      partialDownloadHandoff = PartialDownloadHandoff(
-        store: partialStore,
-        equivalentCandidates: cache?.directEquivalents,
-        onError: (error, stackTrace) {},
-        clock: clock,
-        readScheduler: localReadScheduler,
-        traceSink: traceHub,
-        sessionId: 'composition-transfer-owner',
+        exactDurableRestoreProof: partialDownloadHandoff?.provesExactDurableBody,
       );
     }
     registry = DownloadRegistry(

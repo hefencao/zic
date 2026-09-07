@@ -261,6 +261,72 @@ void main() {
     await consumer.dispose();
   });
 
+  test('exact durable ready restore skips the second promoted backend preflight',
+      () async {
+    final durableRoot =
+        await Directory.systemTemp.createTemp('ready-restore-proof-');
+    addTearDown(() async => durableRoot.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'ready',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/ready.webp'),
+    );
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x08, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
+    final store = await PersistentDownloadArtifactStore.open(durableRoot.path);
+    await store.storePromotedArtifact(id: id, bytes: bytes);
+    final backend = _CountingArtifactBackend(store);
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: store,
+      net: NetLane(maxActive: 1),
+    );
+    final transport = _RangeSuffixTransport(
+      bytes,
+      validators: const Validators(),
+    );
+    final consumer = runtime.attachConsumer(
+      scopeId: 'ready-restore-proof',
+      transportFor: (_) => transport,
+      consumerTraceSink: const NoopTraceSink(),
+    );
+    addTearDown(() async {
+      await consumer.dispose();
+      await runtime.dispose();
+      await store.close();
+    });
+
+    consumer.replaceDemands(
+      'ready-restore-proof',
+      1,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 1000,
+          reason: 'ready-restore-proof',
+          completionIntent: TransferCompletionIntent.required,
+        ),
+      },
+    );
+    await consumer.idle();
+
+    final session = runtime.registry.findExact(id);
+    expect(session, isNotNull);
+    expect(session!.state, DownloadState.promoted);
+    expect(session.committedLength, bytes.lengthInBytes);
+    expect(transport.rangeStarts, isEmpty,
+        reason: 'a complete durable body must finish locally');
+    expect(backend.openCalls, 0,
+        reason: 'the just-consumed exact durable body already proves handoff');
+    expect(backend.storeCalls, 0);
+  });
+
   test('physical partial never persists validators from an aliased provider',
       () async {
     final root = await Directory.systemTemp.createTemp('partial-validator-scope-');
@@ -492,11 +558,14 @@ final class _CountingArtifactBackend implements ArtifactCacheBackend {
   _CountingArtifactBackend(this.delegate);
 
   final ArtifactCacheBackend delegate;
+  int openCalls = 0;
   int storeCalls = 0;
 
   @override
-  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) =>
-      delegate.openArtifactStream(id);
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) {
+    openCalls++;
+    return delegate.openArtifactStream(id);
+  }
 
   @override
   Future<void> storePromotedArtifact({

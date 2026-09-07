@@ -16,6 +16,11 @@ typedef ArtifactCacheHandoffError = void Function(
 typedef RequiredArtifactTargets = Iterable<DownloadId> Function(
   DownloadSession session,
 );
+typedef ExactDurableRestoreProof = bool Function(
+  DownloadSession session,
+  DownloadId targetId,
+  int length,
+);
 
 /// Commits only fully promoted session artifacts to the persistent cache tier.
 ///
@@ -31,6 +36,7 @@ final class PromotedArtifactCacheHandoff {
     this.sessionId = 'artifact-cache-handoff',
     this.residentReplaySource,
     this.requiredExactTargets,
+    this.exactDurableRestoreProof,
   });
 
   final ArtifactCacheManager cache;
@@ -40,6 +46,7 @@ final class PromotedArtifactCacheHandoff {
   final String sessionId;
   final DownloadResidentReplaySource? residentReplaySource;
   final RequiredArtifactTargets? requiredExactTargets;
+  final ExactDurableRestoreProof? exactDurableRestoreProof;
   final Map<DownloadSession, DownloadSnapshotListener> _listeners =
       <DownloadSession, DownloadSnapshotListener>{};
   final Map<DownloadId, Future<void>> _commits =
@@ -377,6 +384,21 @@ final class PromotedArtifactCacheHandoff {
         targetId: targetId,
         action: 'skip-empty',
         bytes: 0,
+        startedAtMicros: startedAtMicros,
+      );
+      return;
+    }
+    if (exactDurableRestoreProof?.call(
+          session,
+          targetId,
+          expectedLength,
+        ) ==
+        true) {
+      _recordCommit(
+        session,
+        targetId: targetId,
+        action: 'skip-restored-exact-durable',
+        bytes: expectedLength,
         startedAtMicros: startedAtMicros,
       );
       return;

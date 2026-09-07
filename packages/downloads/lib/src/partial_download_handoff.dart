@@ -39,12 +39,28 @@ final class PartialDownloadHandoff {
   final String sessionId;
   final Map<DownloadSession, Future<bool>> _stores =
       <DownloadSession, Future<bool>>{};
+  final Expando<_ExactDurableRestoreProof> _exactDurableRestoreProofs =
+      Expando<_ExactDurableRestoreProof>('exact-durable-restore');
+
+  bool provesExactDurableBody(
+    DownloadSession session,
+    DownloadId targetId,
+    int length,
+  ) {
+    final proof = _exactDurableRestoreProofs[session];
+    return proof != null &&
+        proof.id == targetId &&
+        proof.epoch == session.epoch &&
+        proof.length == length &&
+        session.id == targetId;
+  }
 
   Future<void> restoreInto(
     DownloadSession session, {
     TaskControl? control,
   }) async {
     control?.throwIfCancelled();
+    _exactDurableRestoreProofs[session] = null;
     if (session.committedLength > 0) return;
     await session.restore(
       verifyPromotedChecksum: false,
@@ -120,6 +136,13 @@ final class PartialDownloadHandoff {
         }
       }
       Error.throwWithStackTrace(error, stackTrace);
+    }
+    if (!candidate.equivalent && entry.exactDurableFinal) {
+      _exactDurableRestoreProofs[session] = _ExactDurableRestoreProof(
+        id: session.id,
+        epoch: session.epoch,
+        length: offset,
+      );
     }
     _record(
       session,
@@ -378,6 +401,18 @@ final class PartialDownloadHandoff {
       },
     ));
   }
+}
+
+final class _ExactDurableRestoreProof {
+  const _ExactDurableRestoreProof({
+    required this.id,
+    required this.epoch,
+    required this.length,
+  });
+
+  final DownloadId id;
+  final SourceEpoch epoch;
+  final int length;
 }
 
 final class _PartialRestoreCandidate {

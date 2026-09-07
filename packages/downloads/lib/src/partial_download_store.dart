@@ -12,12 +12,18 @@ final class PartialDownloadEntry {
     required this.open,
     this.totalLength,
     this.adoptInto,
+    this.exactDurableFinal = false,
   });
 
   final int length;
   final Validators validators;
   final int? totalLength;
   final Stream<List<int>> Function({required int start}) open;
+
+  /// True only when this exact-id entry is already a complete durable final.
+  /// A full restore can pass this operation-scoped proof to the promoted cache
+  /// handoff so it need not immediately re-stat the same durable body.
+  final bool exactDurableFinal;
 
   /// Optional exclusive mutable-spool adoption. Only a store that can prove a
   /// POSIX session-owned partial and keep its index/cleanup authority alive may
