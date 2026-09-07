@@ -889,8 +889,7 @@ final class DownloadTransferOwner {
       // the waiter itself, not just its bookkeeping; otherwise the old timer
       // can wake after a fresh attempt has already completed and reopen a
       // retired physical session.
-      _cancelDownloadRetry(id);
-      _downloadTerminalFailures.remove(id);
+      _cancelDownloadRetry(id, resetBudget: false);
       final deferredAtLength = _downloadDeferredAtLength[id];
       final deferredStillMatches = deferredAtLength == session.committedLength;
       if (!deferredStillMatches ||
@@ -947,7 +946,7 @@ final class DownloadTransferOwner {
     // keep the physical session waiting on a disposed consumer's backoff hook.
     // Task retirement will admit the replacement attempt from the remaining
     // current claims.
-    _cancelDownloadRetry(id);
+    _cancelDownloadRetry(id, resetBudget: false);
     claim.lease.detach();
     if (byScope != null && byScope.isEmpty) {
       _claims.remove(id);
@@ -1674,8 +1673,7 @@ final class DownloadTransferOwner {
     final taskEpoch = session.epoch;
     var claim = _preferredClaim(id);
     if (claim == null) {
-      _cancelDownloadRetry(id);
-      _downloadTerminalFailures.remove(id);
+      _cancelDownloadRetry(id, resetBudget: false);
       if (_networkTaskKeys[id] == taskKey) {
         // Keep the owner key until NetLane has retired the task. A new claim
         // may arrive in the small interval between this future completing and
@@ -1894,11 +1892,14 @@ final class DownloadTransferOwner {
               },
             );
             if (session.demanded && !token.cancelled) {
-              final retryScheduled = failure.code == ErrorCode.network &&
-                  _scheduleDownloadRetry(id, session, failure);
-              if (!retryScheduled) {
-                _downloadTerminalFailures.add(id);
-              }
+              // Once DownloadJob has entered the provider attempt loop, this
+              // RetryPolicy is the single recovery budget for transport/open
+              // and body failures. Re-entering owner-level recovery here would
+              // multiply maxAttempts by physical-task retries (and claim churn
+              // could restart that outer budget), producing an unbounded open
+              // loop with zero byte progress. Owner recovery remains reserved
+              // for setup failures that occur before this loop starts.
+              _downloadTerminalFailures.add(id);
             }
             if (_downloadTerminalFailures.contains(id) && !token.cancelled) {
               // Terminal task outcome (no further retry): publish the failure
@@ -2047,11 +2048,16 @@ final class DownloadTransferOwner {
     return true;
   }
 
-  void _cancelDownloadRetry(DownloadId id) {
+  void _cancelDownloadRetry(
+    DownloadId id, {
+    bool resetBudget = true,
+  }) {
     final waiter = _downloadRetryWaiters.remove(id);
     if (waiter != null && !waiter.isCompleted) waiter.complete();
     _downloadRetryPending.remove(id);
-    _downloadRetryRounds.remove(id);
+    if (resetBudget) {
+      _downloadRetryRounds.remove(id);
+    }
   }
 
 

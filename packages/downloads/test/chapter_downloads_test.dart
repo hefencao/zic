@@ -1949,7 +1949,7 @@ void main() {
       ),
     );
 
-    // Body stall → DownloadJob attempt cleanup → owner retry → completes.
+    // Body stall → DownloadJob attempt cleanup → provider retry → completes.
     await service.download(entry);
     expect(await service.isDownloaded(entry), isTrue);
     expect(openCalls, greaterThanOrEqualTo(2));

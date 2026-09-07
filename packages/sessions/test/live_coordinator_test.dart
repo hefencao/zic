@@ -1065,7 +1065,7 @@ void main() {
     expect(registry.find(id)?.state, DownloadState.promoted);
   });
 
-  test('terminal source failure is not hot-looped while demand is unchanged',
+  test('terminal source failure survives scheduling-only demand changes',
       () async {
     final temp = await Directory.systemTemp.createTemp('live_terminal_failure_');
     addTearDown(() async => temp.delete(recursive: true));
@@ -1128,7 +1128,7 @@ void main() {
     const changedDemand = DownloadDemand(
       role: PageRole.current,
       priority: 999,
-      reason: 'explicit-demand-change',
+      reason: 'scheduling-only-demand-change',
       expirationRevision: 2,
     );
     final second = DemandPlan(
@@ -1148,7 +1148,7 @@ void main() {
     );
     await coordinator.idle();
     await Future<void>.delayed(Duration.zero);
-    expect(transport.opens, 2);
+    expect(transport.opens, 1);
   });
 
   test('download completion wakes a waiting decode demand', () async {

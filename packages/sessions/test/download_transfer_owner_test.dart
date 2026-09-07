@@ -214,7 +214,7 @@ void main() {
     );
   });
 
-  test('open watchdog aborts one attempt and owner retries the demand',
+  test('open watchdog aborts one attempt and provider retries the demand',
       () async {
     final temp = await Directory.systemTemp.createTemp(
       'transfer_owner_open_watchdog_retry_',
@@ -260,6 +260,87 @@ void main() {
     expect(transport.firstCancelled.isCompleted, isTrue);
     expect(registry.get(id).state, DownloadState.promoted);
     expect(registry.get(id).snapshot.failure, isNull);
+  });
+
+  test('transport attempt exhaustion does not multiply into owner recovery',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_open_watchdog_exhausted_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final trace = MemoryTraceSink();
+    final transport = _AlwaysStallControlledTransport();
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      readStallTimeout: const Duration(milliseconds: 30),
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+    final id = _id('open-watchdog-exhausted');
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-open-watchdog-exhausted',
+      transportFor: (_) => transport,
+      traceSink: trace,
+      retry: const RetryPolicy(
+        maxAttempts: 3,
+        baseDelay: Duration.zero,
+        maxDelay: Duration.zero,
+      ),
+    );
+
+    consumer.replaceDemands(
+      'reader-open-watchdog-exhausted',
+      1,
+      _desired(id, priority: 1000),
+    );
+    await consumer.idle().timeout(const Duration(seconds: 2));
+
+    final session = registry.get(id);
+    final exhaustedOpenCalls = transport.opens;
+    expect(exhaustedOpenCalls, greaterThanOrEqualTo(3));
+    expect(session.state, DownloadState.failed);
+    expect(session.committedLength, 0);
+    expect(
+      trace.events.where(
+        (event) => event.kind == TraceEventKind.downloadStarted,
+      ).length,
+      1,
+    );
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.retryScheduled &&
+            event.payload['stage'] == 'download-recovery',
+      ),
+      isEmpty,
+    );
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.retryScheduled &&
+            event.payload['stage'] == 'download-attempt',
+      ).length,
+      2,
+    );
+
+    // Scheduling-only claim churn must not create another physical task after
+    // the provider retry budget is already terminal.
+    consumer.replaceDemands(
+      'reader-open-watchdog-exhausted',
+      2,
+      _desired(id, priority: 780),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    expect(transport.opens, exhaustedOpenCalls);
   });
 
   test('provider setup failures retry finitely and publish terminal failure',
@@ -2681,6 +2762,38 @@ final class _CancelThenSucceedTransport implements ControlledTransport {
       rangeStart: 0,
       totalLength: bytes.length,
       rangeSupported: true,
+    );
+  }
+}
+
+
+final class _AlwaysStallControlledTransport implements ControlledTransport {
+  int opens = 0;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) =>
+      openControlled(uri, range: range, validators: validators);
+
+  @override
+  Future<ByteResponse> openControlled(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+  }) async {
+    final taskControl = control;
+    if (taskControl == null) {
+      throw StateError('physical scheduler must pass TaskControl');
+    }
+    opens++;
+    await taskControl.whenCancelled;
+    throw const Failure(
+      code: ErrorCode.cancelled,
+      message: 'attempt-local open aborted by watchdog',
     );
   }
 }
