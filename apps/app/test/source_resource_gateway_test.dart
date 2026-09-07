@@ -26,7 +26,7 @@ void main() {
         source.sourceId,
         Uri.parse('venera-resource:durable'),
       ),
-      <int>[1, 2, 3],
+      <int>[0xff, 0xd8, 0xff, 0xd9],
     );
     expect(source.loads, 1);
 
@@ -318,6 +318,13 @@ void main() {
     addTearDown(gateway.close);
     addTearDown(cache.close);
 
+    final invalidRuntimeBody = isA<Failure>()
+        .having((error) => error.code, 'code', ErrorCode.network)
+        .having(
+          (error) => error.details['runtimeBodyImageSignatureRejected'],
+          'runtime signature rejection',
+          isTrue,
+        );
     await expectLater(
       gateway.loadArtworkSource(
         cache: cache,
@@ -325,7 +332,7 @@ void main() {
         comicId: 'comic',
         uri: locator,
       ),
-      throwsFormatException,
+      throwsA(invalidRuntimeBody),
     );
     await expectLater(
       gateway.loadArtworkSource(
@@ -334,9 +341,9 @@ void main() {
         comicId: 'comic',
         uri: locator,
       ),
-      throwsFormatException,
+      throwsA(invalidRuntimeBody),
     );
-    expect(source.resolveCalls, 1);
+    expect(source.resolveCalls, 2);
     expect(source.loads, 2);
   });
 
@@ -406,7 +413,7 @@ final class _Source implements BrowsableComicSource {
   @override
   Future<Uint8List> loadResource(Uri uri) async {
     loads += 1;
-    return Uint8List.fromList(<int>[1, 2, 3]);
+    return Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 0xd9]);
   }
 }
 

@@ -26,6 +26,7 @@ source_compat = read('apps/app/lib/demo_home_source_compat.dart')
 controller = read('packages/plugin_host_bridge/lib/src/external_plugin_controller.dart')
 entrypoint = read('packages/plugin_host_bridge/lib/runtime_service_entrypoint.dart')
 transport = read('packages/downloads/lib/src/source_resource_transport.dart')
+content_sniffer = read('packages/transport/lib/src/content_sniffer.dart')
 cache = read('packages/catalog/lib/src/cached_comic_source.dart')
 check = read('tool/check.sh')
 
@@ -78,9 +79,14 @@ for token in (
     '_openRuntimeFallback(',
     'await _prefetchEncodedMediaBody(',
     "'sourceMediaProtocolMismatch': true",
-    '_looksLikeEncodedMediaPrefix',
+    'hasSupportedEncodedImageSignature',
 ):
     require(transport, token, 'source-owned media compatibility fallback')
+require(
+    content_sniffer,
+    'bool hasSupportedEncodedImageSignature(List<int> prefix)',
+    'shared encoded-image signature authority',
+)
 
 # Previously cached bad Mihon manifests must not mask the corrected catalog
 # contract after upgrade; do not invalidate unrelated source ecosystems.

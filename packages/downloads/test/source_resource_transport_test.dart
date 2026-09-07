@@ -427,10 +427,12 @@ void main() {
       () async {
     final failed = Uri.parse('https://fixture/failed');
     final retried = Uri.parse('https://fixture/retried');
+    final runtimeImage =
+        Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 6, 5, 4, 3, 0xff, 0xd9]);
     final source = _FixtureSource(
       request: ComicResourceRequest(uri: failed),
       retryRequest: ComicResourceRequest(uri: retried),
-      runtimeBytes: Uint8List.fromList(<int>[6, 5, 4, 3]),
+      runtimeBytes: runtimeImage,
     );
     final pool = ExternalPluginResourceTransportPool(
       directOpen: (_) => Future<ByteResponse>.error(
@@ -445,7 +447,7 @@ void main() {
     final response = await pool
         .loaderFor(source, Uri.parse('mihon:resource:fixture'))();
 
-    expect(await _collect(response.bytes), <int>[6, 5, 4, 3]);
+    expect(await _collect(response.bytes), runtimeImage);
     expect(source.resolveCalls, 1);
     expect(source.retryCalls, 1);
     expect(source.loadCalls, 1);
@@ -453,12 +455,14 @@ void main() {
 
   test('runtime body path is reserved for actual response transforms',
       () async {
+    final runtimeImage =
+        Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 7, 8, 9, 0xff, 0xd9]);
     final source = _FixtureSource(
       request: ComicResourceRequest(
         uri: Uri.parse('venera-resource:fixture'),
         requiresRuntimeTransform: true,
       ),
-      runtimeBytes: Uint8List.fromList(<int>[7, 8, 9]),
+      runtimeBytes: runtimeImage,
     );
     final pool = ExternalPluginResourceTransportPool(
       directOpen: (_) => throw StateError('direct transport must not run'),
@@ -468,8 +472,36 @@ void main() {
     final response = await pool
         .loaderFor(source, Uri.parse('venera-resource:fixture'))();
 
-    expect(await _collect(response.bytes), <int>[7, 8, 9]);
+    expect(await _collect(response.bytes), runtimeImage);
     expect(source.resolveCalls, 1);
+    expect(source.loadCalls, 1);
+  });
+
+  test('runtime body rejects non-image bytes before transfer admission',
+      () async {
+    final locator = Uri.parse('venera-resource:invalid-runtime-body');
+    final source = _FixtureSource(
+      request: ComicResourceRequest(
+        uri: locator,
+        requiresRuntimeTransform: true,
+      ),
+      runtimeBytes: Uint8List.fromList('<html>source error</html>'.codeUnits),
+    );
+    final pool = ExternalPluginResourceTransportPool();
+    addTearDown(pool.close);
+
+    await expectLater(
+      pool.loaderFor(source, locator)(),
+      throwsA(
+        isA<Failure>()
+            .having((error) => error.code, 'code', ErrorCode.network)
+            .having(
+              (error) => error.details['runtimeBodyImageSignatureRejected'],
+              'runtime signature rejection',
+              isTrue,
+            ),
+      ),
+    );
     expect(source.loadCalls, 1);
   });
 

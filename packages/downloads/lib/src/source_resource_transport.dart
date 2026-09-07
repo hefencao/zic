@@ -632,6 +632,18 @@ final class _SourceResourceTransport
             .loadResourceControlled(uri, control: control)
         : await source.loadResource(uri);
     _throwIfTaskCancelled(control);
+    if (!hasSupportedEncodedImageSignature(bytes)) {
+      _invalidate(uri);
+      _failedStreams.add(uri);
+      throw Failure(
+        code: ErrorCode.network,
+        message: 'source runtime returned non-image bytes for $uri',
+        details: const <String, Object?>{
+          'sourceMediaProtocolMismatch': true,
+          'runtimeBodyImageSignatureRejected': true,
+        },
+      );
+    }
     final current = Validators(etag: '"runtime-${bytes.length}-${_fnv(bytes)}"');
     final canRange = range != null &&
         range.start <= bytes.length &&
@@ -820,7 +832,8 @@ Future<_SourceHttpResponseBody> _prefetchEncodedMediaBody(
     }));
   }
   try {
-    while (prefix.length < 16 && await iterator.moveNext()) {
+    while (prefix.length < encodedImageSniffPrefixLength &&
+        await iterator.moveNext()) {
       _throwIfTaskCancelled(control);
       final chunk = iterator.current;
       if (chunk.isEmpty) continue;
@@ -840,7 +853,7 @@ Future<_SourceHttpResponseBody> _prefetchEncodedMediaBody(
     preparing = false;
   }
   final bytes = prefix.takeBytes();
-  if (!_looksLikeEncodedMediaPrefix(bytes)) {
+  if (!hasSupportedEncodedImageSignature(bytes)) {
     await iterator.cancel();
     throw Failure(
       code: ErrorCode.network,
@@ -908,33 +921,6 @@ final class _PrefetchedHttpResponseBody implements _SourceHttpResponseBody {
     _aborted = true;
     await _iterator.cancel();
   }
-}
-
-bool _looksLikeEncodedMediaPrefix(Uint8List bytes) {
-  bool matches(int offset, List<int> signature) {
-    if (bytes.length < offset + signature.length) return false;
-    for (var index = 0; index < signature.length; index++) {
-      if (bytes[offset + index] != signature[index]) return false;
-    }
-    return true;
-  }
-
-  if (matches(0, const <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) ||
-      matches(0, const <int>[0xff, 0xd8, 0xff]) ||
-      matches(0, const <int>[0x47, 0x49, 0x46, 0x38]) ||
-      matches(0, const <int>[0x42, 0x4d]) ||
-      matches(0, const <int>[0x00, 0x00, 0x01, 0x00])) {
-    return true;
-  }
-  if (matches(0, const <int>[0x52, 0x49, 0x46, 0x46]) &&
-      matches(8, const <int>[0x57, 0x45, 0x42, 0x50])) {
-    return true;
-  }
-  if (matches(4, const <int>[0x66, 0x74, 0x79, 0x70]) && bytes.length >= 12) {
-    final brand = String.fromCharCodes(bytes.sublist(8, 12));
-    return brand == 'avif' || brand == 'avis' || brand == 'heic' || brand == 'heix';
-  }
-  return false;
 }
 
 final class _HttpResponseBody implements _SourceHttpResponseBody {
