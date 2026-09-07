@@ -35,12 +35,15 @@ void main() {
           byteLoaders: <String, LocalImageFileBytesLoader>{
             sourceId: () async => Uint8List(1),
           },
-          responseLoaders: <String, ControlledTransportResponseLoader>{
-            sourceId: ({range, validators, control}) async => ByteResponse(
-              bytes: const Stream<List<int>>.empty(),
-              statusCode: 200,
-              rangeStart: 0,
-              totalLength: 0,
+          responseSources: <String, LocalImageResponseSource>{
+            sourceId: LocalImageResponseSource(
+              openControlledResponse: ({range, validators, control}) async =>
+                  ByteResponse(
+                bytes: const Stream<List<int>>.empty(),
+                statusCode: 200,
+                rangeStart: 0,
+                totalLength: 0,
+              ),
             ),
           },
           pipelineFactory: PipelineReaderSessionFactory(

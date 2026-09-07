@@ -37,12 +37,14 @@ check = read('tool/check.sh')
 for token in (
     'abstract interface class ReaderProgressCheckpointStore',
     'void enqueueProgress(ReadingProgress progress);',
+    'Future<void> flushProgressCheckpoints();',
 ):
     require(catalog_store, token, 'Reader checkpoint boundary')
-forbid(catalog_store, 'flushProgress', 'Reader route durability API')
 for token in (
     'ReaderProgressCheckpointStore',
     'enqueueProgress(ReadingProgress progress)',
+    'Future<void> flushProgressCheckpoints() async',
+    'await writer.flush();',
 ):
     require(storage_store, token, 'SQLite checkpoint implementation')
 for token in (
@@ -58,11 +60,14 @@ for token in (
     'ReadingProgress? latestProgress;',
     'latestProgress = progress;',
     '_librarySession.replaceProgress(progress);',
+    '_flushReaderProgressCheckpoints()',
+    '.flushProgressCheckpoints();',
 ):
     require(home, token, 'route-local Reader projection')
 for stale in ('_saveReaderProgress', '_publishReaderProgressAfterRoute', '_latestReaderProgress'):
     forbid(home, stale, 'superseded global Reader projection')
-forbid(home, 'flushProgress(', 'Reader route durable barrier')
+forbid(home, 'await library.saveProgress(progress)', 'Reader per-page durable barrier')
+require(read('docs/adr/0303-reader-progress-durable-exit-barrier.md'), 'Accepted', 'Reader exit durability ADR')
 for token in (
     'void replaceProgress(ReadingProgress progress)',
     'Reader page callbacks never call this method',

@@ -1177,6 +1177,14 @@ final class _DemoHomeState extends State<DemoHome> {
     return Future<void>.value();
   }
 
+  Future<void> _flushReaderProgressCheckpoints() async {
+    final library = _library;
+    if (library is ReaderProgressCheckpointStore) {
+      await (library as ReaderProgressCheckpointStore)
+          .flushProgressCheckpoints();
+    }
+  }
+
 
   Future<void> _markChapterReadForNavigation(
     ImportedLibraryEntry entry,

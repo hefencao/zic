@@ -49,7 +49,7 @@ Native implementation
 
 ### `transport`
 
-可取消、可分块的 encoded-byte transport、range、validator 和 response 合同。Reader page 使用可选 `ControlledTransport` 将 scheduler `TaskControl` 贯穿 cache read-through、source-plan、open与response body；任何transparent/read-through wrapper若下层支持controlled capability都必须保持同一control，不能因cache miss降级为普通`open()`。transport可中止自身请求但不拥有priority policy，也不得在请求真实退出前伪释放lane容量；prefix probe后outer stream取消仍必须abort底层response。它不拥有artifact、Reader demand或播放状态。 `SelfBoundedOpenTransport`只允许lower transport在指定URI的完整open生命周期已经由自身有限deadline覆盖时声明；此时DownloadJob可省略generic 6s open watchdog，但仍保持同一TaskControl cancellation与6s body-read inactivity watchdog。external source只有runtime source明确暴露resource-operation deadline且最终direct media transport也自有open deadline时才可形成该proof；当前production Mihon/Venera runtime分别由executor的45s/55s invocation limit约束，`RhttpSourceResourceDirectTransport`另以15s约束client/header open并在header timeout时取消native request。显式chapter download的LoaderTransport可直接携带该proof；Reader的`ArtifactCacheTransport`不得把整个wrapper伪装成self-bounded，因为origin前仍有本地cache lookup/foreground阶段。Reader现在保持外层generic 6s watchdog覆盖这些本地阶段，只有在本地阶段结束且即将进入已证明self-bounded的origin fallback时，才通过scheduler-owned `OpenPhaseReportingTaskControl`报告一次phase handoff，由同一DownloadJob撤掉当前open timer并继续等待同一pending future/CancelToken；lower层不能设置timeout值、retry、priority或admission，body read仍由原6s inactivity watchdog负责。generic open watchdog真正超时时，DownloadJob必须只abort当前controlled open attempt的私有control，而不得cancel真实scheduler `CancelToken`；该attempt control持续透明代理实时priority/priorityChanges与scheduler cancellation，因此owner仍看到`ErrorCode.network`并可按既有retry继续。已超时的cache/storage lookup即使稍后物理完成，也必须在attempt-control取消检查处终止，禁止在NetLane task已归还后再跨入origin fallback；真正scheduler cancellation仍沿原CancelToken下沉。
+可取消、可分块的 encoded-byte transport、range、validator 和 response 合同。Reader page 使用可选 `ControlledTransport` 将 scheduler `TaskControl` 贯穿 cache read-through、source-plan、open与response body；任何transparent/read-through wrapper若下层支持controlled capability都必须保持同一control，不能因cache miss降级为普通`open()`。transport可中止自身请求但不拥有priority policy，也不得在请求真实退出前伪释放lane容量；prefix probe后outer stream取消仍必须abort底层response。它不拥有artifact、Reader demand或播放状态。 `SelfBoundedOpenTransport`只允许lower transport在指定URI的完整open生命周期已经由自身有限deadline覆盖时声明；此时DownloadJob可省略generic 6s open watchdog，但仍保持同一TaskControl cancellation与6s body-read inactivity watchdog。external source只有runtime source明确暴露resource-operation deadline且最终direct media transport也自有open deadline时才可形成该proof；当前production Mihon/Venera runtime分别由executor的45s/55s invocation limit约束，`RhttpSourceResourceDirectTransport`另以15s约束client/header open并在header timeout时取消native request。显式chapter download的LoaderTransport可直接携带该proof；Reader的`ArtifactCacheTransport`不得把整个wrapper伪装成self-bounded，因为origin前仍有本地cache lookup/foreground阶段。Reader现在保持外层generic 6s watchdog覆盖这些本地阶段，只有在本地阶段结束且即将进入已证明self-bounded的origin fallback时，才通过scheduler-owned `OpenPhaseReportingTaskControl`报告一次phase handoff，由同一DownloadJob撤掉当前open timer并继续等待同一pending future/CancelToken；lower层不能设置timeout值、retry、priority或admission，body read仍由原6s inactivity watchdog负责。 `ComicSourceResourceGateway` 的 per-page self-bounded proof 必须与 controlled response loader 作为一个 composition capability 原子传递到 `LoaderTransportSource.selfBoundedOpen`；App/LocalMedia 只传函数而丢失该 bit 会让 `ArtifactCacheTransport` 无法报告 phase handoff，从而错误地让 generic 6s timer覆盖 Venera/Mihon 已由 runtime/direct owner 自限时的 source-open 阶段。generic open watchdog真正超时时，DownloadJob必须只abort当前controlled open attempt的私有control，而不得cancel真实scheduler `CancelToken`；该attempt control持续透明代理实时priority/priorityChanges与scheduler cancellation，因此owner仍看到`ErrorCode.network`并可按既有retry继续。已超时的cache/storage lookup即使稍后物理完成，也必须在attempt-control取消检查处终止，禁止在NetLane task已归还后再跨入origin fallback；真正scheduler cancellation仍沿原CancelToken下沉。
 
 ### `storage`
 
@@ -292,7 +292,7 @@ Reader Host 从 `PipelineReaderSessionFactory.acquire` 获取资源会话并在�
 
 Reader 页面变化产生的 `ReadingProgress` 由 `reader_runtime` 串行合并后写入 App 提供的 progress facade。同一 Reader 同时只有一个 active writer；较新的 pending progress覆盖尚未开始写入的旧值，禁止并行 Future 倒序完成后覆盖新页码。
 
-正常导航返回不等待 SQLite pending/active writer 清空；Reader callback只 enqueue checkpoint，composition route-local `latestProgress` 在 pop 后立即替换 Home/详情内存投影一次，因此阅读历史不依赖再次进入详情或整库 reload。`inactive`、`paused`、`detached` 和每次稳定页面变化继续 best-effort checkpoint，以降低进程意外终止的损失窗口；操作系统强杀无法提供绝对完成保证，文档和 UI不得声称 crash-safe commit。
+普通页面变化只 enqueue checkpoint，不等待 SQLite；但正常 Reader route 返回前必须先 drain Reader-local pending writer，再通过 `ReaderProgressCheckpointStore.flushProgressCheckpoints()` 等待 storage-owned SQLite writer 的 durable barrier，完成后才用 route-local `latestProgress` 替换 Home/详情内存投影一次。`inactive`、`paused`、`detached` 也执行同一 checkpoint+flush，但不得把 durable barrier扩散到普通翻页。操作系统在 barrier 前强杀仍可能丢最后窗口，文档和 UI不得声称绝对 crash-safe commit。
 
 ## 11. Identity、缓存与 artifact
 
@@ -390,8 +390,8 @@ namespace 由 canonical comic identity 固定，raw Mihon `comicId`、封面 URL
 ### Reader checkpoint 与历史投影边界
 Reader 页面变化只 enqueue 最新 `ReadingProgress`，不得等待 SQLite或逐页发布 Home；首次
 checkpoint 写入前不创建 progress writer，首次写入后 storage isolate 对同 source/chapter
-latest-wins，空闲约 8 秒提交、持续活跃最多约 30 秒提交。显式 `saveProgress()`/store close 可等待内部 durability barrier，但 Reader route API不暴露 barrier。
-Reader 返回后 Home只更新该 route最终 progress一次，已挂载详情只替换当前章节；不得在返回路径读取/重建整库。硬进程终止仍为 best-effort，不宣称最后一页绝对持久化。
+latest-wins，空闲约 8 秒提交、持续活跃最多约 30 秒提交。`ReaderProgressCheckpointStore` 同时暴露 route/lifecycle 专用 durable flush；Reader 正常返回前必须在最终 checkpoint drain 后等待该 barrier，background lifecycle也发起同一 barrier，而普通页面变化仍不等待。
+Reader 返回后 Home只更新该 route最终 progress一次，已挂载详情只替换当前章节；不得在返回路径读取/重建整库。硬进程终止在 flush barrier 之前仍为 best-effort，不宣称最后一页绝对持久化。
 
 ## 12. 插件与网络边界
 

@@ -121,6 +121,7 @@ typedef ReaderPageSubtitleBuilder = String Function(PageAsset asset);
 typedef ReaderProgressWriter = FutureOr<void> Function(
   ReadingProgress progress,
 );
+typedef ReaderProgressFlush = FutureOr<void> Function();
 typedef ReaderSessionSettingsWriter = FutureOr<void> Function(
   ReaderSessionSettings settings,
 );
@@ -134,6 +135,7 @@ final class ReaderRuntimeScreen extends StatefulWidget {
     this.pageSubtitleBuilder,
     this.initialProgress,
     this.onProgressChanged,
+    this.onProgressFlush,
     this.initialFavorite = false,
     this.onFavoriteChanged,
     this.onDownloadRequested,
@@ -151,6 +153,7 @@ final class ReaderRuntimeScreen extends StatefulWidget {
   final ReaderPageSubtitleBuilder? pageSubtitleBuilder;
   final ReadingProgress? initialProgress;
   final ReaderProgressWriter? onProgressChanged;
+  final ReaderProgressFlush? onProgressFlush;
   final bool initialFavorite;
   final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
   final FutureOr<void> Function()? onDownloadRequested;
@@ -443,10 +446,22 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     }
   }
 
-  Future<bool> _flushProgressBeforePop() async {
+  Future<void> _checkpointAndFlushReaderProgress() async {
     await _checkpointReaderProgress(force: true);
     while (_pendingProgress != null || _progressDrain != null) {
       await _checkpointReaderProgress();
+    }
+    final flush = widget.onProgressFlush;
+    if (flush != null) {
+      await Future<void>.sync(flush);
+    }
+  }
+
+  Future<bool> _flushProgressBeforePop() async {
+    try {
+      await _checkpointAndFlushReaderProgress();
+    } on Object catch (error) {
+      debugPrint('reader progress flush failed: $error');
     }
     return true;
   }
@@ -456,7 +471,13 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
-      unawaited(_checkpointReaderProgress(force: true));
+      unawaited(
+        _checkpointAndFlushReaderProgress().catchError(
+          (Object error, StackTrace _) {
+            debugPrint('reader lifecycle progress flush failed: $error');
+          },
+        ),
+      );
     }
   }
 

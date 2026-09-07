@@ -242,7 +242,9 @@ void main() {
   testWidgets('reader waits for the final progress checkpoint before pop',
       (tester) async {
     final firstWrite = Completer<void>();
+    final durableFlush = Completer<void>();
     final writes = <ReadingProgress>[];
+    var flushes = 0;
     final chapter = _chapter();
     const launchKey = ValueKey<String>('reader-progress-launch');
 
@@ -268,6 +270,10 @@ void main() {
                           onProgressChanged: (progress) {
                             writes.add(progress);
                             return firstWrite.future;
+                          },
+                          onProgressFlush: () {
+                            flushes++;
+                            return durableFlush.future;
                           },
                           artifactPageBuilder: (
                             context,
@@ -313,6 +319,14 @@ void main() {
     );
 
     firstWrite.complete();
+    await tester.pump();
+    expect(flushes, 1);
+    expect(
+      find.byKey(const ValueKey<String>('reader-progress-screen')),
+      findsOneWidget,
+    );
+
+    durableFlush.complete();
     await pop;
     await tester.pumpAndSettle();
     expect(find.byKey(launchKey), findsOneWidget);

@@ -27,6 +27,7 @@ pipe = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 composition_runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
 decode = read('packages/sessions/lib/src/decode_session.dart')
 app = read('apps/app/lib/demo_home_reader_route.dart')
+local_media_ui = read('packages/local_media_ui/lib/src/local_media_screens.dart')
 
 for forbidden in ('PartialDownload', 'openPartial', 'storePartial', 'invalidatePartial'):
     if forbidden in manager or forbidden in store:
@@ -49,6 +50,18 @@ for forbidden in ('PartialDownload', 'partialDownload', 'checkpoint', '.drain(')
         raise SystemExit(f'ordinary Reader retain leaked durable partial work: {forbidden}')
 if '_readerSessionRetentionDuration = Duration(minutes: 2)' not in pipe:
     raise SystemExit('hot PipelineReaderSession retention owner missing')
+for marker in (
+    'LocalImageResponseSource(',
+    'selfBoundedOpen: _sourceResources.pageOpenSelfBoundedFor(',
+):
+    if marker not in app:
+        raise SystemExit(f'Reader source-open bound proof lost at App composition: {marker}')
+for marker in (
+    'final class LocalImageResponseSource',
+    'selfBoundedOpen: responseSource?.selfBoundedOpen ?? false',
+):
+    if marker not in local_media_ui:
+        raise SystemExit(f'Reader source-open bound proof lost before LoaderTransport: {marker}')
 transfer_owner_path = ROOT / 'packages/sessions/lib/src/download_transfer_owner.dart'
 if transfer_owner_path.exists():
     transfer_owner = transfer_owner_path.read_text(encoding='utf-8')

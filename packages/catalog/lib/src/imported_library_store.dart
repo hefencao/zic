@@ -89,12 +89,15 @@ ReadingProgress? reconcileImportedProgress({
 /// durable writer runs outside Flutter's UI isolate.
 ///
 /// Reader-facing composition may enqueue latest-wins checkpoints without
-/// waiting for disk I/O. Route transitions and presentation projection updates
-/// must not depend on durable completion. Ordinary
+/// waiting for disk I/O during ordinary page turns. Reader route exit and app
+/// background transitions may request [flushProgressCheckpoints] as a durable
+/// barrier without changing the per-page write cadence. Ordinary
 /// [ImportedLibraryStore.saveProgress] keeps durable-completion semantics for
 /// non-Reader callers.
 abstract interface class ReaderProgressCheckpointStore {
   void enqueueProgress(ReadingProgress progress);
+
+  Future<void> flushProgressCheckpoints();
 }
 
 /// Optional durable revision for the Home projection.

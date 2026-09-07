@@ -277,6 +277,18 @@ final class SqliteImportedLibraryStore
     _startProgressWriter(db);
   }
 
+  @override
+  Future<void> flushProgressCheckpoints() async {
+    final opening = _progressWriterOpening;
+    if (opening != null) {
+      await opening;
+    }
+    final writer = _progressWriter;
+    if (writer != null) {
+      await writer.flush();
+    }
+  }
+
   void _saveProgressSynchronously(
     sql.Database db,
     ReadingProgress progress,

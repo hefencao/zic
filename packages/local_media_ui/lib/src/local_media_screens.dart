@@ -7,6 +7,7 @@ final class ImageFolderScreen extends StatelessWidget {
     this.onPreviewStateChanged,
     this.initialProgress,
     this.onProgressChanged,
+    this.onProgressFlush,
     this.initialFavorite = false,
     this.onFavoriteChanged,
     this.onDownloadRequested,
@@ -21,6 +22,7 @@ final class ImageFolderScreen extends StatelessWidget {
   final ImagePreviewStateChanged? onPreviewStateChanged;
   final ReadingProgress? initialProgress;
   final ReaderProgressWriter? onProgressChanged;
+  final ReaderProgressFlush? onProgressFlush;
   final bool initialFavorite;
   final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
   final FutureOr<void> Function()? onDownloadRequested;
@@ -46,6 +48,7 @@ final class ImageFolderScreen extends StatelessWidget {
       onPreviewStateChanged: onPreviewStateChanged,
       initialProgress: initialProgress,
       onProgressChanged: onProgressChanged,
+      onProgressFlush: onProgressFlush,
       initialFavorite: initialFavorite,
       onFavoriteChanged: onFavoriteChanged,
       onDownloadRequested: onDownloadRequested,
@@ -56,14 +59,25 @@ final class ImageFolderScreen extends StatelessWidget {
   }
 }
 
+final class LocalImageResponseSource {
+  const LocalImageResponseSource({
+    required this.openControlledResponse,
+    this.selfBoundedOpen = false,
+  });
+
+  final ControlledTransportResponseLoader openControlledResponse;
+  final bool selfBoundedOpen;
+}
+
 final class ImportedImageChapterScreen extends StatelessWidget {
   const ImportedImageChapterScreen({
     required this.record,
     this.byteLoaders = const <String, LocalImageFileBytesLoader>{},
-    this.responseLoaders = const <String, ControlledTransportResponseLoader>{},
+    this.responseSources = const <String, LocalImageResponseSource>{},
     this.onPreviewStateChanged,
     this.initialProgress,
     this.onProgressChanged,
+    this.onProgressFlush,
     this.initialFavorite = false,
     this.onFavoriteChanged,
     this.onDownloadRequested,
@@ -77,10 +91,11 @@ final class ImportedImageChapterScreen extends StatelessWidget {
 
   final ImportedChapterRecord record;
   final Map<String, LocalImageFileBytesLoader> byteLoaders;
-  final Map<String, ControlledTransportResponseLoader> responseLoaders;
+  final Map<String, LocalImageResponseSource> responseSources;
   final ImagePreviewStateChanged? onPreviewStateChanged;
   final ReadingProgress? initialProgress;
   final ReaderProgressWriter? onProgressChanged;
+  final ReaderProgressFlush? onProgressFlush;
   final bool initialFavorite;
   final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
   final FutureOr<void> Function()? onDownloadRequested;
@@ -98,8 +113,8 @@ final class ImportedImageChapterScreen extends StatelessWidget {
       final page = record.pages[index];
       final uri = chapter.pages[index].uri;
       final loader = byteLoaders[page.sourceId];
-      final responseLoader = responseLoaders[page.sourceId];
-      if (loader != null && responseLoader != null) {
+      final responseSource = responseSources[page.sourceId];
+      if (loader != null && responseSource != null) {
         throw StateError(
           'page source composition must choose local bytes or origin response, not both',
         );
@@ -107,8 +122,9 @@ final class ImportedImageChapterScreen extends StatelessWidget {
       sources[uri] = LoaderTransportSource(
         revision: '${record.sourceRevision}:$index',
         loadBytes: loader,
-        openControlledResponse: responseLoader,
-        openResponse: responseLoader == null && loader == null
+        openControlledResponse: responseSource?.openControlledResponse,
+        selfBoundedOpen: responseSource?.selfBoundedOpen ?? false,
+        openResponse: responseSource == null && loader == null
             ? ({ByteRange? range, Validators? validators}) =>
                 _openLocalMediaResponse(
                   page.sourceId,
@@ -125,7 +141,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
           record.chapterId,
           record.sourceRevision,
           byteLoaders.length,
-          responseLoaders.length,
+          responseSources.length,
         ),
       ),
       chapter: chapter,
@@ -145,6 +161,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
         ),
         initialProgress: initialProgress,
         onProgressChanged: onProgressChanged,
+        onProgressFlush: onProgressFlush,
         initialFavorite: initialFavorite,
         onFavoriteChanged: onFavoriteChanged,
         onDownloadRequested: onDownloadRequested,

@@ -169,6 +169,76 @@ void main() {
   });
 
 
+  test('reader progress flush persists the latest queued checkpoint', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-reader-progress-flush-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final path = '${directory.path}/library.sqlite3';
+    final store = SqliteImportedLibraryStore(path);
+    await store.open();
+    addTearDown(store.close);
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/chapter',
+      displayName: 'Progress flush',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.png',
+          sourceId: 'file:///progress/001.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: '002.png',
+          sourceId: 'file:///progress/002.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await store.upsertChapter(chapter);
+
+    store.enqueueProgress(
+      ReadingProgress(
+        sourceId: chapter.sourceId,
+        comicId: chapter.comicId,
+        chapterId: chapter.chapterId,
+        pageIndex: 0,
+        subPageOffset: 0,
+        readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 9, 7, 1),
+      ),
+    );
+    await store.flushProgressCheckpoints();
+
+    store.enqueueProgress(
+      ReadingProgress(
+        sourceId: chapter.sourceId,
+        comicId: chapter.comicId,
+        chapterId: chapter.chapterId,
+        pageIndex: 1,
+        subPageOffset: 0,
+        readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 9, 7, 1, 1),
+      ),
+    );
+    await store.flushProgressCheckpoints();
+
+    final observer = sql.sqlite3.open(path);
+    addTearDown(observer.dispose);
+    final rows = observer.select(
+      'SELECT progress_json FROM reading_progress '
+      'WHERE source_id = ? AND chapter_id = ?',
+      <Object?>[chapter.sourceId, chapter.chapterId],
+    );
+    expect(rows, hasLength(1));
+    final persisted = jsonDecode(rows.single['progress_json']! as String)
+        as Map<String, Object?>;
+    expect(persisted['pageIndex'], 1);
+  });
+
   test('sqlite refresh follows the same page source after insertion', () async {
     final store = SqliteImportedLibraryStore.memory();
     await store.open();

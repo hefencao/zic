@@ -3,7 +3,7 @@ part of 'demo_home.dart';
 typedef _PreparedImportedChapter = ({
   ImportedLibraryEntry entry,
   Map<String, LocalImageFileBytesLoader> byteLoaders,
-  Map<String, ExternalPluginControlledResourceResponseLoader> responseLoaders,
+  Map<String, LocalImageResponseSource> responseSources,
   int? initialPageIndex,
 });
 
@@ -126,7 +126,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
     final screen = ImportedImageChapterScreen(
       record: recordForReader,
       byteLoaders: prepared.byteLoaders,
-      responseLoaders: prepared.responseLoaders,
+      responseSources: prepared.responseSources,
       initialProgress: initialProgress ??
           ReadingProgress(
             sourceId: current.chapter.sourceId,
@@ -140,6 +140,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       onProgressChanged: (p) => onProgressChanged(
         p.copyWith(pageIndex: mapIndexForStorage(p.pageIndex)),
       ),
+      onProgressFlush: _flushReaderProgressCheckpoints,
       initiallyImmersive: widget.preferences.readerStartsImmersive,
       initialReaderSettings: initialSettings,
       onReaderSettingsChanged: (settings) =>
@@ -238,6 +239,11 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
         ),
       ),
     );
+    try {
+      await _flushReaderProgressCheckpoints();
+    } on Object catch (error) {
+      debugPrint('reader post-pop progress flush failed: $error');
+    }
     final progress = latestProgress;
     if (progress != null) {
       _librarySession.replaceProgress(progress);
@@ -286,14 +292,21 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
     final byteLoaders = <String, LocalImageFileBytesLoader>{};
     const byteProbeMs = 0;
     final source = _sourceForId(current.chapter.sourceId);
-    final responseLoaders = source == null
-        ? const <String, ExternalPluginControlledResourceResponseLoader>{}
-        : <String, ExternalPluginControlledResourceResponseLoader>{
+    final responseSources = source == null
+        ? const <String, LocalImageResponseSource>{}
+        : <String, LocalImageResponseSource>{
             for (final page in current.chapter.pages)
               if (!byteLoaders.containsKey(page.sourceId))
-                page.sourceId: _sourceResources.pageControlledResponseLoaderFor(
-                  current.chapter.sourceId,
-                  Uri.parse(page.sourceId),
+                page.sourceId: LocalImageResponseSource(
+                  openControlledResponse:
+                      _sourceResources.pageControlledResponseLoaderFor(
+                    current.chapter.sourceId,
+                    Uri.parse(page.sourceId),
+                  ),
+                  selfBoundedOpen: _sourceResources.pageOpenSelfBoundedFor(
+                    current.chapter.sourceId,
+                    Uri.parse(page.sourceId),
+                  ),
                 ),
           };
     unawaited(_markChapterReadForNavigation(current));
@@ -311,7 +324,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
           'refreshRemote': refreshRemote,
           'totalPages': current.chapter.pages.length,
           'localByteLoaders': byteLoaders.length,
-          'networkResponseLoaders': responseLoaders.length,
+          'networkResponseLoaders': responseSources.length,
           'loadChapterMs': loadMs,
           'hydrateMs': hydrateMs,
           'remoteRefreshMs': remoteMs,
@@ -325,7 +338,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
     return (
       entry: current,
       byteLoaders: byteLoaders,
-      responseLoaders: responseLoaders,
+      responseSources: responseSources,
       initialPageIndex: initialPageIndex,
     );
   }
