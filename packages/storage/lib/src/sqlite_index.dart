@@ -272,6 +272,54 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
         .toList(growable: false);
   }
 
+  Future<List<ArtifactReplicaRecord>> listArtifactReplicasForStorageRoot(
+    String storageRootId,
+  ) async {
+    final normalized = storageRootId.trim();
+    if (normalized.isEmpty) return const <ArtifactReplicaRecord>[];
+    final rows = _requireDb().select(
+      'SELECT replica_id, artifact_id, access_locator, storage_root_id, '
+      'created_us, touched_us FROM artifact_replica WHERE storage_root_id = ? '
+      'ORDER BY touched_us DESC, replica_id',
+      <Object?>[normalized],
+    );
+    return rows
+        .map(
+          (row) => ArtifactReplicaRecord(
+            replicaId: row['replica_id']! as String,
+            artifactId: row['artifact_id']! as String,
+            accessLocator: row['access_locator']! as String,
+            storageRootId: (row['storage_root_id'] as String?) ?? 'default',
+            createdUs: row['created_us']! as int,
+            touchedUs: row['touched_us']! as int,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<ArtifactReplicaRecord?> artifactReplicaForAccessLocator(
+    String accessLocator,
+  ) async {
+    final normalized = accessLocator.trim();
+    if (normalized.isEmpty) return null;
+    final rows = _requireDb().select(
+      'SELECT replica_id, artifact_id, access_locator, storage_root_id, '
+      'created_us, touched_us FROM artifact_replica WHERE access_locator = ? '
+      'LIMIT 1',
+      <Object?>[normalized],
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return ArtifactReplicaRecord(
+      replicaId: row['replica_id']! as String,
+      artifactId: row['artifact_id']! as String,
+      accessLocator: row['access_locator']! as String,
+      storageRootId: (row['storage_root_id'] as String?) ?? 'default',
+      createdUs: row['created_us']! as int,
+      touchedUs: row['touched_us']! as int,
+    );
+  }
+
   Future<ArtifactReplicaRecord> putArtifactReplica({
     required String artifactId,
     required String accessLocator,
@@ -317,6 +365,89 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       'DELETE FROM artifact_replica WHERE replica_id = ?',
       <Object?>[normalized],
     );
+  }
+
+  /// Moves one already-verified physical replica to a new locator/root without
+  /// changing its replica identity. The destination bytes must be proven by
+  /// the caller before this metadata transaction is committed.
+  Future<ArtifactReplicaRecord> relocateArtifactReplica({
+    required String replicaId,
+    required String accessLocator,
+    required String storageRootId,
+    required int touchedUs,
+  }) async {
+    final db = _requireDb();
+    final normalizedReplicaId = replicaId.trim();
+    final normalizedLocator = accessLocator.trim();
+    final normalizedRoot = storageRootId.trim();
+    if (normalizedReplicaId.isEmpty || normalizedLocator.isEmpty) {
+      throw ArgumentError(
+        'replica identity and destination locator must not be empty',
+      );
+    }
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      final rows = db.select(
+        'SELECT artifact_id, created_us FROM artifact_replica '
+        'WHERE replica_id = ? LIMIT 1',
+        <Object?>[normalizedReplicaId],
+      );
+      if (rows.isEmpty) {
+        throw StateError('artifact replica $normalizedReplicaId does not exist');
+      }
+      final artifactId = rows.first['artifact_id']! as String;
+      final createdUs = rows.first['created_us']! as int;
+      final effectiveRoot = normalizedRoot.isEmpty ? 'default' : normalizedRoot;
+      final collision = db.select(
+        'SELECT replica_id FROM artifact_replica WHERE access_locator = ? '
+        'AND replica_id != ? LIMIT 1',
+        <Object?>[normalizedLocator, normalizedReplicaId],
+      );
+      if (collision.isNotEmpty) {
+        throw StateError(
+          'artifact replica destination is already owned by another replica',
+        );
+      }
+      _ensureStorageRootLocator(db, effectiveRoot, touchedUs: touchedUs);
+      db.execute(
+        'UPDATE artifact_replica SET access_locator = ?, storage_root_id = ?, '
+        'touched_us = ? WHERE replica_id = ?',
+        <Object?>[
+          normalizedLocator,
+          effectiveRoot,
+          touchedUs,
+          normalizedReplicaId,
+        ],
+      );
+      if (normalizedReplicaId == artifactId) {
+        // Replica one is also the compatibility locator mirror used by older
+        // readers/tools. Keep those rows coherent without creating a second
+        // physical-copy fact or manufacturing logical-cache recency.
+        db.execute(
+          'UPDATE artifact_object SET path = ?, storage_root_id = ?, '
+          'touched_us = ? WHERE artifact_id = ?',
+          <Object?>[normalizedLocator, effectiveRoot, touchedUs, artifactId],
+        );
+        db.execute(
+          'UPDATE cache_entry SET path = ?, storage_root_id = ? '
+          "WHERE artifact_id = ? AND state = 'ready'",
+          <Object?>[normalizedLocator, effectiveRoot, artifactId],
+        );
+      }
+      db.execute('COMMIT');
+      _invalidateCache();
+      return ArtifactReplicaRecord(
+        replicaId: normalizedReplicaId,
+        artifactId: artifactId,
+        accessLocator: normalizedLocator,
+        storageRootId: effectiveRoot,
+        createdUs: createdUs,
+        touchedUs: touchedUs,
+      );
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
   }
 
   Future<StorageRootRecord?> getStorageRoot(String rootIdOrLocator) async {

@@ -66,6 +66,7 @@ void main() {
       root.path,
       transferNet: resources.networkLane,
       localReadScheduler: resources.localReadScheduler,
+      storageWriteScheduler: resources.storageWriteScheduler,
     );
     try {
       expect(identical(composition.transferRuntime.net, resources.networkLane), isTrue);
@@ -73,6 +74,13 @@ void main() {
         identical(
           composition.transferRuntime.localReadScheduler,
           resources.localReadScheduler,
+        ),
+        isTrue,
+      );
+      expect(
+        identical(
+          composition.artifactStore.storageWriteScheduler,
+          resources.storageWriteScheduler,
         ),
         isTrue,
       );

@@ -19,6 +19,7 @@ import 'artifact_cache_reuse.dart';
 import 'artifact_cache_store.dart';
 import 'comic_conflict_inspector.dart';
 import 'composition_download_transfer_runtime.dart';
+import 'download_resource_coordinator.dart';
 import 'partial_download_store.dart';
 
 enum ChapterDownloadPhase {
@@ -1119,6 +1120,19 @@ final class _ArtifactAccessCandidate {
   final StorageAccessLocatorRecord? rootAccess;
 }
 
+final class ArtifactReplicaMigrationResult {
+  const ArtifactReplicaMigrationResult({
+    required this.replica,
+    required this.sourceCleanupComplete,
+  });
+
+  final ArtifactReplicaRecord replica;
+
+  /// False means destination authority is already committed but best-effort
+  /// cleanup of the former physical location did not complete.
+  final bool sourceCleanupComplete;
+}
+
 final class PersistentDownloadArtifactStore
     implements
         ArtifactCacheBackend,
@@ -1129,6 +1143,7 @@ final class PersistentDownloadArtifactStore
     required SqliteIndex index,
     required CacheOps cacheOps,
     required ArtifactBytes bytes,
+    required this._storageWriteScheduler,
     this.safTreeIo,
     required this.safTreeUri,
     TraceSink? traceSink,
@@ -1162,6 +1177,7 @@ final class PersistentDownloadArtifactStore
     String? indexPath,
     CacheLayout? Function(DownloadId id)? layoutResolver,
     ArtifactBytes? bytes,
+    StorageWriteScheduler? storageWriteScheduler,
     SafTreeIo? safMirror,
     String? safTreeUri,
     TraceSink? traceSink,
@@ -1186,6 +1202,8 @@ final class PersistentDownloadArtifactStore
                 local: const LocalArtifactBytes(),
                 saf: SafArtifactBytes(safMirror, treeUri: safTreeUri),
               ));
+    final resolvedStorageWriteScheduler = storageWriteScheduler ??
+        StorageWriteScheduler(localReadScheduler: ArtifactCacheReadScheduler());
     late final PersistentDownloadArtifactStore resolved;
     resolved = PersistentDownloadArtifactStore._(
       registry: registry,
@@ -1198,6 +1216,7 @@ final class PersistentDownloadArtifactStore
             resolved._evictCacheRecord(id, expected: expected),
       ),
       bytes: resolvedBytes,
+      storageWriteScheduler: resolvedStorageWriteScheduler,
       safTreeIo: safMirror,
       safTreeUri: safTreeUri,
       traceSink: traceSink,
@@ -1328,6 +1347,511 @@ final class PersistentDownloadArtifactStore
         );
       });
 
+  /// Moves one sealed physical replica while preserving [replicaId].
+  ///
+  /// Destination bytes are materialized and fully read-back verified before
+  /// metadata authority moves. Source bytes are deleted only after that
+  /// authority commit, so cancellation/failure cannot remove the last valid
+  /// replica. Direct/SAF aliases already proven to address the same physical
+  /// root are treated as the existing replica rather than copied.
+  Future<ArtifactReplicaMigrationResult> migrateArtifactReplica({
+    required DownloadId id,
+    required String replicaId,
+    required String destinationAccessLocator,
+    required String destinationStorageRootId,
+    TaskControl? control,
+  }) => _serializeArtifactMutation(id, () async {
+    _requireOpen();
+    control?.throwIfCancelled();
+    final record = await _index.get(id.key);
+    if (record == null || !_isVerifiedReadyRecord(record) || record.id != id) {
+      throw const Failure(
+        code: ErrorCode.policy,
+        message: 'replica migration requires an existing ready artifact',
+      );
+    }
+    final normalizedReplicaId = replicaId.trim();
+    final destinationLocator = destinationAccessLocator.trim();
+    final destinationRoot = destinationStorageRootId.trim();
+    if (normalizedReplicaId.isEmpty ||
+        destinationLocator.isEmpty ||
+        destinationRoot.isEmpty) {
+      throw ArgumentError(
+        'replica identity, destination locator, and destination root must not be empty',
+      );
+    }
+    return _serializeArtifactReplicaMutation(
+      record.effectiveArtifactId,
+      () => _serializeStructuredWrite(destinationLocator, () async {
+    final replicas = await _resolveArtifactReplicas(record);
+    final source = replicas
+        .where((candidate) => candidate.replicaId == normalizedReplicaId)
+        .firstOrNull;
+    if (source == null) {
+      throw Failure(
+        code: ErrorCode.policy,
+        message: 'artifact replica does not exist: $normalizedReplicaId',
+      );
+    }
+    final sourceAliases = await _artifactAccessCandidates(source);
+    if (sourceAliases.any(
+      (candidate) => candidate.access.accessLocator == destinationLocator,
+    )) {
+      final current = (await _index.listArtifactReplicas(
+        record.effectiveArtifactId,
+      )).firstWhere((candidate) => candidate.replicaId == normalizedReplicaId);
+      return ArtifactReplicaMigrationResult(
+        replica: current,
+        sourceCleanupComplete: true,
+      );
+    }
+    for (final replica in replicas) {
+      if (replica.replicaId == normalizedReplicaId) continue;
+      final aliases = await _artifactAccessCandidates(replica);
+      if (aliases.any(
+        (candidate) => candidate.access.accessLocator == destinationLocator,
+      )) {
+        throw const Failure(
+          code: ErrorCode.policy,
+          message: 'migration destination is already owned by another replica',
+        );
+      }
+    }
+    await _validateReplicaDestinationRoot(destinationLocator, destinationRoot);
+    await _ensureReplicaDestinationUnowned(
+      currentReplicaId: normalizedReplicaId,
+      accessLocator: destinationLocator,
+      storageRootId: destinationRoot,
+    );
+
+    final selected = await _selectReadableArtifactAccess(sourceAliases);
+    final sourceAccess = selected.candidate.access;
+    final materialized = await _materializeReplicaDestination(
+      record: record,
+      sourceCandidates: sourceAliases,
+      destinationAccessLocator: destinationLocator,
+      control: control,
+    );
+    var authorityCommitted = false;
+    try {
+      control?.throwIfCancelled();
+      await _verifyReplicaDestination(
+        record,
+        destinationLocator,
+        control: control,
+      );
+      control?.throwIfCancelled();
+      final moved = await _index.relocateArtifactReplica(
+        replicaId: normalizedReplicaId,
+        accessLocator: destinationLocator,
+        storageRootId: destinationRoot,
+        touchedUs: DateTime.now().toUtc().microsecondsSinceEpoch,
+      );
+      authorityCommitted = true;
+      var sourceCleanupComplete =
+          sourceAccess.accessLocator == destinationLocator;
+      if (!sourceCleanupComplete) {
+        try {
+          await _withStorageWriteQuantum(() async {
+            await _bytes.delete(sourceAccess.accessLocator);
+            await _deleteArtifactSidecar(sourceAccess.accessLocator);
+          });
+          sourceCleanupComplete = true;
+        } on Object {
+          sourceCleanupComplete = false;
+        }
+      }
+      return ArtifactReplicaMigrationResult(
+        replica: moved,
+        sourceCleanupComplete: sourceCleanupComplete,
+      );
+    } on Object {
+      if (!authorityCommitted && materialized.createdDestination) {
+        try {
+          await _withStorageWriteQuantum(
+            () => _bytes.delete(destinationLocator),
+          );
+        } on Object {
+          // The old authority still points at the source. An unreachable
+          // destination orphan is cleanup debt, not authority loss.
+        }
+      }
+      rethrow;
+    }
+      }),
+    );
+  });
+
+  Future<({bool createdDestination})> _materializeReplicaDestination({
+    required CacheRec record,
+    required List<_ArtifactAccessCandidate> sourceCandidates,
+    required String destinationAccessLocator,
+    TaskControl? control,
+  }) async {
+    final safDestination = parseSafRecordPath(destinationAccessLocator);
+    if (safDestination == null) {
+      _rejectLocalPathLinks(destinationAccessLocator);
+    } else if (safTreeIo == null ||
+        safTreeUri == null ||
+        safDestination.treeUri != safTreeUri) {
+      throw const Failure(
+        code: ErrorCode.policy,
+        message: 'replica migration cannot write an unavailable SAF tree',
+      );
+    }
+
+    final destinationExists = await _withStorageWriteQuantum(
+      () => _bytes.exists(destinationAccessLocator),
+      control: control,
+    );
+    if (destinationExists) {
+      await _verifyReplicaDestination(
+        record,
+        destinationAccessLocator,
+        control: control,
+      );
+      return (createdDestination: false);
+    }
+
+    final suffix = DateTime.now().microsecondsSinceEpoch;
+    final iterator = StreamIterator<Uint8List>(
+      _readArtifactCandidates(
+        sourceCandidates,
+        start: 0,
+        endExclusive: record.bytes,
+      ),
+    );
+    final crc = Crc32();
+    var copied = 0;
+    Object? primaryError;
+    StackTrace? primaryStack;
+
+    if (safDestination == null) {
+      final destination = File(destinationAccessLocator);
+      final temporary = File(
+        '$destinationAccessLocator.zic-migrate-tmp-$suffix',
+      );
+      RandomAccessFile? writer;
+      try {
+        await _withStorageWriteQuantum(() async {
+          await destination.parent.create(recursive: true);
+          writer = await temporary.open(mode: FileMode.write);
+        }, control: control);
+        while (true) {
+          final lease = await _storageWriteScheduler.acquireQuantum(
+            control: control,
+          );
+          try {
+            control?.throwIfCancelled();
+            if (!await _moveNextMigrationChunk(iterator, control)) break;
+            final chunk = iterator.current;
+            await writer!.writeFrom(chunk);
+            crc.add(chunk);
+            copied += chunk.length;
+          } finally {
+            lease.release();
+          }
+        }
+        await _withStorageWriteQuantum(() async {
+          await writer!.flush();
+          await writer!.close();
+          writer = null;
+        }, control: control);
+        _requireReplicaCopyProof(record, copied: copied, checksum: crc.hex);
+        await _verifyReplicaDestination(
+          record,
+          temporary.path,
+          control: control,
+        );
+        control?.throwIfCancelled();
+        final destinationAppeared = await _withStorageWriteQuantum(
+          destination.exists,
+          control: control,
+        );
+        if (destinationAppeared) {
+          await _verifyReplicaDestination(
+            record,
+            destinationAccessLocator,
+            control: control,
+          );
+          return (createdDestination: false);
+        }
+        await _withStorageWriteQuantum(
+          () => temporary.rename(destinationAccessLocator),
+          control: control,
+        );
+        return (createdDestination: true);
+      } catch (error, stackTrace) {
+        primaryError = error;
+        primaryStack = stackTrace;
+      } finally {
+        if (writer != null) {
+          try {
+            await _withStorageWriteQuantum(writer!.close);
+          } on Object {
+            // Preserve the primary failure; temp cleanup below is best effort.
+          }
+        }
+        try {
+          await iterator.cancel();
+        } on Object catch (error, stackTrace) {
+          if (primaryError == null) {
+            primaryError = error;
+            primaryStack = stackTrace;
+          }
+        }
+        final temporaryExists = await _withStorageWriteQuantum(
+          temporary.exists,
+        );
+        if (temporaryExists) {
+          try {
+            await _withStorageWriteQuantum(temporary.delete);
+          } on Object {
+            // This path is not authoritative; later repair may remove the temp.
+          }
+        }
+      }
+    } else {
+      final io = safTreeIo!;
+      final temporaryRelative =
+          '${safDestination.relativePath}.zic-migrate-tmp-$suffix';
+      final temporaryLocator = encodeSafRecordPath(
+        treeUri: safDestination.treeUri,
+        relativePath: temporaryRelative,
+      );
+      int? writer;
+      try {
+        writer = await _withStorageWriteQuantum(
+          () => io.open(temporaryRelative, mode: SafWriteMode.writeTruncate),
+          control: control,
+        );
+        if (writer == null) {
+          throw StateError('SAF tree refused replica migration temporary');
+        }
+        while (true) {
+          final lease = await _storageWriteScheduler.acquireQuantum(
+            control: control,
+          );
+          try {
+            control?.throwIfCancelled();
+            if (!await _moveNextMigrationChunk(iterator, control)) break;
+            final chunk = iterator.current;
+            await io.write(writer, chunk);
+            crc.add(chunk);
+            copied += chunk.length;
+          } finally {
+            lease.release();
+          }
+        }
+        await _withStorageWriteQuantum(() async {
+          await io.close(writer!);
+          writer = null;
+        }, control: control);
+        _requireReplicaCopyProof(record, copied: copied, checksum: crc.hex);
+        await _verifyReplicaDestination(
+          record,
+          temporaryLocator,
+          control: control,
+        );
+        control?.throwIfCancelled();
+        final destinationAppeared = await _withStorageWriteQuantum(
+          () => io.exists(safDestination.relativePath),
+          control: control,
+        );
+        if (destinationAppeared) {
+          await _verifyReplicaDestination(
+            record,
+            destinationAccessLocator,
+            control: control,
+          );
+          return (createdDestination: false);
+        }
+        final committed = await _withStorageWriteQuantum(
+          () => io.rename(temporaryRelative, safDestination.relativePath),
+          control: control,
+        );
+        if (!committed) {
+          final racedDestination = await _withStorageWriteQuantum(
+            () => io.exists(safDestination.relativePath),
+            control: control,
+          );
+          if (racedDestination) {
+            await _verifyReplicaDestination(
+              record,
+              destinationAccessLocator,
+              control: control,
+            );
+            return (createdDestination: false);
+          }
+          throw StateError(
+            'SAF tree refused no-replace replica migration commit',
+          );
+        }
+        return (createdDestination: true);
+      } catch (error, stackTrace) {
+        primaryError = error;
+        primaryStack = stackTrace;
+      } finally {
+        if (writer != null) {
+          try {
+            await _withStorageWriteQuantum(() => io.close(writer!));
+          } on Object {
+            // Preserve the primary failure; temp cleanup below is best effort.
+          }
+        }
+        try {
+          await iterator.cancel();
+        } on Object catch (error, stackTrace) {
+          if (primaryError == null) {
+            primaryError = error;
+            primaryStack = stackTrace;
+          }
+        }
+        final temporaryExists = await _withStorageWriteQuantum(
+          () => io.exists(temporaryRelative),
+        );
+        if (temporaryExists) {
+          try {
+            await _withStorageWriteQuantum(() => io.delete(temporaryRelative));
+          } on Object {
+            // This path is not authoritative; later repair may remove the temp.
+          }
+        }
+      }
+    }
+    Error.throwWithStackTrace(primaryError!, primaryStack!);
+  }
+
+  Future<void> _verifyReplicaDestination(
+    CacheRec record,
+    String accessLocator, {
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
+    if (record.checksumAlgorithm.trim().toLowerCase() != 'crc32') {
+      throw const Failure(
+        code: ErrorCode.policy,
+        message: 'replica migration currently requires crc32 artifact proof',
+      );
+    }
+    final preflight = await _withStorageWriteQuantum(() async {
+      final exists = await _bytes.exists(accessLocator);
+      final length = exists ? await _bytes.length(accessLocator) : 0;
+      return (exists: exists, length: length);
+    }, control: control);
+    if (!preflight.exists) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.missing,
+        accessLocator: accessLocator,
+        replicaId: record.effectiveArtifactId,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        expectedLength: record.bytes,
+        observedLength: 0,
+      );
+    }
+    final length = preflight.length;
+    if (length != record.bytes) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.lengthChanged,
+        accessLocator: accessLocator,
+        replicaId: record.effectiveArtifactId,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        expectedLength: record.bytes,
+        observedLength: length,
+      );
+    }
+    final iterator = StreamIterator<Uint8List>(
+      _bytes.readChunks(accessLocator, start: 0, endExclusive: record.bytes),
+    );
+    final crc = Crc32();
+    var verified = 0;
+    Object? primaryError;
+    StackTrace? primaryStack;
+    try {
+      while (true) {
+        final lease = await _storageWriteScheduler.acquireQuantum(
+          control: control,
+        );
+        try {
+          control?.throwIfCancelled();
+          if (!await _moveNextMigrationChunk(iterator, control)) break;
+          final chunk = iterator.current;
+          crc.add(chunk);
+          verified += chunk.length;
+        } finally {
+          lease.release();
+        }
+      }
+    } catch (error, stackTrace) {
+      primaryError = error;
+      primaryStack = stackTrace;
+    }
+    try {
+      await iterator.cancel();
+    } catch (error, stackTrace) {
+      if (primaryError == null) {
+        primaryError = error;
+        primaryStack = stackTrace;
+      }
+    }
+    if (primaryError != null) {
+      Error.throwWithStackTrace(primaryError, primaryStack!);
+    }
+    _requireReplicaCopyProof(record, copied: verified, checksum: crc.hex);
+  }
+
+  void _requireReplicaCopyProof(
+    CacheRec record, {
+    required int copied,
+    required String checksum,
+  }) {
+    if (copied != record.bytes ||
+        checksum != record.checksum.trim().toLowerCase()) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message:
+            'replica migration bytes do not match immutable artifact proof',
+      );
+    }
+  }
+
+  Future<T> _withStorageWriteQuantum<T>(
+    Future<T> Function() operation, {
+    TaskControl? control,
+  }) async {
+    final lease = await _storageWriteScheduler.acquireQuantum(control: control);
+    try {
+      control?.throwIfCancelled();
+      return await operation();
+    } finally {
+      lease.release();
+    }
+  }
+
+  Future<bool> _moveNextMigrationChunk(
+    StreamIterator<Uint8List> iterator,
+    TaskControl? control,
+  ) async {
+    if (control == null) return iterator.moveNext();
+    control.throwIfCancelled();
+    try {
+      return await Future.any<bool>(<Future<bool>>[
+        iterator.moveNext(),
+        control.whenCancelled.then<bool>((_) {
+          throw const Failure(
+            code: ErrorCode.cancelled,
+            message: 'artifact replica migration was cancelled',
+          );
+        }),
+      ]);
+    } catch (error, stackTrace) {
+      if (control.cancelled) control.throwIfCancelled();
+      throw Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
   void setSafTree(String treeUri) {
     if (safTreeUri != null && safTreeUri != treeUri) {
       throw StateError('SAF tree identity cannot change on an open store');
@@ -1338,6 +1862,9 @@ final class PersistentDownloadArtifactStore
   final SqliteIndex _index;
   final CacheOps _cacheOps;
   final ArtifactBytes _bytes;
+  final StorageWriteScheduler _storageWriteScheduler;
+
+  StorageWriteScheduler get storageWriteScheduler => _storageWriteScheduler;
 
   /// When set, freshly promoted finals are mirrored into the SAF tree and
   /// their index records switch to `saf:` paths; the local staging copy is
@@ -1349,6 +1876,8 @@ final class PersistentDownloadArtifactStore
       _artifactWriteProofs = <DownloadId, ({int length, String checksum})>{};
   final Map<DownloadId, Future<void>> _artifactMutationTails =
       <DownloadId, Future<void>>{};
+  final Map<String, Future<void>> _artifactReplicaMutationTails =
+      <String, Future<void>>{};
   final Set<DownloadId> _borrowedPartialIds = <DownloadId>{};
   final Map<String, Future<void>> _structuredWriteTails =
       <String, Future<void>>{};
@@ -2484,6 +3013,29 @@ final class PersistentDownloadArtifactStore
     return current.whenComplete(() {
       if (identical(_artifactMutationTails[id], tail)) {
         _artifactMutationTails.remove(id);
+      }
+    });
+  }
+
+  Future<T> _serializeArtifactReplicaMutation<T>(
+    String artifactId,
+    Future<T> Function() operation,
+  ) {
+    final previous =
+        _artifactReplicaMutationTails[artifactId] ?? Future<void>.value();
+    final current = previous.then<T>(
+      (_) => operation(),
+      onError: (Object _, StackTrace __) => operation(),
+    );
+    late final Future<void> tail;
+    tail = current.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    _artifactReplicaMutationTails[artifactId] = tail;
+    return current.whenComplete(() {
+      if (identical(_artifactReplicaMutationTails[artifactId], tail)) {
+        _artifactReplicaMutationTails.remove(artifactId);
       }
     });
   }
@@ -4438,6 +4990,112 @@ final class PersistentDownloadArtifactStore
     return rank(left).compareTo(rank(right));
   }
 
+  Future<void> _validateReplicaDestinationRoot(
+    String accessLocator,
+    String storageRootId,
+  ) async {
+    final parsed = parseSafRecordPath(accessLocator);
+    if (parsed != null) {
+      if (storageRootId == parsed.treeUri) return;
+      final root = await _index.getStorageRoot(parsed.treeUri);
+      if (root?.rootId == storageRootId) return;
+      throw const Failure(
+        code: ErrorCode.policy,
+        message: 'SAF replica destination does not belong to the declared root',
+      );
+    }
+
+    if (_relativeDirectArtifactPath(
+          root: storageRootId,
+          artifactPath: accessLocator,
+        ) !=
+        null) {
+      return;
+    }
+    final root = await _index.getStorageRoot(storageRootId);
+    if (root != null) {
+      for (final locator in root.accessLocators) {
+        if (locator.kind != StorageAccessLocatorKind.direct) continue;
+        if (_relativeDirectArtifactPath(
+              root: locator.locator,
+              artifactPath: accessLocator,
+            ) !=
+            null) {
+          return;
+        }
+      }
+    }
+    throw const Failure(
+      code: ErrorCode.policy,
+      message: 'direct replica destination does not belong to the declared root',
+    );
+  }
+
+  Future<void> _ensureReplicaDestinationUnowned({
+    required String currentReplicaId,
+    required String accessLocator,
+    required String storageRootId,
+  }) async {
+    final exact = await _index.artifactReplicaForAccessLocator(accessLocator);
+    if (exact != null && exact.replicaId != currentReplicaId) {
+      throw const Failure(
+        code: ErrorCode.policy,
+        message: 'migration destination is already owned by another replica',
+      );
+    }
+
+    final root = await _index.getStorageRoot(storageRootId);
+    final canonicalRootId = root?.rootId ?? storageRootId;
+    final destinationRelative = _relativeReplicaLocatorWithinRoot(
+      accessLocator: accessLocator,
+      storageRootId: canonicalRootId,
+      root: root,
+    );
+    if (destinationRelative == null) return;
+    final replicas =
+        await _index.listArtifactReplicasForStorageRoot(canonicalRootId);
+    for (final replica in replicas) {
+      if (replica.replicaId == currentReplicaId) continue;
+      final relative = _relativeReplicaLocatorWithinRoot(
+        accessLocator: replica.accessLocator,
+        storageRootId: canonicalRootId,
+        root: root,
+      );
+      if (relative == destinationRelative) {
+        throw const Failure(
+          code: ErrorCode.policy,
+          message: 'migration destination is already owned by another replica',
+        );
+      }
+    }
+  }
+
+  String? _relativeReplicaLocatorWithinRoot({
+    required String accessLocator,
+    required String storageRootId,
+    required StorageRootRecord? root,
+  }) {
+    final parsed = parseSafRecordPath(accessLocator);
+    if (parsed != null) return parsed.relativePath;
+    final directRoots = <String>[
+      if (root != null)
+        ...root.accessLocators
+            .where(
+              (locator) => locator.kind == StorageAccessLocatorKind.direct,
+            )
+            .map((locator) => locator.locator),
+      storageRootId,
+    ]..sort((left, right) => right.length.compareTo(left.length));
+    for (final directRoot in directRoots) {
+      final relative = _relativeDirectArtifactPath(
+        root: directRoot,
+        artifactPath: accessLocator,
+      );
+      if (relative != null) return relative;
+    }
+    return null;
+  }
+
   String? _relativeDirectArtifactPath({
     required String root,
     required String artifactPath,
@@ -5766,6 +6424,7 @@ final class PersistentDownloadComposition
     String Function()? userAgentProvider,
     NetLane? transferNet,
     ArtifactCacheReadScheduler? localReadScheduler,
+    StorageWriteScheduler? storageWriteScheduler,
     SafTreeIo? safTreeIo,
     String? safTreeUri,
     Duration pageStallTimeout =
@@ -5779,6 +6438,7 @@ final class PersistentDownloadComposition
       layoutResolver: layoutResolver,
       transferNet: transferNet,
       localReadScheduler: localReadScheduler,
+      storageWriteScheduler: storageWriteScheduler,
       safTreeIo: safTreeIo,
       safTreeUri: safTreeUri,
       stallTimeout: pageStallTimeout,
@@ -5839,6 +6499,7 @@ Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
   CacheLayout? Function(DownloadId id)? layoutResolver,
   NetLane? transferNet,
   ArtifactCacheReadScheduler? localReadScheduler,
+  StorageWriteScheduler? storageWriteScheduler,
   SafTreeIo? safTreeIo,
   String? safTreeUri,
   Duration stallTimeout = PersistentChapterDownloadService.defaultPageStallTimeout,
@@ -5849,6 +6510,7 @@ Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
     directory: directory,
     indexPath: indexPath,
     layoutResolver: layoutResolver,
+    storageWriteScheduler: storageWriteScheduler,
     safMirror: safTreeIo,
     safTreeUri: safTreeUri,
     traceSink: traceSink,
@@ -5924,6 +6586,7 @@ final class PersistentChapterDownloadService
     String Function()? userAgentProvider,
     NetLane? transferNet,
     ArtifactCacheReadScheduler? localReadScheduler,
+    StorageWriteScheduler? storageWriteScheduler,
     SafTreeIo? safTreeIo,
     String? safTreeUri,
     Duration pageStallTimeout = defaultPageStallTimeout,
@@ -5935,6 +6598,7 @@ final class PersistentChapterDownloadService
       layoutResolver: layoutResolver,
       transferNet: transferNet,
       localReadScheduler: localReadScheduler,
+      storageWriteScheduler: storageWriteScheduler,
       safTreeIo: safTreeIo,
       safTreeUri: safTreeUri,
       stallTimeout: pageStallTimeout,

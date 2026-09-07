@@ -51,6 +51,13 @@ This document is normative for the detailed download/storage behavior. `docs/SPE
 4. Explicit root migration MUST operate per replica and MUST commit a destination replica before source deletion.
 5. Active partial spools MUST NOT move during the same physical transfer generation.
 6. Automatic cache MAY remain on the old root/private tier and converge lazily.
+7. A per-replica relocation MUST preserve `replica_id`. The destination locator MUST belong to the declared `StorageRoot`, and a proven access alias already owned by another replica MUST NOT be used to collapse two replica identities onto one physical copy.
+8. Before relocation authority moves, the destination MUST match the sealed artifact's exact length and immutable checksum proof. A complete destination left by an earlier interrupted attempt MAY be adopted only after repeating that proof; a partial destination MUST NOT become authority.
+9. Source bytes and sidecar MUST be removed only after the destination locator/root transaction commits. Failure to clean the former location MUST NOT roll back the already-committed destination authority; such cleanup debt MAY be repaired later.
+10. Physical replica relocation MUST NOT manufacture logical cache recency or otherwise change logical-binding usage semantics.
+11. Migration source reads, destination writes/commit, verification reads and cleanup I/O MUST consume the App-level storage-write capacity in bounded quanta and yield to foreground local reads. This requirement MUST NOT consume or cancel unrelated network capacity.
+12. The current relocation primitive MAY discard an interrupted temporary partial copy. Durable partial-copy checkpoint/resume, durable cleanup-debt retry and automatic lazy-migration policy require separate authority before being treated as implemented.
+13. Concurrent relocation MUST serialize mutations of the same artifact and the same destination path. Commit-time metadata MUST reject an exact destination locator already owned by another replica; same-root Direct/SAF aliases MUST also be treated as one physical destination across artifact identities.
 
 ## 6. Partial and network continuity
 
