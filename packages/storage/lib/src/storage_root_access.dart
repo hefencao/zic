@@ -20,6 +20,48 @@ final class SafStorageAccessLocator extends StorageAccessLocator {
   String get treeUri => value;
 }
 
+
+enum StorageAccessLocatorKind { direct, saf }
+
+enum StorageAccessHealth { unknown, healthy, accessDenied }
+
+/// Durable access capability for one physical storage root.
+///
+/// Locator health is access-path state, not artifact/replica validity. In
+/// particular, `accessDenied` may suppress Direct access while a proven SAF
+/// locator for the same root remains usable.
+final class StorageAccessLocatorRecord {
+  const StorageAccessLocatorRecord({
+    required this.rootId,
+    required this.kind,
+    required this.locator,
+    required this.health,
+    required this.touchedUs,
+    this.verifiedUs,
+  });
+
+  final String rootId;
+  final StorageAccessLocatorKind kind;
+  final String locator;
+  final StorageAccessHealth health;
+  final int touchedUs;
+  final int? verifiedUs;
+}
+
+final class StorageRootRecord {
+  const StorageRootRecord({
+    required this.rootId,
+    required this.createdUs,
+    required this.touchedUs,
+    required this.accessLocators,
+  });
+
+  final String rootId;
+  final int createdUs;
+  final int touchedUs;
+  final List<StorageAccessLocatorRecord> accessLocators;
+}
+
 /// Ephemeral proof that two access locators observed the same physical root.
 ///
 /// The proof does not create storage ownership or choose a preferred access

@@ -30,7 +30,7 @@ This document is normative for the detailed download/storage behavior. `docs/SPE
 2. On Android 11+, a Direct candidate used for alias proof MUST require the current `Environment.isExternalStorageManager()` grant. A permission-settings launch is not itself evidence that the grant exists.
 3. A proof canary MUST be created exclusively through Direct access, MUST be read with the exact expected token through SAF before SAF is allowed to mutate it, MUST then be rewritten through SAF and read back through Direct, and MUST be cleaned up. The probe MUST NOT overwrite a pre-existing user file.
 4. Generic/unproven `content://` providers MUST remain SAF-only. The current candidate mapper is intentionally limited to the system ExternalStorageProvider `primary:` tree; removable/UUID volumes remain SAF-only until an explicit volume mapping is implemented.
-5. Successful alias proof MAY be cached only as process-local capability while locator health is not durable. It MUST NOT by itself switch current artifact I/O, change the selected root, or migrate bytes.
+5. A successful alias proof MUST be persisted into App-private root/access metadata when a durable artifact store is active; proof registration MUST NOT migrate bytes or change replica identity. The two proven locators MUST retain one root identity, and locator health MUST remain separate from artifact validity.
 6. When direct and SAF locators are both healthy for one root, direct access SHOULD be the preferred data-plane path and SAF SHOULD remain an available fallback.
 7. Switching preferred access for the same physical root MUST NOT copy bytes.
 8. `accessDenied` MUST degrade the affected access locator, not delete replica/artifact metadata.

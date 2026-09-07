@@ -1106,6 +1106,16 @@ final class _ArtifactAccessRecord {
   final String storageRootId;
 }
 
+final class _ArtifactAccessCandidate {
+  const _ArtifactAccessCandidate({
+    required this.access,
+    this.rootAccess,
+  });
+
+  final _ArtifactAccessRecord access;
+  final StorageAccessLocatorRecord? rootAccess;
+}
+
 final class PersistentDownloadArtifactStore
     implements
         ArtifactCacheBackend,
@@ -1197,6 +1207,21 @@ final class PersistentDownloadArtifactStore
   final String? safTreeUri;
 
   String get storageRootId => safTreeUri ?? layout.root;
+
+  Future<StorageRootRecord> registerStorageRootAccessAliasProof(
+    StorageRootAccessAliasProof proof,
+  ) {
+    _requireOpen();
+    return _index.registerStorageRootAccessAliasProof(
+      proof,
+      verifiedUs: DateTime.now().toUtc().microsecondsSinceEpoch,
+    );
+  }
+
+  Future<StorageRootRecord?> storageRootForAccess(String identity) {
+    _requireOpen();
+    return _index.getStorageRoot(identity);
+  }
 
   void setSafTree(String treeUri) {
     if (safTreeUri != null && safTreeUri != treeUri) {
@@ -4150,6 +4175,300 @@ final class PersistentDownloadArtifactStore
     );
   }
 
+  Future<bool> _artifactAccessMatchesCurrentStore(
+    DownloadId id,
+    _ArtifactAccessRecord access,
+  ) async {
+    if (_artifactAccessBelongsToCurrentRoot(id, access)) return true;
+    final currentSaf = safTreeUri;
+    if (currentSaf == null) return false;
+    final parsed = parseSafRecordPath(access.accessLocator);
+    final identity = parsed?.treeUri ?? access.storageRootId;
+    final root = await _index.getStorageRoot(identity);
+    return root?.accessLocators.any(
+          (locator) =>
+              locator.kind == StorageAccessLocatorKind.saf &&
+              locator.locator == currentSaf,
+        ) ==
+        true;
+  }
+
+  Future<List<_ArtifactAccessCandidate>> _artifactAccessCandidates(
+    _ArtifactAccessRecord base,
+  ) async {
+    final parsed = parseSafRecordPath(base.accessLocator);
+    final rootIdentity = parsed?.treeUri ?? base.storageRootId;
+    final root = await _index.getStorageRoot(rootIdentity);
+    if (root == null || root.accessLocators.isEmpty) {
+      return <_ArtifactAccessCandidate>[_ArtifactAccessCandidate(access: base)];
+    }
+
+    String? relativePath = parsed?.relativePath;
+    if (relativePath == null) {
+      final directRoots = root.accessLocators
+          .where((locator) => locator.kind == StorageAccessLocatorKind.direct)
+          .map((locator) => locator.locator)
+          .toList(growable: false)
+        ..sort((left, right) => right.length.compareTo(left.length));
+      for (final directRoot in directRoots) {
+        final relative = _relativeDirectArtifactPath(
+          root: directRoot,
+          artifactPath: base.accessLocator,
+        );
+        if (relative != null) {
+          relativePath = relative;
+          break;
+        }
+      }
+      relativePath ??= _relativeDirectArtifactPath(
+        root: base.storageRootId,
+        artifactPath: base.accessLocator,
+      );
+    }
+    if (relativePath == null || relativePath.isEmpty) {
+      return <_ArtifactAccessCandidate>[
+        _ArtifactAccessCandidate(
+          access: base,
+          rootAccess: _matchingRootAccess(root, base),
+        ),
+      ];
+    }
+
+    final available = root.accessLocators.where((locator) {
+      if (locator.kind == StorageAccessLocatorKind.saf) {
+        return safTreeUri != null && locator.locator == safTreeUri;
+      }
+      return true;
+    }).toList(growable: false)
+      ..sort(_compareStorageAccessPreference);
+    final candidates = <_ArtifactAccessCandidate>[];
+    final seen = <String>{};
+    for (final locator in available) {
+      final artifactLocator = switch (locator.kind) {
+        StorageAccessLocatorKind.direct => _joinDirectArtifactPath(
+            locator.locator,
+            relativePath,
+          ),
+        StorageAccessLocatorKind.saf => encodeSafRecordPath(
+            treeUri: locator.locator,
+            relativePath: relativePath,
+          ),
+      };
+      if (!seen.add(artifactLocator)) continue;
+      candidates.add(
+        _ArtifactAccessCandidate(
+          access: _ArtifactAccessRecord(
+            artifactId: base.artifactId,
+            accessLocator: artifactLocator,
+            bytes: base.bytes,
+            checksum: base.checksum,
+            checksumAlgorithm: base.checksumAlgorithm,
+            storageRootId: locator.locator,
+          ),
+          rootAccess: locator,
+        ),
+      );
+    }
+    if (seen.add(base.accessLocator)) {
+      candidates.add(
+        _ArtifactAccessCandidate(
+          access: base,
+          rootAccess: _matchingRootAccess(root, base),
+        ),
+      );
+    }
+    return candidates.isEmpty
+        ? <_ArtifactAccessCandidate>[_ArtifactAccessCandidate(access: base)]
+        : candidates;
+  }
+
+  StorageAccessLocatorRecord? _matchingRootAccess(
+    StorageRootRecord root,
+    _ArtifactAccessRecord access,
+  ) {
+    final parsed = parseSafRecordPath(access.accessLocator);
+    final kind = parsed == null
+        ? StorageAccessLocatorKind.direct
+        : StorageAccessLocatorKind.saf;
+    final locator = parsed?.treeUri ?? access.storageRootId;
+    for (final candidate in root.accessLocators) {
+      if (candidate.kind == kind && candidate.locator == locator) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  int _compareStorageAccessPreference(
+    StorageAccessLocatorRecord left,
+    StorageAccessLocatorRecord right,
+  ) {
+    int rank(StorageAccessLocatorRecord value) {
+      final healthPenalty =
+          value.health == StorageAccessHealth.accessDenied ? 100 : 0;
+      final kindPenalty =
+          value.kind == StorageAccessLocatorKind.direct ? 0 : 10;
+      return healthPenalty + kindPenalty;
+    }
+
+    return rank(left).compareTo(rank(right));
+  }
+
+  String? _relativeDirectArtifactPath({
+    required String root,
+    required String artifactPath,
+  }) {
+    final normalizedRoot = root.trim();
+    if (normalizedRoot.isEmpty || normalizedRoot == 'default') return null;
+    final separator = Platform.pathSeparator;
+    final prefix = normalizedRoot.endsWith(separator)
+        ? normalizedRoot
+        : '$normalizedRoot$separator';
+    if (artifactPath == normalizedRoot) return '';
+    if (!artifactPath.startsWith(prefix)) return null;
+    return artifactPath
+        .substring(prefix.length)
+        .split(separator)
+        .where((segment) => segment.isNotEmpty)
+        .join('/');
+  }
+
+  String _joinDirectArtifactPath(String root, String relativePath) {
+    final separator = Platform.pathSeparator;
+    final normalizedRoot = root.endsWith(separator)
+        ? root.substring(0, root.length - separator.length)
+        : root;
+    final relative = relativePath.split('/').join(separator);
+    return '$normalizedRoot$separator$relative';
+  }
+
+  Future<void> _recordStorageAccessHealth(
+    _ArtifactAccessCandidate candidate,
+    StorageAccessHealth health,
+  ) async {
+    final locator = candidate.rootAccess;
+    if (locator == null || locator.health == health) return;
+    await _index.updateStorageAccessHealth(
+      kind: locator.kind,
+      locator: locator.locator,
+      health: health,
+      touchedUs: DateTime.now().toUtc().microsecondsSinceEpoch,
+    );
+  }
+
+  Future<({ _ArtifactAccessCandidate candidate, int length })>
+      _selectReadableArtifactAccess(
+    List<_ArtifactAccessCandidate> candidates,
+  ) async {
+    ArtifactReadFailure? lastFailure;
+    for (final candidate in candidates) {
+      final access = candidate.access;
+      try {
+        final exists = await _artifactRecordExists(access);
+        if (!exists) {
+          lastFailure = ArtifactReadFailure(
+            kind: ArtifactReadFailureKind.missing,
+            accessLocator: access.accessLocator,
+            replicaId: access.artifactId,
+            failedOffset: 0,
+            bytesEmitted: 0,
+            expectedLength: access.bytes,
+            observedLength: 0,
+          );
+          continue;
+        }
+        final length = await _artifactRecordLength(access);
+        if (length <= 0 || length != access.bytes) {
+          lastFailure = ArtifactReadFailure(
+            kind: ArtifactReadFailureKind.lengthChanged,
+            accessLocator: access.accessLocator,
+            replicaId: access.artifactId,
+            failedOffset: 0,
+            bytesEmitted: 0,
+            expectedLength: access.bytes,
+            observedLength: length,
+          );
+          continue;
+        }
+        await _recordStorageAccessHealth(
+          candidate,
+          StorageAccessHealth.healthy,
+        );
+        return (candidate: candidate, length: length);
+      } on ArtifactReadFailure catch (error) {
+        lastFailure = _enrichArtifactReadFailure(access, error);
+        if (error.kind == ArtifactReadFailureKind.accessDenied) {
+          await _recordStorageAccessHealth(
+            candidate,
+            StorageAccessHealth.accessDenied,
+          );
+        }
+      }
+    }
+    throw lastFailure ??
+        const ArtifactReadFailure(
+          kind: ArtifactReadFailureKind.missing,
+          accessLocator: '',
+          failedOffset: 0,
+          bytesEmitted: 0,
+        );
+  }
+
+  Stream<Uint8List> _readArtifactCandidates(
+    List<_ArtifactAccessCandidate> candidates, {
+    required int start,
+    int? endExclusive,
+  }) async* {
+    var emitted = 0;
+    ArtifactReadFailure? lastFailure;
+    for (final candidate in candidates) {
+      if (endExclusive != null && start + emitted >= endExclusive) return;
+      final access = candidate.access;
+      try {
+        await for (final chunk in _bytes.readChunks(
+          access.accessLocator,
+          start: start + emitted,
+          endExclusive: endExclusive,
+        )) {
+          emitted += chunk.length;
+          yield chunk;
+        }
+        await _recordStorageAccessHealth(
+          candidate,
+          StorageAccessHealth.healthy,
+        );
+        return;
+      } on ArtifactReadFailure catch (error) {
+        if (error.kind == ArtifactReadFailureKind.accessDenied) {
+          await _recordStorageAccessHealth(
+            candidate,
+            StorageAccessHealth.accessDenied,
+          );
+        }
+        lastFailure = ArtifactReadFailure(
+          kind: error.kind,
+          accessLocator: error.accessLocator,
+          replicaId: error.replicaId ?? access.artifactId,
+          failedOffset: start + emitted,
+          bytesEmitted: emitted,
+          expectedLength: error.expectedLength,
+          observedLength: error.observedLength,
+          cause: error.cause,
+        );
+      } on Object catch (error) {
+        lastFailure = ArtifactReadFailure(
+          kind: ArtifactReadFailureKind.ioFailure,
+          accessLocator: access.accessLocator,
+          replicaId: access.artifactId,
+          failedOffset: start + emitted,
+          bytesEmitted: emitted,
+          cause: error,
+        );
+      }
+    }
+    if (lastFailure != null) throw lastFailure;
+  }
+
   ArtifactReadFailure _enrichArtifactReadFailure(
     _ArtifactAccessRecord access,
     ArtifactReadFailure failure,
@@ -4192,35 +4511,6 @@ final class PersistentDownloadArtifactStore
     }
   }
 
-  Stream<Uint8List> _readArtifactRecord(
-    _ArtifactAccessRecord access, {
-    required int start,
-    int? endExclusive,
-  }) async* {
-    var emitted = 0;
-    try {
-      await for (final chunk in _bytes.readChunks(
-        access.accessLocator,
-        start: start,
-        endExclusive: endExclusive,
-      )) {
-        emitted += chunk.length;
-        yield chunk;
-      }
-    } on ArtifactReadFailure catch (error) {
-      throw _enrichArtifactReadFailure(access, error);
-    } on Object catch (error) {
-      throw ArtifactReadFailure(
-        kind: ArtifactReadFailureKind.ioFailure,
-        accessLocator: access.accessLocator,
-        replicaId: access.artifactId,
-        failedOffset: start + emitted,
-        bytesEmitted: emitted,
-        cause: error,
-      );
-    }
-  }
-
   Future<ArtifactCacheStreamEntry?> _openArtifactStreamExact(DownloadId id) async {
     final record = await _index.get(id.key);
     if (record == null ||
@@ -4229,62 +4519,42 @@ final class PersistentDownloadArtifactStore
       return null;
     }
     final access = await _resolveArtifactAccess(record);
-    final file = access.accessLocator;
-    final parsed = parseSafRecordPath(file);
-    if (!_artifactAccessBelongsToCurrentRoot(id, access)) {
-      // A root switch must not invalidate a binding that belongs to another
-      // still-recoverable store. Reconcile it only when that root is selected.
-      return null;
-    }
-    if (parsed != null && safTreeUri != null && parsed.treeUri != safTreeUri) {
-      // The index may outlive a user-selected SAF tree. Do not invalidate a
-      // row belonging to another grant; it can still be reconciled if that
-      // tree is selected again.
+    if (!await _artifactAccessMatchesCurrentStore(id, access)) {
+      // App-private metadata may retain artifacts on other roots. Only a
+      // current root or a proven access alias for it is readable here.
       return null;
     }
     if (access.bytes <= 0) {
       await _invalidateIndexedArtifact(id, record: record);
       return null;
     }
-    final exists = await _artifactRecordExists(access);
-    if (!exists) {
-      await _invalidateIndexedArtifact(
-        id,
-        record: record,
-        physicalPath: file,
-        physicalArtifactId: access.artifactId,
-        physicalStorageRootId: access.storageRootId,
-      );
-      throw ArtifactReadFailure(
-        kind: ArtifactReadFailureKind.missing,
-        accessLocator: file,
-        replicaId: access.artifactId,
-        failedOffset: 0,
-        bytesEmitted: 0,
-        expectedLength: access.bytes,
-        observedLength: 0,
-      );
+    final candidates = await _artifactAccessCandidates(access);
+    late final ({_ArtifactAccessCandidate candidate, int length}) selected;
+    try {
+      selected = await _selectReadableArtifactAccess(candidates);
+    } on ArtifactReadFailure catch (error) {
+      if (error.kind == ArtifactReadFailureKind.missing ||
+          error.kind == ArtifactReadFailureKind.staleLocator ||
+          error.kind == ArtifactReadFailureKind.shortRead ||
+          error.kind == ArtifactReadFailureKind.lengthChanged) {
+        await _invalidateIndexedArtifact(
+          id,
+          record: record,
+          physicalPath: access.accessLocator,
+          physicalArtifactId: access.artifactId,
+          physicalStorageRootId: access.storageRootId,
+        );
+      }
+      rethrow;
     }
-    final length = await _artifactRecordLength(access);
-    if (length <= 0 || length != access.bytes) {
-      await _invalidateIndexedArtifact(
-        id,
-        record: record,
-        physicalPath: file,
-        physicalArtifactId: access.artifactId,
-        physicalStorageRootId: access.storageRootId,
-      );
-      throw ArtifactReadFailure(
-        kind: ArtifactReadFailureKind.lengthChanged,
-        accessLocator: file,
-        replicaId: access.artifactId,
-        failedOffset: 0,
-        bytesEmitted: 0,
-        expectedLength: access.bytes,
-        observedLength: length,
-      );
-    }
-    if (access.checksumAlgorithm.toLowerCase() != 'crc32') {
+    final selectedAccess = selected.candidate.access;
+    final selectedCandidates = <_ArtifactAccessCandidate>[
+      selected.candidate,
+      ...candidates.where((candidate) =>
+          candidate.access.accessLocator != selectedAccess.accessLocator),
+    ];
+    final length = selected.length;
+    if (selectedAccess.checksumAlgorithm.toLowerCase() != 'crc32') {
       await _invalidateIndexedArtifact(id, record: record);
       return null;
     }
@@ -4292,21 +4562,22 @@ final class PersistentDownloadArtifactStore
     await _index.touch(id.key, touchedUs);
     return ArtifactCacheStreamEntry(
       length: length,
-      open: ({required int start, int? endExclusive}) => _readArtifactRecord(
-        access,
+      open: ({required int start, int? endExclusive}) =>
+          _readArtifactCandidates(
+        selectedCandidates,
         start: start,
         endExclusive: endExclusive,
       ),
-      readAll: () => _readArtifactAllVerified(
-        access,
+      readAll: () => _readArtifactAllVerifiedCandidates(
+        selectedCandidates,
         length,
-        access.checksum.trim().toLowerCase(),
+        selectedAccess.checksum.trim().toLowerCase(),
       ),
       readAllControlled: ({required control}) =>
-          _readArtifactAllControlled(
-            access,
+          _readArtifactAllControlledCandidates(
+            selectedCandidates,
             length,
-            access.checksum.trim().toLowerCase(),
+            selectedAccess.checksum.trim().toLowerCase(),
             control,
           ),
       streamIntegrity: ArtifactReadIntegrityBasis.sealedMetadataLength,
@@ -4314,15 +4585,15 @@ final class PersistentDownloadArtifactStore
     );
   }
 
-  Future<Uint8List> _readArtifactAllVerified(
-    _ArtifactAccessRecord access,
+  Future<Uint8List> _readArtifactAllVerifiedCandidates(
+    List<_ArtifactAccessCandidate> candidates,
     int length,
     String expectedChecksum,
   ) async {
     final builder = BytesBuilder(copy: false);
     final crc = Crc32();
     await for (final chunk
-        in _readArtifactRecord(access, start: 0, endExclusive: length)) {
+        in _readArtifactCandidates(candidates, start: 0, endExclusive: length)) {
       builder.add(chunk);
       crc.add(chunk);
     }
@@ -4331,21 +4602,21 @@ final class PersistentDownloadArtifactStore
       throw Failure(
         code: ErrorCode.artifactCorruption,
         message:
-            'artifact cache body changed while reading ${access.accessLocator}',
+            'artifact cache body failed full verification',
       );
     }
     return bytes;
   }
 
-  Future<Uint8List> _readArtifactAllControlled(
-    _ArtifactAccessRecord access,
+  Future<Uint8List> _readArtifactAllControlledCandidates(
+    List<_ArtifactAccessCandidate> candidates,
     int length,
     String expectedChecksum,
     TaskControl control,
   ) async {
     control.throwIfCancelled();
     final iterator = StreamIterator<List<int>>(
-      _readArtifactRecord(access, start: 0, endExclusive: length),
+      _readArtifactCandidates(candidates, start: 0, endExclusive: length),
     );
     final builder = BytesBuilder(copy: false);
     final crc = Crc32();
@@ -4376,7 +4647,7 @@ final class PersistentDownloadArtifactStore
       throw Failure(
         code: ErrorCode.artifactCorruption,
         message:
-            'artifact cache body changed while reading ${access.accessLocator}',
+            'artifact cache body failed full verification',
       );
     }
     return bytes;

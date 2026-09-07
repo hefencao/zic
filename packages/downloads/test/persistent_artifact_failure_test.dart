@@ -266,6 +266,74 @@ void main() {
     expect(await File(authoritativePath).exists(), isTrue);
   });
 
+  test('proven root alias falls back from denied Direct access to SAF', () async {
+    final appRoot = await Directory.systemTemp.createTemp('zic-root-alias-app-');
+    final directRoot = await Directory.systemTemp.createTemp('zic-root-alias-direct-');
+    addTearDown(() async {
+      if (await appRoot.exists()) await appRoot.delete(recursive: true);
+      if (await directRoot.exists()) await directRoot.delete(recursive: true);
+    });
+    const safTree =
+        'content://com.android.externalstorage.documents/tree/primary%3ABooks';
+    final indexPath = defaultChapterDownloadMetadataPath(appRoot.path);
+    final id = _id('root-alias-fallback');
+    final bytes = Uint8List.fromList(<int>[2, 7, 1, 8, 2, 8]);
+
+    final direct = await PersistentDownloadArtifactStore.open(
+      appRoot.path,
+      directory: directRoot.path,
+      indexPath: indexPath,
+    );
+    await direct.storePromotedArtifact(id: id, bytes: bytes);
+    final directRecord = (await direct.indexedRecords())[id.key]!;
+    await direct.close();
+
+    final access = _AliasFallbackArtifactBytes(bytes);
+    final saf = await PersistentDownloadArtifactStore.open(
+      appRoot.path,
+      indexPath: indexPath,
+      bytes: access,
+      safTreeUri: safTree,
+    );
+    addTearDown(saf.close);
+    await saf.registerStorageRootAccessAliasProof(
+      StorageRootAccessAliasProof(
+        direct: DirectStorageAccessLocator(directRoot.path),
+        saf: const SafStorageAccessLocator(safTree),
+      ),
+    );
+
+    final entry = await saf.openArtifactStream(id);
+    expect(entry, isNotNull);
+    final read = <int>[];
+    await for (final chunk in entry!.open(start: 0)) {
+      read.addAll(chunk);
+    }
+    expect(read, bytes);
+    expect(access.directExistsCalls, 1);
+    expect(access.safExistsCalls, 1);
+    expect(await File(directRecord.path).exists(), isTrue,
+        reason: 'access fallback must not migrate or delete the replica');
+
+    final root = await saf.storageRootForAccess(directRoot.path);
+    expect(root, isNotNull);
+    final directAccess = root!.accessLocators.singleWhere(
+      (value) => value.kind == StorageAccessLocatorKind.direct,
+    );
+    final safAccess = root.accessLocators.singleWhere(
+      (value) => value.kind == StorageAccessLocatorKind.saf,
+    );
+    expect(directAccess.health, StorageAccessHealth.accessDenied);
+    expect(safAccess.health, StorageAccessHealth.healthy);
+
+    access.resetCounters();
+    final second = await saf.openArtifactStream(id);
+    expect(second, isNotNull);
+    expect(access.safExistsCalls, 1);
+    expect(access.directExistsCalls, 0,
+        reason: 'durable access health should prefer the healthy SAF alias');
+  });
+
   test('persistent preflight reports lengthChanged with replica identity', () async {
     final root = await Directory.systemTemp.createTemp('zic-replica-length-');
     final store = await PersistentDownloadArtifactStore.open(root.path);
@@ -418,6 +486,60 @@ DownloadId _id(String pageId) => DownloadId(
       sourceRevision: 'typed-read-r1',
       canonicalUri: Uri.parse('https://example.invalid/$pageId.bin'),
     );
+
+final class _AliasFallbackArtifactBytes implements ArtifactBytes {
+  _AliasFallbackArtifactBytes(this.bytes);
+
+  final Uint8List bytes;
+  int directExistsCalls = 0;
+  int safExistsCalls = 0;
+
+  void resetCounters() {
+    directExistsCalls = 0;
+    safExistsCalls = 0;
+  }
+
+  bool _isSaf(String path) => path.startsWith('saf:');
+
+  Never _deny(String path) => throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.accessDenied,
+        accessLocator: path,
+        failedOffset: 0,
+        bytesEmitted: 0,
+      );
+
+  @override
+  Future<bool> exists(String path) async {
+    if (_isSaf(path)) {
+      safExistsCalls++;
+      return true;
+    }
+    directExistsCalls++;
+    return _deny(path);
+  }
+
+  @override
+  Future<int> length(String path) async {
+    if (!_isSaf(path)) return _deny(path);
+    return bytes.lengthInBytes;
+  }
+
+  @override
+  Stream<Uint8List> readChunks(
+    String path, {
+    required int start,
+    int? endExclusive,
+  }) async* {
+    if (!_isSaf(path)) _deny(path);
+    final end = endExclusive == null || endExclusive > bytes.lengthInBytes
+        ? bytes.lengthInBytes
+        : endExclusive;
+    if (start < end) yield Uint8List.fromList(bytes.sublist(start, end));
+  }
+
+  @override
+  Future<void> delete(String path) async {}
+}
 
 final class _AccessDeniedArtifactBytes implements ArtifactBytes {
   const _AccessDeniedArtifactBytes();

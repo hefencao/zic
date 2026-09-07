@@ -74,6 +74,24 @@ Future<StorageRootAccessAliasProof?> _probeStorageRootAccessAlias(
   return proof;
 }
 
+void _persistStorageRootAccessAliasProof(_AppServices services) {
+  final proofFuture = services.storageRootAccessAliasProof;
+  final store = services.downloadComposition?.artifactStore;
+  if (proofFuture == null || store == null) return;
+  unawaited(Future<void>(() async {
+    try {
+      final proof = await proofFuture;
+      if (proof == null) return;
+      await store.registerStorageRootAccessAliasProof(proof);
+      _startupLog('storage-root-access-alias-persisted');
+    } on Object catch (error) {
+      // Alias proof is an optional access optimization. A permission change or
+      // service rebuild must never make the already-open SAF data path fail.
+      debugPrint('storage-root alias persistence failed: $error');
+    }
+  }));
+}
+
 final class _BootstrapApp extends StatefulWidget {
   const _BootstrapApp({
     this.firstFrameAlreadyRasterized = false,
@@ -588,6 +606,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
           ? null
           : _probeStorageRootAccessAlias(safOverride),
       );
+      _persistStorageRootAccessAliasProof(services);
       // An optional plugin host open may still be in flight on the replaced
       // instance. Settle it so its controller is not stranded unpublished.
       try {
@@ -1173,6 +1192,7 @@ Future<_AppServices> _openServices(
           ? null
           : _probeStorageRootAccessAlias(safOverride),
     );
+    _persistStorageRootAccessAliasProof(services);
     telemetry.servicesReady(startedAtMicros: openedAt);
     _startupLog('durable-services-ready');
     return services;

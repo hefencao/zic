@@ -6,6 +6,7 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 
 import 'cache_index.dart';
 import 'download_placement.dart';
+import 'storage_root_access.dart';
 
 final class SqliteIndex implements CacheIndex, CacheBindingOperations {
   SqliteIndex(this.path);
@@ -36,7 +37,7 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
     db.execute('PRAGMA foreign_keys = ON');
     db.execute('PRAGMA journal_mode = WAL');
     final version = db.select('PRAGMA user_version').first.values.first as int;
-    if (version > 6) {
+    if (version > 7) {
       throw StateError('unsupported cache schema version: $version');
     }
     db.execute('BEGIN IMMEDIATE');
@@ -156,9 +157,35 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
           touched_us INTEGER NOT NULL
         )
       ''');
+      db.execute('''
+        CREATE TABLE IF NOT EXISTS storage_root (
+          root_id TEXT NOT NULL PRIMARY KEY,
+          created_us INTEGER NOT NULL,
+          touched_us INTEGER NOT NULL
+        )
+      ''');
+      db.execute('''
+        CREATE TABLE IF NOT EXISTS storage_access_locator (
+          kind TEXT NOT NULL,
+          locator TEXT NOT NULL,
+          root_id TEXT NOT NULL,
+          health TEXT NOT NULL DEFAULT 'unknown',
+          verified_us INTEGER,
+          touched_us INTEGER NOT NULL,
+          PRIMARY KEY (kind, locator),
+          FOREIGN KEY (root_id) REFERENCES storage_root(root_id) ON DELETE CASCADE,
+          CHECK (kind IN ('direct', 'saf')),
+          CHECK (health IN ('unknown', 'healthy', 'accessDenied'))
+        )
+      ''');
+      db.execute(
+        'CREATE INDEX IF NOT EXISTS storage_access_locator_root '
+        'ON storage_access_locator(root_id)',
+      );
       _backfillArtifactObjects(db);
+      _backfillStorageRootRegistry(db);
       _migrateDownloadIdentityKeys(db);
-      db.execute('PRAGMA user_version = 6');
+      db.execute('PRAGMA user_version = 7');
       db.execute('COMMIT');
     } on Object {
       db.execute('ROLLBACK');
@@ -200,6 +227,130 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       checksum: row['checksum']! as String,
       checksumAlgorithm: (row['checksum_algorithm'] as String?) ?? 'crc32',
       storageRootId: (row['storage_root_id'] as String?) ?? 'default',
+    );
+  }
+
+  Future<StorageRootRecord?> getStorageRoot(String rootIdOrLocator) async {
+    final identity = rootIdOrLocator.trim();
+    if (identity.isEmpty || identity == 'default') return null;
+    final db = _requireDb();
+    var rootId = identity;
+    final byId = db.select(
+      'SELECT root_id FROM storage_root WHERE root_id = ? LIMIT 1',
+      <Object?>[identity],
+    );
+    if (byId.isEmpty) {
+      final byLocator = db.select(
+        'SELECT root_id FROM storage_access_locator WHERE locator = ? '
+        "ORDER BY CASE kind WHEN 'direct' THEN 0 ELSE 1 END LIMIT 1",
+        <Object?>[identity],
+      );
+      if (byLocator.isEmpty) return null;
+      rootId = byLocator.first['root_id']! as String;
+    }
+    return _readStorageRoot(db, rootId);
+  }
+
+  Future<StorageRootRecord> registerStorageRootAccessAliasProof(
+    StorageRootAccessAliasProof proof, {
+    required int verifiedUs,
+  }) async {
+    if (verifiedUs < 0) {
+      throw ArgumentError.value(verifiedUs, 'verifiedUs', 'must not be negative');
+    }
+    final direct = proof.direct.path.trim();
+    final saf = proof.saf.treeUri.trim();
+    if (direct.isEmpty || saf.isEmpty) {
+      throw ArgumentError('storage access locators must not be empty');
+    }
+    final db = _requireDb();
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      String? locatorRoot(StorageAccessLocatorKind kind, String locator) {
+        final rows = db.select(
+          'SELECT root_id FROM storage_access_locator '
+          'WHERE kind = ? AND locator = ? LIMIT 1',
+          <Object?>[kind.name, locator],
+        );
+        return rows.isEmpty ? null : rows.first['root_id']! as String;
+      }
+
+      bool rootExists(String rootId) => db.select(
+            'SELECT 1 FROM storage_root WHERE root_id = ? LIMIT 1',
+            <Object?>[rootId],
+          ).isNotEmpty;
+
+      final safRoot = locatorRoot(StorageAccessLocatorKind.saf, saf);
+      final directRoot = locatorRoot(StorageAccessLocatorKind.direct, direct);
+      final rootId = safRoot ??
+          directRoot ??
+          (rootExists(saf) ? saf : rootExists(direct) ? direct : saf);
+      db.execute(
+        'INSERT INTO storage_root (root_id, created_us, touched_us) '
+        'VALUES (?, ?, ?) ON CONFLICT(root_id) DO UPDATE SET '
+        'touched_us = excluded.touched_us',
+        <Object?>[rootId, verifiedUs, verifiedUs],
+      );
+
+      final mergeRoots = <String>{
+        if (safRoot != null) safRoot,
+        if (directRoot != null) directRoot,
+        if (rootExists(saf)) saf,
+        if (rootExists(direct)) direct,
+      }..remove(rootId);
+      for (final oldRoot in mergeRoots) {
+        db.execute(
+          'UPDATE storage_access_locator SET root_id = ?, touched_us = ? '
+          'WHERE root_id = ?',
+          <Object?>[rootId, verifiedUs, oldRoot],
+        );
+        db.execute(
+          'DELETE FROM storage_root WHERE root_id = ?',
+          <Object?>[oldRoot],
+        );
+      }
+
+      void upsertLocator(StorageAccessLocatorKind kind, String locator) {
+        db.execute(
+          'INSERT INTO storage_access_locator '
+          '(kind, locator, root_id, health, verified_us, touched_us) '
+          "VALUES (?, ?, ?, 'healthy', ?, ?) "
+          'ON CONFLICT(kind, locator) DO UPDATE SET '
+          'root_id = excluded.root_id, health = excluded.health, '
+          'verified_us = excluded.verified_us, touched_us = excluded.touched_us',
+          <Object?>[kind.name, locator, rootId, verifiedUs, verifiedUs],
+        );
+      }
+
+      upsertLocator(StorageAccessLocatorKind.direct, direct);
+      upsertLocator(StorageAccessLocatorKind.saf, saf);
+      db.execute('COMMIT');
+      return _readStorageRoot(db, rootId)!;
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  Future<void> updateStorageAccessHealth({
+    required StorageAccessLocatorKind kind,
+    required String locator,
+    required StorageAccessHealth health,
+    required int touchedUs,
+  }) async {
+    final normalized = locator.trim();
+    if (normalized.isEmpty) return;
+    final db = _requireDb();
+    final rows = db.select(
+      'SELECT health FROM storage_access_locator '
+      'WHERE kind = ? AND locator = ? LIMIT 1',
+      <Object?>[kind.name, normalized],
+    );
+    if (rows.isEmpty || rows.first['health'] == health.name) return;
+    db.execute(
+      'UPDATE storage_access_locator SET health = ?, touched_us = ? '
+      'WHERE kind = ? AND locator = ?',
+      <Object?>[health.name, touchedUs, kind.name, normalized],
     );
   }
 
@@ -424,6 +575,11 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
           'placement id is already owned by another download placement',
         );
       }
+      _ensureStorageRootLocator(
+        db,
+        placement.storageRootId,
+        touchedUs: placement.updatedAt.toUtc().microsecondsSinceEpoch,
+      );
       db.execute('''
         INSERT INTO download_placement (
           placement_id, source_id, comic_id, comic_title, mode,
@@ -660,6 +816,11 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
     CacheRec record,
     String artifactId,
   ) {
+    _ensureStorageRootLocator(
+      db,
+      record.storageRootId,
+      touchedUs: record.touchedUs,
+    );
     final existingReady = db.select(
       'SELECT key, bytes, checksum, checksum_algorithm '
       'FROM cache_entry WHERE artifact_id = ? AND key != ? '
@@ -819,6 +980,79 @@ void _migrateDownloadIdentityKeys(sql.Database db) {
     } on TypeError {
       // Same compatibility rule for partially written legacy JSON.
     }
+  }
+}
+
+StorageRootRecord? _readStorageRoot(sql.Database db, String rootId) {
+  final roots = db.select(
+    'SELECT root_id, created_us, touched_us FROM storage_root '
+    'WHERE root_id = ? LIMIT 1',
+    <Object?>[rootId],
+  );
+  if (roots.isEmpty) return null;
+  final root = roots.first;
+  final locators = db.select(
+    'SELECT kind, locator, health, verified_us, touched_us '
+    'FROM storage_access_locator WHERE root_id = ?',
+    <Object?>[rootId],
+  ).map((row) => StorageAccessLocatorRecord(
+        rootId: rootId,
+        kind: StorageAccessLocatorKind.values.byName(row['kind']! as String),
+        locator: row['locator']! as String,
+        health: StorageAccessHealth.values.byName(row['health']! as String),
+        verifiedUs: row['verified_us'] as int?,
+        touchedUs: row['touched_us']! as int,
+      )).toList(growable: false);
+  return StorageRootRecord(
+    rootId: rootId,
+    createdUs: root['created_us']! as int,
+    touchedUs: root['touched_us']! as int,
+    accessLocators: List<StorageAccessLocatorRecord>.unmodifiable(locators),
+  );
+}
+
+void _ensureStorageRootLocator(
+  sql.Database db,
+  String identity, {
+  required int touchedUs,
+}) {
+  final normalized = identity.trim();
+  if (normalized.isEmpty || normalized == 'default') return;
+  final kind = normalized.startsWith('content://')
+      ? StorageAccessLocatorKind.saf
+      : StorageAccessLocatorKind.direct;
+  db.execute(
+    'INSERT OR IGNORE INTO storage_root (root_id, created_us, touched_us) '
+    'VALUES (?, ?, ?)',
+    <Object?>[normalized, touchedUs, touchedUs],
+  );
+  db.execute(
+    'INSERT OR IGNORE INTO storage_access_locator '
+    '(kind, locator, root_id, health, verified_us, touched_us) '
+    "VALUES (?, ?, ?, 'unknown', NULL, ?)",
+    <Object?>[kind.name, normalized, normalized, touchedUs],
+  );
+}
+
+void _backfillStorageRootRegistry(sql.Database db) {
+  final nowUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+  final identities = <String>{};
+  for (final table in const <String>[
+    'artifact_object',
+    'cache_entry',
+    'download_placement',
+  ]) {
+    final rows = db.select(
+      'SELECT DISTINCT storage_root_id FROM $table '
+      "WHERE storage_root_id IS NOT NULL AND storage_root_id != '' "
+      "AND storage_root_id != 'default'",
+    );
+    for (final row in rows) {
+      identities.add(row['storage_root_id']! as String);
+    }
+  }
+  for (final identity in identities) {
+    _ensureStorageRootLocator(db, identity, touchedUs: nowUs);
   }
 }
 

@@ -76,7 +76,7 @@ artifact_replica
   health
 ```
 
-`CacheRec.path` is therefore a compatibility representation, not the desired long-term authority. Production schema 6 already persists one `artifact_object` row per immutable `artifact_id`; the first Root/Access migration step now consumes that row as the current single physical `accessLocator + storageRootId + seal proof` authority whenever its byte-length/checksum proof agrees with the logical binding. `cache_entry.path` remains a legacy fallback only. This is deliberately not yet `artifact_replica`: one artifact still has at most one indexed object locator, and locator health / Direct+SAF aliases remain future state.
+`CacheRec.path` is therefore a compatibility representation, not the desired long-term authority. Production schema 7 persists one `artifact_object` row per immutable `artifact_id` plus a durable `storage_root` / `storage_access_locator` registry in the App-private metadata database. `artifact_object` remains the current single physical replica locator/root authority whenever its byte-length/checksum proof agrees with the logical binding, while `cache_entry.path` is legacy fallback only. A proven root may now retain multiple Direct/SAF access locators and durable access health, but this is deliberately not yet `artifact_replica`: one artifact still has at most one indexed physical replica/object locator.
 
 ### 2.3 StorageRootRegistry
 
@@ -99,7 +99,7 @@ SafAccess(treeUri=content://...)
 
 when ZIC has positively proved both locators address the same physical root.
 
-Access failure and replica failure are separate facts. `EACCES` may disable DirectAccess while the SAF locator remains usable; it must not by itself invalidate the artifact. Root/Access phase 2 now exposes an ephemeral `StorageRootAccessAliasProof`: Android first requires the real `Environment.isExternalStorageManager()` grant and only derives a Direct candidate for the system ExternalStorageProvider `primary:` tree. Identity is then proven by a random hidden canary created atomically with Direct `O_CREAT|O_EXCL`, read through SAF, rewritten through SAF only after the exact Direct token matches, and read back through Direct before cleanup. URI/path resemblance alone is never proof. Generic providers and removable/UUID volumes remain SAF-only. The proof is started after durable services open, cached only after success for the process lifetime, and is not yet used to switch artifact I/O or migrate bytes.
+Access failure and replica failure are separate facts. `EACCES` may disable DirectAccess while the SAF locator remains usable; it must not by itself invalidate the artifact. Android alias proof first requires the real `Environment.isExternalStorageManager()` grant and only derives a Direct candidate for the system ExternalStorageProvider `primary:` tree. Identity is then proven by a random hidden canary created atomically with Direct `O_CREAT|O_EXCL`, read through SAF, rewritten through SAF only after the exact Direct token matches, and read back through Direct before cleanup; URI/path resemblance alone is never proof and generic/removable/UUID providers remain SAF-only. After durable services open, a successful proof is persisted into schema-7 App-private root/access metadata. Data-plane reads prefer a healthy Direct locator, may fall back to the proven SAF locator without copying bytes, and persist `accessDenied` only against the failed locator so later reads prefer the healthy alias; structural artifact failures remain artifact/replica facts.
 
 ### 2.4 ExportLayout
 
@@ -342,7 +342,7 @@ The migration is intentionally incremental and each functional boundary should b
 1. Move shared transfer/read scheduling ownership out of Pipeline factory construction into an App-level resource composition owner without changing scheduling policy.
 2. Make persistent artifact Reader hits truly stream from `ArtifactCacheStreamEntry.open()`; remove the full-page `readPage -> Uint8List` local fast path for remote pages.
 3. Make durable partials adoptable as the active spool and allow ordered local replay + network suffix concurrency. Exact POSIX active-spool adoption is implemented; SAF/non-capable backends retain streaming-copy fallback, while replay/suffix concurrency remains pending.
-4. Introduce StorageRoot + AccessLocator modeling and direct/SAF same-root capability proof. The ephemeral alias-proof seam is implemented; durable root registry/health and data-plane selection remain pending.
+4. Introduce StorageRoot + AccessLocator modeling and direct/SAF same-root capability proof. Schema 7 now persists the proven root/access registry and locator health, and ready-artifact reads perform Direct-preferred same-root access fallback without copying bytes; first-class `artifact_replica` ownership remains the next boundary.
 5. **Implemented:** move durable download metadata authority to App-private SQLite while retaining one-time compatibility migration from existing root-coupled stores.
 6. Split logical artifact binding from physical replica location/health.
 7. Replace persistent N-dependent page numbering with sparse materialized ExportLayout + direct VersionBaseline mappings; historical version edges remain provenance only.

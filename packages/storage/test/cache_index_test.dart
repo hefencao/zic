@@ -476,6 +476,204 @@ void runCacheSchemaV2Tests() {
     );
   });
 
+  test('v6 cache metadata migrates existing root identities into schema 7', () async {
+    final temp = await Directory.systemTemp.createTemp('cache_index_v6_root_');
+    addTearDown(() => temp.delete(recursive: true));
+    final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
+    const rootIdentity = '/storage/emulated/0/Books';
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'v6-root',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/v6-root.webp'),
+    );
+
+    final current = SqliteIndex(dbPath);
+    await current.open();
+    await current.put(
+      CacheRec(
+        id: id,
+        state: CacheState.ready,
+        path: '$rootIdentity/final/page.bin',
+        bytes: 3,
+        checksum: '01020304',
+        createdUs: 1,
+        touchedUs: 2,
+        storageRootId: rootIdentity,
+      ),
+    );
+    await current.close();
+
+    final legacy = sql.sqlite3.open(dbPath);
+    legacy.execute('DROP TABLE storage_access_locator');
+    legacy.execute('DROP TABLE storage_root');
+    legacy.execute('PRAGMA user_version = 6');
+    legacy.dispose();
+
+    final migrated = SqliteIndex(dbPath);
+    await migrated.open();
+    addTearDown(migrated.close);
+    final root = await migrated.getStorageRoot(rootIdentity);
+    expect(root, isNotNull);
+    expect(root!.rootId, rootIdentity);
+    expect(root.accessLocators, hasLength(1));
+    expect(root.accessLocators.single.kind, StorageAccessLocatorKind.direct);
+    expect(root.accessLocators.single.locator, rootIdentity);
+    expect(root.accessLocators.single.health, StorageAccessHealth.unknown);
+  });
+
+  test('schema 7 backfills one durable locator for a storage root', () async {
+    final index = SqliteIndex.memory();
+    await index.open();
+    addTearDown(index.close);
+    final rootId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'root-backfill',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/root-backfill.webp'),
+    );
+    await index.put(
+      CacheRec(
+        id: rootId,
+        state: CacheState.ready,
+        path: '/storage/emulated/0/Books/final/page.bin',
+        bytes: 3,
+        checksum: '01020304',
+        createdUs: 1,
+        touchedUs: 2,
+        storageRootId: '/storage/emulated/0/Books',
+      ),
+    );
+
+    final root = await index.getStorageRoot('/storage/emulated/0/Books');
+    expect(root, isNotNull);
+    expect(root!.accessLocators, hasLength(1));
+    expect(root.accessLocators.single.kind, StorageAccessLocatorKind.direct);
+    expect(root.accessLocators.single.health, StorageAccessHealth.unknown);
+  });
+
+  test('verified SAF and Direct locators merge into one durable root', () async {
+    final index = SqliteIndex.memory();
+    await index.open();
+    addTearDown(index.close);
+    const direct = '/storage/emulated/0/Books';
+    const saf =
+        'content://com.android.externalstorage.documents/tree/primary%3ABooks';
+    final directId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'root-direct',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/direct.webp'),
+    );
+    final safId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'root-saf',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/saf.webp'),
+    );
+    await index.put(
+      CacheRec(
+        id: directId,
+        state: CacheState.ready,
+        path: '$direct/final/direct.bin',
+        bytes: 3,
+        checksum: '11111111',
+        createdUs: 1,
+        touchedUs: 1,
+        storageRootId: direct,
+      ),
+    );
+    await index.put(
+      CacheRec(
+        id: safId,
+        state: CacheState.ready,
+        path: 'saf:placeholder',
+        bytes: 3,
+        checksum: '22222222',
+        createdUs: 2,
+        touchedUs: 2,
+        storageRootId: saf,
+      ),
+    );
+
+    final merged = await index.registerStorageRootAccessAliasProof(
+      const StorageRootAccessAliasProof(
+        direct: DirectStorageAccessLocator(direct),
+        saf: SafStorageAccessLocator(saf),
+      ),
+      verifiedUs: 99,
+    );
+
+    expect(merged.accessLocators, hasLength(2));
+    expect(
+      merged.accessLocators.map((value) => value.kind).toSet(),
+      <StorageAccessLocatorKind>{
+        StorageAccessLocatorKind.direct,
+        StorageAccessLocatorKind.saf,
+      },
+    );
+    expect(
+      merged.accessLocators.every(
+        (value) => value.health == StorageAccessHealth.healthy &&
+            value.verifiedUs == 99,
+      ),
+      isTrue,
+    );
+    expect((await index.getStorageRoot(direct))?.rootId, merged.rootId);
+    expect((await index.getStorageRoot(saf))?.rootId, merged.rootId);
+  });
+
+  test('access health changes do not alter root identity', () async {
+    final index = SqliteIndex.memory();
+    await index.open();
+    addTearDown(index.close);
+    const direct = '/storage/emulated/0/Books';
+    const saf =
+        'content://com.android.externalstorage.documents/tree/primary%3ABooks';
+    final root = await index.registerStorageRootAccessAliasProof(
+      const StorageRootAccessAliasProof(
+        direct: DirectStorageAccessLocator(direct),
+        saf: SafStorageAccessLocator(saf),
+      ),
+      verifiedUs: 10,
+    );
+
+    await index.updateStorageAccessHealth(
+      kind: StorageAccessLocatorKind.direct,
+      locator: direct,
+      health: StorageAccessHealth.accessDenied,
+      touchedUs: 11,
+    );
+
+    final current = await index.getStorageRoot(root.rootId);
+    expect(current, isNotNull);
+    final directAccess = current!.accessLocators.singleWhere(
+      (value) => value.kind == StorageAccessLocatorKind.direct,
+    );
+    final safAccess = current.accessLocators.singleWhere(
+      (value) => value.kind == StorageAccessLocatorKind.saf,
+    );
+    expect(directAccess.health, StorageAccessHealth.accessDenied);
+    expect(safAccess.health, StorageAccessHealth.healthy);
+    expect(current.rootId, root.rootId);
+  });
+
   test('DownloadPlacement equality includes export page order', () {
     final now = DateTime.utc(2026, 9, 6);
     final origin = DownloadPlacement(
