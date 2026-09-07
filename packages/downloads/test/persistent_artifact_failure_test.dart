@@ -7,6 +7,28 @@ import 'package:storage/storage.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('sealed persistent entry distinguishes hot-path trust from full CRC',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-sealed-trust-');
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(() async {
+      await store.close();
+      await root.delete(recursive: true);
+    });
+    final id = _id('sealed-trust');
+    final bytes = Uint8List.fromList(<int>[1, 2, 3, 4, 5, 6, 7, 8]);
+    await store.storePromotedArtifact(id: id, bytes: bytes);
+
+    final entry = await store.openArtifactStream(id);
+
+    expect(entry, isNotNull);
+    expect(
+      entry!.streamIntegrity,
+      ArtifactReadIntegrityBasis.sealedMetadataLength,
+    );
+    expect(entry.fullReadIntegrity, ArtifactReadIntegrityBasis.crc32Verified);
+  });
+
   test('shared artifact reads through artifact_object locator when binding path is stale', () async {
     final root = await Directory.systemTemp.createTemp('zic-artifact-object-read-');
     addTearDown(() => root.delete(recursive: true));

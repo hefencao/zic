@@ -144,14 +144,23 @@ void main() {
           yield Uint8List.fromList(<int>[1, 2, 3]);
         },
         readAll: () => gate.future,
+        fullReadIntegrity: ArtifactReadIntegrityBasis.crc32Verified,
       ),
       tier: ArtifactCacheTier.persistent,
     );
     final foreground = manager.readForegroundLookup(lookup);
     gate.complete(Uint8List.fromList(<int>[1, 2, 3]));
 
-    expect((await local).durable, isFalse);
-    expect((await foreground).durable, isFalse);
+    final localRead = await local;
+    final foregroundRead = await foreground;
+    expect(localRead.durable, isFalse);
+    expect(foregroundRead.durable, isFalse);
+    expect(localRead.integrityBasis, ArtifactReadIntegrityBasis.sessionArtifact);
+    expect(
+      foregroundRead.integrityBasis,
+      ArtifactReadIntegrityBasis.sessionArtifact,
+      reason: 'a later durable join cannot relabel the source operation proof',
+    );
     expect((await manager.lookup(id))?.durable, isFalse);
   });
 

@@ -4308,6 +4308,8 @@ final class PersistentDownloadArtifactStore
             access.checksum.trim().toLowerCase(),
             control,
           ),
+      streamIntegrity: ArtifactReadIntegrityBasis.sealedMetadataLength,
+      fullReadIntegrity: ArtifactReadIntegrityBasis.crc32Verified,
     );
   }
 

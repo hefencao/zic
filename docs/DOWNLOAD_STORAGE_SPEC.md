@@ -71,7 +71,7 @@ This document is normative for the detailed download/storage behavior. `docs/SPE
 4. Origin/network fallback after emitted local bytes MUST re-enter DownloadSession/DownloadJob on a later Transfer attempt. The failing persistent read MAY be quarantined for the current transport lifetime so that retry selects origin rather than reopening the same replica.
 5. `missing`, `staleLocator`, `shortRead`, and `lengthChanged` MUST invalidate the affected durable binding. `accessDenied` and generic `ioFailure` MUST NOT by themselves delete the binding or physical artifact.
 6. Resetting an ephemeral resident artifact-cache projection after body failure MUST NOT delete the external durable cache binding.
-7. Normal sealed reads MUST NOT compute whole-file CRC32 on every Reader access. Length/access metadata is the normal hot-path check; explicit repair/audit and materialization/seal boundaries own full checksum work.
+7. Normal sealed reads MUST NOT compute whole-file CRC32 on every Reader access. Length/access metadata is the normal hot-path check; explicit repair/audit and materialization/seal boundaries own full checksum work. The byte source MUST expose the integrity basis actually used by stream/full reads; `sourceRead` diagnostics MUST distinguish prior seal proof + current length/access preflight from a CRC recomputed during this read, and a joined read MUST inherit the basis of the operation that supplied its bytes.
 
 ## 8. Cross-consumer resource scheduling
 

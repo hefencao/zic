@@ -161,6 +161,10 @@ final class ArtifactCacheTransport implements ControlledTransport {
               'verifiedEquivalentCandidates': verifiedEquivalentCandidates,
               'hotCacheEntries': _cache.memoryEntryCount,
               'hotCacheBytes': _cache.memoryBytes,
+              'artifactIntegrityBasis': lookup.entry.streamIntegrity.name,
+              'artifactWholeChecksumVerifiedThisRead':
+                  lookup.entry.streamIntegrity ==
+                      ArtifactReadIntegrityBasis.crc32Verified,
             };
             _recordSource(
               source: source,
@@ -490,6 +494,9 @@ final class ArtifactCacheTransport implements ControlledTransport {
         'continuationChunkBytes': _foregroundContinuationChunkBytes,
       'hotCacheEntries': _cache.memoryEntryCount,
       'hotCacheBytes': _cache.memoryBytes,
+      'artifactIntegrityBasis': read.integrityBasis.name,
+      'artifactWholeChecksumVerifiedThisRead':
+          read.integrityBasis == ArtifactReadIntegrityBasis.crc32Verified,
     };
     _recordSource(
       source: source,

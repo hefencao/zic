@@ -1530,6 +1530,7 @@ final class PipelineReaderSession {
         readMicros: 0,
         memoryHit: true,
         joined: false,
+        integrityBasis: ArtifactReadIntegrityBasis.memoryResident.name,
       );
       return hotBytes;
     }
@@ -1563,6 +1564,7 @@ final class PipelineReaderSession {
             readMicros: readMicros,
             memoryHit: cached.memoryHit,
             joined: cached.joined,
+            integrityBasis: cached.integrityBasis.name,
             sessionState: session?.state.name,
           );
           return cached.bytes;
@@ -1641,6 +1643,8 @@ final class PipelineReaderSession {
       readMicros: artifactReadMicros,
       memoryHit: cacheRead?.memoryHit ?? false,
       joined: cacheRead?.joined ?? false,
+      integrityBasis: cacheRead?.integrityBasis.name ??
+          ArtifactReadIntegrityBasis.sessionArtifact.name,
     );
     return bytes;
   }
@@ -1722,6 +1726,7 @@ final class PipelineReaderSession {
       readMicros: clock.nowMicros() - started,
       memoryHit: false,
       joined: false,
+      integrityBasis: 'directImmutableSource',
       sessionState: session.state.name,
     );
     return bytes;
@@ -1835,6 +1840,7 @@ final class PipelineReaderSession {
     required int readMicros,
     required bool memoryHit,
     required bool joined,
+    required String integrityBasis,
     String? sessionState,
   }) {
     final safeMicros = readMicros < 0 ? 0 : readMicros;
@@ -1862,6 +1868,9 @@ final class PipelineReaderSession {
           'artifactReadMode': readMode,
           'memoryCacheHit': memoryHit,
           'memoryCacheJoined': joined,
+          'artifactIntegrityBasis': integrityBasis,
+          'artifactWholeChecksumVerifiedThisRead':
+              integrityBasis == ArtifactReadIntegrityBasis.crc32Verified.name,
           'artifactMaterializeMicros': safeMicros,
           'hotCacheEntries': _artifactCacheManager?.memoryEntryCount ?? 0,
           'hotCacheBytes': _artifactCacheManager?.memoryBytes ?? 0,

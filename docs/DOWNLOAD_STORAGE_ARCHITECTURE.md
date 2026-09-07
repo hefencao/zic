@@ -202,7 +202,7 @@ Hard links are not the default because user mutation of an exported file would m
 
 ### 4.2 Pure SAF root
 
-Automatic cache and mutable partials stay in fast App-private POSIX storage by default. A manual SAF export is materialized exactly once by bounded streaming copy. The copy pass computes/retains the seal proof; normal Reader reads do not re-hash the complete file.
+Automatic cache and mutable partials stay in fast App-private POSIX storage by default. A manual SAF export is materialized exactly once by bounded streaming copy. The copy pass computes/retains the seal proof; normal Reader reads do not re-hash the complete file. Production now makes that distinction explicit: a sealed persistent stream reports `sealedMetadataLength` after locator/existence/exact-length preflight, while a full read that actually recomputes CRC reports `crc32Verified`; joined full reads keep the integrity basis of the source operation that really ran.
 
 SAF cache colocation is not useful unless the provider proves a cheap cross-directory move capability. Current same-directory rename is insufficient.
 

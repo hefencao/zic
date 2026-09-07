@@ -582,6 +582,11 @@ void main() {
     expect(reads[0].payload['memoryCacheHit'], isFalse);
     expect(reads[0].payload['readSchedulerAcquires'], 1);
     expect(reads[0].payload['readSchedulerForegroundAcquires'], 1);
+    expect(
+      reads[0].payload['artifactIntegrityBasis'],
+      ArtifactReadIntegrityBasis.sealedMetadataLength.name,
+    );
+    expect(reads[0].payload['artifactWholeChecksumVerifiedThisRead'], isFalse);
   });
 
   test('foreground memory artifact keeps the direct hot-byte fast path',
@@ -1113,6 +1118,10 @@ final class _StreamingArtifactStore implements ArtifactCacheBackend {
               return bytes;
             }
           : null,
+      streamIntegrity: ArtifactReadIntegrityBasis.sealedMetadataLength,
+      fullReadIntegrity: exposeReadAll
+          ? ArtifactReadIntegrityBasis.crc32Verified
+          : ArtifactReadIntegrityBasis.unspecified,
     );
   }
 

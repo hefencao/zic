@@ -275,14 +275,19 @@ final class ArtifactCacheManager {
         memoryHit: true,
         joined: false,
         durable: lookup.durable,
+        integrityBasis: ArtifactReadIntegrityBasis.memoryResident,
       );
     }
     final controlledRead = lookup.entry.readAllControlled;
     final readAll = lookup.entry.readAll;
+    final integrityBasis = controlledRead != null || readAll != null
+        ? lookup.entry.fullReadIntegrity
+        : lookup.entry.streamIntegrity;
     return _readJoined(
       id: lookup.storageId,
       length: lookup.entry.length,
       durable: true,
+      integrityBasis: integrityBasis,
       loader: controlledRead == null
           ? (operationControl) => readAll != null
               ? readAll()
@@ -329,6 +334,7 @@ final class ArtifactCacheManager {
           id: id,
           length: length,
           durable: false,
+          integrityBasis: ArtifactReadIntegrityBasis.sessionArtifact,
           loader: (_) => Future<Uint8List>.sync(loader),
           control: control,
         );
@@ -491,6 +497,7 @@ final class ArtifactCacheManager {
     required DownloadId id,
     required int length,
     required bool durable,
+    required ArtifactReadIntegrityBasis integrityBasis,
     required Future<Uint8List> Function(TaskControl operationControl) loader,
     int? expectedGeneration,
     TaskControl? control,
@@ -516,6 +523,7 @@ final class ArtifactCacheManager {
         memoryHit: true,
         joined: false,
         durable: _durableMemory.contains(_ArtifactByteKey(id, length)),
+        integrityBasis: ArtifactReadIntegrityBasis.memoryResident,
       );
     }
     final key = _ArtifactByteKey(id, length);
@@ -531,6 +539,7 @@ final class ArtifactCacheManager {
         memoryHit: false,
         joined: true,
         durable: running.durable,
+        integrityBasis: running.integrityBasis,
       );
     }
     if (running != null && identical(_inFlight[key], running)) {
@@ -587,6 +596,7 @@ final class ArtifactCacheManager {
       control: operationControl,
       generation: generation,
       durable: durable,
+      integrityBasis: integrityBasis,
     );
     _inFlight[key] = operation;
     final bytes = await _awaitJoined(operation, control);
@@ -595,6 +605,7 @@ final class ArtifactCacheManager {
       memoryHit: false,
       joined: false,
       durable: operation.durable,
+      integrityBasis: operation.integrityBasis,
     );
   }
 
@@ -710,6 +721,8 @@ final class ArtifactCacheManager {
           }
         },
         readAll: () async => bytes.asUnmodifiableView(),
+        streamIntegrity: ArtifactReadIntegrityBasis.memoryResident,
+        fullReadIntegrity: ArtifactReadIntegrityBasis.memoryResident,
       );
 
   static Future<Uint8List> _collect(
@@ -889,6 +902,7 @@ final class ArtifactCacheRead {
     required this.bytes,
     required this.memoryHit,
     required this.joined,
+    required this.integrityBasis,
     this.durable = false,
   });
 
@@ -896,6 +910,7 @@ final class ArtifactCacheRead {
   final bool memoryHit;
   final bool joined;
   final bool durable;
+  final ArtifactReadIntegrityBasis integrityBasis;
 }
 
 final class _ArtifactEquivalencePair {
@@ -921,6 +936,7 @@ final class _InFlightArtifactRead {
     required this.control,
     required this.generation,
     required this.durable,
+    required this.integrityBasis,
   });
 
   final _ArtifactByteKey key;
@@ -928,6 +944,7 @@ final class _InFlightArtifactRead {
   final _JoinedArtifactReadControl control;
   final int generation;
   final bool durable;
+  final ArtifactReadIntegrityBasis integrityBasis;
   int consumers = 0;
   bool futureCompleted = false;
 }
