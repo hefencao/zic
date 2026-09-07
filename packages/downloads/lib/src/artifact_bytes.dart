@@ -17,7 +17,8 @@ enum ArtifactReadFailureKind {
 ///
 /// [bytesEmitted] is relative to the current read request, while
 /// [failedOffset] is the absolute artifact offset. Replica identity is optional
-/// until the storage-root migration gives every physical copy a first-class id.
+/// because low-level byte backends may fail before durable replica resolution;
+/// persistent sealed-artifact reads enrich it with the selected replica id.
 final class ArtifactReadFailure implements Exception {
   const ArtifactReadFailure({
     required this.kind,
@@ -151,9 +152,9 @@ class LocalArtifactBytes implements ArtifactBytes {
             bytesEmitted: 0,
           );
         }
-        // Symlinks and non-file entries remain unreadable by policy. Preserve
-        // the historical empty-stream behavior until Root/Access migration can
-        // represent them explicitly instead of following an unsafe locator.
+        // Symlinks and non-file entries remain unreadable by policy. Replica
+        // ownership does not make an unsafe/non-file locator readable; keep
+        // the historical empty-stream behavior rather than following it.
         return;
       }
       final raf = await file.open();
