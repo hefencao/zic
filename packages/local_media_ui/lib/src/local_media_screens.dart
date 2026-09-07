@@ -186,6 +186,9 @@ final class ImportedImageChapterScreen extends StatelessWidget {
               ),
               image: image,
               tokenBytesLoader: (_, token) => runtime.loadBytes(token),
+              onRecoverPresentationFailure:
+                  runtime.recoverPresentationFailure,
+              onRetry: runtime.retryPresentation,
               onPreviewStateChanged: onPreviewStateChanged,
               onFirstFrame: reportFirstFrame,
               downloadIdentity: runtime.pageStream.identity,

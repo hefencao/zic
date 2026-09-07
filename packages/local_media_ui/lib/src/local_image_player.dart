@@ -8,6 +8,8 @@ final class LocalImagePlayer extends StatefulWidget {
     this.bytesLoader,
     this.tokenBytesLoader,
     this.decodeProbe,
+    this.onRecoverPresentationFailure,
+    this.onRetry,
     this.onPreviewStateChanged,
     this.onFirstFrame,
     this.downloadIdentity,
@@ -32,6 +34,8 @@ final class LocalImagePlayer extends StatefulWidget {
   final LocalImageBytesLoader? bytesLoader;
   final LocalImageTokenBytesLoader? tokenBytesLoader;
   final LocalImageDecodeProbe? decodeProbe;
+  final Future<bool> Function(Object error)? onRecoverPresentationFailure;
+  final Future<bool> Function()? onRetry;
   final ImagePreviewStateChanged? onPreviewStateChanged;
   final VoidCallback? onFirstFrame;
   final DownloadId? downloadIdentity;
@@ -71,6 +75,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   int _streamingPrefixRequestedRevision = 0;
   int _streamingPrefixReadRevision = 0;
   bool _fallbackLoadStarted = false;
+  bool _recoveryInFlight = false;
   Size? _reportedDimensions;
   bool _reportedDimensionsAuthoritative = false;
   bool? _reportedPlaybackCapability;
@@ -410,8 +415,79 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           token.isCancelled) {
         return;
       }
+      if (await _tryAutomaticRecovery(error)) {
+        return;
+      }
+      if (!mounted ||
+          generation != _generation ||
+          token != _loadToken ||
+          token.isCancelled) {
+        return;
+      }
       _publish(ImagePreviewState.invalid(_detectedFormat, error));
     }
+  }
+
+  Future<bool> _tryAutomaticRecovery(Object error) async {
+    final recover = widget.onRecoverPresentationFailure;
+    if (recover == null || _recoveryInFlight) return false;
+    _recoveryInFlight = true;
+    try {
+      final recovered = await recover(error);
+      if (!mounted || !recovered) return false;
+      _restartLoadAfterRecovery();
+      return true;
+    } on Object {
+      return false;
+    } finally {
+      _recoveryInFlight = false;
+    }
+  }
+
+  Future<void> _retry() async {
+    final retry = widget.onRetry;
+    if (retry == null || _recoveryInFlight) return;
+    final prior = _state;
+    _recoveryInFlight = true;
+    _publish(ImagePreviewState.loading(_detectedFormat));
+    try {
+      final recovered = await retry();
+      if (!mounted) return;
+      if (recovered) {
+        _restartLoadAfterRecovery();
+        return;
+      }
+      _publish(
+        ImagePreviewState.invalid(
+          prior.format,
+          prior.error ?? StateError('图片重试未能建立新的资源版本'),
+        ),
+      );
+    } on Object catch (error) {
+      if (mounted) {
+        _publish(ImagePreviewState.invalid(prior.format, error));
+      }
+    } finally {
+      _recoveryInFlight = false;
+    }
+  }
+
+  void _restartLoadAfterRecovery() {
+    if (!mounted) return;
+    _generation++;
+    _loadToken.cancel();
+    _loadToken = MediaLoadToken();
+    _bytes = null;
+    _imageProvider = null;
+    _scheduledStaticFrameGeneration = -1;
+    _reportedDimensions = null;
+    _reportedDimensionsAuthoritative = false;
+    _reportedPlaybackCapability = null;
+    _reportedPlaybackCapabilityCallback = null;
+    _detectedFormat = widget.image.format;
+    _fallbackLoadStarted = true;
+    _publish(ImagePreviewState.loading(_detectedFormat));
+    unawaited(_load());
   }
 
   @override
@@ -556,9 +632,16 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   void _scheduleError(Object error) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        _publish(ImagePreviewState.invalid(_detectedFormat, error));
+        unawaited(_handlePresentedDecodeFailure(error));
       }
     });
+  }
+
+  Future<void> _handlePresentedDecodeFailure(Object error) async {
+    if (await _tryAutomaticRecovery(error)) return;
+    if (mounted) {
+      _publish(ImagePreviewState.invalid(_detectedFormat, error));
+    }
   }
 
   void _onWebpState(WebpPreviewState state) {
@@ -617,7 +700,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   void _onControlledError(Object error) {
-    _publish(ImagePreviewState.invalid(_detectedFormat, error));
+    unawaited(_handlePresentedDecodeFailure(error));
   }
 
   Widget _loadingIndicator() => const Center(
@@ -633,12 +716,26 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     final Widget content;
     if (_state.phase == ImagePreviewPhase.invalid) {
       content = Center(
-        child: SelectionArea(
-          child: Text(
-            '图片无法打开：${_state.error}',
-            key: imageFolderPreviewErrorKey,
-            textAlign: TextAlign.center,
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            SelectionArea(
+              child: Text(
+                '图片无法打开：${_state.error}',
+                key: imageFolderPreviewErrorKey,
+                textAlign: TextAlign.center,
+              ),
+            ),
+            if (widget.onRetry != null) ...<Widget>[
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                key: imageFolderPreviewRetryKey,
+                onPressed: _recoveryInFlight ? null : () => unawaited(_retry()),
+                icon: const Icon(Icons.refresh),
+                label: const Text('重试'),
+              ),
+            ],
+          ],
         ),
       );
     } else if (_detectedFormat.isWebp) {

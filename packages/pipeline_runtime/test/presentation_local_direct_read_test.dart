@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
@@ -68,6 +69,158 @@ void main() {
 
         expect(opens, 1);
         expect(transferRuntime.registry.find(id)?.committedLength, 3);
+      } finally {
+        await reader.dispose().timeout(const Duration(seconds: 5));
+        await transferRuntime.dispose().timeout(const Duration(seconds: 5));
+      }
+    },
+  );
+
+  test(
+    'late presentation failure cannot invalidate a newer cache generation',
+    () async {
+      final uri = Uri.parse('https://example.invalid/stale-cache-failure.jpg');
+      final chapter = _chapter(uri: uri);
+      final asset = chapter.pages.single;
+      final id = readerPageDownloadId(chapter, asset);
+      final oldBytes = Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 0x01]);
+      final newBytes = Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 0x02]);
+      final cache = ArtifactCacheManager(backend: const _Backend());
+      cache.remember(id: id, bytes: oldBytes, durable: true);
+      final transferRuntime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: cache,
+        partialDownloadStore: null,
+        net: NetLane(maxActive: 1),
+      );
+      var sourceOpens = 0;
+      final factory = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _FreshFactory(),
+      ).withTransferRuntime(transferRuntime).withLoaderSources(
+        <Uri, LoaderTransportSource>{
+          uri: LoaderTransportSource(
+            revision: 'stale-r1',
+            openControlledResponse: ({range, validators, control}) async {
+              sourceOpens++;
+              return ByteResponse(
+                bytes: Stream<List<int>>.value(newBytes),
+                statusCode: 200,
+                rangeStart: 0,
+                totalLength: newBytes.lengthInBytes,
+              );
+            },
+          ),
+        },
+      );
+      final reader = factory.create(
+        chapter: chapter,
+        sessionId: 'presentation-stale-generation',
+      );
+
+      try {
+        final first = await reader
+            .loadBytes(asset, MediaLoadToken())
+            .timeout(const Duration(seconds: 2));
+        expect(first, oldBytes);
+
+        await cache.storePromotedArtifact(id: id, bytes: newBytes);
+        expect(
+          await reader.recoverPresentationFailure(
+            asset,
+            StateError('late rejection from old generation'),
+          ),
+          isTrue,
+        );
+
+        final reloaded = await reader
+            .loadBytes(asset, MediaLoadToken())
+            .timeout(const Duration(seconds: 2));
+        expect(reloaded, newBytes);
+        expect(sourceOpens, 0);
+      } finally {
+        await reader.dispose().timeout(const Duration(seconds: 5));
+        await transferRuntime.dispose().timeout(const Duration(seconds: 5));
+      }
+    },
+  );
+
+  test(
+    'presentation rejection of a cached image cancels hydration and reopens source once',
+    () async {
+      final uri = Uri.parse('https://example.invalid/recover-old-cache.jpg');
+      final chapter = _chapter(uri: uri);
+      final asset = chapter.pages.single;
+      final id = readerPageDownloadId(chapter, asset);
+      final cachedImage = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+        'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      );
+      final store = _RejectedCachedImageStore(id: id, bytes: cachedImage);
+      final cache = ArtifactCacheManager(backend: store);
+      final transferRuntime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: cache,
+        partialDownloadStore: store,
+        net: NetLane(maxActive: 1),
+      );
+      const fresh = <int>[0xff, 0xd8, 0xff, 0xd9];
+      var sourceOpens = 0;
+      final factory = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _FreshFactory(),
+      ).withTransferRuntime(transferRuntime).withLoaderSources(
+        <Uri, LoaderTransportSource>{
+          uri: LoaderTransportSource(
+            revision: 'fresh-r1',
+            openControlledResponse: ({range, validators, control}) async {
+              sourceOpens++;
+              return ByteResponse(
+                bytes: Stream<List<int>>.value(fresh),
+                statusCode: 200,
+                rangeStart: 0,
+                totalLength: fresh.length,
+              );
+            },
+          ),
+        },
+      );
+      final reader = factory.create(
+        chapter: chapter,
+        sessionId: 'presentation-old-cache-recovery',
+      );
+
+      try {
+        reader.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+        reader.accept(_observation(reader.sessionId, chapter));
+        await store.partialOpened.future.timeout(const Duration(seconds: 2));
+
+        final cached = await reader
+            .loadBytes(asset, MediaLoadToken())
+            .timeout(const Duration(seconds: 2));
+        expect(cached, cachedImage);
+        expect(transferRuntime.registry.find(id)?.state,
+            DownloadState.receiving);
+
+        expect(
+          await reader.recoverPresentationFailure(
+            asset,
+            StateError('decoder rejected cached image'),
+          ),
+          isTrue,
+        );
+        expect(store.invalidations, 1);
+        expect(
+          await reader.recoverPresentationFailure(
+            asset,
+            const FormatException('must not auto-loop'),
+          ),
+          isFalse,
+        );
+
+        final recovered = await reader
+            .loadBytes(asset, MediaLoadToken())
+            .timeout(const Duration(seconds: 5));
+        expect(recovered, Uint8List.fromList(fresh));
+        expect(sourceOpens, 1);
+        expect(transferRuntime.registry.find(id)?.state,
+            DownloadState.promoted);
       } finally {
         await reader.dispose().timeout(const Duration(seconds: 5));
         await transferRuntime.dispose().timeout(const Duration(seconds: 5));
@@ -196,6 +349,80 @@ ChapterManifest _chapter({required Uri uri}) => ChapterManifest(
       ],
       readingDirection: ReadingDirection.ltr,
     );
+
+final class _RejectedCachedImageStore
+    implements ArtifactCacheBackend, PartialDownloadStore {
+  _RejectedCachedImageStore({required this.id, required this.bytes});
+
+  final DownloadId id;
+  final Uint8List bytes;
+  final Completer<void> partialOpened = Completer<void>();
+  bool invalidated = false;
+  int invalidations = 0;
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId candidate) async {
+    if (candidate != id || invalidated) return null;
+    return ArtifactCacheStreamEntry(
+      length: bytes.lengthInBytes,
+      open: ({required int start, int? endExclusive}) async* {
+        final end = endExclusive ?? bytes.lengthInBytes;
+        yield Uint8List.sublistView(bytes, start, end);
+      },
+      readAll: () async => bytes,
+      fullReadIntegrity: ArtifactReadIntegrityBasis.crc32Verified,
+    );
+  }
+
+  @override
+  Future<PartialDownloadEntry?> openPartialDownload(DownloadId candidate) async {
+    if (candidate != id || invalidated) return null;
+    return PartialDownloadEntry(
+      length: bytes.lengthInBytes,
+      validators: const Validators(etag: '"old-cache"'),
+      totalLength: bytes.lengthInBytes,
+      open: ({required int start}) {
+        late final StreamController<List<int>> controller;
+        controller = StreamController<List<int>>(
+          onListen: () {
+            if (!partialOpened.isCompleted) partialOpened.complete();
+            final split = bytes.lengthInBytes ~/ 2;
+            if (start < split) {
+              controller.add(Uint8List.sublistView(bytes, start, split));
+            }
+            // Keep local hydration in-flight until recovery cancels this stream.
+          },
+        );
+        return controller.stream;
+      },
+    );
+  }
+
+  @override
+  Future<void> invalidateArtifact(DownloadId candidate) async {
+    if (candidate != id) return;
+    invalidated = true;
+    invalidations++;
+  }
+
+  @override
+  Future<void> invalidatePartialDownload(DownloadId candidate) async {
+    if (candidate != id) return;
+    invalidated = true;
+  }
+
+  @override
+  Future<void> storePartialDownload({
+    required DownloadId id,
+    required PartialDownloadEntry entry,
+  }) async {}
+
+  @override
+  Future<void> storePromotedArtifact({
+    required DownloadId id,
+    required Uint8List bytes,
+  }) async {}
+}
 
 final class _Backend implements ArtifactCacheBackend {
   const _Backend();

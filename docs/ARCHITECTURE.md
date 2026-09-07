@@ -65,7 +65,7 @@ encoded source、cursor、frame、output、renderer 和只读 timing capability�
 
 ### `sessions`
 
-`DownloadSession`、`DecodeSession`、`UploadSession`、registry、claim/lease、frame holder、playback timer、Net/Decode/Upload lane 和 `LiveCoordinator`。它是可变媒体状态的权威所有者。Reader ingress registry必须同时保持physical object generation与Reader encoded generation边界：unfinished/failed或pending-late-attach source按DownloadSession object identity换代；already sealed/sourceReady/no-failure且无pending attachment的same-exact immutable projection可跨transient physical session recreation保留。旧same-id session teardown必须校验concrete session identity，不能删除replacement entry。synchronized late join只有Reader-local projection自身追平稳定physical epoch/length/sealed且无failure后才能加入live fan-out。UploadSession dispose是generation retirement barrier：旧generation即使仍有pending prepare也必须立即退休其uploader slot，old async tail不得延迟release到replacement generation；普通detach/reset仍可使用既有deferred release。 UploadRegistry拥有UploadSession→DecodeSession concrete-generation binding不变量：logical DecodeId复用时，registry get/prepare必须先与DecodeRegistry当前session做object-identity校验；不一致时只能退休旧UploadSession并创建replacement，禁止让UploadSession原地跨代换绑或继续读取retired holder。
+`DownloadSession`、`DecodeSession`、`UploadSession`、registry、claim/lease、frame holder、playback timer、Net/Decode/Upload lane 和 `LiveCoordinator`。它是可变媒体状态的权威所有者。Presentation 已证明某一 artifact-backed generation 无法语义展示时，`DownloadTransferOwner` 还拥有该 physical id 的恢复事务：recovery barrier 先冻结新 admission 并 quiesce local preparation/NetLane task，再由 composition cache owner 失效对应 durable authority，随后 reset physical epoch 并以原 claims 重启；task retirement 不得越过此 barrier 抢跑。Reader ingress registry必须同时保持physical object generation与Reader encoded generation边界：unfinished/failed或pending-late-attach source按DownloadSession object identity换代；already sealed/sourceReady/no-failure且无pending attachment的same-exact immutable projection可跨transient physical session recreation保留。旧same-id session teardown必须校验concrete session identity，不能删除replacement entry。synchronized late join只有Reader-local projection自身追平稳定physical epoch/length/sealed且无failure后才能加入live fan-out。UploadSession dispose是generation retirement barrier：旧generation即使仍有pending prepare也必须立即退休其uploader slot，old async tail不得延迟release到replacement generation；普通detach/reset仍可使用既有deferred release。 UploadRegistry拥有UploadSession→DecodeSession concrete-generation binding不变量：logical DecodeId复用时，registry get/prepare必须先与DecodeRegistry当前session做object-identity校验；不一致时只能退休旧UploadSession并创建replacement，禁止让UploadSession原地跨代换绑或继续读取retired holder。
 
 ### `pipeline`
 
@@ -73,7 +73,7 @@ encoded source、cursor、frame、output、renderer 和只读 timing capability�
 
 ### `pipeline_runtime`
 
-Reader 章节资源会话的唯一组合所有者。它把 demand reconcile 到 download/decode/upload session，发布 `PipelinePageStream`，管理 frame budget、共享 page download lane、artifact handoff 和短期资源会话 retention。
+Reader 章节资源会话的唯一组合所有者。它把 demand reconcile 到 download/decode/upload session，发布 `PipelinePageStream`，管理 frame budget、共享 page download lane、artifact handoff 和短期资源会话 retention。它也接收 Presentation 的语义失败反馈并保存最后一次 page-body authority：artifact-cache body 的展示失败可触发每页每 Reader session 一次自动恢复；显式重试走同一 composition recovery。cache 等价复用时必须保存实际 `storageId + mutation generation`；恢复只能条件失效产生失败字节的那一代，旧 failure 若晚于 authority 换代到达只能重载当前 generation，禁止删除或 reset 新 authority；`fallback` classification 本身不授权删除。
 
 ### `pipeline_native`
 
@@ -81,7 +81,7 @@ Reader 章节资源会话的唯一组合所有者。它把 demand reconcile 到 
 
 ### `reader_runtime` / `reader`
 
-`reader` 提供 observation、导航和通用 Flutter Reader；`reader_runtime` 负责产品交互、尺寸投影和 `ReaderObs` 适配。二者都不拥有资源 session、缓存或 native handle。
+`reader` 提供 observation、导航和通用 Flutter Reader；`reader_runtime` 负责产品交互、尺寸投影和 `ReaderObs` 适配。二者都不拥有资源 session、缓存或 native handle。页面错误 UI 可以报告 presentation failure 和发出显式“重试”命令，但恢复资格、cache invalidation、session reset 与 network re-admission 全部留在 Pipeline/composition owner。
 
 ### Home 冷启动组合
 

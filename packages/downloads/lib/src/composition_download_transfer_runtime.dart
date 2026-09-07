@@ -282,6 +282,96 @@ final class CompositionDownloadTransferRuntime {
   Future<Uint8List> readArtifact(Artifact artifact) =>
       workspace.readArtifact(artifact);
 
+  /// Invalidates the exact byte authority rejected by presentation and
+  /// reopens the same demanded physical transfer as a fresh epoch. The
+  /// rejected storage identity/generation comes from the actual cache read; a
+  /// late failure from an older generation must never delete a newer artifact.
+  Future<bool> recoverPresentationArtifact(
+    DownloadId id, {
+    required String reason,
+    bool userInitiated = false,
+    DownloadId? rejectedStorageId,
+    int? rejectedGeneration,
+  }) async {
+    if (_disposed) return false;
+    final cache = artifactCacheManager;
+    final rejectedAuthorityKnown =
+        rejectedStorageId != null && rejectedGeneration != null;
+    if (cache != null &&
+        rejectedAuthorityKnown &&
+        cache.generationFor(rejectedStorageId) != rejectedGeneration) {
+      _recordPresentationRecoveryTrace(
+        id: id,
+        storageId: rejectedStorageId,
+        reason: reason,
+        action: 'stale-generation-reload',
+      );
+      return true;
+    }
+
+    var storageId = rejectedStorageId;
+    var generation = rejectedGeneration;
+    if (cache != null && storageId == null) {
+      final lookup = await cache.lookup(id);
+      storageId = lookup?.storageId ?? id;
+      generation = lookup?.generation ?? cache.generationFor(storageId);
+    }
+    storageId ??= id;
+
+    return owner.recoverPresentationArtifact(
+      id,
+      invalidateArtifact: () async {
+        var invalidated = true;
+        if (cache != null) {
+          final expectedGeneration = generation;
+          if (expectedGeneration == null) {
+            await cache.invalidate(storageId!);
+          } else {
+            invalidated = await cache.invalidateIfGeneration(
+              storageId!,
+              expectedGeneration: expectedGeneration,
+            );
+          }
+        }
+        _recordPresentationRecoveryTrace(
+          id: id,
+          storageId: storageId!,
+          reason: reason,
+          action: invalidated
+              ? (userInitiated ? 'manual-retry' : 'automatic-retry')
+              : 'stale-generation-reload',
+        );
+        return invalidated;
+      },
+    );
+  }
+
+  void _recordPresentationRecoveryTrace({
+    required DownloadId id,
+    required DownloadId storageId,
+    required String reason,
+    required String action,
+  }) {
+    try {
+      traceHub.record(
+        traceEvent(
+          clock: clock,
+          sessionId: 'composition-transfer-owner',
+          kind: TraceEventKind.artifactSource,
+          identityHash: id.key,
+          payload: <String, Object?>{
+            'stage': 'presentation-artifact-recovery',
+            'action': action,
+            'reason': reason,
+            if (storageId != id) 'storageIdentityHash': storageId.key,
+          },
+        ),
+      );
+    } on Object {
+      // Recovery diagnostics must never alter cache/session authority.
+    }
+  }
+
   /// Returns the composition-owned resident-body replay service for one
   /// consumer. Storage/source backend selection stays here; consumers supply
   /// only a dynamic priority projection for the shared local-read scheduler.

@@ -195,6 +195,8 @@ const imagePageLoadingIndicatorKey =
     ValueKey<String>('image-page-loading-indicator');
 const imageFolderPreviewErrorKey =
     ValueKey<String>('image-folder-preview-error');
+const imageFolderPreviewRetryKey =
+    ValueKey<String>('image-folder-preview-retry');
 const imageFolderFlutterPreviewKey =
     ValueKey<String>('image-folder-flutter-preview');
 

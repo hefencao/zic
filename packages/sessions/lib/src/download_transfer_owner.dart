@@ -135,6 +135,7 @@ final class DownloadTransferOwner {
   final Map<DownloadId, Completer<void>> _downloadRetryWaiters =
       <DownloadId, Completer<void>>{};
   final Set<DownloadId> _downloadTerminalFailures = <DownloadId>{};
+  final Set<DownloadId> _presentationArtifactRecoveries = <DownloadId>{};
   final Map<DownloadId, String> _ensureSkipReasons = <DownloadId, String>{};
   final Map<DownloadId, int> _downloadDeferredAtLength = <DownloadId, int>{};
   // The physical session owns bytes/writer state, while the source provider is
@@ -245,6 +246,91 @@ final class DownloadTransferOwner {
     _retireDownloadTracking(physicalId, session);
     await session.dispose();
     return true;
+  }
+
+  /// Retires one presentation-invalid physical generation and immediately
+  /// re-admits its existing demand after the durable/cache owner has removed
+  /// the rejected byte authority.
+  ///
+  /// Presentation can discover semantic invalidity after local hydration has
+  /// already started copying a durable artifact. Quiesce both local preparation
+  /// and any network lane task before resetting the physical epoch so a stale
+  /// writer cannot seal/promote after recovery. The caller owns durable cache
+  /// invalidation; this transfer owner owns only task/session lifecycle.
+  Future<bool> recoverPresentationArtifact(
+    DownloadId id, {
+    required Future<bool> Function() invalidateArtifact,
+  }) async {
+    if (_disposed) return false;
+    final physicalId = registry.resolvePhysicalId(id);
+    if (!_presentationArtifactRecoveries.add(physicalId)) return false;
+    final session = registry.findExact(physicalId);
+    try {
+      _cancelDownloadRetry(physicalId);
+      _downloadTerminalFailures.remove(physicalId);
+      _downloadDeferredAtLength.remove(physicalId);
+      _preparedNetworkAdmissions.remove(physicalId);
+      _preparedAdmissionDeferrals.remove(physicalId);
+
+      final localControl = _localPreparationControls[physicalId];
+      localControl?.cancel();
+      final localPreparation = _localPreparations[physicalId];
+      if (localPreparation != null) {
+        await localPreparation;
+      }
+
+      final taskKey = _networkTaskKeys[physicalId];
+      if (taskKey != null) {
+        net.cancel(taskKey);
+        await net.idleKeys(<String>[taskKey]);
+        if (_networkTaskKeys[physicalId] == taskKey) {
+          _networkTaskKeys.remove(physicalId);
+        }
+      }
+
+      if (_disposed) return false;
+      if (session == null) {
+        await invalidateArtifact();
+        return true;
+      }
+      if (!identical(registry.findExact(physicalId), session)) return false;
+      if (session.activeRun || session.hasWriter) {
+        throw const Failure(
+          code: ErrorCode.sessionBusy,
+          message: 'presentation artifact recovery could not quiesce transfer',
+        );
+      }
+
+      final invalidated = await invalidateArtifact();
+      if (_disposed || !identical(registry.findExact(physicalId), session)) {
+        return false;
+      }
+      if (!invalidated) {
+        _presentationArtifactRecoveries.remove(physicalId);
+        if (session.demanded) {
+          _ensureDownloadTask(physicalId, session);
+          _drainPreparedNetworkAdmissions();
+        }
+        return true;
+      }
+      await session.reset(removeCacheRecord: false);
+      _locallyPreparedSessions.remove(physicalId);
+      _preparedNetworkAdmissions.remove(physicalId);
+      _preparedAdmissionDeferrals.remove(physicalId);
+      _retireDownloadTracking(physicalId, session);
+
+      // End the recovery barrier before waking the existing claim. Every other
+      // scheduling path sees the same guard and therefore cannot race this
+      // exact reset/invalidation transaction.
+      _presentationArtifactRecoveries.remove(physicalId);
+      if (session.demanded) {
+        _ensureDownloadTask(physicalId, session);
+        _drainPreparedNetworkAdmissions();
+      }
+      return true;
+    } finally {
+      _presentationArtifactRecoveries.remove(physicalId);
+    }
   }
 
   /// Reopens a resident immutable body through a currently attached consumer
@@ -534,6 +620,7 @@ final class DownloadTransferOwner {
     _downloadRetryRounds.clear();
     _downloadRetryPending.clear();
     _downloadTerminalFailures.clear();
+    _presentationArtifactRecoveries.clear();
     _downloadDeferredAtLength.clear();
     _activeProviderLeases.clear();
     _taskRetirementWaits.clear();
@@ -1103,6 +1190,7 @@ final class DownloadTransferOwner {
   }
 
   void _ensureDownloadTask(DownloadId id, DownloadSession session) {
+    if (_presentationArtifactRecoveries.contains(id)) return;
     final claim = _preferredClaim(id);
     if (claim == null || !session.demanded) return;
     final effectivePriority = session.effectivePriority;
@@ -2022,6 +2110,7 @@ final class DownloadTransferOwner {
         _retireDownloadTracking(id, session);
       }
       if (_disposed ||
+          _presentationArtifactRecoveries.contains(id) ||
           (_networkTaskKeys[id] != null &&
               _networkTaskKeys[id] != taskKey) ||
           _downloadRetryPending.contains(id) ||

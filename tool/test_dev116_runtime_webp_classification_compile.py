@@ -26,11 +26,14 @@ telemetry = read("packages/telemetry/lib/src/trace.dart")
 analyzer = read("tool/analyze_frame_pipeline_trace.py")
 check = read("tool/check.sh")
 
-if manager.count("await backend.invalidateArtifact(id);") != 1 or \
-        manager.count("await backend.invalidateArtifact(storageId);") != 1:
-    raise SystemExit(
-        "cache manager must invalidate both exact writes and alias-resolved storage"
-    )
+for token in (
+    "Future<void> invalidate(DownloadId id, {TaskControl? control}) async",
+    "Future<bool> invalidateIfGeneration(",
+    "if (generationFor(id) != expectedGeneration) return false;",
+    "await backend.invalidateArtifact(id);",
+    "await backend.invalidateArtifact(storageId);",
+):
+    require(manager, token, "cache invalidation authority")
 if "ArtifactCacheInvalidationBackend" in manager:
     raise SystemExit("cache manager still contains optional invalidation dispatch")
 if runtime.count("final artifactReadMicros =") != 1:

@@ -133,10 +133,24 @@ final class ArtifactCacheManager {
     yield* directEquivalents(id);
   }
 
-  Uint8List? lookupMemory(DownloadId id, {int? length}) {
+  Uint8List? lookupMemory(DownloadId id, {int? length}) =>
+      lookupMemoryWithAuthority(id, length: length)?.bytes;
+
+  ArtifactCacheMemoryRead? lookupMemoryWithAuthority(
+    DownloadId id, {
+    int? length,
+  }) {
     for (final candidate in _lookupCandidates(id)) {
       final bytes = _lookupMemoryExact(candidate, length: length);
-      if (bytes != null) return bytes;
+      if (bytes == null) continue;
+      return ArtifactCacheMemoryRead(
+        bytes: bytes,
+        storageId: candidate,
+        generation: generationFor(candidate),
+        durable: _durableMemory.contains(
+          _ArtifactByteKey(candidate, bytes.lengthInBytes),
+        ),
+      );
     }
     return null;
   }
@@ -272,6 +286,8 @@ final class ArtifactCacheManager {
       }
       return ArtifactCacheRead(
         bytes: bytes,
+        storageId: lookup.storageId,
+        generation: lookup.generation,
         memoryHit: true,
         joined: false,
         durable: lookup.durable,
@@ -471,6 +487,25 @@ final class ArtifactCacheManager {
     );
   }
 
+  Future<bool> invalidateIfGeneration(
+    DownloadId id, {
+    required int expectedGeneration,
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
+    await _awaitMutationBarrier(id, control);
+    if (generationFor(id) != expectedGeneration) return false;
+    _advanceMutationGeneration(id);
+    _invalidateMemoryExact(id);
+    await _awaitCancellable(
+      _serializeMutation(id, () async {
+        await backend.invalidateArtifact(id);
+      }),
+      control,
+    );
+    return true;
+  }
+
   void clearMemory() {
     final ids = <DownloadId>{
       ..._mutationGenerations.keys,
@@ -520,6 +555,8 @@ final class ArtifactCacheManager {
     if (cached != null) {
       return ArtifactCacheRead(
         bytes: cached,
+        storageId: id,
+        generation: generationFor(id),
         memoryHit: true,
         joined: false,
         durable: _durableMemory.contains(_ArtifactByteKey(id, length)),
@@ -536,6 +573,8 @@ final class ArtifactCacheManager {
       // session-artifact read (or vice versa).
       return ArtifactCacheRead(
         bytes: bytes,
+        storageId: id,
+        generation: running.generation,
         memoryHit: false,
         joined: true,
         durable: running.durable,
@@ -602,6 +641,8 @@ final class ArtifactCacheManager {
     final bytes = await _awaitJoined(operation, control);
     return ArtifactCacheRead(
       bytes: bytes,
+      storageId: id,
+      generation: operation.generation,
       memoryHit: false,
       joined: false,
       durable: operation.durable,
@@ -897,9 +938,25 @@ final class _StaleArtifactCacheLookup implements Exception {
   const _StaleArtifactCacheLookup();
 }
 
+final class ArtifactCacheMemoryRead {
+  const ArtifactCacheMemoryRead({
+    required this.bytes,
+    required this.storageId,
+    required this.generation,
+    required this.durable,
+  });
+
+  final Uint8List bytes;
+  final DownloadId storageId;
+  final int generation;
+  final bool durable;
+}
+
 final class ArtifactCacheRead {
   const ArtifactCacheRead({
     required this.bytes,
+    required this.storageId,
+    required this.generation,
     required this.memoryHit,
     required this.joined,
     required this.integrityBasis,
@@ -907,6 +964,8 @@ final class ArtifactCacheRead {
   });
 
   final Uint8List bytes;
+  final DownloadId storageId;
+  final int generation;
   final bool memoryHit;
   final bool joined;
   final bool durable;

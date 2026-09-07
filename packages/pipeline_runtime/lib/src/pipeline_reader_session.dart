@@ -26,6 +26,16 @@ typedef PipelineArtifactBytesLoader = Future<Uint8List> Function(
   MediaLoadToken token,
 );
 
+final class _PresentationArtifactAuthority {
+  const _PresentationArtifactAuthority({
+    required this.storageId,
+    required this.generation,
+  });
+
+  final DownloadId storageId;
+  final int generation;
+}
+
 final class _MediaLoadTaskControl implements TaskControl {
   _MediaLoadTaskControl(this.token);
 
@@ -654,6 +664,10 @@ final class PipelineReaderSession {
       <String, PipelinePageStream>{};
   final Map<String, PipelinePageOutputStream> _pageOutputs =
       <String, PipelinePageOutputStream>{};
+  final Map<DownloadId, _PresentationArtifactAuthority>
+      _artifactCachePresentationAuthorities =
+      <DownloadId, _PresentationArtifactAuthority>{};
+  final Set<DownloadId> _automaticPresentationRecoveries = <DownloadId>{};
   final Set<DecodeId> _animatedOutputs = <DecodeId>{};
   // DownloadSession publishes source-canvas metadata as soon as the WebP
   // prefix is available. Keep one listener per physical session so the
@@ -1515,12 +1529,20 @@ final class PipelineReaderSession {
     MediaLoadToken token,
   ) async {
     final override = _bytesLoader;
-    if (override != null) return override(asset, token);
-    token.throwIfCancelled();
     final id = readerPageDownloadId(chapter, asset);
+    if (override != null) {
+      _artifactCachePresentationAuthorities.remove(id);
+      return override(asset, token);
+    }
+    token.throwIfCancelled();
     final cache = _artifactCacheManager;
-    final hotBytes = cache?.lookupMemory(id);
-    if (hotBytes != null) {
+    final hotRead = cache?.lookupMemoryWithAuthority(id);
+    if (hotRead != null) {
+      final hotBytes = hotRead.bytes;
+      _artifactCachePresentationAuthorities[id] = _PresentationArtifactAuthority(
+        storageId: hotRead.storageId,
+        generation: hotRead.generation,
+      );
       _recordPresentationCacheRead(
         asset: asset,
         id: id,
@@ -1548,6 +1570,11 @@ final class PipelineReaderSession {
         );
         token.throwIfCancelled();
         if (cached != null) {
+          _artifactCachePresentationAuthorities[id] =
+              _PresentationArtifactAuthority(
+            storageId: cached.storageId,
+            generation: cached.generation,
+          );
           final readMicros = clock.nowMicros() - readStarted;
           _recordPresentationCacheRead(
             asset: asset,
@@ -1597,6 +1624,7 @@ final class PipelineReaderSession {
       );
     }
     if (_isDirectImmutableLocalUri(asset.uri)) {
+      _artifactCachePresentationAuthorities.remove(id);
       // An immutable local source owns final bytes before, during and after
       // its transfer. Presentation must not queue behind the transfer copy,
       // CRC and promotion just to read the same immutable body back; the
@@ -1609,6 +1637,7 @@ final class PipelineReaderSession {
     token.throwIfCancelled();
     if (session.residentBodyBacked &&
         _isDirectImmutableLocalUri(asset.uri)) {
+      _artifactCachePresentationAuthorities.remove(id);
       return _readDirectImmutableSource(asset, id, session, token);
     }
     final artifactReadStarted = clock.nowMicros();
@@ -1628,6 +1657,7 @@ final class PipelineReaderSession {
     }
     token.throwIfCancelled();
     final artifactReadMicros = clock.nowMicros() - artifactReadStarted;
+    _artifactCachePresentationAuthorities.remove(id);
     _recordPresentationCacheRead(
       asset: asset,
       id: id,
@@ -1648,6 +1678,43 @@ final class PipelineReaderSession {
     );
     return bytes;
   }
+
+  /// Presentation reports semantic decode/format rejection back to the
+  /// composition owner. Automatic recovery is allowed only when the bytes
+  /// actually came from the artifact-cache tier and only once per Reader
+  /// session; explicit user retry may always request a fresh generation.
+  Future<bool> recoverPresentationFailure(
+    PageAsset asset,
+    Object error, {
+    bool userInitiated = false,
+  }) async {
+    _requireOpen();
+    final id = readerPageDownloadId(chapter, asset);
+    final authority = _artifactCachePresentationAuthorities[id];
+    if (!userInitiated) {
+      if (authority == null) return false;
+      if (!_automaticPresentationRecoveries.add(id)) return false;
+    }
+    final recovered = await _transferRuntime.recoverPresentationArtifact(
+      id,
+      reason: error.runtimeType.toString(),
+      userInitiated: userInitiated,
+      rejectedStorageId: authority?.storageId,
+      rejectedGeneration: authority?.generation,
+    );
+    if (recovered) {
+      _artifactCachePresentationAuthorities.remove(id);
+      _downloadTransfer.refreshScheduling();
+    }
+    return recovered;
+  }
+
+  Future<bool> retryPresentation(PageAsset asset) =>
+      recoverPresentationFailure(
+        asset,
+        const FormatException('manual presentation retry'),
+        userInitiated: true,
+      );
 
   Future<Uint8List> _readDirectImmutableSource(
     PageAsset asset,

@@ -676,6 +676,31 @@ void main() {
     expect((await manager.readForeground(id))?.bytes, <int>[4, 5, 6]);
   });
 
+  test('generation-scoped invalidation never deletes a newer artifact',
+      () async {
+    final id = _id('generation-scoped-invalidate');
+    final backend = _Backend(<DownloadId, Uint8List>{});
+    final manager = ArtifactCacheManager(backend: backend);
+    final oldBytes = Uint8List.fromList(<int>[1, 2, 3]);
+    final newBytes = Uint8List.fromList(<int>[4, 5, 6]);
+
+    await manager.storePromotedArtifact(id: id, bytes: oldBytes);
+    final rejected = manager.lookupMemoryWithAuthority(id)!;
+    await manager.storePromotedArtifact(id: id, bytes: newBytes);
+
+    expect(
+      await manager.invalidateIfGeneration(
+        id,
+        expectedGeneration: rejected.generation,
+      ),
+      isFalse,
+    );
+    expect(backend.values[id], newBytes);
+    final current = manager.lookupMemoryWithAuthority(id)!;
+    expect(current.bytes, newBytes);
+    expect(current.generation, isNot(rejected.generation));
+  });
+
   test('session read reselects promoted bytes after generation handoff',
       () async {
     final id = _id('session-read-generation-handoff');
