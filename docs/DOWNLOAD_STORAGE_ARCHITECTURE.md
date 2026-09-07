@@ -325,7 +325,7 @@ Manual demand: lower priority, required durable/export completion
 
 Effective scheduling priority is the highest active consumer priority, while completion intent is the strongest required intent. When Reader leaves, its claim disappears and the same transfer can continue at manual priority without restart.
 
-Network resources therefore remain globally coordinated below Pipeline. Pipeline only translates Reader observation into Reader transfer demand and owns decode/upload/presentation.
+Network resources therefore remain globally coordinated below Pipeline. App composition also owns a separate storage-write/migration capacity domain beside the persistent local-read scheduler; these domains are not folded into `NetLane`. Storage write/migration work acquires only bounded quanta and must wait when the shared local-read scheduler reports foreground pressure, so a newly foreground Reader can block the next storage chunk without cancelling an unrelated network transfer. The capacity owner is implemented; per-replica migration is the next consumer boundary. Pipeline only translates Reader observation into Reader transfer demand and owns decode/upload/presentation.
 
 Manual download completion is split into two milestones:
 

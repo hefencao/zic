@@ -24,6 +24,8 @@ final class ArtifactCacheReadScheduler {
   final int maxBackgroundWhileForeground;
 
   final List<_PendingRead> _pending = <_PendingRead>[];
+  final List<_PendingPressureRelief> _pressureReliefWaiters =
+      <_PendingPressureRelief>[];
   int _active = 0;
   int _activeForeground = 0;
   int _activeBackground = 0;
@@ -36,6 +38,41 @@ final class ArtifactCacheReadScheduler {
   int get pendingCount => _pending.length;
   bool get foregroundPressure => _hasForegroundPressure;
   int get foregroundPressureHoldCount => _foregroundPressureHolds;
+
+  /// Completes once no foreground read is active, queued, or explicitly held.
+  ///
+  /// Storage-write scheduling uses this only at bounded I/O quantum boundaries;
+  /// it does not consume a local-read slot or affect unrelated network work.
+  Future<void> waitForForegroundRelief({TaskControl? control}) {
+    if (control?.cancelled == true) {
+      return Future<void>.error(const Failure(
+        code: ErrorCode.cancelled,
+        message: 'storage write was cancelled while yielding to local reads',
+      ));
+    }
+    if (!_hasForegroundPressure) return Future<void>.value();
+    final completer = Completer<void>();
+    final pending = _PendingPressureRelief(
+      completer: completer,
+      control: control,
+    );
+    _pressureReliefWaiters.add(pending);
+    if (control != null) {
+      unawaited(
+        control.whenCancelled.then<void>((_) {
+          if (completer.isCompleted ||
+              !_pressureReliefWaiters.remove(pending)) {
+            return;
+          }
+          completer.completeError(const Failure(
+            code: ErrorCode.cancelled,
+            message: 'storage write was cancelled while yielding to local reads',
+          ));
+        }),
+      );
+    }
+    return completer.future;
+  }
 
   /// Holds foreground pressure without consuming a read slot.
   ///
@@ -152,6 +189,7 @@ final class ArtifactCacheReadScheduler {
   }
 
   void _pump() {
+    _completePressureReliefWaitersIfIdle();
     while (_pending.isNotEmpty && _active < maxActive) {
       for (final pending in _pending
           .where((pending) => pending.control?.cancelled == true)
@@ -186,6 +224,23 @@ final class ArtifactCacheReadScheduler {
         pending.completer.complete(
           _start(_isForeground(priority), priority),
         );
+      }
+    }
+  }
+
+  void _completePressureReliefWaitersIfIdle() {
+    if (_hasForegroundPressure || _pressureReliefWaiters.isEmpty) return;
+    final waiters = _pressureReliefWaiters.toList(growable: false);
+    _pressureReliefWaiters.clear();
+    for (final pending in waiters) {
+      if (pending.completer.isCompleted) continue;
+      if (pending.control?.cancelled == true) {
+        pending.completer.completeError(const Failure(
+          code: ErrorCode.cancelled,
+          message: 'storage write was cancelled while yielding to local reads',
+        ));
+      } else {
+        pending.completer.complete();
       }
     }
   }
@@ -227,4 +282,14 @@ final class _PendingRead {
   final TaskControl? control;
 
   int get currentPriority => priority();
+}
+
+final class _PendingPressureRelief {
+  const _PendingPressureRelief({
+    required this.completer,
+    required this.control,
+  });
+
+  final Completer<void> completer;
+  final TaskControl? control;
 }
