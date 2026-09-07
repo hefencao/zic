@@ -614,6 +614,47 @@ int _rewriteIndexPaths({
           }
         }
       }
+      final replicaTable = db.select(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'artifact_replica'",
+      );
+      if (replicaTable.isNotEmpty) {
+        final rows = db.select(
+          'SELECT replica_id, access_locator FROM artifact_replica',
+        );
+        for (final row in rows) {
+          final path = row['access_locator']! as String;
+          if (path == oldPrefix || path.startsWith('$oldPrefix$separator')) {
+            final updated = newPrefix + path.substring(oldPrefix.length);
+            db.execute(
+              'UPDATE artifact_replica SET access_locator = ?, storage_root_id = ? '
+              'WHERE replica_id = ?',
+              <Object?>[updated, newPrefix, row['replica_id']! as String],
+            );
+          }
+        }
+      }
+      final rootTable = db.select(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'storage_root'",
+      );
+      final accessTable = db.select(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'storage_access_locator'",
+      );
+      if (rootTable.isNotEmpty && accessTable.isNotEmpty) {
+        final nowUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+        db.execute(
+          'INSERT INTO storage_root (root_id, created_us, touched_us) '
+          'VALUES (?, ?, ?) ON CONFLICT(root_id) DO UPDATE SET touched_us = ?',
+          <Object?>[newPrefix, nowUs, nowUs, nowUs],
+        );
+        db.execute(
+          'INSERT INTO storage_access_locator '
+          '(kind, locator, root_id, health, verified_us, touched_us) '
+          "VALUES ('direct', ?, ?, 'unknown', NULL, ?) "
+          'ON CONFLICT(kind, locator) DO UPDATE SET '
+          'root_id = excluded.root_id, touched_us = excluded.touched_us',
+          <Object?>[newPrefix, newPrefix, nowUs],
+        );
+      }
       // The placement table is scoped to this SQLite store as well. Keeping
       // its root identity in sync prevents a queue opened after migration
       // from treating a moved placement as belonging to the old authority.

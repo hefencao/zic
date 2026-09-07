@@ -37,7 +37,7 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
     db.execute('PRAGMA foreign_keys = ON');
     db.execute('PRAGMA journal_mode = WAL');
     final version = db.select('PRAGMA user_version').first.values.first as int;
-    if (version > 7) {
+    if (version > 8) {
       throw StateError('unsupported cache schema version: $version');
     }
     db.execute('BEGIN IMMEDIATE');
@@ -158,6 +158,22 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
         )
       ''');
       db.execute('''
+        CREATE TABLE IF NOT EXISTS artifact_replica (
+          replica_id TEXT NOT NULL PRIMARY KEY,
+          artifact_id TEXT NOT NULL,
+          access_locator TEXT NOT NULL,
+          storage_root_id TEXT NOT NULL DEFAULT 'default',
+          created_us INTEGER NOT NULL,
+          touched_us INTEGER NOT NULL,
+          FOREIGN KEY (artifact_id) REFERENCES artifact_object(artifact_id) ON DELETE CASCADE,
+          UNIQUE (artifact_id, access_locator, storage_root_id)
+        )
+      ''');
+      db.execute(
+        'CREATE INDEX IF NOT EXISTS artifact_replica_artifact '
+        'ON artifact_replica(artifact_id, touched_us)',
+      );
+      db.execute('''
         CREATE TABLE IF NOT EXISTS storage_root (
           root_id TEXT NOT NULL PRIMARY KEY,
           created_us INTEGER NOT NULL,
@@ -183,9 +199,10 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
         'ON storage_access_locator(root_id)',
       );
       _backfillArtifactObjects(db);
+      _backfillArtifactReplicas(db);
       _backfillStorageRootRegistry(db);
       _migrateDownloadIdentityKeys(db);
-      db.execute('PRAGMA user_version = 7');
+      db.execute('PRAGMA user_version = 8');
       db.execute('COMMIT');
     } on Object {
       db.execute('ROLLBACK');
@@ -227,6 +244,78 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       checksum: row['checksum']! as String,
       checksumAlgorithm: (row['checksum_algorithm'] as String?) ?? 'crc32',
       storageRootId: (row['storage_root_id'] as String?) ?? 'default',
+    );
+  }
+
+  Future<List<ArtifactReplicaRecord>> listArtifactReplicas(
+    String artifactId,
+  ) async {
+    final normalized = artifactId.trim();
+    if (normalized.isEmpty) return const <ArtifactReplicaRecord>[];
+    final rows = _requireDb().select(
+      'SELECT replica_id, artifact_id, access_locator, storage_root_id, '
+      'created_us, touched_us FROM artifact_replica WHERE artifact_id = ? '
+      'ORDER BY touched_us DESC, replica_id',
+      <Object?>[normalized],
+    );
+    return rows
+        .map(
+          (row) => ArtifactReplicaRecord(
+            replicaId: row['replica_id']! as String,
+            artifactId: row['artifact_id']! as String,
+            accessLocator: row['access_locator']! as String,
+            storageRootId: (row['storage_root_id'] as String?) ?? 'default',
+            createdUs: row['created_us']! as int,
+            touchedUs: row['touched_us']! as int,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<ArtifactReplicaRecord> putArtifactReplica({
+    required String artifactId,
+    required String accessLocator,
+    required String storageRootId,
+    required int createdUs,
+    required int touchedUs,
+  }) async {
+    final db = _requireDb();
+    final normalizedArtifactId = artifactId.trim();
+    final normalizedLocator = accessLocator.trim();
+    final normalizedRoot = storageRootId.trim();
+    if (normalizedArtifactId.isEmpty || normalizedLocator.isEmpty) {
+      throw ArgumentError('artifact replica identity and locator must not be empty');
+    }
+    if (db.select(
+      'SELECT 1 FROM artifact_object WHERE artifact_id = ? LIMIT 1',
+      <Object?>[normalizedArtifactId],
+    ).isEmpty) {
+      throw StateError('artifact object $normalizedArtifactId does not exist');
+    }
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      final record = _putArtifactReplica(
+        db,
+        artifactId: normalizedArtifactId,
+        accessLocator: normalizedLocator,
+        storageRootId: normalizedRoot.isEmpty ? 'default' : normalizedRoot,
+        createdUs: createdUs,
+        touchedUs: touchedUs,
+      );
+      db.execute('COMMIT');
+      return record;
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  Future<void> removeArtifactReplica(String replicaId) async {
+    final normalized = replicaId.trim();
+    if (normalized.isEmpty) return;
+    _requireDb().execute(
+      'DELETE FROM artifact_replica WHERE replica_id = ?',
+      <Object?>[normalized],
     );
   }
 
@@ -303,6 +392,11 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
           'UPDATE storage_access_locator SET root_id = ?, touched_us = ? '
           'WHERE root_id = ?',
           <Object?>[rootId, verifiedUs, oldRoot],
+        );
+        db.execute(
+          'UPDATE artifact_replica SET storage_root_id = ? '
+          'WHERE storage_root_id = ?',
+          <Object?>[rootId, oldRoot],
         );
         db.execute(
           'DELETE FROM storage_root WHERE root_id = ?',
@@ -861,6 +955,138 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       record.createdUs,
       record.touchedUs,
     ]);
+    if (record.state == CacheState.ready) {
+      _syncCompatibilityArtifactReplica(
+        db,
+        artifactId: artifactId,
+        accessLocator: record.path,
+        storageRootId: record.storageRootId,
+        createdUs: record.createdUs,
+        touchedUs: record.touchedUs,
+      );
+    }
+  }
+
+  void _syncCompatibilityArtifactReplica(
+    sql.Database db, {
+    required String artifactId,
+    required String accessLocator,
+    required String storageRootId,
+    required int createdUs,
+    required int touchedUs,
+  }) {
+    _ensureStorageRootLocator(db, storageRootId, touchedUs: touchedUs);
+    final matching = db.select(
+      'SELECT replica_id FROM artifact_replica WHERE artifact_id = ? '
+      'AND access_locator = ? AND storage_root_id = ? LIMIT 1',
+      <Object?>[artifactId, accessLocator, storageRootId],
+    );
+    if (matching.isNotEmpty) {
+      db.execute(
+        'UPDATE artifact_replica SET touched_us = ? WHERE replica_id = ?',
+        <Object?>[touchedUs, matching.first['replica_id']! as String],
+      );
+      return;
+    }
+    final primary = db.select(
+      'SELECT created_us FROM artifact_replica WHERE replica_id = ? LIMIT 1',
+      <Object?>[artifactId],
+    );
+    if (primary.isNotEmpty) {
+      db.execute(
+        'UPDATE artifact_replica SET access_locator = ?, storage_root_id = ?, '
+        'touched_us = ? WHERE replica_id = ?',
+        <Object?>[accessLocator, storageRootId, touchedUs, artifactId],
+      );
+      return;
+    }
+    db.execute(
+      'INSERT INTO artifact_replica '
+      '(replica_id, artifact_id, access_locator, storage_root_id, created_us, touched_us) '
+      'VALUES (?, ?, ?, ?, ?, ?)',
+      <Object?>[
+        artifactId, artifactId, accessLocator, storageRootId, createdUs, touchedUs,
+      ],
+    );
+  }
+
+  ArtifactReplicaRecord _putArtifactReplica(
+    sql.Database db, {
+    required String artifactId,
+    required String accessLocator,
+    required String storageRootId,
+    required int createdUs,
+    required int touchedUs,
+  }) {
+    _ensureStorageRootLocator(db, storageRootId, touchedUs: touchedUs);
+    final existing = db.select(
+      'SELECT replica_id, created_us FROM artifact_replica '
+      'WHERE artifact_id = ? AND access_locator = ? AND storage_root_id = ? '
+      'LIMIT 1',
+      <Object?>[artifactId, accessLocator, storageRootId],
+    );
+    final replicaId = existing.isNotEmpty
+        ? existing.first['replica_id']! as String
+        : _allocateArtifactReplicaId(
+            db,
+            artifactId: artifactId,
+            accessLocator: accessLocator,
+            storageRootId: storageRootId,
+          );
+    final effectiveCreatedUs = existing.isNotEmpty
+        ? existing.first['created_us']! as int
+        : createdUs;
+    db.execute(
+      'INSERT INTO artifact_replica '
+      '(replica_id, artifact_id, access_locator, storage_root_id, created_us, touched_us) '
+      'VALUES (?, ?, ?, ?, ?, ?) '
+      'ON CONFLICT(replica_id) DO UPDATE SET '
+      'access_locator = excluded.access_locator, '
+      'storage_root_id = excluded.storage_root_id, touched_us = excluded.touched_us',
+      <Object?>[
+        replicaId,
+        artifactId,
+        accessLocator,
+        storageRootId,
+        effectiveCreatedUs,
+        touchedUs,
+      ],
+    );
+    return ArtifactReplicaRecord(
+      replicaId: replicaId,
+      artifactId: artifactId,
+      accessLocator: accessLocator,
+      storageRootId: storageRootId,
+      createdUs: effectiveCreatedUs,
+      touchedUs: touchedUs,
+    );
+  }
+
+  String _allocateArtifactReplicaId(
+    sql.Database db, {
+    required String artifactId,
+    required String accessLocator,
+    required String storageRootId,
+  }) {
+    if (db.select(
+      'SELECT 1 FROM artifact_replica WHERE artifact_id = ? LIMIT 1',
+      <Object?>[artifactId],
+    ).isEmpty) {
+      return artifactId;
+    }
+    final token = defaultArtifactIdForPath(
+      '$artifactId\u0000$storageRootId\u0000$accessLocator',
+    );
+    var candidate = '$artifactId:$token';
+    var suffix = 1;
+    while (db.select(
+      'SELECT 1 FROM artifact_replica WHERE replica_id = ? LIMIT 1',
+      <Object?>[candidate],
+    ).isNotEmpty) {
+      candidate = '$artifactId:$token:$suffix';
+      suffix++;
+    }
+    return candidate;
   }
 
   void _putBinding(sql.Database db, CacheRec record, String artifactId) {
@@ -1032,6 +1258,31 @@ void _ensureStorageRootLocator(
     "VALUES (?, ?, ?, 'unknown', NULL, ?)",
     <Object?>[kind.name, normalized, normalized, touchedUs],
   );
+}
+
+void _backfillArtifactReplicas(sql.Database db) {
+  final rows = db.select(
+    'SELECT o.artifact_id, o.path, o.storage_root_id, o.created_us, o.touched_us '
+    'FROM artifact_object o WHERE EXISTS ('
+    "SELECT 1 FROM cache_entry e WHERE e.artifact_id = o.artifact_id AND e.state = 'ready'"
+    ')',
+  );
+  for (final row in rows) {
+    final artifactId = row['artifact_id']! as String;
+    db.execute(
+      'INSERT OR IGNORE INTO artifact_replica '
+      '(replica_id, artifact_id, access_locator, storage_root_id, created_us, touched_us) '
+      'VALUES (?, ?, ?, ?, ?, ?)',
+      <Object?>[
+        artifactId,
+        artifactId,
+        row['path']! as String,
+        (row['storage_root_id'] as String?) ?? 'default',
+        row['created_us']! as int,
+        row['touched_us']! as int,
+      ],
+    );
+  }
 }
 
 void _backfillStorageRootRegistry(sql.Database db) {

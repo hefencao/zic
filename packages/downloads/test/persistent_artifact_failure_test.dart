@@ -334,6 +334,184 @@ void main() {
         reason: 'durable access health should prefer the healthy SAF alias');
   });
 
+  test('one corrupt replica is retired while another sealed copy remains readable',
+      () async {
+    final appRoot = await Directory.systemTemp.createTemp('zic-replica-app-');
+    final rootA = await Directory.systemTemp.createTemp('zic-replica-a-');
+    final rootB = await Directory.systemTemp.createTemp('zic-replica-b-');
+    addTearDown(() async {
+      for (final directory in <Directory>[appRoot, rootA, rootB]) {
+        if (await directory.exists()) await directory.delete(recursive: true);
+      }
+    });
+    final indexPath = defaultChapterDownloadMetadataPath(appRoot.path);
+    final id = _id('multi-replica-fallback');
+    final bytes = Uint8List.fromList(<int>[3, 1, 4, 1, 5, 9, 2, 6]);
+    final store = await PersistentDownloadArtifactStore.open(
+      appRoot.path,
+      directory: rootA.path,
+      indexPath: indexPath,
+    );
+    addTearDown(store.close);
+    await store.storePromotedArtifact(id: id, bytes: bytes);
+    final initial = await store.artifactReplicasFor(id);
+    expect(initial, hasLength(1));
+    final primary = initial.single;
+
+    final replicaFile = File(
+      '${rootB.path}${Platform.pathSeparator}replica.bin',
+    );
+    await replicaFile.writeAsBytes(bytes, flush: true);
+    final second = await store.registerVerifiedArtifactReplica(
+      id: id,
+      accessLocator: replicaFile.path,
+      storageRootId: rootB.path,
+    );
+    expect(second.replicaId, isNot(primary.replicaId));
+    expect(await store.artifactReplicasFor(id), hasLength(2));
+
+    // The newest replica is selected first; corrupt it after registration so
+    // preflight must retire only that copy and continue to the primary.
+    await replicaFile.writeAsBytes(<int>[3, 1, 4], flush: true);
+    final entry = await store.openArtifactStream(id);
+    expect(entry, isNotNull);
+    final read = <int>[];
+    await for (final chunk in entry!.open(start: 0)) {
+      read.addAll(chunk);
+    }
+    expect(read, bytes);
+
+    final remaining = await store.artifactReplicasFor(id);
+    expect(remaining, hasLength(1));
+    expect(remaining.single.replicaId, primary.replicaId);
+    expect((await store.indexedRecords()).containsKey(id.key), isTrue,
+        reason: 'one failed replica must not erase logical artifact authority');
+  });
+
+  test('proven SAF locator for one Direct replica is not a second replica',
+      () async {
+    final appRoot = await Directory.systemTemp.createTemp('zic-replica-alias-app-');
+    final directRoot = await Directory.systemTemp.createTemp('zic-replica-alias-direct-');
+    addTearDown(() async {
+      if (await appRoot.exists()) await appRoot.delete(recursive: true);
+      if (await directRoot.exists()) await directRoot.delete(recursive: true);
+    });
+    const safTree =
+        'content://com.android.externalstorage.documents/tree/primary%3ABooks';
+    final indexPath = defaultChapterDownloadMetadataPath(appRoot.path);
+    final id = _id('replica-alias');
+    final bytes = Uint8List.fromList(<int>[8, 6, 7, 5, 3, 0, 9]);
+    final direct = await PersistentDownloadArtifactStore.open(
+      appRoot.path,
+      directory: directRoot.path,
+      indexPath: indexPath,
+    );
+    await direct.storePromotedArtifact(id: id, bytes: bytes);
+    final primary = (await direct.artifactReplicasFor(id)).single;
+    await direct.close();
+
+    final access = _AliasFallbackArtifactBytes(bytes);
+    final store = await PersistentDownloadArtifactStore.open(
+      appRoot.path,
+      indexPath: indexPath,
+      bytes: access,
+      safTreeUri: safTree,
+    );
+    addTearDown(store.close);
+    await store.registerStorageRootAccessAliasProof(
+      StorageRootAccessAliasProof(
+        direct: DirectStorageAccessLocator(directRoot.path),
+        saf: const SafStorageAccessLocator(safTree),
+      ),
+    );
+    final relative = primary.accessLocator
+        .substring(directRoot.path.length + 1)
+        .split(Platform.pathSeparator)
+        .join('/');
+    final aliasPath = encodeSafRecordPath(treeUri: safTree, relativePath: relative);
+    final registered = await store.registerVerifiedArtifactReplica(
+      id: id,
+      accessLocator: aliasPath,
+      storageRootId: safTree,
+    );
+    expect(registered.replicaId, primary.replicaId);
+    expect(await store.artifactReplicasFor(id), hasLength(1));
+  });
+
+  test('explicit invalidation removes every replica when no binding remains',
+      () async {
+    final appRoot = await Directory.systemTemp.createTemp('zic-replica-delete-app-');
+    final rootA = await Directory.systemTemp.createTemp('zic-replica-delete-a-');
+    final rootB = await Directory.systemTemp.createTemp('zic-replica-delete-b-');
+    addTearDown(() async {
+      for (final directory in <Directory>[appRoot, rootA, rootB]) {
+        if (await directory.exists()) await directory.delete(recursive: true);
+      }
+    });
+    final id = _id('replica-delete');
+    final bytes = Uint8List.fromList(<int>[1, 6, 1, 8, 0, 3, 3, 9]);
+    final store = await PersistentDownloadArtifactStore.open(
+      appRoot.path,
+      directory: rootA.path,
+      indexPath: defaultChapterDownloadMetadataPath(appRoot.path),
+    );
+    addTearDown(store.close);
+    await store.storePromotedArtifact(id: id, bytes: bytes);
+    final primary = (await store.artifactReplicasFor(id)).single;
+    final secondFile = File('${rootB.path}${Platform.pathSeparator}replica.bin');
+    await secondFile.writeAsBytes(bytes, flush: true);
+    await store.registerVerifiedArtifactReplica(
+      id: id,
+      accessLocator: secondFile.path,
+      storageRootId: rootB.path,
+    );
+    expect(await store.artifactReplicasFor(id), hasLength(2));
+
+    await store.invalidateArtifact(id);
+    expect((await store.indexedRecords()).containsKey(id.key), isFalse);
+    expect(await File(primary.accessLocator).exists(), isFalse);
+    expect(await secondFile.exists(), isFalse);
+    expect(await store.artifactReplicasFor(id), isEmpty);
+  });
+
+  test('replica registration rejects bytes that do not match artifact proof',
+      () async {
+    final appRoot = await Directory.systemTemp.createTemp('zic-replica-proof-app-');
+    final root = await Directory.systemTemp.createTemp('zic-replica-proof-root-');
+    addTearDown(() async {
+      if (await appRoot.exists()) await appRoot.delete(recursive: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final id = _id('replica-proof');
+    final store = await PersistentDownloadArtifactStore.open(
+      appRoot.path,
+      indexPath: defaultChapterDownloadMetadataPath(appRoot.path),
+    );
+    addTearDown(store.close);
+    await store.storePromotedArtifact(
+      id: id,
+      bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
+    );
+    final foreign = File('${root.path}${Platform.pathSeparator}foreign.bin');
+    await foreign.writeAsBytes(<int>[4, 3, 2, 1], flush: true);
+
+    await expectLater(
+      store.registerVerifiedArtifactReplica(
+        id: id,
+        accessLocator: foreign.path,
+        storageRootId: root.path,
+      ),
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.artifactCorruption,
+        ),
+      ),
+    );
+    expect(await store.artifactReplicasFor(id), hasLength(1));
+  });
+
   test('persistent preflight reports lengthChanged with replica identity', () async {
     final root = await Directory.systemTemp.createTemp('zic-replica-length-');
     final store = await PersistentDownloadArtifactStore.open(root.path);

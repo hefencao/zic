@@ -127,9 +127,9 @@ final class CacheRec {
   }
 }
 
-/// Physical immutable-object metadata projected separately from a logical
-/// DownloadId binding. [accessLocator] still maps to the compatibility SQL
-/// `path` column, but callers consume it as physical access authority.
+/// Immutable-object proof metadata projected separately from a logical
+/// DownloadId binding. [accessLocator] still mirrors the compatibility SQL
+/// `path` column; schema-8 physical-copy authority lives in artifact replicas.
 final class ArtifactObjectRecord {
   const ArtifactObjectRecord({
     required this.artifactId,
@@ -150,6 +150,29 @@ final class ArtifactObjectRecord {
   final String checksum;
   final String checksumAlgorithm;
   final String storageRootId;
+}
+
+/// One independently materialized physical copy of an immutable artifact.
+///
+/// Direct and SAF locators proven to address one [storageRootId] are access
+/// aliases for this same replica, not separate replicas. [accessLocator] is a
+/// compatibility physical locator until root-relative replica locators land.
+final class ArtifactReplicaRecord {
+  const ArtifactReplicaRecord({
+    required this.replicaId,
+    required this.artifactId,
+    required this.accessLocator,
+    required this.storageRootId,
+    required this.createdUs,
+    required this.touchedUs,
+  });
+
+  final String replicaId;
+  final String artifactId;
+  final String accessLocator;
+  final String storageRootId;
+  final int createdUs;
+  final int touchedUs;
 }
 
 /// Optional transactional binding capability. A path may be shared by

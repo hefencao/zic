@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:domain/domain.dart';
 import 'package:sqlite3/sqlite3.dart' as sql;
 import 'package:storage/storage.dart';
 import 'package:test/test.dart';
@@ -246,6 +247,64 @@ void main() {
     } finally {
       movedDb.close();
     }
+  });
+
+  test('App-private move rewrites replica locator without changing replica id',
+      () async {
+    final from = dir('replica-move-from');
+    final to = dir('replica-move-to');
+    final metadata = dir('private-metadata');
+    final separator = Platform.pathSeparator;
+    await Directory('${from.path}${separator}final').create(recursive: true);
+    final sourcePath = '${from.path}${separator}final${separator}page.bin';
+    await File(sourcePath).writeAsBytes(const <int>[1, 2, 3, 4]);
+    final dbPath = '${metadata.path}${separator}chapter_downloads.sqlite';
+    final index = SqliteIndex(dbPath);
+    await index.open();
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'replica-move',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/replica-move.webp'),
+    );
+    const artifactId = 'replica-move-artifact';
+    await index.put(
+      CacheRec(
+        id: id,
+        state: CacheState.ready,
+        path: sourcePath,
+        bytes: 4,
+        checksum: 'b63cfbcd',
+        createdUs: 1,
+        touchedUs: 1,
+        artifactId: artifactId,
+        storageRootId: from.path,
+      ),
+    );
+    final before = (await index.listArtifactReplicas(artifactId)).single;
+    await index.close();
+
+    await moveChapterDownloadStore(
+      from: from.path,
+      to: to.path,
+      metadataDbPath: dbPath,
+    );
+
+    final reopened = SqliteIndex(dbPath);
+    await reopened.open();
+    addTearDown(reopened.close);
+    final after = (await reopened.listArtifactReplicas(artifactId)).single;
+    expect(after.replicaId, before.replicaId);
+    expect(
+      after.accessLocator,
+      '${to.path}${separator}final${separator}page.bin',
+    );
+    expect(after.storageRootId, to.path);
+    expect((await reopened.getStorageRoot(to.path)), isNotNull);
   });
 
   test('move preflights directory/file shape conflicts before moving', () async {

@@ -526,6 +526,162 @@ void runCacheSchemaV2Tests() {
     expect(root.accessLocators.single.health, StorageAccessHealth.unknown);
   });
 
+  test('v7 cache metadata backfills the compatibility object as replica one', () async {
+    final temp = await Directory.systemTemp.createTemp('cache_index_v7_replica_');
+    addTearDown(() => temp.delete(recursive: true));
+    final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'v7-replica',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/v7-replica.webp'),
+    );
+    const root = '/storage/emulated/0/Books';
+    const artifactId = 'v7-artifact';
+    final current = SqliteIndex(dbPath);
+    await current.open();
+    await current.put(
+      CacheRec(
+        id: id,
+        state: CacheState.ready,
+        path: '$root/final/page.bin',
+        bytes: 4,
+        checksum: '01020304',
+        createdUs: 1,
+        touchedUs: 2,
+        artifactId: artifactId,
+        storageRootId: root,
+      ),
+    );
+    await current.close();
+
+    final legacy = sql.sqlite3.open(dbPath);
+    legacy.execute('DROP TABLE artifact_replica');
+    legacy.execute('PRAGMA user_version = 7');
+    legacy.dispose();
+
+    final migrated = SqliteIndex(dbPath);
+    await migrated.open();
+    addTearDown(migrated.close);
+    final replicas = await migrated.listArtifactReplicas(artifactId);
+    expect(replicas, hasLength(1));
+    expect(replicas.single.replicaId, artifactId);
+    expect(replicas.single.accessLocator, '$root/final/page.bin');
+    expect(replicas.single.storageRootId, root);
+  });
+
+  test('mutable partial records never become immutable artifact replicas', () async {
+    final index = SqliteIndex.memory();
+    await index.open();
+    addTearDown(index.close);
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'partial-no-replica',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/partial-no-replica.webp'),
+    );
+    await index.put(
+      CacheRec(
+        id: id,
+        state: CacheState.partial,
+        path: '/storage/a/partial/page.part',
+        bytes: 4,
+        checksum: '00000000',
+        createdUs: 1,
+        touchedUs: 1,
+        artifactId: 'partial-object',
+        storageRootId: '/storage/a',
+      ),
+    );
+    expect(await index.listArtifactReplicas('partial-object'), isEmpty);
+  });
+
+  test('one artifact keeps independent replicas on two physical roots', () async {
+    final index = SqliteIndex.memory();
+    await index.open();
+    addTearDown(index.close);
+    final firstId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'replica-a',
+        chapterId: 'chapter',
+        pageId: 'page-a',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/replica-a.webp'),
+    );
+    final secondId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'replica-b',
+        chapterId: 'chapter',
+        pageId: 'page-b',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/replica-b.webp'),
+    );
+    const artifactId = 'multi-root-artifact';
+    const rootA = '/storage/a';
+    const rootB = '/storage/b';
+    await index.put(
+      CacheRec(
+        id: firstId,
+        state: CacheState.ready,
+        path: '$rootA/final/page.bin',
+        bytes: 8,
+        checksum: '11112222',
+        createdUs: 1,
+        touchedUs: 1,
+        artifactId: artifactId,
+        storageRootId: rootA,
+      ),
+    );
+    await index.putArtifactReplica(
+      artifactId: artifactId,
+      accessLocator: '$rootB/final/page.bin',
+      storageRootId: rootB,
+      createdUs: 2,
+      touchedUs: 2,
+    );
+
+    final replicas = await index.listArtifactReplicas(artifactId);
+    expect(replicas, hasLength(2));
+    expect(
+      replicas.map((value) => value.accessLocator).toSet(),
+      <String>{'$rootA/final/page.bin', '$rootB/final/page.bin'},
+    );
+    expect(replicas.map((value) => value.replicaId).toSet(), hasLength(2));
+    expect(replicas.any((value) => value.replicaId == artifactId), isTrue);
+    expect((await index.getArtifactObject(artifactId))?.accessLocator,
+        '$rootA/final/page.bin',
+        reason: 'adding a replica must not silently move the compatibility object');
+
+    await index.put(
+      CacheRec(
+        id: secondId,
+        state: CacheState.ready,
+        path: '$rootB/final/relocated.bin',
+        bytes: 8,
+        checksum: '11112222',
+        createdUs: 3,
+        touchedUs: 3,
+        artifactId: artifactId,
+        storageRootId: rootB,
+      ),
+    );
+    final afterBindingWrite = await index.listArtifactReplicas(artifactId);
+    expect(afterBindingWrite, hasLength(2),
+        reason: 'ordinary binding/object updates are not implicit replica copies');
+  });
+
   test('schema 7 backfills one durable locator for a storage root', () async {
     final index = SqliteIndex.memory();
     await index.open();
@@ -637,6 +793,16 @@ void runCacheSchemaV2Tests() {
     );
     expect((await index.getStorageRoot(direct))?.rootId, merged.rootId);
     expect((await index.getStorageRoot(saf))?.rootId, merged.rootId);
+    final directRecord = await index.get(directId.key);
+    final safRecord = await index.get(safId.key);
+    final directReplica = (
+      await index.listArtifactReplicas(directRecord!.effectiveArtifactId)
+    ).single;
+    final safReplica = (
+      await index.listArtifactReplicas(safRecord!.effectiveArtifactId)
+    ).single;
+    expect(directReplica.storageRootId, merged.rootId);
+    expect(safReplica.storageRootId, merged.rootId);
   });
 
   test('access health changes do not alter root identity', () async {
