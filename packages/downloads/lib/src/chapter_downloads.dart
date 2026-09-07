@@ -1146,6 +1146,7 @@ final class PersistentDownloadArtifactStore
   static Future<PersistentDownloadArtifactStore> open(
     String root, {
     String? directory,
+    String? indexPath,
     CacheLayout? Function(DownloadId id)? layoutResolver,
     ArtifactBytes? bytes,
     SafTreeIo? safMirror,
@@ -1156,7 +1157,7 @@ final class PersistentDownloadArtifactStore
     final layout = CacheLayout(
       directory ?? defaultChapterDownloadDirectory(root),
     );
-    final index = SqliteIndex(layout.dbPath);
+    final index = SqliteIndex(indexPath ?? layout.dbPath);
     await index.open();
     final resolvedClock = clock ?? const SystemClock();
     final registry = DownloadRegistry(
@@ -5310,6 +5311,7 @@ final class PersistentDownloadComposition
   static Future<PersistentDownloadComposition> open(
     String root, {
     String? directory,
+    String? indexPath,
     CacheLayout? Function(DownloadId id)? layoutResolver,
     String Function()? userAgentProvider,
     NetLane? transferNet,
@@ -5323,6 +5325,7 @@ final class PersistentDownloadComposition
     final authorities = await _openPersistentDownloadAuthorities(
       root,
       directory: directory,
+      indexPath: indexPath,
       layoutResolver: layoutResolver,
       transferNet: transferNet,
       localReadScheduler: localReadScheduler,
@@ -5382,6 +5385,7 @@ typedef _PersistentDownloadAuthorities = ({
 Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
   String root, {
   String? directory,
+  String? indexPath,
   CacheLayout? Function(DownloadId id)? layoutResolver,
   NetLane? transferNet,
   ArtifactCacheReadScheduler? localReadScheduler,
@@ -5393,6 +5397,7 @@ Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
   final store = await PersistentDownloadArtifactStore.open(
     root,
     directory: directory,
+    indexPath: indexPath,
     layoutResolver: layoutResolver,
     safMirror: safTreeIo,
     safTreeUri: safTreeUri,

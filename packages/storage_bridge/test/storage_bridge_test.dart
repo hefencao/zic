@@ -92,6 +92,84 @@ void main() {
     );
   });
 
+  test('App-private chapter metadata alone is durable application state',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-storage-private-metadata-state-',
+    );
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    await File(defaultChapterDownloadMetadataPath(root.path))
+        .writeAsBytes(const <int>[1]);
+
+    expect(await durableZicStateExists(root.path), isTrue);
+  });
+
+  test('private metadata disables legacy default-root auto adoption', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-storage-private-root-authority-',
+    );
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final defaultDirectory = Directory(
+      defaultChapterDownloadDirectory(root.path),
+    );
+    final target = Directory(
+      '${root.path}${Platform.pathSeparator}custom',
+    );
+    final oldPage = File(
+      '${defaultDirectory.path}${Platform.pathSeparator}final'
+      '${Platform.pathSeparator}old.bin',
+    );
+    await oldPage.parent.create(recursive: true);
+    await oldPage.writeAsBytes(const <int>[1]);
+    await target.create(recursive: true);
+    final metadataPath = defaultChapterDownloadMetadataPath(root.path);
+    await File(metadataPath).writeAsBytes(const <int>[1]);
+
+    expect(
+      await settleChapterDownloadDirectory(
+        storageRoot: root.path,
+        configuredOverride: target.path,
+        metadataDbPath: metadataPath,
+      ),
+      target.path,
+    );
+    expect(await oldPage.exists(), isTrue);
+  });
+
+  test('SAF selection never treats the default byte store as a POSIX move source',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-storage-saf-settle-',
+    );
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final defaultDirectory = Directory(
+      defaultChapterDownloadDirectory(root.path),
+    );
+    final retained = File(
+      '${defaultDirectory.path}${Platform.pathSeparator}final'
+      '${Platform.pathSeparator}page.bin',
+    );
+    await retained.parent.create(recursive: true);
+    await retained.writeAsBytes(const <int>[1, 2, 3]);
+    const safTarget =
+        'saf://content://com.android.externalstorage.documents/tree/primary%3ABooks';
+
+    expect(
+      await settleChapterDownloadDirectory(
+        storageRoot: root.path,
+        configuredOverride: safTarget,
+      ),
+      safTarget,
+    );
+    expect(await retained.exists(), isTrue);
+  });
+
   test('a Home snapshot short-circuits the durable state probe', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-storage-snapshot-state-',

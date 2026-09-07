@@ -364,6 +364,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     required bool migrateFiles,
   }) async {
     final root = await _storageRoot;
+    final chapterMetadataPath = defaultChapterDownloadMetadataPath(root);
     if (_services?.hasCoreServices != true) {
       try {
         await _ensureDurableServices();
@@ -492,6 +493,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
         final report = await moveChapterDownloadStore(
           from: pendingFrom,
           to: target,
+          metadataDbPath: chapterMetadataPath,
         );
         _startupLog(
           'chapter-download-move-complete files=${report.movedFileCount} '
@@ -510,8 +512,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     // gone, the target is the only authoritative side after a partial move.
     final rebuildDirectory = moveError == null
         ? target
-        : pendingFrom != null &&
-                await chapterDownloadIndexExists(pendingFrom)
+        : pendingFrom != null && chapterDownloadStoreHasContent(pendingFrom)
             ? pendingFrom
             : target;
     final rebuildError = await _rebuildDownloadServices(
@@ -545,6 +546,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       final composition = await PersistentDownloadComposition.open(
         storageRoot,
         directory: safOverride == null ? downloadDirectory : null,
+        indexPath: defaultChapterDownloadMetadataPath(storageRoot),
         layoutResolver: sourceDownloadLayoutResolver(_preferences),
         userAgentProvider: () => _preferences.networkUserAgent,
         transferNet: defaultDownloadResourceCoordinator.networkLane,
@@ -1024,6 +1026,8 @@ Future<_AppServices> _openServices(
     final configuredChapterDownloadDirectory =
         preferences.chapterDownloadDirectoryOverride ??
         defaultChapterDownloadDirectory(root);
+    final chapterMetadataPath = defaultChapterDownloadMetadataPath(root);
+    final chapterMetadataPreexisting = await chapterDownloadMetadataExists(root);
     late final String chapterDownloadDirectory;
     var chapterDownloadMoveSettled = true;
     try {
@@ -1031,6 +1035,7 @@ Future<_AppServices> _openServices(
         storageRoot: root,
         configuredOverride: preferences.chapterDownloadDirectoryOverride,
         pendingMoveFrom: preferences.chapterDownloadDirectoryPendingMoveFrom,
+        metadataDbPath: chapterMetadataPreexisting ? chapterMetadataPath : null,
       );
     } on Object catch (error) {
       // Keep the intent marker when recovery could not finish. The target is
@@ -1042,9 +1047,11 @@ Future<_AppServices> _openServices(
       // A preflight failure leaves the source store authoritative. Reopen it
       // when its index is still present; otherwise the destination already
       // owns the moved index and is the only usable recovery side.
-      final sourceHasIndex = pendingSource != null &&
+      final sourceStillOwnsBytes = pendingSource != null &&
+          chapterDownloadStoreHasContent(pendingSource);
+      final sourceHasLegacyIndex = pendingSource != null &&
           await chapterDownloadIndexExists(pendingSource);
-      chapterDownloadDirectory = sourceHasIndex
+      chapterDownloadDirectory = sourceStillOwnsBytes || sourceHasLegacyIndex
           ? pendingSource
           : configuredChapterDownloadDirectory;
       debugPrint(
@@ -1055,8 +1062,23 @@ Future<_AppServices> _openServices(
     if (chapterDownloadMoveSettled) {
       preferences.setChapterDownloadDirectoryPendingMoveFrom(null);
     }
+    final legacyChapterMetadataPath = legacyChapterDownloadMetadataPath(
+      storageRoot: root,
+      downloadDirectory: chapterDownloadDirectory,
+    );
+    final metadataMigrated = await migrateLegacyChapterDownloadMetadata(
+      legacyDbPath: legacyChapterMetadataPath,
+      metadataDbPath: chapterMetadataPath,
+    );
+    if (metadataMigrated) {
+      _startupLog(
+        'chapter-download-metadata-migrated '
+        'from=$legacyChapterMetadataPath to=$chapterMetadataPath',
+      );
+    }
     _startupLog(
-      'chapter-download-directory-resolved path=$chapterDownloadDirectory',
+      'chapter-download-directory-resolved path=$chapterDownloadDirectory '
+      'metadata=$chapterMetadataPath',
     );
 
     // A fresh install has no library, download index, or queue state. Opening
@@ -1064,7 +1086,7 @@ Future<_AppServices> _openServices(
     // schema transactions solely because Home was shown. Keep the Home
     // projection in memory until an actual durable state exists.
     final hasDurableState = await durableStateFuture ||
-        await chapterDownloadIndexExists(chapterDownloadDirectory);
+        await chapterDownloadMetadataExists(root);
     _startupLog(
       'durable-state-check-complete '
       'durationMs=${durableStateClock.elapsedMilliseconds} '
@@ -1097,6 +1119,7 @@ Future<_AppServices> _openServices(
     downloadComposition = await PersistentDownloadComposition.open(
       root,
       directory: safOverride == null ? chapterDownloadDirectory : null,
+      indexPath: chapterMetadataPath,
       layoutResolver: sourceDownloadLayoutResolver(preferences),
       userAgentProvider: () => preferences.networkUserAgent,
       transferNet: defaultDownloadResourceCoordinator.networkLane,

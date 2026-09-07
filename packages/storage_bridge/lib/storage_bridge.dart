@@ -24,6 +24,9 @@ export 'package:storage/storage.dart'
         buildComicDirectoryName,
         chapterDownloadStoreHasContent,
         defaultChapterDownloadDirectory,
+        defaultChapterDownloadMetadataPath,
+        legacyChapterDownloadMetadataPath,
+        migrateLegacyChapterDownloadMetadata,
         isSameDirectoryPath,
         isSameOrNestedDirectoryPath,
         moveChapterDownloadStore,
@@ -79,16 +82,21 @@ HomeProjectionSnapshotStore createHomeProjectionSnapshotStore({
 /// still includes a queue or snapshot file because restoring either projection
 /// requires the durable composition to reconcile it.
 ///
-/// [chapterDownloadDirectory] overrides where the chapter-download store index
-/// lives when the user configured a custom download directory.
+/// [chapterDownloadDirectory] is used only to detect a pre-migration legacy
+/// `cache.sqlite`; current chapter metadata lives under [storageRoot].
 Future<bool> durableZicStateExists(
   String storageRoot, {
   String? chapterDownloadDirectory,
 }) async {
   final importedLibrary = File('$storageRoot/imported_library.sqlite3');
-  final offlineCache = File(
-    '${chapterDownloadDirectory ?? '$storageRoot/offline_chapters'}'
-    '/cache.sqlite',
+  final chapterMetadata = File(defaultChapterDownloadMetadataPath(storageRoot));
+  final effectiveDownloadDirectory = chapterDownloadDirectory ??
+      defaultChapterDownloadDirectory(storageRoot);
+  final legacyChapterMetadata = File(
+    legacyChapterDownloadMetadataPath(
+      storageRoot: storageRoot,
+      downloadDirectory: effectiveDownloadDirectory,
+    ),
   );
   final wholeComicQueue = File('$storageRoot/whole_comic_queue.json');
   final homeSnapshot = File('$storageRoot/home_projection_snapshot.json');
@@ -98,21 +106,23 @@ Future<bool> durableZicStateExists(
   if (await homeSnapshot.exists()) {
     print(
       '[zic-storage] durable-state-files '
-      'library=unknown offlineCache=unknown wholeComicQueue=unknown '
+      'library=unknown chapterMetadata=unknown legacyChapterMetadata=unknown '
+      'wholeComicQueue=unknown '
       'homeSnapshot=true source=home-snapshot',
     );
     return true;
   }
   final results = await Future.wait<bool>(<Future<bool>>[
     importedLibrary.exists(),
-    offlineCache.exists(),
+    chapterMetadata.exists(),
+    legacyChapterMetadata.exists(),
     wholeComicQueue.exists(),
-    homeSnapshot.exists(),
   ]);
   print(
     '[zic-storage] durable-state-files '
-    'library=${results[0]} offlineCache=${results[1]} '
-    'wholeComicQueue=${results[2]} homeSnapshot=${results[3]} source=full-scan',
+    'library=${results[0]} chapterMetadata=${results[1]} '
+    'legacyChapterMetadata=${results[2]} wholeComicQueue=${results[3]} '
+    'homeSnapshot=false source=full-scan',
   );
   return results.any((exists) => exists);
 }
@@ -140,6 +150,9 @@ ResourceCacheCoordinator createAppResourceCache({
 Future<bool> chapterDownloadIndexExists(String directory) =>
     File('$directory/cache.sqlite').exists();
 
+Future<bool> chapterDownloadMetadataExists(String storageRoot) =>
+    File(defaultChapterDownloadMetadataPath(storageRoot)).exists();
+
 /// Completes a deferred or interrupted chapter-download store move and
 /// returns the effective chapter-download directory for this launch.
 ///
@@ -152,6 +165,7 @@ Future<String> settleChapterDownloadDirectory({
   required String storageRoot,
   required String? configuredOverride,
   String? pendingMoveFrom,
+  String? metadataDbPath,
 }) async {
   final defaultDirectory = defaultChapterDownloadDirectory(storageRoot);
   final target = configuredOverride ?? defaultDirectory;
@@ -175,23 +189,29 @@ Future<String> settleChapterDownloadDirectory({
     final report = await moveChapterDownloadStore(
       from: pendingMoveFrom,
       to: target,
+      metadataDbPath: metadataDbPath,
     );
     print(
       '[zic-storage] chapter-download move completed '
       'from=$pendingMoveFrom to=$target files=${report.movedFileCount} '
       'records=${report.rewrittenRecordCount}',
     );
-  } else if (!samePath(defaultDirectory, target) &&
+  } else if (!target.startsWith('saf://') &&
+      metadataDbPath == null &&
+      !samePath(defaultDirectory, target) &&
       chapterDownloadStoreHasContent(defaultDirectory) &&
       !await File('$target/cache.sqlite').exists()) {
-    // An override is configured while the default location still owns the
-    // only complete copy of the store (for example a crash before the move
-    // started). Bring the store to the configured location. Let failures
+    // Legacy pre-private-metadata recovery: an override is configured while
+    // the default location still owns the only indexed store (for example a
+    // crash before the move started). Once App-private metadata exists, root
+    // content is no longer sufficient evidence to infer an automatic move.
+    // Bring the legacy store to the configured location. Let failures
     // reach startup so the pending intent remains durable and the source can
     // be reopened as the authoritative recovery side.
     final report = await moveChapterDownloadStore(
       from: defaultDirectory,
       to: target,
+      metadataDbPath: metadataDbPath,
     );
     print(
       '[zic-storage] chapter-download default-location adoption completed '

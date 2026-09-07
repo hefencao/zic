@@ -29,6 +29,41 @@ void main() {
     expect(entry.fullReadIntegrity, ArtifactReadIntegrityBasis.crc32Verified);
   });
 
+  test('persistent store can keep metadata outside the selected byte root',
+      () async {
+    final appRoot = await Directory.systemTemp.createTemp(
+      'zic-private-download-metadata-',
+    );
+    final byteRoot = await Directory.systemTemp.createTemp(
+      'zic-private-download-bytes-',
+    );
+    addTearDown(() async {
+      if (await appRoot.exists()) await appRoot.delete(recursive: true);
+      if (await byteRoot.exists()) await byteRoot.delete(recursive: true);
+    });
+    final indexPath = defaultChapterDownloadMetadataPath(appRoot.path);
+    final store = await PersistentDownloadArtifactStore.open(
+      appRoot.path,
+      directory: byteRoot.path,
+      indexPath: indexPath,
+    );
+    addTearDown(store.close);
+    final id = _id('private-metadata');
+    final bytes = Uint8List.fromList(<int>[1, 4, 9, 16]);
+
+    await store.storePromotedArtifact(id: id, bytes: bytes);
+
+    expect(await File(indexPath).exists(), isTrue);
+    expect(
+      await File('${byteRoot.path}${Platform.pathSeparator}cache.sqlite').exists(),
+      isFalse,
+    );
+    final record = (await store.indexedRecords())[id.key];
+    expect(record, isNotNull);
+    expect(record!.path.startsWith(byteRoot.path), isTrue);
+    expect(await File(record.path).readAsBytes(), bytes);
+  });
+
   test('shared artifact reads through artifact_object locator when binding path is stale', () async {
     final root = await Directory.systemTemp.createTemp('zic-artifact-object-read-');
     addTearDown(() => root.delete(recursive: true));

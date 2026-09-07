@@ -227,7 +227,7 @@ Changing preferred access from SAF to direct for the same root performs zero byt
 
 ## 6. Storage-root changes
 
-The durable metadata database belongs in App-private storage and is not conceptually part of a user-selected download root.
+The durable metadata database belongs in App-private storage and is not conceptually part of a user-selected download root. Production now implements this as `<storage root>/chapter_downloads.sqlite`; `PersistentDownloadArtifactStore` receives its byte `CacheLayout` separately from `SqliteIndex(indexPath)`. A legacy root-coupled `cache.sqlite` is imported once with SQLite `VACUUM INTO` plus `integrity_check`; successful authority switch does not require legacy cleanup to succeed.
 
 A change from root A to root B changes the default destination for future materialization. Existing replicas on A remain valid unless the user explicitly migrates or deletes them.
 
@@ -343,7 +343,7 @@ The migration is intentionally incremental and each functional boundary should b
 2. Make persistent artifact Reader hits truly stream from `ArtifactCacheStreamEntry.open()`; remove the full-page `readPage -> Uint8List` local fast path for remote pages.
 3. Make durable partials adoptable as the active spool and allow ordered local replay + network suffix concurrency. Exact POSIX active-spool adoption is implemented; SAF/non-capable backends retain streaming-copy fallback, while replay/suffix concurrency remains pending.
 4. Introduce StorageRoot + AccessLocator modeling and direct/SAF same-root capability proof. The ephemeral alias-proof seam is implemented; durable root registry/health and data-plane selection remain pending.
-5. Move durable download metadata authority to App-private SQLite while retaining compatibility migration from existing stores.
+5. **Implemented:** move durable download metadata authority to App-private SQLite while retaining one-time compatibility migration from existing root-coupled stores.
 6. Split logical artifact binding from physical replica location/health.
 7. Replace persistent N-dependent page numbering with sparse materialized ExportLayout + direct VersionBaseline mappings; historical version edges remain provenance only.
 8. Replace whole-store directory moves with per-replica, resumable migration and retained multi-root reads.

@@ -302,6 +302,150 @@ void main() {
     expect(await to.exists(), isFalse);
   });
 
+  test('legacy cache index migrates into App-private metadata', () async {
+    final legacy = dir('legacy-metadata-store');
+    final appRoot = dir('app-private-root');
+    await legacy.create(recursive: true);
+    await appRoot.create(recursive: true);
+    final legacyPath =
+        '${legacy.path}${Platform.pathSeparator}cache.sqlite';
+    final metadataPath = defaultChapterDownloadMetadataPath(appRoot.path);
+    final db = sql.sqlite3.open(legacyPath);
+    db.execute('PRAGMA journal_mode = WAL');
+    db.execute(
+      'CREATE TABLE cache_entry (key TEXT NOT NULL PRIMARY KEY, path TEXT NOT NULL)',
+    );
+    db.execute(
+      'INSERT INTO cache_entry (key, path) VALUES (?, ?)',
+      <Object?>['page', '${legacy.path}/final/page.bin'],
+    );
+    db.execute('PRAGMA user_version = 6');
+    db.close();
+
+    expect(
+      await migrateLegacyChapterDownloadMetadata(
+        legacyDbPath: legacyPath,
+        metadataDbPath: metadataPath,
+      ),
+      isTrue,
+    );
+
+    expect(await File(metadataPath).exists(), isTrue);
+    expect(await File(legacyPath).exists(), isFalse);
+    expect(await File('$legacyPath-wal').exists(), isFalse);
+    expect(await File('$legacyPath-shm').exists(), isFalse);
+    final migrated = sql.sqlite3.open(metadataPath);
+    try {
+      expect(
+        migrated.select('PRAGMA user_version').single.values.single,
+        6,
+      );
+      final row = migrated.select(
+        'SELECT key, path FROM cache_entry',
+      ).single;
+      expect(row['key'], 'page');
+      expect(row['path'], '${legacy.path}/final/page.bin');
+    } finally {
+      migrated.close();
+    }
+  });
+
+  test('existing App-private metadata is never overwritten by legacy state',
+      () async {
+    final legacy = dir('legacy-metadata-loser');
+    final appRoot = dir('app-private-winner');
+    await legacy.create(recursive: true);
+    await appRoot.create(recursive: true);
+    final legacyPath =
+        '${legacy.path}${Platform.pathSeparator}cache.sqlite';
+    final metadataPath = defaultChapterDownloadMetadataPath(appRoot.path);
+    final legacyDb = sql.sqlite3.open(legacyPath);
+    legacyDb.execute('CREATE TABLE marker (value TEXT NOT NULL)');
+    legacyDb.execute("INSERT INTO marker (value) VALUES ('legacy')");
+    legacyDb.close();
+    final privateDb = sql.sqlite3.open(metadataPath);
+    privateDb.execute('CREATE TABLE marker (value TEXT NOT NULL)');
+    privateDb.execute("INSERT INTO marker (value) VALUES ('private')");
+    privateDb.close();
+
+    expect(
+      await migrateLegacyChapterDownloadMetadata(
+        legacyDbPath: legacyPath,
+        metadataDbPath: metadataPath,
+      ),
+      isFalse,
+    );
+
+    final current = sql.sqlite3.open(metadataPath);
+    try {
+      expect(
+        current.select('SELECT value FROM marker').single['value'],
+        'private',
+      );
+    } finally {
+      current.close();
+    }
+    expect(await File(legacyPath).exists(), isTrue);
+  });
+
+  test('byte-root move rewrites App-private metadata without moving it',
+      () async {
+    final from = dir('private-index-from');
+    final to = dir('private-index-to');
+    final appRoot = dir('private-index-app');
+    final separator = Platform.pathSeparator;
+    final sourcePath =
+        '${from.path}${separator}final${separator}page.bin';
+    await File(sourcePath).parent.create(recursive: true);
+    await File(sourcePath).writeAsBytes(const <int>[1, 2, 3]);
+    final staleLegacyIndex = File(
+      '${from.path}${separator}cache.sqlite',
+    );
+    await staleLegacyIndex.writeAsBytes(const <int>[9, 9, 9]);
+    await appRoot.create(recursive: true);
+    final metadataPath = defaultChapterDownloadMetadataPath(appRoot.path);
+    final db = sql.sqlite3.open(metadataPath);
+    db.execute(
+      'CREATE TABLE cache_entry (key TEXT NOT NULL PRIMARY KEY, '
+      'path TEXT NOT NULL, storage_root_id TEXT NOT NULL)',
+    );
+    db.execute(
+      'INSERT INTO cache_entry (key, path, storage_root_id) VALUES (?, ?, ?)',
+      <Object?>['page', sourcePath, from.path],
+    );
+    db.close();
+
+    final report = await moveChapterDownloadStore(
+      from: from.path,
+      to: to.path,
+      metadataDbPath: metadataPath,
+    );
+
+    expect(report.movedFileCount, 1);
+    expect(report.rewrittenRecordCount, 1);
+    expect(await File(metadataPath).exists(), isTrue);
+    expect(
+      await File('${to.path}${separator}cache.sqlite').exists(),
+      isFalse,
+      reason: 'detached metadata must never follow byte-root migration',
+    );
+    expect(await staleLegacyIndex.exists(), isFalse);
+    final current = sql.sqlite3.open(metadataPath);
+    try {
+      final row = current.select(
+        'SELECT path, storage_root_id FROM cache_entry WHERE key = ?',
+        <Object?>['page'],
+      ).single;
+      expect(
+        row['path'],
+        '${to.path}${separator}final${separator}page.bin',
+      );
+      expect(row['storage_root_id'], to.path);
+    } finally {
+      current.close();
+    }
+  });
+
   test('move rejects nested, equal, or contentless sources', () async {
     final from = dir('from');
     final separator = Platform.pathSeparator;

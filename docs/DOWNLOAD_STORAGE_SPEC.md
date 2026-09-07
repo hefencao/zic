@@ -84,6 +84,6 @@ This document is normative for the detailed download/storage behavior. `docs/SPE
 
 ## 9. Compatibility migration
 
-1. Existing `CacheRec.path` and download-root SQLite representations MAY be read during migration but MUST NOT remain the final logical identity authority.
+1. Existing `CacheRec.path` and download-root SQLite representations MAY be read during migration but MUST NOT remain the final logical identity authority. Production chapter metadata MUST open from App-private `chapter_downloads.sqlite`; a legacy root `cache.sqlite` MAY be imported only when the private DB does not yet exist, and the imported snapshot MUST pass SQLite integrity validation before it becomes authority.
 2. Existing SAF-only and direct-only placements MUST remain readable throughout staged migration.
 3. No refactor phase may silently orphan existing pinned/manual downloads, valid partials, or still-readable old roots.

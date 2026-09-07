@@ -10,6 +10,96 @@ String defaultChapterDownloadDirectory(String storageRoot) {
   return '${_stripTrailingSeparator(storageRoot)}${separator}offline_chapters';
 }
 
+/// App-private SQLite authority for chapter-download metadata.
+///
+/// Artifact/partial bytes may live on a user-selected root, but this database
+/// deliberately stays under the application support root so changing export
+/// roots never requires moving metadata authority with the bytes.
+String defaultChapterDownloadMetadataPath(String storageRoot) {
+  final separator = Platform.pathSeparator;
+  return '${_stripTrailingSeparator(storageRoot)}${separator}chapter_downloads.sqlite';
+}
+
+/// Location used by pre-App-private chapter metadata for one configured byte
+/// root. SAF historically kept its SQLite index in the default private byte
+/// staging directory even though sealed finals were mirrored through SAF.
+String legacyChapterDownloadMetadataPath({
+  required String storageRoot,
+  required String downloadDirectory,
+}) {
+  final directory = downloadDirectory.startsWith('saf://')
+      ? defaultChapterDownloadDirectory(storageRoot)
+      : downloadDirectory;
+  return '${_stripTrailingSeparator(directory)}${Platform.pathSeparator}cache.sqlite';
+}
+
+/// Imports a legacy download-root `cache.sqlite` into App-private metadata.
+///
+/// SQLite performs the snapshot with `VACUUM INTO`, so committed WAL content is
+/// included without copying database sidecars by hand. The legacy files are
+/// removed only after the snapshot passes `PRAGMA integrity_check` and has
+/// atomically become the destination authority.
+Future<bool> migrateLegacyChapterDownloadMetadata({
+  required String legacyDbPath,
+  required String metadataDbPath,
+}) async {
+  final legacy = File(legacyDbPath);
+  final metadata = File(metadataDbPath);
+  if (_comparisonPath(legacy.path) == _comparisonPath(metadata.path) ||
+      await metadata.exists() ||
+      !await legacy.exists()) {
+    return false;
+  }
+  await metadata.parent.create(recursive: true);
+  final temporaryPath = '$metadataDbPath.zic-metadata-migration';
+  await _deleteSqliteFileSet(temporaryPath);
+
+  final source = sql.sqlite3.open(legacy.path);
+  try {
+    final escaped = temporaryPath.replaceAll("'", "''");
+    source.execute("VACUUM INTO '$escaped'");
+  } finally {
+    source.close();
+  }
+
+  final migrated = sql.sqlite3.open(temporaryPath);
+  try {
+    final rows = migrated.select('PRAGMA integrity_check');
+    if (rows.length != 1 || rows.single.values.single != 'ok') {
+      throw StateError('migrated chapter-download metadata failed integrity_check');
+    }
+  } finally {
+    migrated.close();
+  }
+
+  if (await metadata.exists()) {
+    // Another startup owner won the same migration race. Keep its authority
+    // and discard only this verified temporary snapshot.
+    await _deleteSqliteFileSet(temporaryPath);
+    return false;
+  }
+  await File(temporaryPath).rename(metadataDbPath);
+  // The App-private snapshot is authoritative now. A legacy root that became
+  // read-only after the snapshot must not turn successful adoption into a
+  // startup failure; stale sidecars are ignored by all new opens.
+  await _deleteSqliteFileSet(legacyDbPath, ignoreErrors: true);
+  return true;
+}
+
+Future<void> _deleteSqliteFileSet(
+  String path, {
+  bool ignoreErrors = false,
+}) async {
+  for (final suffix in const <String>['', '-wal', '-shm', '-journal']) {
+    final file = File('$path$suffix');
+    try {
+      if (await file.exists()) await file.delete();
+    } on FileSystemException {
+      if (!ignoreErrors) rethrow;
+    }
+  }
+}
+
 /// Resolves the effective chapter-download store directory for a user-picked
 /// parent directory.
 ///
@@ -128,12 +218,12 @@ final class ChapterDownloadStoreMoveReport {
   final int rewrittenRecordCount;
 }
 
-/// Moves one chapter-download store (SQLite index plus partial/final artifact
-/// bytes) from [from] to [to], rewriting every indexed record path to the new
-/// location.
+/// Moves one chapter-download byte store from [from] to [to], rewriting
+/// indexed record paths to the new location.
 ///
-/// Index and artifacts always travel together: callers must never point the
-/// download configuration at a new directory while leaving either side behind.
+/// Legacy callers omit [metadataDbPath] and keep the historical colocated
+/// `cache.sqlite` behavior. Production passes the App-private metadata path;
+/// the database then stays in place while only artifact/export bytes move.
 /// The operation is idempotent so a crashed earlier attempt can be completed
 /// by running it again.
 ///
@@ -143,6 +233,7 @@ final class ChapterDownloadStoreMoveReport {
 Future<ChapterDownloadStoreMoveReport> moveChapterDownloadStore({
   required String from,
   required String to,
+  String? metadataDbPath,
 }) async {
   final source = _normalizeDirectoryPath(from);
   final target = _normalizeDirectoryPath(to);
@@ -157,6 +248,16 @@ Future<ChapterDownloadStoreMoveReport> moveChapterDownloadStore({
   }
   final sourceRoot = Directory(source);
   final targetRoot = Directory(target);
+  final detachedLegacyMetadataPaths = metadataDbPath == null
+      ? const <String>{}
+      : <String>{
+          '$source${Platform.pathSeparator}cache.sqlite',
+          '$source${Platform.pathSeparator}cache.sqlite-wal',
+          '$source${Platform.pathSeparator}cache.sqlite-shm',
+          '$source${Platform.pathSeparator}cache.sqlite-journal',
+        };
+  bool isDetachedLegacyMetadata(FileSystemEntity entity) =>
+      detachedLegacyMetadataPaths.contains(entity.path);
   final sourceHasContent = _containsStore(source);
   final targetHasContent = _containsStore(target);
   if (!sourceHasContent && !targetHasContent) {
@@ -237,6 +338,9 @@ Future<ChapterDownloadStoreMoveReport> moveChapterDownloadStore({
   ) async {
     if (!await current.exists()) return;
     await for (final entity in current.list(followLinks: false)) {
+      if (current.path == sourceRoot.path && isDetachedLegacyMetadata(entity)) {
+        continue;
+      }
       final name = entity.path.substring(current.path.length + 1);
       final destinationPath =
           '${destination.path}${Platform.pathSeparator}$name';
@@ -301,6 +405,9 @@ Future<ChapterDownloadStoreMoveReport> moveChapterDownloadStore({
     if (!await current.exists()) return;
     await destination.create(recursive: true);
     await for (final entity in current.list(followLinks: false)) {
+      if (current.path == sourceRoot.path && isDetachedLegacyMetadata(entity)) {
+        continue;
+      }
       final name = entity.path.substring(current.path.length + 1);
       final targetEntity = '${destination.path}${Platform.pathSeparator}$name';
       if (entity is File) {
@@ -361,10 +468,21 @@ Future<ChapterDownloadStoreMoveReport> moveChapterDownloadStore({
 
   final separator = Platform.pathSeparator;
   final rewrittenRecords = _rewriteIndexPaths(
-    dbPath: '${targetRoot.path}${separator}cache.sqlite',
+    dbPath: metadataDbPath ??
+        '${targetRoot.path}${separator}cache.sqlite',
     oldPrefix: source,
     newPrefix: target,
   );
+  if (metadataDbPath != null) {
+    await _deleteSqliteFileSet(
+      '$source${separator}cache.sqlite',
+      ignoreErrors: true,
+    );
+    if (await sourceRoot.exists() &&
+        (await sourceRoot.list(followLinks: false).isEmpty)) {
+      await sourceRoot.delete();
+    }
+  }
   return ChapterDownloadStoreMoveReport(
     movedFileCount: movedFiles,
     rewrittenRecordCount: rewrittenRecords,
