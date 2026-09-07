@@ -319,7 +319,7 @@ void main() {
     addTearDown(cache.close);
 
     final invalidRuntimeBody = isA<Failure>()
-        .having((error) => error.code, 'code', ErrorCode.network)
+        .having((error) => error.code, 'code', ErrorCode.source)
         .having(
           (error) => error.details['runtimeBodyImageSignatureRejected'],
           'runtime signature rejection',
