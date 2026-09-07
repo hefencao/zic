@@ -37,7 +37,7 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
     db.execute('PRAGMA foreign_keys = ON');
     db.execute('PRAGMA journal_mode = WAL');
     final version = db.select('PRAGMA user_version').first.values.first as int;
-    if (version > 8) {
+    if (version > 9) {
       throw StateError('unsupported cache schema version: $version');
     }
     db.execute('BEGIN IMMEDIATE');
@@ -174,6 +174,25 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
         'ON artifact_replica(artifact_id, touched_us)',
       );
       db.execute('''
+        CREATE TABLE IF NOT EXISTS artifact_replica_migration (
+          replica_id TEXT NOT NULL PRIMARY KEY,
+          source_access_locator TEXT NOT NULL,
+          source_storage_root_id TEXT NOT NULL,
+          destination_access_locator TEXT NOT NULL,
+          destination_storage_root_id TEXT NOT NULL,
+          temporary_access_locator TEXT NOT NULL,
+          phase TEXT NOT NULL,
+          created_us INTEGER NOT NULL,
+          touched_us INTEGER NOT NULL,
+          FOREIGN KEY (replica_id) REFERENCES artifact_replica(replica_id) ON DELETE CASCADE,
+          CHECK (phase IN ('copying', 'cleanupPending'))
+        )
+      ''');
+      db.execute(
+        'CREATE INDEX IF NOT EXISTS artifact_replica_migration_phase '
+        'ON artifact_replica_migration(phase, touched_us)',
+      );
+      db.execute('''
         CREATE TABLE IF NOT EXISTS storage_root (
           root_id TEXT NOT NULL PRIMARY KEY,
           created_us INTEGER NOT NULL,
@@ -202,7 +221,7 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       _backfillArtifactReplicas(db);
       _backfillStorageRootRegistry(db);
       _migrateDownloadIdentityKeys(db);
-      db.execute('PRAGMA user_version = 8');
+      db.execute('PRAGMA user_version = 9');
       db.execute('COMMIT');
     } on Object {
       db.execute('ROLLBACK');
@@ -318,6 +337,162 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       createdUs: row['created_us']! as int,
       touchedUs: row['touched_us']! as int,
     );
+  }
+
+  Future<ArtifactReplicaMigrationRecord?> getArtifactReplicaMigration(
+    String replicaId,
+  ) async {
+    final normalized = replicaId.trim();
+    if (normalized.isEmpty) return null;
+    final rows = _requireDb().select(
+      'SELECT replica_id, source_access_locator, source_storage_root_id, '
+      'destination_access_locator, destination_storage_root_id, '
+      'temporary_access_locator, phase, created_us, touched_us '
+      'FROM artifact_replica_migration WHERE replica_id = ? LIMIT 1',
+      <Object?>[normalized],
+    );
+    if (rows.isEmpty) return null;
+    return _readArtifactReplicaMigration(rows.first);
+  }
+
+  Future<List<ArtifactReplicaMigrationRecord>> listArtifactReplicaMigrations({
+    ArtifactReplicaMigrationPhase? phase,
+  }) async {
+    final rows = phase == null
+        ? _requireDb().select(
+            'SELECT replica_id, source_access_locator, source_storage_root_id, '
+            'destination_access_locator, destination_storage_root_id, '
+            'temporary_access_locator, phase, created_us, touched_us '
+            'FROM artifact_replica_migration ORDER BY touched_us, replica_id',
+          )
+        : _requireDb().select(
+            'SELECT replica_id, source_access_locator, source_storage_root_id, '
+            'destination_access_locator, destination_storage_root_id, '
+            'temporary_access_locator, phase, created_us, touched_us '
+            'FROM artifact_replica_migration WHERE phase = ? '
+            'ORDER BY touched_us, replica_id',
+            <Object?>[phase.name],
+          );
+    return rows.map(_readArtifactReplicaMigration).toList(growable: false);
+  }
+
+  Future<List<ArtifactReplicaMigrationRecord>>
+      listArtifactReplicaMigrationsForArtifact(String artifactId) async {
+    final normalized = artifactId.trim();
+    if (normalized.isEmpty) {
+      return const <ArtifactReplicaMigrationRecord>[];
+    }
+    final rows = _requireDb().select(
+      'SELECT m.replica_id, m.source_access_locator, '
+      'm.source_storage_root_id, m.destination_access_locator, '
+      'm.destination_storage_root_id, m.temporary_access_locator, m.phase, '
+      'm.created_us, m.touched_us FROM artifact_replica_migration m '
+      'JOIN artifact_replica r ON r.replica_id = m.replica_id '
+      'WHERE r.artifact_id = ? ORDER BY m.touched_us, m.replica_id',
+      <Object?>[normalized],
+    );
+    return rows.map(_readArtifactReplicaMigration).toList(growable: false);
+  }
+
+  Future<ArtifactReplicaMigrationRecord> beginArtifactReplicaMigration({
+    required String replicaId,
+    required String sourceAccessLocator,
+    required String sourceStorageRootId,
+    required String destinationAccessLocator,
+    required String destinationStorageRootId,
+    required String temporaryAccessLocator,
+    required int touchedUs,
+  }) async {
+    final db = _requireDb();
+    final normalizedReplicaId = replicaId.trim();
+    final sourceLocator = sourceAccessLocator.trim();
+    final sourceRoot = sourceStorageRootId.trim();
+    final destinationLocator = destinationAccessLocator.trim();
+    final destinationRoot = destinationStorageRootId.trim();
+    final temporaryLocator = temporaryAccessLocator.trim();
+    if (normalizedReplicaId.isEmpty ||
+        sourceLocator.isEmpty ||
+        destinationLocator.isEmpty ||
+        temporaryLocator.isEmpty) {
+      throw ArgumentError('replica migration identities must not be empty');
+    }
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      final existing = db.select(
+        'SELECT replica_id, source_access_locator, source_storage_root_id, '
+        'destination_access_locator, destination_storage_root_id, '
+        'temporary_access_locator, phase, created_us, touched_us '
+        'FROM artifact_replica_migration WHERE replica_id = ? LIMIT 1',
+        <Object?>[normalizedReplicaId],
+      );
+      if (existing.isNotEmpty) {
+        final record = _readArtifactReplicaMigration(existing.first);
+        if (record.phase != ArtifactReplicaMigrationPhase.copying ||
+            record.sourceAccessLocator != sourceLocator ||
+            record.sourceStorageRootId !=
+                (sourceRoot.isEmpty ? 'default' : sourceRoot) ||
+            record.destinationAccessLocator != destinationLocator ||
+            record.destinationStorageRootId !=
+                (destinationRoot.isEmpty ? 'default' : destinationRoot) ||
+            record.temporaryAccessLocator != temporaryLocator) {
+          throw StateError(
+            'replica migration already exists with a different durable state',
+          );
+        }
+        db.execute('COMMIT');
+        return record;
+      }
+      final replicas = db.select(
+        'SELECT access_locator, storage_root_id FROM artifact_replica '
+        'WHERE replica_id = ? LIMIT 1',
+        <Object?>[normalizedReplicaId],
+      );
+      if (replicas.isEmpty) {
+        throw StateError('artifact replica $normalizedReplicaId does not exist');
+      }
+      final replica = replicas.first;
+      final effectiveSourceRoot = sourceRoot.isEmpty ? 'default' : sourceRoot;
+      if (replica['access_locator'] != sourceLocator ||
+          ((replica['storage_root_id'] as String?) ?? 'default') !=
+              effectiveSourceRoot) {
+        throw StateError('replica source authority changed before migration began');
+      }
+      final effectiveDestinationRoot =
+          destinationRoot.isEmpty ? 'default' : destinationRoot;
+      db.execute(
+        'INSERT INTO artifact_replica_migration '
+        '(replica_id, source_access_locator, source_storage_root_id, '
+        'destination_access_locator, destination_storage_root_id, '
+        'temporary_access_locator, phase, created_us, touched_us) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        <Object?>[
+          normalizedReplicaId,
+          sourceLocator,
+          effectiveSourceRoot,
+          destinationLocator,
+          effectiveDestinationRoot,
+          temporaryLocator,
+          ArtifactReplicaMigrationPhase.copying.name,
+          touchedUs,
+          touchedUs,
+        ],
+      );
+      db.execute('COMMIT');
+      return ArtifactReplicaMigrationRecord(
+        replicaId: normalizedReplicaId,
+        sourceAccessLocator: sourceLocator,
+        sourceStorageRootId: effectiveSourceRoot,
+        destinationAccessLocator: destinationLocator,
+        destinationStorageRootId: effectiveDestinationRoot,
+        temporaryAccessLocator: temporaryLocator,
+        phase: ArtifactReplicaMigrationPhase.copying,
+        createdUs: touchedUs,
+        touchedUs: touchedUs,
+      );
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
   }
 
   Future<ArtifactReplicaRecord> putArtifactReplica({
@@ -450,6 +625,133 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
     }
   }
 
+  /// Atomically moves replica authority to the durable migration destination
+  /// and marks the old source as cleanup debt.
+  Future<ArtifactReplicaRecord> commitArtifactReplicaMigration({
+    required String replicaId,
+    required int touchedUs,
+  }) async {
+    final db = _requireDb();
+    final normalizedReplicaId = replicaId.trim();
+    if (normalizedReplicaId.isEmpty) {
+      throw ArgumentError('replica identity must not be empty');
+    }
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      final migrationRows = db.select(
+        'SELECT replica_id, source_access_locator, source_storage_root_id, '
+        'destination_access_locator, destination_storage_root_id, '
+        'temporary_access_locator, phase, created_us, touched_us '
+        'FROM artifact_replica_migration WHERE replica_id = ? LIMIT 1',
+        <Object?>[normalizedReplicaId],
+      );
+      if (migrationRows.isEmpty) {
+        throw StateError('artifact replica migration does not exist');
+      }
+      final migration = _readArtifactReplicaMigration(migrationRows.first);
+      if (migration.phase != ArtifactReplicaMigrationPhase.copying) {
+        throw StateError('artifact replica migration is not in copying phase');
+      }
+      final rows = db.select(
+        'SELECT artifact_id, access_locator, storage_root_id, created_us '
+        'FROM artifact_replica WHERE replica_id = ? LIMIT 1',
+        <Object?>[normalizedReplicaId],
+      );
+      if (rows.isEmpty) {
+        throw StateError('artifact replica $normalizedReplicaId does not exist');
+      }
+      final current = rows.first;
+      if (current['access_locator'] != migration.sourceAccessLocator ||
+          ((current['storage_root_id'] as String?) ?? 'default') !=
+              migration.sourceStorageRootId) {
+        throw StateError('replica source authority changed during migration');
+      }
+      final artifactId = current['artifact_id']! as String;
+      final createdUs = current['created_us']! as int;
+      final collision = db.select(
+        'SELECT replica_id FROM artifact_replica WHERE access_locator = ? '
+        'AND replica_id != ? LIMIT 1',
+        <Object?>[
+          migration.destinationAccessLocator,
+          normalizedReplicaId,
+        ],
+      );
+      if (collision.isNotEmpty) {
+        throw StateError(
+          'artifact replica destination is already owned by another replica',
+        );
+      }
+      _ensureStorageRootLocator(
+        db,
+        migration.destinationStorageRootId,
+        touchedUs: touchedUs,
+      );
+      db.execute(
+        'UPDATE artifact_replica SET access_locator = ?, storage_root_id = ?, '
+        'touched_us = ? WHERE replica_id = ?',
+        <Object?>[
+          migration.destinationAccessLocator,
+          migration.destinationStorageRootId,
+          touchedUs,
+          normalizedReplicaId,
+        ],
+      );
+      if (normalizedReplicaId == artifactId) {
+        db.execute(
+          'UPDATE artifact_object SET path = ?, storage_root_id = ?, '
+          'touched_us = ? WHERE artifact_id = ?',
+          <Object?>[
+            migration.destinationAccessLocator,
+            migration.destinationStorageRootId,
+            touchedUs,
+            artifactId,
+          ],
+        );
+        db.execute(
+          'UPDATE cache_entry SET path = ?, storage_root_id = ? '
+          "WHERE artifact_id = ? AND state = 'ready'",
+          <Object?>[
+            migration.destinationAccessLocator,
+            migration.destinationStorageRootId,
+            artifactId,
+          ],
+        );
+      }
+      db.execute(
+        'UPDATE artifact_replica_migration SET phase = ?, touched_us = ? '
+        'WHERE replica_id = ?',
+        <Object?>[
+          ArtifactReplicaMigrationPhase.cleanupPending.name,
+          touchedUs,
+          normalizedReplicaId,
+        ],
+      );
+      db.execute('COMMIT');
+      _invalidateCache();
+      return ArtifactReplicaRecord(
+        replicaId: normalizedReplicaId,
+        artifactId: artifactId,
+        accessLocator: migration.destinationAccessLocator,
+        storageRootId: migration.destinationStorageRootId,
+        createdUs: createdUs,
+        touchedUs: touchedUs,
+      );
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  Future<void> finishArtifactReplicaMigrationCleanup(String replicaId) async {
+    final normalized = replicaId.trim();
+    if (normalized.isEmpty) return;
+    _requireDb().execute(
+      'DELETE FROM artifact_replica_migration '
+      "WHERE replica_id = ? AND phase = 'cleanupPending'",
+      <Object?>[normalized],
+    );
+  }
+
   Future<StorageRootRecord?> getStorageRoot(String rootIdOrLocator) async {
     final identity = rootIdOrLocator.trim();
     if (identity.isEmpty || identity == 'default') return null;
@@ -530,10 +832,35 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
           <Object?>[rootId, oldRoot],
         );
         db.execute(
+          'UPDATE artifact_replica_migration SET source_storage_root_id = ? '
+          'WHERE source_storage_root_id = ?',
+          <Object?>[rootId, oldRoot],
+        );
+        db.execute(
+          'UPDATE artifact_replica_migration SET destination_storage_root_id = ? '
+          'WHERE destination_storage_root_id = ?',
+          <Object?>[rootId, oldRoot],
+        );
+        db.execute(
           'DELETE FROM storage_root WHERE root_id = ?',
           <Object?>[oldRoot],
         );
       }
+      // A migration destination may name a not-yet-materialized root before
+      // it has its own storage_root row. The alias proof itself is enough to
+      // canonicalize those durable progress references; requiring the root to
+      // have existed already would leave a migration split across two names
+      // for the same physical directory.
+      db.execute(
+        'UPDATE artifact_replica_migration SET source_storage_root_id = ? '
+        'WHERE source_storage_root_id = ? OR source_storage_root_id = ?',
+        <Object?>[rootId, direct, saf],
+      );
+      db.execute(
+        'UPDATE artifact_replica_migration SET destination_storage_root_id = ? '
+        'WHERE destination_storage_root_id = ? OR destination_storage_root_id = ?',
+        <Object?>[rootId, direct, saf],
+      );
 
       void upsertLocator(StorageAccessLocatorKind kind, String locator) {
         db.execute(
@@ -1338,6 +1665,24 @@ void _migrateDownloadIdentityKeys(sql.Database db) {
       // Same compatibility rule for partially written legacy JSON.
     }
   }
+}
+
+ArtifactReplicaMigrationRecord _readArtifactReplicaMigration(sql.Row row) {
+  return ArtifactReplicaMigrationRecord(
+    replicaId: row['replica_id']! as String,
+    sourceAccessLocator: row['source_access_locator']! as String,
+    sourceStorageRootId:
+        (row['source_storage_root_id'] as String?) ?? 'default',
+    destinationAccessLocator: row['destination_access_locator']! as String,
+    destinationStorageRootId:
+        (row['destination_storage_root_id'] as String?) ?? 'default',
+    temporaryAccessLocator: row['temporary_access_locator']! as String,
+    phase: ArtifactReplicaMigrationPhase.values.byName(
+      row['phase']! as String,
+    ),
+    createdUs: row['created_us']! as int,
+    touchedUs: row['touched_us']! as int,
+  );
 }
 
 StorageRootRecord? _readStorageRoot(sql.Database db, String rootId) {

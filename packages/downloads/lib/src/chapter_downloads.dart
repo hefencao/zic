@@ -1383,6 +1383,38 @@ final class PersistentDownloadArtifactStore
     return _serializeArtifactReplicaMutation(
       record.effectiveArtifactId,
       () => _serializeStructuredWrite(destinationLocator, () async {
+    final pendingMigration =
+        await _index.getArtifactReplicaMigration(normalizedReplicaId);
+    if (pendingMigration?.phase ==
+        ArtifactReplicaMigrationPhase.cleanupPending) {
+      final cleanupComplete = await _cleanupCommittedReplicaMigration(
+        pendingMigration!,
+      );
+      final current = (await _index.listArtifactReplicas(
+        record.effectiveArtifactId,
+      )).where(
+        (candidate) => candidate.replicaId == normalizedReplicaId,
+      ).firstOrNull;
+      if (current == null) {
+        throw const Failure(
+          code: ErrorCode.policy,
+          message: 'cleanup debt refers to a missing artifact replica',
+        );
+      }
+      if (current.accessLocator == destinationLocator &&
+          current.storageRootId == destinationRoot) {
+        return ArtifactReplicaMigrationResult(
+          replica: current,
+          sourceCleanupComplete: cleanupComplete,
+        );
+      }
+      if (!cleanupComplete) {
+        throw const Failure(
+          code: ErrorCode.policy,
+          message: 'artifact replica has unresolved migration cleanup debt',
+        );
+      }
+    }
     final replicas = await _resolveArtifactReplicas(record);
     final source = replicas
         .where((candidate) => candidate.replicaId == normalizedReplicaId)
@@ -1424,76 +1456,72 @@ final class PersistentDownloadArtifactStore
       storageRootId: destinationRoot,
     );
 
-    final selected = await _selectReadableArtifactAccess(sourceAliases);
-    final sourceAccess = selected.candidate.access;
-    final materialized = await _materializeReplicaDestination(
+    final temporaryLocator = _replicaMigrationTemporaryLocator(
+      replicaId: normalizedReplicaId,
+      destinationAccessLocator: destinationLocator,
+    );
+    final migration = await _index.beginArtifactReplicaMigration(
+      replicaId: normalizedReplicaId,
+      sourceAccessLocator: source.accessLocator,
+      sourceStorageRootId: source.storageRootId,
+      destinationAccessLocator: destinationLocator,
+      destinationStorageRootId: destinationRoot,
+      temporaryAccessLocator: temporaryLocator,
+      touchedUs: DateTime.now().toUtc().microsecondsSinceEpoch,
+    );
+
+    await _materializeReplicaDestination(
       record: record,
       sourceCandidates: sourceAliases,
       destinationAccessLocator: destinationLocator,
+      temporaryAccessLocator: migration.temporaryAccessLocator,
       control: control,
     );
-    var authorityCommitted = false;
-    try {
-      control?.throwIfCancelled();
-      await _verifyReplicaDestination(
-        record,
-        destinationLocator,
-        control: control,
-      );
-      control?.throwIfCancelled();
-      final moved = await _index.relocateArtifactReplica(
-        replicaId: normalizedReplicaId,
-        accessLocator: destinationLocator,
-        storageRootId: destinationRoot,
-        touchedUs: DateTime.now().toUtc().microsecondsSinceEpoch,
-      );
-      authorityCommitted = true;
-      var sourceCleanupComplete =
-          sourceAccess.accessLocator == destinationLocator;
-      if (!sourceCleanupComplete) {
-        try {
-          await _withStorageWriteQuantum(() async {
-            await _bytes.delete(sourceAccess.accessLocator);
-            await _deleteArtifactSidecar(sourceAccess.accessLocator);
-          });
-          sourceCleanupComplete = true;
-        } on Object {
-          sourceCleanupComplete = false;
-        }
-      }
-      return ArtifactReplicaMigrationResult(
-        replica: moved,
-        sourceCleanupComplete: sourceCleanupComplete,
-      );
-    } on Object {
-      if (!authorityCommitted && materialized.createdDestination) {
-        try {
-          await _withStorageWriteQuantum(
-            () => _bytes.delete(destinationLocator),
-          );
-        } on Object {
-          // The old authority still points at the source. An unreachable
-          // destination orphan is cleanup debt, not authority loss.
-        }
-      }
-      rethrow;
-    }
+    control?.throwIfCancelled();
+    await _verifyReplicaDestination(
+      record,
+      destinationLocator,
+      control: control,
+    );
+    control?.throwIfCancelled();
+    final moved = await _index.commitArtifactReplicaMigration(
+      replicaId: normalizedReplicaId,
+      touchedUs: DateTime.now().toUtc().microsecondsSinceEpoch,
+    );
+    final sourceCleanupComplete = await _cleanupCommittedReplicaMigration(
+      migration,
+    );
+    return ArtifactReplicaMigrationResult(
+      replica: moved,
+      sourceCleanupComplete: sourceCleanupComplete,
+    );
       }),
     );
   });
 
-  Future<({bool createdDestination})> _materializeReplicaDestination({
+  Future<void> _materializeReplicaDestination({
     required CacheRec record,
     required List<_ArtifactAccessCandidate> sourceCandidates,
     required String destinationAccessLocator,
+    required String temporaryAccessLocator,
     TaskControl? control,
   }) async {
     final safDestination = parseSafRecordPath(destinationAccessLocator);
+    final safTemporary = parseSafRecordPath(temporaryAccessLocator);
     if (safDestination == null) {
+      if (safTemporary != null) {
+        throw const Failure(
+          code: ErrorCode.policy,
+          message: 'direct replica migration requires a direct temporary path',
+        );
+      }
       _rejectLocalPathLinks(destinationAccessLocator);
+      _rejectLocalPathLinks(temporaryAccessLocator);
     } else if (safTreeIo == null ||
         safTreeUri == null ||
-        safDestination.treeUri != safTreeUri) {
+        safDestination.treeUri != safTreeUri ||
+        safTemporary == null ||
+        safTemporary.treeUri != safDestination.treeUri) {
       throw const Failure(
         code: ErrorCode.policy,
         message: 'replica migration cannot write an unavailable SAF tree',
@@ -1510,33 +1538,43 @@ final class PersistentDownloadArtifactStore
         destinationAccessLocator,
         control: control,
       );
-      return (createdDestination: false);
+      return;
     }
 
-    final suffix = DateTime.now().microsecondsSinceEpoch;
-    final iterator = StreamIterator<Uint8List>(
-      _readArtifactCandidates(
-        sourceCandidates,
-        start: 0,
-        endExclusive: record.bytes,
-      ),
+    var resumeOffset = await _validatedMigrationResumeOffset(
+      record: record,
+      sourceCandidates: sourceCandidates,
+      temporaryAccessLocator: temporaryAccessLocator,
+      control: control,
     );
-    final crc = Crc32();
-    var copied = 0;
+    StreamIterator<Uint8List>? iterator;
     Object? primaryError;
     StackTrace? primaryStack;
 
     if (safDestination == null) {
       final destination = File(destinationAccessLocator);
-      final temporary = File(
-        '$destinationAccessLocator.zic-migrate-tmp-$suffix',
-      );
+      final temporary = File(temporaryAccessLocator);
       RandomAccessFile? writer;
       try {
         await _withStorageWriteQuantum(() async {
           await destination.parent.create(recursive: true);
-          writer = await temporary.open(mode: FileMode.write);
+          writer = await temporary.open(
+            mode: resumeOffset == 0 ? FileMode.write : FileMode.append,
+          );
+          final actualLength = await writer!.length();
+          if (actualLength != resumeOffset) {
+            await writer!.close();
+            writer = await temporary.open(mode: FileMode.write);
+            resumeOffset = 0;
+          }
         }, control: control);
+        iterator = StreamIterator<Uint8List>(
+          _readArtifactCandidates(
+            sourceCandidates,
+            start: resumeOffset,
+            endExclusive: record.bytes,
+          ),
+        );
         while (true) {
           final lease = await _storageWriteScheduler.acquireQuantum(
             control: control,
@@ -1544,10 +1582,7 @@ final class PersistentDownloadArtifactStore
           try {
             control?.throwIfCancelled();
             if (!await _moveNextMigrationChunk(iterator, control)) break;
-            final chunk = iterator.current;
-            await writer!.writeFrom(chunk);
-            crc.add(chunk);
-            copied += chunk.length;
+            await writer!.writeFrom(iterator.current);
           } finally {
             lease.release();
           }
@@ -1557,10 +1592,9 @@ final class PersistentDownloadArtifactStore
           await writer!.close();
           writer = null;
         }, control: control);
-        _requireReplicaCopyProof(record, copied: copied, checksum: crc.hex);
         await _verifyReplicaDestination(
           record,
-          temporary.path,
+          temporaryAccessLocator,
           control: control,
         );
         control?.throwIfCancelled();
@@ -1574,13 +1608,13 @@ final class PersistentDownloadArtifactStore
             destinationAccessLocator,
             control: control,
           );
-          return (createdDestination: false);
+          return;
         }
         await _withStorageWriteQuantum(
           () => temporary.rename(destinationAccessLocator),
           control: control,
         );
-        return (createdDestination: true);
+        return;
       } catch (error, stackTrace) {
         primaryError = error;
         primaryStack = stackTrace;
@@ -1589,45 +1623,63 @@ final class PersistentDownloadArtifactStore
           try {
             await _withStorageWriteQuantum(writer!.close);
           } on Object {
-            // Preserve the primary failure; temp cleanup below is best effort.
+            // Keep durable temporary bytes for the next resume attempt.
           }
         }
-        try {
-          await iterator.cancel();
-        } on Object catch (error, stackTrace) {
-          if (primaryError == null) {
-            primaryError = error;
-            primaryStack = stackTrace;
-          }
-        }
-        final temporaryExists = await _withStorageWriteQuantum(
-          temporary.exists,
-        );
-        if (temporaryExists) {
+        if (iterator != null) {
           try {
-            await _withStorageWriteQuantum(temporary.delete);
-          } on Object {
-            // This path is not authoritative; later repair may remove the temp.
+            await iterator.cancel();
+          } on Object catch (error, stackTrace) {
+            if (primaryError == null) {
+              primaryError = error;
+              primaryStack = stackTrace;
+            }
           }
         }
       }
     } else {
       final io = safTreeIo!;
-      final temporaryRelative =
-          '${safDestination.relativePath}.zic-migrate-tmp-$suffix';
-      final temporaryLocator = encodeSafRecordPath(
-        treeUri: safDestination.treeUri,
-        relativePath: temporaryRelative,
-      );
+      final temporaryRelative = safTemporary!.relativePath;
       int? writer;
       try {
         writer = await _withStorageWriteQuantum(
-          () => io.open(temporaryRelative, mode: SafWriteMode.writeTruncate),
+          () => io.open(
+            temporaryRelative,
+            mode: resumeOffset == 0
+                ? SafWriteMode.writeTruncate
+                : SafWriteMode.writeAppend,
+          ),
           control: control,
         );
         if (writer == null) {
           throw StateError('SAF tree refused replica migration temporary');
         }
+        final actualLength = await _withStorageWriteQuantum(
+          () => io.length(writer!),
+          control: control,
+        );
+        if (actualLength != resumeOffset) {
+          await _withStorageWriteQuantum(() => io.close(writer!), control: control);
+          final restarted = await _withStorageWriteQuantum(
+            () => io.open(
+              temporaryRelative,
+              mode: SafWriteMode.writeTruncate,
+            ),
+            control: control,
+          );
+          if (restarted == null) {
+            throw StateError('SAF tree refused replica migration restart');
+          }
+          writer = restarted;
+          resumeOffset = 0;
+        }
+        iterator = StreamIterator<Uint8List>(
+          _readArtifactCandidates(
+            sourceCandidates,
+            start: resumeOffset,
+            endExclusive: record.bytes,
+          ),
+        );
         while (true) {
           final lease = await _storageWriteScheduler.acquireQuantum(
             control: control,
@@ -1635,10 +1687,7 @@ final class PersistentDownloadArtifactStore
           try {
             control?.throwIfCancelled();
             if (!await _moveNextMigrationChunk(iterator, control)) break;
-            final chunk = iterator.current;
-            await io.write(writer, chunk);
-            crc.add(chunk);
-            copied += chunk.length;
+            await io.write(writer, iterator.current);
           } finally {
             lease.release();
           }
@@ -1647,10 +1696,9 @@ final class PersistentDownloadArtifactStore
           await io.close(writer!);
           writer = null;
         }, control: control);
-        _requireReplicaCopyProof(record, copied: copied, checksum: crc.hex);
         await _verifyReplicaDestination(
           record,
-          temporaryLocator,
+          temporaryAccessLocator,
           control: control,
         );
         control?.throwIfCancelled();
@@ -1664,7 +1712,7 @@ final class PersistentDownloadArtifactStore
             destinationAccessLocator,
             control: control,
           );
-          return (createdDestination: false);
+          return;
         }
         final committed = await _withStorageWriteQuantum(
           () => io.rename(temporaryRelative, safDestination.relativePath),
@@ -1681,13 +1729,13 @@ final class PersistentDownloadArtifactStore
               destinationAccessLocator,
               control: control,
             );
-            return (createdDestination: false);
+            return;
           }
           throw StateError(
             'SAF tree refused no-replace replica migration commit',
           );
         }
-        return (createdDestination: true);
+        return;
       } catch (error, stackTrace) {
         primaryError = error;
         primaryStack = stackTrace;
@@ -1696,30 +1744,181 @@ final class PersistentDownloadArtifactStore
           try {
             await _withStorageWriteQuantum(() => io.close(writer!));
           } on Object {
-            // Preserve the primary failure; temp cleanup below is best effort.
+            // Keep durable temporary bytes for the next resume attempt.
           }
         }
-        try {
-          await iterator.cancel();
-        } on Object catch (error, stackTrace) {
-          if (primaryError == null) {
-            primaryError = error;
-            primaryStack = stackTrace;
-          }
-        }
-        final temporaryExists = await _withStorageWriteQuantum(
-          () => io.exists(temporaryRelative),
-        );
-        if (temporaryExists) {
+        if (iterator != null) {
           try {
-            await _withStorageWriteQuantum(() => io.delete(temporaryRelative));
-          } on Object {
-            // This path is not authoritative; later repair may remove the temp.
+            await iterator.cancel();
+          } on Object catch (error, stackTrace) {
+            if (primaryError == null) {
+              primaryError = error;
+              primaryStack = stackTrace;
+            }
           }
         }
       }
     }
     Error.throwWithStackTrace(primaryError!, primaryStack!);
+  }
+
+  Future<int> _validatedMigrationResumeOffset({
+    required CacheRec record,
+    required List<_ArtifactAccessCandidate> sourceCandidates,
+    required String temporaryAccessLocator,
+    TaskControl? control,
+  }) async {
+    final preflight = await _withStorageWriteQuantum(() async {
+      final exists = await _bytes.exists(temporaryAccessLocator);
+      final length = exists ? await _bytes.length(temporaryAccessLocator) : 0;
+      return (exists: exists, length: length);
+    }, control: control);
+    if (!preflight.exists || preflight.length == 0) return 0;
+    if (preflight.length < 0 || preflight.length > record.bytes) {
+      await _deleteMigrationTemporary(temporaryAccessLocator, control: control);
+      return 0;
+    }
+    final temporaryChecksum = await _migrationRangeChecksum(
+      _bytes.readChunks(
+        temporaryAccessLocator,
+        start: 0,
+        endExclusive: preflight.length,
+      ),
+      expectedBytes: preflight.length,
+      control: control,
+    );
+    final sourceChecksum = await _migrationRangeChecksum(
+      _readArtifactCandidates(
+        sourceCandidates,
+        start: 0,
+        endExclusive: preflight.length,
+      ),
+      expectedBytes: preflight.length,
+      control: control,
+    );
+    if (temporaryChecksum != sourceChecksum) {
+      await _deleteMigrationTemporary(temporaryAccessLocator, control: control);
+      return 0;
+    }
+    return preflight.length;
+  }
+
+  Future<String> _migrationRangeChecksum(
+    Stream<Uint8List> chunks, {
+    required int expectedBytes,
+    TaskControl? control,
+  }) async {
+    final iterator = StreamIterator<Uint8List>(chunks);
+    final crc = Crc32();
+    var consumed = 0;
+    Object? primaryError;
+    StackTrace? primaryStack;
+    try {
+      while (true) {
+        final lease = await _storageWriteScheduler.acquireQuantum(
+          control: control,
+        );
+        try {
+          control?.throwIfCancelled();
+          if (!await _moveNextMigrationChunk(iterator, control)) break;
+          final chunk = iterator.current;
+          crc.add(chunk);
+          consumed += chunk.length;
+        } finally {
+          lease.release();
+        }
+      }
+    } catch (error, stackTrace) {
+      primaryError = error;
+      primaryStack = stackTrace;
+    }
+    try {
+      await iterator.cancel();
+    } on Object catch (error, stackTrace) {
+      if (primaryError == null) {
+        primaryError = error;
+        primaryStack = stackTrace;
+      }
+    }
+    if (primaryError != null) {
+      Error.throwWithStackTrace(primaryError, primaryStack!);
+    }
+    if (consumed != expectedBytes) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'migration resume prefix length changed during verification',
+      );
+    }
+    return crc.hex;
+  }
+
+  Future<void> _deleteMigrationTemporary(
+    String accessLocator, {
+    TaskControl? control,
+  }) async {
+    try {
+      await _withStorageWriteQuantum(
+        () => _bytes.delete(accessLocator),
+        control: control,
+      );
+    } on Object {
+      // The durable migration row still owns this non-authoritative temp. If
+      // truncation cannot be established now, the next attempt will re-check.
+    }
+  }
+
+  String _replicaMigrationTemporaryLocator({
+    required String replicaId,
+    required String destinationAccessLocator,
+  }) {
+    final token = defaultArtifactIdForPath(
+      'replica-migration:$replicaId:$destinationAccessLocator',
+    );
+    final saf = parseSafRecordPath(destinationAccessLocator);
+    if (saf != null) {
+      return encodeSafRecordPath(
+        treeUri: saf.treeUri,
+        relativePath: '${saf.relativePath}.zic-migrate-$token.part',
+      );
+    }
+    return '$destinationAccessLocator.zic-migrate-$token.part';
+  }
+
+  Future<bool> _cleanupCommittedReplicaMigration(
+    ArtifactReplicaMigrationRecord migration,
+  ) async {
+    var complete = true;
+    if (migration.sourceAccessLocator != migration.destinationAccessLocator) {
+      try {
+        await _withStorageWriteQuantum(() async {
+          await _bytes.delete(migration.sourceAccessLocator);
+          await _deleteArtifactSidecar(migration.sourceAccessLocator);
+          if (await _bytes.exists(migration.sourceAccessLocator)) {
+            throw StateError('replica migration source still exists');
+          }
+        });
+      } on Object {
+        complete = false;
+      }
+    }
+    if (migration.temporaryAccessLocator !=
+            migration.destinationAccessLocator &&
+        migration.temporaryAccessLocator != migration.sourceAccessLocator) {
+      try {
+        await _withStorageWriteQuantum(() async {
+          await _bytes.delete(migration.temporaryAccessLocator);
+          if (await _bytes.exists(migration.temporaryAccessLocator)) {
+            throw StateError('replica migration temporary still exists');
+          }
+        });
+      } on Object {
+        complete = false;
+      }
+    }
+    if (complete) {
+      await _index.finishArtifactReplicaMigrationCleanup(migration.replicaId);
+    }
+    return complete;
   }
 
   Future<void> _verifyReplicaDestination(
@@ -1878,6 +2077,7 @@ final class PersistentDownloadArtifactStore
       <DownloadId, Future<void>>{};
   final Map<String, Future<void>> _artifactReplicaMutationTails =
       <String, Future<void>>{};
+  static final Object _artifactReplicaMutationZoneKey = Object();
   final Set<DownloadId> _borrowedPartialIds = <DownloadId>{};
   final Map<String, Future<void>> _structuredWriteTails =
       <String, Future<void>>{};
@@ -3021,11 +3221,24 @@ final class PersistentDownloadArtifactStore
     String artifactId,
     Future<T> Function() operation,
   ) {
+    if (Zone.current[_artifactReplicaMutationZoneKey] == artifactId) {
+      return operation();
+    }
     final previous =
         _artifactReplicaMutationTails[artifactId] ?? Future<void>.value();
     final current = previous.then<T>(
-      (_) => operation(),
-      onError: (Object _, StackTrace __) => operation(),
+      (_) => runZoned(
+        operation,
+        zoneValues: <Object?, Object?>{
+          _artifactReplicaMutationZoneKey: artifactId,
+        },
+      ),
+      onError: (Object _, StackTrace __) => runZoned(
+        operation,
+        zoneValues: <Object?, Object?>{
+          _artifactReplicaMutationZoneKey: artifactId,
+        },
+      ),
     );
     late final Future<void> tail;
     tail = current.then<void>(
@@ -5264,7 +5477,11 @@ final class PersistentDownloadArtifactStore
     final failure = accessFailure ?? structuralFailure;
     if (failure != null) {
       if (accessFailure == null && _isStructuralReplicaFailure(failure.kind)) {
-        await _retireArtifactReplica(failure.replicaId, failure.accessLocator);
+        await _retireArtifactReplica(
+          candidates.first.access.artifactId,
+          failure.replicaId,
+          failure.accessLocator,
+        );
       }
       throw failure;
     }
@@ -5277,18 +5494,33 @@ final class PersistentDownloadArtifactStore
       kind == ArtifactReadFailureKind.lengthChanged;
 
   Future<void> _retireArtifactReplica(
+    String artifactId,
     String? replicaId,
     String accessLocator,
   ) async {
     if (replicaId == null || replicaId.isEmpty) return;
-    await _index.removeArtifactReplica(replicaId);
-    try {
-      await _bytes.delete(accessLocator);
-      await _deleteArtifactSidecar(accessLocator);
-    } on Object {
-      // The bad replica is no longer advertised. Physical cleanup may be
-      // retried by repair if this access path is itself unavailable.
-    }
+    await _serializeArtifactReplicaMutation(artifactId, () async {
+      final migration = await _index.getArtifactReplicaMigration(replicaId);
+      if (migration != null &&
+          migration.temporaryAccessLocator != migration.sourceAccessLocator &&
+          migration.temporaryAccessLocator !=
+              migration.destinationAccessLocator) {
+        try {
+          await _bytes.delete(migration.temporaryAccessLocator);
+        } on Object {
+          // Structural replica retirement remains authoritative even when a
+          // non-authoritative migration temp cannot be cleaned immediately.
+        }
+      }
+      await _index.removeArtifactReplica(replicaId);
+      try {
+        await _bytes.delete(accessLocator);
+        await _deleteArtifactSidecar(accessLocator);
+      } on Object {
+        // The bad replica is no longer advertised. Physical cleanup may be
+        // retried by repair if this access path is itself unavailable.
+      }
+    });
   }
 
   ArtifactReadFailure _enrichArtifactReadFailure(
@@ -5360,13 +5592,18 @@ final class PersistentDownloadArtifactStore
       } on ArtifactReadFailure catch (error) {
         lastFailure = error;
         if (_isStructuralReplicaFailure(error.kind)) {
-          await _retireArtifactReplica(replica.replicaId, replica.accessLocator);
+          await _retireArtifactReplica(
+            replica.artifactId,
+            replica.replicaId,
+            replica.accessLocator,
+          );
         }
         continue;
       }
       final selectedAccess = selected.candidate.access;
       if (selectedAccess.checksumAlgorithm.toLowerCase() != 'crc32') {
         await _retireArtifactReplica(
+          selectedAccess.artifactId,
           selectedAccess.replicaId,
           selectedAccess.accessLocator,
         );
@@ -6191,12 +6428,15 @@ final class PersistentDownloadArtifactStore
     // invalidation with adoption, structured materialization, and mirroring on
     // the actual artifact-object locator; the compatibility binding path may
     // already be stale after an immutable object rebind.
-    return _serializeStructuredWrite(
-      physicalAccess.accessLocator,
-      () => _invalidateIndexedArtifactLocked(
-        id,
-        record: snapshot,
-        physicalAccess: physicalAccess,
+    return _serializeArtifactReplicaMutation(
+      snapshot.effectiveArtifactId,
+      () => _serializeStructuredWrite(
+        physicalAccess.accessLocator,
+        () => _invalidateIndexedArtifactLocked(
+          id,
+          record: snapshot,
+          physicalAccess: physicalAccess,
+        ),
       ),
     );
   }
@@ -6218,6 +6458,11 @@ final class PersistentDownloadArtifactStore
     final replicas = initial.state == CacheState.ready
         ? await _index.listArtifactReplicas(initial.effectiveArtifactId)
         : const <ArtifactReplicaRecord>[];
+    final migrations = initial.state == CacheState.ready
+        ? await _index.listArtifactReplicaMigrationsForArtifact(
+            initial.effectiveArtifactId,
+          )
+        : const <ArtifactReplicaMigrationRecord>[];
 
     Future<bool> removeBindingAndPhysical({required bool sessionWasReset}) async {
       final current = initial;
@@ -6253,6 +6498,20 @@ final class PersistentDownloadArtifactStore
         for (final replica in replicas) {
           await _bytes.delete(replica.accessLocator);
           await _deleteArtifactSidecar(replica.accessLocator);
+        }
+        for (final migration in migrations) {
+          if (migration.phase == ArtifactReplicaMigrationPhase.cleanupPending &&
+              migration.sourceAccessLocator !=
+                  migration.destinationAccessLocator) {
+            await _bytes.delete(migration.sourceAccessLocator);
+            await _deleteArtifactSidecar(migration.sourceAccessLocator);
+          }
+          if (migration.temporaryAccessLocator !=
+                  migration.sourceAccessLocator &&
+              migration.temporaryAccessLocator !=
+                  migration.destinationAccessLocator) {
+            await _bytes.delete(migration.temporaryAccessLocator);
+          }
         }
         return true;
       }

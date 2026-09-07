@@ -633,6 +633,57 @@ int _rewriteIndexPaths({
           }
         }
       }
+      final migrationTable = db.select(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'artifact_replica_migration'",
+      );
+      if (migrationTable.isNotEmpty) {
+        final rows = db.select(
+          'SELECT replica_id, source_access_locator, source_storage_root_id, '
+          'destination_access_locator, destination_storage_root_id, '
+          'temporary_access_locator FROM artifact_replica_migration',
+        );
+        for (final row in rows) {
+          var source = row['source_access_locator']! as String;
+          var sourceRoot = (row['source_storage_root_id'] as String?) ?? 'default';
+          var destination = row['destination_access_locator']! as String;
+          var destinationRoot =
+              (row['destination_storage_root_id'] as String?) ?? 'default';
+          var temporary = row['temporary_access_locator']! as String;
+          var changed = false;
+          if (source == oldPrefix || source.startsWith('$oldPrefix$separator')) {
+            source = newPrefix + source.substring(oldPrefix.length);
+            sourceRoot = newPrefix;
+            changed = true;
+          }
+          if (destination == oldPrefix ||
+              destination.startsWith('$oldPrefix$separator')) {
+            destination = newPrefix + destination.substring(oldPrefix.length);
+            destinationRoot = newPrefix;
+            changed = true;
+          }
+          if (temporary == oldPrefix ||
+              temporary.startsWith('$oldPrefix$separator')) {
+            temporary = newPrefix + temporary.substring(oldPrefix.length);
+            changed = true;
+          }
+          if (changed) {
+            db.execute(
+              'UPDATE artifact_replica_migration SET '
+              'source_access_locator = ?, source_storage_root_id = ?, '
+              'destination_access_locator = ?, destination_storage_root_id = ?, '
+              'temporary_access_locator = ? WHERE replica_id = ?',
+              <Object?>[
+                source,
+                sourceRoot,
+                destination,
+                destinationRoot,
+                temporary,
+                row['replica_id']! as String,
+              ],
+            );
+          }
+        }
+      }
       final rootTable = db.select(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'storage_root'",
       );

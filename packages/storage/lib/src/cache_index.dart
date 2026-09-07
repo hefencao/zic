@@ -175,6 +175,40 @@ final class ArtifactReplicaRecord {
   final int touchedUs;
 }
 
+enum ArtifactReplicaMigrationPhase { copying, cleanupPending }
+
+/// Durable progress for relocating one immutable physical replica.
+///
+/// This record never owns artifact bytes or replica identity. While [phase]
+/// is [ArtifactReplicaMigrationPhase.copying], [sourceAccessLocator] remains
+/// the replica authority and [temporaryAccessLocator] is a non-authoritative
+/// resumable copy. The metadata transaction that moves the replica switches
+/// this row to [ArtifactReplicaMigrationPhase.cleanupPending] atomically; only
+/// then may the former source be removed.
+final class ArtifactReplicaMigrationRecord {
+  const ArtifactReplicaMigrationRecord({
+    required this.replicaId,
+    required this.sourceAccessLocator,
+    required this.sourceStorageRootId,
+    required this.destinationAccessLocator,
+    required this.destinationStorageRootId,
+    required this.temporaryAccessLocator,
+    required this.phase,
+    required this.createdUs,
+    required this.touchedUs,
+  });
+
+  final String replicaId;
+  final String sourceAccessLocator;
+  final String sourceStorageRootId;
+  final String destinationAccessLocator;
+  final String destinationStorageRootId;
+  final String temporaryAccessLocator;
+  final ArtifactReplicaMigrationPhase phase;
+  final int createdUs;
+  final int touchedUs;
+}
+
 /// Optional transactional binding capability. A path may be shared by
 /// verified logical identities, but an explicit overwrite must replace the
 /// old logical bindings in the same SQLite transaction as the new one.

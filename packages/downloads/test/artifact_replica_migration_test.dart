@@ -312,6 +312,611 @@ void main() {
   );
 
   test(
+    'cleanup debt survives reopen and is retried without moving authority back',
+    () async {
+      final roots = await _MigrationRoots.create('cleanup-reopen');
+      addTearDown(roots.delete);
+      final failingBytes = _DeleteFailArtifactBytes();
+      final first = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+        bytes: failingBytes,
+      );
+      final id = _id('cleanup-reopen');
+      final bytes = Uint8List.fromList(<int>[3, 1, 4, 1, 5, 9, 2, 6]);
+      await first.storePromotedArtifact(id: id, bytes: bytes);
+      final before = (await first.artifactReplicasFor(id)).single;
+      final sourcePath = before.accessLocator;
+      final destination =
+          '${roots.destination.path}${Platform.pathSeparator}committed.bin';
+      failingBytes.failDeletePath = sourcePath;
+
+      final firstResult = await first.migrateArtifactReplica(
+        id: id,
+        replicaId: before.replicaId,
+        destinationAccessLocator: destination,
+        destinationStorageRootId: roots.destination.path,
+      );
+      expect(firstResult.sourceCleanupComplete, isFalse);
+      await first.close();
+
+      final indexPath = CacheLayout(roots.source.path).dbPath;
+      final between = SqliteIndex(indexPath);
+      await between.open();
+      final debt = await between.getArtifactReplicaMigration(before.replicaId);
+      expect(debt, isNotNull);
+      expect(debt!.phase, ArtifactReplicaMigrationPhase.cleanupPending);
+      expect(
+        (await between.listArtifactReplicas(debt.replicaId)).single.accessLocator,
+        destination,
+      );
+      await between.close();
+      expect(await File(sourcePath).exists(), isTrue);
+
+      final reopened = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+      );
+      final retry = await reopened.migrateArtifactReplica(
+        id: id,
+        replicaId: before.replicaId,
+        destinationAccessLocator: destination,
+        destinationStorageRootId: roots.destination.path,
+      );
+      expect(retry.sourceCleanupComplete, isTrue);
+      expect(retry.replica.accessLocator, destination);
+      expect(await File(sourcePath).exists(), isFalse);
+      expect(await File(destination).readAsBytes(), bytes);
+      await reopened.close();
+
+      final after = SqliteIndex(indexPath);
+      await after.open();
+      expect(await after.getArtifactReplicaMigration(before.replicaId), isNull);
+      expect(
+        (await after.listArtifactReplicas(before.artifactId)).single.accessLocator,
+        destination,
+      );
+      await after.close();
+    },
+  );
+
+  test(
+    'direct interrupted copy resumes from verified durable temporary after reopen',
+    () async {
+      final roots = await _MigrationRoots.create('direct-resume');
+      addTearDown(roots.delete);
+      final id = _id('direct-resume');
+      final bytes = Uint8List.fromList(
+        List<int>.generate(1024 * 1024 + 97, (index) => index % 227),
+      );
+      final seed = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+      );
+      await seed.storePromotedArtifact(id: id, bytes: bytes);
+      final before = (await seed.artifactReplicasFor(id)).single;
+      final sourcePath = before.accessLocator;
+      await seed.close();
+
+      final destination =
+          '${roots.destination.path}${Platform.pathSeparator}resumed.bin';
+      final control = _TestTaskControl(priority: 0);
+      final interruptedBytes = _InterruptAfterFirstSourceChunkArtifactBytes(
+        sourcePath: sourcePath,
+        control: control,
+      );
+      final interrupted = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+        bytes: interruptedBytes,
+      );
+      await expectLater(
+        interrupted.migrateArtifactReplica(
+          id: id,
+          replicaId: before.replicaId,
+          destinationAccessLocator: destination,
+          destinationStorageRootId: roots.destination.path,
+          control: control,
+        ),
+        throwsA(
+          isA<Failure>().having(
+            (value) => value.code,
+            'code',
+            ErrorCode.cancelled,
+          ),
+        ),
+      );
+      await interrupted.close();
+
+      final indexPath = CacheLayout(roots.source.path).dbPath;
+      final between = SqliteIndex(indexPath);
+      await between.open();
+      final migration =
+          await between.getArtifactReplicaMigration(before.replicaId);
+      expect(migration, isNotNull);
+      expect(migration!.phase, ArtifactReplicaMigrationPhase.copying);
+      expect(
+        (await between.listArtifactReplicas(before.artifactId)).single.accessLocator,
+        sourcePath,
+        reason: 'partial temporary bytes are never replica authority',
+      );
+      await between.close();
+      final temporary = File(migration.temporaryAccessLocator);
+      final durablePrefixLength = await temporary.length();
+      expect(durablePrefixLength, greaterThan(0));
+      expect(durablePrefixLength, lessThan(bytes.lengthInBytes));
+      expect(await File(destination).exists(), isFalse);
+      expect(await File(sourcePath).readAsBytes(), bytes);
+
+      final recordingBytes = _RecordingArtifactBytes(sourcePath: sourcePath);
+      final resumed = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+        bytes: recordingBytes,
+      );
+      final result = await resumed.migrateArtifactReplica(
+        id: id,
+        replicaId: before.replicaId,
+        destinationAccessLocator: destination,
+        destinationStorageRootId: roots.destination.path,
+      );
+      expect(result.sourceCleanupComplete, isTrue);
+      expect(
+        recordingBytes.sourceReadStarts,
+        contains(durablePrefixLength),
+        reason: 'after prefix proof, the body copy must restart at the temp length',
+      );
+      expect(await File(destination).readAsBytes(), bytes);
+      expect(await File(sourcePath).exists(), isFalse);
+      expect(await temporary.exists(), isFalse);
+      await resumed.close();
+
+      final after = SqliteIndex(indexPath);
+      await after.open();
+      expect(await after.getArtifactReplicaMigration(before.replicaId), isNull);
+      await after.close();
+    },
+  );
+
+  test(
+    'corrupted durable temporary prefix is rejected and recopied from zero',
+    () async {
+      final roots = await _MigrationRoots.create('corrupt-resume-prefix');
+      addTearDown(roots.delete);
+      final id = _id('corrupt-resume-prefix');
+      final bytes = Uint8List.fromList(
+        List<int>.generate(1024 * 1024 + 113, (index) => index % 219),
+      );
+      final seed = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+      );
+      await seed.storePromotedArtifact(id: id, bytes: bytes);
+      final before = (await seed.artifactReplicasFor(id)).single;
+      final sourcePath = before.accessLocator;
+      await seed.close();
+      final destination =
+          '${roots.destination.path}${Platform.pathSeparator}repaired.bin';
+      final control = _TestTaskControl(priority: 0);
+      final interruptedBytes = _InterruptAfterFirstSourceChunkArtifactBytes(
+        sourcePath: sourcePath,
+        control: control,
+      );
+      final interrupted = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+        bytes: interruptedBytes,
+      );
+      await expectLater(
+        interrupted.migrateArtifactReplica(
+          id: id,
+          replicaId: before.replicaId,
+          destinationAccessLocator: destination,
+          destinationStorageRootId: roots.destination.path,
+          control: control,
+        ),
+        throwsA(isA<Failure>()),
+      );
+      await interrupted.close();
+
+      final indexPath = CacheLayout(roots.source.path).dbPath;
+      final between = SqliteIndex(indexPath);
+      await between.open();
+      final migration =
+          await between.getArtifactReplicaMigration(before.replicaId);
+      await between.close();
+      final temporary = File(migration!.temporaryAccessLocator);
+      final prefixLength = await temporary.length();
+      expect(prefixLength, greaterThan(0));
+      final tempBytes = await temporary.readAsBytes();
+      tempBytes[0] ^= 0xff;
+      await temporary.writeAsBytes(tempBytes, flush: true);
+
+      final recordingBytes = _RecordingArtifactBytes(sourcePath: sourcePath);
+      final resumed = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+        bytes: recordingBytes,
+      );
+      final result = await resumed.migrateArtifactReplica(
+        id: id,
+        replicaId: before.replicaId,
+        destinationAccessLocator: destination,
+        destinationStorageRootId: roots.destination.path,
+      );
+      expect(result.sourceCleanupComplete, isTrue);
+      expect(
+        recordingBytes.sourceReadStarts.where((start) => start == 0).length,
+        greaterThanOrEqualTo(2),
+        reason: 'one read proves the prefix mismatch and another recopies from zero',
+      );
+      expect(recordingBytes.sourceReadStarts, isNot(contains(prefixLength)));
+      expect(await File(destination).readAsBytes(), bytes);
+      expect(await temporary.exists(), isFalse);
+      await resumed.close();
+    },
+  );
+
+  test(
+    'final logical invalidation removes a non-authoritative migration temporary',
+    () async {
+      final roots = await _MigrationRoots.create('invalidate-copying');
+      addTearDown(roots.delete);
+      final id = _id('invalidate-copying');
+      final bytes = Uint8List.fromList(
+        List<int>.generate(1024 * 1024 + 127, (index) => index % 217),
+      );
+      final seed = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+      );
+      await seed.storePromotedArtifact(id: id, bytes: bytes);
+      final before = (await seed.artifactReplicasFor(id)).single;
+      final sourcePath = before.accessLocator;
+      await seed.close();
+      final destination =
+          '${roots.destination.path}${Platform.pathSeparator}never-committed.bin';
+      final control = _TestTaskControl(priority: 0);
+      final interruptedBytes = _InterruptAfterFirstSourceChunkArtifactBytes(
+        sourcePath: sourcePath,
+        control: control,
+      );
+      final store = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+        bytes: interruptedBytes,
+      );
+      await expectLater(
+        store.migrateArtifactReplica(
+          id: id,
+          replicaId: before.replicaId,
+          destinationAccessLocator: destination,
+          destinationStorageRootId: roots.destination.path,
+          control: control,
+        ),
+        throwsA(isA<Failure>()),
+      );
+      final indexPath = CacheLayout(roots.source.path).dbPath;
+      final between = SqliteIndex(indexPath);
+      await between.open();
+      final migration =
+          await between.getArtifactReplicaMigration(before.replicaId);
+      await between.close();
+      expect(migration, isNotNull);
+      expect(await File(migration!.temporaryAccessLocator).exists(), isTrue);
+
+      await store.invalidateArtifact(id);
+      expect(await File(sourcePath).exists(), isFalse);
+      expect(await File(migration.temporaryAccessLocator).exists(), isFalse);
+      expect(await File(destination).exists(), isFalse);
+      await store.close();
+
+      final after = SqliteIndex(indexPath);
+      await after.open();
+      expect(await after.get(id.key), isNull);
+      expect(await after.getArtifactReplicaMigration(before.replicaId), isNull);
+      expect(await after.listArtifactReplicas(before.artifactId), isEmpty);
+      await after.close();
+    },
+  );
+
+  test(
+    'structural source retirement during copy removes durable migration temp',
+    () async {
+      final roots = await _MigrationRoots.create('retire-copying');
+      addTearDown(roots.delete);
+      final id = _id('retire-copying');
+      final bytes = Uint8List.fromList(
+        List<int>.generate(1024 * 1024 + 193, (index) => index % 229),
+      );
+      final seed = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+      );
+      await seed.storePromotedArtifact(id: id, bytes: bytes);
+      final before = (await seed.artifactReplicasFor(id)).single;
+      final sourcePath = before.accessLocator;
+      await seed.close();
+
+      final failingBytes = _FailAfterFirstSourceChunkArtifactBytes(
+        sourcePath: sourcePath,
+      );
+      final store = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+        bytes: failingBytes,
+      );
+      final destination =
+          '${roots.destination.path}${Platform.pathSeparator}never-committed.bin';
+      await expectLater(
+        store
+            .migrateArtifactReplica(
+              id: id,
+              replicaId: before.replicaId,
+              destinationAccessLocator: destination,
+              destinationStorageRootId: roots.destination.path,
+            )
+            .timeout(const Duration(seconds: 2)),
+        throwsA(
+          isA<ArtifactReadFailure>().having(
+            (value) => value.kind,
+            'kind',
+            ArtifactReadFailureKind.shortRead,
+          ),
+        ),
+      );
+
+      expect(await File(sourcePath).exists(), isFalse);
+      expect(await File(destination).exists(), isFalse);
+      expect(
+        await roots.destination
+            .list()
+            .where((entry) => entry.path.contains('.zic-migrate-'))
+            .isEmpty,
+        isTrue,
+      );
+      expect(await store.artifactReplicasFor(id), isEmpty);
+      await store.close();
+
+      final index = SqliteIndex(CacheLayout(roots.source.path).dbPath);
+      await index.open();
+      expect(await index.getArtifactReplicaMigration(before.replicaId), isNull);
+      await index.close();
+    },
+  );
+
+  test(
+    'SAF interrupted copy reopens the verified durable temporary in append mode',
+    () async {
+      final roots = await _MigrationRoots.create('saf-resume');
+      addTearDown(roots.delete);
+      final saf = _MemorySafTreeIo();
+      const safTree =
+          'content://com.android.externalstorage.documents/tree/primary%3ASafResume';
+      final id = _id('saf-resume');
+      final bytes = Uint8List.fromList(
+        List<int>.generate(1024 * 1024 + 131, (index) => index % 223),
+      );
+      final seed = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+        safMirror: saf,
+        safTreeUri: safTree,
+      );
+      await seed.storePromotedArtifact(id: id, bytes: bytes);
+      final before = (await seed.artifactReplicasFor(id)).single;
+      final sourcePath = before.accessLocator;
+      expect(parseSafRecordPath(sourcePath), isNull);
+      await seed.close();
+
+      final destination = encodeSafRecordPath(
+        treeUri: safTree,
+        relativePath: 'offline/resumed.bin',
+      );
+      final firstDelegate = CompositeArtifactBytes(
+        local: const LocalArtifactBytes(),
+        saf: SafArtifactBytes(saf, treeUri: safTree),
+      );
+      final control = _TestTaskControl(priority: 0);
+      final interruptedBytes = _InterruptAfterFirstSourceChunkArtifactBytes(
+        sourcePath: sourcePath,
+        control: control,
+        delegate: firstDelegate,
+      );
+      final interrupted = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+        bytes: interruptedBytes,
+        safMirror: saf,
+        safTreeUri: safTree,
+      );
+      await expectLater(
+        interrupted.migrateArtifactReplica(
+          id: id,
+          replicaId: before.replicaId,
+          destinationAccessLocator: destination,
+          destinationStorageRootId: safTree,
+          control: control,
+        ),
+        throwsA(
+          isA<Failure>().having(
+            (value) => value.code,
+            'code',
+            ErrorCode.cancelled,
+          ),
+        ),
+      );
+      await interrupted.close();
+
+      final indexPath = CacheLayout(roots.source.path).dbPath;
+      final between = SqliteIndex(indexPath);
+      await between.open();
+      final migration =
+          await between.getArtifactReplicaMigration(before.replicaId);
+      expect(migration, isNotNull);
+      expect(migration!.phase, ArtifactReplicaMigrationPhase.copying);
+      await between.close();
+      final temporary = parseSafRecordPath(migration.temporaryAccessLocator)!;
+      final durablePrefixLength = saf.storage[temporary.relativePath]!.lengthInBytes;
+      expect(durablePrefixLength, greaterThan(0));
+      expect(durablePrefixLength, lessThan(bytes.lengthInBytes));
+      expect(saf.storage.containsKey('offline/resumed.bin'), isFalse);
+      expect(await File(sourcePath).readAsBytes(), bytes);
+
+      saf.opens.clear();
+      final secondDelegate = CompositeArtifactBytes(
+        local: const LocalArtifactBytes(),
+        saf: SafArtifactBytes(saf, treeUri: safTree),
+      );
+      final recordingBytes = _RecordingArtifactBytes(
+        sourcePath: sourcePath,
+        delegate: secondDelegate,
+      );
+      final resumed = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+        bytes: recordingBytes,
+        safMirror: saf,
+        safTreeUri: safTree,
+      );
+      final result = await resumed.migrateArtifactReplica(
+        id: id,
+        replicaId: before.replicaId,
+        destinationAccessLocator: destination,
+        destinationStorageRootId: safTree,
+      );
+      expect(result.sourceCleanupComplete, isTrue);
+      expect(
+        saf.opens,
+        contains(
+          (path: temporary.relativePath, mode: SafWriteMode.writeAppend),
+        ),
+        reason: 'a proven SAF temporary must be reopened for append, not truncate',
+      );
+      expect(recordingBytes.sourceReadStarts, contains(durablePrefixLength));
+      expect(saf.storage['offline/resumed.bin'], bytes);
+      expect(saf.storage.containsKey(temporary.relativePath), isFalse);
+      expect(await File(sourcePath).exists(), isFalse);
+      await resumed.close();
+
+      final after = SqliteIndex(indexPath);
+      await after.open();
+      expect(await after.getArtifactReplicaMigration(before.replicaId), isNull);
+      await after.close();
+    },
+  );
+
+  test(
+    'SAF resume restarts from zero when provider cannot prove temporary length',
+    () async {
+      final roots = await _MigrationRoots.create('saf-no-length');
+      addTearDown(roots.delete);
+      final saf = _MemorySafTreeIo();
+      const safTree =
+          'content://com.android.externalstorage.documents/tree/primary%3ASafNoLength';
+      final id = _id('saf-no-length');
+      final bytes = Uint8List.fromList(
+        List<int>.generate(1024 * 1024 + 149, (index) => index % 211),
+      );
+      final seed = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+        safMirror: saf,
+        safTreeUri: safTree,
+      );
+      await seed.storePromotedArtifact(id: id, bytes: bytes);
+      final before = (await seed.artifactReplicasFor(id)).single;
+      final sourcePath = before.accessLocator;
+      await seed.close();
+      final destination = encodeSafRecordPath(
+        treeUri: safTree,
+        relativePath: 'offline/no-length.bin',
+      );
+      final firstDelegate = CompositeArtifactBytes(
+        local: const LocalArtifactBytes(),
+        saf: SafArtifactBytes(saf, treeUri: safTree),
+      );
+      final control = _TestTaskControl(priority: 0);
+      final interruptedBytes = _InterruptAfterFirstSourceChunkArtifactBytes(
+        sourcePath: sourcePath,
+        control: control,
+        delegate: firstDelegate,
+      );
+      final interrupted = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+        bytes: interruptedBytes,
+        safMirror: saf,
+        safTreeUri: safTree,
+      );
+      await expectLater(
+        interrupted.migrateArtifactReplica(
+          id: id,
+          replicaId: before.replicaId,
+          destinationAccessLocator: destination,
+          destinationStorageRootId: safTree,
+          control: control,
+        ),
+        throwsA(isA<Failure>()),
+      );
+      await interrupted.close();
+
+      final indexPath = CacheLayout(roots.source.path).dbPath;
+      final between = SqliteIndex(indexPath);
+      await between.open();
+      final migration =
+          await between.getArtifactReplicaMigration(before.replicaId);
+      await between.close();
+      expect(migration, isNotNull);
+      final temporary = parseSafRecordPath(migration!.temporaryAccessLocator)!;
+      expect(saf.storage[temporary.relativePath]!.lengthInBytes, greaterThan(0));
+
+      saf.suppressedLengthCalls = 1;
+      saf.opens.clear();
+      final secondDelegate = CompositeArtifactBytes(
+        local: const LocalArtifactBytes(),
+        saf: SafArtifactBytes(saf, treeUri: safTree),
+      );
+      final recordingBytes = _RecordingArtifactBytes(
+        sourcePath: sourcePath,
+        delegate: secondDelegate,
+      );
+      final resumed = await PersistentDownloadArtifactStore.open(
+        roots.app.path,
+        directory: roots.source.path,
+        bytes: recordingBytes,
+        safMirror: saf,
+        safTreeUri: safTree,
+      );
+      final result = await resumed.migrateArtifactReplica(
+        id: id,
+        replicaId: before.replicaId,
+        destinationAccessLocator: destination,
+        destinationStorageRootId: safTree,
+      );
+      expect(result.sourceCleanupComplete, isTrue);
+      expect(
+        saf.opens,
+        contains(
+          (path: temporary.relativePath, mode: SafWriteMode.writeTruncate),
+        ),
+        reason: 'unprovable provider length must force a fresh temporary',
+      );
+      expect(
+        saf.opens,
+        isNot(
+          contains(
+            (path: temporary.relativePath, mode: SafWriteMode.writeAppend),
+          ),
+        ),
+      );
+      expect(recordingBytes.sourceReadStarts, contains(0));
+      expect(saf.storage['offline/no-length.bin'], bytes);
+      await resumed.close();
+    },
+  );
+
+  test(
     'secondary replica migration does not move the primary compatibility mirror',
     () async {
       final roots = await _MigrationRoots.create('secondary');
@@ -827,8 +1432,128 @@ final class _GatedArtifactBytes implements ArtifactBytes {
   Future<void> delete(String path) => _delegate.delete(path);
 }
 
+final class _InterruptAfterFirstSourceChunkArtifactBytes
+    implements ArtifactBytes {
+  _InterruptAfterFirstSourceChunkArtifactBytes({
+    required this.sourcePath,
+    required this.control,
+    ArtifactBytes? delegate,
+  }) : _delegate = delegate ?? const LocalArtifactBytes();
+
+  final String sourcePath;
+  final _TestTaskControl control;
+  final ArtifactBytes _delegate;
+  bool _cancelled = false;
+
+  @override
+  Future<bool> exists(String path) => _delegate.exists(path);
+
+  @override
+  Future<int> length(String path) => _delegate.length(path);
+
+  @override
+  Stream<Uint8List> readChunks(
+    String path, {
+    required int start,
+    int? endExclusive,
+  }) async* {
+    await for (final chunk in _delegate.readChunks(
+      path,
+      start: start,
+      endExclusive: endExclusive,
+    )) {
+      yield chunk;
+      if (path == sourcePath && !_cancelled) {
+        _cancelled = true;
+        control.cancel();
+      }
+    }
+  }
+
+  @override
+  Future<void> delete(String path) => _delegate.delete(path);
+}
+
+final class _RecordingArtifactBytes implements ArtifactBytes {
+  _RecordingArtifactBytes({
+    required this.sourcePath,
+    ArtifactBytes? delegate,
+  }) : _delegate = delegate ?? const LocalArtifactBytes();
+
+  final String sourcePath;
+  final ArtifactBytes _delegate;
+  final List<int> sourceReadStarts = <int>[];
+
+  @override
+  Future<bool> exists(String path) => _delegate.exists(path);
+
+  @override
+  Future<int> length(String path) => _delegate.length(path);
+
+  @override
+  Stream<Uint8List> readChunks(
+    String path, {
+    required int start,
+    int? endExclusive,
+  }) {
+    if (path == sourcePath) sourceReadStarts.add(start);
+    return _delegate.readChunks(
+      path,
+      start: start,
+      endExclusive: endExclusive,
+    );
+  }
+
+  @override
+  Future<void> delete(String path) => _delegate.delete(path);
+}
+
+final class _FailAfterFirstSourceChunkArtifactBytes implements ArtifactBytes {
+  _FailAfterFirstSourceChunkArtifactBytes({required this.sourcePath});
+
+  final String sourcePath;
+  final ArtifactBytes _delegate = const LocalArtifactBytes();
+  bool _failed = false;
+
+  @override
+  Future<bool> exists(String path) => _delegate.exists(path);
+
+  @override
+  Future<int> length(String path) => _delegate.length(path);
+
+  @override
+  Stream<Uint8List> readChunks(
+    String path, {
+    required int start,
+    int? endExclusive,
+  }) async* {
+    await for (final chunk in _delegate.readChunks(
+      path,
+      start: start,
+      endExclusive: endExclusive,
+    )) {
+      yield chunk;
+      if (path == sourcePath && !_failed) {
+        _failed = true;
+        throw ArtifactReadFailure(
+          kind: ArtifactReadFailureKind.shortRead,
+          accessLocator: path,
+          failedOffset: start + chunk.lengthInBytes,
+          bytesEmitted: chunk.lengthInBytes,
+        );
+      }
+    }
+  }
+
+  @override
+  Future<void> delete(String path) => _delegate.delete(path);
+}
+
 final class _MemorySafTreeIo implements SafTreeIo {
   final Map<String, Uint8List> storage = <String, Uint8List>{};
+  final List<({String path, SafWriteMode mode})> opens =
+      <({String path, SafWriteMode mode})>[];
+  int suppressedLengthCalls = 0;
   final Map<int, ({String path, int position})> _handles =
       <int, ({String path, int position})>{};
   int _nextHandle = 1;
@@ -838,6 +1563,7 @@ final class _MemorySafTreeIo implements SafTreeIo {
     String relativePath, {
     SafWriteMode mode = SafWriteMode.read,
   }) async {
+    opens.add((path: relativePath, mode: mode));
     if (!storage.containsKey(relativePath)) {
       if (mode == SafWriteMode.writeTruncate ||
           mode == SafWriteMode.writeAppend) {
@@ -886,6 +1612,10 @@ final class _MemorySafTreeIo implements SafTreeIo {
 
   @override
   Future<int?> length(int handle) async {
+    if (suppressedLengthCalls > 0) {
+      suppressedLengthCalls--;
+      return null;
+    }
     final state = _handles[handle];
     if (state == null) return null;
     return storage[state.path]?.lengthInBytes;

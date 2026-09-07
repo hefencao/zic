@@ -245,9 +245,22 @@ If migration is requested:
 
 Each replica migration commits destination authority before deleting the source, so a crash leaves at least one valid replica.
 
-Production now implements the first per-replica relocation primitive for sealed CRC32 artifacts. It preserves `replica_id`, serializes relocation by logical binding, artifact authority and destination path, validates that the destination locator belongs to the declared `StorageRoot`, rejects a destination that is already a proven access alias of any other replica (including another artifact), copies through bounded `StorageWriteScheduler` quanta, and fully verifies destination length + CRC32 before the SQLite authority move. Direct and the currently writable SAF tree are both supported. If a previous crash left a complete destination before metadata commit, a later call may adopt it only after repeating the full proof. Source bytes/sidecar are cleaned only after authority moves; cleanup failure is reported as cleanup debt and does not roll the destination authority back. Physical relocation does not refresh logical-binding recency.
+Production now implements durable per-replica relocation for sealed CRC32 artifacts. It preserves `replica_id`, serializes relocation by logical binding, artifact authority and destination path, validates that the destination locator belongs to the declared `StorageRoot`, rejects a destination that is already a proven access alias of any other replica (including another artifact), copies through bounded `StorageWriteScheduler` quanta, and fully verifies destination length + CRC32 before the SQLite authority move. Direct and the currently writable SAF tree are both supported. Physical relocation does not refresh logical-binding recency.
 
-This is not yet the complete resumable/lazy migration engine: an interrupted partial copy is discarded rather than checkpointed across process restart, post-commit cleanup debt has no durable retry journal, and automatic lazy-convergence/retention policy is not yet driving relocation. Mutable transfer spools remain outside this primitive.
+Schema 9 adds `artifact_replica_migration` as progress-only state; it never becomes artifact or replica authority. Its durable state machine is deliberately small:
+
+```text
+copying(source remains replica authority, deterministic temp is non-authoritative)
+    -> one SQLite transaction moves replica/compatibility authority
+cleanupPending(destination is authority, old source/temp are cleanup debt)
+    -> cleanup succeeds -> migration row removed
+```
+
+The temporary file's physical length is the copy checkpoint, so migration does not write SQLite on every chunk. After restart, a non-empty temp is resumable only after its actual length is within the sealed artifact range and the whole temp prefix CRC32 matches the same source prefix. A proven Direct temp reopens in append mode; the current Android SAF backend likewise uses `writeAppend`/seek semantics after the same proof. If the provider cannot prove the old temp length, or if the prefix differs, the temp is truncated/recreated and copying restarts from zero. A complete destination left before metadata commit may be adopted only after repeating the full destination proof.
+
+The authority move and `copying -> cleanupPending` transition are one `BEGIN IMMEDIATE` transaction. Source bytes/sidecar are removed only afterward. Cleanup failure leaves the destination authoritative and the durable cleanup row intact; reopening and retrying the same relocation attempts that cleanup again without moving authority back. Final logical invalidation removes migration-owned non-authoritative temps, and StorageRoot alias merges / legacy whole-root byte moves keep schema-9 root/locator references coherent.
+
+This is still not automatic lazy migration: no retention policy scans old roots and decides which replicas to move, and removable/UUID-volume Direct mapping plus root-relative replica class/retention representation remain later boundaries. Mutable transfer spools also remain outside replica migration; their resume semantics are owned by the transfer-spool architecture.
 
 ## 7. Partial transfer architecture
 
@@ -329,7 +342,7 @@ Manual demand: lower priority, required durable/export completion
 
 Effective scheduling priority is the highest active consumer priority, while completion intent is the strongest required intent. When Reader leaves, its claim disappears and the same transfer can continue at manual priority without restart.
 
-Network resources therefore remain globally coordinated below Pipeline. App composition also owns a separate storage-write/migration capacity domain beside the persistent local-read scheduler; these domains are not folded into `NetLane`. Storage write/migration work acquires only bounded quanta and must wait when the shared local-read scheduler reports foreground pressure, so a newly foreground Reader can block the next storage chunk without cancelling an unrelated network transfer. The verified per-replica relocation primitive now consumes this capacity domain for source reads, destination writes/commit, verification reads and cleanup; partial-copy resume/lazy policy remain later boundaries. Pipeline only translates Reader observation into Reader transfer demand and owns decode/upload/presentation.
+Network resources therefore remain globally coordinated below Pipeline. App composition also owns a separate storage-write/migration capacity domain beside the persistent local-read scheduler; these domains are not folded into `NetLane`. Storage write/migration work acquires only bounded quanta and must wait when the shared local-read scheduler reports foreground pressure, so a newly foreground Reader can block the next storage chunk without cancelling an unrelated network transfer. Durable per-replica copy, prefix verification, destination verification, commit-adjacent I/O and cleanup all consume this capacity domain; migration does not consume or cancel unrelated network capacity. Pipeline only translates Reader observation into Reader transfer demand and owns decode/upload/presentation.
 
 Manual download completion is split into two milestones:
 
@@ -352,7 +365,8 @@ The migration is intentionally incremental and each functional boundary should b
 5. **Implemented:** move durable download metadata authority to App-private SQLite while retaining one-time compatibility migration from existing root-coupled stores.
 6. **Implemented:** split logical artifact binding from physical replica ownership. Schema 8 persists first-class immutable `artifact_replica` rows, backfills the old object locator as replica one, permits only proof-verified independent copies, and retires structural failures per replica rather than deleting the whole logical artifact.
 7. **Implemented:** replace persistent N-dependent page numbering with sparse materialized ExportLayout + direct VersionBaseline mappings; historical version edges remain provenance only.
-8. **Implemented foundation:** sealed replicas can be explicitly relocated one at a time with stable `replica_id`, destination-root/alias validation, bounded storage-write scheduling, full destination proof before authority commit, crash retry from a complete pre-existing destination, and source cleanup only after commit.
-9. **Pending next storage stage:** add durable partial-copy resume/checkpointing, cleanup-debt journaling, lazy migration/retention policy and retained multi-root convergence. Removable-volume Direct mapping and root-relative replica locator cleanup remain separate representation/capability boundaries rather than schema 8 work.
+8. **Implemented:** sealed replicas can be explicitly relocated one at a time with stable `replica_id`, destination-root/alias validation, bounded storage-write scheduling, full destination proof before authority commit, and source cleanup only after commit.
+9. **Implemented:** schema 9 persists progress-only replica migration state. Direct/current-SAF interrupted copies resume from a physically measured + prefix-CRC32-verified temp, unsafe/unprovable prefixes restart from zero, replica authority moves atomically with `cleanupPending`, and post-commit cleanup debt survives process restart until successfully retried.
+10. **Pending next storage stage:** add automatic lazy migration/retention policy and retained multi-root convergence. Removable-volume Direct mapping and root-relative replica locator/class/retention cleanup remain separate representation/capability boundaries rather than schema-9 work.
 
 Each phase must keep compatibility with the preceding durable representation until its own migration is complete.

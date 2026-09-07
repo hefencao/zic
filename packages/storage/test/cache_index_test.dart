@@ -574,6 +574,166 @@ void runCacheSchemaV2Tests() {
     expect(replicas.single.storageRootId, root);
   });
 
+  test('v8 cache metadata adds durable replica migration state as schema 9', () async {
+    final temp = await Directory.systemTemp.createTemp('cache_index_v8_migration_');
+    addTearDown(() => temp.delete(recursive: true));
+    final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'v8-migration',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/v8-migration.webp'),
+    );
+    const artifactId = 'v8-migration-artifact';
+    const sourceRoot = '/storage/source';
+    const sourcePath = '/storage/source/page.bin';
+    final current = SqliteIndex(dbPath);
+    await current.open();
+    await current.put(
+      CacheRec(
+        id: id,
+        state: CacheState.ready,
+        path: sourcePath,
+        bytes: 4,
+        checksum: '01020304',
+        createdUs: 1,
+        touchedUs: 2,
+        artifactId: artifactId,
+        storageRootId: sourceRoot,
+      ),
+    );
+    await current.close();
+
+    final legacy = sql.sqlite3.open(dbPath);
+    legacy.execute('DROP TABLE artifact_replica_migration');
+    legacy.execute('PRAGMA user_version = 8');
+    legacy.dispose();
+
+    final migrated = SqliteIndex(dbPath);
+    await migrated.open();
+    final replica = (await migrated.listArtifactReplicas(artifactId)).single;
+    expect(replica.replicaId, artifactId);
+    final started = await migrated.beginArtifactReplicaMigration(
+      replicaId: replica.replicaId,
+      sourceAccessLocator: sourcePath,
+      sourceStorageRootId: sourceRoot,
+      destinationAccessLocator: '/storage/destination/page.bin',
+      destinationStorageRootId: '/storage/destination',
+      temporaryAccessLocator: '/storage/destination/page.bin.part',
+      touchedUs: 3,
+    );
+    expect(started.phase, ArtifactReplicaMigrationPhase.copying);
+    await migrated.close();
+
+    final schema = sql.sqlite3.open(dbPath);
+    expect(schema.select('PRAGMA user_version').single.values.single, 9);
+    expect(
+      schema
+          .select(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'artifact_replica_migration'",
+          )
+          .length,
+      1,
+    );
+    schema.dispose();
+  });
+
+  test('replica migration authority switch and cleanup debt survive reopen', () async {
+    final temp = await Directory.systemTemp.createTemp('cache_index_migration_state_');
+    addTearDown(() => temp.delete(recursive: true));
+    final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'migration-state',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/migration-state.webp'),
+    );
+    const artifactId = 'migration-state-artifact';
+    const sourceRoot = '/storage/a';
+    const sourcePath = '/storage/a/page.bin';
+    const destinationRoot = '/storage/b';
+    const destinationPath = '/storage/b/page.bin';
+    const temporaryPath = '/storage/b/page.bin.part';
+    final first = SqliteIndex(dbPath);
+    await first.open();
+    await first.put(
+      CacheRec(
+        id: id,
+        state: CacheState.ready,
+        path: sourcePath,
+        bytes: 4,
+        checksum: '01020304',
+        createdUs: 10,
+        touchedUs: 20,
+        artifactId: artifactId,
+        storageRootId: sourceRoot,
+      ),
+    );
+    final replica = (await first.listArtifactReplicas(artifactId)).single;
+    await first.beginArtifactReplicaMigration(
+      replicaId: replica.replicaId,
+      sourceAccessLocator: sourcePath,
+      sourceStorageRootId: sourceRoot,
+      destinationAccessLocator: destinationPath,
+      destinationStorageRootId: destinationRoot,
+      temporaryAccessLocator: temporaryPath,
+      touchedUs: 30,
+    );
+    expect(
+      (await first.listArtifactReplicas(artifactId)).single.accessLocator,
+      sourcePath,
+      reason: 'copying progress must not become replica authority',
+    );
+    await first.close();
+
+    final second = SqliteIndex(dbPath);
+    await second.open();
+    final restored = await second.getArtifactReplicaMigration(replica.replicaId);
+    expect(restored, isNotNull);
+    expect(restored!.phase, ArtifactReplicaMigrationPhase.copying);
+    expect(restored.temporaryAccessLocator, temporaryPath);
+    final moved = await second.commitArtifactReplicaMigration(
+      replicaId: replica.replicaId,
+      touchedUs: 40,
+    );
+    expect(moved.replicaId, replica.replicaId);
+    expect(moved.accessLocator, destinationPath);
+    expect((await second.get(id.key))!.path, destinationPath);
+    expect(
+      (await second.get(id.key))!.touchedUs,
+      20,
+      reason: 'physical relocation must not refresh logical cache recency',
+    );
+    expect(
+      (await second.getArtifactReplicaMigration(replica.replicaId))!.phase,
+      ArtifactReplicaMigrationPhase.cleanupPending,
+    );
+    await second.close();
+
+    final third = SqliteIndex(dbPath);
+    await third.open();
+    expect(
+      (await third.getArtifactReplicaMigration(replica.replicaId))!.phase,
+      ArtifactReplicaMigrationPhase.cleanupPending,
+    );
+    expect(
+      (await third.listArtifactReplicas(artifactId)).single.accessLocator,
+      destinationPath,
+    );
+    await third.finishArtifactReplicaMigrationCleanup(replica.replicaId);
+    expect(await third.getArtifactReplicaMigration(replica.replicaId), isNull);
+    await third.close();
+  });
+
   test('mutable partial records never become immutable artifact replicas', () async {
     final index = SqliteIndex.memory();
     await index.open();
@@ -803,6 +963,65 @@ void runCacheSchemaV2Tests() {
     ).single;
     expect(directReplica.storageRootId, merged.rootId);
     expect(safReplica.storageRootId, merged.rootId);
+  });
+
+  test('storage-root alias merge keeps durable migration roots aligned', () async {
+    final index = SqliteIndex.memory();
+    await index.open();
+    addTearDown(index.close);
+    const direct = '/storage/emulated/0/MigrationBooks';
+    const saf =
+        'content://com.android.externalstorage.documents/tree/primary%3AMigrationBooks';
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'migration-root-merge',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/migration-root-merge.webp'),
+    );
+    const artifactId = 'migration-root-merge-artifact';
+    await index.put(
+      CacheRec(
+        id: id,
+        state: CacheState.ready,
+        path: '$direct/final/page.bin',
+        bytes: 4,
+        checksum: '01020304',
+        createdUs: 1,
+        touchedUs: 1,
+        artifactId: artifactId,
+        storageRootId: direct,
+      ),
+    );
+    final replica = (await index.listArtifactReplicas(artifactId)).single;
+    await index.beginArtifactReplicaMigration(
+      replicaId: replica.replicaId,
+      sourceAccessLocator: replica.accessLocator,
+      sourceStorageRootId: direct,
+      destinationAccessLocator: 'saf:destination',
+      destinationStorageRootId: saf,
+      temporaryAccessLocator: 'saf:temporary',
+      touchedUs: 2,
+    );
+
+    final merged = await index.registerStorageRootAccessAliasProof(
+      const StorageRootAccessAliasProof(
+        direct: DirectStorageAccessLocator(direct),
+        saf: SafStorageAccessLocator(saf),
+      ),
+      verifiedUs: 3,
+    );
+
+    final afterReplica = (await index.listArtifactReplicas(artifactId)).single;
+    final migration = await index.getArtifactReplicaMigration(replica.replicaId);
+    expect(afterReplica.storageRootId, merged.rootId);
+    expect(migration, isNotNull);
+    expect(migration!.sourceStorageRootId, merged.rootId);
+    expect(migration.destinationStorageRootId, merged.rootId);
+    expect(migration.phase, ArtifactReplicaMigrationPhase.copying);
   });
 
   test('access health changes do not alter root identity', () async {

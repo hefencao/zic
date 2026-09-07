@@ -307,6 +307,98 @@ void main() {
     expect((await reopened.getStorageRoot(to.path)), isNotNull);
   });
 
+  test('App-private move rewrites durable replica migration locators and roots',
+      () async {
+    final from = dir('migration-state-move-from');
+    final to = dir('migration-state-move-to');
+    final metadata = dir('migration-state-private-metadata');
+    final separator = Platform.pathSeparator;
+    final sourceDirectory = Directory('${from.path}${separator}final');
+    final destinationDirectory = Directory('${from.path}${separator}export');
+    await sourceDirectory.create(recursive: true);
+    await destinationDirectory.create(recursive: true);
+    final sourcePath = '${sourceDirectory.path}${separator}page.bin';
+    final destinationPath = '${destinationDirectory.path}${separator}page.bin';
+    final temporaryPath = '$destinationPath.part';
+    await File(sourcePath).writeAsBytes(const <int>[1, 2, 3, 4]);
+    await File(temporaryPath).writeAsBytes(const <int>[1, 2]);
+    final dbPath = '${metadata.path}${separator}chapter_downloads.sqlite';
+    final index = SqliteIndex(dbPath);
+    await index.open();
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'migration-state-move',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/migration-state-move.webp'),
+    );
+    const artifactId = 'migration-state-move-artifact';
+    await index.put(
+      CacheRec(
+        id: id,
+        state: CacheState.ready,
+        path: sourcePath,
+        bytes: 4,
+        checksum: 'b63cfbcd',
+        createdUs: 1,
+        touchedUs: 1,
+        artifactId: artifactId,
+        storageRootId: from.path,
+      ),
+    );
+    final replica = (await index.listArtifactReplicas(artifactId)).single;
+    await index.beginArtifactReplicaMigration(
+      replicaId: replica.replicaId,
+      sourceAccessLocator: sourcePath,
+      sourceStorageRootId: from.path,
+      destinationAccessLocator: destinationPath,
+      destinationStorageRootId: from.path,
+      temporaryAccessLocator: temporaryPath,
+      touchedUs: 2,
+    );
+    await index.close();
+
+    await moveChapterDownloadStore(
+      from: from.path,
+      to: to.path,
+      metadataDbPath: dbPath,
+    );
+
+    final reopened = SqliteIndex(dbPath);
+    await reopened.open();
+    addTearDown(reopened.close);
+    final movedReplica = (await reopened.listArtifactReplicas(artifactId)).single;
+    final migration =
+        await reopened.getArtifactReplicaMigration(replica.replicaId);
+    expect(
+      movedReplica.accessLocator,
+      '${to.path}${separator}final${separator}page.bin',
+    );
+    expect(movedReplica.storageRootId, to.path);
+    expect(migration, isNotNull);
+    expect(
+      migration!.sourceAccessLocator,
+      '${to.path}${separator}final${separator}page.bin',
+    );
+    expect(migration.sourceStorageRootId, to.path);
+    expect(
+      migration.destinationAccessLocator,
+      '${to.path}${separator}export${separator}page.bin',
+    );
+    expect(migration.destinationStorageRootId, to.path);
+    expect(
+      migration.temporaryAccessLocator,
+      '${to.path}${separator}export${separator}page.bin.part',
+    );
+    expect(
+      await File(migration.temporaryAccessLocator).readAsBytes(),
+      const <int>[1, 2],
+    );
+  });
+
   test('move preflights directory/file shape conflicts before moving', () async {
     final from = dir('from-shape-conflict');
     final to = dir('to-shape-conflict');
