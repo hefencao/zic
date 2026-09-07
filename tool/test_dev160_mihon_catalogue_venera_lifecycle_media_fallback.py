@@ -71,14 +71,23 @@ for token in (
     require(entrypoint, token, 'production plugin session capacity')
 
 # Shared direct media transport must not impersonate Venera for Mihon. A 2xx
-# non-media response is rejected before Pipeline and handed to the existing
-# source-owned compatibility path.
+# non-media response is rejected before Pipeline and consumes exactly one
+# source-owned semantic retry plan. Runtime fallback is reserved for explicit
+# source-client state that the host cannot replay statelessly.
 forbid(transport, "_client.userAgent = 'zic-venera/0.31.0'", 'cross-source default user agent')
+forbid(
+    transport,
+    "if (error.details['sourceMediaProtocolMismatch'] == true)",
+    'broad protocol mismatch runtime fallback',
+)
 for token in (
-    "error.details['sourceMediaProtocolMismatch'] == true",
+    '_isSourceMediaSemanticRejection(error)',
+    '_requiresSourceClientState(error)',
+    'final retry = await _retry(uri, control: control);',
     '_openRuntimeFallback(',
     'await _prefetchEncodedMediaBody(',
-    "'sourceMediaProtocolMismatch': true",
+    "'sourceMediaSemanticRejected': true",
+    'sourceSemanticRetryExhausted',
     'hasSupportedEncodedImageSignature',
 ):
     require(transport, token, 'source-owned media compatibility fallback')

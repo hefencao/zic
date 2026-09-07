@@ -494,7 +494,7 @@ void main() {
       pool.loaderFor(source, locator)(),
       throwsA(
         isA<Failure>()
-            .having((error) => error.code, 'code', ErrorCode.network)
+            .having((error) => error.code, 'code', ErrorCode.source)
             .having(
               (error) => error.details['runtimeBodyImageSignatureRejected'],
               'runtime signature rejection',
@@ -502,6 +502,131 @@ void main() {
             ),
       ),
     );
+    expect(source.loadCalls, 1);
+  });
+
+  test('non-image direct response uses one source semantic retry plan', () async {
+    final failed = Uri.parse('https://fixture/non-image');
+    final recovered = Uri.parse('https://fixture/recovered.webp');
+    final source = _FixtureSource(
+      request: ComicResourceRequest(uri: failed),
+      retryRequest: ComicResourceRequest(uri: recovered),
+    );
+    final opened = <Uri>[];
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (request) async {
+        opened.add(request.uri);
+        if (request.uri == failed) {
+          throw const Failure(
+            code: ErrorCode.network,
+            message: 'source host returned non-image bytes',
+            details: <String, Object?>{
+              'sourceMediaProtocolMismatch': true,
+              'sourceMediaSemanticRejected': true,
+            },
+          );
+        }
+        return ByteResponse(
+          bytes: Stream<List<int>>.value(<int>[
+            0xff,
+            0xd8,
+            0xff,
+            1,
+            2,
+            3,
+            0xff,
+            0xd9,
+          ]),
+          statusCode: HttpStatus.ok,
+          rangeStart: 0,
+          totalLength: 8,
+        );
+      },
+    );
+    addTearDown(pool.close);
+
+    final response = await pool
+        .loaderFor(source, Uri.parse('venera-resource:semantic-retry'))();
+
+    expect(await _collect(response.bytes), hasLength(8));
+    expect(opened, <Uri>[failed, recovered]);
+    expect(source.resolveCalls, 1);
+    expect(source.retryCalls, 1);
+    expect(source.loadCalls, 0);
+  });
+
+  test('replacement non-image response is terminal after one semantic retry',
+      () async {
+    final failed = Uri.parse('https://fixture/non-image');
+    final recovered = Uri.parse('https://fixture/still-non-image');
+    final source = _FixtureSource(
+      request: ComicResourceRequest(uri: failed),
+      retryRequest: ComicResourceRequest(uri: recovered),
+    );
+    final opened = <Uri>[];
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (request) async {
+        opened.add(request.uri);
+        throw const Failure(
+          code: ErrorCode.network,
+          message: 'source host returned non-image bytes',
+          details: <String, Object?>{
+            'sourceMediaProtocolMismatch': true,
+            'sourceMediaSemanticRejected': true,
+          },
+        );
+      },
+    );
+    addTearDown(pool.close);
+
+    await expectLater(
+      pool.loaderFor(source, Uri.parse('venera-resource:semantic-terminal'))(),
+      throwsA(
+        isA<Failure>()
+            .having((error) => error.code, 'code', ErrorCode.source)
+            .having(
+              (error) => error.details['sourceSemanticRetryExhausted'],
+              'semantic retry exhausted',
+              isTrue,
+            ),
+      ),
+    );
+    expect(opened, <Uri>[failed, recovered]);
+    expect(source.resolveCalls, 1);
+    expect(source.retryCalls, 1);
+    expect(source.loadCalls, 0);
+  });
+
+  test('source-client state mismatch still falls back to runtime ownership',
+      () async {
+    final runtimeImage =
+        Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 9, 8, 7, 0xff, 0xd9]);
+    final source = _FixtureSource(
+      request: ComicResourceRequest(
+        uri: Uri.parse('https://fixture/source-client-state'),
+      ),
+      runtimeBytes: runtimeImage,
+    );
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (_) => Future<ByteResponse>.error(
+        const Failure(
+          code: ErrorCode.network,
+          message: 'source client state is required',
+          details: <String, Object?>{
+            'sourceMediaProtocolMismatch': true,
+            'sourceClientStateRequired': true,
+          },
+        ),
+      ),
+    );
+    addTearDown(pool.close);
+
+    final response = await pool
+        .loaderFor(source, Uri.parse('venera-resource:client-state'))();
+
+    expect(await _collect(response.bytes), runtimeImage);
+    expect(source.resolveCalls, 1);
+    expect(source.retryCalls, 0);
     expect(source.loadCalls, 1);
   });
 

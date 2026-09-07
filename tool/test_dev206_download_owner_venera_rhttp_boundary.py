@@ -27,7 +27,29 @@ pipe = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 composition_runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
 decode = read('packages/sessions/lib/src/decode_session.dart')
 app = read('apps/app/lib/demo_home_reader_route.dart')
+source_transport = read('packages/downloads/lib/src/source_resource_transport.dart')
+rhttp_transport = read('packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart')
+venera_runtime = read('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt')
 local_media_ui = read('packages/local_media_ui/lib/src/local_media_screens.dart')
+
+for marker in (
+    "'sourceMediaSemanticRejected': true",
+    "_isSourceMediaSemanticRejection(error)",
+    "_requiresSourceClientState(error)",
+    "sourceSemanticRetryExhausted",
+):
+    if marker not in source_transport:
+        raise SystemExit(f'source semantic/client-state recovery split missing: {marker}')
+if "'sourceMediaSemanticRejected': true" not in rhttp_transport:
+    raise SystemExit('rhttp non-image response is not typed as source semantic rejection')
+for marker in (
+    '__zicSemanticRetryConsumed:false',
+    '__zicSemanticRetryConsumed:true',
+    'active.__zicSemanticRetryConsumed',
+    '__zicResolveFreshResourceConfig(key,source)',
+):
+    if marker not in venera_runtime:
+        raise SystemExit(f'Venera one-semantic-retry fence missing: {marker}')
 
 for forbidden in ('PartialDownload', 'openPartial', 'storePartial', 'invalidatePartial'):
     if forbidden in manager or forbidden in store:

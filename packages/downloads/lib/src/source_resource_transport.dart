@@ -253,8 +253,24 @@ final class _SourceResourceTransport
         if (error.code == ErrorCode.cancelled) rethrow;
         if (error.code != ErrorCode.network) rethrow;
         _invalidate(uri);
-        if (error.details['sourceMediaProtocolMismatch'] == true) {
-          openPath = 'protocol-runtime-fallback';
+        if (_isSourceMediaSemanticRejection(error)) {
+          retryUsed = true;
+          final retry = await _retry(uri, control: control);
+          _throwIfTaskCancelled(control);
+          if (retry == null) {
+            throw _sourceMediaSemanticFailure(uri, cause: error);
+          }
+          final retried = await _openRetryPlan(
+            uri,
+            retry,
+            range: range,
+            validators: validators,
+            control: control,
+          );
+          response = retried.response;
+          openPath = retried.openPath;
+        } else if (_requiresSourceClientState(error)) {
+          openPath = 'client-runtime-fallback';
           response = await _openRuntimeFallback(
             uri,
             range: range,
@@ -460,6 +476,9 @@ final class _SourceResourceTransport
       );
     } on Failure catch (error) {
       if (error.code != ErrorCode.network) rethrow;
+      if (_isSourceMediaSemanticRejection(error)) {
+        throw _sourceMediaSemanticFailure(locator, cause: error);
+      }
     } on IOException {
       // A source-owned OkHttp interceptor, cookie jar or TLS stack can make
       // the host request unusable. Preserve complete-body compatibility only
@@ -636,10 +655,12 @@ final class _SourceResourceTransport
       _invalidate(uri);
       _failedStreams.add(uri);
       throw Failure(
-        code: ErrorCode.network,
+        code: ErrorCode.source,
         message: 'source runtime returned non-image bytes for $uri',
         details: const <String, Object?>{
           'sourceMediaProtocolMismatch': true,
+          'sourceMediaSemanticRejected': true,
+          'sourceSemanticRetryExhausted': true,
           'runtimeBodyImageSignatureRejected': true,
         },
       );
@@ -723,6 +744,24 @@ String? verifiedComicResourceIdentity(Uri uri) {
   return hash == null ? null : 'hash:$hash';
 }
 
+
+
+bool _isSourceMediaSemanticRejection(Failure error) =>
+    error.details['sourceMediaSemanticRejected'] == true;
+
+bool _requiresSourceClientState(Failure error) =>
+    error.details['sourceClientStateRequired'] == true;
+
+Failure _sourceMediaSemanticFailure(Uri locator, {Object? cause}) => Failure(
+      code: ErrorCode.source,
+      message: 'source image recovery returned non-media bytes for $locator',
+      cause: cause,
+      details: const <String, Object?>{
+        'sourceMediaProtocolMismatch': true,
+        'sourceMediaSemanticRejected': true,
+        'sourceSemanticRetryExhausted': true,
+      },
+    );
 
 
 Failure _taskCancelledFailure() => const Failure(
@@ -858,7 +897,10 @@ Future<_SourceHttpResponseBody> _prefetchEncodedMediaBody(
     throw Failure(
       code: ErrorCode.network,
       message: 'source host transport returned non-media bytes for $locator',
-      details: const <String, Object?>{'sourceMediaProtocolMismatch': true},
+      details: const <String, Object?>{
+        'sourceMediaProtocolMismatch': true,
+        'sourceMediaSemanticRejected': true,
+      },
     );
   }
   final body = _PrefetchedHttpResponseBody(

@@ -281,7 +281,10 @@ Future<_RhttpResponseBody> _prefetchEncodedMediaBody(
       throw Failure(
         code: ErrorCode.network,
         message: 'source host transport returned non-media bytes for $locator',
-        details: const <String, Object?>{'sourceMediaProtocolMismatch': true},
+        details: const <String, Object?>{
+          'sourceMediaProtocolMismatch': true,
+          'sourceMediaSemanticRejected': true,
+        },
       );
     }
   }

@@ -277,6 +277,43 @@ async function checkNonImageBodyUsesSourceRecovery(){
  if(loaded?.__zicNativeBytesToken!=='semantic-retry-token'||failedCalls!==1||requests!==2)throw new Error('200 non-image body did not use exactly one source semantic recovery '+JSON.stringify({loaded,failedCalls,requests}));
 }
 
+async function checkExternalSemanticRetryIsNotRepeatedByRuntimeFallback(){
+ const locator='venera-resource:'+__zicB64({v:1,image:'external-semantic-retry',comicId:'comic',epId:'ep'});
+ let configCalls=0,failedCalls=0,replacementFailedCalls=0,requests=0;
+ ZicNative.request=raw=>{
+   const message=__zicDecode(JSON.parse(raw));
+   if(message.method==='cookie'&&message.function==='get')return JSON.stringify({ok:true,value:__zicEncode([])});
+   if(message.method!=='http_image_binary')throw new Error('unexpected external semantic-retry bridge method '+message.method);
+   requests++;
+   if(message.url!=='https://cdn.invalid/replacement.webp')throw new Error('runtime fallback replayed the original semantic URL '+message.url);
+   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{'content-type':'text/html'},encodedImage:false,bodyLength:31})});
+ };
+ globalThis.__zicSource={comic:{
+   onImageLoad:async()=>{
+     configCalls++;
+     return {
+       url:'https://cdn.invalid/original.webp',
+       onLoadFailed:async()=>{
+         failedCalls++;
+         return {
+           url:'https://cdn.invalid/replacement.webp',
+           onLoadFailed:async()=>{replacementFailedCalls++;return {url:'https://cdn.invalid/second-replacement.webp'}},
+         };
+       },
+     };
+   },
+ }};
+ const resolved=await __zicOperation({operation:'resolveResource',arguments:{uri:locator}});
+ if(resolved.url!=='https://cdn.invalid/original.webp')throw new Error('external semantic retry initial plan mismatch '+JSON.stringify(resolved));
+ const retry=await __zicOperation({operation:'retryResource',arguments:{uri:locator}});
+ if(!retry.available||retry.request.url!=='https://cdn.invalid/replacement.webp'||failedCalls!==1)throw new Error('external semantic retry did not produce one replacement '+JSON.stringify({retry,failedCalls}));
+ let failed=false;
+ try{await __zicOperation({operation:'loadResource',arguments:{uri:locator}})}catch(error){failed=String(error).includes('non-image bytes')}
+ if(!failed||requests!==1||replacementFailedCalls!==0)throw new Error('runtime fallback repeated an already-consumed semantic retry '+JSON.stringify({failed,requests,replacementFailedCalls}));
+ const nextRetry=await __zicOperation({operation:'retryResource',arguments:{uri:locator}});
+ if(!nextRetry.available||configCalls!==2||failedCalls!==2)throw new Error('a later semantic retry did not refresh the durable resource identity '+JSON.stringify({nextRetry,configCalls,failedCalls}));
+}
+
 async function checkChapterImageConfigIsDeferred(){
  const comicId='venera:comic:'+__zicB64({id:'deferred-comic',title:'Deferred'});
  const chapter=__zicChapterMessage(comicId,'ep-deferred','Deferred episode',0);
@@ -479,7 +516,7 @@ async function checkInvokeRequestLifecycle(){
  if(seenRequestId!=='invoke-lifecycle'||completed?.requestId!=='invoke-lifecycle'||finished!=='invoke-lifecycle')throw new Error('invoke lifecycle did not retain the request id '+JSON.stringify({seenRequestId,completed,finished}));
 }
 
-(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkNonImageBodyUsesSourceRecovery();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkRequestScopedDelayCancellation();await checkAsyncNetworkBridgeAndActivationGate();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkNonImageBodyUsesSourceRecovery();await checkExternalSemanticRetryIsNotRepeatedByRuntimeFallback();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkRequestScopedDelayCancellation();await checkAsyncNetworkBridgeAndActivationGate();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)
