@@ -78,8 +78,41 @@ void main() {
       sessionId: 'retained-reader-1',
       traceSink: trace,
     );
+    first.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+    first.accept(
+      ReaderObs(
+        sessionId: 'retained-reader-1',
+        currentIndex: 0,
+        stableIndex: 0,
+        interaction: Interaction.idle,
+        logicalPosition: 0,
+        velocity: 0,
+        currentCoverage: Coverage(
+          pageIndex: 0,
+          assetKey: chapter.pages.single.assetKey,
+          fraction: 1,
+        ),
+        direction: ReadingDirection.ltr,
+        timestamp: DateTime.utc(2026),
+        monotonicMicros: 1,
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
 
     firstFactory.release(first);
+    final retainedEvent = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.readerSessionRetained,
+    );
+    expect(retainedEvent.payload['decodeSessions'], 0);
+    expect(retainedEvent.payload['uploadSessions'], 0);
+    expect(
+      retainedEvent.payload['releasedDecodeSessions'],
+      greaterThanOrEqualTo(1),
+    );
+    expect(
+      retainedEvent.payload['releasedUploadSessions'],
+      greaterThanOrEqualTo(1),
+    );
 
     final secondFactory = base.withLoaderSources(
       <Uri, LoaderTransportSource>{

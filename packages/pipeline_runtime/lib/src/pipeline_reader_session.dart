@@ -1266,6 +1266,26 @@ final class PipelineReaderSession {
       stream.dispose();
     }
     _pageStreams.clear();
+    _deferredOutputPrewarms.clear();
+
+    // Reader re-entry retention exists to preserve expensive transfer/source
+    // authority, not decoded presentation state. A NativeCursor owns an Arc to
+    // its encoded ByteSource plus a full RGBA canvas; keeping one detached
+    // decode frame per old viewport therefore pins both the compressed page
+    // body and native raster working set even after the physical transfer
+    // registry retires that page. Retire uploads first so their frame claims
+    // are released, then retire every decode/cursor. Re-entry recreates this
+    // cheap Reader-local media layer from the retained DownloadSession bytes.
+    final retainedDecodedBytes = _decodes.totalBytes;
+    final retainedOutputBytes = _uploads.totalBytes;
+    final retainedUploadSessions = _uploads.sessions.toList(growable: false);
+    for (final upload in retainedUploadSessions) {
+      _uploads.evict(upload.id);
+    }
+    final retainedDecodeSessions = _decodes.sessions.toList(growable: false);
+    for (final decode in retainedDecodeSessions) {
+      _decodes.evict(decode.id);
+    }
     trace.record(
       traceEvent(
         clock: clock,
@@ -1275,6 +1295,10 @@ final class PipelineReaderSession {
           'downloadSessions': _downloads.sessions.length,
           'decodeSessions': _decodes.sessions.length,
           'uploadSessions': _uploads.sessions.length,
+          'releasedDecodeSessions': retainedDecodeSessions.length,
+          'releasedUploadSessions': retainedUploadSessions.length,
+          'releasedDecodedBytes': retainedDecodedBytes,
+          'releasedOutputBytes': retainedOutputBytes,
         },
       ),
     );
