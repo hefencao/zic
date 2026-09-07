@@ -185,18 +185,17 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
               snapshot.state == PipelinePageTransferState.receiving ||
               snapshot.state == PipelinePageTransferState.sealed ||
               snapshot.state == PipelinePageTransferState.promoted;
-      final knownWebpAwaitingClassification =
-          _detectedFormat.isWebp &&
-              (kind == null || kind == PipelinePageContentKind.unknown);
-      // A known WebP already has a Pipeline streaming/native presentation
-      // path. During the short interval before transport sniffing resolves
-      // `kind`, starting loadBytes() would materialize the same full artifact
-      // into the presentation byte cache in parallel with that stream. Wait
-      // for classification instead. If the source later explicitly resolves
-      // to fallback/gif, the normal full-body path below remains available.
+      final awaitingPipelineClassification =
+          kind == null || kind == PipelinePageContentKind.unknown;
+      // Pipeline owns content sniffing for every streamed page, including
+      // opaque plugin locators whose filename/manifest exposes no useful
+      // extension. While that classification is unresolved, starting
+      // loadBytes() creates a second full-artifact read that can race and beat
+      // the streaming prefix path. Wait for the authoritative sniff instead;
+      // explicit fallback/gif classification still enters the full-body path.
       if (!_fallbackLoadStarted &&
           transferActive &&
-          !knownWebpAwaitingClassification) {
+          !awaitingPipelineClassification) {
         _fallbackLoadStarted = true;
         unawaited(_load());
       }

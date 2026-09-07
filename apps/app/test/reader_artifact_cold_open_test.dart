@@ -143,6 +143,138 @@ void main() {
       }
     },
   );
+
+  testWidgets(
+    'opaque page waits for Pipeline classification before persistent read-all',
+    (tester) async {
+      final bytes = _tinyWebp();
+      final record = ImportedChapterRecord(
+        directoryId: 'remote:opaque-comic',
+        displayName: 'Chapter',
+        sourceId: 'source',
+        comicId: 'opaque-webp-comic',
+        comicTitle: 'Comic',
+        chapterId: 'opaque-webp-chapter',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: 'opaque-page',
+            sourceId: 'memory://opaque-page',
+            pageId: 'page-0',
+            contentKindHint: ContentKindHint.unknown,
+            byteLength: bytes.lengthInBytes,
+          ),
+        ],
+      );
+      final chapter = record.toManifest();
+      final id = readerPageDownloadId(chapter, chapter.pages.single);
+      final store = _ArtifactStore(
+        <DownloadId, Uint8List>{id: bytes},
+        streamDelay: const Duration(milliseconds: 50),
+      );
+
+      try {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ImportedImageChapterScreen(
+              record: record,
+              pipelineFactory: defaultLocalMediaPipelineFactory
+                  .withArtifactCacheManager(
+                    ArtifactCacheManager(backend: store),
+                  ),
+            ),
+          ),
+        );
+        final elapsed = Stopwatch()..start();
+        while (elapsed.elapsed < const Duration(seconds: 3) &&
+            store.streamChunks == 0 &&
+            store.readAlls == 0) {
+          await tester.pump(const Duration(milliseconds: 1));
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 2)),
+          );
+        }
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 70)),
+        );
+        await tester.pump();
+        expect(store.streamChunks, greaterThan(0));
+        expect(
+          store.readAlls,
+          0,
+          reason: 'opaque presentation must wait for Pipeline media sniffing',
+        );
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(minutes: 2));
+      }
+    },
+  );
+
+  testWidgets(
+    'opaque non-WebP waits for classification then uses full-body presentation',
+    (tester) async {
+      final bytes = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+        'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      );
+      final record = ImportedChapterRecord(
+        directoryId: 'remote:opaque-png-comic',
+        displayName: 'Chapter',
+        sourceId: 'source',
+        comicId: 'opaque-png-comic',
+        comicTitle: 'Comic',
+        chapterId: 'opaque-png-chapter',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: 'opaque-page',
+            sourceId: 'memory://opaque-png-page',
+            pageId: 'page-0',
+            contentKindHint: ContentKindHint.unknown,
+            byteLength: bytes.lengthInBytes,
+          ),
+        ],
+      );
+      final chapter = record.toManifest();
+      final id = readerPageDownloadId(chapter, chapter.pages.single);
+      final store = _ArtifactStore(
+        <DownloadId, Uint8List>{id: bytes},
+        streamDelay: const Duration(milliseconds: 30),
+      );
+
+      try {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: ImportedImageChapterScreen(
+              record: record,
+              pipelineFactory: defaultLocalMediaPipelineFactory
+                  .withArtifactCacheManager(
+                    ArtifactCacheManager(backend: store),
+                  ),
+            ),
+          ),
+        );
+        final elapsed = Stopwatch()..start();
+        while (elapsed.elapsed < const Duration(seconds: 3) &&
+            store.readAlls == 0) {
+          await tester.pump(const Duration(milliseconds: 2));
+          await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 2)),
+          );
+        }
+        expect(store.streamChunks, greaterThan(0));
+        expect(
+          store.readAlls,
+          1,
+          reason: 'explicit Pipeline fallback must still permit full-body presentation',
+        );
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(minutes: 2));
+      }
+    },
+  );
 }
 
 Uint8List _tinyWebp() => base64Decode(
@@ -227,9 +359,13 @@ final class _ArtifactBytesPageState extends State<_ArtifactBytesPage> {
 }
 
 final class _ArtifactStore implements ArtifactCacheBackend {
-  _ArtifactStore(this.values);
+  _ArtifactStore(
+    this.values, {
+    this.streamDelay = Duration.zero,
+  });
 
   final Map<DownloadId, Uint8List> values;
+  final Duration streamDelay;
   int reads = 0;
   int streamChunks = 0;
   int readAlls = 0;
@@ -244,6 +380,9 @@ final class _ArtifactStore implements ArtifactCacheBackend {
       length: bytes.lengthInBytes,
       open: ({required int start, int? endExclusive}) async* {
         final end = endExclusive ?? bytes.lengthInBytes;
+        if (streamDelay > Duration.zero) {
+          await Future<void>.delayed(streamDelay);
+        }
         streamChunks++;
         yield Uint8List.sublistView(bytes, start, end);
       },
