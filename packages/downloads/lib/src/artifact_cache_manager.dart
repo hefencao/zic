@@ -41,6 +41,15 @@ final class ArtifactCacheManager {
   final LinkedHashMap<String, ArtifactEquivalentResolver>
       _equivalenceResolvers =
       LinkedHashMap<String, ArtifactEquivalentResolver>();
+  // Presentation may semantically reject bytes that are still structurally
+  // valid and shared by version-equivalent bindings. During that recovery the
+  // affected logical/physical ids must not source bytes from any cache tier or
+  // equivalence fallback; one fresh exact durable write clears the group.
+  final Map<DownloadId, int> _freshSourceRecoveryGroups = <DownloadId, int>{};
+  final Map<int, Set<DownloadId>> _freshSourceRecoveryMembers =
+      <int, Set<DownloadId>>{};
+  final Set<int> _armedFreshSourceRecoveryGroups = <int>{};
+  int _freshSourceRecoverySequence = 0;
   int _memoryBytes = 0;
 
   int get memoryEntryCount => _memory.length;
@@ -48,6 +57,57 @@ final class ArtifactCacheManager {
   int get equivalenceCount => _equivalenceOrder.length;
   int get equivalenceResolverCount => _equivalenceResolvers.length;
   bool hasEquivalentResolver(String key) => _equivalenceResolvers.containsKey(key);
+  bool requiresFreshSource(DownloadId id) =>
+      _freshSourceRecoveryGroups.containsKey(id);
+
+  /// Suppresses all cache-backed source selection for the supplied recovery
+  /// identities until one member publishes a fresh exact durable artifact.
+  /// This is a transient routing quarantine, not deletion of equivalent
+  /// siblings: their own logical lookups remain valid.
+  int beginFreshSourceRecovery(Iterable<DownloadId> ids) {
+    final members = <DownloadId>{...ids};
+    if (members.isEmpty) {
+      throw ArgumentError.value(ids, 'ids', 'must contain a recovery identity');
+    }
+    final existingGroups = members
+        .map((id) => _freshSourceRecoveryGroups[id])
+        .whereType<int>()
+        .toSet();
+    for (final group in existingGroups) {
+      _armedFreshSourceRecoveryGroups.remove(group);
+      members.addAll(
+        _freshSourceRecoveryMembers.remove(group) ?? const <DownloadId>{},
+      );
+    }
+    final group = ++_freshSourceRecoverySequence;
+    for (final id in members) {
+      _freshSourceRecoveryGroups[id] = group;
+      _invalidateMemoryExact(id);
+    }
+    _freshSourceRecoveryMembers[group] = members;
+    return group;
+  }
+
+  /// Allows a post-reset fresh exact store to complete this recovery group.
+  /// Stores that began before this point can never release the quarantine.
+  void armFreshSourceRecovery(int group) {
+    if (_freshSourceRecoveryMembers.containsKey(group)) {
+      _armedFreshSourceRecoveryGroups.add(group);
+    }
+  }
+
+  void _completeFreshSourceRecovery(DownloadId id) {
+    final group = _freshSourceRecoveryGroups[id];
+    if (group == null) return;
+    _armedFreshSourceRecoveryGroups.remove(group);
+    final members =
+        _freshSourceRecoveryMembers.remove(group) ?? <DownloadId>{id};
+    for (final member in members) {
+      if (_freshSourceRecoveryGroups[member] == group) {
+        _freshSourceRecoveryGroups.remove(member);
+      }
+    }
+  }
 
   /// Returns the current exact-identity mutation generation. A caller that
   /// starts a source-backed hot-byte retention operation may pass this value
@@ -56,6 +116,7 @@ final class ArtifactCacheManager {
   int generationFor(DownloadId id) => _mutationGenerations[id] ?? 0;
 
   Iterable<DownloadId> directEquivalents(DownloadId id) {
+    if (requiresFreshSource(id)) return const <DownloadId>[];
     final resolved = <DownloadId>{};
     final explicit = _equivalents[id];
     if (explicit != null) {
@@ -129,6 +190,7 @@ final class ArtifactCacheManager {
   }
 
   Iterable<DownloadId> _lookupCandidates(DownloadId id) sync* {
+    if (requiresFreshSource(id)) return;
     yield id;
     yield* directEquivalents(id);
   }
@@ -190,16 +252,19 @@ final class ArtifactCacheManager {
   Future<ArtifactCacheLookup?> lookupAuthoritative(
     DownloadId id, {
     TaskControl? control,
-  }) =>
-      _lookupCandidatesInOrder(id, <DownloadId>[id], control: control);
+  }) => requiresFreshSource(id)
+      ? Future<ArtifactCacheLookup?>.value()
+      : _lookupCandidatesInOrder(id, <DownloadId>[id], control: control);
 
   Future<ArtifactCacheLookup?> _lookupCandidatesInOrder(
     DownloadId id,
     Iterable<DownloadId> candidates, {
     TaskControl? control,
   }) async {
+    if (requiresFreshSource(id)) return null;
     for (final storageId in candidates) {
       control?.throwIfCancelled();
+      if (requiresFreshSource(id)) return null;
       await _awaitMutationBarrier(storageId, control);
       final memory = _lookupMemoryExact(storageId);
       if (memory != null) {
@@ -222,6 +287,7 @@ final class ArtifactCacheManager {
           backend.openArtifactStream(storageId),
           control,
         );
+        if (requiresFreshSource(id)) return null;
         if (generationFor(storageId) != generation) {
           staleLookupAttempts++;
           if (staleLookupAttempts < 3) continue;
@@ -264,6 +330,7 @@ final class ArtifactCacheManager {
     required DownloadId id,
     required int expectedLength,
   }) async {
+    if (requiresFreshSource(id)) return false;
     await _awaitMutationBarrier(id, null);
     final generation = generationFor(id);
     final entry = await backend.openArtifactStream(id);
@@ -322,7 +389,9 @@ final class ArtifactCacheManager {
       final lookup = await this.lookup(id, control: control);
       if (lookup == null) return null;
       try {
-        return await readForegroundLookup(lookup, control: control);
+        final read = await readForegroundLookup(lookup, control: control);
+        if (requiresFreshSource(id)) return null;
+        return read;
       } on _StaleArtifactCacheLookup {
         control?.throwIfCancelled();
       }
@@ -392,12 +461,19 @@ final class ArtifactCacheManager {
       throw StateError('cannot store an empty promoted artifact for ${id.key}');
     }
     final ownedBytes = bytes.asUnmodifiableView();
+    final recoveryGroupAtStart = _freshSourceRecoveryGroups[id];
+    final recoveryArmedAtStart = recoveryGroupAtStart != null &&
+        _armedFreshSourceRecoveryGroups.contains(recoveryGroupAtStart);
     final generation = _advanceMutationGeneration(id);
     _invalidateMemoryExact(id);
     await _serializeMutation(id, () async {
       await backend.storePromotedArtifact(id: id, bytes: ownedBytes);
     });
     if (generationFor(id) == generation) {
+      if (recoveryArmedAtStart &&
+          _freshSourceRecoveryGroups[id] == recoveryGroupAtStart) {
+        _completeFreshSourceRecovery(id);
+      }
       // Retain durable memory projection: remember(id: id, bytes: bytes, durable: true)
       _rememberExact(id: id, bytes: ownedBytes, durable: true);
     }

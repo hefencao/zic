@@ -1647,7 +1647,14 @@ final class DownloadSession {
     _notifySnapshot();
   }
 
-  Future<void> reset({bool removeCacheRecord = true}) async {
+  /// Starts a fresh physical generation. Ordinary resets preserve an immutable
+  /// promoted final so cache/shared-binding owners can re-adopt it. A caller
+  /// with semantic evidence that those exact physical bytes are invalid must
+  /// set [deleteFinalArtifact] to destroy that final before restore.
+  Future<void> reset({
+    bool removeCacheRecord = true,
+    bool deleteFinalArtifact = false,
+  }) async {
     _requireNotDisposed();
     if (_resetting ||
         _disposing ||
@@ -1660,7 +1667,10 @@ final class DownloadSession {
     }
     _resetting = true;
     try {
-      await _resetClaimed(removeCacheRecord: removeCacheRecord);
+      await _resetClaimed(
+        removeCacheRecord: removeCacheRecord,
+        deleteFinalArtifact: deleteFinalArtifact,
+      );
     } finally {
       _resetting = false;
     }
@@ -1711,7 +1721,10 @@ final class DownloadSession {
     }
   }
 
-  Future<void> _resetClaimed({required bool removeCacheRecord}) async {
+  Future<void> _resetClaimed({
+    required bool removeCacheRecord,
+    bool deleteFinalArtifact = false,
+  }) async {
     _ingressProjectionRevision++;
     _flushCommittedTrace();
     _writer = null;
@@ -1734,7 +1747,7 @@ final class DownloadSession {
     _failure = null;
     _resetPlayablePrefixEvidence();
     try {
-      await _restartArtifact();
+      await _restartArtifact(deleteFinal: deleteFinalArtifact);
       _state = DownloadState.idle;
       // Establish a cache synchronization boundary even when the caller has
       // already removed the index binding. In particular, a stale _syncCache
@@ -2738,8 +2751,8 @@ final class DownloadSession {
     return current;
   }
 
-  Future<void> _restartArtifact() async {
-    await artifact.reset();
+  Future<void> _restartArtifact({bool deleteFinal = false}) async {
+    await artifact.reset(deleteFinal: deleteFinal);
     await artifact.restore();
   }
 

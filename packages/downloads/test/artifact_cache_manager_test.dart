@@ -868,6 +868,70 @@ void main() {
     expect((await manager.readForeground(oldId))?.bytes, <int>[3, 2, 1]);
   });
 
+  test('fresh-source recovery quarantines cache fallback until exact durable write',
+      () async {
+    final target = _id('presentation-recovery-target');
+    final sibling = _id('presentation-recovery-sibling');
+    final stale = Uint8List.fromList(<int>[7, 7, 7]);
+    final fresh = Uint8List.fromList(<int>[1, 2, 3, 4]);
+    final backend = _Backend(<DownloadId, Uint8List>{sibling: stale});
+    final manager = ArtifactCacheManager(backend: backend);
+    manager.linkEquivalent(first: target, second: sibling);
+
+    expect((await manager.readForeground(target))?.bytes, stale);
+    final recoveryGroup =
+        manager.beginFreshSourceRecovery(<DownloadId>[target]);
+
+    expect(manager.requiresFreshSource(target), isTrue);
+    expect(manager.directEquivalents(target), isEmpty);
+    expect(manager.lookupMemoryWithAuthority(target), isNull);
+    expect(await manager.lookup(target), isNull);
+    expect(await manager.lookupAuthoritative(target), isNull);
+    expect(
+      await manager.containsBackendExact(id: target, expectedLength: stale.length),
+      isFalse,
+    );
+    expect((await manager.readForeground(sibling))?.bytes, stale);
+
+    // Simulate an old promoted handoff that started before physical reset. It
+    // may write exact bytes, but an unarmed recovery must keep them quarantined.
+    await manager.storePromotedArtifact(id: target, bytes: stale);
+    expect(manager.requiresFreshSource(target), isTrue);
+    expect(await manager.readForeground(target), isNull);
+
+    manager.armFreshSourceRecovery(recoveryGroup);
+    await manager.storePromotedArtifact(id: target, bytes: fresh);
+
+    expect(manager.requiresFreshSource(target), isFalse);
+    expect((await manager.readForeground(target))?.bytes, fresh);
+    expect((await manager.readForeground(sibling))?.bytes, stale);
+  });
+
+  test('fresh-source recovery withdraws an equivalent read already in flight',
+      () async {
+    final target = _id('presentation-recovery-race-target');
+    final sibling = _id('presentation-recovery-race-sibling');
+    final stale = Uint8List.fromList(<int>[9, 8, 7]);
+    final gate = Completer<void>();
+    final backend = _Backend(
+      <DownloadId, Uint8List>{sibling: stale},
+      readGate: gate,
+    );
+    final manager = ArtifactCacheManager(backend: backend);
+    manager.linkEquivalent(first: target, second: sibling);
+
+    final pending = manager.readForeground(target);
+    while (backend.readAllCalls == 0) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    manager.beginFreshSourceRecovery(<DownloadId>[target]);
+    gate.complete();
+
+    expect(await pending, isNull);
+    expect(manager.requiresFreshSource(target), isTrue);
+    expect((await manager.readForeground(sibling))?.bytes, stale);
+  });
+
   test('lazy equivalent resolver participates only in fallback lookup', () async {
     final target = _id('lazy-target');
     final source = _id('lazy-source');

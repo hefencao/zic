@@ -260,6 +260,7 @@ final class DownloadTransferOwner {
   Future<bool> recoverPresentationArtifact(
     DownloadId id, {
     required Future<bool> Function() invalidateArtifact,
+    Future<void> Function()? afterPhysicalReset,
   }) async {
     if (_disposed) return false;
     final physicalId = registry.resolvePhysicalId(id);
@@ -290,7 +291,8 @@ final class DownloadTransferOwner {
 
       if (_disposed) return false;
       if (session == null) {
-        await invalidateArtifact();
+        final invalidated = await invalidateArtifact();
+        if (invalidated) await afterPhysicalReset?.call();
         return true;
       }
       if (!identical(registry.findExact(physicalId), session)) return false;
@@ -313,7 +315,11 @@ final class DownloadTransferOwner {
         }
         return true;
       }
-      await session.reset(removeCacheRecord: false);
+      await session.reset(
+        removeCacheRecord: false,
+        deleteFinalArtifact: true,
+      );
+      await afterPhysicalReset?.call();
       _locallyPreparedSessions.remove(physicalId);
       _preparedNetworkAdmissions.remove(physicalId);
       _preparedAdmissionDeferrals.remove(physicalId);

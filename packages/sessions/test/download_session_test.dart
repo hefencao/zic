@@ -356,6 +356,25 @@ void main() {
     );
   });
 
+  test('destructive reset deletes a promoted final while ordinary reset preserves it',
+      () async {
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1, 2, 3]);
+    await session.seal(writer, expectedLength: 3);
+    await session.promote();
+    final finalFile = File(session.artifact.finalPath);
+    expect(await finalFile.exists(), isTrue);
+
+    await session.reset();
+    expect(await finalFile.exists(), isTrue);
+    expect(session.committedLength, 3);
+
+    await session.reset(deleteFinalArtifact: true);
+    expect(await finalFile.exists(), isFalse);
+    expect(session.committedLength, 0);
+    expect(session.state, DownloadState.idle);
+  });
+
   test('detach retains an active receiving writer', () async {
     final writer = session.acquireWriter();
     session.detach();

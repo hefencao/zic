@@ -229,6 +229,123 @@ void main() {
   );
 
   test(
+    'presentation rejection of a promoted cached copy destroys the physical final',
+    () async {
+      final uri = Uri.parse('https://example.invalid/recover-promoted-cache.jpg');
+      final chapter = _chapter(uri: uri);
+      final asset = chapter.pages.single;
+      final id = readerPageDownloadId(chapter, asset);
+      final cachedImage = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+        'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      );
+      final siblingId = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'older-comic',
+          chapterId: 'chapter',
+          pageId: 'page-0',
+        ),
+        sourceRevision: 'older-r1',
+        canonicalUri: Uri.parse(
+          'https://example.invalid/recover-promoted-cache-older.jpg',
+        ),
+      );
+      final partialCompletionGate = Completer<void>();
+      final store = _RejectedCachedImageStore(
+        id: id,
+        bytes: cachedImage,
+        equivalentId: siblingId,
+        completePartial: true,
+        partialCompletionGate: partialCompletionGate,
+      );
+      final cache = ArtifactCacheManager(backend: store);
+      cache.linkEquivalent(first: id, second: siblingId);
+      final transferRuntime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: cache,
+        partialDownloadStore: store,
+        net: NetLane(maxActive: 1),
+      );
+      const fresh = <int>[0xff, 0xd8, 0xff, 0xd9];
+      var sourceOpens = 0;
+      final factory = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _FreshFactory(),
+      ).withTransferRuntime(transferRuntime).withLoaderSources(
+        <Uri, LoaderTransportSource>{
+          uri: LoaderTransportSource(
+            revision: 'fresh-r1',
+            openControlledResponse: ({range, validators, control}) async {
+              sourceOpens++;
+              return ByteResponse(
+                bytes: Stream<List<int>>.value(fresh),
+                statusCode: 200,
+                rangeStart: 0,
+                totalLength: fresh.length,
+              );
+            },
+          ),
+        },
+      );
+      final reader = factory.create(
+        chapter: chapter,
+        sessionId: 'presentation-promoted-cache-recovery',
+      );
+
+      try {
+        reader.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+        reader.accept(_observation(reader.sessionId, chapter));
+        await store.partialOpened.future.timeout(const Duration(seconds: 2));
+
+        // Presentation reads the durable cache while local hydration is still
+        // receiving. This is the real-device ordering: the semantic failure
+        // arrives only after that same body has also become a promoted physical
+        // final.
+        final cached = await reader
+            .loadBytes(asset, MediaLoadToken())
+            .timeout(const Duration(seconds: 2));
+        expect(cached, cachedImage);
+        partialCompletionGate.complete();
+        await _waitForCondition(
+          () => transferRuntime.registry.find(id)?.state == DownloadState.promoted,
+        );
+        final beforeRecovery = transferRuntime.registry.find(id)!;
+        expect(beforeRecovery.committedLength, cachedImage.lengthInBytes);
+        expect(sourceOpens, 0);
+
+        expect(
+          await reader.recoverPresentationFailure(
+            asset,
+            const FormatException('decoder rejected promoted cached copy'),
+          ),
+          isTrue,
+        );
+        await _waitForCondition(() => sourceOpens == 1);
+        final recovered = await reader
+            .loadBytes(asset, MediaLoadToken())
+            .timeout(const Duration(seconds: 5));
+        expect(recovered, Uint8List.fromList(fresh));
+        expect(sourceOpens, 1);
+        expect(store.invalidations, 1);
+        await _waitForCondition(
+          () => transferRuntime.registry.find(id)?.state == DownloadState.promoted,
+        );
+        final freshSession = transferRuntime.registry.find(id)!;
+        expect(freshSession.committedLength, fresh.length);
+        expect(cache.requiresFreshSource(id), isTrue);
+        expect(
+          await transferRuntime.artifactCacheHandoff!.settleAutomatic(freshSession),
+          isTrue,
+        );
+        expect(cache.requiresFreshSource(id), isFalse);
+        expect((await cache.readForeground(siblingId))?.bytes, cachedImage);
+      } finally {
+        await reader.dispose().timeout(const Duration(seconds: 5));
+        await transferRuntime.dispose().timeout(const Duration(seconds: 5));
+      }
+    },
+  );
+
+  test(
     'presentation loadBytes reads immutable local sources before promotion',
     () async {
       const payload = <int>[7, 8, 9];
@@ -304,6 +421,16 @@ void main() {
     });
 }
 
+Future<void> _waitForCondition(bool Function() condition) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      throw TimeoutException('condition did not become true');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
 Stream<List<int>> _neverEndingBody() async* {
   // The gated transfer attempt never receives a byte; it exits only when its
   // consumer cancels the response subscription.
@@ -352,17 +479,29 @@ ChapterManifest _chapter({required Uri uri}) => ChapterManifest(
 
 final class _RejectedCachedImageStore
     implements ArtifactCacheBackend, PartialDownloadStore {
-  _RejectedCachedImageStore({required this.id, required this.bytes});
+  _RejectedCachedImageStore({
+    required this.id,
+    required this.bytes,
+    this.equivalentId,
+    this.completePartial = false,
+    this.partialCompletionGate,
+  });
 
   final DownloadId id;
   final Uint8List bytes;
+  final DownloadId? equivalentId;
+  final bool completePartial;
+  final Completer<void>? partialCompletionGate;
   final Completer<void> partialOpened = Completer<void>();
   bool invalidated = false;
   int invalidations = 0;
 
+  bool _canRead(DownloadId candidate) =>
+      (candidate == id && !invalidated) || candidate == equivalentId;
+
   @override
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId candidate) async {
-    if (candidate != id || invalidated) return null;
+    if (!_canRead(candidate)) return null;
     return ArtifactCacheStreamEntry(
       length: bytes.lengthInBytes,
       open: ({required int start, int? endExclusive}) async* {
@@ -376,12 +515,33 @@ final class _RejectedCachedImageStore
 
   @override
   Future<PartialDownloadEntry?> openPartialDownload(DownloadId candidate) async {
-    if (candidate != id || invalidated) return null;
+    if (!_canRead(candidate)) return null;
     return PartialDownloadEntry(
       length: bytes.lengthInBytes,
       validators: const Validators(etag: '"old-cache"'),
       totalLength: bytes.lengthInBytes,
       open: ({required int start}) {
+        if (completePartial) {
+          final gate = partialCompletionGate;
+          if (gate == null) {
+            if (!partialOpened.isCompleted) partialOpened.complete();
+            return Stream<List<int>>.value(
+              Uint8List.sublistView(bytes, start),
+            );
+          }
+          return (() async* {
+            final split = bytes.lengthInBytes ~/ 2;
+            if (!partialOpened.isCompleted) partialOpened.complete();
+            if (start < split) {
+              yield Uint8List.sublistView(bytes, start, split);
+            }
+            await gate.future;
+            final suffixStart = start > split ? start : split;
+            if (suffixStart < bytes.lengthInBytes) {
+              yield Uint8List.sublistView(bytes, suffixStart);
+            }
+          })();
+        }
         late final StreamController<List<int>> controller;
         controller = StreamController<List<int>>(
           onListen: () {
@@ -395,6 +555,7 @@ final class _RejectedCachedImageStore
         );
         return controller.stream;
       },
+      exactDurableFinal: completePartial,
     );
   }
 

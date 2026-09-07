@@ -318,6 +318,7 @@ final class CompositionDownloadTransferRuntime {
       generation = lookup?.generation ?? cache.generationFor(storageId);
     }
     storageId ??= id;
+    int? freshSourceRecoveryGroup;
 
     return owner.recoverPresentationArtifact(
       id,
@@ -334,6 +335,12 @@ final class CompositionDownloadTransferRuntime {
             );
           }
         }
+        if (invalidated && cache != null) {
+          freshSourceRecoveryGroup = cache.beginFreshSourceRecovery(<DownloadId>{
+            id,
+            registry.resolvePhysicalId(id),
+          });
+        }
         _recordPresentationRecoveryTrace(
           id: id,
           storageId: storageId!,
@@ -343,6 +350,10 @@ final class CompositionDownloadTransferRuntime {
               : 'stale-generation-reload',
         );
         return invalidated;
+      },
+      afterPhysicalReset: () async {
+        final group = freshSourceRecoveryGroup;
+        if (group != null) cache?.armFreshSourceRecovery(group);
       },
     );
   }
