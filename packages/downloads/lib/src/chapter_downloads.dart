@@ -7848,16 +7848,27 @@ final class PersistentChapterDownloadService
       );
       token.throwIfCancelled();
       if (_deletedIdentities.contains(identity)) return;
+      final finalIndexedRecords = await artifactStore.indexedRecords();
+      final finalChapterIds = artifactStore.downloadedChapterIdsFromRecords(
+        finalIndexedRecords.values,
+        sourceId: manifest.sourceId,
+        comicId: entry.chapter.comicId,
+      );
       await artifactStore.writeComicFolderManifest(
         entry,
         comicDirectoryName: structuredComicDirectory,
         chapterDirectoryName: chapterDirectoryName,
+        knownChapterIds: finalChapterIds,
       );
       if (_deletedIdentities.contains(identity)) return;
       _terminalPhases[identity] = ChapterDownloadPhase.complete;
       _startedRuns.add(identity);
       _recordCommandTrace(identity, 'chapter-run-complete', const <String, Object?>{});
-      await _emitInspection(entry, phase: ChapterDownloadPhase.complete);
+      await _emitInspection(
+        entry,
+        phase: ChapterDownloadPhase.complete,
+        indexedRecords: finalIndexedRecords,
+      );
     } on Failure catch (error) {
       await progress.flush();
       progress.close();
