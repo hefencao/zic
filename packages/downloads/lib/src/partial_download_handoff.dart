@@ -428,6 +428,7 @@ final class PartialDownloadHandoff {
     final scheduler = readScheduler;
     final iterator = StreamIterator<List<int>>(entry.open(start: 0));
     var offset = 0;
+    var iteratorCleanupDetached = false;
     Object? primaryError;
     StackTrace? primaryStack;
     try {
@@ -440,7 +441,50 @@ final class PartialDownloadHandoff {
               control: control,
             );
           }
-          if (!await _moveNextCancellable(iterator, control)) break;
+          final moveNext = iterator.moveNext();
+          final bool available;
+          if (control == null) {
+            available = await moveNext;
+          } else {
+            control.throwIfCancelled();
+            try {
+              available = await Future.any<bool>(<Future<bool>>[
+                moveNext,
+                control.whenCancelled.then<bool>((_) {
+                  throw const Failure(
+                    code: ErrorCode.cancelled,
+                    message: 'partial download restore was cancelled',
+                  );
+                }),
+              ]);
+            } on Object catch (error, stackTrace) {
+              if (control.cancelled) {
+                // The consumer/session side of a preempted restore can retire
+                // immediately, but the physical source read may still be
+                // inside an uncancellable platform/file Future. Keep that
+                // exact read quantum charged to ArtifactCacheReadScheduler
+                // until it really settles, while transferring StreamIterator
+                // cleanup to the detached drain. This frees the bounded local
+                // preparation slot without pretending the underlying I/O has
+                // already finished.
+                final drainingLease = lease;
+                lease = null;
+                iteratorCleanupDetached = true;
+                unawaited(
+                  _drainCancelledRestoreRead(
+                    session,
+                    iterator,
+                    moveNext,
+                    drainingLease,
+                    offset: offset,
+                  ),
+                );
+                Error.throwWithStackTrace(error, stackTrace);
+              }
+              rethrow;
+            }
+          }
+          if (!available) break;
           final chunk = iterator.current;
           if (chunk.isEmpty) continue;
           control?.throwIfCancelled();
@@ -455,11 +499,13 @@ final class PartialDownloadHandoff {
       primaryError = error;
       primaryStack = stackTrace;
     } finally {
-      try {
-        await iterator.cancel();
-      } on Object catch (error, stackTrace) {
-        if (primaryError == null) {
-          Error.throwWithStackTrace(error, stackTrace);
+      if (!iteratorCleanupDetached) {
+        try {
+          await iterator.cancel();
+        } on Object catch (error, stackTrace) {
+          if (primaryError == null) {
+            Error.throwWithStackTrace(error, stackTrace);
+          }
         }
       }
     }
@@ -467,6 +513,59 @@ final class PartialDownloadHandoff {
       Error.throwWithStackTrace(primaryError, primaryStack!);
     }
     return offset;
+  }
+
+  Future<void> _drainCancelledRestoreRead(
+    DownloadSession session,
+    StreamIterator<List<int>> iterator,
+    Future<bool> moveNext,
+    ArtifactCacheReadLease? lease, {
+    required int offset,
+  }) async {
+    final startedAtMicros = clock?.nowMicros();
+    try {
+      _record(
+        session,
+        action: 'cancelled-read-draining',
+        bytes: offset,
+        startedAtMicros: startedAtMicros,
+      );
+    } on Object {
+      // Diagnostics cannot own detached physical-I/O retirement.
+    }
+    try {
+      Future<void>? cancel;
+      try {
+        cancel = iterator.cancel();
+      } on Object {
+        // A synchronous cleanup failure cannot resurrect a cancelled restore.
+      }
+      try {
+        await moveNext;
+      } on Object {
+        // The restore cancellation already owns the consumer-visible result.
+        // A late source error is only part of retiring this read quantum.
+      }
+      if (cancel != null) {
+        try {
+          await cancel;
+        } on Object {
+          // Likewise, async cleanup failure remains detached from the owner.
+        }
+      }
+    } finally {
+      lease?.release();
+      try {
+        _record(
+          session,
+          action: 'cancelled-read-drain-complete',
+          bytes: offset,
+          startedAtMicros: startedAtMicros,
+        );
+      } on Object {
+        // Diagnostics cannot own detached physical-I/O retirement.
+      }
+    }
   }
 
   Future<bool> _moveNextCancellable(

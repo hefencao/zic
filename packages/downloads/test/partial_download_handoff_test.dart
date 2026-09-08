@@ -495,6 +495,110 @@ void main() {
     expect(backend.partial[id]?.bytes, bytes);
   });
 
+  test(
+    'cancelled restore frees preparation ownership while physical read drains',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'partial-restore-draining-read-',
+      );
+      addTearDown(() async => root.delete(recursive: true));
+      final id = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'draining-cancel',
+          chapterId: 'chapter',
+          pageId: 'page',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://example.test/draining.webp'),
+      );
+      final scheduler = ArtifactCacheReadScheduler(maxActive: 2);
+      final readEntered = Completer<void>();
+      final releaseRead = Completer<void>();
+      final streamClosed = Completer<void>();
+      Stream<List<int>> slowRead(Uint8List bytes) async* {
+        try {
+          if (!readEntered.isCompleted) readEntered.complete();
+          await releaseRead.future;
+          yield bytes;
+        } finally {
+          if (!streamClosed.isCompleted) streamClosed.complete();
+        }
+      }
+
+      final backend = _PartialStore(streamFor: slowRead);
+      final bytes = Uint8List.fromList(
+        List<int>.generate(4096, (index) => index & 0xff),
+      );
+      backend.partial[id] = _StoredPartial(
+        bytes: bytes,
+        validators: const Validators(etag: 'durable'),
+        totalLength: bytes.lengthInBytes + 1024,
+      );
+      final trace = MemoryTraceSink();
+      final handoff = PartialDownloadHandoff(
+        store: backend,
+        readScheduler: scheduler,
+        clock: SystemClock(),
+        traceSink: trace,
+      );
+      final registry = DownloadRegistry(
+        layout: CacheLayout(root.path),
+        clock: SystemClock(),
+      );
+      addTearDown(registry.dispose);
+      final session = registry.get(id);
+      final control = CancelToken(priority: 640);
+      final restore = handoff.restoreInto(session, control: control);
+
+      await readEntered.future.timeout(const Duration(seconds: 1));
+      expect(scheduler.activeCount, 1);
+      control.cancel();
+      await expectLater(
+        restore,
+        throwsA(
+          isA<Failure>().having(
+            (failure) => failure.code,
+            'code',
+            ErrorCode.cancelled,
+          ),
+        ),
+      ).timeout(const Duration(seconds: 1));
+
+      expect(session.state, DownloadState.idle);
+      expect(session.committedLength, 0);
+      expect(
+        scheduler.activeCount,
+        1,
+        reason:
+            'the uncancellable physical read must remain charged after the restore owner retires',
+      );
+      expect(
+        trace.events.any(
+          (event) =>
+              event.kind == TraceEventKind.artifactSource &&
+              event.payload['action'] == 'cancelled-read-draining',
+        ),
+        isTrue,
+      );
+
+      releaseRead.complete();
+      await streamClosed.future.timeout(const Duration(seconds: 1));
+      for (var i = 0; i < 20 && scheduler.activeCount != 0; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+      }
+      expect(scheduler.activeCount, 0);
+      expect(
+        trace.events.any(
+          (event) =>
+              event.kind == TraceEventKind.artifactSource &&
+              event.payload['action'] == 'cancelled-read-drain-complete',
+        ),
+        isTrue,
+      );
+    },
+  );
+
   test('cold partial hydration uses the shared persistent read scheduler', () async {
     final root = await Directory.systemTemp.createTemp('partial-read-scheduler-');
     addTearDown(() async => root.delete(recursive: true));
