@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
@@ -10,6 +11,35 @@ const _compactHomeProjectionSnapshotVersion = 2;
 const _homeProjectionSnapshotVersion = 3;
 const _compactPageSourcePrefix = 'zic-home-snapshot-page:';
 const _snapshotCompressionThreshold = 512 * 1024;
+
+typedef _EncodedHomeProjectionSnapshot = ({
+  List<int> storedBytes,
+  int jsonBytes,
+  bool compressed,
+});
+
+final class _HomeProjectionSnapshotEncoder {
+  const _HomeProjectionSnapshotEncoder(this.snapshot);
+
+  final HomeProjectionSnapshot snapshot;
+
+  _EncodedHomeProjectionSnapshot call() =>
+      _encodeHomeProjectionSnapshot(snapshot);
+}
+
+_EncodedHomeProjectionSnapshot _encodeHomeProjectionSnapshot(
+  HomeProjectionSnapshot snapshot,
+) {
+  final jsonBytes = utf8.encode(jsonEncode(snapshot.toJson()));
+  final storedBytes = jsonBytes.length >= _snapshotCompressionThreshold
+      ? gzip.encode(jsonBytes)
+      : jsonBytes;
+  return (
+    storedBytes: storedBytes,
+    jsonBytes: jsonBytes.length,
+    compressed: storedBytes.length != jsonBytes.length,
+  );
+}
 
 /// Storage-neutral, read-only download state used only by the Home startup
 /// accelerator. The downloads package remains the owner of live task state.
@@ -410,11 +440,11 @@ final class HomeProjectionSnapshotStore {
         final file = File(fixedPath ?? await _path);
         await file.parent.create(recursive: true);
         final temporary = File('${file.path}.tmp');
-        final jsonBytes = utf8.encode(jsonEncode(snapshot.toJson()));
-        final storedBytes = jsonBytes.length >= _snapshotCompressionThreshold
-            ? gzip.encode(jsonBytes)
-            : jsonBytes;
-        final compressed = storedBytes.length != jsonBytes.length;
+        final encoder = _HomeProjectionSnapshotEncoder(snapshot);
+        final encoded = await Isolate.run<_EncodedHomeProjectionSnapshot>(
+          encoder.call,
+        );
+        final storedBytes = encoded.storedBytes;
         await temporary.writeAsBytes(storedBytes, flush: true);
         try {
           await temporary.rename(file.path);
@@ -428,7 +458,7 @@ final class HomeProjectionSnapshotStore {
         }
         _snapshotLog(
           'home-snapshot-write-complete storedBytes=${storedBytes.length} '
-          'jsonBytes=${jsonBytes.length} compressed=$compressed '
+          'jsonBytes=${encoded.jsonBytes} compressed=${encoded.compressed} '
           'durationMs=${startedAt.elapsedMilliseconds}',
         );
         _readCache = null;

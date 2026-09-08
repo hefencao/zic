@@ -1163,6 +1163,16 @@ final class _DemoHomeState extends State<DemoHome> {
     ImportedLibraryEntry entry,
     bool isRead,
   ) async {
+    final identity = chapterLibraryIdentity(
+      entry.chapter.sourceId,
+      entry.chapter.chapterId,
+    );
+    final existing = _chapterReadStates[identity];
+    if (existing != null &&
+        existing.comicId == entry.chapter.comicId &&
+        existing.isRead == isRead) {
+      return;
+    }
     final state = ChapterReadState(
       sourceId: entry.chapter.sourceId,
       comicId: entry.chapter.comicId,
