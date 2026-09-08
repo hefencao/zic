@@ -4917,22 +4917,21 @@ final class PersistentDownloadArtifactStore
     return '$source-${hash.toRadixString(16).padLeft(8, '0')}';
   }
 
-  /// Marks every indexed record of one chapter as explicitly downloaded so
-  /// capacity trims and cache clears can no longer evict it. Returns the
-  /// number of records newly pinned.
-  Future<int> pinChapterRecords({
-    required String sourceId,
-    required String comicId,
-    required String chapterId,
-  }) async {
+  /// Marks only the exact logical bindings completed by one explicit
+  /// download command as retained offline pages. Version siblings, Reader
+  /// cache pages and other records that merely share a chapter id are not
+  /// download intent and must remain evictable.
+  Future<int> pinExactRecords(Iterable<DownloadId> ids) async {
     _requireOpen();
     var pinnedCount = 0;
-    for (final record in await _index.list()) {
-      final content = record.id.content;
-      final matches = content.sourceId == sourceId &&
-          content.comicId == comicId &&
-          content.chapterId == chapterId;
-      if (matches && !record.pinned) {
+    final seen = <String>{};
+    for (final id in ids) {
+      if (!seen.add(id.key)) continue;
+      final record = await _index.get(id.key);
+      if (record == null || !_isVerifiedReadyRecord(record) || record.id != id) {
+        continue;
+      }
+      if (!record.pinned) {
         await _index.put(record.copyWith(pinned: true));
         pinnedCount++;
       }
@@ -6543,16 +6542,6 @@ final class PersistentDownloadArtifactStore
     } finally {
       session.endRun(runLease);
     }
-    final placement = await _index.getPlacement(
-      sourceId: id.content.sourceId,
-      comicId: id.content.comicId,
-    );
-    if (placement != null) {
-      final rec = await _index.get(id.key);
-      if (rec != null && !rec.pinned) {
-        await _index.put(rec.copyWith(pinned: true));
-      }
-    }
   }
 
   @override
@@ -7685,10 +7674,8 @@ final class PersistentChapterDownloadService
       progress.close();
       token.throwIfCancelled();
       if (_deletedIdentities.contains(identity)) return;
-      await artifactStore.pinChapterRecords(
-        sourceId: manifest.sourceId,
-        comicId: entry.chapter.comicId,
-        chapterId: entry.chapter.chapterId,
+      await artifactStore.pinExactRecords(
+        manifest.pages.map((page) => _downloadId(manifest, page)),
       );
       token.throwIfCancelled();
       if (_deletedIdentities.contains(identity)) return;

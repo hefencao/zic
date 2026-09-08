@@ -37,8 +37,9 @@ final class CacheRec {
   final int createdUs;
   final int touchedUs;
 
-  /// Explicitly downloaded content is protected from capacity trims and
-  /// cache clears; only an explicit per-chapter delete may remove it.
+  /// This exact logical binding was explicitly retained by a manual/offline
+  /// download. Export placement alone and version-equivalent cache residency
+  /// never set this bit. Capacity trims preserve it until explicit deletion.
   final bool pinned;
 
   /// The checksum namespace is persisted separately from the digest value.

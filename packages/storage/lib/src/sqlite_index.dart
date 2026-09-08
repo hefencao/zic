@@ -13,7 +13,7 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
 
   SqliteIndex.memory() : path = null;
 
-  static const int _schemaVersion = 10;
+  static const int _schemaVersion = 11;
 
   final String? path;
   sql.Database? _db;
@@ -228,6 +228,9 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       _backfillArtifactReplicas(db);
       _backfillStorageRootRegistry(db);
       _migrateDownloadIdentityKeys(db);
+      if (version < 11) {
+        _migrateLegacyPinnedRetention(db);
+      }
       db.execute('PRAGMA user_version = $_schemaVersion');
       db.execute('COMMIT');
     } on Object {
@@ -1554,7 +1557,27 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
     return candidate;
   }
 
+  void _migrateLegacyPinnedRetention(sql.Database db) {
+    // Historical Reader promotion treated the existence of a comic download
+    // placement as manual retention and could therefore pin App-private cache
+    // finals. A placement is only export-location policy. Clear only states
+    // that cannot represent a completed manual export; keep older structured
+    // pins intact and leave ambiguous unpinned structured rows to the existing
+    // compatibility projection rather than guessing new retention intent.
+    db.execute('''
+      UPDATE cache_entry
+      SET pinned = 0
+      WHERE pinned != 0 AND (
+        state != 'ready' OR (
+          path NOT LIKE 'saf:%' AND
+          instr(replace(path, char(92), '/'), '/final/') > 0
+        )
+      )
+    ''');
+  }
+
   void _putBinding(sql.Database db, CacheRec record, String artifactId) {
+
     db.execute('''
       INSERT INTO cache_entry (
         key, download_json, state, path, bytes, checksum, created_us, touched_us,

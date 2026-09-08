@@ -574,7 +574,7 @@ void runCacheSchemaV2Tests() {
     expect(replicas.single.storageRootId, root);
   });
 
-  test('v8 cache metadata adds durable replica migration state as schema 10', () async {
+  test('v8 cache metadata adds durable replica migration state through schema 11', () async {
     final temp = await Directory.systemTemp.createTemp('cache_index_v8_migration_');
     addTearDown(() => temp.delete(recursive: true));
     final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
@@ -630,7 +630,7 @@ void runCacheSchemaV2Tests() {
     await migrated.close();
 
     final schema = sql.sqlite3.open(dbPath);
-    expect(schema.select('PRAGMA user_version').single.values.single, 10);
+    expect(schema.select('PRAGMA user_version').single.values.single, 11);
     expect(
       schema
           .select(
@@ -641,6 +641,93 @@ void runCacheSchemaV2Tests() {
       1,
     );
     schema.dispose();
+  });
+
+  test('v10 migration clears cache-final and partial legacy pins only', () async {
+    final temp = await Directory.systemTemp.createTemp('cache_index_v10_pin_migration_');
+    addTearDown(() => temp.delete(recursive: true));
+    final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
+    DownloadId id(String pageId) => DownloadId(
+          content: ContentId(
+            sourceId: 'source',
+            comicId: 'retention-migration',
+            chapterId: 'chapter',
+            pageId: pageId,
+          ),
+          sourceRevision: 'r1',
+          canonicalUri: Uri.parse('https://example.test/$pageId.webp'),
+        );
+    final cacheFinal = id('cache-final');
+    final partial = id('partial');
+    final structuredPinned = id('structured-pinned');
+    final structuredUnpinned = id('structured-unpinned');
+    final current = SqliteIndex(dbPath);
+    await current.open();
+    await current.put(
+      CacheRec(
+        id: cacheFinal,
+        state: CacheState.ready,
+        path: '${temp.path}/final/cache-final.webp',
+        bytes: 4,
+        checksum: '01020304',
+        createdUs: 1,
+        touchedUs: 1,
+        pinned: true,
+      ),
+    );
+    await current.put(
+      CacheRec(
+        id: partial,
+        state: CacheState.partial,
+        path: '${temp.path}/partial/partial.part',
+        bytes: 2,
+        checksum: '',
+        createdUs: 1,
+        touchedUs: 1,
+        pinned: true,
+      ),
+    );
+    await current.put(
+      CacheRec(
+        id: structuredPinned,
+        state: CacheState.ready,
+        path: '${temp.path}/Manual Comic/001.webp',
+        bytes: 4,
+        checksum: '01020304',
+        createdUs: 1,
+        touchedUs: 1,
+        pinned: true,
+      ),
+    );
+    await current.put(
+      CacheRec(
+        id: structuredUnpinned,
+        state: CacheState.ready,
+        path: '${temp.path}/Manual Comic/002.webp',
+        bytes: 4,
+        checksum: '01020304',
+        createdUs: 1,
+        touchedUs: 1,
+      ),
+    );
+    await current.close();
+
+    final legacy = sql.sqlite3.open(dbPath);
+    legacy.execute('PRAGMA user_version = 10');
+    legacy.dispose();
+
+    final migrated = SqliteIndex(dbPath);
+    await migrated.open();
+    addTearDown(migrated.close);
+
+    expect((await migrated.get(cacheFinal.key))!.pinned, isFalse);
+    expect((await migrated.get(partial.key))!.pinned, isFalse);
+    expect((await migrated.get(structuredPinned.key))!.pinned, isTrue);
+    expect((await migrated.get(structuredUnpinned.key))!.pinned, isFalse,
+        reason: 'migration must not invent manual intent for ambiguous old rows');
+    final raw = sql.sqlite3.open(dbPath);
+    expect(raw.select('PRAGMA user_version').single.values.single, 11);
+    raw.dispose();
   });
 
   test('current cache schema does not rerun legacy identity migration on reopen',
@@ -665,7 +752,7 @@ void runCacheSchemaV2Tests() {
       canonicalUri: Uri.parse('https://example.test/current-reopen.webp'),
     );
     final raw = sql.sqlite3.open(dbPath);
-    expect(raw.select('PRAGMA user_version').single.values.single, 10);
+    expect(raw.select('PRAGMA user_version').single.values.single, 11);
     raw.execute(
       'INSERT INTO cache_entry '
       '(key, download_json, state, path, bytes, checksum, created_us, touched_us, '
@@ -695,7 +782,7 @@ void runCacheSchemaV2Tests() {
     expect(
       await reopened.get(id.key),
       isNull,
-      reason: 'schema-10 reopen must not rescan/rewrite all cache identities',
+      reason: 'schema-11 reopen must not rescan/rewrite all cache identities',
     );
   });
 

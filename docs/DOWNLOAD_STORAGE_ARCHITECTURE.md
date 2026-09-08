@@ -192,9 +192,9 @@ If the relation cannot be represented by a verified compact proof, ZIC may forgo
 
 ## 4. Cache, export and retention
 
-`cache` and `manual download` are retention intents, not necessarily distinct byte objects.
+`cache` and `manual download` are retention intents, not necessarily distinct byte objects. Production schema 11 keeps the compatibility `CacheRec.pinned` bit strictly binding-local: only an exact logical page that enters explicit manual/offline materialization may set it; `DownloadPlacement` selects export location/conflict policy and MUST NOT retain later Reader cache pages. Chapter completion pins only the current manifest exact `DownloadId` set, never every revision sharing a chapter id. The v10→v11 one-time migration clears historical placement-derived pins on App-private `final/` cache rows and any pinned partial while preserving already-structured legacy pins. Older structured rows with no reliable bit remain a read-only compatibility projection until a stronger migration can prove their intent.
 
-A replica may satisfy automatic-cache retention, manual-export retention, or both.
+A replica may satisfy automatic-cache retention, manual-export retention, or both. Multiple logical bindings may still share one immutable artifact/replica; physical deletion remains governed by binding/replica references, not by copying `pinned` across equivalent versions. A generalized reasoned-retention table/`retention_flags` is deferred until production has more than one real durable retention owner (for example an explicit user cache-pin distinct from manual export).
 
 ### 4.1 Direct POSIX root
 

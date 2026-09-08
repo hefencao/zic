@@ -42,6 +42,7 @@ This document is normative for the detailed download/storage behavior. `docs/SPE
 3. On pure SAF roots, automatic cache and mutable partials SHOULD remain in App-private storage unless a provider-specific cheap-move capability is proven.
 4. Private/direct-to-SAF materialization MUST be a single bounded streaming copy; the copy pass MUST establish the destination seal proof without a mandatory second whole-file readback on the Reader hot path.
 5. Automatic cache MUST NOT be eagerly migrated merely because the default export root changes.
+6. `DownloadPlacement` MUST describe export location/conflict/order only and MUST NOT by itself create retention. The compatibility `pinned` state may protect only an exact logical binding completed by explicit manual/offline materialization; chapter-level pinning MUST NOT include other source revisions or pages outside the current exact manifest. Equivalent logical bindings may share physical artifact bytes without inheriting each other's retention intent.
 
 ## 5. Export layout and migration
 

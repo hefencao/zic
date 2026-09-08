@@ -3835,7 +3835,7 @@ void main() {
     expect(safStorage.containsKey('漫画V2/001.webp'), isFalse);
   });
 
-  test('storing reader cache for comic with existing download placement automatically pins page', () async {
+  test('download placement alone never pins a later Reader cache page', () async {
     final root = await Directory.systemTemp.createTemp('zic-auto-pin-test-');
     addTearDown(() => root.delete(recursive: true));
     final service = await PersistentChapterDownloadService.open(root.path);
@@ -3889,14 +3889,97 @@ void main() {
     ]);
     await service.storePromotedArtifact(id: id, bytes: webpBytes);
 
-    final rec = await service.artifactStore.index.get(id.key);
+    var rec = await service.artifactStore.index.get(id.key);
+    expect(rec, isNotNull);
+    expect(rec!.pinned, isFalse,
+        reason: 'placement chooses an export destination, not retention intent');
+
+    var snapshot = await service.inspect(entry);
+    expect(snapshot.pinnedPages, 0);
+    expect(snapshot.isManualDownload, isFalse);
+    expect(snapshot.hasAutoCache, isTrue);
+
+    // The explicit download command converts this exact cached binding into
+    // an offline retained page without needing placement to act as a pin.
+    await service.download(entry);
+    rec = await service.artifactStore.index.get(id.key);
     expect(rec, isNotNull);
     expect(rec!.pinned, isTrue);
+    snapshot = await service.inspect(entry);
+    expect(snapshot.pinnedPages, 1);
+    expect(snapshot.isComplete, isTrue);
+  });
 
-    // Snapshot correctly reports pinned page
-    final snapshot = await service.inspect(entry);
-    expect(snapshot.pinnedPages, equals(1));
-    expect(snapshot.isManualDownload, isTrue);
+  test('explicit download pins only the current exact revision', () async {
+    final root = await Directory.systemTemp.createTemp('zic-exact-pin-scope-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    const sourceId = 'mihon:test-src';
+    const comicId = 'pin-scope-comic';
+    const chapterId = 'ch1';
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x1a, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x4c,
+      0x0d, 0x00, 0x00, 0x00, 0x2f, 0x00, 0x00, 0x00,
+      0x00, 0x07, 0x08, 0x85, 0x88, 0x88, 0x08, 0x00,
+    ]);
+    await service.claimComicDirectory(
+      sourceId: sourceId,
+      comicId: comicId,
+      comicTitle: 'Pin Scope',
+      directoryName: 'Pin Scope',
+    );
+    final oldId = DownloadId(
+      content: const ContentId(
+        sourceId: sourceId,
+        comicId: comicId,
+        chapterId: chapterId,
+        pageId: 'old-page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/old.webp'),
+    );
+    final currentId = DownloadId(
+      content: const ContentId(
+        sourceId: sourceId,
+        comicId: comicId,
+        chapterId: chapterId,
+        pageId: 'current-page',
+      ),
+      sourceRevision: 'r2',
+      canonicalUri: Uri.parse('https://example.test/current.webp'),
+    );
+    await service.storePromotedArtifact(id: oldId, bytes: bytes);
+    await service.storePromotedArtifact(id: currentId, bytes: bytes);
+    expect((await service.artifactStore.index.get(oldId.key))!.pinned, isFalse);
+    expect((await service.artifactStore.index.get(currentId.key))!.pinned, isFalse);
+
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:pin-scope',
+        displayName: '第一话',
+        sourceId: sourceId,
+        comicId: comicId,
+        comicTitle: 'Pin Scope',
+        chapterId: chapterId,
+        sourceRevision: 'r2',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.test/current.webp',
+            pageId: 'current-page',
+            contentKindHint: ContentKindHint.webp,
+          ),
+        ],
+      ),
+    );
+
+    await service.download(entry);
+
+    expect((await service.artifactStore.index.get(currentId.key))!.pinned, isTrue);
+    expect((await service.artifactStore.index.get(oldId.key))!.pinned, isFalse,
+        reason: 'chapter id and placement do not confer current download intent');
   });
 
   test('same pageId from another revision never proves target page reuse', () async {
