@@ -31,6 +31,8 @@ void main() {
           predecessorPageCount: 370,
           successorPageCount: 371,
           successorOffset: 1,
+          predecessorSourceRevision: 'old-r1',
+          successorSourceRevision: 'new-r1',
           verifiedPredecessorPageIndexes: const <int>[0, 369],
           verifiedAt: DateTime.utc(2026, 8, 11, 1, 1),
         ),
@@ -60,6 +62,14 @@ void main() {
     expect(predecessors.single.discoveredAt, relation.discoveredAt);
     expect(predecessors.single.pageMappings, hasLength(1));
     expect(predecessors.single.pageMappings.single.successorOffset, 1);
+    expect(
+      predecessors.single.pageMappings.single.predecessorSourceRevision,
+      'old-r1',
+    );
+    expect(
+      predecessors.single.pageMappings.single.successorSourceRevision,
+      'new-r1',
+    );
     expect(
       predecessors.single.pageMappings.single.verifiedPredecessorPageIndexes,
       <int>[0, 369],

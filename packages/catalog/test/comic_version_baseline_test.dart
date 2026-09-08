@@ -88,6 +88,8 @@ void main() {
               predecessorPageCount: 3,
               successorPageCount: 4,
               successorOffset: 1,
+              predecessorSourceRevision: 'a-r1',
+              successorSourceRevision: 'b-r1',
               verifiedPredecessorPageIndexes: <int>[0, 1, 2],
             ),
           ],
@@ -103,6 +105,8 @@ void main() {
               predecessorPageCount: 4,
               successorPageCount: 4,
               successorOffset: 0,
+              predecessorSourceRevision: 'b-r1',
+              successorSourceRevision: 'c-r1',
               verifiedPredecessorPageIndexes: <int>[1, 3],
             ),
           ],
@@ -117,7 +121,59 @@ void main() {
       (relation) => relation.predecessorComicId == 'A',
     ).pageMappings.single;
     expect(composed.successorOffset, 1);
+    expect(composed.predecessorSourceRevision, 'a-r1');
+    expect(composed.successorSourceRevision, 'c-r1');
     expect(composed.verifiedPredecessorPageIndexes, <int>[0, 2]);
+  });
+
+  test('composed offset drops proof across a revision discontinuity', () {
+    final projection = resolveComicVersionBaselines(
+      relations: const <ComicVersionRelation>[
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'A',
+          successorComicId: 'B',
+          pageMappings: <ComicVersionPageMapping>[
+            ComicVersionPageMapping(
+              predecessorChapterId: 'a',
+              successorChapterId: 'b',
+              predecessorPageCount: 1,
+              successorPageCount: 1,
+              successorOffset: 0,
+              predecessorSourceRevision: 'a-r1',
+              successorSourceRevision: 'b-r1',
+              verifiedPredecessorPageIndexes: <int>[0],
+            ),
+          ],
+        ),
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'B',
+          successorComicId: 'C',
+          pageMappings: <ComicVersionPageMapping>[
+            ComicVersionPageMapping(
+              predecessorChapterId: 'b',
+              successorChapterId: 'c',
+              predecessorPageCount: 1,
+              successorPageCount: 1,
+              successorOffset: 0,
+              predecessorSourceRevision: 'b-r2',
+              successorSourceRevision: 'c-r1',
+              verifiedPredecessorPageIndexes: <int>[0],
+            ),
+          ],
+        ),
+      ],
+      manualDownloadComics: const <ComicVersionIdentity>[
+        ComicVersionIdentity(sourceId: 's', comicId: 'C'),
+      ],
+    );
+
+    final composed = projection.downloadHeadRelations.singleWhere(
+      (relation) => relation.predecessorComicId == 'A',
+    ).pageMappings.single;
+    expect(composed.successorOffset, 0);
+    expect(composed.verifiedPredecessorPageIndexes, isEmpty);
   });
 
   test('does not invent a latest head for an ambiguous branch', () {

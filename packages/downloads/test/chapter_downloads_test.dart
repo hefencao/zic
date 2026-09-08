@@ -3814,6 +3814,152 @@ void main() {
     expect(snapshot.isManualDownload, isTrue);
   });
 
+  test('same pageId from another revision never proves target page reuse', () async {
+    final root = await Directory.systemTemp.createTemp('zic-pageid-revision-proof-');
+    addTearDown(() => root.delete(recursive: true));
+    final oldBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 1, 1, 1, 1,
+    ]);
+    final newBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 2, 2, 2, 2,
+    ]);
+    var networkCalls = 0;
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(loadBytes: (_, __) async {
+        networkCalls++;
+        return newBytes;
+      }),
+    );
+
+    final oldId = DownloadId(
+      content: const ContentId(
+        sourceId: 'venera:test',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'same-page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('venera-resource:old-revision-page'),
+    );
+    await service.storePromotedArtifact(id: oldId, bytes: oldBytes);
+
+    final target = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'venera:test:comic',
+        displayName: '第一话',
+        sourceId: 'venera:test',
+        comicId: 'comic',
+        comicTitle: 'Revision Identity',
+        chapterId: 'chapter',
+        sourceRevision: 'r2',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'venera-resource:new-revision-page',
+            pageId: 'same-page',
+            contentKindHint: ContentKindHint.webp,
+          ),
+        ],
+      ),
+    );
+
+    await service.download(target);
+    expect(networkCalls, 1);
+    expect(await service.readPage(target, 0), newBytes);
+  });
+
+  test('version page proof is invalid when predecessor revision changed', () async {
+    final root = await Directory.systemTemp.createTemp('zic-version-proof-revision-');
+    addTearDown(() => root.delete(recursive: true));
+    final oldBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 3, 3, 3, 3,
+    ]);
+    final newBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 4, 4, 4, 4,
+    ]);
+    var networkCalls = 0;
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(loadBytes: (_, __) async {
+        networkCalls++;
+        return networkCalls == 1 ? oldBytes : newBytes;
+      }),
+    );
+
+    final oldEntry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'venera:old',
+        displayName: '第一话',
+        sourceId: 'venera:test',
+        comicId: 'old',
+        comicTitle: 'Old',
+        chapterId: 'chapter',
+        sourceRevision: 'old-r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'venera-resource:old-page',
+            pageId: 'old-page',
+            contentKindHint: ContentKindHint.webp,
+          ),
+        ],
+      ),
+    );
+    final newEntry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'venera:new',
+        displayName: '第一话',
+        sourceId: 'venera:test',
+        comicId: 'new',
+        comicTitle: 'New',
+        chapterId: 'chapter',
+        sourceRevision: 'new-r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'venera-resource:new-page',
+            pageId: 'new-page',
+            contentKindHint: ContentKindHint.webp,
+          ),
+        ],
+      ),
+    );
+
+    await service.download(oldEntry);
+    expect(networkCalls, 1);
+    service.updateVersionBaselines(const <ComicVersionRelation>[
+      ComicVersionRelation(
+        sourceId: 'venera:test',
+        predecessorComicId: 'old',
+        successorComicId: 'new',
+        pageMappings: <ComicVersionPageMapping>[
+          ComicVersionPageMapping(
+            predecessorChapterId: 'chapter',
+            successorChapterId: 'chapter',
+            predecessorPageCount: 1,
+            successorPageCount: 1,
+            successorOffset: 0,
+            predecessorSourceRevision: 'old-r0',
+            successorSourceRevision: 'new-r1',
+            verifiedPredecessorPageIndexes: <int>[0],
+          ),
+        ],
+      ),
+    ]);
+
+    await service.download(newEntry);
+    expect(networkCalls, 2,
+        reason: 'a proof for old-r0 must not adopt the old-r1 artifact');
+    expect(await service.readPage(newEntry, 0), newBytes);
+  });
+
   test('cross-version download with offset adopts predecessor pages in chronological order', () async {
     final root = await Directory.systemTemp.createTemp('zic-offset-adopt-test-');
     addTearDown(() => root.delete(recursive: true));
@@ -3892,6 +4038,9 @@ void main() {
             successorOffset: 2,
             predecessorPageCount: 3,
             successorPageCount: 5,
+            predecessorSourceRevision: 'r1',
+            successorSourceRevision: 'r1',
+            verifiedPredecessorPageIndexes: <int>[0, 1, 2],
           ),
         ],
       ),

@@ -7360,6 +7360,40 @@ final class PersistentChapterDownloadService
 
       final baselinePredecessors =
           artifactStore._downloadBaselinePredecessorMappings(entry);
+      final predecessorBindingLookups = <String, Future<Map<int, String>>>{};
+      Future<String?> predecessorPageIdAt({
+        required String sourceId,
+        required String comicId,
+        required String chapterId,
+        required int logicalIndex,
+      }) async {
+        final key = '$sourceId\u0000$comicId\u0000$chapterId';
+        final byIndex = await predecessorBindingLookups.putIfAbsent(
+          key,
+          () async {
+            final bindings = await artifactStore._index.listExportPageBindings(
+              sourceId: sourceId,
+              comicId: comicId,
+              chapterId: chapterId,
+            );
+            final resolved = <int, String>{};
+            final ambiguous = <int>{};
+            for (final binding in bindings) {
+              final previous = resolved[binding.logicalIndex];
+              if (previous != null && previous != binding.pageId) {
+                ambiguous.add(binding.logicalIndex);
+                continue;
+              }
+              resolved[binding.logicalIndex] = binding.pageId;
+            }
+            for (final index in ambiguous) {
+              resolved.remove(index);
+            }
+            return Map<int, String>.unmodifiable(resolved);
+          },
+        );
+        return byIndex[logicalIndex];
+      }
 
       var placement = await artifactStore.resolveDownloadPlacement(entry);
       placement = await artifactStore.freezeExportPageOrder(
@@ -7469,66 +7503,67 @@ final class PersistentChapterDownloadService
           }
         }
 
-        // Classify from the one run-start index snapshot. Network pages are
-        // then admitted as a bounded batch, so the scheduler can overlap
-        // transfers without allowing an unbounded chapter fan-out.
+        // Classify from the one run-start index snapshot. Reuse requires an
+        // exact-page proof; pageId, file name, ordinal, or revision proximity
+        // are locator hints only and never establish content equivalence.
         CacheRec? siblingRecord;
-        for (final candidate in indexedRecords.values) {
-          if (!artifactStore._isVerifiedReadyRecord(candidate)) {
-            continue;
-          }
-          if (candidate.id.content.sourceId == entry.chapter.sourceId &&
-              candidate.id.content.comicId == entry.chapter.comicId &&
-              candidate.id.content.chapterId == entry.chapter.chapterId &&
-              candidate.id.content.pageId == page.pageId &&
-              candidate.id.key != id.key) {
-            siblingRecord = candidate;
-            break;
+        String? siblingProof;
+        final pageVerifiedIds = verifiedPageIdentities(page).toSet();
+        if (pageVerifiedIds.isNotEmpty) {
+          for (final candidate in indexedRecords.values) {
+            if (!artifactStore._isVerifiedReadyRecord(candidate) ||
+                candidate.id.key == id.key ||
+                candidate.id.content.sourceId != entry.chapter.sourceId) {
+              continue;
+            }
+            if (verifiedRecordIdentities(candidate).any(pageVerifiedIds.contains)) {
+              siblingRecord = candidate;
+              siblingProof = 'strong-media-identity';
+              break;
+            }
           }
         }
         if (siblingRecord == null) {
           for (final baseline in baselinePredecessors) {
             final mapping = baseline.mapping;
-            if (mapping.successorOffset < 0 ||
+            if (mapping.successorSourceRevision !=
+                    entry.chapter.sourceRevision ||
+                mapping.predecessorSourceRevision == null ||
+                mapping.successorOffset < 0 ||
                 pageIndex < mapping.successorOffset) {
               continue;
             }
             final predecessorIndex = pageIndex - mapping.successorOffset;
-            if (predecessorIndex >= mapping.predecessorPageCount) continue;
-            for (final candidate in indexedRecords.values) {
-              if (!artifactStore._isVerifiedReadyRecord(candidate)) continue;
-              if (candidate.id.content.sourceId == entry.chapter.sourceId &&
-                  candidate.id.content.comicId ==
-                      baseline.relation.predecessorComicId &&
-                  candidate.id.content.chapterId ==
-                      mapping.predecessorChapterId) {
-                final parsedNum = parsePageIndexFromFileName(candidate.path);
-                if (parsedNum == null) continue;
-                final matchesReverse =
-                    parsedNum == (mapping.predecessorPageCount - predecessorIndex);
-                final matchesNormal = parsedNum == (predecessorIndex + 1);
-                if (matchesReverse || matchesNormal) {
-                  siblingRecord = candidate;
-                  break;
-                }
-              }
+            if (predecessorIndex >= mapping.predecessorPageCount ||
+                !mapping.verifiedPredecessorPageIndexes.contains(
+                  predecessorIndex,
+                )) {
+              continue;
             }
-            if (siblingRecord != null) break;
-          }
-        }
-        if (siblingRecord == null) {
-          final pageVerifiedIds = verifiedPageIdentities(page).toSet();
-          if (pageVerifiedIds.isNotEmpty) {
-            for (final candidate in indexedRecords.values) {
-              if (!artifactStore._isVerifiedReadyRecord(candidate) ||
-                  candidate.id.key == id.key) {
-                continue;
-              }
-              if (verifiedRecordIdentities(candidate).any(pageVerifiedIds.contains)) {
-                siblingRecord = candidate;
-                break;
-              }
-            }
+            final predecessorPageId = await predecessorPageIdAt(
+              sourceId: entry.chapter.sourceId,
+              comicId: baseline.relation.predecessorComicId,
+              chapterId: mapping.predecessorChapterId,
+              logicalIndex: predecessorIndex,
+            );
+            if (predecessorPageId == null) continue;
+            final candidates = <CacheRec>[
+              for (final candidate in indexedRecords.values)
+                if (artifactStore._isVerifiedReadyRecord(candidate) &&
+                    candidate.id.content.sourceId == entry.chapter.sourceId &&
+                    candidate.id.content.comicId ==
+                        baseline.relation.predecessorComicId &&
+                    candidate.id.content.chapterId ==
+                        mapping.predecessorChapterId &&
+                    candidate.id.content.pageId == predecessorPageId &&
+                    candidate.id.sourceRevision ==
+                        mapping.predecessorSourceRevision)
+                  candidate,
+            ];
+            if (candidates.length != 1) continue;
+            siblingRecord = candidates.single;
+            siblingProof = 'version-page-proof';
+            break;
           }
         }
         if (siblingRecord != null) {
@@ -7556,6 +7591,7 @@ final class PersistentChapterDownloadService
             'page': pageIndex,
             'targetPageNumber': targetPageNumber,
             'bytes': siblingRecord.bytes,
+            if (siblingProof != null) 'reuseProof': siblingProof,
             if (siblingRecord.id.content.comicId != entry.chapter.comicId)
               'baselineComicId': siblingRecord.id.content.comicId,
           });

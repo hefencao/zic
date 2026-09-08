@@ -433,6 +433,8 @@ final class ComicVersionPageMapping {
     required this.predecessorPageCount,
     required this.successorPageCount,
     required this.successorOffset,
+    this.predecessorSourceRevision,
+    this.successorSourceRevision,
     this.verifiedPredecessorPageIndexes = const <int>[],
     this.verifiedAt,
   });
@@ -442,6 +444,8 @@ final class ComicVersionPageMapping {
   final int predecessorPageCount;
   final int successorPageCount;
   final int successorOffset;
+  final String? predecessorSourceRevision;
+  final String? successorSourceRevision;
   final List<int> verifiedPredecessorPageIndexes;
   final DateTime? verifiedAt;
 
@@ -451,6 +455,10 @@ final class ComicVersionPageMapping {
         'predecessorPageCount': predecessorPageCount,
         'successorPageCount': successorPageCount,
         'successorOffset': successorOffset,
+        if (predecessorSourceRevision != null)
+          'predecessorSourceRevision': predecessorSourceRevision,
+        if (successorSourceRevision != null)
+          'successorSourceRevision': successorSourceRevision,
         if (verifiedPredecessorPageIndexes.isNotEmpty)
           'verifiedPredecessorPageIndexes': verifiedPredecessorPageIndexes,
         if (verifiedAt != null)
@@ -463,6 +471,8 @@ final class ComicVersionPageMapping {
     final predecessorPageCount = json['predecessorPageCount'];
     final successorPageCount = json['successorPageCount'];
     final successorOffset = json['successorOffset'];
+    final predecessorSourceRevision = json['predecessorSourceRevision'];
+    final successorSourceRevision = json['successorSourceRevision'];
     final verifiedIndexesValue = json['verifiedPredecessorPageIndexes'];
     final verifiedAtValue = json['verifiedAt'];
     if (predecessorChapterId is! String ||
@@ -474,6 +484,11 @@ final class ComicVersionPageMapping {
         successorPageCount is! int ||
         successorPageCount <= 0 ||
         successorOffset is! int ||
+        (predecessorSourceRevision != null &&
+            (predecessorSourceRevision is! String ||
+                predecessorSourceRevision.isEmpty)) ||
+        (successorSourceRevision != null &&
+            (successorSourceRevision is! String || successorSourceRevision.isEmpty)) ||
         (verifiedIndexesValue != null && verifiedIndexesValue is! List) ||
         (verifiedAtValue != null && verifiedAtValue is! String)) {
       throw const FormatException('invalid comic version page mapping');
@@ -505,6 +520,8 @@ final class ComicVersionPageMapping {
       predecessorPageCount: predecessorPageCount,
       successorPageCount: successorPageCount,
       successorOffset: successorOffset,
+      predecessorSourceRevision: predecessorSourceRevision as String?,
+      successorSourceRevision: successorSourceRevision as String?,
       verifiedPredecessorPageIndexes:
           List<int>.unmodifiable(verifiedIndexes),
       verifiedAt: verifiedAt,

@@ -332,6 +332,10 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         }
       }
       if (currentMapping != null &&
+          currentMapping.predecessorSourceRevision ==
+              predecessorChapter.sourceRevision &&
+          currentMapping.successorSourceRevision ==
+              matchedSuccessorChapter.sourceRevision &&
           currentMapping.verifiedPredecessorPageIndexes.isNotEmpty &&
           _versionPageMappingIsFresh(currentMapping, revalidationNow)) {
         verifiedMappings++;
@@ -368,6 +372,8 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         predecessorPageCount: predecessorManifest.pages.length,
         successorPageCount: successorManifest.pages.length,
         successorOffset: offsetProof.targetOffsetFromSource,
+        predecessorSourceRevision: predecessorManifest.chapter.sourceRevision,
+        successorSourceRevision: successorManifest.chapter.sourceRevision,
         verifiedPredecessorPageIndexes: offsetProof.verifiedSourceIndexes,
         verifiedAt: DateTime.now().toUtc(),
       );
@@ -508,6 +514,8 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           '\u0000${mapping.predecessorPageCount}'
           '\u0000${mapping.successorPageCount}'
           '\u0000${mapping.successorOffset}'
+          '\u0000${mapping.predecessorSourceRevision ?? ''}'
+          '\u0000${mapping.successorSourceRevision ?? ''}'
           '\u0000${mapping.verifiedPredecessorPageIndexes.join(',')}'
           '\u0000${mapping.verifiedAt?.microsecondsSinceEpoch ?? 0}',
         );
@@ -566,6 +574,16 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         if (currentIsPredecessor &&
             (mapping.predecessorPageCount != current.chapter.pages.length ||
                 mapping.successorPageCount != sourceManifest.pages.length)) {
+          continue;
+        }
+        final predecessorRevision = currentIsSuccessor
+            ? sourceManifest.chapter.sourceRevision
+            : current.chapter.sourceRevision;
+        final successorRevision = currentIsSuccessor
+            ? current.chapter.sourceRevision
+            : sourceManifest.chapter.sourceRevision;
+        if (mapping.predecessorSourceRevision != predecessorRevision ||
+            mapping.successorSourceRevision != successorRevision) {
           continue;
         }
         resolver.addVerifiedOffset(
