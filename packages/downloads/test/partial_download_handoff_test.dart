@@ -434,6 +434,80 @@ void main() {
     expect(backend.partial.containsKey(newId), isFalse);
     expect(backend.partial.containsKey(oldId), isTrue);
   });
+  test('verified equivalent partials still choose the longest prefix', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'partial-equivalent-longest-',
+    );
+    addTearDown(() async => root.delete(recursive: true));
+    final shortId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'short',
+        chapterId: 'chapter-short',
+        pageId: 'page-short',
+      ),
+      sourceRevision: 'short-r1',
+      canonicalUri: Uri.parse('https://example.test/short.webp'),
+    );
+    final longId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'long',
+        chapterId: 'chapter-long',
+        pageId: 'page-long',
+      ),
+      sourceRevision: 'long-r1',
+      canonicalUri: Uri.parse('https://example.test/long.webp'),
+    );
+    final targetId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'target',
+        chapterId: 'chapter-target',
+        pageId: 'page-target',
+      ),
+      sourceRevision: 'target-r2',
+      canonicalUri: Uri.parse('https://example.test/target.webp'),
+    );
+    final shortBytes = Uint8List.fromList(
+      List<int>.generate(128, (index) => index & 0xff),
+    );
+    final longBytes = Uint8List.fromList(
+      List<int>.generate(384, (index) => (index + 17) & 0xff),
+    );
+    final backend = _PartialStore();
+    backend.partial[shortId] = _StoredPartial(
+      bytes: shortBytes,
+      validators: const Validators(etag: 'short-etag'),
+      totalLength: 1024,
+    );
+    backend.partial[longId] = _StoredPartial(
+      bytes: longBytes,
+      validators: const Validators(etag: 'long-etag'),
+      totalLength: 1024,
+    );
+    final handoff = PartialDownloadHandoff(
+      store: backend,
+      equivalentCandidates: (id) => id == targetId
+          ? <DownloadId>[shortId, longId]
+          : const <DownloadId>[],
+    );
+    final registry = DownloadRegistry(
+      layout: CacheLayout(root.path),
+      clock: SystemClock(),
+    );
+    addTearDown(registry.dispose);
+    final session = registry.get(targetId);
+
+    await handoff.restoreInto(session);
+
+    expect(session.state, DownloadState.idle);
+    expect(session.committedLength, longBytes.lengthInBytes);
+    expect(session.validators.isEmpty, isTrue);
+    expect(session.totalLength, 1024);
+    expect(await session.artifact.readBytes(), orderedEquals(longBytes));
+  });
+
   test('cancelling partial restore aborts body and preserves durable source',
       () async {
     final root = await Directory.systemTemp.createTemp(
@@ -690,6 +764,125 @@ void main() {
     },
   );
 
+  test(
+    'verified equivalent READY binds resident authority without body copy',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'equivalent-ready-bound-reader-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final oldId = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'old-comic',
+          chapterId: 'old-chapter',
+          pageId: 'old-page',
+        ),
+        sourceRevision: 'old-r1',
+        canonicalUri: Uri.parse('https://example.test/old-ready.webp'),
+      );
+      final newId = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'new-comic',
+          chapterId: 'new-chapter',
+          pageId: 'new-page',
+        ),
+        sourceRevision: 'new-r2',
+        canonicalUri: Uri.parse('https://example.test/new-ready.webp'),
+      );
+      final neverId = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'never-comic',
+          chapterId: 'never-chapter',
+          pageId: 'never-page',
+        ),
+        sourceRevision: 'never-r3',
+        canonicalUri: Uri.parse('https://example.test/never-ready.webp'),
+      );
+      final bytes = Uint8List.fromList(<int>[
+        ...'RIFF'.codeUnits,
+        0x80, 0x00, 0x00, 0x00,
+        ...'WEBP'.codeUnits,
+        ...'VP8X'.codeUnits,
+        10, 0, 0, 0,
+        0x02, 0, 0, 0,
+        0x7f, 0x02, 0,
+        0xaf, 0x04, 0,
+        ...List<int>.generate(1024, (index) => index & 0xff),
+      ]);
+      final store = _ReadyBoundStore(id: oldId, bytes: bytes);
+      final trace = MemoryTraceSink();
+      final handoff = PartialDownloadHandoff(
+        store: store,
+        equivalentCandidates: (id) => id == newId
+            ? <DownloadId>[oldId, neverId]
+            : const <DownloadId>[],
+        clock: SystemClock(),
+        traceSink: trace,
+      );
+      final registry = DownloadRegistry(
+        layout: CacheLayout(root.path),
+        clock: SystemClock(),
+      );
+      addTearDown(registry.dispose);
+      final session = registry.get(newId);
+
+      await handoff.restoreInto(session);
+
+      expect(session.state, DownloadState.promoted);
+      expect(session.residentBodyBacked, isTrue);
+      expect(session.residentIngressDeferred, isTrue);
+      expect(session.artifact.committedLength, 0,
+          reason: 'equivalent READY bytes must not be copied into hot storage');
+      expect(await session.artifact.hasRestorableBody(), isFalse,
+          reason: 'the initialized deterministic artifact remains body-empty');
+      expect(session.validators.isEmpty, isTrue,
+          reason: 'provider validators never cross equivalent source revisions');
+      expect(session.committedLength, bytes.lengthInBytes);
+      expect(session.sourceMetadataPrefixLength, 64);
+      expect(store.readerOpenCalls, 1);
+      expect(store.readerReadCalls, 1,
+          reason: 'restore reads only the metadata prefix before binding');
+      expect(store.bodyOpenCalls, 0,
+          reason: 'the historical full-body restore path must stay unused');
+      expect(store.openRequests.where((id) => id == newId), hasLength(1),
+          reason: 'the cold exact miss must not be queried twice');
+      expect(store.openRequests, contains(oldId));
+      expect(store.openRequests, isNot(contains(neverId)),
+          reason: 'the first complete equivalent READY ends candidate search');
+      expect(
+        handoff.provesExactDurableBody(
+          session,
+          newId,
+          bytes.lengthInBytes,
+        ),
+        isFalse,
+        reason: 'verified equivalence is not exact-target durable ownership',
+      );
+      expect(
+        trace.events.any(
+          (event) =>
+              event.kind == TraceEventKind.artifactSource &&
+              event.payload['action'] == 'bound-ready-authority' &&
+              event.payload['verifiedEquivalentReuse'] == true,
+        ),
+        isTrue,
+      );
+
+      final replay = session.residentReplayRangeChunks;
+      expect(replay, isNotNull);
+      final chunks = await replay!(64, 128);
+      final replayed = <int>[];
+      await for (final chunk in chunks) {
+        replayed.addAll(chunk);
+      }
+      expect(replayed, orderedEquals(bytes.sublist(64, 128)));
+      expect(store.readerReadCalls, 2);
+    },
+  );
+
   test('bound READY reader preserves metadata prefix and stays retained for ranges', () async {
     final root = await Directory.systemTemp.createTemp('ready-bound-reader-');
     addTearDown(() => root.delete(recursive: true));
@@ -833,9 +1026,12 @@ final class _ReadyBoundStore implements PartialDownloadStore {
   int readerOpenCalls = 0;
   int readerReadCalls = 0;
   int readerCloseCalls = 0;
+  int bodyOpenCalls = 0;
+  final List<DownloadId> openRequests = <DownloadId>[];
 
   @override
   Future<PartialDownloadEntry?> openPartialDownload(DownloadId requested) async {
+    openRequests.add(requested);
     if (requested != id) return null;
     return PartialDownloadEntry(
       length: bytes.lengthInBytes,
@@ -844,6 +1040,7 @@ final class _ReadyBoundStore implements PartialDownloadStore {
       exactDurableFinal: true,
       accessMode: 'saf',
       open: ({required int start}) async* {
+        bodyOpenCalls++;
         yield Uint8List.sublistView(bytes, start);
       },
       openRange: ({required int start, required int endExclusive}) async* {

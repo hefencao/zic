@@ -70,8 +70,10 @@ final class PartialDownloadHandoff {
     // requires a retained range reader, whose open includes the exact-length
     // physical proof; any miss/failure falls back to the complete restore path.
     _PartialRestoreCandidate? exactCandidate;
+    var exactCandidateChecked = false;
     if (!await session.artifact.hasRestorableBody()) {
       control?.throwIfCancelled();
+      exactCandidateChecked = true;
       exactCandidate = await _restoreExactCandidate(
         session.id,
         control: control,
@@ -97,10 +99,25 @@ final class PartialDownloadHandoff {
         session.artifact.committedLength > 0) {
       return;
     }
-    final candidate =
-        exactCandidate ?? await _restoreCandidate(session.id, control: control);
+    final candidate = exactCandidate ??
+        await _restoreCandidate(
+          session.id,
+          skipExact: exactCandidateChecked,
+          control: control,
+        );
     if (candidate == null || candidate.entry.length <= 0) return;
     final entry = candidate.entry;
+
+    if (candidate.equivalent &&
+        entry.exactDurableFinal &&
+        await _tryBindEquivalentReadyAuthority(
+          session,
+          entry,
+          candidatesChecked: candidate.candidatesChecked,
+          control: control,
+        )) {
+      return;
+    }
 
     if (!candidate.equivalent && entry.exactDurableFinal) {
       final totalLength = entry.totalLength ?? entry.length;
@@ -279,6 +296,113 @@ final class PartialDownloadHandoff {
   ) async* {
     final bytes = await reader.readRange(start, endExclusive);
     if (bytes.isNotEmpty) yield bytes;
+  }
+
+  Future<bool> _tryBindEquivalentReadyAuthority(
+    DownloadSession session,
+    PartialDownloadEntry entry, {
+    required int candidatesChecked,
+    TaskControl? control,
+  }) async {
+    final startedAtMicros = clock?.nowMicros();
+    final totalLength = entry.totalLength ?? entry.length;
+    if (!entry.exactDurableFinal ||
+        entry.length <= 0 ||
+        totalLength != entry.length) {
+      return false;
+    }
+
+    PartialDownloadBoundRangeReader? boundReader;
+    final openBoundReader = entry.openBoundRangeReader;
+    if (openBoundReader != null) {
+      ArtifactCacheReadLease? lease;
+      try {
+        final scheduler = readScheduler;
+        if (scheduler != null) {
+          lease = await scheduler.acquire(
+            priority: () => session.effectivePriority,
+            control: control,
+          );
+        }
+        boundReader = await openBoundReader();
+      } on Object {
+        // Retained descriptor reuse is an optimization. The verified durable
+        // range authority below remains a correctness fallback.
+        boundReader = null;
+      } finally {
+        lease?.release();
+      }
+    }
+    control?.throwIfCancelled();
+
+    final List<int> prefix;
+    try {
+      prefix = await _readEntryPrefix(
+        entry,
+        boundReader: boundReader,
+        priority: () => session.effectivePriority,
+        control: control,
+      );
+    } on Object {
+      final reader = boundReader;
+      boundReader = null;
+      if (reader != null) {
+        try {
+          await reader.close();
+        } on Object {
+          // Preserve the metadata/read failure and use the historical copy
+          // fallback below.
+        }
+      }
+      return false;
+    }
+    control?.throwIfCancelled();
+
+    final openRange = entry.openRange;
+    final reader = boundReader;
+    if (reader == null && openRange == null) {
+      return false;
+    }
+    try {
+      session.bindResidentImmutableAuthority(
+        // Equivalent source revisions may not share resume validators even
+        // when their bytes are source-verified equivalent.
+        validators: const Validators(),
+        totalLength: totalLength,
+        bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+        metadataPrefix: prefix,
+        residentReplayRangeChunks: reader != null
+            ? (start, endExclusive) async =>
+                _openBoundRange(reader, start, endExclusive)
+            : (start, endExclusive) async => openRange!(
+                  start: start,
+                  endExclusive: endExclusive,
+                ),
+        residentReplayRangeClose: reader?.close,
+        residentReplayAccessMode: reader?.accessMode ?? entry.accessMode,
+      );
+      boundReader = null; // DownloadSession now owns the retained reader.
+    } on Object {
+      final reader = boundReader;
+      boundReader = null;
+      if (reader != null) {
+        try {
+          await reader.close();
+        } on Object {
+          // Preserve the bind failure.
+        }
+      }
+      rethrow;
+    }
+    _record(
+      session,
+      action: 'bound-ready-authority',
+      bytes: entry.length,
+      startedAtMicros: startedAtMicros,
+      equivalent: true,
+      equivalentCandidatesChecked: candidatesChecked,
+    );
+    return true;
   }
 
   Future<bool> _tryBindExactReadyWithoutSessionRestore(
@@ -593,10 +717,13 @@ final class PartialDownloadHandoff {
 
   Future<_PartialRestoreCandidate?> _restoreCandidate(
     DownloadId id, {
+    bool skipExact = false,
     TaskControl? control,
   }) async {
-    final exact = await _restoreExactCandidate(id, control: control);
-    if (exact != null) return exact;
+    if (!skipExact) {
+      final exact = await _restoreExactCandidate(id, control: control);
+      if (exact != null) return exact;
+    }
     final candidates = equivalentCandidates;
     if (candidates == null) return null;
     PartialDownloadEntry? selected;
@@ -610,6 +737,17 @@ final class PartialDownloadHandoff {
         control,
       );
       if (entry == null || entry.length <= 0) continue;
+      if (entry.exactDurableFinal) {
+        // Complete verified-equivalent READY is already the strongest local
+        // source state. Continuing to open later equivalents can only spend
+        // I/O/SQLite/SAF work; the longest-prefix comparison matters only for
+        // incomplete partials.
+        return _PartialRestoreCandidate(
+          entry: entry,
+          equivalent: true,
+          candidatesChecked: checked,
+        );
+      }
       if (selected == null || entry.length > selected.length) {
         selected = entry;
       }
