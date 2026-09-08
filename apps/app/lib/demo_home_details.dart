@@ -86,9 +86,12 @@ extension _DemoHomeDetailsActions on _DemoHomeState {
             comicAuthors: entry.chapter.comicAuthors,
             comicTags: entry.chapter.comicTags,
             comicDescription: entry.chapter.comicDescription,
-            coverSourceId: entry.chapter.coverSourceId,
             sequence: entry.chapter.sequence,
             importedAt: entry.chapter.importedAt,
+          );
+          await this._materializeLocalFolderCover(
+            refreshed,
+            forceRefresh: true,
           );
           await _librarySession.upsertChapter(refreshed);
         }

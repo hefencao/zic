@@ -39,6 +39,7 @@ part 'demo_home_catalog_identity.dart';
 part 'demo_home_source_migration.dart';
 part 'demo_home_reader_route.dart';
 part 'demo_home_service_handoff.dart';
+part 'demo_home_local_cover.dart';
 const homePageKey = ValueKey<String>('home-page');
 const bookshelfPageKey = ValueKey<String>('bookshelf-page');
 const homeUpdatesSectionKey = ValueKey<String>('home-updates-section');
@@ -459,6 +460,9 @@ final class _DemoHomeState extends State<DemoHome> {
     _librarySession.downloadProjectionChanges.addListener(
       _handleDownloadProjectionChanged,
     );
+    _serviceHandoff?.setHomeProjectionCheckpoint(
+      _librarySession.checkpointSnapshot,
+    );
     // Always armed so external-source cover requests stay pending (never
     // fail source-unavailable) while the deferred plugin host is still
     // opening; it completes once sources are published or refresh gives up.
@@ -476,8 +480,12 @@ final class _DemoHomeState extends State<DemoHome> {
   void didUpdateWidget(covariant DemoHome oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.serviceHandoff, widget.serviceHandoff)) {
+      oldWidget.serviceHandoff?.setHomeProjectionCheckpoint(null);
       oldWidget.serviceHandoff?.removeListener(_handleServiceHandoffChanged);
       widget.serviceHandoff?.addListener(_handleServiceHandoffChanged);
+      widget.serviceHandoff?.setHomeProjectionCheckpoint(
+        _librarySession.checkpointSnapshot,
+      );
     }
     _handleServiceHandoffChanged();
   }
@@ -659,6 +667,7 @@ final class _DemoHomeState extends State<DemoHome> {
   @override
   void dispose() {
     widget.preferences.removeListener(_handleAppPreferencesChanged);
+    _serviceHandoff?.setHomeProjectionCheckpoint(null);
     _serviceHandoff?.removeListener(_handleServiceHandoffChanged);
     unawaited(_externalPluginSourceChanges?.cancel());
     _completeInitialExternalSourcesPublished();
@@ -1244,6 +1253,10 @@ final class _DemoHomeState extends State<DemoHome> {
       }
       await _ensureLibraryReady();
       final record = imageFolderChapterRecord(folder);
+      // Match the local-comic ownership used by Venera without copying the
+      // whole SAF tree: publish a small retained cover artifact before the
+      // library entry becomes the long-lived Home/Bookshelf identity.
+      await this._materializeLocalFolderCover(record);
       final entry = await _librarySession.upsertChapter(record);
       final existingPreference = await _library.getComicPreference(
         record.sourceId,
@@ -1343,6 +1356,7 @@ final class _DemoHomeState extends State<DemoHome> {
     );
   }
 
+
   Future<EncodedResourceSource> _loadCoverSource({
     required String sourceId,
     required String comicId,
@@ -1362,13 +1376,23 @@ final class _DemoHomeState extends State<DemoHome> {
     if (sourceValue == null || sourceValue.trim().isEmpty) {
       throw StateError('漫画详情没有可用封面');
     }
+    final uri = Uri.tryParse(sourceValue);
+    if (sourceId == 'local-folder' &&
+        resourceRole == 'cover' &&
+        uri?.scheme.toLowerCase() == 'content') {
+      return this._loadLocalFolderCoverArtifact(
+        comicId: comicId,
+        sourceValue: sourceValue,
+        chapter: fallback?.chapter,
+        awaitPersistenceOnMiss: false,
+      );
+    }
     final directPath = localImageFilePath(sourceValue);
     if (directPath != null) {
       return FileEncodedResourceSource(
         path: directPath,
       );
     }
-    final uri = Uri.tryParse(sourceValue);
     if (sourceId != 'local-folder' && uri != null) {
       return _sourceResources.loadArtworkSource(
         cache: _cacheCoordinator.responses,

@@ -154,7 +154,11 @@ home_session = read('apps/app/lib/home_library_session.dart')
 for token in (
     'List<ImportedLibraryEntry> get downloadManagerEntries',
     'ChapterDownloadManagementProjectionReader',
-    'inspectDownloadManagement(requested)',
+    'inspectDownloadManagement(',
+    '_startupDownloadProjectionEntries(',
+    '_refreshKnownDownloadSnapshots(',
+    'service.inspectMany(requested)',
+    'download-snapshot-persist-skip reason=unchanged',
     "unawaited(_refreshDownloadSnapshotsAfterFrame(_entries));",
 ):
     require(home_session, token, 'Home-owned download management projection')

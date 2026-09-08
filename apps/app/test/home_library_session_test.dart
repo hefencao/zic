@@ -537,6 +537,113 @@ void main() {
     expect(session.loading, isFalse);
   });
 
+  test('explicit Home projection flush drains the latest queued snapshot',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-home-session-exit-flush-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final snapshotStore = HomeProjectionSnapshotStore.atPath(
+      '${directory.path}/snapshot.json',
+    );
+    final delegate = MemoryImportedLibraryStore();
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+      libraryRevision: 42,
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      snapshotStore: snapshotStore,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    await session.ready;
+    final preference = ComicPreference.defaults(
+      sourceId: 'fixture-source',
+      comicId: 'fixture-comic',
+      sourceKind: ComicSourceKind.remote,
+    ).copyWith(liked: true);
+    session.replacePreference(preference);
+
+    await session.flushSnapshotWrites();
+
+    final persisted = await snapshotStore.read();
+    expect(persisted?.libraryRevision, 42);
+    expect(
+      persisted?.preferences.singleWhere(
+        (candidate) => candidate.identity == preference.identity,
+      ).liked,
+      isTrue,
+    );
+  });
+
+  test('explicit checkpoint rewrites snapshot after durable revision advances',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-home-session-exit-checkpoint-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final snapshotStore = HomeProjectionSnapshotStore.atPath(
+      '${directory.path}/snapshot.json',
+    );
+    final library = _GatedLibraryStore(
+      MemoryImportedLibraryStore(),
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+      libraryRevision: 42,
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      snapshotStore: snapshotStore,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    await session.ready;
+    await session.flushSnapshotWrites();
+    expect((await snapshotStore.read())?.libraryRevision, 42);
+
+    // Models a Reader progress writer committing after the last ordinary Home
+    // mutation: Home data is unchanged, but the durable revision advanced.
+    library.libraryRevision = 43;
+    await session.checkpointSnapshot();
+
+    expect((await snapshotStore.read())?.libraryRevision, 43);
+  });
+
   test('shows the previous Home snapshot before reconciling SQLite data',
       () async {
     final directory = await Directory.systemTemp.createTemp(
@@ -872,6 +979,14 @@ void main() {
     );
     final durableQueue = WholeComicDownloadQueue(downloads: durableDownloads);
     final primaryFrame = Completer<void>();
+    final presentationFrame = Completer<void>();
+    var frameWaitCalls = 0;
+    Future<void> waitForFrame() {
+      frameWaitCalls++;
+      return frameWaitCalls == 1
+          ? primaryFrame.future
+          : presentationFrame.future;
+    }
     final session = HomeLibrarySession(
       library: bootstrapLibrary,
       snapshotStore: snapshotStore,
@@ -882,11 +997,14 @@ void main() {
       ownsLibrary: true,
       ownsChapterDownloads: true,
       ownsWholeComicDownloads: true,
-      waitForPrimaryFrame: () => primaryFrame.future,
+      waitForPrimaryFrame: waitForFrame,
     );
     addTearDown(() async {
       if (!primaryFrame.isCompleted) {
         primaryFrame.complete();
+      }
+      if (!presentationFrame.isCompleted) {
+        presentationFrame.complete();
       }
       await session.close();
       session.dispose();
@@ -917,7 +1035,23 @@ void main() {
     expect(durableLibrary.listCalls, 0);
     expect(session.loading, isFalse);
 
+    for (var attempt = 0; attempt < 20 && frameWaitCalls < 1; attempt++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(frameWaitCalls, 1);
+
     primaryFrame.complete();
+    for (var attempt = 0; attempt < 20 && frameWaitCalls < 2; attempt++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(frameWaitCalls, 2);
+    expect(
+      session.downloadSnapshots.values.single.phase,
+      ChapterDownloadPhase.complete,
+      reason: 'download reconciliation must not preempt the successor Home frame',
+    );
+
+    presentationFrame.complete();
     for (var attempt = 0;
         attempt < 20 &&
             session.downloadSnapshots.values.single.phase !=
@@ -956,7 +1090,7 @@ final class _GatedLibraryStore
   final ImportedLibraryStore delegate;
   final Future<List<LibraryCategory>> categories;
   final Future<void>? openGate;
-  final int? libraryRevision;
+  int? libraryRevision;
   var comicPreferenceWrites = 0;
   var sourcePreferenceWrites = 0;
   var listCalls = 0;

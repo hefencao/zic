@@ -19,9 +19,7 @@ String _downloadEntryIdentity(ImportedLibraryEntry entry) =>
       entry.chapter.sourceRevision,
     );
 
-HomeChapterDownloadSummary _downloadSummary(
-  ChapterDownloadSnapshot snapshot,
-) =>
+HomeChapterDownloadSummary _downloadSummary(ChapterDownloadSnapshot snapshot) =>
     HomeChapterDownloadSummary(
       sourceId: snapshot.sourceId,
       comicId: snapshot.comicId,
@@ -40,9 +38,7 @@ HomeChapterDownloadSummary _downloadSummary(
       started: snapshot.started,
     );
 
-ChapterDownloadSnapshot? _downloadSnapshot(
-  HomeChapterDownloadSummary summary,
-) {
+ChapterDownloadSnapshot? _downloadSnapshot(HomeChapterDownloadSummary summary) {
   ChapterDownloadPhase? phase;
   for (final candidate in ChapterDownloadPhase.values) {
     if (candidate.name == summary.phase) {
@@ -82,6 +78,39 @@ bool _shouldPersistDownloadTransition(
     previous.isManualDownload != next.isManualDownload ||
     previous.hasAutoCache != next.hasAutoCache;
 
+Map<String, HomeChapterDownloadSummary> _persistedDownloadProjection(
+  Map<String, ChapterDownloadSnapshot> snapshots,
+) => <String, HomeChapterDownloadSummary>{
+  for (final snapshot in snapshots.values)
+    if (snapshot.isManualDownload || snapshot.hasAutoCache)
+      snapshot.identity: _downloadSummary(snapshot),
+};
+
+bool _samePersistedDownloadProjection(
+  Map<String, ChapterDownloadSnapshot> left,
+  Map<String, ChapterDownloadSnapshot> right,
+) {
+  final leftPersisted = _persistedDownloadProjection(left);
+  final rightPersisted = _persistedDownloadProjection(right);
+  if (leftPersisted.length != rightPersisted.length) return false;
+  for (final entry in leftPersisted.entries) {
+    final other = rightPersisted[entry.key];
+    if (other == null || !mapEquals(entry.value.toJson(), other.toJson())) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _sameOrphanedDownloadProjection(
+  Iterable<ImportedLibraryEntry> left,
+  Iterable<ImportedLibraryEntry> right,
+) {
+  final leftIds = left.map(_downloadEntryIdentity).toSet();
+  final rightIds = right.map(_downloadEntryIdentity).toSet();
+  return setEquals(leftIds, rightIds);
+}
+
 /// Stable composition boundary between the bootstrap Home and durable app
 /// services. Updating this object does not rebuild MaterialApp or DemoHome;
 /// the existing Home session adopts the services in place.
@@ -99,8 +128,18 @@ final class HomeServiceHandoff extends ChangeNotifier {
   /// first explicit download action when startup intentionally used the
   /// bootstrap projection.
   Future<void> Function()? ensureCoreServices;
+  Future<void> Function()? checkpointHomeProjection;
   String? storageRoot;
   bool persistHomeProjectionSnapshot = false;
+
+  /// Home-owned durability checkpoint used only by whole-App teardown.
+  ///
+  /// The runtime invokes this after durable Reader progress has been flushed,
+  /// so the Home snapshot records the final SQLite projection revision before
+  /// the FlutterEngine is destroyed.
+  void setHomeProjectionCheckpoint(Future<void> Function()? callback) {
+    checkpointHomeProjection = callback;
+  }
 
   /// Runtime-owned capability for applying a new chapter-download directory.
   ///
@@ -109,16 +148,12 @@ final class HomeServiceHandoff extends ChangeNotifier {
   /// [updateServices]. Returns a user-facing error message on failure, or
   /// `null` on success. Absent when the runtime has not registered the
   /// capability (for example in widget-only test harnesses).
-  Future<String?> Function({
-    String? directory,
-    required bool migrateFiles,
-  })? chapterDownloadRelay;
+  Future<String?> Function({String? directory, required bool migrateFiles})?
+  chapterDownloadRelay;
 
   void setChapterDownloadRelay(
-    Future<String?> Function({
-      String? directory,
-      required bool migrateFiles,
-    })? relay,
+    Future<String?> Function({String? directory, required bool migrateFiles})?
+    relay,
   ) {
     chapterDownloadRelay = relay;
   }
@@ -144,14 +179,14 @@ final class HomeServiceHandoff extends ChangeNotifier {
     required WholeComicDownloadQueue? wholeComicDownloads,
     required ResourceCacheCoordinator? cacheCoordinator,
     required ExternalPluginController? externalPlugins,
-    required Future<ExternalPluginController?> Function()?
-        externalPluginLoader,
+    required Future<ExternalPluginController?> Function()? externalPluginLoader,
     required Future<void> Function()? platformEnvironmentLoader,
     required Future<void> Function()? ensureCoreServices,
     required String? storageRoot,
     required bool persistHomeProjectionSnapshot,
   }) {
-    final changed = !identical(this.libraryStore, libraryStore) ||
+    final changed =
+        !identical(this.libraryStore, libraryStore) ||
         !identical(this.chapterDownloads, chapterDownloads) ||
         !identical(this.downloadComposition, downloadComposition) ||
         !identical(this.wholeComicDownloads, wholeComicDownloads) ||
@@ -187,12 +222,12 @@ final class HomeServiceHandoff extends ChangeNotifier {
   /// library and response cache instead of opening empty SQLite stores.
   void updateDeferredCapabilities({
     required ExternalPluginController? externalPlugins,
-    required Future<ExternalPluginController?> Function()?
-        externalPluginLoader,
+    required Future<ExternalPluginController?> Function()? externalPluginLoader,
     required Future<void> Function()? platformEnvironmentLoader,
     required String? storageRoot,
   }) {
-    final changed = !identical(this.externalPlugins, externalPlugins) ||
+    final changed =
+        !identical(this.externalPlugins, externalPlugins) ||
         this.externalPluginLoader != externalPluginLoader ||
         this.platformEnvironmentLoader != platformEnvironmentLoader ||
         this.storageRoot != storageRoot;
@@ -279,8 +314,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       const <String, ChapterReadState>{};
   Map<String, ComicSourcePreference> _sourcePreferences =
       const <String, ComicSourcePreference>{};
-  List<ComicVersionRelation> _versionRelations =
-      const <ComicVersionRelation>[];
+  List<ComicVersionRelation> _versionRelations = const <ComicVersionRelation>[];
   ComicVersionBaselineProjection _versionBaselines =
       ComicVersionBaselineProjection.empty;
   Map<String, ChapterDownloadSnapshot> _downloadSnapshots =
@@ -317,6 +351,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
     return List<ImportedLibraryEntry>.unmodifiable(byIdentity.values);
   }
+
   WholeComicQueueSnapshot get wholeComicQueueSnapshot =>
       _wholeComicQueueSnapshot;
   Listenable get downloadProjectionChanges => _downloadProjectionChanges;
@@ -362,15 +397,16 @@ final class HomeLibrarySession extends ChangeNotifier {
   }
 
   List<BrowsableComicSource> get enabledSources {
-    final result = sources
-        .where(
-          (source) => _sourcePreferences[source.sourceId]?.enabled ?? true,
-        )
-        .toList(growable: false)
-      ..sort((left, right) =>
-          (_sourcePreferences[left.sourceId]?.sortOrder ?? 0).compareTo(
-            _sourcePreferences[right.sourceId]?.sortOrder ?? 0,
-          ));
+    final result =
+        sources
+            .where(
+              (source) => _sourcePreferences[source.sourceId]?.enabled ?? true,
+            )
+            .toList(growable: false)
+          ..sort(
+            (left, right) => (_sourcePreferences[left.sourceId]?.sortOrder ?? 0)
+                .compareTo(_sourcePreferences[right.sourceId]?.sortOrder ?? 0),
+          );
     return result;
   }
 
@@ -406,9 +442,7 @@ final class HomeLibrarySession extends ChangeNotifier {
         }
       }
       await openFuture;
-      _homeLog(
-        'library-open-ready snapshotPresent=${loadedSnapshot != null}',
-      );
+      _homeLog('library-open-ready snapshotPresent=${loadedSnapshot != null}');
       if (loadedSnapshot != null && !persistSnapshot) {
         // The bootstrap Home is backed by an intentionally empty lazy memory
         // store. It may display a durable snapshot, but it must not reconcile
@@ -495,17 +529,18 @@ final class HomeLibrarySession extends ChangeNotifier {
       return existing;
     }
     late final Future<void> adoption;
-    adoption = _adoptServices(
-      library: library,
-      chapterDownloads: chapterDownloads,
-      wholeComicDownloads: wholeComicDownloads,
-      sources: sources,
-      persistSnapshot: persistSnapshot,
-    ).whenComplete(() {
-      if (identical(_serviceAdoption, adoption)) {
-        _serviceAdoption = null;
-      }
-    });
+    adoption =
+        _adoptServices(
+          library: library,
+          chapterDownloads: chapterDownloads,
+          wholeComicDownloads: wholeComicDownloads,
+          sources: sources,
+          persistSnapshot: persistSnapshot,
+        ).whenComplete(() {
+          if (identical(_serviceAdoption, adoption)) {
+            _serviceAdoption = null;
+          }
+        });
     _serviceAdoption = adoption;
     return adoption;
   }
@@ -631,22 +666,18 @@ final class HomeLibrarySession extends ChangeNotifier {
     );
   }
 
-  void _applySnapshot(
-    HomeProjectionSnapshot snapshot, {
-    bool publish = true,
-  }) {
+  void _applySnapshot(HomeProjectionSnapshot snapshot, {bool publish = true}) {
     if (_closed) {
       return;
     }
     _entries = List<ImportedLibraryEntry>.unmodifiable(snapshot.entries);
     _savedComics = List<SavedComicRecord>.unmodifiable(snapshot.savedComics);
     _categories = List<LibraryCategory>.unmodifiable(snapshot.categories);
-    _preferences = Map<String, ComicPreference>.unmodifiable(
-      <String, ComicPreference>{
-        for (final preference in snapshot.preferences)
-          preference.identity: preference,
-      },
-    );
+    _preferences =
+        Map<String, ComicPreference>.unmodifiable(<String, ComicPreference>{
+          for (final preference in snapshot.preferences)
+            preference.identity: preference,
+        });
     _readStates = Map<String, ChapterReadState>.unmodifiable(
       <String, ChapterReadState>{
         for (final state in snapshot.readStates) state.identity: state,
@@ -658,8 +689,9 @@ final class HomeLibrarySession extends ChangeNotifier {
           preference.sourceId: preference,
       },
     );
-    _versionRelations =
-        List<ComicVersionRelation>.unmodifiable(snapshot.versionRelations);
+    _versionRelations = List<ComicVersionRelation>.unmodifiable(
+      snapshot.versionRelations,
+    );
     _orphanedDownloadEntries = List<ImportedLibraryEntry>.unmodifiable(
       snapshot.orphanedDownloadEntries,
     );
@@ -736,8 +768,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       library.list,
       summary: (entries) => 'count=${entries.length}',
     );
-    final savedComicsFuture =
-        _traceStartupOperation<List<SavedComicRecord>>(
+    final savedComicsFuture = _traceStartupOperation<List<SavedComicRecord>>(
       'query-saved-comics',
       library.listSavedComics,
       summary: (comics) => 'count=${comics.length}',
@@ -746,26 +777,23 @@ final class HomeLibrarySession extends ChangeNotifier {
     // instead of waiting for the primary frame barrier; the Home update strip
     // needs the stored shelf preferences and confirmed versions, while the
     // history strip can already be projected from the chapter progress.
-    final categoriesFuture =
-        _traceStartupOperation<List<LibraryCategory>>(
+    final categoriesFuture = _traceStartupOperation<List<LibraryCategory>>(
       'query-categories',
       library.listCategories,
       summary: (categories) => 'count=${categories.length}',
     );
-    final preferencesFuture =
-        _traceStartupOperation<List<ComicPreference>>(
+    final preferencesFuture = _traceStartupOperation<List<ComicPreference>>(
       'query-comic-preferences',
       library.listComicPreferences,
       summary: (preferences) => 'count=${preferences.length}',
     );
     final sourcePreferencesFuture =
         _traceStartupOperation<List<ComicSourcePreference>>(
-      'query-source-preferences',
-      library.listSourcePreferences,
-      summary: (preferences) => 'count=${preferences.length}',
-    );
-    final readStatesFuture =
-        _traceStartupOperation<List<ChapterReadState>>(
+          'query-source-preferences',
+          library.listSourcePreferences,
+          summary: (preferences) => 'count=${preferences.length}',
+        );
+    final readStatesFuture = _traceStartupOperation<List<ChapterReadState>>(
       'query-read-states',
       () => library.listAllChapterReadStates(),
       summary: (states) => 'count=${states.length}',
@@ -800,8 +828,9 @@ final class HomeLibrarySession extends ChangeNotifier {
         _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
         _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
         _preferences = Map<String, ComicPreference>.unmodifiable(preferences);
-        _versionRelations =
-            List<ComicVersionRelation>.unmodifiable(versionRelations);
+        _versionRelations = List<ComicVersionRelation>.unmodifiable(
+          versionRelations,
+        );
         _recomputeVersionBaselines();
       }
       _error = null;
@@ -822,7 +851,8 @@ final class HomeLibrarySession extends ChangeNotifier {
       // same isolate.
       await _traceStartupOperation<void>(
         'primary-frame-wait',
-        () => waitForPrimaryFrame?.call() ??
+        () =>
+            waitForPrimaryFrame?.call() ??
             Future<void>.delayed(const Duration(milliseconds: 16)),
       );
     }
@@ -835,8 +865,8 @@ final class HomeLibrarySession extends ChangeNotifier {
       for (final preference in storedSourcePreferences)
         preference.sourceId: preference,
     };
-    final systemLanguage =
-        ui.PlatformDispatcher.instance.locale.languageCode.toLowerCase();
+    final systemLanguage = ui.PlatformDispatcher.instance.locale.languageCode
+        .toLowerCase();
     final defaultLanguages = <String>{'all', 'en', systemLanguage};
     defaultLanguages.addAll(
       sources
@@ -851,16 +881,17 @@ final class HomeLibrarySession extends ChangeNotifier {
       if (sourcePreferences.containsKey(source.sourceId)) {
         continue;
       }
-      final preference = ComicSourcePreference.defaults(
-        sourceId: source.sourceId,
-        sortOrder: index,
-      ).copyWith(
-        enabled: defaultComicSourceEnabled(
-          source,
-          defaultLanguages: defaultLanguages,
-        ),
-        updatedAt: DateTime.now().toUtc(),
-      );
+      final preference =
+          ComicSourcePreference.defaults(
+            sourceId: source.sourceId,
+            sortOrder: index,
+          ).copyWith(
+            enabled: defaultComicSourceEnabled(
+              source,
+              defaultLanguages: defaultLanguages,
+            ),
+            updatedAt: DateTime.now().toUtc(),
+          );
       sourcePreferences[source.sourceId] = preference;
       sourceDefaultsCreated++;
       if (persistMissingPreferences) {
@@ -894,28 +925,25 @@ final class HomeLibrarySession extends ChangeNotifier {
     final seedPreferences = projectionChanged
         ? <String, ComicPreference>{..._preferences}
         : preferences;
-    final comicSeeds = <({
-      String sourceId,
-      String comicId,
-      ComicSourceKind sourceKind,
-    })>[
-      for (final entry in seedEntries)
-        (
-          sourceId: entry.chapter.sourceId,
-          comicId: entry.chapter.comicId,
-          sourceKind: entry.chapter.sourceId == 'local-folder'
-              ? ComicSourceKind.local
-              : ComicSourceKind.remote,
-        ),
-      for (final comic in seedSavedComics)
-        (
-          sourceId: comic.sourceId,
-          comicId: comic.comicId,
-          sourceKind: comic.sourceId == 'local-folder'
-              ? ComicSourceKind.local
-              : ComicSourceKind.remote,
-        ),
-    ];
+    final comicSeeds =
+        <({String sourceId, String comicId, ComicSourceKind sourceKind})>[
+          for (final entry in seedEntries)
+            (
+              sourceId: entry.chapter.sourceId,
+              comicId: entry.chapter.comicId,
+              sourceKind: entry.chapter.sourceId == 'local-folder'
+                  ? ComicSourceKind.local
+                  : ComicSourceKind.remote,
+            ),
+          for (final comic in seedSavedComics)
+            (
+              sourceId: comic.sourceId,
+              comicId: comic.comicId,
+              sourceKind: comic.sourceId == 'local-folder'
+                  ? ComicSourceKind.local
+                  : ComicSourceKind.remote,
+            ),
+        ];
     final comicDefaultsClock = Stopwatch()..start();
     var comicDefaultsCreated = 0;
     var comicDefaultsPersisted = 0;
@@ -924,15 +952,16 @@ final class HomeLibrarySession extends ChangeNotifier {
       if (seedPreferences.containsKey(identity)) {
         continue;
       }
-      final preference = ComicPreference.defaults(
-        sourceId: seed.sourceId,
-        comicId: seed.comicId,
-        sourceKind: seed.sourceKind,
-        customOrder: nextOrder++,
-      ).copyWith(
-        inShelf: seed.sourceKind == ComicSourceKind.local,
-        updatedAt: DateTime.now().toUtc(),
-      );
+      final preference =
+          ComicPreference.defaults(
+            sourceId: seed.sourceId,
+            comicId: seed.comicId,
+            sourceKind: seed.sourceKind,
+            customOrder: nextOrder++,
+          ).copyWith(
+            inShelf: seed.sourceKind == ComicSourceKind.local,
+            updatedAt: DateTime.now().toUtc(),
+          );
       seedPreferences[preference.identity] = preference;
       comicDefaultsCreated++;
       if (persistMissingPreferences) {
@@ -957,15 +986,17 @@ final class HomeLibrarySession extends ChangeNotifier {
     if (_libraryProjectionRevision == projectionRevisionAtStart) {
       _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
       _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
-      _versionRelations =
-          List<ComicVersionRelation>.unmodifiable(versionRelations);
+      _versionRelations = List<ComicVersionRelation>.unmodifiable(
+        versionRelations,
+      );
       _recomputeVersionBaselines();
     }
     _categories = List<LibraryCategory>.unmodifiable(categories);
     _preferences = Map<String, ComicPreference>.unmodifiable(seedPreferences);
     _readStates = Map<String, ChapterReadState>.unmodifiable(seedReadStates);
-    _sourcePreferences =
-        Map<String, ComicSourcePreference>.unmodifiable(seedSourcePreferences);
+    _sourcePreferences = Map<String, ComicSourcePreference>.unmodifiable(
+      seedSourcePreferences,
+    );
     _recomputeVersionBaselines();
     _activeSourceId = nextActiveSourceId;
     _error = null;
@@ -984,7 +1015,9 @@ final class HomeLibrarySession extends ChangeNotifier {
       );
     }
     final visibleEntries =
-        _libraryProjectionRevision == projectionRevisionAtStart ? entries : _entries;
+        _libraryProjectionRevision == projectionRevisionAtStart
+        ? entries
+        : _entries;
     unawaited(_refreshDownloadSnapshotsAfterFrame(visibleEntries));
     _snapshotRewriteNeeded = false;
     _scheduleSnapshotWrite();
@@ -1016,9 +1049,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   /// locator is consumed by Reader or downloads. Compact snapshot entries keep
   /// only the page count and cover metadata, so they are intentionally not
   /// suitable for page loading.
-  Future<ImportedLibraryEntry> hydrateEntry(
-    ImportedLibraryEntry entry,
-  ) async {
+  Future<ImportedLibraryEntry> hydrateEntry(ImportedLibraryEntry entry) async {
     final hydrated = await _traceStartupOperation<ImportedLibraryEntry?>(
       'chapter-hydrate',
       () => library.get(entry.chapter.sourceId, entry.chapter.chapterId),
@@ -1047,11 +1078,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     ComicVersionRelation relation,
   ) async {
     await _persistVersionRelation(relation);
-    _replaceVersionRelation(
-      relation,
-      publishHome: false,
-      writeSnapshot: false,
-    );
+    _replaceVersionRelation(relation, publishHome: false, writeSnapshot: false);
   }
 
   Future<void> _persistVersionRelation(ComicVersionRelation relation) async {
@@ -1065,11 +1092,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   }
 
   void replaceVersionRelation(ComicVersionRelation relation) {
-    _replaceVersionRelation(
-      relation,
-      publishHome: true,
-      writeSnapshot: true,
-    );
+    _replaceVersionRelation(relation, publishHome: true, writeSnapshot: true);
   }
 
   void _replaceVersionRelation(
@@ -1179,7 +1202,9 @@ final class HomeLibrarySession extends ChangeNotifier {
       throw StateError('saved comic write completed without a readable record');
     }
     final next = _savedComics.toList(growable: true);
-    final index = next.indexWhere((current) => current.identity == stored.identity);
+    final index = next.indexWhere(
+      (current) => current.identity == stored.identity,
+    );
     if (index < 0) {
       next.add(stored);
     } else {
@@ -1227,7 +1252,8 @@ final class HomeLibrarySession extends ChangeNotifier {
     if (index < 0) return;
     final entry = _entries[index];
     final current = entry.progress;
-    if (current != null && current.updatedAt.isAfter(progress.updatedAt)) return;
+    if (current != null && current.updatedAt.isAfter(progress.updatedAt))
+      return;
     // Chapter identity is source + chapter. Raw comic locators may have a
     // source-verified alias while the durable chapter remains the same; keep
     // the entry's comic locator authoritative for the visible projection.
@@ -1247,7 +1273,9 @@ final class HomeLibrarySession extends ChangeNotifier {
 
   void _replaceEntry(ImportedLibraryEntry entry) {
     final next = _entries.toList(growable: true);
-    final index = next.indexWhere((current) => current.identity == entry.identity);
+    final index = next.indexWhere(
+      (current) => current.identity == entry.identity,
+    );
     if (index < 0) {
       next.add(entry);
     } else {
@@ -1307,7 +1335,9 @@ final class HomeLibrarySession extends ChangeNotifier {
       next[entry.key] = entry.value;
     }
     next[snapshot.identity] = snapshot;
-    _downloadSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(next);
+    _downloadSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
+      next,
+    );
     _recomputeVersionBaselines();
     _downloadProjectionChanges.notifyListeners();
     if (_shouldPersistDownloadTransition(previous, snapshot)) {
@@ -1326,12 +1356,14 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
     final requested = entries.toList(growable: false);
     late final Future<void> refresh;
-    refresh = _refreshDownloadSnapshotsOnce(service, requested).whenComplete(() {
-      if (identical(_downloadProjectionRefresh, refresh)) {
-        _downloadProjectionRefresh = null;
-        _downloadProjectionRefreshService = null;
-      }
-    });
+    refresh = _refreshDownloadSnapshotsOnce(service, requested).whenComplete(
+      () {
+        if (identical(_downloadProjectionRefresh, refresh)) {
+          _downloadProjectionRefresh = null;
+          _downloadProjectionRefreshService = null;
+        }
+      },
+    );
     _downloadProjectionRefreshService = service;
     _downloadProjectionRefresh = refresh;
     return refresh;
@@ -1341,26 +1373,31 @@ final class HomeLibrarySession extends ChangeNotifier {
     ChapterDownloadService service,
     List<ImportedLibraryEntry> requested,
   ) async {
+    final previousSnapshots = _downloadSnapshots;
+    final previousOrphaned = _orphanedDownloadEntries;
     final snapshots = <String, ChapterDownloadSnapshot>{};
     var orphaned = const <ImportedLibraryEntry>[];
     final startedAt = _homeStartupClock.elapsedMilliseconds;
     _homeLog('download-snapshot-refresh-start entries=${requested.length}');
     try {
-      final projectionReader = service is ChapterDownloadManagementProjectionReader
+      final projectionReader =
+          service is ChapterDownloadManagementProjectionReader
           ? service as ChapterDownloadManagementProjectionReader
           : null;
       if (projectionReader != null) {
-        final projection =
-            await projectionReader.inspectDownloadManagement(requested);
+        final projection = await projectionReader.inspectDownloadManagement(
+          requested,
+        );
         orphaned = projection.orphanedEntries;
         for (final snapshot in projection.snapshots) {
           snapshots[snapshot.identity] = snapshot;
         }
       } else {
         orphaned = await service.discoverOrphanedEntries(requested);
-        for (final snapshot in await service.inspectMany(
-          <ImportedLibraryEntry>[...requested, ...orphaned],
-        )) {
+        for (final snapshot in await service.inspectMany(<ImportedLibraryEntry>[
+          ...requested,
+          ...orphaned,
+        ])) {
           snapshots[snapshot.identity] = snapshot;
         }
       }
@@ -1391,11 +1428,91 @@ final class HomeLibrarySession extends ChangeNotifier {
     if (_closed || !identical(service, chapterDownloads)) {
       return;
     }
-    _orphanedDownloadEntries =
-        List<ImportedLibraryEntry>.unmodifiable(orphaned);
-    _downloadSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
+    final nextOrphaned = List<ImportedLibraryEntry>.unmodifiable(orphaned);
+    final nextSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
       snapshots,
     );
+    final persistedChanged =
+        !_samePersistedDownloadProjection(previousSnapshots, nextSnapshots) ||
+        !_sameOrphanedDownloadProjection(previousOrphaned, nextOrphaned);
+    _orphanedDownloadEntries = nextOrphaned;
+    _downloadSnapshots = nextSnapshots;
+    _recomputeVersionBaselines();
+    _downloadProjectionChanges.notifyListeners();
+    if (persistedChanged) {
+      _scheduleSnapshotWrite();
+    } else {
+      _homeLog('download-snapshot-persist-skip reason=unchanged');
+    }
+  }
+
+  List<ImportedLibraryEntry> _startupDownloadProjectionEntries(
+    Iterable<ImportedLibraryEntry> entries,
+  ) {
+    if (_snapshotLibraryRevision == null) {
+      return entries.toList(growable: false);
+    }
+    final wanted = _persistedDownloadProjection(
+      _downloadSnapshots,
+    ).keys.toSet();
+    if (wanted.isEmpty) return const <ImportedLibraryEntry>[];
+    final selected = <String, ImportedLibraryEntry>{};
+    for (final entry in <ImportedLibraryEntry>[
+      ...entries,
+      ..._orphanedDownloadEntries,
+    ]) {
+      final identity = _downloadEntryIdentity(entry);
+      if (wanted.contains(identity)) {
+        selected[identity] = entry;
+      }
+    }
+    return List<ImportedLibraryEntry>.unmodifiable(selected.values);
+  }
+
+  Future<void> _refreshKnownDownloadSnapshots(
+    List<ImportedLibraryEntry> requested,
+  ) async {
+    final service = chapterDownloads;
+    final previous = _downloadSnapshots;
+    final next = <String, ChapterDownloadSnapshot>{...previous};
+    final startedAt = _homeStartupClock.elapsedMilliseconds;
+    _homeLog(
+      'download-snapshot-targeted-refresh-start entries=${requested.length}',
+    );
+    try {
+      for (final snapshot in await service.inspectMany(requested)) {
+        next[snapshot.identity] = snapshot;
+      }
+    } on Object {
+      _homeLog('download-snapshot-targeted-refresh-bulk-failed');
+      for (final entry in requested) {
+        try {
+          final snapshot = await service.inspect(entry);
+          next[snapshot.identity] = snapshot;
+        } on Object {
+          // Preserve the snapshot accelerator's last known projection for an
+          // individual stale entry; management UI can diagnose it explicitly.
+        }
+      }
+    }
+    if (_closed || !identical(service, chapterDownloads)) return;
+    final nextSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
+      next,
+    );
+    final persistedChanged = !_samePersistedDownloadProjection(
+      previous,
+      nextSnapshots,
+    );
+    _homeLog(
+      'download-snapshot-targeted-refresh-complete '
+      'entries=${requested.length} changed=$persistedChanged '
+      'durationMs=${_homeStartupClock.elapsedMilliseconds - startedAt}',
+    );
+    if (!persistedChanged) {
+      _homeLog('download-snapshot-persist-skip reason=unchanged');
+      return;
+    }
+    _downloadSnapshots = nextSnapshots;
     _recomputeVersionBaselines();
     _downloadProjectionChanges.notifyListeners();
     _scheduleSnapshotWrite();
@@ -1404,16 +1521,75 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<void> _refreshDownloadSnapshotsAfterFrame(
     Iterable<ImportedLibraryEntry> entries,
   ) async {
-    // inspectMany() walks the artifact index and every chapter page. It is
-    // useful for an accurate progress projection, but it must not compete
-    // with the first Home frame that already has a usable snapshot.
-    await (waitForPrimaryFrame?.call() ?? Future<void>.delayed(Duration.zero));
+    // A revision-matched Home snapshot already contains every manual/auto-cache
+    // download summary needed by Home. Revalidate only those identities here;
+    // orphan discovery and the all-library management projection belong to the
+    // Download Manager. Without a trustworthy snapshot, retain one full
+    // recovery reconcile.
+    final hasTrustedSnapshot = _snapshotLibraryRevision != null;
+    final requested = _startupDownloadProjectionEntries(entries);
+    if (requested.isEmpty) {
+      _homeLog(
+        'download-snapshot-startup-refresh-skip '
+        'reason=no-persisted-downloads trusted=$hasTrustedSnapshot',
+      );
+      return;
+    }
+    final waitForFrame = waitForPrimaryFrame;
+    if (waitForFrame == null) {
+      await Future<void>.delayed(Duration.zero);
+    } else {
+      await waitForFrame();
+      if (_closed) return;
+      await waitForFrame();
+    }
     if (_closed) return;
-    await refreshDownloadSnapshots(entries);
+    if (hasTrustedSnapshot) {
+      await _refreshKnownDownloadSnapshots(requested);
+    } else {
+      await refreshDownloadSnapshots(requested);
+    }
   }
 
   void refreshWholeComicSnapshot() {
     _acceptWholeComicQueueSnapshot(wholeComicDownloads.snapshot);
+  }
+
+  /// Writes the current Home projection against the latest durable revision,
+  /// then waits until that checkpoint has reached the snapshot store.
+  ///
+  /// Whole-App teardown calls this only after Reader progress checkpoints have
+  /// been flushed to SQLite. Scheduling a fresh write here is intentional: the
+  /// durable progress flush may advance the projection revision without any
+  /// additional Home mutation to trigger the ordinary write-through path.
+  Future<void> checkpointSnapshot() async {
+    if (!persistSnapshot || snapshotStore == null || _closed) return;
+    final startedAt = _homeStartupClock.elapsedMilliseconds;
+    _homeLog('snapshot-checkpoint-start');
+    _scheduleSnapshotWrite();
+    await flushSnapshotWrites();
+    _homeLog(
+      'snapshot-checkpoint-complete durationMs='
+      '${_homeStartupClock.elapsedMilliseconds - startedAt}',
+    );
+  }
+
+  /// Waits for every Home projection snapshot already admitted by this owner.
+  Future<void> flushSnapshotWrites() async {
+    if (!persistSnapshot || snapshotStore == null) return;
+    final startedAt = _homeStartupClock.elapsedMilliseconds;
+    _homeLog('snapshot-flush-start');
+    while (true) {
+      final tail = _snapshotWriteTail;
+      await tail;
+      if (identical(tail, _snapshotWriteTail)) {
+        _homeLog(
+          'snapshot-flush-complete durationMs='
+          '${_homeStartupClock.elapsedMilliseconds - startedAt}',
+        );
+        return;
+      }
+    }
   }
 
   Future<void> close() async {
@@ -1481,13 +1657,14 @@ final class HomeLibrarySession extends ChangeNotifier {
     Map<String, ComicSourcePreference> preferences, {
     required String? current,
   }) {
-    final enabled = sources
-        .where((source) => preferences[source.sourceId]?.enabled ?? true)
-        .toList(growable: false)
-      ..sort((left, right) =>
-          (preferences[left.sourceId]?.sortOrder ?? 0).compareTo(
-            preferences[right.sourceId]?.sortOrder ?? 0,
-          ));
+    final enabled =
+        sources
+            .where((source) => preferences[source.sourceId]?.enabled ?? true)
+            .toList(growable: false)
+          ..sort(
+            (left, right) => (preferences[left.sourceId]?.sortOrder ?? 0)
+                .compareTo(preferences[right.sourceId]?.sortOrder ?? 0),
+          );
     return enabled.any((source) => source.sourceId == current)
         ? current
         : (enabled.isEmpty ? null : enabled.first.sourceId);
@@ -1554,11 +1731,11 @@ final class HomeLibrarySession extends ChangeNotifier {
       (_) {},
       onError: (Object _, StackTrace _) {},
     );
-    unawaited(operation.catchError((Object error, StackTrace _) {
-      _homeLog(
-        'snapshot-write-failed errorType=${error.runtimeType}',
-      );
-    }));
+    unawaited(
+      operation.catchError((Object error, StackTrace _) {
+        _homeLog('snapshot-write-failed errorType=${error.runtimeType}');
+      }),
+    );
   }
 
   void _homeLog(String message) {

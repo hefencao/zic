@@ -2171,13 +2171,18 @@ def check_compile_regressions() -> None:
     for required in (
         'library.listAllChapterReadStates()',
         'ChapterDownloadManagementProjectionReader',
-        'projectionReader.inspectDownloadManagement(requested)',
+        'projectionReader.inspectDownloadManagement(',
+        '_startupDownloadProjectionEntries(',
+        '_refreshKnownDownloadSnapshots(',
+        'service.inspectMany(requested)',
+        'if (_snapshotLibraryRevision == null)',
+        'download-snapshot-persist-skip reason=unchanged',
         'snapshot.chapterDownloads',
         'snapshot.orphanedDownloadEntries',
         'chapterDownloads: <HomeChapterDownloadSummary>[',
     ):
         if required not in home_library_session:
-            fail(f'Home startup bulk projection is incomplete: {required}')
+            fail(f'Home snapshot/download projection boundary is incomplete: {required}')
 
     home_projection_snapshot = (
         ROOT / 'packages/storage/lib/src/home_projection_snapshot.dart'
