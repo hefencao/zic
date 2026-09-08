@@ -227,6 +227,13 @@ final class ArtifactReplicaMigrationRecord {
 /// Optional transactional binding capability. A path may be shared by
 /// verified logical identities, but an explicit overwrite must replace the
 /// old logical bindings in the same SQLite transaction as the new one.
+abstract interface class CachePathBindingQuery {
+  Future<List<CacheRec>> listPathBindings(
+    String path, {
+    String? excludingKey,
+  });
+}
+
 abstract interface class CacheBindingOperations {
   /// Adds one exact logical binding to an already-authoritative immutable
   /// artifact. Implementations must not rewrite the artifact object's physical
@@ -287,7 +294,8 @@ abstract interface class CacheIndex {
   Future<void> close();
 }
 
-final class MemIndex implements CacheIndex, CacheBindingOperations {
+final class MemIndex
+    implements CacheIndex, CacheBindingOperations, CachePathBindingQuery {
   final Map<String, CacheRec> _records = <String, CacheRec>{};
   final Map<String, DownloadPlacement> _placements =
       <String, DownloadPlacement>{};
@@ -311,6 +319,21 @@ final class MemIndex implements CacheIndex, CacheBindingOperations {
     _requireOpen();
     final records = _records.values
         .where((record) => state == null || record.state == state)
+        .toList(growable: false)
+      ..sort((a, b) => a.key.compareTo(b.key));
+    return records;
+  }
+
+  @override
+  Future<List<CacheRec>> listPathBindings(
+    String path, {
+    String? excludingKey,
+  }) async {
+    _requireOpen();
+    final records = _records.values
+        .where(
+          (record) => record.path == path && record.key != excludingKey,
+        )
         .toList(growable: false)
       ..sort((a, b) => a.key.compareTo(b.key));
     return records;

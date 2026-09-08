@@ -2848,12 +2848,10 @@ final class PersistentDownloadArtifactStore
         relativePath: relativePath,
       );
       await _serializeStructuredWrite(recordPath, () async {
-        final siblings = (await _index.list()).where(
-          (candidate) =>
-              _isVerifiedReadyRecord(candidate) &&
-              candidate.key != id.key &&
-              candidate.path == recordPath,
-        );
+        final siblings = (await _index.listPathBindings(
+          recordPath,
+          excludingKey: id.key,
+        )).where(_isVerifiedReadyRecord);
         final safExists = await safIo.exists(relativePath);
         if (safExists) {
           final proof = await _artifactProof(recordPath);
@@ -2958,12 +2956,10 @@ final class PersistentDownloadArtifactStore
       _rejectLocalPathLinks(destFile.path);
       if (destFile.path != local.path) {
         await _serializeStructuredWrite(destFile.path, () async {
-          final siblings = (await _index.list()).where(
-            (candidate) =>
-                _isVerifiedReadyRecord(candidate) &&
-                candidate.key != id.key &&
-                candidate.path == destFile.path,
-          );
+          final siblings = (await _index.listPathBindings(
+            destFile.path,
+            excludingKey: id.key,
+          )).where(_isVerifiedReadyRecord);
           final destExists = await destFile.exists();
           if (destExists) {
             final proof = await _artifactProof(destFile.path);

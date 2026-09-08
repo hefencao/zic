@@ -176,6 +176,82 @@ void main() {
     });
   }
 
+  for (final fixture in <String, Object Function()>{
+    'memory': MemIndex.new,
+    'sqlite': SqliteIndex.memory,
+  }.entries) {
+    test('${fixture.key} path binding query is exact and excludes one logical key',
+        () async {
+      final candidate = fixture.value();
+      final index = candidate as CacheIndex;
+      final pathQuery = candidate as CachePathBindingQuery;
+      await index.open();
+      addTearDown(index.close);
+
+      DownloadId pathId(String pageId) => DownloadId(
+            content: ContentId(
+              sourceId: 'source',
+              comicId: 'path-query',
+              chapterId: 'chapter',
+              pageId: pageId,
+            ),
+            sourceRevision: 'r1',
+            canonicalUri: Uri.parse('https://example.test/$pageId.webp'),
+          );
+      const sharedPath = '/cache/structured/shared.webp';
+      final first = CacheRec(
+        id: pathId('first'),
+        state: CacheState.ready,
+        path: sharedPath,
+        bytes: 4,
+        checksum: '01020304',
+        createdUs: 1,
+        touchedUs: 1,
+      );
+      final second = CacheRec(
+        id: pathId('second'),
+        state: CacheState.ready,
+        path: sharedPath,
+        bytes: 4,
+        checksum: '01020304',
+        createdUs: 2,
+        touchedUs: 2,
+      );
+      final other = CacheRec(
+        id: pathId('other'),
+        state: CacheState.ready,
+        path: '/cache/structured/other.webp',
+        bytes: 4,
+        checksum: '05060708',
+        createdUs: 3,
+        touchedUs: 3,
+      );
+      await index.put(first);
+      await index.put(second);
+      await index.put(other);
+      // Populate SqliteIndex's whole-table read cache first. listPathBindings
+      // must retain its targeted path-query semantics rather than reuse that
+      // O(N) projection.
+      expect(await index.list(), hasLength(3));
+
+      expect(
+        (await pathQuery.listPathBindings(sharedPath))
+            .map((record) => record.key)
+            .toSet(),
+        <String>{first.key, second.key},
+      );
+      expect(
+        (await pathQuery.listPathBindings(
+          sharedPath,
+          excludingKey: first.key,
+        ))
+            .map((record) => record.key)
+            .toList(),
+        <String>[second.key],
+      );
+    });
+  }
+
   test('sqlite artifact_object locator is independent from logical binding path',
       () async {
     final index = SqliteIndex.memory();
@@ -664,7 +740,7 @@ void runCacheSchemaV2Tests() {
     expect(replicas.single.storageRootId, root);
   });
 
-  test('v8 cache metadata adds durable replica migration state through schema 11', () async {
+  test('v8 cache metadata adds durable replica migration state through schema 12', () async {
     final temp = await Directory.systemTemp.createTemp('cache_index_v8_migration_');
     addTearDown(() => temp.delete(recursive: true));
     final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
@@ -720,7 +796,7 @@ void runCacheSchemaV2Tests() {
     await migrated.close();
 
     final schema = sql.sqlite3.open(dbPath);
-    expect(schema.select('PRAGMA user_version').single.values.single, 11);
+    expect(schema.select('PRAGMA user_version').single.values.single, 12);
     expect(
       schema
           .select(
@@ -816,8 +892,88 @@ void runCacheSchemaV2Tests() {
     expect((await migrated.get(structuredUnpinned.key))!.pinned, isFalse,
         reason: 'migration must not invent manual intent for ambiguous old rows');
     final raw = sql.sqlite3.open(dbPath);
-    expect(raw.select('PRAGMA user_version').single.values.single, 11);
+    expect(raw.select('PRAGMA user_version').single.values.single, 12);
     raw.dispose();
+  });
+
+  test('v11 upgrade adds path index without rerunning legacy identity migration',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'cache_index_v11_path_index_',
+    );
+    addTearDown(() => temp.delete(recursive: true));
+    final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
+    final current = SqliteIndex(dbPath);
+    await current.open();
+    await current.close();
+
+    final legacyId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source/legacy',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'path-index-page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/path-index-page.webp'),
+    );
+    final raw = sql.sqlite3.open(dbPath);
+    raw.execute('DROP INDEX cache_entry_path');
+    raw.execute('PRAGMA user_version = 11');
+    raw.execute(
+      'INSERT INTO cache_entry '
+      '(key, download_json, state, path, bytes, checksum, created_us, touched_us, '
+      'pinned, checksum_algorithm, artifact_id, storage_root_id) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      <Object?>[
+        legacyId.legacyKey,
+        jsonEncode(legacyId.toJson()),
+        CacheState.partial.name,
+        '${temp.path}/legacy-path.part',
+        1,
+        '',
+        1,
+        1,
+        0,
+        'crc32',
+        '',
+        temp.path,
+      ],
+    );
+    raw.dispose();
+
+    final migrated = SqliteIndex(dbPath);
+    await migrated.open();
+    await migrated.close();
+
+    final checked = sql.sqlite3.open(dbPath);
+    addTearDown(checked.dispose);
+    expect(checked.select('PRAGMA user_version').single.values.single, 12);
+    expect(
+      checked.select(
+        "SELECT name FROM sqlite_master WHERE type = 'index' "
+        "AND name = 'cache_entry_path'",
+      ),
+      hasLength(1),
+    );
+    expect(
+      checked.select(
+        'SELECT key FROM cache_entry WHERE key = ?',
+        <Object?>[legacyId.legacyKey],
+      ),
+      hasLength(1),
+      reason: '11→12 must only add the path index, not rerun old key migration',
+    );
+    final plan = checked.select(
+      'EXPLAIN QUERY PLAN SELECT * FROM cache_entry '
+      'WHERE path = ? AND key != ?',
+      <Object?>['${temp.path}/legacy-path.part', legacyId.key],
+    );
+    expect(
+      plan.map((row) => row['detail'].toString()).join(' '),
+      contains('cache_entry_path'),
+      reason: 'the structured-path query must use the new persistent index',
+    );
   });
 
   test('current cache schema does not rerun legacy identity migration on reopen',
@@ -842,7 +998,7 @@ void runCacheSchemaV2Tests() {
       canonicalUri: Uri.parse('https://example.test/current-reopen.webp'),
     );
     final raw = sql.sqlite3.open(dbPath);
-    expect(raw.select('PRAGMA user_version').single.values.single, 11);
+    expect(raw.select('PRAGMA user_version').single.values.single, 12);
     raw.execute(
       'INSERT INTO cache_entry '
       '(key, download_json, state, path, bytes, checksum, created_us, touched_us, '

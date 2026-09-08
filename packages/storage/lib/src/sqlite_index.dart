@@ -8,12 +8,13 @@ import 'cache_index.dart';
 import 'download_placement.dart';
 import 'storage_root_access.dart';
 
-final class SqliteIndex implements CacheIndex, CacheBindingOperations {
+final class SqliteIndex
+    implements CacheIndex, CacheBindingOperations, CachePathBindingQuery {
   SqliteIndex(this.path);
 
   SqliteIndex.memory() : path = null;
 
-  static const int _schemaVersion = 11;
+  static const int _schemaVersion = 12;
 
   final String? path;
   sql.Database? _db;
@@ -47,6 +48,21 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
     // O(N) cold-start tax and also opens a write transaction before Home's
     // first frame. Version 10 records completion of the v1-v9 backfills.
     if (version == _schemaVersion) return;
+    if (version == 11) {
+      db.execute('BEGIN IMMEDIATE');
+      try {
+        db.execute(
+          'CREATE INDEX IF NOT EXISTS cache_entry_path '
+          'ON cache_entry(path)',
+        );
+        db.execute('PRAGMA user_version = $_schemaVersion');
+        db.execute('COMMIT');
+      } on Object {
+        db.execute('ROLLBACK');
+        rethrow;
+      }
+      return;
+    }
     db.execute('BEGIN IMMEDIATE');
     try {
       if (version == 0) {
@@ -95,6 +111,10 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       db.execute(
         'CREATE INDEX IF NOT EXISTS cache_entry_state_touch '
         'ON cache_entry(state, touched_us)',
+      );
+      db.execute(
+        'CREATE INDEX IF NOT EXISTS cache_entry_path '
+        'ON cache_entry(path)',
       );
       db.execute('''
         CREATE TABLE IF NOT EXISTS download_placement (
@@ -942,6 +962,24 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       };
     }
     return list;
+  }
+
+  @override
+  Future<List<CacheRec>> listPathBindings(
+    String path, {
+    String? excludingKey,
+  }) async {
+    final db = _requireDb();
+    final rows = excludingKey == null
+        ? db.select(
+            'SELECT * FROM cache_entry WHERE path = ? ORDER BY key',
+            <Object?>[path],
+          )
+        : db.select(
+            'SELECT * FROM cache_entry WHERE path = ? AND key != ? ORDER BY key',
+            <Object?>[path, excludingKey],
+          );
+    return rows.map(_read).toList(growable: false);
   }
 
   @override
