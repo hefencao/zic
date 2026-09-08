@@ -920,18 +920,28 @@ private class VeneraNativeBridge(
                 val srcY = message.getInt("srcY")
                 val width = message.getInt("width")
                 val height = message.getInt("height")
-                require(srcX >= 0 && srcY >= 0 && width > 0 && height > 0 &&
-                    srcX + width <= source.width && srcY + height <= source.height) {
-                    "Venera image source range is out of bounds"
-                }
                 val x = message.getInt("x")
                 val y = message.getInt("y")
-                Canvas(target).drawBitmap(
-                    source,
-                    Rect(srcX, srcY, srcX + width, srcY + height),
-                    Rect(x, y, x + width, y + height),
-                    null,
+                val emptyRange = validateVeneraImageFillRange(
+                    targetWidth = target.width,
+                    targetHeight = target.height,
+                    sourceWidth = source.width,
+                    sourceHeight = source.height,
+                    x = x,
+                    y = y,
+                    srcX = srcX,
+                    srcY = srcY,
+                    width = width,
+                    height = height,
                 )
+                if (!emptyRange) {
+                    Canvas(target).drawBitmap(
+                        source,
+                        Rect(srcX, srcY, srcX + width, srcY + height),
+                        Rect(x, y, x + width, y + height),
+                        null,
+                    )
+                }
                 null
             }
             "getWidth" -> requireImage(message.getInt("key")).width
