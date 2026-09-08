@@ -148,6 +148,62 @@ void main() {
     expect(stream.snapshot.kind, PipelinePageContentKind.fallback);
   });
 
+  test('page stream exposes only generation-local metadata while receiving',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'pipeline_receiving_metadata_prefix_',
+    );
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'streaming-page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.invalid/streaming.webp'),
+    );
+    final session = DownloadSession(
+      id: id,
+      artifact: Artifact(
+        partialPath: '${temp.path}/streaming.part',
+        finalPath: '${temp.path}/streaming.bin',
+      ),
+      clock: SystemClock(),
+    );
+    await session.restore();
+    addTearDown(() async {
+      if (session.hasWriter) await session.reset();
+      await session.dispose();
+      await temp.delete(recursive: true);
+    });
+    final bytes = <int>[
+      0x52, 0x49, 0x46, 0x46,
+      0x80, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50,
+      ...List<int>.generate(256 * 1024, (index) => index & 0xff),
+    ];
+    await session.bindResponse(
+      validators: const Validators(),
+      totalLength: bytes.length,
+    );
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, bytes);
+    final stream = PipelinePageStream.forDownload(
+      id,
+      resolvePhysical: () => session,
+    )..refreshBinding();
+    addTearDown(stream.dispose);
+
+    expect(stream.snapshot.state, PipelinePageTransferState.receiving);
+    expect(stream.metadataPrefixLength, 64);
+    expect(
+      stream.readMetadataPrefix(),
+      orderedEquals(bytes.sublist(0, 64)),
+    );
+    expect(stream.readMetadataPrefix().length, lessThan(bytes.length));
+  });
+
   test('publisher follows resolved physical session for an exact alias', () async {
     final temp = await Directory.systemTemp.createTemp(
       'pipeline_transfer_progress_alias_',

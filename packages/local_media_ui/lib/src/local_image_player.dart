@@ -216,10 +216,11 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     PipelinePageStream stream,
     PipelinePageStreamSnapshot snapshot,
   ) {
-    final requested = math.min(snapshot.committedLength, 256 * 1024);
-    if (requested > _streamingPrefixRequestedLength) {
-      _streamingPrefixRequestedLength = requested;
+    final requested = stream.metadataPrefixLength;
+    if (requested <= _streamingPrefixRequestedLength) {
+      return;
     }
+    _streamingPrefixRequestedLength = requested;
     _streamingPrefixRequestedRevision++;
     if (_streamingPrefixSyncing ||
         _streamingPrefixRequestedLength < 20 ||
@@ -245,7 +246,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           return;
         }
         try {
-          final prefix = await stream.readPrefix(requested);
+          final prefix = stream.readMetadataPrefix();
           if (!mounted || widget.pageStream != stream) {
             return;
           }

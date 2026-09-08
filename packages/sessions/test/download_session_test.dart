@@ -1538,6 +1538,29 @@ void main() {
     expect(session.readIngressPrefix(prefix.length), prefix);
   });
 
+  test('source metadata prefix stays in-memory while receiving body grows',
+      () async {
+    final bytes = <int>[
+      0x52, 0x49, 0x46, 0x46,
+      0x80, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50,
+      ...List<int>.generate(256, (index) => index & 0xff),
+    ];
+    await session.bindResponse(
+      validators: const Validators(),
+      totalLength: bytes.length,
+    );
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, bytes);
+
+    expect(session.committedLength, bytes.length);
+    expect(session.sourceMetadataPrefixLength, 64);
+    expect(
+      session.readSourceMetadataPrefix(),
+      orderedEquals(bytes.sublist(0, 64)),
+    );
+  });
+
   test('resident source prefix uses external body authority beyond metadata',
       () async {
     final bytes = <int>[

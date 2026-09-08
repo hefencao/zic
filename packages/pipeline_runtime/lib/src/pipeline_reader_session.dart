@@ -1344,7 +1344,6 @@ final class PipelineReaderSession {
       () => PipelinePageStream.forDownload(
         id,
         resolvePhysical: () => _downloads.find(id),
-        residentReplaySource: _residentReplaySource,
       )..refreshBinding(),
     );
   }

@@ -58,12 +58,12 @@ if '_downloads.get' in PIPELINE_RUNTIME:
 for forbidden in ('DownloadRegistry', 'DownloadSession', 'LiveCoordinator', 'NetLane(', 'DecodeLane(', 'UploadLane(', "package:downloads/", "package:sessions/", "package:storage/", "package:transport/", "package:media/"):
     if forbidden in RUNTIME:
         raise SystemExit(f'Reader regained pipeline ownership: {forbidden}')
-for token in ('final class PipelinePageStream', 'PipelinePageStreamSnapshot', 'Future<Uint8List> readPrefix', 'void refreshBinding()', 'required DownloadSession? Function() resolvePhysical'):
+for token in ('final class PipelinePageStream', 'PipelinePageStreamSnapshot', 'Uint8List readMetadataPrefix()', 'int get metadataPrefixLength', 'void refreshBinding()', 'required DownloadSession? Function() resolvePhysical'):
     if token not in PAGE_STREAM:
         raise SystemExit(f'Pipeline page-stream projection missing: {token}')
-for forbidden in ('final EncodedSource', 'EncodedSource? get source', ' get source'):
+for forbidden in ('final EncodedSource', 'EncodedSource? get source', ' get source', 'readSourcePrefix(', 'residentReplaySource'):
     if forbidden in PAGE_STREAM:
-        raise SystemExit(f'Pipeline transfer projection leaked mutable media: {forbidden}')
+        raise SystemExit(f'Pipeline transfer projection leaked mutable media/body authority: {forbidden}')
 for token in ('final class PipelinePageOutputStream', 'PipelinePageSurface?', '_uploads.claimPresent(', '_outputs.project('):
     if token not in PAGE_OUTPUT:
         raise SystemExit(f'Pipeline page-output projection missing: {token}')
@@ -89,10 +89,10 @@ for token in (
 for token in ('StreamIterator<List<int>>', 'cancel.whenCancelled', 'await iterator.cancel()'):
     if token not in DOWNLOAD_JOB:
         raise SystemExit(f'Explicit streaming cancellation contract missing: {token}')
-for token in ('pageStream: runtime.pageStream', 'pageOutput: runtime.pageOutput', 'PipelinePageOutputStream? pageOutput', 'parseWebpPrefixInfo(prefix)', 'surface.build('):
+for token in ('pageStream: runtime.pageStream', 'pageOutput: runtime.pageOutput', 'PipelinePageOutputStream? pageOutput', 'stream.readMetadataPrefix()', 'parseWebpPrefixInfo(prefix)', 'surface.build('):
     if token not in PLAYER:
         raise SystemExit(f'WebP Pipeline projection contract missing: {token}')
-for forbidden in ('stream.source', 'pageStream?.source', '_startStreamingNative(', '_waitForStreamingAdvance(', '_ownsSource = false'):
+for forbidden in ('stream.source', 'pageStream?.source', 'stream.readPrefix(', '_startStreamingNative(', '_waitForStreamingAdvance(', '_ownsSource = false'):
     if forbidden in PLAYER:
         raise SystemExit(f'Presentation regained Pipeline decode/source ownership: {forbidden}')
 if 'child: _zoomed' not in READER or 'InteractiveViewer(' not in READER:

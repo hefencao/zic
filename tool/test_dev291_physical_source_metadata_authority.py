@@ -24,28 +24,23 @@ require(
     "final int? sourceCanvasWidth;",
     "final int? sourceCanvasHeight;",
     "Uint8List readIngressPrefix(int maxBytes)",
+    "Uint8List readSourceMetadataPrefix()",
     "void _appendSourceMetadataPrefix(int offset, Uint8List chunk)",
     "final info = parseWebpPrefixInfo(Uint8List.fromList(_prefix));",
 )
 require(
     "packages/pipeline_runtime/lib/src/pipeline_page_stream.dart",
-    "return session.readSourcePrefix(",
+    "Uint8List readMetadataPrefix()",
+    "session.readSourceMetadataPrefix()",
+    "int get metadataPrefixLength",
 )
-if version >= 292:
-    require(
-        "packages/pipeline_runtime/lib/src/pipeline_page_stream.dart",
-        "DownloadResidentReplaySource? residentReplaySource",
-        "residentReplayChunks: replaySource == null",
-        "replaySource(session, endExclusive)",
-    )
-else:
-    require(
-        "packages/pipeline_runtime/lib/src/pipeline_page_stream.dart",
-        "residentReplaySource: _residentReplaySource,",
-    )
 stream = text("packages/pipeline_runtime/lib/src/pipeline_page_stream.dart")
 req("session.artifact.readPrefix" not in stream,
     "PipelinePageStream must not read source metadata from resident session Artifact")
+req("session.readSourcePrefix(" not in stream,
+    "Pipeline presentation metadata must not expand into encoded body replay")
+req("residentReplaySource" not in stream,
+    "PipelinePageStream metadata projection must not own resident body replay")
 reader = text("packages/pipeline_runtime/lib/src/pipeline_reader_session.dart")
 req("download.artifact.readPrefix" not in reader,
     "Pipeline dimension resolution must not guess Artifact ownership")
@@ -62,6 +57,8 @@ require(
     "expect(session.snapshot.sourceCanvasWidth, 640);",
     "expect(session.snapshot.sourceCanvasHeight, 1200);",
     "expect(session.readIngressPrefix(prefix.length), prefix);",
+    "source metadata prefix stays in-memory while receiving body grows",
+    "expect(session.sourceMetadataPrefixLength, 64);",
     "resident source prefix uses external body authority beyond metadata",
     "final prefix = await session.readSourcePrefix(96,",
     "residentReplayChunks: (endExclusive) async",

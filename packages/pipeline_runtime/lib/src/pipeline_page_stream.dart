@@ -62,13 +62,10 @@ final class PipelinePageStream {
   PipelinePageStream.forDownload(
     this.identity, {
     required DownloadSession? Function() resolvePhysical,
-    DownloadResidentReplaySource? residentReplaySource,
-  })  : _resolvePhysical = resolvePhysical,
-        _residentReplaySource = residentReplaySource;
+  }) : _resolvePhysical = resolvePhysical;
 
   final DownloadId identity;
   final DownloadSession? Function() _resolvePhysical;
-  final DownloadResidentReplaySource? _residentReplaySource;
   DownloadSession? _session;
   final Set<PipelinePageStreamListener> _listeners =
       <PipelinePageStreamListener>{};
@@ -96,20 +93,20 @@ final class PipelinePageStream {
         : _state(session.state);
   }
 
-  Future<Uint8List> readPrefix(int maxBytes) async {
+  /// Returns the generation-local encoded metadata prefix without touching
+  /// the Artifact body.
+  ///
+  /// Presentation uses this for dimensions/format flags only. Larger encoded
+  /// prefixes belong to ingress/decode source growth; reading them back through
+  /// an actively written Artifact would introduce an IOSink.flush() barrier
+  /// into the UI observation path.
+  int get metadataPrefixLength => _session?.sourceMetadataPrefixLength ?? 0;
+
+  Uint8List readMetadataPrefix() {
     final session = _session;
-    if (session == null || maxBytes <= 0) return Uint8List(0);
-    // This stream can rebind to a replacement physical generation. Keep the
-    // cross-owner replay service unbound until the current session is known,
-    // then pass DownloadSession only a generation-bound `(end) => chunks`
-    // capability.
-    final replaySource = _residentReplaySource;
-    return session.readSourcePrefix(
-      maxBytes,
-      residentReplayChunks: replaySource == null
-          ? null
-          : (endExclusive) => replaySource(session, endExclusive),
-    );
+    return session == null
+        ? Uint8List(0)
+        : session.readSourceMetadataPrefix();
   }
 
   void addListener(

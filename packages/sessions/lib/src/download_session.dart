@@ -2115,6 +2115,17 @@ final class DownloadSession {
     return Uint8List.fromList(_prefix.sublist(0, end));
   }
 
+  /// Returns only the generation-local encoded metadata authority.
+  ///
+  /// Presentation/content sniffing must use this instead of [readSourcePrefix]:
+  /// expanding a metadata probe into the Artifact body would force an active
+  /// receiving IOSink to flush before the file can be read back. Decoder source
+  /// growth remains the owner of larger encoded prefixes.
+  int get sourceMetadataPrefixLength => _prefix.length;
+
+  Uint8List readSourceMetadataPrefix() =>
+      readIngressPrefix(_sourceMetadataPrefixLength);
+
   /// Reads an encoded prefix through this physical generation's body owner.
   /// Small metadata reads hit the generation-local ingress prefix. Larger
   /// reads use the external replay authority for resident bodies and the
