@@ -29,9 +29,10 @@ for token in (
 ):
     require(refill, token, "single-frame refill policy")
 for token in (
-    "void _reportAnimationIfComplete()",
-    "holder.add(frame);\n            _reportAnimationIfComplete();",
-    "final loop = _cursor!.loop;\n            _reportAnimationIfComplete();",
+    "void _reportAnimationEvidence()",
+    "holder.add(frame);\n            _reportAnimationEvidence();",
+    "final loop = _cursor!.loop;\n            _reportAnimationEvidence();",
+    "ingress.webpAnimationEvidence == WebpAnimationEvidence.staticImage",
 ):
     require(decode, token, "early authoritative animation reporting")
 for token in (
@@ -42,6 +43,7 @@ for token in (
 for text, token, owner in (
     (refill_test, "single-frame demands bootstrap before staged animation waterlines", "refill owner test"),
     (decode_test, "expect(resolvedAnimation?.complete, isTrue);", "decode owner test"),
+    (decode_test, "unsealed static VP8X prefix resolves static at a one-frame watermark", "decode static-prefix owner test"),
     (local_test, "local WebP stays an animation candidate until runtime classification", "local-media owner test"),
 ):
     require(text, token, owner)

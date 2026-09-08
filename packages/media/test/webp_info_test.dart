@@ -54,6 +54,30 @@ void main() {
     expect(info!.width, 4);
     expect(info.height, 4);
     expect(webpPrefixDeclaresAnimation(prefix), isTrue);
+    expect(
+      parseWebpPrefixAnimationEvidence(prefix),
+      WebpAnimationEvidence.animated,
+    );
+  });
+
+  test('VP8X prefix proves static without the complete image body', () {
+    final prefix = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46,
+      0xf4, 0x03, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50,
+      0x56, 0x50, 0x38, 0x58,
+      0x0a, 0x00, 0x00, 0x00,
+      0x00,
+      0, 0, 0,
+      0x7f, 0x02, 0,
+      0xaf, 0x04, 0,
+    ]);
+
+    expect(
+      parseWebpPrefixAnimationEvidence(prefix),
+      WebpAnimationEvidence.staticImage,
+    );
+    expect(webpPrefixDeclaresAnimation(prefix), isFalse);
   });
 
 
@@ -85,6 +109,7 @@ void main() {
     ]);
 
     expect(parseWebpPrefixInfo(prefix), isNull);
+    expect(parseWebpPrefixAnimationEvidence(prefix), isNull);
     expect(webpPrefixDeclaresAnimation(prefix), isFalse);
     expect(estimateWebpPlayablePrefixBytes(prefix), 256 * 1024);
   });

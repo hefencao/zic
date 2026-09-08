@@ -878,6 +878,79 @@ void main() {
   });
 
   test(
+    'unsealed static VP8X prefix resolves static at a one-frame watermark',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'decode_static_prefix_evidence_test_',
+      );
+      final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024 * 1024);
+      final download = DownloadSession(
+        id: _downloadId(),
+        artifact: Artifact(
+          partialPath: '${temp.path}/page.part',
+          finalPath: '${temp.path}/page.webp',
+        ),
+        clock: _Clock(),
+      );
+      final projection = DownloadIngressProjection(
+        scopeId: 'test:${download.id.key}',
+        ingress: ingress,
+        decodePrefixQuantumBytes: 256 * 1024,
+        decoderDrivenSourceGrowth: true,
+      );
+      download.attachIngressProjection(projection);
+      projection.append(
+        epoch: const SourceEpoch(0),
+        offset: 0,
+        bytes: <int>[
+          0x52, 0x49, 0x46, 0x46,
+          0xf4, 0x03, 0x00, 0x00,
+          0x57, 0x45, 0x42, 0x50,
+          0x56, 0x50, 0x38, 0x58,
+          0x0a, 0x00, 0x00, 0x00,
+          0x00,
+          0, 0, 0,
+          0x7f, 0x02, 0,
+          0xaf, 0x04, 0,
+        ],
+      );
+      final resolved = <AnimationInfo>[];
+      final decode = DecodeSession(
+        id: _decodeId(download.id),
+        ingress: projection,
+        cursors: _PartialPrefixCursorFactory(frameCount: 1),
+        clock: _Clock(),
+        onAnimationResolved: (_, animation) => resolved.add(animation),
+      );
+
+      final snapshot = await decode.fill(
+        demand: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'cold-static-prefix',
+          expirationRevision: 1,
+        ),
+        revision: 1,
+        cancel: CancelToken(),
+      );
+
+      expect(snapshot.state, DecodeState.ready);
+      expect(snapshot.depth, 1);
+      expect(snapshot.sourceSealed, isFalse);
+      expect(snapshot.animation.complete, isTrue);
+      expect(snapshot.animation.frameCount, 1);
+      expect(resolved, hasLength(1));
+      expect(resolved.single.complete, isTrue);
+      expect(resolved.single.frameCount, 1);
+
+      decode.dispose();
+      await download.dispose();
+      await temp.delete(recursive: true);
+    },
+  );
+
+  test(
     'detached exhausted partial cursor drops stale next-frame prefix gate',
     () async {
       final temp = await Directory.systemTemp.createTemp(

@@ -166,8 +166,11 @@ final class DecodeSession {
   DecodeState get state => _state;
   FrameHolder? get holder => _holder;
   int get bytes => _holder?.bytes ?? 0;
-  AnimationInfo get _animation =>
-      _cursor?.loop?.animation ?? const AnimationInfo.unknown();
+  AnimationInfo get _animation {
+    final reported = _reportedAnimation;
+    if (reported != null && reported.complete) return reported;
+    return _cursor?.loop?.animation ?? const AnimationInfo.unknown();
+  }
 
   int get _cycle => _partialPrefixCycle + (_cursor?.loop?.cycle ?? 0);
 
@@ -179,9 +182,20 @@ final class DecodeSession {
       onAnimationResolved?.call(id, animation);
       return;
     }
+    if (ingress.webpAnimationEvidence == WebpAnimationEvidence.staticImage) {
+      const staticImage = AnimationInfo(
+        frameCount: 1,
+        loopCount: 0,
+        complete: true,
+      );
+      if (_reportedAnimation == staticImage) return;
+      _reportedAnimation = staticImage;
+      onAnimationResolved?.call(id, staticImage);
+      return;
+    }
     // Two successfully decoded distinct frames are already authoritative
     // positive animation evidence even while the encoded source is still
-    // growing. Static classification still requires complete demux metadata.
+    // growing. Static prefix evidence above is the symmetric fast path.
     if (_maxDecodedPrefixFrames < 2 ||
         (_reportedAnimation?.frameCount ?? 0) > 1) {
       return;

@@ -139,28 +139,52 @@ WebpInfo? parseWebpPrefixInfo(Uint8List bytes) {
   return null;
 }
 
-bool webpPrefixDeclaresAnimation(Uint8List bytes) {
-  if (bytes.length < 30 ||
+enum WebpAnimationEvidence { staticImage, animated }
+
+/// Returns animation evidence that is authoritative from the available WebP
+/// prefix alone. A null result means the prefix is still insufficient; it does
+/// not mean static.
+///
+/// Extended WebP declares animation in the VP8X feature flags, while a simple
+/// top-level VP8/VP8L image is necessarily static. This lets an incremental
+/// source resolve a static image without hydrating the complete RIFF body just
+/// to make the demuxer report `complete=true`.
+WebpAnimationEvidence? parseWebpPrefixAnimationEvidence(Uint8List bytes) {
+  if (bytes.length < 20 ||
       ascii.decode(bytes.sublist(0, 4), allowInvalid: true) != 'RIFF' ||
       ascii.decode(bytes.sublist(8, 12), allowInvalid: true) != 'WEBP') {
-    return false;
+    return null;
   }
   final data = ByteData.sublistView(bytes);
   var offset = 12;
   while (offset + 8 <= bytes.length) {
-    final tag = ascii.decode(bytes.sublist(offset, offset + 4), allowInvalid: true);
+    final tag = ascii.decode(
+      bytes.sublist(offset, offset + 4),
+      allowInvalid: true,
+    );
     final length = data.getUint32(offset + 4, Endian.little);
     final dataOffset = offset + 8;
     final dataEnd = dataOffset + length;
-    if (dataEnd > bytes.length) return false;
-    if (tag == 'ANIM') return true;
-    if (tag == 'VP8X' && length >= 1 && (bytes[dataOffset] & 0x02) != 0) {
-      return true;
+    if (tag == 'VP8X') {
+      if (length < 1 || dataOffset >= bytes.length) return null;
+      return (bytes[dataOffset] & 0x02) != 0
+          ? WebpAnimationEvidence.animated
+          : WebpAnimationEvidence.staticImage;
     }
+    if (tag == 'ANIM' || tag == 'ANMF') {
+      return WebpAnimationEvidence.animated;
+    }
+    if (tag == 'VP8 ' || tag == 'VP8L') {
+      return WebpAnimationEvidence.staticImage;
+    }
+    if (dataEnd > bytes.length) return null;
     offset = dataEnd + (length.isOdd ? 1 : 0);
   }
-  return false;
+  return null;
 }
+
+bool webpPrefixDeclaresAnimation(Uint8List bytes) =>
+    parseWebpPrefixAnimationEvidence(bytes) == WebpAnimationEvidence.animated;
 
 /// Estimates a generous playable prefix byte target based on available WebP
 /// prefix headers, canvas dimensions, and initial frame chunk sizes.

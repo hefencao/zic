@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:domain/domain.dart';
 import 'package:media/media.dart';
 
@@ -44,6 +46,12 @@ final class DownloadIngressProjection {
   /// contract must not hide that evidence behind partial-prefix playback.
   bool get decoderDrivenSourceGrowth => _decoderDrivenSourceGrowth;
   bool _decoderDrivenSourceGrowth;
+
+  /// Authoritative animation evidence available from the encoded WebP prefix.
+  /// Null means the prefix is not yet sufficient to classify it.
+  WebpAnimationEvidence? get webpAnimationEvidence => _webpAnimationEvidence;
+  WebpAnimationEvidence? _webpAnimationEvidence;
+  final List<int> _webpEvidencePrefix = <int>[];
 
   void setDecoderDrivenSourceGrowth(bool value) {
     _decoderDrivenSourceGrowth = value;
@@ -116,6 +124,7 @@ final class DownloadIngressProjection {
   }
 
   void reset(SourceEpoch epoch) {
+    _resetWebpAnimationEvidence();
     final before = snapshot;
     ingress.reset(epoch);
     _notify(before, snapshot);
@@ -126,6 +135,7 @@ final class DownloadIngressProjection {
     required int offset,
     required List<int> bytes,
   }) {
+    _observeWebpAnimationEvidence(bytes);
     final before = snapshot;
     ingress.append(epoch: epoch, offset: offset, bytes: bytes);
     _notify(before, snapshot);
@@ -142,8 +152,16 @@ final class DownloadIngressProjection {
     required Stream<List<int>> chunks,
     required bool sealed,
   }) async {
+    _resetWebpAnimationEvidence();
     final before = snapshot;
-    await ingress.rebuild(epoch: epoch, chunks: chunks, sealed: sealed);
+    await ingress.rebuild(
+      epoch: epoch,
+      chunks: chunks.map((chunk) {
+        _observeWebpAnimationEvidence(chunk);
+        return chunk;
+      }),
+      sealed: sealed,
+    );
     _notify(before, snapshot);
   }
 
@@ -156,6 +174,25 @@ final class DownloadIngressProjection {
 
   void detach() {
     _listeners.clear();
+  }
+
+  void _observeWebpAnimationEvidence(List<int> bytes) {
+    if (_webpAnimationEvidence != null || bytes.isEmpty) return;
+    const prefixLimit = 64;
+    final remaining = prefixLimit - _webpEvidencePrefix.length;
+    if (remaining <= 0) return;
+    _webpEvidencePrefix.addAll(bytes.take(remaining));
+    _webpAnimationEvidence = parseWebpPrefixAnimationEvidence(
+      Uint8List.fromList(_webpEvidencePrefix),
+    );
+    if (_webpAnimationEvidence != null) {
+      _webpEvidencePrefix.clear();
+    }
+  }
+
+  void _resetWebpAnimationEvidence() {
+    _webpAnimationEvidence = null;
+    _webpEvidencePrefix.clear();
   }
 
   void _notify(IngressSnap before, IngressSnap after) {
