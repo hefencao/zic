@@ -97,7 +97,7 @@ final class CacheOps {
     };
     return _apply(
       records: records,
-      requestedBytes: records.fold<int>(0, (sum, rec) => sum + rec.bytes),
+      requestedBytes: physicalCacheBytes(records),
       protectedKeys: protectedKeys,
       busyKeys: busyKeys,
     );

@@ -215,6 +215,8 @@ void main() {
     await index.put(first);
     await index.put(second);
 
+    expect(await index.totalBytes(), 3,
+        reason: 'logical siblings sharing one artifact count physical bytes once');
     expect((await index.get(first.key))!.path, '/tmp/shared-old.bin');
     final object = await index.getArtifactObject('shared-locator-artifact');
     expect(object, isNotNull);

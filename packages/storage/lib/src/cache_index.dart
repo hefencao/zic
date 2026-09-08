@@ -14,6 +14,20 @@ String defaultArtifactIdForPath(String path) {
   return hash.toRadixString(16).padLeft(16, '0');
 }
 
+String physicalCacheKey(CacheRec record) => record.state == CacheState.ready
+    ? 'artifact:${record.effectiveArtifactId}'
+    : 'binding:${record.key}';
+
+int physicalCacheBytes(Iterable<CacheRec> records) {
+  final bytesByPhysicalKey = <String, int>{};
+  for (final record in records) {
+    final key = physicalCacheKey(record);
+    final previous = bytesByPhysicalKey[key] ?? 0;
+    if (record.bytes > previous) bytesByPhysicalKey[key] = record.bytes;
+  }
+  return bytesByPhysicalKey.values.fold<int>(0, (sum, bytes) => sum + bytes);
+}
+
 final class CacheRec {
   const CacheRec({
     required this.id,
@@ -333,9 +347,11 @@ final class MemIndex implements CacheIndex, CacheBindingOperations {
   @override
   Future<int> totalBytes({CacheState? state}) async {
     _requireOpen();
-    return _records.values
-        .where((record) => state == null || record.state == state)
-        .fold<int>(0, (total, record) => total + record.bytes);
+    return physicalCacheBytes(
+      _records.values.where(
+        (record) => state == null || record.state == state,
+      ),
+    );
   }
 
   @override

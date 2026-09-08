@@ -50,4 +50,40 @@ CacheRec _rec(String page, int bytes, int touched) {
     createdUs: touched,
     touchedUs: touched,
   );
+
+  test('shared ready bindings count one physical artifact and protect as a group', () {
+    final first = _rec('shared-a', 40, 1).copyWith(artifactId: 'shared-artifact');
+    final second = _rec('shared-b', 40, 5).copyWith(artifactId: 'shared-artifact');
+    final other = _rec('other', 30, 2);
+
+    final plan = const CachePolicy().plan(
+      records: <CacheRec>[first, second, other],
+      limits: const CacheLimits(maxBytes: 60, targetBytes: 30),
+      protectedKeys: <String>{second.key},
+    );
+
+    expect(plan.totalBytes, 70,
+        reason: 'two logical bindings share one 40-byte physical artifact');
+    expect(plan.protectedBytes, 40);
+    expect(plan.candidates.map((record) => record.key), <String>[other.key]);
+    expect(plan.plannedBytes, 30);
+    expect(plan.projectedBytes, 40);
+  });
+
+  test('shared artifact eviction selects every logical binding once', () {
+    final first = _rec('shared-a', 40, 1).copyWith(artifactId: 'shared-artifact');
+    final second = _rec('shared-b', 40, 5).copyWith(artifactId: 'shared-artifact');
+
+    final plan = const CachePolicy().plan(
+      records: <CacheRec>[first, second],
+      limits: const CacheLimits(maxBytes: 39, targetBytes: 0),
+    );
+
+    expect(plan.totalBytes, 40);
+    expect(plan.candidates.map((record) => record.key).toSet(),
+        <String>{first.key, second.key});
+    expect(plan.plannedBytes, 40);
+    expect(plan.projectedBytes, 0);
+  });
+
 }

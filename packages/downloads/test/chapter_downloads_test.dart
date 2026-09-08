@@ -2334,6 +2334,59 @@ void main() {
     expect(await service.artifactStore.openArtifactStream(id), isNull);
   });
 
+  test('shared cache bindings charge and release physical bytes once', () async {
+    final root = await Directory.systemTemp.createTemp('zic-shared-cache-capacity-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x18, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
+    final first = DownloadId(
+      content: const ContentId(
+        sourceId: 'source', comicId: 'v1', chapterId: 'ch', pageId: 'p'),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/v1.webp'),
+    );
+    final second = DownloadId(
+      content: const ContentId(
+        sourceId: 'source', comicId: 'v2', chapterId: 'ch', pageId: 'p'),
+      sourceRevision: 'r2',
+      canonicalUri: Uri.parse('https://example.test/v2.webp'),
+    );
+    await service.storePromotedArtifact(id: first, bytes: bytes);
+    final source = await service.artifactStore.index.get(first.key);
+    expect(source, isNotNull);
+    await service.artifactStore.index.put(
+      CacheRec(
+        id: second,
+        state: CacheState.ready,
+        path: source!.path,
+        bytes: source.bytes,
+        checksum: source.checksum,
+        createdUs: source.createdUs,
+        touchedUs: source.touchedUs + 1,
+        pinned: false,
+        checksumAlgorithm: source.checksumAlgorithm,
+        artifactId: source.effectiveArtifactId,
+        storageRootId: source.storageRootId,
+      ),
+    );
+
+    final usage = await service.inspectArtifacts();
+    expect(usage.entries, 2);
+    expect(usage.bytes, bytes.lengthInBytes);
+
+    final cleared = await service.clearArtifacts();
+    expect(cleared.releasedBytes, bytes.lengthInBytes);
+    expect(cleared.evictedEntries, 1,
+        reason: 'one physical artifact was released after both bindings left');
+    expect(cleared.remainingBytes, 0);
+    expect(await service.artifactStore.index.get(first.key), isNull);
+    expect(await service.artifactStore.index.get(second.key), isNull);
+  });
+
   test('cross-version shared physical file is preserved when one version is deleted', () async {
     final tempDir = await Directory.systemTemp.createTemp('zic_delete_safety_test_');
     addTearDown(() => tempDir.delete(recursive: true));

@@ -6584,7 +6584,6 @@ final class PersistentDownloadArtifactStore
               (expected != null && !_sameIndexedRecord(expected, record))) {
             return 0;
           }
-          final released = record.bytes;
           final deletedPhysical = await _invalidateIndexedArtifact(
             id,
             record: record,
@@ -6595,7 +6594,7 @@ final class PersistentDownloadArtifactStore
             // for a shared path because registry.evict deletes blindly.
             await _registry.evict(id);
           }
-          return released;
+          return deletedPhysical ? record.bytes : 0;
         },
       );
 
@@ -6789,7 +6788,7 @@ final class PersistentDownloadArtifactStore
     _requireOpen();
     final records = await _index.list();
     return ArtifactCacheUsage(
-      bytes: records.fold<int>(0, (sum, record) => sum + record.bytes),
+      bytes: physicalCacheBytes(records),
       entries: records.length,
     );
   }

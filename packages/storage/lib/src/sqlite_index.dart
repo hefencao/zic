@@ -1050,23 +1050,33 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
   Future<int> totalBytes({CacheState? state}) async {
     final cached = _cachedEntries;
     if (cached != null) {
-      if (state == null) {
-        return cached.values.fold<int>(0, (sum, rec) => sum + rec.bytes);
-      }
-      return cached.values
-          .where((rec) => rec.state == state)
-          .fold<int>(0, (sum, rec) => sum + rec.bytes);
+      return physicalCacheBytes(
+        cached.values.where(
+          (record) => state == null || record.state == state,
+        ),
+      );
     }
-    final rows = state == null
-        ? _requireDb().select(
-            'SELECT COALESCE(SUM(bytes), 0) AS total FROM cache_entry',
-          )
-        : _requireDb().select(
-            'SELECT COALESCE(SUM(bytes), 0) AS total '
-            'FROM cache_entry WHERE state = ?',
-            <Object?>[state.name],
-          );
-    return rows.first['total']! as int;
+    final db = _requireDb();
+    if (state == CacheState.partial) {
+      return db.select(
+        "SELECT COALESCE(SUM(bytes), 0) AS total "
+        "FROM cache_entry WHERE state = 'partial'",
+      ).first['total']! as int;
+    }
+    final ready = db.select("""
+      SELECT COALESCE(SUM(bytes), 0) AS total FROM (
+        SELECT MAX(bytes) AS bytes
+        FROM cache_entry
+        WHERE state = 'ready'
+        GROUP BY CASE WHEN artifact_id = '' THEN key ELSE artifact_id END
+      )
+    """).first['total']! as int;
+    if (state == CacheState.ready) return ready;
+    final partial = db.select(
+      "SELECT COALESCE(SUM(bytes), 0) AS total "
+      "FROM cache_entry WHERE state = 'partial'",
+    ).first['total']! as int;
+    return ready + partial;
   }
 
   @override

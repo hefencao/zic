@@ -24,8 +24,7 @@ final class EvictPlan {
   final int protectedBytes;
   final List<CacheRec> candidates;
 
-  int get plannedBytes =>
-      candidates.fold<int>(0, (sum, record) => sum + record.bytes);
+  int get plannedBytes => physicalCacheBytes(candidates);
 
   int get projectedBytes => totalBytes - plannedBytes;
 }
@@ -38,11 +37,15 @@ final class CachePolicy {
     required CacheLimits limits,
     Set<String> protectedKeys = const <String>{},
   }) {
-    final all = records.toList(growable: false);
-    final total = all.fold<int>(0, (sum, record) => sum + record.bytes);
-    final protectedBytes = all
-        .where((record) => protectedKeys.contains(record.key))
-        .fold<int>(0, (sum, record) => sum + record.bytes);
+    final groups = _groupPhysicalRecords(records);
+    final total = groups.fold<int>(0, (sum, group) => sum + group.bytes);
+    final protectedBytes = groups
+        .where(
+          (group) => group.records.any(
+            (record) => protectedKeys.contains(record.key),
+          ),
+        )
+        .fold<int>(0, (sum, group) => sum + group.bytes);
     if (total <= limits.maxBytes) {
       return EvictPlan(
         totalBytes: total,
@@ -52,29 +55,27 @@ final class CachePolicy {
       );
     }
 
-    final candidates = all
-        .where((record) => !protectedKeys.contains(record.key))
+    final candidates = groups
+        .where(
+          (group) => !group.records.any(
+            (record) => protectedKeys.contains(record.key),
+          ),
+        )
         .toList(growable: false)
       ..sort((a, b) {
         final touched = a.touchedUs.compareTo(b.touchedUs);
-        if (touched != 0) {
-          return touched;
-        }
+        if (touched != 0) return touched;
         final state = a.state.index.compareTo(b.state.index);
-        if (state != 0) {
-          return state;
-        }
+        if (state != 0) return state;
         return a.key.compareTo(b.key);
       });
 
     final selected = <CacheRec>[];
     var projected = total;
-    for (final record in candidates) {
-      if (projected <= limits.targetBytes) {
-        break;
-      }
-      selected.add(record);
-      projected -= record.bytes;
+    for (final group in candidates) {
+      if (projected <= limits.targetBytes) break;
+      selected.addAll(group.records);
+      projected -= group.bytes;
     }
     return EvictPlan(
       totalBytes: total,
@@ -83,4 +84,36 @@ final class CachePolicy {
       candidates: selected,
     );
   }
+}
+
+List<_PhysicalCacheGroup> _groupPhysicalRecords(Iterable<CacheRec> records) {
+  final grouped = <String, List<CacheRec>>{};
+  for (final record in records) {
+    grouped.putIfAbsent(physicalCacheKey(record), () => <CacheRec>[]).add(record);
+  }
+  return <_PhysicalCacheGroup>[
+    for (final entry in grouped.entries) _PhysicalCacheGroup(entry.key, entry.value),
+  ];
+}
+
+final class _PhysicalCacheGroup {
+  _PhysicalCacheGroup(this.key, List<CacheRec> records)
+      : records = List<CacheRec>.unmodifiable(records),
+        bytes = records.fold<int>(
+          0,
+          (value, record) => record.bytes > value ? record.bytes : value,
+        ),
+        touchedUs = records.fold<int>(
+          0,
+          (value, record) => record.touchedUs > value ? record.touchedUs : value,
+        ),
+        state = records.any((record) => record.state == CacheState.ready)
+            ? CacheState.ready
+            : CacheState.partial;
+
+  final String key;
+  final List<CacheRec> records;
+  final int bytes;
+  final int touchedUs;
+  final CacheState state;
 }
