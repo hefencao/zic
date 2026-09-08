@@ -62,13 +62,72 @@ void main() {
     service.updateCacheVersionRelations(const <ComicVersionRelation>[]);
     expect(await service.openArtifactStream(oldId), isNull);
 
-    // The full verified relation set is a separate cache authority. The newer
-    // version need not be a manual download head for its immutable body to be
-    // reused by a related version.
+    // Persistent storage remains exact even when the app knows a verified
+    // version relation. Cross-version reuse belongs to ArtifactCacheManager,
+    // which must preserve the actual storage identity of the reused body.
     service.updateCacheVersionRelations(const <ComicVersionRelation>[relation]);
-    final stream = await service.openArtifactStream(oldId);
-    expect(stream, isNotNull);
-    final chunks = await stream!.open(start: 0).toList();
-    expect(Uint8List.fromList(chunks.expand((chunk) => chunk).toList()), bytes);
+    expect(await service.openArtifactStream(oldId), isNull);
+    expect(await service.artifactCacheManager.lookupAuthoritative(oldId), isNull);
+
+    service.artifactCacheManager.linkEquivalent(first: oldId, second: newerId);
+    final lookup = await service.artifactCacheManager.lookup(oldId);
+    expect(lookup, isNotNull);
+    expect(lookup!.id, oldId);
+    expect(lookup.storageId, newerId);
+    expect(lookup.durable, isTrue);
+    final read = await service.artifactCacheManager.readForegroundLookup(lookup);
+    expect(read.bytes, bytes);
   });
+  test('persistent backend never aliases a same-URI sibling as exact storage',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-cache-exact-same-uri-');
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+
+    final uri = Uri.parse('https://example.test/shared/page.webp');
+    final target = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'target',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'target-r1',
+      canonicalUri: uri,
+    );
+    final sibling = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'sibling',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'sibling-r1',
+      canonicalUri: uri,
+    );
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 5, 6, 7, 8,
+    ]);
+    await service.storePromotedArtifact(id: sibling, bytes: bytes);
+
+    expect(await service.openArtifactStream(target), isNull);
+    expect(await service.artifactCacheManager.lookupAuthoritative(target), isNull);
+    expect(
+      await service.artifactCacheManager.containsBackendExact(
+        id: target,
+        expectedLength: bytes.length,
+      ),
+      isFalse,
+    );
+
+    service.artifactCacheManager.linkEquivalent(first: target, second: sibling);
+    final lookup = await service.artifactCacheManager.lookup(target);
+    expect(lookup, isNotNull);
+    expect(lookup!.storageId, sibling);
+    expect((await service.artifactCacheManager.readForegroundLookup(lookup)).bytes,
+        bytes);
+  });
+
 }

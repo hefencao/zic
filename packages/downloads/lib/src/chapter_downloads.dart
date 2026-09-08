@@ -1223,15 +1223,13 @@ final class PersistentDownloadArtifactStore
 
   List<ComicVersionRelation> _downloadHeadRelations =
       const <ComicVersionRelation>[];
-  List<ComicVersionRelation> _cacheVersionRelations =
-      const <ComicVersionRelation>[];
-
   void updateVersionBaselines(List<ComicVersionRelation> relations) {
     _downloadHeadRelations = List<ComicVersionRelation>.unmodifiable(relations);
   }
 
   void updateCacheVersionRelations(List<ComicVersionRelation> relations) {
-    _cacheVersionRelations = List<ComicVersionRelation>.unmodifiable(relations);
+    // Cache-version fallback belongs to ArtifactCacheManager's verified
+    // direct/lazy equivalence resolvers. The persistent backend is exact-only.
   }
 
   static Future<PersistentDownloadArtifactStore> open(
@@ -5002,87 +5000,16 @@ final class PersistentDownloadArtifactStore
 
   @override
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) =>
-      _serializeArtifactMutation(id, () => _openArtifactStream(id));
+      _serializeArtifactMutation(id, () => _openAuthoritativeArtifactStream(id));
 
-  Future<ArtifactCacheStreamEntry?> _openArtifactStream(DownloadId id) async {
+  Future<ArtifactCacheStreamEntry?> _openAuthoritativeArtifactStream(
+    DownloadId id,
+  ) async {
     _requireOpen();
     if (_artifactWrites.containsKey(id)) return null;
     final active = _registry.find(id);
     if (active != null && (active.activeRun || active.hasWriter)) return null;
-    ArtifactReadFailure? lastReadFailure;
-    Future<ArtifactCacheStreamEntry?> tryOpenExact(DownloadId candidate) async {
-      try {
-        return await _openArtifactStreamExact(candidate);
-      } on ArtifactReadFailure catch (error) {
-        lastReadFailure ??= error;
-        return null;
-      }
-    }
-
-    final exact = await tryOpenExact(id);
-    if (exact != null) return exact;
-
-    final allRecords = await _index.list();
-    for (final cand in allRecords) {
-      if (!_isVerifiedReadyRecord(cand)) continue;
-      if (cand.id.canonicalUri == id.canonicalUri) {
-        final stream = await tryOpenExact(cand.id);
-        if (stream != null) return stream;
-      }
-    }
-
-    final idVerified = verifiedRecordIdentities(
-      CacheRec(
-        id: id,
-        state: CacheState.ready,
-        path: '',
-        bytes: 0,
-        checksum: '',
-        createdUs: 0,
-        touchedUs: 0,
-      ),
-    ).toSet();
-    if (idVerified.isNotEmpty) {
-      for (final cand in allRecords) {
-        if (!_isVerifiedReadyRecord(cand)) continue;
-        if (cand.id.content.sourceId == id.content.sourceId &&
-            verifiedRecordIdentities(cand).any(idVerified.contains)) {
-          final stream = await tryOpenExact(cand.id);
-          if (stream != null) return stream;
-        }
-      }
-    }
-
-    for (final rel in _cacheVersionRelations) {
-      final isSucc = rel.successorComicId == id.content.comicId;
-      final isPred = rel.predecessorComicId == id.content.comicId;
-      if (!isSucc && !isPred) continue;
-      for (final mapping in rel.pageMappings) {
-        final targetChapter =
-            isSucc ? mapping.successorChapterId : mapping.predecessorChapterId;
-        if (targetChapter != id.content.chapterId) continue;
-        final otherChapter =
-            isSucc ? mapping.predecessorChapterId : mapping.successorChapterId;
-        final otherComic =
-            isSucc ? rel.predecessorComicId : rel.successorComicId;
-        for (final cand in allRecords) {
-          if (!_isVerifiedReadyRecord(cand)) continue;
-          if (cand.id.content.sourceId == id.content.sourceId &&
-              cand.id.content.comicId == otherComic &&
-              cand.id.content.chapterId == otherChapter) {
-            if (cand.id.content.pageId == id.content.pageId ||
-                cand.id.canonicalUri == id.canonicalUri) {
-              final stream = await tryOpenExact(cand.id);
-              if (stream != null) return stream;
-            }
-          }
-        }
-      }
-    }
-    if (lastReadFailure != null) {
-      throw lastReadFailure!;
-    }
-    return null;
+    return _openArtifactStreamExact(id);
   }
 
   Future<List<_ArtifactAccessRecord>> _resolveArtifactReplicas(
