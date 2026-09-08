@@ -7,4 +7,10 @@ void main() {
     final factory = NativePipelineMediaRuntimeFactory();
     expect(factory, isA<PipelineMediaRuntimeFactory>());
   });
+
+  test('composition shutdown is a no-op before native workers are started',
+      () async {
+    final factory = NativePipelineMediaRuntimeFactory();
+    await factory.shutdownComposition();
+  });
 }

@@ -75,6 +75,27 @@ Future<bool> waitForFirstFlutterUiDisplayed() async {
   }
 }
 
+/// Hands an explicit Android app exit to the current Activity after Dart has
+/// already closed its durable/composition owners. Android must destroy the
+/// Activity-owned FlutterEngine before starting the finish transition so a
+/// rapid same-process relaunch cannot overlap two engines. Other hosts (and
+/// older Android hosts without this startup method) return false and let the
+/// caller use the normal SystemNavigator fallback.
+Future<bool> requestAndroidApplicationExit() async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return false;
+  try {
+    return await startupPlatformChannel.invokeMethod<bool>(
+          'finishApplication',
+        ) ??
+        false;
+  } on MissingPluginException {
+    return false;
+  } on PlatformException catch (error) {
+    debugPrint('Android explicit application exit unavailable: $error');
+    return false;
+  }
+}
+
 Future<Map<String, Object?>?> getNativeStartupTimeline() async {
   if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return null;
   try {

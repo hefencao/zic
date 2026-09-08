@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zic/app.dart';
+import 'package:zic/startup_platform.dart';
 
 void main() {
   testWidgets('root back requires a confirming second press before exit', (
@@ -16,14 +19,31 @@ void main() {
         return null;
       },
     );
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      startupPlatformChannel,
+      (call) async => call.method == 'finishApplication' ? false : null,
+    );
     addTearDown(() {
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
         SystemChannels.platform,
         null,
       );
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        startupPlatformChannel,
+        null,
+      );
     });
 
-    await tester.pumpWidget(const App());
+    final cleanup = Completer<void>();
+    var cleanupCalls = 0;
+    await tester.pumpWidget(
+      App(
+        beforeExit: () {
+          cleanupCalls++;
+          return cleanup.future;
+        },
+      ),
+    );
     await tester.pump(const Duration(milliseconds: 100));
 
     await tester.binding.handlePopRoute();
@@ -34,6 +54,12 @@ void main() {
 
     await tester.pump(const Duration(milliseconds: 100));
     await tester.binding.handlePopRoute();
+    await tester.pump();
+
+    expect(cleanupCalls, 1);
+    expect(exitCalls, isEmpty);
+    cleanup.complete();
+    await tester.pump();
     await tester.pump();
 
     expect(exitCalls, <String>['SystemNavigator.pop']);

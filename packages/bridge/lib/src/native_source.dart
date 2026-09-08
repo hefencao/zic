@@ -14,10 +14,23 @@ part 'native_decode_pool.dart';
 
 final class _Source extends Opaque {}
 
-/// Starts the two process-lifetime native decode isolates before first page use.
-/// The returned future reports library-load failures to composition/tests.
+/// Starts the two native decode worker isolates before first page use.
+///
+/// Workers are retained across Reader sessions inside one App composition so
+/// re-entry does not repay isolate startup. A host that is about to destroy its
+/// FlutterEngine while keeping the Android process alive must call
+/// [shutdownNativeDecodeWorkers] first; otherwise each replacement engine can
+/// leave the previous isolate group's decode arenas mapped in the process.
 Future<void> prewarmNativeDecodeWorkers({String? libPath}) =>
     _NativeDecodeWorkerPool.forLibrary(libPath).prewarm();
+
+/// Shuts down the decode workers owned by the current Dart/App composition.
+///
+/// The pool entry is removed before shutdown, so a later composition in the
+/// same Dart isolate can create a fresh pool. Callers must first dispose active
+/// decode sessions; shutdown rejects a pool that still has active native work.
+Future<void> shutdownNativeDecodeWorkers({String? libPath}) =>
+    _NativeDecodeWorkerPool.shutdownForLibrary(libPath);
 
 typedef _CreateNative = Pointer<_Source> Function(Uint64 epoch, UintPtr maxBytes);
 typedef _CreateDart = Pointer<_Source> Function(int epoch, int maxBytes);

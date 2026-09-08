@@ -15,6 +15,19 @@ final defaultLocalMediaPipelineFactory = PipelineReaderSessionFactory(
   pageDownloadLane: defaultDownloadResourceCoordinator.networkLane,
 );
 
-/// Forces the process-level native decode workers to start before page entry.
+/// Forces the composition-retained native decode workers to start before page
+/// entry. They survive normal Reader back/re-entry, but not an explicit App
+/// composition shutdown.
 Future<void> prewarmDefaultLocalMediaPipeline() =>
     _defaultNativeMediaRuntimeFactory.prewarm();
+
+/// Closes every resource retained by the default local-media composition.
+///
+/// Normal Reader navigation must use the retention pool instead. This boundary
+/// is only for whole-App teardown before Android destroys/replaces the current
+/// FlutterEngine while keeping the Android application process alive.
+Future<void> shutdownDefaultLocalMediaPipeline() async {
+  await defaultLocalMediaPipelineFactory.disposeRetainedSessions();
+  await defaultLocalMediaPipelineFactory.disposeTransferRuntimes();
+  await _defaultNativeMediaRuntimeFactory.shutdownComposition();
+}

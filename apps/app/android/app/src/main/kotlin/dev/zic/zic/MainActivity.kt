@@ -777,6 +777,33 @@ class MainActivity : FlutterActivity() {
             )
             return
         }
+        if (method == "finishApplication") {
+            // Dart has already completed durable/composition shutdown before
+            // this handoff. A normal Flutter SystemNavigator.pop() only asks
+            // Android to finish the Activity; MIUI may keep that finishing
+            // Activity (and its owned FlutterEngine) alive through the close
+            // transition while a rapid relaunch creates another engine in the
+            // same process. Acknowledge the channel call first, then tear down
+            // this Activity's engine through FlutterActivity's supported
+            // detach path *before* requesting the Android task finish.
+            startupLog("explicit-native-exit-accepted")
+            result.success(true)
+            mainHandler.post {
+                startupLog("explicit-native-exit-start")
+                val channel = startupChannel
+                startupChannel = null
+                channel?.setMethodCallHandler(null)
+                if (configuredEngine != null) {
+                    startupLog("explicit-native-exit-engine-detach-start")
+                    detachFromFlutterEngine()
+                    configuredEngine = null
+                    startupLog("explicit-native-exit-engine-detach-complete")
+                }
+                finishAndRemoveTask()
+                startupLog("explicit-native-exit-finish-requested")
+            }
+            return
+        }
         if (method == "allFilesAccessGranted") {
             result.success(allFilesAccessGranted())
             return
@@ -1067,6 +1094,7 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        startupLog("activity-onDestroy-start engineAttached=${configuredEngine != null}")
         pendingTraceResult?.error(
             "trace-export-cancelled",
             "activity destroyed during trace export",
@@ -1090,5 +1118,6 @@ class MainActivity : FlutterActivity() {
         configuredEngine = null
         rhttpExecutor.shutdownNow()
         super.onDestroy()
+        startupLog("activity-onDestroy-complete")
     }
 }

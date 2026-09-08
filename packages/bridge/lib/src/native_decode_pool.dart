@@ -53,6 +53,16 @@ final class _NativeDecodeWorkerPool {
     );
   }
 
+  static Future<void> shutdownForLibrary(String? libPath) async {
+    final key = libPath ?? '<default>';
+    final pool = _instances[key];
+    if (pool == null) return;
+    await pool.shutdown();
+    if (identical(_instances[key], pool)) {
+      _instances.remove(key);
+    }
+  }
+
   final String? libPath;
   final Queue<_PendingNativeDecode> _currentPending =
       Queue<_PendingNativeDecode>();
@@ -60,8 +70,55 @@ final class _NativeDecodeWorkerPool {
       Queue<_PendingNativeDecode>();
   final List<_NativeDecodeWorker> _workers = <_NativeDecodeWorker>[];
   Future<void>? _starting;
+  Future<void>? _shutdown;
+  bool _shuttingDown = false;
 
   Future<void> prewarm() => _ensureStarted();
+
+  Future<void> shutdown() {
+    final existing = _shutdown;
+    if (existing != null) return existing;
+    late final Future<void> shutdown;
+    shutdown = _shutdownWorkers();
+    _shutdown = shutdown;
+    return shutdown;
+  }
+
+  Future<void> _shutdownWorkers() async {
+    _shuttingDown = true;
+    final starting = _starting;
+    if (starting != null) {
+      try {
+        await starting;
+      } on Object {
+        // A failed startup already closes any workers it managed to create.
+      }
+    }
+    if (_currentPending.isNotEmpty || _nonCurrentPending.isNotEmpty) {
+      final failure = StateError('native decode worker pool shut down');
+      for (final pending in <_PendingNativeDecode>[
+        ..._currentPending,
+        ..._nonCurrentPending,
+      ]) {
+        if (!pending.completer.isCompleted) {
+          pending.completer.completeError(failure);
+        }
+      }
+      _currentPending.clear();
+      _nonCurrentPending.clear();
+    }
+    if (_workers.any((worker) => worker.busy)) {
+      throw StateError(
+        'cannot shut down native decode workers while decode work is active',
+      );
+    }
+    final workers = _workers.toList(growable: false);
+    _workers.clear();
+    await Future.wait<void>(
+      workers.map((worker) => worker.close()),
+      eagerError: false,
+    );
+  }
 
   Future<List<_NativeDecodeResult>> decodeBatch({
     required int cursorAddress,
@@ -69,6 +126,11 @@ final class _NativeDecodeWorkerPool {
     required DecodeExecutionClass executionClass,
     required int maxFrames,
   }) {
+    if (_shuttingDown) {
+      return Future<List<_NativeDecodeResult>>.error(
+        StateError('native decode worker pool is shutting down'),
+      );
+    }
     if (maxFrames <= 0 || maxFrames > 2) {
       throw ArgumentError.value(maxFrames, 'maxFrames', 'must be 1 or 2');
     }
@@ -141,6 +203,11 @@ final class _NativeDecodeWorkerPool {
   }
 
   Future<void> _ensureStarted() {
+    if (_shuttingDown) {
+      return Future<void>.error(
+        StateError('native decode worker pool is shutting down'),
+      );
+    }
     final existing = _starting;
     if (existing != null) {
       return existing;
@@ -160,9 +227,10 @@ final class _NativeDecodeWorkerPool {
       _markQueuedWorkersReady();
       _pump();
     } on Object {
-      for (final worker in started) {
-        worker.close();
-      }
+      await Future.wait<void>(
+        started.map((worker) => worker.close()),
+        eagerError: false,
+      );
       _starting = null;
       rethrow;
     }
@@ -171,7 +239,7 @@ final class _NativeDecodeWorkerPool {
   Future<_NativeDecodeWorker> _spawnWorker(int index) async {
     final ready = ReceivePort();
     try {
-      await Isolate.spawn<List<Object?>>(
+      final isolate = await Isolate.spawn<List<Object?>>(
         _nativeDecodeWorkerEntry,
         <Object?>[ready.sendPort, libPath, index],
         debugName: 'zic-webp-decode-$index',
@@ -187,6 +255,7 @@ final class _NativeDecodeWorkerPool {
         value[0]! as SendPort,
         index,
         value[1]! as int,
+        isolate,
       );
     } finally {
       ready.close();
@@ -288,7 +357,9 @@ final class _NativeDecodeWorkerPool {
       worker.executionClass = null;
       worker.cursorAddress = null;
       worker.epoch = null;
-      _pump();
+      if (!_shuttingDown) {
+        _pump();
+      }
     }
   }
 }
@@ -324,18 +395,35 @@ final class _PendingNativeDecode {
 }
 
 final class _NativeDecodeWorker {
-  _NativeDecodeWorker(this.port, this.index, this.placementStatus);
+  _NativeDecodeWorker(
+    this.port,
+    this.index,
+    this.placementStatus,
+    this.isolate,
+  ) {
+    isolate.addOnExitListener(_exitPort.sendPort);
+    _exited = _exitPort.first.then<void>((_) {}).whenComplete(_exitPort.close);
+  }
 
   final SendPort port;
   final int index;
   final int placementStatus;
+  final Isolate isolate;
+  final ReceivePort _exitPort = ReceivePort();
+  late final Future<void> _exited;
   bool busy = false;
   DecodeExecutionClass? executionClass;
   int? cursorAddress;
   int? epoch;
 
-  void close() {
+  Future<void> close() async {
     port.send('close');
+    try {
+      await _exited.timeout(const Duration(milliseconds: 500));
+    } on TimeoutException {
+      isolate.kill(priority: Isolate.immediate);
+      await _exited;
+    }
   }
 
   Future<List<_NativeDecodeResult>> decodeBatch({

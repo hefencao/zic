@@ -36,7 +36,10 @@ require(
     'frameAddress',
     "message == 'close'",
     'api.decode(cursor, epoch, out)',
-    'for (final worker in started)',
+    'started.map((worker) => worker.close())',
+    'shutdownForLibrary(String? libPath)',
+    'Future<void> _shutdownWorkers()',
+    'workers.map((worker) => worker.close())',
     'response.close();',
 )
 require(
