@@ -103,22 +103,13 @@ final class CacheOps {
     );
   }
 
-  /// Explicitly downloaded chapters survive capacity trims and cache clears;
-  /// only a per-chapter delete may remove them.
-  Future<Set<String>> _pinnedKeys(Iterable<CacheRec> records) async {
-    final placements = await index.listPlacements();
-    final owners = <String>{
-      for (final placement in placements) placement.ownerKey,
-    };
-    return <String>{
-      for (final record in records)
-        if (record.pinned ||
-            owners.contains(
-              '${record.id.content.sourceId}\u0000${record.id.content.comicId}',
-            ))
-          record.key,
-    };
-  }
+  /// Explicitly downloaded exact bindings survive capacity trims and cache
+  /// clears; a download placement owns export location only and must not turn
+  /// later Reader cache entries into implicit retention claims.
+  Future<Set<String>> _pinnedKeys(Iterable<CacheRec> records) async => <String>{
+        for (final record in records)
+          if (record.pinned) record.key,
+      };
 
   Future<CacheReport> _apply({
     required Iterable<CacheRec> records,

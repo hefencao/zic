@@ -50,7 +50,7 @@ void main() {
     expect(await index.get(busy.key), isNotNull);
   });
 
-  test('durable placement protects records even before pin repair commits',
+  test('download placement does not protect an unpinned cache binding',
       () async {
     final temp = await Directory.systemTemp.createTemp('cache_ops_placement_');
     addTearDown(() => temp.delete(recursive: true));
@@ -66,10 +66,8 @@ void main() {
 
     final transient = _id('transient', comic: 'transient-comic');
     final downloaded = _id('downloaded', comic: 'downloaded-comic');
-    await _writeReady(registry.get(transient), 30);
-    await _writeReady(registry.get(downloaded), 70);
-    await index.touch(downloaded.key, 1);
-    await index.touch(transient.key, 2);
+    await index.put(_record(downloaded, 70, touchedUs: 1));
+    await index.put(_record(transient, 30, touchedUs: 2));
     await index.putPlacement(
       DownloadPlacement(
         placementId: 'source\u0000downloaded-comic',
@@ -88,12 +86,17 @@ void main() {
       index: index,
       registry: registry,
       clock: FakeMonoClock(),
-    ).trim(const CacheLimits(maxBytes: 100, targetBytes: 60));
+      evictRecordWithSnapshot: (id, expected) async {
+        await index.remove(expected.key);
+        return expected.bytes;
+      },
+    ).trim(const CacheLimits(maxBytes: 99, targetBytes: 60));
 
-    expect(report.releasedBytes, 0);
-    expect(report.evicted, 0);
+    expect(report.releasedBytes, 70);
+    expect(report.evicted, 1);
+    expect(await index.get(downloaded.key), isNull,
+        reason: 'placement owns export location, not cache retention');
     expect(await index.get(transient.key), isNotNull);
-    expect(await index.get(downloaded.key), isNotNull);
   });
 
   test('external busy ownership protects a record from trim and clear', () async {
@@ -205,6 +208,16 @@ void main() {
     expect(await index.get(downloaded.key), isNotNull);
   });
 }
+
+CacheRec _record(DownloadId id, int bytes, {required int touchedUs}) => CacheRec(
+      id: id,
+      state: CacheState.ready,
+      path: '/cache/${id.content.pageId}',
+      bytes: bytes,
+      checksum: '01020304',
+      createdUs: touchedUs,
+      touchedUs: touchedUs,
+    );
 
 Future<void> _writeReady(DownloadSession session, int count) async {
   await session.restore();

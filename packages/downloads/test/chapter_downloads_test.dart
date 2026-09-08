@@ -3899,6 +3899,15 @@ void main() {
     expect(snapshot.isManualDownload, isFalse);
     expect(snapshot.hasAutoCache, isTrue);
 
+    final cleared = await service.clearArtifacts();
+    expect(cleared.releasedBytes, webpBytes.lengthInBytes,
+        reason: 'placement alone must not protect Reader cache from clear');
+    expect(await service.artifactStore.index.get(id.key), isNull);
+
+    // Recreate the same Reader cache so the explicit command can demonstrate
+    // the only production transition that adds durable retention.
+    await service.storePromotedArtifact(id: id, bytes: webpBytes);
+
     // The explicit download command converts this exact cached binding into
     // an offline retained page without needing placement to act as a pin.
     await service.download(entry);
