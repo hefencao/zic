@@ -181,12 +181,8 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
 
   Future<Iterable<ChapterDownloadSnapshot>> _inspectChapterDownloads(
     Iterable<ImportedLibraryEntry> entries,
-  ) async {
-    final hydrated = await Future.wait<ImportedLibraryEntry>(
-      entries.map(_librarySession.hydrateEntry),
-    );
-    return _chapterDownloads.inspectMany(hydrated);
-  }
+  ) =>
+      _chapterDownloads.inspectMany(entries);
 
   Future<ComicConflictReport> _inspectComicConflictsForDetails({
     required String sourceId,
