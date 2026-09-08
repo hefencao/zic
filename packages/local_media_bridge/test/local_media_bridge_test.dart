@@ -243,6 +243,46 @@ void main() {
     expect(closeCount, 1);
   });
 
+  test('document thumbnail request keeps original bytes on the platform side',
+      () async {
+    final thumbnail = Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 0xd9]);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'readDocumentThumbnail');
+      expect(
+        call.arguments,
+        <String, Object?>{
+          'sourceUri': 'content://provider/document/large-cover.webp',
+          'maxWidth': 512,
+          'maxHeight': 768,
+        },
+      );
+      return thumbnail;
+    });
+
+    expect(
+      await bridge.readDocumentThumbnail(
+        'content://provider/document/large-cover.webp',
+      ),
+      thumbnail,
+    );
+  });
+
+  test('document thumbnail capability failure falls back to caller policy',
+      () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      throw PlatformException(code: 'thumbnail_unavailable');
+    });
+
+    expect(
+      await bridge.readDocumentThumbnail(
+        'content://provider/document/large-cover.webp',
+      ),
+      isNull,
+    );
+  });
+
   test('document reads use the persisted content identity', () async {
     final expected = Uint8List.fromList(<int>[1, 2, 3, 4]);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

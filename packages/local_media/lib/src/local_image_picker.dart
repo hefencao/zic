@@ -34,6 +34,17 @@ Future<LocalImageDirectoryScan> listLocalImageDirectory(String path) =>
 Future<Uint8List> readLocalImageSource(String sourceId) =>
     platform.readLocalImageSource(sourceId);
 
+Future<Uint8List?> readLocalImageThumbnail(
+  String sourceId, {
+  int maxWidth = 512,
+  int maxHeight = 768,
+}) =>
+    platform.readLocalImageThumbnail(
+      sourceId,
+      maxWidth: maxWidth,
+      maxHeight: maxHeight,
+    );
+
 Future<LocalImageSourceResponse> openLocalImageSource(
   String sourceId, {
   int start = 0,

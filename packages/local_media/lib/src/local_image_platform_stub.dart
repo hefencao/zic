@@ -22,6 +22,13 @@ Future<Uint8List> readLocalImageSource(String sourceId) {
   throw UnsupportedError('当前平台不支持读取本地图片来源：$sourceId');
 }
 
+Future<Uint8List?> readLocalImageThumbnail(
+  String sourceId, {
+  int maxWidth = 512,
+  int maxHeight = 768,
+}) =>
+    Future<Uint8List?>.value();
+
 Future<LocalImageSourceResponse> openLocalImageSource(
   String sourceId, {
   int start = 0,

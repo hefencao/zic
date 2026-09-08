@@ -86,6 +86,8 @@ final class ImportedChapterRecord {
     Iterable<String> comicTags = const <String>[],
     this.comicDescription,
     this.coverSourceId,
+    this.coverMediaFormat,
+    this.coverAnimatedHint = false,
     this.sequence = 0,
     this.readingDirection = ReadingDirection.ltr,
     DateTime? importedAt,
@@ -117,6 +119,13 @@ final class ImportedChapterRecord {
       throw ArgumentError.value(
         this.comicDescription,
         'comicDescription',
+        'must be null or non-empty',
+      );
+    }
+    if (coverMediaFormat != null && coverMediaFormat!.trim().isEmpty) {
+      throw ArgumentError.value(
+        coverMediaFormat,
+        'coverMediaFormat',
         'must be null or non-empty',
       );
     }
@@ -191,6 +200,9 @@ final class ImportedChapterRecord {
     required String directoryId,
     required String displayName,
     required List<ImportedPageRecord> pages,
+    String? coverSourceId,
+    String? coverMediaFormat,
+    bool coverAnimatedHint = false,
     ReadingDirection readingDirection = ReadingDirection.ltr,
     DateTime? importedAt,
   }) {
@@ -199,18 +211,42 @@ final class ImportedChapterRecord {
     if (normalizedDirectory.isEmpty || normalizedName.isEmpty) {
       throw ArgumentError('directoryId and displayName must be non-empty');
     }
+    if (pages.isEmpty) {
+      throw ArgumentError.value(pages, 'pages', 'must not be empty');
+    }
+    final normalizedCover = coverSourceId?.trim();
+    final effectiveCover = normalizedCover == null || normalizedCover.isEmpty
+        ? pages.first.sourceId
+        : normalizedCover;
+    ImportedPageRecord? effectiveCoverPage;
+    for (final page in pages) {
+      if (page.sourceId == effectiveCover) {
+        effectiveCoverPage = page;
+        break;
+      }
+    }
+    final effectiveCoverMediaFormat =
+        coverMediaFormat ?? effectiveCoverPage?.mediaFormat;
+    final effectiveCoverAnimatedHint =
+        coverAnimatedHint || (effectiveCoverPage?.animatedHint ?? false);
     final identityHash = _stableHash(normalizedDirectory);
-    final revisionHash = _stableHash(
-      pages
-          .map(
-            (page) => '${page.pageId ?? ''}\u0000${page.sourceId}'
-                '\u0000${page.contentKindHint.name}'
-                '\u0000${page.mediaFormat ?? ''}'
-                '\u0000${page.byteLength ?? -1}'
-                '\u0000${page.animatedHint}',
-          )
-          .join('\u0001'),
-    );
+    final pageRevisionSeed = pages
+        .map(
+          (page) => '${page.pageId ?? ''}\u0000${page.sourceId}'
+              '\u0000${page.contentKindHint.name}'
+              '\u0000${page.mediaFormat ?? ''}'
+              '\u0000${page.byteLength ?? -1}'
+              '\u0000${page.animatedHint}',
+        )
+        .join('\u0001');
+    // Preserve the historical revision for the common first-page-cover case.
+    // A separate cover artifact becomes part of the source revision because a
+    // cover-only replacement must invalidate the persisted Home projection.
+    final revisionSeed = effectiveCover == pages.first.sourceId
+        ? pageRevisionSeed
+        : 'cover\u0000$effectiveCover\u0000${effectiveCoverMediaFormat ?? ''}'
+            '\u0000$effectiveCoverAnimatedHint\u0001$pageRevisionSeed';
+    final revisionHash = _stableHash(revisionSeed);
     return ImportedChapterRecord(
       directoryId: normalizedDirectory,
       displayName: normalizedName,
@@ -220,7 +256,9 @@ final class ImportedChapterRecord {
       sourceRevision: 'folder-$revisionHash',
       pages: pages,
       comicTitle: normalizedName,
-      coverSourceId: pages.first.sourceId,
+      coverSourceId: effectiveCover,
+      coverMediaFormat: effectiveCoverMediaFormat,
+      coverAnimatedHint: effectiveCoverAnimatedHint,
       readingDirection: readingDirection,
       importedAt: importedAt,
     );
@@ -237,6 +275,8 @@ final class ImportedChapterRecord {
   final List<String> comicTags;
   final String? comicDescription;
   final String? coverSourceId;
+  final String? coverMediaFormat;
+  final bool coverAnimatedHint;
   final int sequence;
   final List<ImportedPageRecord> pages;
   final ReadingDirection readingDirection;
@@ -254,6 +294,9 @@ final class ImportedChapterRecord {
     bool clearComicDescription = false,
     String? coverSourceId,
     bool clearCoverSourceId = false,
+    String? coverMediaFormat,
+    bool clearCoverMediaFormat = false,
+    bool? coverAnimatedHint,
     String? chapterId,
     String? sourceRevision,
     int? sequence,
@@ -274,6 +317,10 @@ final class ImportedChapterRecord {
           : (comicDescription ?? this.comicDescription),
       coverSourceId:
           clearCoverSourceId ? null : (coverSourceId ?? this.coverSourceId),
+      coverMediaFormat: clearCoverMediaFormat
+          ? null
+          : (coverMediaFormat ?? this.coverMediaFormat),
+      coverAnimatedHint: coverAnimatedHint ?? this.coverAnimatedHint,
       chapterId: chapterId ?? this.chapterId,
       sourceRevision: sourceRevision ?? this.sourceRevision,
       sequence: sequence ?? this.sequence,
@@ -327,6 +374,8 @@ final class ImportedChapterRecord {
         'comicTags': comicTags,
         if (comicDescription != null) 'comicDescription': comicDescription,
         if (coverSourceId != null) 'coverSourceId': coverSourceId,
+        if (coverMediaFormat != null) 'coverMediaFormat': coverMediaFormat,
+        'coverAnimatedHint': coverAnimatedHint,
         'sequence': sequence,
         'readingDirection': readingDirection.name,
         'importedAt': importedAt.toIso8601String(),
@@ -368,9 +417,35 @@ final class ImportedChapterRecord {
         'coverSourceId must be a non-empty string',
       );
     }
+    final rawCoverMediaFormat = json['coverMediaFormat'];
+    if (rawCoverMediaFormat != null &&
+        (rawCoverMediaFormat is! String || rawCoverMediaFormat.trim().isEmpty)) {
+      throw const FormatException(
+        'coverMediaFormat must be a non-empty string',
+      );
+    }
+    final rawCoverAnimatedHint = json['coverAnimatedHint'];
+    if (rawCoverAnimatedHint != null && rawCoverAnimatedHint is! bool) {
+      throw const FormatException('coverAnimatedHint must be a boolean');
+    }
     final rawSequence = json['sequence'];
     if (rawSequence != null && rawSequence is! int) {
       throw const FormatException('sequence must be an integer');
+    }
+    final parsedPages = rawPages.map((value) {
+      if (value is! Map) {
+        throw const FormatException('page entry must be an object');
+      }
+      return ImportedPageRecord.fromJson(Map<String, Object?>.from(value));
+    }).toList(growable: false);
+    ImportedPageRecord? legacyCoverPage;
+    if (rawCoverSourceId is String) {
+      for (final page in parsedPages) {
+        if (page.sourceId == rawCoverSourceId) {
+          legacyCoverPage = page;
+          break;
+        }
+      }
     }
     return ImportedChapterRecord(
       directoryId: _requiredString(json, 'directoryId'),
@@ -387,13 +462,13 @@ final class ImportedChapterRecord {
           const <String>[],
       comicDescription: rawDescription as String?,
       coverSourceId: rawCoverSourceId as String?,
+      coverMediaFormat:
+          (rawCoverMediaFormat as String?) ?? legacyCoverPage?.mediaFormat,
+      coverAnimatedHint: (rawCoverAnimatedHint as bool?) ??
+          legacyCoverPage?.animatedHint ??
+          false,
       sequence: (rawSequence as int?) ?? 0,
-      pages: rawPages.map((value) {
-        if (value is! Map) {
-          throw const FormatException('page entry must be an object');
-        }
-        return ImportedPageRecord.fromJson(Map<String, Object?>.from(value));
-      }).toList(growable: false),
+      pages: parsedPages,
       readingDirection: ReadingDirection.values.byName(
         (json['readingDirection'] as String?) ?? ReadingDirection.ltr.name,
       ),

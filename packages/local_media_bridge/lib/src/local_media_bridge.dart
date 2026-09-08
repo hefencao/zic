@@ -252,6 +252,35 @@ final class LocalMediaBridge {
     }
   }
 
+  Future<Uint8List?> readDocumentThumbnail(
+    String sourceUri, {
+    int maxWidth = 512,
+    int maxHeight = 768,
+  }) async {
+    await _ensurePluginAttached();
+    final normalized = sourceUri.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError.value(sourceUri, 'sourceUri', 'must not be empty');
+    }
+    if (maxWidth <= 0 || maxHeight <= 0) {
+      throw ArgumentError('thumbnail bounds must be positive');
+    }
+    try {
+      return await _channel.invokeMethod<Uint8List>(
+        'readDocumentThumbnail',
+        <String, Object?>{
+          'sourceUri': normalized,
+          'maxWidth': maxWidth,
+          'maxHeight': maxHeight,
+        },
+      );
+    } on MissingPluginException {
+      return null;
+    } on PlatformException {
+      return null;
+    }
+  }
+
   Future<Uint8List> readDocument(String sourceUri) async {
     await _ensurePluginAttached();
     final normalized = sourceUri.trim();

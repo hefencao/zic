@@ -5,12 +5,16 @@ import android.content.res.AssetFileDescriptor
 import android.content.ContentResolver
 import android.content.Intent
 import android.database.Cursor
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
 import android.system.Os
 import android.system.OsConstants
+import android.util.Size
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -92,6 +96,7 @@ class LocalMediaBridgePlugin :
         when (call.method) {
             "pickImageDirectory" -> pickImageDirectory(result)
             "scanImageDirectory" -> scanImageDirectory(call, result)
+            "readDocumentThumbnail" -> readDocumentThumbnail(call, result)
             "readDocument" -> readDocument(call, result)
             "openDocument" -> openDocument(call, result)
             "readDocumentChunk" -> readDocumentChunk(call, result)
@@ -384,6 +389,80 @@ class LocalMediaBridgePlugin :
         val handles = documentHandles.values.toList()
         documentHandles.clear()
         handles.forEach { handle -> runCatching(handle::close) }
+    }
+
+    private fun readDocumentThumbnail(call: MethodCall, result: MethodChannel.Result) {
+        val uri = requireContentUri(call, result) ?: return
+        val maxWidth = call.argument<Number>("maxWidth")?.toInt() ?: 512
+        val maxHeight = call.argument<Number>("maxHeight")?.toInt() ?: 768
+        if (maxWidth <= 0 || maxHeight <= 0 || maxWidth > 2048 || maxHeight > 2048) {
+            result.error("invalid_size", "thumbnail bounds are invalid", null)
+            return
+        }
+        execute(result) {
+            val bitmap = loadDocumentThumbnail(uri, maxWidth, maxHeight)
+                ?: return@execute null
+            try {
+                val output = ByteArrayOutputStream()
+                val format = if (bitmap.hasAlpha()) {
+                    Bitmap.CompressFormat.PNG
+                } else {
+                    Bitmap.CompressFormat.JPEG
+                }
+                val quality = if (format == Bitmap.CompressFormat.JPEG) 88 else 100
+                if (!bitmap.compress(format, quality, output)) {
+                    return@execute null
+                }
+                output.toByteArray().takeIf { it.size >= MIN_MEDIA_BYTES }
+            } finally {
+                bitmap.recycle()
+            }
+        }
+    }
+
+    private fun loadDocumentThumbnail(
+        uri: Uri,
+        maxWidth: Int,
+        maxHeight: Int,
+    ): Bitmap? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                return resolver.loadThumbnail(uri, Size(maxWidth, maxHeight), null)
+            } catch (_: Throwable) {
+                // Some DocumentsProviders do not implement thumbnail loading.
+                // Fall back to a sampled descriptor decode without crossing the
+                // original encoded body through the Flutter MethodChannel.
+            }
+        }
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+            BitmapFactory.decodeFileDescriptor(descriptor.fileDescriptor, null, bounds)
+        } ?: return null
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sampleSize = 1
+        while (bounds.outWidth / (sampleSize * 2) >= maxWidth &&
+            bounds.outHeight / (sampleSize * 2) >= maxHeight
+        ) {
+            sampleSize *= 2
+        }
+        val decoded = resolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+            BitmapFactory.decodeFileDescriptor(
+                descriptor.fileDescriptor,
+                null,
+                BitmapFactory.Options().apply { inSampleSize = sampleSize },
+            )
+        } ?: return null
+        val scale = minOf(
+            1.0f,
+            maxWidth.toFloat() / decoded.width.toFloat(),
+            maxHeight.toFloat() / decoded.height.toFloat(),
+        )
+        if (scale >= 1.0f) return decoded
+        val scaledWidth = maxOf(1, (decoded.width * scale).toInt())
+        val scaledHeight = maxOf(1, (decoded.height * scale).toInt())
+        val scaled = Bitmap.createScaledBitmap(decoded, scaledWidth, scaledHeight, true)
+        if (scaled !== decoded) decoded.recycle()
+        return scaled
     }
 
     private fun readDocument(call: MethodCall, result: MethodChannel.Result) {

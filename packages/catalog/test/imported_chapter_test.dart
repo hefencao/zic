@@ -57,6 +57,40 @@ void main() {
     expect(manifest.pages.first.contentKindHint, ContentKindHint.webp);
   });
 
+  test('separate folder cover changes revision without changing work identity', () {
+    const pages = <ImportedPageRecord>[
+      ImportedPageRecord(
+        displayName: '001.webp',
+        sourceId: 'content://provider/document/001',
+        contentKindHint: ContentKindHint.webp,
+        animatedHint: true,
+      ),
+      ImportedPageRecord(
+        displayName: '002.png',
+        sourceId: 'content://provider/document/002',
+        contentKindHint: ContentKindHint.png,
+      ),
+    ];
+    final first = ImportedChapterRecord.folder(
+      directoryId: 'content://provider/tree/chapter',
+      displayName: 'chapter',
+      coverSourceId: 'content://provider/document/cover-a',
+      pages: pages,
+    );
+    final second = ImportedChapterRecord.folder(
+      directoryId: 'content://provider/tree/chapter',
+      displayName: 'chapter',
+      coverSourceId: 'content://provider/document/cover-b',
+      pages: pages,
+    );
+
+    expect(second.comicId, first.comicId);
+    expect(second.chapterId, first.chapterId);
+    expect(second.sourceRevision, isNot(first.sourceRevision));
+    expect(first.coverSourceId, 'content://provider/document/cover-a');
+    expect(second.coverSourceId, 'content://provider/document/cover-b');
+  });
+
   test('stable page identity survives insertion before an existing page', () {
     final original = ImportedChapterRecord.folder(
       directoryId: '/chapter',
@@ -139,6 +173,29 @@ void main() {
         );
 
     expect(record('bmp').sourceRevision, isNot(record('tiff').sourceRevision));
+  });
+
+  test('legacy cover metadata is recovered from its matching page', () {
+    final json = ImportedChapterRecord.folder(
+      directoryId: '/books/animated',
+      displayName: 'animated',
+      coverSourceId: '/books/animated/1.webp',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '1.webp',
+          sourceId: '/books/animated/1.webp',
+          contentKindHint: ContentKindHint.webp,
+          mediaFormat: 'webp',
+          animatedHint: true,
+        ),
+      ],
+    ).toJson()
+      ..remove('coverMediaFormat')
+      ..remove('coverAnimatedHint');
+
+    final restored = ImportedChapterRecord.fromJson(json);
+    expect(restored.coverMediaFormat, 'webp');
+    expect(restored.coverAnimatedHint, isTrue);
   });
 
   test('record JSON round trip preserves import metadata', () {

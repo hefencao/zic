@@ -1400,12 +1400,26 @@ ImportedChapterRecord imageFolderChapterRecord(
   ReadingDirection readingDirection = ReadingDirection.ltr,
   DateTime? importedAt,
 }) {
+  final explicitCoverIndex = folder.files.indexWhere(_isExplicitFolderCover);
+  final cover = explicitCoverIndex < 0
+      ? folder.files.first
+      : folder.files[explicitCoverIndex];
+  final pageFiles = explicitCoverIndex >= 0 && folder.files.length > 1
+      ? <PickedImage>[
+          for (var index = 0; index < folder.files.length; index++)
+            if (index != explicitCoverIndex) folder.files[index],
+        ]
+      : folder.files;
   return ImportedChapterRecord.folder(
     directoryId: folder.directoryPath,
     displayName: folder.displayName,
+    coverSourceId: cover.sourceId,
+    coverMediaFormat: cover.format.name,
+    coverAnimatedHint: cover.format == LocalImageFormat.gif ||
+        cover.format == LocalImageFormat.webp,
     readingDirection: readingDirection,
     importedAt: importedAt,
-    pages: folder.files
+    pages: pageFiles
         .map(
           (image) => ImportedPageRecord(
             displayName: image.displayName,
@@ -1423,6 +1437,16 @@ ImportedChapterRecord imageFolderChapterRecord(
         )
         .toList(growable: false),
   );
+}
+
+bool _isExplicitFolderCover(PickedImage image) {
+  final normalized = image.displayName.trim().replaceAll('\\', '/');
+  if (normalized.isEmpty || normalized.contains('/')) {
+    return false;
+  }
+  final dot = normalized.lastIndexOf('.');
+  final stem = dot <= 0 ? normalized : normalized.substring(0, dot);
+  return stem.toLowerCase() == 'cover';
 }
 
 ContentKindHint _contentKindHint(LocalImageFormat format) => switch (format) {

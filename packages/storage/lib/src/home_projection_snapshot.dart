@@ -484,6 +484,9 @@ Map<String, Object?> _compactChapterToJson(ImportedChapterRecord chapter) =>
       if (chapter.comicDescription != null)
         'comicDescription': chapter.comicDescription,
       if (chapter.coverSourceId != null) 'coverSourceId': chapter.coverSourceId,
+      if (chapter.coverMediaFormat != null)
+        'coverMediaFormat': chapter.coverMediaFormat,
+      'coverAnimatedHint': chapter.coverAnimatedHint,
       'sequence': chapter.sequence,
       'readingDirection': chapter.readingDirection.name,
       'importedAt': chapter.importedAt.toIso8601String(),
@@ -536,6 +539,8 @@ ImportedChapterRecord _compactChapterFromJson(Map<String, Object?> json) {
     comicTags: _optionalStringList(json, 'comicTags'),
     comicDescription: _optionalString(json, 'comicDescription'),
     coverSourceId: _optionalString(json, 'coverSourceId'),
+    coverMediaFormat: _optionalString(json, 'coverMediaFormat'),
+    coverAnimatedHint: (json['coverAnimatedHint'] as bool?) ?? false,
     sequence: _optionalInteger(json, 'sequence') ?? 0,
     pages: List<ImportedPageRecord>.generate(
       pageCount,

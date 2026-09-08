@@ -221,6 +221,8 @@ final class _CoverImageState extends State<_CoverImage> {
   bool _reportedFirstFrame = false;
   bool _sourceFailed = false;
   int _loadGeneration = 0;
+  HomeStartupTelemetry? _loadTelemetry;
+  String? _loadTelemetryIdentity;
 
   @override
   void initState() {
@@ -231,12 +233,16 @@ final class _CoverImageState extends State<_CoverImage> {
   Future<EncodedResourceSource> _loadSource() async {
     final generation = ++_loadGeneration;
     final sourceAvailableAtStart = widget.sourceAvailable;
+    final telemetry = widget.startupTelemetry;
+    final telemetryIdentity = widget.telemetryIdentity;
     _sourceFailed = false;
-    widget.startupTelemetry?.coverRequested(widget.telemetryIdentity);
+    _loadTelemetry = telemetry;
+    _loadTelemetryIdentity = telemetryIdentity;
+    telemetry?.coverRequested(telemetryIdentity);
     try {
       final source = await widget.loader();
-      widget.startupTelemetry?.coverSourceReady(
-        widget.telemetryIdentity,
+      telemetry?.coverSourceReady(
+        telemetryIdentity,
         source: source.origin.name,
         byteLength: source.lengthInBytes,
       );
@@ -245,8 +251,8 @@ final class _CoverImageState extends State<_CoverImage> {
       if (generation == _loadGeneration) {
         _sourceFailed = true;
       }
-      widget.startupTelemetry?.coverSourceFailed(
-        widget.telemetryIdentity,
+      telemetry?.coverSourceFailed(
+        telemetryIdentity,
         errorType: error.runtimeType.toString(),
         sourceAvailable: sourceAvailableAtStart,
       );
@@ -257,11 +263,17 @@ final class _CoverImageState extends State<_CoverImage> {
   void _reportFirstFrame() {
     if (_reportedFirstFrame) return;
     _reportedFirstFrame = true;
-    widget.startupTelemetry?.coverFirstFrame(widget.telemetryIdentity);
+    final identity = _loadTelemetryIdentity;
+    if (identity != null) {
+      _loadTelemetry?.coverFirstFrame(identity);
+    }
   }
 
   void _reportDecodeFailure() {
-    widget.startupTelemetry?.coverDecodeFailed(widget.telemetryIdentity);
+    final identity = _loadTelemetryIdentity;
+    if (identity != null) {
+      _loadTelemetry?.coverDecodeFailed(identity);
+    }
   }
 
   @override

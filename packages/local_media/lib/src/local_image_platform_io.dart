@@ -171,6 +171,23 @@ Stream<List<int>> _readLocalFileChunks(
   }
 }
 
+Future<Uint8List?> readLocalImageThumbnail(
+  String sourceId, {
+  int maxWidth = 512,
+  int maxHeight = 768,
+}) async {
+  final uri = Uri.tryParse(sourceId);
+  final scheme = uri?.scheme.toLowerCase() ?? '';
+  if (!Platform.isAndroid || scheme != 'content') {
+    return null;
+  }
+  return _androidBridge.readDocumentThumbnail(
+    sourceId,
+    maxWidth: maxWidth,
+    maxHeight: maxHeight,
+  );
+}
+
 Future<Uint8List> readLocalImageSource(String sourceId) async {
   final uri = Uri.tryParse(sourceId);
   final scheme = uri?.scheme.toLowerCase() ?? '';

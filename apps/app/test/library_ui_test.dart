@@ -867,6 +867,62 @@ void main() {
     expect(loadCount, 2);
   });
 
+  testWidgets('pending cover keeps the telemetry owner across rebuilds',
+      (tester) async {
+    final chapter = _chapter(name: '慢封面诊断');
+    final comic = LibraryComic.fromEntries(
+      <ImportedLibraryEntry>[ImportedLibraryEntry(chapter: chapter)],
+    );
+    final source = Completer<EncodedResourceSource>();
+    final trace = MemoryTraceSink();
+    final telemetry = HomeStartupTelemetry(
+      clock: const SystemClock(),
+      sink: trace,
+    );
+
+    Widget card(HomeStartupTelemetry? owner) => MaterialApp(
+          home: Scaffold(
+            body: ComicCoverCard(
+              key: const ValueKey<String>('telemetry-cover'),
+              comic: comic,
+              preference: ComicPreference.defaults(
+                sourceId: chapter.sourceId,
+                comicId: chapter.comicId,
+                sourceKind: ComicSourceKind.remote,
+              ),
+              coverSource: () => source.future,
+              coverIdentity: 'source/comic/telemetry-cover',
+              telemetryIdentity: 'home-history:telemetry-cover',
+              startupTelemetry: owner,
+              onTap: () {},
+            ),
+          ),
+        );
+
+    await tester.pumpWidget(card(telemetry));
+    await tester.pump();
+    expect(
+      trace.events.where(
+        (event) => event.kind == TraceEventKind.homeCoverRequested,
+      ),
+      hasLength(1),
+    );
+
+    // Home may stop assigning startup telemetry ownership on unrelated
+    // projection rebuilds while the original cover Future is still pending.
+    await tester.pumpWidget(card(null));
+    await tester.pump();
+    source.complete(MemoryEncodedResourceSource(_tinyPng()));
+    await tester.pumpAndSettle();
+
+    expect(
+      trace.events.where(
+        (event) => event.kind == TraceEventKind.homeCoverSourceReady,
+      ),
+      hasLength(1),
+    );
+  });
+
   testWidgets('home cover cards render independently from a slow cover',
       (tester) async {
     final fastChapter = _chapter(name: '快速封面');
