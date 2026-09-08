@@ -54,7 +54,7 @@ Native implementation
 
 ### `storage`
 
-partial artifact、连续前缀、校验、seal、原子 promotion、索引和临时 workspace。对稳定 DownloadId，已经提交并成为 playback authority 的 partial prefix 单调不减；网络 attempt 重启、validator 缺失或 Range 被拒绝都不能删除、缩短或重建该 prefix。partial append只写入并推进长度，不在UI isolate逐chunk计算CRC；seal/restore在isolate rehash后提交权威checksum。partial→final promotion的filesystem rename与内存state切换属于Artifact内部事务，所有encoded read必须由Artifact按preferred/alternate path直接open同一authoritative file handle，Reader/sessions不得观察或猜测rename窗口。它不决定页面角色或网络优先级。
+partial artifact、连续前缀、校验、seal、原子 promotion、索引和临时 workspace。对稳定 DownloadId，已经提交并成为 playback authority 的 partial prefix 单调不减；网络 attempt 重启、validator 缺失或 Range 被拒绝都不能删除、缩短或重建该 prefix。partial append只写入并推进长度，不在UI isolate逐chunk计算CRC；seal/restore在isolate rehash后提交权威checksum。partial→final promotion的filesystem rename与内存state切换属于Artifact内部事务，所有encoded read必须由Artifact按preferred/alternate path直接open同一authoritative file handle，Reader/sessions不得观察或猜测rename窗口。它不决定页面角色或网络优先级。 Android SAF 的 provider document-id/children-listing 缓存只属于路径解析加速，不是文件存在性authority：正常 create/delete/rename/replace MUST仅失效实际发生mutation的父目录listing；stale exact locator第一次恢复也只失效目标父目录。只有父document-id无法解析，或scoped recovery后仍失败并怀疑祖先目录被外部整体替换时，MAY退回整tree cache invalidation。
 
 ### `downloads`
 

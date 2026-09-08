@@ -422,12 +422,71 @@ class MainActivity : FlutterActivity() {
         safChildDocumentIds.keys.removeAll { it.startsWith(prefix) }
     }
 
+    private fun safChildCacheKey(treeUri: String, parentDocumentId: String): String =
+        "$treeUri\u0000$parentDocumentId"
+
+    private fun documentIdForSafUri(uri: Uri): String? = try {
+        DocumentsContract.getDocumentId(uri)
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun forgetSafDirectoryListing(
+        treeUri: String,
+        parentDocumentId: String?,
+    ) {
+        if (parentDocumentId == null) return
+        safChildDocumentIds.remove(safChildCacheKey(treeUri, parentDocumentId))
+    }
+
+    private fun invalidateSafDirectoryListing(
+        treeUri: String,
+        parentDocumentId: String?,
+    ) {
+        if (parentDocumentId == null) {
+            clearSafPathCache(treeUri)
+            return
+        }
+        forgetSafDirectoryListing(treeUri, parentDocumentId)
+    }
+
+    private fun invalidateSafDirectoryListing(
+        treeUri: String,
+        directory: androidx.documentfile.provider.DocumentFile,
+    ) {
+        invalidateSafDirectoryListing(treeUri, documentIdForSafUri(directory.uri))
+    }
+
+    private fun parentRelativePath(relativePath: String): String {
+        val segments = relativePath.split('/').filter { it.isNotEmpty() }
+        return segments.dropLast(1).joinToString("/")
+    }
+
+    private fun invalidateSafReadParentListing(
+        treeUriText: String,
+        relativePath: String,
+    ): Boolean {
+        val treeUri = Uri.parse(treeUriText)
+        val parentPath = parentRelativePath(relativePath)
+        val parentDocumentId = if (parentPath.isEmpty()) {
+            try {
+                DocumentsContract.getTreeDocumentId(treeUri)
+            } catch (_: Throwable) {
+                null
+            }
+        } else {
+            resolveReadDocumentId(treeUriText, parentPath)
+        } ?: return false
+        safChildDocumentIds.remove(safChildCacheKey(treeUriText, parentDocumentId))
+        return true
+    }
+
     private fun childDocumentId(
         treeUri: Uri,
         parentDocumentId: String,
         displayName: String,
     ): String? {
-        val key = "${treeUri}\u0000$parentDocumentId"
+        val key = safChildCacheKey(treeUri.toString(), parentDocumentId)
         val indexed = safChildDocumentIds[key] ?: run {
             val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
                 treeUri,
@@ -500,7 +559,7 @@ class MainActivity : FlutterActivity() {
                 return openDocumentId(cachedDocumentId)
             } catch (_: java.io.FileNotFoundException) {
                 forgetSafExactLocator(treeUri, relativePath)
-                clearSafPathCache(treeUri)
+                invalidateSafReadParentListing(treeUri, relativePath)
             }
         }
 
@@ -537,7 +596,6 @@ class MainActivity : FlutterActivity() {
         } else {
             val root = safTreeRoot(treeUri)
                 ?: throw IllegalStateException("tree unavailable")
-            var createdPath = false
             val target: androidx.documentfile.provider.DocumentFile =
                 resolvePath(root, relativePath) ?: run {
                     var dir = root
@@ -550,8 +608,8 @@ class MainActivity : FlutterActivity() {
                             dir = existing
                             continue
                         }
-                        createdPath = true
-                        dir = (if (isLast) {
+                        val parent = dir
+                        val created = (if (isLast) {
                             val mimeType = when {
                                 segment.endsWith(".jpg", ignoreCase = true) || segment.endsWith(".jpeg", ignoreCase = true) -> "image/jpeg"
                                 segment.endsWith(".png", ignoreCase = true) -> "image/png"
@@ -560,14 +618,22 @@ class MainActivity : FlutterActivity() {
                                 segment.endsWith(".avif", ignoreCase = true) -> "image/avif"
                                 else -> "application/octet-stream"
                             }
-                            dir.createFile(mimeType, segment)
+                            parent.createFile(mimeType, segment)
                         } else {
-                            dir.createDirectory(segment)
+                            parent.createDirectory(segment)
                         }) ?: throw IllegalStateException("cannot create $segment")
+                        val createdRelativePath = segments.take(i + 1).joinToString("/")
+                        forgetSafExactLocator(
+                            treeUri,
+                            createdRelativePath,
+                            includeDescendants = !isLast,
+                        )
+                        invalidateSafDirectoryListing(treeUri, parent)
+                        dir = created
                     }
                     dir
                 }
-            if (createdPath) clearSafPathCache(treeUri)
+            // Each created segment invalidates only its parent listing above.
             contentResolver.openFileDescriptor(target.uri, "rw")
                 ?: throw IllegalStateException("resolver returned null")
         }
@@ -667,10 +733,22 @@ class MainActivity : FlutterActivity() {
         val treeUri = requireNotNull(call.argument<String>("treeUri"))
         val relativePath = call.argument<String>("relativePath") ?: ""
         if (!isSafeRelativePath(relativePath)) return false
-        forgetSafExactLocator(treeUri, relativePath, includeDescendants = true)
-        clearSafPathCache(treeUri)
         val root = safTreeRoot(treeUri) ?: return false
-        return resolvePath(root, relativePath)?.delete() == true
+        val target = resolvePath(root, relativePath)
+        if (target == null) {
+            forgetSafExactLocator(treeUri, relativePath, includeDescendants = true)
+            invalidateSafReadParentListing(treeUri, relativePath)
+            return false
+        }
+        val parentPath = parentRelativePath(relativePath)
+        val parent = if (parentPath.isEmpty()) root else resolvePath(root, parentPath)
+        val targetDocumentId = documentIdForSafUri(target.uri)
+        val deleted = target.delete()
+        if (!deleted) return false
+        forgetSafExactLocator(treeUri, relativePath, includeDescendants = true)
+        if (parent != null) invalidateSafDirectoryListing(treeUri, parent)
+        forgetSafDirectoryListing(treeUri, targetDocumentId)
+        return true
     }
 
     private fun safRename(call: MethodCall): Boolean {
@@ -678,11 +756,14 @@ class MainActivity : FlutterActivity() {
         val relativePath = requireNotNull(call.argument<String>("relativePath"))
         val newRelativePath = requireNotNull(call.argument<String>("newRelativePath"))
         if (!isSafeRelativePath(relativePath) || !isSafeRelativePath(newRelativePath)) return false
-        forgetSafExactLocator(treeUri, relativePath, includeDescendants = true)
-        forgetSafExactLocator(treeUri, newRelativePath, includeDescendants = true)
-        clearSafPathCache(treeUri)
         val root = safTreeRoot(treeUri) ?: return false
         val source = resolvePath(root, relativePath) ?: return false
+        val sourceParentPath = parentRelativePath(relativePath)
+        val sourceParent = if (sourceParentPath.isEmpty()) {
+            root
+        } else {
+            resolvePath(root, sourceParentPath) ?: return false
+        }
         val segments = newRelativePath.split('/').filter { it.isNotEmpty() }
         if (segments.isEmpty()) return false
         val parentPath = segments.dropLast(1).joinToString("/")
@@ -695,7 +776,15 @@ class MainActivity : FlutterActivity() {
         // Refuse an existing destination so callers can decide how to replace
         // it after the new bytes have been fully staged.
         if (parent.findFile(segments.last()) != null) return false
-        return source.renameTo(segments.last())
+        val renamed = source.renameTo(segments.last())
+        if (!renamed) return false
+        forgetSafExactLocator(treeUri, relativePath, includeDescendants = true)
+        forgetSafExactLocator(treeUri, newRelativePath, includeDescendants = true)
+        invalidateSafDirectoryListing(treeUri, sourceParent)
+        if (parent.uri != sourceParent.uri) {
+            invalidateSafDirectoryListing(treeUri, parent)
+        }
+        return true
     }
 
     /**
@@ -709,11 +798,14 @@ class MainActivity : FlutterActivity() {
         val relativePath = requireNotNull(call.argument<String>("relativePath"))
         val newRelativePath = requireNotNull(call.argument<String>("newRelativePath"))
         if (!isSafeRelativePath(relativePath) || !isSafeRelativePath(newRelativePath)) return false
-        forgetSafExactLocator(treeUri, relativePath, includeDescendants = true)
-        forgetSafExactLocator(treeUri, newRelativePath, includeDescendants = true)
-        clearSafPathCache(treeUri)
         val root = safTreeRoot(treeUri) ?: return false
         val source = resolvePath(root, relativePath) ?: return false
+        val sourceParentPath = parentRelativePath(relativePath)
+        val sourceParent = if (sourceParentPath.isEmpty()) {
+            root
+        } else {
+            resolvePath(root, sourceParentPath) ?: return false
+        }
         val segments = newRelativePath.split('/').filter { it.isNotEmpty() }
         if (segments.isEmpty()) return false
         val parentPath = segments.dropLast(1).joinToString("/")
@@ -724,20 +816,37 @@ class MainActivity : FlutterActivity() {
         }
         val targetName = segments.last()
         val existing = parent.findFile(targetName)
-        if (existing == null) return source.renameTo(targetName)
-        if (existing.uri == source.uri) return true
-        val backupName = "$targetName.zic-old-${System.nanoTime()}"
-        if (!existing.renameTo(backupName)) return false
-        val committed = source.renameTo(targetName)
-        if (!committed) {
-            val backup = parent.findFile(backupName)
-            if (backup != null && parent.findFile(targetName) == null) {
-                backup.renameTo(targetName)
+        if (existing?.uri == source.uri) return true
+        var mutated = false
+        try {
+            if (existing == null) {
+                val committed = source.renameTo(targetName)
+                mutated = committed
+                return committed
             }
-            return false
+            val backupName = "$targetName.zic-old-${System.nanoTime()}"
+            if (!existing.renameTo(backupName)) return false
+            mutated = true
+            val committed = source.renameTo(targetName)
+            if (!committed) {
+                val backup = parent.findFile(backupName)
+                if (backup != null && parent.findFile(targetName) == null) {
+                    backup.renameTo(targetName)
+                }
+                return false
+            }
+            parent.findFile(backupName)?.delete()
+            return true
+        } finally {
+            if (mutated) {
+                forgetSafExactLocator(treeUri, relativePath, includeDescendants = true)
+                forgetSafExactLocator(treeUri, newRelativePath, includeDescendants = true)
+                invalidateSafDirectoryListing(treeUri, sourceParent)
+                if (parent.uri != sourceParent.uri) {
+                    invalidateSafDirectoryListing(treeUri, parent)
+                }
+            }
         }
-        parent.findFile(backupName)?.delete()
-        return true
     }
 
     private fun safExists(call: MethodCall): Boolean {
