@@ -3,7 +3,8 @@ import 'trace.dart';
 
 /// Observational cold-start timeline for the Home surface.
 ///
-/// It records service-open stages and visible-cover source/first-frame events.
+/// It records service-open stages, visible-cover source/first-frame events and
+/// user interaction arrival at Home controls.
 /// It never selects covers, owns cache entries, or changes image policy.
 final class HomeStartupTelemetry {
   const HomeStartupTelemetry({
@@ -82,6 +83,16 @@ final class HomeStartupTelemetry {
 
   void coverFirstFrame(String identity) {
     _record(TraceEventKind.homeCoverFirstFrame, identityHash: identity);
+  }
+
+  void interaction(String action, {Map<String, Object?> payload = const {}}) {
+    _record(
+      TraceEventKind.homeInteraction,
+      payload: <String, Object?>{
+        'action': action,
+        ...payload,
+      },
+    );
   }
 
   void _record(

@@ -320,11 +320,24 @@ void main() {
     expect(session, isNotNull);
     expect(session!.state, DownloadState.promoted);
     expect(session.committedLength, bytes.lengthInBytes);
+    expect(session.residentReplayAccessMode, 'direct',
+        reason: 'Persistent READY binds its selected physical access capability');
     expect(transport.rangeStarts, isEmpty,
         reason: 'a complete durable body must finish locally');
     expect(backend.openCalls, 0,
         reason: 'the just-consumed exact durable body already proves handoff');
     expect(backend.storeCalls, 0);
+
+    final replay = runtime.residentReplayRangeSource(
+      priorityFor: (_) => 1000,
+    );
+    final replayed = <int>[];
+    await for (final chunk in await replay(session, 0, bytes.lengthInBytes)) {
+      replayed.addAll(chunk);
+    }
+    expect(replayed, orderedEquals(bytes));
+    expect(backend.openCalls, 0,
+        reason: 'decoder ranges must reuse the READY generation authority');
   });
 
   test('physical partial never persists validators from an aliased provider',
@@ -524,6 +537,73 @@ void main() {
     expect(session.committedLength, bytes.lengthInBytes);
   });
 
+  test('bound READY reader is retained for ranges and closed by reset', () async {
+    final root = await Directory.systemTemp.createTemp('ready-bound-reader-');
+    addTearDown(() => root.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'ready-bound',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/ready-bound.webp'),
+    );
+    final bytes = Uint8List.fromList(<int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.generate(1024, (index) => index & 0xff),
+    ]);
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 2);
+    var activeWhileOpening = 0;
+    var activeWhileReading = 0;
+    final store = _ReadyBoundStore(
+      id: id,
+      bytes: bytes,
+      onReaderOpen: () => activeWhileOpening = scheduler.activeCount,
+      onReaderRead: () => activeWhileReading = scheduler.activeCount,
+    );
+    final handoff = PartialDownloadHandoff(
+      store: store,
+      readScheduler: scheduler,
+    );
+    final registry = DownloadRegistry(
+      layout: CacheLayout(root.path),
+      clock: SystemClock(),
+    );
+    addTearDown(registry.dispose);
+    final session = registry.get(id);
+
+    await handoff.restoreInto(session);
+    expect(session.state, DownloadState.promoted);
+    expect(session.residentIngressDeferred, isTrue);
+    expect(session.residentReplayAccessMode, 'saf');
+    expect(store.readerOpenCalls, 1);
+    expect(activeWhileOpening, 1,
+        reason: 'descriptor open must run inside the local-read scheduler');
+    expect(activeWhileReading, 0,
+        reason: 'binding READY authority must not read bytes before Reader demand');
+
+    final replay = session.residentReplayRangeChunks;
+    expect(replay, isNotNull);
+    final first = await replay!(64, 128);
+    final firstBytes = <int>[];
+    await for (final chunk in first) { firstBytes.addAll(chunk); }
+    final second = await replay(128, 256);
+    final secondBytes = <int>[];
+    await for (final chunk in second) { secondBytes.addAll(chunk); }
+    expect(firstBytes, orderedEquals(bytes.sublist(64, 128)));
+    expect(secondBytes, orderedEquals(bytes.sublist(128, 256)));
+    expect(store.readerOpenCalls, 1);
+    expect(store.readerReadCalls, 2,
+        reason: 'only decoder-demanded ranges read the retained READY reader');
+
+    await session.reset(removeCacheRecord: false);
+    expect(store.readerCloseCalls, 1,
+        reason: 'reset is the generation boundary for the retained descriptor');
+    expect(session.residentReplayRangeChunks, isNull);
+  });
+
 }
 
 final class _RangeSuffixTransport implements Transport {
@@ -579,6 +659,63 @@ final class _CountingArtifactBackend implements ArtifactCacheBackend {
   @override
   Future<void> invalidateArtifact(DownloadId id) =>
       delegate.invalidateArtifact(id);
+}
+
+final class _ReadyBoundStore implements PartialDownloadStore {
+  _ReadyBoundStore({
+    required this.id,
+    required this.bytes,
+    this.onReaderOpen,
+    this.onReaderRead,
+  });
+
+  final DownloadId id;
+  final Uint8List bytes;
+  final void Function()? onReaderOpen;
+  final void Function()? onReaderRead;
+  int readerOpenCalls = 0;
+  int readerReadCalls = 0;
+  int readerCloseCalls = 0;
+
+  @override
+  Future<PartialDownloadEntry?> openPartialDownload(DownloadId requested) async {
+    if (requested != id) return null;
+    return PartialDownloadEntry(
+      length: bytes.lengthInBytes,
+      validators: const Validators(etag: '"ready"'),
+      totalLength: bytes.lengthInBytes,
+      exactDurableFinal: true,
+      accessMode: 'saf',
+      open: ({required int start}) async* {
+        yield Uint8List.sublistView(bytes, start);
+      },
+      openRange: ({required int start, required int endExclusive}) async* {
+        yield Uint8List.sublistView(bytes, start, endExclusive);
+      },
+      openBoundRangeReader: () async {
+        onReaderOpen?.call();
+        readerOpenCalls++;
+        return (
+          accessMode: 'saf',
+          readRange: (int start, int endExclusive) async {
+            onReaderRead?.call();
+            readerReadCalls++;
+            return Uint8List.sublistView(bytes, start, endExclusive);
+          },
+          close: () async { readerCloseCalls++; },
+        );
+      },
+    );
+  }
+
+  @override
+  Future<void> storePartialDownload({
+    required DownloadId id,
+    required PartialDownloadEntry entry,
+  }) async {}
+
+  @override
+  Future<void> invalidatePartialDownload(DownloadId id) async {}
 }
 
 final class _PartialStore implements PartialDownloadStore {

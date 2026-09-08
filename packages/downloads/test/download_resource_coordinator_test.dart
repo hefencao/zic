@@ -8,6 +8,10 @@ void main() {
     final resources = DownloadResourceCoordinator();
 
     expect(
+      resources.networkLane.preemptionCandidateGrace,
+      const Duration(milliseconds: 100),
+    );
+    expect(
       identical(
         resources.storageWriteScheduler.localReadScheduler,
         resources.localReadScheduler,

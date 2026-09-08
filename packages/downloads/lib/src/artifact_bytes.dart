@@ -95,6 +95,290 @@ abstract interface class ArtifactBytes {
   Future<void> delete(String path);
 }
 
+/// One opened random-access view over a durable artifact locator.
+///
+/// This is intentionally separate from [ArtifactBytes.readChunks]: ordinary
+/// callers keep stateless open/read/close semantics, while a proven immutable
+/// READY generation may retain one descriptor and avoid paying provider path
+/// resolution on every decoder range request. Callers must serialize reads.
+abstract interface class ArtifactByteRangeReader {
+  String get accessMode;
+
+  /// Exact physical length observed through this already-open generation.
+  /// READY restore can use the same descriptor for seal-length preflight and
+  /// subsequent decoder ranges instead of reopening the provider immediately.
+  Future<int> length();
+
+  Future<Uint8List> readRange(int start, int endExclusive);
+
+  Future<void> close();
+}
+
+/// Opens a reusable reader when the concrete byte backend can safely retain a
+/// descriptor. Unknown/custom [ArtifactBytes] implementations return null and
+/// keep the historical stateless range path.
+Future<ArtifactByteRangeReader?> openArtifactByteRangeReader(
+  ArtifactBytes bytes,
+  String path,
+) async {
+  if (bytes is CompositeArtifactBytes) {
+    final target = bytes._target(path);
+    if (target == null) return null;
+    return openArtifactByteRangeReader(target, path);
+  }
+  if (bytes is LocalArtifactBytes) {
+    final type = await FileSystemEntity.type(path, followLinks: false);
+    if (type != FileSystemEntityType.file) return null;
+    final raf = await File(path).open();
+    return _LocalArtifactByteRangeReader(path, raf);
+  }
+  if (bytes is SafArtifactBytes) {
+    final parsed = parseSafRecordPath(path);
+    if (parsed == null || !bytes._belongsToThisTree(path)) return null;
+    return _SafArtifactByteRangeReader(
+      path: path,
+      relativePath: parsed.relativePath,
+      io: bytes._io,
+    );
+  }
+  return null;
+}
+
+final class _LocalArtifactByteRangeReader implements ArtifactByteRangeReader {
+  _LocalArtifactByteRangeReader(this._path, this._raf);
+
+  final String _path;
+  final RandomAccessFile _raf;
+  bool _closed = false;
+
+  @override
+  String get accessMode => 'direct';
+
+  @override
+  Future<int> length() async {
+    if (_closed) {
+      throw StateError('artifact range reader is closed');
+    }
+    try {
+      return await _raf.length();
+    } on FileSystemException catch (error) {
+      throw ArtifactReadFailure(
+        kind: _fileReadFailureKind(error),
+        accessLocator: _path,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        cause: error,
+      );
+    } on OSError catch (error) {
+      throw ArtifactReadFailure(
+        kind: _osReadFailureKind(error.errorCode),
+        accessLocator: _path,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        cause: error,
+      );
+    }
+  }
+
+  @override
+  Future<Uint8List> readRange(int start, int endExclusive) async {
+    if (_closed) {
+      throw StateError('artifact range reader is closed');
+    }
+    if (start < 0 || endExclusive <= start) {
+      throw RangeError.range(endExclusive, start + 1, null, 'endExclusive');
+    }
+    var position = start;
+    final out = BytesBuilder(copy: false);
+    try {
+      await _raf.setPosition(start);
+      while (position < endExclusive) {
+        final chunk = await _raf.read(min(endExclusive - position, 512 * 1024));
+        if (chunk.isEmpty) {
+          throw ArtifactReadFailure(
+            kind: ArtifactReadFailureKind.shortRead,
+            accessLocator: _path,
+            failedOffset: position,
+            bytesEmitted: position - start,
+            expectedLength: endExclusive - start,
+            observedLength: position - start,
+          );
+        }
+        out.add(chunk);
+        position += chunk.length;
+      }
+      return out.takeBytes();
+    } on ArtifactReadFailure {
+      rethrow;
+    } on FileSystemException catch (error) {
+      throw ArtifactReadFailure(
+        kind: _fileReadFailureKind(error),
+        accessLocator: _path,
+        failedOffset: position,
+        bytesEmitted: position - start,
+        cause: error,
+      );
+    } on OSError catch (error) {
+      throw ArtifactReadFailure(
+        kind: _osReadFailureKind(error.errorCode),
+        accessLocator: _path,
+        failedOffset: position,
+        bytesEmitted: position - start,
+        cause: error,
+      );
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await _raf.close();
+  }
+}
+
+final class _SafArtifactByteRangeReader implements ArtifactByteRangeReader {
+  _SafArtifactByteRangeReader({
+    required String path,
+    required String relativePath,
+    required SafTreeIo io,
+  }) : _path = path,
+       _relativePath = relativePath,
+       _io = io;
+
+  final String _path;
+  final String _relativePath;
+  final SafTreeIo _io;
+  int? _handle;
+  bool _closed = false;
+
+  @override
+  String get accessMode => 'saf';
+
+  Future<int> _ensureOpen() async {
+    if (_closed) {
+      throw StateError('artifact range reader is closed');
+    }
+    final existing = _handle;
+    if (existing != null) return existing;
+    final opened = await _io.open(_relativePath);
+    if (opened == null) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.staleLocator,
+        accessLocator: _path,
+        failedOffset: 0,
+        bytesEmitted: 0,
+      );
+    }
+    _handle = opened;
+    return opened;
+  }
+
+  @override
+  Future<int> length() async {
+    try {
+      final handle = await _ensureOpen();
+      return await _io.length(handle) ?? 0;
+    } on ArtifactReadFailure {
+      rethrow;
+    } on SafTreeAccessFailure catch (error) {
+      throw ArtifactReadFailure(
+        kind: error.kind,
+        accessLocator: _path,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        cause: error.cause ?? error,
+      );
+    } on Object catch (error) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.ioFailure,
+        accessLocator: _path,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        cause: error,
+      );
+    }
+  }
+
+  @override
+  Future<Uint8List> readRange(int start, int endExclusive) async {
+    if (_closed) {
+      throw StateError('artifact range reader is closed');
+    }
+    if (start < 0 || endExclusive <= start) {
+      throw RangeError.range(endExclusive, start + 1, null, 'endExclusive');
+    }
+    var position = start;
+    final out = BytesBuilder(copy: false);
+    try {
+      final handle = await _ensureOpen();
+      if (_io is SafTreeRandomRead) {
+        final randomRead = _io as SafTreeRandomRead;
+        final expectedLength = endExclusive - start;
+        final bytes = await randomRead.readAt(handle, start, expectedLength);
+        if (bytes.length != expectedLength) {
+          throw ArtifactReadFailure(
+            kind: ArtifactReadFailureKind.shortRead,
+            accessLocator: _path,
+            failedOffset: start + bytes.length,
+            bytesEmitted: bytes.length,
+            expectedLength: expectedLength,
+            observedLength: bytes.length,
+          );
+        }
+        return bytes;
+      }
+      await _io.seek(handle, start);
+      while (position < endExclusive) {
+        final chunk = await _io.read(
+          handle,
+          min(endExclusive - position, 512 * 1024),
+        );
+        if (chunk.isEmpty) {
+          throw ArtifactReadFailure(
+            kind: ArtifactReadFailureKind.shortRead,
+            accessLocator: _path,
+            failedOffset: position,
+            bytesEmitted: position - start,
+            expectedLength: endExclusive - start,
+            observedLength: position - start,
+          );
+        }
+        out.add(chunk);
+        position += chunk.length;
+      }
+      return out.takeBytes();
+    } on ArtifactReadFailure {
+      rethrow;
+    } on SafTreeAccessFailure catch (error) {
+      throw ArtifactReadFailure(
+        kind: error.kind,
+        accessLocator: _path,
+        failedOffset: position,
+        bytesEmitted: position - start,
+        cause: error.cause ?? error,
+      );
+    } on Object catch (error) {
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.ioFailure,
+        accessLocator: _path,
+        failedOffset: position,
+        bytesEmitted: position - start,
+        cause: error,
+      );
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    final handle = _handle;
+    _handle = null;
+    if (handle != null) await _io.close(handle);
+  }
+}
+
 class LocalArtifactBytes implements ArtifactBytes {
   const LocalArtifactBytes();
 
@@ -212,6 +496,14 @@ class LocalArtifactBytes implements ArtifactBytes {
 
 /// Minimal SAF transport the app binds at composition time; keeps this
 /// package free of any platform channel dependency.
+abstract interface class SafTreeRandomRead {
+  /// Reads one exact range from an already-open descriptor as one physical
+  /// provider operation. Implementations may satisfy it with pread/lseek+read,
+  /// but callers rely on the range not being interleaved with unrelated SAF
+  /// work between positioning and body reads.
+  Future<Uint8List> readAt(int handle, int position, int length);
+}
+
 abstract interface class SafTreeIo {
   Future<int?> open(
     String relativePath, {

@@ -652,6 +652,94 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('decoder-driven local prefix requests growth instead of partial looping', () async {
+    final temp =
+        await Directory.systemTemp.createTemp('decode_deferred_prefix_growth_test_');
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024 * 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpartial-animation'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
+      ingress: ingress,
+      decodePrefixQuantumBytes: 1024,
+      decoderDrivenSourceGrowth: true,
+    );
+    download.attachIngressProjection(projection);
+    final trace = MemoryTraceSink();
+    final cursors = _PartialPrefixCursorFactory(frameCount: 30);
+    final animationEvidence = <AnimationInfo>[];
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      ingress: projection,
+      cursors: cursors,
+      clock: _Clock(),
+      traceSink: trace,
+      partialLoopMinFrames: 30,
+      onAnimationResolved: (_, animation) => animationEvidence.add(animation),
+    );
+    const demand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 1,
+      reason: 'deferred-local-prefix-growth',
+      expirationRevision: 64,
+    );
+
+    for (var revision = 1; revision <= 30; revision++) {
+      final snap = await decode.fill(
+        demand: demand,
+        revision: revision,
+        cancel: CancelToken(),
+      );
+      expect(snap.depth, 1);
+      expect(decode.holder!.consume(revision - 1), isTrue);
+    }
+
+    expect(animationEvidence, hasLength(1));
+    expect(animationEvidence.single.frameCount, 2);
+    expect(animationEvidence.single.complete, isFalse);
+
+    final waiting = await decode.fill(
+      demand: demand,
+      revision: 31,
+      cancel: CancelToken(),
+    );
+    expect(waiting.state, DecodeState.waitingSource);
+    expect(waiting.depth, 0);
+    expect(waiting.requiredSourceLength, greaterThan(waiting.sourceLength));
+    expect(cursors.created, 1,
+        reason: 'the cursor must not rewind before local hydration grows the source');
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.animationLoop &&
+            event.payload['partialPrefix'] == true,
+      ),
+      isEmpty,
+    );
+    final growth = trace.events.lastWhere(
+      (event) =>
+          event.kind == TraceEventKind.retryScheduled &&
+          event.payload['stage'] == 'decode-prefix',
+    );
+    expect(growth.payload['nextSourceLength'], waiting.requiredSourceLength);
+
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('rewinds an infinite animation only after held frames are consumed', () async {
     final temp = await Directory.systemTemp.createTemp('decode_loop_test_');
     final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);

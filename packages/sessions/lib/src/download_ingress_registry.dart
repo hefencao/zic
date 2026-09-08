@@ -2,9 +2,13 @@ import 'dart:async';
 
 import 'package:domain/domain.dart';
 import 'package:media/media.dart';
+import 'package:telemetry/telemetry.dart';
 
 import 'download_ingress_projection.dart';
 import 'download_session.dart';
+import 'webp_decode_prefix_hints.dart';
+
+const int _residentInitialHydrationBytes = 256 * 1024;
 
 final class _IngressProjectionEntry {
   _IngressProjectionEntry({
@@ -15,9 +19,12 @@ final class _IngressProjectionEntry {
 
   DownloadSession session;
   final DownloadIngressProjection projection;
-  final _IngressAttachmentControl? control;
+  _IngressAttachmentControl? control;
   final Completer<void> completer;
   Future<void>? attachment;
+  Future<void>? residentHydration;
+  DownloadSnapshotListener? sessionListener;
+  int residentRequestedLength = 0;
   bool active = true;
 
   int get priority => control?.priority ?? session.effectivePriority;
@@ -43,6 +50,9 @@ final class DownloadIngressProjectionRegistry {
     required this.scopePrefix,
     this.residentReplaySource,
     this.residentReplaySourceWithControl,
+    this.residentReplayRangeSource,
+    this.residentReplayRangeSourceWithControl,
+    this.traceSink = const NoopTraceSink(),
     this.maxActiveReplays = 2,
   }) : assert(maxActiveReplays > 0);
 
@@ -51,6 +61,10 @@ final class DownloadIngressProjectionRegistry {
   final DownloadResidentReplaySource? residentReplaySource;
   final DownloadResidentReplaySourceWithControl?
       residentReplaySourceWithControl;
+  final DownloadResidentReplayRangeSource? residentReplayRangeSource;
+  final DownloadResidentReplayRangeSourceWithControl?
+      residentReplayRangeSourceWithControl;
+  final TraceSink traceSink;
   final int maxActiveReplays;
   final Map<DownloadId, _IngressProjectionEntry> _entries =
       <DownloadId, _IngressProjectionEntry>{};
@@ -97,6 +111,10 @@ final class DownloadIngressProjectionRegistry {
       if (!existing.completer.isCompleted) {
         existing.completer.complete();
       }
+      final existingListener = existing.sessionListener;
+      if (existingListener != null) {
+        existing.session.removeSnapshotListener(existingListener);
+      }
       existing.session.detachIngressProjection(existing.projection.scopeId);
       existing.projection.detach();
       _entries.remove(session.id);
@@ -109,6 +127,8 @@ final class DownloadIngressProjectionRegistry {
     final projection = DownloadIngressProjection(
       scopeId: '$scopePrefix:physical:${session.sessionId}',
       ingress: sources.get(session.id),
+      decodePrefixQuantumBytes: _decodePrefixQuantumFor(session),
+      decoderDrivenSourceGrowth: session.residentIngressDeferred,
     );
     final attachmentControl = session.committedLength == 0
         ? null
@@ -122,6 +142,20 @@ final class DownloadIngressProjectionRegistry {
     // may safely enter waitingSource against this empty projection while the
     // physical prefix is copied; the eventual rebuild notification wakes it.
     _entries[session.id] = entry;
+    _observeSession(entry);
+
+    if (session.residentIngressDeferred) {
+      try {
+        session.attachDeferredResidentIngressProjection(projection);
+      } on Object {
+        _removeSessionListener(entry);
+        _entries.remove(session.id);
+        projection.detach();
+        rethrow;
+      }
+      _requestInitialResidentHydration(entry);
+      return projection;
+    }
 
     if (session.committedLength == 0) {
       try {
@@ -170,6 +204,7 @@ final class DownloadIngressProjectionRegistry {
     if (!entry.completer.isCompleted) {
       entry.completer.complete();
     }
+    _removeSessionListener(entry);
     session.detachIngressProjection(entry.projection.scopeId);
     entry.projection.detach();
     _pumpReplays();
@@ -209,8 +244,256 @@ final class DownloadIngressProjectionRegistry {
       if (!entry.completer.isCompleted) {
         entry.completer.complete();
       }
+      _removeSessionListener(entry);
       entry.session.detachIngressProjection(entry.projection.scopeId);
       entry.projection.detach();
+    }
+  }
+
+  void _observeSession(_IngressProjectionEntry entry) {
+    void listener(DownloadSnapshot snapshot) {
+      if (!entry.active || !identical(_entries[entry.session.id], entry)) {
+        return;
+      }
+      entry.control?.updatePriority(snapshot.effectivePriority);
+      entry.projection.setDecodePrefixQuantumBytes(
+        _decodePrefixQuantumFor(entry.session),
+      );
+      entry.projection.setDecoderDrivenSourceGrowth(
+        entry.session.residentIngressDeferred,
+      );
+      if (entry.session.residentIngressDeferred &&
+          snapshot.state == DownloadState.promoted &&
+          snapshot.committedLength > 0) {
+        _requestInitialResidentHydration(entry);
+      }
+    }
+
+    entry.sessionListener = listener;
+    entry.session.addSnapshotListener(listener, fireImmediately: false);
+  }
+
+  void _removeSessionListener(_IngressProjectionEntry entry) {
+    final listener = entry.sessionListener;
+    if (listener == null) return;
+    entry.session.removeSnapshotListener(listener);
+    entry.sessionListener = null;
+  }
+
+  void _requestInitialResidentHydration(_IngressProjectionEntry entry) {
+    if (!entry.active || !entry.session.residentIngressDeferred) return;
+    entry.projection.setDecodePrefixQuantumBytes(
+      localWebpDecodePrefixQuantumBytes,
+    );
+    entry.control ??=
+        _IngressAttachmentControl(priority: entry.session.effectivePriority);
+    final total = entry.session.committedLength;
+    if (total <= 0) return;
+    final target = _residentInitialHydrationBytes < total
+        ? _residentInitialHydrationBytes
+        : total;
+    final hydration = _requestResidentHydration(entry, target);
+    unawaited(
+      hydration.whenComplete(() {
+        if (entry.active && !entry.completer.isCompleted) {
+          entry.completer.complete();
+        }
+      }),
+    );
+  }
+
+  static int? _decodePrefixQuantumFor(DownloadSession session) =>
+      session.residentIngressDeferred ? localWebpDecodePrefixQuantumBytes : null;
+
+  /// Extends one already-demanded Reader source to decoder-owned evidence.
+  ///
+  /// This is not a page-admission policy. The caller has already established
+  /// DecodeDemand/UploadDemand; [endExclusive] comes from DecodeSession's
+  /// `requiredSourceLength` after native need-more-data evidence.
+  Future<void> ensureResidentPrefix(
+    DownloadSession session,
+    int endExclusive,
+  ) {
+    final entry = _entries[session.id];
+    if (entry == null ||
+        !identical(entry.session, session) ||
+        !session.residentIngressDeferred ||
+        endExclusive <= 0) {
+      return Future<void>.value();
+    }
+    final total = session.committedLength;
+    final target = endExclusive < total ? endExclusive : total;
+    return _requestResidentHydration(entry, target);
+  }
+
+  Future<void> _requestResidentHydration(
+    _IngressProjectionEntry entry,
+    int target,
+  ) {
+    if (!entry.active || !entry.session.residentIngressDeferred) {
+      return Future<void>.value();
+    }
+    if (target > entry.residentRequestedLength) {
+      entry.residentRequestedLength = target;
+    }
+    final running = entry.residentHydration;
+    if (running != null) return running;
+    late final Future<void> tracked;
+    tracked = _hydrateResident(entry).catchError((Object error, StackTrace stack) {
+      if (!entry.active ||
+          !identical(_entries[entry.session.id], entry) ||
+          !entry.session.residentIngressDeferred) {
+        return;
+      }
+      final failure = error is Failure
+          ? error
+          : Failure(
+              code: ErrorCode.source,
+              message: 'deferred resident ingress hydration failed',
+              cause: error,
+            );
+      _recordResidentHydration(
+        entry,
+        action: 'failed',
+        start: entry.projection.snapshot.length,
+        endExclusive: entry.residentRequestedLength,
+        error: '$failure',
+      );
+      entry.projection.fail(failure);
+    }).whenComplete(() {
+      if (identical(entry.residentHydration, tracked)) {
+        entry.residentHydration = null;
+      }
+      if (entry.active &&
+          identical(_entries[entry.session.id], entry) &&
+          entry.session.residentIngressDeferred &&
+          entry.projection.snapshot.length < entry.residentRequestedLength) {
+        unawaited(_requestResidentHydration(
+          entry,
+          entry.residentRequestedLength,
+        ));
+      }
+    });
+    entry.residentHydration = tracked;
+    return tracked;
+  }
+
+  Future<void> _hydrateResident(_IngressProjectionEntry entry) async {
+    final session = entry.session;
+    final projection = entry.projection;
+    final control = entry.control ??=
+        _IngressAttachmentControl(priority: session.effectivePriority);
+    control.throwIfCancelled();
+    if (!session.residentIngressDeferred ||
+        session.state != DownloadState.promoted) {
+      return;
+    }
+    final epoch = session.epoch;
+    final total = session.committedLength;
+    final current = projection.snapshot.length;
+    final requested = entry.residentRequestedLength;
+    final target = requested < total ? requested : total;
+    if (target <= current) return;
+    _recordResidentHydration(
+      entry,
+      action: 'started',
+      start: current,
+      endExclusive: target,
+    );
+    final range = residentReplayRangeSource;
+    final controlledRange = residentReplayRangeSourceWithControl;
+    if (range == null && controlledRange == null) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'deferred resident ingress range replay is unavailable',
+      );
+    }
+    final chunks = controlledRange != null
+        ? await controlledRange(
+            session,
+            current,
+            target,
+            control: control,
+          )
+        : await range!(session, current, target);
+    control.throwIfCancelled();
+    if (session.epoch != epoch || !session.residentIngressDeferred) return;
+    projection.expectLength(session.totalLength);
+    if (current == 0) {
+      projection.beginSynchronizedReplay();
+      await projection.rebuild(
+        epoch: epoch,
+        chunks: chunks,
+        sealed: target == total,
+      );
+      control.throwIfCancelled();
+      if (session.epoch != epoch || !session.residentIngressDeferred) return;
+      projection.publishSynchronizedReplayPrefix();
+      _recordResidentHydration(
+        entry,
+        action: 'completed',
+        start: current,
+        endExclusive: target,
+      );
+      return;
+    }
+    var offset = current;
+    await for (final chunk in chunks) {
+      control.throwIfCancelled();
+      if (session.epoch != epoch || !session.residentIngressDeferred) return;
+      if (chunk.isEmpty) continue;
+      projection.append(epoch: epoch, offset: offset, bytes: chunk);
+      offset += chunk.length;
+    }
+    if (offset != target) {
+      throw Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'resident ingress range replay was short: $offset/$target',
+      );
+    }
+    if (target == total) {
+      projection.seal(epoch);
+    }
+    _recordResidentHydration(
+      entry,
+      action: 'completed',
+      start: current,
+      endExclusive: target,
+    );
+  }
+
+  void _recordResidentHydration(
+    _IngressProjectionEntry entry, {
+    required String action,
+    required int start,
+    required int endExclusive,
+    String? error,
+  }) {
+    try {
+      traceSink.record(
+        traceEvent(
+          clock: entry.session.clock,
+          sessionId: scopePrefix,
+          kind: TraceEventKind.artifactSource,
+          identityHash: entry.session.id.key,
+          epoch: entry.session.epoch.value,
+          payload: <String, Object?>{
+            'stage': 'resident-ingress-hydration',
+            'action': action,
+            'start': start,
+            'endExclusive': endExclusive,
+            'priority': entry.priority,
+            'physicalEffectivePriority': entry.session.effectivePriority,
+            'sourceLength': entry.projection.snapshot.length,
+            'bodyLength': entry.session.committedLength,
+            'boundReadyReplay': entry.session.residentReplayRangeChunks != null,
+            'residentReplayAccessMode': entry.session.residentReplayAccessMode,
+            if (error != null) 'error': error,
+          },
+        ),
+      );
+    } on Object {
+      // Diagnostics cannot alter Reader-local ingress ownership.
     }
   }
 

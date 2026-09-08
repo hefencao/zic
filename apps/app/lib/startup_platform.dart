@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
@@ -47,6 +48,44 @@ Future<String?> getStartupApplicationSupportPath() async {
     return null;
   } on Object catch (error) {
     debugPrint('Android application support path unavailable: $error');
+    return null;
+  }
+}
+
+/// Waits for Android's FlutterActivity callback that the first Flutter UI
+/// surface has actually been displayed. A Dart post-frame callback runs before
+/// this platform-visible boundary and therefore cannot safely admit heavy
+/// startup I/O on its own. Other platforms keep their existing post-frame
+/// behavior by returning false.
+Future<bool> waitForFirstFlutterUiDisplayed() async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return false;
+  try {
+    return await startupPlatformChannel
+            .invokeMethod<bool>('waitForFirstFlutterUiDisplayed')
+            .timeout(const Duration(seconds: 3)) ??
+        false;
+  } on MissingPluginException {
+    return false;
+  } on PlatformException catch (error) {
+    debugPrint('Android first Flutter UI display wait unavailable: $error');
+    return false;
+  } on TimeoutException {
+    debugPrint('Android first Flutter UI display wait timed out');
+    return false;
+  }
+}
+
+Future<Map<String, Object?>?> getNativeStartupTimeline() async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return null;
+  try {
+    final raw = await startupPlatformChannel.invokeMethod<Map<Object?, Object?>>(
+      'nativeStartupTimeline',
+    );
+    return raw == null ? null : Map<String, Object?>.from(raw);
+  } on MissingPluginException {
+    return null;
+  } on PlatformException catch (error) {
+    debugPrint('Android native startup timeline unavailable: $error');
     return null;
   }
 }

@@ -16,6 +16,7 @@ export 'src/artifact_bytes.dart'
         LocalArtifactBytes,
         SafArtifactBytes,
         SafTreeIo,
+        SafTreeRandomRead,
         SafTreeAccessFailure,
         SafTreeAtomicReplace,
         SafTreeFile,

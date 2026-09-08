@@ -189,6 +189,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
           CallbackTraceSink((event) => debugPrint(event.toJsonLine())),
       ]),
     );
+    unawaited(_recordNativeStartupTimeline());
     if (widget.firstFrameAlreadyRasterized) {
       _homeMounted = true;
       _startupLog('home-mount-ready mode=already-rasterized');
@@ -210,6 +211,19 @@ final class _BootstrapAppState extends State<_BootstrapApp>
 
   late final Future<void> _preferencesReady;
 
+  Future<void> _recordNativeStartupTimeline() async {
+    final timeline = await getNativeStartupTimeline();
+    if (_disposed || timeline == null) return;
+    _debugTrace.record(
+      traceEvent(
+        clock: SystemClock(),
+        sessionId: 'home-startup',
+        kind: TraceEventKind.platformStartupTimeline,
+        payload: timeline,
+      ),
+    );
+  }
+
   Future<void> _attachPreferencesEarly() async {
     final root = await _storageRoot;
     final preferencePath = '$root/app_preferences.json';
@@ -226,12 +240,19 @@ final class _BootstrapAppState extends State<_BootstrapApp>
   }
 
   Future<void> _scheduleDurableServicesAfterFirstRaster() async {
-    // A post-frame callback is the visibility boundary. Do not wait for the
-    // engine raster Future here: on some Flutter/Android combinations that
-    // Future never completes although the bootstrap frame is already shown.
-    await Future<void>.delayed(Duration.zero);
+    // A Dart post-frame callback runs before Android has necessarily presented
+    // the Flutter surface. Reader-triggered cache/index work can therefore
+    // still turn the nominal bootstrap frame into a multi-second black screen
+    // if admitted here. On Android, wait for FlutterActivity's actual
+    // onFlutterUiDisplayed boundary. The platform helper is bounded and other
+    // platforms keep the existing post-frame fallback.
+    final platformDisplayed = await waitForFirstFlutterUiDisplayed();
     if (_disposed) return;
-    _startupLog('runtime-bootstrap-frame-rasterized');
+    _startupLog(
+      platformDisplayed
+          ? 'runtime-bootstrap-platform-ui-displayed'
+          : 'runtime-bootstrap-platform-ui-display-fallback',
+    );
     _startupLog('runtime-bootstrap-frame-presented');
     _startupTelemetry.bootstrapPresented();
     if (!_homeMounted) {
@@ -894,7 +915,7 @@ final class _AppServices {
 /// transport interface. Lives here because platform channels are an app
 /// concern; the package stays testable with fakes.
 class _SafTreeIoAdapter
-    implements SafTreeIo, SafTreeAtomicReplace {
+    implements SafTreeIo, SafTreeRandomRead, SafTreeAtomicReplace {
   _SafTreeIoAdapter(this._store);
 
   final SafStore _store;
@@ -940,6 +961,13 @@ class _SafTreeIoAdapter
   @override
   Future<Uint8List> read(int handle, int length) =>
       _readOperation<Uint8List>('read', () => _store.read(handle, length));
+
+  @override
+  Future<Uint8List> readAt(int handle, int position, int length) =>
+      _readOperation<Uint8List>(
+        'readAt',
+        () => _store.readAt(handle, position, length),
+      );
 
   @override
   Future<void> write(int handle, Uint8List bytes) =>

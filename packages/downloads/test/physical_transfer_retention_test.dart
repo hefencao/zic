@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -288,6 +289,63 @@ void main() {
     expect(session.artifact.committedLength, 0);
   });
 
+  test('controlled resident replay keeps physical current priority under foreground pressure',
+      () async {
+    final backend = _RetentionStore();
+    final cache = ArtifactCacheManager(backend: backend);
+    final scheduler = ArtifactCacheReadScheduler(
+      maxActive: 2,
+      maxBackgroundWhileForeground: 1,
+    );
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: cache,
+      partialDownloadStore: backend,
+      net: NetLane(maxActive: 1),
+      localReadScheduler: scheduler,
+    );
+    addTearDown(runtime.dispose);
+    final id = _id('resident-current-priority');
+    final bytes = Uint8List.fromList(<int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.generate(64, (index) => index & 0xff),
+    ]);
+    await cache.storePromotedArtifact(id: id, bytes: bytes);
+    final session = runtime.registry.get(id);
+    session.bindResidentImmutableAuthority(
+      validators: const Validators(),
+      totalLength: bytes.lengthInBytes,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: bytes.sublist(0, 64),
+    );
+    final demand = session.attachDemand(scopeId: 'reader', priority: 1000);
+    addTearDown(demand.detach);
+
+    final pressure = scheduler.holdForegroundPressure();
+    addTearDown(pressure.release);
+    final background = await scheduler.acquire(priority: () => 0);
+    addTearDown(background.release);
+    expect(scheduler.activeBackgroundCount, 1);
+
+    final replay = runtime.residentReplayRangeSourceWithControl(
+      priorityFor: (_) => 0,
+    );
+    final control = _TestTaskControl(priority: 1000);
+    final stream = await replay(
+      session,
+      0,
+      32,
+      control: control,
+    );
+    final iterator = StreamIterator<List<int>>(stream);
+    addTearDown(iterator.cancel);
+
+    expect(await iterator.moveNext().timeout(const Duration(seconds: 1)), isTrue,
+        reason: 'physical current priority must bypass a saturated background slot');
+    expect(iterator.current, orderedEquals(bytes.sublist(0, 32)));
+    expect(scheduler.activeForegroundCount, 0,
+        reason: 'the per-chunk foreground lease is released after the chunk read');
+  });
+
   test('retiring physical owner removes acquire-time aliases to that session',
       () async {
     final root = await Directory.systemTemp.createTemp('alias-retention-');
@@ -405,6 +463,21 @@ final class _RetentionStore
   Future<void> invalidatePartialDownload(DownloadId id) async {
     partials.remove(id);
   }
+}
+
+final class _TestTaskControl implements TaskControl {
+  _TestTaskControl({required this.priority});
+
+  final Completer<void> _cancelled = Completer<void>();
+
+  @override
+  int priority;
+
+  @override
+  bool get cancelled => _cancelled.isCompleted;
+
+  @override
+  Future<void> get whenCancelled => _cancelled.future;
 }
 
 final class _StoredPartial {

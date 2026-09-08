@@ -540,11 +540,22 @@ final class PipelineReaderSession {
         _transferRuntime.residentReplaySourceWithControl(
       priorityFor: _artifactReadPriority,
     );
+    _residentReplayRangeSource = _transferRuntime.residentReplayRangeSource(
+      priorityFor: _artifactReadPriority,
+    );
+    _residentReplayRangeSourceWithControl =
+        _transferRuntime.residentReplayRangeSourceWithControl(
+      priorityFor: _artifactReadPriority,
+    );
     _ingresses = DownloadIngressProjectionRegistry(
       sources: _streamingSources,
       scopePrefix: 'reader:$sessionId',
       residentReplaySource: _residentReplaySource,
       residentReplaySourceWithControl: _residentReplaySourceWithControl,
+      residentReplayRangeSource: _residentReplayRangeSource,
+      residentReplayRangeSourceWithControl:
+          _residentReplayRangeSourceWithControl,
+      traceSink: trace,
     );
     _downloads = _transferRuntime.registry;
     _downloadTransfer = _transferRuntime.attachConsumer(
@@ -654,6 +665,9 @@ final class PipelineReaderSession {
   late final DownloadResidentReplaySource _residentReplaySource;
   late final DownloadResidentReplaySourceWithControl
       _residentReplaySourceWithControl;
+  late final DownloadResidentReplayRangeSource _residentReplayRangeSource;
+  late final DownloadResidentReplayRangeSourceWithControl
+      _residentReplayRangeSourceWithControl;
   late final DecodeRegistry _decodes;
   late final UploadRegistry _uploads;
   late final FrameBudgeter _frameBudgets;

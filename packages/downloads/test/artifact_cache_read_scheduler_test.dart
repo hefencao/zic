@@ -179,6 +179,38 @@ void main() {
     pressure.release();
     next.release();
   });
+
+  test('strict background waits until startup foreground pressure clears',
+      () async {
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 3);
+    final pressure = scheduler.holdForegroundPressure();
+    var backgroundStarted = false;
+    final background = scheduler
+        .acquire(
+          priority: () => 820,
+          allowBackgroundDuringForegroundPressure: false,
+        )
+        .then((lease) {
+      backgroundStarted = true;
+      return lease;
+    });
+
+    await Future<void>.delayed(Duration.zero);
+    expect(backgroundStarted, isFalse);
+    expect(scheduler.activeBackgroundCount, 0);
+
+    final current = await scheduler.acquire(priority: () => 1000);
+    expect(current.foreground, isTrue);
+    current.release();
+    await Future<void>.delayed(Duration.zero);
+    expect(backgroundStarted, isFalse,
+        reason: 'the startup pressure hold still protects the physical executor');
+
+    pressure.release();
+    final lease = await background;
+    expect(backgroundStarted, isTrue);
+    lease.release();
+  });
 }
 
 final class _TestTaskControl implements TaskControl {

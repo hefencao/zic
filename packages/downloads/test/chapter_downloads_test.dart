@@ -172,208 +172,298 @@ void main() {
     expect(promotedStream!.length, 5);
   });
 
-  test('compact home entries project progress from incrementally verified records',
-      () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'zic-compact-download-progress-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
-    final service = await PersistentChapterDownloadService.open(directory.path);
-    addTearDown(service.close);
-    final id = DownloadId(
-      content: const ContentId(
-        sourceId: 'compact-source',
-        comicId: 'compact-comic',
-        chapterId: 'compact-chapter',
-        pageId: 'page-1',
-      ),
-      sourceRevision: 'compact-r1',
-      canonicalUri: Uri.parse('https://example.test/page-1.webp'),
-    );
-    await service.storePromotedArtifact(
-      id: id,
-      bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
-    );
-    final compact = ImportedLibraryEntry(
-      chapter: ImportedChapterRecord(
-        directoryId: 'compact-directory',
-        displayName: '紧凑章节',
-        sourceId: 'compact-source',
-        comicId: 'compact-comic',
-        chapterId: 'compact-chapter',
+  test(
+    'compact home entries project progress from incrementally verified records',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'zic-compact-download-progress-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final service = await PersistentChapterDownloadService.open(
+        directory.path,
+      );
+      addTearDown(service.close);
+      final id = DownloadId(
+        content: const ContentId(
+          sourceId: 'compact-source',
+          comicId: 'compact-comic',
+          chapterId: 'compact-chapter',
+          pageId: 'page-1',
+        ),
         sourceRevision: 'compact-r1',
-        pages: const <ImportedPageRecord>[
-          ImportedPageRecord(
-            displayName: 'page-1',
-            sourceId: 'zic-home-snapshot-page:0',
-            contentKindHint: ContentKindHint.unknown,
-          ),
-          ImportedPageRecord(
-            displayName: 'page-2',
-            sourceId: 'zic-home-snapshot-page:1',
-            contentKindHint: ContentKindHint.unknown,
-          ),
-          ImportedPageRecord(
-            displayName: 'page-3',
-            sourceId: 'zic-home-snapshot-page:2',
-            contentKindHint: ContentKindHint.unknown,
-          ),
-        ],
-      ),
-    );
+        canonicalUri: Uri.parse('https://example.test/page-1.webp'),
+      );
+      await service.storePromotedArtifact(
+        id: id,
+        bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
+      );
+      final compact = ImportedLibraryEntry(
+        chapter: ImportedChapterRecord(
+          directoryId: 'compact-directory',
+          displayName: '紧凑章节',
+          sourceId: 'compact-source',
+          comicId: 'compact-comic',
+          chapterId: 'compact-chapter',
+          sourceRevision: 'compact-r1',
+          pages: const <ImportedPageRecord>[
+            ImportedPageRecord(
+              displayName: 'page-1',
+              sourceId: 'zic-home-snapshot-page:0',
+              contentKindHint: ContentKindHint.unknown,
+            ),
+            ImportedPageRecord(
+              displayName: 'page-2',
+              sourceId: 'zic-home-snapshot-page:1',
+              contentKindHint: ContentKindHint.unknown,
+            ),
+            ImportedPageRecord(
+              displayName: 'page-3',
+              sourceId: 'zic-home-snapshot-page:2',
+              contentKindHint: ContentKindHint.unknown,
+            ),
+          ],
+        ),
+      );
 
-    final snapshot = (await service.inspectMany(<ImportedLibraryEntry>[compact])).single;
-    expect(snapshot.completedPages, 1);
-    expect(snapshot.totalPages, 3);
-    expect(snapshot.receivedBytes, 4);
-  });
+      final snapshot = (await service.inspectMany(<ImportedLibraryEntry>[
+        compact,
+      ])).single;
+      expect(snapshot.completedPages, 1);
+      expect(snapshot.totalPages, 3);
+      expect(snapshot.receivedBytes, 4);
+    },
+  );
 
-  test('persistent partial artifact survives Reader service reopen without promotion',
-      () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'zic-reader-partial-cache-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
-    final id = _readerArtifactId('persistent-partial-page');
-    final bytes = Uint8List.fromList(
-      List<int>.generate(384, (index) => index & 0xff),
-    );
+  test(
+    'persistent partial artifact survives Reader service reopen without promotion',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'zic-reader-partial-cache-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final id = _readerArtifactId('persistent-partial-page');
+      final bytes = Uint8List.fromList(
+        List<int>.generate(384, (index) => index & 0xff),
+      );
 
-    final first = await PersistentChapterDownloadService.open(directory.path);
-    await first.storePartialDownload(
-      id: id,
-      entry: PartialDownloadEntry(
-        length: bytes.lengthInBytes,
-        validators: const Validators(etag: '"partial-v1"'),
-        totalLength: 2048,
-        open: ({required int start}) async* {
-          yield Uint8List.sublistView(bytes, start);
-        },
-      ),
-    );
-    expect(await first.openArtifactStream(id), isNull);
-    final beforeClose = await first.openPartialDownload(id);
-    expect(beforeClose, isNotNull);
-    expect(beforeClose!.length, bytes.lengthInBytes);
-    await first.close();
-
-    final reopened =
-        await PersistentChapterDownloadService.open(directory.path);
-    addTearDown(reopened.close);
-    expect(await reopened.openArtifactStream(id), isNull);
-    expect(reopened.materializedSessionCount, 0);
-    final partial = await reopened.openPartialDownload(id);
-    expect(partial, isNotNull);
-    expect(partial!.length, bytes.lengthInBytes);
-    expect(partial.validators.etag, '"partial-v1"');
-    expect(partial.totalLength, 2048);
-    expect(reopened.materializedSessionCount, 0);
-    expect(
-      await partial.open(start: 0).expand((chunk) => chunk).toList(),
-      bytes,
-    );
-    expect(reopened.materializedSessionCount, 0);
-  });
-
-  test('cold partial misses do not materialize durable DownloadSessions',
-      () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'zic-reader-partial-miss-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
-    final service = await PersistentChapterDownloadService.open(directory.path);
-    addTearDown(service.close);
-
-    for (var index = 0; index < 12; index++) {
-      final id = _readerArtifactId('missing-partial-$index');
-      expect(await service.openPartialDownload(id), isNull);
-    }
-    expect(service.materializedSessionCount, 0);
-  });
-
-  test('SAF partial store rejects an explicitly foreign existing owner', () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'zic-saf-partial-owner-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
-    final storage = <String, Uint8List>{};
-    final saf = _MemorySafIo(storage);
-    final service = await PersistentChapterDownloadService.open(
-      directory.path,
-      safTreeIo: saf,
-      safTreeUri: 'content://tree/saf-partial-owner',
-    );
-    addTearDown(service.close);
-
-    final id = _readerArtifactId('saf-partial-owner');
-    final foreign = _readerArtifactId('saf-partial-foreign');
-    final relativePath = 'partial/${service.artifactStore.layoutFor(id).tokenFor(id)}.part';
-    final bytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
-    storage[relativePath] = Uint8List.fromList(bytes);
-    storage['$relativePath.meta'] = Uint8List.fromList(
-      utf8.encode(jsonEncode(<String, Object?>{
-        'downloadKey': foreign.key,
-        'download': foreign.toJson(),
-      })),
-    );
-
-    await expectLater(
-      service.storePartialDownload(
+      final first = await PersistentChapterDownloadService.open(directory.path);
+      await first.storePartialDownload(
         id: id,
         entry: PartialDownloadEntry(
-          length: bytes.length,
-          validators: const Validators(etag: 'saf-partial'),
-          totalLength: 20,
+          length: bytes.lengthInBytes,
+          validators: const Validators(etag: '"partial-v1"'),
+          totalLength: 2048,
           open: ({required int start}) async* {
             yield Uint8List.sublistView(bytes, start);
           },
         ),
-      ),
-      throwsA(isA<Failure>().having(
-        (error) => error.code,
-        'code',
-        ErrorCode.artifactCorruption,
-      )),
-    );
-    expect(storage[relativePath], orderedEquals(bytes));
-  });
+      );
+      expect(await first.openArtifactStream(id), isNull);
+      final beforeClose = await first.openPartialDownload(id);
+      expect(beforeClose, isNotNull);
+      expect(beforeClose!.length, bytes.lengthInBytes);
+      await first.close();
 
-  test('SAF partial stays stream-backed and never exposes POSIX adoption',
-      () async {
-    final directory = await Directory.systemTemp.createTemp(
-      'zic-saf-partial-stream-fallback-',
-    );
-    addTearDown(() => directory.delete(recursive: true));
-    final storage = <String, Uint8List>{};
-    final service = await PersistentChapterDownloadService.open(
-      directory.path,
-      safTreeIo: _MemorySafIo(storage),
-      safTreeUri: 'content://tree/saf-partial-stream-fallback',
-    );
-    addTearDown(service.close);
-    final id = _readerArtifactId('saf-partial-stream-fallback');
-    final bytes = Uint8List.fromList(<int>[1, 2, 3, 4, 5, 6]);
+      final reopened = await PersistentChapterDownloadService.open(
+        directory.path,
+      );
+      addTearDown(reopened.close);
+      expect(await reopened.openArtifactStream(id), isNull);
+      expect(reopened.materializedSessionCount, 0);
+      final partial = await reopened.openPartialDownload(id);
+      expect(partial, isNotNull);
+      expect(partial!.length, bytes.lengthInBytes);
+      expect(partial.validators.etag, '"partial-v1"');
+      expect(partial.totalLength, 2048);
+      expect(reopened.materializedSessionCount, 0);
+      expect(
+        await partial.open(start: 0).expand((chunk) => chunk).toList(),
+        bytes,
+      );
+      expect(reopened.materializedSessionCount, 0);
+    },
+  );
 
-    await service.storePartialDownload(
-      id: id,
-      entry: PartialDownloadEntry(
-        length: bytes.lengthInBytes,
-        validators: const Validators(etag: 'saf-stream-v1'),
-        totalLength: 12,
-        open: ({required int start}) =>
-            Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
-      ),
-    );
-    final partial = await service.openPartialDownload(id);
+  test(
+    'cold partial misses do not materialize durable DownloadSessions',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'zic-reader-partial-miss-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final service = await PersistentChapterDownloadService.open(
+        directory.path,
+      );
+      addTearDown(service.close);
 
-    expect(partial, isNotNull);
-    expect(partial!.adoptInto, isNull);
-    final restored = <int>[];
-    await for (final chunk in partial.open(start: 0)) {
-      restored.addAll(chunk);
-    }
-    expect(restored, bytes);
-  });
+      for (var index = 0; index < 12; index++) {
+        final id = _readerArtifactId('missing-partial-$index');
+        expect(await service.openPartialDownload(id), isNull);
+      }
+      expect(service.materializedSessionCount, 0);
+    },
+  );
+
+  test(
+    'SAF partial store rejects an explicitly foreign existing owner',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'zic-saf-partial-owner-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final storage = <String, Uint8List>{};
+      final saf = _MemorySafIo(storage);
+      final service = await PersistentChapterDownloadService.open(
+        directory.path,
+        safTreeIo: saf,
+        safTreeUri: 'content://tree/saf-partial-owner',
+      );
+      addTearDown(service.close);
+
+      final id = _readerArtifactId('saf-partial-owner');
+      final foreign = _readerArtifactId('saf-partial-foreign');
+      final relativePath =
+          'partial/${service.artifactStore.layoutFor(id).tokenFor(id)}.part';
+      final bytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
+      storage[relativePath] = Uint8List.fromList(bytes);
+      storage['$relativePath.meta'] = Uint8List.fromList(
+        utf8.encode(
+          jsonEncode(<String, Object?>{
+            'downloadKey': foreign.key,
+            'download': foreign.toJson(),
+          }),
+        ),
+      );
+
+      await expectLater(
+        service.storePartialDownload(
+          id: id,
+          entry: PartialDownloadEntry(
+            length: bytes.length,
+            validators: const Validators(etag: 'saf-partial'),
+            totalLength: 20,
+            open: ({required int start}) async* {
+              yield Uint8List.sublistView(bytes, start);
+            },
+          ),
+        ),
+        throwsA(
+          isA<Failure>().having(
+            (error) => error.code,
+            'code',
+            ErrorCode.artifactCorruption,
+          ),
+        ),
+      );
+      expect(storage[relativePath], orderedEquals(bytes));
+    },
+  );
+
+  test(
+    'SAF partial persistence yields to foreground local-read pressure',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'zic-saf-partial-foreground-yield-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final storage = <String, Uint8List>{};
+      final saf = _MemorySafIo(storage);
+      final reads = ArtifactCacheReadScheduler(
+        maxActive: 2,
+        maxBackgroundWhileForeground: 1,
+      );
+      final writes = StorageWriteScheduler(localReadScheduler: reads);
+      final service = await PersistentChapterDownloadService.open(
+        directory.path,
+        localReadScheduler: reads,
+        storageWriteScheduler: writes,
+        safTreeIo: saf,
+        safTreeUri: 'content://tree/saf-partial-foreground-yield',
+      );
+      addTearDown(service.close);
+      final id = _readerArtifactId('saf-partial-foreground-yield');
+      final bytes = Uint8List.fromList(
+        List<int>.generate(1024, (index) => index & 0xff),
+      );
+      final pressure = reads.holdForegroundPressure();
+      addTearDown(pressure.release);
+
+      var completed = false;
+      final storing = service
+          .storePartialDownload(
+            id: id,
+            entry: PartialDownloadEntry(
+              length: bytes.lengthInBytes,
+              validators: const Validators(etag: 'saf-yield'),
+              totalLength: bytes.lengthInBytes * 2,
+              open: ({required int start}) async* {
+                yield Uint8List.sublistView(
+                  bytes,
+                  start,
+                  bytes.lengthInBytes ~/ 2,
+                );
+                yield Uint8List.sublistView(bytes, bytes.lengthInBytes ~/ 2);
+              },
+            ),
+          )
+          .whenComplete(() => completed = true);
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(completed, isFalse);
+      expect(
+        storage.keys.where((path) => path.contains('.zic-tmp-')),
+        isEmpty,
+        reason:
+            'background SAF persistence must not acquire a write quantum '
+            'while Reader foreground pressure is held',
+      );
+
+      pressure.release();
+      await storing.timeout(const Duration(seconds: 1));
+      final relativePath =
+          'partial/${service.artifactStore.layoutFor(id).tokenFor(id)}.part';
+      expect(storage[relativePath], orderedEquals(bytes));
+    },
+  );
+
+  test(
+    'SAF partial stays stream-backed and never exposes POSIX adoption',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'zic-saf-partial-stream-fallback-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final storage = <String, Uint8List>{};
+      final service = await PersistentChapterDownloadService.open(
+        directory.path,
+        safTreeIo: _MemorySafIo(storage),
+        safTreeUri: 'content://tree/saf-partial-stream-fallback',
+      );
+      addTearDown(service.close);
+      final id = _readerArtifactId('saf-partial-stream-fallback');
+      final bytes = Uint8List.fromList(<int>[1, 2, 3, 4, 5, 6]);
+
+      await service.storePartialDownload(
+        id: id,
+        entry: PartialDownloadEntry(
+          length: bytes.lengthInBytes,
+          validators: const Validators(etag: 'saf-stream-v1'),
+          totalLength: 12,
+          open: ({required int start}) =>
+              Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+        ),
+      );
+      final partial = await service.openPartialDownload(id);
+
+      expect(partial, isNotNull);
+      expect(partial!.adoptInto, isNull);
+      final restored = <int>[];
+      await for (final chunk in partial.open(start: 0)) {
+        restored.addAll(chunk);
+      }
+      expect(restored, bytes);
+    },
+  );
 
   test('foreign partial metadata drops only the logical binding', () async {
     final directory = await Directory.systemTemp.createTemp(

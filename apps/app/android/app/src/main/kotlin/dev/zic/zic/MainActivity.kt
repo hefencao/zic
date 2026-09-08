@@ -48,6 +48,10 @@ class MainActivity : FlutterActivity() {
     private var pendingTraceResult: MethodChannel.Result? = null
     private var pendingTraceBytes: ByteArray? = null
     private var pendingDownloadPick: MethodChannel.Result? = null
+    private var firstFlutterUiDisplayed = false
+    private var pendingFirstFlutterUiDisplayedResult: MethodChannel.Result? = null
+    private val processStartUptimeMs = android.os.Process.getStartUptimeMillis()
+    private val nativeStartupTimeline = mutableListOf<Map<String, Any>>()
 
     private fun clearPendingDownloadPick() {
         pendingDownloadPick = null
@@ -131,6 +135,9 @@ class MainActivity : FlutterActivity() {
 
     override fun onFlutterUiDisplayed() {
         startupLog("flutter-ui-displayed")
+        firstFlutterUiDisplayed = true
+        pendingFirstFlutterUiDisplayedResult?.success(true)
+        pendingFirstFlutterUiDisplayedResult = null
         super.onFlutterUiDisplayed()
     }
 
@@ -177,6 +184,7 @@ class MainActivity : FlutterActivity() {
      *
      * Methods: safOpen(treeUri, relativePath, mode=read|writeAppend|writeTruncate)
      * → handle; safRead(handle, length) → bytes (advances cursor);
+     * safReadAt(handle, position, length) → bytes (one random-access operation);
      * safWrite(handle, bytes); safSeek(handle, position);
      * safLength(handle) → long; safClose(handle);
      * safDelete(treeUri, relativePath); safRename(treeUri, relativePath, newRelativePath);
@@ -231,6 +239,8 @@ class MainActivity : FlutterActivity() {
                     "safOpen" -> runCatching { safOpen(call) }
                         .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safRead" -> runCatching { safRead(call) }
+                        .fold({ true to it }, { false to safBridgeFailure(it) })
+                    "safReadAt" -> runCatching { safReadAt(call) }
                         .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safWrite" -> runCatching { safWrite(call) }
                         .fold({ true to null }, { false to safBridgeFailure(it) })
@@ -297,6 +307,88 @@ class MainActivity : FlutterActivity() {
         return dir
     }
 
+    // Accessed only from the single SAF executor. Each entry is one directory
+    // listing keyed by provider document id, so hundreds of sibling pages pay
+    // one children query instead of repeating DocumentFile.findFile metadata
+    // lookups for every page open.
+    private val safChildDocumentIds = mutableMapOf<String, Map<String, String>>()
+
+    private fun clearSafPathCache(treeUri: String? = null) {
+        if (treeUri == null) {
+            safChildDocumentIds.clear()
+            return
+        }
+        val prefix = "$treeUri\u0000"
+        safChildDocumentIds.keys.removeAll { it.startsWith(prefix) }
+    }
+
+    private fun childDocumentId(
+        treeUri: Uri,
+        parentDocumentId: String,
+        displayName: String,
+    ): String? {
+        val key = "${treeUri}\u0000$parentDocumentId"
+        val indexed = safChildDocumentIds[key] ?: run {
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                treeUri,
+                parentDocumentId,
+            )
+            val values = LinkedHashMap<String, String>()
+            contentResolver.query(
+                childrenUri,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                ),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                val idColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                )
+                val nameColumn = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                )
+                while (cursor.moveToNext()) {
+                    val name = cursor.getString(nameColumn) ?: continue
+                    val id = cursor.getString(idColumn) ?: continue
+                    values.putIfAbsent(name, id)
+                }
+            }
+            values.toMap().also { safChildDocumentIds[key] = it }
+        }
+        return indexed[displayName]
+    }
+
+    private fun resolveReadUri(treeUriText: String, relativePath: String): Uri? {
+        if (!isSafeRelativePath(relativePath)) return null
+        val treeUri = Uri.parse(treeUriText)
+        var documentId = DocumentsContract.getTreeDocumentId(treeUri)
+        for (segment in relativePath.split('/').filter { it.isNotEmpty() }) {
+            documentId = childDocumentId(treeUri, documentId, segment) ?: return null
+        }
+        return DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
+    }
+
+    private fun openSafReadDescriptor(treeUri: String, relativePath: String): android.os.ParcelFileDescriptor {
+        fun openResolved(): android.os.ParcelFileDescriptor {
+            val uri = resolveReadUri(treeUri, relativePath)
+                ?: throw java.io.FileNotFoundException("missing $relativePath")
+            return contentResolver.openFileDescriptor(uri, "r")
+                ?: throw IllegalStateException("resolver returned null")
+        }
+        return try {
+            openResolved()
+        } catch (error: java.io.FileNotFoundException) {
+            // A user or another process may replace a document while this app
+            // remains alive. Drop provider ids and resolve once from fresh
+            // directory authority before surfacing the stale locator.
+            clearSafPathCache(treeUri)
+            openResolved()
+        }
+    }
+
     private fun safOpen(call: MethodCall): Int {
         val treeUri = requireNotNull(call.argument<String>("treeUri"))
         val relativePath = call.argument<String>("relativePath") ?: ""
@@ -305,19 +397,26 @@ class MainActivity : FlutterActivity() {
         require(mode == "read" || mode == "writeAppend" || mode == "writeTruncate") {
             "unsupported SAF open mode"
         }
-        val root = safTreeRoot(treeUri)
-            ?: throw IllegalStateException("tree unavailable")
-        val target: androidx.documentfile.provider.DocumentFile =
-            if (relativePath.isEmpty()) root else resolvePath(root, relativePath)
-                ?: run {
-                    if (mode == "read") throw java.io.FileNotFoundException("missing $relativePath")
+        val pfd = if (mode == "read") {
+            openSafReadDescriptor(treeUri, relativePath)
+        } else {
+            val root = safTreeRoot(treeUri)
+                ?: throw IllegalStateException("tree unavailable")
+            var createdPath = false
+            val target: androidx.documentfile.provider.DocumentFile =
+                resolvePath(root, relativePath) ?: run {
                     var dir = root
                     val segments = relativePath.split('/').filter { it.isNotEmpty() }
                     for (i in segments.indices) {
                         val segment = segments[i]
                         val isLast = i == segments.lastIndex
                         val existing = dir.findFile(segment)
-                        dir = existing ?: (if (isLast) {
+                        if (existing != null) {
+                            dir = existing
+                            continue
+                        }
+                        createdPath = true
+                        dir = (if (isLast) {
                             val mimeType = when {
                                 segment.endsWith(".jpg", ignoreCase = true) || segment.endsWith(".jpeg", ignoreCase = true) -> "image/jpeg"
                                 segment.endsWith(".png", ignoreCase = true) -> "image/png"
@@ -333,8 +432,10 @@ class MainActivity : FlutterActivity() {
                     }
                     dir
                 }
-        val pfd = contentResolver.openFileDescriptor(target.uri, if (mode == "read") "r" else "rw")
-            ?: throw IllegalStateException("resolver returned null")
+            if (createdPath) clearSafPathCache(treeUri)
+            contentResolver.openFileDescriptor(target.uri, "rw")
+                ?: throw IllegalStateException("resolver returned null")
+        }
         if (mode == "writeTruncate") {
             android.system.Os.ftruncate(pfd.fileDescriptor, 0)
             android.system.Os.lseek(
@@ -367,6 +468,29 @@ class MainActivity : FlutterActivity() {
         val buffer = ByteArray(minOf(length, 8 shl 20))
         val read = android.system.Os.read(pfd.fileDescriptor, buffer, 0, buffer.size)
         return if (read <= 0) ByteArray(0) else buffer.copyOf(read)
+    }
+
+    private fun safReadAt(call: MethodCall): ByteArray {
+        val pfd = safDescriptor(call)
+        val position = requireNotNull(call.argument<Number>("position")).toLong()
+        val length = requireNotNull(call.argument<Number>("length")).toInt()
+        require(position >= 0) { "read position must not be negative" }
+        require(length >= 0) { "read length must not be negative" }
+        if (length == 0) return ByteArray(0)
+        val buffer = ByteArray(length)
+        var offset = 0
+        while (offset < length) {
+            val read = android.system.Os.pread(
+                pfd.fileDescriptor,
+                buffer,
+                offset,
+                length - offset,
+                position + offset,
+            )
+            if (read <= 0) break
+            offset += read
+        }
+        return if (offset == length) buffer else buffer.copyOf(offset)
     }
 
     private fun safWrite(call: MethodCall) {
@@ -408,6 +532,7 @@ class MainActivity : FlutterActivity() {
         val treeUri = requireNotNull(call.argument<String>("treeUri"))
         val relativePath = call.argument<String>("relativePath") ?: ""
         if (!isSafeRelativePath(relativePath)) return false
+        clearSafPathCache(treeUri)
         val root = safTreeRoot(treeUri) ?: return false
         return resolvePath(root, relativePath)?.delete() == true
     }
@@ -417,6 +542,7 @@ class MainActivity : FlutterActivity() {
         val relativePath = requireNotNull(call.argument<String>("relativePath"))
         val newRelativePath = requireNotNull(call.argument<String>("newRelativePath"))
         if (!isSafeRelativePath(relativePath) || !isSafeRelativePath(newRelativePath)) return false
+        clearSafPathCache(treeUri)
         val root = safTreeRoot(treeUri) ?: return false
         val source = resolvePath(root, relativePath) ?: return false
         val segments = newRelativePath.split('/').filter { it.isNotEmpty() }
@@ -445,6 +571,7 @@ class MainActivity : FlutterActivity() {
         val relativePath = requireNotNull(call.argument<String>("relativePath"))
         val newRelativePath = requireNotNull(call.argument<String>("newRelativePath"))
         if (!isSafeRelativePath(relativePath) || !isSafeRelativePath(newRelativePath)) return false
+        clearSafPathCache(treeUri)
         val root = safTreeRoot(treeUri) ?: return false
         val source = resolvePath(root, relativePath) ?: return false
         val segments = newRelativePath.split('/').filter { it.isNotEmpty() }
@@ -477,8 +604,8 @@ class MainActivity : FlutterActivity() {
         val treeUri = requireNotNull(call.argument<String>("treeUri"))
         val relativePath = call.argument<String>("relativePath") ?: ""
         if (!isSafeRelativePath(relativePath, allowRoot = true)) return false
-        val root = safTreeRoot(treeUri) ?: return false
-        return resolvePath(root, relativePath) != null
+        if (relativePath.isEmpty()) return safTreeRoot(treeUri) != null
+        return resolveReadUri(treeUri, relativePath) != null
     }
 
     private fun safList(call: MethodCall): List<Map<String, Any?>> {
@@ -617,6 +744,37 @@ class MainActivity : FlutterActivity() {
         if (method == "applicationSupportPath") {
             Log.i(TAG, "startup-applicationSupportPath")
             result.success(applicationContext.filesDir.absolutePath)
+            return
+        }
+        if (method == "waitForFirstFlutterUiDisplayed") {
+            if (firstFlutterUiDisplayed) {
+                result.success(true)
+                return
+            }
+            if (pendingFirstFlutterUiDisplayedResult != null) {
+                result.error(
+                    "startup-ui-wait-busy",
+                    "first Flutter UI display wait is already active",
+                    null,
+                )
+                return
+            }
+            pendingFirstFlutterUiDisplayedResult = result
+            return
+        }
+        if (method == "nativeStartupTimeline") {
+            val now = SystemClock.elapsedRealtime()
+            val events = synchronized(nativeStartupTimeline) {
+                nativeStartupTimeline.map { HashMap(it) }
+            }
+            result.success(
+                mapOf(
+                    "processStartUptimeMs" to processStartUptimeMs,
+                    "retrievedUptimeMs" to now,
+                    "retrievedSinceProcessStartMs" to (now - processStartUptimeMs),
+                    "events" to events,
+                ),
+            )
             return
         }
         if (method == "allFilesAccessGranted") {
@@ -893,7 +1051,19 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun startupLog(event: String) {
-        Log.i(TAG, "$event elapsedMs=${SystemClock.elapsedRealtime()}")
+        val now = SystemClock.elapsedRealtime()
+        synchronized(nativeStartupTimeline) {
+            if (nativeStartupTimeline.size < 96) {
+                nativeStartupTimeline.add(
+                    mapOf(
+                        "event" to event,
+                        "uptimeMs" to now,
+                        "sinceProcessStartMs" to (now - processStartUptimeMs),
+                    ),
+                )
+            }
+        }
+        Log.i(TAG, "$event elapsedMs=$now")
     }
 
     override fun onDestroy() {
@@ -909,6 +1079,12 @@ class MainActivity : FlutterActivity() {
             null,
         )
         clearPendingDownloadPick()
+        pendingFirstFlutterUiDisplayedResult?.error(
+            "startup-ui-wait-cancelled",
+            "activity destroyed before first Flutter UI display",
+            null,
+        )
+        pendingFirstFlutterUiDisplayedResult = null
         startupChannel?.setMethodCallHandler(null)
         startupChannel = null
         configuredEngine = null

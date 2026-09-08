@@ -27,6 +27,10 @@ void main() {
     );
     clock.advance(70);
     telemetry.coverFirstFrame('source/comic/cover');
+    telemetry.interaction(
+      'navigation-destination',
+      payload: const <String, Object?>{'fromIndex': 0, 'toIndex': 3},
+    );
 
     expect(
       sink.events.map((event) => event.kind),
@@ -39,6 +43,7 @@ void main() {
         TraceEventKind.homeCoverDecodeFailed,
         TraceEventKind.homeCoverSourceFailed,
         TraceEventKind.homeCoverFirstFrame,
+        TraceEventKind.homeInteraction,
       ],
     );
     expect(sink.events[1].payload, <String, Object?>{
@@ -52,6 +57,11 @@ void main() {
     expect(sink.events[6].payload, <String, Object?>{
       'errorType': 'StateError',
       'sourceAvailable': false,
+    });
+    expect(sink.events[8].payload, <String, Object?>{
+      'action': 'navigation-destination',
+      'fromIndex': 0,
+      'toIndex': 3,
     });
   });
 }

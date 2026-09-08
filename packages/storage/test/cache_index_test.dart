@@ -574,7 +574,7 @@ void runCacheSchemaV2Tests() {
     expect(replicas.single.storageRootId, root);
   });
 
-  test('v8 cache metadata adds durable replica migration state as schema 9', () async {
+  test('v8 cache metadata adds durable replica migration state as schema 10', () async {
     final temp = await Directory.systemTemp.createTemp('cache_index_v8_migration_');
     addTearDown(() => temp.delete(recursive: true));
     final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
@@ -630,7 +630,7 @@ void runCacheSchemaV2Tests() {
     await migrated.close();
 
     final schema = sql.sqlite3.open(dbPath);
-    expect(schema.select('PRAGMA user_version').single.values.single, 9);
+    expect(schema.select('PRAGMA user_version').single.values.single, 10);
     expect(
       schema
           .select(
@@ -641,6 +641,62 @@ void runCacheSchemaV2Tests() {
       1,
     );
     schema.dispose();
+  });
+
+  test('current cache schema does not rerun legacy identity migration on reopen',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'cache_index_current_reopen_',
+    );
+    addTearDown(() => temp.delete(recursive: true));
+    final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
+    final current = SqliteIndex(dbPath);
+    await current.open();
+    await current.close();
+
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source/legacy',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/current-reopen.webp'),
+    );
+    final raw = sql.sqlite3.open(dbPath);
+    expect(raw.select('PRAGMA user_version').single.values.single, 10);
+    raw.execute(
+      'INSERT INTO cache_entry '
+      '(key, download_json, state, path, bytes, checksum, created_us, touched_us, '
+      'pinned, checksum_algorithm, artifact_id, storage_root_id) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      <Object?>[
+        id.legacyKey,
+        jsonEncode(id.toJson()),
+        CacheState.partial.name,
+        '${temp.path}/legacy.part',
+        1,
+        '',
+        1,
+        1,
+        0,
+        'crc32',
+        '',
+        'default',
+      ],
+    );
+    raw.dispose();
+
+    final reopened = SqliteIndex(dbPath);
+    await reopened.open();
+    addTearDown(reopened.close);
+    expect(await reopened.get(id.legacyKey), isNotNull);
+    expect(
+      await reopened.get(id.key),
+      isNull,
+      reason: 'schema-10 reopen must not rescan/rewrite all cache identities',
+    );
   });
 
   test('replica migration authority switch and cleanup debt survive reopen', () async {

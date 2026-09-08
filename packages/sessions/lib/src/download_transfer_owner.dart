@@ -120,6 +120,10 @@ final class DownloadTransferOwner {
   final Set<DownloadId> _activeLocalPreparations = <DownloadId>{};
   final Map<DownloadId, _LocalPreparationControl>
       _localPreparationControls = <DownloadId, _LocalPreparationControl>{};
+  Timer? _localPreparationPreemptionWake;
+  DownloadId? _localPreparationPreemptionCandidateId;
+  DownloadId? _localPreparationPreemptionVictimId;
+  int? _localPreparationPreemptionSinceMicros;
   final Map<DownloadId, SourceEpoch> _locallyPreparedSessions =
       <DownloadId, SourceEpoch>{};
   // Local preparation may finish out of demand-priority order. Network/source
@@ -349,6 +353,7 @@ final class DownloadTransferOwner {
   /// materialization.
   Future<Stream<List<int>>> openResidentReplay(
     DownloadId id, {
+    int start = 0,
     required int endExclusive,
     TaskControl? control,
   }) async {
@@ -366,10 +371,12 @@ final class DownloadTransferOwner {
         message: 'resident replay requires a promoted resident transfer',
       );
     }
-    if (endExclusive <= 0 || endExclusive > session.committedLength) {
+    if (start < 0 ||
+        endExclusive <= start ||
+        endExclusive > session.committedLength) {
       throw Failure(
         code: ErrorCode.artifactCorruption,
-        message: 'invalid resident replay boundary $endExclusive/'
+        message: 'invalid resident replay range $start..$endExclusive/'
             '${session.committedLength}',
       );
     }
@@ -386,13 +393,13 @@ final class DownloadTransferOwner {
     final pendingResponse = transport is ControlledTransport
         ? transport.openControlled(
             sourceId.canonicalUri,
-            range: ByteRange(start: 0, end: endExclusive - 1),
+            range: ByteRange(start: start, end: endExclusive - 1),
             validators: resumeValidators.canResume ? resumeValidators : null,
             control: control,
           )
         : transport.open(
             sourceId.canonicalUri,
-            range: ByteRange(start: 0, end: endExclusive - 1),
+            range: ByteRange(start: start, end: endExclusive - 1),
             validators: resumeValidators.canResume ? resumeValidators : null,
           );
     final response = await _awaitResidentResponse(
@@ -404,10 +411,10 @@ final class DownloadTransferOwner {
       control!.throwIfCancelled();
     }
     try {
-      if (response.rangeStart != 0) {
+      if (response.rangeStart != start) {
         throw Failure(
           code: ErrorCode.artifactCorruption,
-          message: 'resident replay started at ${response.rangeStart}, expected 0',
+          message: 'resident replay started at ${response.rangeStart}, expected $start',
         );
       }
       final expectedTotal = session.totalLength;
@@ -446,7 +453,7 @@ final class DownloadTransferOwner {
     }
     return _boundedResidentReplay(
       body,
-      endExclusive,
+      endExclusive - start,
       id,
       control: control,
     );
@@ -484,30 +491,30 @@ final class DownloadTransferOwner {
 
   Stream<List<int>> _boundedResidentReplay(
     _ResidentReplayBody body,
-    int endExclusive,
+    int expectedBytes,
     DownloadId id, {
     TaskControl? control,
   }) async* {
     var emitted = 0;
     final iterator = StreamIterator<List<int>>(body.response.bytes);
     try {
-      while (emitted < endExclusive &&
+      while (emitted < expectedBytes &&
           await _moveNextResidentChunk(iterator, control)) {
         control?.throwIfCancelled();
         final chunk = iterator.current;
         if (chunk.isEmpty) continue;
-        final remaining = endExclusive - emitted;
+        final remaining = expectedBytes - emitted;
         final part = chunk.length <= remaining
             ? chunk
             : chunk.sublist(0, remaining);
         emitted += part.length;
         if (part.isNotEmpty) yield part;
       }
-      if (emitted != endExclusive) {
+      if (emitted != expectedBytes) {
         throw Failure(
           code: ErrorCode.artifactCorruption,
           message: 'resident replay was short for ${id.key}: '
-              '$emitted/$endExclusive',
+              '$emitted/$expectedBytes',
         );
       }
     } finally {
@@ -586,6 +593,7 @@ final class DownloadTransferOwner {
   Future<void> dispose() async {
     if (_disposed) return;
     _disposed = true;
+    _clearLocalPreparationPreemptionCandidate();
     if (!_disposedCompleter.isCompleted) {
       _disposedCompleter.complete();
     }
@@ -1379,8 +1387,17 @@ final class DownloadTransferOwner {
       }
       return false;
     });
-    if (_pendingLocalPreparations.isEmpty) return;
+    if (_pendingLocalPreparations.isEmpty) {
+      _clearLocalPreparationPreemptionCandidate();
+      return;
+    }
 
+    if (_activeLocalPreparations.length >= _maxActiveLocalPreparations) {
+      _preemptLocalPreparationForBlockedHighPriority();
+      return;
+    }
+
+    _clearLocalPreparationPreemptionCandidate();
     while (_activeLocalPreparations.length < _maxActiveLocalPreparations) {
       final candidates = _pendingLocalPreparations.values.toList(growable: false)
         ..sort((left, right) {
@@ -1421,10 +1438,15 @@ final class DownloadTransferOwner {
         if (identical(_localPreparationControls[id], control)) {
           _localPreparationControls.remove(id);
         }
-        if (!_disposed &&
+        final stillDemanded = !_disposed &&
             identical(registry.findExact(id), session) &&
-            session.demanded &&
-            !control.cancelled) {
+            session.demanded;
+        if (stillDemanded &&
+            (!control.cancelled || session.committedLength > 0)) {
+          // A preempted restore may already have copied a useful prefix. Treat
+          // that prefix as locally prepared for admission ordering rather than
+          // reopening the durable restore from zero or letting its lower-rank
+          // network continuation bypass a higher local preparation.
           _preparedNetworkAdmissions[id] = session;
         } else {
           _preparedNetworkAdmissions.remove(id);
@@ -1432,9 +1454,143 @@ final class DownloadTransferOwner {
         }
         _pumpLocalPreparations();
         _drainPreparedNetworkAdmissions();
+        if (stillDemanded &&
+            control.cancelled &&
+            session.committedLength == 0) {
+          // Priority preemption cancels only this local acceleration attempt,
+          // not the authoritative demand. Re-enter normal preparation after
+          // the old operation has fully retired; the bounded scheduler will
+          // keep it behind the newly promoted work while preserving the normal
+          // wider Pipeline window.
+          _ensureDownloadTask(id, session);
+        }
       });
       _localPreparations[target.id] = tracked;
     }
+  }
+
+  bool _preemptLocalPreparationForBlockedHighPriority() {
+    // Keep at most one destructive local-preparation cancellation in flight.
+    // The cancelled operation still owns its writer/descriptor until its
+    // Future unwinds, so freeing another logical slot early would violate the
+    // operation-lifetime bound this layer exists to enforce.
+    for (final id in _activeLocalPreparations) {
+      if (_localPreparationControls[id]?.cancelled == true) return false;
+    }
+
+    final pending = _pendingLocalPreparations.values.toList(growable: false)
+      ..sort((left, right) {
+        final priority = right.session.effectivePriority
+            .compareTo(left.session.effectivePriority);
+        if (priority != 0) return priority;
+        final leftSequence =
+            _preferredClaim(left.id)?.sequence ?? (1 << 62);
+        final rightSequence =
+            _preferredClaim(right.id)?.sequence ?? (1 << 62);
+        return leftSequence.compareTo(rightSequence);
+      });
+    if (pending.isEmpty) {
+      _clearLocalPreparationPreemptionCandidate();
+      return false;
+    }
+    final incoming = pending.first;
+    final incomingPriority = incoming.session.effectivePriority;
+
+    DownloadId? victimId;
+    DownloadSession? victimSession;
+    var victimPriority = 1 << 30;
+    for (final id in _activeLocalPreparations) {
+      final session = registry.findExact(id);
+      final control = _localPreparationControls[id];
+      if (session == null ||
+          control == null ||
+          control.cancelled ||
+          !session.demanded ||
+          !net.highPriorityOutranks(
+            incomingPriority,
+            incumbentPriority: session.effectivePriority,
+          )) {
+        continue;
+      }
+      if (victimId == null || session.effectivePriority < victimPriority) {
+        victimId = id;
+        victimSession = session;
+        victimPriority = session.effectivePriority;
+      }
+    }
+    if (victimId == null || victimSession == null) {
+      _clearLocalPreparationPreemptionCandidate();
+      return false;
+    }
+
+    if (!_localPreparationPreemptionReady(
+      candidateId: incoming.id,
+      victimId: victimId,
+    )) {
+      return false;
+    }
+
+    _clearLocalPreparationPreemptionCandidate();
+    final control = _localPreparationControls[victimId]!;
+    control.cancel();
+    _record(
+      _preferredClaim(victimId),
+      kind: TraceEventKind.policyDecision,
+      id: victimId,
+      payload: <String, Object?>{
+        'stage': 'local-preparation-preempted',
+        'victimPriority': victimPriority,
+        'incomingPriority': incomingPriority,
+        'activePreparations': _activeLocalPreparations.length,
+        'pendingPreparations': _pendingLocalPreparations.length,
+        'reason': 'blocked-high-priority-local-preparation',
+      },
+    );
+    return true;
+  }
+
+  bool _localPreparationPreemptionReady({
+    required DownloadId candidateId,
+    required DownloadId victimId,
+  }) {
+    final graceMicros = net.preemptionCandidateGrace.inMicroseconds;
+    if (graceMicros <= 0) return true;
+    final now = clock.nowMicros();
+    if (_localPreparationPreemptionCandidateId != candidateId ||
+        _localPreparationPreemptionVictimId != victimId ||
+        _localPreparationPreemptionSinceMicros == null) {
+      _localPreparationPreemptionCandidateId = candidateId;
+      _localPreparationPreemptionVictimId = victimId;
+      _localPreparationPreemptionSinceMicros = now;
+      _scheduleLocalPreparationPreemptionWake(graceMicros);
+      return false;
+    }
+    final age = (now - _localPreparationPreemptionSinceMicros!)
+        .clamp(0, 1 << 62)
+        .toInt();
+    if (age >= graceMicros) return true;
+    _scheduleLocalPreparationPreemptionWake(graceMicros - age);
+    return false;
+  }
+
+  void _scheduleLocalPreparationPreemptionWake(int delayMicros) {
+    if (delayMicros <= 0 || _disposed) return;
+    if (_localPreparationPreemptionWake?.isActive == true) return;
+    _localPreparationPreemptionWake = Timer(
+      Duration(microseconds: delayMicros),
+      () {
+        _localPreparationPreemptionWake = null;
+        if (!_disposed) _pumpLocalPreparations();
+      },
+    );
+  }
+
+  void _clearLocalPreparationPreemptionCandidate() {
+    _localPreparationPreemptionWake?.cancel();
+    _localPreparationPreemptionWake = null;
+    _localPreparationPreemptionCandidateId = null;
+    _localPreparationPreemptionVictimId = null;
+    _localPreparationPreemptionSinceMicros = null;
   }
 
   void _drainPreparedNetworkAdmissions() {

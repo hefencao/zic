@@ -13,6 +13,8 @@ enum TraceEventKind {
   homeCoverSourceFailed,
   homeCoverDecodeFailed,
   homeCoverFirstFrame,
+  homeInteraction,
+  platformStartupTimeline,
   readerSessionCreated,
   readerSessionRetained,
   readerSessionReused,

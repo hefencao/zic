@@ -1077,6 +1077,140 @@ void main() {
     expect(starts, <DownloadId>[blocker.id, high.id, low.id]);
   });
 
+  test('deferred durable resident hydrates only decoder-requested ranges',
+      () async {
+    final id = _idWithSource('deferred-durable-ready');
+    final durable = DownloadSession(
+      id: id,
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/deferred-ready.webp',
+        finalPath: '${temp.path}/cache/deferred-ready.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    addTearDown(durable.dispose);
+    await durable.restore();
+    final quantum = webpDecodePrefixQuantumBytesFor(id);
+    final totalLength = quantum + 4096;
+    final bytes = List<int>.filled(totalLength, 0);
+    final header = 'RIFF....WEBP'.codeUnits;
+    bytes.setRange(0, header.length, header);
+    durable.bindResidentImmutableAuthority(
+      validators: const Validators(etag: '"ready"'),
+      totalLength: totalLength,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: bytes.sublist(0, 64),
+    );
+
+    expect(durable.state, DownloadState.promoted);
+    expect(durable.committedLength, totalLength,
+        reason: 'physical committed boundary is the immutable body authority');
+    expect(durable.artifact.committedLength, 0,
+        reason: 'READY authority must not be recopied into the session artifact');
+    expect(durable.residentIngressDeferred, isTrue);
+
+    final ranges = <(int, int)>[];
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => totalLength + 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-deferred-ready',
+      residentReplayRangeSourceWithControl:
+          (physical, start, endExclusive, {required control}) async {
+        expect(physical, same(durable));
+        control.throwIfCancelled();
+        ranges.add((start, endExclusive));
+        return Stream<List<int>>.value(bytes.sublist(start, endExclusive));
+      },
+    );
+    addTearDown(() {
+      ingresses.dispose();
+      sources.dispose();
+    });
+
+    final projection = ingresses.get(durable);
+    await ingresses.settled(id);
+    expect(projection.snapshot.length, quantum);
+    expect(projection.snapshot.sealed, isFalse);
+    expect(ranges, <(int, int)>[(0, quantum)]);
+
+    final secondTarget = quantum + 2048;
+    await ingresses.ensureResidentPrefix(durable, secondTarget);
+    expect(projection.snapshot.length, secondTarget);
+    expect(projection.snapshot.sealed, isFalse);
+    expect(ranges, <(int, int)>[(0, quantum), (quantum, secondTarget)]);
+
+    await ingresses.ensureResidentPrefix(durable, totalLength);
+    expect(projection.snapshot.length, totalLength);
+    expect(projection.snapshot.sealed, isTrue);
+    expect(ranges.last, (secondTarget, totalLength));
+    expect(durable.artifact.committedLength, 0);
+  });
+
+  test('empty Reader projection hydrates when durable resident authority arrives later',
+      () async {
+    final id = _idWithSource('deferred-durable-late-authority');
+    final durable = DownloadSession(
+      id: id,
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/deferred-late.webp',
+        finalPath: '${temp.path}/cache/deferred-late.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    addTearDown(durable.dispose);
+    await durable.restore();
+    final quantum = webpDecodePrefixQuantumBytesFor(id);
+    final totalLength = quantum + 4096;
+    final bytes = List<int>.filled(totalLength, 0);
+    final header = 'RIFF....WEBP'.codeUnits;
+    bytes.setRange(0, header.length, header);
+    final ranges = <(int, int)>[];
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => totalLength + 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-deferred-late-authority',
+      residentReplayRangeSourceWithControl:
+          (physical, start, endExclusive, {required control}) async {
+        expect(physical, same(durable));
+        control.throwIfCancelled();
+        ranges.add((start, endExclusive));
+        return Stream<List<int>>.value(bytes.sublist(start, endExclusive));
+      },
+    );
+    addTearDown(() {
+      ingresses.dispose();
+      sources.dispose();
+    });
+
+    final projection = ingresses.get(durable);
+    expect(projection.snapshot.length, 0);
+    expect(projection.source, isNull);
+
+    durable.bindResidentImmutableAuthority(
+      validators: const Validators(etag: '\"ready-late\"'),
+      totalLength: totalLength,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: bytes.sublist(0, 64),
+    );
+
+    for (var turn = 0; turn < 100 && projection.snapshot.length < quantum; turn++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(projection.snapshot.length, quantum,
+        reason: 'an already-attached empty Reader must observe 0->resident READY');
+    expect(projection.decodePrefixQuantumBytes, localWebpDecodePrefixQuantumBytes,
+        reason: 'late durable READY must switch decoder growth to physical-local quantum');
+    expect(projection.snapshot.sourceReady, isTrue);
+    expect(projection.snapshot.sealed, isFalse);
+    expect(ranges, <(int, int)>[(0, quantum)]);
+  });
+
   test('synchronized ingress projection attachment stages replays by priority and watermark',
       () async {
     final s1 = DownloadSession(

@@ -14,7 +14,10 @@ final class DownloadIngressProjection {
   DownloadIngressProjection({
     required this.scopeId,
     required this.ingress,
-  }) {
+    int? decodePrefixQuantumBytes,
+    bool decoderDrivenSourceGrowth = false,
+  })  : _decodePrefixQuantumBytes = decodePrefixQuantumBytes,
+        _decoderDrivenSourceGrowth = decoderDrivenSourceGrowth {
     if (scopeId.isEmpty) {
       throw ArgumentError.value(scopeId, 'scopeId', 'must not be empty');
     }
@@ -22,6 +25,30 @@ final class DownloadIngressProjection {
 
   final String scopeId;
   final Ingress ingress;
+
+  /// Physical encoded-source growth quantum for incremental decode. Null keeps
+  /// the logical DownloadId scheme as the fallback authority. Durable local
+  /// replay sets this explicitly because its original URI may still be remote.
+  int? get decodePrefixQuantumBytes => _decodePrefixQuantumBytes;
+  int? _decodePrefixQuantumBytes;
+
+  void setDecodePrefixQuantumBytes(int? value) {
+    if (value != null && value <= 0) {
+      throw ArgumentError.value(value, 'value', 'must be positive');
+    }
+    _decodePrefixQuantumBytes = value;
+  }
+
+  /// True when the current encoded prefix grows only after DecodeSession
+  /// publishes explicit need-more-data evidence. An unsealed source with this
+  /// contract must not hide that evidence behind partial-prefix playback.
+  bool get decoderDrivenSourceGrowth => _decoderDrivenSourceGrowth;
+  bool _decoderDrivenSourceGrowth;
+
+  void setDecoderDrivenSourceGrowth(bool value) {
+    _decoderDrivenSourceGrowth = value;
+  }
+
   final Set<SourceListener> _listeners = <SourceListener>{};
   bool _synchronizedReplayPending = false;
 
@@ -132,6 +159,13 @@ final class DownloadIngressProjection {
   }
 
   void _notify(IngressSnap before, IngressSnap after) {
+    // Synchronized replay is a private construction transaction. Its ingress
+    // length/revision may advance before the encoded source is authoritative
+    // for this Reader, so publishing those intermediate revisions would let a
+    // source watcher consume the wake edge while [source] is still hidden.
+    // The eventual publishSynchronizedReplayPrefix() call emits the single
+    // consumer-visible source-ready transition.
+    if (_synchronizedReplayPending && after.failure == null) return;
     final changed =
         before.revision != after.revision ||
         before.length != after.length ||

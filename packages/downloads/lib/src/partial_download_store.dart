@@ -1,6 +1,14 @@
+import 'dart:typed_data';
+
 import 'package:domain/domain.dart';
 import 'package:sessions/sessions.dart';
 import 'package:transport/transport.dart';
+
+typedef PartialDownloadBoundRangeReader = ({
+  String accessMode,
+  Future<Uint8List> Function(int start, int endExclusive) readRange,
+  Future<void> Function() close,
+});
 
 /// Durable owner for an incomplete page download after its hot DownloadSession
 /// is truly evicted. Reader route detach/reentry must reuse the hot session
@@ -10,6 +18,9 @@ final class PartialDownloadEntry {
     required this.length,
     required this.validators,
     required this.open,
+    this.openRange,
+    this.openBoundRangeReader,
+    this.accessMode = 'unknown',
     this.totalLength,
     this.adoptInto,
     this.exactDurableFinal = false,
@@ -19,6 +30,17 @@ final class PartialDownloadEntry {
   final Validators validators;
   final int? totalLength;
   final Stream<List<int>> Function({required int start}) open;
+  final Stream<List<int>> Function({
+    required int start,
+    required int endExclusive,
+  })? openRange;
+
+  /// Optional one-generation random-access reader acquired after the durable
+  /// backend has already selected/validated the physical access path.
+  final Future<PartialDownloadBoundRangeReader?> Function()? openBoundRangeReader;
+
+  /// Non-sensitive selected access mode for diagnostics.
+  final String accessMode;
 
   /// True only when this exact-id entry is already a complete durable final.
   /// A full restore can pass this operation-scoped proof to the promoted cache

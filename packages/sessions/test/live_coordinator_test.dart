@@ -195,6 +195,141 @@ void main() {
     expect(sources.find(id), isNull);
   });
 
+  test('durable resident needMoreData expands Reader prefix and wakes decode',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_resident_need_more_data_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'resident-need-more-data',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/resident-need-more.webp'),
+    );
+    final decodeId = DecodeId(
+      download: id,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final initialQuantum = webpDecodePrefixQuantumBytesFor(id);
+    final totalLength = initialQuantum * 2 + 4096;
+    final bytes = List<int>.filled(totalLength, 0);
+    final header = 'RIFF....WEBP'.codeUnits;
+    bytes.setRange(0, header.length, header);
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final physical = registry.get(id);
+    physical.bindResidentImmutableAuthority(
+      validators: const Validators(etag: '"resident-ready"'),
+      totalLength: totalLength,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: bytes.sublist(0, 64),
+    );
+    final ranges = <(int, int)>[];
+    final trace = MemoryTraceSink();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => totalLength + 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'resident-need-more-data',
+      traceSink: trace,
+      residentReplayRangeSourceWithControl:
+          (session, start, endExclusive, {required control}) async {
+        expect(session, same(physical));
+        control.throwIfCancelled();
+        ranges.add((start, endExclusive));
+        return Stream<List<int>>.value(bytes.sublist(start, endExclusive));
+      },
+    );
+    final cursorFactory =
+        _NeedMoreDataCursorFactory(requiredLength: initialQuantum * 2);
+    final decodes = DecodeRegistry(
+      downloads: registry,
+      ingresses: ingresses,
+      cursors: cursorFactory,
+      clock: clock,
+      traceSink: trace,
+    );
+    final coordinator = LiveCoordinator(
+      registry: registry,
+      ingresses: ingresses,
+      decodes: decodes,
+      transportFor: (_) =>
+          FakeTransport(bytes: <int>[...'RIFF....WEBPunused'.codeUnits]),
+      clock: clock,
+      traceSink: trace,
+      net: NetLane(maxActive: 1),
+      decode: DecodeLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      ingresses.dispose();
+      sources.dispose();
+      await registry.dispose();
+    });
+
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: const <DownloadId, DownloadDemand>{},
+      decodes: <DecodeId, DecodeDemand>{
+        decodeId: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'resident-need-more-data',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{ResourceId.decode(decodeId)},
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: plan,
+        diff: DemandDiff.between(DemandPlan.empty(), plan),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+
+    for (var turn = 0; turn < 500 && !cursorFactory.frameDecoded.isCompleted; turn++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    if (!cursorFactory.frameDecoded.isCompleted) {
+      final decodeSnapshot = decodes.find(decodeId)?.snapshot;
+      final ingressSnapshot = ingresses.find(id)?.snapshot;
+      fail(
+        'resident needMoreData chain stalled: ranges=$ranges '
+        'decode=$decodeSnapshot ingress=$ingressSnapshot '
+        'events=${trace.events.map((event) => "${event.kind.name}:${event.payload}").join(" | ")}',
+      );
+    }
+    final snapshot = decodes.find(decodeId)?.snapshot;
+    expect(snapshot?.depth, 1);
+    expect(snapshot?.state, DecodeState.ready);
+    expect(ranges, contains((0, initialQuantum)));
+    expect(ranges, contains((initialQuantum, totalLength)),
+        reason: 'durable SAF replay uses the physical-local decode quantum and '
+            'clamps its next growth step to durable EOF');
+    expect(cursorFactory.needMoreCount, 1,
+        reason: 'decoder evidence should request one larger durable prefix');
+    expect(ingresses.find(id)?.snapshot.length, totalLength);
+    expect(physical.artifact.committedLength, 0,
+        reason: 'decoder-driven hydration must not recreate a session artifact');
+  });
+
   test('download priority migration does not re-observe physical identity', () async {
     final temp = await Directory.systemTemp.createTemp('live_identity_observe_test_');
     addTearDown(() async => temp.delete(recursive: true));
@@ -2969,6 +3104,63 @@ final class _TestSource implements EncodedSource {
   SourceStatus seal(int epoch) {
     sealed = true;
     return SourceStatus.ok;
+  }
+
+  @override
+  void dispose() {}
+}
+
+final class _NeedMoreDataCursorFactory implements CursorFactory {
+  _NeedMoreDataCursorFactory({required this.requiredLength});
+
+  final int requiredLength;
+  final Completer<void> frameDecoded = Completer<void>();
+  int needMoreCount = 0;
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) =>
+      CursorBinding(
+        frames: _NeedMoreDataCursor(
+          epoch: epoch,
+          source: source,
+          requiredLength: requiredLength,
+          onNeedMore: () => needMoreCount++,
+          frameDecoded: frameDecoded,
+        ),
+      );
+}
+
+final class _NeedMoreDataCursor implements FrameCursor {
+  _NeedMoreDataCursor({
+    required this.epoch,
+    required this.source,
+    required this.requiredLength,
+    required this.onNeedMore,
+    required this.frameDecoded,
+  });
+
+  @override
+  final int epoch;
+  final EncodedSource source;
+  final int requiredLength;
+  final void Function() onNeedMore;
+  final Completer<void> frameDecoded;
+  bool _emitted = false;
+
+  @override
+  Future<CursorStep> decodeNext() async {
+    if (_emitted) return const CursorStep.end();
+    if (source.length < requiredLength) {
+      onNeedMore();
+      return const CursorStep.needMoreData();
+    }
+    _emitted = true;
+    if (!frameDecoded.isCompleted) frameDecoded.complete();
+    return CursorStep.frame(_TestFrame(epoch, 0));
   }
 
   @override

@@ -39,8 +39,12 @@ final class WebpDecodePrefixHints {
     required DownloadId id,
     required int frameIndex,
     required int sourceLength,
+    int? quantumBytes,
   }) {
-    final quantum = webpDecodePrefixQuantumBytesFor(id);
+    final quantum = quantumBytes ?? webpDecodePrefixQuantumBytesFor(id);
+    if (quantum <= 0) {
+      throw ArgumentError.value(quantum, 'quantumBytes', 'must be positive');
+    }
     final next = _alignUp(sourceLength + 1, quantum);
     final key = _PrefixHintKey(id, frameIndex);
     final prior = _hints.remove(key);

@@ -78,6 +78,100 @@ final class PartialDownloadHandoff {
     if (candidate == null || candidate.entry.length <= 0) return;
     final entry = candidate.entry;
 
+    if (!candidate.equivalent && entry.exactDurableFinal) {
+      final totalLength = entry.totalLength ?? entry.length;
+      if (totalLength != entry.length) {
+        throw StateError(
+          'exact durable final length mismatch for ${session.id.key}: '
+          '${entry.length}/$totalLength',
+        );
+      }
+      final startedAtMicros = clock?.nowMicros();
+      PartialDownloadBoundRangeReader? boundReader;
+      final openBoundReader = entry.openBoundRangeReader;
+      if (openBoundReader != null) {
+        ArtifactCacheReadLease? lease;
+        try {
+          final scheduler = readScheduler;
+          if (scheduler != null) {
+            lease = await scheduler.acquire(
+              priority: () => session.effectivePriority,
+              control: control,
+            );
+          }
+          boundReader = await openBoundReader();
+        } on Object {
+          // Descriptor reuse is an optimization. The stateless exact-range
+          // authority below remains the correctness fallback.
+          boundReader = null;
+        } finally {
+          lease?.release();
+        }
+      }
+      final prefix = boundReader == null
+          ? await _readEntryPrefix(
+              entry,
+              priority: () => session.effectivePriority,
+              control: control,
+            )
+          : const <int>[];
+      control?.throwIfCancelled();
+      final proof = _ExactDurableRestoreProof(
+        id: session.id,
+        epoch: session.epoch,
+        length: entry.length,
+      );
+      // Promotion observers run synchronously from DownloadSession's snapshot
+      // publication. Install the exact durable proof before binding/promoting so
+      // PromotedArtifactCacheHandoff cannot race ahead into a redundant backend
+      // preflight of the same body.
+      _exactDurableRestoreProofs[session] = proof;
+      try {
+        final openRange = entry.openRange;
+        final reader = boundReader;
+        session.bindResidentImmutableAuthority(
+          validators: entry.validators,
+          totalLength: totalLength,
+          validatorRequestUri: session.id.canonicalUri,
+          bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+          metadataPrefix: prefix,
+          residentReplayRangeChunks: reader != null
+              ? (start, endExclusive) async =>
+                    _openBoundRange(reader, start, endExclusive)
+              : openRange == null
+                  ? null
+                  : (start, endExclusive) async => openRange(
+                        start: start,
+                        endExclusive: endExclusive,
+                      ),
+          residentReplayRangeClose: reader?.close,
+          residentReplayAccessMode: reader?.accessMode ?? entry.accessMode,
+        );
+        boundReader = null; // DownloadSession now owns reader lifecycle.
+      } on Object {
+        final reader = boundReader;
+        boundReader = null;
+        if (reader != null) {
+          try {
+            await reader.close();
+          } on Object {
+            // Preserve the bind failure.
+          }
+        }
+        if (identical(_exactDurableRestoreProofs[session], proof)) {
+          _exactDurableRestoreProofs[session] = null;
+        }
+        rethrow;
+      }
+      _record(
+        session,
+        action: 'bound-ready-authority',
+        bytes: entry.length,
+        startedAtMicros: startedAtMicros,
+      );
+      return;
+    }
+
     final adoptInto = entry.adoptInto;
     if (!candidate.equivalent && adoptInto != null) {
       final startedAtMicros = clock?.nowMicros();
@@ -154,6 +248,65 @@ final class PartialDownloadHandoff {
     );
   }
 
+
+  Stream<List<int>> _openBoundRange(
+    PartialDownloadBoundRangeReader reader,
+    int start,
+    int endExclusive,
+  ) async* {
+    final bytes = await reader.readRange(start, endExclusive);
+    if (bytes.isNotEmpty) yield bytes;
+  }
+
+  Future<List<int>> _readEntryPrefix(
+    PartialDownloadEntry entry, {
+    PartialDownloadBoundRangeReader? boundReader,
+    required int Function() priority,
+    TaskControl? control,
+    int maxBytes = 64,
+  }) async {
+    final exactPrefix = entry.openRange;
+    final prefixEnd = maxBytes < entry.length ? maxBytes : entry.length;
+    final iterator = StreamIterator<List<int>>(
+      boundReader != null
+          ? _openBoundRange(boundReader, 0, prefixEnd)
+          : exactPrefix == null
+              ? entry.open(start: 0)
+              : exactPrefix(
+                  start: 0,
+                  endExclusive: prefixEnd,
+                ),
+    );
+    final prefix = <int>[];
+    try {
+      while (prefix.length < maxBytes) {
+        ArtifactCacheReadLease? lease;
+        final bool available;
+        try {
+          if (readScheduler != null) {
+            lease = await readScheduler!.acquire(
+              priority: priority,
+              control: control,
+            );
+          }
+          available = await _moveNextCancellable(iterator, control);
+        } finally {
+          lease?.release();
+        }
+        if (!available) break;
+        control?.throwIfCancelled();
+        final chunk = iterator.current;
+        if (chunk.isEmpty) continue;
+        final remaining = maxBytes - prefix.length;
+        prefix.addAll(
+          chunk.length <= remaining ? chunk : chunk.sublist(0, remaining),
+        );
+      }
+    } finally {
+      await iterator.cancel();
+    }
+    return prefix;
+  }
 
   Future<int> _restoreEntry(
     DownloadSession session,

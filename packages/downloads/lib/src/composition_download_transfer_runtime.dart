@@ -392,6 +392,7 @@ final class CompositionDownloadTransferRuntime {
   }) =>
       (session, endExclusive) => _openResidentReplay(
             session,
+            0,
             endExclusive,
             priority: () => priorityFor(session.id),
           );
@@ -401,18 +402,49 @@ final class CompositionDownloadTransferRuntime {
   }) =>
       (session, endExclusive, {required control}) => _openResidentReplay(
             session,
+            0,
             endExclusive,
             priority: () => priorityFor(session.id),
             control: control,
           );
 
+  DownloadResidentReplayRangeSource residentReplayRangeSource({
+    required int Function(DownloadId id) priorityFor,
+  }) =>
+      (session, start, endExclusive) => _openResidentReplay(
+            session,
+            start,
+            endExclusive,
+            priority: () => priorityFor(session.id),
+          );
+
+  DownloadResidentReplayRangeSourceWithControl
+      residentReplayRangeSourceWithControl({
+    required int Function(DownloadId id) priorityFor,
+  }) =>
+          (session, start, endExclusive, {required control}) =>
+              _openResidentReplay(
+                session,
+                start,
+                endExclusive,
+                priority: () => priorityFor(session.id),
+                control: control,
+              );
+
   Future<Stream<List<int>>> _openResidentReplay(
     DownloadSession session,
+    int start,
     int endExclusive, {
     required int Function() priority,
     TaskControl? control,
   }) async {
     control?.throwIfCancelled();
+    int replayPriority() {
+      final controlled = control?.priority;
+      if (controlled != null) return controlled;
+      final physical = session.effectivePriority;
+      return physical > 0 ? physical : priority();
+    }
     if (_disposed) {
       throw StateError('composition transfer runtime is disposed');
     }
@@ -422,11 +454,26 @@ final class CompositionDownloadTransferRuntime {
         message: 'resident replay requires the current physical session',
       );
     }
-    if (endExclusive <= 0 || endExclusive > session.committedLength) {
+    if (start < 0 ||
+        endExclusive <= start ||
+        endExclusive > session.committedLength) {
       throw Failure(
         code: ErrorCode.artifactCorruption,
-        message: 'invalid resident replay boundary $endExclusive/'
+        message: 'invalid resident replay range $start..$endExclusive/'
             '${session.committedLength}',
+      );
+    }
+
+    final boundReplay = session.residentReplayRangeChunks;
+    if (boundReplay != null) {
+      final chunks = await boundReplay(start, endExclusive);
+      control?.throwIfCancelled();
+      return _scheduledResidentReplay(
+        chunks,
+        priority: replayPriority,
+        control: control,
+        allowBackgroundDuringForegroundPressure:
+            session.residentReplayAccessMode != 'saf',
       );
     }
 
@@ -440,11 +487,13 @@ final class CompositionDownloadTransferRuntime {
             lookup.entry.length >= endExclusive) {
           return _scheduledResidentReplay(
             lookup.entry.open(
-              start: 0,
+              start: start,
               endExclusive: endExclusive,
             ),
-            priority: priority,
+            priority: replayPriority,
             control: control,
+            allowBackgroundDuringForegroundPressure:
+                lookup.entry.accessMode != 'saf',
           );
         }
       }
@@ -460,12 +509,13 @@ final class CompositionDownloadTransferRuntime {
     }
     final chunks = await owner.openResidentReplay(
       session.id,
+      start: start,
       endExclusive: endExclusive,
       control: control,
     );
     return _scheduledResidentReplay(
       chunks,
-      priority: priority,
+      priority: replayPriority,
       control: control,
     );
   }
@@ -474,6 +524,7 @@ final class CompositionDownloadTransferRuntime {
     Stream<List<int>> chunks, {
     required int Function() priority,
     TaskControl? control,
+    bool allowBackgroundDuringForegroundPressure = true,
   }) async* {
     final iterator = StreamIterator<List<int>>(chunks);
     try {
@@ -481,6 +532,8 @@ final class CompositionDownloadTransferRuntime {
         final lease = await localReadScheduler.acquire(
           priority: priority,
           control: control,
+          allowBackgroundDuringForegroundPressure:
+              allowBackgroundDuringForegroundPressure,
         );
         final bool hasChunk;
         try {

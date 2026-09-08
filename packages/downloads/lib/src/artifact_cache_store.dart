@@ -18,12 +18,22 @@ enum ArtifactReadIntegrityBasis {
   sessionArtifact,
 }
 
+abstract interface class ArtifactCacheBoundRangeReader {
+  String get accessMode;
+
+  Future<Uint8List> readRange(int start, int endExclusive);
+
+  Future<void> close();
+}
+
 final class ArtifactCacheStreamEntry {
   const ArtifactCacheStreamEntry({
     required this.length,
     required this.open,
     this.readAll,
     this.readAllControlled,
+    this.openBoundRangeReader,
+    this.accessMode = 'unknown',
     this.streamIntegrity = ArtifactReadIntegrityBasis.unspecified,
     this.fullReadIntegrity = ArtifactReadIntegrityBasis.unspecified,
   });
@@ -34,6 +44,14 @@ final class ArtifactCacheStreamEntry {
     int? endExclusive,
   }) open;
   final Future<Uint8List> Function()? readAll;
+
+  /// Optional generation-scoped random-access reader. Persistent backends may
+  /// expose this after locator/replica preflight so a READY physical session
+  /// can reuse one descriptor across decoder range requests.
+  final Future<ArtifactCacheBoundRangeReader?> Function()? openBoundRangeReader;
+
+  /// Non-sensitive diagnostics for the selected physical access path.
+  final String accessMode;
 
   /// Integrity basis of [open]. A normal sealed persistent read should expose
   /// its previously-established seal proof rather than pretending to rehash.

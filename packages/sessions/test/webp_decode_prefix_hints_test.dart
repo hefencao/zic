@@ -28,6 +28,21 @@ void main() {
     );
     expect(hints.minimumBytes(id, 2), 524288);
   });
+
+  test('physical local replay overrides a remote logical URI quantum', () {
+    final hints = WebpDecodePrefixHints();
+    final id = _id(Uri.parse('https://example.invalid/page.webp'));
+
+    expect(
+      hints.recordNeedMoreData(
+        id: id,
+        frameIndex: 0,
+        sourceLength: 262144,
+        quantumBytes: localWebpDecodePrefixQuantumBytes,
+      ),
+      1048576,
+    );
+  });
 }
 
 DownloadId _id(Uri uri) => DownloadId(

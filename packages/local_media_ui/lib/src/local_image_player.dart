@@ -689,7 +689,41 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   void _onWebpFirstFrame() {
-    _publish(ImagePreviewState.ready(LocalImageFormat.webp));
+    final priorFormat = _detectedFormat;
+    final formatChanged = priorFormat != LocalImageFormat.webp;
+    _detectedFormat = LocalImageFormat.webp;
+    final needsReadyPublish =
+        _state.phase != ImagePreviewPhase.ready ||
+            _state.format != LocalImageFormat.webp;
+    if (needsReadyPublish) {
+      _publish(ImagePreviewState.ready(LocalImageFormat.webp));
+    } else if (formatChanged && mounted) {
+      setState(() {});
+    }
+
+    final clock = widget.traceClock;
+    if (clock != null) {
+      final output = _pageOutputSnapshot;
+      widget.traceSink.record(
+        traceEvent(
+          clock: clock,
+          sessionId: widget.traceSessionId,
+          kind: TraceEventKind.readerObservation,
+          identityHash: widget.downloadIdentity?.key ?? widget.image.sourceId,
+          revision: widget.demandRevision?.call(),
+          payload: <String, Object?>{
+            'stage': 'presentation-widget-first-frame',
+            'priorFormat': priorFormat.name,
+            'detectedFormat': _detectedFormat.name,
+            'previewPhase': _state.phase.name,
+            'hasSurface': output?.hasSurface ?? false,
+            'outputState': output?.state.name,
+            'surfaceWidth': output?.surface?.width,
+            'surfaceHeight': output?.surface?.height,
+          },
+        ),
+      );
+    }
     _reportFirstFrame();
   }
 

@@ -32,7 +32,6 @@ Future<void> main([List<String>? arguments]) async {
   }
   runApp(
     runtime.createStartupApp(
-      firstFrameAlreadyRasterized: true,
       startupApplicationSupportPath: startupApplicationSupportPath,
       startupApplicationSupportPathValue: entrypointPath,
       startupStorageMetadataWarmed: startupStorageMetadataWarmed,

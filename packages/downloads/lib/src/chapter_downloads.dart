@@ -1120,6 +1120,69 @@ final class _ArtifactAccessCandidate {
   final StorageAccessLocatorRecord? rootAccess;
 }
 
+final class _PersistentBoundRangeReader
+    implements ArtifactCacheBoundRangeReader {
+  _PersistentBoundRangeReader({
+    required ArtifactByteRangeReader primary,
+    required Future<Uint8List> Function(int start, int endExclusive) fallback,
+  }) : _primary = primary,
+       _fallback = fallback;
+
+  ArtifactByteRangeReader? _primary;
+  final Future<Uint8List> Function(int start, int endExclusive) _fallback;
+  Future<void> _tail = Future<void>.value();
+  bool _closed = false;
+
+  @override
+  String get accessMode => _primary?.accessMode ?? 'fallback';
+
+  @override
+  Future<Uint8List> readRange(int start, int endExclusive) {
+    final result = Completer<Uint8List>();
+    final previous = _tail;
+    final done = Completer<void>();
+    _tail = done.future;
+    unawaited(() async {
+      try {
+        await previous;
+        if (_closed) {
+          throw StateError('artifact bound range reader is closed');
+        }
+        final primary = _primary;
+        if (primary != null) {
+          try {
+            result.complete(await primary.readRange(start, endExclusive));
+            return;
+          } on Object {
+            _primary = null;
+            try {
+              await primary.close();
+            } on Object {
+              // The stateless fallback below remains the correctness owner.
+            }
+          }
+        }
+        result.complete(await _fallback(start, endExclusive));
+      } catch (error, stackTrace) {
+        if (!result.isCompleted) result.completeError(error, stackTrace);
+      } finally {
+        if (!done.isCompleted) done.complete();
+      }
+    }());
+    return result.future;
+  }
+
+  @override
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await _tail;
+    final primary = _primary;
+    _primary = null;
+    if (primary != null) await primary.close();
+  }
+}
+
 final class ArtifactReplicaMigrationResult {
   const ArtifactReplicaMigrationResult({
     required this.replica,
@@ -5351,27 +5414,30 @@ final class PersistentDownloadArtifactStore
     );
   }
 
-  Future<({ _ArtifactAccessCandidate candidate, int length })>
-      _selectReadableArtifactAccess(
-    List<_ArtifactAccessCandidate> candidates,
-  ) async {
+  Future<({_ArtifactAccessCandidate candidate, int length})>
+  _selectReadableArtifactAccess(
+    List<_ArtifactAccessCandidate> candidates, {
+    bool skipExistsProbe = false,
+  }) async {
     ArtifactReadFailure? accessFailure;
     ArtifactReadFailure? structuralFailure;
     for (final candidate in candidates) {
       final access = candidate.access;
       try {
-        final exists = await _artifactRecordExists(access);
-        if (!exists) {
-          structuralFailure = ArtifactReadFailure(
-            kind: ArtifactReadFailureKind.missing,
-            accessLocator: access.accessLocator,
-            replicaId: access.replicaId,
-            failedOffset: 0,
-            bytesEmitted: 0,
-            expectedLength: access.bytes,
-            observedLength: 0,
-          );
-          continue;
+        if (!skipExistsProbe) {
+          final exists = await _artifactRecordExists(access);
+          if (!exists) {
+            structuralFailure = ArtifactReadFailure(
+              kind: ArtifactReadFailureKind.missing,
+              accessLocator: access.accessLocator,
+              replicaId: access.replicaId,
+              failedOffset: 0,
+              bytesEmitted: 0,
+              expectedLength: access.bytes,
+              observedLength: 0,
+            );
+            continue;
+          }
         }
         final length = await _artifactRecordLength(access);
         if (length <= 0 || length != access.bytes) {
@@ -5414,6 +5480,113 @@ final class PersistentDownloadArtifactStore
           failedOffset: 0,
           bytesEmitted: 0,
         );
+  }
+
+  Future<ArtifactCacheBoundRangeReader?> _openBoundArtifactRangeReader(
+    List<_ArtifactAccessCandidate> candidates, {
+    int? expectedLength,
+  }) async {
+    if (candidates.isEmpty) return null;
+    ArtifactReadFailure? accessFailure;
+    ArtifactReadFailure? structuralFailure;
+    for (var index = 0; index < candidates.length; index++) {
+      final candidate = candidates[index];
+      final access = candidate.access;
+      ArtifactByteRangeReader? reader;
+      try {
+        reader = await openArtifactByteRangeReader(
+          _bytes,
+          access.accessLocator,
+        );
+        if (reader == null) continue;
+        if (expectedLength != null) {
+          final length = await reader.length();
+          if (length <= 0 || length != expectedLength) {
+            throw ArtifactReadFailure(
+              kind: ArtifactReadFailureKind.lengthChanged,
+              accessLocator: access.accessLocator,
+              replicaId: access.replicaId,
+              failedOffset: 0,
+              bytesEmitted: 0,
+              expectedLength: expectedLength,
+              observedLength: length,
+            );
+          }
+        }
+        await _recordStorageAccessHealth(
+          candidate,
+          StorageAccessHealth.healthy,
+        );
+        final selected = <_ArtifactAccessCandidate>[
+          candidate,
+          ...candidates.where(
+            (other) => other.access.accessLocator != access.accessLocator,
+          ),
+        ];
+        final retained = reader;
+        reader = null;
+        return _PersistentBoundRangeReader(
+          primary: retained,
+          fallback: (start, endExclusive) async {
+            final builder = BytesBuilder(copy: false);
+            await for (final chunk in _readArtifactCandidates(
+              selected,
+              start: start,
+              endExclusive: endExclusive,
+            )) {
+              builder.add(chunk);
+            }
+            final bytes = builder.takeBytes();
+            if (bytes.lengthInBytes != endExclusive - start) {
+              throw ArtifactReadFailure(
+                kind: ArtifactReadFailureKind.shortRead,
+                accessLocator: access.accessLocator,
+                replicaId: access.replicaId,
+                failedOffset: start + bytes.lengthInBytes,
+                bytesEmitted: bytes.lengthInBytes,
+                expectedLength: endExclusive - start,
+                observedLength: bytes.lengthInBytes,
+              );
+            }
+            return bytes;
+          },
+        );
+      } on ArtifactReadFailure catch (error) {
+        final enriched = _enrichArtifactReadFailure(access, error);
+        if (_isStructuralReplicaFailure(enriched.kind)) {
+          structuralFailure = enriched;
+        } else {
+          accessFailure ??= enriched;
+        }
+        if (error.kind == ArtifactReadFailureKind.accessDenied) {
+          await _recordStorageAccessHealth(
+            candidate,
+            StorageAccessHealth.accessDenied,
+          );
+        }
+      } on Object catch (error) {
+        accessFailure ??= ArtifactReadFailure(
+          kind: ArtifactReadFailureKind.ioFailure,
+          accessLocator: access.accessLocator,
+          replicaId: access.replicaId,
+          failedOffset: 0,
+          bytesEmitted: 0,
+          cause: error,
+        );
+      } finally {
+        if (reader != null) {
+          try {
+            await reader.close();
+          } on Object {
+            // A failed preflight already owns the classification. Descriptor
+            // cleanup cannot replace that failure.
+          }
+        }
+      }
+    }
+    final failure = accessFailure ?? structuralFailure;
+    if (failure != null) throw failure;
+    return null;
   }
 
   Stream<Uint8List> _readArtifactCandidates(
@@ -5565,11 +5738,12 @@ final class PersistentDownloadArtifactStore
     }
   }
 
-  Future<ArtifactCacheStreamEntry?> _openArtifactStreamExact(DownloadId id) async {
+  Future<ArtifactCacheStreamEntry?> _openArtifactStreamExact(
+    DownloadId id, {
+    bool skipExistsProbe = false,
+  }) async {
     final record = await _index.get(id.key);
-    if (record == null ||
-        !_isVerifiedReadyRecord(record) ||
-        record.id != id) {
+    if (record == null || !_isVerifiedReadyRecord(record) || record.id != id) {
       return null;
     }
     final replicas = await _resolveArtifactReplicas(record);
@@ -5588,7 +5762,10 @@ final class PersistentDownloadArtifactStore
       final candidates = await _artifactAccessCandidates(replica);
       late final ({_ArtifactAccessCandidate candidate, int length}) selected;
       try {
-        selected = await _selectReadableArtifactAccess(candidates);
+        selected = await _selectReadableArtifactAccess(
+          candidates,
+          skipExistsProbe: skipExistsProbe,
+        );
       } on ArtifactReadFailure catch (error) {
         lastFailure = error;
         if (_isStructuralReplicaFailure(error.kind)) {
@@ -5636,6 +5813,11 @@ final class PersistentDownloadArtifactStore
               selectedAccess.checksum.trim().toLowerCase(),
               control,
             ),
+        openBoundRangeReader: () =>
+            _openBoundArtifactRangeReader(selectedCandidates),
+        accessMode: parseSafRecordPath(selectedAccess.accessLocator) == null
+            ? 'direct'
+            : 'saf',
         streamIntegrity: ArtifactReadIntegrityBasis.sealedMetadataLength,
         fullReadIntegrity: ArtifactReadIntegrityBasis.crc32Verified,
       );
@@ -5764,6 +5946,110 @@ final class PersistentDownloadArtifactStore
   Future<PartialDownloadEntry?> openPartialDownload(DownloadId id) =>
       _serializeArtifactMutation(id, () => _openPartialDownload(id));
 
+  Future<PartialDownloadEntry?> _openVerifiedReadyPartialEntry(
+    DownloadId id,
+    CacheRec record,
+  ) async {
+    final replicas = await _resolveArtifactReplicas(record);
+    if (replicas.isEmpty) {
+      await _forgetIndexedBinding(id, record: record);
+      return null;
+    }
+
+    final groups =
+        <
+          ({
+            _ArtifactAccessRecord replica,
+            List<_ArtifactAccessCandidate> candidates,
+          })
+        >[];
+    for (final replica in replicas) {
+      if (!await _artifactReplicaIsAccessible(replica)) continue;
+      if (replica.checksumAlgorithm.trim().toLowerCase() != 'crc32') {
+        await _retireArtifactReplica(
+          replica.artifactId,
+          replica.replicaId,
+          replica.accessLocator,
+        );
+        continue;
+      }
+      final candidates = await _artifactAccessCandidates(replica);
+      if (candidates.isNotEmpty) {
+        groups.add((replica: replica, candidates: candidates));
+      }
+    }
+    if (groups.isEmpty) {
+      if ((await _index.listArtifactReplicas(
+        record.effectiveArtifactId,
+      )).isEmpty) {
+        await _forgetIndexedBinding(id, record: record);
+      }
+      return null;
+    }
+
+    Stream<List<int>> fallbackRange(int start, int endExclusive) async* {
+      final stream = await _openArtifactStreamExact(id);
+      if (stream == null) {
+        throw ArtifactReadFailure(
+          kind: ArtifactReadFailureKind.missing,
+          accessLocator: groups.first.replica.accessLocator,
+          replicaId: groups.first.replica.replicaId,
+          failedOffset: start,
+          bytesEmitted: 0,
+          expectedLength: endExclusive - start,
+          observedLength: 0,
+        );
+      }
+      yield* stream.open(start: start, endExclusive: endExclusive);
+    }
+
+    Future<PartialDownloadBoundRangeReader?> openBoundReader() async {
+      ArtifactReadFailure? lastFailure;
+      for (final group in groups) {
+        try {
+          final reader = await _openBoundArtifactRangeReader(
+            group.candidates,
+            expectedLength: record.bytes,
+          );
+          if (reader == null) continue;
+          await _index.touch(
+            id.key,
+            DateTime.now().toUtc().microsecondsSinceEpoch,
+          );
+          return (
+            accessMode: reader.accessMode,
+            readRange: reader.readRange,
+            close: reader.close,
+          );
+        } on ArtifactReadFailure catch (error) {
+          lastFailure = error;
+          if (_isStructuralReplicaFailure(error.kind)) {
+            await _retireArtifactReplica(
+              group.replica.artifactId,
+              group.replica.replicaId,
+              group.replica.accessLocator,
+            );
+          }
+        }
+      }
+      if (lastFailure != null) throw lastFailure;
+      return null;
+    }
+
+    final firstAccess = groups.first.candidates.first.access.accessLocator;
+    return PartialDownloadEntry(
+      length: record.bytes,
+      validators: Validators(etag: '"${record.bytes}-${id.key}"'),
+      totalLength: record.bytes,
+      open: ({required int start}) => fallbackRange(start, record.bytes),
+      openRange: ({required int start, required int endExclusive}) =>
+          fallbackRange(start, endExclusive),
+      openBoundRangeReader: openBoundReader,
+      accessMode: parseSafRecordPath(firstAccess) == null ? 'direct' : 'saf',
+      exactDurableFinal: true,
+    );
+  }
+
   Future<PartialDownloadEntry?> _openPartialDownload(DownloadId id) async {
     _requireOpen();
     if (_artifactWrites.containsKey(id) || _borrowedPartialIds.contains(id)) {
@@ -5781,26 +6067,8 @@ final class PersistentDownloadArtifactStore
         _isVerifiedReadyRecord(record) &&
         record.id == id &&
         record.bytes > 0) {
-      ArtifactCacheStreamEntry? stream;
-      try {
-        stream = await _openArtifactStreamExact(id);
-      } on ArtifactReadFailure catch (error) {
-        if (!_isStructuralReplicaFailure(error.kind)) rethrow;
-        stream = null;
-      }
-      if (stream != null) {
-        final validators = Validators(etag: '"${stream.length}-${id.key}"');
-        return PartialDownloadEntry(
-          length: stream.length,
-          validators: validators,
-          totalLength: stream.length,
-          open: ({required int start}) => stream!.open(
-            start: start,
-            endExclusive: stream.length,
-          ),
-          exactDurableFinal: true,
-        );
-      }
+      final ready = await _openVerifiedReadyPartialEntry(id, record);
+      if (ready != null) return ready;
     }
     if (record == null ||
         record.state != CacheState.partial ||
@@ -6041,9 +6309,8 @@ final class PersistentDownloadArtifactStore
       }
       final temporaryPath =
           '$relativePath.zic-tmp-${DateTime.now().microsecondsSinceEpoch}';
-      final handle = await io.open(
-        temporaryPath,
-        mode: SafWriteMode.writeTruncate,
+      final handle = await _withStorageWriteQuantum(
+        () => io.open(temporaryPath, mode: SafWriteMode.writeTruncate),
       );
       if (handle == null) {
         throw StateError('SAF tree refused create for $temporaryPath');
@@ -6052,13 +6319,12 @@ final class PersistentDownloadArtifactStore
       try {
         await for (final chunk in entry.open(start: 0)) {
           if (chunk.isEmpty) continue;
-          await io.write(handle, chunk is Uint8List
-              ? chunk
-              : Uint8List.fromList(chunk));
+          final bytes = chunk is Uint8List ? chunk : Uint8List.fromList(chunk);
+          await _withStorageWriteQuantum(() => io.write(handle, bytes));
           written += chunk.length;
         }
       } finally {
-        await io.close(handle);
+        await _withStorageWriteQuantum(() => io.close(handle));
       }
       try {
         if (written != entry.length) {
@@ -6076,10 +6342,15 @@ final class PersistentDownloadArtifactStore
                 'SAF partial artifact owner changed before commit',
           );
         }
-        await commitSafTemporary(io, temporaryPath, relativePath);
+        await _withStorageWriteQuantum(
+          () => commitSafTemporary(io, temporaryPath, relativePath),
+        );
       } finally {
-        if (await io.exists(temporaryPath)) {
-          await io.delete(temporaryPath);
+        final temporaryExists = await _withStorageWriteQuantum(
+          () => io.exists(temporaryPath),
+        );
+        if (temporaryExists) {
+          await _withStorageWriteQuantum(() => io.delete(temporaryPath));
         }
       }
       final now = DateTime.now().toUtc().microsecondsSinceEpoch;
@@ -6097,18 +6368,20 @@ final class PersistentDownloadArtifactStore
       // Metadata is an optimization for validator-bound resume. A provider
       // failure here must not discard the newly committed media prefix.
       try {
-        await writeBytesToSaf(
-          io,
-          '$relativePath.meta',
-          Uint8List.fromList(
-            utf8.encode(
-              jsonEncode(<String, Object?>{
-                'downloadKey': id.key,
-                'download': id.toJson(),
-                'validators': entry.validators.toJson(),
-                'totalLength': entry.totalLength,
-                'validatorRequestUri': id.canonicalUri.toString(),
-              }),
+        await _withStorageWriteQuantum(
+          () => writeBytesToSaf(
+            io,
+            '$relativePath.meta',
+            Uint8List.fromList(
+              utf8.encode(
+                jsonEncode(<String, Object?>{
+                  'downloadKey': id.key,
+                  'download': id.toJson(),
+                  'validators': entry.validators.toJson(),
+                  'totalLength': entry.totalLength,
+                  'validatorRequestUri': id.canonicalUri.toString(),
+                }),
+              ),
             ),
           ),
         );

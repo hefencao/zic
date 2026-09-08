@@ -862,6 +862,141 @@ void main() {
     await consumer.idle();
   });
 
+  test(
+      'blocked high-priority local preparation preempts one lower operation without narrowing the window',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_local_prepare_preempt_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    const clock = SystemClock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final background1 = _id('prepare-preempt-bg1');
+    final background2 = _id('prepare-preempt-bg2');
+    final promoted = _id('prepare-preempt-promoted');
+    final bg1Entered = Completer<void>();
+    final bg2Entered = Completer<void>();
+    final bg2Cancelled = Completer<void>();
+    final bg2Reentered = Completer<void>();
+    final promotedEntered = Completer<void>();
+    final bg1Release = Completer<void>();
+    final bg2Release = Completer<void>();
+    var bg2Calls = 0;
+    var activePreparations = 0;
+    var maxActivePreparations = 0;
+    final trace = MemoryTraceSink();
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(
+        maxActive: 3,
+        reservedHighPrioritySlots: 1,
+        highPriorityThreshold: 1000,
+        preemptionThreshold: 40,
+        preemptionCandidateGrace: const Duration(milliseconds: 20),
+      ),
+      prepareDownloadWithControl: (session, {required control}) async {
+        activePreparations++;
+        if (activePreparations > maxActivePreparations) {
+          maxActivePreparations = activePreparations;
+        }
+        try {
+          if (session.id == background1) {
+            if (!bg1Entered.isCompleted) bg1Entered.complete();
+            await Future.any<void>(<Future<void>>[
+              control.whenCancelled,
+              bg1Release.future,
+            ]);
+          } else if (session.id == background2) {
+            bg2Calls++;
+            if (!bg2Entered.isCompleted) bg2Entered.complete();
+            if (bg2Calls >= 2 && !bg2Reentered.isCompleted) {
+              bg2Reentered.complete();
+            }
+            await Future.any<void>(<Future<void>>[
+              control.whenCancelled,
+              bg2Release.future,
+            ]);
+            if (control.cancelled && !bg2Cancelled.isCompleted) {
+              bg2Cancelled.complete();
+            }
+          } else if (session.id == promoted) {
+            if (!promotedEntered.isCompleted) promotedEntered.complete();
+          }
+        } finally {
+          activePreparations--;
+        }
+      },
+    );
+    addTearDown(() async {
+      if (!bg1Release.isCompleted) bg1Release.complete();
+      if (!bg2Release.isCompleted) bg2Release.complete();
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-local-prepare-preempt',
+      transportFor: (_) =>
+          _CountingBytesTransport('RIFF....WEBPpriority-preempt'.codeUnits),
+      traceSink: trace,
+    );
+    consumer.replaceDemands(
+      'reader-local-prepare-preempt',
+      1,
+      <DownloadId, TransferDemand>{
+        background1: const TransferDemand(priority: 820, reason: 'next'),
+        background2: const TransferDemand(priority: 800, reason: 'next2'),
+        promoted: const TransferDemand(priority: 760, reason: 'near'),
+      },
+    );
+
+    await bg1Entered.future;
+    await bg2Entered.future;
+    expect(promotedEntered.isCompleted, isFalse);
+    expect(maxActivePreparations, 2);
+
+    // The same page becomes foreground while both bounded local-operation
+    // slots are occupied. Pipeline changes only its numeric rank; the physical
+    // owner must let that rank cross the local-preparation seam promptly.
+    consumer.replaceDemands(
+      'reader-local-prepare-preempt',
+      2,
+      <DownloadId, TransferDemand>{
+        background1: const TransferDemand(priority: 820, reason: 'next'),
+        background2: const TransferDemand(priority: 800, reason: 'next2'),
+        promoted: const TransferDemand(priority: 1000, reason: 'current'),
+      },
+    );
+
+    expect(bg2Cancelled.isCompleted, isFalse,
+        reason: 'a transient current must keep the shared preemption grace');
+    await bg2Cancelled.future.timeout(const Duration(seconds: 1));
+    await promotedEntered.future.timeout(const Duration(seconds: 1));
+    expect(maxActivePreparations, 2,
+        reason: 'preemption must not exceed the operation-lifetime bound');
+    await bg2Reentered.future.timeout(const Duration(seconds: 1));
+    expect(bg2Calls, 2,
+        reason: 'preemption cancels only the acceleration attempt, not demand');
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.policyDecision &&
+            event.payload['stage'] == 'local-preparation-preempted' &&
+            event.payload['incomingPriority'] == 1000 &&
+            event.payload['victimPriority'] == 800,
+      ),
+      isTrue,
+    );
+
+    bg1Release.complete();
+    bg2Release.complete();
+    await consumer.idle();
+  });
+
   test('local preparation is retried after the physical session epoch resets',
       () async {
     final temp = await Directory.systemTemp.createTemp(

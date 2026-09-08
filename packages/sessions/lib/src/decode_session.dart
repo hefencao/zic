@@ -171,15 +171,28 @@ final class DecodeSession {
 
   int get _cycle => _partialPrefixCycle + (_cursor?.loop?.cycle ?? 0);
 
-  void _reportAnimationIfComplete() {
+  void _reportAnimationEvidence() {
     final animation = _cursor?.loop?.animation;
-    if (animation == null ||
-        !animation.complete ||
-        _reportedAnimation == animation) {
+    if (animation != null && animation.complete) {
+      if (_reportedAnimation == animation) return;
+      _reportedAnimation = animation;
+      onAnimationResolved?.call(id, animation);
       return;
     }
-    _reportedAnimation = animation;
-    onAnimationResolved?.call(id, animation);
+    // Two successfully decoded distinct frames are already authoritative
+    // positive animation evidence even while the encoded source is still
+    // growing. Static classification still requires complete demux metadata.
+    if (_maxDecodedPrefixFrames < 2 ||
+        (_reportedAnimation?.frameCount ?? 0) > 1) {
+      return;
+    }
+    final partial = AnimationInfo(
+      frameCount: _maxDecodedPrefixFrames,
+      loopCount: animation?.loopCount ?? 0,
+      complete: false,
+    );
+    _reportedAnimation = partial;
+    onAnimationResolved?.call(id, partial);
   }
 
   DecodedFrameTiming? timingForFrame(int frameIndex) =>
@@ -404,6 +417,7 @@ final class DecodeSession {
                 id: id.download,
                 frameIndex: _nextFrameHintIndex,
                 sourceLength: source.length,
+                quantumBytes: ingress.decodePrefixQuantumBytes,
               );
               if (_nextFrameHintIndex == 0 &&
                   _requiredSourceLength > _firstFrameRequiredSourceLength) {
@@ -425,7 +439,7 @@ final class DecodeSession {
             return snapshot;
           case CursorStepKind.end:
             final loop = _cursor!.loop;
-            _reportAnimationIfComplete();
+            _reportAnimationEvidence();
             if (loop != null && holder.isEmpty && loop.rewind()) {
               _nextFrameHintIndex = 0;
               _requiredSourceLength = 0;
@@ -476,7 +490,7 @@ final class DecodeSession {
               }
             }
             holder.add(frame);
-            _reportAnimationIfComplete();
+            _reportAnimationEvidence();
             final timing = frame is FrameDecodeTiming
                 ? frame as FrameDecodeTiming
                 : null;
@@ -587,6 +601,7 @@ final class DecodeSession {
       id: id.download,
       frameIndex: _nextFrameHintIndex,
       sourceLength: source.length,
+      quantumBytes: ingress.decodePrefixQuantumBytes,
     );
     if (_nextFrameHintIndex == 0 &&
         _requiredSourceLength > _firstFrameRequiredSourceLength) {
@@ -651,6 +666,7 @@ final class DecodeSession {
 
   bool _canLoopPartialPrefix(EncodedSource source, FrameHolder holder) =>
       !source.sealed &&
+      !ingress.decoderDrivenSourceGrowth &&
       holder.isEmpty &&
       _partialPrefixAnimated &&
       _maxDecodedPrefixFrames >= partialLoopMinFrames;

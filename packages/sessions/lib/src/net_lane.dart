@@ -474,6 +474,20 @@ final class NetLane implements TaskLane {
       _core.activePolicyRank(key, basePriority: basePriority);
   bool incomingOutranks(int incomingPriority, NetPolicyRank incumbent) =>
       _core.incomingOutranks(incomingPriority, incumbent);
+
+  /// Reuses the lane's high-priority admission boundary for bounded work that
+  /// must happen before a network task can be submitted. This exposes rank
+  /// semantics only; ownership and cancellation of that pre-admission work
+  /// remain with its caller.
+  bool highPriorityOutranks(
+    int incomingPriority, {
+    required int incumbentPriority,
+  }) =>
+      incomingPriority >= _core.highPriorityThreshold &&
+      incomingPriority - incumbentPriority >= _core.preemptionThreshold;
+
+  Duration get preemptionCandidateGrace => _core.preemptionCandidateGrace;
+
   bool updatePriority(String key, int priority) =>
       _core.updatePriority(key, priority);
   bool updateFlowTargetFrames(String key, int frames) =>

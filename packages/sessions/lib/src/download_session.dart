@@ -53,6 +53,31 @@ typedef DownloadResidentReplaySourceWithControl =
   required TaskControl control,
 });
 
+/// Resident replay over one exact encoded byte range. This is used by
+/// Reader-local on-demand hydration so a durable immutable body does not need
+/// to be recopied from byte zero whenever decode asks for a larger prefix.
+typedef DownloadResidentReplayRangeSource = Future<Stream<List<int>>> Function(
+  DownloadSession session,
+  int start,
+  int endExclusive,
+);
+typedef DownloadResidentReplayRangeSourceWithControl =
+    Future<Stream<List<int>>> Function(
+  DownloadSession session,
+  int start,
+  int endExclusive, {
+  required TaskControl control,
+});
+
+/// Exact-range replay capability already bound to one immutable physical body
+/// generation. The capability is invalidated together with resident authority
+/// on reset/rebind; callers still own scheduling/cancellation around the stream.
+typedef DownloadResidentReplayRangeChunks = Future<Stream<List<int>>> Function(
+  int start,
+  int endExclusive,
+);
+typedef DownloadResidentReplayRangeClose = Future<void> Function();
+
 Stream<List<int>> _replayChunks(
   Stream<List<int>> chunks, {
   TaskControl? control,
@@ -252,7 +277,12 @@ final class DownloadSession {
   int _networkCursorPublishedLength = 0;
   int? _residentLength;
   bool _residentBodyBacked = false;
+  bool _residentIngressDeferred = false;
   ByteResponseBodyAuthority? _residentBodyAuthority;
+  DownloadResidentReplayRangeChunks? _residentReplayRangeChunks;
+  DownloadResidentReplayRangeClose? _residentReplayRangeClose;
+  String _residentReplayAccessMode = 'unknown';
+  Future<void> _residentReplayCloseTail = Future<void>.value();
   Failure? _failure;
 
   // Decoder-owned playable-prefix evidence projected onto this physical
@@ -288,9 +318,17 @@ final class DownloadSession {
   SourceEpoch get epoch => _epoch;
   int get committedLength => _residentLength ?? artifact.committedLength;
   bool get residentBodyBacked => _residentBodyBacked;
+  bool get residentIngressDeferred =>
+      _residentBodyBacked && _residentIngressDeferred;
 
   ByteResponseBodyAuthority? get residentBodyAuthority =>
       _residentBodyBacked ? _residentBodyAuthority : null;
+
+  DownloadResidentReplayRangeChunks? get residentReplayRangeChunks =>
+      residentIngressDeferred ? _residentReplayRangeChunks : null;
+
+  String get residentReplayAccessMode =>
+      residentIngressDeferred ? _residentReplayAccessMode : 'unknown';
 
   /// Compatibility/diagnostic label; behavior must use [residentBodyAuthority].
   String? get residentSource => switch (residentBodyAuthority) {
@@ -523,7 +561,10 @@ final class DownloadSession {
       _ingressProjectionRevision++;
       _residentLength = null;
       _residentBodyBacked = false;
+      _residentIngressDeferred = false;
       _residentBodyAuthority = null;
+      _dropResidentReplayRangeCapability();
+      await _residentReplayCloseTail;
       _validators = validators;
       _validatorRequestUri =
           validators.isEmpty ? null : id.canonicalUri;
@@ -658,7 +699,10 @@ final class DownloadSession {
     _ingressProjectionRevision++;
     _residentLength = null;
     _residentBodyBacked = false;
+    _residentIngressDeferred = false;
     _residentBodyAuthority = null;
+    _dropResidentReplayRangeCapability();
+    await _residentReplayCloseTail;
     // Artifact.restore must not first bind a final file that explicitly
     // belongs to another DownloadId. Preflight the ready sidecar while the
     // Artifact is still empty so a collision cannot leave its in-memory state
@@ -908,6 +952,126 @@ final class DownloadSession {
     _notifySnapshot();
   }
 
+  /// Binds a complete immutable body authority without hydrating Reader ingress.
+  ///
+  /// [committedLength] becomes the physical body-authority boundary immediately,
+  /// while each Reader-local ingress remains independently empty until its
+  /// media demand asks the projection registry to replay a prefix. This is the
+  /// durable READY fast path: the session owns transfer/completion state, not a
+  /// duplicate encoded-body copy.
+  void bindResidentImmutableAuthority({
+    required Validators validators,
+    required int totalLength,
+    required ByteResponseBodyAuthority bodyAuthority,
+    Uri? validatorRequestUri,
+    List<int> metadataPrefix = const <int>[],
+    DownloadResidentReplayRangeChunks? residentReplayRangeChunks,
+    DownloadResidentReplayRangeClose? residentReplayRangeClose,
+    String residentReplayAccessMode = 'unknown',
+  }) {
+    _requireNotDisposed();
+    _requireState(<DownloadState>{
+      DownloadState.idle,
+      DownloadState.queued,
+      DownloadState.failed,
+    });
+    if (totalLength <= 0) {
+      throw ArgumentError.value(
+        totalLength,
+        'totalLength',
+        'resident immutable authorities must contain image bytes',
+      );
+    }
+    if (metadataPrefix.length > _sourceMetadataPrefixLength) {
+      throw ArgumentError.value(
+        metadataPrefix.length,
+        'metadataPrefix.length',
+        'must not exceed $_sourceMetadataPrefixLength bytes',
+      );
+    }
+    _ingressProjectionRevision++;
+    _residentBodyBacked = true;
+    _residentIngressDeferred = true;
+    _residentBodyAuthority = bodyAuthority;
+    _dropResidentReplayRangeCapability();
+    _residentReplayRangeChunks = residentReplayRangeChunks;
+    _residentReplayRangeClose = residentReplayRangeClose;
+    _residentReplayAccessMode = residentReplayAccessMode;
+    _residentLength = totalLength;
+    _validators = validators;
+    _validatorRequestUri = validators.isEmpty
+        ? null
+        : (validatorRequestUri ?? id.canonicalUri);
+    _totalLength = totalLength;
+    _networkStartLength = 0;
+    _networkAttemptActive = false;
+    _networkCursorLength = 0;
+    _networkCursorPublishedLength = 0;
+    _prefix = <int>[];
+    _sourceCanvasWidth = null;
+    _sourceCanvasHeight = null;
+    if (metadataPrefix.isNotEmpty) {
+      _appendSourceMetadataPrefix(
+        0,
+        metadataPrefix is Uint8List
+            ? metadataPrefix
+            : Uint8List.fromList(metadataPrefix),
+      );
+    } else {
+      _contentKind = ContentKind.unknown;
+    }
+    _failure = null;
+    _resetPlayablePrefixEvidence();
+    final epoch = _epoch;
+    for (final projection in _ingressProjections.values) {
+      projection.expectLength(totalLength);
+    }
+    _state = DownloadState.promoted;
+    _recordTrace(
+      TraceEventKind.artifactPromoted,
+      <String, Object?>{
+        'length': totalLength,
+        'cacheResident': true,
+        'residentBodyBacked': true,
+        'residentIngressDeferred': true,
+        'residentIngressHydratedLength': 0,
+        'residentBodyAuthority': bodyAuthority.name,
+        'residentReplayAccessMode': _residentReplayAccessMode,
+        if (residentSource != null) 'residentSource': residentSource,
+      },
+    );
+    _notifySnapshot();
+    _requireEpoch(epoch);
+  }
+
+  /// Attaches an empty Reader-local projection to a complete resident body.
+  /// The projection remains part of this physical generation for reset/dispose
+  /// lifecycle propagation, but immutable bytes are appended only by the
+  /// Reader-local replay registry as decode requests them.
+  void attachDeferredResidentIngressProjection(
+    DownloadIngressProjection projection,
+  ) {
+    _requireNotDisposed();
+    if (!residentIngressDeferred || _state != DownloadState.promoted) {
+      throw const Failure(
+        code: ErrorCode.invalidState,
+        message: 'deferred resident ingress requires a promoted resident authority',
+      );
+    }
+    final existing = _ingressProjections[projection.scopeId];
+    if (existing != null && !identical(existing, projection)) {
+      throw ArgumentError.value(
+        projection.scopeId,
+        'projection.scopeId',
+        'already attached to another ingress projection',
+      );
+    }
+    if (identical(existing, projection)) return;
+    _ingressProjections[projection.scopeId] = projection;
+    projection.expectLength(_totalLength);
+    _notifySnapshot();
+  }
+
   void beginResidentImmutableIngress({
     required Validators validators,
     required int totalLength,
@@ -929,7 +1093,9 @@ final class DownloadSession {
     }
     _ingressProjectionRevision++;
     _residentBodyBacked = true;
+    _residentIngressDeferred = false;
     _residentBodyAuthority = bodyAuthority;
+    _dropResidentReplayRangeCapability();
     _residentLength = 0;
     _validators = validators;
     _validatorRequestUri = validators.isEmpty
@@ -1739,7 +1905,10 @@ final class DownloadSession {
     _networkCursorPublishedLength = 0;
     _residentLength = null;
     _residentBodyBacked = false;
+    _residentIngressDeferred = false;
     _residentBodyAuthority = null;
+    _dropResidentReplayRangeCapability();
+    await _residentReplayCloseTail;
     _contentKind = ContentKind.unknown;
     _prefix = <int>[];
     _sourceCanvasWidth = null;
@@ -1802,7 +1971,10 @@ final class DownloadSession {
       _networkCursorPublishedLength = 0;
       _residentLength = null;
       _residentBodyBacked = false;
+      _residentIngressDeferred = false;
       _residentBodyAuthority = null;
+      _dropResidentReplayRangeCapability();
+      await _residentReplayCloseTail;
       _contentKind = ContentKind.unknown;
       _prefix = <int>[];
       _sourceCanvasWidth = null;
@@ -1823,6 +1995,21 @@ final class DownloadSession {
     } finally {
       _resetting = false;
     }
+  }
+
+  void _dropResidentReplayRangeCapability() {
+    final close = _residentReplayRangeClose;
+    _residentReplayRangeChunks = null;
+    _residentReplayRangeClose = null;
+    _residentReplayAccessMode = 'unknown';
+    if (close == null) return;
+    _residentReplayCloseTail = _residentReplayCloseTail.then((_) async {
+      try {
+        await close();
+      } on Object {
+        // Generation retirement must not be reversed by descriptor cleanup.
+      }
+    });
   }
 
   void _resetPlayablePrefixEvidence() {
@@ -1881,6 +2068,8 @@ final class DownloadSession {
       _ingressProjections.clear();
       _demandPriorities.clear();
       _legacyDemanded = false;
+      _dropResidentReplayRangeCapability();
+      await _residentReplayCloseTail;
       // Cache synchronization is a separate serialized persistence tail. Do
       // not close the artifact/session while a prior index operation can still
       // touch the cache backend; the epoch guard above turns that operation

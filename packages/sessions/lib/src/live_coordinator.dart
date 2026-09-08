@@ -932,6 +932,17 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
               sourceBinding.session,
               after,
             );
+            if (sourceBinding.session.residentIngressDeferred &&
+                after.state == DecodeState.waitingSource &&
+                after.requiredSourceLength > after.sourceLength) {
+              unawaited(
+                ingresses?.ensureResidentPrefix(
+                      sourceBinding.session,
+                      after.requiredSourceLength,
+                    ) ??
+                    Future<void>.value(),
+              );
+            }
           }
         }
         if (after != null &&

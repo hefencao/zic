@@ -65,6 +65,18 @@ class SafStore {
     );
   }
 
+  Future<Uint8List> readAt(int handle, int position, int length) {
+    return _invoke<Uint8List>(
+      (channel) => channel.invokeMethod('safReadAt', <String, Object?>{
+        'handle': handle,
+        'position': position,
+        'length': length,
+      }),
+      () => Uint8List(0),
+      (raw) => raw! as Uint8List,
+    );
+  }
+
   Future<void> write(int handle, Uint8List bytes) async {
     await _invoke<Object?>(
       (channel) => channel.invokeMethod('safWrite', <String, Object?>{

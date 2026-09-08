@@ -96,6 +96,7 @@ final class ArtifactCacheReadScheduler {
   Future<ArtifactCacheReadLease> acquire({
     required int Function() priority,
     TaskControl? control,
+    bool allowBackgroundDuringForegroundPressure = true,
   }) {
     if (control?.cancelled == true) {
       return Future<ArtifactCacheReadLease>.error(const Failure(
@@ -105,7 +106,11 @@ final class ArtifactCacheReadScheduler {
     }
     final currentPriority = priority();
     final foreground = _isForeground(currentPriority);
-    if (_canStart(foreground)) {
+    if (_canStart(
+      foreground,
+      allowBackgroundDuringForegroundPressure:
+          allowBackgroundDuringForegroundPressure,
+    )) {
       return Future<ArtifactCacheReadLease>.value(
         _start(foreground, currentPriority),
       );
@@ -116,6 +121,8 @@ final class ArtifactCacheReadScheduler {
       sequence: _sequence++,
       completer: completer,
       control: control,
+      allowBackgroundDuringForegroundPressure:
+          allowBackgroundDuringForegroundPressure,
     );
     _pending.add(pending);
     if (control != null) {
@@ -154,10 +161,14 @@ final class ArtifactCacheReadScheduler {
     return false;
   }
 
-  bool _canStart(bool foreground) {
+  bool _canStart(
+    bool foreground, {
+    required bool allowBackgroundDuringForegroundPressure,
+  }) {
     if (_active >= maxActive) return false;
     if (foreground) return true;
     if (_hasForegroundPressure) {
+      if (!allowBackgroundDuringForegroundPressure) return false;
       return _activeBackground < maxBackgroundWhileForeground;
     }
     return true;
@@ -211,8 +222,13 @@ final class ArtifactCacheReadScheduler {
       });
       var selected = -1;
       for (var index = 0; index < _pending.length; index++) {
-        final priority = _pending[index].currentPriority;
-        if (_canStart(_isForeground(priority))) {
+        final pending = _pending[index];
+        final priority = pending.currentPriority;
+        if (_canStart(
+          _isForeground(priority),
+          allowBackgroundDuringForegroundPressure:
+              pending.allowBackgroundDuringForegroundPressure,
+        )) {
           selected = index;
           break;
         }
@@ -274,12 +290,14 @@ final class _PendingRead {
     required this.sequence,
     required this.completer,
     required this.control,
+    required this.allowBackgroundDuringForegroundPressure,
   });
 
   final int Function() priority;
   final int sequence;
   final Completer<ArtifactCacheReadLease> completer;
   final TaskControl? control;
+  final bool allowBackgroundDuringForegroundPressure;
 
   int get currentPriority => priority();
 }

@@ -1689,6 +1689,13 @@ final class _DemoHomeState extends State<DemoHome> {
           ),
         ],
         onDestinationSelected: (index) {
+          widget.startupTelemetry?.interaction(
+            'navigation-destination',
+            payload: <String, Object?>{
+              'fromIndex': _navigationIndex,
+              'toIndex': index,
+            },
+          );
           setState(() {
             _navigationIndex = index;
             if (index == 2) {

@@ -244,6 +244,23 @@ final class PromotedArtifactCacheHandoff {
           'resident promoted transfer has no body for ${session.id.key}',
         );
       }
+      if (session.residentBodyAuthority ==
+              ByteResponseBodyAuthority.artifactCache &&
+          exactDurableRestoreProof?.call(
+                session,
+                targetId,
+                expectedLength,
+              ) ==
+              true) {
+        _recordCommit(
+          session,
+          targetId: targetId,
+          action: 'skip-bound-exact-durable',
+          bytes: expectedLength,
+          startedAtMicros: startedAtMicros,
+        );
+        return;
+      }
       final alreadyDurable = await cache.containsBackendExact(
         id: targetId,
         expectedLength: expectedLength,

@@ -13,6 +13,8 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
 
   SqliteIndex.memory() : path = null;
 
+  static const int _schemaVersion = 10;
+
   final String? path;
   sql.Database? _db;
   Map<String, CacheRec>? _cachedEntries;
@@ -37,9 +39,14 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
     db.execute('PRAGMA foreign_keys = ON');
     db.execute('PRAGMA journal_mode = WAL');
     final version = db.select('PRAGMA user_version').first.values.first as int;
-    if (version > 9) {
+    if (version > _schemaVersion) {
       throw StateError('unsupported cache schema version: $version');
     }
+    // Schema/data migrations are one-time work. Re-running every historical
+    // backfill on every process start turns Reader-created cache rows into an
+    // O(N) cold-start tax and also opens a write transaction before Home's
+    // first frame. Version 10 records completion of the v1-v9 backfills.
+    if (version == _schemaVersion) return;
     db.execute('BEGIN IMMEDIATE');
     try {
       if (version == 0) {
@@ -221,7 +228,7 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
       _backfillArtifactReplicas(db);
       _backfillStorageRootRegistry(db);
       _migrateDownloadIdentityKeys(db);
-      db.execute('PRAGMA user_version = 9');
+      db.execute('PRAGMA user_version = $_schemaVersion');
       db.execute('COMMIT');
     } on Object {
       db.execute('ROLLBACK');

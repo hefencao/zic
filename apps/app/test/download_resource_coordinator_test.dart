@@ -12,6 +12,10 @@ void main() {
     );
     expect(defaultDownloadResourceCoordinator.networkLane.maxActive, 5);
     expect(
+      defaultDownloadResourceCoordinator.networkLane.preemptionCandidateGrace,
+      const Duration(milliseconds: 100),
+    );
+    expect(
       identical(
         defaultLocalMediaPipelineFactory.artifactReadScheduler,
         defaultDownloadResourceCoordinator.localReadScheduler,
