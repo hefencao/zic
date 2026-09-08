@@ -262,7 +262,8 @@ final class ComicSourceResourceGateway {
     if (isLegacyVeneraRuntimeLocator(uri.toString())) {
       return false;
     }
-    return _transports.selfBoundsOpenFor(_requireSource(sourceId, uri), uri);
+    final source = _sourceForId(sourceId);
+    return source != null && _transports.selfBoundsOpenFor(source, uri);
   }
 
   ExternalPluginControlledResourceResponseLoader
@@ -274,7 +275,25 @@ final class ComicSourceResourceGateway {
     if (isLegacyVeneraRuntimeLocator(uri.toString())) {
       throw StateError('已阻止打开失效的 Venera 运行时资源定位符：$uri');
     }
-    return _transports.controlledLoaderFor(_requireSource(sourceId, uri), uri);
+    return ({ByteRange? range, Validators? validators, TaskControl? control}) async {
+      // Reader/cache lookup must not wait for optional plugin activation. Only
+      // the real origin-open fallback needs a live source adapter. While that
+      // readiness wait is still generic-open work it remains under the normal
+      // watchdog; once the source appears, report the proven source/direct
+      // transport bound before entering its potentially longer runtime plan.
+      await _waitForSource?.call(sourceId);
+      control?.throwIfCancelled();
+      final source = _requireSource(sourceId, uri);
+      if (_transports.selfBoundsOpenFor(source, uri) &&
+          control is OpenPhaseReportingTaskControl) {
+        control.markOpenSelfBounded();
+      }
+      return _transports.controlledLoaderFor(source, uri)(
+        range: range,
+        validators: validators,
+        control: control,
+      );
+    };
   }
 
   ExternalPluginResourceResponseLoader pageResponseLoaderFor(
@@ -285,7 +304,14 @@ final class ComicSourceResourceGateway {
     if (isLegacyVeneraRuntimeLocator(uri.toString())) {
       throw StateError('已阻止打开失效的 Venera 运行时资源定位符：$uri');
     }
-    return _transports.loaderFor(_requireSource(sourceId, uri), uri);
+    return ({ByteRange? range, Validators? validators}) async {
+      await _waitForSource?.call(sourceId);
+      final source = _requireSource(sourceId, uri);
+      return _transports.loaderFor(source, uri)(
+        range: range,
+        validators: validators,
+      );
+    };
   }
 
   Future<String?> verifiedPageReuseIdentity({

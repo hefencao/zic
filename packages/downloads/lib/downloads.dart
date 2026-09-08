@@ -2,7 +2,7 @@ export 'package:catalog/catalog.dart' show ComicResourceRequest;
 export 'package:domain/domain.dart' show ErrorCode, Failure, TaskControl;
 export 'package:storage/storage.dart'
     show ComicPageOrder, DownloadPlacement, DownloadPlacementMode;
-export 'package:transport/transport.dart' show ByteResponse, ByteResponseFlowControl, ByteResponseReadDiagnostics, Validators;
+export 'package:transport/transport.dart' show ByteRange, ByteResponse, ByteResponseFlowControl, ByteResponseReadDiagnostics, Validators;
 
 export 'src/artifact_cache_reuse.dart';
 export 'src/artifact_cache_manager.dart';

@@ -261,9 +261,6 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
     final loadMs = totalWatch.elapsedMilliseconds;
     final entry = await _librarySession.hydrateEntry(rawEntry);
     final hydrateMs = totalWatch.elapsedMilliseconds - loadMs;
-    if (entry.chapter.sourceId != 'local-folder') {
-      await _waitForExternalSource(entry.chapter.sourceId);
-    }
     final legacyVenera = _hasLegacyVeneraLocators(entry.chapter);
     final remoteWatch = Stopwatch()..start();
     final current = legacyVenera
@@ -291,8 +288,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
     // large SAF/POSIX foreground pages wait for complete Uint8List materialization.
     final byteLoaders = <String, LocalImageFileBytesLoader>{};
     const byteProbeMs = 0;
-    final source = _sourceForId(current.chapter.sourceId);
-    final responseSources = source == null
+    final responseSources = current.chapter.sourceId == 'local-folder'
         ? const <String, LocalImageResponseSource>{}
         : <String, LocalImageResponseSource>{
             for (final page in current.chapter.pages)

@@ -59,6 +59,41 @@ void main() {
     );
   });
 
+  test('page open waits for deferred source only on origin fallback', () async {
+    final locator = Uri.parse('venera:resource:deferred-page');
+    final source = _ResolvedSource(
+      resolvedUri: Uri.parse('https://example.invalid/deferred.webp'),
+      bytes: Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 0xd9]),
+      resourceOperationTimeout: const Duration(seconds: 55),
+    );
+    final published = Completer<void>();
+    _ResolvedSource? liveSource;
+    final gateway = ComicSourceResourceGateway(
+      sourceForId: (sourceId) =>
+          sourceId == source.sourceId ? liveSource : null,
+      waitForSource: (_) => published.future,
+      directTransport: _SelfBoundedDirectTransport(),
+    );
+    addTearDown(gateway.close);
+
+    final loader = gateway.pageControlledResponseLoaderFor(
+      source.sourceId,
+      locator,
+    );
+    expect(gateway.pageOpenSelfBoundedFor(source.sourceId, locator), isFalse);
+
+    final control = _OpenPhaseControl();
+    final pending = loader(control: control);
+    await Future<void>.delayed(Duration.zero);
+    expect(control.reportedSelfBounded, isFalse);
+
+    liveSource = source;
+    published.complete();
+    final response = await pending;
+    expect(control.reportedSelfBounded, isTrue);
+    await response.discard();
+  });
+
   test('artwork cache coalesces one source request-plan resolution', () async {
     final locator = Uri.parse('mihon:resource:cover');
     final source = _ResolvedSource(
@@ -364,19 +399,17 @@ void main() {
     expect(source.loads, 0);
   });
 
-  test('pageControlledResponseLoaderFor throws StateError when source is unavailable', () {
+  test('page loader creation does not require a published source', () async {
     final gateway = ComicSourceResourceGateway(
       sourceForId: (_) => null,
     );
     addTearDown(gateway.close);
 
-    expect(
-      () => gateway.pageControlledResponseLoaderFor(
-        'venera:missing',
-        Uri.parse('venera-resource:page-1'),
-      ),
-      throwsStateError,
+    final loader = gateway.pageControlledResponseLoaderFor(
+      'venera:missing',
+      Uri.parse('venera-resource:page-1'),
     );
+    await expectLater(loader(), throwsStateError);
   });
 }
 
@@ -643,6 +676,25 @@ final class _ImageSource
   @override
   Future<ChapterManifest> loadChapter(String chapterId) =>
       throw UnimplementedError();
+}
+
+final class _OpenPhaseControl implements OpenPhaseReportingTaskControl {
+  final Completer<void> _cancelled = Completer<void>();
+  bool reportedSelfBounded = false;
+
+  @override
+  bool get cancelled => false;
+
+  @override
+  Future<void> get whenCancelled => _cancelled.future;
+
+  @override
+  int get priority => 1000;
+
+  @override
+  void markOpenSelfBounded() {
+    reportedSelfBounded = true;
+  }
 }
 
 final class _SelfBoundedDirectTransport
