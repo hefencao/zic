@@ -25,6 +25,8 @@ import java.io.FileOutputStream
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : FlutterActivity() {
     companion object {
@@ -33,6 +35,9 @@ class MainActivity : FlutterActivity() {
         private const val TRACE_EXPORT_CHANNEL = "dev.zic.zic/debug_trace_export"
         private const val STARTUP_CHANNEL = "dev.zic.zic/startup"
         private const val TAG = "zic.MainActivity"
+        private const val SAF_LOCATOR_PREFS = "zic_saf_locator_cache"
+        private const val SAF_LOCATOR_STATE = "recent_exact_document_ids_v1"
+        private const val SAF_LOCATOR_MAX_ENTRIES = 256
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -313,6 +318,101 @@ class MainActivity : FlutterActivity() {
     // lookups for every page open.
     private val safChildDocumentIds = mutableMapOf<String, Map<String, String>>()
 
+    // Process restarts lose the directory-listing cache above. Keep only a
+    // bounded set of exact provider document ids that have already opened
+    // successfully. Document ids are opaque acceleration hints, never file
+    // existence authority: a stale direct open is discarded and immediately
+    // falls back to the normal tree traversal below.
+    private val safExactDocumentIds = java.util.LinkedHashMap<String, String>(
+        SAF_LOCATOR_MAX_ENTRIES + 1,
+        0.75f,
+        true,
+    )
+    private var safExactDocumentIdsLoaded = false
+
+    private fun safExactLocatorKey(treeUri: String, relativePath: String): String =
+        "$treeUri\u0000$relativePath"
+
+    private fun ensureSafExactDocumentIdsLoaded() {
+        if (safExactDocumentIdsLoaded) return
+        safExactDocumentIdsLoaded = true
+        val encoded = getSharedPreferences(SAF_LOCATOR_PREFS, Context.MODE_PRIVATE)
+            .getString(SAF_LOCATOR_STATE, null) ?: return
+        try {
+            val entries = JSONArray(encoded)
+            val start = maxOf(0, entries.length() - SAF_LOCATOR_MAX_ENTRIES)
+            for (index in start until entries.length()) {
+                val entry = entries.optJSONObject(index) ?: continue
+                val key = entry.optString("key")
+                val documentId = entry.optString("documentId")
+                if (key.isNotEmpty() && documentId.isNotEmpty()) {
+                    safExactDocumentIds[key] = documentId
+                }
+            }
+        } catch (_: Throwable) {
+            safExactDocumentIds.clear()
+        }
+    }
+
+    private fun persistSafExactDocumentIds() {
+        val entries = JSONArray()
+        for ((key, documentId) in safExactDocumentIds) {
+            entries.put(
+                JSONObject()
+                    .put("key", key)
+                    .put("documentId", documentId),
+            )
+        }
+        getSharedPreferences(SAF_LOCATOR_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putString(SAF_LOCATOR_STATE, entries.toString())
+            .apply()
+    }
+
+    private fun cachedSafExactDocumentId(
+        treeUri: String,
+        relativePath: String,
+    ): String? {
+        ensureSafExactDocumentIdsLoaded()
+        return safExactDocumentIds[safExactLocatorKey(treeUri, relativePath)]
+    }
+
+    private fun rememberSafExactDocumentId(
+        treeUri: String,
+        relativePath: String,
+        documentId: String,
+    ) {
+        ensureSafExactDocumentIdsLoaded()
+        val key = safExactLocatorKey(treeUri, relativePath)
+        val unchanged = safExactDocumentIds[key] == documentId
+        safExactDocumentIds[key] = documentId
+        if (unchanged) return
+        while (safExactDocumentIds.size > SAF_LOCATOR_MAX_ENTRIES) {
+            val eldest = safExactDocumentIds.entries.iterator().next()
+            safExactDocumentIds.remove(eldest.key)
+        }
+        persistSafExactDocumentIds()
+    }
+
+    private fun forgetSafExactLocator(
+        treeUri: String,
+        relativePath: String,
+        includeDescendants: Boolean = false,
+    ) {
+        ensureSafExactDocumentIdsLoaded()
+        val key = safExactLocatorKey(treeUri, relativePath)
+        var changed = safExactDocumentIds.remove(key) != null
+        if (includeDescendants) {
+            val prefix = "$key/"
+            val staleKeys = safExactDocumentIds.keys
+                .filter { it.startsWith(prefix) }
+            for (staleKey in staleKeys) {
+                changed = safExactDocumentIds.remove(staleKey) != null || changed
+            }
+        }
+        if (changed) persistSafExactDocumentIds()
+    }
+
     private fun clearSafPathCache(treeUri: String? = null) {
         if (treeUri == null) {
             safChildDocumentIds.clear()
@@ -361,31 +461,66 @@ class MainActivity : FlutterActivity() {
         return indexed[displayName]
     }
 
-    private fun resolveReadUri(treeUriText: String, relativePath: String): Uri? {
+    private fun resolveReadDocumentId(
+        treeUriText: String,
+        relativePath: String,
+    ): String? {
         if (!isSafeRelativePath(relativePath)) return null
         val treeUri = Uri.parse(treeUriText)
         var documentId = DocumentsContract.getTreeDocumentId(treeUri)
         for (segment in relativePath.split('/').filter { it.isNotEmpty() }) {
             documentId = childDocumentId(treeUri, documentId, segment) ?: return null
         }
-        return DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
+        return documentId
     }
 
-    private fun openSafReadDescriptor(treeUri: String, relativePath: String): android.os.ParcelFileDescriptor {
-        fun openResolved(): android.os.ParcelFileDescriptor {
-            val uri = resolveReadUri(treeUri, relativePath)
-                ?: throw java.io.FileNotFoundException("missing $relativePath")
+    private fun resolveReadUri(treeUriText: String, relativePath: String): Uri? {
+        val documentId = resolveReadDocumentId(treeUriText, relativePath) ?: return null
+        return DocumentsContract.buildDocumentUriUsingTree(Uri.parse(treeUriText), documentId)
+    }
+
+    private fun openSafReadDescriptor(
+        treeUri: String,
+        relativePath: String,
+    ): android.os.ParcelFileDescriptor {
+        val parsedTreeUri = Uri.parse(treeUri)
+
+        fun openDocumentId(documentId: String): android.os.ParcelFileDescriptor {
+            val uri = DocumentsContract.buildDocumentUriUsingTree(
+                parsedTreeUri,
+                documentId,
+            )
             return contentResolver.openFileDescriptor(uri, "r")
                 ?: throw IllegalStateException("resolver returned null")
         }
+
+        val cachedDocumentId = cachedSafExactDocumentId(treeUri, relativePath)
+        if (cachedDocumentId != null) {
+            try {
+                return openDocumentId(cachedDocumentId)
+            } catch (_: java.io.FileNotFoundException) {
+                forgetSafExactLocator(treeUri, relativePath)
+                clearSafPathCache(treeUri)
+            }
+        }
+
+        fun resolveAndOpen(): android.os.ParcelFileDescriptor {
+            val documentId = resolveReadDocumentId(treeUri, relativePath)
+                ?: throw java.io.FileNotFoundException("missing $relativePath")
+            val descriptor = openDocumentId(documentId)
+            rememberSafExactDocumentId(treeUri, relativePath, documentId)
+            return descriptor
+        }
+
         return try {
-            openResolved()
+            resolveAndOpen()
         } catch (error: java.io.FileNotFoundException) {
             // A user or another process may replace a document while this app
             // remains alive. Drop provider ids and resolve once from fresh
             // directory authority before surfacing the stale locator.
+            forgetSafExactLocator(treeUri, relativePath)
             clearSafPathCache(treeUri)
-            openResolved()
+            resolveAndOpen()
         }
     }
 
@@ -532,6 +667,7 @@ class MainActivity : FlutterActivity() {
         val treeUri = requireNotNull(call.argument<String>("treeUri"))
         val relativePath = call.argument<String>("relativePath") ?: ""
         if (!isSafeRelativePath(relativePath)) return false
+        forgetSafExactLocator(treeUri, relativePath, includeDescendants = true)
         clearSafPathCache(treeUri)
         val root = safTreeRoot(treeUri) ?: return false
         return resolvePath(root, relativePath)?.delete() == true
@@ -542,6 +678,8 @@ class MainActivity : FlutterActivity() {
         val relativePath = requireNotNull(call.argument<String>("relativePath"))
         val newRelativePath = requireNotNull(call.argument<String>("newRelativePath"))
         if (!isSafeRelativePath(relativePath) || !isSafeRelativePath(newRelativePath)) return false
+        forgetSafExactLocator(treeUri, relativePath, includeDescendants = true)
+        forgetSafExactLocator(treeUri, newRelativePath, includeDescendants = true)
         clearSafPathCache(treeUri)
         val root = safTreeRoot(treeUri) ?: return false
         val source = resolvePath(root, relativePath) ?: return false
@@ -571,6 +709,8 @@ class MainActivity : FlutterActivity() {
         val relativePath = requireNotNull(call.argument<String>("relativePath"))
         val newRelativePath = requireNotNull(call.argument<String>("newRelativePath"))
         if (!isSafeRelativePath(relativePath) || !isSafeRelativePath(newRelativePath)) return false
+        forgetSafExactLocator(treeUri, relativePath, includeDescendants = true)
+        forgetSafExactLocator(treeUri, newRelativePath, includeDescendants = true)
         clearSafPathCache(treeUri)
         val root = safTreeRoot(treeUri) ?: return false
         val source = resolvePath(root, relativePath) ?: return false
