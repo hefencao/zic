@@ -25,7 +25,7 @@ for token in (
 
 storage = read('packages/storage/lib/src/sqlite_imported_library_store.dart')
 for token in (
-    'const _schemaVersion = 10;',
+    'const _schemaVersion = 11;',
     "page_mappings_json TEXT NOT NULL DEFAULT '[]'",
     'void _migrateComicVersionPageMappings(',
     '_comicVersionPageMappingsFromJson(',
@@ -39,8 +39,9 @@ for token in (
     'VerifiedArtifactReusePlan.matchResolvedRelated(',
     '_sourceResources.verifiedPageReuseIdentity(',
     'Future<int> _restoreSourceVersionArtifactEquivalences(',
-    'VerifiedArtifactReusePlan.fromVerifiedOffset(',
-    'plan.registerEquivalences(artifactCache)',
+    'VerifiedArtifactReuseResolver(',
+    'resolver.addVerifiedOffset(',
+    'artifactCache.registerEquivalentResolver(',
     "'stage': 'version-artifact-equivalence-restored'",
     "'stage': 'version-page-mapping-warmed'",
 ):
@@ -54,7 +55,7 @@ forbid(
 home = read('apps/app/lib/demo_home.dart') + read('apps/app/lib/demo_home_reader_route.dart')
 for token in (
     'await _restoreSourceVersionArtifactEquivalences(current);',
-    '_scheduleVersionReuseWarmup(versionSource, current.chapter.comicId);',
+    '_scheduleVersionReuseWarmup(versionSource, current);',
 ):
     require(home, token, 'Reader fast local restore + async refresh')
 forbid(

@@ -632,6 +632,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       current.chapter.comicId,
     );
     final relationFingerprintParts = <String>[];
+    final sourceChapterKeys = <String, ImportedLibraryChapterKey>{};
     for (final relation in relations) {
       final currentIsSuccessor =
           relation.successorComicId == current.chapter.comicId;
@@ -643,6 +644,17 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
             ? mapping.successorChapterId
             : mapping.predecessorChapterId;
         if (targetChapterId != current.chapter.chapterId) continue;
+        final sourceChapterId = currentIsSuccessor
+            ? mapping.predecessorChapterId
+            : mapping.successorChapterId;
+        final sourceChapterKey = ImportedLibraryChapterKey(
+          sourceId: current.chapter.sourceId,
+          chapterId: sourceChapterId,
+        );
+        sourceChapterKeys.putIfAbsent(
+          sourceChapterKey.identity,
+          () => sourceChapterKey,
+        );
         relationFingerprintParts.add(
           '${relation.predecessorComicId}\u0000${relation.successorComicId}'
           '\u0000${mapping.predecessorChapterId}'
@@ -672,6 +684,8 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     final resolver = VerifiedArtifactReuseResolver(
       targetChapter: targetManifest,
     );
+    final hydratedSourceEntries =
+        await _librarySession.hydrateChapterBatch(sourceChapterKeys.values);
     final cachedManifests = <String, ChapterManifest>{};
     var skippedMissingSourceManifests = 0;
     for (final relation in relations) {
@@ -690,15 +704,16 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
             : mapping.successorChapterId;
         var sourceManifest = cachedManifests[sourceChapterId];
         if (sourceManifest == null) {
-          final sourceEntryHint = _exactChapterEntry(
+          final sourceIdentity = chapterLibraryIdentity(
             current.chapter.sourceId,
             sourceChapterId,
-          ) ?? await _library.get(current.chapter.sourceId, sourceChapterId);
-          if (sourceEntryHint == null) {
+          );
+          final sourceEntry = hydratedSourceEntries[sourceIdentity] ??
+              _exactChapterEntry(current.chapter.sourceId, sourceChapterId);
+          if (sourceEntry == null) {
             skippedMissingSourceManifests++;
             continue;
           }
-          final sourceEntry = await _librarySession.hydrateEntry(sourceEntryHint);
           sourceManifest = sourceEntry.chapter.toManifest();
           cachedManifests[sourceChapterId] = sourceManifest;
         }

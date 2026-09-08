@@ -111,6 +111,26 @@ abstract interface class ImportedLibraryRevisionStore {
   Future<int?> get libraryProjectionRevision;
 }
 
+final class ImportedLibraryChapterKey {
+  const ImportedLibraryChapterKey({
+    required this.sourceId,
+    required this.chapterId,
+  });
+
+  final String sourceId;
+  final String chapterId;
+
+  String get identity => chapterLibraryIdentity(sourceId, chapterId);
+}
+
+/// Optional targeted bulk lookup for callers that already know the exact
+/// chapter identities they need. This is not a library enumeration API.
+abstract interface class ImportedLibraryBatchLookup {
+  Future<List<ImportedLibraryEntry>> getMany(
+    Iterable<ImportedLibraryChapterKey> chapters,
+  );
+}
+
 abstract interface class ImportedLibraryStore {
   Future<void> open();
 
@@ -174,7 +194,11 @@ abstract interface class ImportedLibraryStore {
 }
 
 final class MemoryImportedLibraryStore
-    implements ImportedLibraryStore, ComicVersionRelationStore, SourceMigrationJournalStore {
+    implements
+        ImportedLibraryStore,
+        ImportedLibraryBatchLookup,
+        ComicVersionRelationStore,
+        SourceMigrationJournalStore {
   MemoryImportedLibraryStore({
     Iterable<LibraryMigrationIssue> migrationIssues =
         const <LibraryMigrationIssue>[],
@@ -248,6 +272,27 @@ final class MemoryImportedLibraryStore
       chapter: chapter,
       progress: _progress[identity],
     );
+  }
+
+  @override
+  Future<List<ImportedLibraryEntry>> getMany(
+    Iterable<ImportedLibraryChapterKey> chapters,
+  ) async {
+    _requireOpen();
+    final seen = <String>{};
+    final result = <ImportedLibraryEntry>[];
+    for (final key in chapters) {
+      if (!seen.add(key.identity)) continue;
+      final chapter = _chapters[key.identity];
+      if (chapter == null) continue;
+      result.add(
+        ImportedLibraryEntry(
+          chapter: chapter,
+          progress: _progress[key.identity],
+        ),
+      );
+    }
+    return List<ImportedLibraryEntry>.unmodifiable(result);
   }
 
   @override

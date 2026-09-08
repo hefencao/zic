@@ -90,4 +90,71 @@ void main() {
 
     expect(hydrated?.chapter.toJson(), chapter.toJson());
   });
+
+  test('batch get opens durable store once when bootstrap memory is incomplete',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-lazy-library-batch-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final first = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/first',
+      displayName: 'first',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.png',
+          sourceId: 'file:///batch/001.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    final second = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/second',
+      displayName: 'second',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.png',
+          sourceId: 'file:///batch/001.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    final durable = SqliteImportedLibraryStore(
+      '${directory.path}/imported_library.sqlite3',
+    );
+    await durable.open();
+    await durable.upsertChapter(first);
+    await durable.upsertChapter(second);
+    await durable.close();
+
+    var rootCalls = 0;
+    final store = LazyImportedLibraryStore(
+      rootProvider: () async {
+        rootCalls++;
+        return directory.path;
+      },
+    );
+    await store.open();
+    addTearDown(store.close);
+
+    final result = await store.getMany(<ImportedLibraryChapterKey>[
+      ImportedLibraryChapterKey(
+        sourceId: first.sourceId,
+        chapterId: first.chapterId,
+      ),
+      ImportedLibraryChapterKey(
+        sourceId: second.sourceId,
+        chapterId: second.chapterId,
+      ),
+    ]);
+
+    expect(result, hasLength(2));
+    expect(rootCalls, 1);
+    expect(store.isDurable, isTrue);
+  });
+
 }

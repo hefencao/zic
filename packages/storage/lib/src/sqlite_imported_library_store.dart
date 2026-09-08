@@ -13,6 +13,7 @@ const _schemaVersion = 11;
 final class SqliteImportedLibraryStore
     implements
         ImportedLibraryStore,
+        ImportedLibraryBatchLookup,
         ComicVersionRelationStore,
         ReaderProgressCheckpointStore,
         ImportedLibraryRevisionStore,
@@ -208,6 +209,42 @@ final class SqliteImportedLibraryStore
       LIMIT 1
     ''', <Object?>[sourceId, chapterId]);
     return rows.isEmpty ? null : _readEntry(rows.first);
+  }
+
+  @override
+  Future<List<ImportedLibraryEntry>> getMany(
+    Iterable<ImportedLibraryChapterKey> chapters,
+  ) async {
+    final unique = <String, ImportedLibraryChapterKey>{};
+    for (final key in chapters) {
+      unique.putIfAbsent(key.identity, () => key);
+    }
+    if (unique.isEmpty) return const <ImportedLibraryEntry>[];
+    final db = _requireDb();
+    final result = <ImportedLibraryEntry>[];
+    final keys = unique.values.toList(growable: false);
+    const chunkSize = 200;
+    for (var offset = 0; offset < keys.length; offset += chunkSize) {
+      final end = (offset + chunkSize).clamp(0, keys.length);
+      final chunk = keys.sublist(offset, end);
+      final where = List<String>.filled(
+        chunk.length,
+        '(c.source_id = ? AND c.chapter_id = ?)',
+      ).join(' OR ');
+      final args = <Object?>[];
+      for (final key in chunk) {
+        args
+          ..add(key.sourceId)
+          ..add(key.chapterId);
+      }
+      final statement = 'SELECT c.chapter_json, p.progress_json '
+          'FROM imported_chapter AS c '
+          'LEFT JOIN reading_progress AS p '
+          'ON p.source_id = c.source_id AND p.chapter_id = c.chapter_id '
+          'WHERE $where';
+      result.addAll(db.select(statement, args).map(_readEntry));
+    }
+    return List<ImportedLibraryEntry>.unmodifiable(result);
   }
 
   @override

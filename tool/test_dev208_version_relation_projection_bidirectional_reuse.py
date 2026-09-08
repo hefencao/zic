@@ -40,7 +40,8 @@ for token in (
     "_versionRelations",
     "Future<int> _restoreSourceVersionArtifactEquivalences(",
     "_sourceVersionRelationsForComic(",
-    "VerifiedArtifactReusePlan.fromVerifiedOffset(",
+    "VerifiedArtifactReuseResolver(",
+    "resolver.addVerifiedOffset(",
     "VerifiedArtifactReusePlan.matchResolvedRelated(",
     "'stage': 'version-artifact-equivalence-restored'",
 ):

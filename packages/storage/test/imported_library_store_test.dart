@@ -8,6 +8,81 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 import 'package:test/test.dart';
 
 void main() {
+  test('sqlite batch lookup returns exact requested chapters with progress', () async {
+    final store = SqliteImportedLibraryStore.memory();
+    await store.open();
+    addTearDown(store.close);
+    ImportedChapterRecord chapter(String id) => ImportedChapterRecord.folder(
+          directoryId: '/batch/$id',
+          displayName: id,
+          pages: <ImportedPageRecord>[
+            ImportedPageRecord(
+              displayName: '001.png',
+              sourceId: '/batch/$id/001.png',
+              contentKindHint: ContentKindHint.png,
+            ),
+          ],
+        );
+    final first = chapter('first');
+    final second = chapter('second');
+    final unrequested = chapter('unrequested');
+    await store.upsertChapter(first);
+    await store.upsertChapter(second);
+    await store.upsertChapter(unrequested);
+    final progress = ReadingProgress(
+      sourceId: second.sourceId,
+      comicId: second.comicId,
+      chapterId: second.chapterId,
+      pageIndex: 0,
+      subPageOffset: 0.25,
+      readerMode: ReaderMode.paged,
+      updatedAt: DateTime.utc(2026, 9, 9),
+    );
+    await store.saveProgress(progress);
+
+    final entries = await store.getMany(<ImportedLibraryChapterKey>[
+      ImportedLibraryChapterKey(
+        sourceId: first.sourceId,
+        chapterId: first.chapterId,
+      ),
+      ImportedLibraryChapterKey(
+        sourceId: second.sourceId,
+        chapterId: second.chapterId,
+      ),
+      ImportedLibraryChapterKey(
+        sourceId: first.sourceId,
+        chapterId: first.chapterId,
+      ),
+      const ImportedLibraryChapterKey(
+        sourceId: 'local-folder',
+        chapterId: '/batch/missing',
+      ),
+    ]);
+
+    expect(entries, hasLength(2));
+    final byIdentity = <String, ImportedLibraryEntry>{
+      for (final entry in entries) entry.identity: entry,
+    };
+    final firstIdentity = chapterLibraryIdentity(first.sourceId, first.chapterId);
+    final secondIdentity =
+        chapterLibraryIdentity(second.sourceId, second.chapterId);
+    expect(byIdentity, contains(firstIdentity));
+    expect(byIdentity, contains(secondIdentity));
+    expect(
+      byIdentity,
+      isNot(contains(chapterLibraryIdentity(
+        unrequested.sourceId,
+        unrequested.chapterId,
+      ))),
+    );
+    final restoredProgress = byIdentity[secondIdentity]!.progress;
+    expect(restoredProgress, isNotNull);
+    expect(restoredProgress!.pageIndex, progress.pageIndex);
+    expect(restoredProgress.subPageOffset, progress.subPageOffset);
+    expect(restoredProgress.readerMode, progress.readerMode);
+    expect(restoredProgress.updatedAt, progress.updatedAt);
+  });
+
   test('sqlite persists discovered comic version predecessors', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-comic-version-relation-',

@@ -1060,6 +1060,35 @@ final class HomeLibrarySession extends ChangeNotifier {
     return hydrated ?? entry;
   }
 
+  Future<Map<String, ImportedLibraryEntry>> hydrateChapterBatch(
+    Iterable<ImportedLibraryChapterKey> chapters,
+  ) async {
+    final keys = <String, ImportedLibraryChapterKey>{};
+    for (final key in chapters) {
+      keys.putIfAbsent(key.identity, () => key);
+    }
+    if (keys.isEmpty) return const <String, ImportedLibraryEntry>{};
+    final batch = library is ImportedLibraryBatchLookup
+        ? library as ImportedLibraryBatchLookup
+        : null;
+    final entries = await _traceStartupOperation<List<ImportedLibraryEntry>>(
+      'chapter-hydrate-batch',
+      () async {
+        if (batch != null) return batch.getMany(keys.values);
+        final result = <ImportedLibraryEntry>[];
+        for (final key in keys.values) {
+          final entry = await library.get(key.sourceId, key.chapterId);
+          if (entry != null) result.add(entry);
+        }
+        return result;
+      },
+      summary: (value) => 'requested=${keys.length} present=${value.length}',
+    );
+    return <String, ImportedLibraryEntry>{
+      for (final entry in entries) entry.identity: entry,
+    };
+  }
+
   Future<List<ImportedLibraryEntry>> loadAuthoritativeEntries() async {
     await ready;
     return library.list();

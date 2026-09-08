@@ -1077,11 +1077,85 @@ void main() {
     expect(persisted?.chapterDownloads, isEmpty);
   });
 
+
+  test('chapter batch hydration uses one targeted store lookup', () async {
+    final delegate = MemoryImportedLibraryStore();
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+    final first = ImportedChapterRecord.folder(
+      directoryId: '/batch/one',
+      displayName: 'one',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.png',
+          sourceId: 'file:///batch/001.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    final second = ImportedChapterRecord.folder(
+      directoryId: '/batch/two',
+      displayName: 'two',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.png',
+          sourceId: 'file:///batch/001.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await delegate.upsertChapter(first);
+    await delegate.upsertChapter(second);
+
+    final hydrated = await session.hydrateChapterBatch(
+      <ImportedLibraryChapterKey>[
+        ImportedLibraryChapterKey(
+          sourceId: first.sourceId,
+          chapterId: first.chapterId,
+        ),
+        ImportedLibraryChapterKey(
+          sourceId: second.sourceId,
+          chapterId: second.chapterId,
+        ),
+        ImportedLibraryChapterKey(
+          sourceId: first.sourceId,
+          chapterId: first.chapterId,
+        ),
+      ],
+    );
+
+    expect(hydrated, hasLength(2));
+    expect(library.getManyCalls, 1);
+    expect(library.getCalls, 0);
+  });
 }
 
 
 final class _GatedLibraryStore
-    implements ImportedLibraryStore, ImportedLibraryRevisionStore {
+    implements
+        ImportedLibraryStore,
+        ImportedLibraryBatchLookup,
+        ImportedLibraryRevisionStore {
   _GatedLibraryStore(
     this.delegate,
     this.categories, {
@@ -1096,6 +1170,8 @@ final class _GatedLibraryStore
   var comicPreferenceWrites = 0;
   var sourcePreferenceWrites = 0;
   var listCalls = 0;
+  var getCalls = 0;
+  var getManyCalls = 0;
 
   @override
   Future<int?> get libraryProjectionRevision async => libraryRevision;
@@ -1111,8 +1187,17 @@ final class _GatedLibraryStore
     return delegate.list();
   }
   @override
-  Future<ImportedLibraryEntry?> get(String sourceId, String chapterId) =>
-      delegate.get(sourceId, chapterId);
+  Future<ImportedLibraryEntry?> get(String sourceId, String chapterId) {
+    getCalls++;
+    return delegate.get(sourceId, chapterId);
+  }
+  @override
+  Future<List<ImportedLibraryEntry>> getMany(
+    Iterable<ImportedLibraryChapterKey> chapters,
+  ) {
+    getManyCalls++;
+    return (delegate as ImportedLibraryBatchLookup).getMany(chapters);
+  }
   @override
   Future<void> upsertChapter(ImportedChapterRecord chapter) =>
       delegate.upsertChapter(chapter);

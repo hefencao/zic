@@ -13,6 +13,7 @@ import 'sqlite_imported_library_store.dart';
 final class LazyImportedLibraryStore
     implements
         ImportedLibraryStore,
+        ImportedLibraryBatchLookup,
         ComicVersionRelationStore,
         ImportedLibraryRevisionStore,
         SourceMigrationJournalStore {
@@ -148,6 +149,24 @@ final class LazyImportedLibraryStore
     // semantics and may create an empty durable store on explicit access.
     final durable = await _ensureDurable();
     return durable.get(sourceId, chapterId);
+  }
+
+  @override
+  Future<List<ImportedLibraryEntry>> getMany(
+    Iterable<ImportedLibraryChapterKey> chapters,
+  ) async {
+    final keys = <String, ImportedLibraryChapterKey>{};
+    for (final key in chapters) {
+      keys.putIfAbsent(key.identity, () => key);
+    }
+    if (keys.isEmpty) return const <ImportedLibraryEntry>[];
+    final active = _active as ImportedLibraryBatchLookup;
+    final entries = await active.getMany(keys.values);
+    if (_durable != null || entries.length == keys.length) {
+      return entries;
+    }
+    final durable = await _ensureDurable();
+    return (durable as ImportedLibraryBatchLookup).getMany(keys.values);
   }
 
   @override
