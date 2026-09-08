@@ -963,8 +963,8 @@ final class DownloadSession {
     required Validators validators,
     required int totalLength,
     required ByteResponseBodyAuthority bodyAuthority,
+    required List<int> metadataPrefix,
     Uri? validatorRequestUri,
-    List<int> metadataPrefix = const <int>[],
     DownloadResidentReplayRangeChunks? residentReplayRangeChunks,
     DownloadResidentReplayRangeClose? residentReplayRangeClose,
     String residentReplayAccessMode = 'unknown',
@@ -980,6 +980,13 @@ final class DownloadSession {
         totalLength,
         'totalLength',
         'resident immutable authorities must contain image bytes',
+      );
+    }
+    if (metadataPrefix.isEmpty) {
+      throw ArgumentError.value(
+        metadataPrefix,
+        'metadataPrefix',
+        'resident immutable authorities must preserve encoded metadata',
       );
     }
     if (metadataPrefix.length > _sourceMetadataPrefixLength) {
@@ -1010,16 +1017,12 @@ final class DownloadSession {
     _prefix = <int>[];
     _sourceCanvasWidth = null;
     _sourceCanvasHeight = null;
-    if (metadataPrefix.isNotEmpty) {
-      _appendSourceMetadataPrefix(
-        0,
-        metadataPrefix is Uint8List
-            ? metadataPrefix
-            : Uint8List.fromList(metadataPrefix),
-      );
-    } else {
-      _contentKind = ContentKind.unknown;
-    }
+    _appendSourceMetadataPrefix(
+      0,
+      metadataPrefix is Uint8List
+          ? metadataPrefix
+          : Uint8List.fromList(metadataPrefix),
+    );
     _failure = null;
     _resetPlayablePrefixEvidence();
     final epoch = _epoch;

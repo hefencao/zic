@@ -62,6 +62,32 @@ final class PartialDownloadHandoff {
     control?.throwIfCancelled();
     _exactDurableRestoreProofs[session] = null;
     if (session.committedLength > 0) return;
+
+    // A chapter-owned exact READY body may bypass an empty deterministic
+    // session artifact only after the Artifact owner itself proves that no
+    // local partial/final body exists. This preserves the historical authority
+    // order when both representations exist. The fast path additionally
+    // requires a retained range reader, whose open includes the exact-length
+    // physical proof; any miss/failure falls back to the complete restore path.
+    _PartialRestoreCandidate? exactCandidate;
+    if (!await session.artifact.hasRestorableBody()) {
+      control?.throwIfCancelled();
+      exactCandidate = await _restoreExactCandidate(
+        session.id,
+        control: control,
+      );
+      final exactEntry = exactCandidate?.entry;
+      if (exactEntry != null &&
+          exactEntry.exactDurableFinal &&
+          await _tryBindExactReadyWithoutSessionRestore(
+            session,
+            exactEntry,
+            control: control,
+          )) {
+        return;
+      }
+    }
+
     await session.restore(
       verifyPromotedChecksum: false,
       control: control,
@@ -71,10 +97,8 @@ final class PartialDownloadHandoff {
         session.artifact.committedLength > 0) {
       return;
     }
-    final candidate = await _restoreCandidate(
-      session.id,
-      control: control,
-    );
+    final candidate =
+        exactCandidate ?? await _restoreCandidate(session.id, control: control);
     if (candidate == null || candidate.entry.length <= 0) return;
     final entry = candidate.entry;
 
@@ -108,13 +132,12 @@ final class PartialDownloadHandoff {
           lease?.release();
         }
       }
-      final prefix = boundReader == null
-          ? await _readEntryPrefix(
-              entry,
-              priority: () => session.effectivePriority,
-              control: control,
-            )
-          : const <int>[];
+      final prefix = await _readEntryPrefix(
+        entry,
+        boundReader: boundReader,
+        priority: () => session.effectivePriority,
+        control: control,
+      );
       control?.throwIfCancelled();
       final proof = _ExactDurableRestoreProof(
         id: session.id,
@@ -258,6 +281,93 @@ final class PartialDownloadHandoff {
     if (bytes.isNotEmpty) yield bytes;
   }
 
+  Future<bool> _tryBindExactReadyWithoutSessionRestore(
+    DownloadSession session,
+    PartialDownloadEntry entry, {
+    TaskControl? control,
+  }) async {
+    final startedAtMicros = clock?.nowMicros();
+    final totalLength = entry.totalLength ?? entry.length;
+    if (entry.length <= 0 || totalLength != entry.length) return false;
+    final openBoundReader = entry.openBoundRangeReader;
+    if (openBoundReader == null) return false;
+
+    PartialDownloadBoundRangeReader? boundReader;
+    ArtifactCacheReadLease? lease;
+    try {
+      final scheduler = readScheduler;
+      if (scheduler != null) {
+        lease = await scheduler.acquire(
+          priority: () => session.effectivePriority,
+          control: control,
+        );
+      }
+      boundReader = await openBoundReader();
+    } on Object {
+      boundReader = null;
+    } finally {
+      lease?.release();
+    }
+    control?.throwIfCancelled();
+    final reader = boundReader;
+    if (reader == null) return false;
+
+    final List<int> prefix;
+    try {
+      prefix = await _readEntryPrefix(
+        entry,
+        boundReader: reader,
+        priority: () => session.effectivePriority,
+        control: control,
+      );
+    } on Object {
+      try {
+        await reader.close();
+      } on Object {
+        // Prefix metadata is required for the fast path. If it cannot be
+        // proven, fall back to the ordinary restore path instead of binding a
+        // promoted body whose content kind would remain permanently unknown.
+      }
+      return false;
+    }
+
+    final proof = _ExactDurableRestoreProof(
+      id: session.id,
+      epoch: session.epoch,
+      length: entry.length,
+    );
+    _exactDurableRestoreProofs[session] = proof;
+    try {
+      session.bindResidentImmutableAuthority(
+        validators: entry.validators,
+        totalLength: totalLength,
+        validatorRequestUri: session.id.canonicalUri,
+        bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+        metadataPrefix: prefix,
+        residentReplayRangeChunks: (start, endExclusive) async =>
+            _openBoundRange(reader, start, endExclusive),
+        residentReplayRangeClose: reader.close,
+        residentReplayAccessMode: reader.accessMode,
+      );
+      boundReader = null;
+    } on Object {
+      _exactDurableRestoreProofs[session] = null;
+      try {
+        await reader.close();
+      } on Object {
+        // Preserve the bind failure.
+      }
+      rethrow;
+    }
+    _record(
+      session,
+      action: 'bound-ready-authority',
+      bytes: entry.length,
+      startedAtMicros: startedAtMicros,
+    );
+    return true;
+  }
+
   Future<List<int>> _readEntryPrefix(
     PartialDownloadEntry entry, {
     PartialDownloadBoundRangeReader? boundReader,
@@ -386,18 +496,8 @@ final class PartialDownloadHandoff {
     DownloadId id, {
     TaskControl? control,
   }) async {
-    control?.throwIfCancelled();
-    final exact = await _awaitCancellable(
-      store.openPartialDownload(id),
-      control,
-    );
-    if (exact != null && exact.length > 0) {
-      return _PartialRestoreCandidate(
-        entry: exact,
-        equivalent: false,
-        candidatesChecked: 0,
-      );
-    }
+    final exact = await _restoreExactCandidate(id, control: control);
+    if (exact != null) return exact;
     final candidates = equivalentCandidates;
     if (candidates == null) return null;
     PartialDownloadEntry? selected;
@@ -420,6 +520,23 @@ final class PartialDownloadHandoff {
       entry: selected,
       equivalent: true,
       candidatesChecked: checked,
+    );
+  }
+
+  Future<_PartialRestoreCandidate?> _restoreExactCandidate(
+    DownloadId id, {
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
+    final exact = await _awaitCancellable(
+      store.openPartialDownload(id),
+      control,
+    );
+    if (exact == null || exact.length <= 0) return null;
+    return _PartialRestoreCandidate(
+      entry: exact,
+      equivalent: false,
+      candidatesChecked: 0,
     );
   }
 

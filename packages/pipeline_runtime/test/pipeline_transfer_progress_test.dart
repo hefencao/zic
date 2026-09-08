@@ -101,6 +101,53 @@ void main() {
     expect(progress.phase, PipelineTransferPhase.idle);
   });
 
+  test('resident READY metadata projects static fallback content kind', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'pipeline_resident_static_kind_',
+    );
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'static-page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.invalid/static-page.jpg'),
+    );
+    final session = DownloadSession(
+      id: id,
+      artifact: Artifact(
+        partialPath: '${temp.path}/static.part',
+        finalPath: '${temp.path}/static.bin',
+      ),
+      clock: SystemClock(),
+    );
+    addTearDown(() async {
+      await session.dispose();
+      await temp.delete(recursive: true);
+    });
+
+    session.bindResidentImmutableAuthority(
+      validators: const Validators(),
+      totalLength: 2557,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: const <int>[
+        0xff, 0xd8, 0xff, 0xe0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+      ],
+    );
+    final stream = PipelinePageStream.forDownload(
+      id,
+      resolvePhysical: () => session,
+    );
+    addTearDown(stream.dispose);
+    stream.refreshBinding();
+
+    expect(stream.snapshot.state, PipelinePageTransferState.promoted);
+    expect(stream.snapshot.kind, PipelinePageContentKind.fallback);
+  });
+
   test('publisher follows resolved physical session for an exact alias', () async {
     final temp = await Directory.systemTemp.createTemp(
       'pipeline_transfer_progress_alias_',

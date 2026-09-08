@@ -81,6 +81,28 @@ final class Artifact {
         ),
       );
 
+  /// Returns whether this deterministic session artifact has a physical body
+  /// that must retain restore priority over an external durable authority.
+  ///
+  /// This is a read-only admission probe, not restore evidence. It preserves
+  /// the same path/immediate-parent symlink rejection as [restore], but does
+  /// not create directories, read sidecars, hash bytes, or mutate artifact
+  /// state. Any non-file/non-missing body node is treated as restorable so the
+  /// full restore path remains authoritative for unusual filesystem states.
+  Future<bool> hasRestorableBody() async {
+    await _mutationTail;
+    _requireNotDisposed();
+    final checkedParents = <String>{};
+    for (final path in <String>[partialPath, finalPath]) {
+      final type = await _artifactPathType(
+        path,
+        checkedParents: checkedParents,
+      );
+      if (type != FileSystemEntityType.notFound) return true;
+    }
+    return false;
+  }
+
   /// Opens an already-indexed mutable partial without hashing its whole body.
   ///
   /// This is deliberately narrower than [restore]: the caller must already own
@@ -777,6 +799,7 @@ final class Artifact {
   }
 
   Future<void> _rejectArtifactLinks() async {
+    final checkedParents = <String>{};
     for (final path in <String>[
       partialPath,
       finalPath,
@@ -785,11 +808,18 @@ final class Artifact {
       '$metaPath.tmp',
       '$finalMetaPath.tmp',
     ]) {
-      await _rejectLink(path);
+      await _rejectLink(path, checkedParents: checkedParents);
     }
   }
 
-  Future<void> _rejectLink(String path) async {
+  Future<void> _rejectLink(String path, {Set<String>? checkedParents}) async {
+    await _artifactPathType(path, checkedParents: checkedParents);
+  }
+
+  Future<FileSystemEntityType> _artifactPathType(
+    String path, {
+    Set<String>? checkedParents,
+  }) async {
     final type = await FileSystemEntity.type(path, followLinks: false);
     if (type == FileSystemEntityType.link) {
       throw Failure(
@@ -798,13 +828,16 @@ final class Artifact {
       );
     }
     final parent = File(path).parent.path;
-    final parentType = await FileSystemEntity.type(parent, followLinks: false);
-    if (parentType == FileSystemEntityType.link) {
-      throw Failure(
-        code: ErrorCode.artifactCorruption,
-        message: 'artifact path must not contain a symlink: $path',
-      );
+    if (checkedParents == null || checkedParents.add(parent)) {
+      final parentType = await FileSystemEntity.type(parent, followLinks: false);
+      if (parentType == FileSystemEntityType.link) {
+        throw Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'artifact path must not contain a symlink: $path',
+        );
+      }
     }
+    return type;
   }
 
   Future<void> _closeWriter() async {

@@ -537,7 +537,56 @@ void main() {
     expect(session.committedLength, bytes.lengthInBytes);
   });
 
-  test('bound READY reader is retained for ranges and closed by reset', () async {
+  test(
+    'deterministic session body keeps priority over exact READY fast path',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'ready-local-priority-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final id = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'ready-priority',
+          chapterId: 'chapter',
+          pageId: 'page',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://example.test/ready-priority.webp'),
+      );
+      final registry = DownloadRegistry(
+        layout: CacheLayout(root.path),
+        clock: SystemClock(),
+      );
+      addTearDown(registry.dispose);
+      final session = registry.get(id);
+      final localBytes = Uint8List.fromList(<int>[
+        ...'RIFF....WEBPlocal'.codeUnits,
+      ]);
+      await File(session.artifact.partialPath).create(recursive: true);
+      await File(session.artifact.partialPath).writeAsBytes(localBytes);
+
+      final durableBytes = Uint8List.fromList(<int>[
+        ...'RIFF....WEBPdurable'.codeUnits,
+        ...List<int>.generate(64, (index) => index),
+      ]);
+      final store = _ReadyBoundStore(id: id, bytes: durableBytes);
+      final handoff = PartialDownloadHandoff(store: store);
+
+      await handoff.restoreInto(session);
+
+      expect(session.residentIngressDeferred, isFalse);
+      expect(session.artifact.state, ArtifactState.partial);
+      expect(session.committedLength, localBytes.lengthInBytes);
+      expect(
+        store.readerOpenCalls,
+        0,
+        reason: 'an existing deterministic body must keep restore priority',
+      );
+    },
+  );
+
+  test('bound READY reader preserves metadata prefix and stays retained for ranges', () async {
     final root = await Directory.systemTemp.createTemp('ready-bound-reader-');
     addTearDown(() => root.delete(recursive: true));
     final id = DownloadId(
@@ -548,10 +597,10 @@ void main() {
         pageId: 'page',
       ),
       sourceRevision: 'r1',
-      canonicalUri: Uri.parse('https://example.test/ready-bound.webp'),
+      canonicalUri: Uri.parse('https://example.test/ready-bound.jpg'),
     );
     final bytes = Uint8List.fromList(<int>[
-      ...'RIFF....WEBP'.codeUnits,
+      0xff, 0xd8, 0xff,
       ...List<int>.generate(1024, (index) => index & 0xff),
     ]);
     final scheduler = ArtifactCacheReadScheduler(maxActive: 2);
@@ -576,13 +625,17 @@ void main() {
 
     await handoff.restoreInto(session);
     expect(session.state, DownloadState.promoted);
+    expect(session.artifact.state, ArtifactState.empty,
+        reason: 'exact READY bypasses restore only with no deterministic body');
     expect(session.residentIngressDeferred, isTrue);
     expect(session.residentReplayAccessMode, 'saf');
+    expect(session.contentKind, ContentKind.fallback,
+        reason: 'READY binding must preserve its bounded metadata prefix');
     expect(store.readerOpenCalls, 1);
     expect(activeWhileOpening, 1,
         reason: 'descriptor open must run inside the local-read scheduler');
-    expect(activeWhileReading, 0,
-        reason: 'binding READY authority must not read bytes before Reader demand');
+    expect(activeWhileReading, 1,
+        reason: 'binding reads only the bounded metadata prefix');
 
     final replay = session.residentReplayRangeChunks;
     expect(replay, isNotNull);
@@ -595,8 +648,8 @@ void main() {
     expect(firstBytes, orderedEquals(bytes.sublist(64, 128)));
     expect(secondBytes, orderedEquals(bytes.sublist(128, 256)));
     expect(store.readerOpenCalls, 1);
-    expect(store.readerReadCalls, 2,
-        reason: 'only decoder-demanded ranges read the retained READY reader');
+    expect(store.readerReadCalls, 3,
+        reason: 'one metadata read precedes the two decoder-demanded ranges');
 
     await session.reset(removeCacheRecord: false);
     expect(store.readerCloseCalls, 1,
