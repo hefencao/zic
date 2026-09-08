@@ -5,6 +5,7 @@ import 'library_migration_issue.dart';
 import 'library_preferences.dart';
 import 'saved_comic.dart';
 import 'source_catalog.dart';
+import 'source_migration_journal.dart';
 
 String comicLibraryIdentity(String sourceId, String comicId) =>
     '$sourceId\u0000$comicId';
@@ -173,7 +174,7 @@ abstract interface class ImportedLibraryStore {
 }
 
 final class MemoryImportedLibraryStore
-    implements ImportedLibraryStore, ComicVersionRelationStore {
+    implements ImportedLibraryStore, ComicVersionRelationStore, SourceMigrationJournalStore {
   MemoryImportedLibraryStore({
     Iterable<LibraryMigrationIssue> migrationIssues =
         const <LibraryMigrationIssue>[],
@@ -197,6 +198,8 @@ final class MemoryImportedLibraryStore
   final Map<String, List<ComicVersionRelation>> _versionRelations =
       <String, List<ComicVersionRelation>>{};
   final Map<int, LibraryMigrationIssue> _migrationIssues;
+  final Map<String, SourceMigrationJournalRecord> _sourceMigrationJournals =
+      <String, SourceMigrationJournalRecord>{};
   bool _open = false;
 
   @override
@@ -583,6 +586,91 @@ final class MemoryImportedLibraryStore
     while (_versionRelations.length > 256) {
       _versionRelations.remove(_versionRelations.keys.first);
     }
+  }
+
+  @override
+  Future<SourceMigrationJournalRecord?> getSourceMigrationJournal(
+    String migrationId,
+  ) async {
+    _requireOpen();
+    return _sourceMigrationJournals[migrationId];
+  }
+
+  @override
+  Future<List<SourceMigrationJournalRecord>>
+  listPendingSourceMigrations() async {
+    _requireOpen();
+    final records =
+        _sourceMigrationJournals.values
+            .where((record) => record.phase != SourceMigrationPhase.done)
+            .toList(growable: false)
+          ..sort((left, right) => left.createdAt.compareTo(right.createdAt));
+    return records;
+  }
+
+  @override
+  Future<SourceMigrationJournalRecord> beginSourceMigrationJournal(
+    SourceMigrationJournalRecord record,
+  ) async {
+    _requireOpen();
+    final existing = _sourceMigrationJournals[record.migrationId];
+    if (existing != null) {
+      if (existing.sourceSourceId != record.sourceSourceId ||
+          existing.sourceComicId != record.sourceComicId ||
+          existing.targetSourceId != record.targetSourceId ||
+          existing.targetComicId != record.targetComicId ||
+          existing.replacingSource != record.replacingSource ||
+          existing.preparedFingerprint != record.preparedFingerprint) {
+        throw StateError('source migration journal identity changed');
+      }
+      return existing;
+    }
+    for (final active in _sourceMigrationJournals.values) {
+      if (active.phase != SourceMigrationPhase.done &&
+          active.sourceSourceId == record.sourceSourceId &&
+          active.sourceComicId == record.sourceComicId) {
+        throw StateError('another source migration is already pending');
+      }
+    }
+    _sourceMigrationJournals[record.migrationId] = record;
+    return record;
+  }
+
+  @override
+  Future<SourceMigrationJournalRecord> advanceSourceMigrationJournal(
+    String migrationId, {
+    required SourceMigrationPhase phase,
+    required DateTime updatedAt,
+  }) async {
+    _requireOpen();
+    final current = _sourceMigrationJournals[migrationId];
+    if (current == null) {
+      throw StateError('source migration journal is missing');
+    }
+    if (current.phase == phase) return current;
+    if (phase.index != current.phase.index + 1) {
+      throw StateError('source migration phase must advance exactly once');
+    }
+    final next = SourceMigrationJournalRecord(
+      migrationId: current.migrationId,
+      sourceSourceId: current.sourceSourceId,
+      sourceComicId: current.sourceComicId,
+      targetSourceId: current.targetSourceId,
+      targetComicId: current.targetComicId,
+      replacingSource: current.replacingSource,
+      preparedFingerprint: current.preparedFingerprint,
+      phase: phase,
+      createdAt: current.createdAt,
+      updatedAt: updatedAt.toUtc(),
+    );
+    _sourceMigrationJournals[migrationId] = next;
+    return next;
+  }
+
+  @override
+  Future<void> removeSourceMigrationJournal(String migrationId) async {
+    _requireOpen();
+    _sourceMigrationJournals.remove(migrationId);
   }
 
   @override

@@ -194,6 +194,7 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<ExternalPluginController?>? _externalPluginLoading;
   Future<void>? _externalSourcesPublishing;
   Future<void>? _durableAdoption;
+  Future<void>? _sourceMigrationRecovery;
   Future<void>? _externalSourceRefresh;
   bool _externalSourceRefreshPending = false;
   bool _suppressLibrarySessionRebuild = false;

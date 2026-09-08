@@ -8,14 +8,15 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 
 import 'sqlite_progress_writer.dart';
 
-const _schemaVersion = 10;
+const _schemaVersion = 11;
 
 final class SqliteImportedLibraryStore
     implements
         ImportedLibraryStore,
         ComicVersionRelationStore,
         ReaderProgressCheckpointStore,
-        ImportedLibraryRevisionStore {
+        ImportedLibraryRevisionStore,
+        SourceMigrationJournalStore {
   SqliteImportedLibraryStore(this.path);
 
   SqliteImportedLibraryStore.memory() : path = null;
@@ -72,6 +73,7 @@ final class SqliteImportedLibraryStore
           _createMigrationIssueTable(db);
           _createComicVersionRelationTable(db);
           _createLibraryProjectionRevision(db);
+          _createSourceMigrationJournalTable(db);
           db.execute('PRAGMA user_version = $_schemaVersion');
           db.execute('COMMIT');
         } on Object {
@@ -131,6 +133,14 @@ final class SqliteImportedLibraryStore
         _migrateChapterReadStateOwnership(db);
         _storageLog(
           'library-schema-migration-complete from=9 to=$_schemaVersion '
+          'durationMs=${migrationStartedAt.elapsedMilliseconds}',
+        );
+      } else if (version == 10) {
+        final migrationStartedAt = Stopwatch()..start();
+        _storageLog('library-schema-migration-start from=10');
+        _migrateSourceMigrationJournal(db);
+        _storageLog(
+          'library-schema-migration-complete from=10 to=$_schemaVersion '
           'durationMs=${migrationStartedAt.elapsedMilliseconds}',
         );
       } else if (version != _schemaVersion) {
@@ -755,6 +765,185 @@ final class SqliteImportedLibraryStore
   }
 
   @override
+  Future<SourceMigrationJournalRecord?> getSourceMigrationJournal(
+    String migrationId,
+  ) async {
+    final rows = _requireDb().select(
+      '''
+      SELECT migration_id, source_source_id, source_comic_id,
+             target_source_id, target_comic_id, replacing_source,
+             prepared_fingerprint, phase, created_us, updated_us
+      FROM source_migration_journal
+      WHERE migration_id = ?
+      LIMIT 1
+    ''',
+      <Object?>[migrationId],
+    );
+    return rows.isEmpty ? null : _readSourceMigrationJournal(rows.first);
+  }
+
+  @override
+  Future<List<SourceMigrationJournalRecord>>
+  listPendingSourceMigrations() async {
+    final rows = _requireDb().select('''
+      SELECT migration_id, source_source_id, source_comic_id,
+             target_source_id, target_comic_id, replacing_source,
+             prepared_fingerprint, phase, created_us, updated_us
+      FROM source_migration_journal
+      WHERE phase != 'done'
+      ORDER BY created_us, migration_id
+    ''');
+    return rows.map(_readSourceMigrationJournal).toList(growable: false);
+  }
+
+  @override
+  Future<SourceMigrationJournalRecord> beginSourceMigrationJournal(
+    SourceMigrationJournalRecord record,
+  ) async {
+    final db = _requireDb();
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      final existingRows = db.select(
+        '''
+        SELECT migration_id, source_source_id, source_comic_id,
+               target_source_id, target_comic_id, replacing_source,
+               prepared_fingerprint, phase, created_us, updated_us
+        FROM source_migration_journal
+        WHERE migration_id = ?
+        LIMIT 1
+      ''',
+        <Object?>[record.migrationId],
+      );
+      if (existingRows.isNotEmpty) {
+        final existing = _readSourceMigrationJournal(existingRows.first);
+        if (existing.sourceSourceId != record.sourceSourceId ||
+            existing.sourceComicId != record.sourceComicId ||
+            existing.targetSourceId != record.targetSourceId ||
+            existing.targetComicId != record.targetComicId ||
+            existing.replacingSource != record.replacingSource ||
+            existing.preparedFingerprint != record.preparedFingerprint) {
+          throw StateError('source migration journal identity changed');
+        }
+        db.execute('COMMIT');
+        return existing;
+      }
+      final conflicts = db.select(
+        '''
+        SELECT 1
+        FROM source_migration_journal
+        WHERE source_source_id = ? AND source_comic_id = ? AND phase != 'done'
+        LIMIT 1
+      ''',
+        <Object?>[record.sourceSourceId, record.sourceComicId],
+      );
+      if (conflicts.isNotEmpty) {
+        throw StateError('another source migration is already pending');
+      }
+      db.execute(
+        '''
+        INSERT INTO source_migration_journal (
+          migration_id, source_source_id, source_comic_id,
+          target_source_id, target_comic_id, replacing_source,
+          prepared_fingerprint, phase, created_us, updated_us
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ''',
+        <Object?>[
+          record.migrationId,
+          record.sourceSourceId,
+          record.sourceComicId,
+          record.targetSourceId,
+          record.targetComicId,
+          record.replacingSource ? 1 : 0,
+          record.preparedFingerprint,
+          record.phase.name,
+          record.createdAt.toUtc().microsecondsSinceEpoch,
+          record.updatedAt.toUtc().microsecondsSinceEpoch,
+        ],
+      );
+      db.execute('COMMIT');
+      return record;
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<SourceMigrationJournalRecord> advanceSourceMigrationJournal(
+    String migrationId, {
+    required SourceMigrationPhase phase,
+    required DateTime updatedAt,
+  }) async {
+    final db = _requireDb();
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      final rows = db.select(
+        '''
+        SELECT migration_id, source_source_id, source_comic_id,
+               target_source_id, target_comic_id, replacing_source,
+               prepared_fingerprint, phase, created_us, updated_us
+        FROM source_migration_journal
+        WHERE migration_id = ?
+        LIMIT 1
+      ''',
+        <Object?>[migrationId],
+      );
+      if (rows.isEmpty) {
+        throw StateError('source migration journal is missing');
+      }
+      final current = _readSourceMigrationJournal(rows.first);
+      if (current.phase == phase) {
+        db.execute('COMMIT');
+        return current;
+      }
+      if (phase.index != current.phase.index + 1) {
+        throw StateError('source migration phase must advance exactly once');
+      }
+      final next = SourceMigrationJournalRecord(
+        migrationId: current.migrationId,
+        sourceSourceId: current.sourceSourceId,
+        sourceComicId: current.sourceComicId,
+        targetSourceId: current.targetSourceId,
+        targetComicId: current.targetComicId,
+        replacingSource: current.replacingSource,
+        preparedFingerprint: current.preparedFingerprint,
+        phase: phase,
+        createdAt: current.createdAt,
+        updatedAt: updatedAt.toUtc(),
+      );
+      db.execute(
+        '''
+        UPDATE source_migration_journal
+        SET phase = ?, updated_us = ?
+        WHERE migration_id = ? AND phase = ?
+      ''',
+        <Object?>[
+          phase.name,
+          next.updatedAt.microsecondsSinceEpoch,
+          migrationId,
+          current.phase.name,
+        ],
+      );
+      if (db.updatedRows != 1) {
+        throw StateError('source migration journal changed concurrently');
+      }
+      db.execute('COMMIT');
+      return next;
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> removeSourceMigrationJournal(String migrationId) async {
+    _requireDb().execute(
+      'DELETE FROM source_migration_journal WHERE migration_id = ?',
+      <Object?>[migrationId],
+    );
+  }
+
+  @override
   Future<List<ComicVersionRelation>> listAllComicVersionRelations() async {
     final rows = _requireDb().select('''
       SELECT source_id, predecessor_comic_id, successor_comic_id,
@@ -827,6 +1016,27 @@ final class SqliteImportedLibraryStore
         relation.pageMappings.map((mapping) => mapping.toJson()).toList(),
       ),
     ]);
+  }
+
+  SourceMigrationJournalRecord _readSourceMigrationJournal(sql.Row row) {
+    return SourceMigrationJournalRecord(
+      migrationId: row['migration_id']! as String,
+      sourceSourceId: row['source_source_id']! as String,
+      sourceComicId: row['source_comic_id']! as String,
+      targetSourceId: row['target_source_id']! as String,
+      targetComicId: row['target_comic_id']! as String,
+      replacingSource: (row['replacing_source']! as int) != 0,
+      preparedFingerprint: row['prepared_fingerprint']! as String,
+      phase: SourceMigrationPhase.values.byName(row['phase']! as String),
+      createdAt: DateTime.fromMicrosecondsSinceEpoch(
+        row['created_us']! as int,
+        isUtc: true,
+      ),
+      updatedAt: DateTime.fromMicrosecondsSinceEpoch(
+        row['updated_us']! as int,
+        isUtc: true,
+      ),
+    );
   }
 
   ComicVersionRelation _comicVersionRelationFromRow(sql.Row row) =>
@@ -1059,6 +1269,7 @@ void _migrateMigrationIssueAcknowledgement(sql.Database db) {
     _createComicVersionRelationTable(db);
     _createLibraryProjectionRevision(db);
     _rebuildChapterReadStateWithoutChapterForeignKey(db);
+    _createSourceMigrationJournalTable(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -1073,6 +1284,7 @@ void _migrateComicVersionRelations(sql.Database db) {
     _createComicVersionRelationTable(db);
     _createLibraryProjectionRevision(db);
     _rebuildChapterReadStateWithoutChapterForeignKey(db);
+    _createSourceMigrationJournalTable(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -1097,6 +1309,7 @@ void _migrateComicVersionPageMappings(sql.Database db) {
     }
     _createLibraryProjectionRevision(db);
     _rebuildChapterReadStateWithoutChapterForeignKey(db);
+    _createSourceMigrationJournalTable(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -1110,6 +1323,7 @@ void _migrateLibraryProjectionRevision(sql.Database db) {
   try {
     _createLibraryProjectionRevision(db);
     _rebuildChapterReadStateWithoutChapterForeignKey(db);
+    _createSourceMigrationJournalTable(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -1122,6 +1336,19 @@ void _migrateChapterReadStateOwnership(sql.Database db) {
   db.execute('BEGIN IMMEDIATE');
   try {
     _rebuildChapterReadStateWithoutChapterForeignKey(db);
+    _createSourceMigrationJournalTable(db);
+    db.execute('PRAGMA user_version = $_schemaVersion');
+    db.execute('COMMIT');
+  } on Object {
+    db.execute('ROLLBACK');
+    rethrow;
+  }
+}
+
+void _migrateSourceMigrationJournal(sql.Database db) {
+  db.execute('BEGIN IMMEDIATE');
+  try {
+    _createSourceMigrationJournalTable(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -1477,6 +1704,7 @@ void _migrateToCompositeSchema(
     }
     _createComicVersionRelationTable(db);
     _createLibraryProjectionRevision(db);
+    _createSourceMigrationJournalTable(db);
     db.execute('PRAGMA user_version = $_schemaVersion');
     db.execute('COMMIT');
   } on Object {
@@ -1763,6 +1991,29 @@ void _createSourcePreferenceTables(sql.Database db) {
   db.execute('''
     CREATE INDEX IF NOT EXISTS comic_source_preference_order
     ON comic_source_preference(sort_order, source_id)
+  ''');
+}
+
+void _createSourceMigrationJournalTable(sql.Database db) {
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS source_migration_journal (
+      migration_id TEXT NOT NULL PRIMARY KEY,
+      source_source_id TEXT NOT NULL,
+      source_comic_id TEXT NOT NULL,
+      target_source_id TEXT NOT NULL,
+      target_comic_id TEXT NOT NULL,
+      replacing_source INTEGER NOT NULL,
+      prepared_fingerprint TEXT NOT NULL,
+      phase TEXT NOT NULL,
+      created_us INTEGER NOT NULL,
+      updated_us INTEGER NOT NULL,
+      CHECK (replacing_source IN (0, 1)),
+      CHECK (phase IN ('prepared', 'artifactsReady', 'metadataCommitted', 'cleanupPending', 'done'))
+    )
+  ''');
+  db.execute('''
+    CREATE INDEX IF NOT EXISTS source_migration_journal_pending_source
+    ON source_migration_journal(source_source_id, source_comic_id, phase, created_us)
   ''');
 }
 

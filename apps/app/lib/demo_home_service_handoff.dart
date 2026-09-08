@@ -112,6 +112,7 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     _cacheCoordinator = cacheCoordinator;
     _ownsCacheCoordinator = suppliedCache == null;
     _sources = sources;
+    unawaited(_recoverCommittedSourceMigrations());
     if (previousOwnsCacheCoordinator &&
         !identical(previousCacheCoordinator, _cacheCoordinator) &&
         !identical(

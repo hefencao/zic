@@ -14,7 +14,8 @@ final class LazyImportedLibraryStore
     implements
         ImportedLibraryStore,
         ComicVersionRelationStore,
-        ImportedLibraryRevisionStore {
+        ImportedLibraryRevisionStore,
+        SourceMigrationJournalStore {
   LazyImportedLibraryStore({required Future<String> Function() rootProvider})
       : _rootProvider = rootProvider;
 
@@ -310,6 +311,55 @@ final class LazyImportedLibraryStore
     final store = await _ensureDurable();
     final relations = store as ComicVersionRelationStore;
     await relations.saveComicVersionRelation(relation);
+  }
+
+  @override
+  Future<SourceMigrationJournalRecord?> getSourceMigrationJournal(
+    String migrationId,
+  ) async {
+    final store = await _ensureDurable();
+    return (store as SourceMigrationJournalStore).getSourceMigrationJournal(
+      migrationId,
+    );
+  }
+
+  @override
+  Future<List<SourceMigrationJournalRecord>>
+  listPendingSourceMigrations() async {
+    final store = await _ensureDurable();
+    return (store as SourceMigrationJournalStore).listPendingSourceMigrations();
+  }
+
+  @override
+  Future<SourceMigrationJournalRecord> beginSourceMigrationJournal(
+    SourceMigrationJournalRecord record,
+  ) async {
+    final store = await _ensureDurable();
+    return (store as SourceMigrationJournalStore).beginSourceMigrationJournal(
+      record,
+    );
+  }
+
+  @override
+  Future<SourceMigrationJournalRecord> advanceSourceMigrationJournal(
+    String migrationId, {
+    required SourceMigrationPhase phase,
+    required DateTime updatedAt,
+  }) async {
+    final store = await _ensureDurable();
+    return (store as SourceMigrationJournalStore).advanceSourceMigrationJournal(
+      migrationId,
+      phase: phase,
+      updatedAt: updatedAt,
+    );
+  }
+
+  @override
+  Future<void> removeSourceMigrationJournal(String migrationId) async {
+    final store = await _ensureDurable();
+    await (store as SourceMigrationJournalStore).removeSourceMigrationJournal(
+      migrationId,
+    );
   }
 
   @override

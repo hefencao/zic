@@ -14,4 +14,5 @@ export 'src/library_comic.dart';
 export 'src/library_migration_issue.dart';
 export 'src/library_preferences.dart';
 export 'src/source_catalog.dart';
+export 'src/source_migration_journal.dart';
 export 'src/mangadex_source.dart';

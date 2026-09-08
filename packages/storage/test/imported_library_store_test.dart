@@ -86,7 +86,7 @@ void main() {
     expect(successors.single.successorComicId, relation.successorComicId);
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 10);
+    expect(db.select('PRAGMA user_version').single.values.single, 11);
   });
 
   test('sqlite persists a Home projection revision across writes and reopen',
@@ -541,7 +541,7 @@ void main() {
     );
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 10);
+    expect(db.select('PRAGMA user_version').single.values.single, 11);
   });
 
   test('sqlite migrates schema 2 source preferences', () async {
@@ -626,7 +626,7 @@ void main() {
     expect(await store.getComicPreference(saved.sourceId, saved.comicId), isNull);
   });
 
-  test('sqlite migrates schema 3 through composite schema 10', () async {
+  test('sqlite migrates schema 3 through composite schema 11', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-saved-comic-migration-',
     );
@@ -648,7 +648,7 @@ void main() {
     );
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 10);
+    expect(db.select('PRAGMA user_version').single.values.single, 11);
   });
 
   test('sqlite schema 5 adds durable migration issue acknowledgement',
@@ -702,7 +702,7 @@ void main() {
 
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 10);
+    expect(db.select('PRAGMA user_version').single.values.single, 11);
     expect(
       db.select('PRAGMA table_info(library_migration_issue)')
           .map((row) => row['name'])
@@ -750,7 +750,7 @@ void main() {
 
     final db = sql.sqlite3.open(path);
     addTearDown(db.dispose);
-    expect(db.select('PRAGMA user_version').single.values.single, 10);
+    expect(db.select('PRAGMA user_version').single.values.single, 11);
     expect(
       db.select('PRAGMA table_info(comic_version_relation)')
           .map((row) => row['name'])
@@ -758,6 +758,132 @@ void main() {
       contains('page_mappings_json'),
     );
   });
+
+  test(
+    'sqlite source migration journal survives reopen and advances monotonically',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'zic-source-migration-journal-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final path = '${directory.path}/library.sqlite3';
+      final createdAt = DateTime.utc(2026, 9, 9, 1);
+      final record = SourceMigrationJournalRecord(
+        migrationId: sourceMigrationJournalId(
+          sourceSourceId: 'source-a',
+          sourceComicId: 'comic-old',
+          targetSourceId: 'source-b',
+          targetComicId: 'comic-new',
+        ),
+        sourceSourceId: 'source-a',
+        sourceComicId: 'comic-old',
+        targetSourceId: 'source-b',
+        targetComicId: 'comic-new',
+        replacingSource: true,
+        preparedFingerprint: 'fingerprint-v1',
+        phase: SourceMigrationPhase.prepared,
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      );
+
+      final first = SqliteImportedLibraryStore(path);
+      await first.open();
+      final projectionRevision = await first.libraryProjectionRevision;
+      final begun = await first.beginSourceMigrationJournal(record);
+      expect(begun.migrationId, record.migrationId);
+      expect(begun.phase, SourceMigrationPhase.prepared);
+      final repeated = await first.beginSourceMigrationJournal(record);
+      expect(repeated.migrationId, record.migrationId);
+      expect(repeated.phase, SourceMigrationPhase.prepared);
+      final artifactsReady = await first.advanceSourceMigrationJournal(
+        record.migrationId,
+        phase: SourceMigrationPhase.artifactsReady,
+        updatedAt: createdAt.add(const Duration(seconds: 1)),
+      );
+      expect(artifactsReady.phase, SourceMigrationPhase.artifactsReady);
+      expect(
+        await first.libraryProjectionRevision,
+        projectionRevision,
+        reason: 'journal control phases must not dirty the Home projection',
+      );
+      await expectLater(
+        first.advanceSourceMigrationJournal(
+          record.migrationId,
+          phase: SourceMigrationPhase.cleanupPending,
+          updatedAt: createdAt.add(const Duration(seconds: 2)),
+        ),
+        throwsStateError,
+      );
+      await first.close();
+
+      final reopened = SqliteImportedLibraryStore(path);
+      await reopened.open();
+      addTearDown(reopened.close);
+      expect(
+        (await reopened.getSourceMigrationJournal(record.migrationId))?.phase,
+        SourceMigrationPhase.artifactsReady,
+      );
+      expect(await reopened.listPendingSourceMigrations(), hasLength(1));
+      await reopened.advanceSourceMigrationJournal(
+        record.migrationId,
+        phase: SourceMigrationPhase.metadataCommitted,
+        updatedAt: createdAt.add(const Duration(seconds: 3)),
+      );
+      await reopened.advanceSourceMigrationJournal(
+        record.migrationId,
+        phase: SourceMigrationPhase.cleanupPending,
+        updatedAt: createdAt.add(const Duration(seconds: 4)),
+      );
+      await reopened.advanceSourceMigrationJournal(
+        record.migrationId,
+        phase: SourceMigrationPhase.done,
+        updatedAt: createdAt.add(const Duration(seconds: 5)),
+      );
+      expect(await reopened.listPendingSourceMigrations(), isEmpty);
+    },
+  );
+
+
+  test(
+    'library schema 10 upgrades to source migration journal schema 11',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'zic-source-migration-schema11-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final path = '${directory.path}/library.sqlite3';
+      final current = SqliteImportedLibraryStore(path);
+      await current.open();
+      final saved = _savedComic();
+      await current.upsertSavedComic(saved);
+      await current.close();
+
+      final legacy = sql.sqlite3.open(path);
+      legacy.execute('DROP TABLE source_migration_journal');
+      legacy.execute('PRAGMA user_version = 10');
+      legacy.dispose();
+
+      final migrated = SqliteImportedLibraryStore(path);
+      await migrated.open();
+      addTearDown(migrated.close);
+      expect(
+        (await migrated.getSavedComic(saved.sourceId, saved.comicId))?.toJson(),
+        saved.toJson(),
+      );
+      expect(await migrated.listPendingSourceMigrations(), isEmpty);
+      final db = sql.sqlite3.open(path);
+      addTearDown(db.dispose);
+      expect(db.select('PRAGMA user_version').single.values.single, 11);
+      expect(
+        db.select(
+          "SELECT name FROM sqlite_master WHERE type='table' "
+          "AND name='source_migration_journal'",
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
 
   test('sqlite keeps comic preference until the last grouped chapter is removed',
       () async {
