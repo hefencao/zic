@@ -101,19 +101,6 @@ bool _versionPageMappingIsFresh(
   return !age.isNegative && age <= _versionPageMappingRevalidationInterval;
 }
 
-bool _versionPageMappingsAreFresh(
-  ComicVersionRelation relation,
-  DateTime now,
-) {
-  if (relation.pageMappings.isEmpty) return false;
-  for (final mapping in relation.pageMappings) {
-    if (!_versionPageMappingIsFresh(mapping, now)) {
-      return false;
-    }
-  }
-  return true;
-}
-
 String sourceVersionViewIdentity({
   required String sourceId,
   required String currentComicId,
@@ -438,103 +425,121 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   Future<void> _warmVersionRelationPageMappings(
     BrowsableComicSource source,
     ComicVersionRelation relation,
+    ImportedLibraryEntry focus,
   ) async {
+    final focusIsPredecessor =
+        relation.predecessorComicId == focus.chapter.comicId;
+    final focusIsSuccessor =
+        relation.successorComicId == focus.chapter.comicId;
+    if (!focusIsPredecessor && !focusIsSuccessor) return;
+
     final revalidationNow = DateTime.now().toUtc();
-    if (_versionPageMappingsAreFresh(relation, revalidationNow)) {
-      return;
+    for (final mapping in relation.pageMappings) {
+      final focusedChapterId = focusIsPredecessor
+          ? mapping.predecessorChapterId
+          : mapping.successorChapterId;
+      final focusedRevision = focusIsPredecessor
+          ? mapping.predecessorSourceRevision
+          : mapping.successorSourceRevision;
+      final focusedPageCount = focusIsPredecessor
+          ? mapping.predecessorPageCount
+          : mapping.successorPageCount;
+      if (focusedChapterId == focus.chapter.chapterId &&
+          focusedRevision == focus.chapter.sourceRevision &&
+          focusedPageCount == focus.chapter.pages.length &&
+          mapping.verifiedPredecessorPageIndexes.isNotEmpty &&
+          _versionPageMappingIsFresh(mapping, revalidationNow)) {
+        return;
+      }
     }
-    final predecessorComic = await source.loadComic(relation.predecessorComicId);
-    final successorComic = await source.loadComic(relation.successorComicId);
-    if (predecessorComic.comic.sourceId != source.sourceId ||
-        successorComic.comic.sourceId != source.sourceId ||
-        predecessorComic.comic.comicId != relation.predecessorComicId ||
-        successorComic.comic.comicId != relation.successorComicId) {
+
+    final relatedComicId = focusIsPredecessor
+        ? relation.successorComicId
+        : relation.predecessorComicId;
+    final relatedComic = await source.loadComic(relatedComicId);
+    if (relatedComic.comic.sourceId != source.sourceId ||
+        relatedComic.comic.comicId != relatedComicId) {
       throw StateError('同源版本漫画返回了不匹配的身份');
     }
-    var updatedRelation = relation;
-    var verifiedMappings = 0;
-    for (final predecessorChapter in predecessorComic.chapters) {
-      Chapter? successorChapter;
-      for (final candidate in successorComic.chapters) {
-        if (candidate.sequence == predecessorChapter.sequence) {
-          successorChapter = candidate;
-          break;
-        }
+    Chapter? relatedChapter;
+    for (final candidate in relatedComic.chapters) {
+      if (candidate.sequence == focus.chapter.sequence) {
+        relatedChapter = candidate;
+        break;
       }
-      final matchedSuccessorChapter = successorChapter;
-      if (matchedSuccessorChapter == null) continue;
-      final existing = updatedRelation.pageMappings.where(
-        (mapping) =>
-            mapping.predecessorChapterId == predecessorChapter.chapterId &&
-            mapping.successorChapterId == matchedSuccessorChapter.chapterId,
-      );
-      ComicVersionPageMapping? currentMapping;
-      for (final mapping in existing) {
-        if (mapping.predecessorPageCount == predecessorChapter.pageCount &&
-            mapping.successorPageCount == matchedSuccessorChapter.pageCount) {
-          currentMapping = mapping;
-          break;
-        }
-      }
-      if (currentMapping != null &&
-          currentMapping.predecessorSourceRevision ==
-              predecessorChapter.sourceRevision &&
-          currentMapping.successorSourceRevision ==
-              matchedSuccessorChapter.sourceRevision &&
-          currentMapping.verifiedPredecessorPageIndexes.isNotEmpty &&
-          _versionPageMappingIsFresh(currentMapping, revalidationNow)) {
-        verifiedMappings++;
-        continue;
-      }
-      final predecessorEntry = await _loadVersionChapterEntry(
-        source,
-        predecessorComic.comic,
-        predecessorChapter,
-      );
-      final successorEntry = await _loadVersionChapterEntry(
-        source,
-        successorComic.comic,
-        matchedSuccessorChapter,
-      );
-      final predecessorManifest = predecessorEntry.chapter.toManifest();
-      final successorManifest = successorEntry.chapter.toManifest();
-      final offsetProof =
-          await VerifiedArtifactReusePlan.matchResolvedRelatedOffset(
-        sourceChapter: predecessorManifest,
-        targetChapter: successorManifest,
-        resolveIdentity: (page) => _sourceResources.verifiedPageReuseIdentity(
-          sourceId: source.sourceId,
-          locator: page.uri,
-        ),
-      );
-      if (offsetProof == null || offsetProof.verifiedSourceIndexes.isEmpty) {
-        continue;
-      }
-      verifiedMappings++;
-      final mapping = ComicVersionPageMapping(
-        predecessorChapterId: predecessorManifest.chapter.chapterId,
-        successorChapterId: successorManifest.chapter.chapterId,
-        predecessorPageCount: predecessorManifest.pages.length,
-        successorPageCount: successorManifest.pages.length,
-        successorOffset: offsetProof.targetOffsetFromSource,
-        predecessorSourceRevision: predecessorManifest.chapter.sourceRevision,
-        successorSourceRevision: successorManifest.chapter.sourceRevision,
-        verifiedPredecessorPageIndexes: offsetProof.verifiedSourceIndexes,
-        verifiedAt: DateTime.now().toUtc(),
-      );
-      updatedRelation = ComicVersionRelation(
-        sourceId: relation.sourceId,
-        predecessorComicId: relation.predecessorComicId,
-        successorComicId: relation.successorComicId,
-        predecessorTitle: relation.predecessorTitle,
-        discoveredAt: relation.discoveredAt,
-        pageMappings: _replaceVersionPageMapping(
-          updatedRelation.pageMappings,
-          mapping,
-        ),
-      );
-      await _librarySession.upsertVersionRelationDerivedState(updatedRelation);
     }
+    if (relatedChapter == null) return;
+
+    final predecessorChapter = focusIsPredecessor
+        ? focus.chapter.toManifest().chapter
+        : relatedChapter;
+    final successorChapter = focusIsSuccessor
+        ? focus.chapter.toManifest().chapter
+        : relatedChapter;
+    ComicVersionPageMapping? currentMapping;
+    for (final mapping in relation.pageMappings) {
+      if (mapping.predecessorChapterId == predecessorChapter.chapterId &&
+          mapping.successorChapterId == successorChapter.chapterId &&
+          mapping.predecessorPageCount == predecessorChapter.pageCount &&
+          mapping.successorPageCount == successorChapter.pageCount) {
+        currentMapping = mapping;
+        break;
+      }
+    }
+    if (currentMapping != null &&
+        currentMapping.predecessorSourceRevision ==
+            predecessorChapter.sourceRevision &&
+        currentMapping.successorSourceRevision == successorChapter.sourceRevision &&
+        currentMapping.verifiedPredecessorPageIndexes.isNotEmpty &&
+        _versionPageMappingIsFresh(currentMapping, revalidationNow)) {
+      return;
+    }
+
+    final relatedEntry = await _loadVersionChapterEntry(
+      source,
+      relatedComic.comic,
+      relatedChapter,
+    );
+    final focusManifest = focus.chapter.toManifest();
+    final relatedManifest = relatedEntry.chapter.toManifest();
+    final predecessorManifest =
+        focusIsPredecessor ? focusManifest : relatedManifest;
+    final successorManifest = focusIsSuccessor ? focusManifest : relatedManifest;
+    final offsetProof =
+        await VerifiedArtifactReusePlan.matchResolvedRelatedOffset(
+      sourceChapter: predecessorManifest,
+      targetChapter: successorManifest,
+      resolveIdentity: (page) => _sourceResources.verifiedPageReuseIdentity(
+        sourceId: source.sourceId,
+        locator: page.uri,
+      ),
+    );
+    if (offsetProof == null || offsetProof.verifiedSourceIndexes.isEmpty) {
+      return;
+    }
+    final mapping = ComicVersionPageMapping(
+      predecessorChapterId: predecessorManifest.chapter.chapterId,
+      successorChapterId: successorManifest.chapter.chapterId,
+      predecessorPageCount: predecessorManifest.pages.length,
+      successorPageCount: successorManifest.pages.length,
+      successorOffset: offsetProof.targetOffsetFromSource,
+      predecessorSourceRevision: predecessorManifest.chapter.sourceRevision,
+      successorSourceRevision: successorManifest.chapter.sourceRevision,
+      verifiedPredecessorPageIndexes: offsetProof.verifiedSourceIndexes,
+      verifiedAt: DateTime.now().toUtc(),
+    );
+    final updatedRelation = ComicVersionRelation(
+      sourceId: relation.sourceId,
+      predecessorComicId: relation.predecessorComicId,
+      successorComicId: relation.successorComicId,
+      predecessorTitle: relation.predecessorTitle,
+      discoveredAt: relation.discoveredAt,
+      pageMappings: _replaceVersionPageMapping(
+        relation.pageMappings,
+        mapping,
+      ),
+    );
+    await _librarySession.upsertVersionRelationDerivedState(updatedRelation);
     widget.debugTrace.record(
       TraceEvent(
         monotonicMicros: _traceClock.elapsedMicroseconds,
@@ -544,7 +549,8 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
             '${source.sourceId}\u0000${relation.predecessorComicId}\u0000${relation.successorComicId}',
         payload: <String, Object?>{
           'stage': 'version-page-mapping-warmed',
-          'verifiedMappings': verifiedMappings,
+          'focusChapterId': focus.chapter.chapterId,
+          'verifiedPages': mapping.verifiedPredecessorPageIndexes.length,
           'persistedMappings': updatedRelation.pageMappings.length,
           'materializedEquivalenceEdges': 0,
         },
@@ -554,8 +560,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
 
   void _scheduleVersionReuseWarmup(
     BrowsableComicSource source,
-    String comicId, {
-    bool refreshVersions = true,
+    ImportedLibraryEntry focus, {
     bool deferUntilAfterFrame = true,
   }) {
     if (deferUntilAfterFrame) {
@@ -565,8 +570,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           if (mounted) {
             _scheduleVersionReuseWarmup(
               source,
-              comicId,
-              refreshVersions: refreshVersions,
+              focus,
               deferUntilAfterFrame: false,
             );
           }
@@ -574,33 +578,18 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       });
       return;
     }
-    final key = '${source.sourceId}\u0000$comicId';
+    final key = '${source.sourceId}\u0000${focus.chapter.comicId}'
+        '\u0000${focus.chapter.chapterId}\u0000${focus.chapter.sourceRevision}';
     if (_versionReuseWarmups.containsKey(key)) return;
     late Future<void> future;
     future = Future<void>(() async {
-      final versionSource = _sourceVersionCapability(source);
-      if (refreshVersions &&
-          versionSource != null &&
-          versionSource.supportsComicVersions) {
-        try {
-          final versions = await versionSource.findComicVersions(comicId);
-          await _rememberSourceSuccessors(
-            source: source,
-            predecessorComicId: comicId,
-            predecessorTitle:
-                _exactLibraryComicForSourceIdentity(source.sourceId, comicId)
-                        ?.title ??
-                    comicId,
-            successors: versions.where((item) => !item.isPredecessor),
-          );
-        } on Object {
-          // Persisted relations remain usable when source refresh is offline.
-        }
-      }
-      final relations = _sourceVersionRelationsForComic(source.sourceId, comicId);
+      final relations = _sourceVersionRelationsForComic(
+        source.sourceId,
+        focus.chapter.comicId,
+      );
       for (final relation in relations) {
         try {
-          await _warmVersionRelationPageMappings(source, relation);
+          await _warmVersionRelationPageMappings(source, relation, focus);
         } on Object catch (error) {
           widget.debugTrace.record(
             TraceEvent(
@@ -611,12 +600,14 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
                   '${source.sourceId}\u0000${relation.predecessorComicId}\u0000${relation.successorComicId}',
               payload: <String, Object?>{
                 'stage': 'version-page-mapping-warm-failed',
+                'focusChapterId': focus.chapter.chapterId,
                 'errorType': error.runtimeType.toString(),
               },
             ),
           );
         }
       }
+      await _restoreSourceVersionArtifactEquivalences(focus);
     });
     _versionReuseWarmups[key] = future;
     unawaited(
@@ -879,11 +870,6 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           return stateFor(const <SourceComicVersion>[]);
         }
       });
-      _scheduleVersionReuseWarmup(
-        source,
-        currentComicId,
-        refreshVersions: false,
-      );
       return stateFor(
         const <SourceComicVersion>[],
         backgroundRefresh: backgroundRefresh,
@@ -896,11 +882,6 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     } on Object {
       if (storedPredecessors.isEmpty) rethrow;
     }
-    _scheduleVersionReuseWarmup(
-      source,
-      currentComicId,
-      refreshVersions: false,
-    );
     return stateFor(discovered);
   }
 

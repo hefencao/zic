@@ -133,7 +133,7 @@ Home 的“更新漫画”投影只取已在书架且具有 source-confirmed upd
 详情页与漫画源页的统一刷新由 `AppPullToRefresh` 拥有 edge trigger、72 px位移、进行中状态与成功/失败结果图标；页面不得叠加第二套刷新状态。
 
 详情入口采用 stale-while-revalidate：若 `CachedComicDetailsProjection` 有热 manifest，页面先同步投影漫画和章节，并复用已缓存的首屏预览/评论；主详情请求和可选预览/评论请求在后台刷新。Presentation 按漫画字段、章节列表、预览页和评论页分别比较，只替换发生变化的那一类，失败的可选请求保留旧投影。内嵌在新 manifest 中的首屏页只在强制主响应刷新后同步到对应分页 key，分页独立刷新不会被普通主响应命中覆盖。预览图/头像的编码字节仍归 `ComicSourceResourceGateway/ResourceCacheManager` 的 artwork 路径，不归 catalog metadata cache。
-详情首帧不得等待下载状态、artifact index、章节 page I/O 或跨版本 page mapping warmup。章节状态检查在首帧后以 `inspectMany()` 批量读取，并合并同一详情路由的并发检查；跨版本版本发现和 mapping warmup 也在详情首帧后后台执行。Reader、DownloadSession、NetLane 的正文和调度所有权不因该 UI 优化下沉到详情页。
+详情首帧不得等待下载状态、artifact index、章节 page I/O 或跨版本 page mapping proof。章节状态检查在首帧后以 `inspectMany()` 批量读取，并合并同一详情路由的并发检查；跨版本关系发现由详情/version-state单一owner在首帧后后台刷新，但page-media equivalence proof不得由详情预热，只有Reader当前hydrated chapter或显式migration可触发。Reader后台proof以`comicId+chapterId+sourceRevision` single-flight，只处理当前章节对应relation pair，fresh mapping直接跳过；proof更新后可刷新当前chapter的lazy resolver。Reader、DownloadSession、NetLane 的正文和调度所有权不因该 UI 优化下沉到详情页。
 详情扩展数据由 source adapter 负责：`ComicManifest` 可携带首批预览缩略图和评论，`ComicPreviewSource`/`ComicCommentSource` 只在来源声明能力时提供继续分页。App 只消费
 规范化 URI、评论字段和不透明的 `sourceSubId`/回复 ID；评论正文的受限 HTML 只解析实体、换行和 HTTP(S) `img`，emoji 仍通过统一 artwork loader/cache 绘制，不把原始标签直接交给文本控件。图片仍走统一 artwork cache，评论完整列表和回复通过详情次级页加载，不把评论请求或插件 transport 变成章节目录的
 全局门控。Venera 直接复用 `comic.loadThumbnails` 与 `comic.loadComments`，因此已有 `ComicDetails` 能力的来源可渐进显示预览、评论和回复。预览 URI 保留 Venera 的

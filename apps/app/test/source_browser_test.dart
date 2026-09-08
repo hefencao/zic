@@ -1764,6 +1764,8 @@ void main() {
     expect(find.byKey(details.comicDetailsMigrateKey), findsOneWidget);
     expect(find.byKey(details.comicDetailsVersionActionKey), findsOneWidget);
     expect(versionLoadStarted.isCompleted, isTrue);
+    expect(source.versionLoadCalls, 1,
+        reason: 'details version discovery must have one owner');
     expect(find.byIcon(Icons.error_outline), findsOneWidget);
     expect(find.byKey(details.comicDetailsVersionViewKey), findsNothing);
     expect(find.byKey(details.comicDetailsVersionMigrateKey), findsNothing);
@@ -2667,6 +2669,7 @@ final class _FixtureSource
   int _comicLoads = 0;
   int _chapterLoads = 0;
   int _chapterRefreshes = 0;
+  int versionLoadCalls = 0;
   int browseCalls = 0;
   final List<String> browseQueries = <String>[];
   int filteredBrowseCalls = 0;
@@ -2798,6 +2801,7 @@ final class _FixtureSource
 
   @override
   Future<List<SourceComicVersion>> findComicVersions(String comicId) async {
+    versionLoadCalls++;
     expect(comicId, _comicId);
     final started = versionLoadStarted;
     if (started != null && !started.isCompleted) started.complete();

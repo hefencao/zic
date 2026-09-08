@@ -280,7 +280,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
     final restoreMs = restoreWatch.elapsedMilliseconds;
     final versionSource = _sourceForId(current.chapter.sourceId);
     if (versionSource != null) {
-      _scheduleVersionReuseWarmup(versionSource, current.chapter.comicId);
+      _scheduleVersionReuseWarmup(versionSource, current);
     }
     // Persistent remote bytes are owned by ArtifactCacheTransport. Do not
     // pre-probe the chapter index or register a full-page readPage() loader:
