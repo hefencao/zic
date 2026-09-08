@@ -1632,6 +1632,24 @@ void main() {
       ),
     );
 
+    final beforeSecond = await service.artifactStore.indexedRecords();
+    final existingBeforeSecond =
+        service.artifactStore.downloadedChapterIdsFromRecords(
+      beforeSecond.values,
+      sourceId: entry2.chapter.sourceId,
+      comicId: entry2.chapter.comicId,
+    );
+    final firstTransitionPlan =
+        await service.artifactStore.flatChapterMigrationPlan(
+      entry: entry2,
+      comicDirectoryName: '航海王',
+      existingChapterIds: existingBeforeSecond,
+    );
+    expect(firstTransitionPlan, hasLength(1));
+    expect(firstTransitionPlan.single.chapterId, 'ch-01');
+    expect(firstTransitionPlan.single.title, '第 1 话');
+    expect(firstTransitionPlan.single.sequence, 1);
+
     await service.download(entry2);
     expect(await service.isDownloaded(entry1), isTrue);
     expect(await service.isDownloaded(entry2), isTrue);
@@ -1640,6 +1658,92 @@ void main() {
     expect(multiChapterPaths, contains('航海王/第 1 话/001.png'));
     expect(multiChapterPaths, contains('航海王/第 2 话/001.png'));
     expect(multiChapterPaths, isNot(contains('航海王/001.png')));
+
+    final entry3 = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:test:comic-one',
+        displayName: '第 3 话',
+        sourceId: 'mihon:test',
+        comicId: 'comic-one',
+        comicTitle: '航海王',
+        chapterId: 'ch-03',
+        sourceRevision: 'r1',
+        sequence: 3,
+        pages: <ImportedPageRecord>[
+          const ImportedPageRecord(
+            displayName: '001.png',
+            sourceId: 'mihon:resource:page-3',
+            pageId: 'page-3',
+            contentKindHint: ContentKindHint.png,
+            byteLength: 8,
+          ),
+        ],
+      ),
+    );
+    final afterSecond = await service.artifactStore.indexedRecords();
+    final existingAfterSecond =
+        service.artifactStore.downloadedChapterIdsFromRecords(
+      afterSecond.values,
+      sourceId: entry3.chapter.sourceId,
+      comicId: entry3.chapter.comicId,
+    );
+    final stableMultiChapterPlan =
+        await service.artifactStore.flatChapterMigrationPlan(
+      entry: entry3,
+      comicDirectoryName: '航海王',
+      existingChapterIds: existingAfterSecond,
+    );
+    expect(stableMultiChapterPlan, isEmpty,
+        reason: 'a committed multi-chapter manifest owns the layout; '
+            'later chapters must not rescan every prior chapter for flat pages');
+
+    final manifestBytes = memoryStorage['航海王/.zic.json'];
+    expect(manifestBytes, isNotNull);
+    final legacyManifest = ComicFolderManifest(
+      sourceId: entry3.chapter.sourceId,
+      comicId: entry3.chapter.comicId,
+      comicTitle: entry3.chapter.comicTitle,
+      chapters: const <String>['ch-01', 'ch-02'],
+      chapterTitles: const <String, String>{
+        'ch-01': '第 1 话',
+        'ch-02': '第 2 话',
+      },
+      chapterSequences: const <String, int>{'ch-01': 1, 'ch-02': 2},
+      updatedAt: DateTime.utc(2026, 9, 9),
+    );
+    memoryStorage['航海王/.zic.json'] =
+        Uint8List.fromList(utf8.encode(legacyManifest.encode()));
+    final legacyManifestPlan =
+        await service.artifactStore.flatChapterMigrationPlan(
+      entry: entry3,
+      comicDirectoryName: '航海王',
+      existingChapterIds: existingAfterSecond,
+    );
+    expect(
+      legacyManifestPlan.map((item) => item.chapterId).toSet(),
+      <String>{'ch-01', 'ch-02'},
+      reason: 'older manifests may list multiple chapters without the later '
+          'chapterDirectories commit markers',
+    );
+
+    memoryStorage.remove('航海王/.zic.json');
+    final noManifestFallbackPlan =
+        await service.artifactStore.flatChapterMigrationPlan(
+      entry: entry3,
+      comicDirectoryName: '航海王',
+      existingChapterIds: existingAfterSecond,
+    );
+    expect(
+      noManifestFallbackPlan.map((item) => item.chapterId).toSet(),
+      <String>{'ch-01', 'ch-02'},
+      reason: 'stores without a manifest keep the historical recovery '
+          'fallback instead of assuming their layout is already migrated',
+    );
+    memoryStorage['航海王/.zic.json'] = manifestBytes!;
+
+    await service.download(entry3);
+    expect(await service.isDownloaded(entry3), isTrue);
+    expect(memoryStorage.keys, contains('航海王/第 3 话/001.png'));
 
     // 3. Delete chapters: cleans up entries
     await service.delete(entry1);

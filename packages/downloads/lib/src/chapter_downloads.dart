@@ -2222,14 +2222,13 @@ final class PersistentDownloadArtifactStore
         : layout.root;
   }
 
-  Future<List<String>> downloadedChapterIds({
+  List<String> downloadedChapterIdsFromRecords(
+    Iterable<CacheRec> records, {
     required String sourceId,
     required String comicId,
-  }) async {
-    _requireOpen();
+  }) {
     final chapters = <String>{};
-    final records = await indexedRecords();
-    for (final record in records.values) {
+    for (final record in records) {
       final content = record.id.content;
       if (content.sourceId == sourceId &&
           content.comicId == comicId &&
@@ -2238,6 +2237,73 @@ final class PersistentDownloadArtifactStore
       }
     }
     return chapters.toList(growable: false);
+  }
+
+  Future<List<String>> downloadedChapterIds({
+    required String sourceId,
+    required String comicId,
+  }) async {
+    _requireOpen();
+    return downloadedChapterIdsFromRecords(
+      (await indexedRecords()).values,
+      sourceId: sourceId,
+      comicId: comicId,
+    );
+  }
+
+  Future<List<({String chapterId, String title, int sequence})>>
+      flatChapterMigrationPlan({
+    required ImportedLibraryEntry entry,
+    required String comicDirectoryName,
+    required Iterable<String> existingChapterIds,
+  }) async {
+    _requireOpen();
+    final currentChapterId = entry.chapter.chapterId;
+    final previousIds = existingChapterIds
+        .where((chapterId) => chapterId != currentChapterId)
+        .toSet();
+    if (previousIds.isEmpty) {
+      return const <({String chapterId, String title, int sequence})>[];
+    }
+    final rootLayout = entry.chapter.pages.isEmpty
+        ? layout
+        : _layoutForEntryPage(entry, 0);
+    final manifest = await _readComicFolderManifest(
+      comicDirectoryName,
+      rootLayout: rootLayout,
+    );
+
+    // A directory mapping is the layout commit marker for that chapter.
+    // Current writers create mappings for every chapter once the comic becomes
+    // multi-chapter, while the intentional one-chapter flat manifest keeps no
+    // mapping. An interrupted first transition therefore re-enters exactly the
+    // still-unmapped chapter. Older manifests may omit chapterDirectories even
+    // when they already list multiple chapters, so missing mappings must keep
+    // the historical recovery path instead of being treated as committed.
+    final sameComic = manifest != null &&
+        manifest.sourceId == entry.chapter.sourceId &&
+        manifest.comicId == entry.chapter.comicId;
+    if (sameComic && manifest.chapters.isNotEmpty) {
+      final manifestChapters = manifest.chapters.toSet();
+      return <({String chapterId, String title, int sequence})>[
+        for (final chapterId in previousIds)
+          if (!manifestChapters.contains(chapterId) ||
+              manifest.chapterDirectories[chapterId]?.isNotEmpty != true)
+            (
+              chapterId: chapterId,
+              title: manifest.chapterTitles[chapterId] ?? '第 1 话',
+              sequence: manifest.chapterSequences[chapterId] ?? 1,
+            ),
+      ];
+    }
+
+    // Legacy stores may predate .zic.json entirely. Preserve the historical
+    // recovery behavior there instead of assuming that every old chapter is
+    // already in a subdirectory.
+    return <({String chapterId, String title, int sequence})>[
+      for (final chapterId in previousIds)
+        (chapterId: chapterId, title: '第 1 话', sequence: 1),
+    ];
   }
 
   /// When a comic with a single chapter directly at root transitions to having
@@ -7485,7 +7551,8 @@ final class PersistentChapterDownloadService
     _commandConsumers[identity] = consumer;
     var revision = 0;
     try {
-      final existingChapters = await artifactStore.downloadedChapterIds(
+      final existingChapters = artifactStore.downloadedChapterIdsFromRecords(
+        indexedRecords.values,
         sourceId: manifest.sourceId,
         comicId: entry.chapter.comicId,
       );
@@ -7496,15 +7563,20 @@ final class PersistentChapterDownloadService
           existingChapters.length > 1;
       final isSingleChapter = !isHighConfidenceMultiChapter;
 
-      if (existingChapters.isNotEmpty &&
-          !existingChapters.contains(entry.chapter.chapterId)) {
-        for (final prevId in existingChapters) {
+      if (hasOtherDownloadedChapters) {
+        final migrationPlan = await artifactStore.flatChapterMigrationPlan(
+          entry: entry,
+          comicDirectoryName: structuredComicDirectory,
+          existingChapterIds: existingChapters,
+        );
+        for (final previous in migrationPlan) {
           await artifactStore.migrateSingleChapterToSubdirectory(
             sourceId: manifest.sourceId,
             comicId: entry.chapter.comicId,
             comicTitle: entry.chapter.comicTitle,
-            previousChapterId: prevId,
-            previousChapterTitle: '第 1 话',
+            previousChapterId: previous.chapterId,
+            previousChapterTitle: previous.title,
+            previousSequence: previous.sequence,
             comicDirectoryName: structuredComicDirectory,
             rootLayout: manifest.pages.isEmpty
                 ? null
