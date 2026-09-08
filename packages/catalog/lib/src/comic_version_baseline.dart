@@ -215,6 +215,13 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
               left.successorPageCount != right.predecessorPageCount) {
             continue;
           }
+          final rightProof = right.verifiedPredecessorPageIndexes.toSet();
+          final composedProof = <int>[
+            for (final predecessorIndex
+                in left.verifiedPredecessorPageIndexes)
+              if (rightProof.contains(predecessorIndex + left.successorOffset))
+                predecessorIndex,
+          ];
           composed.add(
             ComicVersionPageMapping(
               predecessorChapterId: left.predecessorChapterId,
@@ -222,6 +229,7 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
               predecessorPageCount: left.predecessorPageCount,
               successorPageCount: right.successorPageCount,
               successorOffset: left.successorOffset + right.successorOffset,
+              verifiedPredecessorPageIndexes: composedProof,
               verifiedAt: earlierVerifiedAt(left.verifiedAt, right.verifiedAt),
             ),
           );

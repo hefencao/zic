@@ -418,12 +418,14 @@ abstract interface class ComicCommentSource {
   });
 }
 
-/// A source-confirmed page-position mapping between one predecessor chapter
-/// and its successor chapter.
+/// A source-confirmed affine page-position candidate between one predecessor
+/// chapter and its successor chapter.
 ///
-/// [successorOffset] means `successorIndex = predecessorIndex + offset` for
-/// every page in the verified overlap. The mapping is durable metadata only;
-/// it never owns image bytes, transport validators or cache files.
+/// [successorOffset] means `successorIndex = predecessorIndex + offset` only as
+/// candidate positioning evidence. Immutable-artifact reuse is allowed solely
+/// for [verifiedPredecessorPageIndexes], whose exact page media identities were
+/// compared successfully. The mapping never owns image bytes, validators or
+/// cache files.
 final class ComicVersionPageMapping {
   const ComicVersionPageMapping({
     required this.predecessorChapterId,
@@ -431,6 +433,7 @@ final class ComicVersionPageMapping {
     required this.predecessorPageCount,
     required this.successorPageCount,
     required this.successorOffset,
+    this.verifiedPredecessorPageIndexes = const <int>[],
     this.verifiedAt,
   });
 
@@ -439,6 +442,7 @@ final class ComicVersionPageMapping {
   final int predecessorPageCount;
   final int successorPageCount;
   final int successorOffset;
+  final List<int> verifiedPredecessorPageIndexes;
   final DateTime? verifiedAt;
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -447,6 +451,8 @@ final class ComicVersionPageMapping {
         'predecessorPageCount': predecessorPageCount,
         'successorPageCount': successorPageCount,
         'successorOffset': successorOffset,
+        if (verifiedPredecessorPageIndexes.isNotEmpty)
+          'verifiedPredecessorPageIndexes': verifiedPredecessorPageIndexes,
         if (verifiedAt != null)
           'verifiedAt': verifiedAt!.toUtc().toIso8601String(),
       };
@@ -457,6 +463,7 @@ final class ComicVersionPageMapping {
     final predecessorPageCount = json['predecessorPageCount'];
     final successorPageCount = json['successorPageCount'];
     final successorOffset = json['successorOffset'];
+    final verifiedIndexesValue = json['verifiedPredecessorPageIndexes'];
     final verifiedAtValue = json['verifiedAt'];
     if (predecessorChapterId is! String ||
         predecessorChapterId.isEmpty ||
@@ -467,8 +474,22 @@ final class ComicVersionPageMapping {
         successorPageCount is! int ||
         successorPageCount <= 0 ||
         successorOffset is! int ||
+        (verifiedIndexesValue != null && verifiedIndexesValue is! List) ||
         (verifiedAtValue != null && verifiedAtValue is! String)) {
       throw const FormatException('invalid comic version page mapping');
+    }
+    final verifiedIndexes = <int>[];
+    if (verifiedIndexesValue is List) {
+      for (final value in verifiedIndexesValue) {
+        if (value is! int || value < 0 || value >= predecessorPageCount) {
+          throw const FormatException('invalid comic version page mapping');
+        }
+        verifiedIndexes.add(value);
+      }
+      if (verifiedIndexes.toSet().length != verifiedIndexes.length) {
+        throw const FormatException('invalid comic version page mapping');
+      }
+      verifiedIndexes.sort();
     }
     DateTime? verifiedAt;
     if (verifiedAtValue is String) {
@@ -484,6 +505,8 @@ final class ComicVersionPageMapping {
       predecessorPageCount: predecessorPageCount,
       successorPageCount: successorPageCount,
       successorOffset: successorOffset,
+      verifiedPredecessorPageIndexes:
+          List<int>.unmodifiable(verifiedIndexes),
       verifiedAt: verifiedAt,
     );
   }

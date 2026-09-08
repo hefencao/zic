@@ -234,10 +234,19 @@ void main() {
       resolveIdentity: (page) async => identities[page.uri.toString()],
     );
 
-    expect(plan.mappings, hasLength(3));
+    expect(plan.mappings, hasLength(2));
     expect(
       plan.mappings[readerPageDownloadId(newChapter, newChapter.pages[1])],
       readerPageDownloadId(oldChapter, oldChapter.pages[0]),
+    );
+    expect(
+      plan.mappings[readerPageDownloadId(newChapter, newChapter.pages[2])],
+      isNull,
+      reason: 'the middle page was positioned by offset but never proved',
+    );
+    expect(
+      plan.mappings[readerPageDownloadId(newChapter, newChapter.pages[3])],
+      readerPageDownloadId(oldChapter, oldChapter.pages[2]),
     );
   });
 
@@ -277,10 +286,19 @@ void main() {
       resolveIdentity: (page) async => identities[page.uri.toString()],
     );
 
-    expect(plan.mappings, hasLength(3));
+    expect(plan.mappings, hasLength(2));
     expect(
       plan.mappings[readerPageDownloadId(older, older.pages.first)],
       readerPageDownloadId(newer, newer.pages[1]),
+    );
+    expect(
+      plan.mappings[readerPageDownloadId(older, older.pages[1])],
+      isNull,
+      reason: 'reverse affine positioning is not middle-page proof',
+    );
+    expect(
+      plan.mappings[readerPageDownloadId(older, older.pages.last)],
+      readerPageDownloadId(newer, newer.pages[3]),
     );
   });
 
@@ -345,11 +363,13 @@ void main() {
       sourceChapter: older,
       targetChapter: newer,
       targetOffsetFromSource: 1,
+      verifiedSourceIndexes: const <int>[0, 1],
     );
     final reverse = VerifiedArtifactReusePlan.fromVerifiedOffset(
       sourceChapter: newer,
       targetChapter: older,
       targetOffsetFromSource: -1,
+      verifiedSourceIndexes: const <int>[1, 2],
     );
 
     expect(forward.mappings, hasLength(2));
@@ -396,6 +416,7 @@ void main() {
       resolver.addVerifiedOffset(
         sourceChapter: older,
         targetOffsetFromSource: 1,
+        verifiedSourceIndexes: const <int>[0, 1, 2],
       ),
       3,
     );
@@ -453,13 +474,14 @@ void main() {
       'venera-resource:newer-2': 'eh:c',
     };
 
-    final offset = await VerifiedArtifactReusePlan.matchResolvedRelatedOffset(
+    final proof = await VerifiedArtifactReusePlan.matchResolvedRelatedOffset(
       sourceChapter: older,
       targetChapter: newer,
       resolveIdentity: (page) async => identities[page.uri.toString()],
     );
 
-    expect(offset, 1);
+    expect(proof?.targetOffsetFromSource, 1);
+    expect(proof?.verifiedSourceIndexes, <int>[0, 2]);
   });
 
   test('persisted offset registers symmetric future-artifact equivalence',
@@ -490,6 +512,7 @@ void main() {
       sourceChapter: older,
       targetChapter: newer,
       targetOffsetFromSource: 1,
+      verifiedSourceIndexes: const <int>[0, 1],
     );
 
     expect(plan.registerEquivalences(cache), 2);
@@ -501,6 +524,63 @@ void main() {
       bytes: Uint8List.fromList(<int>[6, 6, 6]),
     );
     expect((await cache.readForeground(oldFirst))?.bytes, <int>[6, 6, 6]);
+  });
+
+  test('affine anchors never alias an unverified replaced middle page', () async {
+    final source = _chapter(
+      comicId: 'source-middle-proof',
+      revision: 'source',
+      urls: const <String>[
+        'venera-resource:source-a',
+        'venera-resource:source-b',
+        'venera-resource:source-c',
+      ],
+    );
+    final target = _chapter(
+      comicId: 'target-middle-proof',
+      revision: 'target',
+      urls: const <String>[
+        'venera-resource:target-a',
+        'venera-resource:target-x',
+        'venera-resource:target-c',
+      ],
+    );
+    final identities = <String, String>{
+      'venera-resource:source-a': 'media:a',
+      'venera-resource:source-b': 'media:b',
+      'venera-resource:source-c': 'media:c',
+      'venera-resource:target-a': 'media:a',
+      'venera-resource:target-x': 'media:x',
+      'venera-resource:target-c': 'media:c',
+    };
+
+    final proof = await VerifiedArtifactReusePlan.matchResolvedRelatedOffset(
+      sourceChapter: source,
+      targetChapter: target,
+      resolveIdentity: (page) async => identities[page.uri.toString()],
+    );
+    expect(proof?.targetOffsetFromSource, 0);
+    expect(proof?.verifiedSourceIndexes, <int>[0, 2]);
+
+    final resolver = VerifiedArtifactReuseResolver(targetChapter: target);
+    resolver.addVerifiedOffset(
+      sourceChapter: source,
+      targetOffsetFromSource: proof!.targetOffsetFromSource,
+      verifiedSourceIndexes: proof.verifiedSourceIndexes,
+    );
+    expect(
+      resolver.resolve(readerPageDownloadId(target, target.pages.first)),
+      <DownloadId>[readerPageDownloadId(source, source.pages.first)],
+    );
+    expect(
+      resolver.resolve(readerPageDownloadId(target, target.pages[1])),
+      isEmpty,
+      reason: 'the affine offset is candidate evidence, not middle-page proof',
+    );
+    expect(
+      resolver.resolve(readerPageDownloadId(target, target.pages.last)),
+      <DownloadId>[readerPageDownloadId(source, source.pages.last)],
+    );
   });
 
   test('resolved offset requires verified anchor agreement', () async {

@@ -31,6 +31,7 @@ void main() {
           predecessorPageCount: 370,
           successorPageCount: 371,
           successorOffset: 1,
+          verifiedPredecessorPageIndexes: const <int>[0, 369],
           verifiedAt: DateTime.utc(2026, 8, 11, 1, 1),
         ),
       ],
@@ -59,6 +60,10 @@ void main() {
     expect(predecessors.single.discoveredAt, relation.discoveredAt);
     expect(predecessors.single.pageMappings, hasLength(1));
     expect(predecessors.single.pageMappings.single.successorOffset, 1);
+    expect(
+      predecessors.single.pageMappings.single.verifiedPredecessorPageIndexes,
+      <int>[0, 369],
+    );
     final all = await reopened.listAllComicVersionRelations();
     expect(all, hasLength(1));
     expect(all.single.successorComicId, relation.successorComicId);

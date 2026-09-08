@@ -332,6 +332,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         }
       }
       if (currentMapping != null &&
+          currentMapping.verifiedPredecessorPageIndexes.isNotEmpty &&
           _versionPageMappingIsFresh(currentMapping, revalidationNow)) {
         verifiedMappings++;
         continue;
@@ -348,7 +349,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       );
       final predecessorManifest = predecessorEntry.chapter.toManifest();
       final successorManifest = successorEntry.chapter.toManifest();
-      final successorOffset =
+      final offsetProof =
           await VerifiedArtifactReusePlan.matchResolvedRelatedOffset(
         sourceChapter: predecessorManifest,
         targetChapter: successorManifest,
@@ -357,14 +358,17 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           locator: page.uri,
         ),
       );
-      if (successorOffset == null) continue;
+      if (offsetProof == null || offsetProof.verifiedSourceIndexes.isEmpty) {
+        continue;
+      }
       verifiedMappings++;
       final mapping = ComicVersionPageMapping(
         predecessorChapterId: predecessorManifest.chapter.chapterId,
         successorChapterId: successorManifest.chapter.chapterId,
         predecessorPageCount: predecessorManifest.pages.length,
         successorPageCount: successorManifest.pages.length,
-        successorOffset: successorOffset,
+        successorOffset: offsetProof.targetOffsetFromSource,
+        verifiedPredecessorPageIndexes: offsetProof.verifiedSourceIndexes,
         verifiedAt: DateTime.now().toUtc(),
       );
       updatedRelation = ComicVersionRelation(
@@ -504,6 +508,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           '\u0000${mapping.predecessorPageCount}'
           '\u0000${mapping.successorPageCount}'
           '\u0000${mapping.successorOffset}'
+          '\u0000${mapping.verifiedPredecessorPageIndexes.join(',')}'
           '\u0000${mapping.verifiedAt?.microsecondsSinceEpoch ?? 0}',
         );
       }
@@ -568,6 +573,12 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           targetOffsetFromSource: currentIsSuccessor
               ? mapping.successorOffset
               : -mapping.successorOffset,
+          verifiedSourceIndexes: currentIsSuccessor
+              ? mapping.verifiedPredecessorPageIndexes
+              : mapping.verifiedPredecessorPageIndexes.map(
+                  (predecessorIndex) =>
+                      predecessorIndex + mapping.successorOffset,
+                ),
         );
       }
     }

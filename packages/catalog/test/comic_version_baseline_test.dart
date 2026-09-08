@@ -74,6 +74,52 @@ void main() {
     );
   });
 
+  test('composed version offsets preserve only proof shared by every edge', () {
+    final projection = resolveComicVersionBaselines(
+      relations: const <ComicVersionRelation>[
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'A',
+          successorComicId: 'B',
+          pageMappings: <ComicVersionPageMapping>[
+            ComicVersionPageMapping(
+              predecessorChapterId: 'a',
+              successorChapterId: 'b',
+              predecessorPageCount: 3,
+              successorPageCount: 4,
+              successorOffset: 1,
+              verifiedPredecessorPageIndexes: <int>[0, 1, 2],
+            ),
+          ],
+        ),
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'B',
+          successorComicId: 'C',
+          pageMappings: <ComicVersionPageMapping>[
+            ComicVersionPageMapping(
+              predecessorChapterId: 'b',
+              successorChapterId: 'c',
+              predecessorPageCount: 4,
+              successorPageCount: 4,
+              successorOffset: 0,
+              verifiedPredecessorPageIndexes: <int>[1, 3],
+            ),
+          ],
+        ),
+      ],
+      manualDownloadComics: const <ComicVersionIdentity>[
+        ComicVersionIdentity(sourceId: 's', comicId: 'C'),
+      ],
+    );
+
+    final composed = projection.downloadHeadRelations.singleWhere(
+      (relation) => relation.predecessorComicId == 'A',
+    ).pageMappings.single;
+    expect(composed.successorOffset, 1);
+    expect(composed.verifiedPredecessorPageIndexes, <int>[0, 2]);
+  });
+
   test('does not invent a latest head for an ambiguous branch', () {
     final projection = resolveComicVersionBaselines(
       relations: const <ComicVersionRelation>[
