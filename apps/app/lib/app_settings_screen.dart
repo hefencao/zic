@@ -739,15 +739,13 @@ final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
   }
 
   Future<void> _editReaderPrefetchReadBudget() async {
-    final controller = TextEditingController(
-      text: '${widget.preferences.readerPrefetchReadBudgetMiB}',
-    );
+    var draft = '${widget.preferences.readerPrefetchReadBudgetMiB}';
     final confirmed = await showDialog<int>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('设置 Reader 预读取上限'),
-        content: TextField(
-          controller: controller,
+        content: TextFormField(
+          initialValue: draft,
           autofocus: true,
           keyboardType: TextInputType.number,
           inputFormatters: <TextInputFormatter>[
@@ -759,6 +757,7 @@ final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
                 '范围 $minReaderPrefetchReadBudgetMiB–$maxReaderPrefetchReadBudgetMiB MB；只限制后台预下载/本地预读取，当前页不受限。',
             border: OutlineInputBorder(),
           ),
+          onChanged: (value) => draft = value,
         ),
         actions: <Widget>[
           AppDialogActions(
@@ -767,7 +766,7 @@ final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
               FilledButton(
                 onPressed: () => Navigator.pop(
                   dialogContext,
-                  int.tryParse(controller.text),
+                  int.tryParse(draft),
                 ),
                 child: const Text('设置'),
               ),
@@ -776,7 +775,6 @@ final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
         ],
       ),
     );
-    controller.dispose();
     if (!mounted || confirmed == null) return;
     widget.preferences.setReaderPrefetchReadBudgetMiB(confirmed);
   }
@@ -786,12 +784,14 @@ final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
     return Scaffold(
       key: networkSettingsScreenKey,
       appBar: AppBar(title: const Text('网络')),
-      body: StreamBuilder<WholeComicQueueSnapshot>(
-        stream: widget.downloads.changes,
-        initialData: widget.downloads.snapshot,
-        builder: (context, snapshot) {
-          final policy = snapshot.requireData.policy;
-          return ListView(
+      body: AnimatedBuilder(
+        animation: widget.preferences,
+        builder: (context, _) => StreamBuilder<WholeComicQueueSnapshot>(
+          stream: widget.downloads.changes,
+          initialData: widget.downloads.snapshot,
+          builder: (context, snapshot) {
+            final policy = snapshot.requireData.policy;
+            return ListView(
             padding: const EdgeInsets.symmetric(vertical: 8),
             children: <Widget>[
               SwitchListTile(
@@ -863,9 +863,10 @@ final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
                   '目录/详情/封面等可重新获取响应必须经过统一缓存；章节正文由 DownloadSession/artifact owner流式处理。来源 Cookie、拦截器和显式 UA不得被全局默认值覆盖。',
                 ),
               ),
-            ],
-          );
-        },
+              ],
+            );
+          },
+        ),
       ),
     );
   }

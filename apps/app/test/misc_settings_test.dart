@@ -60,6 +60,34 @@ void main() {
     expect(find.byKey(settingsAppearanceEntryKey), findsOneWidget);
   });
 
+  testWidgets('network prefetch budget updates without leaving the settings page', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const App());
+    await _pumpUntilFound(tester, find.byIcon(Icons.more_horiz));
+    await tester.tap(find.byIcon(Icons.more_horiz));
+    await tester.pump();
+    await _pumpUntilFound(tester, find.byKey(miscSettingsEntryKey));
+    await tester.tap(find.byKey(miscSettingsEntryKey));
+    await tester.pump();
+    await _pumpUntilFound(tester, find.byKey(settingsNetworkEntryKey));
+    await tester.tap(find.byKey(settingsNetworkEntryKey));
+    await tester.pump();
+    await _pumpUntilFound(tester, find.byKey(networkSettingsScreenKey));
+
+    expect(find.text('50 MB'), findsOneWidget);
+    await tester.tap(find.byKey(networkReaderPrefetchBudgetKey));
+    await tester.pumpAndSettle();
+    final field = find.widgetWithText(TextFormField, '大小（MB）');
+    expect(field, findsOneWidget);
+    await tester.enterText(field, '25');
+    await tester.tap(find.widgetWithText(FilledButton, '设置'));
+    await tester.pump();
+
+    expect(find.byKey(networkSettingsScreenKey), findsOneWidget);
+    expect(find.text('25 MB'), findsOneWidget);
+  });
+
   testWidgets('appearance settings exposes AMOLED dark mode', (tester) async {
     final preferences = AppPreferencesController();
     addTearDown(preferences.dispose);
