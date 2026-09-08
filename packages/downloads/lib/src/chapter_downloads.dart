@@ -3574,6 +3574,7 @@ final class PersistentDownloadArtifactStore
   Future<DownloadPlacement> resolveDownloadPlacement(
     ImportedLibraryEntry entry, {
     DownloadPlacement? requestedPlacement,
+    Iterable<CacheRec>? knownRecords,
   }) async {
     _requireOpen();
     await _loadPersistedPlacementClaims();
@@ -3656,7 +3657,8 @@ final class PersistentDownloadArtifactStore
       return normalized;
     }
 
-    final allRecords = await _index.list();
+    final allRecords = knownRecords?.toList(growable: false) ??
+        await _index.list();
     final hasRecords = allRecords.any((r) =>
         r.id.content.sourceId == entry.chapter.sourceId &&
         r.id.content.comicId == entry.chapter.comicId &&
@@ -3875,9 +3877,13 @@ final class PersistentDownloadArtifactStore
   }
 
   Future<String> resolveStructuredComicDirectory(
-    ImportedLibraryEntry entry,
-  ) async {
-    final placement = await resolveDownloadPlacement(entry);
+    ImportedLibraryEntry entry, {
+    Iterable<CacheRec>? knownRecords,
+  }) async {
+    final placement = await resolveDownloadPlacement(
+      entry,
+      knownRecords: knownRecords,
+    );
     return placement.relativeDirectory;
   }
 
@@ -4003,8 +4009,9 @@ final class PersistentDownloadArtifactStore
 
   Future<Map<String, int>> ensureExportPageOrdinals(
     ImportedLibraryEntry entry,
-    DownloadPlacement placement,
-  ) async {
+    DownloadPlacement placement, {
+    Iterable<CacheRec>? knownRecords,
+  }) async {
     if (placement.pageOrder == ComicPageOrder.auto) {
       throw const Failure(
         code: ErrorCode.invalidState,
@@ -4028,7 +4035,7 @@ final class PersistentDownloadArtifactStore
 
     // Compatibility migration: if structured files predate export bindings,
     // preserve their already-visible ordinals instead of renumbering them.
-    final indexed = await _index.list();
+    final indexed = knownRecords ?? await _index.list();
     for (final record in indexed) {
       if (record.id.content.sourceId != chapter.sourceId ||
           record.id.content.comicId != chapter.comicId ||
@@ -7533,7 +7540,10 @@ final class PersistentChapterDownloadService
     final manifest = entry.chapter.toManifest();
     token.throwIfCancelled();
     final structuredComicDirectory =
-        await artifactStore.resolveStructuredComicDirectory(entry);
+        await artifactStore.resolveStructuredComicDirectory(
+      entry,
+      knownRecords: indexedRecords.values,
+    );
     _recordCommandTrace(identity, 'structured-directory-resolved', <String, Object?>{
       'comicTitle': entry.chapter.comicTitle,
       'structuredComicDirectory': structuredComicDirectory,
@@ -7607,7 +7617,10 @@ final class PersistentChapterDownloadService
       );
       final predecessorBindingLookups = <String, Future<Map<int, String>>>{};
 
-      var placement = await artifactStore.resolveDownloadPlacement(entry);
+      var placement = await artifactStore.resolveDownloadPlacement(
+        entry,
+        knownRecords: indexedRecords.values,
+      );
       placement = await artifactStore.freezeExportPageOrder(
         entry,
         placement,
@@ -7616,6 +7629,7 @@ final class PersistentChapterDownloadService
       final exportOrdinals = await artifactStore.ensureExportPageOrdinals(
         entry,
         placement,
+        knownRecords: indexedRecords.values,
       );
       await artifactStore.writeComicFolderManifest(
         entry,
