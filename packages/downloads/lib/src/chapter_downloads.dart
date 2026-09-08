@@ -6964,6 +6964,7 @@ final class PersistentDownloadComposition
     NetLane? transferNet,
     ArtifactCacheReadScheduler? localReadScheduler,
     StorageWriteScheduler? storageWriteScheduler,
+    SpeculativeEncodedReadBudget? speculativeEncodedReadBudget,
     SafTreeIo? safTreeIo,
     String? safTreeUri,
     Duration pageStallTimeout =
@@ -6978,6 +6979,7 @@ final class PersistentDownloadComposition
       transferNet: transferNet,
       localReadScheduler: localReadScheduler,
       storageWriteScheduler: storageWriteScheduler,
+      speculativeEncodedReadBudget: speculativeEncodedReadBudget,
       safTreeIo: safTreeIo,
       safTreeUri: safTreeUri,
       stallTimeout: pageStallTimeout,
@@ -7039,6 +7041,7 @@ Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
   NetLane? transferNet,
   ArtifactCacheReadScheduler? localReadScheduler,
   StorageWriteScheduler? storageWriteScheduler,
+  SpeculativeEncodedReadBudget? speculativeEncodedReadBudget,
   SafTreeIo? safTreeIo,
   String? safTreeUri,
   Duration stallTimeout = PersistentChapterDownloadService.defaultPageStallTimeout,
@@ -7069,6 +7072,7 @@ Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
           preemptionThreshold: 40,
         ),
     localReadScheduler: localReadScheduler,
+    speculativeEncodedReadBudget: speculativeEncodedReadBudget,
     readStallTimeout: stallTimeout,
   );
   return (
@@ -7126,6 +7130,7 @@ final class PersistentChapterDownloadService
     NetLane? transferNet,
     ArtifactCacheReadScheduler? localReadScheduler,
     StorageWriteScheduler? storageWriteScheduler,
+    SpeculativeEncodedReadBudget? speculativeEncodedReadBudget,
     SafTreeIo? safTreeIo,
     String? safTreeUri,
     Duration pageStallTimeout = defaultPageStallTimeout,

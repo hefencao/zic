@@ -104,7 +104,8 @@ void main() {
         'zoomDecodeBoost': false,
         'detailsPreviewMaxItemsPerRow': 6,
         'networkUserAgent': 'fixture-network-agent',
-        'animatedWebpPrefetchBudgetMiB': 72, // ignored legacy dev.247/248 key
+        'readerPrefetchReadBudgetMiB': 72,
+        'animatedWebpPrefetchBudgetMiB': 88, // ignored legacy dev.247/248 key
         'sourceDownloadDirectories': <String, Object?>{
           'venera:alpha': '/data/downloads-alpha',
           'mihon:beta': 42, // invalid entries are dropped
@@ -159,6 +160,7 @@ void main() {
     expect(controller.chapterDownloadDirectoryOverride, isNull);
     expect(controller.chapterDownloadDirectoryPendingMoveFrom, isNull);
     expect(controller.cacheLimitMb, defaultCacheLimitMb);
+    expect(controller.readerPrefetchReadBudgetMiB, 72);
     expect(
       controller.sourceDownloadDirectoryFor('venera:alpha'),
       '/data/downloads-alpha',
@@ -190,6 +192,7 @@ void main() {
     controller.setChapterDownloadDirectoryOverride('/data/downloads');
     controller.setChapterDownloadDirectoryPendingMoveFrom('/data/old');
     controller.setCacheLimitMb(1024);
+    controller.setReaderPrefetchReadBudgetMiB(64);
     controller.setSourceDownloadDirectory('venera:gamma', '/data/gamma');
     controller.setLongPressZoomRestoreOnRelease(true);
     controller.setLongPressZoomMoveMode(ReaderLongPressMoveMode.drag);
@@ -225,6 +228,7 @@ void main() {
       '/data/old',
     );
     expect(written?['cacheLimitMb'], 1024);
+    expect(written?['readerPrefetchReadBudgetMiB'], 64);
     expect(
       written?['sourceDownloadDirectories'],
       <String, String>{

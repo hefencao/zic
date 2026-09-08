@@ -594,16 +594,24 @@ final class DownloadIngressProjectionRegistry {
   }
 }
 
-final class _IngressAttachmentControl implements TaskControl {
+final class _IngressAttachmentControl
+    implements PriorityObservableTaskControl {
   _IngressAttachmentControl({int priority = 0}) : _priority = priority;
 
   int _priority;
+  final StreamController<int> _priorityChanges =
+      StreamController<int>.broadcast(sync: true);
 
   @override
   int get priority => _priority;
 
+  @override
+  Stream<int> get priorityChanges => _priorityChanges.stream;
+
   void updatePriority(int priority) {
+    if (_priority == priority) return;
     _priority = priority;
+    if (!_priorityChanges.isClosed) _priorityChanges.add(priority);
   }
 
   final Completer<void> _cancelledSignal = Completer<void>();
@@ -616,5 +624,6 @@ final class _IngressAttachmentControl implements TaskControl {
 
   void cancel() {
     if (!_cancelledSignal.isCompleted) _cancelledSignal.complete();
+    if (!_priorityChanges.isClosed) unawaited(_priorityChanges.close());
   }
 }

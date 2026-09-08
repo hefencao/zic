@@ -1785,6 +1785,90 @@ void main() {
     expect(registry.sessions, hasLength(1));
   });
 
+  test('required completion dynamically bypasses speculative budget on same physical task', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_required_budget_bypass_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final budget = SpeculativeEncodedReadBudget(limitBytes: 64);
+    final net = NetLane(maxActive: 1);
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: net,
+      speculativeEncodedReadBudget: budget,
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('required-budget-bypass');
+    final bytes = List<int>.generate(192, (index) => index & 0xff);
+    final transport = _FlowSuspendingTransport(bytes, chunkSize: 64);
+    final reader = owner.attachConsumer(
+      scopeId: 'reader-budgeted',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+    reader.replaceDemands(
+      'reader-budgeted',
+      1,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 700,
+          reason: 'reader-prefetch',
+        ),
+      },
+    );
+
+    for (var attempt = 0;
+        attempt < 100 && budget.activeSpeculativeBytes < 64;
+        attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(budget.activeSpeculativeBytes, 64);
+    expect(registry.get(id).state, DownloadState.receiving);
+    expect(transport.opens, 1);
+    for (var attempt = 0;
+        attempt < 100 && net.readPermitReleasedTasks < 1;
+        attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(registry.get(id).state, DownloadState.receiving,
+        reason: 'speculative task must remain paused at the byte budget');
+    expect(budget.activeSpeculativeBytes, 64);
+    expect(net.readPermitReleasedTasks, 1,
+        reason: 'budget waiting must park the response instead of occupying the read permit');
+
+    final required = owner.attachConsumer(
+      scopeId: 'chapter-required-budget-bypass',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+    required.replaceDemands(
+      'chapter-required-budget-bypass',
+      1,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 120,
+          reason: 'chapter-download-command',
+          completionIntent: TransferCompletionIntent.required,
+        ),
+      },
+    );
+
+    await required.idle().timeout(const Duration(seconds: 2));
+    expect(registry.get(id).state, DownloadState.promoted);
+    expect(transport.opens, 1,
+        reason: 'required completion must reuse the already-open physical task');
+  });
+
   test('required completion claim can finish a costly full-body catchup', () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_required_');
     addTearDown(() async => temp.delete(recursive: true));

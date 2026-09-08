@@ -839,6 +839,40 @@ void main() {
     expect(factory.source.bytes, body);
   });
 
+  test('speculative encoded budget pauses body growth and foreground resumes same response', () async {
+    final session = createSession();
+    final transport = _BudgetBodyTransport(
+      List<int>.generate(192, (index) => index & 0xff),
+      chunkSize: 64,
+    );
+    final token = CancelToken(priority: 700);
+    final budget = SpeculativeEncodedReadBudget(limitBytes: 64);
+    final account = budget.accountFor(token, control: token);
+    final run = DownloadJob(
+      transport: transport,
+      session: session,
+      speculativeEncodedReadAccount: account,
+    ).run(cancel: token);
+
+    for (var attempt = 0; attempt < 100 && transport.bodyReadCount < 1; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(transport.bodyReadCount, 1);
+    expect(budget.activeSpeculativeBytes, 64);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(transport.bodyReadCount, 1,
+        reason: 'the next response chunk must not be requested above budget');
+
+    token.updatePriority(1000);
+    final result = await run.timeout(const Duration(seconds: 2));
+    expect(result.state, DownloadState.promoted);
+    expect(transport.openCount, 1,
+        reason: 'foreground promotion resumes the same physical response');
+    expect(transport.bodyReadCount, 3);
+    expect(budget.activeSpeculativeBytes, 0);
+    account.close();
+  });
+
   test('animated frame credit pauses and resumes one response without reopen', () async {
     final trace = MemoryTraceSink();
     final bytes = _flowAnimatedWebp(<int>[48, 48, 48]);
@@ -1489,6 +1523,42 @@ Future<void> _waitForFlowAction(
     await Future<void>.delayed(const Duration(milliseconds: 1));
   }
   throw StateError('flow action $action target=$targetFrames not observed');
+}
+
+final class _BudgetBodyTransport implements Transport {
+  _BudgetBodyTransport(this.bytes, {required this.chunkSize});
+
+  final List<int> bytes;
+  final int chunkSize;
+  int openCount = 0;
+  int bodyReadCount = 0;
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    openCount++;
+    final start = range?.start ?? 0;
+    Stream<List<int>> body() async* {
+      for (var offset = start; offset < bytes.length; offset += chunkSize) {
+        bodyReadCount++;
+        final end = (offset + chunkSize).clamp(0, bytes.length).toInt();
+        yield bytes.sublist(offset, end);
+      }
+    }
+
+    return ByteResponse(
+      bytes: body(),
+      statusCode: start == 0 ? HttpStatus.ok : HttpStatus.partialContent,
+      rangeStart: start,
+      totalLength: bytes.length,
+      rangeSupported: true,
+      flowControl: ByteResponseFlowControl.streamBackpressure,
+      validators: const Validators(etag: 'budget-v1'),
+    );
+  }
 }
 
 final class _FlowBodyTransport implements Transport {

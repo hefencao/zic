@@ -8,6 +8,7 @@ import 'package:transport/transport.dart';
 import 'download_session.dart';
 import 'net_lane.dart';
 import 'source_progress.dart';
+import 'speculative_encoded_budget.dart';
 import 'webp_decode_prefix_hints.dart';
 import 'webp_frame_prefix_tracker.dart';
 
@@ -30,6 +31,7 @@ final class DownloadJob {
     this.allowFullBodyCatchup,
     this.attachLegacyDemand = true,
     this.publishAttemptFailures = true,
+    this.speculativeEncodedReadAccount,
     this.readStallTimeout = defaultReadStallTimeout,
   });
 
@@ -41,6 +43,7 @@ final class DownloadJob {
 
   final Transport transport;
   final DownloadSession session;
+  final SpeculativeEncodedReadAccount? speculativeEncodedReadAccount;
   final Duration readStallTimeout;
 
   /// Whether this job publishes one transport attempt failure as terminal
@@ -521,6 +524,8 @@ final class DownloadJob {
                 runLease: runLease,
                 capability: response.flowControl,
                 rangeSupported: response.rangeSupported,
+                speculativeEncodedReadAccount:
+                    speculativeEncodedReadAccount,
               )
             : null;
 
@@ -1056,6 +1061,7 @@ final class DownloadJob {
     final builder = BytesBuilder(copy: false);
     try {
       while (true) {
+        await _waitForSpeculativeEncodedReadBudget(cancel);
         bool available;
         if (cancel == null) {
           available = await iterator.moveNext();
@@ -1078,6 +1084,7 @@ final class DownloadJob {
         }
         if (!available) break;
         cancel?.throwIfCancelled();
+        speculativeEncodedReadAccount?.recordRead(iterator.current.length);
         builder.add(iterator.current);
       }
     } finally {
@@ -1122,6 +1129,49 @@ final class DownloadJob {
     throw DownloadCatchupDeferred(preservedLength: preservedLength);
   }
 
+  Future<void> _waitForSpeculativeEncodedReadBudget(
+    CancelToken? control,
+  ) async {
+    final account = speculativeEncodedReadAccount;
+    if (account == null || !account.readBlocked) return;
+    var releasedReadPermit = false;
+    while (account.readBlocked) {
+      control?.throwIfCancelled();
+      if (control != null && control.responseReadPermitHeld) {
+        control.releaseResponseReadPermit(responseRetained: true);
+        releasedReadPermit = true;
+        session.recordTransportReadPermit(
+          action: 'released',
+          reason: 'speculative-encoded-budget',
+          responseReadPermitHeld: false,
+          demanded: control.demanded,
+        );
+      }
+      await account.waitForRead(control: control);
+      control?.throwIfCancelled();
+      if (control != null && !control.demanded) {
+        await Future.any<void>(<Future<void>>[
+          control.whenDemandChanged,
+          control.whenCancelled,
+        ]);
+        continue;
+      }
+    }
+    if (releasedReadPermit && control != null) {
+      await control.acquireResponseReadPermit();
+      control.throwIfCancelled();
+      if (!control.demanded || !control.responseReadPermitHeld) {
+        return _waitForSpeculativeEncodedReadBudget(control);
+      }
+      session.recordTransportReadPermit(
+        action: 'acquired',
+        reason: 'speculative-encoded-budget',
+        responseReadPermitHeld: true,
+        demanded: control.demanded,
+      );
+    }
+  }
+
   Future<bool> _moveNext(
     StreamIterator<List<int>> iterator,
     CancelToken? cancel, {
@@ -1132,8 +1182,14 @@ final class DownloadJob {
     if (flowGate != null) {
       await flowGate.waitBeforeRead(networkCursor: networkCursor);
     }
+    await _waitForSpeculativeEncodedReadBudget(cancel);
     if (cancel == null) {
-      return _moveNextWithStallWatchdog(iterator, onAbort: onAbort);
+      final available =
+          await _moveNextWithStallWatchdog(iterator, onAbort: onAbort);
+      if (available) {
+        speculativeEncodedReadAccount?.recordRead(iterator.current.length);
+      }
+      return available;
     }
     cancel.throwIfCancelled();
     final Object result;
@@ -1155,7 +1211,11 @@ final class DownloadJob {
       await _cancelIteratorAndDiscard(iterator, onAbort);
       cancel.throwIfCancelled();
     }
-    return (result as _NextChunk).available;
+    final available = (result as _NextChunk).available;
+    if (available) {
+      speculativeEncodedReadAccount?.recordRead(iterator.current.length);
+    }
+    return available;
   }
 
   /// One body read, raced against the read-stall watchdog. The watchdog only
@@ -1493,6 +1553,7 @@ final class _ResponseReadGate {
     required this.runLease,
     required this.capability,
     required this.rangeSupported,
+    required this.speculativeEncodedReadAccount,
   }) : _authoritativeCatchupFloor = session.committedLength;
 
   final DownloadSession session;
@@ -1500,6 +1561,7 @@ final class _ResponseReadGate {
   final RunLease runLease;
   final ByteResponseFlowControl capability;
   final bool rangeSupported;
+  final SpeculativeEncodedReadAccount? speculativeEncodedReadAccount;
   final int _authoritativeCatchupFloor;
   static const Duration _flowEvidencePollInterval = Duration(milliseconds: 100);
   WebpFramePrefixTracker? _tracker;
@@ -1538,6 +1600,40 @@ final class _ResponseReadGate {
     return session.committedLength >= _playablePrefixFloorBytes;
   }
 
+  Future<void> _waitForSpeculativeEncodedBudget() async {
+    final account = speculativeEncodedReadAccount;
+    final control = cancel;
+    if (account == null || control == null || !account.readBlocked) return;
+    var releasedReadPermit = false;
+    while (account.readBlocked) {
+      control.throwIfCancelled();
+      if (control.responseReadPermitHeld) {
+        control.releaseResponseReadPermit(responseRetained: true);
+        releasedReadPermit = true;
+        session.recordTransportReadPermit(
+          action: 'released',
+          reason: 'speculative-encoded-budget-evidence',
+          responseReadPermitHeld: false,
+          demanded: control.demanded,
+        );
+      }
+      await account.waitForRead(control: control);
+      control.throwIfCancelled();
+      if (!control.demanded) return;
+    }
+    if (releasedReadPermit) {
+      await control.acquireResponseReadPermit();
+      control.throwIfCancelled();
+      if (!control.demanded || !control.responseReadPermitHeld) return;
+      session.recordTransportReadPermit(
+        action: 'acquired',
+        reason: 'speculative-encoded-budget-evidence',
+        responseReadPermitHeld: true,
+        demanded: control.demanded,
+      );
+    }
+  }
+
   Future<void> _ensureInitialized() async {
     session.requireRun(runLease);
     if (_tracker != null || _initializing) return;
@@ -1553,6 +1649,7 @@ final class _ResponseReadGate {
       final tracker = WebpFramePrefixTracker();
       while (true) {
         control.throwIfCancelled();
+        await _waitForSpeculativeEncodedBudget();
         final Object result;
         try {
           result = await Future.any<Object>(<Future<Object>>[
@@ -1582,6 +1679,7 @@ final class _ResponseReadGate {
         // provisional tracker and let waitBeforeRead release the permit.
         if (!control.demanded || control.flowTargetFrames <= 0) return;
         session.requireRun(runLease);
+        speculativeEncodedReadAccount?.recordRead(iterator.current.length);
         tracker.add(iterator.current);
       }
       session.requireRun(runLease);

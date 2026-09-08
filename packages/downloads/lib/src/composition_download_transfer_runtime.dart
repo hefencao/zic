@@ -27,12 +27,15 @@ final class CompositionDownloadTransferRuntime {
     required this.partialDownloadStore,
     required this.net,
     ArtifactCacheReadScheduler? localReadScheduler,
+    SpeculativeEncodedReadBudget? speculativeEncodedReadBudget,
     this.readStallTimeout = DownloadJob.defaultReadStallTimeout,
     this.maxIdlePromotedSessions = 8,
     this.maxIdlePartialSessions = 32,
     this.maxIdlePartialBytes = 256 * 1024 * 1024,
   })  : localReadScheduler =
             localReadScheduler ?? ArtifactCacheReadScheduler(),
+        speculativeEncodedReadBudget =
+            speculativeEncodedReadBudget ?? SpeculativeEncodedReadBudget(),
         clock = const SystemClock(),
         traceHub = _CompositionTransferTraceHub(),
         workspace = EphemeralCacheWorkspace.readerSession(
@@ -89,6 +92,7 @@ final class CompositionDownloadTransferRuntime {
               ),
       net: net,
       resolveTransferId: _resolveTransferIdForAcquire,
+      speculativeEncodedReadBudget: this.speculativeEncodedReadBudget,
       readStallTimeout: readStallTimeout,
     );
     _physicalTransferRetention = PhysicalTransferRetention(
@@ -110,6 +114,7 @@ final class CompositionDownloadTransferRuntime {
   final PartialDownloadStore? partialDownloadStore;
   final NetLane net;
   final ArtifactCacheReadScheduler localReadScheduler;
+  final SpeculativeEncodedReadBudget speculativeEncodedReadBudget;
   final Duration readStallTimeout;
   final int maxIdlePromotedSessions;
   final int maxIdlePartialSessions;
@@ -466,10 +471,13 @@ final class CompositionDownloadTransferRuntime {
 
     final boundReplay = session.residentReplayRangeChunks;
     if (boundReplay != null) {
-      final chunks = await boundReplay(start, endExclusive);
-      control?.throwIfCancelled();
       return _scheduledResidentReplay(
-        chunks,
+        _boundedResidentReplay(
+          boundReplay,
+          start,
+          endExclusive,
+          control: control,
+        ),
         priority: replayPriority,
         control: control,
         allowBackgroundDuringForegroundPressure:
@@ -520,6 +528,38 @@ final class CompositionDownloadTransferRuntime {
     );
   }
 
+  Stream<List<int>> _boundedResidentReplay(
+    DownloadResidentReplayRangeChunks openRange,
+    int start,
+    int endExclusive, {
+    TaskControl? control,
+  }) async* {
+    const quantumBytes = 256 * 1024;
+    var offset = start;
+    while (offset < endExclusive) {
+      control?.throwIfCancelled();
+      final remaining = endExclusive - offset;
+      final end = offset +
+          (remaining < quantumBytes ? remaining : quantumBytes);
+      final chunks = await openRange(offset, end);
+      control?.throwIfCancelled();
+      var emitted = 0;
+      await for (final chunk in chunks) {
+        control?.throwIfCancelled();
+        if (chunk.isEmpty) continue;
+        emitted += chunk.length;
+        yield chunk;
+      }
+      if (emitted != end - offset) {
+        throw Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'resident replay quantum was short: $emitted/${end - offset}',
+        );
+      }
+      offset = end;
+    }
+  }
+
   Stream<List<int>> _scheduledResidentReplay(
     Stream<List<int>> chunks, {
     required int Function() priority,
@@ -528,7 +568,11 @@ final class CompositionDownloadTransferRuntime {
   }) async* {
     final iterator = StreamIterator<List<int>>(chunks);
     try {
+      final budgetAccount = control == null
+          ? null
+          : speculativeEncodedReadBudget.accountFor(control, control: control);
       while (true) {
+        await budgetAccount?.waitForRead(control: control);
         final lease = await localReadScheduler.acquire(
           priority: priority,
           control: control,
@@ -544,7 +588,10 @@ final class CompositionDownloadTransferRuntime {
         if (!hasChunk) break;
         control?.throwIfCancelled();
         final chunk = iterator.current;
-        if (chunk.isNotEmpty) yield chunk;
+        if (chunk.isNotEmpty) {
+          budgetAccount?.recordRead(chunk.length);
+          yield chunk;
+        }
       }
     } finally {
       await iterator.cancel();
@@ -666,12 +713,14 @@ final class CompositionDownloadTransferRuntimePool {
     required PartialDownloadStore? partialDownloadStore,
     required NetLane net,
     ArtifactCacheReadScheduler? localReadScheduler,
+    SpeculativeEncodedReadBudget? speculativeEncodedReadBudget,
   }) {
     final key = _CompositionTransferRuntimeKey(
       artifactCacheManager: artifactCacheManager,
       partialDownloadStore: partialDownloadStore,
       net: net,
       localReadScheduler: localReadScheduler,
+      speculativeEncodedReadBudget: speculativeEncodedReadBudget,
     );
     return _entries.putIfAbsent(
       key,
@@ -680,6 +729,7 @@ final class CompositionDownloadTransferRuntimePool {
         partialDownloadStore: partialDownloadStore,
         net: net,
         localReadScheduler: localReadScheduler,
+        speculativeEncodedReadBudget: speculativeEncodedReadBudget,
       ),
     );
   }
@@ -717,12 +767,14 @@ final class _CompositionTransferRuntimeKey {
     required this.partialDownloadStore,
     required this.net,
     required this.localReadScheduler,
+    required this.speculativeEncodedReadBudget,
   });
 
   final ArtifactCacheManager? artifactCacheManager;
   final PartialDownloadStore? partialDownloadStore;
   final NetLane net;
   final ArtifactCacheReadScheduler? localReadScheduler;
+  final SpeculativeEncodedReadBudget? speculativeEncodedReadBudget;
 
   @override
   bool operator ==(Object other) =>
@@ -730,7 +782,8 @@ final class _CompositionTransferRuntimeKey {
       identical(artifactCacheManager, other.artifactCacheManager) &&
       identical(partialDownloadStore, other.partialDownloadStore) &&
       identical(net, other.net) &&
-      identical(localReadScheduler, other.localReadScheduler);
+      identical(localReadScheduler, other.localReadScheduler) &&
+      identical(speculativeEncodedReadBudget, other.speculativeEncodedReadBudget);
 
   @override
   int get hashCode => Object.hash(
@@ -738,6 +791,7 @@ final class _CompositionTransferRuntimeKey {
         identityHashCode(partialDownloadStore),
         identityHashCode(net),
         identityHashCode(localReadScheduler),
+        identityHashCode(speculativeEncodedReadBudget),
       );
 }
 

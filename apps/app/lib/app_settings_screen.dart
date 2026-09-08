@@ -26,6 +26,8 @@ const settingsAppearanceEntryKey =
     ValueKey<String>('settings-appearance-entry');
 const dataSettingsScreenKey = ValueKey<String>('data-settings-screen');
 const networkSettingsScreenKey = ValueKey<String>('network-settings-screen');
+const networkReaderPrefetchBudgetKey =
+    ValueKey<String>('network-reader-prefetch-budget');
 const bookshelfSettingsScreenKey =
     ValueKey<String>('bookshelf-settings-screen');
 const readingSettingsScreenKey = ValueKey<String>('reading-settings-screen');
@@ -736,6 +738,49 @@ final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
     _userAgent.selection = TextSelection.collapsed(offset: _userAgent.text.length);
   }
 
+  Future<void> _editReaderPrefetchReadBudget() async {
+    final controller = TextEditingController(
+      text: '${widget.preferences.readerPrefetchReadBudgetMiB}',
+    );
+    final confirmed = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('设置 Reader 预读取上限'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          inputFormatters: <TextInputFormatter>[
+            FilteringTextInputFormatter.digitsOnly,
+          ],
+          decoration: const InputDecoration(
+            labelText: '大小（MB）',
+            helperText:
+                '范围 $minReaderPrefetchReadBudgetMiB–$maxReaderPrefetchReadBudgetMiB MB；只限制后台预下载/本地预读取，当前页不受限。',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: <Widget>[
+          AppDialogActions(
+            onClose: () => Navigator.pop(dialogContext, null),
+            actions: <Widget>[
+              FilledButton(
+                onPressed: () => Navigator.pop(
+                  dialogContext,
+                  int.tryParse(controller.text),
+                ),
+                child: const Text('设置'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (!mounted || confirmed == null) return;
+    widget.preferences.setReaderPrefetchReadBudgetMiB(confirmed);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -762,6 +807,18 @@ final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
                     ),
                   ),
                 ),
+              ),
+              ListTile(
+                key: networkReaderPrefetchBudgetKey,
+                leading: const Icon(Icons.speed_outlined),
+                title: const Text('Reader 后台预读取上限'),
+                subtitle: const Text(
+                  '限制 3/7 预取窗口内实际新增的 encoded bytes；达到上限后暂停下一次读取，当前/可见过渡页直接绕过。',
+                ),
+                trailing: Text(
+                  '${widget.preferences.readerPrefetchReadBudgetMiB} MB',
+                ),
+                onTap: _editReaderPrefetchReadBudget,
               ),
               const Divider(),
               const _SettingsSectionTitle('请求标识'),

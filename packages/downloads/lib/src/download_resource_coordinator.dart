@@ -15,6 +15,7 @@ final class DownloadResourceCoordinator {
     NetLane? networkLane,
     ArtifactCacheReadScheduler? localReadScheduler,
     StorageWriteScheduler? storageWriteScheduler,
+    SpeculativeEncodedReadBudget? speculativeEncodedReadBudget,
   }) {
     final reads = localReadScheduler ?? ArtifactCacheReadScheduler();
     return DownloadResourceCoordinator._(
@@ -28,6 +29,7 @@ final class DownloadResourceCoordinator {
           ),
       reads,
       storageWriteScheduler ?? StorageWriteScheduler(localReadScheduler: reads),
+      speculativeEncodedReadBudget ?? SpeculativeEncodedReadBudget(),
     );
   }
 
@@ -35,11 +37,13 @@ final class DownloadResourceCoordinator {
     this.networkLane,
     this.localReadScheduler,
     this.storageWriteScheduler,
+    this.speculativeEncodedReadBudget,
   );
 
   final NetLane networkLane;
   final ArtifactCacheReadScheduler localReadScheduler;
   final StorageWriteScheduler storageWriteScheduler;
+  final SpeculativeEncodedReadBudget speculativeEncodedReadBudget;
 }
 
 /// Process-composition capacity domain for durable storage writes/migrations.

@@ -10,6 +10,7 @@ import 'download_registry.dart';
 import 'download_session.dart';
 import 'net_lane.dart';
 import 'retry_policy.dart';
+import 'speculative_encoded_budget.dart';
 import 'transfer_rank_policy.dart';
 import 'webp_decode_prefix_hints.dart';
 
@@ -87,6 +88,7 @@ final class DownloadTransferOwner {
     required this.net,
     this.resolveTransferId = _identityTransferId,
     this.rankPolicy = const TransferRankPolicy(),
+    this.speculativeEncodedReadBudget,
     this.readStallTimeout = DownloadJob.defaultReadStallTimeout,
   });
 
@@ -98,12 +100,16 @@ final class DownloadTransferOwner {
   final Completer<void> _disposedCompleter = Completer<void>();
   final TransferIdentityResolver resolveTransferId;
   final TransferRankPolicy rankPolicy;
+  final SpeculativeEncodedReadBudget? speculativeEncodedReadBudget;
 
   final Duration readStallTimeout;
 
   final Map<DownloadId, Map<String, _TransferClaim>> _claims =
       <DownloadId, Map<String, _TransferClaim>>{};
   final Map<DownloadId, String> _networkTaskKeys = <DownloadId, String>{};
+  final Map<DownloadId, SpeculativeEncodedReadAccount>
+      _speculativeEncodedReadAccounts =
+      <DownloadId, SpeculativeEncodedReadAccount>{};
   // Local physical-session hydration is intentionally outside NetLane. Cold
   // partial/artifact restore is local I/O and may publish Reader-local ingress
   // before a source/network transport lease is available. One physical session
@@ -887,6 +893,7 @@ final class DownloadTransferOwner {
     TransferDemand demand,
   ) {
     _localPreparationControls[id]?.updatePriority(session.effectivePriority);
+    _speculativeEncodedReadAccounts[id]?.setBypassed(_requiresCompletion(id));
     _pumpLocalPreparations();
     // A flow frame proof describes bytes already present in the physical
     // partial, not the policy target that happened to trigger suspension.
@@ -960,6 +967,7 @@ final class DownloadTransferOwner {
     if (byScope != null && byScope.isEmpty) {
       _claims.remove(id);
     }
+    _speculativeEncodedReadAccounts[id]?.setBypassed(_requiresCompletion(id));
     final session = registry.find(id);
     final taskKey = _networkTaskKeys[id];
     final taskIsActive = taskKey != null && net.isActive(taskKey);
@@ -1811,6 +1819,14 @@ final class DownloadTransferOwner {
       return;
     }
     _ActiveProviderLease? providerLease;
+    final encodedBudgetAccount = speculativeEncodedReadBudget?.accountFor(
+      token,
+      control: token,
+      bypassed: _requiresCompletion(id),
+    );
+    if (encodedBudgetAccount != null) {
+      _speculativeEncodedReadAccounts[id] = encodedBudgetAccount;
+    }
     try {
       if (await DownloadJob.completeWithoutTransport(
         session: session,
@@ -1907,6 +1923,7 @@ final class DownloadTransferOwner {
             requestUri: sourceId.canonicalUri,
             attachLegacyDemand: false,
             publishAttemptFailures: false,
+            speculativeEncodedReadAccount: encodedBudgetAccount,
             readStallTimeout: readStallTimeout,
             allowFullBodyCatchup: (preservedLength) =>
                 _allowsCostlyFullBodyCatchup(
@@ -2093,6 +2110,10 @@ final class DownloadTransferOwner {
         await session.failWithoutWriter(failure);
       }
     } finally {
+      if (identical(_speculativeEncodedReadAccounts[id], encodedBudgetAccount)) {
+        _speculativeEncodedReadAccounts.remove(id);
+      }
+      speculativeEncodedReadBudget?.releaseAccount(token);
       if (providerLease != null &&
           _activeProviderLeases[id]?.taskKey == taskKey) {
         _activeProviderLeases.remove(id);

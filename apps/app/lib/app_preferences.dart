@@ -19,6 +19,9 @@ const defaultNetworkUserAgent =
 const defaultCacheLimitMb = 512;
 const minCacheLimitMb = 64;
 const maxCacheLimitMb = 8192;
+const defaultReaderPrefetchReadBudgetMiB = 50;
+const minReaderPrefetchReadBudgetMiB = 1;
+const maxReaderPrefetchReadBudgetMiB = 1024;
 
 @immutable
 final class ComicReaderSettings {
@@ -181,6 +184,7 @@ final class AppPreferencesController extends ChangeNotifier {
   String? _chapterDownloadDirectoryOverride;
   String? _chapterDownloadDirectoryPendingMoveFrom;
   int _cacheLimitMb = defaultCacheLimitMb;
+  int _readerPrefetchReadBudgetMiB = defaultReaderPrefetchReadBudgetMiB;
   Map<String, String> _sourceDownloadDirectories = <String, String>{};
   List<String> _sourceSearchHistory = <String>[];
   Set<String> _acknowledgedComicVersionNotices = <String>{};
@@ -230,6 +234,7 @@ final class AppPreferencesController extends ChangeNotifier {
   String? get chapterDownloadDirectoryPendingMoveFrom =>
       _chapterDownloadDirectoryPendingMoveFrom;
   int get cacheLimitMb => _cacheLimitMb;
+  int get readerPrefetchReadBudgetMiB => _readerPrefetchReadBudgetMiB;
 
   /// Per-source physical download roots chosen by the user, keyed by the
   /// external source identity (`venera:<key>` / `mihon:<id>`).
@@ -390,6 +395,12 @@ final class AppPreferencesController extends ChangeNotifier {
       fallback: _cacheLimitMb,
       min: minCacheLimitMb,
       max: maxCacheLimitMb,
+    );
+    _readerPrefetchReadBudgetMiB = _intInRange(
+      values['readerPrefetchReadBudgetMiB'],
+      fallback: _readerPrefetchReadBudgetMiB,
+      min: minReaderPrefetchReadBudgetMiB,
+      max: maxReaderPrefetchReadBudgetMiB,
     );
     _sourceDownloadDirectories = _decodeDirectoryMap(
       values['sourceDownloadDirectories'],
@@ -573,6 +584,18 @@ final class AppPreferencesController extends ChangeNotifier {
     _changed();
   }
 
+  void setReaderPrefetchReadBudgetMiB(int value) {
+    final clamped = value
+        .clamp(
+          minReaderPrefetchReadBudgetMiB,
+          maxReaderPrefetchReadBudgetMiB,
+        )
+        .toInt();
+    if (_disposed || _readerPrefetchReadBudgetMiB == clamped) return;
+    _readerPrefetchReadBudgetMiB = clamped;
+    _changed();
+  }
+
   /// Sets or clears (null/empty) the physical download root of one source.
   void setSourceDownloadDirectory(String sourceId, String? directory) {
     if (_disposed) return;
@@ -742,6 +765,7 @@ final class AppPreferencesController extends ChangeNotifier {
       'chapterDownloadDirectoryPendingMoveFrom':
           _chapterDownloadDirectoryPendingMoveFrom,
       'cacheLimitMb': _cacheLimitMb,
+      'readerPrefetchReadBudgetMiB': _readerPrefetchReadBudgetMiB,
       'sourceDownloadDirectories': _sourceDownloadDirectories,
       'sourceSearchHistory': _sourceSearchHistory,
       'acknowledgedComicVersionNotices':

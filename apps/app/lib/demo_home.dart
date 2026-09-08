@@ -391,6 +391,7 @@ final class _DemoHomeState extends State<DemoHome> {
     _sourceFilter = widget.preferences.shelfSourceFilter;
     _sortMode = widget.preferences.shelfSortMode;
     _shelfViewMode = widget.preferences.shelfView;
+    _syncReaderPrefetchReadBudget();
     widget.preferences.addListener(_handleAppPreferencesChanged);
     final initialLibrary = _incomingLibraryStore;
     final ownsLibrary = initialLibrary == null;
@@ -546,7 +547,15 @@ final class _DemoHomeState extends State<DemoHome> {
     }
   }
 
+  void _syncReaderPrefetchReadBudget() {
+    defaultDownloadResourceCoordinator.speculativeEncodedReadBudget
+        .updateLimitBytes(
+      widget.preferences.readerPrefetchReadBudgetMiB * 1024 * 1024,
+    );
+  }
+
   void _handleAppPreferencesChanged() {
+    _syncReaderPrefetchReadBudget();
     final sourceFilter = widget.preferences.shelfSourceFilter;
     final sortMode = widget.preferences.shelfSortMode;
     final shelfView = widget.preferences.shelfView;

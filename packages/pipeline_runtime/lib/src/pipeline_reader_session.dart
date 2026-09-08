@@ -184,6 +184,7 @@ final class PipelineReaderSessionFactory {
     this.artifactCacheManager,
     this.partialDownloadStore,
     ArtifactCacheReadScheduler? artifactReadScheduler,
+    SpeculativeEncodedReadBudget? speculativeEncodedReadBudget,
     NetLane? pageDownloadLane,
     WebpDecodePrefixHints? decodePrefixHints,
     this.loaderSources = const <Uri, LoaderTransportSource>{},
@@ -198,6 +199,8 @@ final class PipelineReaderSessionFactory {
             CompositionDownloadTransferRuntimePool(),
         artifactReadScheduler =
             artifactReadScheduler ?? ArtifactCacheReadScheduler(),
+        speculativeEncodedReadBudget =
+            speculativeEncodedReadBudget ?? SpeculativeEncodedReadBudget(),
         pageDownloadLane =
             pageDownloadLane ??
             NetLane(
@@ -216,6 +219,7 @@ final class PipelineReaderSessionFactory {
   final CompositionDownloadTransferRuntimePool _transferRuntimePool;
   final CompositionDownloadTransferRuntime? transferRuntime;
   final ArtifactCacheReadScheduler artifactReadScheduler;
+  final SpeculativeEncodedReadBudget speculativeEncodedReadBudget;
   final NetLane pageDownloadLane;
   final WebpDecodePrefixHints decodePrefixHints;
   final Map<Uri, LoaderTransportSource> loaderSources;
@@ -232,6 +236,7 @@ final class PipelineReaderSessionFactory {
         artifactCacheManager: artifactCacheManager,
         partialDownloadStore: partialDownloadStore,
         artifactReadScheduler: artifactReadScheduler,
+        speculativeEncodedReadBudget: speculativeEncodedReadBudget,
         pageDownloadLane: pageDownloadLane,
         decodePrefixHints: decodePrefixHints,
         loaderSources: <Uri, LoaderTransportSource>{
@@ -253,6 +258,7 @@ final class PipelineReaderSessionFactory {
         artifactCacheManager: manager,
         partialDownloadStore: partialDownloadStore,
         artifactReadScheduler: artifactReadScheduler,
+        speculativeEncodedReadBudget: speculativeEncodedReadBudget,
         pageDownloadLane: pageDownloadLane,
         decodePrefixHints: decodePrefixHints,
         loaderSources: loaderSources,
@@ -271,6 +277,7 @@ final class PipelineReaderSessionFactory {
         artifactCacheManager: artifactCacheManager,
         partialDownloadStore: store,
         artifactReadScheduler: artifactReadScheduler,
+        speculativeEncodedReadBudget: speculativeEncodedReadBudget,
         pageDownloadLane: pageDownloadLane,
         decodePrefixHints: decodePrefixHints,
         loaderSources: loaderSources,
@@ -289,6 +296,7 @@ final class PipelineReaderSessionFactory {
         artifactCacheManager: artifactCacheManager,
         partialDownloadStore: partialDownloadStore,
         artifactReadScheduler: artifactReadScheduler,
+        speculativeEncodedReadBudget: speculativeEncodedReadBudget,
         pageDownloadLane: pageDownloadLane,
         decodePrefixHints: decodePrefixHints,
         loaderSources: loaderSources,
@@ -307,6 +315,7 @@ final class PipelineReaderSessionFactory {
         artifactCacheManager: artifactCacheManager,
         partialDownloadStore: partialDownloadStore,
         artifactReadScheduler: artifactReadScheduler,
+        speculativeEncodedReadBudget: speculativeEncodedReadBudget,
         pageDownloadLane: pageDownloadLane,
         decodePrefixHints: decodePrefixHints,
         loaderSources: loaderSources,
@@ -330,6 +339,8 @@ final class PipelineReaderSessionFactory {
         partialDownloadStore:
             runtime == null ? partialDownloadStore : runtime.partialDownloadStore,
         artifactReadScheduler: artifactReadScheduler,
+        speculativeEncodedReadBudget:
+            runtime?.speculativeEncodedReadBudget ?? speculativeEncodedReadBudget,
         pageDownloadLane: runtime?.net ?? pageDownloadLane,
         decodePrefixHints: decodePrefixHints,
         loaderSources: loaderSources,
@@ -355,7 +366,11 @@ final class PipelineReaderSessionFactory {
             partialDownloadStore,
             externalTransferRuntime.partialDownloadStore,
           ) ||
-          !identical(pageDownloadLane, externalTransferRuntime.net)) {
+          !identical(pageDownloadLane, externalTransferRuntime.net) ||
+          !identical(
+            speculativeEncodedReadBudget,
+            externalTransferRuntime.speculativeEncodedReadBudget,
+          )) {
         throw StateError(
           'Reader transfer runtime must share the factory artifact cache, '
           'partial store and NetLane authorities',
@@ -368,6 +383,7 @@ final class PipelineReaderSessionFactory {
           partialDownloadStore: partialDownloadStore,
           net: pageDownloadLane,
           localReadScheduler: artifactReadScheduler,
+          speculativeEncodedReadBudget: speculativeEncodedReadBudget,
         );
     final localReadScheduler = transferRuntime.localReadScheduler;
     return PipelineReaderSession._(
@@ -441,6 +457,7 @@ final class PipelineReaderSessionFactory {
       identityHashCode(artifactCacheManager),
       identityHashCode(partialDownloadStore),
       identityHashCode(artifactReadScheduler),
+      identityHashCode(speculativeEncodedReadBudget),
       identityHashCode(pageDownloadLane),
       identityHashCode(decodePrefixHints),
       identityHashCode(bytesLoader),

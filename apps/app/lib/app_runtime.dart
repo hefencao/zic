@@ -583,6 +583,10 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       final safOverride = downloadDirectory.startsWith('saf://')
           ? downloadDirectory.substring(5)
           : null;
+      defaultDownloadResourceCoordinator.speculativeEncodedReadBudget
+          .updateLimitBytes(
+        _preferences.readerPrefetchReadBudgetMiB * 1024 * 1024,
+      );
       final composition = await PersistentDownloadComposition.open(
         storageRoot,
         directory: safOverride == null ? downloadDirectory : null,
@@ -592,6 +596,8 @@ final class _BootstrapAppState extends State<_BootstrapApp>
         transferNet: defaultDownloadResourceCoordinator.networkLane,
         localReadScheduler: defaultDownloadResourceCoordinator.localReadScheduler,
         storageWriteScheduler: defaultDownloadResourceCoordinator.storageWriteScheduler,
+        speculativeEncodedReadBudget:
+            defaultDownloadResourceCoordinator.speculativeEncodedReadBudget,
         safTreeIo: safOverride == null
             ? null
             : _SafTreeIoAdapter(SafStore(treeUri: safOverride)),
@@ -1274,6 +1280,10 @@ Future<_AppServices> _openServices(
     final safOverride = chapterDownloadDirectory.startsWith('saf://')
         ? chapterDownloadDirectory.substring(5)
         : null;
+    defaultDownloadResourceCoordinator.speculativeEncodedReadBudget
+        .updateLimitBytes(
+      preferences.readerPrefetchReadBudgetMiB * 1024 * 1024,
+    );
     downloadComposition = await PersistentDownloadComposition.open(
       root,
       directory: safOverride == null ? chapterDownloadDirectory : null,
@@ -1283,6 +1293,8 @@ Future<_AppServices> _openServices(
       transferNet: defaultDownloadResourceCoordinator.networkLane,
       localReadScheduler: defaultDownloadResourceCoordinator.localReadScheduler,
       storageWriteScheduler: defaultDownloadResourceCoordinator.storageWriteScheduler,
+      speculativeEncodedReadBudget:
+          defaultDownloadResourceCoordinator.speculativeEncodedReadBudget,
       safTreeIo: safOverride == null
           ? null
           : _SafTreeIoAdapter(SafStore(treeUri: safOverride)),
