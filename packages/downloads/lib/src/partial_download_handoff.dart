@@ -726,9 +726,125 @@ final class PartialDownloadHandoff {
     }
     final candidates = equivalentCandidates;
     if (candidates == null) return null;
+    final metadataStore = store is PartialDownloadMetadataStore
+        ? store as PartialDownloadMetadataStore
+        : null;
+    if (metadataStore != null) {
+      return _restoreEquivalentCandidateByMetadata(
+        id,
+        candidates,
+        metadataStore,
+        control: control,
+      );
+    }
+    return _restoreEquivalentCandidateLegacy(
+      id,
+      candidates(id),
+      control: control,
+    );
+  }
+
+  Future<_PartialRestoreCandidate?> _restoreEquivalentCandidateByMetadata(
+    DownloadId id,
+    PartialEquivalentCandidates candidates,
+    PartialDownloadMetadataStore metadataStore, {
+    TaskControl? control,
+  }) async {
+    final candidateIds = <DownloadId>[];
+    final ranked = <_RankedPartialCandidate>[];
+    var checked = 0;
+    var order = 0;
+    for (final equivalent in candidates(id)) {
+      control?.throwIfCancelled();
+      if (equivalent == id) continue;
+      candidateIds.add(equivalent);
+      checked++;
+      final metadata = await _awaitCancellable(
+        metadataStore.inspectPartialDownloadMetadata(equivalent),
+        control,
+      );
+      if (metadata == null || metadata.length <= 0) {
+        order++;
+        continue;
+      }
+      if (metadata.exactDurableFinal) {
+        final entry = await _awaitCancellable(
+          store.openPartialDownload(equivalent),
+          control,
+        );
+        if (entry == null || entry.length <= 0) {
+          order++;
+          continue;
+        }
+        if (entry.exactDurableFinal) {
+          return _PartialRestoreCandidate(
+            entry: entry,
+            equivalent: true,
+            candidatesChecked: checked,
+          );
+        }
+        ranked.add(_RankedPartialCandidate(
+          id: equivalent,
+          metadataLength: entry.length,
+          order: order,
+          openedEntry: entry,
+        ));
+        order++;
+        continue;
+      }
+      ranked.add(_RankedPartialCandidate(
+        id: equivalent,
+        metadataLength: metadata.length,
+        order: order,
+      ));
+      order++;
+    }
+    ranked.sort((a, b) {
+      final length = b.metadataLength.compareTo(a.metadataLength);
+      return length != 0 ? length : a.order.compareTo(b.order);
+    });
+    for (final candidate in ranked) {
+      control?.throwIfCancelled();
+      final entry = candidate.openedEntry ??
+          await _awaitCancellable(
+            store.openPartialDownload(candidate.id),
+            control,
+          );
+      if (entry == null || entry.length <= 0) continue;
+      if (entry.exactDurableFinal) {
+        return _PartialRestoreCandidate(
+          entry: entry,
+          equivalent: true,
+          candidatesChecked: checked,
+        );
+      }
+      if (entry.length != candidate.metadataLength) {
+        // The metadata snapshot changed while candidates were ranked. Fall
+        // back to the historical physical-open scan so longest-prefix
+        // selection remains authoritative under concurrent mutation.
+        return _restoreEquivalentCandidateLegacy(
+          id,
+          candidateIds,
+          control: control,
+        );
+      }
+      return _PartialRestoreCandidate(
+        entry: entry,
+        equivalent: true,
+        candidatesChecked: checked,
+      );
+    }
+    return null;
+  }
+
+  Future<_PartialRestoreCandidate?> _restoreEquivalentCandidateLegacy(
+    DownloadId id,
+    Iterable<DownloadId> candidates, {
+    TaskControl? control,
+  }) async {
     PartialDownloadEntry? selected;
     var checked = 0;
-    for (final equivalent in candidates(id)) {
+    for (final equivalent in candidates) {
       control?.throwIfCancelled();
       if (equivalent == id) continue;
       checked++;
@@ -738,10 +854,6 @@ final class PartialDownloadHandoff {
       );
       if (entry == null || entry.length <= 0) continue;
       if (entry.exactDurableFinal) {
-        // Complete verified-equivalent READY is already the strongest local
-        // source state. Continuing to open later equivalents can only spend
-        // I/O/SQLite/SAF work; the longest-prefix comparison matters only for
-        // incomplete partials.
         return _PartialRestoreCandidate(
           entry: entry,
           equivalent: true,
@@ -920,6 +1032,20 @@ final class _ExactDurableRestoreProof {
   final DownloadId id;
   final SourceEpoch epoch;
   final int length;
+}
+
+final class _RankedPartialCandidate {
+  const _RankedPartialCandidate({
+    required this.id,
+    required this.metadataLength,
+    required this.order,
+    this.openedEntry,
+  });
+
+  final DownloadId id;
+  final int metadataLength;
+  final int order;
+  final PartialDownloadEntry? openedEntry;
 }
 
 final class _PartialRestoreCandidate {

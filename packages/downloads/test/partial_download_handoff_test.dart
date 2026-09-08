@@ -508,6 +508,130 @@ void main() {
     expect(await session.artifact.readBytes(), orderedEquals(longBytes));
   });
 
+  test('metadata ranking opens only the longest verified equivalent partial',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'partial-equivalent-metadata-ranking-',
+    );
+    addTearDown(() async => root.delete(recursive: true));
+    final targetId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'target',
+        chapterId: 'chapter-target',
+        pageId: 'page-target',
+      ),
+      sourceRevision: 'target-r2',
+      canonicalUri: Uri.parse('https://example.test/target.webp'),
+    );
+    final candidates = <DownloadId>[
+      for (var i = 0; i < 16; i++)
+        DownloadId(
+          content: ContentId(
+            sourceId: 'source',
+            comicId: 'old-$i',
+            chapterId: 'chapter-$i',
+            pageId: 'page-$i',
+          ),
+          sourceRevision: 'old-r$i',
+          canonicalUri: Uri.parse('https://example.test/old-$i.webp'),
+        ),
+    ];
+    final backend = _MetadataPartialStore();
+    for (var i = 0; i < candidates.length; i++) {
+      backend.partial[candidates[i]] = _StoredPartial(
+        bytes: Uint8List.fromList(
+          List<int>.generate(256 + i * 32, (index) => index & 0xff),
+        ),
+        validators: const Validators(),
+        totalLength: 4096,
+      );
+    }
+    final handoff = PartialDownloadHandoff(
+      store: backend,
+      equivalentCandidates: (id) => id == targetId
+          ? candidates
+          : const <DownloadId>[],
+    );
+    final registry = DownloadRegistry(
+      layout: CacheLayout(root.path),
+      clock: SystemClock(),
+    );
+    addTearDown(registry.dispose);
+
+    final session = registry.get(targetId);
+    await handoff.restoreInto(session);
+
+    expect(backend.metadataRequests, candidates);
+    expect(
+      backend.openRequests.where((id) => id != targetId),
+      <DownloadId>[candidates.last],
+      reason: 'only the metadata-ranked longest equivalent should open its body',
+    );
+    expect(
+      session.committedLength,
+      backend.partial[candidates.last]!.bytes.lengthInBytes,
+    );
+  });
+
+  test('metadata ranking falls back when selected partial changes', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'partial-equivalent-metadata-stale-',
+    );
+    addTearDown(() async => root.delete(recursive: true));
+    final targetId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'target',
+        chapterId: 'target-chapter',
+        pageId: 'target-page',
+      ),
+      sourceRevision: 'target-r2',
+      canonicalUri: Uri.parse('https://example.test/target.webp'),
+    );
+    DownloadId candidate(String name) => DownloadId(
+          content: ContentId(
+            sourceId: 'source',
+            comicId: name,
+            chapterId: '$name-chapter',
+            pageId: '$name-page',
+          ),
+          sourceRevision: '$name-r1',
+          canonicalUri: Uri.parse('https://example.test/$name.webp'),
+        );
+    final first = candidate('first');
+    final longest = candidate('longest');
+    final backend = _MetadataPartialStore();
+    backend.partial[first] = _StoredPartial(
+      bytes: Uint8List(128),
+      validators: const Validators(),
+      totalLength: 1024,
+    );
+    backend.partial[longest] = _StoredPartial(
+      bytes: Uint8List(512),
+      validators: const Validators(),
+      totalLength: 1024,
+    );
+    backend.metadataLengthOverrides[first] = 2048;
+    final handoff = PartialDownloadHandoff(
+      store: backend,
+      equivalentCandidates: (id) => id == targetId
+          ? <DownloadId>[first, longest]
+          : const <DownloadId>[],
+    );
+    final registry = DownloadRegistry(
+      layout: CacheLayout(root.path),
+      clock: SystemClock(),
+    );
+    addTearDown(registry.dispose);
+
+    final session = registry.get(targetId);
+    await handoff.restoreInto(session);
+
+    expect(session.committedLength, 512,
+        reason: 'stale metadata must fall back to physical longest-prefix scan');
+  });
+
   test('cancelling partial restore aborts body and preserves durable source',
       () async {
     final root = await Directory.systemTemp.createTemp(
@@ -1070,6 +1194,54 @@ final class _ReadyBoundStore implements PartialDownloadStore {
 
   @override
   Future<void> invalidatePartialDownload(DownloadId id) async {}
+}
+
+final class _MetadataPartialStore
+    implements PartialDownloadStore, PartialDownloadMetadataStore {
+  final Map<DownloadId, _StoredPartial> partial =
+      <DownloadId, _StoredPartial>{};
+  final Map<DownloadId, int> metadataLengthOverrides = <DownloadId, int>{};
+  final List<DownloadId> metadataRequests = <DownloadId>[];
+  final List<DownloadId> openRequests = <DownloadId>[];
+
+  @override
+  Future<PartialDownloadMetadata?> inspectPartialDownloadMetadata(
+    DownloadId id,
+  ) async {
+    metadataRequests.add(id);
+    final stored = partial[id];
+    if (stored == null) return null;
+    return PartialDownloadMetadata(
+      length: metadataLengthOverrides[id] ?? stored.bytes.lengthInBytes,
+      exactDurableFinal: false,
+    );
+  }
+
+  @override
+  Future<PartialDownloadEntry?> openPartialDownload(DownloadId id) async {
+    openRequests.add(id);
+    final stored = partial[id];
+    if (stored == null) return null;
+    return PartialDownloadEntry(
+      length: stored.bytes.lengthInBytes,
+      validators: stored.validators,
+      totalLength: stored.totalLength,
+      open: ({required int start}) async* {
+        yield Uint8List.sublistView(stored.bytes, start);
+      },
+    );
+  }
+
+  @override
+  Future<void> storePartialDownload({
+    required DownloadId id,
+    required PartialDownloadEntry entry,
+  }) async {}
+
+  @override
+  Future<void> invalidatePartialDownload(DownloadId id) async {
+    partial.remove(id);
+  }
 }
 
 final class _PartialStore implements PartialDownloadStore {

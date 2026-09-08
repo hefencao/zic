@@ -1214,6 +1214,7 @@ final class PersistentDownloadArtifactStore
         ArtifactCacheBackend,
         ArtifactCacheBindingBackend,
         PartialDownloadStore,
+        PartialDownloadMetadataStore,
         ArtifactCacheMaintenance {
   PersistentDownloadArtifactStore._({
     required DownloadRegistry registry,
@@ -6037,6 +6038,39 @@ final class PersistentDownloadArtifactStore
   }
 
   @override
+  Future<PartialDownloadMetadata?> inspectPartialDownloadMetadata(
+    DownloadId id,
+  ) async {
+    _requireOpen();
+    if (_artifactWrites.containsKey(id) || _borrowedPartialIds.contains(id)) {
+      return null;
+    }
+    final active = _registry.find(id);
+    if (active != null && (active.activeRun || active.hasWriter)) return null;
+    final record = await _index.get(id.key);
+    if (record == null || record.id != id || record.bytes <= 0) return null;
+    if (_isVerifiedReadyRecord(record)) {
+      return PartialDownloadMetadata(
+        length: record.bytes,
+        exactDurableFinal: true,
+      );
+    }
+    if (record.state != CacheState.partial ||
+        !_recordBelongsToCurrentRoot(id, record)) {
+      return null;
+    }
+    final parsed = parseSafRecordPath(record.path);
+    if (parsed != null &&
+        (safTreeUri == null || parsed.treeUri != safTreeUri)) {
+      return null;
+    }
+    return PartialDownloadMetadata(
+      length: record.bytes,
+      exactDurableFinal: false,
+    );
+  }
+
+  @override
   Future<PartialDownloadEntry?> openPartialDownload(DownloadId id) =>
       _serializeArtifactMutation(id, () => _openPartialDownload(id));
 
@@ -7173,6 +7207,7 @@ final class PersistentChapterDownloadService
         ArtifactCacheBackend,
         ArtifactCacheBindingBackend,
         PartialDownloadStore,
+        PartialDownloadMetadataStore,
         ConfigurableChapterResourceAccess,
         ChapterDownloadTransferRuntimeProvider {
   /// Stall window for one page's promotion. Re-armed by every non-terminal
@@ -8834,6 +8869,12 @@ final class PersistentChapterDownloadService
   @override
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) =>
       artifactStore.openArtifactStream(id);
+
+  @override
+  Future<PartialDownloadMetadata?> inspectPartialDownloadMetadata(
+    DownloadId id,
+  ) =>
+      artifactStore.inspectPartialDownloadMetadata(id);
 
   @override
   Future<PartialDownloadEntry?> openPartialDownload(DownloadId id) =>

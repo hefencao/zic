@@ -56,6 +56,23 @@ final class PartialDownloadEntry {
   })? adoptInto;
 }
 
+final class PartialDownloadMetadata {
+  const PartialDownloadMetadata({
+    required this.length,
+    required this.exactDurableFinal,
+  });
+
+  final int length;
+  final bool exactDurableFinal;
+}
+
+/// Optional cheap candidate-ranking capability. This metadata is never a body
+/// authority: callers MUST still open the selected candidate through
+/// [PartialDownloadStore.openPartialDownload] before restoring or binding it.
+abstract interface class PartialDownloadMetadataStore {
+  Future<PartialDownloadMetadata?> inspectPartialDownloadMetadata(DownloadId id);
+}
+
 abstract interface class PartialDownloadStore {
   Future<PartialDownloadEntry?> openPartialDownload(DownloadId id);
 
