@@ -453,6 +453,46 @@ final class ArtifactCacheManager {
     return true;
   }
 
+  /// Makes a caller-verified equivalent source artifact durable under the
+  /// target exact identity. Persistent backends may add a metadata-only
+  /// binding; backends without that capability retain the historical body-copy
+  /// fallback. The target never inherits source retention flags.
+  Future<bool> materializeVerifiedEquivalentTarget({
+    required DownloadId sourceId,
+    required DownloadId targetId,
+  }) async {
+    if (sourceId == targetId ||
+        requiresFreshSource(sourceId) ||
+        requiresFreshSource(targetId)) {
+      return false;
+    }
+    final target = await lookupAuthoritative(targetId);
+    if (target?.durable == true) return false;
+
+    final bindingBackend = backend;
+    if (bindingBackend is ArtifactCacheBindingBackend) {
+      await _awaitMutationBarrier(sourceId, null);
+      _advanceMutationGeneration(targetId);
+      _invalidateMemoryExact(targetId);
+      var bound = false;
+      await _serializeMutation(targetId, () async {
+        bound = await (bindingBackend as ArtifactCacheBindingBackend)
+            .bindExistingArtifact(
+          sourceId: sourceId,
+          targetId: targetId,
+        );
+      });
+      if (bound) return true;
+    }
+
+    final source = await lookupAuthoritative(sourceId);
+    if (source == null || !source.durable) return false;
+    final read = await readForegroundLookup(source);
+    if (read.bytes.isEmpty) return false;
+    await storePromotedArtifact(id: targetId, bytes: read.bytes);
+    return true;
+  }
+
   Future<void> storePromotedArtifact({
     required DownloadId id,
     required Uint8List bytes,

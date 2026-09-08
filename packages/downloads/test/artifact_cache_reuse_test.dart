@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:domain/domain.dart';
@@ -111,6 +112,96 @@ void main() {
     final reopened = ArtifactCacheManager(backend: backend);
     expect((await reopened.readForeground(newId))?.bytes, <int>[4, 5, 6]);
     expect(await reopened.lookupAuthoritative(oldId), isNotNull);
+  });
+
+  test('persistent migration binds verified artifact without body copy and survives reopen',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-zero-copy-version-migration-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final recordingBytes = _RecordingArtifactBytes();
+    final store = await PersistentDownloadArtifactStore.open(
+      root.path,
+      bytes: recordingBytes,
+    );
+    addTearDown(store.close);
+    final cache = ArtifactCacheManager(backend: store);
+    final oldChapter = _chapter(
+      comicId: 'persistent-old',
+      revision: 'old',
+      urls: const <String>[
+        'https://e-hentai.org/s/aaaaaaaaaaaaaaaa/1-1',
+      ],
+    );
+    final newChapter = _chapter(
+      comicId: 'persistent-new',
+      revision: 'new',
+      urls: const <String>[
+        'https://e-hentai.org/s/aaaaaaaaaaaaaaaa/2-1',
+      ],
+    );
+    final oldId = readerPageDownloadId(oldChapter, oldChapter.pages.single);
+    final newId = readerPageDownloadId(newChapter, newChapter.pages.single);
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x18, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
+    await cache.storePromotedArtifact(id: oldId, bytes: bytes);
+    var source = await store.index.get(oldId.key);
+    expect(source, isNotNull);
+    await store.index.put(source!.copyWith(pinned: true));
+    source = await store.index.get(oldId.key);
+    recordingBytes.resetReadCounters();
+
+    final plan = VerifiedArtifactReusePlan.match(
+      oldChapter: oldChapter,
+      newChapter: newChapter,
+    );
+    expect(await plan.materializeTargetArtifacts(cache), 1);
+
+    final target = await store.index.get(newId.key);
+    expect(target, isNotNull);
+    expect(source!.pinned, isTrue);
+    expect(target!.pinned, isFalse,
+        reason: 'target cache reuse must not inherit source offline retention');
+    expect(target.effectiveArtifactId, source.effectiveArtifactId);
+    expect(target.path, source.path);
+    expect(
+      await store.artifactReplicasFor(newId),
+      hasLength(1),
+      reason: 'target exact identity must not create a second body replica',
+    );
+    expect(recordingBytes.existsCalls, greaterThan(0));
+    expect(recordingBytes.lengthCalls, greaterThan(0));
+    expect(recordingBytes.readChunkCalls, 0,
+        reason: 'migration preflight may stat but must not read the body');
+    expect(recordingBytes.readBytes, 0);
+
+    await store.close();
+    final reopened = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(reopened.close);
+    final reopenedCache = ArtifactCacheManager(backend: reopened);
+    final lookup = await reopenedCache.lookupAuthoritative(newId);
+    expect(lookup, isNotNull);
+    expect(lookup!.storageId, newId,
+        reason: 'the target is now its own exact durable logical authority');
+    expect((await reopenedCache.readForeground(newId))?.bytes, bytes);
+
+    final replacement = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x18, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x4c,
+    ]);
+    await reopenedCache.storePromotedArtifact(id: newId, bytes: replacement);
+    final reboundSource = await reopened.index.get(oldId.key);
+    final reboundTarget = await reopened.index.get(newId.key);
+    expect(reboundSource, isNotNull);
+    expect(reboundTarget, isNotNull);
+    expect(reboundTarget!.effectiveArtifactId,
+        isNot(reboundSource!.effectiveArtifactId),
+        reason: 'a later exact target write must detach from shared authority');
+    expect((await reopenedCache.readForeground(oldId))?.bytes, bytes);
+    expect((await reopenedCache.readForeground(newId))?.bytes, replacement);
   });
 
   test('checksum reuse includes algorithm and normalizes digest case', () {
@@ -668,6 +759,53 @@ ChapterManifest _chapter({
     ],
     readingDirection: ReadingDirection.vertical,
   );
+}
+
+final class _RecordingArtifactBytes implements ArtifactBytes {
+  final ArtifactBytes _delegate = const LocalArtifactBytes();
+  int existsCalls = 0;
+  int lengthCalls = 0;
+  int readChunkCalls = 0;
+  int readBytes = 0;
+
+  void resetReadCounters() {
+    existsCalls = 0;
+    lengthCalls = 0;
+    readChunkCalls = 0;
+    readBytes = 0;
+  }
+
+  @override
+  Future<bool> exists(String path) {
+    existsCalls++;
+    return _delegate.exists(path);
+  }
+
+  @override
+  Future<int> length(String path) {
+    lengthCalls++;
+    return _delegate.length(path);
+  }
+
+  @override
+  Stream<Uint8List> readChunks(
+    String path, {
+    required int start,
+    int? endExclusive,
+  }) async* {
+    readChunkCalls++;
+    await for (final chunk in _delegate.readChunks(
+      path,
+      start: start,
+      endExclusive: endExclusive,
+    )) {
+      readBytes += chunk.lengthInBytes;
+      yield chunk;
+    }
+  }
+
+  @override
+  Future<void> delete(String path) => _delegate.delete(path);
 }
 
 final class _Backend implements ArtifactCacheBackend {

@@ -998,6 +998,45 @@ final class SqliteIndex implements CacheIndex, CacheBindingOperations {
   }
 
   @override
+  Future<void> putExistingArtifactBinding(CacheRec record) async {
+    final artifactId = record.artifactId.trim();
+    if (record.state != CacheState.ready || artifactId.isEmpty) {
+      throw ArgumentError('existing artifact bindings require ready artifactId');
+    }
+    final db = _requireDb();
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      final rows = db.select(
+        'SELECT bytes, checksum, checksum_algorithm FROM artifact_object '
+        'WHERE artifact_id = ? LIMIT 1',
+        <Object?>[artifactId],
+      );
+      if (rows.isEmpty) {
+        throw StateError('artifact identity $artifactId does not exist');
+      }
+      final object = rows.first;
+      final objectBytes = object['bytes']! as int;
+      final objectChecksum = (object['checksum']! as String).trim().toLowerCase();
+      final objectAlgorithm =
+          ((object['checksum_algorithm'] as String?) ?? 'crc32')
+              .trim()
+              .toLowerCase();
+      if (objectBytes != record.bytes ||
+          objectChecksum != record.checksum.trim().toLowerCase() ||
+          objectAlgorithm != record.checksumAlgorithm.trim().toLowerCase()) {
+        throw StateError('artifact identity $artifactId has different content');
+      }
+      _putBinding(db, record, artifactId);
+      db.execute('COMMIT');
+      final cached = _cachedEntries;
+      if (cached != null) cached[record.key] = record;
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  @override
   Future<void> replacePathBindings({
     required CacheRec record,
     required String path,

@@ -225,6 +225,94 @@ void main() {
     expect(object.checksum, '01020304');
   });
 
+  test('existing artifact binding preserves the physical object locator', () async {
+    final index = SqliteIndex.memory();
+    await index.open();
+    addTearDown(index.close);
+    final source = CacheRec(
+      id: id,
+      state: CacheState.ready,
+      path: '/tmp/source-authority.bin',
+      bytes: 3,
+      checksum: '01020304',
+      createdUs: 1,
+      touchedUs: 1,
+      artifactId: 'binding-only-artifact',
+      storageRootId: '/tmp',
+    );
+    final target = CacheRec(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'target-comic',
+          chapterId: 'chapter',
+          pageId: 'target-page',
+        ),
+        sourceRevision: 'r2',
+        canonicalUri: Uri.parse('https://example.test/target.webp'),
+      ),
+      state: CacheState.ready,
+      path: '/tmp/logical-target-compatibility.bin',
+      bytes: 3,
+      checksum: '01020304',
+      createdUs: 2,
+      touchedUs: 2,
+      artifactId: 'binding-only-artifact',
+      storageRootId: '/tmp',
+    );
+    await index.put(source);
+    await index.putExistingArtifactBinding(target);
+
+    final object = await index.getArtifactObject('binding-only-artifact');
+    expect(object, isNotNull);
+    expect(object!.accessLocator, '/tmp/source-authority.bin',
+        reason: 'binding-only commit must not redirect physical authority');
+    expect((await index.get(target.key))?.artifactId, 'binding-only-artifact');
+    expect(await index.totalBytes(), 3);
+  });
+
+  test('existing artifact binding rejects a different content proof', () async {
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final source = CacheRec(
+      id: id,
+      state: CacheState.ready,
+      path: '/tmp/source.bin',
+      bytes: 3,
+      checksum: '01020304',
+      createdUs: 1,
+      touchedUs: 1,
+      artifactId: 'shared-proof',
+    );
+    final target = CacheRec(
+      id: DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'other',
+          chapterId: 'chapter',
+          pageId: 'other',
+        ),
+        sourceRevision: 'r2',
+        canonicalUri: Uri.parse('https://example.test/other.webp'),
+      ),
+      state: CacheState.ready,
+      path: source.path,
+      bytes: 4,
+      checksum: source.checksum,
+      createdUs: 2,
+      touchedUs: 2,
+      artifactId: source.artifactId,
+      storageRootId: source.storageRootId,
+    );
+    await index.put(source);
+    await expectLater(
+      index.putExistingArtifactBinding(target),
+      throwsA(isA<StateError>()),
+    );
+    expect(await index.get(target.key), isNull);
+  });
+
   test('sqlite rejects conflicting ready bindings for one artifact identity', () async {
     final index = SqliteIndex.memory();
     await index.open();

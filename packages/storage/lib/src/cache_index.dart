@@ -228,6 +228,11 @@ final class ArtifactReplicaMigrationRecord {
 /// verified logical identities, but an explicit overwrite must replace the
 /// old logical bindings in the same SQLite transaction as the new one.
 abstract interface class CacheBindingOperations {
+  /// Adds one exact logical binding to an already-authoritative immutable
+  /// artifact. Implementations must not rewrite the artifact object's physical
+  /// locator or replicas while adding the binding.
+  Future<void> putExistingArtifactBinding(CacheRec record);
+
   Future<void> replacePathBindings({
     required CacheRec record,
     required String path,
@@ -321,6 +326,31 @@ final class MemIndex implements CacheIndex, CacheBindingOperations {
   Future<void> remove(String key) async {
     _requireOpen();
     _records.remove(key);
+  }
+
+  @override
+  Future<void> putExistingArtifactBinding(CacheRec record) async {
+    _requireOpen();
+    final artifactId = record.artifactId.trim();
+    if (record.state != CacheState.ready || artifactId.isEmpty) {
+      throw ArgumentError('existing artifact bindings require ready artifactId');
+    }
+    final source = _records.values.where(
+      (candidate) =>
+          candidate.state == CacheState.ready &&
+          candidate.effectiveArtifactId == artifactId,
+    ).firstOrNull;
+    if (source == null) {
+      throw StateError('artifact identity $artifactId does not exist');
+    }
+    if (source.bytes != record.bytes ||
+        source.checksum.trim().toLowerCase() !=
+            record.checksum.trim().toLowerCase() ||
+        source.checksumAlgorithm.trim().toLowerCase() !=
+            record.checksumAlgorithm.trim().toLowerCase()) {
+      throw StateError('artifact identity $artifactId has different content');
+    }
+    _records[record.key] = record;
   }
 
   @override

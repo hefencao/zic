@@ -2898,19 +2898,20 @@ final class DownloadSession {
         if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
           return;
         }
+        final writtenPath = state == CacheState.ready
+            ? artifact.finalPath
+            : artifact.partialPath;
         final written = CacheRec(
           id: id,
           state: state,
-          path: state == CacheState.ready
-              ? artifact.finalPath
-              : artifact.partialPath,
+          path: writtenPath,
           bytes: artifact.committedLength,
           checksum: artifact.checksum,
           createdUs: existing?.createdUs ?? now,
           touchedUs: now,
           pinned: existing?.pinned ?? false,
           checksumAlgorithm: existing?.checksumAlgorithm ?? 'crc32',
-          artifactId: existing?.artifactId ?? '',
+          artifactId: existing?.path == writtenPath ? existing!.artifactId : '',
           storageRootId: storageRootId,
         );
         await cache.put(written);

@@ -1212,6 +1212,7 @@ final class ArtifactReplicaMigrationResult {
 final class PersistentDownloadArtifactStore
     implements
         ArtifactCacheBackend,
+        ArtifactCacheBindingBackend,
         PartialDownloadStore,
         ArtifactCacheMaintenance {
   PersistentDownloadArtifactStore._({
@@ -5011,6 +5012,85 @@ final class PersistentDownloadArtifactStore
   }
 
   @override
+  Future<bool> bindExistingArtifact({
+    required DownloadId sourceId,
+    required DownloadId targetId,
+  }) =>
+      _serializeArtifactMutation(targetId, () async {
+        _requireOpen();
+        if (sourceId == targetId || _borrowedPartialIds.contains(targetId)) {
+          return false;
+        }
+        final targetSession = _registry.find(targetId);
+        if (targetSession != null &&
+            targetSession.state != DownloadState.disposed) {
+          return false;
+        }
+        final existingTarget = await _index.get(targetId.key);
+        if (existingTarget != null) {
+          return existingTarget.id == targetId &&
+              _isVerifiedReadyRecord(existingTarget);
+        }
+        final source = await _index.get(sourceId.key);
+        if (source == null ||
+            source.id != sourceId ||
+            !_isVerifiedReadyRecord(source)) {
+          return false;
+        }
+        final artifactId = source.effectiveArtifactId;
+        return _serializeArtifactReplicaMutation(artifactId, () async {
+          final targetAfterLock = await _index.get(targetId.key);
+          if (targetAfterLock != null) {
+            return targetAfterLock.id == targetId &&
+                _isVerifiedReadyRecord(targetAfterLock);
+          }
+          final sourceAfterLock = await _index.get(sourceId.key);
+          if (sourceAfterLock == null ||
+              sourceAfterLock.id != sourceId ||
+              !_isVerifiedReadyRecord(sourceAfterLock) ||
+              sourceAfterLock.effectiveArtifactId != artifactId) {
+            return false;
+          }
+          ArtifactCacheStreamEntry? preflight;
+          try {
+            preflight = await _openArtifactStreamExact(sourceId);
+          } on ArtifactReadFailure {
+            return false;
+          }
+          if (preflight == null || preflight.length != sourceAfterLock.bytes) {
+            return false;
+          }
+          final currentSource = await _index.get(sourceId.key);
+          if (currentSource == null ||
+              currentSource.id != sourceId ||
+              !_isVerifiedReadyRecord(currentSource) ||
+              currentSource.effectiveArtifactId != artifactId ||
+              currentSource.bytes != sourceAfterLock.bytes ||
+              currentSource.checksum.trim().toLowerCase() !=
+                  sourceAfterLock.checksum.trim().toLowerCase()) {
+            return false;
+          }
+          final nowUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+          await _index.putExistingArtifactBinding(
+            CacheRec(
+              id: targetId,
+              state: CacheState.ready,
+              path: currentSource.path,
+              bytes: currentSource.bytes,
+              checksum: currentSource.checksum,
+              createdUs: nowUs,
+              touchedUs: nowUs,
+              pinned: false,
+              checksumAlgorithm: currentSource.checksumAlgorithm,
+              artifactId: artifactId,
+              storageRootId: currentSource.storageRootId,
+            ),
+          );
+          return true;
+        });
+      });
+
+  @override
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) =>
       _serializeArtifactMutation(id, () => _openAuthoritativeArtifactStream(id));
 
@@ -7016,6 +7096,7 @@ final class PersistentChapterDownloadService
         ChapterDownloadManagementProjectionReader,
         ArtifactCacheMaintenance,
         ArtifactCacheBackend,
+        ArtifactCacheBindingBackend,
         PartialDownloadStore,
         ConfigurableChapterResourceAccess,
         ChapterDownloadTransferRuntimeProvider {
@@ -8668,6 +8749,16 @@ final class PersistentChapterDownloadService
   @override
   Future<void> invalidatePartialDownload(DownloadId id) =>
       artifactStore.invalidatePartialDownload(id);
+
+  @override
+  Future<bool> bindExistingArtifact({
+    required DownloadId sourceId,
+    required DownloadId targetId,
+  }) =>
+      artifactStore.bindExistingArtifact(
+        sourceId: sourceId,
+        targetId: targetId,
+      );
 
   @override
   Future<void> storePromotedArtifact({

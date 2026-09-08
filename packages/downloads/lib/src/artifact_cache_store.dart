@@ -72,6 +72,17 @@ final class ArtifactCacheStreamEntry {
 ///
 /// Backends do not own tier order, presence policy, in-flight joining, hot-byte
 /// retention or invalidation. Those rules belong to [ArtifactCacheManager].
+abstract interface class ArtifactCacheBindingBackend {
+  /// Adds [targetId] as another exact logical binding to [sourceId]'s existing
+  /// immutable durable artifact. The caller owns semantic equivalence proof;
+  /// the backend must revalidate source durability and must not copy body bytes.
+  /// Returns false when zero-copy binding is not currently safe/available.
+  Future<bool> bindExistingArtifact({
+    required DownloadId sourceId,
+    required DownloadId targetId,
+  });
+}
+
 abstract interface class ArtifactCacheBackend {
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id);
 

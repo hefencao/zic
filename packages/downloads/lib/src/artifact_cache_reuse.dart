@@ -304,16 +304,12 @@ final class VerifiedArtifactReusePlan {
   Future<int> materializeTargetArtifacts(ArtifactCacheManager cache) async {
     var materialized = 0;
     for (final mapping in mappings.entries) {
-      final targetId = mapping.key;
-      final sourceId = mapping.value;
-      final target = await cache.lookupAuthoritative(targetId);
-      if (target?.durable == true) continue;
-      final source = await cache.lookupAuthoritative(sourceId);
-      if (source == null || !source.durable) continue;
-      final read = await cache.readForegroundLookup(source);
-      if (read.bytes.isEmpty) continue;
-      await cache.storePromotedArtifact(id: targetId, bytes: read.bytes);
-      materialized++;
+      if (await cache.materializeVerifiedEquivalentTarget(
+        sourceId: mapping.value,
+        targetId: mapping.key,
+      )) {
+        materialized++;
+      }
     }
     return materialized;
   }
