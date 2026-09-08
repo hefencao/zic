@@ -43,12 +43,16 @@ final class ChapterDownloadSnapshot {
     required this.receivedBytes,
     required this.phase,
     this.pinnedPages = 0,
+    int? exactCompletedPages,
     this.totalBytes,
     this.pageProgressUnits,
     this.failure,
     this.started = false,
-  })  : assert(completedPages >= 0),
+  })  : exactCompletedPages = exactCompletedPages ?? completedPages,
+        assert(completedPages >= 0),
         assert(pinnedPages >= 0),
+        assert((exactCompletedPages ?? completedPages) >= 0),
+        assert((exactCompletedPages ?? completedPages) <= completedPages),
         assert(totalPages > 0),
         assert(completedPages <= totalPages),
         assert(receivedBytes >= 0),
@@ -81,6 +85,15 @@ final class ChapterDownloadSnapshot {
   final int totalPages;
   final int receivedBytes;
   final int pinnedPages;
+
+  /// Pages complete under the current exact DownloadId. Equivalent bodies
+  /// from another version never contribute to this count.
+  final int exactCompletedPages;
+
+  /// Pages currently readable only through a verified immutable-artifact
+  /// reuse proof rather than a current exact durable binding.
+  int get reusablePages => completedPages - exactCompletedPages;
+
   final int? totalBytes;
   final double? pageProgressUnits;
   final ChapterDownloadPhase phase;
@@ -7246,6 +7259,93 @@ final class PersistentChapterDownloadService
     });
   }
 
+  Future<Map<int, String>> _predecessorPageIdsByIndex({
+    required String sourceId,
+    required String comicId,
+    required String chapterId,
+    required Map<String, Future<Map<int, String>>> cache,
+  }) {
+    final key = '$sourceId\u0000$comicId\u0000$chapterId';
+    return cache.putIfAbsent(
+      key,
+      () async {
+        final bindings = await artifactStore._index.listExportPageBindings(
+          sourceId: sourceId,
+          comicId: comicId,
+          chapterId: chapterId,
+        );
+        final resolved = <int, String>{};
+        final ambiguous = <int>{};
+        for (final binding in bindings) {
+          final previous = resolved[binding.logicalIndex];
+          if (previous != null && previous != binding.pageId) {
+            ambiguous.add(binding.logicalIndex);
+            continue;
+          }
+          resolved[binding.logicalIndex] = binding.pageId;
+        }
+        for (final index in ambiguous) {
+          resolved.remove(index);
+        }
+        return Map<int, String>.unmodifiable(resolved);
+      },
+    );
+  }
+
+  Future<({CacheRec record, String proof})?> _resolveReusablePageRecord({
+    required ImportedLibraryEntry entry,
+    required PageAsset page,
+    required int pageIndex,
+    required DownloadId targetId,
+    required _DurableReadyRecordIndex readyIndex,
+    required Map<String, Future<Map<int, String>>> predecessorBindingLookups,
+  }) async {
+    for (final identity in verifiedPageIdentities(page)) {
+      final strong = readyIndex.byVerifiedIdentity(
+        sourceId: entry.chapter.sourceId,
+        identity: identity,
+        excludingKey: targetId.key,
+      );
+      if (strong != null) {
+        return (record: strong, proof: 'strong-media-identity');
+      }
+    }
+
+    for (final baseline in artifactStore._downloadBaselinePredecessorMappings(entry)) {
+      final mapping = baseline.mapping;
+      if (mapping.successorSourceRevision != entry.chapter.sourceRevision ||
+          mapping.predecessorSourceRevision == null ||
+          mapping.successorOffset < 0 ||
+          pageIndex < mapping.successorOffset) {
+        continue;
+      }
+      final predecessorIndex = pageIndex - mapping.successorOffset;
+      if (predecessorIndex >= mapping.predecessorPageCount ||
+          !mapping.verifiedPredecessorPageIndexes.contains(predecessorIndex)) {
+        continue;
+      }
+      final pageIds = await _predecessorPageIdsByIndex(
+        sourceId: entry.chapter.sourceId,
+        comicId: baseline.relation.predecessorComicId,
+        chapterId: mapping.predecessorChapterId,
+        cache: predecessorBindingLookups,
+      );
+      final predecessorPageId = pageIds[predecessorIndex];
+      if (predecessorPageId == null) continue;
+      final candidate = readyIndex.byLogicalPage(
+        sourceId: entry.chapter.sourceId,
+        comicId: baseline.relation.predecessorComicId,
+        chapterId: mapping.predecessorChapterId,
+        sourceRevision: mapping.predecessorSourceRevision!,
+        pageId: predecessorPageId,
+      );
+      if (candidate != null) {
+        return (record: candidate, proof: 'version-page-proof');
+      }
+    }
+    return null;
+  }
+
   /// Lifecycle-edge diagnostic trail only — never progress ticks.
   void _recordCommandTrace(
     String identityHash,
@@ -7358,42 +7458,11 @@ final class PersistentChapterDownloadService
               comicDirectoryName: structuredComicDirectory,
             );
 
-      final baselinePredecessors =
-          artifactStore._downloadBaselinePredecessorMappings(entry);
+      final readyIndex = _DurableReadyRecordIndex(
+        indexedRecords.values,
+        isReady: artifactStore._isVerifiedReadyRecord,
+      );
       final predecessorBindingLookups = <String, Future<Map<int, String>>>{};
-      Future<String?> predecessorPageIdAt({
-        required String sourceId,
-        required String comicId,
-        required String chapterId,
-        required int logicalIndex,
-      }) async {
-        final key = '$sourceId\u0000$comicId\u0000$chapterId';
-        final byIndex = await predecessorBindingLookups.putIfAbsent(
-          key,
-          () async {
-            final bindings = await artifactStore._index.listExportPageBindings(
-              sourceId: sourceId,
-              comicId: comicId,
-              chapterId: chapterId,
-            );
-            final resolved = <int, String>{};
-            final ambiguous = <int>{};
-            for (final binding in bindings) {
-              final previous = resolved[binding.logicalIndex];
-              if (previous != null && previous != binding.pageId) {
-                ambiguous.add(binding.logicalIndex);
-                continue;
-              }
-              resolved[binding.logicalIndex] = binding.pageId;
-            }
-            for (final index in ambiguous) {
-              resolved.remove(index);
-            }
-            return Map<int, String>.unmodifiable(resolved);
-          },
-        );
-        return byIndex[logicalIndex];
-      }
 
       var placement = await artifactStore.resolveDownloadPlacement(entry);
       placement = await artifactStore.freezeExportPageOrder(
@@ -7471,19 +7540,27 @@ final class PersistentChapterDownloadService
           final isAlreadyStructured = record.pinned &&
               (!record.path.contains('/final/') ||
                   parseSafRecordPath(record.path) != null);
-          if (!isBusy && isAlreadyStructured) {
-            // A successful structured commit already proved the destination
-            // bytes before pinning the record. Do not reopen and rehash every
-            // downloaded page merely to retry the chapter command; normal
-            // page reads still perform authoritative content verification.
-            continue;
-          }
           if (!isBusy) {
-            final durable = await artifactStore.openArtifactStream(id);
+            // Explicit retry revalidates the exact physical locator even for
+            // an already-structured page. openArtifactStream performs the
+            // cheap accessibility + exact-length preflight against the sealed
+            // record; it does not recompute the whole-file CRC. An externally
+            // deleted/truncated file therefore cannot survive retry as exact.
+            ArtifactCacheStreamEntry? durable;
+            try {
+              durable = await artifactStore.openArtifactStream(id);
+            } on ArtifactReadFailure catch (error) {
+              if (!artifactStore._isStructuralReplicaFailure(error.kind)) {
+                rethrow;
+              }
+              durable = null;
+            }
             if (durable == null) {
               indexedRecords.remove(id.key);
               record = null;
               recordReady = false;
+            } else if (isAlreadyStructured) {
+              continue;
             } else {
               await artifactStore.mirrorPromotedToSafIfConfigured(
                 id,
@@ -7503,69 +7580,19 @@ final class PersistentChapterDownloadService
           }
         }
 
-        // Classify from the one run-start index snapshot. Reuse requires an
-        // exact-page proof; pageId, file name, ordinal, or revision proximity
-        // are locator hints only and never establish content equivalence.
-        CacheRec? siblingRecord;
-        String? siblingProof;
-        final pageVerifiedIds = verifiedPageIdentities(page).toSet();
-        if (pageVerifiedIds.isNotEmpty) {
-          for (final candidate in indexedRecords.values) {
-            if (!artifactStore._isVerifiedReadyRecord(candidate) ||
-                candidate.id.key == id.key ||
-                candidate.id.content.sourceId != entry.chapter.sourceId) {
-              continue;
-            }
-            if (verifiedRecordIdentities(candidate).any(pageVerifiedIds.contains)) {
-              siblingRecord = candidate;
-              siblingProof = 'strong-media-identity';
-              break;
-            }
-          }
-        }
-        if (siblingRecord == null) {
-          for (final baseline in baselinePredecessors) {
-            final mapping = baseline.mapping;
-            if (mapping.successorSourceRevision !=
-                    entry.chapter.sourceRevision ||
-                mapping.predecessorSourceRevision == null ||
-                mapping.successorOffset < 0 ||
-                pageIndex < mapping.successorOffset) {
-              continue;
-            }
-            final predecessorIndex = pageIndex - mapping.successorOffset;
-            if (predecessorIndex >= mapping.predecessorPageCount ||
-                !mapping.verifiedPredecessorPageIndexes.contains(
-                  predecessorIndex,
-                )) {
-              continue;
-            }
-            final predecessorPageId = await predecessorPageIdAt(
-              sourceId: entry.chapter.sourceId,
-              comicId: baseline.relation.predecessorComicId,
-              chapterId: mapping.predecessorChapterId,
-              logicalIndex: predecessorIndex,
-            );
-            if (predecessorPageId == null) continue;
-            final candidates = <CacheRec>[
-              for (final candidate in indexedRecords.values)
-                if (artifactStore._isVerifiedReadyRecord(candidate) &&
-                    candidate.id.content.sourceId == entry.chapter.sourceId &&
-                    candidate.id.content.comicId ==
-                        baseline.relation.predecessorComicId &&
-                    candidate.id.content.chapterId ==
-                        mapping.predecessorChapterId &&
-                    candidate.id.content.pageId == predecessorPageId &&
-                    candidate.id.sourceRevision ==
-                        mapping.predecessorSourceRevision)
-                  candidate,
-            ];
-            if (candidates.length != 1) continue;
-            siblingRecord = candidates.single;
-            siblingProof = 'version-page-proof';
-            break;
-          }
-        }
+        // Classify from the one run-start index snapshot. The same resolver
+        // is shared with management projection; pageId, file name, ordinal,
+        // and revision proximity are locator hints only, never reuse proof.
+        final reusable = await _resolveReusablePageRecord(
+          entry: entry,
+          page: page,
+          pageIndex: pageIndex,
+          targetId: id,
+          readyIndex: readyIndex,
+          predecessorBindingLookups: predecessorBindingLookups,
+        );
+        final siblingRecord = reusable?.record;
+        final siblingProof = reusable?.proof;
         if (siblingRecord != null) {
           final destPath =
               await artifactStore.materializeSiblingToDestinationIfSeparate(
@@ -8333,7 +8360,10 @@ final class PersistentChapterDownloadService
     Map<String, CacheRec> indexed,
   ) async {
     final recordsByChapter = <String, List<CacheRec>>{};
-    final recordsByVerifiedIdentity = <String, CacheRec>{};
+    final readyIndex = _DurableReadyRecordIndex(
+      indexed.values,
+      isReady: artifactStore._isVerifiedReadyRecord,
+    );
     for (final record in indexed.values) {
       if (!artifactStore._isVerifiedReadyRecord(record)) {
         continue;
@@ -8344,9 +8374,6 @@ final class PersistentChapterDownloadService
       recordsByChapter
           .putIfAbsent(chapterKey, () => <CacheRec>[])
           .add(record);
-      for (final verifiedId in verifiedRecordIdentities(record)) {
-        recordsByVerifiedIdentity.putIfAbsent(verifiedId, () => record);
-      }
     }
     final snapshots = <ChapterDownloadSnapshot>[];
     for (final entry in entries) {
@@ -8357,7 +8384,7 @@ final class PersistentChapterDownloadService
           entry,
           indexedRecords: indexed,
           chapterRecords: recordsByChapter[chapterKey],
-          recordsByVerifiedIdentity: recordsByVerifiedIdentity,
+          readyIndex: readyIndex,
         ),
       );
     }
@@ -8370,49 +8397,34 @@ final class PersistentChapterDownloadService
     String? failure,
     Map<String, CacheRec>? indexedRecords,
     Iterable<CacheRec>? chapterRecords,
-    Map<String, CacheRec>? recordsByVerifiedIdentity,
+    _DurableReadyRecordIndex? readyIndex,
   }) async {
     final manifest = entry.chapter.toManifest();
     final records = indexedRecords ??
         (chapterRecords == null
             ? await artifactStore.indexedRecords()
             : const <String, CacheRec>{});
-    // The per-page alias must be deterministic (last-wins used to flip
-    // progress between superseded revisions): entry-revision records win,
-    // then the newest createdUs.
-    CacheRec preferRecord(CacheRec current, CacheRec candidate) {
-      final candidateMatchesRevision =
-          candidate.id.sourceRevision == entry.chapter.sourceRevision;
-      final currentMatchesRevision =
-          current.id.sourceRevision == entry.chapter.sourceRevision;
-      if (candidateMatchesRevision != currentMatchesRevision) {
-        return candidateMatchesRevision ? candidate : current;
-      }
-      return candidate.createdUs > current.createdUs ? candidate : current;
-    }
-
     final recordsByPage = <String, CacheRec>{};
-    final resolvedVerifiedIdentities =
-        recordsByVerifiedIdentity ?? <String, CacheRec>{};
     final targetRecords = chapterRecords ?? records.values;
     for (final rec in targetRecords) {
-      if (!artifactStore._isVerifiedReadyRecord(rec)) {
+      if (!artifactStore._isVerifiedReadyRecord(rec) ||
+          rec.id.sourceRevision != entry.chapter.sourceRevision) {
         continue;
       }
       if (rec.id.content.sourceId == entry.chapter.sourceId &&
           rec.id.content.comicId == entry.chapter.comicId &&
           rec.id.content.chapterId == entry.chapter.chapterId) {
-        final pageId = rec.id.content.pageId;
-        final existing = recordsByPage[pageId];
-        recordsByPage[pageId] =
-            existing == null ? rec : preferRecord(existing, rec);
-      }
-      if (recordsByVerifiedIdentity == null) {
-        for (final verifiedId in verifiedRecordIdentities(rec)) {
-          resolvedVerifiedIdentities.putIfAbsent(verifiedId, () => rec);
-        }
+        // Compact Home placeholders need a deterministic page list, but only
+        // records from the current exact source revision may shape it.
+        recordsByPage.putIfAbsent(rec.id.content.pageId, () => rec);
       }
     }
+    final resolvedReadyIndex = readyIndex ??
+        _DurableReadyRecordIndex(
+          records.values,
+          isReady: artifactStore._isVerifiedReadyRecord,
+        );
+    final predecessorBindingLookups = <String, Future<Map<int, String>>>{};
     var exactCompletedPages = 0;
     var completedPages = 0;
     var pinnedPages = 0;
@@ -8432,26 +8444,33 @@ final class PersistentChapterDownloadService
     for (var index = 0; index < effectivePages.length; index++) {
       final page = effectivePages[index];
       final id = _downloadId(manifest, page);
-      final sessionSnapshot = transferRuntime.registry.find(id)?.snapshot;
-      final snapshot = sessionSnapshot != null &&
-              (sessionSnapshot.state != DownloadState.idle ||
-                  sessionSnapshot.activeRun ||
-                  sessionSnapshot.hasWriter)
-          ? sessionSnapshot
+      final resolvedSessionSnapshot = transferRuntime.registry.find(id)?.snapshot;
+      final snapshot = resolvedSessionSnapshot != null &&
+              (resolvedSessionSnapshot.state != DownloadState.idle ||
+                  resolvedSessionSnapshot.activeRun ||
+                  resolvedSessionSnapshot.hasWriter)
+          ? resolvedSessionSnapshot
           : null;
-      CacheRec? verifiedEquivalent;
-      for (final pageVerifiedId in verifiedPageIdentities(page)) {
-        verifiedEquivalent = resolvedVerifiedIdentities[pageVerifiedId];
-        if (verifiedEquivalent != null) break;
-      }
-      final exactIndexed = records[id.key] ?? recordsByPage[page.pageId];
-      final indexed = exactIndexed ?? verifiedEquivalent;
+      final exactSessionSnapshot = transferRuntime.registry.findExact(id)?.snapshot;
+      final exactIndexed = records[id.key];
+      final reusable = exactIndexed == null
+          ? await _resolveReusablePageRecord(
+              entry: entry,
+              page: page,
+              pageIndex: index,
+              targetId: id,
+              readyIndex: resolvedReadyIndex,
+              predecessorBindingLookups: predecessorBindingLookups,
+            )
+          : null;
+      final indexed = exactIndexed ?? reusable?.record;
       final committedLength = snapshot?.committedLength ?? indexed?.bytes ?? 0;
       receivedBytes += committedLength;
-      final exactPromoted = snapshot?.state == DownloadState.promoted ||
+      final exactPromoted = exactSessionSnapshot?.state == DownloadState.promoted ||
           (exactIndexed != null &&
               artifactStore._isVerifiedReadyRecord(exactIndexed));
-      final promoted = exactPromoted ||
+      final promoted = snapshot?.state == DownloadState.promoted ||
+          exactPromoted ||
           (indexed != null && artifactStore._isVerifiedReadyRecord(indexed));
       final isExactPinned = exactIndexed != null &&
           artifactStore._isVerifiedReadyRecord(exactIndexed) &&
@@ -8519,6 +8538,7 @@ final class PersistentChapterDownloadService
       totalPages: effectivePages.length,
       receivedBytes: receivedBytes,
       pinnedPages: pinnedPages,
+      exactCompletedPages: exactCompletedPages,
       totalBytes: knowsTotalBytes ? totalBytes : null,
       pageProgressUnits: pageProgressUnits,
       phase: resolvedPhase,
@@ -8594,34 +8614,23 @@ final class PersistentChapterDownloadService
     if (missing.isEmpty) {
       return ready;
     }
-    final recordsByPage = <String, CacheRec>{};
-    final recordsByVerifiedIdentity = <String, CacheRec>{};
-    for (final rec in indexedRecords.values) {
-      if (!artifactStore._isVerifiedReadyRecord(rec)) continue;
-      if (rec.id.content.sourceId == entry.chapter.sourceId &&
-          rec.id.content.comicId == entry.chapter.comicId &&
-          rec.id.content.chapterId == entry.chapter.chapterId) {
-        recordsByPage[rec.id.content.pageId] = rec;
-      }
-      for (final verifiedId in verifiedRecordIdentities(rec)) {
-        recordsByVerifiedIdentity.putIfAbsent(verifiedId, () => rec);
-      }
-    }
+    final readyIndex = _DurableReadyRecordIndex(
+      indexedRecords.values,
+      isReady: artifactStore._isVerifiedReadyRecord,
+    );
+    final predecessorBindingLookups = <String, Future<Map<int, String>>>{};
     for (final i in missing) {
       final page = manifest.pages[i];
       final id = _downloadId(manifest, page);
-      final exactIndexed = indexedRecords[id.key] ?? recordsByPage[page.pageId];
-      if (exactIndexed != null && artifactStore._isVerifiedReadyRecord(exactIndexed)) {
-        ready.add(i);
-        continue;
-      }
-      for (final pageVerifiedId in verifiedPageIdentities(page)) {
-        final verifiedEquivalent = recordsByVerifiedIdentity[pageVerifiedId];
-        if (verifiedEquivalent != null && artifactStore._isVerifiedReadyRecord(verifiedEquivalent)) {
-          ready.add(i);
-          break;
-        }
-      }
+      final reusable = await _resolveReusablePageRecord(
+        entry: entry,
+        page: page,
+        pageIndex: i,
+        targetId: id,
+        readyIndex: readyIndex,
+        predecessorBindingLookups: predecessorBindingLookups,
+      );
+      if (reusable != null) ready.add(i);
     }
     return ready;
   }
@@ -8898,6 +8907,90 @@ String chapterDownloadIdentity(
   String sourceRevision,
 ) =>
     '$sourceId\u0000$comicId\u0000$chapterId\u0000$sourceRevision';
+
+final class _DurableReadyRecordIndex {
+  _DurableReadyRecordIndex(
+    Iterable<CacheRec> records, {
+    required bool Function(CacheRec record) isReady,
+  }) {
+    for (final record in records) {
+      if (!isReady(record)) continue;
+      final content = record.id.content;
+      for (final identity in verifiedRecordIdentities(record)) {
+        _byVerifiedIdentity
+            .putIfAbsent(
+              '${content.sourceId}\u0000$identity',
+              () => <CacheRec>[],
+            )
+            .add(record);
+      }
+      final logicalKey = _logicalPageKey(
+        sourceId: content.sourceId,
+        comicId: content.comicId,
+        chapterId: content.chapterId,
+        sourceRevision: record.id.sourceRevision,
+        pageId: content.pageId,
+      );
+      final existing = _byLogicalPage[logicalKey];
+      if (existing == null) {
+        if (!_ambiguousLogicalPages.contains(logicalKey)) {
+          _byLogicalPage[logicalKey] = record;
+        }
+      } else if (existing.id != record.id) {
+        _byLogicalPage.remove(logicalKey);
+        _ambiguousLogicalPages.add(logicalKey);
+      }
+    }
+    for (final candidates in _byVerifiedIdentity.values) {
+      candidates.sort((left, right) => right.createdUs.compareTo(left.createdUs));
+    }
+  }
+
+  final Map<String, List<CacheRec>> _byVerifiedIdentity =
+      <String, List<CacheRec>>{};
+  final Map<String, CacheRec> _byLogicalPage = <String, CacheRec>{};
+  final Set<String> _ambiguousLogicalPages = <String>{};
+
+  CacheRec? byVerifiedIdentity({
+    required String sourceId,
+    required String identity,
+    required String excludingKey,
+  }) {
+    final candidates = _byVerifiedIdentity['$sourceId\u0000$identity'];
+    if (candidates == null) return null;
+    for (final candidate in candidates) {
+      if (candidate.id.key != excludingKey) return candidate;
+    }
+    return null;
+  }
+
+  CacheRec? byLogicalPage({
+    required String sourceId,
+    required String comicId,
+    required String chapterId,
+    required String sourceRevision,
+    required String pageId,
+  }) {
+    final key = _logicalPageKey(
+      sourceId: sourceId,
+      comicId: comicId,
+      chapterId: chapterId,
+      sourceRevision: sourceRevision,
+      pageId: pageId,
+    );
+    if (_ambiguousLogicalPages.contains(key)) return null;
+    return _byLogicalPage[key];
+  }
+
+  static String _logicalPageKey({
+    required String sourceId,
+    required String comicId,
+    required String chapterId,
+    required String sourceRevision,
+    required String pageId,
+  }) =>
+      '$sourceId\u0000$comicId\u0000$chapterId\u0000$sourceRevision\u0000$pageId';
+}
 
 String _identity(ImportedLibraryEntry entry) => chapterDownloadIdentity(
       entry.chapter.sourceId,

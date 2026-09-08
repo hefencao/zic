@@ -8,7 +8,8 @@ import 'package:domain/domain.dart';
 const _homeProjectionSnapshotFormat = 'zic-home-projection';
 const _legacyHomeProjectionSnapshotVersion = 1;
 const _compactHomeProjectionSnapshotVersion = 2;
-const _homeProjectionSnapshotVersion = 3;
+const _legacyDownloadProjectionHomeSnapshotVersion = 3;
+const _homeProjectionSnapshotVersion = 4;
 const _compactPageSourcePrefix = 'zic-home-snapshot-page:';
 const _snapshotCompressionThreshold = 512 * 1024;
 
@@ -55,6 +56,7 @@ final class HomeChapterDownloadSummary {
     required this.totalPages,
     required this.receivedBytes,
     required this.pinnedPages,
+    required this.exactCompletedPages,
     required this.phase,
     required this.started,
     this.totalBytes,
@@ -72,6 +74,8 @@ final class HomeChapterDownloadSummary {
   final int totalPages;
   final int receivedBytes;
   final int pinnedPages;
+  final int exactCompletedPages;
+  int get reusablePages => completedPages - exactCompletedPages;
   final int? totalBytes;
   final double? pageProgressUnits;
   final String phase;
@@ -89,6 +93,7 @@ final class HomeChapterDownloadSummary {
         'totalPages': totalPages,
         'receivedBytes': receivedBytes,
         'pinnedPages': pinnedPages,
+        'exactCompletedPages': exactCompletedPages,
         if (totalBytes != null) 'totalBytes': totalBytes,
         if (pageProgressUnits != null)
           'pageProgressUnits': pageProgressUnits,
@@ -102,7 +107,11 @@ final class HomeChapterDownloadSummary {
     final completedPages = _requiredNonNegativeInt(json, 'completedPages');
     final totalPages = _requiredPositiveInt(json, 'totalPages');
     final pinnedPages = _requiredNonNegativeInt(json, 'pinnedPages');
-    if (completedPages > totalPages || pinnedPages > totalPages) {
+    final exactCompletedPages =
+        _requiredNonNegativeInt(json, 'exactCompletedPages');
+    if (completedPages > totalPages ||
+        pinnedPages > totalPages ||
+        exactCompletedPages > completedPages) {
       throw const FormatException(
         'chapter download page counts exceed totalPages',
       );
@@ -118,6 +127,7 @@ final class HomeChapterDownloadSummary {
       totalPages: totalPages,
       receivedBytes: _requiredNonNegativeInt(json, 'receivedBytes'),
       pinnedPages: pinnedPages,
+      exactCompletedPages: exactCompletedPages,
       totalBytes: _optionalNonNegativeInt(json, 'totalBytes'),
       pageProgressUnits:
           _optionalNonNegativeDouble(json, 'pageProgressUnits'),
@@ -199,10 +209,14 @@ final class HomeProjectionSnapshot {
     final version = json['version'];
     final entries = _requiredList(json, 'entries');
     final isCompact = version == _compactHomeProjectionSnapshotVersion ||
+        version == _legacyDownloadProjectionHomeSnapshotVersion ||
         version == _homeProjectionSnapshotVersion;
     if (version != _legacyHomeProjectionSnapshotVersion && !isCompact) {
       throw const FormatException('unsupported Home projection snapshot');
     }
+    // v3 persisted download progress before exact-vs-reusable page identity
+    // was represented. It is a startup accelerator only, so discard that
+    // ambiguous projection and let the durable download service rebuild it.
     final includesDownloadProjection =
         version == _homeProjectionSnapshotVersion;
     return HomeProjectionSnapshot(

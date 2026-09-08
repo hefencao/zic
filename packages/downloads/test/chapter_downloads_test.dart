@@ -1905,6 +1905,84 @@ void main() {
     expect(await service.isDownloaded(entry), isTrue);
   });
 
+  test('retry revalidates a structured exact file deleted outside the app',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-retry-external-delete-');
+    addTearDown(() => root.delete(recursive: true));
+
+    final memoryStorage = <String, Uint8List>{};
+    final memorySaf = _MemorySafIo(memoryStorage);
+    final webp = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    var networkCalls = 0;
+    var service = await PersistentChapterDownloadService.open(
+      root.path,
+      safTreeIo: memorySaf,
+      safTreeUri: 'content://tree/downloads',
+    );
+    addTearDown(() async {
+      try {
+        await service.close();
+      } on StateError {
+        // The test may have already closed the previous service instance.
+      }
+    });
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(loadBytes: (_, __) async {
+        networkCalls++;
+        return webp;
+      }),
+    );
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'mihon:retry-external-delete',
+        displayName: '单话',
+        sourceId: 'mihon:test',
+        comicId: 'retry-external-delete',
+        comicTitle: '外部删除重试',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'mihon:test:retry-page',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: 16,
+          ),
+        ],
+      ),
+    );
+
+    await service.download(entry);
+    expect(networkCalls, 1);
+    final exportedPath = memoryStorage.keys.singleWhere(
+      (path) => path.endsWith('/001.webp'),
+    );
+    await service.close();
+    memoryStorage.remove(exportedPath);
+    service = await PersistentChapterDownloadService.open(
+      root.path,
+      safTreeIo: memorySaf,
+      safTreeUri: 'content://tree/downloads',
+    );
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(loadBytes: (_, __) async {
+        networkCalls++;
+        return webp;
+      }),
+    );
+
+    await service.retry(entry);
+
+    expect(networkCalls, 2,
+        reason: 'retry must not trust a structured index after external deletion');
+    expect(memoryStorage[exportedPath], webp);
+    expect(await service.isDownloaded(entry), isTrue);
+  });
+
   test('chapter stall window resets on sub-quantum network progress', () async {
     final root = await Directory.systemTemp.createTemp('zic-stall-progress-');
     addTearDown(() => root.delete(recursive: true));
@@ -2124,7 +2202,7 @@ void main() {
     expect(stages, isNot(contains('page-promotion-stall-gave-up')));
   });
 
-  test('cross-version page alias prefers the entry revision over a newer foreign record',
+  test('same revision pageId never substitutes for a different exact URI',
       () async {
     final root = await Directory.systemTemp.createTemp('zic-alias-preference-');
     addTearDown(() => root.delete(recursive: true));
@@ -2139,9 +2217,8 @@ void main() {
       chapterId: 'alias-ch',
       pageId: 'p1',
     );
-    // The entry's revision re-resolved the page to a different URI, so the
-    // exact index key misses; a NEWER record under the superseded revision
-    // must still lose the alias against the entry-revision record.
+    // The current revision re-resolved the page to a different URI. Neither
+    // the same pageId nor being in the current revision proves exact identity.
     final superseded = DownloadId(
       content: content,
       sourceRevision: 'r1',
@@ -2178,8 +2255,12 @@ void main() {
     );
 
     final snapshot = await service.inspect(entry);
-    expect(snapshot.completedPages, 1);
-    expect(snapshot.receivedBytes, bytesEntryRevision.length);
+    expect(await service.readyPageIndices(entry), isEmpty);
+    expect(snapshot.completedPages, 0);
+    expect(snapshot.exactCompletedPages, 0);
+    expect(snapshot.reusablePages, 0);
+    expect(snapshot.receivedBytes, 0);
+    expect(snapshot.isComplete, isFalse);
   });
 
   test('invalid comic manifests block destructive directory reuse', () async {
@@ -2967,8 +3048,12 @@ void main() {
 
     // Snapshot should recognize Version B's page as already available via verified equivalence
     final snapshotB = await service.inspect(entryB);
+    expect(await service.readyPageIndices(entryB), <int>{0});
     expect(snapshotB.completedPages, 1);
+    expect(snapshotB.exactCompletedPages, 0);
+    expect(snapshotB.reusablePages, 1);
     expect(snapshotB.receivedBytes, webpBytes.length);
+    expect(snapshotB.isComplete, isFalse);
 
     // Downloading Version B should adopt the equivalent artifact with ZERO new network calls
     await service.download(entryB);
@@ -4050,6 +4135,13 @@ void main() {
     await service.download(entryOld);
     expect(await service.isDownloaded(entryOld), isTrue);
     expect(networkCalls, 3);
+
+    final reusableBeforeDownload = await service.inspect(entryNew);
+    expect(await service.readyPageIndices(entryNew), <int>{2, 3, 4});
+    expect(reusableBeforeDownload.completedPages, 3);
+    expect(reusableBeforeDownload.exactCompletedPages, 0);
+    expect(reusableBeforeDownload.reusablePages, 3);
+    expect(reusableBeforeDownload.isComplete, isFalse);
 
     // Download new version: only 2 new pages should hit network, 3 adopted!
     await service.download(entryNew);

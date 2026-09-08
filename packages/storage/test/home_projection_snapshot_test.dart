@@ -114,6 +114,7 @@ void main() {
           totalPages: 2,
           receivedBytes: 128,
           pinnedPages: 1,
+          exactCompletedPages: 1,
           totalBytes: 256,
           pageProgressUnits: 1.5,
           phase: 'downloading',
@@ -146,6 +147,8 @@ void main() {
     expect(restored.orphanedDownloadEntries, hasLength(1));
     expect(restored.chapterDownloads, hasLength(1));
     expect(restored.chapterDownloads.single.phase, 'downloading');
+    expect(restored.chapterDownloads.single.exactCompletedPages, 1);
+    expect(restored.chapterDownloads.single.reusablePages, 0);
     expect(restored.chapterDownloads.single.pageProgressUnits, 1.5);
     expect(restored.chapterDownloads.single.started, isTrue);
     expect(restored.includesDownloadProjection, isTrue);
@@ -153,13 +156,73 @@ void main() {
 
     final encoded = jsonDecode(await File(storePath(directory)).readAsString())
         as Map<Object?, Object?>;
-    expect(encoded['version'], 3);
+    expect(encoded['version'], 4);
     final firstEntry = (encoded['entries']! as List<Object?>).single
         as Map<Object?, Object?>;
     expect(
       (firstEntry['chapter']! as Map<Object?, Object?>).containsKey('pages'),
       isFalse,
     );
+  });
+
+  test('v3 download projection is discarded because exact identity is unknown',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-home-snapshot-v3-download-identity-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) await directory.delete(recursive: true);
+    });
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/comic',
+      displayName: 'Legacy download chapter',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.jpg',
+          sourceId: 'file:///legacy/001.jpg',
+          contentKindHint: ContentKindHint.jpeg,
+        ),
+      ],
+    );
+    final current = HomeProjectionSnapshot(
+      entries: <ImportedLibraryEntry>[ImportedLibraryEntry(chapter: chapter)],
+      savedComics: const <SavedComicRecord>[],
+      categories: const <LibraryCategory>[],
+      preferences: const <ComicPreference>[],
+      readStates: const <ChapterReadState>[],
+      sourcePreferences: const <ComicSourcePreference>[],
+      versionRelations: const <ComicVersionRelation>[],
+      chapterDownloads: <HomeChapterDownloadSummary>[
+        HomeChapterDownloadSummary(
+          sourceId: chapter.sourceId,
+          comicId: chapter.comicId,
+          comicTitle: chapter.comicTitle,
+          chapterId: chapter.chapterId,
+          sourceRevision: chapter.sourceRevision,
+          title: chapter.displayName,
+          completedPages: 1,
+          totalPages: 1,
+          receivedBytes: 4,
+          pinnedPages: 1,
+          exactCompletedPages: 1,
+          phase: 'complete',
+          started: true,
+        ),
+      ],
+    ).toJson();
+    current['version'] = 3;
+    final summaries = current['chapterDownloads']! as List<Object?>;
+    (summaries.single as Map<String, Object?>).remove('exactCompletedPages');
+    final path = '${directory.path}/snapshot.json';
+    await File(path).writeAsString(jsonEncode(current));
+
+    final restored = await HomeProjectionSnapshotStore.atPath(path).read();
+
+    expect(restored, isNotNull);
+    expect(restored!.entriesAreCompact, isTrue);
+    expect(restored.includesDownloadProjection, isFalse);
+    expect(restored.chapterDownloads, isEmpty);
+    expect(restored.requiresRewrite, isTrue);
   });
 
   test('legacy v1 Home snapshots are readable and compact on rewrite', () async {
@@ -208,7 +271,7 @@ void main() {
     await store.write(restored);
     final compact = jsonDecode(await File(path).readAsString())
         as Map<Object?, Object?>;
-    expect(compact['version'], 3);
+    expect(compact['version'], 4);
     expect(
       ((compact['entries']! as List<Object?>).single
               as Map<Object?, Object?>)['chapter'],
@@ -223,7 +286,7 @@ void main() {
     );
   });
 
-  test('v2 compact snapshots remain readable and request a v3 rewrite',
+  test('v2 compact snapshots remain readable and request a v4 rewrite',
       () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-home-snapshot-v2-',
