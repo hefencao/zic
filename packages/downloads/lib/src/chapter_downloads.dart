@@ -4450,6 +4450,7 @@ final class PersistentDownloadArtifactStore
     ImportedLibraryEntry entry, {
     String? comicDirectoryName,
     String? chapterDirectoryName,
+    Iterable<String>? knownChapterIds,
   }) async {
     final comicDir = _requireSafeComicDirectoryName(
       comicDirectoryName ?? await resolveStructuredComicDirectory(entry),
@@ -4465,12 +4466,6 @@ final class PersistentDownloadArtifactStore
         entry,
         comicDirectoryName: comicDir,
       );
-      final chapters = (await downloadedChapterIds(
-        sourceId: entry.chapter.sourceId,
-        comicId: entry.chapter.comicId,
-      )).toSet()
-        ..add(entry.chapter.chapterId);
-      final orderedChapters = chapters.toList(growable: true)..sort();
       final rootLayout = entry.chapter.pages.isEmpty
           ? layout
           : _layoutForEntryPage(entry, 0);
@@ -4481,6 +4476,17 @@ final class PersistentDownloadArtifactStore
       final isSameComic = previous != null &&
           previous.sourceId == entry.chapter.sourceId &&
           previous.comicId == entry.chapter.comicId;
+      final indexedChapterIds = knownChapterIds ??
+          await downloadedChapterIds(
+            sourceId: entry.chapter.sourceId,
+            comicId: entry.chapter.comicId,
+          );
+      final chapters = <String>{
+        if (isSameComic) ...previous.chapters,
+        ...indexedChapterIds,
+        entry.chapter.chapterId,
+      };
+      final orderedChapters = chapters.toList(growable: true)..sort();
       final directories = <String, String>{
         if (isSameComic) ...previous.chapterDirectories,
       };
@@ -7615,6 +7621,7 @@ final class PersistentChapterDownloadService
         entry,
         comicDirectoryName: structuredComicDirectory,
         chapterDirectoryName: chapterDirectoryName,
+        knownChapterIds: existingChapters,
       );
 
       final pendingPages = <Future<void>>[];

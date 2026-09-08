@@ -1687,6 +1687,22 @@ void main() {
       sourceId: entry3.chapter.sourceId,
       comicId: entry3.chapter.comicId,
     );
+    await service.artifactStore.writeComicFolderManifest(
+      entry3,
+      comicDirectoryName: '航海王',
+      chapterDirectoryName: '第 3 话',
+      knownChapterIds: const <String>['ch-01'],
+    );
+    final mergedManifest = ComicFolderManifest.decode(
+      utf8.decode(memoryStorage['航海王/.zic.json']!),
+    );
+    expect(mergedManifest, isNotNull);
+    expect(
+      mergedManifest!.chapters.toSet(),
+      <String>{'ch-01', 'ch-02', 'ch-03'},
+      reason: 'caller snapshots are hints; the manifest lock must merge the '
+          'latest previous manifest so a concurrent chapter cannot be lost',
+    );
     final stableMultiChapterPlan =
         await service.artifactStore.flatChapterMigrationPlan(
       entry: entry3,
