@@ -21,6 +21,7 @@ DownloadId readerPageDownloadId(
     ),
     sourceRevision: chapter.chapter.sourceRevision,
     canonicalUri: asset.uri,
+    pageIndexHint: asset.index,
   );
 }
 

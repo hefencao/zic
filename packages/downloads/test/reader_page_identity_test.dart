@@ -31,6 +31,7 @@ void main() {
     final download = readerPageDownloadId(chapter, asset);
     final trace = readerPageTraceIdentity(chapter, asset);
 
+    expect(download.pageIndexHint, asset.index);
     expect(trace.pageAssetKey, asset.assetKey);
     expect(trace.resourceKeyPrefix, download.key);
     expect(trace.matchesResource(_event(download.key)), isTrue);

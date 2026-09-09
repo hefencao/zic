@@ -81,8 +81,23 @@ forbid(home, 'hasConfirmedSuccessor', 'version relation mirrored into sourceUpda
 reuse = read('packages/downloads/lib/src/artifact_cache_reuse.dart')
 for token in (
     'factory VerifiedArtifactReusePlan.fromVerifiedOffset({',
+    'final targetIndex = id.pageIndexHint;',
+    'hintedPage.pageId != id.content.pageId',
+    'hintedPage.uri != id.canonicalUri',
 ):
-    require(reuse, token, 'persisted mapping / validatorless durable partial reuse')
+    require(reuse, token, 'persisted mapping / O(1) page-index resolver')
+forbid(reuse, '_targetIndexes', 'whole-chapter resolver page index table')
+forbid(reuse, '_ExactPageLocator', 'whole-chapter resolver page locator map')
+
+domain_identity = read('packages/domain/lib/src/identity.dart')
+for token in (
+    'this.pageIndexHint,',
+    'final int? pageIndexHint;',
+    'This is deliberately excluded from [key], JSON persistence,',
+):
+    require(domain_identity, token, 'non-identity page index execution hint')
+reader_identity = read('packages/downloads/lib/src/reader_page_identity.dart')
+require(reader_identity, 'pageIndexHint: asset.index,', 'manifest-aware page index hint publication')
 
 home_session = read('apps/app/lib/home_library_session.dart')
 for token in (

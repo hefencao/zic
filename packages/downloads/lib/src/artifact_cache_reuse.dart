@@ -34,11 +34,7 @@ final class VerifiedArtifactOffsetProof {
 /// The current caller may still hydrate source manifests themselves; that is a
 /// separate library-locator cost, not hidden by this resolver.
 final class VerifiedArtifactReuseResolver {
-  VerifiedArtifactReuseResolver({required this.targetChapter})
-      : _targetIndexes = <_ExactPageLocator, int>{
-          for (final page in targetChapter.pages)
-            _ExactPageLocator(page.pageId, page.uri): page.index,
-        };
+  VerifiedArtifactReuseResolver({required this.targetChapter});
 
   /// Builds the directional predecessor -> successor projection used by the
   /// composition-level direct reuse authority. The persisted mapping expresses
@@ -65,7 +61,6 @@ final class VerifiedArtifactReuseResolver {
   }
 
   final ChapterManifest targetChapter;
-  final Map<_ExactPageLocator, int> _targetIndexes;
   final List<_VerifiedOffsetSource> _sources = <_VerifiedOffsetSource>[];
   int _eligiblePageCount = 0;
 
@@ -144,9 +139,18 @@ final class VerifiedArtifactReuseResolver {
         id.sourceRevision != chapter.chapter.sourceRevision) {
       return;
     }
-    final targetIndex =
-        _targetIndexes[_ExactPageLocator(id.content.pageId, id.canonicalUri)];
-    if (targetIndex == null) return;
+    final targetIndex = id.pageIndexHint;
+    if (targetIndex == null ||
+        targetIndex < 0 ||
+        targetIndex >= targetChapter.pages.length) {
+      return;
+    }
+    final hintedPage = targetChapter.pages[targetIndex];
+    if (hintedPage.index != targetIndex ||
+        hintedPage.pageId != id.content.pageId ||
+        hintedPage.uri != id.canonicalUri) {
+      return;
+    }
     for (final source in _sources) {
       final sourceIndex = targetIndex - source.targetOffsetFromSource;
       if (sourceIndex < source.sourceStart ||
@@ -407,22 +411,6 @@ final class _VerifiedOffsetSource {
   final int sourceEndExclusive;
   final int targetOffsetFromSource;
 }
-
-final class _ExactPageLocator {
-  const _ExactPageLocator(this.pageId, this.uri);
-
-  final String pageId;
-  final Uri uri;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is _ExactPageLocator && pageId == other.pageId && uri == other.uri;
-
-  @override
-  int get hashCode => Object.hash(pageId, uri);
-}
-
 
 Map<String, int> _uniquePageIndexes(ChapterManifest chapter) {
   final candidates = <String, List<int>>{};

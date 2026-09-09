@@ -63,11 +63,19 @@ final class DownloadId {
     required this.content,
     required this.sourceRevision,
     required this.canonicalUri,
-  });
+    this.pageIndexHint,
+  }) : assert(pageIndexHint == null || pageIndexHint >= 0);
 
   final ContentId content;
   final String sourceRevision;
   final Uri canonicalUri;
+
+  /// Optional execution-only page position supplied by a manifest-aware
+  /// caller. This is deliberately excluded from [key], JSON persistence,
+  /// equality and hashing: page order is not logical identity. Version-page
+  /// reuse may consume it only after validating the hinted manifest slot's
+  /// exact pageId + URI against this DownloadId.
+  final int? pageIndexHint;
 
   /// Collision-free framed identity used for new keys.
   String get key =>

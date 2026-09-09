@@ -74,6 +74,33 @@ void main() {
     expect(DownloadId.fromJson(id.toJson()), id);
   });
 
+
+  test('page index hint is execution metadata, never download identity', () {
+    const content = ContentId(
+      sourceId: 'source',
+      comicId: 'comic',
+      chapterId: 'chapter',
+      pageId: 'page',
+    );
+    final withoutHint = DownloadId(
+      content: content,
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/page.webp'),
+    );
+    final withHint = DownloadId(
+      content: content,
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/page.webp'),
+      pageIndexHint: 12345,
+    );
+
+    expect(withHint, withoutHint);
+    expect(withHint.key, withoutHint.key);
+    expect(withHint.hashCode, withoutHint.hashCode);
+    expect(withHint.toJson(), withoutHint.toJson());
+    expect(DownloadId.fromJson(withHint.toJson()).pageIndexHint, isNull);
+  });
+
   test('decode identity includes physical target and renderer', () {
     const content = ContentId(
       sourceId: 'local',

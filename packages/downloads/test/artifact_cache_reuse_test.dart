@@ -675,6 +675,51 @@ void main() {
     );
   });
 
+  test('version resolver requires a validated non-identity page index hint', () {
+    final source = _chapter(
+      comicId: 'source-hint',
+      revision: 'source-hint-r1',
+      urls: const <String>[
+        'https://example.test/source-0.webp',
+        'https://example.test/source-1.webp',
+      ],
+    );
+    final target = _chapter(
+      comicId: 'target-hint',
+      revision: 'target-hint-r1',
+      urls: const <String>[
+        'https://example.test/target-0.webp',
+        'https://example.test/target-1.webp',
+      ],
+    );
+    final resolver = VerifiedArtifactReuseResolver(targetChapter: target)
+      ..addVerifiedInterval(
+        sourceChapter: source,
+        sourceStart: 0,
+        sourceEndExclusive: 2,
+        targetOffsetFromSource: 0,
+      );
+    final exact = readerPageDownloadId(target, target.pages[1]);
+    final noHint = DownloadId(
+      content: exact.content,
+      sourceRevision: exact.sourceRevision,
+      canonicalUri: exact.canonicalUri,
+    );
+    final wrongHint = DownloadId(
+      content: exact.content,
+      sourceRevision: exact.sourceRevision,
+      canonicalUri: exact.canonicalUri,
+      pageIndexHint: 0,
+    );
+
+    expect(resolver.resolve(noHint), isEmpty);
+    expect(resolver.resolve(wrongHint), isEmpty);
+    expect(
+      resolver.resolve(exact),
+      <DownloadId>[readerPageDownloadId(source, source.pages[1])],
+    );
+  });
+
   test('verified affine intervals keep gaps and offset changes local', () {
     final predecessor = _chapter(
       comicId: 'interval-old',
