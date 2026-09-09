@@ -15,6 +15,80 @@ import 'package:transport/transport.dart';
 
 void main() {
   test(
+    'encoded presentation file is a non-WebP durable capability',
+    () async {
+      final uri = Uri.parse('https://example.invalid/presentation-file.jpg');
+      final chapter = _chapter(uri: uri);
+      final backend = _PresentationFileBackend();
+      final transferRuntime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: ArtifactCacheManager(backend: backend),
+        partialDownloadStore: null,
+        net: NetLane(maxActive: 1),
+      );
+      final reader = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _FreshFactory(),
+      ).withTransferRuntime(transferRuntime).create(
+        chapter: chapter,
+        sessionId: 'presentation-file-capability',
+      );
+
+      try {
+        final lease = await reader.openEncodedPresentationFile(
+          chapter.pages.single,
+          MediaLoadToken(),
+        );
+        expect(lease, isNotNull);
+        expect(lease!.width, 1200);
+        expect(lease.height, 1800);
+        expect(backend.opens, 1);
+        await lease.release();
+        expect(backend.releases, 1);
+      } finally {
+        await reader.dispose().timeout(const Duration(seconds: 5));
+        await transferRuntime.dispose().timeout(const Duration(seconds: 5));
+      }
+    },
+  );
+
+  test(
+    'WebP and GIF never enter encoded presentation file fallback',
+    () async {
+      for (final hint in <ContentKindHint>[
+        ContentKindHint.webp,
+        ContentKindHint.gif,
+      ]) {
+        final uri = Uri.parse('https://example.invalid/file-${hint.name}');
+        final chapter = _chapter(uri: uri, contentKindHint: hint);
+        final backend = _PresentationFileBackend();
+        final transferRuntime = CompositionDownloadTransferRuntime(
+          artifactCacheManager: ArtifactCacheManager(backend: backend),
+          partialDownloadStore: null,
+          net: NetLane(maxActive: 1),
+        );
+        final reader = PipelineReaderSessionFactory(
+          mediaRuntimeFactory: const _FreshFactory(),
+        ).withTransferRuntime(transferRuntime).create(
+          chapter: chapter,
+          sessionId: 'presentation-file-excluded-${hint.name}',
+        );
+        try {
+          expect(
+            await reader.openEncodedPresentationFile(
+              chapter.pages.single,
+              MediaLoadToken(),
+            ),
+            isNull,
+          );
+          expect(backend.opens, 0);
+        } finally {
+          await reader.dispose().timeout(const Duration(seconds: 5));
+          await transferRuntime.dispose().timeout(const Duration(seconds: 5));
+        }
+      }
+    },
+  );
+
+  test(
     'Reader cache miss hands a long source open to the proven lower deadline',
     () async {
       final uri = Uri.parse('https://example.invalid/reader-slow-open.jpg');
@@ -454,7 +528,10 @@ ReaderObs _observation(String sessionId, ChapterManifest chapter) => ReaderObs(
       monotonicMicros: 1,
     );
 
-ChapterManifest _chapter({required Uri uri}) => ChapterManifest(
+ChapterManifest _chapter({
+  required Uri uri,
+  ContentKindHint contentKindHint = ContentKindHint.jpeg,
+}) => ChapterManifest(
       sourceId: 'source',
       comicId: 'comic',
       chapter: const Chapter(
@@ -471,11 +548,43 @@ ChapterManifest _chapter({required Uri uri}) => ChapterManifest(
           chapterId: 'chapter',
           index: 0,
           uri: uri,
-          contentKindHint: ContentKindHint.jpeg,
+          contentKindHint: contentKindHint,
         ),
       ],
       readingDirection: ReadingDirection.ltr,
     );
+
+final class _PresentationFileBackend implements ArtifactCacheBackend {
+  int opens = 0;
+  int releases = 0;
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
+    opens++;
+    return ArtifactCacheStreamEntry(
+      length: 3,
+      open: ({required int start, int? endExclusive}) async* {
+        yield Uint8List.fromList(const <int>[1, 2, 3]);
+      },
+      openPresentationFile: () async => ArtifactCachePresentationFileLease(
+        path: '/proc/self/fd/41',
+        length: 3,
+        width: 1200,
+        height: 1800,
+        release: () async => releases++,
+      ),
+    );
+  }
+
+  @override
+  Future<void> storePromotedArtifact({
+    required DownloadId id,
+    required Uint8List bytes,
+  }) async {}
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {}
+}
 
 final class _RejectedCachedImageStore
     implements ArtifactCacheBackend, PartialDownloadStore {

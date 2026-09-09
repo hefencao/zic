@@ -255,6 +255,12 @@ class MainActivity : FlutterActivity() {
                         .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safClose" -> runCatching { safClose(call) }
                         .fold({ true to null }, { false to safBridgeFailure(it) })
+                    "presentationOpenDirect" -> runCatching { presentationOpenDirect(call) }
+                        .fold({ true to it }, { false to safBridgeFailure(it) })
+                    "presentationOpenSaf" -> runCatching { presentationOpenSaf(call) }
+                        .fold({ true to it }, { false to safBridgeFailure(it) })
+                    "presentationClose" -> runCatching { safClose(call) }
+                        .fold({ true to null }, { false to safBridgeFailure(it) })
                     "safDelete" -> runCatching { safDelete(call) }
                         .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safRename" -> runCatching { safRename(call) }
@@ -654,6 +660,51 @@ class MainActivity : FlutterActivity() {
         val handle = safCounter.getAndIncrement()
         safDescriptors[handle] = pfd
         return handle
+    }
+
+    private fun registerPresentationDescriptor(
+        pfd: android.os.ParcelFileDescriptor,
+    ): Map<String, Any> {
+        val length = pfd.statSize.takeIf { it >= 0L }
+            ?: android.system.Os.fstat(pfd.fileDescriptor).st_size
+        require(length >= 0L) { "presentation descriptor length is unavailable" }
+        val handle = safCounter.getAndIncrement()
+        safDescriptors[handle] = pfd
+        return mapOf(
+            "handle" to handle,
+            "path" to "/proc/self/fd/${pfd.fd}",
+            "length" to length,
+        )
+    }
+
+    private fun presentationOpenDirect(call: MethodCall): Map<String, Any> {
+        val path = requireNotNull(call.argument<String>("path")).trim()
+        require(path.isNotEmpty()) { "presentation path is required" }
+        val file = java.io.File(path)
+        require(file.isAbsolute && file.isFile) { "presentation file is unavailable" }
+        val pfd = android.os.ParcelFileDescriptor.open(
+            file,
+            android.os.ParcelFileDescriptor.MODE_READ_ONLY,
+        )
+        return try {
+            registerPresentationDescriptor(pfd)
+        } catch (error: Throwable) {
+            pfd.close()
+            throw error
+        }
+    }
+
+    private fun presentationOpenSaf(call: MethodCall): Map<String, Any> {
+        val treeUri = requireNotNull(call.argument<String>("treeUri"))
+        val relativePath = call.argument<String>("relativePath") ?: ""
+        require(isSafeRelativePath(relativePath)) { "unsafe relative path" }
+        val pfd = openSafReadDescriptor(treeUri, relativePath)
+        return try {
+            registerPresentationDescriptor(pfd)
+        } catch (error: Throwable) {
+            pfd.close()
+            throw error
+        }
     }
 
     private fun safDescriptor(call: MethodCall): android.os.ParcelFileDescriptor {

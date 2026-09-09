@@ -25,6 +25,7 @@ export 'src/artifact_bytes.dart'
         writeBytesToSaf,
         encodeSafRecordPath,
         parseSafRecordPath,
+        sniffImageDimensionsFromBytes,
         sniffImageExtension,
         sniffImageExtensionFromBytes;
 export 'src/artifact_cache_store.dart';

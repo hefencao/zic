@@ -26,6 +26,41 @@ abstract interface class ArtifactCacheBoundRangeReader {
   Future<void> close();
 }
 
+/// Engine-readable immutable encoded-file lease for one physical generation.
+///
+/// The path may be a normal file or a process-local descriptor path such as
+/// `/proc/self/fd/<n>`. Callers must keep the lease alive while an engine
+/// ImageProvider may reopen/read the path; [release] retires only this lease,
+/// never the artifact's logical cache binding.
+final class ArtifactCachePresentationFileLease {
+  const ArtifactCachePresentationFileLease({
+    required this.path,
+    required this.length,
+    required this.release,
+    this.width,
+    this.height,
+  });
+
+  final String path;
+  final int length;
+  final int? width;
+  final int? height;
+  final Future<void> Function() release;
+}
+
+typedef ArtifactCachePresentationFileOpener =
+    Future<ArtifactCachePresentationFileLease?> Function();
+
+/// Platform/storage adapter that can pin one physical locator behind an
+/// engine-readable file path. Android uses descriptor-backed `/proc/self/fd`
+/// leases for both Direct and SAF artifacts; tests/backends may omit it.
+abstract interface class ArtifactPresentationFileLeaseFactory {
+  Future<ArtifactCachePresentationFileLease?> open(
+    String accessLocator, {
+    required int expectedLength,
+  });
+}
+
 final class ArtifactCacheStreamEntry {
   const ArtifactCacheStreamEntry({
     required this.length,
@@ -33,6 +68,7 @@ final class ArtifactCacheStreamEntry {
     this.readAll,
     this.readAllControlled,
     this.openBoundRangeReader,
+    this.openPresentationFile,
     this.accessMode = 'unknown',
     this.streamIntegrity = ArtifactReadIntegrityBasis.unspecified,
     this.fullReadIntegrity = ArtifactReadIntegrityBasis.unspecified,
@@ -49,6 +85,11 @@ final class ArtifactCacheStreamEntry {
   /// expose this after locator/replica preflight so a READY physical session
   /// can reuse one descriptor across decoder range requests.
   final Future<ArtifactCacheBoundRangeReader?> Function()? openBoundRangeReader;
+
+  /// Optional engine-facing file/descriptor lease over the same immutable
+  /// generation. This deliberately carries no Flutter types; presentation
+  /// decides which codec/provider can consume the leased path.
+  final ArtifactCachePresentationFileOpener? openPresentationFile;
 
   /// Non-sensitive diagnostics for the selected physical access path.
   final String accessMode;

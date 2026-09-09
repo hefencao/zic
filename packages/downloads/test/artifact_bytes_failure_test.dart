@@ -6,6 +6,39 @@ import 'package:downloads/src/artifact_bytes.dart' show openArtifactByteRangeRea
 import 'package:test/test.dart';
 
 void main() {
+  test('bounded image headers expose static dimensions without pixel decode', () {
+    final png = Uint8List(24)
+      ..setAll(0, const <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      ..setAll(12, const <int>[0x49, 0x48, 0x44, 0x52])
+      ..setAll(16, const <int>[0x00, 0x00, 0x04, 0xb0])
+      ..setAll(20, const <int>[0x00, 0x00, 0x07, 0x08]);
+    expect(
+      sniffImageDimensionsFromBytes(png),
+      (width: 1200, height: 1800),
+    );
+
+    final jpeg = <int>[
+      0xff, 0xd8,
+      0xff, 0xe1, 0x00, 0x08, 1, 2, 3, 4, 5, 6,
+      0xff, 0xc0, 0x00, 0x11, 0x08,
+      0x01, 0xe0,
+      0x02, 0x80,
+      0x03, 0x01, 0x11,
+      0x00, 0x02, 0x11,
+      0x00, 0x03, 0x11,
+      0x00,
+    ];
+    expect(
+      sniffImageDimensionsFromBytes(jpeg),
+      (width: 640, height: 480),
+    );
+    expect(
+      sniffImageDimensionsFromBytes(jpeg.sublist(0, 18)),
+      isNull,
+      reason: 'a bounded prefix must not invent dimensions before full SOF metadata',
+    );
+  });
+
   test('missing POSIX artifact reports typed read failure before bytes', () async {
     final root = await Directory.systemTemp.createTemp('zic-artifact-read-');
     addTearDown(() => root.delete(recursive: true));

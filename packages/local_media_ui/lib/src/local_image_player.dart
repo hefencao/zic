@@ -7,6 +7,7 @@ final class LocalImagePlayer extends StatefulWidget {
     required this.image,
     this.bytesLoader,
     this.tokenBytesLoader,
+    this.presentationFileLoader,
     this.decodeProbe,
     this.onRecoverPresentationFailure,
     this.onRetry,
@@ -33,6 +34,7 @@ final class LocalImagePlayer extends StatefulWidget {
   final PickedImage image;
   final LocalImageBytesLoader? bytesLoader;
   final LocalImageTokenBytesLoader? tokenBytesLoader;
+  final LocalImagePresentationFileLoader? presentationFileLoader;
   final LocalImageDecodeProbe? decodeProbe;
   final Future<bool> Function(Object error)? onRecoverPresentationFailure;
   final Future<bool> Function()? onRetry;
@@ -62,6 +64,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   late LocalImageFormat _detectedFormat;
   Uint8List? _bytes;
   ImageProvider<Object>? _imageProvider;
+  PipelineEncodedPresentationFileLease? _presentationFileLease;
   int _generation = 0;
   int _scheduledStaticFrameGeneration = -1;
   late MediaLoadToken _loadToken;
@@ -113,6 +116,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _loadToken = MediaLoadToken();
       _reportedFirstFrame = false;
       _scheduledStaticFrameGeneration = -1;
+      _releasePresentationFileLease();
       _bytes = null;
       _imageProvider = null;
       _reportedDimensions = null;
@@ -344,9 +348,56 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   Future<void> _load() async {
     final generation = ++_generation;
     final token = _loadToken;
+    _releasePresentationFileLease();
     try {
       final tokenLoader = widget.tokenBytesLoader;
       final loader = widget.bytesLoader;
+      final presentationFileLoader = widget.presentationFileLoader;
+      final mayUsePresentationFile = presentationFileLoader != null &&
+          widget.decodeProbe == null &&
+          !widget.image.format.isWebp &&
+          !(widget.playback != null &&
+              widget.image.format == LocalImageFormat.gif);
+      if (mayUsePresentationFile) {
+        final lease = await presentationFileLoader(token);
+        token.throwIfCancelled();
+        if (!mounted || generation != _generation || token != _loadToken) {
+          await lease?.release();
+          return;
+        }
+        if (lease != null) {
+          var retained = false;
+          try {
+            final provider = encodedResourceImageProvider(
+              FileEncodedResourceSource(
+                path: lease.path,
+                lengthInBytes: lease.length,
+                origin: EncodedResourceOrigin.durableCacheFile,
+                cacheIdentity: lease.cacheIdentity,
+              ),
+            );
+            final width = lease.width;
+            final height = lease.height;
+            if (width == null || height == null || width <= 0 || height <= 0) {
+              throw StateError(
+                'presentation file lease is missing intrinsic dimensions',
+              );
+            }
+            _presentationFileLease = lease;
+            retained = true;
+            _reportPlaybackCapability(false);
+            _reportDimensions(width, height);
+            setState(() {
+              _detectedFormat = widget.image.format;
+              _bytes = null;
+              _imageProvider = provider;
+            });
+            return;
+          } finally {
+            if (!retained) await lease.release();
+          }
+        }
+      }
       final directPath = tokenLoader == null &&
               loader == null &&
               widget.decodeProbe == null &&
@@ -477,6 +528,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     _generation++;
     _loadToken.cancel();
     _loadToken = MediaLoadToken();
+    _releasePresentationFileLease();
     _bytes = null;
     _imageProvider = null;
     _scheduledStaticFrameGeneration = -1;
@@ -505,7 +557,25 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
 
     _generation++;
     _loadToken.cancel();
+    _releasePresentationFileLease();
     super.dispose();
+  }
+
+  void _releasePresentationFileLease() {
+    final lease = _presentationFileLease;
+    if (lease == null) return;
+    _presentationFileLease = null;
+    unawaited(_releasePresentationFileLeaseBestEffort(lease));
+  }
+
+  Future<void> _releasePresentationFileLeaseBestEffort(
+    PipelineEncodedPresentationFileLease lease,
+  ) async {
+    try {
+      await lease.release();
+    } on Object catch (error) {
+      debugPrint('presentation file lease release failed: $error');
+    }
   }
 
   void _reportDimensions(
@@ -638,6 +708,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   }
 
   Future<void> _handlePresentedDecodeFailure(Object error) async {
+    _releasePresentationFileLease();
     if (await _tryAutomaticRecovery(error)) return;
     if (mounted) {
       _publish(ImagePreviewState.invalid(_detectedFormat, error));

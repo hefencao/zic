@@ -44,8 +44,33 @@ ImageProvider<Object> encodedResourceImageProvider(
 ) =>
     switch (source) {
       MemoryEncodedResourceSource(:final bytes) => MemoryImage(bytes),
-      FileEncodedResourceSource(:final path) => FileImage(File(path)),
+      FileEncodedResourceSource(
+        :final path,
+        :final cacheIdentity,
+      ) =>
+        cacheIdentity == null
+            ? FileImage(File(path))
+            : _IdentityFileImage(File(path), cacheIdentity),
     };
+
+final class _IdentityFileImage extends FileImage {
+  const _IdentityFileImage(super.file, this.cacheIdentity);
+
+  final Object cacheIdentity;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _IdentityFileImage &&
+      other.scale == scale &&
+      other.cacheIdentity == cacheIdentity;
+
+  @override
+  int get hashCode => Object.hash(
+        runtimeType,
+        scale,
+        cacheIdentity,
+      );
+}
 
 /// Materializes immutable encoded content behind the platform/storage boundary.
 ///
@@ -56,6 +81,44 @@ Future<Uint8List> readEncodedResourceBytes(EncodedResourceSource source) =>
       MemoryEncodedResourceSource(:final bytes) => Future<Uint8List>.value(bytes),
       FileEncodedResourceSource(:final path) => File(path).readAsBytes(),
     };
+
+/// Reads only a bounded encoded prefix from a file-backed presentation source.
+///
+/// Descriptor paths such as `/proc/self/fd/<n>` can share their open-file
+/// offset with the pinned platform descriptor. Restore position zero before
+/// releasing the temporary Dart reader so a later engine reopen sees the
+/// encoded body from byte zero. I/O failure is an optimization miss: callers
+/// can release the file lease and fall back to their existing byte path.
+Future<Uint8List?> tryReadEncodedFilePrefix(
+  FileEncodedResourceSource source, {
+  required int maxBytes,
+}) async {
+  if (maxBytes <= 0) {
+    throw ArgumentError.value(maxBytes, 'maxBytes', 'must be positive');
+  }
+  RandomAccessFile? reader;
+  try {
+    reader = await File(source.path).open(mode: FileMode.read);
+    final expectedLength = source.lengthInBytes;
+    final readLength = expectedLength == null || expectedLength > maxBytes
+        ? maxBytes
+        : expectedLength;
+    final prefix = await reader.read(readLength);
+    await reader.setPosition(0);
+    await reader.close();
+    reader = null;
+    return prefix;
+  } on FileSystemException {
+    if (reader != null) {
+      try {
+        await reader.close();
+      } on FileSystemException {
+        // The platform presentation lease remains the outer owner.
+      }
+    }
+    return null;
+  }
+}
 
 Future<String> getDefaultZicStorageRoot({
   Future<String?> Function()? applicationSupportPath,

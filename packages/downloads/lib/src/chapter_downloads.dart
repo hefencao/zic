@@ -1224,6 +1224,7 @@ final class PersistentDownloadArtifactStore
     required this._storageWriteScheduler,
     this.safTreeIo,
     required this.safTreeUri,
+    this.presentationFileLeaseFactory,
     TraceSink? traceSink,
     MonoClock? clock,
   })  : _registry = registry,
@@ -1256,6 +1257,7 @@ final class PersistentDownloadArtifactStore
     StorageWriteScheduler? storageWriteScheduler,
     SafTreeIo? safMirror,
     String? safTreeUri,
+    ArtifactPresentationFileLeaseFactory? presentationFileLeaseFactory,
     TraceSink? traceSink,
     MonoClock? clock,
   }) async {
@@ -1295,6 +1297,7 @@ final class PersistentDownloadArtifactStore
       storageWriteScheduler: resolvedStorageWriteScheduler,
       safTreeIo: safMirror,
       safTreeUri: safTreeUri,
+      presentationFileLeaseFactory: presentationFileLeaseFactory,
       traceSink: traceSink,
       clock: resolvedClock,
     );
@@ -2145,6 +2148,11 @@ final class PersistentDownloadArtifactStore
   /// their index records switch to `saf:` paths; the local staging copy is
   /// removed afterwards. Reading follows the record path scheme.
   final SafTreeIo? safTreeIo;
+
+  /// Optional platform adapter for engine-readable file/descriptor leases.
+  /// The store remains authoritative for replica selection; the adapter only
+  /// pins the selected physical locator for presentation.
+  final ArtifactPresentationFileLeaseFactory? presentationFileLeaseFactory;
   final Map<DownloadId, Future<void>> _artifactWrites =
       <DownloadId, Future<void>>{};
   final Map<DownloadId, ({int length, String checksum})>
@@ -5910,6 +5918,12 @@ final class PersistentDownloadArtifactStore
             ),
         openBoundRangeReader: () =>
             _openBoundArtifactRangeReader(selectedCandidates),
+        openPresentationFile: presentationFileLeaseFactory == null
+            ? null
+            : () => presentationFileLeaseFactory!.open(
+                  selectedAccess.accessLocator,
+                  expectedLength: selected.length,
+                ),
         accessMode: parseSafRecordPath(selectedAccess.accessLocator) == null
             ? 'direct'
             : 'saf',
@@ -7084,6 +7098,7 @@ final class PersistentDownloadComposition
     SpeculativeEncodedReadBudget? speculativeEncodedReadBudget,
     SafTreeIo? safTreeIo,
     String? safTreeUri,
+    ArtifactPresentationFileLeaseFactory? presentationFileLeaseFactory,
     Duration pageStallTimeout =
         PersistentChapterDownloadService.defaultPageStallTimeout,
     TraceSink? traceSink,
@@ -7099,6 +7114,7 @@ final class PersistentDownloadComposition
       speculativeEncodedReadBudget: speculativeEncodedReadBudget,
       safTreeIo: safTreeIo,
       safTreeUri: safTreeUri,
+      presentationFileLeaseFactory: presentationFileLeaseFactory,
       stallTimeout: pageStallTimeout,
       traceSink: traceSink,
     );
@@ -7161,6 +7177,7 @@ Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
   SpeculativeEncodedReadBudget? speculativeEncodedReadBudget,
   SafTreeIo? safTreeIo,
   String? safTreeUri,
+  ArtifactPresentationFileLeaseFactory? presentationFileLeaseFactory,
   Duration stallTimeout = PersistentChapterDownloadService.defaultPageStallTimeout,
   TraceSink? traceSink,
 }) async {
@@ -7172,6 +7189,7 @@ Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
     storageWriteScheduler: storageWriteScheduler,
     safMirror: safTreeIo,
     safTreeUri: safTreeUri,
+    presentationFileLeaseFactory: presentationFileLeaseFactory,
     traceSink: traceSink,
   );
   if (safTreeUri != null) {
@@ -7252,6 +7270,7 @@ final class PersistentChapterDownloadService
     SpeculativeEncodedReadBudget? speculativeEncodedReadBudget,
     SafTreeIo? safTreeIo,
     String? safTreeUri,
+    ArtifactPresentationFileLeaseFactory? presentationFileLeaseFactory,
     Duration pageStallTimeout = defaultPageStallTimeout,
     TraceSink? traceSink,
   }) async {
@@ -7264,6 +7283,7 @@ final class PersistentChapterDownloadService
       storageWriteScheduler: storageWriteScheduler,
       safTreeIo: safTreeIo,
       safTreeUri: safTreeUri,
+      presentationFileLeaseFactory: presentationFileLeaseFactory,
       stallTimeout: pageStallTimeout,
       traceSink: traceSink,
     );

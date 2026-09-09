@@ -85,6 +85,7 @@ final class ReaderPageRuntime {
     required this.sessionId,
     required this.demandRevision,
     required this.loadBytes,
+    required this.openEncodedPresentationFile,
     required this.recoverPresentationFailure,
     required this.retryPresentation,
     required this.playback,
@@ -101,6 +102,8 @@ final class ReaderPageRuntime {
   final String sessionId;
   final int Function() demandRevision;
   final ReaderPageBytesLoader loadBytes;
+  final Future<PipelineEncodedPresentationFileLease?> Function(MediaLoadToken token)
+      openEncodedPresentationFile;
   final Future<bool> Function(Object error) recoverPresentationFailure;
   final Future<bool> Function() retryPresentation;
   final ReaderPlaybackController playback;
@@ -1178,6 +1181,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                 demandRevision: () => _pipeline.revision,
                 loadBytes: (token) =>
                     _pipeline.loadBytes(asset, token),
+                openEncodedPresentationFile: (token) =>
+                    _pipeline.openEncodedPresentationFile(asset, token),
                 recoverPresentationFailure: (error) =>
                     _pipeline.recoverPresentationFailure(asset, error),
                 retryPresentation: () =>

@@ -26,6 +26,27 @@ typedef PipelineArtifactBytesLoader = Future<Uint8List> Function(
   MediaLoadToken token,
 );
 
+/// Immutable encoded-body file/descriptor lease for presentation codecs that
+/// can consume a path directly. The lease is physical-generation scoped and
+/// must remain alive until the ImageProvider/codec no longer needs the path.
+final class PipelineEncodedPresentationFileLease {
+  const PipelineEncodedPresentationFileLease({
+    required this.path,
+    required this.length,
+    required this.cacheIdentity,
+    required this.release,
+    this.width,
+    this.height,
+  });
+
+  final String path;
+  final int length;
+  final Object cacheIdentity;
+  final int? width;
+  final int? height;
+  final Future<void> Function() release;
+}
+
 final class _PresentationArtifactAuthority {
   const _PresentationArtifactAuthority({
     required this.storageId,
@@ -1578,6 +1599,120 @@ final class PipelineReaderSession {
     return !nonWebpSuffixes.any(path.endsWith);
   }
 
+  bool _mayUseEncodedPresentationFile(
+    PageAsset asset,
+    ContentKind? contentKind,
+  ) {
+    switch (contentKind) {
+      case ContentKind.webp:
+      case ContentKind.gif:
+        return false;
+      case ContentKind.fallback:
+        return true;
+      case ContentKind.unknown:
+      case null:
+        break;
+    }
+    switch (asset.contentKindHint) {
+      case ContentKindHint.webp:
+      case ContentKindHint.gif:
+        return false;
+      case ContentKindHint.jpeg:
+      case ContentKindHint.png:
+      case ContentKindHint.avif:
+      case ContentKindHint.fallback:
+        return true;
+      case ContentKindHint.unknown:
+        break;
+    }
+    final path = asset.uri.path.toLowerCase();
+    return !path.endsWith('.webp') && !path.endsWith('.gif');
+  }
+
+  Future<PipelineEncodedPresentationFileLease?> openEncodedPresentationFile(
+    PageAsset asset,
+    MediaLoadToken token,
+  ) async {
+    if (_bytesLoader != null) return null;
+    token.throwIfCancelled();
+    final cache = _artifactCacheManager;
+    if (cache == null) return null;
+    final id = readerPageDownloadId(chapter, asset);
+    final session = _downloads.find(id);
+    if (!_mayUseEncodedPresentationFile(asset, session?.contentKind)) {
+      return null;
+    }
+    final started = clock.nowMicros();
+    ArtifactCachePresentationFileRead? read;
+    try {
+      read = await cache.openPresentationFile(
+        id,
+        control: _MediaLoadTaskControl(token),
+      );
+      if (token.isCancelled) {
+        await read?.release();
+        token.throwIfCancelled();
+      }
+      if (read == null) return null;
+      final width = asset.width ?? read.width;
+      final height = asset.height ?? read.height;
+      if (width == null || height == null || width <= 0 || height <= 0) {
+        await read.release();
+        _recordPresentationFileLeaseFallback(
+          asset: asset,
+          id: id,
+          reason: 'intrinsic-dimensions-unavailable',
+          readMicros: clock.nowMicros() - started,
+        );
+        return null;
+      }
+      _artifactCachePresentationAuthorities[id] = _PresentationArtifactAuthority(
+        storageId: read.storageId,
+        generation: read.generation,
+      );
+      _recordPresentationFileLease(
+        asset: asset,
+        id: id,
+        length: read.length,
+        readMicros: clock.nowMicros() - started,
+        storageId: read.storageId,
+        generation: read.generation,
+        width: width,
+        height: height,
+      );
+      return PipelineEncodedPresentationFileLease(
+        path: read.path,
+        length: read.length,
+        cacheIdentity: read.cacheIdentity,
+        width: width,
+        height: height,
+        release: read.release,
+      );
+    } on Object catch (error) {
+      if (token.isCancelled) {
+        await read?.release();
+        token.throwIfCancelled();
+      }
+      trace.record(
+        traceEvent(
+          clock: clock,
+          sessionId: sessionId,
+          kind: TraceEventKind.taskFailed,
+          identityHash: id.key,
+          revision: revision,
+          payload: <String, Object?>{
+            'lane': 'artifact-cache-presentation-file',
+            'consumer': 'pipeline-presentation',
+            'reason': error.toString(),
+            'readMicros': clock.nowMicros() - started,
+            'fallback': 'encoded-bytes',
+          },
+        ),
+      );
+      return null;
+    }
+  }
+
   Future<Uint8List> loadBytes(
     PageAsset asset,
     MediaLoadToken token,
@@ -1950,6 +2085,73 @@ final class PipelineReaderSession {
   bool _isDirectImmutableLocalUri(Uri uri) {
     final scheme = uri.scheme.toLowerCase();
     return scheme == 'file' || scheme == 'content' || scheme == 'asset';
+  }
+
+  void _recordPresentationFileLease({
+    required PageAsset asset,
+    required DownloadId id,
+    required int length,
+    required int readMicros,
+    required DownloadId storageId,
+    required int generation,
+    required int width,
+    required int height,
+  }) {
+    final safeMicros = readMicros < 0 ? 0 : readMicros;
+    trace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.sourceRead,
+        identityHash: id.key,
+        revision: revision,
+        payload: <String, Object?>{
+          'source': 'artifact-cache',
+          'sourceClass': 'persistent-artifact',
+          'uriScheme': asset.uri.scheme.isEmpty ? 'file' : asset.uri.scheme,
+          'bytes': length,
+          'readMicros': safeMicros,
+          'artifactReadMode': 'presentation-file-lease',
+          'artifactIntegrityBasis':
+              ArtifactReadIntegrityBasis.sealedMetadataLength.name,
+          'artifactWholeChecksumVerifiedThisRead': false,
+          'artifactMaterializeMicros': 0,
+          'encodedWholeBodyMaterializedInDart': false,
+          'presentationWidth': width,
+          'presentationHeight': height,
+          'artifactGeneration': generation,
+          if (storageId != id) 'storageIdentityHash': storageId.key,
+          'hotCacheEntries': _artifactCacheManager?.memoryEntryCount ?? 0,
+          'hotCacheBytes': _artifactCacheManager?.memoryBytes ?? 0,
+          'completed': true,
+          'consumer': 'pipeline-presentation',
+        },
+      ),
+    );
+  }
+
+  void _recordPresentationFileLeaseFallback({
+    required PageAsset asset,
+    required DownloadId id,
+    required String reason,
+    required int readMicros,
+  }) {
+    trace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.readerObservation,
+        identityHash: id.key,
+        revision: revision,
+        payload: <String, Object?>{
+          'stage': 'presentation-file-lease-fallback',
+          'reason': reason,
+          'uriScheme': asset.uri.scheme.isEmpty ? 'file' : asset.uri.scheme,
+          'readMicros': readMicros < 0 ? 0 : readMicros,
+          'fallback': 'encoded-bytes',
+        },
+      ),
+    );
   }
 
   void _recordPresentationCacheRead({

@@ -1,9 +1,69 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:resource_cache/resource_cache.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 
 void main() {
+  test('leased descriptor image cache identity is independent from fd path', () {
+    final generation = Object();
+    final first = encodedResourceImageProvider(
+      FileEncodedResourceSource(
+        path: '/proc/self/fd/41',
+        origin: EncodedResourceOrigin.durableCacheFile,
+        cacheIdentity: generation,
+      ),
+    );
+    final reopened = encodedResourceImageProvider(
+      FileEncodedResourceSource(
+        path: '/proc/self/fd/97',
+        origin: EncodedResourceOrigin.durableCacheFile,
+        cacheIdentity: generation,
+      ),
+    );
+    final nextGeneration = encodedResourceImageProvider(
+      FileEncodedResourceSource(
+        path: '/proc/self/fd/41',
+        origin: EncodedResourceOrigin.durableCacheFile,
+        cacheIdentity: Object(),
+      ),
+    );
+
+    expect(first, reopened);
+    expect(first.hashCode, reopened.hashCode);
+    expect(first, isNot(nextGeneration));
+  });
+
+  test('file presentation metadata probe stays bounded', () async {
+    final directory = await Directory.systemTemp.createTemp('zic-prefix-probe-');
+    addTearDown(() async {
+      if (await directory.exists()) await directory.delete(recursive: true);
+    });
+    final file = File('${directory.path}/encoded.bin');
+    await file.writeAsBytes(List<int>.generate(128, (index) => index));
+
+    final prefix = await tryReadEncodedFilePrefix(
+      FileEncodedResourceSource(
+        path: file.path,
+        lengthInBytes: 128,
+        origin: EncodedResourceOrigin.durableCacheFile,
+      ),
+      maxBytes: 32,
+    );
+
+    expect(prefix, orderedEquals(List<int>.generate(32, (index) => index)));
+    expect(
+      await tryReadEncodedFilePrefix(
+        FileEncodedResourceSource(
+          path: '${directory.path}/missing.bin',
+          origin: EncodedResourceOrigin.durableCacheFile,
+        ),
+        maxBytes: 32,
+      ),
+      isNull,
+    );
+  });
+
   test('default imported library factory is exposed', () {
     expect(openDefaultImportedLibraryStore, isA<Function>());
   });

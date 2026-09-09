@@ -20,6 +20,8 @@ typedef LocalImageTokenBytesLoader = Future<Uint8List> Function(
   PickedImage image,
   MediaLoadToken token,
 );
+typedef LocalImagePresentationFileLoader =
+    Future<PipelineEncodedPresentationFileLease?> Function(MediaLoadToken token);
 typedef LocalImageDecodeProbe = Future<void> Function(Uint8List bytes);
 
 

@@ -76,12 +76,13 @@ final class PersistedResourceBytes {
 /// Immutable encoded resource presented either from Dart-owned memory or from
 /// an externally stable file.
 ///
-/// Cache-owned files are deliberately not exposed through
+/// Raw cache-owned paths are deliberately not exposed through
 /// [FileEncodedResourceSource]: the response cache may trim or invalidate those
 /// files while a Flutter ImageProvider is still alive. Resource-cache image
 /// reads therefore materialize owned bytes before crossing the cache boundary.
-/// [FileEncodedResourceSource] is reserved for paths whose lifetime is owned
-/// outside the response cache, such as imported local files.
+/// A durable artifact may use this source only through an explicit file/
+/// descriptor lease whose lifetime outlives the provider; [cacheIdentity]
+/// then separates process-local descriptor-path reuse from ImageCache identity.
 enum EncodedResourceOrigin {
   memory,
   localFile,
@@ -114,10 +115,18 @@ final class FileEncodedResourceSource extends EncodedResourceSource {
   const FileEncodedResourceSource({
     required this.path,
     super.lengthInBytes,
+    this.cacheIdentity,
+    EncodedResourceOrigin origin = EncodedResourceOrigin.localFile,
   })  : assert(path != ''),
-        super(origin: EncodedResourceOrigin.localFile);
+        assert(origin != EncodedResourceOrigin.memory),
+        super(origin: origin);
 
   final String path;
+
+  /// Optional identity independent from [path]. Descriptor paths may reuse an
+  /// fd number after release, so leased durable files must provide a unique
+  /// generation/lease identity to prevent stale Flutter ImageCache hits.
+  final Object? cacheIdentity;
 }
 
 /// Persistence lifetime for immutable encoded response bytes.

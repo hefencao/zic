@@ -16,6 +16,7 @@ import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'app_preferences.dart';
+import 'artifact_presentation_file_bridge.dart';
 import 'debug_trace.dart';
 import 'demo_home.dart';
 import 'home_library_session.dart';
@@ -602,6 +603,8 @@ final class _BootstrapAppState extends State<_BootstrapApp>
             ? null
             : _SafTreeIoAdapter(SafStore(treeUri: safOverride)),
         safTreeUri: safOverride,
+        presentationFileLeaseFactory:
+            const _AndroidArtifactPresentationFileLeaseFactory(),
         traceSink: _debugTrace,
       );
       final cacheCoordinator = createAppResourceCache(
@@ -1130,6 +1133,84 @@ class _SafTreeIoAdapter
   }
 }
 
+final class _AndroidArtifactPresentationFileLeaseFactory
+    implements ArtifactPresentationFileLeaseFactory {
+  const _AndroidArtifactPresentationFileLeaseFactory();
+
+  static const int _metadataProbeBytes = 64 * 1024;
+  static const AndroidArtifactPresentationFileBridge _bridge =
+      AndroidArtifactPresentationFileBridge();
+
+  @override
+  Future<ArtifactCachePresentationFileLease?> open(
+    String accessLocator, {
+    required int expectedLength,
+  }) async {
+    if (!AndroidArtifactPresentationFileBridge.isSupported) return null;
+    AndroidArtifactPresentationFileHandle? handle;
+    try {
+      final saf = parseSafRecordPath(accessLocator);
+      handle = saf == null
+          ? await _bridge.openDirect(accessLocator)
+          : await _bridge.openSaf(
+              treeUri: saf.treeUri,
+              relativePath: saf.relativePath,
+            );
+    } on PlatformException catch (error) {
+      throw ArtifactReadFailure(
+        kind: switch (error.code) {
+          'saf-access-denied' => ArtifactReadFailureKind.accessDenied,
+          'saf-missing' => ArtifactReadFailureKind.missing,
+          'saf-stale-locator' => ArtifactReadFailureKind.staleLocator,
+          _ => ArtifactReadFailureKind.ioFailure,
+        },
+        accessLocator: accessLocator,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        expectedLength: expectedLength,
+        cause: error,
+      );
+    }
+    if (handle == null) return null;
+    if (handle.length != expectedLength) {
+      await _bridge.close(handle.handle);
+      throw ArtifactReadFailure(
+        kind: ArtifactReadFailureKind.lengthChanged,
+        accessLocator: accessLocator,
+        failedOffset: 0,
+        bytesEmitted: 0,
+        expectedLength: expectedLength,
+        observedLength: handle.length,
+      );
+    }
+    final prefix = await tryReadEncodedFilePrefix(
+      FileEncodedResourceSource(
+        path: handle.path,
+        lengthInBytes: handle.length,
+        origin: EncodedResourceOrigin.durableCacheFile,
+      ),
+      maxBytes: _metadataProbeBytes,
+    );
+    if (prefix == null) {
+      await _bridge.close(handle.handle);
+      return null;
+    }
+    final dimensions = sniffImageDimensionsFromBytes(prefix);
+    var released = false;
+    return ArtifactCachePresentationFileLease(
+      path: handle.path,
+      length: handle.length,
+      width: dimensions?.width,
+      height: dimensions?.height,
+      release: () async {
+        if (released) return;
+        released = true;
+        await _bridge.close(handle!.handle);
+      },
+    );
+  }
+}
+
 Future<_AppServices> _openServices(
   HomeStartupTelemetry telemetry,
   AppPreferencesController preferences, {
@@ -1299,6 +1380,8 @@ Future<_AppServices> _openServices(
           ? null
           : _SafTreeIoAdapter(SafStore(treeUri: safOverride)),
       safTreeUri: safOverride,
+      presentationFileLeaseFactory:
+          const _AndroidArtifactPresentationFileLeaseFactory(),
       traceSink: debugTrace,
     );
     _startupLog('download-composition-open-complete');

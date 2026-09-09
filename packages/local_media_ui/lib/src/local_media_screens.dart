@@ -203,6 +203,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
               ),
               image: image,
               tokenBytesLoader: (_, token) => runtime.loadBytes(token),
+              presentationFileLoader: runtime.openEncodedPresentationFile,
               onRecoverPresentationFailure:
                   runtime.recoverPresentationFailure,
               onRetry: runtime.retryPresentation,

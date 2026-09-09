@@ -46,6 +46,75 @@ void main() {
     );
   });
 
+  test('presentation file lease bypasses hot encoded-byte materialization',
+      () async {
+    final id = _id('presentation-file-hot-memory');
+    var releases = 0;
+    final backend = _Backend(
+      <DownloadId, Uint8List>{
+        id: Uint8List.fromList(<int>[1, 2, 3]),
+      },
+      presentationOpen: (openedId, bytes) async {
+        expect(openedId, id);
+        return ArtifactCachePresentationFileLease(
+          path: '/proc/self/fd/41',
+          length: bytes.lengthInBytes,
+          width: 1200,
+          height: 1800,
+          release: () async => releases++,
+        );
+      },
+    );
+    final manager = ArtifactCacheManager(backend: backend);
+
+    await manager.readForeground(id);
+    expect(manager.lookupMemory(id), isNotNull);
+    final priorReadAllCalls = backend.readAllCalls;
+
+    final lease = await manager.openPresentationFile(id);
+
+    expect(lease, isNotNull);
+    expect(lease!.path, '/proc/self/fd/41');
+    expect(lease.width, 1200);
+    expect(lease.height, 1800);
+    expect(backend.readAllCalls, priorReadAllCalls);
+    await lease.release();
+    expect(releases, 1);
+  });
+
+  test('presentation file lease rejects a generation invalidated while opening',
+      () async {
+    final id = _id('presentation-file-stale-generation');
+    final opened = Completer<void>();
+    final releaseOpen = Completer<void>();
+    var releases = 0;
+    final backend = _Backend(
+      <DownloadId, Uint8List>{
+        id: Uint8List.fromList(<int>[4, 5, 6]),
+      },
+      presentationOpen: (openedId, bytes) async {
+        if (!opened.isCompleted) opened.complete();
+        await releaseOpen.future;
+        return ArtifactCachePresentationFileLease(
+          path: '/proc/self/fd/42',
+          length: bytes.lengthInBytes,
+          width: 1200,
+          height: 1800,
+          release: () async => releases++,
+        );
+      },
+    );
+    final manager = ArtifactCacheManager(backend: backend);
+
+    final pending = manager.openPresentationFile(id);
+    await opened.future;
+    await manager.invalidate(id);
+    releaseOpen.complete();
+
+    expect(await pending, isNull);
+    expect(releases, 1);
+  });
+
   test('memory cache protects its byte buffers with unmodifiable views', () async {
     final id = _id('memory-ownership');
     final manager = ArtifactCacheManager(
@@ -1060,6 +1129,7 @@ final class _Backend implements ArtifactCacheBackend {
     this.controlledRead,
     this.invalidateGate,
     this.storeGate,
+    this.presentationOpen,
   });
 
   final Map<DownloadId, Uint8List> values;
@@ -1068,6 +1138,10 @@ final class _Backend implements ArtifactCacheBackend {
       controlledRead;
   final Completer<void>? invalidateGate;
   final Completer<void>? storeGate;
+  final Future<ArtifactCachePresentationFileLease?> Function(
+    DownloadId id,
+    Uint8List bytes,
+  )? presentationOpen;
   int openCalls = 0;
   int readAllCalls = 0;
   int controlledReadCalls = 0;
@@ -1097,6 +1171,9 @@ final class _Backend implements ArtifactCacheBackend {
               controlledReadCalls++;
               return controlledRead!(control, bytes);
             },
+      openPresentationFile: presentationOpen == null
+          ? null
+          : () => presentationOpen!(id, bytes),
     );
   }
 

@@ -31,6 +31,7 @@ final class ArtifactCacheManager {
   final Map<_ArtifactByteKey, _InFlightArtifactRead> _inFlight =
       <_ArtifactByteKey, _InFlightArtifactRead>{};
   final Map<DownloadId, int> _mutationGenerations = <DownloadId, int>{};
+  final Object _presentationFileCacheEpoch = Object();
   final Map<DownloadId, Future<void>> _mutationTails =
       <DownloadId, Future<void>>{};
   final Set<_ArtifactByteKey> _durableMemory = <_ArtifactByteKey>{};
@@ -255,6 +256,60 @@ final class ArtifactCacheManager {
   }) => requiresFreshSource(id)
       ? Future<ArtifactCacheLookup?>.value()
       : _lookupCandidatesInOrder(id, <DownloadId>[id], control: control);
+
+  /// Opens a durable engine-readable file/descriptor lease without
+  /// materializing the encoded body in Dart.
+  ///
+  /// Memory-tier hits are intentionally ignored: a file lease must remain
+  /// bound to the persistent physical generation selected by the backend.
+  Future<ArtifactCachePresentationFileRead?> openPresentationFile(
+    DownloadId id, {
+    TaskControl? control,
+  }) async {
+    if (requiresFreshSource(id)) return null;
+    for (final storageId in _lookupCandidates(id)) {
+      control?.throwIfCancelled();
+      await _awaitMutationBarrier(storageId, control);
+      final generation = generationFor(storageId);
+      final entry = await backend.openArtifactStream(storageId);
+      control?.throwIfCancelled();
+      if (requiresFreshSource(id) || generationFor(storageId) != generation) {
+        continue;
+      }
+      final opener = entry?.openPresentationFile;
+      if (entry == null || opener == null || entry.length <= 0) continue;
+      final lease = await opener();
+      if (lease == null) continue;
+      var keep = false;
+      try {
+        control?.throwIfCancelled();
+        if (requiresFreshSource(id) ||
+            generationFor(storageId) != generation ||
+            lease.length != entry.length ||
+            lease.path.isEmpty) {
+          continue;
+        }
+        keep = true;
+        return ArtifactCachePresentationFileRead(
+          path: lease.path,
+          length: lease.length,
+          width: lease.width,
+          height: lease.height,
+          cacheIdentity: (
+            _presentationFileCacheEpoch,
+            storageId.key,
+            generation,
+          ),
+          storageId: storageId,
+          generation: generation,
+          release: lease.release,
+        );
+      } finally {
+        if (!keep) await lease.release();
+      }
+    }
+    return null;
+  }
 
   Future<ArtifactCacheLookup?> _lookupCandidatesInOrder(
     DownloadId id,
@@ -1066,6 +1121,28 @@ final class ArtifactCacheMemoryRead {
   final DownloadId storageId;
   final int generation;
   final bool durable;
+}
+
+final class ArtifactCachePresentationFileRead {
+  const ArtifactCachePresentationFileRead({
+    required this.path,
+    required this.length,
+    required this.storageId,
+    required this.generation,
+    required this.cacheIdentity,
+    required this.release,
+    this.width,
+    this.height,
+  });
+
+  final String path;
+  final int length;
+  final int? width;
+  final int? height;
+  final DownloadId storageId;
+  final int generation;
+  final Object cacheIdentity;
+  final Future<void> Function() release;
 }
 
 final class ArtifactCacheRead {

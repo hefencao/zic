@@ -963,6 +963,93 @@ String sniffImageExtensionFromBytes(List<int> header) {
   return 'bin';
 }
 
+/// Reads intrinsic dimensions from bounded encoded-image header bytes without
+/// decoding pixels. Returns null when the format needs metadata beyond the
+/// supplied prefix (for example a JPEG whose SOF follows a large EXIF block).
+({int width, int height})? sniffImageDimensionsFromBytes(List<int> header) {
+  bool at(int offset, List<int> signature) {
+    if (offset < 0 || header.length < offset + signature.length) return false;
+    for (var index = 0; index < signature.length; index++) {
+      if (header[offset + index] != signature[index]) return false;
+    }
+    return true;
+  }
+
+  int u16be(int offset) => (header[offset] << 8) | header[offset + 1];
+  int u16le(int offset) => header[offset] | (header[offset + 1] << 8);
+  int u32be(int offset) =>
+      (header[offset] << 24) |
+      (header[offset + 1] << 16) |
+      (header[offset + 2] << 8) |
+      header[offset + 3];
+  int u32le(int offset) =>
+      header[offset] |
+      (header[offset + 1] << 8) |
+      (header[offset + 2] << 16) |
+      (header[offset + 3] << 24);
+
+  ({int width, int height})? dimensions(int width, int height) =>
+      width > 0 && height > 0 ? (width: width, height: height) : null;
+
+  if (header.length >= 24 &&
+      at(0, const <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) &&
+      at(12, const <int>[0x49, 0x48, 0x44, 0x52])) {
+    return dimensions(u32be(16), u32be(20));
+  }
+  if (header.length >= 10 &&
+      (at(0, const <int>[0x47, 0x49, 0x46, 0x38, 0x37, 0x61]) ||
+          at(0, const <int>[0x47, 0x49, 0x46, 0x38, 0x39, 0x61]))) {
+    return dimensions(u16le(6), u16le(8));
+  }
+  if (header.length >= 26 && at(0, const <int>[0x42, 0x4d])) {
+    final width = u32le(18);
+    final rawHeight = u32le(22);
+    final height = rawHeight & 0x80000000 == 0
+        ? rawHeight
+        : ((~rawHeight + 1) & 0xffffffff);
+    return dimensions(width, height);
+  }
+  if (header.length >= 8 && at(0, const <int>[0x00, 0x00, 0x01, 0x00])) {
+    return dimensions(
+      header[6] == 0 ? 256 : header[6],
+      header[7] == 0 ? 256 : header[7],
+    );
+  }
+  if (header.length >= 4 && at(0, const <int>[0xff, 0xd8, 0xff])) {
+    var offset = 2;
+    while (offset + 3 < header.length) {
+      if (header[offset] != 0xff) {
+        offset++;
+        continue;
+      }
+      while (offset < header.length && header[offset] == 0xff) {
+        offset++;
+      }
+      if (offset >= header.length) break;
+      final marker = header[offset++];
+      if (marker == 0xd8 ||
+          marker == 0xd9 ||
+          marker == 0x01 ||
+          (marker >= 0xd0 && marker <= 0xd7)) {
+        continue;
+      }
+      if (marker == 0xda || offset + 1 >= header.length) break;
+      final segmentLength = u16be(offset);
+      if (segmentLength < 2 || offset + segmentLength > header.length) break;
+      final isStartOfFrame = marker >= 0xc0 &&
+          marker <= 0xcf &&
+          marker != 0xc4 &&
+          marker != 0xc8 &&
+          marker != 0xcc;
+      if (isStartOfFrame && segmentLength >= 7) {
+        return dimensions(u16be(offset + 5), u16be(offset + 3));
+      }
+      offset += segmentLength;
+    }
+  }
+  return null;
+}
+
 /// Sniffs a supported image extension from the first 32 bytes of [file].
 /// Falls back to `bin` on read failure or unknown/unsupported format.
 Future<String> sniffImageExtension(File file) async {
