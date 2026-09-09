@@ -87,6 +87,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   @override
   void initState() {
     super.initState();
+    final clock = widget.traceClock;
+    final initStartedAtMicros = clock?.nowMicros();
     _detectedFormat = widget.image.format;
     _state = ImagePreviewState.loading(widget.image.format);
     _loadToken = MediaLoadToken();
@@ -100,6 +102,29 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       }
     } else {
       unawaited(_load());
+    }
+    if (clock != null && initStartedAtMicros != null) {
+      final initMicros = clock.nowMicros() - initStartedAtMicros;
+      if (initMicros >= 20000) {
+        final identity = widget.downloadIdentity?.key ?? widget.image.sourceId;
+        final revision = widget.demandRevision?.call();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          widget.traceSink.record(
+            traceEvent(
+              clock: clock,
+              sessionId: widget.traceSessionId,
+              kind: TraceEventKind.readerObservation,
+              identityHash: identity,
+              revision: revision,
+              payload: <String, Object?>{
+                'stage': 'presentation-widget-init',
+                'durationMicros': initMicros,
+              },
+            ),
+          );
+        });
+      }
     }
   }
 

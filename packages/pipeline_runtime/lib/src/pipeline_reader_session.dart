@@ -1137,7 +1137,7 @@ final class PipelineReaderSession {
         scheduler.inPersistentCallbacks || scheduler.hasScheduledFrame;
     if (!frameBusy) return false;
 
-    final role = _binding?.pipeline.currentPlan.uploads[id]?.role;
+    final role = _pagedOutputPrewarmRole(id);
     final output = _pageOutputs[id.download.key];
     final detached = output == null ||
         output._listeners.isEmpty ||
@@ -1182,8 +1182,7 @@ final class PipelineReaderSession {
       final prewarmer = _media is PipelineOutputPrewarmer
           ? _media as PipelineOutputPrewarmer
           : null;
-      final uploads = _binding?.pipeline.currentPlan.uploads;
-      if (prewarmer == null || uploads == null) {
+      if (prewarmer == null || _binding == null) {
         _deferredOutputPrewarms.clear();
         return;
       }
@@ -1194,7 +1193,7 @@ final class PipelineReaderSession {
       for (final entry in _deferredOutputPrewarms.entries.toList(
         growable: false,
       )) {
-        final role = uploads[entry.key]?.role;
+        final role = _pagedOutputPrewarmRole(entry.key);
         final priority = switch (role) {
           PageRole.current => 3,
           PageRole.transition => 2,
@@ -1421,6 +1420,22 @@ final class PipelineReaderSession {
     return output;
   }
 
+  PageRole? _pagedOutputPrewarmRole(DecodeId id) {
+    final plan = _binding?.pipeline.currentPlan;
+    final uploadRole = plan?.uploads[id]?.role;
+    if (uploadRole == PageRole.current ||
+        uploadRole == PageRole.transition ||
+        uploadRole == PageRole.next) {
+      return uploadRole;
+    }
+    // Animated next pages intentionally have DecodeDemand but no UploadDemand:
+    // frame upload remains limited to current/transition. The already-bounded
+    // next decode role may still prepare an empty platform output lease so the
+    // first visible upload does not also pay SurfaceProducer creation latency.
+    final decodeRole = plan?.decodes[id]?.role;
+    return decodeRole == PageRole.next ? PageRole.next : null;
+  }
+
   void _maybePrewarmPagedOutput(
     DecodeId id, {
     ReaderObs? observation,
@@ -1433,14 +1448,11 @@ final class PipelineReaderSession {
     }
     final pageIndex = _pageIndexByPageId[id.download.content.pageId];
     if (pageIndex == null) return;
-    final demand = _binding?.pipeline.currentPlan.uploads[id];
-    if (demand == null ||
-        (demand.role != PageRole.current &&
-            demand.role != PageRole.next &&
-            demand.role != PageRole.transition)) {
-      // Only the current/transition/next output roles can become visible
-      // before a PageView host catches up. Keep this guard before creating
-      // any detached projection for the outer window.
+    final role = _pagedOutputPrewarmRole(id);
+    if (role == null) {
+      // Only current/transition output work plus the existing decode-only next
+      // role may pre-create a detached presentation lease. next2/previous and
+      // the outer encoded window remain presentation-inert.
       return;
     }
     final asset = chapter.pages[pageIndex];
@@ -1494,7 +1506,7 @@ final class PipelineReaderSession {
         _recordPagedOutputPrewarm(
           id: id,
           pageIndex: pageIndex,
-          role: demand.role,
+          role: role,
           readyUpload: readyUpload,
           output: existing,
           created: false,
@@ -1518,7 +1530,7 @@ final class PipelineReaderSession {
       _recordPagedOutputPrewarm(
         id: id,
         pageIndex: pageIndex,
-        role: demand.role,
+        role: role,
         readyUpload: readyUpload,
         output: output,
         created: created,
@@ -2291,15 +2303,9 @@ final class PipelineReaderSession {
     if (observation == null || observation.direction == ReadingDirection.vertical) {
       return;
     }
-    final id = _activeUploadIdentity(snapshot.id);
+    final id = _activeDecodeIdentity(snapshot.id);
     if (id == null || _outputPrewarmSizes.containsKey(id)) return;
-    final demand = _binding?.pipeline.currentPlan.uploads[id];
-    if (demand == null ||
-        (demand.role != PageRole.current &&
-            demand.role != PageRole.next &&
-            demand.role != PageRole.transition)) {
-      return;
-    }
+    if (_pagedOutputPrewarmRole(id) == null) return;
     final pageIndex = _pageIndexByPageId[id.download.content.pageId];
     if (pageIndex == null) return;
     final asset = chapter.pages[pageIndex];
@@ -2387,7 +2393,7 @@ final class PipelineReaderSession {
       return;
     }
     final observation = _lastAcceptedControlObservation;
-    final demand = _binding?.pipeline.currentPlan.uploads[id];
+    final prewarmRole = _pagedOutputPrewarmRole(id);
     final prewarmer = _media is PipelineOutputPrewarmer
         ? _media as PipelineOutputPrewarmer
         : null;
@@ -2395,10 +2401,7 @@ final class PipelineReaderSession {
         observation != null &&
         observation.direction != ReadingDirection.vertical &&
         _media.renderer == RendererKind.androidTexture &&
-        demand != null &&
-        (demand.role == PageRole.current ||
-            demand.role == PageRole.next ||
-            demand.role == PageRole.transition)) {
+        prewarmRole != null) {
       // The native decoder has already resolved the exact aligned canvas for
       // this page. Start the matching SurfaceProducer prewarm before the
       // upload lane asks for its lease; the old viewport-sized guess cannot be
@@ -2849,46 +2852,48 @@ final class PipelineReaderSession {
       _pageOutputs.remove(key);
     }
     final acceptedObservation = observation ?? _lastAcceptedControlObservation;
-    final uploads = _binding?.pipeline.currentPlan.uploads;
+    final plan = _binding?.pipeline.currentPlan;
     // A prewarm marker is only a short-lived request guard. Once the role
     // plan no longer admits that DecodeId as a page that can enter the
     // gallery, let a later re-entry request a fresh unpresented lease. The
     // native pool still deduplicates an in-flight/idle lease, so this does not
     // allocate duplicate SurfaceProducers while the old request is settling.
     if (_outputPrewarmSizes.isNotEmpty) {
-      _outputPrewarmSizes.removeWhere((id, _) {
-        final role = uploads?[id]?.role;
-        return role != PageRole.current &&
-            role != PageRole.next &&
-            role != PageRole.transition;
-      });
+      _outputPrewarmSizes.removeWhere(
+        (id, _) => _pagedOutputPrewarmRole(id) == null,
+      );
     }
     if (_deferredOutputPrewarms.isNotEmpty) {
-      _deferredOutputPrewarms.removeWhere((id, _) {
-        final role = uploads?[id]?.role;
-        return role != PageRole.current &&
-            role != PageRole.next &&
-            role != PageRole.transition;
-      });
+      _deferredOutputPrewarms.removeWhere(
+        (id, _) => _pagedOutputPrewarmRole(id) == null,
+      );
     }
     if (acceptedObservation == null ||
         acceptedObservation.direction == ReadingDirection.vertical ||
         _media.renderer != RendererKind.androidTexture ||
-        uploads == null) {
+        plan == null) {
       return;
     }
     // Create the detached projection as soon as the role plan is committed,
-    // rather than waiting for the first UploadSnapshot callback. This closes
-    // the race where a current or prefetched frame is already ready before the
-    // PageView host mounts or begins its next drag.
-    for (final entry in uploads.entries) {
+    // rather than waiting for the first UploadSnapshot callback. Animated next
+    // remains decode-only, but its exact platform output lease can be prepared
+    // before PageView mounts so transition upload does not pay creation cost.
+    final prewarmIds = <DecodeId>{};
+    for (final entry in plan.uploads.entries) {
       final role = entry.value.role;
       if (role == PageRole.current ||
           role == PageRole.next ||
           role == PageRole.transition) {
-        final id = entry.key;
-        _maybePrewarmPagedOutput(id, observation: acceptedObservation);
+        prewarmIds.add(entry.key);
       }
+    }
+    for (final entry in plan.decodes.entries) {
+      if (entry.value.role == PageRole.next) {
+        prewarmIds.add(entry.key);
+      }
+    }
+    for (final id in prewarmIds) {
+      _maybePrewarmPagedOutput(id, observation: acceptedObservation);
     }
   }
 

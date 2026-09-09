@@ -325,6 +325,61 @@ void main() {
     await session.dispose();
   });
 
+  test('animated next prewarms output lease without opening upload demand', () async {
+    final trace = MemoryTraceSink();
+    final runtime = _Runtime(renderer: RendererKind.androidTexture);
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(runtime),
+    ).create(
+      chapter: _galleryChapter(pageCount: 4),
+      sessionId: 'decode-only-next-output-prewarm-test',
+      traceSink: trace,
+    );
+    session.attach(
+      DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+        renderer: RendererKind.androidTexture,
+      ),
+    );
+    final current = session.chapter.pages[0];
+    session.accept(
+      ReaderObs(
+        sessionId: 'reader',
+        currentIndex: 0,
+        stableIndex: 0,
+        interaction: Interaction.idle,
+        logicalPosition: 0,
+        velocity: 0,
+        currentCoverage: Coverage(
+          pageIndex: 0,
+          assetKey: current.assetKey,
+          fraction: 1,
+        ),
+        direction: ReadingDirection.ltr,
+        timestamp: DateTime.utc(2026),
+        monotonicMicros: 1,
+      ),
+    );
+
+    expect(runtime.prewarmCalls, 2);
+    final prewarms = trace.events
+        .where((event) => event.kind == TraceEventKind.pageOutputPrewarmed)
+        .toList(growable: false);
+    expect(prewarms, hasLength(2));
+    expect(
+      prewarms.map((event) => event.payload['role']),
+      containsAll(<String>['current', 'next']),
+    );
+    expect(
+      trace.events.where((event) => event.kind == TraceEventKind.uploadDemand),
+      hasLength(1),
+      reason: 'next output lease prewarm must not create frame upload work',
+    );
+
+    await session.dispose();
+  });
+
   test('current detached prewarm bypasses an already queued Flutter frame', () async {
     final scheduler = _ControlledFrameScheduler(scheduled: true);
     final runtime = _Runtime(
@@ -429,8 +484,9 @@ void main() {
     );
 
     // Current is the only output allowed to cross the queued-frame boundary
-    // immediately. The transition waits for one idle slot; unresolved WebP
-    // next pages no longer gain speculative static-upload eligibility here.
+    // immediately. Transition and decode-only next leases queue behind it,
+    // with transition winning the first idle slot. Neither creates frame
+    // upload work or shares one idle turn with another platform create.
     expect(runtime.prewarmCalls, 1);
     expect(scheduler.pendingCallbackCount, 1);
     expect(
@@ -441,6 +497,10 @@ void main() {
 
     scheduler.flushAfterFrame();
     expect(runtime.prewarmCalls, 2);
+    expect(scheduler.pendingCallbackCount, 1);
+
+    scheduler.flushAfterFrame();
+    expect(runtime.prewarmCalls, 3);
     expect(scheduler.pendingCallbackCount, 0);
 
     await session.dispose();

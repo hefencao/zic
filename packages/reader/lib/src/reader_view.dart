@@ -3930,11 +3930,35 @@ final class _ReaderPageHostState extends State<_ReaderPageHost>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final pageBuilderStartedAtMicros = widget.clock.nowMicros();
     final custom = widget.pageBuilder?.call(
       context,
       widget.asset,
       _reportFirstFrame,
     );
+    final pageBuilderMicros =
+        widget.clock.nowMicros() - pageBuilderStartedAtMicros;
+    if (pageBuilderMicros >= 20000) {
+      final asset = widget.asset;
+      final revision = widget.demandRevision?.call();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || widget.asset.assetKey != asset.assetKey) return;
+        widget.traceSink.record(
+          traceEvent(
+            clock: widget.clock,
+            sessionId: widget.sessionId,
+            kind: TraceEventKind.readerObservation,
+            identityHash: asset.assetKey,
+            revision: revision,
+            payload: <String, Object?>{
+              'stage': 'page-host-page-builder',
+              'pageIndex': asset.index,
+              'durationMicros': pageBuilderMicros,
+            },
+          ),
+        );
+      });
+    }
     return custom ??
         _StaticReaderPage(
           asset: widget.asset,
