@@ -1,5 +1,3 @@
-import 'dart:collection';
-
 import 'package:domain/domain.dart';
 
 typedef VersionPageCanonicalResolver = Iterable<DownloadId> Function(
@@ -14,8 +12,8 @@ typedef VersionPageCanonicalResolver = Iterable<DownloadId> Function(
 /// Resolver replacement is scoped so refreshed relation evidence can revoke
 /// stale projections without touching unrelated authorities.
 final class VersionPageAuthority {
-  final LinkedHashMap<String, LinkedHashMap<String, VersionPageCanonicalResolver>>
-      _scopes = <String, LinkedHashMap<String, VersionPageCanonicalResolver>>{};
+  final Map<String, Map<String, VersionPageCanonicalResolver>> _scopes =
+      <String, Map<String, VersionPageCanonicalResolver>>{};
 
   int get scopeCount => _scopes.length;
   int get resolverCount => _scopes.values
