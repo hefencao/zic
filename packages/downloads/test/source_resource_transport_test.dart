@@ -555,13 +555,73 @@ void main() {
     expect(source.loadCalls, 0);
   });
 
-  test('replacement non-image response is terminal after one semantic retry',
+  test('replacement non-image follows the current source semantic retry chain',
       () async {
     final failed = Uri.parse('https://fixture/non-image');
     final recovered = Uri.parse('https://fixture/still-non-image');
+    final recoveredAgain = Uri.parse('https://fixture/recovered.webp');
     final source = _FixtureSource(
       request: ComicResourceRequest(uri: failed),
-      retryRequest: ComicResourceRequest(uri: recovered),
+      retryRequests: <ComicResourceRequest?>[
+        ComicResourceRequest(uri: recovered),
+        ComicResourceRequest(uri: recoveredAgain),
+      ],
+    );
+    final opened = <Uri>[];
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (request) async {
+        opened.add(request.uri);
+        if (request.uri != recoveredAgain) {
+          throw const Failure(
+            code: ErrorCode.network,
+            message: 'source host returned non-image bytes',
+            details: <String, Object?>{
+              'sourceMediaProtocolMismatch': true,
+              'sourceMediaSemanticRejected': true,
+            },
+          );
+        }
+        return ByteResponse(
+          bytes: Stream<List<int>>.value(<int>[
+            0xff,
+            0xd8,
+            0xff,
+            1,
+            2,
+            3,
+            0xff,
+            0xd9,
+          ]),
+          statusCode: HttpStatus.ok,
+          rangeStart: 0,
+          totalLength: 8,
+        );
+      },
+    );
+    addTearDown(pool.close);
+
+    final response = await pool
+        .loaderFor(source, Uri.parse('venera-resource:semantic-chain'))();
+
+    expect(await _collect(response.bytes), hasLength(8));
+    expect(opened, <Uri>[failed, recovered, recoveredAgain]);
+    expect(source.resolveCalls, 1);
+    expect(source.retryCalls, 2);
+    expect(source.loadCalls, 0);
+  });
+
+  test('source semantic recovery stops after five replacement configs',
+      () async {
+    final failed = Uri.parse('https://fixture/non-image');
+    final replacements = List<Uri>.generate(
+      5,
+      (index) => Uri.parse('https://fixture/replacement-$index'),
+    );
+    final source = _FixtureSource(
+      request: ComicResourceRequest(uri: failed),
+      retryRequests: replacements
+          .map<ComicResourceRequest?>((uri) => ComicResourceRequest(uri: uri))
+          .toList(),
     );
     final opened = <Uri>[];
     final pool = ExternalPluginResourceTransportPool(
@@ -580,7 +640,7 @@ void main() {
     addTearDown(pool.close);
 
     await expectLater(
-      pool.loaderFor(source, Uri.parse('venera-resource:semantic-terminal'))(),
+      pool.loaderFor(source, Uri.parse('venera-resource:semantic-limit'))(),
       throwsA(
         isA<Failure>()
             .having((error) => error.code, 'code', ErrorCode.source)
@@ -591,9 +651,9 @@ void main() {
             ),
       ),
     );
-    expect(opened, <Uri>[failed, recovered]);
+    expect(opened, <Uri>[failed, ...replacements]);
     expect(source.resolveCalls, 1);
-    expect(source.retryCalls, 1);
+    expect(source.retryCalls, 5);
     expect(source.loadCalls, 0);
   });
 
@@ -782,12 +842,14 @@ class _FixtureSource
   _FixtureSource({
     required this.request,
     this.retryRequest,
+    this.retryRequests,
     this.resolveGate,
     Uint8List? runtimeBytes,
   }) : runtimeBytes = runtimeBytes ?? Uint8List(0);
 
   final ComicResourceRequest request;
   final ComicResourceRequest? retryRequest;
+  final List<ComicResourceRequest?>? retryRequests;
   final Completer<ComicResourceRequest>? resolveGate;
   final Uint8List runtimeBytes;
   int resolveCalls = 0;
@@ -832,6 +894,11 @@ class _FixtureSource
     TaskControl? control,
   }) async {
     retryCalls++;
+    final retries = retryRequests;
+    if (retries != null) {
+      final index = retryCalls - 1;
+      return index < retries.length ? retries[index] : null;
+    }
     return retryRequest;
   }
 

@@ -110,8 +110,7 @@ final class _BootstrapApp extends StatefulWidget {
   State<_BootstrapApp> createState() => _BootstrapAppState();
 }
 
-final class _BootstrapAppState extends State<_BootstrapApp>
-    with WidgetsBindingObserver {
+final class _BootstrapAppState extends State<_BootstrapApp> {
   late final AppPreferencesController _preferences;
   late final DebugTraceLog _debugTrace;
   late final HomeStartupTelemetry _startupTelemetry;
@@ -123,14 +122,12 @@ final class _BootstrapAppState extends State<_BootstrapApp>
   _AppServices? _services;
   Timer? _servicesStartupTimer;
   Future<void>? _servicesOpening;
-  Future<void>? _explicitExitPreparation;
   bool _homeMounted = false;
   bool _disposed = false;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _preferences = AppPreferencesController();
     // Resolve the platform support directory once and start it during the
     // bootstrap turn. The first Android startup-channel call can otherwise
@@ -697,94 +694,11 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     _debugTrace.enabled = _preferences.debugTraceEnabled;
   }
 
-  Future<void> _prepareExplicitExit() {
-    final existing = _explicitExitPreparation;
-    if (existing != null) return existing;
-    late final Future<void> preparation;
-    preparation = Future<void>(() async {
-      final startedAt = _startupClock.elapsedMilliseconds;
-      final services = _services;
-      Future<void> checkpointProjectionBeforeLibraryClose(
-        ImportedLibraryStore? library,
-      ) async {
-        try {
-          if (library is ReaderProgressCheckpointStore) {
-            final progressStore = library as ReaderProgressCheckpointStore;
-            _startupLog('explicit-exit-reader-progress-flush-start');
-            await progressStore
-                .flushProgressCheckpoints()
-                .timeout(const Duration(seconds: 2));
-            final revisionStore = library is ImportedLibraryRevisionStore
-                ? library as ImportedLibraryRevisionStore
-                : null;
-            final revision = await revisionStore?.libraryProjectionRevision;
-            _startupLog(
-              'explicit-exit-reader-progress-flush-complete '
-              'revision=${revision ?? 'none'}',
-            );
-          }
-        } on Object catch (error) {
-          debugPrint('explicit exit Reader progress flush failed: $error');
-        }
-        try {
-          final checkpointHomeProjection =
-              _serviceHandoff.checkpointHomeProjection;
-          if (checkpointHomeProjection != null) {
-            _startupLog('explicit-exit-home-projection-checkpoint-start');
-            await checkpointHomeProjection()
-                .timeout(const Duration(seconds: 2));
-            _startupLog('explicit-exit-home-projection-checkpoint-complete');
-          }
-        } on Object catch (error) {
-          debugPrint('explicit exit Home projection checkpoint failed: $error');
-        }
-      }
-
-      try {
-        // Quiesce every Reader/download/plugin owner before the final library
-        // barrier. The callback runs immediately before library.close(), so no
-        // remaining composition owner can enqueue another Reader checkpoint
-        // after Home snapshots the final SQLite projection revision.
-        if (services != null) {
-          await services.close(
-            settleTimeout: const Duration(seconds: 2),
-            beforeLibraryClose: checkpointProjectionBeforeLibraryClose,
-          );
-        } else {
-          await checkpointProjectionBeforeLibraryClose(null);
-          await shutdownDefaultLocalMediaPipeline();
-        }
-      } on Object catch (error) {
-        debugPrint('explicit exit service cleanup failed: $error');
-      }
-      try {
-        await _preferences.flush().timeout(const Duration(milliseconds: 500));
-      } on Object catch (error) {
-        debugPrint('explicit exit preference flush failed: $error');
-      }
-      _startupLog(
-        'explicit-exit-prepared durationMs='
-        '${_startupClock.elapsedMilliseconds - startedAt}',
-      );
-    });
-    _explicitExitPreparation = preparation;
-    return preparation;
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
-      unawaited(_services?.checkpointTransferPartials());
-    }
-  }
-
   @override
   void dispose() {
     _disposed = true;
     _servicesStartupTimer?.cancel();
     _servicesStartupTimer = null;
-    WidgetsBinding.instance.removeObserver(this);
     _preferences.removeListener(_syncDebugTrace);
     final services = _services;
     if (services != null) {
@@ -807,7 +721,6 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       startupTelemetry: _startupTelemetry,
       preferences: _preferences,
       debugTrace: _debugTrace,
-      beforeExit: _prepareExplicitExit,
     );
   }
 }
@@ -931,7 +844,7 @@ final class _AppServices {
     if (running != null) return running;
     late final Future<void> checkpoint;
     checkpoint = composition.transferRuntime
-        .checkpointPartials(reason: 'app-lifecycle-checkpoint')
+        .checkpointPartials(reason: 'app-runtime-safety-checkpoint')
         .whenComplete(() {
       if (identical(_partialCheckpoint, checkpoint)) {
         _partialCheckpoint = null;
@@ -1532,7 +1445,6 @@ final class App extends StatefulWidget {
     this.preferences,
     this.debugTrace,
     this.storageRoot,
-    this.beforeExit,
     super.key,
   }) : assert(
           wholeComicDownloads == null || chapterDownloads != null,
@@ -1559,7 +1471,6 @@ final class App extends StatefulWidget {
   final AppPreferencesController? preferences;
   final DebugTraceLog? debugTrace;
   final String? storageRoot;
-  final Future<void> Function()? beforeExit;
   final HomeStartupTelemetry? startupTelemetry;
   final HomeServiceHandoff? serviceHandoff;
   final Key? homeKey;
@@ -1617,7 +1528,6 @@ final class _AppState extends State<App> {
         ),
         themeMode: _preferences.themeMode,
         home: _RootBackExitGuard(
-          beforeExit: widget.beforeExit,
           child: DemoHome(
             key: widget.homeKey,
             picker: widget.picker,
@@ -1649,10 +1559,9 @@ final class _AppState extends State<App> {
 }
 
 final class _RootBackExitGuard extends StatefulWidget {
-  const _RootBackExitGuard({required this.child, this.beforeExit});
+  const _RootBackExitGuard({required this.child});
 
   final Widget child;
-  final Future<void> Function()? beforeExit;
 
   @override
   State<_RootBackExitGuard> createState() => _RootBackExitGuardState();
@@ -1661,14 +1570,13 @@ final class _RootBackExitGuard extends StatefulWidget {
 final class _RootBackExitGuardState extends State<_RootBackExitGuard> {
   static const Duration _confirmWindow = Duration(seconds: 2);
   bool _exitArmed = false;
-  bool _exiting = false;
   Timer? _disarmTimer;
 
   void _handlePopInvokedWithResult(bool didPop, Object? result) {
     if (didPop) return;
     if (_exitArmed) {
       _disarm();
-      unawaited(_exitAfterCleanup());
+      unawaited(_moveToBackground());
       return;
     }
     _exitArmed = true;
@@ -1681,21 +1589,14 @@ final class _RootBackExitGuardState extends State<_RootBackExitGuard> {
       ..hideCurrentSnackBar()
       ..showSnackBar(
         const SnackBar(
-          content: Text('再按一次返回键退出'),
+          content: Text('再按一次返回到后台'),
           duration: _confirmWindow,
         ),
       );
   }
 
-  Future<void> _exitAfterCleanup() async {
-    if (_exiting) return;
-    _exiting = true;
-    try {
-      await widget.beforeExit?.call();
-    } on Object catch (error) {
-      debugPrint('explicit exit cleanup failed: $error');
-    }
-    final platformHandled = await requestAndroidApplicationExit();
+  Future<void> _moveToBackground() async {
+    final platformHandled = await requestAndroidApplicationBackground();
     if (!platformHandled) {
       await SystemNavigator.pop();
     }

@@ -28,6 +28,21 @@ typedef DebugTraceFileExporter = Future<String?> Function({
 typedef DebugTraceClipboardWriter = Future<void> Function(String text);
 
 const debugTraceClipboardMaxBytes = 64 * 1024;
+const _debugTraceExportChunkSize = 128;
+
+Future<Uint8List> _encodeDebugTraceEvents(Iterable<TraceEvent> events) async {
+  final bytes = BytesBuilder(copy: false);
+  var index = 0;
+  for (final event in events) {
+    if (index > 0) bytes.addByte(0x0a);
+    bytes.add(utf8.encode(event.toJsonLine()));
+    index++;
+    if (index % _debugTraceExportChunkSize == 0) {
+      await Future<void>.delayed(Duration.zero);
+    }
+  }
+  return bytes.takeBytes();
+}
 
 final class DebugTraceScreen extends StatefulWidget {
   const DebugTraceScreen({
@@ -49,6 +64,7 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
   String _query = '';
   String? _sessionId;
   _TraceLevelFilter _level = _TraceLevelFilter.all;
+  bool _exporting = false;
 
   DebugTraceLog get log => widget.log;
 
@@ -94,22 +110,25 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
   }
 
   Future<void> _exportFiltered() async {
-    final events = _filteredEvents(log.exportEvents);
-    final stamp = DateTime.now()
-        .toUtc()
-        .toIso8601String()
-        .replaceAll(':', '-')
-        .split('.').first;
-    final name = 'zic-debug-trace-$stamp.jsonl';
-    final text = events.map((event) => event.toJsonLine()).join('\n');
+    if (_exporting) return;
+    setState(() => _exporting = true);
+    await WidgetsBinding.instance.endOfFrame;
     try {
       final exporter = widget.exportFile;
       if (exporter == null) {
         throw UnsupportedError('当前组合未提供 Trace 文件导出能力');
       }
+      final events = _filteredEvents(log.exportEvents);
+      final stamp = DateTime.now()
+          .toUtc()
+          .toIso8601String()
+          .replaceAll(':', '-')
+          .split('.').first;
+      final name = 'zic-debug-trace-$stamp.jsonl';
+      final bytes = await _encodeDebugTraceEvents(events);
       final path = await exporter(
         suggestedName: name,
-        bytes: Uint8List.fromList(utf8.encode(text)),
+        bytes: bytes,
       );
       if (!mounted || path == null) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -120,6 +139,8 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Trace 导出失败：$error')),
       );
+    } finally {
+      if (mounted) setState(() => _exporting = false);
     }
   }
 
@@ -138,9 +159,14 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
           ),
           IconButton(
             key: debugTraceExportKey,
-            tooltip: '导出筛选后的诊断结果',
-            onPressed: () => unawaited(_exportFiltered()),
-            icon: const Icon(Icons.file_download_outlined),
+            tooltip: _exporting ? '正在准备诊断导出' : '导出筛选后的诊断结果',
+            onPressed: _exporting ? null : () => unawaited(_exportFiltered()),
+            icon: _exporting
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.file_download_outlined),
           ),
           IconButton(
             key: debugTraceClearKey,

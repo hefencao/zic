@@ -7199,6 +7199,7 @@ Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
   final runtime = CompositionDownloadTransferRuntime(
     artifactCacheManager: cache,
     partialDownloadStore: store,
+    transferWorkspace: EphemeralCacheWorkspace.recoverableTransfer(root),
     net: transferNet ??
         NetLane(
           maxActive: 5,

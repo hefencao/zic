@@ -1,6 +1,10 @@
 # ADR 0258：App lifecycle durable partial checkpoint 归属 Composition transfer owner
 
-状态：Accepted（dev.279）
+状态：Superseded
+
+由 ADR 0307 取代。dev.279 把 `paused/detached` 当作 durable partial
+checkpoint 信号的绑定已经撤销；显式 runtime safety checkpoint 能力保留，
+但普通后台化不再触发正文复制。
 
 ## 背景
 

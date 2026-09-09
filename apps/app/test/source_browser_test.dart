@@ -1603,6 +1603,102 @@ void main() {
     );
   });
 
+  testWidgets('local details retries an unpersisted chapter against the live source resolver', (tester) async {
+    final source = _FixtureSource('fixture-live-source', '动态源');
+    final manifest = await source.loadComic(source._comicId);
+    final chapter = manifest.chapters.first;
+    final comic = LibraryComic(
+      sourceId: source.sourceId,
+      comicId: source._comicId,
+      title: source._comic.title,
+      authors: source._comic.authors,
+      tags: source._comic.tags,
+      description: source._comic.description,
+      coverSourceId: source._comic.coverUri?.toString(),
+      readingDirection: source._comic.readingDirection,
+      chapters: const <ImportedLibraryEntry>[],
+      sourceChapters: <Chapter>[chapter],
+      savedAt: DateTime.utc(2026, 9, 9),
+      metadataUpdatedAt: DateTime.utc(2026, 9, 9),
+    );
+    final library = details.ComicDetailsLibrarySnapshot(
+      chapters: const <ImportedLibraryEntry>[],
+      sourceComic: source._comic,
+      sourceChapters: <Chapter>[chapter],
+      readStates: const <String, ChapterReadState>{},
+      preference: ComicPreference.defaults(
+        sourceId: source.sourceId,
+        comicId: source._comicId,
+      ),
+    );
+    BrowsableComicSource? availableSource;
+    details.ComicDetailsChapterLoader? capturedLoader;
+    var ensureCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: details.LocalComicDetailsScreen(
+          comic: comic,
+          initialLibrary: library,
+          categories: const <LibraryCategory>[],
+          loadCover: ({
+            required String sourceId,
+            required String comicId,
+            required Uri? coverUri,
+            required ImportedLibraryEntry? fallbackChapter,
+            required String resourceRole,
+          }) async => MemoryEncodedResourceSource(_tinyPng()),
+          reloadLibrary: ({required bool refreshContent}) async => library,
+          source: null,
+          resolveSource: (_) => availableSource,
+          ensureSourceChapter: (resolved, resolvedComic, resolvedChapter) async {
+            ensureCalls++;
+            expect(identical(resolved, source), isTrue);
+            return ImportedLibraryEntry(
+              chapter: ImportedChapterRecord.remote(
+                comic: resolvedComic,
+                manifest: await source.loadChapter(resolvedChapter.chapterId),
+              ),
+            );
+          },
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (
+            loader, {
+            required bool refreshRemote,
+            required String title,
+            int? initialPageIndex,
+          }) async {
+            capturedLoader = loader;
+            return null;
+          },
+          onDownloadChapter: (_) async {},
+          inspectChapterDownload: (entry) async =>
+              ChapterDownloadSnapshot.idle(entry),
+          downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+          onDownloadComic: (_) async {},
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(
+      tester,
+      find.byKey(details.comicDetailsChapterKey(source.sourceId, chapter.chapterId)),
+    );
+    await tester.tap(
+      find.byKey(details.comicDetailsChapterKey(source.sourceId, chapter.chapterId)),
+    );
+    await tester.pump();
+    expect(capturedLoader, isNotNull);
+
+    await expectLater(capturedLoader!(), throwsA(isA<StateError>()));
+    expect(ensureCalls, 0);
+    availableSource = source;
+    final recovered = await capturedLoader!();
+    expect(recovered.chapter.chapterId, chapter.chapterId);
+    expect(ensureCalls, 1);
+  });
+
   testWidgets('details paints before bulk download status inspection completes',
       (tester) async {
     final source = _FixtureSource(

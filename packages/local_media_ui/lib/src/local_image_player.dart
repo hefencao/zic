@@ -831,6 +831,15 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
                 textAlign: TextAlign.center,
               ),
             ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              key: imageFolderPreviewCopyErrorKey,
+              onPressed: () => Clipboard.setData(
+                ClipboardData(text: '图片无法打开：${_state.error}'),
+              ),
+              icon: const Icon(Icons.copy),
+              label: const Text('复制错误'),
+            ),
             if (widget.onRetry != null) ...<Widget>[
               const SizedBox(height: 12),
               OutlinedButton.icon(

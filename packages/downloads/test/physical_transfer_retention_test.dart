@@ -152,7 +152,7 @@ void main() {
     expect(runtime.registry.sessions, hasLength(1));
   });
 
-  test('process lifecycle checkpoint persists hot partial without retiring owner',
+  test('explicit runtime checkpoint persists hot partial without retiring owner',
       () async {
     final backend = _RetentionStore();
     final runtime = CompositionDownloadTransferRuntime(
@@ -172,10 +172,10 @@ void main() {
     final writer = session.acquireWriter();
     await session.append(writer, 0, <int>[9, 8, 7, 6, 5]);
 
-    // A process lifecycle checkpoint must be safe while the physical writer is
-    // still receiving. It snapshots only the committed prefix and must not
-    // pause, retire, or replace the hot owner.
-    await runtime.checkpointPartials(reason: 'app-lifecycle-checkpoint');
+    // An explicit runtime safety checkpoint remains available for real owner
+    // teardown/migration boundaries. It snapshots only the committed prefix
+    // and must not pause, retire, or replace the hot owner.
+    await runtime.checkpointPartials(reason: 'runtime-safety-checkpoint');
 
     expect(
       backend.partials[id]?.bytes,
@@ -186,7 +186,7 @@ void main() {
     expect(session.hasWriter, isTrue);
 
     await session.append(writer, 5, <int>[4, 3, 2]);
-    await runtime.checkpointPartials(reason: 'app-lifecycle-checkpoint');
+    await runtime.checkpointPartials(reason: 'runtime-safety-checkpoint');
     expect(
       backend.partials[id]?.bytes,
       orderedEquals(<int>[9, 8, 7, 6, 5, 4, 3, 2]),

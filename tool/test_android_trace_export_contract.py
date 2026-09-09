@@ -30,6 +30,8 @@ for token in (
     'contentResolver.openOutputStream(uri, "wt")',
     'trace-export-busy',
     'trace-export-write-failed',
+    'trace-export-host-paused',
+    'trace-export-missing-result-cleared',
 ):
     assert token in activity
 assert 'exportFile: exportDebugTraceDocument' in misc

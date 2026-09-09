@@ -227,6 +227,8 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       MaterialPageRoute<void>(
         builder: (_) => DeferredReaderRoute<_PreparedImportedChapter>(
           title: title,
+          traceSink: widget.debugTrace,
+          traceSessionId: 'reader-entry',
           load: () => _prepareImportedChapter(
             loadChapter,
             refreshRemote: refreshRemote,

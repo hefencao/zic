@@ -605,12 +605,52 @@ void main() {
     await tester.pump();
     await tester.tap(find.byKey(debugTraceExportKey));
     await tester.pump();
+    await tester.pump();
 
     final text = utf8.decode(exported!);
     expect(text.split('\n'), hasLength(3));
     expect(text, contains('\"index\":0'));
     expect(text, contains('\"index\":2'));
     expect(find.text('已导出 3 条诊断 Trace'), findsOneWidget);
+  });
+
+  testWidgets('debug trace export gives immediate busy feedback and is single-flight',
+      (tester) async {
+    final log = DebugTraceLog(maxEvents: 1, maxExportEvents: 10);
+    addTearDown(log.dispose);
+    log.record(
+      TraceEvent(
+        monotonicMicros: 1,
+        sessionId: 'reader-export-busy',
+        kind: TraceEventKind.downloadState,
+      ),
+    );
+    final release = Completer<String?>();
+    var calls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DebugTraceScreen(
+          log: log,
+          exportFile: ({required suggestedName, required bytes}) {
+            calls++;
+            return release.future;
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(debugTraceExportKey));
+    await tester.pump();
+
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(calls, 1);
+    await tester.tap(find.byKey(debugTraceExportKey), warnIfMissed: false);
+    await tester.pump();
+    expect(calls, 1);
+
+    release.complete('/tmp/zic-debug-trace.jsonl');
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
   });
 
   test('debug trace folds high-frequency export samples but preserves errors', () {

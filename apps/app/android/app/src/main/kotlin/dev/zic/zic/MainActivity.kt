@@ -52,6 +52,12 @@ class MainActivity : FlutterActivity() {
     private var startupChannel: MethodChannel? = null
     private var pendingTraceResult: MethodChannel.Result? = null
     private var pendingTraceBytes: ByteArray? = null
+    // ACTION_CREATE_DOCUMENT normally returns through onActivityResult before
+    // this Activity resumes. Root-back now keeps the Activity/engine alive, so
+    // a provider/OEM path that resumes us without delivering that callback
+    // must not leave one MethodChannel result permanently blocking every later
+    // export attempt.
+    private var traceExportHostPaused = false
     private var pendingDownloadPick: MethodChannel.Result? = null
     private var firstFlutterUiDisplayed = false
     private var pendingFirstFlutterUiDisplayedResult: MethodChannel.Result? = null
@@ -128,9 +134,33 @@ class MainActivity : FlutterActivity() {
         startupLog("activity-onStart")
     }
 
+    override fun onPause() {
+        if (pendingTraceResult != null) {
+            traceExportHostPaused = true
+            startupLog("trace-export-host-paused")
+        }
+        super.onPause()
+    }
+
     override fun onResume() {
         super.onResume()
         startupLog("activity-onResume")
+        // For startActivityForResult the normal result callback is dispatched
+        // before onResume. If we get here after the picker paused us and the
+        // pending result is still present, the external round-trip has been
+        // abandoned/lost. Clear it now so a retained Activity cannot poison all
+        // future export attempts.
+        if (traceExportHostPaused && pendingTraceResult != null) {
+            val stale = pendingTraceResult
+            clearPendingTrace()
+            startupLog("trace-export-missing-result-cleared")
+            stale?.error(
+                "trace-export-cancelled",
+                "document picker returned without an activity result",
+                null,
+            )
+        }
+        traceExportHostPaused = false
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -1077,31 +1107,13 @@ class MainActivity : FlutterActivity() {
             )
             return
         }
-        if (method == "finishApplication") {
-            // Dart has already completed durable/composition shutdown before
-            // this handoff. A normal Flutter SystemNavigator.pop() only asks
-            // Android to finish the Activity; MIUI may keep that finishing
-            // Activity (and its owned FlutterEngine) alive through the close
-            // transition while a rapid relaunch creates another engine in the
-            // same process. Acknowledge the channel call first, then tear down
-            // this Activity's engine through FlutterActivity's supported
-            // detach path *before* requesting the Android task finish.
-            startupLog("explicit-native-exit-accepted")
-            result.success(true)
-            mainHandler.post {
-                startupLog("explicit-native-exit-start")
-                val channel = startupChannel
-                startupChannel = null
-                channel?.setMethodCallHandler(null)
-                if (configuredEngine != null) {
-                    startupLog("explicit-native-exit-engine-detach-start")
-                    detachFromFlutterEngine()
-                    configuredEngine = null
-                    startupLog("explicit-native-exit-engine-detach-complete")
-                }
-                finishAndRemoveTask()
-                startupLog("explicit-native-exit-finish-requested")
-            }
+        if (method == "moveApplicationToBackground") {
+            // Root-back is navigation, not application shutdown. Keep this
+            // Activity/FlutterEngine and every Dart owner alive, and let
+            // Android move the existing task behind the launcher immediately.
+            val moved = moveTaskToBack(true)
+            startupLog("application-background-request moved=$moved")
+            result.success(moved)
             return
         }
         if (method == "allFilesAccessGranted") {
@@ -1303,6 +1315,7 @@ class MainActivity : FlutterActivity() {
             )
         }
         try {
+            Log.i(TAG, "trace-export-launch bytes=${bytes.size} mime=$mimeType")
             @Suppress("DEPRECATION")
             startActivityForResult(intent, TRACE_EXPORT_REQUEST)
         } catch (error: Throwable) {
@@ -1344,6 +1357,10 @@ class MainActivity : FlutterActivity() {
         }
         val result = pendingTraceResult
         val bytes = pendingTraceBytes
+        Log.i(
+            TAG,
+            "trace-export-result code=$resultCode hasUri=${data?.data != null} bytes=${bytes?.size ?: 0}",
+        )
         clearPendingTrace()
         if (result == null) return
         val uri: Uri? = data?.data

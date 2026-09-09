@@ -28,6 +28,7 @@ final class CompositionDownloadTransferRuntime {
     required this.net,
     ArtifactCacheReadScheduler? localReadScheduler,
     SpeculativeEncodedReadBudget? speculativeEncodedReadBudget,
+    EphemeralCacheWorkspace? transferWorkspace,
     this.readStallTimeout = DownloadJob.defaultReadStallTimeout,
     this.maxIdlePromotedSessions = 8,
     this.maxIdlePartialSessions = 32,
@@ -38,9 +39,10 @@ final class CompositionDownloadTransferRuntime {
             speculativeEncodedReadBudget ?? SpeculativeEncodedReadBudget(),
         clock = const SystemClock(),
         traceHub = _CompositionTransferTraceHub(),
-        workspace = EphemeralCacheWorkspace.readerSession(
-          'composition-transfer-${++_sequence}',
-        ) {
+        workspace = transferWorkspace ??
+            EphemeralCacheWorkspace.readerSession(
+              'composition-transfer-${++_sequence}',
+            ) {
     final cache = artifactCacheManager;
     final partialStore = partialDownloadStore;
     if (partialStore != null) {
@@ -665,7 +667,7 @@ final class CompositionDownloadTransferRuntime {
   }
 
   Future<void> checkpointPartials({
-    String reason = 'process-lifecycle-checkpoint',
+    String reason = 'runtime-safety-checkpoint',
   }) async {
     final handoff = partialDownloadHandoff;
     if (handoff == null || _disposed) return;

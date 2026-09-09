@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard dev.279 sealed Reader re-entry + process-lifecycle partial durability."""
+"""Guard dev.279 continuity after its lifecycle-checkpoint supersession."""
 from pathlib import Path
 import re
 
@@ -62,40 +62,65 @@ require(
 runtime = text('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
 for marker in (
     'Future<void> checkpointPartials({',
-    "String reason = 'process-lifecycle-checkpoint'",
+    "String reason = 'runtime-safety-checkpoint'",
     'await handoff.persist(session, reason: reason);',
+    'EphemeralCacheWorkspace.readerSession(',
 ):
     req(marker in runtime, f'composition partial checkpoint missing: {marker}')
 
 app = text('apps/app/lib/main.dart') + text('apps/app/lib/app_runtime.dart')
 for marker in (
+    'checkpointTransferPartials()',
+    "checkpointPartials(reason: 'app-runtime-safety-checkpoint')",
+    'await checkpointTransferPartials();',
+    'requestAndroidApplicationBackground()',
+):
+    req(marker in app, f'app runtime safety/background contract missing: {marker}')
+for forbidden in (
     'with WidgetsBindingObserver',
     'AppLifecycleState.paused',
     'AppLifecycleState.detached',
-    'checkpointTransferPartials()',
     "checkpointPartials(reason: 'app-lifecycle-checkpoint')",
-    'await checkpointTransferPartials();',
 ):
-    req(marker in app, f'app lifecycle checkpoint signal missing: {marker}')
+    req(forbidden not in app, f'ordinary background still checkpoints partial: {forbidden}')
+
+workspace = text('packages/storage/lib/src/ephemeral_workspace.dart')
+for marker in (
+    'factory EphemeralCacheWorkspace.recoverableTransfer(String stableId)',
+    "'zic-transfer-$safeId'",
+):
+    req(marker in workspace, f'recoverable transfer staging missing: {marker}')
+downloads = text('packages/downloads/lib/src/chapter_downloads.dart')
+req(
+    'transferWorkspace: EphemeralCacheWorkspace.recoverableTransfer(root)' in downloads,
+    'production composition must inject recoverable app-private staging',
+)
 
 require(
     'packages/downloads/test/physical_transfer_retention_test.dart',
-    'process lifecycle checkpoint persists hot partial without retiring owner',
+    'explicit runtime checkpoint persists hot partial without retiring owner',
     'expect(runtime.registry.findExact(id), same(session));',
     'expect(session.state, DownloadState.receiving);',
     'expect(session.hasWriter, isTrue);',
+)
+require(
+    'packages/downloads/test/partial_download_handoff_test.dart',
+    'replacement runtime restores recoverable app-private partial before network',
+    "reason: 'restart recovery must not depend on durable partial handoff'",
+    'expect(transport.rangeStarts, <int>[prefixLength]);',
 )
 
 for path in (
     'docs/adr/0257-sealed-reader-encoded-generation-continuity.md',
     'docs/adr/0258-app-lifecycle-durable-partial-checkpoint.md',
+    'docs/adr/0307-recoverable-transfer-staging-root-background.md',
     'docs/audits/dev279-local-reentry-cold-partial-regression-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.279 governance file: {path}')
 
-require('docs/ARCHITECTURE.md', 'physical object generation与Reader encoded generation边界', 'durable safety checkpoint')
-require('docs/SPEC.md', 'physical object generation与Reader encoded generation', 'durable safety checkpoint')
+require('docs/ARCHITECTURE.md', 'physical object generation与Reader encoded generation边界', 'recoverable transfer workspace')
+require('docs/SPEC.md', 'physical object generation与Reader encoded generation', 'recoverable staging root')
 require('docs/IMPLEMENTATION_STATUS.md', 'dev.279', 'sealed-source-generation-preserved')
 require('CHANGELOG.md', '0.31.0-dev.279', 'lifecycle partial checkpoint')
 
-print('PASS: dev.279 sealed Reader generation continuity + lifecycle partial durability')
+print('PASS: dev.279 continuity + recoverable staging/background supersession')

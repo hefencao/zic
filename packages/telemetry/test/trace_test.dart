@@ -6,6 +6,17 @@ final class _Clock implements MonoClock {
   int nowMicros() => 42;
 }
 
+enum _FixtureTraceState { ready }
+
+final class _FixtureTraceObject {
+  const _FixtureTraceObject(this.label);
+
+  final String label;
+
+  @override
+  String toString() => 'fixture:$label';
+}
+
 void main() {
   test('trace uses monotonic time and serializes stable fields', () {
     final event = traceEvent(
@@ -18,6 +29,31 @@ void main() {
 
     expect(event.toJson()['t'], 42);
     expect(event.toJson()['revision'], 3);
+  });
+
+
+  test('trace payload is normalized to JSON-safe values at record time', () {
+    final event = traceEvent(
+      clock: _Clock(),
+      sessionId: 'json-safe',
+      kind: TraceEventKind.readerObservation,
+      payload: <String, Object?>{
+        'enum': _FixtureTraceState.ready,
+        'uri': Uri.parse('https://example.invalid/image'),
+        'duration': const Duration(milliseconds: 5),
+        'dateTime': DateTime.utc(2026, 9, 9, 12, 30),
+        'custom': const _FixtureTraceObject('opaque'),
+        'nested': <Object?, Object?>{7: _FixtureTraceState.ready},
+      },
+    );
+
+    final encoded = event.toJsonLine();
+    expect(encoded, contains(r'"enum":"ready"'));
+    expect(encoded, contains('https://example.invalid/image'));
+    expect(encoded, contains('0:00:00.005000'));
+    expect(encoded, contains('2026-09-09T12:30:00.000Z'));
+    expect(encoded, contains('fixture:opaque'));
+    expect(encoded, contains(r'"7":"ready"'));
   });
 
   test('trace replaces Venera locator payloads with compact summaries', () {

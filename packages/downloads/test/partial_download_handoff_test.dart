@@ -261,6 +261,98 @@ void main() {
     await consumer.dispose();
   });
 
+  test('replacement runtime restores recoverable app-private partial before network',
+      () async {
+    final stableId =
+        'runtime-recovery-${DateTime.now().microsecondsSinceEpoch}';
+    final firstWorkspace =
+        EphemeralCacheWorkspace.recoverableTransfer(stableId);
+    addTearDown(firstWorkspace.dispose);
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'recoverable-runtime',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/recoverable-runtime.png'),
+    );
+    final fullBytes = Uint8List.fromList(<int>[
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      ...List<int>.generate(504, (index) => (index * 13 + 7) & 0xff),
+    ]);
+    const prefixLength = 320;
+    const validators = Validators(etag: 'recoverable-runtime-v1');
+
+    final firstRegistry = DownloadRegistry(
+      layout: firstWorkspace.layout,
+      clock: const SystemClock(),
+    );
+    final firstSession = firstRegistry.get(id);
+    await firstSession.restore();
+    await firstSession.bindResponse(
+      validators: validators,
+      totalLength: fullBytes.lengthInBytes,
+    );
+    final writer = firstSession.acquireWriter();
+    await firstSession.append(
+      writer,
+      0,
+      Uint8List.sublistView(fullBytes, 0, prefixLength),
+    );
+    await firstSession.pause(writer);
+    await firstRegistry.dispose();
+
+    // A new process receives the same deterministic app-private staging root.
+    // No durable PartialDownloadStore entry is involved in this recovery.
+    final replacementWorkspace =
+        EphemeralCacheWorkspace.recoverableTransfer(stableId);
+    expect(replacementWorkspace.rootPath, firstWorkspace.rootPath);
+    final partialStore = _PartialStore();
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: null,
+      partialDownloadStore: partialStore,
+      transferWorkspace: replacementWorkspace,
+      net: NetLane(maxActive: 1),
+    );
+    final transport = _RangeSuffixTransport(
+      fullBytes,
+      validators: validators,
+    );
+    final consumer = runtime.attachConsumer(
+      scopeId: 'recoverable-runtime',
+      transportFor: (_) => transport,
+      consumerTraceSink: const NoopTraceSink(),
+    );
+    addTearDown(() async {
+      await consumer.dispose();
+      await runtime.dispose();
+    });
+
+    consumer.replaceDemands(
+      'recoverable-runtime',
+      1,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 1000,
+          reason: 'recoverable-runtime',
+          completionIntent: TransferCompletionIntent.required,
+        ),
+      },
+    );
+    await consumer.idle();
+
+    expect(partialStore.partial, isEmpty,
+        reason: 'restart recovery must not depend on durable partial handoff');
+    expect(transport.rangeStarts, <int>[prefixLength]);
+    final restored = runtime.registry.findExact(id);
+    expect(restored, isNotNull);
+    expect(restored!.state, DownloadState.promoted);
+    expect(restored.committedLength, fullBytes.lengthInBytes);
+    await consumer.dispose();
+  });
+
   test('exact durable ready restore skips the second promoted backend preflight',
       () async {
     final durableRoot =

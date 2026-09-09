@@ -659,7 +659,13 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
 
   Future<void> _pushComicDetails(LibraryComic comic) async {
     _clearDownloadCompletionBadge(comic.sourceId, comic.comicId);
-    final source = _sourceForId(comic.sourceId);
+    var source = _sourceForId(comic.sourceId);
+    if (source == null && _isDeferredExternalSourceId(comic.sourceId)) {
+      await _waitForExternalSource(comic.sourceId);
+      if (!mounted) return;
+      source = _sourceForId(comic.sourceId);
+    }
+    final resolvedSource = source;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => details.LocalComicDetailsScreen(
@@ -676,8 +682,9 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             comic.comicId,
             refreshContent: refreshContent,
           ),
-          source: source,
-          ensureSourceChapter: source == null ? null : _ensureSourceChapter,
+          source: resolvedSource,
+          resolveSource: _sourceForId,
+          ensureSourceChapter: _ensureSourceChapter,
           downloadActions: _detailsDownloadActions,
           onPreferenceChanged: (preference) async {
             await _savePreference(preference);
@@ -720,10 +727,11 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             comicLibraryIdentity(comic.sourceId, comic.comicId),
             entries,
           ),
-          onOpenSourceWebView: source == null
+          onOpenSourceWebView: resolvedSource == null
               ? null
               : ({Uri? verificationUri}) {
-                  final active = _sourceForId(source.sourceId) ?? source;
+                  final active =
+                      _sourceForId(resolvedSource.sourceId) ?? resolvedSource;
                   return _openSourceWebView(
                     active,
                     verificationUri ?? _sourceComicWebUri(active, comic.comicId),
@@ -731,35 +739,38 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
                   );
                 },
           onOpenSourceSettings:
-              source != null && sourceSupportsSettings(source)
-                  ? () => _openComicSourceSettings(source)
+              resolvedSource != null && sourceSupportsSettings(resolvedSource)
+                  ? () => _openComicSourceSettings(resolvedSource)
                   : null,
-          onSearchMetadata: source == null
+          onSearchMetadata: resolvedSource == null
               ? null
-              : (query) => _searchSourceMetadata(source, query),
-          onMigrateSource: source == null || comic.sourceId == 'local-folder'
+              : (query) => _searchSourceMetadata(resolvedSource, query),
+          onMigrateSource: resolvedSource == null ||
+                  comic.sourceId == 'local-folder'
               ? null
               : () => _openSourceMigration(comic),
-          loadVersionState: source == null ||
-                  !_sourceSupportsVersionEntry(source)
+          loadVersionState: resolvedSource == null ||
+                  !_sourceSupportsVersionEntry(resolvedSource)
               ? null
               : () {
-                  final active = _sourceForId(source.sourceId) ?? source;
+                  final active =
+                      _sourceForId(resolvedSource.sourceId) ?? resolvedSource;
                   return _loadSourceVersionState(
                     active,
                     comic.title,
                     comic.comicId,
                   );
                 },
-          onViewVersion: source == null ||
-                  !_sourceSupportsVersionEntry(source)
+          onViewVersion: resolvedSource == null ||
+                  !_sourceSupportsVersionEntry(resolvedSource)
               ? null
               : (version) {
-                  final active = _sourceForId(source.sourceId) ?? source;
+                  final active =
+                      _sourceForId(resolvedSource.sourceId) ?? resolvedSource;
                   return _viewSourceVersion(active, comic.comicId, version);
                 },
-          onMigrateVersion: source == null ||
-                  !_sourceSupportsVersionEntry(source)
+          onMigrateVersion: resolvedSource == null ||
+                  !_sourceSupportsVersionEntry(resolvedSource)
               ? null
               : (version) => _migrateSourceVersion(comic, version),
           previewMaxItemsPerRow:

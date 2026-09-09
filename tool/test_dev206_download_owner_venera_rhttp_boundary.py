@@ -43,13 +43,19 @@ for marker in (
 if "'sourceMediaSemanticRejected': true" not in rhttp_transport:
     raise SystemExit('rhttp non-image response is not typed as source semantic rejection')
 for marker in (
-    '__zicSemanticRetryConsumed:false',
-    '__zicSemanticRetryConsumed:true',
-    'active.__zicSemanticRetryConsumed',
-    '__zicResolveFreshResourceConfig(key,source)',
+    'const __zicSemanticRetryLimit=5',
+    '__zicSemanticRetryCount:0',
+    'retryCount>=__zicSemanticRetryLimit',
+    '__zicSemanticRetryCount:retryCount+1',
 ):
     if marker not in venera_runtime:
-        raise SystemExit(f'Venera one-semantic-retry fence missing: {marker}')
+        raise SystemExit(f'Venera bounded semantic-recovery chain missing: {marker}')
+for forbidden in (
+    '__zicSemanticRetryConsumed',
+    '__zicResolveFreshResourceConfig(key,source)',
+):
+    if forbidden in venera_runtime:
+        raise SystemExit(f'Venera semantic recovery still resets to the original image config: {forbidden}')
 
 for forbidden in ('PartialDownload', 'openPartial', 'storePartial', 'invalidatePartial'):
     if forbidden in manager or forbidden in store:

@@ -18,6 +18,8 @@ required = (
     'function __zicNetworkPayload(method,data)',
     'function __zicDescribeResourceRequest(config)',
     'async function __zicRetryResourceConfig(uri,source)',
+    'const __zicSemanticRetryLimit=5;',
+    '__zicSemanticRetryCount:retryCount+1',
     "if(request.operation==='retryResource')",
     'fetchBinary:async(method,url,headers,data)',
     "async function __zicFetchImageBinary(method,url,headers,data){return sendMessage({method:'http_image_binary'",
@@ -33,6 +35,9 @@ required = (
 for token in required:
     if token not in text:
         raise SystemExit(f'Venera native binary contract is missing: {token}')
+for stale in ('__zicSemanticRetryConsumed', '__zicResolveFreshResourceConfig'):
+    if stale in text:
+        raise SystemExit(f'Venera native binary still contains one-shot semantic recovery: {stale}')
 
 resolver = (ROOT / 'packages/plugin_host_bridge/lib/src/venera_resolver_http_service.dart').read_text(encoding='utf-8')
 resolver_transport = (ROOT / 'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraResolverHttpTransport.kt').read_text(encoding='utf-8')

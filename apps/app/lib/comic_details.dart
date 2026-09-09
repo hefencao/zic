@@ -650,6 +650,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     this.inspectComicConflicts,
     this.downloadActions = ComicDetailsDownloadActions.noop,
     this.source,
+    this.resolveSource,
     this.ensureSourceChapter,
     this.onOpenSourceWebView,
     this.onOpenSourceSettings,
@@ -681,6 +682,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final ComicDetailsConflictInspector? inspectComicConflicts;
   final ComicDetailsDownloadActions downloadActions;
   final BrowsableComicSource? source;
+  final ComicDetailsSourceResolver? resolveSource;
   final ComicDetailsChapterEnsurer? ensureSourceChapter;
   final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
   final ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
@@ -1213,7 +1215,8 @@ final class _LocalComicDetailsScreenState
   }
 
   Future<ImportedLibraryEntry> _ensureFresh(Chapter chapter) async {
-    final source = widget.source;
+    final source = widget.resolveSource?.call(widget.comic.sourceId) ??
+        widget.source;
     final ensure = widget.ensureSourceChapter;
     if (source == null || ensure == null) {
       throw StateError('该章节尚未持久化，且对应漫画源当前不可用');

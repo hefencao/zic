@@ -77,6 +77,8 @@ for token in (
     'debugTraceClipboardMaxBytes',
     '_boundedClipboardPayload',
     'Trace 复制失败：$error',
+    '_encodeDebugTraceEvents',
+    '_exporting',
 ):
     assert token in trace_screen
 for token in ('exportDebugTraceDocument', 'dev.zic.zic/debug_trace_export'):

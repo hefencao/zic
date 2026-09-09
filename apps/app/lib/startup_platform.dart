@@ -75,23 +75,21 @@ Future<bool> waitForFirstFlutterUiDisplayed() async {
   }
 }
 
-/// Hands an explicit Android app exit to the current Activity after Dart has
-/// already closed its durable/composition owners. Android must destroy the
-/// Activity-owned FlutterEngine before starting the finish transition so a
-/// rapid same-process relaunch cannot overlap two engines. Other hosts (and
-/// older Android hosts without this startup method) return false and let the
-/// caller use the normal SystemNavigator fallback.
-Future<bool> requestAndroidApplicationExit() async {
+/// Moves the current Android task to the background without closing Dart,
+/// download, cache or plugin owners. Root-back is a navigation action, not an
+/// application shutdown barrier. Backgrounding itself neither checkpoints hot
+/// transfer partials nor waits for durable work.
+Future<bool> requestAndroidApplicationBackground() async {
   if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return false;
   try {
     return await startupPlatformChannel.invokeMethod<bool>(
-          'finishApplication',
+          'moveApplicationToBackground',
         ) ??
         false;
   } on MissingPluginException {
     return false;
   } on PlatformException catch (error) {
-    debugPrint('Android explicit application exit unavailable: $error');
+    debugPrint('Android application background request unavailable: $error');
     return false;
   }
 }

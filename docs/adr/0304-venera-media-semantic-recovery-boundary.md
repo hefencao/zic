@@ -2,7 +2,7 @@
 
 ## 状态
 
-Accepted
+Accepted；第 3、4、6、7 项 one-shot recovery 决策已由 ADR 0308 取代。第 1、2、5 项 semantic/client-state 分离继续有效。
 
 ## 触发证据
 

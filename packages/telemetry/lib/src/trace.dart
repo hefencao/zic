@@ -214,16 +214,26 @@ Map<String, Object?> _sanitizeTraceMap(Map<String, Object?> value) =>
         entry.key: _sanitizeTraceValue(entry.value),
     };
 
-Object? _sanitizeTraceValue(Object? value) => switch (value) {
-      String text => _sanitizeTraceString(text),
-      Map<Object?, Object?> map => <String, Object?>{
-          for (final entry in map.entries)
-            entry.key.toString(): _sanitizeTraceValue(entry.value),
-        },
-      Iterable<Object?> values =>
-        values.map<Object?>(_sanitizeTraceValue).toList(growable: false),
-      _ => value,
+Object? _sanitizeTraceValue(Object? value) {
+  if (value == null || value is bool || value is num) return value;
+  if (value is String) return _sanitizeTraceString(value);
+  if (value is Enum) return value.name;
+  if (value is Uri) return _sanitizeTraceString(value.toString());
+  if (value is Duration) return value.toString();
+  if (value is DateTime) return value.toIso8601String();
+  if (value is Map<Object?, Object?>) {
+    return <String, Object?>{
+      for (final entry in value.entries)
+        entry.key.toString(): _sanitizeTraceValue(entry.value),
     };
+  }
+  if (value is Iterable<Object?>) {
+    return value.map<Object?>(_sanitizeTraceValue).toList(growable: false);
+  }
+  // Diagnostic payloads must never poison the bounded trace ring. Keep an
+  // identity-sanitized representation for unsupported producer values.
+  return _sanitizeTraceString(value.toString());
+}
 
 String _sanitizeTraceString(String value) {
   var sanitized = value;

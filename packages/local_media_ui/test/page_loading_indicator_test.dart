@@ -128,6 +128,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(imageFolderPreviewErrorKey), findsOneWidget);
+    expect(find.byKey(imageFolderPreviewCopyErrorKey), findsOneWidget);
     expect(find.byKey(imageFolderPreviewRetryKey), findsOneWidget);
 
     await tester.tap(find.byKey(imageFolderPreviewRetryKey));

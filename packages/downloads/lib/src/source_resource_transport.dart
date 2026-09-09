@@ -149,6 +149,7 @@ final class _SourceResourceTransport
 
   static const _requestPlanTtl = Duration(minutes: 10);
   static const _maxRequestPlans = 256;
+  static const _maxSourceSemanticRetries = 5;
 
   BrowsableComicSource _source;
   final SourceResourceDirectTransport? _directTransport;
@@ -255,17 +256,12 @@ final class _SourceResourceTransport
         _invalidate(uri);
         if (_isSourceMediaSemanticRejection(error)) {
           retryUsed = true;
-          final retry = await _retry(uri, control: control);
-          _throwIfTaskCancelled(control);
-          if (retry == null) {
-            throw _sourceMediaSemanticFailure(uri, cause: error);
-          }
-          final retried = await _openRetryPlan(
+          final retried = await _recoverSourceRequest(
             uri,
-            retry,
             range: range,
             validators: validators,
             control: control,
+            cause: error,
           );
           response = retried.response;
           openPath = retried.openPath;
@@ -279,36 +275,37 @@ final class _SourceResourceTransport
           );
         } else {
           retryUsed = true;
-          final retry = await _retry(uri, control: control);
-          _throwIfTaskCancelled(control);
-          if (retry == null) rethrow;
-          final retried = await _openRetryPlan(
-            uri,
-            retry,
-            range: range,
-            validators: validators,
-            control: control,
-          );
-          response = retried.response;
-          openPath = retried.openPath;
+          try {
+            final retried = await _recoverSourceRequest(
+              uri,
+              range: range,
+              validators: validators,
+              control: control,
+              cause: error,
+              requireRetry: false,
+            );
+            response = retried.response;
+            openPath = retried.openPath;
+          } on _NoSourceRecoveryAvailable {
+            rethrow;
+          }
         }
       } on IOException catch (error) {
         _throwIfTaskCancelled(control);
         _invalidate(uri);
         retryUsed = true;
-        final retry = await _retry(uri, control: control);
-        _throwIfTaskCancelled(control);
-        if (retry != null) {
-          final retried = await _openRetryPlan(
+        try {
+          final retried = await _recoverSourceRequest(
             uri,
-            retry,
             range: range,
             validators: validators,
             control: control,
+            cause: error,
+            requireRetry: false,
           );
           response = retried.response;
           openPath = retried.openPath;
-        } else {
+        } on _NoSourceRecoveryAvailable {
           throw Failure(
             code: ErrorCode.network,
             message: 'source resource transport failure for ${request.uri}',
@@ -347,6 +344,43 @@ final class _SourceResourceTransport
     _throwIfTaskCancelled(control);
     if (replacement != null) _remember(locator, replacement);
     return replacement;
+  }
+
+  Future<({ByteResponse response, String openPath})> _recoverSourceRequest(
+    Uri locator, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+    Object? cause,
+    bool requireRetry = true,
+  }) async {
+    Object? lastCause = cause;
+    for (var retryIndex = 0;
+        retryIndex < _maxSourceSemanticRetries;
+        retryIndex++) {
+      final replacement = await _retry(locator, control: control);
+      _throwIfTaskCancelled(control);
+      if (replacement == null) {
+        if (!requireRetry && retryIndex == 0) {
+          throw const _NoSourceRecoveryAvailable();
+        }
+        throw _sourceMediaSemanticFailure(locator, cause: lastCause);
+      }
+      try {
+        return await _openRetryPlan(
+          locator,
+          replacement,
+          range: range,
+          validators: validators,
+          control: control,
+        );
+      } on Failure catch (error) {
+        if (!_isSourceMediaSemanticRejection(error)) rethrow;
+        lastCause = error;
+        _invalidate(locator);
+      }
+    }
+    throw _sourceMediaSemanticFailure(locator, cause: lastCause);
   }
 
   Future<({ComicResourceRequest request, bool cacheHit})> _resolve(
@@ -477,7 +511,7 @@ final class _SourceResourceTransport
     } on Failure catch (error) {
       if (error.code != ErrorCode.network) rethrow;
       if (_isSourceMediaSemanticRejection(error)) {
-        throw _sourceMediaSemanticFailure(locator, cause: error);
+        rethrow;
       }
     } on IOException {
       // A source-owned OkHttp interceptor, cookie jar or TLS stack can make
@@ -768,6 +802,10 @@ Failure _taskCancelledFailure() => const Failure(
       code: ErrorCode.cancelled,
       message: 'source transport request was cancelled by its scheduler owner',
     );
+
+final class _NoSourceRecoveryAvailable implements Exception {
+  const _NoSourceRecoveryAvailable();
+}
 
 void _throwIfTaskCancelled(TaskControl? control) {
   if (control?.cancelled != true) return;

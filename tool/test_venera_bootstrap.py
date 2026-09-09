@@ -277,7 +277,7 @@ async function checkNonImageBodyUsesSourceRecovery(){
  if(loaded?.__zicNativeBytesToken!=='semantic-retry-token'||failedCalls!==1||requests!==2)throw new Error('200 non-image body did not use exactly one source semantic recovery '+JSON.stringify({loaded,failedCalls,requests}));
 }
 
-async function checkExternalSemanticRetryIsNotRepeatedByRuntimeFallback(){
+async function checkExternalSemanticRetryContinuesCurrentReplacementChain(){
  const locator='venera-resource:'+__zicB64({v:1,image:'external-semantic-retry',comicId:'comic',epId:'ep'});
  let configCalls=0,failedCalls=0,replacementFailedCalls=0,requests=0;
  ZicNative.request=raw=>{
@@ -285,8 +285,12 @@ async function checkExternalSemanticRetryIsNotRepeatedByRuntimeFallback(){
    if(message.method==='cookie'&&message.function==='get')return JSON.stringify({ok:true,value:__zicEncode([])});
    if(message.method!=='http_image_binary')throw new Error('unexpected external semantic-retry bridge method '+message.method);
    requests++;
-   if(message.url!=='https://cdn.invalid/replacement.webp')throw new Error('runtime fallback replayed the original semantic URL '+message.url);
-   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{'content-type':'text/html'},encodedImage:false,bodyLength:31})});
+   if(requests===1){
+     if(message.url!=='https://cdn.invalid/replacement.webp')throw new Error('runtime fallback replayed the wrong semantic URL '+message.url);
+     return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{'content-type':'text/html'},encodedImage:false,bodyLength:31})});
+   }
+   if(message.url!=='https://cdn.invalid/second-replacement.webp')throw new Error('runtime fallback did not advance the current replacement chain '+message.url);
+   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{'content-type':'image/webp'},encodedImage:true,bodyLength:128,nativeBytesToken:'second-replacement-token'})});
  };
  globalThis.__zicSource={comic:{
    onImageLoad:async()=>{
@@ -297,7 +301,10 @@ async function checkExternalSemanticRetryIsNotRepeatedByRuntimeFallback(){
          failedCalls++;
          return {
            url:'https://cdn.invalid/replacement.webp',
-           onLoadFailed:async()=>{replacementFailedCalls++;return {url:'https://cdn.invalid/second-replacement.webp'}},
+           onLoadFailed:async()=>{
+             replacementFailedCalls++;
+             return {url:'https://cdn.invalid/second-replacement.webp'};
+           },
          };
        },
      };
@@ -306,12 +313,12 @@ async function checkExternalSemanticRetryIsNotRepeatedByRuntimeFallback(){
  const resolved=await __zicOperation({operation:'resolveResource',arguments:{uri:locator}});
  if(resolved.url!=='https://cdn.invalid/original.webp')throw new Error('external semantic retry initial plan mismatch '+JSON.stringify(resolved));
  const retry=await __zicOperation({operation:'retryResource',arguments:{uri:locator}});
- if(!retry.available||retry.request.url!=='https://cdn.invalid/replacement.webp'||failedCalls!==1)throw new Error('external semantic retry did not produce one replacement '+JSON.stringify({retry,failedCalls}));
- let failed=false;
- try{await __zicOperation({operation:'loadResource',arguments:{uri:locator}})}catch(error){failed=String(error).includes('non-image bytes')}
- if(!failed||requests!==1||replacementFailedCalls!==0)throw new Error('runtime fallback repeated an already-consumed semantic retry '+JSON.stringify({failed,requests,replacementFailedCalls}));
- const nextRetry=await __zicOperation({operation:'retryResource',arguments:{uri:locator}});
- if(!nextRetry.available||configCalls!==2||failedCalls!==2)throw new Error('a later semantic retry did not refresh the durable resource identity '+JSON.stringify({nextRetry,configCalls,failedCalls}));
+ if(!retry.available||retry.request.url!=='https://cdn.invalid/replacement.webp'||failedCalls!==1)throw new Error('external semantic retry did not produce first replacement '+JSON.stringify({retry,failedCalls}));
+ const loaded=await __zicOperation({operation:'loadResource',arguments:{uri:locator}});
+ if(loaded?.__zicNativeBytesToken!=='second-replacement-token'||requests!==2||replacementFailedCalls!==1)throw new Error('runtime fallback did not continue current replacement recovery '+JSON.stringify({loaded,requests,replacementFailedCalls}));
+ if(configCalls!==1||failedCalls!==1)throw new Error('semantic chain incorrectly reran original onImageLoad/onLoadFailed '+JSON.stringify({configCalls,failedCalls}));
+ const exhausted=await __zicOperation({operation:'retryResource',arguments:{uri:locator}});
+ if(exhausted.available!==false||configCalls!==1)throw new Error('completed replacement chain unexpectedly restarted original image config '+JSON.stringify({exhausted,configCalls}));
 }
 
 async function checkChapterImageConfigIsDeferred(){
@@ -516,7 +523,7 @@ async function checkInvokeRequestLifecycle(){
  if(seenRequestId!=='invoke-lifecycle'||completed?.requestId!=='invoke-lifecycle'||finished!=='invoke-lifecycle')throw new Error('invoke lifecycle did not retain the request id '+JSON.stringify({seenRequestId,completed,finished}));
 }
 
-(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkNonImageBodyUsesSourceRecovery();await checkExternalSemanticRetryIsNotRepeatedByRuntimeFallback();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkRequestScopedDelayCancellation();await checkAsyncNetworkBridgeAndActivationGate();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkNonImageBodyUsesSourceRecovery();await checkExternalSemanticRetryContinuesCurrentReplacementChain();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkRequestScopedDelayCancellation();await checkAsyncNetworkBridgeAndActivationGate();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

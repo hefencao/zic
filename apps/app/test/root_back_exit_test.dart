@@ -1,15 +1,14 @@
-import 'dart:async';
-
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zic/app.dart';
 import 'package:zic/startup_platform.dart';
 
 void main() {
-  testWidgets('root back requires a confirming second press before exit', (
+  testWidgets('root back confirms then moves Android task to background', (
     tester,
   ) async {
     final exitCalls = <String>[];
+    final backgroundCalls = <String>[];
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       SystemChannels.platform,
       (call) async {
@@ -21,7 +20,13 @@ void main() {
     );
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
       startupPlatformChannel,
-      (call) async => call.method == 'finishApplication' ? false : null,
+      (call) async {
+        if (call.method == 'moveApplicationToBackground') {
+          backgroundCalls.add(call.method);
+          return true;
+        }
+        return null;
+      },
     );
     addTearDown(() {
       tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
@@ -34,35 +39,21 @@ void main() {
       );
     });
 
-    final cleanup = Completer<void>();
-    var cleanupCalls = 0;
-    await tester.pumpWidget(
-      App(
-        beforeExit: () {
-          cleanupCalls++;
-          return cleanup.future;
-        },
-      ),
-    );
+    await tester.pumpWidget(const App());
     await tester.pump(const Duration(milliseconds: 100));
 
     await tester.binding.handlePopRoute();
     await tester.pump();
 
-    expect(find.text('再按一次返回键退出'), findsOneWidget);
+    expect(find.text('再按一次返回到后台'), findsOneWidget);
     expect(exitCalls, isEmpty);
 
     await tester.pump(const Duration(milliseconds: 100));
     await tester.binding.handlePopRoute();
     await tester.pump();
 
-    expect(cleanupCalls, 1);
+    expect(backgroundCalls, <String>['moveApplicationToBackground']);
     expect(exitCalls, isEmpty);
-    cleanup.complete();
-    await tester.pump();
-    await tester.pump();
-
-    expect(exitCalls, <String>['SystemNavigator.pop']);
   });
 
   testWidgets('expired confirm window asks for a fresh confirmation', (
@@ -90,7 +81,7 @@ void main() {
 
     await tester.binding.handlePopRoute();
     await tester.pump();
-    expect(find.text('再按一次返回键退出'), findsOneWidget);
+    expect(find.text('再按一次返回到后台'), findsOneWidget);
 
     // The snackbar arms its own dismissal only after its entrance animation
     // settles, so advance far enough for both the confirm window and the
@@ -98,12 +89,12 @@ void main() {
     await tester.pump(const Duration(seconds: 3));
     await tester.pump(const Duration(seconds: 3));
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.text('再按一次返回键退出'), findsNothing);
+    expect(find.text('再按一次返回到后台'), findsNothing);
 
     await tester.binding.handlePopRoute();
     await tester.pump();
 
     expect(exitCalls, isEmpty);
-    expect(find.text('再按一次返回键退出'), findsOneWidget);
+    expect(find.text('再按一次返回到后台'), findsOneWidget);
   });
 }
