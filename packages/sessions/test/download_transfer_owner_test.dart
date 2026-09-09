@@ -1869,6 +1869,82 @@ void main() {
         reason: 'required completion must reuse the already-open physical task');
   });
 
+  test('confirmed full-body mismatch discards one stale partial and restarts clean', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_resume_mismatch_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final trace = MemoryTraceSink();
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('resume-mismatch-clean-restart');
+    final oldBytes = <int>[
+      ...'RIFF'.codeUnits,
+      0, 0, 0, 0,
+      ...'WEBP'.codeUnits,
+      ...List<int>.generate(96 * 1024, (index) => index & 0xff),
+    ];
+    final newBytes = List<int>.of(oldBytes)..[32] ^= 0xff;
+    final session = registry.get(id);
+    await session.restore();
+    await session.bindResponse(
+      validators: const Validators(),
+      totalLength: oldBytes.length,
+    );
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, oldBytes.sublist(0, 64 * 1024));
+    await session.pause(writer);
+    final staleLength = session.committedLength;
+
+    final transport = _CountingBytesTransport(newBytes);
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-resume-mismatch-clean-restart',
+      transportFor: (_) => transport,
+      traceSink: trace,
+      retry: const RetryPolicy(
+        maxAttempts: 1,
+        baseDelay: Duration.zero,
+        maxDelay: Duration.zero,
+      ),
+    );
+    consumer.replaceDemands(
+      'reader-resume-mismatch-clean-restart',
+      1,
+      _desired(id, priority: 1000),
+    );
+
+    await consumer.idle().timeout(const Duration(seconds: 2));
+    final result = registry.get(id);
+    expect(result.state, DownloadState.promoted);
+    expect(result.epoch.value, 1);
+    expect(transport.opens, 2,
+        reason: 'one mismatching catchup plus one clean offset-zero restart');
+    expect(
+      await File(result.artifact.finalPath).readAsBytes(),
+      newBytes,
+    );
+    final restart = trace.events.singleWhere(
+      (event) =>
+          event.kind == TraceEventKind.resumeRestarted &&
+          event.payload['strategy'] ==
+              'confirmed-full-body-mismatch-clean-restart',
+    );
+    expect(restart.payload['discardedPartialBytes'], staleLength);
+  });
+
   test('required completion claim can finish a costly full-body catchup', () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_required_');
     addTearDown(() async => temp.delete(recursive: true));

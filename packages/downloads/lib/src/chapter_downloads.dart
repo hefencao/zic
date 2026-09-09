@@ -5542,7 +5542,10 @@ final class PersistentDownloadArtifactStore
             continue;
           }
         }
-        final length = await _artifactRecordLength(access);
+        final length = await _artifactPreflightLength(
+          access,
+          expectedLength: access.bytes,
+        );
         if (length <= 0 || length != access.bytes) {
           structuralFailure = ArtifactReadFailure(
             kind: ArtifactReadFailureKind.lengthChanged,
@@ -5603,7 +5606,31 @@ final class PersistentDownloadArtifactStore
         );
         if (reader == null) continue;
         if (expectedLength != null) {
-          final length = await reader.length();
+          var length = await reader.length();
+          if ((length <= 0 || length != expectedLength) &&
+              parseSafRecordPath(access.accessLocator) != null) {
+            // SAF providers can transiently report a stale/zero stat for one
+            // just-opened descriptor. A single metadata observation is not
+            // enough authority to delete an otherwise sealed replica. Close
+            // that exact descriptor and independently reopen once; only a
+            // repeated mismatch is structural. The reopened descriptor is the
+            // one retained for subsequent decoder ranges when it validates.
+            await reader.close();
+            reader = await openArtifactByteRangeReader(
+              _bytes,
+              access.accessLocator,
+            );
+            if (reader == null) {
+              throw ArtifactReadFailure(
+                kind: ArtifactReadFailureKind.ioFailure,
+                accessLocator: access.accessLocator,
+                replicaId: access.replicaId,
+                failedOffset: 0,
+                bytesEmitted: 0,
+              );
+            }
+            length = await reader.length();
+          }
           if (length <= 0 || length != expectedLength) {
             throw ArtifactReadFailure(
               kind: ArtifactReadFailureKind.lengthChanged,
@@ -5824,6 +5851,22 @@ final class PersistentDownloadArtifactStore
     }
   }
 
+  Future<int> _artifactPreflightLength(
+    _ArtifactAccessRecord access, {
+    required int expectedLength,
+  }) async {
+    final first = await _artifactRecordLength(access);
+    if (parseSafRecordPath(access.accessLocator) == null ||
+        first == expectedLength) {
+      return first;
+    }
+    // SAF metadata is provider-observed rather than POSIX inode authority.
+    // Reopen/re-stat once before classifying a length mismatch as structural;
+    // an access/I/O failure on this independent confirmation remains
+    // recoverable and therefore must not be converted into replica retirement.
+    return _artifactRecordLength(access);
+  }
+
   Future<int> _artifactRecordLength(_ArtifactAccessRecord access) async {
     try {
       return await _bytes.length(access.accessLocator);
@@ -5916,8 +5959,10 @@ final class PersistentDownloadArtifactStore
               selectedAccess.checksum.trim().toLowerCase(),
               control,
             ),
-        openBoundRangeReader: () =>
-            _openBoundArtifactRangeReader(selectedCandidates),
+        openBoundRangeReader: () => _openBoundArtifactRangeReader(
+          selectedCandidates,
+          expectedLength: selected.length,
+        ),
         openPresentationFile: presentationFileLeaseFactory == null
             ? null
             : () => presentationFileLeaseFactory!.open(

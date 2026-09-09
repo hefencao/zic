@@ -512,6 +512,72 @@ void main() {
     expect(await store.artifactReplicasFor(id), hasLength(1));
   });
 
+  test('SAF transient length mismatch is rechecked before replica retirement', () async {
+    final appRoot = await Directory.systemTemp.createTemp('zic-saf-length-app-');
+    final directRoot = await Directory.systemTemp.createTemp('zic-saf-length-direct-');
+    addTearDown(() async {
+      if (await appRoot.exists()) await appRoot.delete(recursive: true);
+      if (await directRoot.exists()) await directRoot.delete(recursive: true);
+    });
+    const safTree =
+        'content://com.android.externalstorage.documents/tree/primary%3ATrace';
+    final indexPath = defaultChapterDownloadMetadataPath(appRoot.path);
+    final id = _id('saf-transient-length');
+    final bytes = Uint8List.fromList(<int>[1, 3, 5, 7, 9, 11, 13, 15]);
+
+    final direct = await PersistentDownloadArtifactStore.open(
+      appRoot.path,
+      directory: directRoot.path,
+      indexPath: indexPath,
+    );
+    await direct.storePromotedArtifact(id: id, bytes: bytes);
+    final primary = (await direct.artifactReplicasFor(id)).single;
+    await direct.close();
+
+    final relative = primary.accessLocator
+        .substring(directRoot.path.length + 1)
+        .split(Platform.pathSeparator)
+        .join('/');
+    final saf = _TransientLengthSafIo(
+      relativePath: relative,
+      bytes: bytes,
+      lengthResponses: <int>[
+        bytes.lengthInBytes - 1,
+        bytes.lengthInBytes,
+        bytes.lengthInBytes - 1,
+        bytes.lengthInBytes,
+      ],
+    );
+    final store = await PersistentDownloadArtifactStore.open(
+      appRoot.path,
+      indexPath: indexPath,
+      bytes: CompositeArtifactBytes(
+        local: const _AccessDeniedArtifactBytes(),
+        saf: SafArtifactBytes(saf, treeUri: safTree),
+      ),
+      safTreeUri: safTree,
+    );
+    addTearDown(store.close);
+    await store.registerStorageRootAccessAliasProof(
+      StorageRootAccessAliasProof(
+        direct: DirectStorageAccessLocator(directRoot.path),
+        saf: const SafStorageAccessLocator(safTree),
+      ),
+    );
+
+    final entry = await store.openArtifactStream(id);
+    expect(entry, isNotNull);
+    final bound = await entry!.openBoundRangeReader!();
+    expect(bound, isNotNull);
+    expect(await bound!.readRange(0, bytes.lengthInBytes), bytes);
+    await bound.close();
+
+    expect(saf.lengthCalls, 4,
+        reason: 'both preflight and retained descriptor must independently recheck');
+    expect((await store.indexedRecords()).containsKey(id.key), isTrue);
+    expect(await store.artifactReplicasFor(id), hasLength(1));
+  });
+
   test('persistent preflight reports lengthChanged with replica identity', () async {
     final root = await Directory.systemTemp.createTemp('zic-replica-length-');
     final store = await PersistentDownloadArtifactStore.open(root.path);
@@ -717,6 +783,74 @@ final class _AliasFallbackArtifactBytes implements ArtifactBytes {
 
   @override
   Future<void> delete(String path) async {}
+}
+
+final class _TransientLengthSafIo implements SafTreeIo {
+  _TransientLengthSafIo({
+    required this.relativePath,
+    required Uint8List bytes,
+    required Iterable<int> lengthResponses,
+  })  : _bytes = Uint8List.fromList(bytes),
+        _lengthResponses = List<int>.of(lengthResponses);
+
+  final String relativePath;
+  final Uint8List _bytes;
+  final List<int> _lengthResponses;
+  final Map<int, int> _positions = <int, int>{};
+  int _nextHandle = 1;
+  int lengthCalls = 0;
+
+  @override
+  Future<int?> open(String path, {SafWriteMode mode = SafWriteMode.read}) async {
+    if (path != relativePath || mode != SafWriteMode.read) return null;
+    final handle = _nextHandle++;
+    _positions[handle] = 0;
+    return handle;
+  }
+
+  @override
+  Future<int?> length(int handle) async {
+    if (!_positions.containsKey(handle)) return null;
+    lengthCalls++;
+    if (_lengthResponses.isNotEmpty) return _lengthResponses.removeAt(0);
+    return _bytes.lengthInBytes;
+  }
+
+  @override
+  Future<Uint8List> read(int handle, int length) async {
+    final start = _positions[handle];
+    if (start == null) throw StateError('invalid SAF test handle');
+    final end = (start + length).clamp(0, _bytes.lengthInBytes);
+    _positions[handle] = end;
+    return Uint8List.fromList(_bytes.sublist(start, end));
+  }
+
+  @override
+  Future<void> seek(int handle, int position) async {
+    if (!_positions.containsKey(handle)) throw StateError('invalid SAF test handle');
+    _positions[handle] = position;
+  }
+
+  @override
+  Future<void> close(int handle) async {
+    _positions.remove(handle);
+  }
+
+  @override
+  Future<bool> exists(String path) async => path == relativePath;
+
+  @override
+  Future<void> write(int handle, Uint8List bytes) =>
+      throw UnsupportedError('read-only SAF test fixture');
+
+  @override
+  Future<bool> delete(String path) async => false;
+
+  @override
+  Future<bool> rename(String path, String newRelativePath) async => false;
+
+  @override
+  Future<List<SafTreeFile>> list(String path) async => const <SafTreeFile>[];
 }
 
 final class _AccessDeniedArtifactBytes implements ArtifactBytes {

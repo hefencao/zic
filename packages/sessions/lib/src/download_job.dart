@@ -1033,6 +1033,10 @@ final class DownloadJob {
             code: ErrorCode.resumeRejected,
             message:
                 'full response prefix differs from the existing playable partial',
+            details: <String, Object?>{
+              'confirmedFullBodyPrefixMismatch': true,
+              'cleanRestartAllowed': true,
+            },
           );
         }
         return take == chunk.length

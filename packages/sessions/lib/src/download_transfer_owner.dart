@@ -146,6 +146,7 @@ final class DownloadTransferOwner {
   final Map<DownloadId, Completer<void>> _downloadRetryWaiters =
       <DownloadId, Completer<void>>{};
   final Set<DownloadId> _downloadTerminalFailures = <DownloadId>{};
+  final Set<DownloadId> _resumeMismatchCleanRestarts = <DownloadId>{};
   final Set<DownloadId> _presentationArtifactRecoveries = <DownloadId>{};
   final Map<DownloadId, String> _ensureSkipReasons = <DownloadId, String>{};
   final Map<DownloadId, int> _downloadDeferredAtLength = <DownloadId, int>{};
@@ -1937,6 +1938,7 @@ final class DownloadTransferOwner {
           );
           _cancelDownloadRetry(id);
           _downloadTerminalFailures.remove(id);
+          _resumeMismatchCleanRestarts.remove(id);
           _downloadDeferredAtLength.remove(id);
           return;
         } on DownloadCatchupDeferred {
@@ -1969,6 +1971,34 @@ final class DownloadTransferOwner {
           // snapshot is attached, so the lower branch cannot observe it.
           if (session.epoch != taskEpoch || _isStaleLifecycleFailure(failure)) {
             return;
+          }
+          if (_isConfirmedFullBodyPrefixMismatch(failure) &&
+              !_resumeMismatchCleanRestarts.contains(id) &&
+              session.committedLength > 0 &&
+              session.demanded &&
+              !token.cancelled) {
+            final discardedPartialBytes = session.committedLength;
+            final reset = await session.resetIfIdle();
+            if (reset) {
+              _resumeMismatchCleanRestarts.add(id);
+              _downloadTerminalFailures.remove(id);
+              _downloadDeferredAtLength.remove(id);
+              _record(
+                claim,
+                kind: TraceEventKind.resumeRestarted,
+                id: id,
+                payload: <String, Object?>{
+                  'strategy': 'confirmed-full-body-mismatch-clean-restart',
+                  'discardedPartialBytes': discardedPartialBytes,
+                  'attempt': attempt,
+                  'physicalOwner': true,
+                },
+              );
+              // resetIfIdle advances the physical generation. Retire this lane
+              // task normally; the retirement barrier will admit one fresh
+              // offset-zero task for the still-demanded session.
+              return;
+            }
           }
           if (token.cancelled) {
             _recordLaneCancellation(claim, id, session, token);
@@ -2129,6 +2159,12 @@ final class DownloadTransferOwner {
     }
   }
 
+
+bool _isConfirmedFullBodyPrefixMismatch(Failure failure) =>
+    failure.code == ErrorCode.resumeRejected &&
+    failure.details['confirmedFullBodyPrefixMismatch'] == true &&
+    failure.details['cleanRestartAllowed'] == true;
+
   bool _scheduleDownloadRetry(
     DownloadId id,
     DownloadSession session,
@@ -2240,6 +2276,7 @@ final class DownloadTransferOwner {
   void _retireDownloadTracking(DownloadId id, DownloadSession? session) {
     _cancelDownloadRetry(id);
     _downloadTerminalFailures.remove(id);
+    _resumeMismatchCleanRestarts.remove(id);
     _ensureSkipReasons.remove(id);
     final deferredAtLength = _downloadDeferredAtLength[id];
     final preserveDeferred = session != null &&
