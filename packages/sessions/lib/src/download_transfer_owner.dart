@@ -169,6 +169,9 @@ final class DownloadTransferOwner {
   final Set<String> _taskRetirementWaits = <String>{};
   int _taskSequence = 0;
   int _claimSequence = 0;
+  int _demandMutationDepth = 0;
+  bool _localPreparationPumpDeferred = false;
+  bool _preparedNetworkDrainDeferred = false;
   bool _disposed = false;
 
   static const int _maxDownloadRetryRounds = 4;
@@ -663,6 +666,23 @@ final class DownloadTransferOwner {
     Map<DownloadId, TransferDemand> desired,
   ) {
     if (_disposed || consumer._disposed) return;
+    _demandMutationDepth++;
+    try {
+      _replaceDemandsNow(consumer, sessionId, revision, desired);
+    } finally {
+      _demandMutationDepth--;
+      if (_demandMutationDepth == 0) {
+        _flushDeferredDemandMutationWork();
+      }
+    }
+  }
+
+  void _replaceDemandsNow(
+    DownloadTransferConsumer consumer,
+    String sessionId,
+    int revision,
+    Map<DownloadId, TransferDemand> desired,
+  ) {
     final normalized = _normalizeDemands(desired);
     _validateDemandChecksums(consumer, normalized);
     consumer._sessionId = sessionId;
@@ -715,6 +735,17 @@ final class DownloadTransferOwner {
       _ensureDownloadTask(physicalId, registry.get(physicalId));
     }
     _drainPreparedNetworkAdmissions();
+  }
+
+  void _flushDeferredDemandMutationWork() {
+    if (_localPreparationPumpDeferred) {
+      _localPreparationPumpDeferred = false;
+      _pumpLocalPreparations();
+    }
+    if (_preparedNetworkDrainDeferred) {
+      _preparedNetworkDrainDeferred = false;
+      _drainPreparedNetworkAdmissions();
+    }
   }
 
   Map<DownloadId, _ConsumerPhysicalDemand> _normalizeDemands(
@@ -1385,6 +1416,10 @@ final class DownloadTransferOwner {
 
   void _pumpLocalPreparations() {
     if (_disposed) return;
+    if (_demandMutationDepth > 0) {
+      _localPreparationPumpDeferred = true;
+      return;
+    }
     _pendingLocalPreparations.removeWhere((id, pending) {
       if (pending.control.cancelled ||
           !identical(registry.findExact(id), pending.session) ||
@@ -1604,6 +1639,10 @@ final class DownloadTransferOwner {
 
   void _drainPreparedNetworkAdmissions() {
     if (_disposed || _preparedNetworkAdmissions.isEmpty) return;
+    if (_demandMutationDepth > 0) {
+      _preparedNetworkDrainDeferred = true;
+      return;
+    }
     while (true) {
       final candidates = _preparedNetworkAdmissions.entries
           .where((entry) =>

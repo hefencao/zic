@@ -452,7 +452,26 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       final progress = _pendingProgress!;
       _pendingProgress = null;
       try {
-        await Future<void>.sync(() => writer(progress));
+        final dispatchStartedAt = _pipeline.clock.nowMicros();
+        final write = Future<void>.sync(() => writer(progress));
+        final dispatchMicros =
+            _pipeline.clock.nowMicros() - dispatchStartedAt;
+        if (dispatchMicros >= 5000) {
+          _pipeline.trace.record(
+            traceEvent(
+              clock: _pipeline.clock,
+              sessionId: _pipeline.sessionId,
+              kind: TraceEventKind.readerObservation,
+              revision: _pipeline.revision,
+              payload: <String, Object?>{
+                'stage': 'progress-checkpoint-dispatch',
+                'pageIndex': progress.pageIndex,
+                'durationMicros': dispatchMicros,
+              },
+            ),
+          );
+        }
+        await write;
       } on Object catch (error) {
         debugPrint('reader progress write failed: $error');
       }
@@ -717,7 +736,21 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   }
 
   void _toggleControls() {
-    setState(() => _controlsVisible = !_controlsVisible);
+    final visible = !_controlsVisible;
+    setState(() => _controlsVisible = visible);
+    _pipeline.trace.record(
+      traceEvent(
+        clock: _pipeline.clock,
+        sessionId: _pipeline.sessionId,
+        kind: TraceEventKind.readerObservation,
+        revision: _pipeline.revision,
+        payload: <String, Object?>{
+          'stage': 'reader-controls-visibility',
+          'visible': visible,
+          'pageCount': widget.chapter.pages.length,
+        },
+      ),
+    );
     unawaited(
       SystemChrome.setEnabledSystemUIMode(
         _controlsVisible ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
@@ -1367,7 +1400,10 @@ final class _ReaderPageScrubberState extends State<_ReaderPageScrubber> {
               value: displayIndex.toDouble(),
               min: 0,
               max: math.max(1, pages - 1).toDouble(),
-              divisions: pages > 1 ? pages - 1 : null,
+              // Page selection remains integer-quantized in [_preview]. A
+              // hundreds-page chapter must not ask RenderSlider/semantics to
+              // materialize one division per page on every current-page update.
+              divisions: null,
               onChangeStart: pages <= 1 ? null : _start,
               onChanged: pages <= 1 ? null : _preview,
               onChangeEnd: pages <= 1 ? null : _commit,

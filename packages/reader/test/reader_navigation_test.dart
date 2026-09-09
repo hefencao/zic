@@ -514,7 +514,7 @@ void main() {
   });
 
   testWidgets(
-    'frame interval-only samples summarize while work jank stays individual',
+    'frame interval anomalies stay individual with work jank',
     (tester) async {
       final chapter = _chapter(pageCount: 1);
       final trace = MemoryTraceSink();
@@ -570,10 +570,14 @@ void main() {
       final timings = trace.events
           .where((event) => event.kind == TraceEventKind.readerFrameTiming)
           .toList(growable: false);
-      expect(timings, hasLength(2));
-      expect(timings.first.payload['frameSampleCount'], 2);
-      expect(timings.first.payload['maxFrameIntervalMicros'], 50000);
-      expect(timings.last.payload['buildMicros'], 22000);
+      expect(timings, hasLength(3));
+      expect(timings[0].payload['frameIntervalMicros'], 25000);
+      expect(timings[1].payload['frameIntervalMicros'], 50000);
+      expect(timings[2].payload['buildMicros'], 22000);
+      expect(
+        timings.where((event) => event.payload['timingSummary'] == true),
+        isEmpty,
+      );
     },
   );
 

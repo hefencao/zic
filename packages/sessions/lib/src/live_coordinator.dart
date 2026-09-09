@@ -236,15 +236,33 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     // Nest in reverse dependency order so commit unwinds network -> decode ->
     // upload, matching the historical admission order while every lane still
     // observes the same fully-mutated authoritative plan.
+    var downloadsMicros = 0;
+    var decodesMicros = 0;
+    var uploadsMicros = 0;
+    var livenessMicros = 0;
+    var sourceWakeMicros = 0;
+    var budgetMicros = 0;
     upload.batch(() {
       decode.batch(() {
         net.batch(() {
+          var stageStartedAt = clock.nowMicros();
           _reconcileDownloads(sessionId, update.diff.downloads);
+          downloadsMicros = clock.nowMicros() - stageStartedAt;
+          stageStartedAt = clock.nowMicros();
           _reconcileDecodes(sessionId, update.diff.decodes);
+          decodesMicros = clock.nowMicros() - stageStartedAt;
+          stageStartedAt = clock.nowMicros();
           _reconcileUploads(sessionId, update.diff.uploads);
+          uploadsMicros = clock.nowMicros() - stageStartedAt;
+          stageStartedAt = clock.nowMicros();
           _refreshDemandLiveness(update.plan);
+          livenessMicros = clock.nowMicros() - stageStartedAt;
+          stageStartedAt = clock.nowMicros();
           _flushSourceRebindWakes(sessionId);
+          sourceWakeMicros = clock.nowMicros() - stageStartedAt;
+          stageStartedAt = clock.nowMicros();
           _enforceBudget(sessionId);
+          budgetMicros = clock.nowMicros() - stageStartedAt;
         });
       });
     });
@@ -258,6 +276,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         payload: <String, Object?>{
           'reconcileMicros':
               (clock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
+          'downloadsMicros': downloadsMicros.clamp(0, 1 << 62).toInt(),
+          'decodesMicros': decodesMicros.clamp(0, 1 << 62).toInt(),
+          'uploadsMicros': uploadsMicros.clamp(0, 1 << 62).toInt(),
+          'livenessMicros': livenessMicros.clamp(0, 1 << 62).toInt(),
+          'sourceWakeMicros': sourceWakeMicros.clamp(0, 1 << 62).toInt(),
+          'budgetMicros': budgetMicros.clamp(0, 1 << 62).toInt(),
           'downloadAdded': update.diff.downloads.added.length,
           'downloadChanged': update.diff.downloads.changed.length,
           'downloadRemoved': update.diff.downloads.removed.length,

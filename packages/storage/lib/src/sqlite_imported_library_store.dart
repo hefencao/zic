@@ -26,6 +26,9 @@ final class SqliteImportedLibraryStore
   sql.Database? _db;
   SqliteProgressWriter? _progressWriter;
   Future<void>? _progressWriterOpening;
+  DateTime? _progressWriterRetryAfter;
+  final Map<String, ReadingProgress> _pendingReaderProgress =
+      <String, ReadingProgress>{};
 
   @override
   Future<void> open() async {
@@ -320,7 +323,17 @@ final class SqliteImportedLibraryStore
       return;
     }
     final db = _requireDb();
-    _saveProgressSynchronously(db, progress);
+    if (path == null) {
+      // In-memory stores are test/compatibility implementations and have no
+      // secondary SQLite connection. Keep their immediate semantics.
+      _saveProgressSynchronously(db, progress);
+      return;
+    }
+    // Reader page turns are a UI hot path. If the optional isolate writer is
+    // still opening (or a prior open attempt failed), retain only the latest
+    // checkpoint in memory and return immediately. In particular, do not
+    // SELECT + jsonDecode the full chapter on Flutter's UI isolate here.
+    _rememberPendingReaderProgress(progress);
     _startProgressWriter(db);
   }
 
@@ -332,8 +345,15 @@ final class SqliteImportedLibraryStore
     }
     final writer = _progressWriter;
     if (writer != null) {
+      _drainPendingReaderProgress(writer);
       await writer.flush();
+      return;
     }
+    // A lifecycle/route flush is a durability barrier, not a page-turn hot
+    // path. If the optional isolate writer cannot be established, this is the
+    // one safe boundary where synchronous SQLite fallback is acceptable.
+    final db = _requireDb();
+    _flushPendingReaderProgressSynchronously(db);
   }
 
   void _saveProgressSynchronously(
@@ -1098,8 +1118,16 @@ final class SqliteImportedLibraryStore
     // can deadlock on a fresh database where the writer is opening its second
     // connection for the first time.
     final db = _db;
-    _db = null;
     final progressWriter = _progressWriter;
+    if (progressWriter != null) {
+      _drainPendingReaderProgress(progressWriter);
+    } else if (db != null) {
+      // Close is a durable boundary. Preserve a checkpoint that arrived while
+      // the isolate writer was unavailable without moving this fallback back
+      // onto ordinary Reader page turns.
+      _flushPendingReaderProgressSynchronously(db);
+    }
+    _db = null;
     _progressWriter = null;
     final progressWriterOpening = _progressWriterOpening;
     _progressWriterOpening = null;
@@ -1115,21 +1143,63 @@ final class SqliteImportedLibraryStore
         _progressWriterOpening != null) {
       return;
     }
+    final retryAfter = _progressWriterRetryAfter;
+    if (retryAfter != null && DateTime.now().isBefore(retryAfter)) {
+      return;
+    }
     late final Future<void> opening;
     opening = SqliteProgressWriter.open(dbPath)
         .then<void>((writer) async {
           if (identical(_db, db)) {
             _progressWriter = writer;
+            _progressWriterRetryAfter = null;
+            _drainPendingReaderProgress(writer);
           } else {
             await writer.close();
           }
         })
         .catchError((Object _, StackTrace __) {
-          // The synchronous progress path remains available if the optional
-          // background writer cannot be started. Reader progress must not make
-          // Home startup fail just because its optimization is unavailable.
+          // Keep the latest checkpoint buffered. A later Reader page turn may
+          // retry opening the optional writer, but rate-limit repeated isolate
+          // spawn failures so an unavailable optimization stays off the hot
+          // path. Lifecycle/close flush remains the synchronous fallback.
+          _progressWriterRetryAfter =
+              DateTime.now().add(const Duration(seconds: 2));
+        }).whenComplete(() {
+          if (identical(_progressWriterOpening, opening)) {
+            _progressWriterOpening = null;
+          }
         });
     _progressWriterOpening = opening;
+  }
+
+  String _readerProgressIdentity(ReadingProgress progress) =>
+      '${progress.sourceId}\u0000${progress.chapterId}';
+
+  void _rememberPendingReaderProgress(ReadingProgress progress) {
+    final key = _readerProgressIdentity(progress);
+    final prior = _pendingReaderProgress[key];
+    if (prior == null || !progress.updatedAt.isBefore(prior.updatedAt)) {
+      _pendingReaderProgress[key] = progress;
+    }
+  }
+
+  void _drainPendingReaderProgress(SqliteProgressWriter writer) {
+    if (_pendingReaderProgress.isEmpty) return;
+    final pending = _pendingReaderProgress.values.toList(growable: false);
+    _pendingReaderProgress.clear();
+    for (final progress in pending) {
+      writer.enqueue(progress);
+    }
+  }
+
+  void _flushPendingReaderProgressSynchronously(sql.Database db) {
+    if (_pendingReaderProgress.isEmpty) return;
+    final pending = _pendingReaderProgress.values.toList(growable: false);
+    _pendingReaderProgress.clear();
+    for (final progress in pending) {
+      _saveProgressSynchronously(db, progress);
+    }
   }
 
   void _putProgress(sql.Database db, ReadingProgress progress) {

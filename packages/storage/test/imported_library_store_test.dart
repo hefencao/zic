@@ -301,6 +301,11 @@ void main() {
         updatedAt: DateTime.utc(2026, 9, 7, 1),
       ),
     );
+    expect(
+      (await store.get(chapter.sourceId, chapter.chapterId))?.progress,
+      isNull,
+      reason: 'Reader enqueue must not synchronously write SQLite on page turn',
+    );
     await store.flushProgressCheckpoints();
 
     store.enqueueProgress(
