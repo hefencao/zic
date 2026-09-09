@@ -43,6 +43,72 @@ void main() {
     );
   });
 
+  test('version mapping preserves verified affine intervals and legacy fallback', () {
+    final legacy = ComicVersionPageMapping.fromJson(
+      <String, Object?>{
+        'predecessorChapterId': 'old',
+        'successorChapterId': 'new',
+        'predecessorPageCount': 4,
+        'successorPageCount': 5,
+        'successorOffset': 1,
+        'verifiedPredecessorPageIndexes': <int>[0, 3],
+      },
+    );
+    expect(
+      legacy.effectiveVerifiedIntervals
+          .map((interval) => (
+                interval.predecessorStart,
+                interval.predecessorEndExclusive,
+                interval.successorOffset,
+              ))
+          .toList(),
+      <(int, int, int)>[(0, 4, 1)],
+    );
+
+    final mapping = ComicVersionPageMapping.fromJson(
+      <String, Object?>{
+        'predecessorChapterId': 'old',
+        'successorChapterId': 'new',
+        'predecessorPageCount': 6,
+        'successorPageCount': 7,
+        'successorOffset': 0,
+        'verifiedIntervals': <Object?>[
+          <String, Object?>{
+            'predecessorStart': 0,
+            'predecessorEndExclusive': 2,
+            'successorOffset': 0,
+          },
+          <String, Object?>{
+            'predecessorStart': 2,
+            'predecessorEndExclusive': 3,
+            'successorOffset': 0,
+          },
+          <String, Object?>{
+            'predecessorStart': 4,
+            'predecessorEndExclusive': 6,
+            'successorOffset': 1,
+          },
+        ],
+      },
+    );
+    expect(
+      mapping.effectiveVerifiedIntervals
+          .map((interval) => (
+                interval.predecessorStart,
+                interval.predecessorEndExclusive,
+                interval.successorOffset,
+              ))
+          .toList(),
+      <(int, int, int)>[(0, 3, 0), (4, 6, 1)],
+    );
+    expect(mapping.uniqueVerifiedSuccessorIndexForPredecessor(2), 2);
+    expect(mapping.uniqueVerifiedSuccessorIndexForPredecessor(3), isNull);
+    expect(mapping.uniqueVerifiedSuccessorIndexForPredecessor(4), 5);
+    final roundTrip = ComicVersionPageMapping.fromJson(mapping.toJson());
+    expect(roundTrip.verifiedIntervals, hasLength(2));
+    expect(roundTrip.uniqueVerifiedPredecessorIndexForSuccessor(6), 5);
+  });
+
   test('memory imported library stores comic version predecessors', () async {
     final store = MemoryImportedLibraryStore();
     await store.open();

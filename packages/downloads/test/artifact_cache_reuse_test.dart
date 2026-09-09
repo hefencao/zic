@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:test/test.dart';
@@ -671,6 +672,85 @@ void main() {
     expect(
       resolver.resolve(readerPageDownloadId(target, target.pages.last)),
       <DownloadId>[readerPageDownloadId(source, source.pages.last)],
+    );
+  });
+
+  test('verified affine intervals keep gaps and offset changes local', () {
+    final predecessor = _chapter(
+      comicId: 'interval-old',
+      revision: 'interval-old-r1',
+      urls: const <String>[
+        'venera-resource:old-0',
+        'venera-resource:old-1',
+        'venera-resource:old-2',
+        'venera-resource:old-3',
+        'venera-resource:old-4',
+        'venera-resource:old-5',
+      ],
+    );
+    final successor = _chapter(
+      comicId: 'interval-new',
+      revision: 'interval-new-r1',
+      urls: const <String>[
+        'venera-resource:new-0',
+        'venera-resource:new-1',
+        'venera-resource:new-gap',
+        'venera-resource:new-3',
+        'venera-resource:new-4',
+        'venera-resource:new-5',
+        'venera-resource:new-6',
+      ],
+    );
+    const intervals = <VerifiedComicVersionPageInterval>[
+      VerifiedComicVersionPageInterval(
+        predecessorStart: 0,
+        predecessorEndExclusive: 2,
+        successorOffset: 0,
+      ),
+      VerifiedComicVersionPageInterval(
+        predecessorStart: 3,
+        predecessorEndExclusive: 6,
+        successorOffset: 1,
+      ),
+    ];
+
+    final reverse = VerifiedArtifactReuseResolver(
+      targetChapter: successor,
+    );
+    for (final interval in intervals) {
+      reverse.addVerifiedInterval(
+        sourceChapter: predecessor,
+        sourceStart: interval.predecessorStart,
+        sourceEndExclusive: interval.predecessorEndExclusive,
+        targetOffsetFromSource: interval.successorOffset,
+      );
+    }
+    expect(
+      reverse.resolve(readerPageDownloadId(successor, successor.pages[1])),
+      <DownloadId>[readerPageDownloadId(predecessor, predecessor.pages[1])],
+    );
+    expect(
+      reverse.resolve(readerPageDownloadId(successor, successor.pages[2])),
+      isEmpty,
+      reason: 'the inserted successor page is outside every verified interval',
+    );
+    expect(
+      reverse.resolve(readerPageDownloadId(successor, successor.pages[4])),
+      <DownloadId>[readerPageDownloadId(predecessor, predecessor.pages[3])],
+    );
+
+    final forward = VerifiedArtifactReuseResolver.predecessorToSuccessor(
+      predecessorChapter: predecessor,
+      successorChapter: successor,
+      verifiedIntervals: intervals,
+    );
+    expect(
+      forward.resolve(readerPageDownloadId(predecessor, predecessor.pages[2])),
+      isEmpty,
+    );
+    expect(
+      forward.resolve(readerPageDownloadId(predecessor, predecessor.pages[5])),
+      <DownloadId>[readerPageDownloadId(successor, successor.pages[6])],
     );
   });
 

@@ -126,6 +126,86 @@ void main() {
     expect(composed.verifiedPredecessorPageIndexes, <int>[0, 1, 2]);
   });
 
+  test('composes multiple verified affine intervals by translated intersection', () {
+    final projection = resolveComicVersionBaselines(
+      relations: const <ComicVersionRelation>[
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'A',
+          successorComicId: 'B',
+          pageMappings: <ComicVersionPageMapping>[
+            ComicVersionPageMapping(
+              predecessorChapterId: 'a',
+              successorChapterId: 'b',
+              predecessorPageCount: 6,
+              successorPageCount: 7,
+              successorOffset: 0,
+              predecessorSourceRevision: 'a-r1',
+              successorSourceRevision: 'b-r1',
+              verifiedIntervals: <VerifiedComicVersionPageInterval>[
+                VerifiedComicVersionPageInterval(
+                  predecessorStart: 0,
+                  predecessorEndExclusive: 3,
+                  successorOffset: 0,
+                ),
+                VerifiedComicVersionPageInterval(
+                  predecessorStart: 3,
+                  predecessorEndExclusive: 6,
+                  successorOffset: 1,
+                ),
+              ],
+            ),
+          ],
+        ),
+        ComicVersionRelation(
+          sourceId: 's',
+          predecessorComicId: 'B',
+          successorComicId: 'C',
+          pageMappings: <ComicVersionPageMapping>[
+            ComicVersionPageMapping(
+              predecessorChapterId: 'b',
+              successorChapterId: 'c',
+              predecessorPageCount: 7,
+              successorPageCount: 9,
+              successorOffset: 1,
+              predecessorSourceRevision: 'b-r1',
+              successorSourceRevision: 'c-r1',
+              verifiedIntervals: <VerifiedComicVersionPageInterval>[
+                VerifiedComicVersionPageInterval(
+                  predecessorStart: 0,
+                  predecessorEndExclusive: 5,
+                  successorOffset: 1,
+                ),
+                VerifiedComicVersionPageInterval(
+                  predecessorStart: 5,
+                  predecessorEndExclusive: 7,
+                  successorOffset: 2,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ],
+      manualDownloadComics: const <ComicVersionIdentity>[
+        ComicVersionIdentity(sourceId: 's', comicId: 'C'),
+      ],
+    );
+
+    final composed = projection.downloadHeadRelations.singleWhere(
+      (relation) => relation.predecessorComicId == 'A',
+    ).pageMappings.single;
+    expect(
+      composed.effectiveVerifiedIntervals
+          .map((interval) => (
+                interval.predecessorStart,
+                interval.predecessorEndExclusive,
+                interval.successorOffset,
+              ))
+          .toList(),
+      <(int, int, int)>[(0, 3, 1), (3, 4, 2), (4, 6, 3)],
+    );
+  });
+
   test('composed offset drops proof across a revision discontinuity', () {
     final projection = resolveComicVersionBaselines(
       relations: const <ComicVersionRelation>[

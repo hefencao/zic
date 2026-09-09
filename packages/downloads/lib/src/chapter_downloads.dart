@@ -4051,8 +4051,11 @@ final class PersistentDownloadArtifactStore
       for (var currentIndex = 0;
           currentIndex < chapter.pages.length;
           currentIndex++) {
-        final predecessorIndex = currentIndex - mapping.successorOffset;
-        final ordinal = byIndex[predecessorIndex];
+        final verifiedIntervals = mapping.effectiveVerifiedIntervals;
+        final predecessorIndex = verifiedIntervals.isEmpty
+            ? currentIndex - mapping.successorOffset
+            : mapping.uniqueVerifiedPredecessorIndexForSuccessor(currentIndex);
+        final ordinal = predecessorIndex == null ? null : byIndex[predecessorIndex];
         if (ordinal != null) inherited[currentIndex] = ordinal;
       }
       if (inherited.length > best.length) best = inherited;
@@ -7603,16 +7606,12 @@ final class PersistentChapterDownloadService
     for (final baseline in artifactStore._downloadBaselinePredecessorMappings(entry)) {
       final mapping = baseline.mapping;
       if (mapping.successorSourceRevision != entry.chapter.sourceRevision ||
-          mapping.predecessorSourceRevision == null ||
-          mapping.successorOffset < 0 ||
-          pageIndex < mapping.successorOffset) {
+          mapping.predecessorSourceRevision == null) {
         continue;
       }
-      final predecessorIndex = pageIndex - mapping.successorOffset;
-      if (predecessorIndex >= mapping.predecessorPageCount ||
-          mapping.verifiedPredecessorPageIndexes.isEmpty) {
-        continue;
-      }
+      final predecessorIndex =
+          mapping.uniqueVerifiedPredecessorIndexForSuccessor(pageIndex);
+      if (predecessorIndex == null) continue;
       final pageIds = await _predecessorPageIdsByIndex(
         sourceId: entry.chapter.sourceId,
         comicId: baseline.relation.predecessorComicId,

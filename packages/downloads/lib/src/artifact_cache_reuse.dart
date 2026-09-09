@@ -1,3 +1,4 @@
+import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:storage/storage.dart' show CacheRec;
 
@@ -46,23 +47,20 @@ final class VerifiedArtifactReuseResolver {
   factory VerifiedArtifactReuseResolver.predecessorToSuccessor({
     required ChapterManifest predecessorChapter,
     required ChapterManifest successorChapter,
-    required int successorOffset,
-    required Iterable<int> verifiedPredecessorIndexes,
+    required Iterable<VerifiedComicVersionPageInterval> verifiedIntervals,
   }) {
     final resolver = VerifiedArtifactReuseResolver(
       targetChapter: predecessorChapter,
     );
-    final successorAnchors = <int>[
-      for (final predecessorIndex in verifiedPredecessorIndexes)
-        if (predecessorIndex + successorOffset >= 0 &&
-            predecessorIndex + successorOffset < successorChapter.pages.length)
-          predecessorIndex + successorOffset,
-    ];
-    resolver.addVerifiedOffset(
-      sourceChapter: successorChapter,
-      targetOffsetFromSource: -successorOffset,
-      verifiedSourceIndexes: successorAnchors,
-    );
+    for (final interval in verifiedIntervals) {
+      resolver.addVerifiedInterval(
+        sourceChapter: successorChapter,
+        sourceStart: interval.predecessorStart + interval.successorOffset,
+        sourceEndExclusive:
+            interval.predecessorEndExclusive + interval.successorOffset,
+        targetOffsetFromSource: -interval.successorOffset,
+      );
+    }
     return resolver;
   }
 
@@ -73,6 +71,35 @@ final class VerifiedArtifactReuseResolver {
 
   int get relationCount => _sources.length;
   int get eligiblePageCount => _eligiblePageCount;
+
+  int addVerifiedInterval({
+    required ChapterManifest sourceChapter,
+    required int sourceStart,
+    required int sourceEndExclusive,
+    required int targetOffsetFromSource,
+  }) {
+    if (sourceStart < 0 ||
+        sourceEndExclusive <= sourceStart ||
+        sourceEndExclusive > sourceChapter.pages.length) {
+      return 0;
+    }
+    final targetStart = sourceStart + targetOffsetFromSource;
+    final targetEnd = sourceEndExclusive + targetOffsetFromSource;
+    if (targetStart < 0 || targetEnd > targetChapter.pages.length) {
+      return 0;
+    }
+    _sources.add(
+      _VerifiedOffsetSource(
+        chapter: sourceChapter,
+        sourceStart: sourceStart,
+        sourceEndExclusive: sourceEndExclusive,
+        targetOffsetFromSource: targetOffsetFromSource,
+      ),
+    );
+    final length = sourceEndExclusive - sourceStart;
+    _eligiblePageCount += length;
+    return length;
+  }
 
   int addVerifiedOffset({
     required ChapterManifest sourceChapter,
@@ -101,14 +128,12 @@ final class VerifiedArtifactReuseResolver {
         ? sourceRemaining
         : targetRemaining;
     if (overlap <= 0) return 0;
-    _sources.add(
-      _VerifiedOffsetSource(
-        chapter: sourceChapter,
-        targetOffsetFromSource: targetOffsetFromSource,
-      ),
+    return addVerifiedInterval(
+      sourceChapter: sourceChapter,
+      sourceStart: sourceStart,
+      sourceEndExclusive: sourceStart + overlap,
+      targetOffsetFromSource: targetOffsetFromSource,
     );
-    _eligiblePageCount += overlap;
-    return overlap;
   }
 
   Iterable<DownloadId> resolve(DownloadId id) sync* {
@@ -124,7 +149,8 @@ final class VerifiedArtifactReuseResolver {
     if (targetIndex == null) return;
     for (final source in _sources) {
       final sourceIndex = targetIndex - source.targetOffsetFromSource;
-      if (sourceIndex < 0 || sourceIndex >= source.chapter.pages.length) {
+      if (sourceIndex < source.sourceStart ||
+          sourceIndex >= source.sourceEndExclusive) {
         continue;
       }
       yield readerPageDownloadId(
@@ -371,10 +397,14 @@ final class VerifiedArtifactReusePlan {
 final class _VerifiedOffsetSource {
   const _VerifiedOffsetSource({
     required this.chapter,
+    required this.sourceStart,
+    required this.sourceEndExclusive,
     required this.targetOffsetFromSource,
   });
 
   final ChapterManifest chapter;
+  final int sourceStart;
+  final int sourceEndExclusive;
   final int targetOffsetFromSource;
 }
 

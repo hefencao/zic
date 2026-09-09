@@ -109,6 +109,13 @@ void main() {
           predecessorSourceRevision: 'old-r1',
           successorSourceRevision: 'new-r1',
           verifiedPredecessorPageIndexes: const <int>[0, 369],
+          verifiedIntervals: const <VerifiedComicVersionPageInterval>[
+            VerifiedComicVersionPageInterval(
+              predecessorStart: 0,
+              predecessorEndExclusive: 370,
+              successorOffset: 1,
+            ),
+          ],
           verifiedAt: DateTime.utc(2026, 8, 11, 1, 1),
         ),
       ],
@@ -148,6 +155,16 @@ void main() {
     expect(
       predecessors.single.pageMappings.single.verifiedPredecessorPageIndexes,
       <int>[0, 369],
+    );
+    expect(
+      predecessors.single.pageMappings.single.effectiveVerifiedIntervals
+          .map((interval) => (
+                interval.predecessorStart,
+                interval.predecessorEndExclusive,
+                interval.successorOffset,
+              ))
+          .toList(),
+      <(int, int, int)>[(0, 370, 1)],
     );
     final all = await reopened.listAllComicVersionRelations();
     expect(all, hasLength(1));

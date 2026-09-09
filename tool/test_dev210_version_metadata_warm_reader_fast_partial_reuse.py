@@ -17,11 +17,15 @@ def forbid(text: str, token: str, label: str) -> None:
 
 catalog = read('packages/catalog/lib/src/source_catalog.dart')
 for token in (
+    'final class VerifiedComicVersionPageInterval {',
     'final class ComicVersionPageMapping {',
+    'final List<VerifiedComicVersionPageInterval> verifiedIntervals;',
+    'List<VerifiedComicVersionPageInterval> get effectiveVerifiedIntervals',
+    'int? uniqueVerifiedPredecessorIndexForSuccessor(int index)',
     'final int successorOffset;',
     'final List<ComicVersionPageMapping> pageMappings;',
 ):
-    require(catalog, token, 'durable verified page mapping model')
+    require(catalog, token, 'durable verified affine interval mapping model')
 
 storage = read('packages/storage/lib/src/sqlite_imported_library_store.dart')
 for token in (
@@ -44,6 +48,8 @@ for token in (
     "'restoreMode': 'compact-version-authority'",
     "'stage': 'version-reuse-authority-ready'",
     "'stage': 'version-page-mapping-warmed'",
+    'verifiedIntervals: <VerifiedComicVersionPageInterval>[',
+    'mapping.effectiveVerifiedIntervals',
 ):
     require(migration, token, 'version metadata warm / compact authority owner')
 for token in (
@@ -77,6 +83,37 @@ for token in (
     'factory VerifiedArtifactReusePlan.fromVerifiedOffset({',
 ):
     require(reuse, token, 'persisted mapping / validatorless durable partial reuse')
+
+home_session = read('apps/app/lib/home_library_session.dart')
+for token in (
+    'mapping.effectiveVerifiedIntervals',
+    'verifiedIntervals: mapping.effectiveVerifiedIntervals',
+    'addVerifiedInterval(',
+):
+    require(home_session, token, 'interval-scoped version authority publication')
+
+downloads = read('packages/downloads/lib/src/chapter_downloads.dart')
+record_start = downloads.index('  Future<({CacheRec record, String proof})?> _resolveReusablePageRecord(')
+record_end = downloads.index('  /// Lifecycle-edge diagnostic trail only', record_start)
+record_reuse = downloads[record_start:record_end]
+require(
+    record_reuse,
+    'mapping.uniqueVerifiedPredecessorIndexForSuccessor(pageIndex)',
+    'manual download interval-scoped byte reuse',
+)
+forbid(
+    record_reuse,
+    'pageIndex - mapping.successorOffset',
+    'manual download global-offset byte reuse',
+)
+
+baseline = read('packages/catalog/lib/src/comic_version_baseline.dart')
+for token in (
+    'List<VerifiedComicVersionPageInterval> composeVerifiedIntervals(',
+    'rightInterval.predecessorStart - leftInterval.successorOffset',
+    'verifiedIntervals: composedIntervals',
+):
+    require(baseline, token, 'multi-hop verified interval composition')
 
 job = read('packages/sessions/lib/src/download_job.dart')
 for token in (

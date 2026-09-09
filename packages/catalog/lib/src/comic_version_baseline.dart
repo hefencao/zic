@@ -199,6 +199,75 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
     return left.isBefore(right) ? left : right;
   }
 
+  List<VerifiedComicVersionPageInterval> composeVerifiedIntervals(
+    ComicVersionPageMapping left,
+    ComicVersionPageMapping right,
+  ) {
+    if (left.successorSourceRevision == null ||
+        left.successorSourceRevision != right.predecessorSourceRevision) {
+      return const <VerifiedComicVersionPageInterval>[];
+    }
+    final candidates = <VerifiedComicVersionPageInterval>[];
+    for (final leftInterval in left.effectiveVerifiedIntervals) {
+      for (final rightInterval in right.effectiveVerifiedIntervals) {
+        final rightStartInLeft =
+            rightInterval.predecessorStart - leftInterval.successorOffset;
+        final rightEndInLeft =
+            rightInterval.predecessorEndExclusive - leftInterval.successorOffset;
+        final start = leftInterval.predecessorStart > rightStartInLeft
+            ? leftInterval.predecessorStart
+            : rightStartInLeft;
+        final end = leftInterval.predecessorEndExclusive < rightEndInLeft
+            ? leftInterval.predecessorEndExclusive
+            : rightEndInLeft;
+        if (start >= end) continue;
+        candidates.add(
+          VerifiedComicVersionPageInterval(
+            predecessorStart: start,
+            predecessorEndExclusive: end,
+            successorOffset:
+                leftInterval.successorOffset + rightInterval.successorOffset,
+          ),
+        );
+      }
+    }
+    candidates.sort((left, right) {
+      final start = left.predecessorStart.compareTo(right.predecessorStart);
+      if (start != 0) return start;
+      return left.predecessorEndExclusive
+          .compareTo(right.predecessorEndExclusive);
+    });
+    final merged = <VerifiedComicVersionPageInterval>[];
+    for (final interval in candidates) {
+      if (merged.isEmpty) {
+        merged.add(interval);
+        continue;
+      }
+      final previous = merged.last;
+      if (interval.predecessorStart < previous.predecessorEndExclusive &&
+          interval.successorOffset != previous.successorOffset) {
+        // A composed relation that maps the same predecessor index to two
+        // successor offsets is ambiguous. Keep the structural version path but
+        // drop byte-reuse authority instead of choosing by insertion order.
+        return const <VerifiedComicVersionPageInterval>[];
+      }
+      if (interval.successorOffset == previous.successorOffset &&
+          interval.predecessorStart <= previous.predecessorEndExclusive) {
+        merged[merged.length - 1] = VerifiedComicVersionPageInterval(
+          predecessorStart: previous.predecessorStart,
+          predecessorEndExclusive:
+              interval.predecessorEndExclusive > previous.predecessorEndExclusive
+                  ? interval.predecessorEndExclusive
+                  : previous.predecessorEndExclusive,
+          successorOffset: previous.successorOffset,
+        );
+      } else {
+        merged.add(interval);
+      }
+    }
+    return List<VerifiedComicVersionPageInterval>.unmodifiable(merged);
+  }
+
   List<ComicVersionPageMapping> composeMappings(
     List<ComicVersionRelation> path,
   ) {
@@ -215,17 +284,10 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
               left.successorPageCount != right.predecessorPageCount) {
             continue;
           }
-          final revisionChainMatches =
-              left.successorSourceRevision != null &&
-              left.successorSourceRevision == right.predecessorSourceRevision;
-          // Anchor indexes prove each affine edge as a whole; they are not a
-          // per-page allow-list. A composed mapping is therefore eligible when
-          // both edges carry anchor proof and the intermediate revision joins
-          // exactly. Keep the left-edge anchors as diagnostic provenance in
-          // the composed predecessor index space.
-          final composedProof = revisionChainMatches &&
-                  left.verifiedPredecessorPageIndexes.isNotEmpty &&
-                  right.verifiedPredecessorPageIndexes.isNotEmpty
+          final composedIntervals = composeVerifiedIntervals(left, right);
+          // Keep anchor indexes as bounded diagnostic provenance only when the
+          // interval composition retained verified coverage.
+          final composedProof = composedIntervals.isNotEmpty
               ? left.verifiedPredecessorPageIndexes
               : const <int>[];
           composed.add(
@@ -238,6 +300,7 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
               predecessorSourceRevision: left.predecessorSourceRevision,
               successorSourceRevision: right.successorSourceRevision,
               verifiedPredecessorPageIndexes: composedProof,
+              verifiedIntervals: composedIntervals,
               verifiedAt: earlierVerifiedAt(left.verifiedAt, right.verifiedAt),
             ),
           );

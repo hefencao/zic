@@ -525,15 +525,31 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     if (offsetProof == null || offsetProof.verifiedSourceIndexes.isEmpty) {
       return;
     }
+    final successorOffset = offsetProof.targetOffsetFromSource;
+    final predecessorStart = successorOffset < 0 ? -successorOffset : 0;
+    final predecessorEndCandidate =
+        successorManifest.pages.length - successorOffset;
+    final predecessorEnd =
+        predecessorEndCandidate < predecessorManifest.pages.length
+            ? predecessorEndCandidate
+            : predecessorManifest.pages.length;
+    if (predecessorStart >= predecessorEnd) return;
     final mapping = ComicVersionPageMapping(
       predecessorChapterId: predecessorManifest.chapter.chapterId,
       successorChapterId: successorManifest.chapter.chapterId,
       predecessorPageCount: predecessorManifest.pages.length,
       successorPageCount: successorManifest.pages.length,
-      successorOffset: offsetProof.targetOffsetFromSource,
+      successorOffset: successorOffset,
       predecessorSourceRevision: predecessorManifest.chapter.sourceRevision,
       successorSourceRevision: successorManifest.chapter.sourceRevision,
       verifiedPredecessorPageIndexes: offsetProof.verifiedSourceIndexes,
+      verifiedIntervals: <VerifiedComicVersionPageInterval>[
+        VerifiedComicVersionPageInterval(
+          predecessorStart: predecessorStart,
+          predecessorEndExclusive: predecessorEnd,
+          successorOffset: successorOffset,
+        ),
+      ],
       verifiedAt: DateTime.now().toUtc(),
     );
     final updatedRelation = ComicVersionRelation(
@@ -765,6 +781,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           '\u0000${mapping.predecessorSourceRevision ?? ''}'
           '\u0000${mapping.successorSourceRevision ?? ''}'
           '\u0000${mapping.verifiedPredecessorPageIndexes.join(',')}'
+          '\u0000${mapping.effectiveVerifiedIntervals.map((interval) => '${interval.predecessorStart}:${interval.predecessorEndExclusive}:${interval.successorOffset}').join(',')}'
           '\u0000${mapping.verifiedAt?.microsecondsSinceEpoch ?? 0}',
         );
       }

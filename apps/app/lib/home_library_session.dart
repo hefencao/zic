@@ -417,7 +417,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     final resolvers = <String, VersionPageReuseResolver>{};
     for (final relation in _versionRelations) {
       for (final mapping in relation.pageMappings) {
-        if (mapping.verifiedPredecessorPageIndexes.isEmpty ||
+        if (mapping.effectiveVerifiedIntervals.isEmpty ||
             mapping.predecessorSourceRevision == null ||
             mapping.successorSourceRevision == null) {
           continue;
@@ -441,16 +441,19 @@ final class HomeLibrarySession extends ChangeNotifier {
             VerifiedArtifactReuseResolver.predecessorToSuccessor(
           predecessorChapter: predecessorManifest,
           successorChapter: successorManifest,
-          successorOffset: mapping.successorOffset,
-          verifiedPredecessorIndexes: mapping.verifiedPredecessorPageIndexes,
+          verifiedIntervals: mapping.effectiveVerifiedIntervals,
         );
         final successorToPredecessor = VerifiedArtifactReuseResolver(
           targetChapter: successorManifest,
-        )..addVerifiedOffset(
+        );
+        for (final interval in mapping.effectiveVerifiedIntervals) {
+          successorToPredecessor.addVerifiedInterval(
             sourceChapter: predecessorManifest,
-            targetOffsetFromSource: mapping.successorOffset,
-            verifiedSourceIndexes: mapping.verifiedPredecessorPageIndexes,
+            sourceStart: interval.predecessorStart,
+            sourceEndExclusive: interval.predecessorEndExclusive,
+            targetOffsetFromSource: interval.successorOffset,
           );
+        }
         if (predecessorToSuccessor.relationCount == 0 ||
             successorToPredecessor.relationCount == 0) {
           continue;

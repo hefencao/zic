@@ -418,14 +418,121 @@ abstract interface class ComicCommentSource {
   });
 }
 
-/// A source-confirmed affine page-position mapping between one predecessor
-/// chapter and its successor chapter.
+/// One verified affine interval in predecessor page-index space.
 ///
-/// [successorOffset] means `successorIndex = predecessorIndex + offset` across
-/// the aligned overlap once the bounded source-owned anchor check succeeds.
-/// [verifiedPredecessorPageIndexes] records the compared anchor indexes for
-/// diagnostics/revalidation; it is not a per-page cache-reuse allow-list. The
-/// mapping never owns image bytes, validators or cache files.
+/// For every predecessor index `i` in `[predecessorStart,
+/// predecessorEndExclusive)`, the related successor index is
+/// `i + successorOffset`. Multiple intervals may use different offsets when a
+/// version contains insertions/removals/replacements. The interval carries
+/// relation evidence only; it never owns image bytes or logical download state.
+final class VerifiedComicVersionPageInterval {
+  const VerifiedComicVersionPageInterval({
+    required this.predecessorStart,
+    required this.predecessorEndExclusive,
+    required this.successorOffset,
+  })  : assert(predecessorStart >= 0),
+        assert(predecessorEndExclusive > predecessorStart);
+
+  final int predecessorStart;
+  final int predecessorEndExclusive;
+  final int successorOffset;
+
+  int get length => predecessorEndExclusive - predecessorStart;
+
+  bool containsPredecessorIndex(int index) =>
+      index >= predecessorStart && index < predecessorEndExclusive;
+
+  bool containsSuccessorIndex(int index) {
+    final predecessorIndex = index - successorOffset;
+    return containsPredecessorIndex(predecessorIndex);
+  }
+
+  Map<String, Object> toJson() => <String, Object>{
+        'predecessorStart': predecessorStart,
+        'predecessorEndExclusive': predecessorEndExclusive,
+        'successorOffset': successorOffset,
+      };
+
+  factory VerifiedComicVersionPageInterval.fromJson(
+    Map<String, Object?> json,
+  ) {
+    final predecessorStart = json['predecessorStart'];
+    final predecessorEndExclusive = json['predecessorEndExclusive'];
+    final successorOffset = json['successorOffset'];
+    if (predecessorStart is! int ||
+        predecessorStart < 0 ||
+        predecessorEndExclusive is! int ||
+        predecessorEndExclusive <= predecessorStart ||
+        successorOffset is! int) {
+      throw const FormatException('invalid verified comic version page interval');
+    }
+    return VerifiedComicVersionPageInterval(
+      predecessorStart: predecessorStart,
+      predecessorEndExclusive: predecessorEndExclusive,
+      successorOffset: successorOffset,
+    );
+  }
+}
+
+List<VerifiedComicVersionPageInterval> _normalizeVerifiedPageIntervals(
+  Iterable<VerifiedComicVersionPageInterval> intervals,
+) {
+  final ordered = intervals.toList(growable: false)
+    ..sort((left, right) {
+      final start = left.predecessorStart.compareTo(right.predecessorStart);
+      if (start != 0) return start;
+      final end = left.predecessorEndExclusive
+          .compareTo(right.predecessorEndExclusive);
+      if (end != 0) return end;
+      return left.successorOffset.compareTo(right.successorOffset);
+    });
+  if (ordered.isEmpty) return const <VerifiedComicVersionPageInterval>[];
+  final result = <VerifiedComicVersionPageInterval>[];
+  for (final interval in ordered) {
+    if (result.isEmpty) {
+      result.add(interval);
+      continue;
+    }
+    final previous = result.last;
+    if (interval.predecessorStart < previous.predecessorEndExclusive) {
+      if (interval.successorOffset != previous.successorOffset) {
+        throw const FormatException(
+          'overlapping verified page intervals use different offsets',
+        );
+      }
+      result[result.length - 1] = VerifiedComicVersionPageInterval(
+        predecessorStart: previous.predecessorStart,
+        predecessorEndExclusive:
+            interval.predecessorEndExclusive > previous.predecessorEndExclusive
+                ? interval.predecessorEndExclusive
+                : previous.predecessorEndExclusive,
+        successorOffset: previous.successorOffset,
+      );
+      continue;
+    }
+    if (interval.predecessorStart == previous.predecessorEndExclusive &&
+        interval.successorOffset == previous.successorOffset) {
+      result[result.length - 1] = VerifiedComicVersionPageInterval(
+        predecessorStart: previous.predecessorStart,
+        predecessorEndExclusive: interval.predecessorEndExclusive,
+        successorOffset: previous.successorOffset,
+      );
+      continue;
+    }
+    result.add(interval);
+  }
+  return List<VerifiedComicVersionPageInterval>.unmodifiable(result);
+}
+
+/// A source-confirmed page-position mapping between one predecessor chapter
+/// and its successor chapter.
+///
+/// [successorOffset] is retained as the legacy/default affine candidate for
+/// old records and simple whole-overlap relations. Reuse authority is carried
+/// by [effectiveVerifiedIntervals]: new records persist [verifiedIntervals],
+/// while historical anchor-only records are interpreted exactly as the current
+/// VibeVenera-compatible behavior (one verified whole-overlap interval).
+/// [verifiedPredecessorPageIndexes] remains bounded proof diagnostics only.
 final class ComicVersionPageMapping {
   const ComicVersionPageMapping({
     required this.predecessorChapterId,
@@ -436,6 +543,7 @@ final class ComicVersionPageMapping {
     this.predecessorSourceRevision,
     this.successorSourceRevision,
     this.verifiedPredecessorPageIndexes = const <int>[],
+    this.verifiedIntervals = const <VerifiedComicVersionPageInterval>[],
     this.verifiedAt,
   });
 
@@ -443,11 +551,69 @@ final class ComicVersionPageMapping {
   final String successorChapterId;
   final int predecessorPageCount;
   final int successorPageCount;
+
+  /// Legacy/default affine candidate. Consumers deciding byte reuse must use
+  /// [effectiveVerifiedIntervals], not this value alone.
   final int successorOffset;
   final String? predecessorSourceRevision;
   final String? successorSourceRevision;
   final List<int> verifiedPredecessorPageIndexes;
+  final List<VerifiedComicVersionPageInterval> verifiedIntervals;
   final DateTime? verifiedAt;
+
+  List<VerifiedComicVersionPageInterval> get effectiveVerifiedIntervals {
+    if (verifiedIntervals.isNotEmpty) {
+      return _normalizeVerifiedPageIntervals(verifiedIntervals);
+    }
+    if (verifiedPredecessorPageIndexes.isEmpty) {
+      return const <VerifiedComicVersionPageInterval>[];
+    }
+    final predecessorStart = successorOffset < 0 ? -successorOffset : 0;
+    final predecessorEndCandidate = successorPageCount - successorOffset;
+    final predecessorEnd = predecessorEndCandidate < predecessorPageCount
+        ? predecessorEndCandidate
+        : predecessorPageCount;
+    if (predecessorStart >= predecessorEnd) {
+      return const <VerifiedComicVersionPageInterval>[];
+    }
+    return <VerifiedComicVersionPageInterval>[
+      VerifiedComicVersionPageInterval(
+        predecessorStart: predecessorStart,
+        predecessorEndExclusive: predecessorEnd,
+        successorOffset: successorOffset,
+      ),
+    ];
+  }
+
+  Iterable<int> verifiedSuccessorIndexesForPredecessor(int index) sync* {
+    for (final interval in effectiveVerifiedIntervals) {
+      if (!interval.containsPredecessorIndex(index)) continue;
+      final successorIndex = index + interval.successorOffset;
+      if (successorIndex >= 0 && successorIndex < successorPageCount) {
+        yield successorIndex;
+      }
+    }
+  }
+
+  Iterable<int> verifiedPredecessorIndexesForSuccessor(int index) sync* {
+    for (final interval in effectiveVerifiedIntervals) {
+      if (!interval.containsSuccessorIndex(index)) continue;
+      final predecessorIndex = index - interval.successorOffset;
+      if (predecessorIndex >= 0 && predecessorIndex < predecessorPageCount) {
+        yield predecessorIndex;
+      }
+    }
+  }
+
+  int? uniqueVerifiedSuccessorIndexForPredecessor(int index) {
+    final values = verifiedSuccessorIndexesForPredecessor(index).toSet();
+    return values.length == 1 ? values.single : null;
+  }
+
+  int? uniqueVerifiedPredecessorIndexForSuccessor(int index) {
+    final values = verifiedPredecessorIndexesForSuccessor(index).toSet();
+    return values.length == 1 ? values.single : null;
+  }
 
   Map<String, Object?> toJson() => <String, Object?>{
         'predecessorChapterId': predecessorChapterId,
@@ -461,6 +627,10 @@ final class ComicVersionPageMapping {
           'successorSourceRevision': successorSourceRevision,
         if (verifiedPredecessorPageIndexes.isNotEmpty)
           'verifiedPredecessorPageIndexes': verifiedPredecessorPageIndexes,
+        if (verifiedIntervals.isNotEmpty)
+          'verifiedIntervals': verifiedIntervals
+              .map((interval) => interval.toJson())
+              .toList(growable: false),
         if (verifiedAt != null)
           'verifiedAt': verifiedAt!.toUtc().toIso8601String(),
       };
@@ -474,6 +644,7 @@ final class ComicVersionPageMapping {
     final predecessorSourceRevision = json['predecessorSourceRevision'];
     final successorSourceRevision = json['successorSourceRevision'];
     final verifiedIndexesValue = json['verifiedPredecessorPageIndexes'];
+    final verifiedIntervalsValue = json['verifiedIntervals'];
     final verifiedAtValue = json['verifiedAt'];
     if (predecessorChapterId is! String ||
         predecessorChapterId.isEmpty ||
@@ -490,6 +661,7 @@ final class ComicVersionPageMapping {
         (successorSourceRevision != null &&
             (successorSourceRevision is! String || successorSourceRevision.isEmpty)) ||
         (verifiedIndexesValue != null && verifiedIndexesValue is! List) ||
+        (verifiedIntervalsValue != null && verifiedIntervalsValue is! List) ||
         (verifiedAtValue != null && verifiedAtValue is! String)) {
       throw const FormatException('invalid comic version page mapping');
     }
@@ -506,6 +678,29 @@ final class ComicVersionPageMapping {
       }
       verifiedIndexes.sort();
     }
+    final verifiedIntervals = <VerifiedComicVersionPageInterval>[];
+    if (verifiedIntervalsValue is List) {
+      for (final value in verifiedIntervalsValue) {
+        if (value is! Map) {
+          throw const FormatException('invalid comic version page mapping');
+        }
+        final interval = VerifiedComicVersionPageInterval.fromJson(
+          Map<String, Object?>.from(value),
+        );
+        final successorStart =
+            interval.predecessorStart + interval.successorOffset;
+        final successorEnd =
+            interval.predecessorEndExclusive + interval.successorOffset;
+        if (interval.predecessorEndExclusive > predecessorPageCount ||
+            successorStart < 0 ||
+            successorEnd > successorPageCount) {
+          throw const FormatException('invalid comic version page mapping');
+        }
+        verifiedIntervals.add(interval);
+      }
+    }
+    final normalizedIntervals =
+        _normalizeVerifiedPageIntervals(verifiedIntervals);
     DateTime? verifiedAt;
     if (verifiedAtValue is String) {
       final parsed = DateTime.tryParse(verifiedAtValue);
@@ -524,6 +719,7 @@ final class ComicVersionPageMapping {
       successorSourceRevision: successorSourceRevision as String?,
       verifiedPredecessorPageIndexes:
           List<int>.unmodifiable(verifiedIndexes),
+      verifiedIntervals: normalizedIntervals,
       verifiedAt: verifiedAt,
     );
   }
