@@ -370,7 +370,7 @@ void main() {
     await session.dispose();
   });
 
-  test('deferred gallery prewarms consume one platform create per idle handoff', () async {
+  test('transition gallery prewarm waits for one idle handoff', () async {
     final scheduler = _ControlledFrameScheduler(scheduled: true);
     final runtime = _Runtime(
       renderer: RendererKind.androidTexture,
@@ -429,7 +429,8 @@ void main() {
     );
 
     // Current is the only output allowed to cross the queued-frame boundary
-    // immediately. Transition and next remain pending for idle slots.
+    // immediately. The transition waits for one idle slot; unresolved WebP
+    // next pages no longer gain speculative static-upload eligibility here.
     expect(runtime.prewarmCalls, 1);
     expect(scheduler.pendingCallbackCount, 1);
     expect(
@@ -440,10 +441,6 @@ void main() {
 
     scheduler.flushAfterFrame();
     expect(runtime.prewarmCalls, 2);
-    expect(scheduler.pendingCallbackCount, 1);
-
-    scheduler.flushAfterFrame();
-    expect(runtime.prewarmCalls, 3);
     expect(scheduler.pendingCallbackCount, 0);
 
     await session.dispose();

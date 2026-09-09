@@ -2,9 +2,10 @@ import 'package:domain/domain.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'browsing_direction_predictor.dart';
-import 'demand.dart';
 import 'decode_target.dart';
+import 'demand.dart';
 import 'heuristic_policy.dart';
+import 'page_media_evidence.dart';
 import 'policy_guard.dart';
 import 'role_window.dart';
 
@@ -206,15 +207,15 @@ final class PipelineController {
     if (runtime != null) return runtime;
     final page = chapter.pages[pageIndex];
     if (page.animatedHint) return true;
-    // Manifest hints are conservative transport-cost evidence only.
-    if (page.contentKindHint == ContentKindHint.webp ||
-        page.uri.path.toLowerCase().endsWith('.webp')) {
+    // Manifest hints, `.webp` URIs and runtime sniffing all prove only the
+    // encoded WebP container cost. Decoder classification remains the sole
+    // static/animated authority and is checked above.
+    if (hasWebpCostEvidence(
+      page,
+      runtimeObserved: _runtimeWebpCostPages.contains(pageIndex),
+    )) {
       return true;
     }
-    // Runtime sniffing closes the opaque-URI gap without claiming animation
-    // truth. If this exact current page has been observed as WebP, use the
-    // bounded body-flow policy until decoder classification says otherwise.
-    if (_runtimeWebpCostPages.contains(pageIndex)) return true;
     // Once an animated page is authoritative, unresolved neighbors are
     // conservatively expensive. A runtime WebP observation provides the same
     // cost hint while the decoder is still working toward authoritative media

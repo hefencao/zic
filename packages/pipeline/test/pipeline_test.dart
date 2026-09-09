@@ -836,10 +836,10 @@ void main() {
           pageId: 'w$index',
           chapterId: 'webp-static-chapter',
           index: index,
-          uri: Uri.parse('venera-resource://page/$index.webp'),
+          uri: Uri.parse('venera-resource:opaque-$index'),
           contentKindHint: ContentKindHint.webp,
-          // Source metadata can only say that WebP may animate.
-          animatedHint: true,
+          // Container metadata does not prove static vs animated. The default
+          // false hint must therefore not enable static warming by itself.
         ),
       ),
       readingDirection: ReadingDirection.vertical,
@@ -983,6 +983,7 @@ void main() {
           chapterId: 'static-chapter',
           index: index,
           uri: Uri.parse('venera-resource:static-$index'),
+          contentKindHint: ContentKindHint.png,
           animatedHint: false,
         ),
       ),
@@ -1165,6 +1166,90 @@ void main() {
     );
   });
 
+  test('opaque default-false animation hint is not static evidence', () {
+    final opaqueChapter = ChapterManifest(
+      sourceId: 'venera:opaque',
+      comicId: 'opaque-comic',
+      chapter: const Chapter(
+        chapterId: 'opaque-chapter',
+        comicId: 'opaque-comic',
+        title: 'Opaque',
+        sequence: 1,
+        pageCount: 4,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        4,
+        (index) => PageAsset(
+          pageId: 'o$index',
+          chapterId: 'opaque-chapter',
+          index: index,
+          uri: Uri.parse('venera-resource:opaque-$index'),
+        ),
+      ),
+      readingDirection: ReadingDirection.ltr,
+    );
+    final obs = ReaderObs(
+      sessionId: 'opaque-reader',
+      currentIndex: 1,
+      stableIndex: 1,
+      interaction: Interaction.idle,
+      logicalPosition: 1,
+      velocity: 0,
+      currentCoverage: Coverage(
+        pageIndex: 1,
+        assetKey: opaqueChapter.pages[1].assetKey,
+        fraction: 1,
+      ),
+      direction: ReadingDirection.ltr,
+      timestamp: DateTime.utc(2026, 9, 9),
+      monotonicMicros: 1,
+    );
+    final window = const RoleResolver(
+      forwardEncodedPages: 7,
+      backwardEncodedPages: 3,
+      forwardDecodePages: 2,
+      backwardDecodePages: 1,
+      nearRadius: 0,
+    ).resolve(opaqueChapter, obs);
+    final policy = const HeuristicPolicy(decodeWarmPages: true);
+    final target = DecodeTarget(physicalWidth: 1000, physicalHeight: 1000);
+    final initial = policy.createPlan(
+      revision: 1,
+      chapter: opaqueChapter,
+      observation: obs,
+      window: window,
+      decodeTarget: target,
+    );
+    expect(initial.decodes, hasLength(4));
+    expect(initial.uploads, hasLength(1));
+    expect(
+      initial.uploads.values.where(
+        (demand) => demand.reason.startsWith('heuristic:static-'),
+      ),
+      isEmpty,
+      reason: 'omitted animation metadata must remain unresolved',
+    );
+
+    final inferred = policy.createPlan(
+      revision: 2,
+      chapter: opaqueChapter,
+      observation: obs,
+      window: window,
+      decodeTarget: target,
+      runtimeAnimatedPages: const <int, bool>{0: false, 1: false},
+      assumeUnresolvedStatic: true,
+    );
+    expect(inferred.uploads.length, greaterThan(1));
+    expect(
+      inferred.uploads.values.where(
+        (demand) => demand.reason.startsWith('heuristic:static-'),
+      ),
+      isNotEmpty,
+      reason: 'authoritative chapter-level static inference still restores warming',
+    );
+  });
+
   test('runtime WebP cost blocks static warm until media classification', () {
     final webpCostChapter = ChapterManifest(
       sourceId: 'venera:fixture',
@@ -1239,9 +1324,25 @@ void main() {
       reason: 'runtime WebP cost must not masquerade as visible static output '
           'before animation classification',
     );
+    final inferredStaticPlan = policy.createPlan(
+      revision: 2,
+      chapter: webpCostChapter,
+      observation: shallow,
+      window: const RoleResolver().resolve(webpCostChapter, shallow),
+      decodeTarget: target,
+      runtimeWebpCostPages: const <int>{1},
+      assumeUnresolvedStatic: true,
+    );
+    expect(
+      inferredStaticPlan.uploads.keys
+          .where((id) => id.download.content.pageId == 'w1'),
+      isEmpty,
+      reason: 'page-local runtime WebP evidence must remain stronger than '
+          'chapter-level unresolved-static inference',
+    );
 
     final classifiedStaticPlan = policy.createPlan(
-      revision: 2,
+      revision: 3,
       chapter: webpCostChapter,
       observation: shallow,
       window: const RoleResolver().resolve(webpCostChapter, shallow),
@@ -1256,7 +1357,7 @@ void main() {
 
     final transition = backwardDrag(0.20);
     final transitionPlan = policy.createPlan(
-      revision: 3,
+      revision: 4,
       chapter: webpCostChapter,
       observation: transition,
       window: const RoleResolver().resolve(webpCostChapter, transition),

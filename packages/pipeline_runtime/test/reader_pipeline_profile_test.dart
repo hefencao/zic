@@ -23,7 +23,7 @@ void main() {
           pageId: 'page-$index',
           chapterId: 'chapter',
           index: index,
-          uri: Uri.parse('$scheme://host/page-$index.webp'),
+          uri: Uri.parse('$scheme://host/page-$index.png'),
         ),
       ),
       readingDirection: ReadingDirection.ltr,

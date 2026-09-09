@@ -3,6 +3,7 @@ import 'package:domain/domain.dart';
 import 'animated_prefetch_policy.dart';
 import 'decode_target.dart';
 import 'demand.dart';
+import 'page_media_evidence.dart';
 import 'role_window.dart';
 
 final class HeuristicPolicy {
@@ -236,8 +237,14 @@ final class HeuristicPolicy {
     bool isStaticCandidate(MapEntry<int, PageRole> entry) {
       final runtimeAnimated = runtimeAnimatedPages[entry.key];
       if (runtimeAnimated != null) return !runtimeAnimated;
+      final page = chapter.pages[entry.key];
+      // An exact runtime WebP sniff is page-local evidence and must wait for
+      // that page's decoder classification. The existing two-page
+      // authoritative-static chapter inference may admit other unresolved
+      // pages, including WebP hints whose exact body has not been sniffed yet.
       if (runtimeWebpCostPages.contains(entry.key)) return false;
-      return assumeUnresolvedStatic || !chapter.pages[entry.key].animatedHint;
+      if (assumeUnresolvedStatic) return true;
+      return hasStaticContentEvidence(page);
     }
 
     bool isStableDecodeRole(PageRole role) => switch (role) {
