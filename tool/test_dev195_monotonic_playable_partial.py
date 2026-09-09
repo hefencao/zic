@@ -16,12 +16,23 @@ for token in (
     "strategy: 'full-body-prefix-catchup'",
     'playablePrefixPreserved: true',
     '_verifyFullBodyPrefix(',
+    '_checksumExistingArtifact(',
     'final checksum = Crc32();',
     'expectedChecksum: session.artifact.checksum',
     'full response prefix differs from the existing playable partial',
 ):
     if token not in JOB:
         raise SystemExit(f'dev.195 full-body catch-up contract missing: {token}')
+
+checksum_block = JOB[
+    JOB.index('Future<String> _checksumExistingArtifact('):
+    JOB.index('Future<Uint8List> _readExistingArtifact(')
+]
+for token in ('session.artifact.readChunks(', 'final checksum = Crc32();', 'checksum.add(iterator.current);'):
+    if token not in checksum_block:
+        raise SystemExit(f'dev.195 streaming partial checksum missing: {token}')
+if 'BytesBuilder' in checksum_block or '_readExistingArtifact(' in checksum_block:
+    raise SystemExit('dev.195 full-body checksum must not materialize the preserved partial')
 
 # There may still be reset() for a brand-new durable-cache ingress failure, but
 # ordinary partial resume fallback must not reset the playback authority.

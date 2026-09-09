@@ -982,13 +982,11 @@ final class DownloadJob {
     }
     var targetChecksum = expectedChecksum;
     if (targetChecksum.isEmpty) {
-      final preserved = await _readExistingArtifact(
+      targetChecksum = await _checksumExistingArtifact(
         start: 0,
         endExclusive: preservedLength,
         cancel: cancel,
       );
-      final diskCrc = Crc32()..add(preserved);
-      targetChecksum = diskCrc.hex;
     }
     if (targetChecksum.isEmpty) {
       throw const Failure(
@@ -1046,6 +1044,57 @@ final class DownloadJob {
     return const <int>[];
   }
 
+
+  Future<String> _checksumExistingArtifact({
+    required int start,
+    required int endExclusive,
+    CancelToken? cancel,
+  }) async {
+    final iterator = StreamIterator<List<int>>(
+      session.artifact.readChunks(
+        start: start,
+        endExclusive: endExclusive,
+      ),
+    );
+    final checksum = Crc32();
+    try {
+      while (true) {
+        await _waitForSpeculativeEncodedReadBudget(cancel);
+        bool available;
+        if (cancel == null) {
+          available = await iterator.moveNext();
+        } else {
+          cancel.throwIfCancelled();
+          try {
+            available = await Future.any<bool>(<Future<bool>>[
+              iterator.moveNext(),
+              cancel.whenCancelled.then<bool>((_) {
+                throw const Failure(
+                  code: ErrorCode.cancelled,
+                  message: 'existing partial checksum read was cancelled',
+                );
+              }),
+            ]);
+          } catch (error, stackTrace) {
+            if (cancel.cancelled) cancel.throwIfCancelled();
+            throw Error.throwWithStackTrace(error, stackTrace);
+          }
+        }
+        if (!available) break;
+        cancel?.throwIfCancelled();
+        speculativeEncodedReadAccount?.recordRead(iterator.current.length);
+        checksum.add(iterator.current);
+      }
+    } finally {
+      try {
+        await iterator.cancel();
+      } on Object {
+        // Preserve the body/cancellation failure; the iterator's generator
+        // still receives its best-effort close request.
+      }
+    }
+    return checksum.hex;
+  }
 
   Future<Uint8List> _readExistingArtifact({
     required int start,
