@@ -38,15 +38,20 @@ for token in (
     'Future<void> _warmVersionRelationPageMappings(',
     'VerifiedArtifactReusePlan.matchResolvedRelated(',
     '_sourceResources.verifiedPageReuseIdentity(',
-    'Future<int> _restoreSourceVersionArtifactEquivalences(',
-    'findExistingReusableKeys(',
-    'hasReusableEquivalentPhysicalState(',
+    'Future<int> _ensureSourceVersionReuseAuthority(',
+    'hasReusableChapterState(',
+    'hasReusablePhysicalStateForChapter(',
+    "'restoreMode': 'compact-version-authority'",
+    "'stage': 'version-reuse-authority-ready'",
+    "'stage': 'version-page-mapping-warmed'",
+):
+    require(migration, token, 'version metadata warm / compact authority owner')
+for token in (
     'artifactCache.linkEquivalent(',
     "'restoreMode': 'vibevenera-existing-cache-alias'",
     "'stage': 'version-artifact-equivalence-restored'",
-    "'stage': 'version-page-mapping-warmed'",
 ):
-    require(migration, token, 'version metadata warm/restore owner')
+    forbid(migration, token, 'superseded Reader materialized alias restore')
 forbid(
     migration,
     'aliases.contains(relation.successorComicId)',

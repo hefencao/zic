@@ -38,15 +38,37 @@ for token in (
     "await _librarySession.upsertVersionRelation(",
     "DateTime? _projectedConfirmedSourceUpdateAt(",
     "_versionRelations",
-    "Future<int> _restoreSourceVersionArtifactEquivalences(",
+    "Future<int> _ensureSourceVersionReuseAuthority(",
     "_sourceVersionRelationsForComic(",
-    "findExistingReusableKeys(",
-    "hasReusableEquivalentPhysicalState(",
-    "artifactCache.linkEquivalent(",
+    "_librarySession.hydrateChapterBatch(sourceChapterKeys.values)",
     "VerifiedArtifactReusePlan.matchResolvedRelated(",
-    "'stage': 'version-artifact-equivalence-restored'",
+    "'stage': 'version-reuse-authority-ready'",
+    "'restoreMode': 'compact-version-authority'",
 ):
-    require(migration, token, "version projection / bidirectional reuse composition")
+    require(migration, token, "version projection / compact reuse authority")
+for token in (
+    "artifactCache.linkEquivalent(",
+    "candidatePages",
+    "registeredEquivalentPages",
+):
+    forbid(migration, token, "Reader materialized version aliases")
+
+home_session = read("apps/app/lib/home_library_session.dart")
+for token in (
+    "VersionPageReuseResolver",
+    "_versionAuthorityHydratedEntries",
+    "versionPageAuthority.replaceScope(",
+    "VerifiedArtifactReuseResolver.predecessorToSuccessor(",
+):
+    require(home_session, token, "Home compact version authority projection")
+
+runtime = read("packages/downloads/lib/src/composition_download_transfer_runtime.dart")
+for token in (
+    "resolver: this.versionPageAuthority.directCandidates",
+    "equivalentCandidates: _verifiedEquivalentCandidates",
+    "Iterable<DownloadId> versionCandidatesFor(DownloadId id)",
+):
+    require(runtime, token, "shared READY/partial/hot version candidate authority")
 forbid(
     migration,
     "if (relations.isEmpty) return 0;",

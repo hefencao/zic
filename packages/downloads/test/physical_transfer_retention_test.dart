@@ -253,11 +253,11 @@ void main() {
     expect(runtime.registry.sessions, hasLength(2));
   });
 
-  test('version canonical owner redirects new physical acquire before session creation', () async {
-    final oldId = _id('canonical-old');
-    final newId = _id('canonical-new');
+  test('version relation alone never replaces the requested physical owner', () async {
+    final oldId = _id('relation-old');
+    final newId = _id('relation-new');
     final authority = VersionPageAuthority()
-      ..replaceScope('old-new', <String, VersionPageCanonicalResolver>{
+      ..replaceScope('old-new', <String, VersionPageReuseResolver>{
         'page': (id) sync* {
           if (id == oldId) yield newId;
         },
@@ -271,14 +271,40 @@ void main() {
     );
     addTearDown(runtime.dispose);
 
-    expect(runtime.owner.resolveTransferId(oldId), newId);
+    expect(runtime.owner.resolveTransferId(oldId), oldId);
     final session = runtime.sessionFor(oldId);
-    expect(session.id, newId);
-    expect(runtime.registry.findExact(oldId), isNull);
-    expect(runtime.registry.findExact(newId), same(session));
+    expect(session.id, oldId);
+    expect(runtime.registry.findExact(oldId), same(session));
+    expect(runtime.registry.findExact(newId), isNull);
   });
 
-  test('canonical promotion moves old hot partial persistence to newer owner', () async {
+  test('version relation joins an already-existing reusable physical carrier', () async {
+    final oldId = _id('join-old');
+    final newId = _id('join-new');
+    final authority = VersionPageAuthority()
+      ..replaceScope('old-new', <String, VersionPageReuseResolver>{
+        'page': (id) sync* {
+          if (id == oldId) yield newId;
+          if (id == newId) yield oldId;
+        },
+      });
+    final backend = _RetentionStore();
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: backend,
+      versionPageAuthority: authority,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(runtime.dispose);
+    final newerCarrier = runtime.registry.get(newId);
+    await _writePartial(newerCarrier, <int>[1, 2, 3]);
+
+    expect(runtime.owner.resolveTransferId(oldId), newId);
+    expect(runtime.sessionFor(oldId), same(newerCarrier));
+    expect(runtime.registry.findExact(oldId), isNull);
+  });
+
+  test('relation discovery does not move an existing partial to another version', () async {
     final oldId = _id('partial-old');
     final newId = _id('partial-new');
     final authority = VersionPageAuthority();
@@ -299,24 +325,20 @@ void main() {
     await oldCarrier.append(writer, 0, <int>[1, 2, 3, 4, 5]);
     await oldCarrier.pause(writer);
 
-    authority.replaceScope('old-new', <String, VersionPageCanonicalResolver>{
+    authority.replaceScope('old-new', <String, VersionPageReuseResolver>{
       'page': (id) sync* {
         if (id == oldId) yield newId;
+        if (id == newId) yield oldId;
       },
     });
-    await runtime.checkpointPartials(reason: 'version-owner-promotion');
+    await runtime.checkpointPartials(reason: 'version-relation-refresh');
 
-    expect(backend.partials.containsKey(oldId), isFalse);
-    expect(backend.partials[newId]?.bytes, orderedEquals(<int>[1, 2, 3, 4, 5]));
-    expect(
-      backend.partials[newId]?.validators.isEmpty,
-      isTrue,
-      reason: 'old provider validators must not cross into the newer owner',
-    );
-    expect(runtime.registry.findExact(oldId), same(oldCarrier));
+    expect(backend.partials[oldId]?.bytes, orderedEquals(<int>[1, 2, 3, 4, 5]));
+    expect(backend.partials[oldId]?.validators.etag, 'old-provider-etag');
+    expect(backend.partials.containsKey(newId), isFalse);
   });
 
-  test('promoted old carrier commits immutable bytes under canonical owner', () async {
+  test('relation discovery does not rewrite a promoted artifact owner', () async {
     final oldId = _id('ready-old');
     final newId = _id('ready-new');
     final authority = VersionPageAuthority();
@@ -329,9 +351,10 @@ void main() {
     );
     addTearDown(runtime.dispose);
     final oldCarrier = runtime.registry.get(oldId);
-    authority.replaceScope('old-new', <String, VersionPageCanonicalResolver>{
+    authority.replaceScope('old-new', <String, VersionPageReuseResolver>{
       'page': (id) sync* {
         if (id == oldId) yield newId;
+        if (id == newId) yield oldId;
       },
     });
     final bytes = Uint8List.fromList(<int>[7, 6, 5, 4, 3, 2, 1]);
@@ -345,9 +368,10 @@ void main() {
     await oldCarrier.promote();
     expect(await runtime.artifactCacheHandoff!.settleAutomatic(oldCarrier), isTrue);
 
-    expect(backend.artifacts.containsKey(oldId), isFalse);
-    expect(backend.artifacts[newId], orderedEquals(bytes));
+    expect(backend.artifacts[oldId], orderedEquals(bytes));
+    expect(backend.artifacts.containsKey(newId), isFalse);
   });
+
 
   test('resident replay binds runtime service to one physical generation',
       () async {
@@ -461,6 +485,72 @@ void main() {
     expect(registry.resolvePhysicalId(aliasId), aliasId);
     await session.dispose();
   });
+
+  test('version authority feeds READY cache lookup without materialized aliases', () async {
+    final oldId = _id('cache-old');
+    final newId = _id('cache-new');
+    final authority = VersionPageAuthority()
+      ..replaceScope('old-new', <String, VersionPageReuseResolver>{
+        'page': (id) sync* {
+          if (id == oldId) yield newId;
+          if (id == newId) yield oldId;
+        },
+      });
+    final backend = _RetentionStore()
+      ..artifacts[newId] = Uint8List.fromList(<int>[9, 8, 7]);
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: backend,
+      versionPageAuthority: authority,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(runtime.dispose);
+
+    final lookup = await runtime.artifactCacheManager!.lookup(oldId);
+    expect(lookup, isNotNull);
+    expect(lookup!.storageId, newId);
+    expect(await lookup.entry.readAll!(), orderedEquals(<int>[9, 8, 7]));
+    expect(backend.artifacts.containsKey(oldId), isFalse);
+  });
+
+  test('version authority feeds cold partial restore with exact validator isolation', () async {
+    final oldId = _id('cold-old');
+    final newId = _id('cold-new');
+    final authority = VersionPageAuthority()
+      ..replaceScope('old-new', <String, VersionPageReuseResolver>{
+        'page': (id) sync* {
+          if (id == oldId) yield newId;
+          if (id == newId) yield oldId;
+        },
+      });
+    final backend = _RetentionStore();
+    await backend.storePartialDownload(
+      id: newId,
+      entry: PartialDownloadEntry(
+        length: 4,
+        validators: const Validators(etag: 'new-provider-etag'),
+        totalLength: 12,
+        open: ({required int start}) async* {
+          yield Uint8List.sublistView(Uint8List.fromList(<int>[1, 2, 3, 4]), start);
+        },
+      ),
+    );
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: backend,
+      versionPageAuthority: authority,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(runtime.dispose);
+    final oldSession = runtime.registry.get(oldId);
+
+    await runtime.partialDownloadHandoff!.restoreInto(oldSession);
+
+    expect(oldSession.committedLength, 4);
+    expect(oldSession.resumeValidatorsFor(oldId.canonicalUri).isEmpty, isTrue);
+    expect(backend.partials.containsKey(oldId), isFalse);
+  });
+
 }
 
 Future<void> _writePartial(DownloadSession session, List<int> values) async {

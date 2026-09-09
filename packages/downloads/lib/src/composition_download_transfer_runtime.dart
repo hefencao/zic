@@ -47,12 +47,17 @@ final class CompositionDownloadTransferRuntime {
               'composition-transfer-${++_sequence}',
             ) {
     final cache = artifactCacheManager;
+    if (cache != null) {
+      cache.registerEquivalentResolver(
+        key: _versionPageAuthorityResolverKey,
+        resolver: this.versionPageAuthority.directCandidates,
+      );
+    }
     final partialStore = partialDownloadStore;
     if (partialStore != null) {
       partialDownloadHandoff = PartialDownloadHandoff(
         store: partialStore,
-        equivalentCandidates: cache?.directEquivalents,
-        persistTarget: this.versionPageAuthority.resolve,
+        equivalentCandidates: _verifiedEquivalentCandidates,
         onError: (error, stackTrace) {},
         clock: clock,
         readScheduler: localReadScheduler,
@@ -71,11 +76,8 @@ final class CompositionDownloadTransferRuntime {
           session.id,
           endExclusive: endExclusive,
         ),
-        defaultTarget: (session) => this.versionPageAuthority.resolve(session.id),
-        requiredExactTargets: (session) => owner
-            .requiredExactDurableTargets(session.id)
-            .map(this.versionPageAuthority.resolve)
-            .toSet(),
+        requiredExactTargets: (session) =>
+            owner.requiredExactDurableTargets(session.id),
         exactDurableRestoreProof: partialDownloadHandoff?.provesExactDurableBody,
       );
     }
@@ -118,6 +120,8 @@ final class CompositionDownloadTransferRuntime {
   }
 
   static int _sequence = 0;
+  static const _versionPageAuthorityResolverKey =
+      'composition-version-page-authority';
 
   final ArtifactCacheManager? artifactCacheManager;
   final VersionPageAuthority versionPageAuthority;
@@ -142,66 +146,49 @@ final class CompositionDownloadTransferRuntime {
   bool get disposed => _disposed;
   bool get hasConsumers => owner.consumers.isNotEmpty;
 
-  DownloadId canonicalOwnerFor(DownloadId id) => versionPageAuthority.resolve(id);
+  Iterable<DownloadId> versionCandidatesFor(DownloadId id) =>
+      versionPageAuthority.directCandidates(id);
 
-  /// Resolves a logical page through the same canonical authority used by the
-  /// scheduler before materializing its physical session. Composition callers
-  /// must use this boundary instead of bypassing authority with registry.get.
+  Iterable<DownloadId> _verifiedEquivalentCandidates(DownloadId id) sync* {
+    final cache = artifactCacheManager;
+    if (cache != null) {
+      yield* cache.directEquivalents(id);
+      return;
+    }
+    yield* versionPageAuthority.directCandidates(id);
+  }
+
+  /// Resolves a logical page to an already-existing reusable physical carrier
+  /// before materializing a new session. The logical identity itself remains
+  /// exact; version relations only supply verified candidates.
   DownloadSession sessionFor(DownloadId logicalId) =>
       registry.get(_resolveTransferIdForAcquire(logicalId));
 
-  /// Read-only logical-session lookup. Prefer the canonical owner, but expose
-  /// an already-existing older carrier until the next acquire binds it.
+  /// Read-only logical-session lookup using the same physical-candidate set as
+  /// acquire, without creating a new alias or session.
   DownloadSession? findSession(DownloadId logicalId) {
-    final canonicalId = versionPageAuthority.resolve(logicalId);
-    return registry.find(canonicalId) ?? registry.find(logicalId);
+    final direct = registry.find(logicalId);
+    if (direct != null) return direct;
+    final candidates = <DownloadId, DownloadSession>{};
+    for (final equivalent in _verifiedEquivalentCandidates(logicalId)) {
+      final physicalId = registry.resolvePhysicalId(equivalent);
+      final session = registry.find(physicalId);
+      if (session == null || !_canJoinEquivalentSession(session)) continue;
+      candidates[physicalId] = session;
+    }
+    if (candidates.isEmpty) return null;
+    final ordered = candidates.entries.toList(growable: false)
+      ..sort(_compareEquivalentPhysicalCandidates);
+    return ordered.first.value;
   }
 
   DownloadId _resolveTransferIdForAcquire(DownloadId exactId) {
-    final canonicalId = versionPageAuthority.resolve(exactId);
-    final resolvedCanonical = registry.resolvePhysicalId(canonicalId);
-    if (resolvedCanonical != canonicalId) return resolvedCanonical;
     final resolvedExact = registry.resolvePhysicalId(exactId);
     if (resolvedExact != exactId) return resolvedExact;
-
-    if (canonicalId != exactId) {
-      final canonicalSession = registry.findExact(canonicalId);
-      if (canonicalSession != null) {
-        registry.aliasPhysical(id: exactId, target: canonicalId);
-        _recordAcquireAlias(
-          exactId,
-          action: 'joined-canonical-owner',
-          candidate: canonicalId,
-          session: canonicalSession,
-        );
-        return canonicalId;
-      }
-      final exactSession = registry.findExact(exactId);
-      if (exactSession != null && _canJoinEquivalentSession(exactSession)) {
-        // A relation can be discovered after an older physical carrier already
-        // exists. Keep the active carrier stable, but bind the newer canonical
-        // logical owner to it so future claims converge before persistence.
-        registry.aliasPhysical(id: canonicalId, target: exactId);
-        _recordAcquireAlias(
-          canonicalId,
-          action: 'canonical-owner-adopted-existing-carrier',
-          candidate: exactId,
-          session: exactSession,
-        );
-        return exactId;
-      }
-      if (exactSession == null) {
-        return canonicalId;
-      }
-      return exactId;
-    }
-
     if (registry.findExact(exactId) != null) return exactId;
-    final cache = artifactCacheManager;
-    if (cache == null) return exactId;
 
     final candidates = <DownloadId, DownloadSession>{};
-    for (final equivalent in cache.directEquivalents(exactId)) {
+    for (final equivalent in _verifiedEquivalentCandidates(exactId)) {
       final physicalId = registry.resolvePhysicalId(equivalent);
       final session = registry.find(physicalId);
       if (session == null || !_canJoinEquivalentSession(session)) continue;
@@ -312,6 +299,20 @@ final class CompositionDownloadTransferRuntime {
   bool hasReusableEquivalentPhysicalState(DownloadId id) {
     final session = registry.find(id);
     return session != null && _canJoinEquivalentSession(session);
+  }
+
+  bool hasReusablePhysicalStateForChapter(ChapterManifest chapter) {
+    for (final session in registry.sessions) {
+      final id = session.id;
+      if (id.content.sourceId != chapter.sourceId ||
+          id.content.comicId != chapter.comicId ||
+          id.content.chapterId != chapter.chapter.chapterId ||
+          id.sourceRevision != chapter.chapter.sourceRevision) {
+        continue;
+      }
+      if (_canJoinEquivalentSession(session)) return true;
+    }
+    return false;
   }
 
   DownloadTransferConsumer attachConsumer({
@@ -712,8 +713,7 @@ final class CompositionDownloadTransferRuntime {
   }
 
   Future<void> persistPromoted(DownloadId id) async {
-    final canonicalId = versionPageAuthority.resolve(id);
-    final session = registry.find(id) ?? registry.find(canonicalId);
+    final session = registry.find(id);
     if (session == null || session.state != DownloadState.promoted) return;
     final handoff = artifactCacheHandoff;
     final cache = artifactCacheManager;
@@ -724,15 +724,15 @@ final class CompositionDownloadTransferRuntime {
         'physical alias',
       );
     }
-    await handoff.persist(session, exactId: canonicalId);
+    await handoff.persist(session, exactId: id);
     final expectedLength = session.committedLength;
     if (expectedLength > 0 &&
         !await cache.containsBackendExact(
-          id: canonicalId,
+          id: id,
           expectedLength: expectedLength,
         )) {
       throw StateError(
-        'required canonical durable artifact was not materialized for ${canonicalId.key}',
+        'required exact durable artifact was not materialized for ${id.key}',
       );
     }
   }
@@ -767,6 +767,9 @@ final class CompositionDownloadTransferRuntime {
       throw StateError('cannot dispose composition transfer with active consumers');
     }
     _disposed = true;
+    artifactCacheManager?.removeEquivalentResolver(
+      _versionPageAuthorityResolverKey,
+    );
     await _physicalTransferRetention?.dispose();
     await owner.dispose();
     await artifactCacheHandoff?.drain(registry.sessions);

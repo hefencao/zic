@@ -29,7 +29,7 @@ prepare = migration[prepare_start:prepare_end]
 assert 'ImportedLibraryEntry focus' in prepare
 assert '_versionReuseWarmupKey(source, focus)' in prepare
 assert '_warmVersionRelationPageMappings(source, relation, focus)' in prepare
-assert 'refreshAvailability: true' in prepare
+assert '_ensureSourceVersionReuseAuthority(focus)' in prepare
 assert 'findComicVersions' not in prepare
 
 # Focused proof loads at most the related comic/chapter and is only attempted
@@ -58,10 +58,14 @@ view = migration[view_start:view_end]
 assert '_startVersionViewReusePreparation(' in view
 assert '_versionViewReusePreparations' in migration
 
-# Existing-state lookup is bounded to candidate keys, but zic streaming partials
-# and joinable hot physical sessions are first-class reusable state.
-assert 'findExistingReusableKeys(' in migration
-assert 'existing.partialKeys' in migration
-assert 'hasReusableEquivalentPhysicalState(candidate.source)' in migration
+# Missing-mapping eligibility is chapter-scoped: it must not enumerate every
+# page merely to learn whether READY/partial/hot reusable state exists.
+chapter_state_start = migration.index('  Future<bool> _chapterHasReusableVersionSourceState(')
+chapter_state_end = migration.index('  Future<void> _warmVersionRelationPageMappings(', chapter_state_start)
+chapter_state = migration[chapter_state_start:chapter_state_end]
+assert 'hasReusableChapterState(' in chapter_state
+assert 'hasReusablePhysicalStateForChapter(chapter)' in chapter_state
+assert 'for (final page in chapter.pages)' not in chapter_state
+assert 'findExistingReusableKeys(' not in chapter_state
 
 print('version reuse warmup scope: OK')

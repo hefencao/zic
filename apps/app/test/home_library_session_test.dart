@@ -52,7 +52,7 @@ void main() {
     expect(notifications, 1);
   });
 
-  test('version relations publish canonical page ownership without Reader entry',
+  test('version relations publish page reuse candidates without Reader entry',
       () async {
     final root = await Directory.systemTemp.createTemp('version-owner-home-');
     final composition = await PersistentDownloadComposition.open(root.path);
@@ -121,10 +121,100 @@ void main() {
     await session.ready;
     final oldId = readerPageDownloadId(oldManifest, oldManifest.pages[0]);
     final newId = readerPageDownloadId(newManifest, newManifest.pages[1]);
-    expect(composition.transferRuntime.canonicalOwnerFor(oldId), newId);
+    expect(composition.transferRuntime.versionCandidatesFor(oldId), contains(newId));
+    expect(composition.transferRuntime.versionCandidatesFor(newId), contains(oldId));
 
     await session.removeChapter('version-source', 'new-chapter');
-    expect(composition.transferRuntime.canonicalOwnerFor(oldId), oldId);
+    expect(composition.transferRuntime.versionCandidatesFor(oldId), isEmpty);
+  });
+
+  test('batch hydration publishes reuse candidates without growing Home entries',
+      () async {
+    final root = await Directory.systemTemp.createTemp('version-owner-hydrate-');
+    final composition = await PersistentDownloadComposition.open(root.path);
+    final library = MemoryImportedLibraryStore();
+    final queue = WholeComicDownloadQueue(downloads: composition.chapterDownloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: composition.chapterDownloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: false,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await composition.close();
+      await root.delete(recursive: true);
+    });
+    await session.ready;
+    expect(session.entries, isEmpty);
+
+    final oldManifest = _versionManifest(
+      comicId: 'old-comic',
+      chapterId: 'old-chapter',
+      revision: 'old-r1',
+      pageCount: 2,
+    );
+    final newManifest = _versionManifest(
+      comicId: 'new-comic',
+      chapterId: 'new-chapter',
+      revision: 'new-r1',
+      pageCount: 3,
+    );
+    await library.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic('old-comic'),
+        manifest: oldManifest,
+      ),
+    );
+    await library.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic('new-comic'),
+        manifest: newManifest,
+      ),
+    );
+    await session.upsertVersionRelation(
+      const ComicVersionRelation(
+        sourceId: 'version-source',
+        predecessorComicId: 'old-comic',
+        successorComicId: 'new-comic',
+        pageMappings: <ComicVersionPageMapping>[
+          ComicVersionPageMapping(
+            predecessorChapterId: 'old-chapter',
+            successorChapterId: 'new-chapter',
+            predecessorPageCount: 2,
+            successorPageCount: 3,
+            successorOffset: 1,
+            predecessorSourceRevision: 'old-r1',
+            successorSourceRevision: 'new-r1',
+            verifiedPredecessorPageIndexes: <int>[0, 1],
+          ),
+        ],
+      ),
+    );
+    final oldId = readerPageDownloadId(oldManifest, oldManifest.pages[0]);
+    final newId = readerPageDownloadId(newManifest, newManifest.pages[1]);
+    expect(composition.transferRuntime.versionCandidatesFor(oldId), isEmpty);
+
+    final hydrated = await session.hydrateChapterBatch(
+      const <ImportedLibraryChapterKey>[
+        ImportedLibraryChapterKey(
+          sourceId: 'version-source',
+          chapterId: 'old-chapter',
+        ),
+        ImportedLibraryChapterKey(
+          sourceId: 'version-source',
+          chapterId: 'new-chapter',
+        ),
+      ],
+    );
+    expect(hydrated, hasLength(2));
+    expect(session.entries, isEmpty);
+    expect(composition.transferRuntime.versionCandidatesFor(oldId), contains(newId));
+    expect(composition.transferRuntime.versionCandidatesFor(newId), contains(oldId));
   });
 
   test('derived version page mappings do not broadcast Home projection',

@@ -207,8 +207,9 @@ final class _DemoHomeState extends State<DemoHome> {
   bool _batchManagement = false;
   final Set<String> _managedComicIdentities = <String>{};
   final Set<String> _openingComicIdentities = <String>{};
-  final Map<String, String> _restoredVersionChapterFingerprints =
-      <String, String>{};
+  final Map<String, ({String fingerprint, int acceptedMappings})>
+      _versionReuseAuthorityStates =
+      <String, ({String fingerprint, int acceptedMappings})>{};
   final Map<String, Future<void>> _versionReuseWarmups = <String, Future<void>>{};
   final Map<String, Future<void>> _readerVersionRefreshes =
       <String, Future<void>>{};

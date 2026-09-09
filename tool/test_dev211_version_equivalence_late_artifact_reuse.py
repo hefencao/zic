@@ -46,20 +46,28 @@ else:
 
 migration = read('apps/app/lib/demo_home_source_migration.dart')
 for token in (
-    'Future<int> _restoreSourceVersionArtifactEquivalences(',
-    'findExistingReusableKeys(',
-    'hasReusableEquivalentPhysicalState(',
+    'Future<int> _ensureSourceVersionReuseAuthority(',
+    '_librarySession.hydrateChapterBatch(sourceChapterKeys.values)',
+    "'stage': 'version-reuse-authority-ready'",
+    "'materializedEquivalenceEdges': 0",
+    "'restoreMode': 'compact-version-authority'",
+):
+    require(migration, token, 'Reader compact version-authority preparation')
+for token in (
     'artifactCache.linkEquivalent(',
-    "'stage': 'version-artifact-equivalence-restored'",
-    "'registeredEquivalentPages': registered",
+    "'registeredEquivalentPages':",
     "'restoreMode': 'vibevenera-existing-cache-alias'",
 ):
-    require(migration, token, 'Reader existing-cache equivalence restoration')
-forbid(
-    migration,
-    'artifactCache.registerEquivalentResolver(',
-    'future-page lazy version equivalence registration',
-)
+    forbid(migration, token, 'superseded materialized version aliases')
+
+runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
+for token in (
+    'cache.registerEquivalentResolver(',
+    'resolver: this.versionPageAuthority.directCandidates',
+    'equivalentCandidates: _verifiedEquivalentCandidates',
+    "action: 'joined-existing-physical'",
+):
+    require(runtime, token, 'shared version candidate authority across cache/partial/hot')
 
 
 promoted = read('packages/downloads/lib/src/promoted_artifact_cache_handoff.dart')

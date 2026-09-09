@@ -417,21 +417,15 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         ? _chapterDownloads as ChapterDownloadTransferRuntimeProvider
         : null;
     if (provider == null || chapter.pages.isEmpty) return false;
-    final ids = <DownloadId>[
-      for (final page in chapter.pages) readerPageDownloadId(chapter, page),
-    ];
-    final indexed = await provider.artifactStore.findExistingReusableKeys(
-      ids.map((id) => id.key),
-    );
-    if (indexed.readyKeys.isNotEmpty || indexed.partialKeys.isNotEmpty) {
+    if (await provider.artifactStore.hasReusableChapterState(
+      sourceId: chapter.sourceId,
+      comicId: chapter.comicId,
+      chapterId: chapter.chapter.chapterId,
+      sourceRevision: chapter.chapter.sourceRevision,
+    )) {
       return true;
     }
-    for (final id in ids) {
-      if (provider.transferRuntime.hasReusableEquivalentPhysicalState(id)) {
-        return true;
-      }
-    }
-    return false;
+    return provider.transferRuntime.hasReusablePhysicalStateForChapter(chapter);
   }
 
   Future<void> _warmVersionRelationPageMappings(
@@ -612,10 +606,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           );
         }
       }
-      await _restoreSourceVersionArtifactEquivalences(
-        focus,
-        refreshAvailability: true,
-      );
+      await _ensureSourceVersionReuseAuthority(focus);
     });
     _versionReuseWarmups[key] = future;
     unawaited(
@@ -730,15 +721,12 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     );
   }
 
-  Future<int> _restoreSourceVersionArtifactEquivalences(
-    ImportedLibraryEntry current, {
-    bool refreshAvailability = false,
-  }) async {
+  Future<int> _ensureSourceVersionReuseAuthority(
+    ImportedLibraryEntry current,
+  ) async {
     final chapterKey =
         '${current.chapter.sourceId}\u0000${current.chapter.comicId}'
         '\u0000${current.chapter.chapterId}\u0000${current.chapter.sourceRevision}';
-    final artifactCache = _readerArtifactCache;
-    if (artifactCache == null) return 0;
     final relations = _sourceVersionRelationsForComic(
       current.chapter.sourceId,
       current.chapter.comicId,
@@ -783,26 +771,15 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     }
     relationFingerprintParts.sort();
     final relationFingerprint = relationFingerprintParts.join('\u0001');
-    if (!refreshAvailability &&
-        _restoredVersionChapterFingerprints[chapterKey] ==
-            relationFingerprint) {
-      return 0;
-    }
-
-    final provider = _chapterDownloads is ChapterDownloadTransferRuntimeProvider
-        ? _chapterDownloads as ChapterDownloadTransferRuntimeProvider
-        : null;
-    if (provider == null) {
-      _restoredVersionChapterFingerprints[chapterKey] = relationFingerprint;
-      return 0;
+    final previous = _versionReuseAuthorityStates[chapterKey];
+    if (previous?.fingerprint == relationFingerprint) {
+      return previous!.acceptedMappings;
     }
 
     final targetManifest = current.chapter.toManifest();
     final hydratedSourceEntries =
         await _librarySession.hydrateChapterBatch(sourceChapterKeys.values);
     final cachedManifests = <String, ChapterManifest>{};
-    final candidates = <({DownloadId target, DownloadId source})>[];
-    final candidateKeys = <String>{};
     var acceptedMappings = 0;
     var skippedMissingSourceManifests = 0;
     for (final relation in relations) {
@@ -856,64 +833,13 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           continue;
         }
         acceptedMappings++;
-        final targetOffsetFromSource =
-            currentIsSuccessor ? mapping.successorOffset : -mapping.successorOffset;
-        for (var sourceIndex = 0;
-            sourceIndex < sourceManifest.pages.length;
-            sourceIndex++) {
-          final targetIndex = sourceIndex + targetOffsetFromSource;
-          if (targetIndex < 0 || targetIndex >= targetManifest.pages.length) {
-            continue;
-          }
-          final sourceId = readerPageDownloadId(
-            sourceManifest,
-            sourceManifest.pages[sourceIndex],
-          );
-          final targetId = readerPageDownloadId(
-            targetManifest,
-            targetManifest.pages[targetIndex],
-          );
-          candidates.add((target: targetId, source: sourceId));
-          candidateKeys
-            ..add(sourceId.key)
-            ..add(targetId.key);
-        }
       }
     }
 
-    final resolverKey = 'version-reuse:$chapterKey';
-    artifactCache.removeEquivalentResolver(resolverKey);
-    final existing = await provider.artifactStore.findExistingReusableKeys(
-      candidateKeys,
+    _versionReuseAuthorityStates[chapterKey] = (
+      fingerprint: relationFingerprint,
+      acceptedMappings: acceptedMappings,
     );
-    final indexedReusable = <String>{
-      ...existing.readyKeys,
-      ...existing.partialKeys,
-    };
-    final runtime = provider.transferRuntime;
-    var registered = 0;
-    var hotSourcePages = 0;
-    var indexedPartialSourcePages = 0;
-    for (final candidate in candidates) {
-      final targetSession = runtime.registry.findExact(candidate.target);
-      if (indexedReusable.contains(candidate.target.key) ||
-          targetSession != null) {
-        continue;
-      }
-      final sourceHot =
-          runtime.hasReusableEquivalentPhysicalState(candidate.source);
-      final sourceIndexed = indexedReusable.contains(candidate.source.key);
-      if (!sourceIndexed && !sourceHot) continue;
-      if (sourceHot) hotSourcePages++;
-      if (existing.partialKeys.contains(candidate.source.key)) {
-        indexedPartialSourcePages++;
-      }
-      artifactCache.linkEquivalent(
-        first: candidate.target,
-        second: candidate.source,
-      );
-      registered++;
-    }
     widget.debugTrace.record(
       TraceEvent(
         monotonicMicros: _traceClock.elapsedMicroseconds,
@@ -922,22 +848,16 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         identityHash:
             '${current.chapter.sourceId}\u0000${current.chapter.chapterId}',
         payload: <String, Object?>{
-          'stage': 'version-artifact-equivalence-restored',
+          'stage': 'version-reuse-authority-ready',
           'acceptedMappings': acceptedMappings,
-          'candidatePages': candidates.length,
-          'existingReadyKeys': existing.readyKeys.length,
-          'existingPartialKeys': existing.partialKeys.length,
-          'hotSourcePages': hotSourcePages,
-          'indexedPartialSourcePages': indexedPartialSourcePages,
-          'registeredEquivalentPages': registered,
-          'materializedEquivalenceEdges': registered,
+          'hydratedSourceChapters': hydratedSourceEntries.length,
           'skippedMissingSourceManifests': skippedMissingSourceManifests,
-          'restoreMode': 'vibevenera-existing-cache-alias',
+          'materializedEquivalenceEdges': 0,
+          'restoreMode': 'compact-version-authority',
         },
       ),
     );
-    _restoredVersionChapterFingerprints[chapterKey] = relationFingerprint;
-    return registered;
+    return acceptedMappings;
   }
 
   Future<details.ComicDetailsVersionState> _loadSourceVersionState(

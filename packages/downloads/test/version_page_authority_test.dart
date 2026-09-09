@@ -14,70 +14,58 @@ DownloadId _id(String version) => DownloadId(
     );
 
 void main() {
-  test('canonical authority follows a unique directional version chain', () {
+  test('version authority exposes direct candidates without changing ownership', () {
     final a = _id('a');
     final b = _id('b');
     final c = _id('c');
     final authority = VersionPageAuthority()
-      ..replaceScope('a-b', <String, VersionPageCanonicalResolver>{
+      ..replaceScope('a-b', <String, VersionPageReuseResolver>{
         'page': (id) sync* {
           if (id == a) yield b;
         },
       })
-      ..replaceScope('b-c', <String, VersionPageCanonicalResolver>{
+      ..replaceScope('b-c', <String, VersionPageReuseResolver>{
         'page': (id) sync* {
           if (id == b) yield c;
         },
       });
 
-    expect(authority.resolve(a), c);
-    expect(authority.resolve(b), c);
-    expect(authority.resolve(c), c);
+    expect(authority.directCandidates(a), orderedEquals(<DownloadId>[b]));
+    expect(authority.directCandidates(b), orderedEquals(<DownloadId>[c]));
+    expect(authority.directCandidates(c), isEmpty);
   });
 
-  test('relation scope replacement revokes stale canonical projections', () {
+  test('relation scope replacement revokes stale reuse candidates', () {
     final a = _id('a');
     final b = _id('b');
     final authority = VersionPageAuthority()
-      ..replaceScope('relation', <String, VersionPageCanonicalResolver>{
+      ..replaceScope('relation', <String, VersionPageReuseResolver>{
         'old': (id) sync* {
           if (id == a) yield b;
         },
       });
 
-    expect(authority.resolve(a), b);
-    authority.replaceScope('relation', const <String, VersionPageCanonicalResolver>{});
-    expect(authority.resolve(a), a);
+    expect(authority.directCandidates(a), orderedEquals(<DownloadId>[b]));
+    authority.replaceScope('relation', const <String, VersionPageReuseResolver>{});
+    expect(authority.directCandidates(a), isEmpty);
   });
 
-  test('branched or cyclic ownership fails closed to exact identity', () {
+  test('multiple verified candidates remain candidates instead of choosing a head', () {
     final a = _id('a');
     final b = _id('b');
     final c = _id('c');
-    final branch = VersionPageAuthority()
-      ..replaceScope('a-b', <String, VersionPageCanonicalResolver>{
+    final authority = VersionPageAuthority()
+      ..replaceScope('a-b', <String, VersionPageReuseResolver>{
         'one': (id) sync* {
           if (id == a) yield b;
         },
       })
-      ..replaceScope('a-c', <String, VersionPageCanonicalResolver>{
+      ..replaceScope('a-c', <String, VersionPageReuseResolver>{
         'two': (id) sync* {
           if (id == a) yield c;
         },
       });
-    expect(branch.resolve(a), a);
 
-    final cycle = VersionPageAuthority()
-      ..replaceScope('a-b', <String, VersionPageCanonicalResolver>{
-        'one': (id) sync* {
-          if (id == a) yield b;
-        },
-      })
-      ..replaceScope('b-a', <String, VersionPageCanonicalResolver>{
-        'two': (id) sync* {
-          if (id == b) yield a;
-        },
-      });
-    expect(cycle.resolve(a), a);
+    expect(authority.directCandidates(a).toSet(), <DownloadId>{b, c});
   });
 }

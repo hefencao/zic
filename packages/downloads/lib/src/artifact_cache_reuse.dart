@@ -40,10 +40,10 @@ final class VerifiedArtifactReuseResolver {
         };
 
   /// Builds the directional predecessor -> successor projection used by the
-  /// composition-level canonical owner. The persisted mapping expresses
+  /// composition-level direct reuse authority. The persisted mapping expresses
   /// `successorIndex = predecessorIndex + successorOffset`; this resolver is
   /// queried with predecessor ids and therefore uses the inverse affine view.
-  factory VerifiedArtifactReuseResolver.canonicalSuccessor({
+  factory VerifiedArtifactReuseResolver.predecessorToSuccessor({
     required ChapterManifest predecessorChapter,
     required ChapterManifest successorChapter,
     required int successorOffset,

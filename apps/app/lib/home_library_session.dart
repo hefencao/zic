@@ -19,6 +19,10 @@ String _downloadEntryIdentity(ImportedLibraryEntry entry) =>
       entry.chapter.sourceRevision,
     );
 
+String _versionAuthorityEntryKey(ImportedLibraryEntry entry) =>
+    '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}'
+    '\u0000${entry.chapter.chapterId}';
+
 HomeChapterDownloadSummary _downloadSummary(ChapterDownloadSnapshot snapshot) =>
     HomeChapterDownloadSummary(
       sourceId: snapshot.sourceId,
@@ -307,6 +311,8 @@ final class HomeLibrarySession extends ChangeNotifier {
   ChapterDownloadService? _downloadProjectionRefreshService;
 
   List<ImportedLibraryEntry> _entries = const <ImportedLibraryEntry>[];
+  final Map<String, ImportedLibraryEntry> _versionAuthorityHydratedEntries =
+      <String, ImportedLibraryEntry>{};
   List<ImportedLibraryEntry> _orphanedDownloadEntries =
       const <ImportedLibraryEntry>[];
   List<SavedComicRecord> _savedComics = const <SavedComicRecord>[];
@@ -405,11 +411,10 @@ final class HomeLibrarySession extends ChangeNotifier {
         : null;
     if (provider == null) return;
     final entriesByKey = <String, ImportedLibraryEntry>{
-      for (final entry in _entries)
-        '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}\u0000${entry.chapter.chapterId}':
-            entry,
+      ..._versionAuthorityHydratedEntries,
+      for (final entry in _entries) _versionAuthorityEntryKey(entry): entry,
     };
-    final resolvers = <String, VersionPageCanonicalResolver>{};
+    final resolvers = <String, VersionPageReuseResolver>{};
     for (final relation in _versionRelations) {
       for (final mapping in relation.pageMappings) {
         if (mapping.verifiedPredecessorPageIndexes.isEmpty ||
@@ -432,23 +437,68 @@ final class HomeLibrarySession extends ChangeNotifier {
                 mapping.successorSourceRevision) {
           continue;
         }
-        final resolver = VerifiedArtifactReuseResolver.canonicalSuccessor(
+        final predecessorToSuccessor =
+            VerifiedArtifactReuseResolver.predecessorToSuccessor(
           predecessorChapter: predecessorManifest,
           successorChapter: successorManifest,
           successorOffset: mapping.successorOffset,
           verifiedPredecessorIndexes: mapping.verifiedPredecessorPageIndexes,
         );
-        if (resolver.relationCount == 0) continue;
+        final successorToPredecessor = VerifiedArtifactReuseResolver(
+          targetChapter: successorManifest,
+        )..addVerifiedOffset(
+            sourceChapter: predecessorManifest,
+            targetOffsetFromSource: mapping.successorOffset,
+            verifiedSourceIndexes: mapping.verifiedPredecessorPageIndexes,
+          );
+        if (predecessorToSuccessor.relationCount == 0 ||
+            successorToPredecessor.relationCount == 0) {
+          continue;
+        }
         final key =
             '${relation.sourceId}\u0000${relation.predecessorComicId}\u0000${relation.successorComicId}'
             '\u0000${mapping.predecessorChapterId}\u0000${mapping.successorChapterId}';
-        resolvers[key] = resolver.resolve;
+        resolvers['$key:forward'] = predecessorToSuccessor.resolve;
+        resolvers['$key:reverse'] = successorToPredecessor.resolve;
       }
     }
     provider.transferRuntime.versionPageAuthority.replaceScope(
       'library-version-relations',
       resolvers,
     );
+  }
+
+  void _rememberVersionAuthorityEntries(
+    Iterable<ImportedLibraryEntry> entries,
+  ) {
+    var changed = false;
+    for (final entry in entries) {
+      final key = _versionAuthorityEntryKey(entry);
+      final previous = _versionAuthorityHydratedEntries[key];
+      if (previous?.chapter.sourceRevision == entry.chapter.sourceRevision &&
+          previous?.chapter.pages.length == entry.chapter.pages.length) {
+        continue;
+      }
+      _versionAuthorityHydratedEntries[key] = entry;
+      changed = true;
+    }
+    if (changed) _refreshVersionPageAuthority();
+  }
+
+  void _forgetVersionAuthorityChapter(String sourceId, String chapterId) {
+    final keys = _versionAuthorityHydratedEntries.entries
+        .where((entry) =>
+            entry.value.chapter.sourceId == sourceId &&
+            entry.value.chapter.chapterId == chapterId)
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    for (final key in keys) {
+      _versionAuthorityHydratedEntries.remove(key);
+    }
+    // The visible `_entries` projection may have changed even when this
+    // chapter was never in the hydration-only cache. Always republish the
+    // compact scope after a chapter removal.
+    _refreshVersionPageAuthority();
   }
 
   List<BrowsableComicSource> get enabledSources {
@@ -725,6 +775,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     if (_closed) {
       return;
     }
+    _versionAuthorityHydratedEntries.clear();
     _entries = List<ImportedLibraryEntry>.unmodifiable(snapshot.entries);
     _savedComics = List<SavedComicRecord>.unmodifiable(snapshot.savedComics);
     _categories = List<LibraryCategory>.unmodifiable(snapshot.categories);
@@ -880,6 +931,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     );
     if (publishPrimary) {
       if (_libraryProjectionRevision == projectionRevisionAtStart) {
+        _versionAuthorityHydratedEntries.clear();
         _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
         _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
         _preferences = Map<String, ComicPreference>.unmodifiable(preferences);
@@ -1039,6 +1091,7 @@ final class HomeLibrarySession extends ChangeNotifier {
         : sourcePreferences;
 
     if (_libraryProjectionRevision == projectionRevisionAtStart) {
+      _versionAuthorityHydratedEntries.clear();
       _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
       _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
       _versionRelations = List<ComicVersionRelation>.unmodifiable(
@@ -1110,7 +1163,9 @@ final class HomeLibrarySession extends ChangeNotifier {
       () => library.get(entry.chapter.sourceId, entry.chapter.chapterId),
       summary: (value) => 'present=${value != null}',
     );
-    return hydrated ?? entry;
+    final resolved = hydrated ?? entry;
+    _rememberVersionAuthorityEntries(<ImportedLibraryEntry>[resolved]);
+    return resolved;
   }
 
   Future<Map<String, ImportedLibraryEntry>> hydrateChapterBatch(
@@ -1137,6 +1192,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       },
       summary: (value) => 'requested=${keys.length} present=${value.length}',
     );
+    _rememberVersionAuthorityEntries(entries);
     return <String, ImportedLibraryEntry>{
       for (final entry in entries) entry.identity: entry,
     };
@@ -1268,14 +1324,14 @@ final class HomeLibrarySession extends ChangeNotifier {
       ..remove(identity);
     final entriesChanged = next.length != _entries.length;
     final readStateChanged = nextReadStates.length != _readStates.length;
-    if (!entriesChanged && !readStateChanged) return;
     if (entriesChanged) {
       _entries = List<ImportedLibraryEntry>.unmodifiable(next);
     }
+    _forgetVersionAuthorityChapter(sourceId, chapterId);
+    if (!entriesChanged && !readStateChanged) return;
     if (readStateChanged) {
       _readStates = Map<String, ChapterReadState>.unmodifiable(nextReadStates);
     }
-    if (entriesChanged) _refreshVersionPageAuthority();
     _libraryProjectionRevision++;
     _publish();
     _scheduleSnapshotWrite();
@@ -1368,6 +1424,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       next[index] = entry;
     }
     _entries = List<ImportedLibraryEntry>.unmodifiable(next);
+    _rememberVersionAuthorityEntries(<ImportedLibraryEntry>[entry]);
     _libraryProjectionRevision++;
     _publish();
     _scheduleSnapshotWrite();

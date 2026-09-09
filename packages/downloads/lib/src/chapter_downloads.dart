@@ -2229,6 +2229,32 @@ final class PersistentDownloadArtifactStore
     return (readyKeys: readyKeys, partialKeys: partialKeys);
   }
 
+  /// Returns whether this exact chapter revision currently owns any reusable
+  /// READY artifact or non-empty indexed partial. The query scales with actual
+  /// cache bindings, never with the source chapter's page count; callers use
+  /// it only as a cheap reason to perform bounded version-page verification.
+  Future<bool> hasReusableChapterState({
+    required String sourceId,
+    required String comicId,
+    required String chapterId,
+    required String sourceRevision,
+  }) async {
+    for (final record in await _index.list()) {
+      final id = record.id;
+      if (id.content.sourceId != sourceId ||
+          id.content.comicId != comicId ||
+          id.content.chapterId != chapterId ||
+          id.sourceRevision != sourceRevision) {
+        continue;
+      }
+      if (_isVerifiedReadyRecord(record) ||
+          (record.state == CacheState.partial && record.bytes > 0)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /// Mirrors a freshly promoted local final into the configured SAF tree and
   /// rewrites the index record to its `saf:` path, removing the local staging
   /// copy. Failures keep the local copy authoritative so downloads never

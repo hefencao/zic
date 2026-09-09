@@ -276,29 +276,23 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
         'Venera 章节仍包含已失效的运行时资源定位符，已阻止进入 Reader',
       );
     }
-    final restoreWatch = Stopwatch()..start();
+    final authorityWatch = Stopwatch()..start();
     final viewReusePreparation = _versionViewReusePreparationFor(current);
     if (viewReusePreparation != null) {
       await viewReusePreparation;
     }
     final versionSource = _sourceForId(current.chapter.sourceId);
-    var restoredCount = await _restoreSourceVersionArtifactEquivalences(
-      current,
-      refreshAvailability: true,
-    );
-    if (restoredCount == 0 &&
+    var authorityMappingCount = await _ensureSourceVersionReuseAuthority(current);
+    if (authorityMappingCount == 0 &&
         versionSource != null &&
         _sourceVersionRelationsForComic(
           current.chapter.sourceId,
           current.chapter.comicId,
         ).isNotEmpty) {
       await _prepareVersionReuseWarmup(versionSource, current);
-      restoredCount = await _restoreSourceVersionArtifactEquivalences(
-        current,
-        refreshAvailability: true,
-      );
+      authorityMappingCount = await _ensureSourceVersionReuseAuthority(current);
     }
-    final restoreMs = restoreWatch.elapsedMilliseconds;
+    final authorityMs = authorityWatch.elapsedMilliseconds;
     if (versionSource != null) {
       _scheduleReaderMetadataVersionRefresh(versionSource, current);
     }
@@ -344,8 +338,8 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
           'loadChapterMs': loadMs,
           'hydrateMs': hydrateMs,
           'remoteRefreshMs': remoteMs,
-          'versionReuseRegistrationMs': restoreMs,
-          'registeredEquivalentCoveragePages': restoredCount,
+          'versionReuseAuthorityMs': authorityMs,
+          'verifiedAuthorityMappings': authorityMappingCount,
           'byteProbeMs': byteProbeMs,
           'totalPrepareMs': totalMs,
         },

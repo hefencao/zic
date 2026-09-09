@@ -1,19 +1,19 @@
 import 'package:domain/domain.dart';
 
-typedef VersionPageCanonicalResolver = Iterable<DownloadId> Function(
+typedef VersionPageReuseResolver = Iterable<DownloadId> Function(
   DownloadId id,
 );
 
-/// Composition-owned canonical logical owner for version-equivalent pages.
+/// Composition-owned verified page-reuse authority across comic versions.
 ///
-/// Version/catalog code contributes directional resolvers such as
-/// predecessor -> successor. Transfer, partial and artifact owners consume the
-/// resolved [DownloadId]; they do not independently walk version history.
-/// Resolver replacement is scoped so refreshed relation evidence can revoke
-/// stale projections without touching unrelated authorities.
+/// Catalog/library code contributes scoped direct-equivalence projections.
+/// This authority never changes a logical page into a newer logical owner by
+/// itself. Cache, partial and hot-transfer owners consume the same candidate
+/// set and may reuse an already-existing physical state; exact writes remain
+/// owned by the logical [DownloadId] requested by the caller.
 final class VersionPageAuthority {
-  final Map<String, Map<String, VersionPageCanonicalResolver>> _scopes =
-      <String, Map<String, VersionPageCanonicalResolver>>{};
+  final Map<String, Map<String, VersionPageReuseResolver>> _scopes =
+      <String, Map<String, VersionPageReuseResolver>>{};
 
   int get scopeCount => _scopes.length;
   int get resolverCount => _scopes.values
@@ -21,7 +21,7 @@ final class VersionPageAuthority {
 
   void replaceScope(
     String scope,
-    Map<String, VersionPageCanonicalResolver> resolvers,
+    Map<String, VersionPageReuseResolver> resolvers,
   ) {
     if (scope.isEmpty) {
       throw ArgumentError.value(scope, 'scope', 'must not be empty');
@@ -30,7 +30,7 @@ final class VersionPageAuthority {
       _scopes.remove(scope);
       return;
     }
-    final normalized = <String, VersionPageCanonicalResolver>{};
+    final normalized = <String, VersionPageReuseResolver>{};
     for (final entry in resolvers.entries) {
       if (entry.key.isEmpty) {
         throw ArgumentError.value(entry.key, 'resolver key', 'must not be empty');
@@ -50,34 +50,21 @@ final class VersionPageAuthority {
     _scopes.clear();
   }
 
-  DownloadId resolve(DownloadId id) {
-    final original = id;
-    var current = id;
-    final visited = <DownloadId>{id};
-    for (var depth = 0; depth < 32; depth++) {
-      final candidates = <DownloadId>{};
-      for (final resolvers in _scopes.values) {
-        for (final resolver in resolvers.values) {
-          for (final candidate in resolver(current)) {
-            if (candidate != current) candidates.add(candidate);
-          }
+  /// Returns direct verified version-page candidates for [id].
+  ///
+  /// No transitive walk is performed here: a candidate only matters if a
+  /// downstream physical authority actually exists. This keeps version graph
+  /// facts separate from logical ownership and prevents a newer source version
+  /// from silently replacing an explicitly requested older version.
+  Iterable<DownloadId> directCandidates(DownloadId id) sync* {
+    final candidates = <DownloadId>{};
+    for (final resolvers in _scopes.values) {
+      for (final resolver in resolvers.values) {
+        for (final candidate in resolver(id)) {
+          if (candidate != id) candidates.add(candidate);
         }
       }
-      if (candidates.isEmpty) return current;
-      if (candidates.length != 1) {
-        // A branched/version-ambiguous page cannot have one canonical owner.
-        // Keep its original exact identity rather than selecting by insertion
-        // order or version timestamp.
-        return original;
-      }
-      final next = candidates.single;
-      if (!visited.add(next)) {
-        // Canonical ownership must be directional. A cycle means the supplied
-        // projections disagree, so fail closed to the caller's exact identity.
-        return original;
-      }
-      current = next;
     }
-    return original;
+    yield* candidates;
   }
 }

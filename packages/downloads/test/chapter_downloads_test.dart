@@ -172,6 +172,24 @@ void main() {
 
     expect(existing.readyKeys, <String>{readyId.key});
     expect(existing.partialKeys, <String>{partialId.key});
+    expect(
+      await service.artifactStore.hasReusableChapterState(
+        sourceId: 'reader-cache-source',
+        comicId: 'reader-cache-comic',
+        chapterId: 'reader-cache-chapter',
+        sourceRevision: 'reader-cache-r1',
+      ),
+      isTrue,
+    );
+    expect(
+      await service.artifactStore.hasReusableChapterState(
+        sourceId: 'reader-cache-source',
+        comicId: 'reader-cache-comic',
+        chapterId: 'reader-cache-chapter',
+        sourceRevision: 'reader-cache-r2',
+      ),
+      isFalse,
+    );
   });
 
   test('storePromotedArtifact replaces interrupted partial session', () async {
