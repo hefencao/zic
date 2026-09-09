@@ -513,8 +513,8 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     final successorReusable =
         await _chapterHasReusableVersionSourceState(successorManifest);
     if (!predecessorReusable && !successorReusable) return;
-    final offsetProof =
-        await VerifiedArtifactReusePlan.matchResolvedRelatedOffset(
+    final intervalProof =
+        await VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(
       sourceChapter: predecessorManifest,
       targetChapter: successorManifest,
       resolveIdentity: (page) => _sourceResources.verifiedPageReuseIdentity(
@@ -522,34 +522,27 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         locator: page.uri,
       ),
     );
-    if (offsetProof == null || offsetProof.verifiedSourceIndexes.isEmpty) {
+    if (intervalProof == null || intervalProof.verifiedIntervals.isEmpty) {
       return;
     }
-    final successorOffset = offsetProof.targetOffsetFromSource;
-    final predecessorStart = successorOffset < 0 ? -successorOffset : 0;
-    final predecessorEndCandidate =
-        successorManifest.pages.length - successorOffset;
-    final predecessorEnd =
-        predecessorEndCandidate < predecessorManifest.pages.length
-            ? predecessorEndCandidate
-            : predecessorManifest.pages.length;
-    if (predecessorStart >= predecessorEnd) return;
+    final whole = intervalProof.verifiedIntervals.length == 1
+        ? intervalProof.verifiedIntervals.single
+        : null;
+    final structuralOffset = whole != null &&
+            whole.predecessorStart == 0 &&
+            whole.predecessorEndExclusive == predecessorManifest.pages.length
+        ? whole.successorOffset
+        : 0;
     final mapping = ComicVersionPageMapping(
       predecessorChapterId: predecessorManifest.chapter.chapterId,
       successorChapterId: successorManifest.chapter.chapterId,
       predecessorPageCount: predecessorManifest.pages.length,
       successorPageCount: successorManifest.pages.length,
-      successorOffset: successorOffset,
+      successorOffset: structuralOffset,
       predecessorSourceRevision: predecessorManifest.chapter.sourceRevision,
       successorSourceRevision: successorManifest.chapter.sourceRevision,
-      verifiedPredecessorPageIndexes: offsetProof.verifiedSourceIndexes,
-      verifiedIntervals: <VerifiedComicVersionPageInterval>[
-        VerifiedComicVersionPageInterval(
-          predecessorStart: predecessorStart,
-          predecessorEndExclusive: predecessorEnd,
-          successorOffset: successorOffset,
-        ),
-      ],
+      verifiedPredecessorPageIndexes: intervalProof.verifiedSourceIndexes,
+      verifiedIntervals: intervalProof.verifiedIntervals,
       verifiedAt: DateTime.now().toUtc(),
     );
     final updatedRelation = ComicVersionRelation(
@@ -575,6 +568,13 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           'stage': 'version-page-mapping-warmed',
           'focusChapterId': focus.chapter.chapterId,
           'verifiedPages': mapping.verifiedPredecessorPageIndexes.length,
+          'verifiedIntervals': mapping.verifiedIntervals.length,
+          'verifiedCoveragePages': mapping.verifiedIntervals.fold<int>(
+            0,
+            (total, interval) => total + interval.length,
+          ),
+          'probeCount': intervalProof.probeCount,
+          'verificationMode': 'bounded-affine-probe',
           'persistedMappings': updatedRelation.pageMappings.length,
           'materializedEquivalenceEdges': 0,
         },

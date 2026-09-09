@@ -25,6 +25,23 @@ final class VerifiedArtifactOffsetProof {
   final List<int> verifiedSourceIndexes;
 }
 
+final class VerifiedArtifactIntervalProof {
+  VerifiedArtifactIntervalProof({
+    required Iterable<VerifiedComicVersionPageInterval> verifiedIntervals,
+    required Iterable<int> verifiedSourceIndexes,
+    required this.probeCount,
+  })  : verifiedIntervals = List<VerifiedComicVersionPageInterval>.unmodifiable(
+          verifiedIntervals,
+        ),
+        verifiedSourceIndexes = List<int>.unmodifiable(
+          (verifiedSourceIndexes.toSet().toList()..sort()),
+        );
+
+  final List<VerifiedComicVersionPageInterval> verifiedIntervals;
+  final List<int> verifiedSourceIndexes;
+  final int probeCount;
+}
+
 /// Compact target-chapter -> verified source-version fallback resolver.
 ///
 /// The target chapter builds one exact page locator index. Each verified
@@ -191,6 +208,200 @@ final class VerifiedArtifactReusePlan {
       ] = readerPageDownloadId(oldChapter, oldPage);
     }
     return VerifiedArtifactReusePlan._(mappings);
+  }
+
+  /// Produces a bounded set of affine reuse intervals without scanning the
+  /// chapter. At most [maxProbeCount] predecessor positions are resolved.
+  ///
+  /// The common case samples first/middle/last and accepts one whole interval
+  /// when all samples agree. A mismatch or offset change recursively splits
+  /// only that region. When the fixed budget is exhausted, unresolved spans
+  /// remain gaps; already classified probe points remain safe singleton
+  /// intervals for later natural browsing/download evidence to expand.
+  static Future<VerifiedArtifactIntervalProof?> matchResolvedRelatedIntervals({
+    required ChapterManifest sourceChapter,
+    required ChapterManifest targetChapter,
+    required VerifiedPageReuseIdentityResolver resolveIdentity,
+    int maxProbeCount = 8,
+  }) async {
+    if (sourceChapter.pages.isEmpty ||
+        targetChapter.pages.isEmpty ||
+        maxProbeCount <= 0) {
+      return null;
+    }
+    final candidateOffsets = <int>{
+      0,
+      targetChapter.pages.length - sourceChapter.pages.length,
+    }.toList(growable: false)
+      ..sort();
+    final sourceIdentityCache = <int, Future<String?>>{};
+    final targetIdentityCache = <int, Future<String?>>{};
+    final classifications = <int, int?>{};
+    var probeCount = 0;
+
+    Future<String?> identityAt(
+      ChapterManifest chapter,
+      int index,
+      Map<int, Future<String?>> cache,
+    ) =>
+        cache.putIfAbsent(index, () {
+          final page = chapter.pages[index];
+          final direct = verifiedPageIdentity(page);
+          return direct != null
+              ? Future<String?>.value(direct)
+              : resolveIdentity(page);
+        });
+
+    Future<int?> classify(int sourceIndex) async {
+      if (classifications.containsKey(sourceIndex)) {
+        return classifications[sourceIndex];
+      }
+      if (probeCount >= maxProbeCount ||
+          sourceIndex < 0 ||
+          sourceIndex >= sourceChapter.pages.length) {
+        return null;
+      }
+      probeCount++;
+      final sourceIdentity = await identityAt(
+        sourceChapter,
+        sourceIndex,
+        sourceIdentityCache,
+      );
+      if (sourceIdentity == null) {
+        classifications[sourceIndex] = null;
+        return null;
+      }
+      final matches = <int>[];
+      for (final offset in candidateOffsets) {
+        final targetIndex = sourceIndex + offset;
+        if (targetIndex < 0 || targetIndex >= targetChapter.pages.length) {
+          continue;
+        }
+        final targetIdentity = await identityAt(
+          targetChapter,
+          targetIndex,
+          targetIdentityCache,
+        );
+        if (targetIdentity != null && targetIdentity == sourceIdentity) {
+          matches.add(offset);
+        }
+      }
+      final result = matches.length == 1 ? matches.single : null;
+      classifications[sourceIndex] = result;
+      return result;
+    }
+
+    final accepted = <VerifiedComicVersionPageInterval>[];
+
+    Future<void> visit(int start, int endExclusive) async {
+      if (start >= endExclusive) return;
+      final length = endExclusive - start;
+      final points = <int>{
+        start,
+        start + length ~/ 2,
+        endExclusive - 1,
+      }.toList(growable: false)
+        ..sort();
+      for (final point in points) {
+        if (!classifications.containsKey(point) &&
+            probeCount < maxProbeCount) {
+          await classify(point);
+        }
+      }
+      final known = <int?>[
+        for (final point in points)
+          if (classifications.containsKey(point)) classifications[point],
+      ];
+      if (known.length == points.length &&
+          known.isNotEmpty &&
+          known.first != null &&
+          known.every((offset) => offset == known.first)) {
+        accepted.add(
+          VerifiedComicVersionPageInterval(
+            predecessorStart: start,
+            predecessorEndExclusive: endExclusive,
+            successorOffset: known.first!,
+          ),
+        );
+        return;
+      }
+      if (length == 1) {
+        final offset = classifications[start];
+        if (offset != null) {
+          accepted.add(
+            VerifiedComicVersionPageInterval(
+              predecessorStart: start,
+              predecessorEndExclusive: endExclusive,
+              successorOffset: offset,
+            ),
+          );
+        }
+        return;
+      }
+      if (probeCount >= maxProbeCount) {
+        for (final point in points) {
+          final offset = classifications[point];
+          if (offset == null) continue;
+          accepted.add(
+            VerifiedComicVersionPageInterval(
+              predecessorStart: point,
+              predecessorEndExclusive: point + 1,
+              successorOffset: offset,
+            ),
+          );
+        }
+        return;
+      }
+      final split = start + length ~/ 2;
+      await visit(start, split);
+      await visit(split, endExclusive);
+    }
+
+    await visit(0, sourceChapter.pages.length);
+    if (accepted.isEmpty) return null;
+    accepted.sort((left, right) {
+      final start = left.predecessorStart.compareTo(right.predecessorStart);
+      if (start != 0) return start;
+      return left.predecessorEndExclusive
+          .compareTo(right.predecessorEndExclusive);
+    });
+    final normalized = <VerifiedComicVersionPageInterval>[];
+    for (final interval in accepted) {
+      if (normalized.isNotEmpty) {
+        final previous = normalized.last;
+        if (previous.successorOffset == interval.successorOffset &&
+            interval.predecessorStart <= previous.predecessorEndExclusive) {
+          normalized[normalized.length - 1] =
+              VerifiedComicVersionPageInterval(
+            predecessorStart: previous.predecessorStart,
+            predecessorEndExclusive:
+                interval.predecessorEndExclusive > previous.predecessorEndExclusive
+                    ? interval.predecessorEndExclusive
+                    : previous.predecessorEndExclusive,
+            successorOffset: previous.successorOffset,
+          );
+          continue;
+        }
+      }
+      normalized.add(interval);
+    }
+    final verifiedIndexes = classifications.entries
+        .where((entry) => entry.value != null)
+        .map((entry) => entry.key)
+        .toList(growable: false)
+      ..sort();
+    final diagnosticIndexes = verifiedIndexes.length <= 3
+        ? verifiedIndexes
+        : <int>[
+            verifiedIndexes.first,
+            verifiedIndexes[verifiedIndexes.length ~/ 2],
+            verifiedIndexes.last,
+          ];
+    return VerifiedArtifactIntervalProof(
+      verifiedIntervals: normalized,
+      verifiedSourceIndexes: diagnosticIndexes,
+      probeCount: probeCount,
+    );
   }
 
   /// Proves one compact target-index offset without materializing page pairs.

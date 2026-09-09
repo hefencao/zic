@@ -40,7 +40,7 @@ migration = read('apps/app/lib/demo_home_source_migration.dart')
 for token in (
     'void _scheduleVersionReuseWarmup(',
     'Future<void> _warmVersionRelationPageMappings(',
-    'VerifiedArtifactReusePlan.matchResolvedRelated(',
+    'VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(',
     '_sourceResources.verifiedPageReuseIdentity(',
     'Future<int> _ensureSourceVersionReuseAuthority(',
     'hasReusableChapterState(',
@@ -48,7 +48,9 @@ for token in (
     "'restoreMode': 'compact-version-authority'",
     "'stage': 'version-reuse-authority-ready'",
     "'stage': 'version-page-mapping-warmed'",
-    'verifiedIntervals: <VerifiedComicVersionPageInterval>[',
+    'verifiedIntervals: intervalProof.verifiedIntervals',
+    "'verificationMode': 'bounded-affine-probe'",
+    "'verifiedCoveragePages': mapping.verifiedIntervals.fold<int>(",
     'mapping.effectiveVerifiedIntervals',
 ):
     require(migration, token, 'version metadata warm / compact authority owner')
@@ -81,6 +83,8 @@ forbid(home, 'hasConfirmedSuccessor', 'version relation mirrored into sourceUpda
 reuse = read('packages/downloads/lib/src/artifact_cache_reuse.dart')
 for token in (
     'factory VerifiedArtifactReusePlan.fromVerifiedOffset({',
+    'static Future<VerifiedArtifactIntervalProof?> matchResolvedRelatedIntervals({',
+    'int maxProbeCount = 8,',
     'final targetIndex = id.pageIndexHint;',
     'hintedPage.pageId != id.content.pageId',
     'hintedPage.uri != id.canonicalUri',

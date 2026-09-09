@@ -799,6 +799,103 @@ void main() {
     );
   });
 
+  test('bounded interval probe finds a middle insertion with constant budget',
+      () async {
+    final source = _chapter(
+      comicId: 'binary-source-insert',
+      revision: 'binary-source-insert-r1',
+      urls: <String>[
+        for (var index = 0; index < 8; index++)
+          'venera-resource:source-insert-$index',
+      ],
+    );
+    final target = _chapter(
+      comicId: 'binary-target-insert',
+      revision: 'binary-target-insert-r1',
+      urls: <String>[
+        for (var index = 0; index < 9; index++)
+          'venera-resource:target-insert-$index',
+      ],
+    );
+    final identities = <String, String>{
+      for (var index = 0; index < 8; index++)
+        'venera-resource:source-insert-$index': 'media:$index',
+      for (var index = 0; index < 4; index++)
+        'venera-resource:target-insert-$index': 'media:$index',
+      'venera-resource:target-insert-4': 'media:inserted',
+      for (var index = 5; index < 9; index++)
+        'venera-resource:target-insert-$index': 'media:${index - 1}',
+    };
+    var resolveCalls = 0;
+    final proof = await VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(
+      sourceChapter: source,
+      targetChapter: target,
+      resolveIdentity: (page) async {
+        resolveCalls++;
+        return identities[page.uri.toString()];
+      },
+    );
+
+    expect(proof, isNotNull);
+    expect(proof!.probeCount, lessThanOrEqualTo(8));
+    expect(resolveCalls, lessThanOrEqualTo(24));
+    expect(
+      proof.verifiedIntervals
+          .map((interval) => (
+                interval.predecessorStart,
+                interval.predecessorEndExclusive,
+                interval.successorOffset,
+              ))
+          .toList(),
+      <(int, int, int)>[(0, 4, 0), (4, 8, 1)],
+    );
+  });
+
+  test('bounded interval probe leaves a replacement as an unverified gap',
+      () async {
+    final source = _chapter(
+      comicId: 'binary-source-replace',
+      revision: 'binary-source-replace-r1',
+      urls: <String>[
+        for (var index = 0; index < 8; index++)
+          'venera-resource:source-replace-$index',
+      ],
+    );
+    final target = _chapter(
+      comicId: 'binary-target-replace',
+      revision: 'binary-target-replace-r1',
+      urls: <String>[
+        for (var index = 0; index < 8; index++)
+          'venera-resource:target-replace-$index',
+      ],
+    );
+    final identities = <String, String>{
+      for (var index = 0; index < 8; index++)
+        'venera-resource:source-replace-$index': 'media:$index',
+      for (var index = 0; index < 8; index++)
+        'venera-resource:target-replace-$index':
+            index == 4 ? 'media:replacement' : 'media:$index',
+    };
+    final proof = await VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(
+      sourceChapter: source,
+      targetChapter: target,
+      resolveIdentity: (page) async => identities[page.uri.toString()],
+    );
+
+    expect(proof, isNotNull);
+    expect(proof!.probeCount, lessThanOrEqualTo(8));
+    expect(
+      proof.verifiedIntervals
+          .map((interval) => (
+                interval.predecessorStart,
+                interval.predecessorEndExclusive,
+                interval.successorOffset,
+              ))
+          .toList(),
+      <(int, int, int)>[(0, 4, 0), (5, 8, 0)],
+    );
+  });
+
   test('resolved offset requires verified anchor agreement', () async {
     final oldChapter = _chapter(
       comicId: 'old',
