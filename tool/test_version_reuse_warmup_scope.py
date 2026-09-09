@@ -1,45 +1,67 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import re
 
 ROOT = Path(__file__).resolve().parents[1]
 migration = (ROOT / 'apps/app/lib/demo_home_source_migration.dart').read_text()
 reader = (ROOT / 'apps/app/lib/demo_home_reader_route.dart').read_text()
 compat = (ROOT / 'apps/app/lib/demo_home_source_compat.dart').read_text()
 
-# Version discovery/presentation owns relation refresh. Opening details must not
-# trigger page-media proof work merely because the version button exists.
+# Merely rendering details must not prove page equivalence. Version discovery,
+# explicit version viewing and Reader entry are the three preparation owners.
 assert '_scheduleVersionReuseWarmup(' not in compat
 
-# Outside the scheduler's recursive self-call, Reader preparation is the only
-# production caller. It passes the hydrated exact chapter, not just comicId.
-reader_calls = reader.count('_scheduleVersionReuseWarmup(')
-assert reader_calls == 1, reader_calls
-assert '_scheduleVersionReuseWarmup(versionSource, current);' in reader
+# Reader consumes a pending detail->Reader preparation before physical demand,
+# can synchronously fill a missing focused mapping, then refreshes metadata and
+# version relations asynchronously after the Reader is allowed to start.
+for token in (
+    'final viewReusePreparation = _versionViewReusePreparationFor(current);',
+    'await viewReusePreparation;',
+    'await _prepareVersionReuseWarmup(versionSource, current);',
+    '_scheduleReaderMetadataVersionRefresh(versionSource, current);',
+):
+    assert token in reader, token
+assert '_scheduleVersionReuseWarmup(versionSource, current);' not in reader
 
-# The scheduler itself is chapter-generation scoped and no longer performs a
-# second findComicVersions refresh behind the details/version-state owner.
-scheduler = migration[migration.index('  void _scheduleVersionReuseWarmup('):migration.index('  Future<int> _restoreSourceVersionArtifactEquivalences(')]
-assert 'ImportedLibraryEntry focus' in scheduler
-assert 'focus.chapter.chapterId' in scheduler
-assert 'focus.chapter.sourceRevision' in scheduler
-assert 'findComicVersions' not in scheduler
-assert 'refreshVersions' not in scheduler
-assert 'await _restoreSourceVersionArtifactEquivalences(focus);' in scheduler
+# Warmup remains chapter-generation scoped and never owns version discovery.
+prepare_start = migration.index('  Future<void> _prepareVersionReuseWarmup(')
+prepare_end = migration.index('  void _scheduleVersionReuseWarmup(', prepare_start)
+prepare = migration[prepare_start:prepare_end]
+assert 'ImportedLibraryEntry focus' in prepare
+assert '_versionReuseWarmupKey(source, focus)' in prepare
+assert '_warmVersionRelationPageMappings(source, relation, focus)' in prepare
+assert 'refreshAvailability: true' in prepare
+assert 'findComicVersions' not in prepare
 
-# Focused proof may inspect the related comic/chapter only; the already-hydrated
-# Reader chapter is reused as one side of the proof instead of loading both
-# comics and every chapter in the relation.
-warm = migration[migration.index('  Future<void> _warmVersionRelationPageMappings('):migration.index('  void _scheduleVersionReuseWarmup(')]
-assert 'ImportedLibraryEntry focus' in warm
+# Focused proof loads at most the related comic/chapter and is only attempted
+# when either side has actual READY/partial/hot reusable physical state.
+warm_start = migration.index('  Future<void> _warmVersionRelationPageMappings(')
+warm_end = migration.index('  String _versionReuseWarmupKey(', warm_start)
+warm = migration[warm_start:warm_end]
 assert warm.count('source.loadComic(') == 1
 assert 'candidate.sequence == focus.chapter.sequence' in warm
 assert 'final focusManifest = focus.chapter.toManifest();' in warm
-assert 'focus.chapter.chapterId' in warm
+assert '_chapterHasReusableVersionSourceState(predecessorManifest)' in warm
+assert '_chapterHasReusableVersionSourceState(successorManifest)' in warm
 
-# loadVersionState still owns relation discovery, but not page-media proof.
-version_state = migration[migration.index('  Future<details.ComicDetailsVersionState> _loadSourceVersionState('):migration.index('  bool _sourceComicHasUpdate(')]
+# Version-state refresh is allowed to warm cached-page matching just like
+# VibeVenera details, while explicit "view version" carries the same Future to
+# a quickly-entered Reader instead of racing it.
+version_state_start = migration.index('  Future<details.ComicDetailsVersionState> _loadSourceVersionState(')
+version_state_end = migration.index('  bool _sourceComicHasUpdate(', version_state_start)
+version_state = migration[version_state_start:version_state_end]
 assert 'findComicVersions' in version_state
-assert '_scheduleVersionReuseWarmup(' not in version_state
+assert '_scheduleVersionReuseWarmup(' in version_state
+
+view_start = migration.index('  Future<void> _viewSourceVersion(')
+view_end = migration.index('  Future<void> _migrateSourceVersion(', view_start)
+view = migration[view_start:view_end]
+assert '_startVersionViewReusePreparation(' in view
+assert '_versionViewReusePreparations' in migration
+
+# Existing-state lookup is bounded to candidate keys, but zic streaming partials
+# and joinable hot physical sessions are first-class reusable state.
+assert 'findExistingReusableKeys(' in migration
+assert 'existing.partialKeys' in migration
+assert 'hasReusableEquivalentPhysicalState(candidate.source)' in migration
 
 print('version reuse warmup scope: OK')

@@ -47,7 +47,8 @@ else:
 migration = read('apps/app/lib/demo_home_source_migration.dart')
 for token in (
     'Future<int> _restoreSourceVersionArtifactEquivalences(',
-    'findExistingReadyKeys(',
+    'findExistingReusableKeys(',
+    'hasReusableEquivalentPhysicalState(',
     'artifactCache.linkEquivalent(',
     "'stage': 'version-artifact-equivalence-restored'",
     "'registeredEquivalentPages': registered",

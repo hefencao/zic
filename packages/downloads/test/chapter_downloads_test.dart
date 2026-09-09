@@ -137,6 +137,43 @@ void main() {
     expect(reopened.materializedSessionCount, 0);
   });
 
+  test('version reuse existence query includes READY and indexed partial only',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-version-reuse-existing-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(service.close);
+    final readyId = _readerArtifactId('version-reuse-ready');
+    final partialId = _readerArtifactId('version-reuse-partial');
+    final missingId = _readerArtifactId('version-reuse-missing');
+
+    await service.storePromotedArtifact(
+      id: readyId,
+      bytes: Uint8List.fromList(<int>[1, 2, 3]),
+    );
+    final partialBytes = Uint8List.fromList(<int>[4, 5]);
+    await service.artifactStore.storePartialDownload(
+      id: partialId,
+      entry: PartialDownloadEntry(
+        length: partialBytes.lengthInBytes,
+        validators: const Validators(),
+        totalLength: 9,
+        open: ({required int start}) async* {
+          yield Uint8List.sublistView(partialBytes, start);
+        },
+      ),
+    );
+
+    final existing = await service.artifactStore.findExistingReusableKeys(
+      <String>[readyId.key, partialId.key, missingId.key],
+    );
+
+    expect(existing.readyKeys, <String>{readyId.key});
+    expect(existing.partialKeys, <String>{partialId.key});
+  });
+
   test('storePromotedArtifact replaces interrupted partial session', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-partial-promoted-store-',
@@ -702,6 +739,10 @@ void main() {
       },
     );
     await oldTransport.opened.future;
+    expect(
+      service.transferRuntime.hasReusableEquivalentPhysicalState(oldId),
+      isTrue,
+    );
     final chapterRun = service.download(entry);
     await _waitUntil(
       () => service.transferRuntime.owner.claimCount(newId) == 2,
@@ -1019,6 +1060,11 @@ void main() {
     final physical = first.transferRuntime.registry.get(id);
     expect(physical.residentBodyBacked, isTrue);
     expect(physical.residentBodyAuthority, ByteResponseBodyAuthority.source);
+    expect(
+      first.transferRuntime.hasReusableEquivalentPhysicalState(id),
+      isFalse,
+      reason: 'source-resident bodies cannot be replayed under another identity',
+    );
     expect(physical.residentSource, 'reopenable-immutable-source');
     expect(physical.artifact.committedLength, 0);
     expect(await first.artifactStore.openArtifactStream(id), isNotNull);

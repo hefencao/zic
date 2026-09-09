@@ -244,6 +244,17 @@ final class CompositionDownloadTransferRuntime {
         session.state == DownloadState.promoted;
   }
 
+  /// Whether [id] currently resolves to physical encoded state that a newly
+  /// verified equivalent identity may safely join at acquire time.
+  ///
+  /// Keep this query on the transfer runtime so version-reuse preparation and
+  /// `_resolveTransferIdForAcquire` share the same resident-body authority
+  /// rules instead of duplicating session-state heuristics in the App layer.
+  bool hasReusableEquivalentPhysicalState(DownloadId id) {
+    final session = registry.find(id);
+    return session != null && _canJoinEquivalentSession(session);
+  }
+
   DownloadTransferConsumer attachConsumer({
     required String scopeId,
     required TransferTransportPick transportFor,

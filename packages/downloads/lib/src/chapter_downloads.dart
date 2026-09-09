@@ -2212,14 +2212,21 @@ final class PersistentDownloadArtifactStore
       };
 
   /// Batched exact-key existence query used by temporary version-cache alias
-  /// restoration. This mirrors VibeVenera's `findExistingKeys`: only requested
-  /// cache keys are read, and only verified READY records are returned.
-  Future<Set<String>> findExistingReadyKeys(Iterable<String> keys) async {
-    final result = <String>{};
+  /// restoration. This mirrors VibeVenera's `findExistingKeys`, extended for
+  /// zic's streaming Reader: an indexed non-empty partial is also reusable
+  /// evidence, while final body validation remains owned by openPartialDownload.
+  Future<({Set<String> readyKeys, Set<String> partialKeys})>
+      findExistingReusableKeys(Iterable<String> keys) async {
+    final readyKeys = <String>{};
+    final partialKeys = <String>{};
     for (final record in await _index.getMany(keys)) {
-      if (_isVerifiedReadyRecord(record)) result.add(record.key);
+      if (_isVerifiedReadyRecord(record)) {
+        readyKeys.add(record.key);
+      } else if (record.state == CacheState.partial && record.bytes > 0) {
+        partialKeys.add(record.key);
+      }
     }
-    return result;
+    return (readyKeys: readyKeys, partialKeys: partialKeys);
   }
 
   /// Mirrors a freshly promoted local final into the configured SAF tree and

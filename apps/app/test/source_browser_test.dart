@@ -1950,6 +1950,65 @@ void main() {
     expect(entry.chapter.pages.single.stablePageId, 'fixture-page-1');
   });
 
+  testWidgets('direct shelf Reader asynchronously checks source versions',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    const sourceId = 'fixture-reader-version-check';
+    final versionLoadStarted = Completer<void>();
+    final versionLoadGate = Completer<void>();
+    final source = _FixtureSource(
+      sourceId,
+      'Reader版本检查源',
+      supportsComicVersions: true,
+      versionLoadStarted: versionLoadStarted,
+      versionLoadGate: versionLoadGate,
+    );
+    final manifest = await source.loadChapter(source._chapterId);
+    await store.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: source._comic,
+        manifest: manifest,
+      ),
+    );
+    await store.saveComicPreference(
+      ComicPreference.defaults(
+        sourceId: sourceId,
+        comicId: source._comicId,
+        sourceKind: ComicSourceKind.remote,
+      ),
+    );
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        comicSources: <BrowsableComicSource>[source],
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pump();
+    await _tapVisible(
+      tester,
+      find.byKey(comicCoverKey(sourceId, source._comicId)),
+    );
+    await _pumpUntilFound(tester, find.byType(ImportedImageChapterScreen));
+    await tester.pump();
+
+    expect(versionLoadStarted.isCompleted, isTrue);
+    expect(source.versionLoadCalls, 1);
+    versionLoadGate.complete();
+    await tester.pump();
+
+    // PipelineReaderSession intentionally retains a detached session for two
+    // minutes. Tear the Reader down and advance that retention clock so this
+    // route-level test proves the background version check without leaking a
+    // product timer into the widget-test harness.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(minutes: 2));
+  });
+
   testWidgets('legacy runtime chapter URI refreshes before entering Reader',
       (tester) async {
     final store = MemoryImportedLibraryStore();

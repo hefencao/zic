@@ -471,6 +471,33 @@ void main() {
     );
   });
 
+  test('debug trace keeps reader lifecycle stages in separate export buckets', () {
+    final log = DebugTraceLog(maxEvents: 4, maxExportEvents: 8);
+    addTearDown(log.dispose);
+    log.record(
+      TraceEvent(
+        monotonicMicros: 1000,
+        sessionId: 'reader-entry',
+        kind: TraceEventKind.readerObservation,
+        payload: const <String, Object?>{'stage': 'reader-prepare-start'},
+      ),
+    );
+    log.record(
+      TraceEvent(
+        monotonicMicros: 2000,
+        sessionId: 'reader-entry',
+        kind: TraceEventKind.readerObservation,
+        payload: const <String, Object?>{'stage': 'reader-prepare-complete'},
+      ),
+    );
+
+    expect(log.exportEvents, hasLength(2));
+    expect(
+      log.exportEvents.map((event) => event.payload['stage']),
+      <Object?>['reader-prepare-start', 'reader-prepare-complete'],
+    );
+  });
+
   testWidgets('debug trace copy uses the diagnostic export ring', (tester) async {
     final log = DebugTraceLog(maxEvents: 1, maxExportEvents: 10);
     addTearDown(log.dispose);

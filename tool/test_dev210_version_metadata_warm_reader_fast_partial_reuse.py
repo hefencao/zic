@@ -39,7 +39,8 @@ for token in (
     'VerifiedArtifactReusePlan.matchResolvedRelated(',
     '_sourceResources.verifiedPageReuseIdentity(',
     'Future<int> _restoreSourceVersionArtifactEquivalences(',
-    'findExistingReadyKeys(',
+    'findExistingReusableKeys(',
+    'hasReusableEquivalentPhysicalState(',
     'artifactCache.linkEquivalent(',
     "'restoreMode': 'vibevenera-existing-cache-alias'",
     "'stage': 'version-artifact-equivalence-restored'",
@@ -54,8 +55,9 @@ forbid(
 
 home = read('apps/app/lib/demo_home.dart') + read('apps/app/lib/demo_home_reader_route.dart')
 for token in (
-    'await _restoreSourceVersionArtifactEquivalences(current);',
-    '_scheduleVersionReuseWarmup(versionSource, current);',
+    '_versionViewReusePreparationFor(current)',
+    'await _prepareVersionReuseWarmup(versionSource, current);',
+    '_scheduleReaderMetadataVersionRefresh(versionSource, current);',
 ):
     require(home, token, 'Reader fast local restore + async refresh')
 forbid(

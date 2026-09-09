@@ -410,6 +410,30 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     );
   }
 
+  Future<bool> _chapterHasReusableVersionSourceState(
+    ChapterManifest chapter,
+  ) async {
+    final provider = _chapterDownloads is ChapterDownloadTransferRuntimeProvider
+        ? _chapterDownloads as ChapterDownloadTransferRuntimeProvider
+        : null;
+    if (provider == null || chapter.pages.isEmpty) return false;
+    final ids = <DownloadId>[
+      for (final page in chapter.pages) readerPageDownloadId(chapter, page),
+    ];
+    final indexed = await provider.artifactStore.findExistingReusableKeys(
+      ids.map((id) => id.key),
+    );
+    if (indexed.readyKeys.isNotEmpty || indexed.partialKeys.isNotEmpty) {
+      return true;
+    }
+    for (final id in ids) {
+      if (provider.transferRuntime.hasReusableEquivalentPhysicalState(id)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   Future<void> _warmVersionRelationPageMappings(
     BrowsableComicSource source,
     ComicVersionRelation relation,
@@ -490,6 +514,11 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     final predecessorManifest =
         focusIsPredecessor ? focusManifest : relatedManifest;
     final successorManifest = focusIsSuccessor ? focusManifest : relatedManifest;
+    final predecessorReusable =
+        await _chapterHasReusableVersionSourceState(predecessorManifest);
+    final successorReusable =
+        await _chapterHasReusableVersionSourceState(successorManifest);
+    if (!predecessorReusable && !successorReusable) return;
     final offsetProof =
         await VerifiedArtifactReusePlan.matchResolvedRelatedOffset(
       sourceChapter: predecessorManifest,
@@ -543,29 +572,20 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     );
   }
 
-  void _scheduleVersionReuseWarmup(
+  String _versionReuseWarmupKey(
     BrowsableComicSource source,
-    ImportedLibraryEntry focus, {
-    bool deferUntilAfterFrame = true,
-  }) {
-    if (deferUntilAfterFrame) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) {
-            _scheduleVersionReuseWarmup(
-              source,
-              focus,
-              deferUntilAfterFrame: false,
-            );
-          }
-        });
-      });
-      return;
-    }
-    final key = '${source.sourceId}\u0000${focus.chapter.comicId}'
-        '\u0000${focus.chapter.chapterId}\u0000${focus.chapter.sourceRevision}';
-    if (_versionReuseWarmups.containsKey(key)) return;
+    ImportedLibraryEntry focus,
+  ) =>
+      '${source.sourceId}\u0000${focus.chapter.comicId}'
+      '\u0000${focus.chapter.chapterId}\u0000${focus.chapter.sourceRevision}';
+
+  Future<void> _prepareVersionReuseWarmup(
+    BrowsableComicSource source,
+    ImportedLibraryEntry focus,
+  ) {
+    final key = _versionReuseWarmupKey(source, focus);
+    final existing = _versionReuseWarmups[key];
+    if (existing != null) return existing;
     late Future<void> future;
     future = Future<void>(() async {
       final relations = _sourceVersionRelationsForComic(
@@ -592,7 +612,10 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           );
         }
       }
-      await _restoreSourceVersionArtifactEquivalences(focus);
+      await _restoreSourceVersionArtifactEquivalences(
+        focus,
+        refreshAvailability: true,
+      );
     });
     _versionReuseWarmups[key] = future;
     unawaited(
@@ -602,11 +625,115 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         }
       }),
     );
+    return future;
+  }
+
+  void _scheduleVersionReuseWarmup(
+    BrowsableComicSource source,
+    ImportedLibraryEntry focus, {
+    bool deferUntilAfterFrame = true,
+  }) {
+    if (deferUntilAfterFrame) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _scheduleVersionReuseWarmup(
+              source,
+              focus,
+              deferUntilAfterFrame: false,
+            );
+          }
+        });
+      });
+      return;
+    }
+    unawaited(_prepareVersionReuseWarmup(source, focus));
+  }
+
+  void _scheduleReaderMetadataVersionRefresh(
+    BrowsableComicSource source,
+    ImportedLibraryEntry focus,
+  ) {
+    final key = _versionReuseWarmupKey(source, focus);
+    if (_readerVersionRefreshes.containsKey(key)) return;
+    late Future<void> future;
+    future = Future<void>(() async {
+      var refreshed = focus;
+      final metadataFuture = _refreshRemoteEntry(focus);
+      final versionFuture = _loadSourceVersionState(
+        source,
+        focus.chapter.comicTitle,
+        focus.chapter.comicId,
+      );
+      var metadataUpdated = false;
+      var versionChecked = false;
+      try {
+        refreshed = await metadataFuture;
+        metadataUpdated = true;
+      } on Object catch (error) {
+        widget.debugTrace.record(
+          TraceEvent(
+            monotonicMicros: _traceClock.elapsedMicroseconds,
+            sessionId: 'reader-version-refresh:${source.sourceId}',
+            kind: TraceEventKind.taskFailed,
+            identityHash: focus.chapter.chapterId,
+            payload: <String, Object?>{
+              'stage': 'reader-metadata-refresh-failed',
+              'errorType': error.runtimeType.toString(),
+            },
+          ),
+        );
+      }
+      try {
+        final state = await versionFuture;
+        final background = state.backgroundRefresh;
+        if (background != null) await background;
+        versionChecked = true;
+      } on Object catch (error) {
+        widget.debugTrace.record(
+          TraceEvent(
+            monotonicMicros: _traceClock.elapsedMicroseconds,
+            sessionId: 'reader-version-refresh:${source.sourceId}',
+            kind: TraceEventKind.taskFailed,
+            identityHash: focus.chapter.comicId,
+            payload: <String, Object?>{
+              'stage': 'reader-version-check-failed',
+              'errorType': error.runtimeType.toString(),
+            },
+          ),
+        );
+      }
+      await _prepareVersionReuseWarmup(source, refreshed);
+      widget.debugTrace.record(
+        TraceEvent(
+          monotonicMicros: _traceClock.elapsedMicroseconds,
+          sessionId: 'reader-version-refresh:${source.sourceId}',
+          kind: TraceEventKind.artifactSource,
+          identityHash: refreshed.chapter.chapterId,
+          payload: <String, Object?>{
+            'stage': 'reader-metadata-version-refresh-complete',
+            'metadataUpdated': metadataUpdated,
+            'versionChecked': versionChecked,
+            'sourceRevision': refreshed.chapter.sourceRevision,
+          },
+        ),
+      );
+    });
+    _readerVersionRefreshes[key] = future;
+    unawaited(
+      future.whenComplete(() {
+        if (identical(_readerVersionRefreshes[key], future)) {
+          _readerVersionRefreshes.remove(key);
+        }
+      }),
+    );
   }
 
   Future<int> _restoreSourceVersionArtifactEquivalences(
-    ImportedLibraryEntry current,
-  ) async {
+    ImportedLibraryEntry current, {
+    bool refreshAvailability = false,
+  }) async {
     final chapterKey =
         '${current.chapter.sourceId}\u0000${current.chapter.comicId}'
         '\u0000${current.chapter.chapterId}\u0000${current.chapter.sourceRevision}';
@@ -656,8 +783,9 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     }
     relationFingerprintParts.sort();
     final relationFingerprint = relationFingerprintParts.join('\u0001');
-    if (_restoredVersionChapterFingerprints[chapterKey] ==
-        relationFingerprint) {
+    if (!refreshAvailability &&
+        _restoredVersionChapterFingerprints[chapterKey] ==
+            relationFingerprint) {
       return 0;
     }
 
@@ -755,14 +883,30 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
 
     final resolverKey = 'version-reuse:$chapterKey';
     artifactCache.removeEquivalentResolver(resolverKey);
-    final existing = await provider.artifactStore.findExistingReadyKeys(
+    final existing = await provider.artifactStore.findExistingReusableKeys(
       candidateKeys,
     );
+    final indexedReusable = <String>{
+      ...existing.readyKeys,
+      ...existing.partialKeys,
+    };
+    final runtime = provider.transferRuntime;
     var registered = 0;
+    var hotSourcePages = 0;
+    var indexedPartialSourcePages = 0;
     for (final candidate in candidates) {
-      if (existing.contains(candidate.target.key) ||
-          !existing.contains(candidate.source.key)) {
+      final targetSession = runtime.registry.findExact(candidate.target);
+      if (indexedReusable.contains(candidate.target.key) ||
+          targetSession != null) {
         continue;
+      }
+      final sourceHot =
+          runtime.hasReusableEquivalentPhysicalState(candidate.source);
+      final sourceIndexed = indexedReusable.contains(candidate.source.key);
+      if (!sourceIndexed && !sourceHot) continue;
+      if (sourceHot) hotSourcePages++;
+      if (existing.partialKeys.contains(candidate.source.key)) {
+        indexedPartialSourcePages++;
       }
       artifactCache.linkEquivalent(
         first: candidate.target,
@@ -781,7 +925,10 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           'stage': 'version-artifact-equivalence-restored',
           'acceptedMappings': acceptedMappings,
           'candidatePages': candidates.length,
-          'existingReadyKeys': existing.length,
+          'existingReadyKeys': existing.readyKeys.length,
+          'existingPartialKeys': existing.partialKeys.length,
+          'hotSourcePages': hotSourcePages,
+          'indexedPartialSourcePages': indexedPartialSourcePages,
           'registeredEquivalentPages': registered,
           'materializedEquivalenceEdges': registered,
           'skippedMissingSourceManifests': skippedMissingSourceManifests,
@@ -887,6 +1034,17 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         predecessorTitle: title,
         successors: discovered.where((item) => !item.isPredecessor),
       );
+      final current = _exactLibraryComicForSourceIdentity(
+        source.sourceId,
+        currentComicId,
+      );
+      if (current != null && current.chapters.length == 1) {
+        _scheduleVersionReuseWarmup(
+          source,
+          current.chapters.single,
+          deferUntilAfterFrame: false,
+        );
+      }
       return discovered;
     }
 
@@ -1327,12 +1485,60 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   }
 
 
+  String _versionViewReusePreparationKey(
+    String sourceId,
+    String comicId,
+  ) =>
+      '$sourceId\u0000$comicId';
+
+  Future<void>? _startVersionViewReusePreparation(
+    BrowsableComicSource source,
+    String currentComicId,
+    String targetComicId,
+  ) {
+    final current = _exactLibraryComicForSourceIdentity(
+      source.sourceId,
+      currentComicId,
+    );
+    if (current == null || current.chapters.length != 1) return null;
+    final key = _versionViewReusePreparationKey(source.sourceId, targetComicId);
+    final existing = _versionViewReusePreparations[key];
+    if (existing != null) return existing;
+    final focus = current.chapters.single;
+    late Future<void> future;
+    future = _prepareVersionReuseWarmup(source, focus);
+    _versionViewReusePreparations[key] = future;
+    unawaited(
+      future.whenComplete(() {
+        if (identical(_versionViewReusePreparations[key], future)) {
+          _versionViewReusePreparations.remove(key);
+        }
+      }),
+    );
+    return future;
+  }
+
+  Future<void>? _versionViewReusePreparationFor(
+    ImportedLibraryEntry entry,
+  ) =>
+      _versionViewReusePreparations[
+        _versionViewReusePreparationKey(
+          entry.chapter.sourceId,
+          entry.chapter.comicId,
+        )
+      ];
+
   Future<void> _viewSourceVersion(
     BrowsableComicSource source,
     String currentComicId,
     SourceComicVersion version,
   ) async {
     if (version.sourceId != source.sourceId || version.comicId.isEmpty) return;
+    _startVersionViewReusePreparation(
+      source,
+      currentComicId,
+      version.comicId,
+    );
     await _openSourceComic(
       source,
       SourceComicSummary(

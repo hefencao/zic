@@ -337,7 +337,10 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     final state = switch (event.kind) {
       TraceEventKind.decodeState ||
       TraceEventKind.uploadState => event.payload['state'],
-      TraceEventKind.readerObservation ||
+      TraceEventKind.readerObservation => event.payload['stage'] != null
+          ? 'stage:${event.payload['stage']}'
+          : '${event.payload['currentIndex']}|${event.payload['targetIndex']}|'
+              '${event.payload['interaction']}',
       TraceEventKind.pageTransition =>
         '${event.payload['currentIndex']}|${event.payload['targetIndex']}|'
             '${event.payload['interaction']}',

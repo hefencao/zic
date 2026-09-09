@@ -24,8 +24,9 @@ for token in (
     require(migration, token, 'background confirmed-version reuse proof')
 demo_home = read('apps/app/lib/demo_home.dart') + read('apps/app/lib/demo_home_reader_route.dart')
 for token in (
-    'await _restoreSourceVersionArtifactEquivalences(current);',
-    '_scheduleVersionReuseWarmup(versionSource, current);',
+    'final viewReusePreparation = _versionViewReusePreparationFor(current);',
+    'await _prepareVersionReuseWarmup(versionSource, current);',
+    '_scheduleReaderMetadataVersionRefresh(versionSource, current);',
 ):
     require(demo_home, token, 'Reader persisted-map reuse composition')
 forbid(
