@@ -39,9 +39,9 @@ for token in (
     'VerifiedArtifactReusePlan.matchResolvedRelated(',
     '_sourceResources.verifiedPageReuseIdentity(',
     'Future<int> _restoreSourceVersionArtifactEquivalences(',
-    'VerifiedArtifactReuseResolver(',
-    'resolver.addVerifiedOffset(',
-    'artifactCache.registerEquivalentResolver(',
+    'findExistingReadyKeys(',
+    'artifactCache.linkEquivalent(',
+    "'restoreMode': 'vibevenera-existing-cache-alias'",
     "'stage': 'version-artifact-equivalence-restored'",
     "'stage': 'version-page-mapping-warmed'",
 ):

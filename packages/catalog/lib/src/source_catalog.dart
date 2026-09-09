@@ -418,14 +418,14 @@ abstract interface class ComicCommentSource {
   });
 }
 
-/// A source-confirmed affine page-position candidate between one predecessor
+/// A source-confirmed affine page-position mapping between one predecessor
 /// chapter and its successor chapter.
 ///
-/// [successorOffset] means `successorIndex = predecessorIndex + offset` only as
-/// candidate positioning evidence. Immutable-artifact reuse is allowed solely
-/// for [verifiedPredecessorPageIndexes], whose exact page media identities were
-/// compared successfully. The mapping never owns image bytes, validators or
-/// cache files.
+/// [successorOffset] means `successorIndex = predecessorIndex + offset` across
+/// the aligned overlap once the bounded source-owned anchor check succeeds.
+/// [verifiedPredecessorPageIndexes] records the compared anchor indexes for
+/// diagnostics/revalidation; it is not a per-page cache-reuse allow-list. The
+/// mapping never owns image bytes, validators or cache files.
 final class ComicVersionPageMapping {
   const ComicVersionPageMapping({
     required this.predecessorChapterId,

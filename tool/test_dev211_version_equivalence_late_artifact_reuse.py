@@ -47,13 +47,18 @@ else:
 migration = read('apps/app/lib/demo_home_source_migration.dart')
 for token in (
     'Future<int> _restoreSourceVersionArtifactEquivalences(',
-    'plan.registerEquivalences(artifactCache)',
+    'findExistingReadyKeys(',
+    'artifactCache.linkEquivalent(',
     "'stage': 'version-artifact-equivalence-restored'",
-    "'equivalentPages': reused",
-    "'registeredEquivalentPages': registeredEquivalentPages",
+    "'registeredEquivalentPages': registered",
+    "'restoreMode': 'vibevenera-existing-cache-alias'",
 ):
-    require(migration, token, 'Reader/warmup equivalence registration')
-forbid(migration, 'reused += await plan.applyExisting(artifactCache);', 'snapshot-only full artifact reuse')
+    require(migration, token, 'Reader existing-cache equivalence restoration')
+forbid(
+    migration,
+    'artifactCache.registerEquivalentResolver(',
+    'future-page lazy version equivalence registration',
+)
 
 
 promoted = read('packages/downloads/lib/src/promoted_artifact_cache_handoff.dart')
@@ -75,7 +80,7 @@ else:
 tests = read('packages/downloads/test/artifact_cache_manager_test.dart') + read('packages/downloads/test/artifact_cache_reuse_test.dart')
 for token in (
     'verified equivalence observes artifacts promoted after registration',
-    'persisted offset registers symmetric future-artifact equivalence',
+    'VibeVenera 2-of-3 anchors authorize the affine overlap',
     'verified equivalence does not satisfy exact backend ownership',
 ):
     require(tests, token, 'late artifact equivalence regression coverage')

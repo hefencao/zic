@@ -8,8 +8,10 @@ typedef VerifiedPageReuseIdentityResolver = Future<String?> Function(
   PageAsset page,
 );
 
-/// Compact affine candidate plus the exact source-page indexes whose immutable
-/// media identity was actually compared successfully.
+/// Compact affine page mapping plus the bounded anchor indexes used to prove
+/// that mapping. Once the offset is accepted, every page in the affine overlap
+/// is eligible for the same temporary cache-alias semantics used by VibeVenera;
+/// [verifiedSourceIndexes] are proof diagnostics, not a per-page allow-list.
 final class VerifiedArtifactOffsetProof {
   VerifiedArtifactOffsetProof({
     required this.targetOffsetFromSource,
@@ -50,25 +52,36 @@ final class VerifiedArtifactReuseResolver {
     required int targetOffsetFromSource,
     required Iterable<int> verifiedSourceIndexes,
   }) {
-    final verified = <int>{};
+    final anchors = <int>{};
     for (final sourceIndex in verifiedSourceIndexes) {
       final targetIndex = sourceIndex + targetOffsetFromSource;
       if (sourceIndex < 0 || sourceIndex >= sourceChapter.pages.length ||
           targetIndex < 0 || targetIndex >= targetChapter.pages.length) {
         continue;
       }
-      verified.add(sourceIndex);
+      anchors.add(sourceIndex);
     }
-    if (verified.isEmpty) return 0;
+    if (anchors.isEmpty) return 0;
+    final sourceStart = targetOffsetFromSource < 0
+        ? -targetOffsetFromSource
+        : 0;
+    final targetStart = targetOffsetFromSource > 0
+        ? targetOffsetFromSource
+        : 0;
+    final sourceRemaining = sourceChapter.pages.length - sourceStart;
+    final targetRemaining = targetChapter.pages.length - targetStart;
+    final overlap = sourceRemaining < targetRemaining
+        ? sourceRemaining
+        : targetRemaining;
+    if (overlap <= 0) return 0;
     _sources.add(
       _VerifiedOffsetSource(
         chapter: sourceChapter,
         targetOffsetFromSource: targetOffsetFromSource,
-        verifiedSourceIndexes: verified,
       ),
     );
-    _eligiblePageCount += verified.length;
-    return verified.length;
+    _eligiblePageCount += overlap;
+    return overlap;
   }
 
   Iterable<DownloadId> resolve(DownloadId id) sync* {
@@ -84,9 +97,7 @@ final class VerifiedArtifactReuseResolver {
     if (targetIndex == null) return;
     for (final source in _sources) {
       final sourceIndex = targetIndex - source.targetOffsetFromSource;
-      if (sourceIndex < 0 ||
-          sourceIndex >= source.chapter.pages.length ||
-          !source.verifiedSourceIndexes.contains(sourceIndex)) {
+      if (sourceIndex < 0 || sourceIndex >= source.chapter.pages.length) {
         continue;
       }
       yield readerPageDownloadId(
@@ -148,9 +159,17 @@ final class VerifiedArtifactReusePlan {
       directVerifiedSourceIndexes.add(sourceIndex);
     }
     if (directOffsets.isNotEmpty) {
+      final indexes = directVerifiedSourceIndexes..sort();
+      final anchors = indexes.length <= 3
+          ? indexes
+          : <int>[
+              indexes.first,
+              indexes[indexes.length ~/ 2],
+              indexes.last,
+            ];
       return VerifiedArtifactOffsetProof(
         targetOffsetFromSource: directOffsets.single,
-        verifiedSourceIndexes: directVerifiedSourceIndexes,
+        verifiedSourceIndexes: anchors,
       );
     }
     if (sourceChapter.pages.isEmpty || targetChapter.pages.isEmpty) return null;
@@ -171,7 +190,11 @@ final class VerifiedArtifactReusePlan {
       final overlap = targetEnd - targetStart;
       final anchorTargets = overlap == 1
           ? <int>[targetStart]
-          : <int>[targetEnd - 1, targetStart];
+          : <int>{
+              targetStart,
+              targetStart + overlap ~/ 2,
+              targetEnd - 1,
+            }.toList(growable: false);
       final sourceIdentities = await Future.wait(
         anchorTargets.map(
           (targetIndex) =>
@@ -267,9 +290,12 @@ final class VerifiedArtifactReusePlan {
   }) {
     final sourcePages = sourceChapter.pages;
     final targetPages = targetChapter.pages;
+    final anchors = verifiedSourceIndexes.toSet();
+    if (anchors.isEmpty) {
+      return VerifiedArtifactReusePlan._(const <DownloadId, DownloadId>{});
+    }
     final mappings = <DownloadId, DownloadId>{};
-    for (final sourceIndex in verifiedSourceIndexes.toSet()) {
-      if (sourceIndex < 0 || sourceIndex >= sourcePages.length) continue;
+    for (var sourceIndex = 0; sourceIndex < sourcePages.length; sourceIndex++) {
       final targetIndex = sourceIndex + targetOffsetFromSource;
       if (targetIndex < 0 || targetIndex >= targetPages.length) continue;
       mappings[
@@ -319,12 +345,10 @@ final class _VerifiedOffsetSource {
   const _VerifiedOffsetSource({
     required this.chapter,
     required this.targetOffsetFromSource,
-    required this.verifiedSourceIndexes,
   });
 
   final ChapterManifest chapter;
   final int targetOffsetFromSource;
-  final Set<int> verifiedSourceIndexes;
 }
 
 final class _ExactPageLocator {

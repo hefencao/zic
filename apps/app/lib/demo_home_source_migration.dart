@@ -89,18 +89,6 @@ String? _sourceVersionRelationDate(DateTime? value) {
   return '${local.year}-${twoDigits(local.month)}-${twoDigits(local.day)}';
 }
 
-const Duration _versionPageMappingRevalidationInterval = Duration(minutes: 10);
-
-bool _versionPageMappingIsFresh(
-  ComicVersionPageMapping mapping,
-  DateTime now,
-) {
-  final verifiedAt = mapping.verifiedAt;
-  if (verifiedAt == null) return false;
-  final age = now.difference(verifiedAt.toUtc());
-  return !age.isNegative && age <= _versionPageMappingRevalidationInterval;
-}
-
 String sourceVersionViewIdentity({
   required String sourceId,
   required String currentComicId,
@@ -433,7 +421,6 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         relation.successorComicId == focus.chapter.comicId;
     if (!focusIsPredecessor && !focusIsSuccessor) return;
 
-    final revalidationNow = DateTime.now().toUtc();
     for (final mapping in relation.pageMappings) {
       final focusedChapterId = focusIsPredecessor
           ? mapping.predecessorChapterId
@@ -447,8 +434,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       if (focusedChapterId == focus.chapter.chapterId &&
           focusedRevision == focus.chapter.sourceRevision &&
           focusedPageCount == focus.chapter.pages.length &&
-          mapping.verifiedPredecessorPageIndexes.isNotEmpty &&
-          _versionPageMappingIsFresh(mapping, revalidationNow)) {
+          mapping.verifiedPredecessorPageIndexes.isNotEmpty) {
         return;
       }
     }
@@ -490,8 +476,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         currentMapping.predecessorSourceRevision ==
             predecessorChapter.sourceRevision &&
         currentMapping.successorSourceRevision == successorChapter.sourceRevision &&
-        currentMapping.verifiedPredecessorPageIndexes.isNotEmpty &&
-        _versionPageMappingIsFresh(currentMapping, revalidationNow)) {
+        currentMapping.verifiedPredecessorPageIndexes.isNotEmpty) {
       return;
     }
 
@@ -671,22 +656,26 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     }
     relationFingerprintParts.sort();
     final relationFingerprint = relationFingerprintParts.join('\u0001');
-    final resolverKey = 'version-reuse:$chapterKey';
-    final fingerprintUnchanged =
-        _restoredVersionChapterFingerprints[chapterKey] == relationFingerprint;
-    if (fingerprintUnchanged &&
-        (relationFingerprintParts.isEmpty ||
-            artifactCache.hasEquivalentResolver(resolverKey))) {
+    if (_restoredVersionChapterFingerprints[chapterKey] ==
+        relationFingerprint) {
+      return 0;
+    }
+
+    final provider = _chapterDownloads is ChapterDownloadTransferRuntimeProvider
+        ? _chapterDownloads as ChapterDownloadTransferRuntimeProvider
+        : null;
+    if (provider == null) {
+      _restoredVersionChapterFingerprints[chapterKey] = relationFingerprint;
       return 0;
     }
 
     final targetManifest = current.chapter.toManifest();
-    final resolver = VerifiedArtifactReuseResolver(
-      targetChapter: targetManifest,
-    );
     final hydratedSourceEntries =
         await _librarySession.hydrateChapterBatch(sourceChapterKeys.values);
     final cachedManifests = <String, ChapterManifest>{};
+    final candidates = <({DownloadId target, DownloadId source})>[];
+    final candidateKeys = <String>{};
+    var acceptedMappings = 0;
     var skippedMissingSourceManifests = 0;
     for (final relation in relations) {
       final currentIsSuccessor =
@@ -718,46 +707,68 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           cachedManifests[sourceChapterId] = sourceManifest;
         }
         if (currentIsSuccessor &&
-            (mapping.successorPageCount != current.chapter.pages.length ||
+            (mapping.successorPageCount != targetManifest.pages.length ||
                 mapping.predecessorPageCount != sourceManifest.pages.length)) {
           continue;
         }
         if (currentIsPredecessor &&
-            (mapping.predecessorPageCount != current.chapter.pages.length ||
+            (mapping.predecessorPageCount != targetManifest.pages.length ||
                 mapping.successorPageCount != sourceManifest.pages.length)) {
           continue;
         }
         final predecessorRevision = currentIsSuccessor
             ? sourceManifest.chapter.sourceRevision
-            : current.chapter.sourceRevision;
+            : targetManifest.chapter.sourceRevision;
         final successorRevision = currentIsSuccessor
-            ? current.chapter.sourceRevision
+            ? targetManifest.chapter.sourceRevision
             : sourceManifest.chapter.sourceRevision;
         if (mapping.predecessorSourceRevision != predecessorRevision ||
-            mapping.successorSourceRevision != successorRevision) {
+            mapping.successorSourceRevision != successorRevision ||
+            mapping.verifiedPredecessorPageIndexes.isEmpty) {
           continue;
         }
-        resolver.addVerifiedOffset(
-          sourceChapter: sourceManifest,
-          targetOffsetFromSource: currentIsSuccessor
-              ? mapping.successorOffset
-              : -mapping.successorOffset,
-          verifiedSourceIndexes: currentIsSuccessor
-              ? mapping.verifiedPredecessorPageIndexes
-              : mapping.verifiedPredecessorPageIndexes.map(
-                  (predecessorIndex) =>
-                      predecessorIndex + mapping.successorOffset,
-                ),
-        );
+        acceptedMappings++;
+        final targetOffsetFromSource =
+            currentIsSuccessor ? mapping.successorOffset : -mapping.successorOffset;
+        for (var sourceIndex = 0;
+            sourceIndex < sourceManifest.pages.length;
+            sourceIndex++) {
+          final targetIndex = sourceIndex + targetOffsetFromSource;
+          if (targetIndex < 0 || targetIndex >= targetManifest.pages.length) {
+            continue;
+          }
+          final sourceId = readerPageDownloadId(
+            sourceManifest,
+            sourceManifest.pages[sourceIndex],
+          );
+          final targetId = readerPageDownloadId(
+            targetManifest,
+            targetManifest.pages[targetIndex],
+          );
+          candidates.add((target: targetId, source: sourceId));
+          candidateKeys
+            ..add(sourceId.key)
+            ..add(targetId.key);
+        }
       }
     }
-    if (resolver.relationCount > 0) {
-      artifactCache.registerEquivalentResolver(
-        key: resolverKey,
-        resolver: resolver.resolve,
+
+    final resolverKey = 'version-reuse:$chapterKey';
+    artifactCache.removeEquivalentResolver(resolverKey);
+    final existing = await provider.artifactStore.findExistingReadyKeys(
+      candidateKeys,
+    );
+    var registered = 0;
+    for (final candidate in candidates) {
+      if (existing.contains(candidate.target.key) ||
+          !existing.contains(candidate.source.key)) {
+        continue;
+      }
+      artifactCache.linkEquivalent(
+        first: candidate.target,
+        second: candidate.source,
       );
-    } else {
-      artifactCache.removeEquivalentResolver(resolverKey);
+      registered++;
     }
     widget.debugTrace.record(
       TraceEvent(
@@ -768,15 +779,18 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
             '${current.chapter.sourceId}\u0000${current.chapter.chapterId}',
         payload: <String, Object?>{
           'stage': 'version-artifact-equivalence-restored',
-          'lazyRelations': resolver.relationCount,
-          'eligibleEquivalentPages': resolver.eligiblePageCount,
-          'materializedEquivalenceEdges': 0,
+          'acceptedMappings': acceptedMappings,
+          'candidatePages': candidates.length,
+          'existingReadyKeys': existing.length,
+          'registeredEquivalentPages': registered,
+          'materializedEquivalenceEdges': registered,
           'skippedMissingSourceManifests': skippedMissingSourceManifests,
+          'restoreMode': 'vibevenera-existing-cache-alias',
         },
       ),
     );
     _restoredVersionChapterFingerprints[chapterKey] = relationFingerprint;
-    return resolver.eligiblePageCount;
+    return registered;
   }
 
   Future<details.ComicDetailsVersionState> _loadSourceVersionState(

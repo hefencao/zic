@@ -251,6 +251,10 @@ abstract interface class CacheIndex {
 
   Future<CacheRec?> get(String key);
 
+  /// Batched exact-key lookup used by cache-alias restoration. Implementations
+  /// must not scan unrelated cache rows.
+  Future<List<CacheRec>> getMany(Iterable<String> keys);
+
   Future<List<CacheRec>> list({CacheState? state});
 
   Future<void> put(CacheRec rec);
@@ -312,6 +316,17 @@ final class MemIndex
   Future<CacheRec?> get(String key) async {
     _requireOpen();
     return _records[key];
+  }
+
+  @override
+  Future<List<CacheRec>> getMany(Iterable<String> keys) async {
+    _requireOpen();
+    final unique = keys.toSet();
+    if (unique.isEmpty) return const <CacheRec>[];
+    return <CacheRec>[
+      for (final key in unique)
+        if (_records[key] case final record?) record,
+    ];
   }
 
   @override

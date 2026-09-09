@@ -25,7 +25,7 @@ for token in (
 demo_home = read('apps/app/lib/demo_home.dart') + read('apps/app/lib/demo_home_reader_route.dart')
 for token in (
     'await _restoreSourceVersionArtifactEquivalences(current);',
-    '_scheduleVersionReuseWarmup(versionSource, current.chapter.comicId);',
+    '_scheduleVersionReuseWarmup(versionSource, current);',
 ):
     require(demo_home, token, 'Reader persisted-map reuse composition')
 forbid(
@@ -41,9 +41,9 @@ reuse = read('packages/downloads/lib/src/artifact_cache_reuse.dart')
 for token in (
     'typedef VerifiedPageReuseIdentityResolver',
     'static Future<VerifiedArtifactReusePlan> matchResolvedOffset({',
-    'final anchors = oldPages.length == 1',
-    'final required = anchors.length == 1 ? 1 : 2;',
-    'readerPageDownloadId(newChapter, newPages[index + offset])',
+    'targetStart + overlap ~/ 2',
+    'final required = anchorTargets.length == 1 ? 1 : 2;',
+    'readerPageDownloadId(targetChapter, targetPages[targetIndex])',
 ):
     require(reuse, token, 'bounded verified temporary alias plan')
 

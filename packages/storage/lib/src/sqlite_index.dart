@@ -275,6 +275,33 @@ final class SqliteIndex
     return _read(rows.first);
   }
 
+  @override
+  Future<List<CacheRec>> getMany(Iterable<String> keys) async {
+    final unique = keys.toSet().toList(growable: false);
+    if (unique.isEmpty) return const <CacheRec>[];
+    final cached = _cachedEntries;
+    if (cached != null) {
+      return <CacheRec>[
+        for (final key in unique)
+          if (cached[key] case final record?) record,
+      ];
+    }
+    final db = _requireDb();
+    final result = <CacheRec>[];
+    const chunkSize = 400;
+    for (var start = 0; start < unique.length; start += chunkSize) {
+      final end = (start + chunkSize).clamp(0, unique.length);
+      final chunk = unique.sublist(start, end);
+      final placeholders = List<String>.filled(chunk.length, '?').join(',');
+      final rows = db.select(
+        'SELECT * FROM cache_entry WHERE key IN ($placeholders)',
+        <Object?>[...chunk],
+      );
+      result.addAll(rows.map(_read));
+    }
+    return result;
+  }
+
   Future<ArtifactObjectRecord?> getArtifactObject(String artifactId) async {
     final normalized = artifactId.trim();
     if (normalized.isEmpty) return null;

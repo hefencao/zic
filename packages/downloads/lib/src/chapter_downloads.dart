@@ -2211,6 +2211,17 @@ final class PersistentDownloadArtifactStore
         for (final record in await _index.list()) record.key: record,
       };
 
+  /// Batched exact-key existence query used by temporary version-cache alias
+  /// restoration. This mirrors VibeVenera's `findExistingKeys`: only requested
+  /// cache keys are read, and only verified READY records are returned.
+  Future<Set<String>> findExistingReadyKeys(Iterable<String> keys) async {
+    final result = <String>{};
+    for (final record in await _index.getMany(keys)) {
+      if (_isVerifiedReadyRecord(record)) result.add(record.key);
+    }
+    return result;
+  }
+
   /// Mirrors a freshly promoted local final into the configured SAF tree and
   /// rewrites the index record to its `saf:` path, removing the local staging
   /// copy. Failures keep the local copy authoritative so downloads never
@@ -7566,7 +7577,7 @@ final class PersistentChapterDownloadService
       }
       final predecessorIndex = pageIndex - mapping.successorOffset;
       if (predecessorIndex >= mapping.predecessorPageCount ||
-          !mapping.verifiedPredecessorPageIndexes.contains(predecessorIndex)) {
+          mapping.verifiedPredecessorPageIndexes.isEmpty) {
         continue;
       }
       final pageIds = await _predecessorPageIdsByIndex(

@@ -325,15 +325,15 @@ void main() {
       resolveIdentity: (page) async => identities[page.uri.toString()],
     );
 
-    expect(plan.mappings, hasLength(2));
+    expect(plan.mappings, hasLength(3));
     expect(
       plan.mappings[readerPageDownloadId(newChapter, newChapter.pages[1])],
       readerPageDownloadId(oldChapter, oldChapter.pages[0]),
     );
     expect(
       plan.mappings[readerPageDownloadId(newChapter, newChapter.pages[2])],
-      isNull,
-      reason: 'the middle page was positioned by offset but never proved',
+      readerPageDownloadId(oldChapter, oldChapter.pages[1]),
+      reason: 'accepted affine offset aliases the whole VibeVenera overlap',
     );
     expect(
       plan.mappings[readerPageDownloadId(newChapter, newChapter.pages[3])],
@@ -377,15 +377,15 @@ void main() {
       resolveIdentity: (page) async => identities[page.uri.toString()],
     );
 
-    expect(plan.mappings, hasLength(2));
+    expect(plan.mappings, hasLength(3));
     expect(
       plan.mappings[readerPageDownloadId(older, older.pages.first)],
       readerPageDownloadId(newer, newer.pages[1]),
     );
     expect(
       plan.mappings[readerPageDownloadId(older, older.pages[1])],
-      isNull,
-      reason: 'reverse affine positioning is not middle-page proof',
+      readerPageDownloadId(newer, newer.pages[2]),
+      reason: 'accepted affine offset aliases the whole reverse overlap',
     );
     expect(
       plan.mappings[readerPageDownloadId(older, older.pages.last)],
@@ -572,7 +572,7 @@ void main() {
     );
 
     expect(proof?.targetOffsetFromSource, 1);
-    expect(proof?.verifiedSourceIndexes, <int>[0, 2]);
+    expect(proof?.verifiedSourceIndexes, <int>[0, 1, 2]);
   });
 
   test('persisted offset registers symmetric future-artifact equivalence',
@@ -617,7 +617,7 @@ void main() {
     expect((await cache.readForeground(oldFirst))?.bytes, <int>[6, 6, 6]);
   });
 
-  test('affine anchors never alias an unverified replaced middle page', () async {
+  test('VibeVenera 2-of-3 anchors authorize the affine overlap', () async {
     final source = _chapter(
       comicId: 'source-middle-proof',
       revision: 'source',
@@ -665,8 +665,8 @@ void main() {
     );
     expect(
       resolver.resolve(readerPageDownloadId(target, target.pages[1])),
-      isEmpty,
-      reason: 'the affine offset is candidate evidence, not middle-page proof',
+      <DownloadId>[readerPageDownloadId(source, source.pages[1])],
+      reason: 'two matching anchors authorize the whole affine overlap',
     );
     expect(
       resolver.resolve(readerPageDownloadId(target, target.pages.last)),

@@ -74,7 +74,7 @@ void main() {
     );
   });
 
-  test('composed version offsets preserve only proof shared by every edge', () {
+  test('composed version offsets keep affine anchor provenance across verified edges', () {
     final projection = resolveComicVersionBaselines(
       relations: const <ComicVersionRelation>[
         ComicVersionRelation(
@@ -123,7 +123,7 @@ void main() {
     expect(composed.successorOffset, 1);
     expect(composed.predecessorSourceRevision, 'a-r1');
     expect(composed.successorSourceRevision, 'c-r1');
-    expect(composed.verifiedPredecessorPageIndexes, <int>[0, 2]);
+    expect(composed.verifiedPredecessorPageIndexes, <int>[0, 1, 2]);
   });
 
   test('composed offset drops proof across a revision discontinuity', () {

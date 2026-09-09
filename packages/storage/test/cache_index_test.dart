@@ -120,6 +120,46 @@ void main() {
       expect(await index.getPlacement(sourceId: 'source', comicId: 'comic'), isNull);
     });
 
+    test('${fixture.key} index batches exact-key lookups without unrelated rows', () async {
+      final index = fixture.value();
+      await index.open();
+      addTearDown(index.close);
+      final otherId = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'other-page',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://example.test/other.webp'),
+      );
+      for (final record in <CacheRec>[
+        CacheRec(
+          id: id,
+          state: CacheState.ready,
+          path: '/tmp/page.bin',
+          bytes: 20,
+          checksum: '00000001',
+          createdUs: 1,
+          touchedUs: 1,
+        ),
+        CacheRec(
+          id: otherId,
+          state: CacheState.ready,
+          path: '/tmp/other.bin',
+          bytes: 30,
+          checksum: '00000002',
+          createdUs: 1,
+          touchedUs: 1,
+        ),
+      ]) {
+        await index.put(record);
+      }
+      final rows = await index.getMany(<String>[id.key, id.key, 'missing-key']);
+      expect(rows.map((record) => record.key), <String>[id.key]);
+    });
+
     test('${fixture.key} index separates identities that shared a legacy key', () async {
       final first = DownloadId(
         content: const ContentId(

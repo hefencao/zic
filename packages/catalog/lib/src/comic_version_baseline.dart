@@ -218,16 +218,15 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
           final revisionChainMatches =
               left.successorSourceRevision != null &&
               left.successorSourceRevision == right.predecessorSourceRevision;
-          final rightProof = right.verifiedPredecessorPageIndexes.toSet();
-          final composedProof = revisionChainMatches
-              ? <int>[
-                  for (final predecessorIndex
-                      in left.verifiedPredecessorPageIndexes)
-                    if (rightProof.contains(
-                      predecessorIndex + left.successorOffset,
-                    ))
-                      predecessorIndex,
-                ]
+          // Anchor indexes prove each affine edge as a whole; they are not a
+          // per-page allow-list. A composed mapping is therefore eligible when
+          // both edges carry anchor proof and the intermediate revision joins
+          // exactly. Keep the left-edge anchors as diagnostic provenance in
+          // the composed predecessor index space.
+          final composedProof = revisionChainMatches &&
+                  left.verifiedPredecessorPageIndexes.isNotEmpty &&
+                  right.verifiedPredecessorPageIndexes.isNotEmpty
+              ? left.verifiedPredecessorPageIndexes
               : const <int>[];
           composed.add(
             ComicVersionPageMapping(
