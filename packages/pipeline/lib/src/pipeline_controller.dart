@@ -277,6 +277,7 @@ final class PipelineController {
       decodeTarget: _decodeTarget,
       runtimeAnimatedPages: _runtimeAnimatedPages,
       runtimeLocalStaticPages: _runtimeLocalStaticPages,
+      runtimeWebpCostPages: _runtimeWebpCostPages,
       assumeUnresolvedStatic: _assumeUnresolvedStatic,
       downloadFlow: animatedFlow,
       readDirection: _readDirection,

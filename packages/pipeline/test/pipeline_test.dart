@@ -1165,6 +1165,111 @@ void main() {
     );
   });
 
+  test('runtime WebP cost blocks static warm until media classification', () {
+    final webpCostChapter = ChapterManifest(
+      sourceId: 'venera:fixture',
+      comicId: 'runtime-webp-cost-comic',
+      chapter: const Chapter(
+        chapterId: 'runtime-webp-cost-chapter',
+        comicId: 'runtime-webp-cost-comic',
+        title: 'Runtime WebP cost',
+        sequence: 1,
+        pageCount: 6,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        6,
+        (index) => PageAsset(
+          pageId: 'w$index',
+          chapterId: 'runtime-webp-cost-chapter',
+          index: index,
+          uri: Uri.parse('venera-resource:opaque-$index'),
+          animatedHint: false,
+        ),
+      ),
+      readingDirection: ReadingDirection.ltr,
+    );
+    ReaderObs backwardDrag(double fraction) => ReaderObs(
+          sessionId: 'runtime-webp-cost',
+          currentIndex: 2,
+          stableIndex: 2,
+          interaction: Interaction.dragging,
+          logicalPosition: 2 - fraction,
+          velocity: -1,
+          currentCoverage: Coverage(
+            pageIndex: 2,
+            assetKey: 'runtime-webp-cost-chapter/w2',
+            fraction: 1 - fraction,
+          ),
+          targetCoverage: Coverage(
+            pageIndex: 1,
+            assetKey: 'runtime-webp-cost-chapter/w1',
+            fraction: fraction,
+          ),
+          direction: ReadingDirection.ltr,
+          timestamp: DateTime.utc(2026, 9, 9),
+          monotonicMicros: 1,
+        );
+    const policy = HeuristicPolicy(
+      decodeWarmPages: true,
+      staticOutputBudgetBytes: 64 * 1024 * 1024,
+    );
+    final target = DecodeTarget(
+      physicalWidth: 1000,
+      physicalHeight: 1000,
+    );
+
+    final shallow = backwardDrag(0.02);
+    final shallowPlan = policy.createPlan(
+      revision: 1,
+      chapter: webpCostChapter,
+      observation: shallow,
+      window: const RoleResolver().resolve(webpCostChapter, shallow),
+      decodeTarget: target,
+      runtimeWebpCostPages: const <int>{1},
+    );
+    final page1Decode = shallowPlan.decodes.entries.singleWhere(
+      (entry) => entry.key.download.content.pageId == 'w1',
+    );
+    expect(page1Decode.value.role, PageRole.previous);
+    expect(
+      shallowPlan.uploads.keys
+          .where((id) => id.download.content.pageId == 'w1'),
+      isEmpty,
+      reason: 'runtime WebP cost must not masquerade as visible static output '
+          'before animation classification',
+    );
+
+    final classifiedStaticPlan = policy.createPlan(
+      revision: 2,
+      chapter: webpCostChapter,
+      observation: shallow,
+      window: const RoleResolver().resolve(webpCostChapter, shallow),
+      decodeTarget: target,
+      runtimeAnimatedPages: const <int, bool>{1: false},
+      runtimeWebpCostPages: const <int>{1},
+    );
+    final staticUpload = classifiedStaticPlan.uploads.entries.singleWhere(
+      (entry) => entry.key.download.content.pageId == 'w1',
+    );
+    expect(staticUpload.value.reason, startsWith('heuristic:static-'));
+
+    final transition = backwardDrag(0.20);
+    final transitionPlan = policy.createPlan(
+      revision: 3,
+      chapter: webpCostChapter,
+      observation: transition,
+      window: const RoleResolver().resolve(webpCostChapter, transition),
+      decodeTarget: target,
+      runtimeWebpCostPages: const <int>{1},
+    );
+    final transitionUpload = transitionPlan.uploads.entries.singleWhere(
+      (entry) => entry.key.download.content.pageId == 'w1',
+    );
+    expect(transitionUpload.value.role, PageRole.transition);
+    expect(transitionUpload.value.priority, 900);
+  });
+
   test('runtime animated evidence disables unresolved static inference', () {
     final overrides = <int, bool>{0: false, 1: false, 2: true};
     final obs = observation();

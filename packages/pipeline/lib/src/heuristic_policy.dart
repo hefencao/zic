@@ -28,6 +28,7 @@ final class HeuristicPolicy {
     required DecodeTarget decodeTarget,
     Map<int, bool> runtimeAnimatedPages = const <int, bool>{},
     Set<int> runtimeLocalStaticPages = const <int>{},
+    Set<int> runtimeWebpCostPages = const <int>{},
     bool assumeUnresolvedStatic = false,
     AnimatedPrefetchFlow? downloadFlow,
     int readDirection = 1,
@@ -47,6 +48,7 @@ final class HeuristicPolicy {
       window: window,
       decodeTarget: decodeTarget,
       runtimeAnimatedPages: runtimeAnimatedPages,
+      runtimeWebpCostPages: runtimeWebpCostPages,
       assumeUnresolvedStatic: assumeUnresolvedStatic,
       readDirection: readDirection,
     );
@@ -221,6 +223,7 @@ final class HeuristicPolicy {
     required RoleWindow window,
     required DecodeTarget decodeTarget,
     required Map<int, bool> runtimeAnimatedPages,
+    required Set<int> runtimeWebpCostPages,
     required bool assumeUnresolvedStatic,
     required int readDirection,
   }) {
@@ -233,6 +236,7 @@ final class HeuristicPolicy {
     bool isStaticCandidate(MapEntry<int, PageRole> entry) {
       final runtimeAnimated = runtimeAnimatedPages[entry.key];
       if (runtimeAnimated != null) return !runtimeAnimated;
+      if (runtimeWebpCostPages.contains(entry.key)) return false;
       return assumeUnresolvedStatic || !chapter.pages[entry.key].animatedHint;
     }
 
