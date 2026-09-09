@@ -465,6 +465,9 @@ final class _DemoHomeState extends State<DemoHome> {
       waitForPrimaryFrame: () => WidgetsBinding.instance.endOfFrame,
       startupTelemetry: widget.startupTelemetry,
     )..addListener(_handleLibrarySessionChanged);
+    _sourceResources.setVerifiedPageReuseObserver(
+      _librarySession.observeVerifiedPageReuseIdentity,
+    );
     _librarySession.downloadProjectionChanges.addListener(
       _handleDownloadProjectionChanged,
     );

@@ -351,6 +351,11 @@ typedef ChapterResourceControlledTransport = Future<ByteResponse> Function(
 });
 
 typedef ChapterResourceOpenBound = bool Function(String sourceId, Uri uri);
+typedef ChapterVerifiedPageReuseObserver = void Function(
+  ChapterManifest manifest,
+  PageAsset page,
+  String identity,
+);
 
 /// Atomic source-resource binding used by application composition.
 ///
@@ -365,6 +370,7 @@ final class ChapterResourceAccess {
     this.openResponse,
     this.openControlledResponse,
     this.selfBoundsOpen,
+    this.onVerifiedPageReuseIdentity,
   }) {
     if (loadBytes == null &&
         loadBytesControlled == null &&
@@ -379,6 +385,7 @@ final class ChapterResourceAccess {
   final ChapterResourceTransport? openResponse;
   final ChapterResourceControlledTransport? openControlledResponse;
   final ChapterResourceOpenBound? selfBoundsOpen;
+  final ChapterVerifiedPageReuseObserver? onVerifiedPageReuseIdentity;
 }
 
 abstract interface class ConfigurableChapterResourceAccess {
@@ -8260,21 +8267,30 @@ final class PersistentChapterDownloadService
         revision: '${manifest.chapter.sourceRevision}:${page.pageId}',
         openResponse: stream == null
             ? null
-            : ({ByteRange? range, Validators? validators}) => stream(
-                  manifest.sourceId,
-                  page.uri,
-                  range: range,
-                  validators: validators,
+            : ({ByteRange? range, Validators? validators}) async =>
+                _observeVerifiedPageReuseIdentity(
+                  manifest,
+                  page,
+                  await stream(
+                    manifest.sourceId,
+                    page.uri,
+                    range: range,
+                    validators: validators,
+                  ),
                 ),
         openControlledResponse: controlledStream == null
             ? null
-            : ({ByteRange? range, Validators? validators, TaskControl? control}) =>
-                controlledStream(
-                  manifest.sourceId,
-                  page.uri,
-                  range: range,
-                  validators: validators,
-                  control: control,
+            : ({ByteRange? range, Validators? validators, TaskControl? control}) async =>
+                _observeVerifiedPageReuseIdentity(
+                  manifest,
+                  page,
+                  await controlledStream(
+                    manifest.sourceId,
+                    page.uri,
+                    range: range,
+                    validators: validators,
+                    control: control,
+                  ),
                 ),
         selfBoundedOpen:
             access?.selfBoundsOpen?.call(manifest.sourceId, page.uri) ?? false,
@@ -8290,6 +8306,26 @@ final class PersistentChapterDownloadService
             : () => loader(manifest.sourceId, page.uri),
       ),
     });
+  }
+
+  ByteResponse _observeVerifiedPageReuseIdentity(
+    ChapterManifest manifest,
+    PageAsset page,
+    ByteResponse response,
+  ) {
+    final identity = response.diagnostics['sourceVerifiedReuseIdentity'];
+    if (identity is String && identity.isNotEmpty) {
+      try {
+        _resourceAccess?.onVerifiedPageReuseIdentity?.call(
+          manifest,
+          page,
+          identity,
+        );
+      } on Object {
+        // Optional version evidence must never change transport success.
+      }
+    }
+    return response;
   }
 
   bool _isSourceOwnedResource(String sourceId, Uri uri) {

@@ -130,6 +130,41 @@ for token in (
 ):
     require(baseline, token, 'multi-hop verified interval composition')
 
+source_transport = read('packages/downloads/lib/src/source_resource_transport.dart')
+for token in (
+    "'sourceVerifiedReuseIdentity': verifiedReuseIdentity",
+    'if (!request.requiresRuntimeTransform)',
+    'verifiedComicResourceIdentity(request.uri)',
+):
+    require(source_transport, token, 'normal-open strong reuse evidence')
+
+chapter_downloads = read('packages/downloads/lib/src/chapter_downloads.dart')
+for token in (
+    'typedef ChapterVerifiedPageReuseObserver = void Function(',
+    'this.onVerifiedPageReuseIdentity,',
+    "response.diagnostics['sourceVerifiedReuseIdentity']",
+    '_resourceAccess?.onVerifiedPageReuseIdentity?.call(',
+):
+    require(chapter_downloads, token, 'manifest-aware natural reuse evidence bridge')
+
+home_session = read('apps/app/lib/home_library_session.dart')
+for token in (
+    'static const int _versionReuseObservationLimit = 1024;',
+    'void observeVerifiedPageReuseIdentity(',
+    '_uniqueObservedRelatedPage(',
+    'mapping.recordVerifiedPageMatch(',
+    'mapping.recordVerifiedPageMismatch(',
+    'if (identical(updated, mapping)) continue;',
+    'await upsertVersionRelationDerivedState(',
+    'Future<void> flushVersionReuseEvidence()',
+):
+    require(home_session, token, 'bounded incremental version interval evidence')
+forbid(
+    home_session,
+    'verifiedPageReuseIdentity(',
+    'Home evidence owner performing source resolution',
+)
+
 job = read('packages/sessions/lib/src/download_job.dart')
 for token in (
     'validatorlessRangeProbe',

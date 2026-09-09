@@ -615,6 +615,134 @@ final class ComicVersionPageMapping {
     return values.length == 1 ? values.single : null;
   }
 
+  ComicVersionPageMapping recordVerifiedPageMatch({
+    required int predecessorIndex,
+    required int successorIndex,
+    DateTime? observedAt,
+  }) {
+    if (predecessorIndex < 0 || predecessorIndex >= predecessorPageCount ||
+        successorIndex < 0 || successorIndex >= successorPageCount) {
+      return this;
+    }
+    final offset = successorIndex - predecessorIndex;
+    for (final interval in effectiveVerifiedIntervals) {
+      if (interval.containsPredecessorIndex(predecessorIndex) &&
+          interval.successorOffset == offset) {
+        return this;
+      }
+    }
+    final next = <VerifiedComicVersionPageInterval>[];
+    for (final interval in effectiveVerifiedIntervals) {
+      if (!interval.containsPredecessorIndex(predecessorIndex)) {
+        next.add(interval);
+        continue;
+      }
+      if (interval.predecessorStart < predecessorIndex) {
+        next.add(
+          VerifiedComicVersionPageInterval(
+            predecessorStart: interval.predecessorStart,
+            predecessorEndExclusive: predecessorIndex,
+            successorOffset: interval.successorOffset,
+          ),
+        );
+      }
+      if (predecessorIndex + 1 < interval.predecessorEndExclusive) {
+        next.add(
+          VerifiedComicVersionPageInterval(
+            predecessorStart: predecessorIndex + 1,
+            predecessorEndExclusive: interval.predecessorEndExclusive,
+            successorOffset: interval.successorOffset,
+          ),
+        );
+      }
+    }
+    next.add(
+      VerifiedComicVersionPageInterval(
+        predecessorStart: predecessorIndex,
+        predecessorEndExclusive: predecessorIndex + 1,
+        successorOffset: offset,
+      ),
+    );
+    final anchors = verifiedPredecessorPageIndexes
+        .where((index) => index != predecessorIndex)
+        .toList(growable: true);
+    if (anchors.length < 3) anchors.add(predecessorIndex);
+    anchors.sort();
+    return _copyWithVerifiedEvidence(
+      intervals: _normalizeVerifiedPageIntervals(next),
+      anchors: anchors,
+      observedAt: observedAt,
+    );
+  }
+
+  ComicVersionPageMapping recordVerifiedPageMismatch({
+    required int predecessorIndex,
+    required int successorIndex,
+    DateTime? observedAt,
+  }) {
+    if (predecessorIndex < 0 || predecessorIndex >= predecessorPageCount ||
+        successorIndex < 0 || successorIndex >= successorPageCount) {
+      return this;
+    }
+    var changed = false;
+    final next = <VerifiedComicVersionPageInterval>[];
+    for (final interval in effectiveVerifiedIntervals) {
+      final mapsComparedPair =
+          interval.containsPredecessorIndex(predecessorIndex) &&
+          predecessorIndex + interval.successorOffset == successorIndex;
+      if (!mapsComparedPair) {
+        next.add(interval);
+        continue;
+      }
+      changed = true;
+      if (interval.predecessorStart < predecessorIndex) {
+        next.add(
+          VerifiedComicVersionPageInterval(
+            predecessorStart: interval.predecessorStart,
+            predecessorEndExclusive: predecessorIndex,
+            successorOffset: interval.successorOffset,
+          ),
+        );
+      }
+      if (predecessorIndex + 1 < interval.predecessorEndExclusive) {
+        next.add(
+          VerifiedComicVersionPageInterval(
+            predecessorStart: predecessorIndex + 1,
+            predecessorEndExclusive: interval.predecessorEndExclusive,
+            successorOffset: interval.successorOffset,
+          ),
+        );
+      }
+    }
+    if (!changed) return this;
+    final anchors = verifiedPredecessorPageIndexes
+        .where((index) => index != predecessorIndex)
+        .toList(growable: false);
+    return _copyWithVerifiedEvidence(
+      intervals: _normalizeVerifiedPageIntervals(next),
+      anchors: anchors,
+      observedAt: observedAt,
+    );
+  }
+
+  ComicVersionPageMapping _copyWithVerifiedEvidence({
+    required List<VerifiedComicVersionPageInterval> intervals,
+    required List<int> anchors,
+    DateTime? observedAt,
+  }) =>
+      ComicVersionPageMapping(
+        predecessorChapterId: predecessorChapterId,
+        successorChapterId: successorChapterId,
+        predecessorPageCount: predecessorPageCount,
+        successorPageCount: successorPageCount,
+        successorOffset: successorOffset,
+        predecessorSourceRevision: predecessorSourceRevision,
+        successorSourceRevision: successorSourceRevision,
+        verifiedPredecessorPageIndexes: List<int>.unmodifiable(anchors),
+        verifiedIntervals: intervals,
+        verifiedAt: observedAt?.toUtc() ?? DateTime.now().toUtc(),
+      );
+
   Map<String, Object?> toJson() => <String, Object?>{
         'predecessorChapterId': predecessorChapterId,
         'successorChapterId': successorChapterId,

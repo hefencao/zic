@@ -109,6 +109,69 @@ void main() {
     expect(roundTrip.uniqueVerifiedPredecessorIndexForSuccessor(6), 5);
   });
 
+  test('verified affine evidence expands, splits, and changes local offset', () {
+    const mapping = ComicVersionPageMapping(
+      predecessorChapterId: 'old',
+      successorChapterId: 'new',
+      predecessorPageCount: 6,
+      successorPageCount: 7,
+      successorOffset: 1,
+      verifiedIntervals: <VerifiedComicVersionPageInterval>[
+        VerifiedComicVersionPageInterval(
+          predecessorStart: 0,
+          predecessorEndExclusive: 4,
+          successorOffset: 1,
+        ),
+      ],
+    );
+
+    final split = mapping.recordVerifiedPageMismatch(
+      predecessorIndex: 2,
+      successorIndex: 3,
+      observedAt: DateTime.utc(2026, 9, 9),
+    );
+    expect(
+      split.effectiveVerifiedIntervals
+          .map((interval) => (
+                interval.predecessorStart,
+                interval.predecessorEndExclusive,
+                interval.successorOffset,
+              ))
+          .toList(),
+      <(int, int, int)>[(0, 2, 1), (3, 4, 1)],
+    );
+
+    final restored = split.recordVerifiedPageMatch(
+      predecessorIndex: 2,
+      successorIndex: 3,
+    );
+    expect(
+      restored.effectiveVerifiedIntervals
+          .map((interval) => (
+                interval.predecessorStart,
+                interval.predecessorEndExclusive,
+                interval.successorOffset,
+              ))
+          .toList(),
+      <(int, int, int)>[(0, 4, 1)],
+    );
+
+    final changedOffset = restored.recordVerifiedPageMatch(
+      predecessorIndex: 2,
+      successorIndex: 2,
+    );
+    expect(
+      changedOffset.effectiveVerifiedIntervals
+          .map((interval) => (
+                interval.predecessorStart,
+                interval.predecessorEndExclusive,
+                interval.successorOffset,
+              ))
+          .toList(),
+      <(int, int, int)>[(0, 2, 1), (2, 3, 0), (3, 4, 1)],
+    );
+  });
+
   test('memory imported library stores comic version predecessors', () async {
     final store = MemoryImportedLibraryStore();
     await store.open();

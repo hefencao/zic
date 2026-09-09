@@ -216,6 +216,7 @@ final class _SourceResourceTransport
     final requestPlanWatch = Stopwatch()..start();
     final resolved = await _resolve(uri, control: control);
     var request = resolved.request;
+    String? verifiedReuseIdentity;
     final sourcePlanDiagnostics = resolved.cacheHit
         ? const <String, Object?>{}
         : request.diagnostics;
@@ -233,6 +234,9 @@ final class _SourceResourceTransport
     var openPath = request.requiresRuntimeTransform
         ? 'runtime-transform'
         : 'direct';
+    if (!request.requiresRuntimeTransform) {
+      verifiedReuseIdentity = verifiedComicResourceIdentity(request.uri);
+    }
     late final ByteResponse response;
     if (request.requiresRuntimeTransform) {
       response = await _openRuntimeFallback(
@@ -256,6 +260,7 @@ final class _SourceResourceTransport
         _invalidate(uri);
         if (_isSourceMediaSemanticRejection(error)) {
           retryUsed = true;
+          verifiedReuseIdentity = null;
           final retried = await _recoverSourceRequest(
             uri,
             range: range,
@@ -266,6 +271,7 @@ final class _SourceResourceTransport
           response = retried.response;
           openPath = retried.openPath;
         } else if (_requiresSourceClientState(error)) {
+          verifiedReuseIdentity = null;
           openPath = 'client-runtime-fallback';
           response = await _openRuntimeFallback(
             uri,
@@ -276,6 +282,7 @@ final class _SourceResourceTransport
         } else {
           retryUsed = true;
           try {
+            verifiedReuseIdentity = null;
             final retried = await _recoverSourceRequest(
               uri,
               range: range,
@@ -295,6 +302,7 @@ final class _SourceResourceTransport
         _invalidate(uri);
         retryUsed = true;
         try {
+          verifiedReuseIdentity = null;
           final retried = await _recoverSourceRequest(
             uri,
             range: range,
@@ -323,6 +331,7 @@ final class _SourceResourceTransport
       hostOpenMicros: hostOpenWatch.elapsedMicroseconds,
       openPath: openPath,
       retryUsed: retryUsed,
+      verifiedReuseIdentity: verifiedReuseIdentity,
     );
   }
 
@@ -727,6 +736,7 @@ final class _SourceResourceTransport
     required int hostOpenMicros,
     required String openPath,
     required bool retryUsed,
+    required String? verifiedReuseIdentity,
   }) {
     return ByteResponse(
       bytes: response.bytes,
@@ -746,6 +756,8 @@ final class _SourceResourceTransport
         'sourceHostOpenMicros': hostOpenMicros,
         'sourceOpenPath': openPath,
         'sourceRetryUsed': retryUsed,
+        if (verifiedReuseIdentity != null)
+          'sourceVerifiedReuseIdentity': verifiedReuseIdentity,
       },
       readDiagnostics: response.readDiagnostics,
       onDiscardControlled: response.discard,

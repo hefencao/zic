@@ -76,7 +76,7 @@ void main() {
       () async {
     final source = _FixtureSource(
       request: ComicResourceRequest(
-        uri: Uri.parse('https://fixture/staged'),
+        uri: Uri.parse('https://e-hentai.org/s/aabbccddeeff0011/1-1'),
         diagnostics: const <String, Object?>{
           'sourcePlanGateWaitMicros': 1200,
           'sourcePlanRuntimeInvocationMicros': 2400,
@@ -120,12 +120,20 @@ void main() {
     expect(first.diagnostics['sourceHostOpenMicros'], isA<int>());
     expect(first.diagnostics['sourceOpenPath'], 'direct');
     expect(first.diagnostics['sourceRetryUsed'], isFalse);
+    expect(
+      first.diagnostics['sourceVerifiedReuseIdentity'],
+      'eh:aabbccddeeff0011',
+    );
 
     final second = await loader();
     expect(await _collect(second.bytes), <int>[1, 2, 3]);
     expect(second.diagnostics['sourceRequestPlanCacheHit'], isTrue);
     expect(second.diagnostics.containsKey('sourcePlanGateWaitMicros'), isFalse);
     expect(second.diagnostics.containsKey('sourcePlanHookMicros'), isFalse);
+    expect(
+      second.diagnostics['sourceVerifiedReuseIdentity'],
+      'eh:aabbccddeeff0011',
+    );
     expect(source.resolveCalls, 1);
   });
 
@@ -459,7 +467,7 @@ void main() {
         Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 7, 8, 9, 0xff, 0xd9]);
     final source = _FixtureSource(
       request: ComicResourceRequest(
-        uri: Uri.parse('venera-resource:fixture'),
+        uri: Uri.parse('https://e-hentai.org/s/deadbeefdeadbeef/1-1'),
         requiresRuntimeTransform: true,
       ),
       runtimeBytes: runtimeImage,
@@ -473,6 +481,7 @@ void main() {
         .loaderFor(source, Uri.parse('venera-resource:fixture'))();
 
     expect(await _collect(response.bytes), runtimeImage);
+    expect(response.diagnostics.containsKey('sourceVerifiedReuseIdentity'), isFalse);
     expect(source.resolveCalls, 1);
     expect(source.loadCalls, 1);
   });

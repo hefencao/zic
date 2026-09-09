@@ -217,6 +217,216 @@ void main() {
     expect(composition.transferRuntime.versionCandidatesFor(newId), contains(oldId));
   });
 
+  test('natural page evidence discovers a changed affine offset from observed identity',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    await library.open();
+    final oldManifest = _versionManifest(
+      comicId: 'old-offset-evidence',
+      chapterId: 'old-offset-chapter',
+      revision: 'old-offset-r1',
+      pageCount: 3,
+    );
+    final newManifest = _versionManifest(
+      comicId: 'new-offset-evidence',
+      chapterId: 'new-offset-chapter',
+      revision: 'new-offset-r1',
+      pageCount: 4,
+    );
+    await library.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic('old-offset-evidence'),
+        manifest: oldManifest,
+      ),
+    );
+    await library.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic('new-offset-evidence'),
+        manifest: newManifest,
+      ),
+    );
+    await library.saveComicVersionRelation(
+      const ComicVersionRelation(
+        sourceId: 'version-source',
+        predecessorComicId: 'old-offset-evidence',
+        successorComicId: 'new-offset-evidence',
+        pageMappings: <ComicVersionPageMapping>[
+          ComicVersionPageMapping(
+            predecessorChapterId: 'old-offset-chapter',
+            successorChapterId: 'new-offset-chapter',
+            predecessorPageCount: 3,
+            successorPageCount: 4,
+            successorOffset: 0,
+            predecessorSourceRevision: 'old-offset-r1',
+            successorSourceRevision: 'new-offset-r1',
+            verifiedPredecessorPageIndexes: <int>[0],
+            verifiedIntervals: <VerifiedComicVersionPageInterval>[
+              VerifiedComicVersionPageInterval(
+                predecessorStart: 0,
+                predecessorEndExclusive: 1,
+                successorOffset: 0,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+
+    // Observe successor first. There is no matching predecessor evidence yet,
+    // so the relation remains unchanged. Observing the predecessor later with
+    // the same strong identity discovers the real +1 index shift directly.
+    session.observeVerifiedPageReuseIdentity(
+      newManifest,
+      newManifest.pages[2],
+      'media:shifted-page',
+    );
+    session.observeVerifiedPageReuseIdentity(
+      oldManifest,
+      oldManifest.pages[1],
+      'media:shifted-page',
+    );
+    await session.flushVersionReuseEvidence();
+
+    final mapping = session.versionRelations.single.pageMappings.single;
+    expect(
+      mapping.effectiveVerifiedIntervals
+          .map((interval) => (
+                interval.predecessorStart,
+                interval.predecessorEndExclusive,
+                interval.successorOffset,
+              ))
+          .toList(),
+      <(int, int, int)>[(0, 1, 0), (1, 2, 1)],
+    );
+  });
+
+  test('natural page evidence splits a mismatched verified interval without Home broadcast',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    await library.open();
+    final oldManifest = _versionManifest(
+      comicId: 'old-evidence',
+      chapterId: 'old-evidence-chapter',
+      revision: 'old-evidence-r1',
+      pageCount: 3,
+    );
+    final newManifest = _versionManifest(
+      comicId: 'new-evidence',
+      chapterId: 'new-evidence-chapter',
+      revision: 'new-evidence-r1',
+      pageCount: 3,
+    );
+    await library.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic('old-evidence'),
+        manifest: oldManifest,
+      ),
+    );
+    await library.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic('new-evidence'),
+        manifest: newManifest,
+      ),
+    );
+    await library.saveComicVersionRelation(
+      const ComicVersionRelation(
+        sourceId: 'version-source',
+        predecessorComicId: 'old-evidence',
+        successorComicId: 'new-evidence',
+        pageMappings: <ComicVersionPageMapping>[
+          ComicVersionPageMapping(
+            predecessorChapterId: 'old-evidence-chapter',
+            successorChapterId: 'new-evidence-chapter',
+            predecessorPageCount: 3,
+            successorPageCount: 3,
+            successorOffset: 0,
+            predecessorSourceRevision: 'old-evidence-r1',
+            successorSourceRevision: 'new-evidence-r1',
+            verifiedPredecessorPageIndexes: <int>[0, 2],
+            verifiedIntervals: <VerifiedComicVersionPageInterval>[
+              VerifiedComicVersionPageInterval(
+                predecessorStart: 0,
+                predecessorEndExclusive: 3,
+                successorOffset: 0,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+    var notifications = 0;
+    session.addListener(() => notifications++);
+
+    session.observeVerifiedPageReuseIdentity(
+      oldManifest,
+      oldManifest.pages[1],
+      'media:old-middle',
+    );
+    session.observeVerifiedPageReuseIdentity(
+      newManifest,
+      newManifest.pages[1],
+      'media:new-middle',
+    );
+    await session.flushVersionReuseEvidence();
+
+    expect(notifications, 0);
+    final mapping = session.versionRelations.single.pageMappings.single;
+    expect(
+      mapping.effectiveVerifiedIntervals
+          .map((interval) => (
+                interval.predecessorStart,
+                interval.predecessorEndExclusive,
+                interval.successorOffset,
+              ))
+          .toList(),
+      <(int, int, int)>[(0, 1, 0), (2, 3, 0)],
+    );
+    final persisted = await library.listComicVersionSuccessors(
+      'version-source',
+      'old-evidence',
+    );
+    expect(
+      persisted.single.pageMappings.single.effectiveVerifiedIntervals,
+      hasLength(2),
+    );
+  });
+
   test('derived version page mappings do not broadcast Home projection',
       () async {
     final library = MemoryImportedLibraryStore();

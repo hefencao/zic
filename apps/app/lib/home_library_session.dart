@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:ui' as ui;
 
 import 'package:catalog/catalog.dart';
@@ -22,6 +23,18 @@ String _downloadEntryIdentity(ImportedLibraryEntry entry) =>
 String _versionAuthorityEntryKey(ImportedLibraryEntry entry) =>
     '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}'
     '\u0000${entry.chapter.chapterId}';
+
+final class _VersionReusePageObservation {
+  const _VersionReusePageObservation({
+    required this.id,
+    required this.identity,
+  });
+
+  final DownloadId id;
+  final String identity;
+
+  int? get pageIndex => id.pageIndexHint;
+}
 
 HomeChapterDownloadSummary _downloadSummary(ChapterDownloadSnapshot snapshot) =>
     HomeChapterDownloadSummary(
@@ -337,6 +350,11 @@ final class HomeLibrarySession extends ChangeNotifier {
   int? _snapshotLibraryRevision;
   bool _snapshotRewriteNeeded = false;
   Future<void> _snapshotWriteTail = Future<void>.value();
+  Future<void> _versionEvidenceWriteTail = Future<void>.value();
+  final LinkedHashMap<String, _VersionReusePageObservation>
+      _versionReuseIdentityObservations =
+      LinkedHashMap<String, _VersionReusePageObservation>();
+  static const int _versionReuseObservationLimit = 1024;
   final Stopwatch _homeStartupClock = Stopwatch()..start();
 
   List<ImportedLibraryEntry> get entries => _entries;
@@ -1206,6 +1224,225 @@ final class HomeLibrarySession extends ChangeNotifier {
     return library.list();
   }
 
+  void observeVerifiedPageReuseIdentity(
+    ChapterManifest chapter,
+    PageAsset page,
+    String identity,
+  ) {
+    if (_closed || identity.isEmpty ||
+        page.chapterId != chapter.chapter.chapterId ||
+        page.index < 0 || page.index >= chapter.pages.length) {
+      return;
+    }
+    final exact = readerPageDownloadId(chapter, page);
+    final previous = _versionReuseIdentityObservations.remove(exact.key);
+    _versionReuseIdentityObservations[exact.key] = _VersionReusePageObservation(
+      id: exact,
+      identity: identity,
+    );
+    while (_versionReuseIdentityObservations.length >
+        _versionReuseObservationLimit) {
+      _versionReuseIdentityObservations.remove(
+        _versionReuseIdentityObservations.keys.first,
+      );
+    }
+    if (previous?.identity == identity) return;
+    _versionEvidenceWriteTail = _versionEvidenceWriteTail.then((_) async {
+      if (_closed) return;
+      await _applyVerifiedPageReuseIdentity(chapter, page, identity);
+    }).catchError((Object error, StackTrace stackTrace) {
+      debugPrint('version reuse evidence update failed: $error');
+    });
+  }
+
+  Future<void> _applyVerifiedPageReuseIdentity(
+    ChapterManifest chapter,
+    PageAsset page,
+    String identity,
+  ) async {
+    final relations = List<ComicVersionRelation>.of(_versionRelations);
+    relationLoop:
+    for (final relation in relations) {
+      if (relation.sourceId != chapter.sourceId) continue;
+      final currentIsPredecessor = relation.predecessorComicId == chapter.comicId;
+      final currentIsSuccessor = relation.successorComicId == chapter.comicId;
+      if (!currentIsPredecessor && !currentIsSuccessor) continue;
+      for (var mappingIndex = 0;
+          mappingIndex < relation.pageMappings.length;
+          mappingIndex++) {
+        final mapping = relation.pageMappings[mappingIndex];
+        if (currentIsPredecessor) {
+          if (mapping.predecessorChapterId != chapter.chapter.chapterId ||
+              mapping.predecessorSourceRevision !=
+                  chapter.chapter.sourceRevision) {
+            continue;
+          }
+        } else {
+          if (mapping.successorChapterId != chapter.chapter.chapterId ||
+              mapping.successorSourceRevision != chapter.chapter.sourceRevision) {
+            continue;
+          }
+        }
+        final relatedComicId = currentIsPredecessor
+            ? relation.successorComicId
+            : relation.predecessorComicId;
+        final relatedChapterId = currentIsPredecessor
+            ? mapping.successorChapterId
+            : mapping.predecessorChapterId;
+        final relatedEntry = _versionAuthorityEntryFor(
+          relation.sourceId,
+          relatedComicId,
+          relatedChapterId,
+        );
+        if (relatedEntry == null) continue;
+        final relatedManifest = relatedEntry.chapter.toManifest();
+        if (currentIsPredecessor &&
+            relatedManifest.chapter.sourceRevision !=
+                mapping.successorSourceRevision) {
+          continue;
+        }
+        if (currentIsSuccessor &&
+            relatedManifest.chapter.sourceRevision !=
+                mapping.predecessorSourceRevision) {
+          continue;
+        }
+
+        final observedCounterpart = _uniqueObservedRelatedPage(
+          sourceId: relation.sourceId,
+          comicId: relatedComicId,
+          chapterId: relatedChapterId,
+          sourceRevision: relatedManifest.chapter.sourceRevision,
+          identity: identity,
+        );
+        late final int predecessorIndex;
+        late final int successorIndex;
+        String? relatedIdentity;
+        if (observedCounterpart != null &&
+            observedCounterpart.pageIndex != null) {
+          if (currentIsPredecessor) {
+            predecessorIndex = page.index;
+            successorIndex = observedCounterpart.pageIndex!;
+          } else {
+            successorIndex = page.index;
+            predecessorIndex = observedCounterpart.pageIndex!;
+          }
+          relatedIdentity = observedCounterpart.identity;
+        } else {
+          if (currentIsPredecessor) {
+            predecessorIndex = page.index;
+            successorIndex = mapping
+                    .uniqueVerifiedSuccessorIndexForPredecessor(page.index) ??
+                page.index + mapping.successorOffset;
+          } else {
+            successorIndex = page.index;
+            predecessorIndex = mapping
+                    .uniqueVerifiedPredecessorIndexForSuccessor(page.index) ??
+                page.index - mapping.successorOffset;
+          }
+        }
+        if (predecessorIndex < 0 ||
+            predecessorIndex >= mapping.predecessorPageCount ||
+            successorIndex < 0 ||
+            successorIndex >= mapping.successorPageCount ||
+            predecessorIndex >=
+                (currentIsPredecessor
+                    ? chapter.pages.length
+                    : relatedManifest.pages.length) ||
+            successorIndex >=
+                (currentIsSuccessor
+                    ? chapter.pages.length
+                    : relatedManifest.pages.length)) {
+          continue;
+        }
+        if (relatedIdentity == null) {
+          final relatedPage = currentIsPredecessor
+              ? relatedManifest.pages[successorIndex]
+              : relatedManifest.pages[predecessorIndex];
+          final relatedId = readerPageDownloadId(relatedManifest, relatedPage);
+          relatedIdentity =
+              _versionReuseIdentityObservations[relatedId.key]?.identity ??
+                  verifiedPageIdentity(relatedPage);
+        }
+        if (relatedIdentity == null) continue;
+        final observedAt = DateTime.now().toUtc();
+        final updated = identity == relatedIdentity
+            ? mapping.recordVerifiedPageMatch(
+                predecessorIndex: predecessorIndex,
+                successorIndex: successorIndex,
+                observedAt: observedAt,
+              )
+            : mapping.recordVerifiedPageMismatch(
+                predecessorIndex: predecessorIndex,
+                successorIndex: successorIndex,
+                observedAt: observedAt,
+              );
+        if (identical(updated, mapping)) continue;
+        final pageMappings = relation.pageMappings.toList(growable: false);
+        final mutableMappings = pageMappings.toList(growable: true);
+        mutableMappings[mappingIndex] = updated;
+        await upsertVersionRelationDerivedState(
+          ComicVersionRelation(
+            sourceId: relation.sourceId,
+            predecessorComicId: relation.predecessorComicId,
+            successorComicId: relation.successorComicId,
+            predecessorTitle: relation.predecessorTitle,
+            discoveredAt: relation.discoveredAt,
+            pageMappings: List<ComicVersionPageMapping>.unmodifiable(
+              mutableMappings,
+            ),
+          ),
+        );
+        // A page belongs to at most one chapter-pair mapping inside one direct
+        // relation. Do not let a duplicate/stale mapping in the same relation
+        // overwrite the evidence just persisted above.
+        continue relationLoop;
+      }
+    }
+  }
+
+  _VersionReusePageObservation? _uniqueObservedRelatedPage({
+    required String sourceId,
+    required String comicId,
+    required String chapterId,
+    required String sourceRevision,
+    required String identity,
+  }) {
+    _VersionReusePageObservation? match;
+    for (final observation in _versionReuseIdentityObservations.values) {
+      final id = observation.id;
+      if (observation.identity != identity ||
+          id.content.sourceId != sourceId ||
+          id.content.comicId != comicId ||
+          id.content.chapterId != chapterId ||
+          id.sourceRevision != sourceRevision) {
+        continue;
+      }
+      if (match != null && match.id != id) return null;
+      match = observation;
+    }
+    return match;
+  }
+
+  ImportedLibraryEntry? _versionAuthorityEntryFor(
+    String sourceId,
+    String comicId,
+    String chapterId,
+  ) {
+    final key = '$sourceId\u0000$comicId\u0000$chapterId';
+    final hydrated = _versionAuthorityHydratedEntries[key];
+    if (hydrated != null) return hydrated;
+    for (final entry in _entries) {
+      if (entry.chapter.sourceId == sourceId &&
+          entry.chapter.comicId == comicId &&
+          entry.chapter.chapterId == chapterId) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  Future<void> flushVersionReuseEvidence() => _versionEvidenceWriteTail;
+
   Future<void> upsertVersionRelation(ComicVersionRelation relation) async {
     await _persistVersionRelation(relation);
     replaceVersionRelation(relation);
@@ -1742,6 +1979,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     if (_closed) {
       return;
     }
+    await _versionEvidenceWriteTail;
     _closed = true;
     await _downloadSubscription.cancel();
     await _wholeComicSubscription.cancel();

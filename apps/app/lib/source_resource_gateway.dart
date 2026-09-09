@@ -38,6 +38,7 @@ final class ComicSourceResourceGateway {
   final ExternalPluginResourceTransportPool _transports;
   final Set<ConfigurableChapterResourceAccess> _boundDownloads =
       HashSet<ConfigurableChapterResourceAccess>.identity();
+  ChapterVerifiedPageReuseObserver? _verifiedPageReuseObserver;
   bool _closed = false;
 
   ChapterResourceAccess get chapterResourceAccess {
@@ -60,7 +61,15 @@ final class ComicSourceResourceGateway {
         control: control,
       ),
       selfBoundsOpen: pageOpenSelfBoundedFor,
+      onVerifiedPageReuseIdentity: (manifest, page, identity) =>
+          _verifiedPageReuseObserver?.call(manifest, page, identity),
     );
+  }
+
+  void setVerifiedPageReuseObserver(
+    ChapterVerifiedPageReuseObserver? observer,
+  ) {
+    _verifiedPageReuseObserver = observer;
   }
 
   void bindTo(ChapterDownloadService downloads) {

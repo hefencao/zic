@@ -1179,6 +1179,7 @@ void main() {
     final service = await PersistentChapterDownloadService.open(directory.path);
     addTearDown(service.close);
     var completeByteFallbackCalled = false;
+    final reuseObservations = <({String chapterId, int pageIndex, String identity})>[];
     service.setChapterResourceAccess(
       ChapterResourceAccess(
         loadBytes: (sourceId, uri) async {
@@ -1203,7 +1204,17 @@ void main() {
             totalLength: 16,
             validators: const Validators(etag: '"stream"'),
             rangeSupported: true,
+            diagnostics: const <String, Object?>{
+              'sourceVerifiedReuseIdentity': 'media:stream-page',
+            },
           );
+        },
+        onVerifiedPageReuseIdentity: (manifest, page, identity) {
+          reuseObservations.add((
+            chapterId: manifest.chapter.chapterId,
+            pageIndex: page.index,
+            identity: identity,
+          ));
         },
       ),
     );
@@ -1230,6 +1241,16 @@ void main() {
     expect(events.last.receivedBytes, 16);
     expect(events.last.fraction, 1);
     expect(completeByteFallbackCalled, isFalse);
+    expect(
+      reuseObservations,
+      <({String chapterId, int pageIndex, String identity})>[
+        (
+          chapterId: 'chapter',
+          pageIndex: 0,
+          identity: 'media:stream-page',
+        ),
+      ],
+    );
   });
 
   test('memory download publishes progress and delete returns to idle',
