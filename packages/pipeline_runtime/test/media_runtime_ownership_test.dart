@@ -377,6 +377,37 @@ void main() {
       reason: 'next output lease prewarm must not create frame upload work',
     );
 
+    final next = session.chapter.pages[1];
+    final nextOutput = session.pageOutput(next);
+    expect(nextOutput.snapshot.state, PipelinePageOutputState.preparing);
+    session.accept(
+      ReaderObs(
+        sessionId: 'reader',
+        currentIndex: 0,
+        stableIndex: 0,
+        interaction: Interaction.idle,
+        logicalPosition: 0,
+        velocity: 0,
+        currentCoverage: Coverage(
+          pageIndex: 0,
+          assetKey: current.assetKey,
+          fraction: 1,
+        ),
+        direction: ReadingDirection.ltr,
+        timestamp: DateTime.utc(2026),
+        monotonicMicros: 2,
+      ),
+    );
+    final repeatedPrewarms = trace.events
+        .where((event) => event.kind == TraceEventKind.pageOutputPrewarmed)
+        .toList(growable: false);
+    expect(repeatedPrewarms, hasLength(2));
+    expect(runtime.prewarmCalls, 2);
+    expect(
+      trace.events.where((event) => event.kind == TraceEventKind.uploadDemand),
+      hasLength(1),
+    );
+
     await session.dispose();
   });
 

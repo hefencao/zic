@@ -318,7 +318,6 @@ final class _ReaderViewState extends State<ReaderView>
   AnimationController? _stripZoomAnimation;
   static const int _verticalInitialCacheScreens = 6;
   static const int _frameTimingBudgetMicros = 16667;
-  static const int _frameTimingMissedVsyncMicros = 20000;
   static const int _frameTimingSummaryWindowMicros = 1000000;
 
   @override
@@ -1826,11 +1825,16 @@ final class _ReaderViewState extends State<ReaderView>
     }
   }
 
+  // Frame interval alone is not a per-frame work outlier. Reader can be idle,
+  // an Android SurfaceProducer animation can update without scheduling a
+  // Flutter frame, and dedicated scroll/platform cadence probes already own
+  // missed-cadence attribution. Keep interval min/max in the one-second timing
+  // summary; retain individual samples only when Flutter build/raster/total
+  // work itself exceeds the frame budget.
   bool _isFrameTimingOutlier(ReaderFrameTimingSample timing) =>
       timing.buildMicros >= _frameTimingBudgetMicros ||
       timing.rasterMicros >= _frameTimingBudgetMicros ||
-      timing.totalSpanMicros >= _frameTimingBudgetMicros ||
-      (timing.frameIntervalMicros ?? 0) >= _frameTimingMissedVsyncMicros;
+      timing.totalSpanMicros >= _frameTimingBudgetMicros;
 
   void _appendFrameTimingSummary(
     ReaderFrameTimingSample timing,

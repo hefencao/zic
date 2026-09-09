@@ -482,6 +482,101 @@ void main() {
     expect(controller.navigationRevision, scrubRevision + 1);
   });
 
+  test('page scrub coalesces intermediate navigation and flushes final page', () async {
+    final chapter = _chapter(pageCount: 5);
+    final controller = ReaderController(
+      sessionId: 'reader-scrub-coalesce-test',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+    final requested = <int?>[];
+    controller.addListener(() => requested.add(controller.requestedIndex));
+
+    controller.beginPageScrub();
+    controller.scrubToPage(1);
+    controller.scrubToPage(2);
+    controller.scrubToPage(3);
+
+    expect(requested, <int?>[1]);
+    expect(controller.navigationRevision, 1);
+
+    await Future<void>.delayed(const Duration(milliseconds: 65));
+    expect(requested, <int?>[1, 3]);
+    expect(controller.navigationRevision, 2);
+
+    controller.endPageScrub(4);
+    expect(controller.pageScrubbing, isFalse);
+    expect(controller.requestedIndex, 4);
+    expect(requested, <int?>[1, 3, 4]);
+    expect(controller.navigationRevision, 3);
+  });
+
+  testWidgets(
+    'frame interval-only samples summarize while work jank stays individual',
+    (tester) async {
+      final chapter = _chapter(pageCount: 1);
+      final trace = MemoryTraceSink();
+      final source = _TestFrameTimingSource();
+      final clock = FakeClock();
+      final controller = ReaderController(
+        sessionId: 'reader-frame-summary-test',
+        chapter: chapter,
+        onObservation: (_) {},
+        clock: clock,
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ReaderView(
+            controller: controller,
+            clock: clock,
+            traceSink: trace,
+            frameTimingSource: source,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      source.emit(const <ReaderFrameTimingSample>[
+        ReaderFrameTimingSample(
+          buildMicros: 3000,
+          rasterMicros: 2500,
+          totalSpanMicros: 6000,
+          vsyncOverheadMicros: 300,
+          vsyncStartMicros: 100000,
+          frameIntervalMicros: 25000,
+        ),
+        ReaderFrameTimingSample(
+          buildMicros: 3500,
+          rasterMicros: 2600,
+          totalSpanMicros: 6500,
+          vsyncOverheadMicros: 350,
+          vsyncStartMicros: 130000,
+          frameIntervalMicros: 50000,
+        ),
+        ReaderFrameTimingSample(
+          buildMicros: 22000,
+          rasterMicros: 3000,
+          totalSpanMicros: 26000,
+          vsyncOverheadMicros: 400,
+          vsyncStartMicros: 160000,
+          frameIntervalMicros: 16667,
+        ),
+      ]);
+
+      final timings = trace.events
+          .where((event) => event.kind == TraceEventKind.readerFrameTiming)
+          .toList(growable: false);
+      expect(timings, hasLength(2));
+      expect(timings.first.payload['frameSampleCount'], 2);
+      expect(timings.first.payload['maxFrameIntervalMicros'], 50000);
+      expect(timings.last.payload['buildMicros'], 22000);
+    },
+  );
+
   testWidgets(
     'vertical current changes rebuild only page shells whose state changed',
     (tester) async {
@@ -1168,6 +1263,35 @@ ChapterManifest _chapter({required int pageCount}) {
     ),
     readingDirection: ReadingDirection.ltr,
   );
+}
+
+final class _TestFrameTimingSource implements ReaderFrameTimingSource {
+  ReaderFrameTimingListener? _listener;
+
+  @override
+  ReaderFrameTimingSubscription subscribe(ReaderFrameTimingListener listener) {
+    _listener = listener;
+    return _TestFrameTimingSubscription(() {
+      if (identical(_listener, listener)) _listener = null;
+    });
+  }
+
+  void emit(List<ReaderFrameTimingSample> samples) => _listener?.call(samples);
+}
+
+final class _TestFrameTimingSubscription
+    implements ReaderFrameTimingSubscription {
+  _TestFrameTimingSubscription(this._cancel);
+
+  final VoidCallback _cancel;
+  bool _cancelled = false;
+
+  @override
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    _cancel();
+  }
 }
 
 final class FakeClock implements MonoClock {

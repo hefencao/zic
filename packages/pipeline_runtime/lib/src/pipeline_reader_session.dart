@@ -1392,10 +1392,10 @@ final class PipelineReaderSession {
       id.key,
       () => _newPageOutput(id),
     );
-    final uploadIdentity = _activeUploadIdentity(id);
+    final outputIdentity = _activePagedOutputIdentity(id);
     output._bind(
-      uploadIdentity,
-      retainedStaticIdentity: uploadIdentity == null
+      outputIdentity,
+      retainedStaticIdentity: outputIdentity == null
           ? _staticPresentationContinuityIdentity(id)
           : null,
     );
@@ -2787,6 +2787,18 @@ final class PipelineReaderSession {
     return null;
   }
 
+  DecodeId? _activePagedOutputIdentity(DownloadId download) {
+    final upload = _activeUploadIdentity(download);
+    if (upload != null) {
+      return upload;
+    }
+    final decode = _activeDecodeIdentity(download);
+    if (decode != null && _pagedOutputPrewarmRole(decode) == PageRole.next) {
+      return decode;
+    }
+    return null;
+  }
+
   /// Presentation-only continuity for an already-presented static surface.
   ///
   /// Directional decode work remains previous1/next2. During a direction flip,
@@ -2834,10 +2846,10 @@ final class PipelineReaderSession {
     final emptyOutputs = <String>[];
     for (final entry in _pageOutputs.entries) {
       final output = entry.value;
-      final uploadIdentity = _activeUploadIdentity(output.download);
+      final outputIdentity = _activePagedOutputIdentity(output.download);
       output._bind(
-        uploadIdentity,
-        retainedStaticIdentity: uploadIdentity == null
+        outputIdentity,
+        retainedStaticIdentity: outputIdentity == null
             ? _staticPresentationContinuityIdentity(output.download)
             : null,
       );

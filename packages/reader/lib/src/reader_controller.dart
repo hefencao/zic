@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:domain/domain.dart';
 import 'package:flutter/foundation.dart';
 import 'package:telemetry/telemetry.dart';
@@ -30,7 +32,11 @@ final class ReaderController extends ChangeNotifier {
   int _stableIndex;
   ReadingDirection _direction;
   int? _requestedIndex;
+  static const Duration _scrubDispatchInterval = Duration(milliseconds: 50);
+
   bool _pageScrubbing = false;
+  Timer? _scrubDispatchTimer;
+  int? _pendingScrubIndex;
   int _navigationRevision = 0;
   int _rotationQuarterTurns = 0;
   ReaderObs? _lastObservation;
@@ -73,26 +79,55 @@ final class ReaderController extends ChangeNotifier {
   }
 
   void requestPage(int index) {
+    _cancelScrubDispatch();
     _pageScrubbing = false;
     _requestPage(index, forceRevision: false);
   }
 
   void beginPageScrub() {
+    _cancelScrubDispatch();
     _pageScrubbing = true;
   }
 
   void scrubToPage(int index) {
     _pageScrubbing = true;
+    if (_scrubDispatchTimer != null) {
+      _pendingScrubIndex = index;
+      return;
+    }
+    _dispatchScrubPage(index);
+  }
+
+  void _dispatchScrubPage(int index) {
+    _pendingScrubIndex = null;
     _requestPage(index, forceRevision: false);
+    _scrubDispatchTimer = Timer(_scrubDispatchInterval, () {
+      _scrubDispatchTimer = null;
+      if (!_pageScrubbing) {
+        _pendingScrubIndex = null;
+        return;
+      }
+      final pending = _pendingScrubIndex;
+      if (pending != null) {
+        _dispatchScrubPage(pending);
+      }
+    });
   }
 
   void endPageScrub(int index) {
+    _cancelScrubDispatch();
     _pageScrubbing = false;
     // Ending a scrub is a planning boundary even when ReaderView has already
     // acknowledged the final visible page. Force one navigation revision so
     // the view can publish a non-scrub observation and restore the normal
     // encoded/decode/upload windows without another page jump.
     _requestPage(index, forceRevision: true);
+  }
+
+  void _cancelScrubDispatch() {
+    _scrubDispatchTimer?.cancel();
+    _scrubDispatchTimer = null;
+    _pendingScrubIndex = null;
   }
 
   void _requestPage(int index, {required bool forceRevision}) {
@@ -200,6 +235,7 @@ final class ReaderController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _cancelScrubDispatch();
     _currentIndexNotifier.dispose();
     super.dispose();
   }
