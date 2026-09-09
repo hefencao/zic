@@ -851,6 +851,46 @@ void main() {
     );
   });
 
+  test('bounded interval probe source work stays constant at 80k pages',
+      () async {
+    const pageCount = 80000;
+    final source = _chapter(
+      comicId: 'binary-source-80k',
+      revision: 'binary-source-80k-r1',
+      urls: <String>[
+        for (var index = 0; index < pageCount; index++)
+          'venera-resource:source-80k-$index',
+      ],
+    );
+    final target = _chapter(
+      comicId: 'binary-target-80k',
+      revision: 'binary-target-80k-r1',
+      urls: <String>[
+        for (var index = 0; index < pageCount; index++)
+          'venera-resource:target-80k-$index',
+      ],
+    );
+    var resolveCalls = 0;
+    final proof = await VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(
+      sourceChapter: source,
+      targetChapter: target,
+      resolveIdentity: (page) async {
+        resolveCalls++;
+        final value = page.uri.toString();
+        final index = int.parse(value.substring(value.lastIndexOf('-') + 1));
+        return 'media:$index';
+      },
+    );
+
+    expect(proof, isNotNull);
+    expect(proof!.probeCount, 3);
+    expect(resolveCalls, 6);
+    expect(proof.verifiedIntervals, hasLength(1));
+    expect(proof.verifiedIntervals.single.predecessorStart, 0);
+    expect(proof.verifiedIntervals.single.predecessorEndExclusive, pageCount);
+    expect(proof.verifiedIntervals.single.successorOffset, 0);
+  });
+
   test('bounded interval probe leaves a replacement as an unverified gap',
       () async {
     final source = _chapter(
