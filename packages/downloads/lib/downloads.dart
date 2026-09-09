@@ -36,6 +36,7 @@ export 'src/promoted_artifact_cache_handoff.dart';
 export 'src/partial_download_handoff.dart';
 export 'src/partial_download_store.dart';
 export 'src/reader_page_identity.dart';
+export 'src/version_page_authority.dart';
 
 export 'src/comic_conflict_inspector.dart';
 export 'src/chapter_downloads.dart';

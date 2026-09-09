@@ -13,6 +13,8 @@ typedef ArtifactCacheHandoffError = void Function(
   StackTrace stackTrace,
 );
 
+typedef DefaultArtifactTarget = DownloadId Function(DownloadSession session);
+
 typedef RequiredArtifactTargets = Iterable<DownloadId> Function(
   DownloadSession session,
 );
@@ -35,6 +37,7 @@ final class PromotedArtifactCacheHandoff {
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'artifact-cache-handoff',
     this.residentReplaySource,
+    this.defaultTarget,
     this.requiredExactTargets,
     this.exactDurableRestoreProof,
   });
@@ -45,6 +48,7 @@ final class PromotedArtifactCacheHandoff {
   final TraceSink traceSink;
   final String sessionId;
   final DownloadResidentReplaySource? residentReplaySource;
+  final DefaultArtifactTarget? defaultTarget;
   final RequiredArtifactTargets? requiredExactTargets;
   final ExactDurableRestoreProof? exactDurableRestoreProof;
   final Map<DownloadSession, DownloadSnapshotListener> _listeners =
@@ -161,7 +165,7 @@ final class PromotedArtifactCacheHandoff {
       final targets = requiredExactTargets?.call(session).toSet() ??
           <DownloadId>{};
       if (targets.isEmpty) {
-        await _commitTarget(session, session.id);
+        await _commitTarget(session, defaultTarget?.call(session) ?? session.id);
       } else {
         for (final target in targets) {
           await _commitTarget(

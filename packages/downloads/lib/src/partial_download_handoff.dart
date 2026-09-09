@@ -8,6 +8,8 @@ import 'package:transport/transport.dart';
 import 'artifact_cache_read_scheduler.dart';
 import 'partial_download_store.dart';
 
+typedef PartialDownloadHandoffTarget = DownloadId Function(DownloadId id);
+
 typedef PartialDownloadHandoffError = void Function(
   Object error,
   StackTrace stackTrace,
@@ -24,6 +26,7 @@ final class PartialDownloadHandoff {
     required this.store,
     this.onError,
     this.equivalentCandidates,
+    this.persistTarget,
     this.clock,
     this.readScheduler,
     this.traceSink = const NoopTraceSink(),
@@ -33,6 +36,7 @@ final class PartialDownloadHandoff {
   final PartialDownloadStore store;
   final PartialDownloadHandoffError? onError;
   final PartialEquivalentCandidates? equivalentCandidates;
+  final PartialDownloadHandoffTarget? persistTarget;
   final MonoClock? clock;
   final ArtifactCacheReadScheduler? readScheduler;
   final TraceSink traceSink;
@@ -952,12 +956,13 @@ final class PartialDownloadHandoff {
     final length = session.artifact.committedLength;
     if (length <= 0) return true;
     final startedAtMicros = clock?.nowMicros();
+    final targetId = persistTarget?.call(session.id) ?? session.id;
     try {
       await store.storePartialDownload(
-        id: session.id,
+        id: targetId,
         entry: PartialDownloadEntry(
           length: length,
-          validators: session.resumeValidatorsFor(session.id.canonicalUri),
+          validators: session.resumeValidatorsFor(targetId.canonicalUri),
           totalLength: session.totalLength,
           open: ({required int start}) => session.artifact.readChunks(
             start: start,

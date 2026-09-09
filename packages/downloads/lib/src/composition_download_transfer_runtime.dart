@@ -13,6 +13,7 @@ import 'partial_download_handoff.dart';
 import 'partial_download_store.dart';
 import 'physical_transfer_retention.dart';
 import 'promoted_artifact_cache_handoff.dart';
+import 'version_page_authority.dart';
 
 /// Composition-level owner for physical image transfer state.
 ///
@@ -33,7 +34,9 @@ final class CompositionDownloadTransferRuntime {
     this.maxIdlePromotedSessions = 8,
     this.maxIdlePartialSessions = 32,
     this.maxIdlePartialBytes = 256 * 1024 * 1024,
-  })  : localReadScheduler =
+    VersionPageAuthority? versionPageAuthority,
+  })  : versionPageAuthority = versionPageAuthority ?? VersionPageAuthority(),
+        localReadScheduler =
             localReadScheduler ?? ArtifactCacheReadScheduler(),
         speculativeEncodedReadBudget =
             speculativeEncodedReadBudget ?? SpeculativeEncodedReadBudget(),
@@ -49,6 +52,7 @@ final class CompositionDownloadTransferRuntime {
       partialDownloadHandoff = PartialDownloadHandoff(
         store: partialStore,
         equivalentCandidates: cache?.directEquivalents,
+        persistTarget: this.versionPageAuthority.resolve,
         onError: (error, stackTrace) {},
         clock: clock,
         readScheduler: localReadScheduler,
@@ -67,8 +71,11 @@ final class CompositionDownloadTransferRuntime {
           session.id,
           endExclusive: endExclusive,
         ),
-        requiredExactTargets: (session) =>
-            owner.requiredExactDurableTargets(session.id),
+        defaultTarget: (session) => this.versionPageAuthority.resolve(session.id),
+        requiredExactTargets: (session) => owner
+            .requiredExactDurableTargets(session.id)
+            .map(this.versionPageAuthority.resolve)
+            .toSet(),
         exactDurableRestoreProof: partialDownloadHandoff?.provesExactDurableBody,
       );
     }
@@ -113,6 +120,7 @@ final class CompositionDownloadTransferRuntime {
   static int _sequence = 0;
 
   final ArtifactCacheManager? artifactCacheManager;
+  final VersionPageAuthority versionPageAuthority;
   final PartialDownloadStore? partialDownloadStore;
   final NetLane net;
   final ArtifactCacheReadScheduler localReadScheduler;
@@ -134,9 +142,47 @@ final class CompositionDownloadTransferRuntime {
   bool get disposed => _disposed;
   bool get hasConsumers => owner.consumers.isNotEmpty;
 
+  DownloadId canonicalOwnerFor(DownloadId id) => versionPageAuthority.resolve(id);
+
   DownloadId _resolveTransferIdForAcquire(DownloadId exactId) {
-    final resolved = registry.resolvePhysicalId(exactId);
-    if (resolved != exactId) return resolved;
+    final canonicalId = versionPageAuthority.resolve(exactId);
+    final resolvedCanonical = registry.resolvePhysicalId(canonicalId);
+    if (resolvedCanonical != canonicalId) return resolvedCanonical;
+    final resolvedExact = registry.resolvePhysicalId(exactId);
+    if (resolvedExact != exactId) return resolvedExact;
+
+    if (canonicalId != exactId) {
+      final canonicalSession = registry.findExact(canonicalId);
+      if (canonicalSession != null) {
+        registry.aliasPhysical(id: exactId, target: canonicalId);
+        _recordAcquireAlias(
+          exactId,
+          action: 'joined-canonical-owner',
+          candidate: canonicalId,
+          session: canonicalSession,
+        );
+        return canonicalId;
+      }
+      final exactSession = registry.findExact(exactId);
+      if (exactSession != null && _canJoinEquivalentSession(exactSession)) {
+        // A relation can be discovered after an older physical carrier already
+        // exists. Keep the active carrier stable, but bind the newer canonical
+        // logical owner to it so future claims converge before persistence.
+        registry.aliasPhysical(id: canonicalId, target: exactId);
+        _recordAcquireAlias(
+          canonicalId,
+          action: 'canonical-owner-adopted-existing-carrier',
+          candidate: exactId,
+          session: exactSession,
+        );
+        return exactId;
+      }
+      if (exactSession == null) {
+        return canonicalId;
+      }
+      return exactId;
+    }
+
     if (registry.findExact(exactId) != null) return exactId;
     final cache = artifactCacheManager;
     if (cache == null) return exactId;
@@ -653,7 +699,8 @@ final class CompositionDownloadTransferRuntime {
   }
 
   Future<void> persistPromoted(DownloadId id) async {
-    final session = registry.find(id);
+    final canonicalId = versionPageAuthority.resolve(id);
+    final session = registry.find(id) ?? registry.find(canonicalId);
     if (session == null || session.state != DownloadState.promoted) return;
     final handoff = artifactCacheHandoff;
     final cache = artifactCacheManager;
@@ -664,15 +711,15 @@ final class CompositionDownloadTransferRuntime {
         'physical alias',
       );
     }
-    await handoff.persist(session, exactId: id);
+    await handoff.persist(session, exactId: canonicalId);
     final expectedLength = session.committedLength;
     if (expectedLength > 0 &&
         !await cache.containsBackendExact(
-          id: id,
+          id: canonicalId,
           expectedLength: expectedLength,
         )) {
       throw StateError(
-        'required exact durable artifact was not materialized for ${id.key}',
+        'required canonical durable artifact was not materialized for ${canonicalId.key}',
       );
     }
   }
