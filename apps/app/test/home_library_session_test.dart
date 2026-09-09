@@ -52,6 +52,81 @@ void main() {
     expect(notifications, 1);
   });
 
+  test('version relations publish canonical page ownership without Reader entry',
+      () async {
+    final root = await Directory.systemTemp.createTemp('version-owner-home-');
+    final composition = await PersistentDownloadComposition.open(root.path);
+    final library = MemoryImportedLibraryStore();
+    await library.open();
+    final oldManifest = _versionManifest(
+      comicId: 'old-comic',
+      chapterId: 'old-chapter',
+      revision: 'old-r1',
+      pageCount: 2,
+    );
+    final newManifest = _versionManifest(
+      comicId: 'new-comic',
+      chapterId: 'new-chapter',
+      revision: 'new-r1',
+      pageCount: 3,
+    );
+    await library.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic('old-comic'),
+        manifest: oldManifest,
+      ),
+    );
+    await library.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic('new-comic'),
+        manifest: newManifest,
+      ),
+    );
+    await library.saveComicVersionRelation(
+      ComicVersionRelation(
+        sourceId: 'version-source',
+        predecessorComicId: 'old-comic',
+        successorComicId: 'new-comic',
+        pageMappings: const <ComicVersionPageMapping>[
+          ComicVersionPageMapping(
+            predecessorChapterId: 'old-chapter',
+            successorChapterId: 'new-chapter',
+            predecessorPageCount: 2,
+            successorPageCount: 3,
+            successorOffset: 1,
+            predecessorSourceRevision: 'old-r1',
+            successorSourceRevision: 'new-r1',
+            verifiedPredecessorPageIndexes: <int>[0, 1],
+          ),
+        ],
+      ),
+    );
+    final queue = WholeComicDownloadQueue(downloads: composition.chapterDownloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: composition.chapterDownloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: false,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await composition.close();
+      await root.delete(recursive: true);
+    });
+
+    await session.ready;
+    final oldId = readerPageDownloadId(oldManifest, oldManifest.pages[0]);
+    final newId = readerPageDownloadId(newManifest, newManifest.pages[1]);
+    expect(composition.transferRuntime.canonicalOwnerFor(oldId), newId);
+
+    await session.removeChapter('version-source', 'new-chapter');
+    expect(composition.transferRuntime.canonicalOwnerFor(oldId), oldId);
+  });
+
   test('derived version page mappings do not broadcast Home projection',
       () async {
     final library = MemoryImportedLibraryStore();
@@ -1150,6 +1225,46 @@ void main() {
   });
 }
 
+
+Comic _versionComic(String comicId) => Comic(
+      comicId: comicId,
+      sourceId: 'version-source',
+      title: comicId,
+      authors: const <String>[],
+      readingDirection: ReadingDirection.ltr,
+    );
+
+ChapterManifest _versionManifest({
+  required String comicId,
+  required String chapterId,
+  required String revision,
+  required int pageCount,
+}) {
+  final chapter = Chapter(
+    chapterId: chapterId,
+    comicId: comicId,
+    title: chapterId,
+    sequence: 1,
+    pageCount: pageCount,
+    sourceRevision: revision,
+  );
+  return ChapterManifest(
+    sourceId: 'version-source',
+    comicId: comicId,
+    chapter: chapter,
+    readingDirection: ReadingDirection.ltr,
+    pages: <PageAsset>[
+      for (var index = 0; index < pageCount; index++)
+        PageAsset(
+          pageId: '$chapterId-page-$index',
+          chapterId: chapterId,
+          index: index,
+          uri: Uri.parse('https://example.test/$comicId/$index.webp'),
+          contentKindHint: ContentKindHint.webp,
+        ),
+    ],
+  );
+}
 
 final class _GatedLibraryStore
     implements

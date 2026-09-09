@@ -396,6 +396,59 @@ final class HomeLibrarySession extends ChangeNotifier {
       _versionBaselines.downloadHeadRelations,
     );
     chapterDownloads.updateCacheVersionRelations(_versionRelations);
+    _refreshVersionPageAuthority();
+  }
+
+  void _refreshVersionPageAuthority() {
+    final provider = chapterDownloads is ChapterDownloadTransferRuntimeProvider
+        ? chapterDownloads as ChapterDownloadTransferRuntimeProvider
+        : null;
+    if (provider == null) return;
+    final entriesByKey = <String, ImportedLibraryEntry>{
+      for (final entry in _entries)
+        '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}\u0000${entry.chapter.chapterId}':
+            entry,
+    };
+    final resolvers = <String, VersionPageCanonicalResolver>{};
+    for (final relation in _versionRelations) {
+      for (final mapping in relation.pageMappings) {
+        if (mapping.verifiedPredecessorPageIndexes.isEmpty ||
+            mapping.predecessorSourceRevision == null ||
+            mapping.successorSourceRevision == null) {
+          continue;
+        }
+        final predecessor = entriesByKey[
+            '${relation.sourceId}\u0000${relation.predecessorComicId}\u0000${mapping.predecessorChapterId}'];
+        final successor = entriesByKey[
+            '${relation.sourceId}\u0000${relation.successorComicId}\u0000${mapping.successorChapterId}'];
+        if (predecessor == null || successor == null) continue;
+        final predecessorManifest = predecessor.chapter.toManifest();
+        final successorManifest = successor.chapter.toManifest();
+        if (predecessorManifest.pages.length != mapping.predecessorPageCount ||
+            successorManifest.pages.length != mapping.successorPageCount ||
+            predecessorManifest.chapter.sourceRevision !=
+                mapping.predecessorSourceRevision ||
+            successorManifest.chapter.sourceRevision !=
+                mapping.successorSourceRevision) {
+          continue;
+        }
+        final resolver = VerifiedArtifactReuseResolver.canonicalSuccessor(
+          predecessorChapter: predecessorManifest,
+          successorChapter: successorManifest,
+          successorOffset: mapping.successorOffset,
+          verifiedPredecessorIndexes: mapping.verifiedPredecessorPageIndexes,
+        );
+        if (resolver.relationCount == 0) continue;
+        final key =
+            '${relation.sourceId}\u0000${relation.predecessorComicId}\u0000${relation.successorComicId}'
+            '\u0000${mapping.predecessorChapterId}\u0000${mapping.successorChapterId}';
+        resolvers[key] = resolver.resolve;
+      }
+    }
+    provider.transferRuntime.versionPageAuthority.replaceScope(
+      'library-version-relations',
+      resolvers,
+    );
   }
 
   List<BrowsableComicSource> get enabledSources {
@@ -1201,6 +1254,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       throw StateError('chapter write completed without a readable entry');
     }
     _replaceEntry(entry);
+    _refreshVersionPageAuthority();
     return entry;
   }
 
@@ -1221,6 +1275,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     if (readStateChanged) {
       _readStates = Map<String, ChapterReadState>.unmodifiable(nextReadStates);
     }
+    if (entriesChanged) _refreshVersionPageAuthority();
     _libraryProjectionRevision++;
     _publish();
     _scheduleSnapshotWrite();

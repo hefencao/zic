@@ -7811,7 +7811,7 @@ final class PersistentChapterDownloadService
             artifactStore._isVerifiedReadyRecord(record);
 
         if (recordReady) {
-          final active = transferRuntime.registry.find(id);
+          final active = transferRuntime.findSession(id);
           final isBusy = active != null &&
               (active.activeRun || active.hasWriter);
           final isAlreadyStructured = record.pinned &&
@@ -7925,7 +7925,7 @@ final class PersistentChapterDownloadService
         // Acquire the physical session only after the claim has passed through
         // the composition resolver. Creating an exact session first would
         // permanently defeat verified transfer-key aliasing for this command.
-        final session = transferRuntime.registry.get(id);
+        final session = transferRuntime.sessionFor(id);
         if (session.state == DownloadState.failed) {
           await session.reset();
         }

@@ -144,6 +144,19 @@ final class CompositionDownloadTransferRuntime {
 
   DownloadId canonicalOwnerFor(DownloadId id) => versionPageAuthority.resolve(id);
 
+  /// Resolves a logical page through the same canonical authority used by the
+  /// scheduler before materializing its physical session. Composition callers
+  /// must use this boundary instead of bypassing authority with registry.get.
+  DownloadSession sessionFor(DownloadId logicalId) =>
+      registry.get(_resolveTransferIdForAcquire(logicalId));
+
+  /// Read-only logical-session lookup. Prefer the canonical owner, but expose
+  /// an already-existing older carrier until the next acquire binds it.
+  DownloadSession? findSession(DownloadId logicalId) {
+    final canonicalId = versionPageAuthority.resolve(logicalId);
+    return registry.find(canonicalId) ?? registry.find(logicalId);
+  }
+
   DownloadId _resolveTransferIdForAcquire(DownloadId exactId) {
     final canonicalId = versionPageAuthority.resolve(exactId);
     final resolvedCanonical = registry.resolvePhysicalId(canonicalId);

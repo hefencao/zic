@@ -39,6 +39,33 @@ final class VerifiedArtifactReuseResolver {
             _ExactPageLocator(page.pageId, page.uri): page.index,
         };
 
+  /// Builds the directional predecessor -> successor projection used by the
+  /// composition-level canonical owner. The persisted mapping expresses
+  /// `successorIndex = predecessorIndex + successorOffset`; this resolver is
+  /// queried with predecessor ids and therefore uses the inverse affine view.
+  factory VerifiedArtifactReuseResolver.canonicalSuccessor({
+    required ChapterManifest predecessorChapter,
+    required ChapterManifest successorChapter,
+    required int successorOffset,
+    required Iterable<int> verifiedPredecessorIndexes,
+  }) {
+    final resolver = VerifiedArtifactReuseResolver(
+      targetChapter: predecessorChapter,
+    );
+    final successorAnchors = <int>[
+      for (final predecessorIndex in verifiedPredecessorIndexes)
+        if (predecessorIndex + successorOffset >= 0 &&
+            predecessorIndex + successorOffset < successorChapter.pages.length)
+          predecessorIndex + successorOffset,
+    ];
+    resolver.addVerifiedOffset(
+      sourceChapter: successorChapter,
+      targetOffsetFromSource: -successorOffset,
+      verifiedSourceIndexes: successorAnchors,
+    );
+    return resolver;
+  }
+
   final ChapterManifest targetChapter;
   final Map<_ExactPageLocator, int> _targetIndexes;
   final List<_VerifiedOffsetSource> _sources = <_VerifiedOffsetSource>[];

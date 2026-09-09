@@ -272,8 +272,10 @@ void main() {
     addTearDown(runtime.dispose);
 
     expect(runtime.owner.resolveTransferId(oldId), newId);
+    final session = runtime.sessionFor(oldId);
+    expect(session.id, newId);
     expect(runtime.registry.findExact(oldId), isNull);
-    expect(runtime.registry.findExact(newId), isNull);
+    expect(runtime.registry.findExact(newId), same(session));
   });
 
   test('canonical promotion moves old hot partial persistence to newer owner', () async {
