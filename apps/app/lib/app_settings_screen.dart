@@ -14,6 +14,7 @@ import 'dialog_actions.dart';
 
 import 'app_preferences.dart';
 import 'directory_picker.dart';
+import 'diagnostic_error_ui.dart';
 
 const settingsScreenKey = ValueKey<String>('settings-screen');
 const settingsDataEntryKey = ValueKey<String>('settings-data-entry');
@@ -315,7 +316,7 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen> {
     } on Object catch (error) {
       debugPrint('directory picker failed: $error');
       messenger.showSnackBar(
-        SnackBar(content: Text('无法打开目录选择器：$error')),
+        copyableDiagnosticSnackBar('无法打开目录选择器：$error'),
       );
       return;
     }

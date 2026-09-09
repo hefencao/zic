@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:telemetry/telemetry.dart';
+import 'diagnostic_error_ui.dart';
 
 import 'debug_trace.dart';
 
@@ -104,7 +105,7 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
     } on Object catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Trace 复制失败：$error')),
+        copyableDiagnosticSnackBar('Trace 复制失败：$error'),
       );
     }
   }
@@ -137,7 +138,7 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
     } on Object catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Trace 导出失败：$error')),
+        copyableDiagnosticSnackBar('Trace 导出失败：$error'),
       );
     } finally {
       if (mounted) setState(() => _exporting = false);

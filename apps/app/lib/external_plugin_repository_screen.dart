@@ -10,6 +10,7 @@ import 'dialog_actions.dart';
 import 'external_plugin_repository_model.dart';
 import 'app_preferences.dart';
 import 'directory_picker.dart';
+import 'diagnostic_error_ui.dart';
 import 'venera_plugin_editor_screen.dart';
 
 enum _ExternalPluginPage { installed, repository }
@@ -366,7 +367,7 @@ final class _ExternalPluginRepositoryScreenState
         debugPrint('download directory resolve failed: $error');
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('无法使用所选目录：$error')),
+          copyableDiagnosticSnackBar('无法使用所选目录：$error'),
         );
         return;
       }
@@ -840,6 +841,12 @@ final class _InstalledPluginTile extends StatelessWidget {
                     tooltip: '重新加载',
                     onPressed: () => onRetry(item),
                     icon: const Icon(Icons.refresh),
+                  ),
+                if (failure != null)
+                  IconButton(
+                    tooltip: '复制错误',
+                    onPressed: () => unawaited(copyDiagnosticText(failure.toString())),
+                    icon: const Icon(Icons.copy_outlined),
                   ),
                 IconButton(
                   tooltip: '移除',
@@ -1378,7 +1385,7 @@ final class _PluginDownloadDirectoryDialogState
     if (!mounted) return;
     if (failure != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('无法打开目录选择器：$failure')),
+        copyableDiagnosticSnackBar('无法打开目录选择器：$failure'),
       );
       return;
     }

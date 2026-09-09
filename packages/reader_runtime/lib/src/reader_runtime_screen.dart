@@ -17,6 +17,16 @@ import 'reader_zoom_decode.dart';
 import 'reader_settings_fields.dart';
 import 'reader_transfer_progress_indicator.dart';
 
+SnackBar _copyableReaderErrorSnackBar(String message) => SnackBar(
+      content: Text(message),
+      action: SnackBarAction(
+        label: '复制',
+        onPressed: () => unawaited(
+          Clipboard.setData(ClipboardData(text: message)),
+        ),
+      ),
+    );
+
 const readerTopControlsKey = ValueKey<String>('reader-top-controls');
 const readerBottomControlsKey = ValueKey<String>('reader-bottom-controls');
 const readerPageSliderKey = ValueKey<String>('reader-page-slider');
@@ -737,7 +747,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       }
       setState(() => _favorite = !next);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('收藏状态保存失败：$error')),
+        _copyableReaderErrorSnackBar('收藏状态保存失败：$error'),
       );
     }
   }
@@ -765,7 +775,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('缓存本章失败：$error')),
+          _copyableReaderErrorSnackBar('缓存本章失败：$error'),
         );
       }
     } finally {
@@ -956,7 +966,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       } on Object catch (error) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('保存本漫画阅读设置失败：$error')),
+            _copyableReaderErrorSnackBar('保存本漫画阅读设置失败：$error'),
           );
         }
       }

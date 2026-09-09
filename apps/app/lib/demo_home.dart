@@ -16,6 +16,7 @@ import 'app_settings_screen.dart';
 import 'comic_details.dart' as details;
 import 'dialog_actions.dart';
 import 'debug_trace.dart';
+import 'diagnostic_error_ui.dart';
 import 'deferred_reader_route.dart';
 import 'download_manager.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
@@ -1225,7 +1226,7 @@ final class _DemoHomeState extends State<DemoHome> {
         return;
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已进入 Reader，但已读状态保存失败：$error')),
+        copyableDiagnosticSnackBar('已进入 Reader，但已读状态保存失败：$error'),
       );
     }
   }
@@ -1249,7 +1250,7 @@ final class _DemoHomeState extends State<DemoHome> {
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('导入 WebP 失败：$error')),
+          copyableDiagnosticSnackBar('导入 WebP 失败：$error'),
         );
       }
     } finally {
@@ -1298,7 +1299,7 @@ final class _DemoHomeState extends State<DemoHome> {
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('导入图片文件夹失败：$error')),
+          copyableDiagnosticSnackBar('导入图片文件夹失败：$error'),
         );
       }
     } finally {

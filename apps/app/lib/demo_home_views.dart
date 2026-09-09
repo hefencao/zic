@@ -68,7 +68,7 @@ extension _DemoHomeViews on _DemoHomeState {
               const SizedBox(height: 12),
               const Text('本地漫画库加载失败'),
               const SizedBox(height: 8),
-              Text('$error', textAlign: TextAlign.center),
+              SelectableText('$error', textAlign: TextAlign.center),
               const SizedBox(height: 12),
               FilledButton.icon(
                 onPressed: _retryLibrary,

@@ -13,6 +13,7 @@ import 'app_preferences.dart';
 import 'app_pull_to_refresh.dart';
 import 'artwork_placeholder.dart';
 import 'comic_details.dart' as details;
+import 'diagnostic_error_ui.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'external_plugin_repository_model.dart';
 import 'external_plugin_repository_screen.dart';
@@ -2594,7 +2595,7 @@ final class _SourceSwitcherState extends State<_SourceSwitcher> {
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$displayName 加载失败：$error')),
+          copyableDiagnosticSnackBar('$displayName 加载失败：$error'),
         );
       }
     } finally {

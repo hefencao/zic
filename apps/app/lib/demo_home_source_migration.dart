@@ -946,7 +946,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         } on Object catch (error) {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('读取同源更新失败，将打开当前版本：$error')),
+              copyableDiagnosticSnackBar('读取同源更新失败，将打开当前版本：$error'),
             );
           }
         }
@@ -1063,7 +1063,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('读取同源版本失败：$error')),
+          copyableDiagnosticSnackBar('读取同源版本失败：$error'),
         );
       }
       return null;
@@ -1256,7 +1256,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('搜索目标漫画失败：$error')),
+          copyableDiagnosticSnackBar('搜索目标漫画失败：$error'),
         );
       }
       return null;
@@ -1277,7 +1277,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     } on Object catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('准备漫画迁移失败：$error')),
+          copyableDiagnosticSnackBar('准备漫画迁移失败：$error'),
         );
       }
     }
@@ -1751,7 +1751,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('漫画源迁移失败：$error')));
+        ).showSnackBar(copyableDiagnosticSnackBar('漫画源迁移失败：$error'));
       }
     }
   }
