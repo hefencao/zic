@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import 'package:reader/reader.dart';
 import 'package:reader_runtime/reader_runtime.dart';
 
+import 'debug_trace_export_destination.dart';
+
 enum ShelfSourceFilter { all, local, remote }
 
 enum ShelfViewPreference { gallery, list }
@@ -181,6 +183,7 @@ final class AppPreferencesController extends ChangeNotifier {
   bool _zoomDecodeBoostEnabled = true;
   int _detailsPreviewMaxItemsPerRow = 4;
   String _networkUserAgent = defaultNetworkUserAgent;
+  String _debugTraceExportDirectory = defaultDebugTraceExportDirectory;
   String? _chapterDownloadDirectoryOverride;
   String? _chapterDownloadDirectoryPendingMoveFrom;
   int _cacheLimitMb = defaultCacheLimitMb;
@@ -218,6 +221,7 @@ final class AppPreferencesController extends ChangeNotifier {
   bool get zoomDecodeBoostEnabled => _zoomDecodeBoostEnabled;
   int get detailsPreviewMaxItemsPerRow => _detailsPreviewMaxItemsPerRow;
   String get networkUserAgent => _networkUserAgent;
+  String get debugTraceExportDirectory => _debugTraceExportDirectory;
 
   /// Absolute chapter-download store directory chosen by the user, or `null`
   /// to keep using the default `<storage root>/offline_chapters` location.
@@ -384,6 +388,12 @@ final class AppPreferencesController extends ChangeNotifier {
       values['networkUserAgent'],
       fallback: _networkUserAgent,
     );
+    final debugTraceExportDirectory = values['debugTraceExportDirectory'];
+    if (debugTraceExportDirectory is String) {
+      _debugTraceExportDirectory = normalizeDebugTraceExportDirectory(
+        debugTraceExportDirectory,
+      );
+    }
     _chapterDownloadDirectoryOverride = _nullableTrimmedString(
       values['chapterDownloadDirectoryOverride'],
     );
@@ -436,6 +446,13 @@ final class AppPreferencesController extends ChangeNotifier {
   void setDebugTraceEnabled(bool value) {
     if (_disposed || _debugTraceEnabled == value) return;
     _debugTraceEnabled = value;
+    _changed();
+  }
+
+  void setDebugTraceExportDirectory(String value) {
+    final normalized = normalizeDebugTraceExportDirectory(value);
+    if (_disposed || _debugTraceExportDirectory == normalized) return;
+    _debugTraceExportDirectory = normalized;
     _changed();
   }
 
@@ -761,6 +778,7 @@ final class AppPreferencesController extends ChangeNotifier {
       'zoomDecodeBoost': _zoomDecodeBoostEnabled,
       'detailsPreviewMaxItemsPerRow': _detailsPreviewMaxItemsPerRow,
       'networkUserAgent': _networkUserAgent,
+      'debugTraceExportDirectory': _debugTraceExportDirectory,
       'chapterDownloadDirectoryOverride': _chapterDownloadDirectoryOverride,
       'chapterDownloadDirectoryPendingMoveFrom':
           _chapterDownloadDirectoryPendingMoveFrom,

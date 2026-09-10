@@ -1,6 +1,7 @@
 package dev.zic.zic
 
 import android.app.Activity
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -11,6 +12,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.DocumentsContract
+import android.provider.MediaStore
 import android.provider.Settings
 import android.system.Os
 import android.system.OsConstants
@@ -1275,18 +1277,38 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun handleTraceExport(call: MethodCall, result: MethodChannel.Result) {
-        if (call.method != "saveJsonl") {
+        if (call.method != "saveJsonl" && call.method != "saveJsonlToDownloadsDirectory") {
             result.notImplemented()
-            return
-        }
-        if (pendingTraceResult != null) {
-            result.error("trace-export-busy", "another trace export is active", null)
             return
         }
         val suggestedName = call.argument<String>("suggestedName")
         val bytes = call.argument<ByteArray>("bytes")
         if (suggestedName.isNullOrBlank() || bytes == null) {
             result.error("trace-export-arguments", "name and bytes are required", null)
+            return
+        }
+        if (call.method == "saveJsonlToDownloadsDirectory") {
+            val relativeDirectory = normalizeTraceExportRelativeDirectory(
+                call.argument<String>("relativeDirectory"),
+            )
+            if (relativeDirectory == null) {
+                result.error(
+                    "trace-export-directory",
+                    "relative Downloads directory is invalid",
+                    null,
+                )
+                return
+            }
+            saveTraceToDownloadsDirectory(
+                suggestedName,
+                bytes,
+                relativeDirectory,
+                result,
+            )
+            return
+        }
+        if (pendingTraceResult != null) {
+            result.error("trace-export-busy", "another trace export is active", null)
             return
         }
         pendingTraceResult = result
@@ -1325,6 +1347,80 @@ class MainActivity : FlutterActivity() {
                 error.message ?: error.javaClass.simpleName,
                 null,
             )
+        }
+    }
+
+    private fun normalizeTraceExportRelativeDirectory(value: String?): String? {
+        val segments = value
+            ?.replace('\\', '/')
+            ?.split('/')
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?: return null
+        if (segments.isEmpty() || segments.any { it == "." || it == ".." || '\u0000' in it }) {
+            return null
+        }
+        return segments.joinToString("/")
+    }
+
+    private fun saveTraceToDownloadsDirectory(
+        suggestedName: String,
+        bytes: ByteArray,
+        relativeDirectory: String,
+        result: MethodChannel.Result,
+    ) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            result.error(
+                "trace-export-direct-unsupported",
+                "direct Downloads export requires Android 10 or newer",
+                null,
+            )
+            return
+        }
+        rhttpExecutor.execute {
+            var uri: Uri? = null
+            try {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, suggestedName)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/x-ndjson")
+                    put(
+                        MediaStore.Downloads.RELATIVE_PATH,
+                        "${Environment.DIRECTORY_DOWNLOADS}/$relativeDirectory",
+                    )
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                uri = contentResolver.insert(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    values,
+                ) ?: throw IllegalStateException("unable to create Downloads trace document")
+                contentResolver.openOutputStream(uri!!, "w").use { output ->
+                    requireNotNull(output) { "unable to open Downloads trace document" }
+                    output.write(bytes)
+                    output.flush()
+                }
+                values.clear()
+                values.put(MediaStore.Downloads.IS_PENDING, 0)
+                contentResolver.update(uri!!, values, null, null)
+                val completedUri = uri.toString()
+                Log.i(
+                    TAG,
+                    "trace-export-downloads-complete bytes=${bytes.size} " +
+                        "directory=$relativeDirectory uri=$completedUri",
+                )
+                mainHandler.post { result.success(completedUri) }
+            } catch (error: Throwable) {
+                uri?.let { failedUri ->
+                    runCatching { contentResolver.delete(failedUri, null, null) }
+                }
+                Log.e(TAG, "trace-export-downloads-failed", error)
+                mainHandler.post {
+                    result.error(
+                        "trace-export-write-failed",
+                        error.message ?: error.javaClass.simpleName,
+                        null,
+                    )
+                }
+            }
         }
     }
 

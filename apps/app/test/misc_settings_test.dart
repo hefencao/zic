@@ -14,6 +14,7 @@ import 'package:telemetry/telemetry.dart';
 import 'package:zic/app_preferences.dart';
 import 'package:zic/app_settings_screen.dart';
 import 'package:zic/debug_trace.dart';
+import 'package:zic/debug_trace_export.dart';
 import 'package:zic/debug_trace_screen.dart';
 import 'package:zic/library_backup.dart';
 import 'package:zic/app.dart';
@@ -33,6 +34,13 @@ Future<void> _pumpUntilFound(
 }
 
 void main() {
+  test('debug trace export directory stays under Downloads', () {
+    expect(normalizeDebugTraceExportDirectory(' Debug/Reader '), 'Debug/Reader');
+    expect(normalizeDebugTraceExportDirectory('../escape'), 'Debug');
+    expect(normalizeDebugTraceExportDirectory(''), 'Debug');
+    expect(debugTraceExportDisplayPath('Debug'), 'Download/Debug');
+  });
+
   testWidgets('fourth navigation page exposes misc settings and diagnostics', (
     tester,
   ) async {
@@ -132,6 +140,7 @@ void main() {
         'zoomDecodeBoost': false,
         'detailsPreviewMaxItemsPerRow': 6,
         'networkUserAgent': 'fixture-network-agent',
+        'debugTraceExportDirectory': 'Diagnostics/Trace',
         'readerPrefetchReadBudgetMiB': 72,
         'animatedWebpPrefetchBudgetMiB': 88, // ignored legacy dev.247/248 key
         'sourceDownloadDirectories': <String, Object?>{
@@ -185,6 +194,7 @@ void main() {
     expect(controller.zoomDecodeBoostEnabled, isFalse);
     expect(controller.detailsPreviewMaxItemsPerRow, 6);
     expect(controller.networkUserAgent, 'fixture-network-agent');
+    expect(controller.debugTraceExportDirectory, 'Diagnostics/Trace');
     expect(controller.chapterDownloadDirectoryOverride, isNull);
     expect(controller.chapterDownloadDirectoryPendingMoveFrom, isNull);
     expect(controller.cacheLimitMb, defaultCacheLimitMb);
@@ -217,6 +227,7 @@ void main() {
     controller.setShelfSortMode(LibrarySortMode.custom);
     controller.setDetailsPreviewMaxItemsPerRow(4);
     controller.setNetworkUserAgent('custom-network-agent');
+    controller.setDebugTraceExportDirectory('Debug/Reader');
     controller.setChapterDownloadDirectoryOverride('/data/downloads');
     controller.setChapterDownloadDirectoryPendingMoveFrom('/data/old');
     controller.setCacheLimitMb(1024);
@@ -250,6 +261,7 @@ void main() {
     expect(written?['version'], 6);
     expect(written?['detailsPreviewMaxItemsPerRow'], 4);
     expect(written?['networkUserAgent'], 'custom-network-agent');
+    expect(written?['debugTraceExportDirectory'], 'Debug/Reader');
     expect(written?['chapterDownloadDirectoryOverride'], '/data/downloads');
     expect(
       written?['chapterDownloadDirectoryPendingMoveFrom'],
@@ -618,14 +630,21 @@ void main() {
       MaterialApp(
         home: DebugTraceScreen(
           log: log,
-          exportFile: ({
-            required String suggestedName,
-            required Uint8List bytes,
-          }) async {
-            expect(suggestedName, endsWith('.jsonl'));
-            exported = bytes;
-            return '/tmp/$suggestedName';
-          },
+          exportDirectory: 'Debug',
+          exportEvents: (events) => exportDebugTraceEvents(
+            events: events,
+            relativeDirectory: 'Debug',
+            writeFile: ({
+              required String suggestedName,
+              required Uint8List bytes,
+              required String relativeDirectory,
+            }) async {
+              expect(suggestedName, endsWith('.jsonl'));
+              expect(relativeDirectory, 'Debug');
+              exported = bytes;
+              return '/tmp/$suggestedName';
+            },
+          ),
         ),
       ),
     );
@@ -638,7 +657,10 @@ void main() {
     expect(text.split('\n'), hasLength(3));
     expect(text, contains('\"index\":0'));
     expect(text, contains('\"index\":2'));
-    expect(find.text('已导出 3 条诊断 Trace'), findsOneWidget);
+    expect(
+      find.text('已导出 3 条诊断 Trace 到 Download/Debug'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('debug trace export gives immediate busy feedback and is single-flight',
@@ -652,13 +674,13 @@ void main() {
         kind: TraceEventKind.downloadState,
       ),
     );
-    final release = Completer<String?>();
+    final release = Completer<DebugTraceExportResult?>();
     var calls = 0;
     await tester.pumpWidget(
       MaterialApp(
         home: DebugTraceScreen(
           log: log,
-          exportFile: ({required suggestedName, required bytes}) {
+          exportEvents: (events) {
             calls++;
             return release.future;
           },
@@ -675,7 +697,13 @@ void main() {
     await tester.pump();
     expect(calls, 1);
 
-    release.complete('/tmp/zic-debug-trace.jsonl');
+    release.complete(
+      const DebugTraceExportResult(
+        path: '/tmp/zic-debug-trace.jsonl',
+        eventCount: 1,
+        relativeDirectory: 'Debug',
+      ),
+    );
     await tester.pump();
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });

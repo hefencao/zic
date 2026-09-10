@@ -16,6 +16,7 @@ import 'app_settings_screen.dart';
 import 'comic_details.dart' as details;
 import 'dialog_actions.dart';
 import 'debug_trace.dart';
+import 'debug_trace_export.dart';
 import 'diagnostic_error_ui.dart';
 import 'deferred_reader_route.dart';
 import 'download_manager.dart';
@@ -46,6 +47,7 @@ const bookshelfPageKey = ValueKey<String>('bookshelf-page');
 const homeUpdatesSectionKey = ValueKey<String>('home-updates-section');
 const homeHistorySectionKey = ValueKey<String>('home-history-section');
 const homeDiagnosticsKey = ValueKey<String>('home-diagnostics');
+const homeTraceQuickExportKey = ValueKey<String>('home-trace-quick-export');
 const bookshelfManageKey = ValueKey<String>('bookshelf-manage');
 const bookshelfSourceFilterKey = ValueKey<String>('bookshelf-source-filter');
 const bookshelfSortKey = ValueKey<String>('bookshelf-sort');
@@ -203,6 +205,7 @@ final class _DemoHomeState extends State<DemoHome> {
 
   bool _picking = false;
   bool _pickingFolder = false;
+  bool _exportingHomeTrace = false;
   bool _manageShelf = false;
   bool _batchManagement = false;
   final Set<String> _managedComicIdentities = <String>{};

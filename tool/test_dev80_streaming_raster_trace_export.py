@@ -77,19 +77,21 @@ for token in (
     'debugTraceClipboardMaxBytes',
     '_boundedClipboardPayload',
     'Trace 复制失败：$error',
-    '_encodeDebugTraceEvents',
+    'DebugTraceEventsExporter',
     '_exporting',
 ):
     assert token in trace_screen
-for token in ('exportDebugTraceDocument', 'dev.zic.zic/debug_trace_export'):
+for token in ('exportDebugTraceEvents', 'dev.zic.zic/debug_trace_export'):
     assert token in trace_export
 for token in (
     'Intent.ACTION_CREATE_DOCUMENT',
     'saveJsonl',
+    'saveJsonlToDownloadsDirectory',
     'contentResolver.openOutputStream',
 ):
     assert token in android
-assert 'exportFile: exportDebugTraceDocument' in misc
+assert 'exportDirectory: preferences.debugTraceExportDirectory' in misc
+assert 'onExportDirectoryChanged:' in misc
 
 for rejected in (
     'getSaveLocation(suggestedName: suggestedName)',

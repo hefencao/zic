@@ -165,7 +165,9 @@ final class MiscPage extends StatelessWidget {
                     MaterialPageRoute<void>(
                       builder: (_) => DebugTraceScreen(
                         log: debugTrace,
-                        exportFile: exportDebugTraceDocument,
+                        exportDirectory: preferences.debugTraceExportDirectory,
+                        onExportDirectoryChanged:
+                            preferences.setDebugTraceExportDirectory,
                       ),
                     ),
                   ),

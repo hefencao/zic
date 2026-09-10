@@ -157,6 +157,34 @@ extension _DemoHomeViews on _DemoHomeState {
     );
   }
 
+  Future<void> _exportHomeDebugTrace() async {
+    if (_exportingHomeTrace) return;
+    _setState(() => _exportingHomeTrace = true);
+    await WidgetsBinding.instance.endOfFrame;
+    try {
+      final result = await exportDebugTraceEvents(
+        events: widget.debugTrace.exportEvents,
+        relativeDirectory: widget.preferences.debugTraceExportDirectory,
+      );
+      if (!mounted || result == null) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '已导出 ${result.eventCount} 条 Trace 到 '
+            '${debugTraceExportDisplayPath(result.relativeDirectory)}',
+          ),
+        ),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        copyableDiagnosticSnackBar('Trace 快捷导出失败：$error'),
+      );
+    } finally {
+      if (mounted) _setState(() => _exportingHomeTrace = false);
+    }
+  }
+
   Widget _buildHomePage() {
     final updates = _libraryComics
         .where(
@@ -220,6 +248,25 @@ extension _DemoHomeViews on _DemoHomeState {
                   )
                 : const Icon(Icons.create_new_folder_outlined),
             label: const Text('导入漫画文件夹'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            key: homeTraceQuickExportKey,
+            onPressed: _exportingHomeTrace
+                ? null
+                : () => unawaited(_exportHomeDebugTrace()),
+            icon: _exportingHomeTrace
+                ? const SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.download_outlined),
+            label: Text(
+              _exportingHomeTrace
+                  ? '正在导出 Trace…'
+                  : '一键导出 Trace 到 '
+                      '${debugTraceExportDisplayPath(widget.preferences.debugTraceExportDirectory)}',
+            ),
           ),
           const SizedBox(height: 12),
           ExpansionTile(

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,11 +7,14 @@ import 'package:telemetry/telemetry.dart';
 import 'diagnostic_error_ui.dart';
 
 import 'debug_trace.dart';
+import 'debug_trace_export.dart';
 
 const debugTraceScreenKey = ValueKey<String>('debug-trace-screen');
 const debugTraceClearKey = ValueKey<String>('debug-trace-clear');
 const debugTraceCopyKey = ValueKey<String>('debug-trace-copy');
 const debugTraceExportKey = ValueKey<String>('debug-trace-export');
+const debugTraceExportDirectoryKey =
+    ValueKey<String>('debug-trace-export-directory');
 const debugTraceSearchKey = ValueKey<String>('debug-trace-search');
 const debugTraceSessionFilterKey =
     ValueKey<String>('debug-trace-session-filter');
@@ -21,40 +23,28 @@ const debugTraceLevelFilterKey =
 
 enum _TraceLevelFilter { all, normal, activity, warning, error }
 
-typedef DebugTraceFileExporter = Future<String?> Function({
-  required String suggestedName,
-  required Uint8List bytes,
-});
+typedef DebugTraceEventsExporter = Future<DebugTraceExportResult?> Function(
+  Iterable<TraceEvent> events,
+);
 
 typedef DebugTraceClipboardWriter = Future<void> Function(String text);
 
 const debugTraceClipboardMaxBytes = 64 * 1024;
-const _debugTraceExportChunkSize = 128;
-
-Future<Uint8List> _encodeDebugTraceEvents(Iterable<TraceEvent> events) async {
-  final bytes = BytesBuilder(copy: false);
-  var index = 0;
-  for (final event in events) {
-    if (index > 0) bytes.addByte(0x0a);
-    bytes.add(utf8.encode(event.toJsonLine()));
-    index++;
-    if (index % _debugTraceExportChunkSize == 0) {
-      await Future<void>.delayed(Duration.zero);
-    }
-  }
-  return bytes.takeBytes();
-}
 
 final class DebugTraceScreen extends StatefulWidget {
   const DebugTraceScreen({
     required this.log,
-    this.exportFile,
+    this.exportDirectory = defaultDebugTraceExportDirectory,
+    this.exportEvents,
+    this.onExportDirectoryChanged,
     this.writeClipboard,
     super.key,
   });
 
   final DebugTraceLog log;
-  final DebugTraceFileExporter? exportFile;
+  final String exportDirectory;
+  final DebugTraceEventsExporter? exportEvents;
+  final ValueChanged<String>? onExportDirectoryChanged;
   final DebugTraceClipboardWriter? writeClipboard;
 
   @override
@@ -66,8 +56,27 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
   String? _sessionId;
   _TraceLevelFilter _level = _TraceLevelFilter.all;
   bool _exporting = false;
+  late String _exportDirectory;
 
   DebugTraceLog get log => widget.log;
+
+  @override
+  void initState() {
+    super.initState();
+    _exportDirectory = normalizeDebugTraceExportDirectory(
+      widget.exportDirectory,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant DebugTraceScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.exportDirectory != widget.exportDirectory) {
+      _exportDirectory = normalizeDebugTraceExportDirectory(
+        widget.exportDirectory,
+      );
+    }
+  }
 
   List<TraceEvent> _filteredEvents(Iterable<TraceEvent> source) {
     final query = _query.trim().toLowerCase();
@@ -115,25 +124,21 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
     setState(() => _exporting = true);
     await WidgetsBinding.instance.endOfFrame;
     try {
-      final exporter = widget.exportFile;
-      if (exporter == null) {
-        throw UnsupportedError('当前组合未提供 Trace 文件导出能力');
-      }
       final events = _filteredEvents(log.exportEvents);
-      final stamp = DateTime.now()
-          .toUtc()
-          .toIso8601String()
-          .replaceAll(':', '-')
-          .split('.').first;
-      final name = 'zic-debug-trace-$stamp.jsonl';
-      final bytes = await _encodeDebugTraceEvents(events);
-      final path = await exporter(
-        suggestedName: name,
-        bytes: bytes,
-      );
-      if (!mounted || path == null) return;
+      final exporter = widget.exportEvents ??
+          (events) => exportDebugTraceEvents(
+                events: events,
+                relativeDirectory: _exportDirectory,
+              );
+      final result = await exporter(events);
+      if (!mounted || result == null) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已导出 ${events.length} 条诊断 Trace')),
+        SnackBar(
+          content: Text(
+            '已导出 ${result.eventCount} 条诊断 Trace 到 '
+            '${debugTraceExportDisplayPath(result.relativeDirectory)}',
+          ),
+        ),
       );
     } on Object catch (error) {
       if (!mounted) return;
@@ -142,6 +147,47 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
       );
     } finally {
       if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  Future<void> _editExportDirectory() async {
+    final onChanged = widget.onExportDirectoryChanged;
+    if (onChanged == null) return;
+    final controller = TextEditingController(text: _exportDirectory);
+    try {
+      final value = await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Trace 导出目录'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(
+              prefixText: 'Download/',
+              hintText: 'Debug',
+              helperText: '可使用多级相对子目录，例如 Debug/Reader',
+            ),
+            onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      );
+      if (value == null) return;
+      final normalized = normalizeDebugTraceExportDirectory(value);
+      if (!mounted) return;
+      setState(() => _exportDirectory = normalized);
+      onChanged(normalized);
+    } finally {
+      controller.dispose();
     }
   }
 
@@ -258,6 +304,22 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
                       ),
                     ),
                   ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton.icon(
+                    key: debugTraceExportDirectoryKey,
+                    onPressed: widget.onExportDirectoryChanged == null
+                        ? null
+                        : () => unawaited(_editExportDirectory()),
+                    icon: const Icon(Icons.folder_outlined, size: 18),
+                    label: Text(
+                      '导出目录 ${debugTraceExportDisplayPath(_exportDirectory)}',
+                    ),
+                  ),
                 ),
               ),
               Padding(
