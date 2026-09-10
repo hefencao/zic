@@ -1453,6 +1453,86 @@ void main() {
   });
 
 
+  test('hydrated chapter cache follows newer Reader progress projection',
+      () async {
+    final delegate = MemoryImportedLibraryStore();
+    await delegate.open();
+    final manifest = _versionManifest(
+      comicId: 'progress-cache-comic',
+      chapterId: 'progress-cache-chapter',
+      revision: 'progress-cache-r1',
+      pageCount: 3,
+    );
+    final record = ImportedChapterRecord.remote(
+      comic: _versionComic(manifest.comicId),
+      manifest: manifest,
+    );
+    await delegate.upsertChapter(record);
+    await delegate.saveProgress(
+      ReadingProgress(
+        sourceId: manifest.sourceId,
+        comicId: manifest.comicId,
+        chapterId: manifest.chapter.chapterId,
+        pageIndex: 2,
+        subPageOffset: 0,
+        readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 9, 10, 1),
+      ),
+    );
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+
+    final first = await session.hydrateEntry(session.entries.single);
+    expect(first.progress?.pageIndex, 2);
+    expect(library.getCalls, 1);
+
+    session.replaceProgress(
+      ReadingProgress(
+        sourceId: manifest.sourceId,
+        comicId: manifest.comicId,
+        chapterId: manifest.chapter.chapterId,
+        pageIndex: 0,
+        subPageOffset: 0,
+        readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 9, 10, 1, 1),
+      ),
+    );
+
+    final reopened = await session.hydrateEntry(session.entries.single);
+    expect(reopened.progress?.pageIndex, 0);
+    expect(reopened.chapter.pages, hasLength(3));
+    expect(
+      reopened.chapter.pages.first.sourceId,
+      record.pages.first.sourceId,
+      reason: 'progress refresh must preserve the fully hydrated chapter payload',
+    );
+    expect(
+      library.getCalls,
+      1,
+      reason: 'Reader reopen should still use the hydrated chapter cache',
+    );
+  });
+
   test('chapter batch hydration uses one targeted store lookup', () async {
     final delegate = MemoryImportedLibraryStore();
     final library = _GatedLibraryStore(

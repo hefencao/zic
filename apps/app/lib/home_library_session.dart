@@ -498,6 +498,20 @@ final class HomeLibrarySession extends ChangeNotifier {
       final previous = _versionAuthorityHydratedEntries[key];
       if (previous?.chapter.sourceRevision == entry.chapter.sourceRevision &&
           previous?.chapter.pages.length == entry.chapter.pages.length) {
+        // This cache owns a fully hydrated chapter payload for version/media
+        // authority, but Reader progress remains mutable. Preserve the cached
+        // full chapter while advancing its progress projection when Home has a
+        // newer checkpoint; otherwise a later hydrateEntry() can resurrect the
+        // page that was current when the chapter was first hydrated.
+        final previousProgress = previous?.progress;
+        final nextProgress = entry.progress;
+        if (previous != null &&
+            nextProgress != null &&
+            (previousProgress == null ||
+                !nextProgress.updatedAt.isBefore(previousProgress.updatedAt))) {
+          _versionAuthorityHydratedEntries[key] =
+              previous.copyWith(progress: nextProgress);
+        }
         continue;
       }
       _versionAuthorityHydratedEntries[key] = entry;

@@ -351,6 +351,73 @@ void main() {
     expect(persisted['pageIndex'], 1);
   });
 
+  test('reader progress failed flush preserves the latest checkpoint for retry', () async {
+    final directory = await Directory.systemTemp.createTemp('zic-progress-retry-');
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final path = '${directory.path}/library.sqlite3';
+    final store = SqliteImportedLibraryStore(path);
+    await store.open();
+    addTearDown(store.close);
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/chapter',
+      displayName: 'Progress retry',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.png',
+          sourceId: 'file:///progress-retry/001.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: '002.png',
+          sourceId: 'file:///progress-retry/002.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await store.upsertChapter(chapter);
+    store.enqueueProgress(
+      ReadingProgress(
+        sourceId: chapter.sourceId,
+        comicId: chapter.comicId,
+        chapterId: chapter.chapterId,
+        pageIndex: 0,
+        subPageOffset: 0,
+        readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 9, 10, 1),
+      ),
+    );
+    await store.flushProgressCheckpoints();
+
+    final blocker = sql.sqlite3.open(path);
+    addTearDown(blocker.dispose);
+    blocker.execute('PRAGMA busy_timeout = 100');
+    blocker.execute('BEGIN IMMEDIATE');
+    store.enqueueProgress(
+      ReadingProgress(
+        sourceId: chapter.sourceId,
+        comicId: chapter.comicId,
+        chapterId: chapter.chapterId,
+        pageIndex: 1,
+        subPageOffset: 0,
+        readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 9, 10, 1, 1),
+      ),
+    );
+    await expectLater(
+      store.flushProgressCheckpoints(),
+      throwsA(isA<StateError>()),
+    );
+    blocker.execute('ROLLBACK');
+
+    await store.flushProgressCheckpoints();
+    final persisted = await store.get(chapter.sourceId, chapter.chapterId);
+    expect(persisted?.progress?.pageIndex, 1);
+  });
+
   test('sqlite refresh follows the same page source after insertion', () async {
     final store = SqliteImportedLibraryStore.memory();
     await store.open();

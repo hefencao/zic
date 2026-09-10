@@ -196,6 +196,14 @@ void _runSqliteProgressWriter(List<Object?> bootstrap) {
       db.execute('COMMIT');
     } on Object catch (error) {
       runCatchingRollback(db);
+      // A failed WAL transaction is not a failed Reader checkpoint. Keep the
+      // latest-wins payloads in this isolate so a later flush/lifecycle barrier
+      // can retry after a transient writer lock clears. Dropping [pending]
+      // here makes the first failed flush destructive, while the next flush
+      // incorrectly reports success with no progress left to persist.
+      for (final message in pending) {
+        remember(message);
+      }
       bufferedFailure ??= error.toString();
     }
   }
