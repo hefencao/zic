@@ -1276,6 +1276,71 @@ void main() {
   });
 
 
+  test('late WebP Reader startup ignores transport-only playable evidence',
+      () async {
+    await session.dispose();
+    final trace = MemoryTraceSink();
+    session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/late-reader-local-probe.webp',
+        finalPath: '${temp.path}/cache/late-reader-local-probe.webp',
+      ),
+      clock: FakeMonoClock(),
+      traceSink: trace,
+    );
+    await session.restore();
+    final writer = session.acquireWriter();
+    final body = <int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.filled(2 * 1024 * 1024, 1),
+    ];
+    await session.append(writer, 0, body);
+
+    const inheritedRequirement = 1024 * 1024;
+    session.observePlayablePrefixEvidence(
+      decodedPrefixFrames: 0,
+      sourceLength: remoteWebpDecodePrefixQuantumBytes,
+      firstPlayablePrefixBytes: 0,
+      firstFrameRequiredSourceLength: inheritedRequirement,
+    );
+    expect(
+      session.transportFlowPlayableFloorBytes(
+        unresolvedFloorBytes: remoteWebpDecodePrefixQuantumBytes,
+      ),
+      inheritedRequirement,
+      reason: 'decoder evidence must remain available to transport flow control',
+    );
+
+    final projection = DownloadIngressProjection(
+      scopeId: 'reader-local-probe',
+      ingress: Ingress(
+        factory: _TestSourceFactory(),
+        maxBytes: 4 * 1024 * 1024,
+      ),
+    );
+    final ready = Completer<IngressSnap>();
+    projection.addSourceListener((snapshot) {
+      if (snapshot.sourceReady && !ready.isCompleted) ready.complete(snapshot);
+    });
+
+    final join = session.attachSynchronizedIngressProjection(projection);
+    final firstReady = await ready.future;
+    expect(firstReady.length, remoteWebpDecodePrefixQuantumBytes);
+    final lateJoin = trace.events.singleWhere(
+      (event) =>
+          event.kind == TraceEventKind.artifactSource &&
+          event.payload['stage'] == 'reader-ingress-late-join',
+    );
+    expect(lateJoin.payload['action'], 'decoder-probe-published');
+    expect(lateJoin.payload['replayBasis'], 'reader-local-probe');
+    expect(lateJoin.payload.containsKey('firstPlayablePrefixBytes'), isFalse);
+    expect(lateJoin.payload.containsKey('firstFrameRequiredPrefixBytes'), isFalse);
+
+    await join;
+    expect(projection.snapshot.length, body.length);
+  });
+
   test('late WebP Reader publishes a playable prefix before full partial catch-up',
       () async {
     await session.dispose();
@@ -2064,7 +2129,7 @@ void main() {
       () async {
     const unresolvedFloor = 256 * 1024;
     expect(
-      session.playableFlowPrefixFloorBytes(
+      session.transportFlowPlayableFloorBytes(
         unresolvedFloorBytes: unresolvedFloor,
       ),
       unresolvedFloor,
@@ -2081,7 +2146,7 @@ void main() {
     );
     expect(session.firstFrameRequiredPrefixBytes, 512 * 1024);
     expect(
-      session.playableFlowPrefixFloorBytes(
+      session.transportFlowPlayableFloorBytes(
         unresolvedFloorBytes: unresolvedFloor,
       ),
       512 * 1024,
@@ -2099,7 +2164,7 @@ void main() {
     expect(session.decodedPrefixFrames, 1);
     expect(session.firstPlayablePrefixBytes, 384 * 1024);
     expect(
-      session.playableFlowPrefixFloorBytes(
+      session.transportFlowPlayableFloorBytes(
         unresolvedFloorBytes: unresolvedFloor,
       ),
       384 * 1024,
@@ -2114,7 +2179,7 @@ void main() {
       firstFrameRequiredSourceLength: 768 * 1024,
     );
     expect(
-      session.playableFlowPrefixFloorBytes(
+      session.transportFlowPlayableFloorBytes(
         unresolvedFloorBytes: unresolvedFloor,
       ),
       384 * 1024,

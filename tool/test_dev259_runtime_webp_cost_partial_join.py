@@ -62,8 +62,10 @@ reject(
     'classifyPage(pageIndex: pageIndex, animated: kind == ContentKind.webp)',
 )
 
-# Existing nonresident hot WebP partials publish a decoder-usable prefix first,
-# then stay on the same source while suffix catch-up reaches the physical edge.
+# Existing nonresident hot WebP partials publish a Reader-local decoder probe
+# first, then stay on the same source while suffix catch-up reaches the physical
+# edge. Physical decoder evidence belongs to transport flow control and must not
+# become a later Reader's replay watermark.
 require(
     'packages/sessions/lib/src/download_ingress_projection.dart',
     'void publishSynchronizedReplayPrefix()',
@@ -73,11 +75,11 @@ require(
     'packages/sessions/lib/src/download_session.dart',
     '!_residentBodyBacked',
     '_contentKind == ContentKind.webp',
-    'playableFlowPrefixFloorBytes(',
     'webpDecodePrefixQuantumBytesFor(id)',
     'projection.publishSynchronizedReplayPrefix();',
     "'stage': 'reader-ingress-late-join'",
-    "'action': 'playable-prefix-published'",
+    "'action': 'decoder-probe-published'",
+    "'replayBasis': 'reader-local-probe'",
     'artifact.readChunks(',
     'start: offset,',
 )
@@ -86,6 +88,18 @@ require(
     'may publish a decoder-usable',
     'same native source continues suffix replay',
 )
+
+session_text = read('packages/sessions/lib/src/download_session.dart')
+late_join_start = session_text.index('Future<void> attachSynchronizedIngressProjection(')
+late_join_end = session_text.index('bool detachIngressProjection(', late_join_start)
+late_join_body = session_text[late_join_start:late_join_end]
+if 'transportFlowPlayableFloorBytes(' in late_join_body:
+    raise SystemExit('Reader late join must not consume transport playable-prefix evidence')
+rebuild_start = session_text.index('Future<void> _rebuildIngressProjection(')
+rebuild_end = session_text.index('bool _metaMatches(', rebuild_start)
+rebuild_body = session_text[rebuild_start:rebuild_end]
+if 'transportFlowPlayableFloorBytes(' in rebuild_body:
+    raise SystemExit('Reader ingress rebuild must not consume transport playable-prefix evidence')
 
 # Far-partial network need remains TransferOwner-owned. target0 is unlimited;
 # positive target uses the existing generation-aware proof + playable floor.

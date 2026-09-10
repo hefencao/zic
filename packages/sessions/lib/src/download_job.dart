@@ -1638,7 +1638,7 @@ final class _ResponseReadGate {
         control.flowBlockedAt(tracker.completedFrames);
   }
 
-  int get _playablePrefixFloorBytes => session.playableFlowPrefixFloorBytes(
+  int get _playablePrefixFloorBytes => session.transportFlowPlayableFloorBytes(
         unresolvedFloorBytes: webpDecodePrefixQuantumBytesFor(session.id),
       );
 

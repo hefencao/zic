@@ -1211,7 +1211,7 @@ final class DownloadTransferOwner {
     if (targetFrames <= 0 || session.networkFlowSatisfiedFrames <= 0) {
       return false;
     }
-    final playableFloor = session.playableFlowPrefixFloorBytes(
+    final playableFloor = session.transportFlowPlayableFloorBytes(
       unresolvedFloorBytes: webpDecodePrefixQuantumBytesFor(session.id),
     );
     return session.committedLength >= session.networkFlowProofLength &&

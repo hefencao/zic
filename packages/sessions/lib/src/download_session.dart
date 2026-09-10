@@ -286,8 +286,10 @@ final class DownloadSession {
   Failure? _failure;
 
   // Decoder-owned playable-prefix evidence projected onto this physical
-  // generation. Transport ANMF framing is only structural progress and must
-  // not independently authorize speculative suspension before this floor.
+  // generation solely for speculative transport flow control. Transport ANMF
+  // framing is only structural progress and must not independently authorize
+  // suspension before this floor. Reader-local replay must derive availability
+  // from its own source/decoder lifecycle instead of consuming this evidence.
   int _firstPlayablePrefixBytes = 0;
   int _firstFrameRequiredPrefixBytes = 0;
   int _decodedPrefixFrames = 0;
@@ -365,10 +367,11 @@ final class DownloadSession {
   int get networkFlowSatisfiedFrames => _networkFlowSatisfiedFrames;
   int get networkFlowProofLength => _networkFlowProofLength;
 
-  /// Minimum authoritative prefix that may be treated as first-frame ready by
-  /// transport flow control. Decoder success is strongest; before success, a
-  /// decoder need-more-data lower bound raises the unresolved fallback.
-  int playableFlowPrefixFloorBytes({required int unresolvedFloorBytes}) {
+  /// Minimum authoritative prefix that may satisfy speculative transport flow.
+  /// Decoder success is strongest; before success, a decoder need-more-data
+  /// lower bound raises the unresolved fallback. This is transport-only state:
+  /// Reader-local ingress startup must not use it as a replay watermark.
+  int transportFlowPlayableFloorBytes({required int unresolvedFloorBytes}) {
     if (_firstPlayablePrefixBytes > 0) {
       return _firstPlayablePrefixBytes;
     }
@@ -2375,12 +2378,6 @@ final class DownloadSession {
           final initialProbeLength = initialQuantum < targetLength
               ? initialQuantum
               : targetLength;
-          final publishFloor = playableFlowPrefixFloorBytes(
-            unresolvedFloorBytes: initialQuantum,
-          );
-          final publishLength = publishFloor < targetLength
-              ? publishFloor
-              : targetLength;
           final totalLength = _totalLength;
           projection.expectLength(totalLength);
           final before = projection.snapshot;
@@ -2426,44 +2423,12 @@ final class DownloadSession {
             TraceEventKind.artifactSource,
             <String, Object?>{
               'stage': 'reader-ingress-late-join',
-              'action': 'playable-prefix-published',
+              'action': 'decoder-probe-published',
               'publishLength': initialProbeLength,
               'physicalCommittedLength': committedLength,
-              'firstPlayablePrefixBytes': _firstPlayablePrefixBytes,
-              'firstFrameRequiredPrefixBytes':
-                  _firstFrameRequiredPrefixBytes,
+              'replayBasis': 'reader-local-probe',
             },
           );
-          if (publishLength > initialProbeLength) {
-            var offset = initialProbeLength;
-            final remainingToPublish = publishLength - offset;
-            if (remainingToPublish > 0) {
-              await for (final chunk in _replayEpochChunks(
-                epoch,
-                artifact.readChunks(
-                  chunkSize: 256 * 1024,
-                  start: offset,
-                  endExclusive: publishLength,
-                ),
-                control: control,
-              )) {
-                control?.throwIfCancelled();
-                projection.append(epoch: epoch, offset: offset, bytes: chunk);
-                offset += chunk.length;
-              }
-            }
-            if ((_state == DownloadState.sealed ||
-                    _state == DownloadState.promoted) &&
-                publishLength == targetLength) {
-              projection.seal(epoch);
-            }
-            _requireEpoch(epoch);
-            _traceIngressProjection(
-              projection.scopeId,
-              before,
-              projection.snapshot,
-            );
-          }
           break;
         }
       }
@@ -2671,11 +2636,6 @@ final class DownloadSession {
       final initialProbeLength = initialQuantum < targetLength
           ? initialQuantum
           : targetLength;
-      final publishFloor = playableFlowPrefixFloorBytes(
-        unresolvedFloorBytes: initialQuantum,
-      );
-      final publishLength =
-          publishFloor < targetLength ? publishFloor : targetLength;
       await projection.rebuild(
         epoch: epoch,
         chunks: _replayEpochChunks(
@@ -2692,36 +2652,8 @@ final class DownloadSession {
       );
       _requireEpoch(epoch);
       _traceIngressProjection(projection.scopeId, before, projection.snapshot);
-      if (publishLength > initialProbeLength) {
+      if (initialProbeLength < targetLength) {
         var offset = initialProbeLength;
-        final remainingToPublish = publishLength - offset;
-        if (remainingToPublish > 0) {
-          await for (final chunk in _replayEpochChunks(
-            epoch,
-            artifact.readChunks(
-              chunkSize: 256 * 1024,
-              start: offset,
-              endExclusive: publishLength,
-            ),
-            control: control,
-          )) {
-            control?.throwIfCancelled();
-            projection.append(epoch: epoch, offset: offset, bytes: chunk);
-            offset += chunk.length;
-          }
-        }
-        if (sealed && publishLength == targetLength) {
-          projection.seal(epoch);
-        }
-        _requireEpoch(epoch);
-        _traceIngressProjection(
-          projection.scopeId,
-          before,
-          projection.snapshot,
-        );
-      }
-      if (publishLength < targetLength) {
-        var offset = publishLength;
         final remainingToTarget = targetLength - offset;
         if (remainingToTarget > 0) {
           await for (final chunk in _replayEpochChunks(

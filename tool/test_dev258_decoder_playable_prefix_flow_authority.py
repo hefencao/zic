@@ -44,7 +44,7 @@ require(
 require(
     'packages/sessions/lib/src/download_session.dart',
     'bool observePlayablePrefixEvidence({',
-    'int playableFlowPrefixFloorBytes({required int unresolvedFloorBytes})',
+    'int transportFlowPlayableFloorBytes({required int unresolvedFloorBytes})',
     "'stage': 'decode-playable-prefix'",
     "'firstPlayablePrefixBytes': _firstPlayablePrefixBytes",
     "'firstFrameRequiredPrefixBytes': _firstFrameRequiredPrefixBytes",
@@ -78,9 +78,9 @@ require(
     'void observeDecodePrefixEvidence(',
 )
 if int(m.group(1)) >= 268:
-    require('packages/sessions/lib/src/download_session.dart', 'playableFlowPrefixFloorBytes(', 'networkFlowSatisfiedFrames')
+    require('packages/sessions/lib/src/download_session.dart', 'transportFlowPlayableFloorBytes(', 'networkFlowSatisfiedFrames')
 else:
-    require('packages/sessions/lib/src/download_transfer_owner.dart', "'playablePrefixFloorBytes': session.playableFlowPrefixFloorBytes(")
+    require('packages/sessions/lib/src/download_transfer_owner.dart', "'playablePrefixFloorBytes': session.transportFlowPlayableFloorBytes(")
 require(
     'packages/sessions/lib/src/live_coordinator.dart',
     'final sourceBinding = _sourceWatches[id.download];',
