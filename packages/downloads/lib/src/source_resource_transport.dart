@@ -254,7 +254,7 @@ final class _SourceResourceTransport
           validators: validators,
           control: control,
         );
-      } on Failure catch (error) {
+      } on Failure catch (error, stackTrace) {
         if (error.code == ErrorCode.cancelled) rethrow;
         if (error.code != ErrorCode.network) rethrow;
         _invalidate(uri);
@@ -294,7 +294,7 @@ final class _SourceResourceTransport
             response = retried.response;
             openPath = retried.openPath;
           } on _NoSourceRecoveryAvailable {
-            rethrow;
+            Error.throwWithStackTrace(error, stackTrace);
           }
         }
       } on IOException catch (error) {

@@ -699,6 +699,35 @@ void main() {
     expect(source.loadCalls, 1);
   });
 
+  test('unavailable source recovery preserves the original network failure',
+      () async {
+    final failed = Uri.parse('https://fixture/no-source-recovery');
+    final original = Failure(
+      code: ErrorCode.network,
+      message: 'original direct network failure',
+    );
+    final source = _FixtureSource(
+      request: ComicResourceRequest(uri: failed),
+    );
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (_) => Future<ByteResponse>.error(original),
+    );
+    addTearDown(pool.close);
+
+    Object? observed;
+    try {
+      await pool
+          .loaderFor(source, Uri.parse('venera-resource:no-source-recovery'))();
+    } on Object catch (error) {
+      observed = error;
+    }
+
+    expect(observed, same(original));
+    expect(source.resolveCalls, 1);
+    expect(source.retryCalls, 1);
+    expect(source.loadCalls, 0);
+  });
+
   test('source retry replaces only the failed request plan', () async {
     final failed = Uri.parse('https://fixture/failed');
     final recovered = Uri.parse('https://fixture/recovered');
