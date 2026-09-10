@@ -6,9 +6,23 @@ import 'package:storage/storage.dart';
 import 'package:transport/transport.dart';
 
 void main() {
-  test('restored and completed artifacts never project network progress', () {
+  test('idle partial projects bytes without pretending network activity', () {
+    final progress = pipelineTransferProgressFor(
+      _snapshot(
+        DownloadState.idle,
+        committedLength: 96,
+        totalLength: 128,
+      ),
+    );
+
+    expect(progress.active, isFalse);
+    expect(progress.phase, PipelineTransferPhase.idle);
+    expect(progress.partialBytes, 96);
+    expect(progress.totalBytes, 128);
+  });
+
+  test('completed and failed artifacts never project transfer progress', () {
     for (final state in <DownloadState>[
-      DownloadState.idle,
       DownloadState.sealed,
       DownloadState.promoted,
       DownloadState.failed,
@@ -16,6 +30,7 @@ void main() {
     ]) {
       final progress = pipelineTransferProgressFor(_snapshot(state));
       expect(progress.active, isFalse, reason: state.name);
+      expect(progress.partialBytes, 0, reason: state.name);
       expect(progress.phase, PipelineTransferPhase.idle, reason: state.name);
     }
   });

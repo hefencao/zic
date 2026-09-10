@@ -266,6 +266,23 @@ void main() {
     expect(publisher.feed.value.partialBytes, 1024 + 64 * 1024);
     expect(publisher.feed.value.transportBytes, 1024 + 64 * 1024);
 
+    session.endNetworkAttemptProgress();
+    await session.pause(writer);
+    await Future<void>.delayed(Duration.zero);
+    expect(publisher.feed.value.active, isFalse);
+    expect(publisher.feed.value.partialBytes, 1024 + 64 * 1024);
+    expect(publisher.feed.value.phase, PipelineTransferPhase.idle);
+
+    session.queue();
+    await Future<void>.delayed(Duration.zero);
+    expect(publisher.feed.value.active, isTrue);
+    expect(publisher.feed.value.partialBytes, 1024 + 64 * 1024);
+    session.deferNetwork(reason: 'test-costly-catchup');
+    await Future<void>.delayed(Duration.zero);
+    expect(publisher.feed.value.active, isFalse);
+    expect(publisher.feed.value.partialBytes, 1024 + 64 * 1024);
+    expect(publisher.feed.value.phase, PipelineTransferPhase.idle);
+
     publisher.dispose();
     await session.reset();
     await registry.dispose();

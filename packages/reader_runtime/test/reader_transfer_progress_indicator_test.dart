@@ -38,6 +38,68 @@ void main() {
     );
   });
 
+  testWidgets('idle physical partial stays visible without network semantics',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ReaderTransferProgressIndicator(
+            progress: PipelineTransferProgress(
+              active: false,
+              partialBytes: 64,
+              transportBytes: 48,
+              totalBytes: 128,
+              transportAttemptActive: false,
+            ),
+            networkKey: networkKey,
+            partialKey: partialKey,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(networkKey), findsOneWidget);
+    expect(find.byKey(partialKey), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(
+      tester.getSemantics(find.byType(ReaderTransferProgressIndicator)),
+      matchesSemantics(
+        label: '已有页面partial',
+        value: '已有partial 64/128 bytes',
+      ),
+    );
+  });
+
+  testWidgets('idle unknown-total partial stays visible without connecting state',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ReaderTransferProgressIndicator(
+            progress: PipelineTransferProgress(
+              active: false,
+              partialBytes: 8216280,
+              totalBytes: null,
+            ),
+            networkKey: networkKey,
+            partialKey: partialKey,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(networkKey), findsOneWidget);
+    expect(find.byKey(partialKey), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+    expect(
+      tester.getSemantics(find.byType(ReaderTransferProgressIndicator)),
+      matchesSemantics(
+        label: '已有页面partial',
+        value: '已有partial 8216280 bytes',
+      ),
+    );
+  });
+
   testWidgets('unknown total without partial stays network-only',
       (tester) async {
     await tester.pumpWidget(

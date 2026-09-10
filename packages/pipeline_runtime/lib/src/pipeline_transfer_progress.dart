@@ -103,11 +103,11 @@ PipelineTransferProgress pipelineTransferProgressFor(
   }
   final active = snapshot.state == DownloadState.receiving ||
       snapshot.state == DownloadState.queued;
-  if (!active) {
+  if (!active && snapshot.committedLength <= 0) {
     return const PipelineTransferProgress();
   }
   return PipelineTransferProgress(
-    active: true,
+    active: active,
     partialBytes: snapshot.committedLength,
     transportBytes: snapshot.networkCursorLength,
     totalBytes: snapshot.totalLength,

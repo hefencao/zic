@@ -79,7 +79,7 @@ final class ReaderTransferProgressIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!progress.active) {
+    if (!progress.active && progress.partialBytes <= 0) {
       return const SizedBox(height: 6);
     }
     final total = progress.totalBytes;
@@ -91,12 +91,15 @@ final class ReaderTransferProgressIndicator extends StatelessWidget {
     if (total == null || total <= 0 || partial == null || transport == null) {
       final receiving = progress.transportAttemptActive;
       final hasPartial = progress.partialBytes > 0;
-      final semanticsLabel = receiving
-          ? (hasPartial ? '已有页面partial，正在接收页面数据' : '正在接收页面数据')
-          : (hasPartial ? '已有页面partial，正在连接页面资源' : '正在连接页面资源');
+      final semanticsLabel = !progress.active && hasPartial
+          ? '已有页面partial'
+          : receiving
+              ? (hasPartial ? '已有页面partial，正在接收页面数据' : '正在接收页面数据')
+              : (hasPartial ? '已有页面partial，正在连接页面资源' : '正在连接页面资源');
       final semanticsValue = <String>[
         if (hasPartial) '已有partial ${progress.partialBytes} bytes',
-        if (receiving) '当前传输 ${progress.transportBytes} bytes',
+        if (progress.active && receiving)
+          '当前传输 ${progress.transportBytes} bytes',
       ].join('；');
       return Semantics(
         label: semanticsLabel,
@@ -107,12 +110,15 @@ final class ReaderTransferProgressIndicator extends StatelessWidget {
             fit: StackFit.expand,
             alignment: Alignment.centerLeft,
             children: <Widget>[
-              LinearProgressIndicator(
-                key: networkKey,
-                minHeight: 3,
-                color: receiving ? waveColor : theme.colorScheme.outline,
-                backgroundColor: Colors.transparent,
-              ),
+              if (progress.active)
+                LinearProgressIndicator(
+                  key: networkKey,
+                  minHeight: 3,
+                  color: receiving ? waveColor : theme.colorScheme.outline,
+                  backgroundColor: Colors.transparent,
+                )
+              else
+                SizedBox(key: networkKey),
               if (hasPartial)
                 Align(
                   alignment: Alignment.bottomLeft,
@@ -133,12 +139,15 @@ final class ReaderTransferProgressIndicator extends StatelessWidget {
       PipelineTransferPhase.replayingPrefix => '正在重读已有页面前缀',
       PipelineTransferPhase.receiving => '正在接收页面数据',
       PipelineTransferPhase.connecting => '正在连接页面资源',
-      PipelineTransferPhase.idle => '页面下载空闲',
+      PipelineTransferPhase.idle => '已有页面partial',
     };
+    final semanticsValue = progress.active
+        ? '${progress.transportBytes}/$total bytes；'
+            '已有partial ${progress.partialBytes}/$total bytes'
+        : '已有partial ${progress.partialBytes}/$total bytes';
     return Semantics(
       label: semanticsLabel,
-      value: '${progress.transportBytes}/$total bytes；'
-          '已有partial ${progress.partialBytes}/$total bytes',
+      value: semanticsValue,
       child: SizedBox(
         height: 6,
         child: Stack(
