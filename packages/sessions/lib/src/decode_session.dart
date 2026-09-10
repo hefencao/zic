@@ -23,6 +23,7 @@ final class DecodeSnapshot {
     required this.sourceLength,
     required this.sourceSealed,
     required this.requiredSourceLength,
+    this.partialPrefixLoopEligible = false,
     this.decodedPrefixFrames = 0,
     this.firstPlayablePrefixBytes = 0,
     this.firstFrameRequiredSourceLength = 0,
@@ -42,6 +43,12 @@ final class DecodeSnapshot {
   final int sourceLength;
   final bool sourceSealed;
   final int requiredSourceLength;
+
+  /// True only when this waiting decode can immediately rewind its already
+  /// proven unsealed animation prefix without waiting for source growth.
+  /// Coordinator scheduling may use this to re-enter DecodeSession after the
+  /// final buffered frame is consumed; it is not transport or cache authority.
+  final bool partialPrefixLoopEligible;
 
   /// Dimensions of the decoded frame generation once the decoder has proven
   /// at least one frame. These are decode facts, not Reader layout state.
@@ -237,6 +244,7 @@ final class DecodeSession {
       sourceLength: source?.length ?? 0,
       sourceSealed: source?.sealed ?? false,
       requiredSourceLength: _requiredSourceLength,
+      partialPrefixLoopEligible: _partialPrefixLoopEligible,
       decodedWidth: _decodedWidth,
       decodedHeight: _decodedHeight,
       decodedPrefixFrames: _maxDecodedPrefixFrames,
@@ -339,6 +347,7 @@ final class DecodeSession {
       _restartCursorWhenHolderEmpty = false;
     }
 
+    final canResumePartialPrefixLoop = _partialPrefixLoopEligible;
     if (!source.sealed) {
       final hinted = prefixHints.minimumBytes(id.download, _nextFrameHintIndex);
       if (hinted > _requiredSourceLength) {
@@ -348,7 +357,9 @@ final class DecodeSession {
           _requiredSourceLength > _firstFrameRequiredSourceLength) {
         _firstFrameRequiredSourceLength = _requiredSourceLength;
       }
-      if (_requiredSourceLength > 0 && source.length < _requiredSourceLength) {
+      if (_requiredSourceLength > 0 &&
+          source.length < _requiredSourceLength &&
+          !canResumePartialPrefixLoop) {
         _waitingSourceSinceMicros ??= clock.nowMicros();
         _setState(DecodeState.waitingSource);
         return snapshot;
@@ -676,6 +687,15 @@ final class DecodeSession {
     if (retainedDepth == 0) {
       _setState(DecodeState.idle);
     }
+  }
+
+  bool get _partialPrefixLoopEligible {
+    final source = _boundSource;
+    final holder = _holder;
+    return _state == DecodeState.waitingSource &&
+        source != null &&
+        holder != null &&
+        _canLoopPartialPrefix(source, holder);
   }
 
   bool _canLoopPartialPrefix(EncodedSource source, FrameHolder holder) =>

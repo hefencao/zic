@@ -1565,6 +1565,150 @@ void main() {
   });
 
 
+  test('draining the last buffered partial frame re-enters partial loop',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_partial_loop_late_wake_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'partial-loop',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/partial-loop.webp'),
+    );
+    final decodeId = DecodeId(
+      download: id,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final clock = _Clock();
+    final trace = MemoryTraceSink();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024 * 1024,
+    );
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      traceSink: trace,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'test',
+    );
+    final physical = downloads.get(id);
+    final ingress = ingresses.get(physical);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpartial-animation'.codeUnits,
+    );
+    final cursors = _LatePartialLoopCursorFactory(frameCount: 30);
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      ingresses: ingresses,
+      cursors: cursors,
+      clock: clock,
+      traceSink: trace,
+    );
+    final uploads = UploadRegistry(
+      decodes: decodes,
+      uploader: _TestUploader(),
+      clock: clock,
+      traceSink: trace,
+    );
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      ingresses: ingresses,
+      transportFor: (_) => FakeTransport(bytes: const <int>[]),
+      clock: clock,
+      traceSink: trace,
+      decodes: decodes,
+      uploads: uploads,
+      net: NetLane(maxActive: 1),
+      decode: DecodeLane(maxActive: 1),
+      upload: UploadLane(maxActive: 1),
+    );
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: const <DownloadId, DownloadDemand>{},
+      decodes: <DecodeId, DecodeDemand>{
+        decodeId: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 7,
+          reason: 'partial-loop-current',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: <DecodeId, UploadDemand>{
+        decodeId: const UploadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'partial-loop-current',
+          expirationRevision: 2,
+        ),
+      },
+      keep: <ResourceId>{
+        ResourceId.download(id),
+        ResourceId.decode(decodeId),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: plan,
+        diff: DemandDiff.between(DemandPlan.empty(), plan),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await coordinator.idle();
+
+    var sawWaitingWithBufferedFrames = false;
+    var advances = 0;
+    while (cursors.created == 1 && advances < 40) {
+      final decode = decodes.find(decodeId)!.snapshot;
+      if (decode.state == DecodeState.waitingSource && decode.depth > 0) {
+        sawWaitingWithBufferedFrames = true;
+        expect(decode.partialPrefixLoopEligible, isFalse);
+      }
+      final frameIndex = uploads.find(decodeId)!.snapshot.frameIndex;
+      expect(frameIndex, isNotNull);
+      expect(
+        coordinator.advanceFrame('reader', decodeId, frameIndex!),
+        isTrue,
+      );
+      await coordinator.idle();
+      advances++;
+    }
+
+    expect(sawWaitingWithBufferedFrames, isTrue);
+    expect(cursors.created, 2,
+        reason: 'last buffered frame must wake decoder to rewind the partial');
+    expect(decodes.find(decodeId)!.snapshot.cycle, 1);
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.animationLoop &&
+            event.payload['partialPrefix'] == true,
+      ),
+      hasLength(1),
+    );
+
+    await coordinator.dispose();
+    uploads.dispose();
+    decodes.dispose();
+    await downloads.dispose();
+  });
+
+
   test('playback state never gates decode refill for other demanded pages',
       () async {
     // The directed source-wake test below covers the operational path. This
@@ -3162,6 +3306,57 @@ final class _NeedMoreDataCursor implements FrameCursor {
     if (!frameDecoded.isCompleted) frameDecoded.complete();
     return CursorStep.frame(_TestFrame(epoch, 0));
   }
+
+  @override
+  void dispose() {}
+}
+
+final class _LatePartialLoopCursorFactory implements CursorFactory {
+  _LatePartialLoopCursorFactory({required this.frameCount});
+
+  final int frameCount;
+  int created = 0;
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) {
+    created++;
+    final cursor = _LatePartialLoopCursor(epoch, frameCount);
+    return CursorBinding(frames: cursor, loop: cursor);
+  }
+}
+
+final class _LatePartialLoopCursor implements FrameCursor, LoopCursor {
+  _LatePartialLoopCursor(this.epoch, this.frameCount);
+
+  @override
+  final int epoch;
+  final int frameCount;
+  int _next = 0;
+
+  @override
+  AnimationInfo get animation => AnimationInfo(
+        frameCount: frameCount,
+        loopCount: 0,
+        complete: false,
+      );
+
+  @override
+  int get cycle => 0;
+
+  @override
+  Future<CursorStep> decodeNext() async {
+    if (_next >= frameCount) {
+      return const CursorStep.needMoreData();
+    }
+    return CursorStep.frame(_TestFrame(epoch, _next++));
+  }
+
+  @override
+  bool rewind() => false;
 
   @override
   void dispose() {}

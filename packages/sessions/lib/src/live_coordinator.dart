@@ -1160,7 +1160,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           return true;
         }
         return snapshot.state != DecodeState.waitingSource ||
-            _hasPendingSourceRevision(id);
+            _hasPendingSourceRevision(id) ||
+            snapshot.partialPrefixLoopEligible;
       },
     );
   }
@@ -1211,6 +1212,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         animation.frameCount <= 1 &&
         snapshot.depth + preparedDepth >= 1) {
       return false;
+    }
+    if (snapshot.partialPrefixLoopEligible) {
+      return true;
     }
     if (snapshot.state == DecodeState.waitingSource && !sourceWake) {
       return false;
