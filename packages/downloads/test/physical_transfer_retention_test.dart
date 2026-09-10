@@ -278,6 +278,67 @@ void main() {
     expect(runtime.registry.findExact(newId), isNull);
   });
 
+  test('idle exact partial yields to a more advanced verified carrier', () async {
+    final oldId = _id('prefer-old');
+    final newId = _id('prefer-new');
+    final authority = VersionPageAuthority()
+      ..replaceScope('old-new', <String, VersionPageReuseResolver>{
+        'page': (id) sync* {
+          if (id == oldId) yield newId;
+          if (id == newId) yield oldId;
+        },
+      });
+    final backend = _RetentionStore();
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: backend,
+      versionPageAuthority: authority,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(runtime.dispose);
+    final oldCarrier = runtime.registry.get(oldId);
+    final newCarrier = runtime.registry.get(newId);
+    await _writePartial(oldCarrier, <int>[1, 2, 3]);
+    await _writePartial(newCarrier, <int>[1, 2, 3, 4, 5, 6, 7, 8]);
+
+    expect(oldCarrier.demanded, isFalse);
+    expect(newCarrier.demanded, isFalse);
+    expect(runtime.owner.resolveTransferId(oldId), newId);
+    expect(runtime.sessionFor(oldId), same(newCarrier));
+    expect(runtime.registry.findExact(oldId), same(oldCarrier));
+    expect(runtime.registry.findExact(newId), same(newCarrier));
+  });
+
+  test('demanded exact session does not switch to an equivalent carrier', () async {
+    final oldId = _id('demanded-old');
+    final newId = _id('demanded-new');
+    final authority = VersionPageAuthority()
+      ..replaceScope('old-new', <String, VersionPageReuseResolver>{
+        'page': (id) sync* {
+          if (id == oldId) yield newId;
+          if (id == newId) yield oldId;
+        },
+      });
+    final backend = _RetentionStore();
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: backend,
+      versionPageAuthority: authority,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(runtime.dispose);
+    final oldCarrier = runtime.registry.get(oldId);
+    final newCarrier = runtime.registry.get(newId);
+    await _writePartial(oldCarrier, <int>[1, 2, 3]);
+    await _writePartial(newCarrier, <int>[1, 2, 3, 4, 5, 6, 7, 8]);
+    final demand = oldCarrier.attachDemand(scopeId: 'reader', priority: 1000);
+    addTearDown(demand.detach);
+
+    expect(oldCarrier.demanded, isTrue);
+    expect(runtime.owner.resolveTransferId(oldId), oldId);
+    expect(runtime.sessionFor(oldId), same(oldCarrier));
+  });
+
   test('version relation joins an already-existing reusable physical carrier', () async {
     final oldId = _id('join-old');
     final newId = _id('join-new');

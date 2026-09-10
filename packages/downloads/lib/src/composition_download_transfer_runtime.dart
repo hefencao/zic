@@ -167,16 +167,23 @@ final class CompositionDownloadTransferRuntime {
   /// Read-only logical-session lookup using the same physical-candidate set as
   /// acquire, without creating a new alias or session.
   DownloadSession? findSession(DownloadId logicalId) {
-    final direct = registry.find(logicalId);
-    if (direct != null) return direct;
+    final resolvedExact = registry.resolvePhysicalId(logicalId);
+    if (resolvedExact != logicalId) {
+      return registry.find(resolvedExact);
+    }
+    final exact = registry.findExact(logicalId);
+    if (exact?.demanded == true) return exact;
     final candidates = <DownloadId, DownloadSession>{};
+    if (exact != null && _canJoinEquivalentSession(exact)) {
+      candidates[logicalId] = exact;
+    }
     for (final equivalent in _verifiedEquivalentCandidates(logicalId)) {
       final physicalId = registry.resolvePhysicalId(equivalent);
       final session = registry.find(physicalId);
       if (session == null || !_canJoinEquivalentSession(session)) continue;
       candidates[physicalId] = session;
     }
-    if (candidates.isEmpty) return null;
+    if (candidates.isEmpty) return exact;
     final ordered = candidates.entries.toList(growable: false)
       ..sort(_compareEquivalentPhysicalCandidates);
     return ordered.first.value;
@@ -185,9 +192,17 @@ final class CompositionDownloadTransferRuntime {
   DownloadId _resolveTransferIdForAcquire(DownloadId exactId) {
     final resolvedExact = registry.resolvePhysicalId(exactId);
     if (resolvedExact != exactId) return resolvedExact;
-    if (registry.findExact(exactId) != null) return exactId;
+    final exact = registry.findExact(exactId);
+    // Never redirect a logical page while its exact physical session still has
+    // consumer demand. A retained/parked exact session with no demand is only
+    // one reusable carrier candidate and may yield to a more advanced verified
+    // equivalent on the next acquire.
+    if (exact?.demanded == true) return exactId;
 
     final candidates = <DownloadId, DownloadSession>{};
+    if (exact != null && _canJoinEquivalentSession(exact)) {
+      candidates[exactId] = exact;
+    }
     for (final equivalent in _verifiedEquivalentCandidates(exactId)) {
       final physicalId = registry.resolvePhysicalId(equivalent);
       final session = registry.find(physicalId);
@@ -198,10 +213,15 @@ final class CompositionDownloadTransferRuntime {
     final ordered = candidates.entries.toList(growable: false)
       ..sort(_compareEquivalentPhysicalCandidates);
     final selected = ordered.first;
-    registry.aliasPhysical(id: exactId, target: selected.key);
+    if (selected.key == exactId) return exactId;
+    if (exact == null) {
+      registry.aliasPhysical(id: exactId, target: selected.key);
+    }
     _recordAcquireAlias(
       exactId,
-      action: 'joined-existing-physical',
+      action: exact == null
+          ? 'joined-existing-physical'
+          : 'preferred-equivalent-over-idle-exact',
       candidate: selected.key,
       session: selected.value,
       candidateOwners: ordered.length,

@@ -33,6 +33,7 @@ live = read('packages/sessions/lib/src/live_coordinator.dart')
 pipe = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
 test = read('packages/sessions/test/download_transfer_owner_test.dart')
+retention_test = read('packages/downloads/test/physical_transfer_retention_test.dart')
 
 require(exports, "export 'src/download_transfer_owner.dart';", 'composition transfer owner export')
 for token in (
@@ -73,6 +74,17 @@ for token in (
     'owner = DownloadTransferOwner(',
 ):
     require(runtime, token, 'composition runtime ownership')
+for token in (
+    'if (exact?.demanded == true) return exactId;',
+    "'preferred-equivalent-over-idle-exact'",
+    'candidates[exactId] = exact;',
+):
+    require(runtime, token, 'verified idle exact carrier re-selection')
+for token in (
+    'idle exact partial yields to a more advanced verified carrier',
+    'demanded exact session does not switch to an equivalent carrier',
+):
+    require(retention_test, token, 'dev.216 version physical carrier regression')
 for token in (
     '_downloads = _transferRuntime.registry;',
     '_downloadTransfer = _transferRuntime.attachConsumer(',
