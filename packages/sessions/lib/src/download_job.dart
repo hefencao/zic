@@ -217,7 +217,7 @@ final class DownloadJob {
     final resumeValidators = session.resumeValidatorsFor(_requestUri);
     final providerValidatorMismatch = preservedLength > 0 &&
         session.hasValidatorsForOtherRequest(_requestUri);
-    var start = preservedLength;
+    final start = preservedLength;
     var fullBodyCatchup = false;
     var validatorlessRangeProbe = false;
     var probeStart = 0;
@@ -238,8 +238,26 @@ final class DownloadJob {
     cancel?.throwIfCancelled();
     try {
     if (start > 0 && !resumeValidators.canResume) {
-      if (preservedTotalLength != null &&
-          preservedTotalLength >= start) {
+      if (preservedTotalLength == null) {
+        // A tail Range request needs only the preserved byte boundary; it does
+        // not require a previously persisted total length. Keep background
+        // partials cheap, though: if policy would not pay for a full-body
+        // continuity check when Range is ignored, defer before opening the
+        // source exactly as the historical unknown-total path did.
+        await _deferCostlyFullBodyCatchupIfNeeded(
+          preservedLength: preservedLength,
+          runLease: runLease,
+          cancel: cancel,
+          diagnostics: <String, Object?>{
+            'resumeProbeAttempted': false,
+            'resumeProbeDeferredBeforeOpen': true,
+            if (providerValidatorMismatch) 'providerValidatorMismatch': true,
+          },
+        );
+      }
+      final validatorlessProbeEligible =
+          preservedTotalLength == null || preservedTotalLength >= start;
+      if (validatorlessProbeEligible) {
         probeBytes = start < _validatorlessResumeProbeBytes
             ? start
             : _validatorlessResumeProbeBytes;
@@ -252,9 +270,13 @@ final class DownloadJob {
           response,
           runLease: runLease,
         );
+        final responseTotalLength = response.totalLength;
         final usableProbe = response.isPartial &&
             response.rangeStart == probeStart &&
-            response.totalLength == preservedTotalLength;
+            responseTotalLength != null &&
+            responseTotalLength >= preservedLength &&
+            (preservedTotalLength == null ||
+                responseTotalLength == preservedTotalLength);
         if (usableProbe) {
           validatorlessRangeProbe = true;
         } else if (response.statusCode == 200 && response.rangeStart == 0) {

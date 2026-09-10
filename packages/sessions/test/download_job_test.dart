@@ -301,6 +301,116 @@ void main() {
     expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
   });
 
+  test('unknown-total validatorless partial probes tail before full catchup',
+      () async {
+    final bytes = <int>[
+      ...'RIFF'.codeUnits,
+      0, 0, 0, 0,
+      ...'WEBP'.codeUnits,
+      ...List<int>.generate(256 * 1024, (index) => index & 0xff),
+    ];
+    final session = createSession();
+    await session.restore();
+    final writer = session.acquireWriter();
+    final preservedLength = 96 * 1024;
+    await session.append(writer, 0, bytes.sublist(0, preservedLength));
+    await session.pause(writer);
+    expect(session.totalLength, isNull);
+    expect(session.validators.isEmpty, isTrue);
+
+    final resumed = FakeTransport(
+      bytes: bytes,
+      chunkSize: 4096,
+      validators: const Validators(),
+    );
+    final result = await DownloadJob(transport: resumed, session: session).run();
+
+    expect(result.state, DownloadState.promoted);
+    expect(resumed.requests, hasLength(1));
+    expect(
+      resumed.requests.single.range?.start,
+      preservedLength - 64 * 1024,
+    );
+    expect(resumed.requests.single.validators, isNull);
+    expect(session.totalLength, bytes.length);
+    expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
+  });
+
+  test('unknown-total ignored Range reuses the probe response for catchup',
+      () async {
+    final bytes = <int>[
+      ...'RIFF'.codeUnits,
+      0, 0, 0, 0,
+      ...'WEBP'.codeUnits,
+      ...List<int>.generate(256 * 1024, (index) => index & 0xff),
+    ];
+    final session = createSession();
+    await session.restore();
+    final writer = session.acquireWriter();
+    final preservedLength = 96 * 1024;
+    await session.append(writer, 0, bytes.sublist(0, preservedLength));
+    await session.pause(writer);
+    expect(session.totalLength, isNull);
+
+    final ignoredRange = FakeTransport(
+      bytes: bytes,
+      chunkSize: 4096,
+      rangeSupported: false,
+      validators: const Validators(),
+    );
+    final result = await DownloadJob(
+      transport: ignoredRange,
+      session: session,
+      allowFullBodyCatchup: (_) => true,
+    ).run(cancel: CancelToken(priority: 1000));
+
+    expect(result.state, DownloadState.promoted);
+    expect(ignoredRange.requests, hasLength(1));
+    expect(
+      ignoredRange.requests.single.range?.start,
+      preservedLength - 64 * 1024,
+    );
+    expect(ignoredRange.discardCount, 0);
+    expect(session.totalLength, bytes.length);
+    expect(await File(result.artifact.finalPath).readAsBytes(), bytes);
+  });
+
+  test('unknown-total background catchup still defers before source open',
+      () async {
+    final bytes = <int>[
+      ...'RIFF'.codeUnits,
+      0, 0, 0, 0,
+      ...'WEBP'.codeUnits,
+      ...List<int>.generate(2 * 1024 * 1024, (index) => index & 0xff),
+    ];
+    final session = createSession();
+    await session.restore();
+    final writer = session.acquireWriter();
+    final preservedLength = 1536 * 1024;
+    await session.append(writer, 0, bytes.sublist(0, preservedLength));
+    await session.pause(writer);
+    expect(session.totalLength, isNull);
+
+    final transport = FakeTransport(
+      bytes: bytes,
+      chunkSize: 16 * 1024,
+      rangeSupported: false,
+      validators: const Validators(),
+    );
+    await expectLater(
+      DownloadJob(
+        transport: transport,
+        session: session,
+        allowFullBodyCatchup: (_) => false,
+      ).run(cancel: CancelToken(priority: 700)),
+      throwsA(isA<DownloadCatchupDeferred>()),
+    );
+
+    expect(transport.requests, isEmpty);
+    expect(session.committedLength, preservedLength);
+    expect(session.state, DownloadState.idle);
+  });
+
   test('validatorless range ignored reuses the same full response for catchup', () async {
     final bytes = <int>[
       ...'RIFF'.codeUnits,
