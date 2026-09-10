@@ -91,14 +91,25 @@ final class ReaderTransferProgressIndicator extends StatelessWidget {
     if (total == null || total <= 0 || partial == null || transport == null) {
       final receiving = progress.transportAttemptActive;
       final hasPartial = progress.partialBytes > 0;
+      final replayingPrefix =
+          progress.phase == PipelineTransferPhase.replayingPrefix;
       final semanticsLabel = !progress.active && hasPartial
           ? '已有页面partial'
-          : receiving
-              ? (hasPartial ? '已有页面partial，正在接收页面数据' : '正在接收页面数据')
-              : (hasPartial ? '已有页面partial，正在连接页面资源' : '正在连接页面资源');
+          : switch (progress.phase) {
+              PipelineTransferPhase.replayingPrefix => '正在重读已有页面前缀',
+              PipelineTransferPhase.receiving => hasPartial
+                  ? '已有页面partial，正在接收页面数据'
+                  : '正在接收页面数据',
+              PipelineTransferPhase.connecting => hasPartial
+                  ? '已有页面partial，正在连接页面资源'
+                  : '正在连接页面资源',
+              PipelineTransferPhase.idle => '已有页面partial',
+            };
       final semanticsValue = <String>[
         if (hasPartial) '已有partial ${progress.partialBytes} bytes',
-        if (progress.active && receiving)
+        if (replayingPrefix)
+          '重读 ${progress.transportBytes}/${progress.partialBytes} bytes'
+        else if (progress.active && receiving)
           '当前传输 ${progress.transportBytes} bytes',
       ].join('；');
       return Semantics(
@@ -113,6 +124,11 @@ final class ReaderTransferProgressIndicator extends StatelessWidget {
               if (progress.active)
                 LinearProgressIndicator(
                   key: networkKey,
+                  value: replayingPrefix
+                      ? (progress.transportBytes / progress.partialBytes)
+                          .clamp(0.0, 1.0)
+                          .toDouble()
+                      : null,
                   minHeight: 3,
                   color: receiving ? waveColor : theme.colorScheme.outline,
                   backgroundColor: Colors.transparent,

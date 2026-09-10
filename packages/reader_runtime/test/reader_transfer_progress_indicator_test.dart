@@ -38,6 +38,40 @@ void main() {
     );
   });
 
+  testWidgets('unknown-total prefix replay shows determinate partial-relative progress',
+      (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: ReaderTransferProgressIndicator(
+            progress: PipelineTransferProgress(
+              active: true,
+              partialBytes: 8 * 1024 * 1024,
+              transportBytes: 2 * 1024 * 1024,
+              totalBytes: null,
+              transportAttemptActive: true,
+            ),
+            networkKey: networkKey,
+            partialKey: partialKey,
+          ),
+        ),
+      ),
+    );
+
+    final indicator = tester.widget<LinearProgressIndicator>(
+      find.byKey(networkKey),
+    );
+    expect(indicator.value, 0.25);
+    expect(find.byKey(partialKey), findsOneWidget);
+    expect(
+      tester.getSemantics(find.byType(ReaderTransferProgressIndicator)),
+      matchesSemantics(
+        label: '正在重读已有页面前缀',
+        value: '已有partial 8388608 bytes；重读 2097152/8388608 bytes',
+      ),
+    );
+  });
+
   testWidgets('idle physical partial stays visible without network semantics',
       (tester) async {
     await tester.pumpWidget(
