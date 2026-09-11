@@ -1,5 +1,6 @@
 use std::os::raw::{c_int, c_void};
 use std::ptr;
+use std::time::Instant;
 
 const WEBP_DEMUX_ABI_VERSION: c_int = 0x0107;
 const WEBP_DECODER_ABI_VERSION: c_int = 0x0210;
@@ -180,6 +181,10 @@ pub(crate) struct DecodedFrame {
     pub(crate) height: u32,
     pub(crate) duration_us: u64,
     pub(crate) bytes: Vec<u8>,
+    pub(crate) canvas_prepare_us: u64,
+    pub(crate) fragment_decode_us: u64,
+    pub(crate) composite_us: u64,
+    pub(crate) frame_copy_us: u64,
 }
 
 pub(crate) struct PreparedFrame {
@@ -216,6 +221,7 @@ struct FrameDescriptor {
     duration_ms: u64,
     dispose_background: bool,
     blend: bool,
+    has_alpha: bool,
     complete: bool,
     fragment_offset: usize,
     fragment_length: usize,
@@ -306,6 +312,7 @@ impl DemuxSnapshot {
                 duration_ms: iter.0.duration.max(0) as u64,
                 dispose_background: iter.0.dispose_method == WEBP_MUX_DISPOSE_BACKGROUND,
                 blend: iter.0.blend_method != WEBP_MUX_NO_BLEND,
+                has_alpha: iter.0.has_alpha != 0,
                 complete: iter.0.complete != 0,
                 fragment_offset,
                 fragment_length,
@@ -473,6 +480,7 @@ impl Decoder {
         &mut self,
         prepared: PreparedFrame,
     ) -> Result<DecodedFrame, DecodeError> {
+        let canvas_prepare_started = Instant::now();
         self.ensure_canvas(
             prepared.background,
             prepared.source_width,
@@ -493,6 +501,7 @@ impl Decoder {
             );
             self.reset_canvas_before_decode = false;
         }
+        let canvas_prepare_us = canvas_prepare_started.elapsed().as_micros() as u64;
 
         let target_rect = map_rect_endpoints(
             prepared.source_rect,
@@ -505,13 +514,16 @@ impl Decoder {
         if target_fragment_len > MAX_WORKING_BYTES {
             return Err(DecodeError::Failed);
         }
+        let fragment_decode_started = Instant::now();
         let target_fragment = decode_rgba_scaled_single_threaded(
             prepared.fragment.as_ptr(),
             prepared.fragment.len(),
             target_rect.width,
             target_rect.height,
         )?;
+        let fragment_decode_us = fragment_decode_started.elapsed().as_micros() as u64;
 
+        let composite_started = Instant::now();
         if let Some(previous) = self.previous {
             if previous.dispose_background {
                 fill_rect(
@@ -531,6 +543,7 @@ impl Decoder {
             &target_fragment,
             prepared.blend,
         )?;
+        let composite_us = composite_started.elapsed().as_micros() as u64;
 
         let duration_us = prepared.duration_ms.saturating_mul(1_000);
         self.previous = Some(PreviousFrame {
@@ -540,12 +553,50 @@ impl Decoder {
         self.next_frame_number = self.next_frame_number.saturating_add(1);
         self.ended = false;
 
+        let frame_copy_started = Instant::now();
+        let bytes = self.canvas.clone();
+        let frame_copy_us = frame_copy_started.elapsed().as_micros() as u64;
         Ok(DecodedFrame {
             width: self.target_width as u32,
             height: self.target_height as u32,
             duration_us,
-            bytes: self.canvas.clone(),
+            bytes,
+            canvas_prepare_us,
+            fragment_decode_us,
+            composite_us,
+            frame_copy_us,
         })
+    }
+
+    pub(crate) fn frame_structure_stats(&self) -> (u32, u32, u32, u32) {
+        let Some(snapshot) = self.demux.as_ref() else {
+            return (0, 0, 0, 0);
+        };
+        let known = snapshot.frames.len().min(u32::MAX as usize) as u32;
+        let mut full_canvas = 0u32;
+        let mut independent = 0u32;
+        let mut dependent_run = 0u32;
+        let mut max_dependent_run = 0u32;
+        for frame in &snapshot.frames {
+            let covers_canvas = frame.x_offset == 0
+                && frame.y_offset == 0
+                && frame.width == snapshot.source_width
+                && frame.height == snapshot.source_height;
+            if covers_canvas {
+                full_canvas = full_canvas.saturating_add(1);
+            }
+            // A full-canvas source-over frame is also presentation-independent
+            // when its compressed frame has no alpha: every source pixel is
+            // opaque, so BLEND is equivalent to replacing the prior canvas.
+            if covers_canvas && (!frame.blend || !frame.has_alpha) {
+                independent = independent.saturating_add(1);
+                dependent_run = 0;
+            } else {
+                dependent_run = dependent_run.saturating_add(1);
+                max_dependent_run = max_dependent_run.max(dependent_run);
+            }
+        }
+        (known, full_canvas, independent, max_dependent_run)
     }
 
     pub(crate) fn metadata(&self) -> AnimationMeta {

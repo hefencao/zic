@@ -117,6 +117,15 @@ void main() {
     expect(pipelineTiming.payload['workerQueueMicros'], 11);
     expect(pipelineTiming.payload['nativeDecodeMicros'], 17);
     expect(pipelineTiming.payload['nativeMetadataMicros'], 19);
+    expect(pipelineTiming.payload['nativePrepareMicros'], 23);
+    expect(pipelineTiming.payload['nativeCanvasPrepareMicros'], 29);
+    expect(pipelineTiming.payload['nativeFragmentDecodeMicros'], 31);
+    expect(pipelineTiming.payload['nativeCompositeMicros'], 37);
+    expect(pipelineTiming.payload['nativeFrameCopyMicros'], 41);
+    expect(pipelineTiming.payload['nativeThreadId'], 1234);
+    expect(pipelineTiming.payload['nativeCpuStart'], 2);
+    expect(pipelineTiming.payload['nativeCpuEnd'], 3);
+    expect(pipelineTiming.payload['nativeCpuAllowedMask'], 15);
     expect(pipelineTiming.payload['decodedRole'], 'current');
     expect(pipelineTiming.payload['decodedLeadMicros'], 0);
     expect(pipelineTiming.payload['uploadBackpressureMicros'], isA<int>());
@@ -1444,7 +1453,11 @@ final class _Cursor implements FrameCursor, LoopCursor {
 }
 
 final class _Frame
-    implements FrameRef, FrameCycleInfo, FrameDecodeTiming {
+    implements
+        FrameRef,
+        FrameCycleInfo,
+        FrameDecodeTiming,
+        FrameNativeDecodeObservation {
   _Frame(
     this.epoch,
     this.index, {
@@ -1485,6 +1498,32 @@ final class _Frame
   int get workerIndex => 1;
   @override
   int get workerPlacementStatus => 1;
+  @override
+  int get nativePrepareMicros => 23;
+  @override
+  int get nativeCanvasPrepareMicros => 29;
+  @override
+  int get nativeFragmentDecodeMicros => 31;
+  @override
+  int get nativeCompositeMicros => 37;
+  @override
+  int get nativeFrameCopyMicros => 41;
+  @override
+  int get nativeThreadId => 1234;
+  @override
+  int get nativeCpuStart => 2;
+  @override
+  int get nativeCpuEnd => 3;
+  @override
+  int get nativeCpuAllowedMask => 15;
+  @override
+  int get nativeKnownFrameCount => 12;
+  @override
+  int get nativeFullCanvasFrameCount => 8;
+  @override
+  int get nativeIndependentFrameCount => 5;
+  @override
+  int get nativeMaxDependentRun => 3;
 
   @override
   void dispose() => disposed = true;

@@ -2589,6 +2589,10 @@ def check_native_abi() -> None:
         'zic_cursor_loop_count',
         'zic_cursor_metadata_complete',
         'zic_cursor_cycle',
+        'zic_cursor_known_frame_count',
+        'zic_cursor_full_canvas_frame_count',
+        'zic_cursor_independent_frame_count',
+        'zic_cursor_max_dependent_run',
         'zic_cursor_rewind',
         'zic_frame_retain',
         'zic_frame_release',
@@ -2599,6 +2603,15 @@ def check_native_abi() -> None:
         'zic_frame_height',
         'zic_frame_duration_us',
         'zic_frame_format',
+        'zic_frame_native_prepare_us',
+        'zic_frame_native_canvas_prepare_us',
+        'zic_frame_native_fragment_decode_us',
+        'zic_frame_native_composite_us',
+        'zic_frame_native_frame_copy_us',
+        'zic_frame_native_thread_id',
+        'zic_frame_native_cpu_start',
+        'zic_frame_native_cpu_end',
+        'zic_frame_native_cpu_allowed_mask',
         'zic_frame_len',
         'zic_frame_data',
     ):
@@ -2606,8 +2619,8 @@ def check_native_abi() -> None:
             fail(f'ABI symbol is not represented in Rust/header/Dart: {symbol}')
     if 'pub const ABI_VERSION: u32 = 6;' not in rust:
         fail('native ABI version must be 6 for reserve/commit ingress')
-    if 'pub const LIB_VERSION: u32 = 0x0012_1400;' not in rust:
-        fail('native library version must identify the dev.134 resource-session retention release')
+    if 'pub const LIB_VERSION: u32 = 0x0012_1500;' not in rust:
+        fail('native library version must identify the dev.135 decode-observability release')
     webp_path = ROOT / 'native/media_core/src/webp.rs'
     if not webp_path.is_file():
         fail('native WebP decoder module is missing')

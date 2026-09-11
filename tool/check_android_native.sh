@@ -60,6 +60,25 @@ for ABI in "${ABI_LIST[@]}"; do
       exit 1
     }
   done
+  for symbol in \
+    zic_cursor_known_frame_count \
+    zic_cursor_full_canvas_frame_count \
+    zic_cursor_independent_frame_count \
+    zic_cursor_max_dependent_run \
+    zic_frame_native_prepare_us \
+    zic_frame_native_canvas_prepare_us \
+    zic_frame_native_fragment_decode_us \
+    zic_frame_native_composite_us \
+    zic_frame_native_frame_copy_us \
+    zic_frame_native_thread_id \
+    zic_frame_native_cpu_start \
+    zic_frame_native_cpu_end \
+    zic_frame_native_cpu_allowed_mask; do
+    grep -q "$symbol" <<< "$SYMBOLS" || {
+      echo "missing native diagnostic symbol $symbol in $LIB" >&2
+      exit 1
+    }
+  done
   if grep -q 'Java_dev_zic_texture_NativeBlitter_configure' <<< "$SYMBOLS"; then
     echo "obsolete standalone texture configure JNI symbol remains in $LIB" >&2
     exit 1

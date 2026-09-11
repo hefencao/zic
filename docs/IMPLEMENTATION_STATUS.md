@@ -191,7 +191,7 @@
 - holder-driven playback 在 successor 缺失时保持当前 output，使用 one-shot deadline wake；两个 decode isolate常驻，current 后续最多双帧批次。
 - Android output 使用默认 platform channel、单 blit lane和普通 main-thread post；used texture 不跨 Reader 复用。
 - Reader 资源会话最多保留 1 个 idle chapter、TTL 2 分钟；保留 resource session，释放 Reader binding、projection、playback wake 和 used texture。
-- Native identity保持 `zic-media-core-dev134-abi6-lib00121400`；dev.175 修改 Rust 内部锁临界区与 WebP frame preparation/decode 分段，但不修改 FFI ABI/JNI identity。
+- Native identity已升级为 `zic-media-core-dev135-abi6-lib00121500`：ABI仍为6，但新增observation-only WebP native prepare/canvas/fragment/composite/frame-copy、OS thread/CPU allowed mask与frame-structure getter，因此同步提升library/build identity并把新symbol纳入header/repo/Android native gate；重建前源码dev135对旧JNI dev134会被`check_android_native.sh`机械拒绝，官方native wrapper重建三ABI后通过。该诊断只用于归因，不驱动waterline、worker placement、DecodeTarget、transport、presentation或CPU affinity。
 - 核心文档已按 production code 重新对齐；Reader 综合决策见 ADR 0122，Home 冷启动与封面前台完成见 ADR 0123/0124。
 ## 当前开放问题
 - 需在 dev.180 真机复测快速前后跨页：current N→N+1后N必须立即进入previous下载角色（首位priority780）与后1decode窗，同时可保留last output；反向切页同理。大跳页后远离7/3的旧current只能保output，不得继续生成download/decode。继续记录current pressure/preemption，但本轮不再改其策略。

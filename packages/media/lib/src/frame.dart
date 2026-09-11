@@ -98,6 +98,26 @@ abstract interface class FrameDecodeTiming {
   int get workerPlacementStatus;
 }
 
+/// Optional native-only decode breakdown and OS execution snapshot.
+///
+/// This capability is diagnostic only. Sessions must never use these fields to
+/// choose waterlines, worker placement, transport policy, or presentation.
+abstract interface class FrameNativeDecodeObservation {
+  int get nativePrepareMicros;
+  int get nativeCanvasPrepareMicros;
+  int get nativeFragmentDecodeMicros;
+  int get nativeCompositeMicros;
+  int get nativeFrameCopyMicros;
+  int get nativeThreadId;
+  int get nativeCpuStart;
+  int get nativeCpuEnd;
+  int get nativeCpuAllowedMask;
+  int get nativeKnownFrameCount;
+  int get nativeFullCanvasFrameCount;
+  int get nativeIndependentFrameCount;
+  int get nativeMaxDependentRun;
+}
+
 enum CursorStepKind { frame, needMoreData, end }
 
 final class CursorStep {

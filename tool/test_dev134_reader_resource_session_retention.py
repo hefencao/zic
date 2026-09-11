@@ -94,10 +94,10 @@ for production in (native_pool, native_cursor, native_lib, native_header):
 if (ROOT / "native/media_core/src/android_performance.rs").exists():
     raise SystemExit("superseded Android affinity source must be deleted")
 require(native_pool, "const placementStatus = 0", "stable Trace compatibility")
-if "pub const LIB_VERSION: u32 = 0x0012_1400" not in native_lib:
-    raise SystemExit("dev.134 native library version missing")
-if native_identity != "zic-media-core-dev134-abi6-lib00121400":
-    raise SystemExit(f"unexpected dev.134 native identity: {native_identity}")
+if "pub const LIB_VERSION: u32 = 0x0012_1500" not in native_lib:
+    raise SystemExit("dev.135 superseding native library version missing")
+if native_identity != "zic-media-core-dev135-abi6-lib00121500":
+    raise SystemExit(f"unexpected dev.135 superseding native identity: {native_identity}")
 
 for token in (
     "BLIT_LANE_COUNT = 1",

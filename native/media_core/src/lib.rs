@@ -8,12 +8,14 @@
 mod android_texture;
 mod webp;
 
+use std::os::raw::{c_int, c_void};
 use std::ptr;
 use std::slice;
+use std::time::Instant;
 use std::sync::{Arc, RwLock};
 
 pub const ABI_VERSION: u32 = 6;
-pub const LIB_VERSION: u32 = 0x0012_1400;
+pub const LIB_VERSION: u32 = 0x0012_1500;
 
 #[repr(u32)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -174,6 +176,47 @@ pub struct Cursor {
     decoder: webp::Decoder,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct NativeExecutionSnapshot {
+    thread_id: u64,
+    cpu: i32,
+    cpu_allowed_mask: u64,
+}
+
+#[cfg(any(target_os = "android", target_os = "linux"))]
+fn native_execution_snapshot() -> NativeExecutionSnapshot {
+    extern "C" {
+        fn gettid() -> c_int;
+        fn sched_getcpu() -> c_int;
+        fn sched_getaffinity(pid: c_int, cpusetsize: usize, mask: *mut c_void) -> c_int;
+    }
+
+    let mut affinity_words = [0u64; 16];
+    let thread_id = unsafe { gettid() };
+    let cpu = unsafe { sched_getcpu() };
+    let affinity_status = unsafe {
+        sched_getaffinity(
+            0,
+            std::mem::size_of_val(&affinity_words),
+            affinity_words.as_mut_ptr().cast::<c_void>(),
+        )
+    };
+    NativeExecutionSnapshot {
+        thread_id: thread_id.max(0) as u64,
+        cpu,
+        cpu_allowed_mask: if affinity_status == 0 {
+            affinity_words[0]
+        } else {
+            0
+        },
+    }
+}
+
+#[cfg(not(any(target_os = "android", target_os = "linux")))]
+fn native_execution_snapshot() -> NativeExecutionSnapshot {
+    NativeExecutionSnapshot::default()
+}
+
 #[derive(Debug)]
 struct FrameData {
     epoch: u64,
@@ -184,6 +227,15 @@ struct FrameData {
     duration_us: u64,
     format: PixelFormat,
     bytes: Vec<u8>,
+    native_prepare_us: u64,
+    native_canvas_prepare_us: u64,
+    native_fragment_decode_us: u64,
+    native_composite_us: u64,
+    native_frame_copy_us: u64,
+    native_thread_id: u64,
+    native_cpu_start: i32,
+    native_cpu_end: i32,
+    native_cpu_allowed_mask: u64,
 }
 
 pub struct FrameHandle {
@@ -203,6 +255,15 @@ impl FrameHandle {
                 duration_us: 16_000,
                 format: PixelFormat::Rgba8888,
                 bytes,
+                native_prepare_us: 0,
+                native_canvas_prepare_us: 0,
+                native_fragment_decode_us: 0,
+                native_composite_us: 0,
+                native_frame_copy_us: 0,
+                native_thread_id: 0,
+                native_cpu_start: -1,
+                native_cpu_end: -1,
+                native_cpu_allowed_mask: 0,
             }),
         }
     }
@@ -475,6 +536,8 @@ pub unsafe extern "C" fn zic_cursor_decode_next(
     if epoch != cursor.epoch {
         return CursorStatus::StaleEpoch as u32;
     }
+    let execution_start = native_execution_snapshot();
+    let prepare_started = Instant::now();
     let (prepared, source_sealed) = {
         let Ok(source) = cursor.source.read() else {
             return CursorStatus::Failed as u32;
@@ -495,6 +558,7 @@ pub unsafe extern "C" fn zic_cursor_decode_next(
             ),
         }
     };
+    let native_prepare_us = prepare_started.elapsed().as_micros() as u64;
 
     // Preparing a frame owns the source read lock only long enough to refresh
     // demux metadata and copy the exact compressed fragment required next.
@@ -513,6 +577,15 @@ pub unsafe extern "C" fn zic_cursor_decode_next(
                     duration_us: decoded.duration_us,
                     format: PixelFormat::Rgba8888,
                     bytes: decoded.bytes,
+                    native_prepare_us,
+                    native_canvas_prepare_us: decoded.canvas_prepare_us,
+                    native_fragment_decode_us: decoded.fragment_decode_us,
+                    native_composite_us: decoded.composite_us,
+                    native_frame_copy_us: decoded.frame_copy_us,
+                    native_thread_id: execution_start.thread_id,
+                    native_cpu_start: execution_start.cpu,
+                    native_cpu_end: native_execution_snapshot().cpu,
+                    native_cpu_allowed_mask: execution_start.cpu_allowed_mask,
                 }),
             };
             cursor.next_index = cursor.next_index.saturating_add(1);
@@ -558,6 +631,34 @@ pub unsafe extern "C" fn zic_cursor_metadata_complete(cursor: *const Cursor) -> 
 #[no_mangle]
 pub unsafe extern "C" fn zic_cursor_cycle(cursor: *const Cursor) -> u32 {
     cursor.as_ref().map_or(0, |cursor| cursor.cycle)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_cursor_known_frame_count(cursor: *const Cursor) -> u32 {
+    cursor
+        .as_ref()
+        .map_or(0, |cursor| cursor.decoder.frame_structure_stats().0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_cursor_full_canvas_frame_count(cursor: *const Cursor) -> u32 {
+    cursor
+        .as_ref()
+        .map_or(0, |cursor| cursor.decoder.frame_structure_stats().1)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_cursor_independent_frame_count(cursor: *const Cursor) -> u32 {
+    cursor
+        .as_ref()
+        .map_or(0, |cursor| cursor.decoder.frame_structure_stats().2)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_cursor_max_dependent_run(cursor: *const Cursor) -> u32 {
+    cursor
+        .as_ref()
+        .map_or(0, |cursor| cursor.decoder.frame_structure_stats().3)
 }
 
 #[no_mangle]
@@ -646,6 +747,61 @@ pub unsafe extern "C" fn zic_frame_format(frame: *const FrameHandle) -> u32 {
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn zic_frame_native_prepare_us(frame: *const FrameHandle) -> u64 {
+    frame.as_ref().map_or(0, |frame| frame.data.native_prepare_us)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_frame_native_canvas_prepare_us(frame: *const FrameHandle) -> u64 {
+    frame
+        .as_ref()
+        .map_or(0, |frame| frame.data.native_canvas_prepare_us)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_frame_native_fragment_decode_us(frame: *const FrameHandle) -> u64 {
+    frame
+        .as_ref()
+        .map_or(0, |frame| frame.data.native_fragment_decode_us)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_frame_native_composite_us(frame: *const FrameHandle) -> u64 {
+    frame
+        .as_ref()
+        .map_or(0, |frame| frame.data.native_composite_us)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_frame_native_frame_copy_us(frame: *const FrameHandle) -> u64 {
+    frame
+        .as_ref()
+        .map_or(0, |frame| frame.data.native_frame_copy_us)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_frame_native_thread_id(frame: *const FrameHandle) -> u64 {
+    frame.as_ref().map_or(0, |frame| frame.data.native_thread_id)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_frame_native_cpu_start(frame: *const FrameHandle) -> i32 {
+    frame.as_ref().map_or(-1, |frame| frame.data.native_cpu_start)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_frame_native_cpu_end(frame: *const FrameHandle) -> i32 {
+    frame.as_ref().map_or(-1, |frame| frame.data.native_cpu_end)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn zic_frame_native_cpu_allowed_mask(frame: *const FrameHandle) -> u64 {
+    frame
+        .as_ref()
+        .map_or(0, |frame| frame.data.native_cpu_allowed_mask)
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn zic_frame_len(frame: *const FrameHandle) -> usize {
     frame.as_ref().map_or(0, |frame| frame.data.bytes.len())
 }
@@ -668,7 +824,7 @@ mod tests {
     #[test]
     fn exported_versions_are_stable() {
         assert_eq!(zic_abi_version(), 6);
-        assert_eq!(zic_version(), 0x0012_1400);
+        assert_eq!(zic_version(), 0x0012_1500);
         // These values are provided by the linked system libwebp, so their
         // exact version is platform-dependent while the exported ABI remains
         // stable.

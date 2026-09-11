@@ -54,6 +54,8 @@ typedef _FrameU64Native = Uint64 Function(Pointer<_Frame> frame);
 typedef _FrameU64Dart = int Function(Pointer<_Frame> frame);
 typedef _FrameU32Native = Uint32 Function(Pointer<_Frame> frame);
 typedef _FrameU32Dart = int Function(Pointer<_Frame> frame);
+typedef _FrameI32Native = Int32 Function(Pointer<_Frame> frame);
+typedef _FrameI32Dart = int Function(Pointer<_Frame> frame);
 typedef _FrameLenNative = UintPtr Function(Pointer<_Frame> frame);
 typedef _FrameLenDart = int Function(Pointer<_Frame> frame);
 typedef _FrameDataNative = Pointer<Uint8> Function(Pointer<_Frame> frame);
@@ -225,6 +227,19 @@ final class NativeCursor
             workerRoundTripMicros: result.workerRoundTripMicros,
             workerIndex: result.workerIndex,
             workerPlacementStatus: result.workerPlacementStatus,
+            nativePrepareMicros: result.nativePrepareMicros,
+            nativeCanvasPrepareMicros: result.nativeCanvasPrepareMicros,
+            nativeFragmentDecodeMicros: result.nativeFragmentDecodeMicros,
+            nativeCompositeMicros: result.nativeCompositeMicros,
+            nativeFrameCopyMicros: result.nativeFrameCopyMicros,
+            nativeThreadId: result.nativeThreadId,
+            nativeCpuStart: result.nativeCpuStart,
+            nativeCpuEnd: result.nativeCpuEnd,
+            nativeCpuAllowedMask: result.nativeCpuAllowedMask,
+            nativeKnownFrameCount: result.nativeKnownFrameCount,
+            nativeFullCanvasFrameCount: result.nativeFullCanvasFrameCount,
+            nativeIndependentFrameCount: result.nativeIndependentFrameCount,
+            nativeMaxDependentRun: result.nativeMaxDependentRun,
             dispatchMicros: (result.workerRoundTripMicros -
                     result.nativeMicros -
                     result.nativeMetadataMicros)
@@ -330,7 +345,11 @@ final class NativeCursor
 }
 
 final class NativeFrame
-    implements PixelFrame, FrameCycleInfo, FrameDecodeTiming {
+    implements
+        PixelFrame,
+        FrameCycleInfo,
+        FrameDecodeTiming,
+        FrameNativeDecodeObservation {
   NativeFrame._(
     this._ptr,
     this._api, {
@@ -342,6 +361,19 @@ final class NativeFrame
     this.workerRoundTripMicros = 0,
     this.workerIndex = -1,
     this.workerPlacementStatus = 0,
+    this.nativePrepareMicros = 0,
+    this.nativeCanvasPrepareMicros = 0,
+    this.nativeFragmentDecodeMicros = 0,
+    this.nativeCompositeMicros = 0,
+    this.nativeFrameCopyMicros = 0,
+    this.nativeThreadId = 0,
+    this.nativeCpuStart = -1,
+    this.nativeCpuEnd = -1,
+    this.nativeCpuAllowedMask = 0,
+    this.nativeKnownFrameCount = 0,
+    this.nativeFullCanvasFrameCount = 0,
+    this.nativeIndependentFrameCount = 0,
+    this.nativeMaxDependentRun = 0,
   });
 
   Pointer<_Frame> _ptr;
@@ -370,6 +402,45 @@ final class NativeFrame
 
   @override
   final int workerPlacementStatus;
+
+  @override
+  final int nativePrepareMicros;
+
+  @override
+  final int nativeCanvasPrepareMicros;
+
+  @override
+  final int nativeFragmentDecodeMicros;
+
+  @override
+  final int nativeCompositeMicros;
+
+  @override
+  final int nativeFrameCopyMicros;
+
+  @override
+  final int nativeThreadId;
+
+  @override
+  final int nativeCpuStart;
+
+  @override
+  final int nativeCpuEnd;
+
+  @override
+  final int nativeCpuAllowedMask;
+
+  @override
+  final int nativeKnownFrameCount;
+
+  @override
+  final int nativeFullCanvasFrameCount;
+
+  @override
+  final int nativeIndependentFrameCount;
+
+  @override
+  final int nativeMaxDependentRun;
 
   @override
   bool get disposed => _ptr == nullptr;
@@ -472,6 +543,20 @@ final class _CursorApi {
         cycle = lib.lookupFunction<_CursorU32Native, _CursorU32Dart>(
           'zic_cursor_cycle',
         ),
+        knownFrameCount = lib.lookupFunction<_CursorU32Native, _CursorU32Dart>(
+          'zic_cursor_known_frame_count',
+        ),
+        fullCanvasFrameCount =
+            lib.lookupFunction<_CursorU32Native, _CursorU32Dart>(
+          'zic_cursor_full_canvas_frame_count',
+        ),
+        independentFrameCount =
+            lib.lookupFunction<_CursorU32Native, _CursorU32Dart>(
+          'zic_cursor_independent_frame_count',
+        ),
+        maxDependentRun = lib.lookupFunction<_CursorU32Native, _CursorU32Dart>(
+          'zic_cursor_max_dependent_run',
+        ),
         rewind = lib.lookupFunction<_CursorRewindNative, _CursorRewindDart>(
           'zic_cursor_rewind',
         ),
@@ -504,6 +589,40 @@ final class _CursorApi {
         frameFormat = lib.lookupFunction<_FrameU32Native, _FrameU32Dart>(
           'zic_frame_format',
         ),
+        frameNativePrepareUs = lib.lookupFunction<_FrameU64Native, _FrameU64Dart>(
+          'zic_frame_native_prepare_us',
+        ),
+        frameNativeCanvasPrepareUs =
+            lib.lookupFunction<_FrameU64Native, _FrameU64Dart>(
+          'zic_frame_native_canvas_prepare_us',
+        ),
+        frameNativeFragmentDecodeUs =
+            lib.lookupFunction<_FrameU64Native, _FrameU64Dart>(
+          'zic_frame_native_fragment_decode_us',
+        ),
+        frameNativeCompositeUs =
+            lib.lookupFunction<_FrameU64Native, _FrameU64Dart>(
+          'zic_frame_native_composite_us',
+        ),
+        frameNativeFrameCopyUs =
+            lib.lookupFunction<_FrameU64Native, _FrameU64Dart>(
+          'zic_frame_native_frame_copy_us',
+        ),
+        frameNativeThreadId =
+            lib.lookupFunction<_FrameU64Native, _FrameU64Dart>(
+          'zic_frame_native_thread_id',
+        ),
+        frameNativeCpuStart =
+            lib.lookupFunction<_FrameI32Native, _FrameI32Dart>(
+          'zic_frame_native_cpu_start',
+        ),
+        frameNativeCpuEnd = lib.lookupFunction<_FrameI32Native, _FrameI32Dart>(
+          'zic_frame_native_cpu_end',
+        ),
+        frameNativeCpuAllowedMask =
+            lib.lookupFunction<_FrameU64Native, _FrameU64Dart>(
+          'zic_frame_native_cpu_allowed_mask',
+        ),
         frameLength = lib.lookupFunction<_FrameLenNative, _FrameLenDart>(
           'zic_frame_len',
         ),
@@ -519,6 +638,10 @@ final class _CursorApi {
   final _CursorU32Dart loopCount;
   final _CursorU32Dart metadataComplete;
   final _CursorU32Dart cycle;
+  final _CursorU32Dart knownFrameCount;
+  final _CursorU32Dart fullCanvasFrameCount;
+  final _CursorU32Dart independentFrameCount;
+  final _CursorU32Dart maxDependentRun;
   final _CursorRewindDart rewind;
   final _FrameRetainDart frameRetain;
   final _FrameReleaseDart frameRelease;
@@ -529,6 +652,15 @@ final class _CursorApi {
   final _FrameU32Dart frameHeight;
   final _FrameU64Dart frameDurationUs;
   final _FrameU32Dart frameFormat;
+  final _FrameU64Dart frameNativePrepareUs;
+  final _FrameU64Dart frameNativeCanvasPrepareUs;
+  final _FrameU64Dart frameNativeFragmentDecodeUs;
+  final _FrameU64Dart frameNativeCompositeUs;
+  final _FrameU64Dart frameNativeFrameCopyUs;
+  final _FrameU64Dart frameNativeThreadId;
+  final _FrameI32Dart frameNativeCpuStart;
+  final _FrameI32Dart frameNativeCpuEnd;
+  final _FrameU64Dart frameNativeCpuAllowedMask;
   final _FrameLenDart frameLength;
   final _FrameDataDart frameData;
 }

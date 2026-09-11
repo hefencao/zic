@@ -122,6 +122,15 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
     'preparedDepth',
     'decodeMicros',
     'nativeDecodeMicros',
+    'nativePrepareMicros',
+    'nativeCanvasPrepareMicros',
+    'nativeFragmentDecodeMicros',
+    'nativeCompositeMicros',
+    'nativeFrameCopyMicros',
+    'nativeKnownFrameCount',
+    'nativeFullCanvasFrameCount',
+    'nativeIndependentFrameCount',
+    'nativeMaxDependentRun',
     'nativeMetadataMicros',
     'decodeDispatchMicros',
     'workerReadyMicros',
@@ -347,11 +356,18 @@ final class DebugTraceLog extends ChangeNotifier implements TraceSink {
       TraceEventKind.pageLayoutSnapshot =>
         '${event.payload['pageIndex']}|${event.payload['role']}|'
             '${event.payload['interaction']}',
+      TraceEventKind.frameDecoded =>
+        '${event.payload['nativeThreadId']}|${event.payload['nativeCpuStart']}|'
+            '${event.payload['nativeCpuEnd']}|'
+            '${event.payload['nativeCpuAllowedMask']}',
       TraceEventKind.framePipelineTiming =>
         '${event.payload['traceReason']}|${event.payload['dominantStage']}|'
             '${event.payload['role']}|${event.payload['decodedRole']}|'
             '${event.payload['uploadRole']}|'
-            '${event.payload['platformResidentReuse']}',
+            '${event.payload['platformResidentReuse']}|'
+            '${event.payload['nativeThreadId']}|${event.payload['nativeCpuStart']}|'
+            '${event.payload['nativeCpuEnd']}|'
+            '${event.payload['nativeCpuAllowedMask']}',
       TraceEventKind.decodeRefill =>
         '${event.payload['role']}|${event.payload['stage']}|'
             '${event.payload['sourceWake']}',

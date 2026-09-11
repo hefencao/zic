@@ -76,6 +76,10 @@ uint32_t zic_cursor_frame_count(const zic_cursor *cursor);
 uint32_t zic_cursor_loop_count(const zic_cursor *cursor);
 uint32_t zic_cursor_metadata_complete(const zic_cursor *cursor);
 uint32_t zic_cursor_cycle(const zic_cursor *cursor);
+uint32_t zic_cursor_known_frame_count(const zic_cursor *cursor);
+uint32_t zic_cursor_full_canvas_frame_count(const zic_cursor *cursor);
+uint32_t zic_cursor_independent_frame_count(const zic_cursor *cursor);
+uint32_t zic_cursor_max_dependent_run(const zic_cursor *cursor);
 uint32_t zic_cursor_rewind(zic_cursor *cursor, uint64_t epoch);
 
 zic_frame *zic_frame_retain(const zic_frame *frame);
@@ -87,6 +91,15 @@ uint32_t zic_frame_width(const zic_frame *frame);
 uint32_t zic_frame_height(const zic_frame *frame);
 uint64_t zic_frame_duration_us(const zic_frame *frame);
 uint32_t zic_frame_format(const zic_frame *frame);
+uint64_t zic_frame_native_prepare_us(const zic_frame *frame);
+uint64_t zic_frame_native_canvas_prepare_us(const zic_frame *frame);
+uint64_t zic_frame_native_fragment_decode_us(const zic_frame *frame);
+uint64_t zic_frame_native_composite_us(const zic_frame *frame);
+uint64_t zic_frame_native_frame_copy_us(const zic_frame *frame);
+uint64_t zic_frame_native_thread_id(const zic_frame *frame);
+int32_t zic_frame_native_cpu_start(const zic_frame *frame);
+int32_t zic_frame_native_cpu_end(const zic_frame *frame);
+uint64_t zic_frame_native_cpu_allowed_mask(const zic_frame *frame);
 size_t zic_frame_len(const zic_frame *frame);
 const uint8_t *zic_frame_data(const zic_frame *frame);
 

@@ -17,6 +17,19 @@ final class _NativeDecodeResult {
     required this.workerQueueMicros,
     required this.workerIndex,
     required this.workerPlacementStatus,
+    required this.nativePrepareMicros,
+    required this.nativeCanvasPrepareMicros,
+    required this.nativeFragmentDecodeMicros,
+    required this.nativeCompositeMicros,
+    required this.nativeFrameCopyMicros,
+    required this.nativeThreadId,
+    required this.nativeCpuStart,
+    required this.nativeCpuEnd,
+    required this.nativeCpuAllowedMask,
+    required this.nativeKnownFrameCount,
+    required this.nativeFullCanvasFrameCount,
+    required this.nativeIndependentFrameCount,
+    required this.nativeMaxDependentRun,
   });
 
   final int status;
@@ -32,6 +45,19 @@ final class _NativeDecodeResult {
   final int workerQueueMicros;
   final int workerIndex;
   final int workerPlacementStatus;
+  final int nativePrepareMicros;
+  final int nativeCanvasPrepareMicros;
+  final int nativeFragmentDecodeMicros;
+  final int nativeCompositeMicros;
+  final int nativeFrameCopyMicros;
+  final int nativeThreadId;
+  final int nativeCpuStart;
+  final int nativeCpuEnd;
+  final int nativeCpuAllowedMask;
+  final int nativeKnownFrameCount;
+  final int nativeFullCanvasFrameCount;
+  final int nativeIndependentFrameCount;
+  final int nativeMaxDependentRun;
 }
 
 /// Process-lifetime pool: page/cursor disposal never owns worker shutdown.
@@ -347,6 +373,23 @@ final class _NativeDecodeWorkerPool {
               workerQueueMicros: index == 0 ? workerQueueMicros : 0,
               workerIndex: worker.index,
               workerPlacementStatus: worker.placementStatus,
+              nativePrepareMicros: results[index].nativePrepareMicros,
+              nativeCanvasPrepareMicros:
+                  results[index].nativeCanvasPrepareMicros,
+              nativeFragmentDecodeMicros:
+                  results[index].nativeFragmentDecodeMicros,
+              nativeCompositeMicros: results[index].nativeCompositeMicros,
+              nativeFrameCopyMicros: results[index].nativeFrameCopyMicros,
+              nativeThreadId: results[index].nativeThreadId,
+              nativeCpuStart: results[index].nativeCpuStart,
+              nativeCpuEnd: results[index].nativeCpuEnd,
+              nativeCpuAllowedMask: results[index].nativeCpuAllowedMask,
+              nativeKnownFrameCount: results[index].nativeKnownFrameCount,
+              nativeFullCanvasFrameCount:
+                  results[index].nativeFullCanvasFrameCount,
+              nativeIndependentFrameCount:
+                  results[index].nativeIndependentFrameCount,
+              nativeMaxDependentRun: results[index].nativeMaxDependentRun,
             ),
         ],
       );
@@ -452,7 +495,7 @@ final class _NativeDecodeWorker {
       final elapsed = workerRoundTrip.elapsedMicroseconds;
       final results = <_NativeDecodeResult>[];
       for (final item in value) {
-        if (item is! List<Object?> || item.length < 8) {
+        if (item is! List<Object?> || item.length < 21) {
           throw StateError('incomplete native decode worker response: $item');
         }
         results.add(
@@ -470,6 +513,19 @@ final class _NativeDecodeWorker {
             workerQueueMicros: 0,
             workerIndex: index,
             workerPlacementStatus: placementStatus,
+            nativePrepareMicros: item[8]! as int,
+            nativeCanvasPrepareMicros: item[9]! as int,
+            nativeFragmentDecodeMicros: item[10]! as int,
+            nativeCompositeMicros: item[11]! as int,
+            nativeFrameCopyMicros: item[12]! as int,
+            nativeThreadId: item[13]! as int,
+            nativeCpuStart: item[14]! as int,
+            nativeCpuEnd: item[15]! as int,
+            nativeCpuAllowedMask: item[16]! as int,
+            nativeKnownFrameCount: item[17]! as int,
+            nativeFullCanvasFrameCount: item[18]! as int,
+            nativeIndependentFrameCount: item[19]! as int,
+            nativeMaxDependentRun: item[20]! as int,
           ),
         );
       }
@@ -512,19 +568,24 @@ void _nativeDecodeWorkerEntry(List<Object?> arguments) {
     final decoded = <List<Object?>>[];
     try {
       final cursor = Pointer<_Cursor>.fromAddress(cursorAddress);
-      for (var index = 0; index < maxFrames; index++) {
-        out.value = nullptr;
-        final stopwatch = Stopwatch()..start();
-        final status = api.decode(cursor, epoch, out);
-        final nativeMicros = stopwatch.elapsedMicroseconds;
+
+      List<Object?> resultFor({
+        required int status,
+        required Pointer<_Frame> frame,
+        required int nativeMicros,
+      }) {
         final metadataStopwatch = Stopwatch()..start();
-        final frameAddress = out.value == nullptr ? 0 : out.value.address;
+        final frameAddress = frame == nullptr ? 0 : frame.address;
         final frameCount = api.frameCount(cursor);
         final loopCount = api.loopCount(cursor);
         final metadataComplete = api.metadataComplete(cursor) != 0;
         final cycle = api.cycle(cursor);
+        final nativeKnownFrameCount = api.knownFrameCount(cursor);
+        final nativeFullCanvasFrameCount = api.fullCanvasFrameCount(cursor);
+        final nativeIndependentFrameCount = api.independentFrameCount(cursor);
+        final nativeMaxDependentRun = api.maxDependentRun(cursor);
         final nativeMetadataMicros = metadataStopwatch.elapsedMicroseconds;
-        decoded.add(<Object?>[
+        return <Object?>[
           status,
           frameAddress,
           frameCount,
@@ -533,7 +594,34 @@ void _nativeDecodeWorkerEntry(List<Object?> arguments) {
           cycle,
           nativeMicros,
           nativeMetadataMicros,
-        ]);
+          frameAddress == 0 ? 0 : api.frameNativePrepareUs(frame),
+          frameAddress == 0 ? 0 : api.frameNativeCanvasPrepareUs(frame),
+          frameAddress == 0 ? 0 : api.frameNativeFragmentDecodeUs(frame),
+          frameAddress == 0 ? 0 : api.frameNativeCompositeUs(frame),
+          frameAddress == 0 ? 0 : api.frameNativeFrameCopyUs(frame),
+          frameAddress == 0 ? 0 : api.frameNativeThreadId(frame),
+          frameAddress == 0 ? -1 : api.frameNativeCpuStart(frame),
+          frameAddress == 0 ? -1 : api.frameNativeCpuEnd(frame),
+          frameAddress == 0 ? 0 : api.frameNativeCpuAllowedMask(frame),
+          nativeKnownFrameCount,
+          nativeFullCanvasFrameCount,
+          nativeIndependentFrameCount,
+          nativeMaxDependentRun,
+        ];
+      }
+
+      for (var index = 0; index < maxFrames; index++) {
+        out.value = nullptr;
+        final stopwatch = Stopwatch()..start();
+        final status = api.decode(cursor, epoch, out);
+        final nativeMicros = stopwatch.elapsedMicroseconds;
+        decoded.add(
+          resultFor(
+            status: status,
+            frame: out.value,
+            nativeMicros: nativeMicros,
+          ),
+        );
         if (status != _CursorStatus.ok.index) {
           break;
         }

@@ -836,6 +836,16 @@ final class UploadSession {
         'nativeMetadataMicros': decoded?.nativeMetadataMicros ?? 0,
         'decodeMicros': decoded?.decodeMicros ?? 0,
         'workerIndex': decoded?.workerIndex ?? -1,
+        'nativePrepareMicros': decoded?.nativePrepareMicros ?? 0,
+        'nativeCanvasPrepareMicros': decoded?.nativeCanvasPrepareMicros ?? 0,
+        'nativeFragmentDecodeMicros':
+            decoded?.nativeFragmentDecodeMicros ?? 0,
+        'nativeCompositeMicros': decoded?.nativeCompositeMicros ?? 0,
+        'nativeFrameCopyMicros': decoded?.nativeFrameCopyMicros ?? 0,
+        'nativeThreadId': decoded?.nativeThreadId ?? 0,
+        'nativeCpuStart': decoded?.nativeCpuStart ?? -1,
+        'nativeCpuEnd': decoded?.nativeCpuEnd ?? -1,
+        'nativeCpuAllowedMask': decoded?.nativeCpuAllowedMask ?? 0,
         'decodedToUploadMicros': timing?.decodedToUploadMicros ?? 0,
         'decodedLeadMicros': timing?.decodedLeadMicros ?? 0,
         'uploadBackpressureMicros':

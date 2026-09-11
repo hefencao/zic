@@ -93,6 +93,15 @@ final class DecodedFrameTiming {
     required this.decodeMicros,
     required this.workerIndex,
     required this.workerPlacementStatus,
+    this.nativePrepareMicros = 0,
+    this.nativeCanvasPrepareMicros = 0,
+    this.nativeFragmentDecodeMicros = 0,
+    this.nativeCompositeMicros = 0,
+    this.nativeFrameCopyMicros = 0,
+    this.nativeThreadId = 0,
+    this.nativeCpuStart = -1,
+    this.nativeCpuEnd = -1,
+    this.nativeCpuAllowedMask = 0,
     required this.sourceLength,
     required this.sourceSealed,
   });
@@ -114,6 +123,15 @@ final class DecodedFrameTiming {
   final int decodeMicros;
   final int workerIndex;
   final int workerPlacementStatus;
+  final int nativePrepareMicros;
+  final int nativeCanvasPrepareMicros;
+  final int nativeFragmentDecodeMicros;
+  final int nativeCompositeMicros;
+  final int nativeFrameCopyMicros;
+  final int nativeThreadId;
+  final int nativeCpuStart;
+  final int nativeCpuEnd;
+  final int nativeCpuAllowedMask;
   final int sourceLength;
   final bool sourceSealed;
 }
@@ -522,6 +540,9 @@ final class DecodeSession {
             final timing = frame is FrameDecodeTiming
                 ? frame as FrameDecodeTiming
                 : null;
+            final nativeObservation = frame is FrameNativeDecodeObservation
+                ? frame as FrameNativeDecodeObservation
+                : null;
             final sourceWaitMicros = _waitingSourceSinceMicros == null
                 ? 0
                 : (decodeStartedAt - _waitingSourceSinceMicros!)
@@ -547,6 +568,20 @@ final class DecodeSession {
               decodeMicros: decodeMicros < 0 ? 0 : decodeMicros,
               workerIndex: timing?.workerIndex ?? -1,
               workerPlacementStatus: timing?.workerPlacementStatus ?? 0,
+              nativePrepareMicros: nativeObservation?.nativePrepareMicros ?? 0,
+              nativeCanvasPrepareMicros:
+                  nativeObservation?.nativeCanvasPrepareMicros ?? 0,
+              nativeFragmentDecodeMicros:
+                  nativeObservation?.nativeFragmentDecodeMicros ?? 0,
+              nativeCompositeMicros:
+                  nativeObservation?.nativeCompositeMicros ?? 0,
+              nativeFrameCopyMicros:
+                  nativeObservation?.nativeFrameCopyMicros ?? 0,
+              nativeThreadId: nativeObservation?.nativeThreadId ?? 0,
+              nativeCpuStart: nativeObservation?.nativeCpuStart ?? -1,
+              nativeCpuEnd: nativeObservation?.nativeCpuEnd ?? -1,
+              nativeCpuAllowedMask:
+                  nativeObservation?.nativeCpuAllowedMask ?? 0,
               sourceLength: source.length,
               sourceSealed: source.sealed,
             );
@@ -586,6 +621,25 @@ final class DecodeSession {
                 'decodeDispatchMicros': frameTiming.dispatchMicros,
                 'workerIndex': frameTiming.workerIndex,
                 'workerPlacementStatus': frameTiming.workerPlacementStatus,
+                'nativePrepareMicros': frameTiming.nativePrepareMicros,
+                'nativeCanvasPrepareMicros':
+                    frameTiming.nativeCanvasPrepareMicros,
+                'nativeFragmentDecodeMicros':
+                    frameTiming.nativeFragmentDecodeMicros,
+                'nativeCompositeMicros': frameTiming.nativeCompositeMicros,
+                'nativeFrameCopyMicros': frameTiming.nativeFrameCopyMicros,
+                'nativeThreadId': frameTiming.nativeThreadId,
+                'nativeCpuStart': frameTiming.nativeCpuStart,
+                'nativeCpuEnd': frameTiming.nativeCpuEnd,
+                'nativeCpuAllowedMask': frameTiming.nativeCpuAllowedMask,
+                'nativeKnownFrameCount':
+                    nativeObservation?.nativeKnownFrameCount ?? 0,
+                'nativeFullCanvasFrameCount':
+                    nativeObservation?.nativeFullCanvasFrameCount ?? 0,
+                'nativeIndependentFrameCount':
+                    nativeObservation?.nativeIndependentFrameCount ?? 0,
+                'nativeMaxDependentRun':
+                    nativeObservation?.nativeMaxDependentRun ?? 0,
                 'width': frame.width,
                 'height': frame.height,
                 'durationMicros': frame.duration.inMicroseconds,
