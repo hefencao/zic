@@ -111,6 +111,7 @@ final class ReaderView extends StatefulWidget {
     this.traceSink = const NoopTraceSink(),
     this.frameTimingSource,
     this.pageBuilder,
+    this.pagePresentationRevisions = const <String, int>{},
     this.demandRevision,
     this.onTap,
     this.verticalStitch = false,
@@ -133,6 +134,12 @@ final class ReaderView extends StatefulWidget {
   final TraceSink traceSink;
   final ReaderFrameTimingSource? frameTimingSource;
   final ReaderPageBuilder? pageBuilder;
+
+  /// Presentation-only rebuild revisions keyed by stable page asset identity.
+  ///
+  /// A force reload can replace one page's presentation subtree without
+  /// recreating ReaderController, navigation state, or unrelated page slots.
+  final Map<String, int> pagePresentationRevisions;
   final int Function()? demandRevision;
   final VoidCallback? onTap;
 
@@ -430,6 +437,21 @@ final class _ReaderViewState extends State<ReaderView>
         oldWidget.traceSink != widget.traceSink ||
         oldWidget.clock != widget.clock) {
       _pageSlots = _createPageSlots();
+    } else if (!mapEquals(
+      oldWidget.pagePresentationRevisions,
+      widget.pagePresentationRevisions,
+    )) {
+      final nextSlots = List<Widget>.of(_pageSlots);
+      final pages = widget.controller.chapter.pages;
+      for (var index = 0; index < pages.length; index++) {
+        final assetKey = pages[index].assetKey;
+        if ((oldWidget.pagePresentationRevisions[assetKey] ?? 0) ==
+            (widget.pagePresentationRevisions[assetKey] ?? 0)) {
+          continue;
+        }
+        nextSlots[index] = _createPageSlot(index);
+      }
+      _pageSlots = nextSlots;
     }
     final stitchChanged = oldWidget.verticalStitch != widget.verticalStitch;
     final nextRatios =
@@ -642,43 +664,46 @@ final class _ReaderViewState extends State<ReaderView>
         growable: false,
       );
 
-  List<Widget> _createPageSlots() {
-    final chapter = widget.controller.chapter;
-    return List<Widget>.generate(chapter.pages.length, (index) {
-      final asset = chapter.pages[index];
-      return _ReaderPageShell(
-        key: ValueKey<String>('reader-page-shell:${asset.assetKey}'),
-        controller: widget.controller,
-        keepAliveCenter: _verticalKeepAliveCenter,
-        asset: asset,
-        index: index,
-        clock: widget.clock,
-        traceSink: widget.traceSink,
-        pageBuilder: widget.pageBuilder,
-        demandRevision: widget.demandRevision,
-        onTap: widget.onTap,
-        onZoomChanged: (zoomed) {
-          final next = zoomed ? index : null;
-          if (_zoomedPage == next) return;
-          setState(() => _zoomedPage = next);
-        },
-        zoomStageFirst: widget.zoomStageFirst,
-        zoomStageSecond: widget.zoomStageSecond,
-        longPressZoomEnabled: widget.longPressZoomEnabled,
-        longPressZoomRestoreOnRelease: widget.longPressZoomRestoreOnRelease,
-        longPressZoomMoveMode: widget.longPressZoomMoveMode,
-        longPressZoomPanRatio: widget.longPressZoomPanRatio,
-        longPressZoomLimitToViewport: widget.longPressZoomLimitToViewport,
-        doubleTapZoomOrigin: widget.doubleTapZoomOrigin,
-        pageAspectRatio: () => _pageAspectRatioFor(index),
-        onScaleChanged: widget.onZoomScaleChanged,
-        onStripLensStart: _handleStripLensStartedAt,
-        onStripPanHoldStart: _handleStripPanHoldStartedAt,
-        onStripLensMove: _handleStripLensMovedTo,
-        onStripLensEnd: _handleStripLensFinished,
-        onStripDoubleTap: _handleStripDoubleTappedAt,
+  List<Widget> _createPageSlots() => List<Widget>.generate(
+        widget.controller.chapter.pages.length,
+        _createPageSlot,
+        growable: false,
       );
-    }, growable: false);
+
+  Widget _createPageSlot(int index) {
+    final asset = widget.controller.chapter.pages[index];
+    return _ReaderPageShell(
+      key: ValueKey<String>('reader-page-shell:${asset.assetKey}'),
+      controller: widget.controller,
+      keepAliveCenter: _verticalKeepAliveCenter,
+      asset: asset,
+      index: index,
+      clock: widget.clock,
+      traceSink: widget.traceSink,
+      pageBuilder: widget.pageBuilder,
+      demandRevision: widget.demandRevision,
+      onTap: widget.onTap,
+      onZoomChanged: (zoomed) {
+        final next = zoomed ? index : null;
+        if (_zoomedPage == next) return;
+        setState(() => _zoomedPage = next);
+      },
+      zoomStageFirst: widget.zoomStageFirst,
+      zoomStageSecond: widget.zoomStageSecond,
+      longPressZoomEnabled: widget.longPressZoomEnabled,
+      longPressZoomRestoreOnRelease: widget.longPressZoomRestoreOnRelease,
+      longPressZoomMoveMode: widget.longPressZoomMoveMode,
+      longPressZoomPanRatio: widget.longPressZoomPanRatio,
+      longPressZoomLimitToViewport: widget.longPressZoomLimitToViewport,
+      doubleTapZoomOrigin: widget.doubleTapZoomOrigin,
+      pageAspectRatio: () => _pageAspectRatioFor(index),
+      onScaleChanged: widget.onZoomScaleChanged,
+      onStripLensStart: _handleStripLensStartedAt,
+      onStripPanHoldStart: _handleStripPanHoldStartedAt,
+      onStripLensMove: _handleStripLensMovedTo,
+      onStripLensEnd: _handleStripLensFinished,
+      onStripDoubleTap: _handleStripDoubleTappedAt,
+    );
   }
 
   bool get _verticalScrollActive {

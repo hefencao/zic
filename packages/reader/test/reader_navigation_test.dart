@@ -73,6 +73,64 @@ void main() {
   });
 
 
+  testWidgets('presentation revision rebuilds only the changed page slot',
+      (tester) async {
+    final chapter = _chapter(pageCount: 3);
+    final controller = ReaderController(
+      sessionId: 'reader-presentation-revision-test',
+      chapter: chapter,
+      onObservation: (_) {},
+      clock: FakeClock(),
+    );
+    addTearDown(controller.dispose);
+    final revisions = ValueNotifier<Map<String, int>>(
+      const <String, int>{},
+    );
+    addTearDown(revisions.dispose);
+    final builds = <String, int>{};
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ValueListenableBuilder<Map<String, int>>(
+          valueListenable: revisions,
+          builder: (context, value, _) => ReaderView(
+            controller: controller,
+            clock: FakeClock(),
+            pagePresentationRevisions: value,
+            pageBuilder: (context, asset, reportFirstFrame) {
+              builds.update(
+                asset.pageId,
+                (count) => count + 1,
+                ifAbsent: () => 1,
+              );
+              return ColoredBox(
+                key: ValueKey<String>('presentation:${asset.pageId}'),
+                color: Colors.black,
+              );
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final before = Map<String, int>.of(builds);
+    expect(before['page-0'], isNotNull);
+
+    revisions.value = <String, int>{chapter.pages[0].assetKey: 1};
+    await tester.pump();
+
+    expect(builds['page-0'], (before['page-0'] ?? 0) + 1);
+    for (final entry in before.entries) {
+      if (entry.key == 'page-0') continue;
+      expect(
+        builds[entry.key],
+        entry.value,
+        reason: 'unmodified page ${entry.key} must retain its cached slot',
+      );
+    }
+  });
+
+
   testWidgets(
     'crossing the page midpoint preserves loaded page hosts',
     (tester) async {

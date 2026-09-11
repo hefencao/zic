@@ -490,6 +490,7 @@ void main() {
       find.descendant(of: top, matching: find.byIcon(Icons.swap_horiz)),
       findsNothing,
     );
+    expect(find.byKey(readerForceReloadKey), findsOneWidget);
     expect(find.byKey(readerComicSettingsKey), findsOneWidget);
     expect(find.byKey(readerPageSliderKey), findsOneWidget);
     await _disposePipelineReader(tester);

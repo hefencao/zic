@@ -30,6 +30,7 @@ SnackBar _copyableReaderErrorSnackBar(String message) => SnackBar(
 
 const readerTopControlsKey = ValueKey<String>('reader-top-controls');
 const readerBottomControlsKey = ValueKey<String>('reader-bottom-controls');
+const readerForceReloadKey = ValueKey<String>('reader-force-reload');
 const readerPageSliderKey = ValueKey<String>('reader-page-slider');
 const readerRotateKey = ValueKey<String>('reader-rotate');
 const readerFavoriteKey = ValueKey<String>('reader-favorite');
@@ -154,6 +155,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   Future<void>? _progressDrain;
   late final ReaderPlaybackController _playback;
   final Map<String, bool> _playbackCapabilities = <String, bool>{};
+  final Map<String, int> _presentationReloadRevisions = <String, int>{};
   late final ValueNotifier<int> _playbackCapabilityRevision;
   late final ValueNotifier<Map<String, double>> _pageAspectRatios;
   final Map<String, double> _pendingPageAspectRatios = <String, double>{};
@@ -726,6 +728,34 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     }
   }
 
+  Future<void> _forceReloadCurrentPage(ReaderController reader) async {
+    final asset = widget.chapter.pages[reader.currentIndex];
+    try {
+      final reloaded = await _pipeline.forceReloadPresentation(asset);
+      if (!mounted) return;
+      if (!reloaded) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('当前页未能开始强制重新加载')),
+        );
+        return;
+      }
+      setState(() {
+        _presentationReloadRevisions[asset.assetKey] =
+            (_presentationReloadRevisions[asset.assetKey] ?? 0) + 1;
+        _playbackCapabilities.remove(asset.assetKey);
+      });
+      _playbackCapabilityRevision.value++;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('已强制重新加载当前页')),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        _copyableReaderErrorSnackBar('强制重新加载失败：$error'),
+      );
+    }
+  }
+
   Future<void> _toggleFavorite() async {
     final callback = widget.onFavoriteChanged;
     if (callback == null) {
@@ -1030,6 +1060,13 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                           ],
                         ),
                       ),
+                      IconButton(
+                        key: readerForceReloadKey,
+                        tooltip: '强制重新加载当前页',
+                        onPressed: () =>
+                            unawaited(_forceReloadCurrentPage(reader)),
+                        icon: const Icon(Icons.refresh),
+                      ),
                       if (widget.onSettingsChanged != null)
                         IconButton(
                           key: readerComicSettingsKey,
@@ -1156,7 +1193,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     final artifactBuilder = widget.artifactPageBuilder;
     final ReaderPageBuilder? pageBuilder = artifactBuilder == null
         ? null
-        : (context, asset, reportFirstFrame) => artifactBuilder(
+        : (context, asset, reportFirstFrame) {
+            final child = artifactBuilder(
               context,
               asset,
               reportFirstFrame,
@@ -1187,6 +1225,16 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                     : BoxFit.contain,
               ),
             );
+            if (child == null) return null;
+            final reloadRevision =
+                _presentationReloadRevisions[asset.assetKey] ?? 0;
+            return KeyedSubtree(
+              key: ValueKey<String>(
+                'reader-page-presentation:${asset.assetKey}:$reloadRevision',
+              ),
+              child: child,
+            );
+          };
     return WillPopScope(
       onWillPop: _flushProgressBeforePop,
       child: Scaffold(
@@ -1201,6 +1249,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
               traceSink: _pipeline.trace,
               frameTimingSource: const FlutterReaderFrameTimingSource(),
               pageBuilder: pageBuilder,
+              pagePresentationRevisions:
+                  Map<String, int>.unmodifiable(_presentationReloadRevisions),
               demandRevision: () => _pipeline.revision,
               onTap: _toggleControls,
               verticalStitch: _settings.effectiveVerticalStitch,
