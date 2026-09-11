@@ -127,6 +127,7 @@ final class DecodeSession {
     WebpDecodePrefixHints? prefixHints,
     this.partialLoopMinFrames = 30,
     this.onAnimationResolved,
+    this.onFrameDecodedTiming,
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'decode',
   }) : prefixHints = prefixHints ?? WebpDecodePrefixHints();
@@ -143,6 +144,8 @@ final class DecodeSession {
 
   final void Function(DecodeId id, AnimationInfo animation)?
       onAnimationResolved;
+  final void Function(DecodedFrameTiming timing, int frameDurationMicros)?
+      onFrameDecodedTiming;
   final TraceSink traceSink;
   final String sessionId;
 
@@ -550,6 +553,10 @@ final class DecodeSession {
             _decodedWidth ??= frame.width;
             _decodedHeight ??= frame.height;
             _frameTimings[frame.index] = frameTiming;
+            onFrameDecodedTiming?.call(
+              frameTiming,
+              frame.duration.inMicroseconds,
+            );
             while (_frameTimings.length > 24) {
               _frameTimings.remove(_frameTimings.keys.first);
             }
