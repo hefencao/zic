@@ -123,6 +123,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
                 widget.preferences.defaultReaderMode,
             updatedAt: DateTime.now().toUtc(),
           );
+    final versionSource = _sourceForId(current.chapter.sourceId);
     final screen = ImportedImageChapterScreen(
       record: recordForReader,
       byteLoaders: prepared.byteLoaders,
@@ -151,6 +152,9 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       ),
       traceSink: widget.debugTrace,
       onDownloadRequested: () => _downloadChapter(current),
+      onFirstPresentationFrame: versionSource == null
+          ? null
+          : () => _scheduleReaderMetadataVersionRefresh(versionSource, current),
       pipelineFactory: defaultLocalMediaPipelineFactory
           .withArtifactCacheManager(_readerArtifactCache)
           .withPartialDownloadStore(
@@ -293,9 +297,6 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       authorityMappingCount = await _ensureSourceVersionReuseAuthority(current);
     }
     final authorityMs = authorityWatch.elapsedMilliseconds;
-    if (versionSource != null) {
-      _scheduleReaderMetadataVersionRefresh(versionSource, current);
-    }
     // Persistent remote bytes are owned by ArtifactCacheTransport. Do not
     // pre-probe the chapter index or register a full-page readPage() loader:
     // that capability bypasses the streaming artifact response path and makes

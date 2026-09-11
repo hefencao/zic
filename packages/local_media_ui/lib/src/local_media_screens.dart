@@ -81,6 +81,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
     this.initialFavorite = false,
     this.onFavoriteChanged,
     this.onDownloadRequested,
+    this.onFirstPresentationFrame,
     required this.pipelineFactory,
     this.initiallyImmersive = true,
     this.initialReaderSettings = const ReaderSessionSettings(),
@@ -99,6 +100,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
   final bool initialFavorite;
   final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
   final FutureOr<void> Function()? onDownloadRequested;
+  final VoidCallback? onFirstPresentationFrame;
   final PipelineReaderSessionFactory pipelineFactory;
   final bool initiallyImmersive;
   final ReaderSessionSettings initialReaderSettings;
@@ -165,6 +167,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
         initialFavorite: initialFavorite,
         onFavoriteChanged: onFavoriteChanged,
         onDownloadRequested: onDownloadRequested,
+        onFirstPresentationFrame: onFirstPresentationFrame,
         initiallyImmersive: initiallyImmersive,
         initialSettings: initialReaderSettings,
         onSettingsChanged: onReaderSettingsChanged,

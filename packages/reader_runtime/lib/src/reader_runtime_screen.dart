@@ -118,6 +118,7 @@ final class ReaderRuntimeScreen extends StatefulWidget {
     this.initialFavorite = false,
     this.onFavoriteChanged,
     this.onDownloadRequested,
+    this.onFirstPresentationFrame,
     this.initiallyImmersive = true,
     this.initialSettings = const ReaderSessionSettings(),
     this.onSettingsChanged,
@@ -136,6 +137,7 @@ final class ReaderRuntimeScreen extends StatefulWidget {
   final bool initialFavorite;
   final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
   final FutureOr<void> Function()? onDownloadRequested;
+  final VoidCallback? onFirstPresentationFrame;
   final bool initiallyImmersive;
   final ReaderSessionSettings initialSettings;
   final ReaderSessionSettingsWriter? onSettingsChanged;
@@ -167,6 +169,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   late bool _controlsVisible;
   bool _downloading = false;
   bool _downloaded = false;
+  bool _reportedFirstPresentationFrame = false;
   late ReaderSessionSettings _settings;
   late final AdaptiveReaderClassifier _adaptiveClassifier;
   AdaptiveReaderProfile? _adaptiveProfile;
@@ -1191,6 +1194,17 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     );
   }
 
+  void _reportPageFirstFrame(VoidCallback reportPageFirstFrame) {
+    reportPageFirstFrame();
+    if (_reportedFirstPresentationFrame) return;
+    _reportedFirstPresentationFrame = true;
+    try {
+      widget.onFirstPresentationFrame?.call();
+    } on Object catch (error) {
+      debugPrint('reader first-presentation observer failed: $error');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final reader = _reader!;
@@ -1201,7 +1215,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
             final child = artifactBuilder(
               context,
               asset,
-              reportFirstFrame,
+              () => _reportPageFirstFrame(reportFirstFrame),
               ReaderPageRuntime(
                 chapter: widget.chapter,
                 clock: _pipeline.clock,

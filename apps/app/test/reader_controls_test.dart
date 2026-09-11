@@ -343,6 +343,44 @@ void main() {
     await _disposePipelineReader(tester);
   });
 
+  testWidgets('first presentation observer fires once after a real page frame',
+      (tester) async {
+    final chapter = _chapter();
+    var firstPresentationFrames = 0;
+    VoidCallback? reportFirstFrame;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _pipelineReader(
+          chapter: chapter,
+          build: (pipeline) => ReaderRuntimeScreen(
+            chapter: chapter,
+            pipeline: pipeline,
+            onFirstPresentationFrame: () => firstPresentationFrames++,
+            artifactPageBuilder: (
+              context,
+              asset,
+              pageFirstFrame,
+              runtime,
+            ) {
+              if (asset.index == 0) reportFirstFrame = pageFirstFrame;
+              return const ColoredBox(color: Colors.black);
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(firstPresentationFrames, 0);
+    expect(reportFirstFrame, isNotNull);
+    reportFirstFrame!();
+    reportFirstFrame!();
+    await tester.pump();
+    expect(firstPresentationFrames, 1);
+
+    await _disposePipelineReader(tester);
+  });
+
   testWidgets('reader waits for the final progress checkpoint before pop',
       (tester) async {
     final firstWrite = Completer<void>();

@@ -1950,7 +1950,7 @@ void main() {
     expect(entry.chapter.pages.single.stablePageId, 'fixture-page-1');
   });
 
-  testWidgets('direct shelf Reader asynchronously checks source versions',
+  testWidgets('direct shelf Reader defers source versions until first presentation',
       (tester) async {
     final store = MemoryImportedLibraryStore();
     await store.open();
@@ -1994,17 +1994,18 @@ void main() {
       find.byKey(comicCoverKey(sourceId, source._comicId)),
     );
     await _pumpUntilFound(tester, find.byType(ImportedImageChapterScreen));
-    await tester.pump();
+    final readerScreen = tester.widget<ImportedImageChapterScreen>(
+      find.byType(ImportedImageChapterScreen),
+    );
 
-    expect(versionLoadStarted.isCompleted, isTrue);
-    expect(source.versionLoadCalls, 1);
+    expect(versionLoadStarted.isCompleted, isFalse);
+    expect(source.versionLoadCalls, 0);
+    expect(readerScreen.onFirstPresentationFrame, isNotNull);
     versionLoadGate.complete();
-    await tester.pump();
 
     // PipelineReaderSession intentionally retains a detached session for two
-    // minutes. Tear the Reader down and advance that retention clock so this
-    // route-level test proves the background version check without leaking a
-    // product timer into the widget-test harness.
+    // minutes. Tear the Reader down and advance that retention clock after
+    // proving metadata/version discovery has not started before presentation.
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(minutes: 2));
   });
