@@ -94,6 +94,21 @@ Future<bool> requestAndroidApplicationBackground() async {
   }
 }
 
+Future<Map<String, Object?>?> getAndroidSchedulingSnapshot() async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return null;
+  try {
+    final raw = await startupPlatformChannel.invokeMethod<Map<Object?, Object?>>(
+      'runtimeSchedulingSnapshot',
+    );
+    return raw == null ? null : Map<String, Object?>.from(raw);
+  } on MissingPluginException {
+    return null;
+  } on PlatformException catch (error) {
+    debugPrint('Android scheduling snapshot unavailable: $error');
+    return null;
+  }
+}
+
 Future<Map<String, Object?>?> getNativeStartupTimeline() async {
   if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return null;
   try {

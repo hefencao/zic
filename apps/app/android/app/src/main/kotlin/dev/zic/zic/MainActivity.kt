@@ -1071,6 +1071,35 @@ class MainActivity : FlutterActivity() {
         return runCatching { !target.exists() || target.delete() }.getOrDefault(false)
     }
 
+    private fun runtimeSchedulingSnapshot(): Map<String, Any?> {
+        val status = runCatching { File("/proc/self/status").readLines() }
+            .getOrDefault(emptyList())
+        val cgroup = runCatching { File("/proc/self/cgroup").readLines() }
+            .getOrDefault(emptyList())
+        fun statusValue(name: String): String? = status
+            .firstOrNull { it.startsWith("$name:") }
+            ?.substringAfter(':')
+            ?.trim()
+        fun cgroupValue(controller: String): String? = cgroup
+            .firstOrNull { line ->
+                val fields = line.split(':', limit = 3)
+                fields.size == 3 && fields[1].split(',').contains(controller)
+            }
+            ?.substringAfterLast(':')
+        val processInfo = android.app.ActivityManager.RunningAppProcessInfo()
+        android.app.ActivityManager.getMyMemoryState(processInfo)
+        val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        return mapOf(
+            "powerSaveMode" to powerManager.isPowerSaveMode,
+            "processImportance" to processInfo.importance,
+            "cpuAllowedList" to statusValue("Cpus_allowed_list"),
+            "cpusetGroup" to cgroupValue("cpuset"),
+            "cpuGroup" to cgroupValue("cpu"),
+            "availableProcessors" to Runtime.getRuntime().availableProcessors(),
+            "elapsedRealtimeMs" to SystemClock.elapsedRealtime(),
+        )
+    }
+
     private fun handleStartup(call: MethodCall, result: MethodChannel.Result) {
         val method = call.method
         if (method == "applicationSupportPath") {
@@ -1092,6 +1121,10 @@ class MainActivity : FlutterActivity() {
                 return
             }
             pendingFirstFlutterUiDisplayedResult = result
+            return
+        }
+        if (method == "runtimeSchedulingSnapshot") {
+            result.success(runtimeSchedulingSnapshot())
             return
         }
         if (method == "nativeStartupTimeline") {

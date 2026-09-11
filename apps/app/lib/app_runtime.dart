@@ -110,7 +110,8 @@ final class _BootstrapApp extends StatefulWidget {
   State<_BootstrapApp> createState() => _BootstrapAppState();
 }
 
-final class _BootstrapAppState extends State<_BootstrapApp> {
+final class _BootstrapAppState extends State<_BootstrapApp>
+    with WidgetsBindingObserver {
   late final AppPreferencesController _preferences;
   late final DebugTraceLog _debugTrace;
   late final HomeStartupTelemetry _startupTelemetry;
@@ -165,6 +166,7 @@ final class _BootstrapAppState extends State<_BootstrapApp> {
       _bootstrapCache = ResourceCacheCoordinator();
     }
     _debugTrace = DebugTraceLog();
+    WidgetsBinding.instance.addObserver(this);
     _bootstrapLibrary = createLazyImportedLibraryStore(
       storageRoot: () => _storageRoot,
     );
@@ -209,6 +211,43 @@ final class _BootstrapAppState extends State<_BootstrapApp> {
   }
 
   late final Future<void> _preferencesReady;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (_disposed) return;
+    final clock = SystemClock();
+    _debugTrace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: 'app-lifecycle',
+        kind: TraceEventKind.appLifecycle,
+        payload: <String, Object?>{
+          'stage': 'dart',
+          'state': state.name,
+        },
+      ),
+    );
+    unawaited(_recordLifecycleSchedulingSnapshot(state));
+  }
+
+  Future<void> _recordLifecycleSchedulingSnapshot(
+    AppLifecycleState state,
+  ) async {
+    final snapshot = await getAndroidSchedulingSnapshot();
+    if (_disposed || snapshot == null) return;
+    _debugTrace.record(
+      traceEvent(
+        clock: SystemClock(),
+        sessionId: 'app-lifecycle',
+        kind: TraceEventKind.appLifecycle,
+        payload: <String, Object?>{
+          'stage': 'android-scheduling',
+          'state': state.name,
+          ...snapshot,
+        },
+      ),
+    );
+  }
 
   Future<void> _recordNativeStartupTimeline() async {
     final timeline = await getNativeStartupTimeline();
@@ -700,6 +739,7 @@ final class _BootstrapAppState extends State<_BootstrapApp> {
     _servicesStartupTimer?.cancel();
     _servicesStartupTimer = null;
     _preferences.removeListener(_syncDebugTrace);
+    WidgetsBinding.instance.removeObserver(this);
     final services = _services;
     if (services != null) {
       unawaited(services.close());
