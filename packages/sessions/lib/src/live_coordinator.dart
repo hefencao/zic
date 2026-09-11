@@ -52,11 +52,15 @@ final class _SourceWatchBinding {
     required this.session,
     required this.projection,
     required this.listener,
+    required this.epoch,
+    required this.sourceReady,
   });
 
   DownloadSession session;
   final DownloadIngressProjection projection;
   final SourceListener listener;
+  SourceEpoch epoch;
+  bool sourceReady;
 }
 
 final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
@@ -616,7 +620,55 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       );
     }
 
+    late final _SourceWatchBinding binding;
     void listener(IngressSnap snapshot) {
+      final epochChanged = binding.epoch != snapshot.epoch;
+      if (epochChanged) {
+        final previousEpoch = binding.epoch;
+        binding.epoch = snapshot.epoch;
+        binding.sourceReady = false;
+        _sourceWakeLengths.remove(id);
+        _sourceRevisions.remove(id);
+        _clearSourceKind(id);
+        final reboundDecodeIds = <DecodeId>{
+          ..._decodes.keys.where((decodeId) => decodeId.download == id),
+          ..._uploads.keys.where((decodeId) => decodeId.download == id),
+        };
+        for (final decodeId in reboundDecodeIds) {
+          _decodeSourceRevisions.remove(decodeId);
+          _decodeRecoveryAttempts.remove(decodeId);
+          _decodeRecoveryPending.remove(decodeId);
+          decode.cancel(decodeId.key);
+          upload.cancel(decodeId.key);
+        }
+        // The physical DownloadSession object may survive a reset, but its
+        // SourceEpoch does not. Upload/output and decode/cursor state are bound
+        // to encoded-source generations, so retire them before the first byte
+        // of the replacement epoch becomes visible. The existing demand map
+        // remains authoritative and will recreate this Reader-local media
+        // chain when the new source becomes ready.
+        final invalidatedUploads = uploads?.invalidateForDownload(id) ?? 0;
+        final invalidatedDecodes = decodes?.invalidateForDownload(id) ?? 0;
+        traceSink.record(
+          traceEvent(
+            clock: clock,
+            sessionId: sessionId,
+            kind: TraceEventKind.artifactSource,
+            identityHash: id.key,
+            revision: _revision,
+            epoch: snapshot.epoch.value,
+            payload: <String, Object?>{
+              'stage': 'reader-source-watch-rebind',
+              'action': 'source-epoch-changed',
+              'fromSourceEpoch': previousEpoch.value,
+              'toSourceEpoch': snapshot.epoch.value,
+              'invalidatedUploads': invalidatedUploads,
+              'invalidatedDecodes': invalidatedDecodes,
+            },
+          ),
+        );
+      }
+
       // Encoded content kind is a Reader/runtime transport-cost fact, not
       // animation truth. Publish only actual sniff transitions; opaque plugin
       // URIs otherwise leave the Pipeline unable to activate bounded WebP body
@@ -632,13 +684,17 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       }
       // Physical retry/terminal state is owned by DownloadTransferOwner. This
       // Reader-local listener only projects source growth into decode wakeups.
+      final becameSourceReady = !binding.sourceReady && snapshot.sourceReady;
+      binding.sourceReady = snapshot.sourceReady;
       _sourceRevisions[id] = snapshot.revision;
       final priorLength = _sourceWakeLengths[id];
-      final shouldWake = onDecode != null ||
-          priorLength == null ||
-          snapshot.failure != null ||
+      final shouldWake = snapshot.failure != null ||
           snapshot.sealed ||
-          snapshot.length - priorLength >= sourceProgressQuantumBytes;
+          (snapshot.sourceReady &&
+              (onDecode != null ||
+                  becameSourceReady ||
+                  priorLength == null ||
+                  snapshot.length - priorLength >= sourceProgressQuantumBytes));
       if (!shouldWake) {
         return;
       }
@@ -646,10 +702,13 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       _wakeDecodesForSource(sessionId, id);
     }
 
-    final binding = _SourceWatchBinding(
+    final initialSnapshot = projection.snapshot;
+    binding = _SourceWatchBinding(
       session: session,
       projection: projection,
       listener: listener,
+      epoch: initialSnapshot.epoch,
+      sourceReady: initialSnapshot.sourceReady,
     );
     _sourceWatches[id] = binding;
     projection.addSourceListener(listener);

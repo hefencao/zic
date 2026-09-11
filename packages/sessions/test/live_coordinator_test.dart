@@ -1565,6 +1565,154 @@ void main() {
   });
 
 
+  test('same physical session epoch reset wakes fresh streaming source', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_same_session_epoch_reload_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final source = File('${temp.path}/source.webp');
+    await source.writeAsBytes('RIFF....WEBPinitial'.codeUnits);
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'same-session-epoch-reload',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: source.uri,
+    );
+    final decodeId = DecodeId(
+      download: id,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final clock = _Clock();
+    final trace = MemoryTraceSink();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+      traceSink: trace,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'same-session-epoch-reload',
+    );
+    final cursors = _StaticCursorFactory();
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      ingresses: ingresses,
+      cursors: cursors,
+      clock: clock,
+      traceSink: trace,
+    );
+    final uploader = _TestUploader();
+    final uploads = UploadRegistry(
+      decodes: decodes,
+      uploader: uploader,
+      clock: clock,
+      traceSink: trace,
+    );
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      ingresses: ingresses,
+      transportFor: (_) => const FileTransport(),
+      clock: clock,
+      traceSink: trace,
+      decodes: decodes,
+      uploads: uploads,
+      net: NetLane(maxActive: 1),
+      decode: DecodeLane(maxActive: 1),
+      upload: UploadLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      uploads.dispose();
+      decodes.dispose();
+      ingresses.dispose();
+      sources.dispose();
+      await downloads.dispose();
+    });
+
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        id: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'same-session-epoch-reload',
+          expirationRevision: 2,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        decodeId: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'same-session-epoch-reload',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: <DecodeId, UploadDemand>{
+        decodeId: const UploadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'same-session-epoch-reload',
+          expirationRevision: 2,
+        ),
+      },
+      keep: <ResourceId>{
+        ResourceId.download(id),
+        ResourceId.decode(decodeId),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: plan,
+        diff: DemandDiff.between(DemandPlan.empty(), plan),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await coordinator.idle();
+    expect(cursors.created, 1);
+    expect(uploader.outputs, hasLength(1));
+
+    final session = downloads.find(id)!;
+    final firstEpoch = session.epoch;
+    await session.reset(deleteFinalArtifact: true);
+    expect(session.epoch, isNot(firstEpoch));
+
+    final run = session.beginRun();
+    final writer = session.acquireWriter(expectedRun: run);
+    final freshPrefix = 'RIFF....WEBPinitial'.codeUnits;
+    await session.append(writer, 0, freshPrefix);
+
+    final deadline = DateTime.now().add(const Duration(seconds: 1));
+    while (cursors.created < 2 || uploader.outputs.length < 2) {
+      if (DateTime.now().isAfter(deadline)) {
+        break;
+      }
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(
+      cursors.created,
+      2,
+      reason: 'the first source-ready prefix of a new epoch must wake decode',
+    );
+    expect(uploader.outputs, hasLength(2));
+    expect(uploader.outputs.last.epoch, session.epoch.value);
+
+    await session.pause(writer);
+    session.endRun(run);
+  });
+
   test('draining the last buffered partial frame re-enters partial loop',
       () async {
     final temp = await Directory.systemTemp.createTemp(
