@@ -1089,8 +1089,20 @@ class MainActivity : FlutterActivity() {
         val processInfo = android.app.ActivityManager.RunningAppProcessInfo()
         android.app.ActivityManager.getMyMemoryState(processInfo)
         val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        val miuiPowerSaveModeOpen = Settings.System.getInt(
+            contentResolver,
+            "POWER_SAVE_MODE_OPEN",
+            0,
+        ) != 0
+        val globalLowPowerMode = Settings.Global.getInt(
+            contentResolver,
+            "low_power",
+            0,
+        ) != 0
         return mapOf(
             "powerSaveMode" to powerManager.isPowerSaveMode,
+            "miuiPowerSaveModeOpen" to miuiPowerSaveModeOpen,
+            "globalLowPowerMode" to globalLowPowerMode,
             "processImportance" to processInfo.importance,
             "cpuAllowedList" to statusValue("Cpus_allowed_list"),
             "cpusetGroup" to cgroupValue("cpuset"),
