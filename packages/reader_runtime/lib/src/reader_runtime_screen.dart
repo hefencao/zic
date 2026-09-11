@@ -12,6 +12,7 @@ import 'package:telemetry/telemetry.dart';
 
 import 'flutter_reader_frame_timing_source.dart';
 import 'flutter_reader_platform_frame_cadence.dart';
+import 'reader_playback_controls.dart';
 import 'reader_session_settings.dart';
 import 'reader_zoom_decode.dart';
 import 'reader_settings_fields.dart';
@@ -30,8 +31,6 @@ SnackBar _copyableReaderErrorSnackBar(String message) => SnackBar(
 const readerTopControlsKey = ValueKey<String>('reader-top-controls');
 const readerBottomControlsKey = ValueKey<String>('reader-bottom-controls');
 const readerPageSliderKey = ValueKey<String>('reader-page-slider');
-const readerPauseKey = ValueKey<String>('reader-pause');
-const readerSpeedKey = ValueKey<String>('reader-speed');
 const readerRotateKey = ValueKey<String>('reader-rotate');
 const readerFavoriteKey = ValueKey<String>('reader-favorite');
 const readerDownloadKey = ValueKey<String>('reader-download');
@@ -46,46 +45,11 @@ const readerVerticalLongPressZoomKey =
     ValueKey<String>('reader-vertical-long-press-zoom');
 const readerExistingProgressKey = ValueKey<String>('reader-existing-progress');
 const readerNetworkProgressKey = ValueKey<String>('reader-network-progress');
-Key readerSpeedOptionKey(double speed) =>
-    ValueKey<String>('reader-speed-option:$speed');
-
 typedef ReaderArtifactBytesLoader = PipelineArtifactBytesLoader;
 typedef ReaderPageBytesLoader = Future<Uint8List> Function(
   MediaLoadToken token,
 );
 typedef ReaderPageDimensionsReporter = void Function(int width, int height);
-
-@immutable
-final class ReaderPlaybackState {
-  const ReaderPlaybackState({
-    this.paused = false,
-    this.speed = 1,
-  })  : assert(speed >= 0.25),
-        assert(speed <= 4);
-
-  final bool paused;
-  final double speed;
-
-  ReaderPlaybackState copyWith({bool? paused, double? speed}) =>
-      ReaderPlaybackState(
-        paused: paused ?? this.paused,
-        speed: speed ?? this.speed,
-      );
-}
-
-final class ReaderPlaybackController
-    extends ValueNotifier<ReaderPlaybackState> {
-  ReaderPlaybackController() : super(const ReaderPlaybackState());
-
-  void togglePaused() => value = value.copyWith(paused: !value.paused);
-
-  void setSpeed(double speed) {
-    if (value.speed == speed) {
-      return;
-    }
-    value = value.copyWith(speed: speed);
-  }
-}
 
 final class ReaderPageRuntime {
   const ReaderPageRuntime({
@@ -558,10 +522,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     }
   }
 
-  bool _currentPageSupportsPlayback(ReaderController reader) {
-    final asset = widget.chapter.pages[reader.currentIndex];
-    return _playbackCapabilities[asset.assetKey] ?? asset.animatedHint;
-  }
+  bool _currentPageSupportsPlayback(ReaderController reader) =>
+      _playbackCapabilities[widget.chapter.pages[reader.currentIndex].assetKey] == true;
 
   void _reportPlaybackCapability(PageAsset asset, bool supported) {
     if (!mounted) return;
@@ -1091,6 +1053,19 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     );
   }
 
+  Widget _animationControls(ReaderController reader) =>
+      ReaderAnimationControlsVisibility(
+        currentIndex: reader.currentIndexListenable,
+        capabilityRevision: _playbackCapabilityRevision,
+        isVisible: () => _controlsVisible && _currentPageSupportsPlayback(reader),
+        child: ReaderAnimationControls(
+          playback: _playback,
+          onTogglePaused: _togglePlaybackPaused,
+          onChooseSpeed: () => unawaited(_choosePlaybackSpeed()),
+          speedLabel: _playbackSpeedLabel,
+        ),
+      );
+
   Widget _bottomControls(
     BuildContext context,
     ReaderController reader,
@@ -1125,76 +1100,46 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                       onScrubEnded: reader.endPageScrub,
                     ),
                   ),
-                  ValueListenableBuilder<int>(
-                    valueListenable: reader.currentIndexListenable,
-                    builder: (context, _, _) => ValueListenableBuilder<int>(
-                      valueListenable: _playbackCapabilityRevision,
-                      builder: (context, _, _) =>
-                          ValueListenableBuilder<ReaderPlaybackState>(
-                        valueListenable: _playback,
-                        builder: (context, playback, _) => Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: <Widget>[
-                          if (_currentPageSupportsPlayback(reader))
-                            IconButton(
-                              key: readerPauseKey,
-                              tooltip: playback.paused ? '继续播放' : '暂停动画',
-                              onPressed: _togglePlaybackPaused,
-                              icon: Icon(
-                                playback.paused ? Icons.play_arrow : Icons.pause,
-                              ),
-                            ),
-                          if (_currentPageSupportsPlayback(reader))
-                            TextButton(
-                              key: readerSpeedKey,
-                              style: TextButton.styleFrom(
-                                foregroundColor: Colors.white,
-                              ),
-                              onPressed: () => unawaited(_choosePlaybackSpeed()),
-                              child: Text(_playbackSpeedLabel(playback.speed)),
-                            ),
-                          IconButton(
-                            key: readerRotateKey,
-                            tooltip: '顺时针旋转',
-                            onPressed: reader.rotateClockwise,
-                            icon: const Icon(Icons.rotate_right),
-                          ),
-                          IconButton(
-                            key: readerFavoriteKey,
-                            tooltip: _favorite ? '取消收藏' : '收藏',
-                            onPressed: widget.onFavoriteChanged == null
-                                ? null
-                                : _toggleFavorite,
-                            icon: Icon(
-                              _favorite
-                                  ? Icons.bookmark
-                                  : Icons.bookmark_border,
-                            ),
-                          ),
-                          if (widget.onDownloadRequested != null)
-                            IconButton(
-                              key: readerDownloadKey,
-                              tooltip: _downloaded ? '本章已缓存' : '缓存本章',
-                              onPressed: _downloading || _downloaded
-                                  ? null
-                                  : _downloadChapter,
-                              icon: _downloading
-                                  ? const SizedBox.square(
-                                      dimension: 20,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : Icon(
-                                      _downloaded
-                                          ? Icons.download_done
-                                          : Icons.download_outlined,
-                                    ),
-                            ),
-                          ],
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: <Widget>[
+                      IconButton(
+                        key: readerRotateKey,
+                        tooltip: '顺时针旋转',
+                        onPressed: reader.rotateClockwise,
+                        icon: const Icon(Icons.rotate_right),
+                      ),
+                      IconButton(
+                        key: readerFavoriteKey,
+                        tooltip: _favorite ? '取消收藏' : '收藏',
+                        onPressed: widget.onFavoriteChanged == null
+                            ? null
+                            : _toggleFavorite,
+                        icon: Icon(
+                          _favorite ? Icons.bookmark : Icons.bookmark_border,
                         ),
                       ),
-                    ),
+                      if (widget.onDownloadRequested != null)
+                        IconButton(
+                          key: readerDownloadKey,
+                          tooltip: _downloaded ? '本章已缓存' : '缓存本章',
+                          onPressed: _downloading || _downloaded
+                              ? null
+                              : _downloadChapter,
+                          icon: _downloading
+                              ? const SizedBox.square(
+                                  dimension: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : Icon(
+                                  _downloaded
+                                      ? Icons.download_done
+                                      : Icons.download_outlined,
+                                ),
+                        ),
+                    ],
                   ),
                 ],
               ),
@@ -1300,7 +1245,13 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                     excluding: !_controlsVisible,
                     child: Align(
                       alignment: Alignment.bottomCenter,
-                      child: _bottomControls(context, reader),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          _animationControls(reader),
+                          _bottomControls(context, reader),
+                        ],
+                      ),
                     ),
                   ),
                 ),

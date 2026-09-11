@@ -113,6 +113,7 @@ void main() {
       (tester) async {
     bool? favorite;
     var downloadRequested = false;
+    ValueChanged<bool>? reportPlaybackCapability;
     final chapter = _chapter(animated: true);
     await tester.pumpWidget(
       MaterialApp(
@@ -130,11 +131,15 @@ void main() {
               asset,
               reportFirstFrame,
               runtime,
-            ) =>
-                ColoredBox(
-              key: ValueKey<String>('reader-control-page:${asset.index}'),
-              color: Colors.black,
-            ),
+            ) {
+              if (asset.index == 0) {
+                reportPlaybackCapability = runtime.reportPlaybackCapability;
+              }
+              return ColoredBox(
+                key: ValueKey<String>('reader-control-page:${asset.index}'),
+                color: Colors.black,
+              );
+            },
           ),
         ),
       ),
@@ -163,11 +168,19 @@ void main() {
       isNull,
       reason: 'page quantization belongs to the scrubber, not RenderSlider ticks',
     );
-    expect(find.byKey(readerPauseKey), findsOneWidget);
-    expect(find.byKey(readerSpeedKey), findsOneWidget);
+    expect(
+      find.byKey(readerAnimationControlsKey),
+      findsNothing,
+      reason: 'manifest animation hints are not playback evidence',
+    );
     expect(find.byKey(readerRotateKey), findsOneWidget);
     expect(find.byKey(readerFavoriteKey), findsOneWidget);
     expect(find.byKey(readerDownloadKey), findsOneWidget);
+
+    expect(reportPlaybackCapability, isNotNull);
+    reportPlaybackCapability!(true);
+    await tester.pump();
+    expect(find.byKey(readerAnimationControlsKey), findsOneWidget);
 
     await _pumpUntilFound(tester, find.byKey(readerPauseKey).hitTestable());
     await tester.tap(find.byKey(readerPauseKey).hitTestable());
@@ -343,6 +356,56 @@ void main() {
     await _disposePipelineReader(tester);
   });
 
+  testWidgets(
+    'late animation classification does not move fixed bottom controls',
+    (tester) async {
+      final chapter = _chapter();
+      ValueChanged<bool>? reportPlaybackCapability;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: _pipelineReader(
+            chapter: chapter,
+            build: (pipeline) => ReaderRuntimeScreen(
+              chapter: chapter,
+              pipeline: pipeline,
+              initiallyImmersive: false,
+              artifactPageBuilder: (
+                context,
+                asset,
+                reportFirstFrame,
+                runtime,
+              ) {
+                if (asset.index == 0) {
+                  reportPlaybackCapability = runtime.reportPlaybackCapability;
+                }
+                return ColoredBox(
+                  key: ValueKey<String>(
+                    'reader-late-animation-page:${asset.index}',
+                  ),
+                  color: Colors.black,
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.byKey(readerAnimationControlsKey), findsNothing);
+      final rotateBefore = tester.getRect(find.byKey(readerRotateKey));
+      final favoriteBefore = tester.getRect(find.byKey(readerFavoriteKey));
+      expect(reportPlaybackCapability, isNotNull);
+
+      reportPlaybackCapability!(true);
+      await tester.pump();
+
+      expect(find.byKey(readerAnimationControlsKey), findsOneWidget);
+      expect(tester.getRect(find.byKey(readerRotateKey)), rotateBefore);
+      expect(tester.getRect(find.byKey(readerFavoriteKey)), favoriteBefore);
+      await _disposePipelineReader(tester);
+    },
+  );
+
   testWidgets('static images hide playback-only controls', (tester) async {
     final chapter = _chapter();
     await tester.pumpWidget(
@@ -376,6 +439,7 @@ void main() {
     await tester.tap(find.byType(ReaderView));
     await _pumpUntilControls(tester, top, bottom, ignoring: false);
 
+    expect(find.byKey(readerAnimationControlsKey), findsNothing);
     expect(find.byKey(readerPauseKey), findsNothing);
     expect(find.byKey(readerSpeedKey), findsNothing);
     expect(find.byKey(readerRotateKey), findsOneWidget);

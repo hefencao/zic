@@ -15,9 +15,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def reader_runtime_source() -> str:
-    return (
-        ROOT / 'packages/reader_runtime/lib/src/reader_runtime_screen.dart'
-    ).read_text(encoding='utf-8')
+    root = ROOT / 'packages/reader_runtime/lib/src'
+    paths = [
+        root / 'reader_runtime_screen.dart',
+        root / 'reader_playback_controls.dart',
+    ]
+    return '\n'.join(path.read_text(encoding='utf-8') for path in paths)
 
 
 def local_media_ui_source() -> str:
@@ -2504,7 +2507,7 @@ def check_compile_regressions() -> None:
     reader_runtime = reader_runtime_source()
     for required in (
         'void _togglePlaybackPaused()',
-        'onPressed: _togglePlaybackPaused',
+        'onTogglePaused: _togglePlaybackPaused',
         'ValueListenableBuilder<ReaderPlaybackState>',
         'Future<void> _choosePlaybackSpeed()',
         'SimpleDialog(',

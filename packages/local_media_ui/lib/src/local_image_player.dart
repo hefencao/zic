@@ -284,9 +284,6 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           if (info != null) {
             _reportDimensions(info.width, info.height);
           }
-          if (webpPrefixDeclaresAnimation(prefix)) {
-            _reportPlaybackCapability(true);
-          }
         } on Object {
           // Wait for the next source lifecycle revision before retrying.
           _streamingPrefixReadRevision = requestedRevision;
@@ -342,8 +339,10 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           surface.height,
           authoritative: false,
         );
-        if (snapshot.animation.complete) {
-          _reportPlaybackCapability(snapshot.isAnimated);
+        if (snapshot.animation.frameCount > 1) {
+          _reportPlaybackCapability(true);
+        } else if (snapshot.animation.complete) {
+          _reportPlaybackCapability(false);
         }
         _schedulePipelineOutputFirstFrame(surface);
         if (!visualChanged) {
@@ -467,9 +466,9 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           return;
         }
       }
-      _reportPlaybackCapability(
-        detected == LocalImageFormat.gif,
-      );
+      if (detected != LocalImageFormat.gif && !detected.isWebp) {
+        _reportPlaybackCapability(false);
+      }
       setState(() {
         _detectedFormat = detected;
         _bytes = bytes;
@@ -937,6 +936,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
             playback: widget.playback!,
             onReady: _onControlledReady,
             onError: _onControlledError,
+            onPlaybackCapabilityChanged: _reportPlaybackCapability,
             codecFactory: widget.flutterAnimatedCodecFactory,
             fit: innerFit,
             downloadIdentity: widget.downloadIdentity,
@@ -1178,6 +1178,7 @@ final class _ControlledAnimatedImage extends StatefulWidget {
     required this.playback,
     required this.onReady,
     required this.onError,
+    required this.onPlaybackCapabilityChanged,
     required this.codecFactory,
     this.fit = BoxFit.contain,
     this.targetWidth,
@@ -1202,6 +1203,7 @@ final class _ControlledAnimatedImage extends StatefulWidget {
   final int Function()? demandRevision;
   final VoidCallback onReady;
   final ValueChanged<Object> onError;
+  final ValueChanged<bool> onPlaybackCapabilityChanged;
   final FlutterAnimatedCodecFactory codecFactory;
 
   @override
@@ -1305,6 +1307,7 @@ final class _ControlledAnimatedImageState
         return;
       }
       _codec = codec;
+      widget.onPlaybackCapabilityChanged(codec.frameCount > 1);
       await _presentNext(generation, workRevision);
     } on Object catch (error) {
       if (mounted && generation == _generation) {

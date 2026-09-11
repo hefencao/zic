@@ -35,7 +35,8 @@ for text, token, owner in (
     (reader, "return LayoutBuilder(", "ReaderView localized root"),
     (reader_test, "vertical current changes rebuild only page shells whose state changed", "localized rebuild owner test"),
     (screen, "child: _topControls(context, reader)", "top controls listener"),
-    (screen, "child: _bottomControls(context, reader)", "bottom controls listener"),
+    (screen, "_bottomControls(context, reader)", "bottom controls listener"),
+    (screen, "_animationControls(reader)", "playback-only controls remain a sibling of fixed bottom controls"),
     (check, "test_dev121_static_watermark_reader_rebuild.py", "repository check"),
 ):
     require(text, token, owner)

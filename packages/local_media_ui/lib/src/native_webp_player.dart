@@ -1099,6 +1099,9 @@ final class _NativeWebpPlayerState extends State<NativeWebpPlayer> {
                                         ? raster.decodeHeight
                                         : null,
                                     onReady: _reportFirstFrame,
+                                    onPlaybackCapabilityChanged: (supported) =>
+                                        widget.onPlaybackCapabilityChanged
+                                            ?.call(supported),
                                     codecFactory:
                                         widget.flutterAnimatedCodecFactory,
                                     fit: widget.fit,
