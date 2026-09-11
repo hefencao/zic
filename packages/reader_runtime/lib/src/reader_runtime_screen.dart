@@ -475,9 +475,15 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _applyLifecyclePlayback(state);
+      return;
+    }
     if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      _applyLifecyclePlayback(state);
       unawaited(
         _checkpointAndFlushReaderProgress().catchError(
           (Object error, StackTrace _) {
@@ -492,6 +498,27 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       direction == ReadingDirection.vertical
           ? ReaderMode.continuous
           : ReaderMode.paged;
+
+  void _applyLifecyclePlayback(AppLifecycleState state) {
+    final playback = _playback.value;
+    final effectivePaused =
+        state != AppLifecycleState.resumed || playback.paused;
+    _pipeline.setPlayback(paused: effectivePaused, speed: playback.speed);
+    _pipeline.trace.record(
+      traceEvent(
+        clock: _pipeline.clock,
+        sessionId: _reader?.sessionId ?? 'reader-lifecycle',
+        kind: TraceEventKind.appLifecycle,
+        payload: <String, Object?>{
+          'stage': 'reader-playback',
+          'state': state.name,
+          'userPaused': playback.paused,
+          'effectivePaused': effectivePaused,
+          'speed': playback.speed,
+        },
+      ),
+    );
+  }
 
   String _playbackSpeedLabel(double speed) {
     final tenths = speed * 10;

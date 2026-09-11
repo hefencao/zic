@@ -11,6 +11,8 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 
 阅读引擎的几何、输出与资源调度合同见第 2、3 章；各合同的实现机制（分层、所有权与数据流）见 `ARCHITECTURE.md`。
 
+Reader 非 `resumed` 生命周期 MUST 临时暂停 Pipeline playback，同时 MUST 保留用户自己的 pause/speed 设置；恢复前台后按用户状态恢复。后台 MUST NOT 继续 Animated WebP decode/upload/present。
+
 ### 1.1 首页冷启动
 
 - bootstrap 与 durable service 之间 MUST 通过稳定 handoff 原地切换 `HomeLibrarySession` 的服务；不得因服务到达更换 `MaterialApp`/Home key 或销毁重建首页导航状态。快照已证明 revision 一致时 handoff MUST 保持现有更新漫画/阅读历史投影，不得重复发布同一 projection。

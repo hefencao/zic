@@ -1,6 +1,7 @@
 # zic Architecture
 本文件描述当前生产代码的稳定所有权、依赖方向、数据流和生命周期。
 ## 1. 架构目标
+- Reader route 进入 `inactive/hidden/paused/detached` 后，用户播放状态不变，但 Pipeline playback MUST 临时视为 paused；`resumed` 后按用户原 `paused/speed` 恢复。后台不得继续 Animated WebP decode/upload/present，也不得用 worker 重建、CPU affinity 或 raster 降质掩盖生命周期问题。
 - Android SurfaceProducer 的 `scheduleFrame()` 合并由 texture bridge 按 producer 持续到下一次 vsync；同一 producer 的重复请求共享一次真实平台调度，不同 producer 保持独立首帧调度。
 - current 具有最高资源优先级，但目标页首帧不得依赖 current 的下载完成或 holder 深度。
 - 同一稳定 identity 只有一个权威 request、session、artifact、cursor 和活动 writer。ContentId/DownloadId/DecodeId 的新 `key` 使用长度 framing，不能把带分隔符的来源字段折叠成同一字符串；旧 cache metadata/SQLite key 只作为兼容恢复输入，新的写入使用 framed key。

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reader/reader.dart';
+import 'package:telemetry/telemetry.dart';
 import 'package:zic/reader_runtime.dart';
 import 'package:zic/webp_demo.dart' show defaultLocalMediaPipelineFactory;
 
@@ -87,10 +88,12 @@ Future<void> _pumpUntilFound(
 Widget _pipelineReader({
   required ChapterManifest chapter,
   required ReaderRuntimeScreen Function(PipelineReaderSession pipeline) build,
+  TraceSink? traceSink,
 }) =>
     PipelineReaderSessionHost(
       chapter: chapter,
       factory: defaultLocalMediaPipelineFactory,
+      traceSink: traceSink,
       builder: (context, pipeline) => build(pipeline),
     );
 
@@ -261,6 +264,58 @@ void main() {
     expect(_controlsPointer(tester, bottom).ignoring, isTrue);
     await _disposePipelineReader(tester);
   });
+
+  testWidgets(
+    'Reader lifecycle pauses Pipeline playback without changing user playback',
+    (tester) async {
+      final trace = MemoryTraceSink();
+      final chapter = _chapter(animated: true);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: _pipelineReader(
+            chapter: chapter,
+            traceSink: trace,
+            build: (pipeline) => ReaderRuntimeScreen(
+              chapter: chapter,
+              pipeline: pipeline,
+              initiallyImmersive: false,
+              artifactPageBuilder: (
+                context,
+                asset,
+                reportFirstFrame,
+                runtime,
+              ) =>
+                  const ColoredBox(color: Colors.black),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      trace.clear();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+
+      final playbackEvents = trace.events
+          .where(
+            (event) =>
+                event.kind == TraceEventKind.appLifecycle &&
+                event.payload['stage'] == 'reader-playback',
+          )
+          .toList(growable: false);
+      expect(playbackEvents.length, 2);
+      expect(playbackEvents[0].payload['state'], 'inactive');
+      expect(playbackEvents[0].payload['userPaused'], isFalse);
+      expect(playbackEvents[0].payload['effectivePaused'], isTrue);
+      expect(playbackEvents[1].payload['state'], 'resumed');
+      expect(playbackEvents[1].payload['userPaused'], isFalse);
+      expect(playbackEvents[1].payload['effectivePaused'], isFalse);
+
+      await _disposePipelineReader(tester);
+    },
+  );
 
   testWidgets('initial system UI waits for the Reader route transition',
       (tester) async {
