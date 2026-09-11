@@ -13,6 +13,7 @@ import 'package:telemetry/telemetry.dart';
 import 'flutter_reader_frame_timing_source.dart';
 import 'flutter_reader_platform_frame_cadence.dart';
 import 'reader_playback_controls.dart';
+import 'reader_route_transition_gate.dart';
 import 'reader_session_settings.dart';
 import 'reader_zoom_decode.dart';
 import 'reader_settings_fields.dart';
@@ -171,6 +172,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   AdaptiveReaderProfile? _adaptiveProfile;
   FlutterReaderPlatformFrameCadenceProbe? _platformFrameCadenceProbe;
   DecodeTarget? _appliedZoomDecodeTarget;
+  late final ReaderRouteTransitionGate _systemUiTransitionGate;
 
   @override
   void initState() {
@@ -199,11 +201,15 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     }
     _favorite = widget.initialFavorite;
     _controlsVisible = !widget.initiallyImmersive;
+    _systemUiTransitionGate = ReaderRouteTransitionGate(
+      _applySystemUiModeForControls,
+    );
+  }
+
+  void _applySystemUiModeForControls() {
     unawaited(
       SystemChrome.setEnabledSystemUIMode(
-        widget.initiallyImmersive
-            ? SystemUiMode.immersiveSticky
-            : SystemUiMode.edgeToEdge,
+        _controlsVisible ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
       ),
     );
   }
@@ -237,6 +243,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _systemUiTransitionGate.schedule(context);
     final media = MediaQuery.of(context);
     final target = DecodeTarget.viewport(
       logicalWidth: media.size.width,
@@ -677,6 +684,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
 
   @override
   void dispose() {
+    _systemUiTransitionGate.dispose();
     final platformFrameCadenceProbe = _platformFrameCadenceProbe;
     _platformFrameCadenceProbe = null;
     if (platformFrameCadenceProbe != null) {
@@ -714,11 +722,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
         },
       ),
     );
-    unawaited(
-      SystemChrome.setEnabledSystemUIMode(
-        _controlsVisible ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
-      ),
-    );
+    _systemUiTransitionGate.applyNow();
   }
 
   void _togglePlaybackPaused() {

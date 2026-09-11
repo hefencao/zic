@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reader/reader.dart';
 import 'package:zic/reader_runtime.dart';
@@ -258,6 +259,87 @@ void main() {
       ignoring: true,
     );
     expect(_controlsPointer(tester, bottom).ignoring, isTrue);
+    await _disposePipelineReader(tester);
+  });
+
+  testWidgets('initial system UI waits for the Reader route transition',
+      (tester) async {
+    final systemUiCalls = <MethodCall>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'SystemChrome.setEnabledSystemUIMode') {
+          systemUiCalls.add(call);
+        }
+        return null;
+      },
+    );
+    addTearDown(() {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      );
+    });
+
+    final chapter = _chapter();
+    const launchKey = ValueKey<String>('reader-system-ui-launch');
+    const routeKey = ValueKey<String>('reader-system-ui-route');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              key: launchKey,
+              onPressed: () => unawaited(
+                Navigator.of(context).push(
+                  PageRouteBuilder<void>(
+                    transitionDuration: const Duration(seconds: 2),
+                    pageBuilder: (context, animation, secondaryAnimation) => _pipelineReader(
+                      chapter: chapter,
+                      build: (pipeline) => ReaderRuntimeScreen(
+                        chapter: chapter,
+                        pipeline: pipeline,
+                        screenKey: routeKey,
+                        artifactPageBuilder: (
+                          context,
+                          asset,
+                          reportFirstFrame,
+                          runtime,
+                        ) =>
+                            const ColoredBox(color: Colors.black),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              child: const Text('Launch Reader'),
+            ),
+          ),
+        ),
+      ),
+    );
+    systemUiCalls.clear();
+
+    await tester.tap(find.byKey(launchKey));
+    await tester.pump();
+    for (var frame = 0;
+        frame < 20 && find.byKey(routeKey).evaluate().isEmpty;
+        frame++) {
+      await tester.pump(_frameStep);
+    }
+    expect(find.byKey(routeKey), findsOneWidget);
+    expect(
+      systemUiCalls,
+      isEmpty,
+      reason: 'route animation must own the transition before immersive UI',
+    );
+
+    await tester.pumpAndSettle();
+    expect(systemUiCalls, hasLength(1));
+    expect(systemUiCalls.single.method, 'SystemChrome.setEnabledSystemUIMode');
+
+    Navigator.of(tester.element(find.byKey(routeKey))).pop();
+    await tester.pumpAndSettle();
     await _disposePipelineReader(tester);
   });
 
