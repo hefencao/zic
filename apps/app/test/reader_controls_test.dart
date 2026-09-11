@@ -219,13 +219,13 @@ void main() {
     // thumb before release; Pipeline marks these observations as scrubbing so
     // only foreground-current demand moves with the gesture.
     expect(tester.widget<Slider>(sliderFinder).value, greaterThan(1));
-    // The thumb/label are immediate; Reader viewport dispatch is bounded to a
-    // 50ms latest-wins cadence so a long scrub does not create one full
-    // navigation/reconcile transaction for every crossed integer page.
-    await tester.pump(const Duration(milliseconds: 65));
-    expect(
+    // The thumb/label are immediate; Reader viewport dispatch is bounded and
+    // latest-wins so a long scrub does not create one full navigation/reconcile
+    // transaction for every crossed integer page. Synchronize on the viewport
+    // state rather than duplicating that cadence as a wall-clock test contract.
+    await _pumpUntilFound(
+      tester,
       find.byKey(const ValueKey<String>('reader-page-rotation:2')),
-      findsOneWidget,
     );
     await gesture.up();
     await tester.pump();
