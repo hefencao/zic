@@ -499,6 +499,9 @@ void main() {
       maxActive: 1,
       reservedHighPrioritySlots: 1,
       highPriorityThreshold: 1000,
+      // This test is about a blocked resume waiter, not transport-rank
+      // reclamation. Keep the current handoff from evicting the parked task.
+      preemptionThreshold: 400,
     );
     final parkedStarted = Completer<CancelToken>();
     final requestResume = Completer<void>();
@@ -548,7 +551,7 @@ void main() {
     await lane.idle();
   });
 
-  test('demanded parked responses are not high-priority preemption victims',
+  test('nearby demand reclaims a cheaper demanded parked response',
       () async {
     final lane = NetLane(
       maxActive: 1,
@@ -572,21 +575,127 @@ void main() {
     parked.releaseResponseReadPermit();
 
     lane.submitRanked(
-      key: 'incoming-current',
-      priority: 1000,
+      key: 'incoming-next',
+      priority: 820,
       bucket: 'test',
       bucketLimit: 1,
       task: (_) async => incomingStarted.complete(),
     );
+
+    await parked.whenCancelled.timeout(const Duration(seconds: 1));
+    expect(parked.preemptionSnapshot, isNull);
+    expect(
+      parked.retentionEvictionSnapshot?.reason,
+      'ranked-transport-lease-reclaim',
+    );
+    await incomingStarted.future.timeout(const Duration(seconds: 1));
+    await lane.idle();
+  });
+
+  test('current handoff retires lower-ranked parked transport in parallel',
+      () async {
+    final lane = NetLane(
+      maxActive: 1,
+      reservedHighPrioritySlots: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+    );
+    final parkedStarted = Completer<CancelToken>();
+    final parkedCancellationObserved = Completer<void>();
+    final parkedExit = Completer<void>();
+    final currentStarted = Completer<void>();
+    final currentExit = Completer<void>();
+
+    lane.submitRanked(
+      key: 'parked-next',
+      priority: 700,
+      bucket: 'test',
+      bucketLimit: 1,
+      task: (token) async {
+        parkedStarted.complete(token);
+        await token.whenCancelled;
+        parkedCancellationObserved.complete();
+        await parkedExit.future;
+      },
+    );
+    final parked = await parkedStarted.future;
+    parked.releaseResponseReadPermit();
+
+    lane.submitRanked(
+      key: 'current',
+      priority: 1000,
+      bucket: 'test',
+      bucketLimit: 1,
+      task: (_) async {
+        currentStarted.complete();
+        await currentExit.future;
+      },
+    );
+
+    await currentStarted.future.timeout(const Duration(seconds: 1));
+    await parkedCancellationObserved.future.timeout(const Duration(seconds: 1));
+    expect(
+      parked.retentionEvictionSnapshot?.reason,
+      'ranked-transport-lease-reclaim',
+    );
+    expect(lane.transportLeases, 2,
+        reason: 'foreground starts before the retained response has retired');
+    expect(lane.handoffActive, 1);
+
+    currentExit.complete();
+    parkedExit.complete();
+    await lane.idle();
+  });
+
+  test('restart cost protects demanded parked response from nearby demand',
+      () async {
+    final clock = FakeMonoClock();
+    final lane = NetLane(
+      maxActive: 1,
+      highPriorityThreshold: 1000,
+      preemptionThreshold: 40,
+      clock: clock,
+    );
+    final parkedStarted = Completer<CancelToken>();
+    final parkedRelease = Completer<void>();
+    final incomingStarted = Completer<void>();
+
+    lane.submitRanked(
+      key: 'invested-parked',
+      priority: 800,
+      bucket: 'test',
+      bucketLimit: 1,
+      task: (token) async {
+        token.beginRestartCost();
+        token.recordRestartCostBytes(8 * 1024 * 1024);
+        parkedStarted.complete(token);
+        await Future.any<void>(<Future<void>>[
+          token.whenCancelled,
+          parkedRelease.future,
+        ]);
+      },
+    );
+    final parked = await parkedStarted.future;
+    clock.advance(const Duration(seconds: 10));
+    parked.releaseResponseReadPermit();
+
+    lane.submitRanked(
+      key: 'incoming-next',
+      priority: 820,
+      bucket: 'test',
+      bucketLimit: 1,
+      task: (_) async => incomingStarted.complete(),
+    );
+    await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
     expect(parked.cancelled, isFalse);
     expect(incomingStarted.isCompleted, isFalse);
     expect(lane.queued, 1);
 
-    parked.cancel();
+    parkedRelease.complete();
+    await incomingStarted.future.timeout(const Duration(seconds: 1));
     await lane.idle();
-    expect(incomingStarted.isCompleted, isTrue);
   });
 
   test('replace cancels active work and runs the replacement next', () async {

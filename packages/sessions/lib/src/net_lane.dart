@@ -1219,7 +1219,7 @@ final class _Lane {
             _preemptLowestRunningForResume(blockedResume)) {
           break;
         }
-        if (_reclaimInactiveTransportLeaseForDemand()) {
+        if (_reclaimTransportLeaseForDemand()) {
           break;
         }
         final blockedHighPriority = _highestBlockedHighPriorityPending();
@@ -1242,6 +1242,15 @@ final class _Lane {
       }
 
       final next = nextPending!;
+      final nextUsesHandoff = next.priority >= highPriorityThreshold &&
+          _needsHandoff(next);
+      if (nextUsesHandoff) {
+        // Reserved handoff lets foreground work start immediately, but it must
+        // not turn a lower-ranked parked response into a permanent sixth-style
+        // transport owner. Ask that retained task to retire in parallel when
+        // the incoming rank outweighs its restart cost.
+        _reclaimTransportLeaseFor(next);
+      }
       _pending.remove(next.key);
       late CancelToken token;
       token = CancelToken(
@@ -1442,7 +1451,7 @@ final class _Lane {
     if (waiter != null && !waiter.isCompleted) waiter.complete();
   }
 
-  bool _reclaimInactiveTransportLeaseForDemand() {
+  bool _reclaimTransportLeaseForDemand() {
     if (_hasBodyPermitPreemptionInFlight || _hasRetentionEvictionInFlight) {
       return false;
     }
@@ -1460,14 +1469,25 @@ final class _Lane {
         incoming = pending;
       }
     }
-    if (incoming == null) return false;
+    return incoming != null && _reclaimTransportLeaseFor(incoming);
+  }
 
+  bool _reclaimTransportLeaseFor(_Pending incoming) {
+    if (_hasBodyPermitPreemptionInFlight || _hasRetentionEvictionInFlight) {
+      return false;
+    }
     final bucket = incoming.bucket;
     final limit = incoming.bucketLimit;
+    final globalFull = _transportLeasesActive >= maxActive;
     final bucketFull = bucket != null &&
         limit != null &&
         (_transportLeasesByBucket[bucket] ?? 0) >= limit;
-    MapEntry<String, _ActiveTask>? victim;
+    if (!globalFull && !bucketFull) return false;
+
+    // Preserve the pre-existing inactive lifecycle rule first. A withdrawn task
+    // that is still opening a response owns a lease but has no consumer, so it
+    // remains cheaper to retire than any demanded retained response.
+    MapEntry<String, _ActiveTask>? inactiveVictim;
     for (final entry in _active.entries) {
       final task = entry.value;
       if (!task.transportLeaseHeld ||
@@ -1479,28 +1499,70 @@ final class _Lane {
         continue;
       }
       if (bucketFull && task.bucket != bucket) continue;
-      if (victim == null ||
-          _inactiveParkedVictimBefore(task, victim.value)) {
-        victim = entry;
+      if (inactiveVictim == null ||
+          _inactiveTransportVictimBefore(task, inactiveVictim.value)) {
+        inactiveVictim = entry;
       }
     }
-    if (victim == null) return false;
+    if (inactiveVictim != null) {
+      final task = inactiveVictim.value;
+      final rank = _policyRank(task, basePriority: task.priority);
+      task.token.cancelForRetentionEviction(
+        TaskRetentionEvictionSnapshot(
+          basePriority: task.priority,
+          retentionPriority: rank.effectivePriority,
+          retentionBonus: rank.retentionBonus,
+          restartCostElapsedMicros: rank.restartCostElapsedMicros,
+          restartCostBytes: rank.restartCostBytes,
+          reason: 'inactive-transport-lease-reclaim',
+        ),
+      );
+      return true;
+    }
+
+    // A demanded parked response retains value, but not absolute ownership of
+    // a saturated transport slot. Reclaim it only when the incoming scheduler
+    // rank beats its restart-cost-protected rank by the normal margin.
+    MapEntry<String, _ActiveTask>? victim;
+    NetPolicyRank? victimRank;
+    for (final entry in _active.entries) {
+      final task = entry.value;
+      if (!task.transportLeaseHeld ||
+          !task.demanded ||
+          task.token.cancelled ||
+          task.responseReadPermitHeld ||
+          !task.responseRetainedWhilePermitReleased ||
+          task.resumeRequested ||
+          !task.preemptible) {
+        continue;
+      }
+      if (bucketFull && task.bucket != bucket) continue;
+      final rank = _policyRank(task, basePriority: task.priority);
+      if (!incomingOutranks(incoming.priority, rank)) continue;
+      if (victim == null ||
+          rank.effectivePriority < victimRank!.effectivePriority ||
+          (rank.effectivePriority == victimRank.effectivePriority &&
+              task.parkedSeq < victim.value.parkedSeq)) {
+        victim = entry;
+        victimRank = rank;
+      }
+    }
+    if (victim == null || victimRank == null) return false;
     final task = victim.value;
-    final rank = _policyRank(task, basePriority: task.priority);
     task.token.cancelForRetentionEviction(
       TaskRetentionEvictionSnapshot(
         basePriority: task.priority,
-        retentionPriority: rank.effectivePriority,
-        retentionBonus: rank.retentionBonus,
-        restartCostElapsedMicros: rank.restartCostElapsedMicros,
-        restartCostBytes: rank.restartCostBytes,
-        reason: 'inactive-transport-lease-reclaim',
+        retentionPriority: victimRank.effectivePriority,
+        retentionBonus: victimRank.retentionBonus,
+        restartCostElapsedMicros: victimRank.restartCostElapsedMicros,
+        restartCostBytes: victimRank.restartCostBytes,
+        reason: 'ranked-transport-lease-reclaim',
       ),
     );
     return true;
   }
 
-  bool _inactiveParkedVictimBefore(_ActiveTask a, _ActiveTask b) {
+  bool _inactiveTransportVictimBefore(_ActiveTask a, _ActiveTask b) {
     if (a.responseReadPermitHeld != b.responseReadPermitHeld) {
       return !a.responseReadPermitHeld;
     }
