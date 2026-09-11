@@ -115,6 +115,7 @@ final class ReaderView extends StatefulWidget {
     this.onTap,
     this.verticalStitch = false,
     this.pageAspectRatios = const <String, double>{},
+    this.pageAspectRatiosListenable,
     this.zoomStageFirst = 1.5,
     this.zoomStageSecond = 2.0,
     this.longPressZoomEnabled = false,
@@ -147,6 +148,11 @@ final class ReaderView extends StatefulWidget {
   /// or inaccurate dimensions after the media header is parsed, without
   /// changing page, download, decode or cache identity.
   final Map<String, double> pageAspectRatios;
+
+  /// Live runtime ratio updates. Paged presentation consumes these lazily for
+  /// zoom bounds and must not rebuild the whole PageView for one page header.
+  /// Continuous vertical presentation still rebuilds when extents can change.
+  final ValueListenable<Map<String, double>>? pageAspectRatiosListenable;
 
   /// Double-tap zoom stages, ascending and > 1. The cycle is
   /// 1x → [zoomStageFirst] → [zoomStageSecond] → 1x.
@@ -220,6 +226,7 @@ final class _ReaderViewState extends State<ReaderView>
   bool _commandScheduled = false;
   bool _verticalInitialOffsetApplied = false;
   late List<Widget> _pageSlots;
+  late Map<String, double> _runtimePageAspectRatios;
   late Map<String, double> _verticalLayoutRatios;
   Map<String, double>? _pendingVerticalLayoutRatios;
   bool _verticalRatioCommitScheduled = false;
@@ -338,8 +345,11 @@ final class _ReaderViewState extends State<ReaderView>
     _lastVerticalVisibleMaxIndex = widget.controller.currentIndex;
     _verticalKeepAliveCenter = ValueNotifier<int>(widget.controller.currentIndex);
     _verticalPageLayoutKeys = _createVerticalPageLayoutKeys();
+    _runtimePageAspectRatios =
+        widget.pageAspectRatiosListenable?.value ?? widget.pageAspectRatios;
+    widget.pageAspectRatiosListenable?.addListener(_handlePageAspectRatiosChanged);
     _pageSlots = _createPageSlots();
-    _verticalLayoutRatios = widget.pageAspectRatios;
+    _verticalLayoutRatios = _runtimePageAspectRatios;
     widget.controller.addListener(_handleControllerCommand);
     _attachFrameTimingSource();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -352,6 +362,13 @@ final class _ReaderViewState extends State<ReaderView>
   @override
   void didUpdateWidget(covariant ReaderView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.pageAspectRatiosListenable !=
+        widget.pageAspectRatiosListenable) {
+      oldWidget.pageAspectRatiosListenable
+          ?.removeListener(_handlePageAspectRatiosChanged);
+      widget.pageAspectRatiosListenable
+          ?.addListener(_handlePageAspectRatiosChanged);
+    }
     final frameSourceChanged =
         oldWidget.frameTimingSource != widget.frameTimingSource;
     final traceOwnerChanged = oldWidget.traceSink != widget.traceSink ||
@@ -400,7 +417,9 @@ final class _ReaderViewState extends State<ReaderView>
       _lastDirection = widget.controller.direction;
       _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
       _pageSlots = _createPageSlots();
-      _verticalLayoutRatios = widget.pageAspectRatios;
+      _runtimePageAspectRatios =
+          widget.pageAspectRatiosListenable?.value ?? widget.pageAspectRatios;
+      _verticalLayoutRatios = _runtimePageAspectRatios;
       _pendingVerticalLayoutRatios = null;
       _verticalRatioCommitScheduled = false;
       _pendingVerticalGeometryCorrection = null;
@@ -413,8 +432,9 @@ final class _ReaderViewState extends State<ReaderView>
       _pageSlots = _createPageSlots();
     }
     final stitchChanged = oldWidget.verticalStitch != widget.verticalStitch;
-    final ratiosChanged =
-        !identical(oldWidget.pageAspectRatios, widget.pageAspectRatios);
+    final nextRatios =
+        widget.pageAspectRatiosListenable?.value ?? widget.pageAspectRatios;
+    final ratiosChanged = !identical(_runtimePageAspectRatios, nextRatios);
     if (oldWidget.verticalStitch != widget.verticalStitch) {
       _preserveVerticalAnchor(
         oldRatios: _verticalLayoutRatios,
@@ -422,39 +442,19 @@ final class _ReaderViewState extends State<ReaderView>
       );
     }
     if (ratiosChanged) {
-      if (widget.controller.direction != ReadingDirection.vertical) {
-        _verticalLayoutRatios = widget.pageAspectRatios;
-        _pendingVerticalLayoutRatios = null;
-        _invalidateVerticalGeometryCache();
-      } else if (_verticalScrollActive || _stripZoomed || _stripLensActive) {
-        // Ratios for pages strictly beyond the current viewport cannot change
-        // the prefix or extents of anything being painted now. Adopt those
-        // decode-ahead facts immediately so they are stable before the page
-        // enters the viewport. Changes at/before the visible tail remain
-        // pending until idle, preserving the dev.280 scroll-stable prefix.
-        _adoptFutureVerticalRatios(widget.pageAspectRatios);
-        _pendingVerticalLayoutRatios =
-            _sameVerticalRatios(_verticalLayoutRatios, widget.pageAspectRatios)
-                ? null
-                : widget.pageAspectRatios;
-      } else {
-        if (!stitchChanged) {
-          _preserveVerticalAnchor(
-            oldRatios: _verticalLayoutRatios,
-            oldStitch: widget.verticalStitch,
-            nextRatios: widget.pageAspectRatios,
-          );
-        }
-        _verticalLayoutRatios = widget.pageAspectRatios;
-        _pendingVerticalLayoutRatios = null;
-        _invalidateVerticalGeometryCache();
-      }
+      _adoptPageAspectRatios(
+        nextRatios,
+        stitchChanged: stitchChanged,
+        rebuild: false,
+      );
     }
   }
 
   @override
   void dispose() {
     _detachFrameTimingSource();
+    widget.pageAspectRatiosListenable
+        ?.removeListener(_handlePageAspectRatiosChanged);
     widget.controller.removeListener(_handleControllerCommand);
     _stripZoomAnimation?.dispose();
     _stripTransform.dispose();
@@ -624,7 +624,7 @@ final class _ReaderViewState extends State<ReaderView>
     final pages = widget.controller.chapter.pages;
     if (index < 0 || index >= pages.length) return null;
     final asset = pages[index];
-    var ratio = widget.pageAspectRatios[asset.assetKey];
+    var ratio = _runtimePageAspectRatios[asset.assetKey];
     if (ratio == null) {
       final width = asset.width?.toDouble();
       final height = asset.height?.toDouble();
@@ -690,6 +690,60 @@ final class _ReaderViewState extends State<ReaderView>
         _interaction == Interaction.scrolling ||
         _interaction == Interaction.settling ||
         _interaction == Interaction.scrubbing;
+  }
+
+  void _handlePageAspectRatiosChanged() {
+    final latest = widget.pageAspectRatiosListenable?.value;
+    if (latest == null || identical(_runtimePageAspectRatios, latest)) {
+      return;
+    }
+    _adoptPageAspectRatios(
+      latest,
+      stitchChanged: false,
+      rebuild: true,
+    );
+  }
+
+  void _adoptPageAspectRatios(
+    Map<String, double> latest, {
+    required bool stitchChanged,
+    required bool rebuild,
+  }) {
+    _runtimePageAspectRatios = latest;
+    if (widget.controller.direction != ReadingDirection.vertical) {
+      // Horizontal presentation uses the ratio only when a page enters a zoom
+      // boundary calculation. Updating the live projection is sufficient; a
+      // full PageView rebuild would amplify one media-header observation into
+      // a whole-reader frame stall.
+      _verticalLayoutRatios = latest;
+      _pendingVerticalLayoutRatios = null;
+      _invalidateVerticalGeometryCache();
+      return;
+    }
+    if (_verticalScrollActive || _stripZoomed || _stripLensActive) {
+      // Ratios for pages strictly beyond the current viewport cannot change
+      // the prefix or extents of anything being painted now. Adopt those
+      // decode-ahead facts immediately so they are stable before the page
+      // enters the viewport. Changes at/before the visible tail remain
+      // pending until idle, preserving the dev.280 scroll-stable prefix.
+      _adoptFutureVerticalRatios(latest);
+      _pendingVerticalLayoutRatios =
+          _sameVerticalRatios(_verticalLayoutRatios, latest) ? null : latest;
+    } else {
+      if (!stitchChanged) {
+        _preserveVerticalAnchor(
+          oldRatios: _verticalLayoutRatios,
+          oldStitch: widget.verticalStitch,
+          nextRatios: latest,
+        );
+      }
+      _verticalLayoutRatios = latest;
+      _pendingVerticalLayoutRatios = null;
+      _invalidateVerticalGeometryCache();
+    }
+    if (rebuild && mounted) {
+      setState(() {});
+    }
   }
 
   void _adoptFutureVerticalRatios(Map<String, double> latest) {
@@ -1591,12 +1645,12 @@ final class _ReaderViewState extends State<ReaderView>
       _resetVerticalCompositionCache();
       rebuildLayout = true;
       if (controller.direction == ReadingDirection.vertical) {
-        _verticalLayoutRatios = widget.pageAspectRatios;
+        _verticalLayoutRatios = _runtimePageAspectRatios;
         _pendingVerticalLayoutRatios = null;
         _verticalInitialOffsetApplied = false;
         _prepareVerticalControllerForCurrentPage();
       } else {
-        _verticalLayoutRatios = widget.pageAspectRatios;
+        _verticalLayoutRatios = _runtimePageAspectRatios;
         _pendingVerticalLayoutRatios = null;
       }
       _scheduleSyncToCurrentPage();

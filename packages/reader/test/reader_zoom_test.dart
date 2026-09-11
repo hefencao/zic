@@ -789,31 +789,33 @@ void main() {
     );
     addTearDown(controller.dispose);
 
-    var ratios = const <String, double>{};
-    Future<void> pumpReader() async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: SizedBox(
-              width: 400,
-              height: 400,
-              child: ReaderView(
-                controller: controller,
-                clock: const _FakeClock(),
-                pageAspectRatios: ratios,
-                zoomStageFirst: 2.0,
-                zoomStageSecond: 4.0,
-                pageBuilder: (context, asset, reportFirstFrame) =>
-                    const ColoredBox(color: Colors.black),
-              ),
+    final ratios = ValueNotifier<Map<String, double>>(
+      const <String, double>{},
+    );
+    addTearDown(ratios.dispose);
+    var pageBuilds = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: const _FakeClock(),
+              pageAspectRatiosListenable: ratios,
+              zoomStageFirst: 2.0,
+              zoomStageSecond: 4.0,
+              pageBuilder: (context, asset, reportFirstFrame) {
+                pageBuilds++;
+                return const ColoredBox(color: Colors.black);
+              },
             ),
           ),
         ),
-      );
-      await tester.pump();
-    }
-
-    await pumpReader();
+      ),
+    );
+    await tester.pump();
     Future<void> doubleTapAt(Offset position) async {
       await tester.tapAt(position);
       await tester.pump(kDoubleTapMinTime);
@@ -829,14 +831,21 @@ void main() {
     // treats the page box as the image. Feed the portrait ratio (height /
     // width) discovered after the first decoded frame and verify the next pan
     // uses x=[-800,-400].
-    ratios = <String, double>{
+    final buildsBeforeRatio = pageBuilds;
+    ratios.value = <String, double>{
       controller.chapter.pages.single.assetKey: 2.0,
     };
-    await pumpReader();
+    await tester.pump();
+    expect(
+      pageBuilds,
+      buildsBeforeRatio,
+      reason: 'paged ratio metadata must not rebuild page presentation',
+    );
     expect(
       tester
           .widget<ReaderView>(find.byType(ReaderView))
-          .pageAspectRatios[controller.chapter.pages.single.assetKey],
+          .pageAspectRatiosListenable
+          ?.value[controller.chapter.pages.single.assetKey],
       2.0,
     );
     expect(_pagedTransform(tester).storage[12], closeTo(-600, 0.01));

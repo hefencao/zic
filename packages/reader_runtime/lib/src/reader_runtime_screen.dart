@@ -371,7 +371,6 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     _reader?.setDirection(candidate.direction);
     _syncPlatformFrameCadenceProbe();
     _persistSettings();
-    if (mounted) setState(() {});
   }
 
   void _persistSettings() {
@@ -1251,36 +1250,27 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
         body: Stack(
           fit: StackFit.expand,
           children: <Widget>[
-            ValueListenableBuilder<Map<String, double>>(
-              valueListenable: _pageAspectRatios,
-              // Horizontal PageView geometry stays fixed, but the paged zoom
-              // boundary follows the contain-fitted image rect. Remote
-              // manifests often omit dimensions, so the Reader must receive
-              // the ratio discovered by the first decoded frame as well.
-              builder: (context, pageAspectRatios, _) {
-                return ReaderView(
-                  controller: reader,
-                  clock: _pipeline.clock,
-                  traceSink: _pipeline.trace,
-                  frameTimingSource: const FlutterReaderFrameTimingSource(),
-                  pageBuilder: pageBuilder,
-                  demandRevision: () => _pipeline.revision,
-                  onTap: _toggleControls,
-                  verticalStitch: _settings.effectiveVerticalStitch,
-                  pageAspectRatios: pageAspectRatios,
-                  zoomStageFirst: _settings.zoomStageFirst,
-                  zoomStageSecond: _settings.zoomStageSecond,
-                  longPressZoomEnabled: _effectiveLongPressZoom(reader),
-                  longPressZoomRestoreOnRelease:
-                      _settings.longPressZoomRestoreOnRelease,
-                  longPressZoomMoveMode: _settings.longPressZoomMoveMode,
-                  longPressZoomPanRatio: _settings.longPressZoomPanRatio,
-                  longPressZoomLimitToViewport:
-                      _settings.longPressZoomLimitToViewport,
-                  doubleTapZoomOrigin: _settings.doubleTapZoomOrigin,
-                  onZoomScaleChanged: _handleZoomScaleChanged,
-                );
-              },
+            ReaderView(
+              controller: reader,
+              clock: _pipeline.clock,
+              traceSink: _pipeline.trace,
+              frameTimingSource: const FlutterReaderFrameTimingSource(),
+              pageBuilder: pageBuilder,
+              demandRevision: () => _pipeline.revision,
+              onTap: _toggleControls,
+              verticalStitch: _settings.effectiveVerticalStitch,
+              pageAspectRatiosListenable: _pageAspectRatios,
+              zoomStageFirst: _settings.zoomStageFirst,
+              zoomStageSecond: _settings.zoomStageSecond,
+              longPressZoomEnabled: _effectiveLongPressZoom(reader),
+              longPressZoomRestoreOnRelease:
+                  _settings.longPressZoomRestoreOnRelease,
+              longPressZoomMoveMode: _settings.longPressZoomMoveMode,
+              longPressZoomPanRatio: _settings.longPressZoomPanRatio,
+              longPressZoomLimitToViewport:
+                  _settings.longPressZoomLimitToViewport,
+              doubleTapZoomOrigin: _settings.doubleTapZoomOrigin,
+              onZoomScaleChanged: _handleZoomScaleChanged,
             ),
             AnimatedBuilder(
               animation: reader,
