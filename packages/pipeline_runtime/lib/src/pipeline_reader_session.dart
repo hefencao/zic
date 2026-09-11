@@ -1910,12 +1910,27 @@ final class PipelineReaderSession {
     return recovered;
   }
 
+  Future<bool> forceReloadPresentation(PageAsset asset) async {
+    _requireOpen();
+    final id = readerPageDownloadId(chapter, asset);
+    final authority = _artifactCachePresentationAuthorities[id];
+    final recovered = await _transferRuntime.recoverPresentationArtifact(
+      id,
+      reason: 'manual-force-reload',
+      userInitiated: true,
+      rejectedStorageId: authority?.storageId,
+      rejectedGeneration: authority?.generation,
+    );
+    if (recovered) {
+      _artifactCachePresentationAuthorities.remove(id);
+      _automaticPresentationRecoveries.remove(id);
+      _downloadTransfer.refreshScheduling();
+    }
+    return recovered;
+  }
+
   Future<bool> retryPresentation(PageAsset asset) =>
-      recoverPresentationFailure(
-        asset,
-        const FormatException('manual presentation retry'),
-        userInitiated: true,
-      );
+      forceReloadPresentation(asset);
 
   Future<Uint8List> _readDirectImmutableSource(
     PageAsset asset,

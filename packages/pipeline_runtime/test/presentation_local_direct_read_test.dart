@@ -303,7 +303,7 @@ void main() {
   );
 
   test(
-    'presentation rejection of a promoted cached copy destroys the physical final',
+    'manual force reload destroys the physical final and bypasses equivalent reuse',
     () async {
       final uri = Uri.parse('https://example.invalid/recover-promoted-cache.jpg');
       final chapter = _chapter(uri: uri);
@@ -387,10 +387,7 @@ void main() {
         expect(sourceOpens, 0);
 
         expect(
-          await reader.recoverPresentationFailure(
-            asset,
-            const FormatException('decoder rejected promoted cached copy'),
-          ),
+          await reader.forceReloadPresentation(asset),
           isTrue,
         );
         await _waitForCondition(() => sourceOpens == 1);
