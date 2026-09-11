@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard dev.134 Reader resource-session retention and affinity removal."""
+"""Guard bounded Reader resource-session retention and affinity removal."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +40,7 @@ for forbidden in ("widget.factory.create(", "_session.dispose()"):
 
 for token in (
     "const Duration _readerSessionRetentionDuration = Duration(minutes: 2)",
-    "const int _maxRetainedReaderSessions = 1",
+    "const int _maxRetainedReaderSessions = 2",
     "final class _PipelineReaderSessionRetentionPool",
     "session.retainReaderSession()",
     "session.resumeRetainedReaderSession(",
@@ -73,7 +73,14 @@ for token in (
     '"readerSessionReuseIdleMicros"',
 ):
     require(analyzer, token, "Trace analyzer")
-require(owner_test, "Reader reentry reuses the authoritative resource session", "owner test")
+for token in (
+    "Reader reentry reuses the authoritative resource session",
+    "retention keeps the two most recent media-empty Reader sessions",
+    "a third retained Reader evicts only the oldest idle session",
+    "retainedEvent.payload['ingressProjections'], 0",
+    "retainedEvent.payload['streamingSources'], 0",
+):
+    require(owner_test, token, "owner test")
 
 for production in (native_pool, native_cursor, native_lib, native_header):
     for forbidden in (

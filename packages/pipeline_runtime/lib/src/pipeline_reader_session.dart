@@ -86,7 +86,7 @@ final class _DirectCancelled {
 }
 
 const Duration _readerSessionRetentionDuration = Duration(minutes: 2);
-const int _maxRetainedReaderSessions = 1;
+const int _maxRetainedReaderSessions = 2;
 
 Map<String, int> _indexChapterPages(ChapterManifest chapter) {
   final result = <String, int>{};
@@ -1346,6 +1346,8 @@ final class PipelineReaderSession {
           'downloadSessions': _downloads.sessions.length,
           'decodeSessions': _decodes.sessions.length,
           'uploadSessions': _uploads.sessions.length,
+          'ingressProjections': _ingresses.projections.length,
+          'streamingSources': _streamingSources.ids.length,
           'releasedDecodeSessions': retainedDecodeSessions.length,
           'releasedUploadSessions': retainedUploadSessions.length,
           'releasedDecodedBytes': retainedDecodedBytes,

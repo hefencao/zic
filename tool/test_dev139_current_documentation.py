@@ -68,7 +68,7 @@ for token in (
     require(refill, token, "StagedDecodeRefillPolicy")
 for token in (
     "Duration(minutes: 2)",
-    "_maxRetainedReaderSessions = 1",
+    "_maxRetainedReaderSessions = 2",
     "reservedHighPrioritySlots: 1",
     "highPriorityThreshold: 1000",
     "preemptionThreshold: 40",
@@ -94,7 +94,7 @@ for token in (
     "t>0",
     "首批约 16 KiB",
     "remote prefix quantum：256 KiB",
-    "最多保留 1 个 idle 章节会话",
+    "idle LRU 最多保留最近两个 exact session key",
     "TTL 为 2 分钟",
     "默认热字节 10 项/256 MiB",
     "一个串行 blit lane",
@@ -116,7 +116,7 @@ for token in (
     "动态 holder 最大水位为 current/next/next2/previous：7 / 5 / 3 / 2",
     "current 浅水位 bootstrap MUST 优先",
     "NetLane` MUST 是页面网络的唯一调度权威",
-    "一个 idle 章节会话最多两分钟",
+    "LRU最多2个media-empty exact session",
 ):
     require(spec, token, "Spec")
 if spec_build >= 271:

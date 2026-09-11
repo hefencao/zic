@@ -105,6 +105,8 @@ void main() {
     );
     expect(retainedEvent.payload['decodeSessions'], 0);
     expect(retainedEvent.payload['uploadSessions'], 0);
+    expect(retainedEvent.payload['ingressProjections'], 0);
+    expect(retainedEvent.payload['streamingSources'], 0);
 
     final secondFactory = base.withLoaderSources(
       <Uri, LoaderTransportSource>{
@@ -143,6 +145,74 @@ void main() {
     secondFactory.release(second);
     await base.disposeRetainedSessions();
     expect(runtime.closed, isTrue);
+  });
+
+  test('retention keeps the two most recent media-empty Reader sessions', () async {
+    final base = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: const _FreshFactory(),
+    );
+    final chapterA = _chapterIdentity(
+      comicId: 'comic-a',
+      chapterId: 'chapter-a',
+      uri: Uri.parse('asset:///a.webp'),
+    );
+    final chapterB = _chapterIdentity(
+      comicId: 'comic-b',
+      chapterId: 'chapter-b',
+      uri: Uri.parse('asset:///b.webp'),
+    );
+
+    final firstA = base.acquire(
+      chapter: chapterA,
+      sessionId: 'retention-a-1',
+    );
+    base.release(firstA);
+    final firstB = base.acquire(
+      chapter: chapterB,
+      sessionId: 'retention-b-1',
+    );
+    base.release(firstB);
+
+    final secondA = base.acquire(
+      chapter: chapterA,
+      sessionId: 'retention-a-2',
+    );
+    expect(secondA, same(firstA));
+    base.release(secondA);
+    final secondB = base.acquire(
+      chapter: chapterB,
+      sessionId: 'retention-b-2',
+    );
+    expect(secondB, same(firstB));
+    base.release(secondB);
+
+    await base.disposeRetainedSessions();
+  });
+
+  test('a third retained Reader evicts only the oldest idle session', () async {
+    final base = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: const _FreshFactory(),
+    );
+    ChapterManifest chapter(String suffix) => _chapterIdentity(
+          comicId: 'comic-$suffix',
+          chapterId: 'chapter-$suffix',
+          uri: Uri.parse('asset:///$suffix.webp'),
+        );
+    final a = base.acquire(chapter: chapter('a'), sessionId: 'lru-a-1');
+    base.release(a);
+    final b = base.acquire(chapter: chapter('b'), sessionId: 'lru-b-1');
+    base.release(b);
+    final c = base.acquire(chapter: chapter('c'), sessionId: 'lru-c-1');
+    base.release(c);
+
+    final bAgain = base.acquire(chapter: chapter('b'), sessionId: 'lru-b-2');
+    expect(bAgain, same(b));
+    base.release(bAgain);
+    final aAgain = base.acquire(chapter: chapter('a'), sessionId: 'lru-a-2');
+    expect(aAgain, isNot(same(a)));
+    base.release(aAgain);
+
+    await base.disposeRetainedSessions();
   });
 
   test(
@@ -688,6 +758,33 @@ ChapterManifest _galleryChapter({int pageCount = 3}) {
     readingDirection: ReadingDirection.ltr,
   );
 }
+
+ChapterManifest _chapterIdentity({
+  required String comicId,
+  required String chapterId,
+  required Uri uri,
+}) => ChapterManifest(
+      sourceId: 'source',
+      comicId: comicId,
+      chapter: Chapter(
+        chapterId: chapterId,
+        comicId: comicId,
+        title: chapterId,
+        sequence: 1,
+        pageCount: 1,
+        sourceRevision: 'r1',
+      ),
+      pages: <PageAsset>[
+        PageAsset(
+          pageId: '$chapterId-page-0',
+          chapterId: chapterId,
+          index: 0,
+          uri: uri,
+          contentKindHint: ContentKindHint.webp,
+        ),
+      ],
+      readingDirection: ReadingDirection.ltr,
+    );
 
 ChapterManifest _chapter({
   int? width,
