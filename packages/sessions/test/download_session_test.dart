@@ -1881,6 +1881,208 @@ void main() {
     sources.dispose();
   });
 
+  test('stale resident hydration failure yields to a new physical epoch', () async {
+    final totalLength = 512 * 1024;
+    final bytes = List<int>.filled(totalLength, 3);
+    final header = 'RIFF....WEBP'.codeUnits;
+    bytes.setRange(0, header.length, header);
+    session.bindResidentImmutableAuthority(
+      validators: const Validators(),
+      totalLength: totalLength,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: bytes.sublist(0, 64),
+    );
+
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => totalLength + 1024,
+    );
+    final firstStarted = Completer<void>();
+    final releaseFirst = Completer<void>();
+    var hydrationAttempts = 0;
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-resident-stale-epoch',
+      residentReplayRangeSource: (physical, start, endExclusive) async {
+        expect(physical, same(session));
+        hydrationAttempts++;
+        if (hydrationAttempts == 1) {
+          firstStarted.complete();
+          await releaseFirst.future;
+          throw const Failure(
+            code: ErrorCode.source,
+            message: 'retired resident replay failed late',
+          );
+        }
+        return Stream<List<int>>.value(bytes.sublist(start, endExclusive));
+      },
+    );
+    addTearDown(() {
+      if (!releaseFirst.isCompleted) releaseFirst.complete();
+      ingresses.dispose();
+      sources.dispose();
+    });
+
+    final projection = ingresses.get(session);
+    await firstStarted.future;
+    final retiredEpoch = session.epoch;
+    await session.reset(removeCacheRecord: false);
+    expect(session.epoch, isNot(retiredEpoch));
+    session.bindResidentImmutableAuthority(
+      validators: const Validators(),
+      totalLength: totalLength,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: bytes.sublist(0, 64),
+    );
+    releaseFirst.complete();
+
+    for (var turn = 0;
+        turn < 100 && projection.snapshot.length < 256 * 1024;
+        turn++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    expect(hydrationAttempts, 2);
+    expect(projection.snapshot.epoch, session.epoch);
+    expect(projection.snapshot.length, 256 * 1024);
+    expect(projection.snapshot.failure, isNull);
+  });
+
+  test('running deferred resident hydration keeps one advanced target', () async {
+    final totalLength = 768 * 1024;
+    final bytes = List<int>.filled(totalLength, 2);
+    final header = 'RIFF....WEBP'.codeUnits;
+    bytes.setRange(0, header.length, header);
+    session.beginResidentImmutableIngress(
+      validators: const Validators(),
+      totalLength: totalLength,
+    );
+    session.appendResidentImmutableIngress(0, bytes);
+    session.sealResidentImmutableIngress(
+      deferFutureReaderIngress: true,
+    );
+
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => totalLength + 1024,
+    );
+    final firstStarted = Completer<void>();
+    final releaseFirst = Completer<void>();
+    final ranges = <(int, int)>[];
+    var hydrationAttempts = 0;
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-resident-coalesced-target',
+      residentReplayRangeSource: (physical, start, endExclusive) async {
+        expect(physical, same(session));
+        hydrationAttempts++;
+        ranges.add((start, endExclusive));
+        if (hydrationAttempts == 1) {
+          firstStarted.complete();
+          await releaseFirst.future;
+        }
+        return Stream<List<int>>.value(bytes.sublist(start, endExclusive));
+      },
+    );
+    addTearDown(() {
+      if (!releaseFirst.isCompleted) releaseFirst.complete();
+      ingresses.dispose();
+      sources.dispose();
+    });
+
+    final projection = ingresses.get(session);
+    await firstStarted.future;
+    final advanced = ingresses.ensureResidentPrefix(session, 512 * 1024);
+    releaseFirst.complete();
+    await advanced;
+    for (var turn = 0;
+        turn < 50 && projection.snapshot.length < 512 * 1024;
+        turn++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    expect(hydrationAttempts, 2);
+    expect(
+      ranges,
+      <(int, int)>[
+        (0, 256 * 1024),
+        (256 * 1024, 512 * 1024),
+      ],
+    );
+    expect(projection.snapshot.length, 512 * 1024);
+    expect(projection.snapshot.failure, isNull);
+  });
+
+  test('failed deferred resident hydration does not self-retry', () async {
+    final totalLength = 512 * 1024;
+    final bytes = List<int>.filled(totalLength, 1);
+    final header = 'RIFF....WEBP'.codeUnits;
+    bytes.setRange(0, header.length, header);
+    session.beginResidentImmutableIngress(
+      validators: const Validators(),
+      totalLength: totalLength,
+    );
+    session.appendResidentImmutableIngress(0, bytes);
+    session.sealResidentImmutableIngress(
+      deferFutureReaderIngress: true,
+    );
+
+    final trace = MemoryTraceSink();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => totalLength + 1024,
+    );
+    var hydrationAttempts = 0;
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-resident-failure',
+      traceSink: trace,
+      residentReplayRangeSource: (physical, start, endExclusive) async {
+        expect(physical, same(session));
+        hydrationAttempts++;
+        if (hydrationAttempts < 3) {
+          throw const Failure(
+            code: ErrorCode.source,
+            message: 'resident replay failed',
+          );
+        }
+        return Stream<List<int>>.value(bytes.sublist(start, endExclusive));
+      },
+    );
+    addTearDown(() {
+      ingresses.dispose();
+      sources.dispose();
+    });
+
+    final projection = ingresses.get(session);
+    await ingresses.settled(session.id);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      hydrationAttempts,
+      1,
+      reason: 'one failed physical generation must wait for new authority '
+          'instead of recursively hydrating the same range on the UI isolate',
+    );
+    expect(projection.snapshot.failure, isNotNull);
+    await ingresses.ensureResidentPrefix(session, totalLength);
+    expect(
+      hydrationAttempts,
+      1,
+      reason: 'a larger request cannot retry the same failed physical epoch',
+    );
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['stage'] == 'resident-ingress-hydration' &&
+            event.payload['action'] == 'failed',
+      ),
+      hasLength(1),
+    );
+  });
+
   test('disposing an ingress registry cancels resident replay attachment', () async {
     final bytes = <int>[...'RIFF....WEBP'.codeUnits, 1, 2, 3, 4, 5, 6];
     session.beginResidentImmutableIngress(

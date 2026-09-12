@@ -25,6 +25,7 @@ final class _IngressProjectionEntry {
   Future<void>? residentHydration;
   DownloadSnapshotListener? sessionListener;
   int residentRequestedLength = 0;
+  SourceEpoch? residentHydrationFailedEpoch;
   bool active = true;
 
   int get priority => control?.priority ?? session.effectivePriority;
@@ -338,13 +339,28 @@ final class DownloadIngressProjectionRegistry {
     }
     final running = entry.residentHydration;
     if (running != null) return running;
+    final attemptEpoch = entry.session.epoch;
+    if (entry.residentHydrationFailedEpoch == attemptEpoch) {
+      return Future<void>.value();
+    }
+    final requestedAtStart = entry.residentRequestedLength;
+    var failedCurrentEpoch = false;
     late final Future<void> tracked;
-    tracked = _hydrateResident(entry).catchError((Object error, StackTrace stack) {
+    tracked = _hydrateResident(entry).then<void>((_) {
+      if (entry.active &&
+          identical(_entries[entry.session.id], entry) &&
+          entry.session.epoch == attemptEpoch) {
+        entry.residentHydrationFailedEpoch = null;
+      }
+    }, onError: (Object error, StackTrace stack) {
       if (!entry.active ||
           !identical(_entries[entry.session.id], entry) ||
-          !entry.session.residentIngressDeferred) {
+          !entry.session.residentIngressDeferred ||
+          entry.session.epoch != attemptEpoch) {
         return;
       }
+      failedCurrentEpoch = true;
+      entry.residentHydrationFailedEpoch = attemptEpoch;
       final failure = error is Failure
           ? error
           : Failure(
@@ -364,7 +380,12 @@ final class DownloadIngressProjectionRegistry {
       if (identical(entry.residentHydration, tracked)) {
         entry.residentHydration = null;
       }
-      if (entry.active &&
+      final requestAdvanced =
+          entry.residentRequestedLength > requestedAtStart;
+      final epochAdvanced = entry.session.epoch != attemptEpoch;
+      if (!failedCurrentEpoch &&
+          (requestAdvanced || epochAdvanced) &&
+          entry.active &&
           identical(_entries[entry.session.id], entry) &&
           entry.session.residentIngressDeferred &&
           entry.projection.snapshot.length < entry.residentRequestedLength) {
