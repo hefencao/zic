@@ -320,6 +320,203 @@ void main() {
     unawaited(durableView.close());
   });
 
+  testWidgets(
+    'canonical tab lazily hydrates missing physical projection after first paint',
+    (tester) async {
+      final old = _versionedDownloadEntry(
+        comicId: 'cold-canonical-old',
+        chapterId: 'same-ch',
+        title: '冷启动旧版缓存',
+      );
+      final newest = _versionedDownloadEntry(
+        comicId: 'cold-canonical-new',
+        chapterId: 'same-ch',
+        title: '冷启动新版缓存',
+      );
+      final service = MemoryChapterDownloadService(
+        pageLoader: (_, __) async => Uint8List(4),
+      );
+      service.seedPages(
+        old,
+        <Uint8List?>[Uint8List(4)],
+        pinnedPages: 0,
+        phase: ChapterDownloadPhase.idle,
+      );
+      service.seedPages(
+        newest,
+        <Uint8List?>[Uint8List(4)],
+        pinnedPages: 0,
+        phase: ChapterDownloadPhase.idle,
+      );
+      final snapshots = await service.inspectMany(
+        <ImportedLibraryEntry>[old, newest],
+      );
+      final queue = WholeComicDownloadQueue(downloads: service);
+      await queue.ready;
+      final canonical = CanonicalChapterCacheSnapshot(
+        familyId: const VersionFamilyId('cold-family'),
+        canonicalChapterId: const CanonicalChapterId('cold-chapter'),
+        readyPages: 1,
+        partialPages: 0,
+        receivedBytes: 4,
+        manualReferencedPages: 0,
+        memberChapterIdentities: snapshots.map((snapshot) => snapshot.identity),
+      );
+      final projectionChanges = ChangeNotifier();
+      var projection = DownloadManagerProjection(
+        entries: <ImportedLibraryEntry>[old, newest],
+        snapshots: snapshots,
+        wholeComicSnapshot: queue.snapshot,
+      );
+      var refreshCalls = 0;
+      final releaseRefresh = Completer<void>();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DownloadManagerScreen(
+            entries: projection.entries,
+            downloads: service,
+            wholeComicDownloads: queue,
+            initialSnapshots: projection.snapshots,
+            projectionChanges: projectionChanges,
+            readProjection: () => projection,
+            refreshProjection: () async {
+              refreshCalls++;
+              await releaseRefresh.future;
+              projection = DownloadManagerProjection(
+                entries: projection.entries,
+                snapshots: projection.snapshots,
+                wholeComicSnapshot: projection.wholeComicSnapshot,
+                cacheProjection: ChapterCacheManagementProjection(
+                  canonical: <CanonicalChapterCacheSnapshot>[canonical],
+                  exact: const <ExactChapterCacheSnapshot>[],
+                ),
+              );
+              projectionChanges.notifyListeners();
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(refreshCalls, 0);
+      await tester.tap(find.byKey(downloadManagerTabCacheKey));
+      await tester.pump();
+      expect(find.text('正在读取 Canonical 缓存…'), findsOneWidget);
+      for (final snapshot in snapshots) {
+        expect(
+          find.byKey(downloadManagerAutoCacheTaskKey(snapshot.identity)),
+          findsNothing,
+        );
+      }
+
+      expect(refreshCalls, 1);
+      releaseRefresh.complete();
+      await tester.pump();
+      await tester.pump();
+      expect(
+        find.byKey(downloadManagerCanonicalCacheTaskKey(canonical.identity)),
+        findsOneWidget,
+      );
+      expect(find.text('正在读取 Canonical 缓存…'), findsNothing);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      projectionChanges.dispose();
+      unawaited(queue.close());
+      unawaited(service.close());
+    },
+  );
+
+  testWidgets(
+    'download manager auto-refreshes durable auto-cache projection changes',
+    (tester) async {
+      final entry = ImportedLibraryEntry(
+        chapter: ImportedChapterRecord(
+          directoryId: 'fixture:auto-cache-auto-refresh',
+          displayName: '自动缓存刷新章节',
+          sourceId: 'auto-cache-refresh-source',
+          comicId: 'auto-cache-refresh-comic',
+          comicTitle: '自动缓存刷新漫画',
+          chapterId: 'auto-cache-refresh-chapter',
+          sourceRevision: 'r1',
+          pages: const <ImportedPageRecord>[
+            ImportedPageRecord(
+              displayName: '1.webp',
+              sourceId: 'memory://auto-cache-refresh-1',
+              pageId: 'auto-cache-refresh-page-1',
+              contentKindHint: ContentKindHint.webp,
+              byteLength: 4,
+            ),
+          ],
+        ),
+      );
+      final delegate = MemoryChapterDownloadService(
+        pageLoader: (_, _) async => Uint8List(4),
+      );
+      final idle = ChapterDownloadSnapshot.idle(entry);
+      final service = _ManagementProjectionDownloadService(
+        delegate,
+        ChapterDownloadManagementProjection(
+          orphanedEntries: const <ImportedLibraryEntry>[],
+          snapshots: <ChapterDownloadSnapshot>[idle],
+        ),
+      );
+      final queue = WholeComicDownloadQueue(downloads: service);
+      await queue.ready;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DownloadManagerScreen(
+            entries: <ImportedLibraryEntry>[entry],
+            downloads: service,
+            wholeComicDownloads: queue,
+            initialSnapshots: <ChapterDownloadSnapshot>[idle],
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+
+      await tester.tap(find.byKey(downloadManagerTabCacheKey));
+      await tester.pump();
+      expect(find.byKey(downloadManagerAutoCacheTaskKey(idle.identity)), findsNothing);
+
+      final cached = ChapterDownloadSnapshot(
+        sourceId: entry.chapter.sourceId,
+        comicId: entry.chapter.comicId,
+        comicTitle: entry.chapter.comicTitle,
+        chapterId: entry.chapter.chapterId,
+        sourceRevision: entry.chapter.sourceRevision,
+        title: entry.chapter.displayName,
+        completedPages: 1,
+        totalPages: 1,
+        receivedBytes: 4,
+        pinnedPages: 0,
+        exactCompletedPages: 0,
+        totalBytes: 4,
+        phase: ChapterDownloadPhase.idle,
+      );
+      service.projection = ChapterDownloadManagementProjection(
+        orphanedEntries: const <ImportedLibraryEntry>[],
+        snapshots: <ChapterDownloadSnapshot>[cached],
+      );
+      service.notifyManagementChanged();
+
+      await tester.pump(const Duration(milliseconds: 121));
+      await tester.pump();
+
+      expect(
+        find.byKey(downloadManagerAutoCacheTaskKey(cached.identity)),
+        findsOneWidget,
+      );
+      expect(service.managementInspections, greaterThanOrEqualTo(2));
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      unawaited(queue.close());
+      unawaited(service.close());
+    },
+  );
+
   testWidgets('download manager exposes completed task and durable delete',
       (tester) async {
     final entry = ImportedLibraryEntry(
@@ -1120,6 +1317,183 @@ void main() {
     unawaited(service.close());
   });
 
+
+  testWidgets(
+      'download manager renders one canonical cache row for version-family cache',
+      (tester) async {
+    final old = _versionedDownloadEntry(
+      comicId: 'canonical-old',
+      chapterId: 'same-ch',
+      title: '旧版缓存',
+    );
+    final newest = _versionedDownloadEntry(
+      comicId: 'canonical-new',
+      chapterId: 'same-ch',
+      title: '新版缓存',
+    );
+    final service = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(4),
+    );
+    service.seedPages(
+      old,
+      <Uint8List?>[Uint8List(4)],
+      pinnedPages: 0,
+      phase: ChapterDownloadPhase.idle,
+    );
+    service.seedPages(
+      newest,
+      <Uint8List?>[Uint8List(4)],
+      pinnedPages: 0,
+      phase: ChapterDownloadPhase.idle,
+    );
+    final snapshots = await service.inspectMany(<ImportedLibraryEntry>[old, newest]);
+    final queue = WholeComicDownloadQueue(downloads: service);
+    await queue.ready;
+    final canonical = CanonicalChapterCacheSnapshot(
+      familyId: const VersionFamilyId('family'),
+      canonicalChapterId: const CanonicalChapterId('chapter'),
+      readyPages: 1,
+      partialPages: 0,
+      receivedBytes: 4,
+      manualReferencedPages: 0,
+      memberChapterIdentities: snapshots.map((snapshot) => snapshot.identity),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: <ImportedLibraryEntry>[old, newest],
+          downloads: service,
+          wholeComicDownloads: queue,
+          initialSnapshots: snapshots,
+          initialCacheProjection: ChapterCacheManagementProjection(
+            canonical: <CanonicalChapterCacheSnapshot>[canonical],
+            exact: const <ExactChapterCacheSnapshot>[],
+          ),
+          versionBaselines: _downloadVersionBaselines(
+            const <ComicVersionRelation>[
+              ComicVersionRelation(
+                sourceId: 'version-manager-source',
+                predecessorComicId: 'canonical-old',
+                successorComicId: 'canonical-new',
+              ),
+            ],
+            snapshots,
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(downloadManagerTabCacheKey));
+    await tester.pump();
+
+    expect(
+      find.byKey(downloadManagerCanonicalCacheTaskKey(canonical.identity)),
+      findsOneWidget,
+    );
+    for (final snapshot in snapshots) {
+      expect(
+        find.byKey(downloadManagerAutoCacheTaskKey(snapshot.identity)),
+        findsNothing,
+      );
+    }
+    expect(find.textContaining('Canonical 缓存'), findsWidgets);
+    expect(find.textContaining('2 个版本共享'), findsOneWidget);
+
+    await tester.tap(find.byKey(downloadManagerConvertKey(canonical.identity)));
+    await tester.pumpAndSettle();
+    final oldAfter = await service.inspect(old);
+    final newestAfter = await service.inspect(newest);
+    expect(oldAfter.isManualDownload, isFalse);
+    expect(newestAfter.isManualDownload, isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(service.close());
+  });
+
+  testWidgets(
+      'canonical cache does not guess an older download target when latest member is absent',
+      (tester) async {
+    final old = _versionedDownloadEntry(
+      comicId: 'canonical-old-only',
+      chapterId: 'same-ch',
+      title: '旧版缓存',
+    );
+    final service = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(4),
+    );
+    service.seedPages(
+      old,
+      <Uint8List?>[Uint8List(4)],
+      pinnedPages: 0,
+      phase: ChapterDownloadPhase.idle,
+    );
+    final snapshots = await service.inspectMany(<ImportedLibraryEntry>[old]);
+    final queue = WholeComicDownloadQueue(downloads: service);
+    await queue.ready;
+    final canonical = CanonicalChapterCacheSnapshot(
+      familyId: const VersionFamilyId('family'),
+      canonicalChapterId: const CanonicalChapterId('chapter'),
+      readyPages: 1,
+      partialPages: 0,
+      receivedBytes: 4,
+      manualReferencedPages: 0,
+      memberChapterIdentities: snapshots.map((snapshot) => snapshot.identity),
+    );
+    final versionBaselines = resolveComicVersionBaselines(
+      relations: const <ComicVersionRelation>[
+        ComicVersionRelation(
+          sourceId: 'version-manager-source',
+          predecessorComicId: 'canonical-old-only',
+          successorComicId: 'canonical-new-missing',
+        ),
+      ],
+      cacheReuseComics: const <ComicVersionIdentity>[
+        ComicVersionIdentity(
+          sourceId: 'version-manager-source',
+          comicId: 'canonical-old-only',
+        ),
+        ComicVersionIdentity(
+          sourceId: 'version-manager-source',
+          comicId: 'canonical-new-missing',
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: <ImportedLibraryEntry>[old],
+          downloads: service,
+          wholeComicDownloads: queue,
+          initialSnapshots: snapshots,
+          initialCacheProjection: ChapterCacheManagementProjection(
+            canonical: <CanonicalChapterCacheSnapshot>[canonical],
+            exact: const <ExactChapterCacheSnapshot>[],
+          ),
+          versionBaselines: versionBaselines,
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(downloadManagerTabCacheKey));
+    await tester.pump();
+
+    expect(
+      find.byKey(downloadManagerCanonicalCacheTaskKey(canonical.identity)),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(downloadManagerConvertKey(canonical.identity)),
+      findsNothing,
+    );
+    expect((await service.inspect(old)).isManualDownload, isFalse);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(service.close());
+  });
+
+
 }
 
 ComicVersionBaselineProjection _downloadVersionBaselines(
@@ -1267,4 +1641,44 @@ final class _BlockingInspectManyDownloadService
 
   @override
   Future<void> close() => _delegate.close();
+}
+
+
+final class _ManagementProjectionDownloadService
+    extends _BlockingInspectManyDownloadService
+    implements
+        ChapterDownloadManagementProjectionReader,
+        ChapterDownloadManagementChangeSource {
+  _ManagementProjectionDownloadService(
+    ChapterDownloadService delegate,
+    this.projection,
+  ) : super(delegate, Future<void>.value());
+
+  final StreamController<void> _managementChanges =
+      StreamController<void>.broadcast(sync: true);
+  ChapterDownloadManagementProjection projection;
+  int managementInspections = 0;
+
+  @override
+  Stream<void> get managementProjectionChanges => _managementChanges.stream;
+
+  @override
+  Future<ChapterDownloadManagementProjection> inspectDownloadManagement(
+    Iterable<ImportedLibraryEntry> knownEntries,
+  ) async {
+    managementInspections++;
+    return projection;
+  }
+
+  void notifyManagementChanged() {
+    _managementChanges.add(null);
+  }
+
+  @override
+  Future<void> close() async {
+    if (!_managementChanges.isClosed) {
+      await _managementChanges.close();
+    }
+    await super.close();
+  }
 }

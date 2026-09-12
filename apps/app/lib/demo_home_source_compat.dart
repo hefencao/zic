@@ -806,6 +806,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             _downloadSnapshots.values,
           ),
           wholeComicSnapshot: _wholeComicQueueSnapshot,
+          cacheProjection: _librarySession.downloadCacheProjection,
           versionBaselines: _librarySession.versionBaselines,
         );
     final initialProjection = readProjection();
@@ -834,6 +835,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           wholeComicDownloads: _wholeComicDownloads,
           initialSnapshots: initialProjection.snapshots,
           initialWholeComicSnapshot: initialProjection.wholeComicSnapshot,
+          initialCacheProjection: initialProjection.cacheProjection,
           versionBaselines: initialProjection.versionBaselines,
           cacheCoordinator: _cacheCoordinator,
           hydrateEntry: _librarySession.hydrateEntry,

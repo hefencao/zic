@@ -349,6 +349,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       ComicVersionBaselineProjection.empty;
   Map<String, ChapterDownloadSnapshot> _downloadSnapshots =
       const <String, ChapterDownloadSnapshot>{};
+  ChapterCacheManagementProjection? _downloadCacheProjection;
   late WholeComicQueueSnapshot _wholeComicQueueSnapshot;
   final ChangeNotifier _downloadProjectionChanges = ChangeNotifier();
   Object? _error;
@@ -377,6 +378,8 @@ final class HomeLibrarySession extends ChangeNotifier {
   ComicVersionBaselineProjection get versionBaselines => _versionBaselines;
   Map<String, ChapterDownloadSnapshot> get downloadSnapshots =>
       _downloadSnapshots;
+  ChapterCacheManagementProjection? get downloadCacheProjection =>
+      _downloadCacheProjection;
   List<ImportedLibraryEntry> get downloadManagerEntries {
     final byIdentity = <String, ImportedLibraryEntry>{
       for (final entry in _entries) _downloadEntryIdentity(entry): entry,
@@ -1036,6 +1039,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     this.downloadComposition = downloadComposition;
     this.wholeComicDownloads = wholeComicDownloads;
     _canonicalPhysicalBackfillFingerprint = null;
+    _downloadCacheProjection = null;
     _recomputeVersionBaselines();
     // Preserve the snapshot-projected orphan entries until the adopted
     // service publishes its first authoritative download projection.
@@ -1173,6 +1177,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _downloadSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
       downloadSnapshots,
     );
+    _downloadCacheProjection = null;
     _recomputeVersionBaselines();
     _downloadProjectionChanges.notifyListeners();
     _snapshotLibraryRevision = snapshot.libraryRevision;
@@ -2150,8 +2155,10 @@ final class HomeLibrarySession extends ChangeNotifier {
   ) async {
     final previousSnapshots = _downloadSnapshots;
     final previousOrphaned = _orphanedDownloadEntries;
+    final previousCacheProjection = _downloadCacheProjection;
     final snapshots = <String, ChapterDownloadSnapshot>{};
     var orphaned = const <ImportedLibraryEntry>[];
+    ChapterCacheManagementProjection? cacheProjection;
     final startedAt = _homeStartupClock.elapsedMilliseconds;
     _homeLog('download-snapshot-refresh-start entries=${requested.length}');
     try {
@@ -2164,6 +2171,7 @@ final class HomeLibrarySession extends ChangeNotifier {
           requested,
         );
         orphaned = projection.orphanedEntries;
+        cacheProjection = projection.cache;
         for (final snapshot in projection.snapshots) {
           snapshots[snapshot.identity] = snapshot;
         }
@@ -2183,6 +2191,7 @@ final class HomeLibrarySession extends ChangeNotifier {
         'durationMs=${_homeStartupClock.elapsedMilliseconds - startedAt}',
       );
     } on Object {
+      cacheProjection = previousCacheProjection;
       // Preserve per-entry recovery for a single stale diagnostic record while
       // keeping the normal startup path to one bulk index projection.
       _homeLog('download-snapshot-refresh-bulk-failed');
@@ -2212,6 +2221,7 @@ final class HomeLibrarySession extends ChangeNotifier {
         !_sameOrphanedDownloadProjection(previousOrphaned, nextOrphaned);
     _orphanedDownloadEntries = nextOrphaned;
     _downloadSnapshots = nextSnapshots;
+    _downloadCacheProjection = cacheProjection;
     _recomputeVersionBaselines();
     _downloadProjectionChanges.notifyListeners();
     if (persistedChanged) {
