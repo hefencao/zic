@@ -482,6 +482,254 @@ void main() {
   );
 
   test(
+    'physical SAF partial skips redundant resume metadata existence probe',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-physical-saf-meta-open-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      const treeUri = 'content://tree/physical-saf-meta-open';
+      final storage = <String, Uint8List>{};
+      final saf = _MemorySafIo(storage);
+      final service = await PersistentChapterDownloadService.open(
+        root.path,
+        safTreeIo: saf,
+        safTreeUri: treeUri,
+      );
+      addTearDown(service.close);
+      final id = _readerArtifactId('physical-saf-meta-open');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000018',
+      );
+      final bytes = Uint8List.fromList(<int>[1, 2, 3, 4, 5, 6]);
+      await service.artifactStore.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        entry: PartialDownloadEntry(
+          length: bytes.length,
+          validators: const Validators(),
+          totalLength: 12,
+          open: ({required int start}) =>
+              Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+        ),
+      );
+      final token = service.artifactStore.layoutFor(id).tokenForPhysical(physical);
+      storage.remove('partial/$token.part.meta');
+      final beforeExistsCalls = saf.existsCalls;
+
+      final partial = await service.artifactStore.openPhysicalPartialDownload(
+        physicalId: physical,
+        requestId: id,
+      );
+
+      expect(partial, isNotNull);
+      expect(partial!.length, bytes.length);
+      expect(partial.validators.isEmpty, isTrue);
+      expect(partial.totalLength, isNull);
+      expect(
+        saf.existsCalls,
+        beforeExistsCalls,
+        reason: 'SAF open is already the sidecar existence check',
+      );
+      final restored = <int>[];
+      await for (final chunk in partial.open(start: 0)) {
+        restored.addAll(chunk);
+      }
+      expect(restored, bytes);
+    },
+  );
+
+  test(
+    'physical SAF partial adopts through a proven Direct root alias',
+    () async {
+      final appRoot = await Directory.systemTemp.createTemp(
+        'zic-physical-saf-direct-alias-app-',
+      );
+      final directRoot = await Directory.systemTemp.createTemp(
+        'zic-physical-saf-direct-alias-root-',
+      );
+      addTearDown(() async {
+        if (await appRoot.exists()) await appRoot.delete(recursive: true);
+        if (await directRoot.exists()) await directRoot.delete(recursive: true);
+      });
+      const treeUri = 'content://tree/physical-saf-direct-alias';
+      final storage = <String, Uint8List>{};
+      final saf = _MemorySafIo(storage);
+      final service = await PersistentChapterDownloadService.open(
+        appRoot.path,
+        safTreeIo: saf,
+        safTreeUri: treeUri,
+      );
+      addTearDown(service.close);
+
+      final id = _readerArtifactId('physical-saf-direct-alias');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000019',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(256 * 1024, (index) => index & 0xff),
+      );
+      await service.artifactStore.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        entry: PartialDownloadEntry(
+          length: bytes.lengthInBytes,
+          validators: const Validators(),
+          totalLength: bytes.lengthInBytes * 2,
+          open: ({required int start}) =>
+              Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+        ),
+      );
+
+      final token = service.artifactStore.layoutFor(id).tokenForPhysical(physical);
+      final relativePath = 'partial/$token.part';
+      final directArtifact = CacheLayout(directRoot.path).artifactForPhysical(physical);
+      await File(directArtifact.partialPath).parent.create(recursive: true);
+      await File(directArtifact.partialPath).writeAsBytes(storage[relativePath]!);
+      await File('${directArtifact.partialPath}.meta')
+          .writeAsBytes(storage['$relativePath.meta']!);
+      await service.artifactStore.registerStorageRootAccessAliasProof(
+        StorageRootAccessAliasProof(
+          direct: DirectStorageAccessLocator(directRoot.path),
+          saf: const SafStorageAccessLocator(treeUri),
+        ),
+      );
+
+      saf.readPaths.clear();
+      final partial = await service.artifactStore.openPhysicalPartialDownload(
+        physicalId: physical,
+        requestId: id,
+      );
+      expect(partial, isNotNull);
+      expect(partial!.accessMode, 'saf');
+      expect(partial.adoptInto, isNotNull);
+
+      final session = DownloadSession(
+        id: id,
+        physicalId: physical,
+        artifact: CacheLayout('${appRoot.path}/ephemeral')
+            .artifactForPhysical(physical),
+        clock: SystemClock(),
+        initiallyDemanded: false,
+      );
+      addTearDown(() async {
+        if (session.state != DownloadState.disposed) await session.dispose();
+      });
+      final adopted = await partial.adoptInto!(session);
+
+      expect(adopted, isTrue);
+      expect(session.hasBorrowedDurableSpool, isTrue);
+      expect(session.committedLength, bytes.lengthInBytes);
+      expect(session.artifact.partialPath, directArtifact.partialPath);
+      expect(session.storageRootId, directRoot.path);
+      expect(
+        saf.readPaths,
+        isEmpty,
+        reason: 'proven Direct adoption must not replay the SAF body first',
+      );
+      final physicalIndex = service.artifactStore.index as PhysicalPartialIndex;
+      final rebound = await physicalIndex.getPhysicalPartial(physical);
+      expect(rebound, isNotNull);
+      expect(rebound!.id, physical);
+      expect(rebound.path, directArtifact.partialPath);
+      expect(rebound.storageRootId, directRoot.path);
+      expect(await File(directArtifact.partialPath).readAsBytes(), bytes);
+    },
+  );
+
+  test(
+    'physical SAF partial falls back when Direct alias disappears before adoption',
+    () async {
+      final appRoot = await Directory.systemTemp.createTemp(
+        'zic-physical-saf-direct-race-app-',
+      );
+      final directRoot = await Directory.systemTemp.createTemp(
+        'zic-physical-saf-direct-race-root-',
+      );
+      addTearDown(() async {
+        if (await appRoot.exists()) await appRoot.delete(recursive: true);
+        if (await directRoot.exists()) await directRoot.delete(recursive: true);
+      });
+      const treeUri = 'content://tree/physical-saf-direct-race';
+      final storage = <String, Uint8List>{};
+      final saf = _MemorySafIo(storage);
+      final service = await PersistentChapterDownloadService.open(
+        appRoot.path,
+        safTreeIo: saf,
+        safTreeUri: treeUri,
+      );
+      addTearDown(service.close);
+
+      final id = _readerArtifactId('physical-saf-direct-race');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000020',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(128 * 1024, (index) => (index * 3) & 0xff),
+      );
+      await service.artifactStore.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        entry: PartialDownloadEntry(
+          length: bytes.lengthInBytes,
+          validators: const Validators(),
+          totalLength: bytes.lengthInBytes * 2,
+          open: ({required int start}) =>
+              Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+        ),
+      );
+
+      final token = service.artifactStore.layoutFor(id).tokenForPhysical(physical);
+      final relativePath = 'partial/$token.part';
+      final directArtifact = CacheLayout(directRoot.path).artifactForPhysical(physical);
+      await File(directArtifact.partialPath).parent.create(recursive: true);
+      await File(directArtifact.partialPath).writeAsBytes(storage[relativePath]!);
+      await File('${directArtifact.partialPath}.meta')
+          .writeAsBytes(storage['$relativePath.meta']!);
+      await service.artifactStore.registerStorageRootAccessAliasProof(
+        StorageRootAccessAliasProof(
+          direct: DirectStorageAccessLocator(directRoot.path),
+          saf: const SafStorageAccessLocator(treeUri),
+        ),
+      );
+
+      final partial = await service.artifactStore.openPhysicalPartialDownload(
+        physicalId: physical,
+        requestId: id,
+      );
+      expect(partial?.adoptInto, isNotNull);
+      await File(directArtifact.partialPath).delete();
+
+      final session = DownloadSession(
+        id: id,
+        physicalId: physical,
+        artifact: CacheLayout('${appRoot.path}/ephemeral-race')
+            .artifactForPhysical(physical),
+        clock: SystemClock(),
+        initiallyDemanded: false,
+      );
+      addTearDown(() async {
+        if (session.state != DownloadState.disposed) await session.dispose();
+      });
+      final adopted = await partial!.adoptInto!(session);
+      expect(adopted, isFalse);
+      expect(session.hasBorrowedDurableSpool, isFalse);
+      expect(session.committedLength, 0);
+
+      final restored = BytesBuilder(copy: false);
+      await for (final chunk in partial.open(start: 0)) {
+        restored.add(chunk);
+      }
+      expect(restored.takeBytes(), bytes);
+      expect(saf.readPaths, contains(relativePath));
+      final physicalIndex = service.artifactStore.index as PhysicalPartialIndex;
+      final retained = await physicalIndex.getPhysicalPartial(physical);
+      expect(retained?.id, physical);
+      expect(parseSafRecordPath(retained!.path), isNotNull);
+    },
+  );
+
+  test(
     'SAF partial stays stream-backed and never exposes POSIX adoption',
     () async {
       final directory = await Directory.systemTemp.createTemp(
@@ -5720,6 +5968,7 @@ final class _MemorySafIo implements SafTreeIo {
       <int, ({String path, int pos})>{};
   int _nextHandle = 1;
   int listCalls = 0;
+  int existsCalls = 0;
   final List<String> readPaths = <String>[];
   bool failNextClose = false;
 
@@ -5802,8 +6051,10 @@ final class _MemorySafIo implements SafTreeIo {
   }
 
   @override
-  Future<bool> exists(String relativePath) async =>
-      storage.containsKey(relativePath);
+  Future<bool> exists(String relativePath) async {
+    existsCalls++;
+    return storage.containsKey(relativePath);
+  }
 
   @override
   Future<List<SafTreeFile>> list(String relativePath) async {
