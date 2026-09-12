@@ -717,20 +717,41 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         focus.chapter.comicId,
       );
       var metadataUpdated = false;
+      var metadataPreempted = false;
+      var metadataRetryAttempted = false;
       var versionChecked = false;
+      bool isRuntimeRequestPreemption(Object error) =>
+          error is Failure &&
+          error.code == ErrorCode.cancelled &&
+          error.details['runtimeErrorCode'] == 'runtime-request-cancelled';
+      Map<String, Object?> errorPayload(Object error) => <String, Object?>{
+            'errorType': error.runtimeType.toString(),
+            'errorMessage': error is Failure ? error.message : error.toString(),
+            if (error is Failure) ...<String, Object?>{
+              'errorCode': error.code.name,
+              if (error.details['runtimeErrorCode'] case final String code)
+                'runtimeErrorCode': code,
+            },
+          };
       try {
         refreshed = await metadataFuture;
         metadataUpdated = true;
       } on Object catch (error) {
+        final preempted = isRuntimeRequestPreemption(error);
+        metadataPreempted = preempted;
         widget.debugTrace.record(
           TraceEvent(
             monotonicMicros: _traceClock.elapsedMicroseconds,
             sessionId: 'reader-version-refresh:${source.sourceId}',
-            kind: TraceEventKind.taskFailed,
+            kind: preempted
+                ? TraceEventKind.artifactSource
+                : TraceEventKind.taskFailed,
             identityHash: focus.chapter.chapterId,
             payload: <String, Object?>{
-              'stage': 'reader-metadata-refresh-failed',
-              'errorType': error.runtimeType.toString(),
+              'stage': preempted
+                  ? 'reader-metadata-refresh-preempted'
+                  : 'reader-metadata-refresh-failed',
+              ...errorPayload(error),
             },
           ),
         );
@@ -749,10 +770,39 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
             identityHash: focus.chapter.comicId,
             payload: <String, Object?>{
               'stage': 'reader-version-check-failed',
-              'errorType': error.runtimeType.toString(),
+              ...errorPayload(error),
             },
           ),
         );
+      }
+      if (metadataPreempted) {
+        // Foreground Reader source work may preempt this post-presentation
+        // generic runtime request. Retry exactly once after the concurrent
+        // version check settles. Other cancellation/failure kinds keep their
+        // existing terminal behavior and are never retried here.
+        metadataRetryAttempted = true;
+        try {
+          refreshed = await _refreshRemoteEntry(focus);
+          metadataUpdated = true;
+        } on Object catch (error) {
+          final preemptedAgain = isRuntimeRequestPreemption(error);
+          widget.debugTrace.record(
+            TraceEvent(
+              monotonicMicros: _traceClock.elapsedMicroseconds,
+              sessionId: 'reader-version-refresh:${source.sourceId}',
+              kind: preemptedAgain
+                  ? TraceEventKind.artifactSource
+                  : TraceEventKind.taskFailed,
+              identityHash: focus.chapter.chapterId,
+              payload: <String, Object?>{
+                'stage': preemptedAgain
+                    ? 'reader-metadata-refresh-preempted-again'
+                    : 'reader-metadata-refresh-retry-failed',
+                ...errorPayload(error),
+              },
+            ),
+          );
+        }
       }
       await _prepareVersionReuseWarmup(source, refreshed);
       widget.debugTrace.record(
@@ -764,6 +814,8 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
           payload: <String, Object?>{
             'stage': 'reader-metadata-version-refresh-complete',
             'metadataUpdated': metadataUpdated,
+            'metadataPreempted': metadataPreempted,
+            'metadataRetryAttempted': metadataRetryAttempted,
             'versionChecked': versionChecked,
             'sourceRevision': refreshed.chapter.sourceRevision,
           },
@@ -779,6 +831,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       }),
     );
   }
+
 
   Future<int> _ensureSourceVersionReuseAuthority(
     ImportedLibraryEntry current,

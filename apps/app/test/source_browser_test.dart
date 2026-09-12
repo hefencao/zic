@@ -10,8 +10,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
+import 'package:telemetry/telemetry.dart';
 import 'package:zic/comic_details.dart' as details;
 import 'package:zic/demo_home.dart';
+import 'package:zic/debug_trace.dart';
 import 'package:zic/app.dart';
 import 'package:zic/source_browser.dart';
 import 'package:zic/webp_demo.dart';
@@ -2010,6 +2012,110 @@ void main() {
     await tester.pump(const Duration(minutes: 2));
   });
 
+  testWidgets(
+      'Reader metadata refresh retries one foreground runtime preemption',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    const sourceId = 'fixture-reader-metadata-preempt';
+    final trace = DebugTraceLog(maxEvents: 200, maxExportEvents: 400);
+    addTearDown(trace.dispose);
+    final source = _FixtureSource(
+      sourceId,
+      'Reader后台刷新源',
+      supportsComicVersions: true,
+      chapterLoadErrors: const <Object>[
+        Failure(
+          code: ErrorCode.cancelled,
+          message: 'foreground page plan preempted metadata request',
+          details: <String, Object?>{
+            'runtimeErrorCode': 'runtime-request-cancelled',
+          },
+        ),
+      ],
+    );
+    final manifest = source._chapterManifest(
+      source._chapterId,
+      durableRuntimeLocator: false,
+    );
+    await store.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: source._comic,
+        manifest: manifest,
+      ),
+    );
+    await store.saveComicPreference(
+      ComicPreference.defaults(
+        sourceId: sourceId,
+        comicId: source._comicId,
+        sourceKind: ComicSourceKind.remote,
+      ),
+    );
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        comicSources: <BrowsableComicSource>[source],
+        debugTrace: trace,
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pump();
+    await _tapVisible(
+      tester,
+      find.byKey(comicCoverKey(sourceId, source._comicId)),
+    );
+    await _pumpUntilFound(tester, find.byType(ImportedImageChapterScreen));
+    final readerScreen = tester.widget<ImportedImageChapterScreen>(
+      find.byType(ImportedImageChapterScreen),
+    );
+
+    readerScreen.onFirstPresentationFrame!();
+    for (var frame = 0; frame < 120; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      if (trace.events.any(
+        (event) =>
+            event.payload['stage'] ==
+            'reader-metadata-version-refresh-complete',
+      )) {
+        break;
+      }
+    }
+
+    expect(source.chapterLoads, 2);
+    expect(source.versionLoadCalls, 1);
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.taskFailed &&
+            event.payload['stage'] == 'reader-metadata-refresh-failed',
+      ),
+      isEmpty,
+    );
+    final preempted = trace.events.singleWhere(
+      (event) => event.payload['stage'] == 'reader-metadata-refresh-preempted',
+    );
+    expect(preempted.kind, TraceEventKind.artifactSource);
+    expect(preempted.payload['errorCode'], ErrorCode.cancelled.name);
+    expect(
+      preempted.payload['runtimeErrorCode'],
+      'runtime-request-cancelled',
+    );
+    final completed = trace.events.singleWhere(
+      (event) =>
+          event.payload['stage'] == 'reader-metadata-version-refresh-complete',
+    );
+    expect(completed.payload['metadataUpdated'], isTrue);
+    expect(completed.payload['metadataPreempted'], isTrue);
+    expect(completed.payload['metadataRetryAttempted'], isTrue);
+    expect(completed.payload['versionChecked'], isTrue);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(minutes: 2));
+  });
+
   testWidgets('legacy runtime chapter URI refreshes before entering Reader',
       (tester) async {
     final store = MemoryImportedLibraryStore();
@@ -2780,6 +2886,7 @@ final class _FixtureSource
     this.versionLoadStarted,
     this.versionLoadGate,
     this.comicVersions = const <SourceComicVersion>[],
+    this.chapterLoadErrors = const <Object>[],
     this.supportsComicPreview = false,
     this.previewPageCount = 1,
     this.previewCrops = false,
@@ -2809,6 +2916,7 @@ final class _FixtureSource
   final Completer<void>? versionLoadStarted;
   final Completer<void>? versionLoadGate;
   final List<SourceComicVersion> comicVersions;
+  final List<Object> chapterLoadErrors;
   @override
   final bool supportsComicPreview;
   final int previewPageCount;
@@ -2958,7 +3066,7 @@ final class _FixtureSource
   @override
   Future<List<SourceComicVersion>> findComicVersions(String comicId) async {
     versionLoadCalls++;
-    expect(comicId, _comicId);
+    expectSync(comicId, _comicId);
     final started = versionLoadStarted;
     if (started != null && !started.isCompleted) started.complete();
     await versionLoadGate?.future;
@@ -2967,7 +3075,7 @@ final class _FixtureSource
 
   @override
   Future<ComicManifest> loadComic(String comicId) async {
-    expect(comicId, _comicId);
+    expectSync(comicId, _comicId);
     final loadIndex = _comicLoads++;
     if (loadIndex == 0) {
       final started = firstComicLoadStarted;
@@ -3060,8 +3168,11 @@ final class _FixtureSource
 
   @override
   Future<ChapterManifest> loadChapter(String chapterId) async {
-    expect(chapterId, anyOf(_chapterId, _secondChapterId));
-    _chapterLoads++;
+    expectSync(chapterId, anyOf(_chapterId, _secondChapterId));
+    final loadIndex = _chapterLoads++;
+    if (loadIndex < chapterLoadErrors.length) {
+      throw chapterLoadErrors[loadIndex];
+    }
     return _chapterManifest(chapterId, durableRuntimeLocator: false);
   }
 
