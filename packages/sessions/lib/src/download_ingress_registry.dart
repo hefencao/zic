@@ -53,6 +53,8 @@ final class DownloadIngressProjectionRegistry {
     this.residentReplaySourceWithControl,
     this.residentReplayRangeSource,
     this.residentReplayRangeSourceWithControl,
+    this.artifactReplayRangeSourceWithControl,
+    this.prefixHints,
     this.traceSink = const NoopTraceSink(),
     this.maxActiveReplays = 2,
   }) : assert(maxActiveReplays > 0);
@@ -65,6 +67,9 @@ final class DownloadIngressProjectionRegistry {
   final DownloadResidentReplayRangeSource? residentReplayRangeSource;
   final DownloadResidentReplayRangeSourceWithControl?
       residentReplayRangeSourceWithControl;
+  final DownloadArtifactReplayRangeSourceWithControl?
+      artifactReplayRangeSourceWithControl;
+  final WebpDecodePrefixHints? prefixHints;
   final TraceSink traceSink;
   final int maxActiveReplays;
   final Map<DownloadId, _IngressProjectionEntry> _entries =
@@ -73,6 +78,7 @@ final class DownloadIngressProjectionRegistry {
       <_IngressProjectionEntry>[];
   final Set<_IngressProjectionEntry> _activeReplays =
       <_IngressProjectionEntry>{};
+  bool _replayPumpScheduled = false;
 
   Iterable<DownloadIngressProjection> get projections =>
       _entries.values.map((entry) => entry.projection);
@@ -81,7 +87,7 @@ final class DownloadIngressProjectionRegistry {
     final existing = _entries[session.id];
     if (existing != null && identical(existing.session, session)) {
       existing.control?.updatePriority(session.effectivePriority);
-      _pumpReplays();
+      _scheduleReplayPump();
       return existing.projection;
     }
     if (existing != null) {
@@ -154,7 +160,7 @@ final class DownloadIngressProjectionRegistry {
         projection.detach();
         rethrow;
       }
-      _requestInitialResidentHydration(entry);
+      _enqueueReplay(entry);
       return projection;
     }
 
@@ -170,8 +176,7 @@ final class DownloadIngressProjectionRegistry {
       return projection;
     }
 
-    _pendingReplays.add(entry);
-    _pumpReplays();
+    _enqueueReplay(entry);
     return projection;
   }
 
@@ -182,7 +187,7 @@ final class DownloadIngressProjectionRegistry {
   Future<void> settled(DownloadId id) {
     final entry = _entries[id];
     if (entry == null) return Future<void>.value();
-    _pumpReplays();
+    _scheduleReplayPump();
     return entry.completer.future;
   }
 
@@ -190,7 +195,7 @@ final class DownloadIngressProjectionRegistry {
     final entry = _entries[session.id];
     if (entry != null && identical(entry.session, session)) {
       entry.control?.updatePriority(session.effectivePriority);
-      _pumpReplays();
+      _scheduleReplayPump();
     }
   }
 
@@ -208,7 +213,7 @@ final class DownloadIngressProjectionRegistry {
     _removeSessionListener(entry);
     session.detachIngressProjection(entry.projection.scopeId);
     entry.projection.detach();
-    _pumpReplays();
+    _scheduleReplayPump();
   }
 
   /// Releases this Reader's encoded-source ownership for one physical page.
@@ -265,8 +270,10 @@ final class DownloadIngressProjectionRegistry {
       );
       if (entry.session.residentIngressDeferred &&
           snapshot.state == DownloadState.promoted &&
-          snapshot.committedLength > 0) {
-        _requestInitialResidentHydration(entry);
+          snapshot.committedLength > 0 &&
+          entry.projection.snapshot.length == 0 &&
+          entry.projection.snapshot.failure == null) {
+        _enqueueReplay(entry);
       }
     }
 
@@ -281,26 +288,23 @@ final class DownloadIngressProjectionRegistry {
     entry.sessionListener = null;
   }
 
-  void _requestInitialResidentHydration(_IngressProjectionEntry entry) {
-    if (!entry.active || !entry.session.residentIngressDeferred) return;
+  Future<void> _requestInitialResidentHydration(
+    _IngressProjectionEntry entry,
+  ) {
+    if (!entry.active || !entry.session.residentIngressDeferred) {
+      return Future<void>.value();
+    }
     entry.projection.setDecodePrefixQuantumBytes(
       localWebpDecodePrefixQuantumBytes,
     );
     entry.control ??=
         _IngressAttachmentControl(priority: entry.session.effectivePriority);
     final total = entry.session.committedLength;
-    if (total <= 0) return;
+    if (total <= 0) return Future<void>.value();
     final target = _residentInitialHydrationBytes < total
         ? _residentInitialHydrationBytes
         : total;
-    final hydration = _requestResidentHydration(entry, target);
-    unawaited(
-      hydration.whenComplete(() {
-        if (entry.active && !entry.completer.isCompleted) {
-          entry.completer.complete();
-        }
-      }),
-    );
+    return _requestResidentHydration(entry, target);
   }
 
   static int? _decodePrefixQuantumFor(DownloadSession session) =>
@@ -518,6 +522,26 @@ final class DownloadIngressProjectionRegistry {
     }
   }
 
+  void _enqueueReplay(_IngressProjectionEntry entry) {
+    if (!entry.active ||
+        !identical(_entries[entry.session.id], entry) ||
+        _pendingReplays.contains(entry) ||
+        _activeReplays.contains(entry)) {
+      return;
+    }
+    _pendingReplays.add(entry);
+    _scheduleReplayPump();
+  }
+
+  void _scheduleReplayPump() {
+    if (_replayPumpScheduled) return;
+    _replayPumpScheduled = true;
+    scheduleMicrotask(() {
+      _replayPumpScheduled = false;
+      _pumpReplays();
+    });
+  }
+
   void _pumpReplays() {
     if (_pendingReplays.isEmpty ||
         _activeReplays.length >= maxActiveReplays) {
@@ -549,34 +573,60 @@ final class DownloadIngressProjectionRegistry {
     final session = entry.session;
     final projection = entry.projection;
     final attachmentControl = entry.control;
+    late final Future<void> attachment;
 
-    final attachment = session.attachSynchronizedIngressProjection(
-      projection,
-      control: attachmentControl,
-      residentReplayChunks: session.residentBodyBacked
-          ? (endExclusive) {
-              final replay = residentReplaySource;
-              if (replay == null) {
-                throw const Failure(
-                  code: ErrorCode.invalidState,
-                  message: 'resident-cache Reader replay source is unavailable',
-                );
-              }
-              return replay(session, endExclusive);
-            }
-          : null,
-      controlledResidentReplayChunks:
-          session.residentBodyBacked &&
-                  residentReplaySourceWithControl != null
-              ? (endExclusive, {required control}) {
-                  return residentReplaySourceWithControl!(
-                    session,
-                    endExclusive,
-                    control: control,
+    if (session.residentIngressDeferred) {
+      // Deferred immutable READY bodies and mutable hot partials share this
+      // admission queue. Their byte backends differ, but neither may bypass
+      // the Reader-local maxActiveReplays/rank domain during initial source
+      // publication.
+      attachment = _requestInitialResidentHydration(entry);
+    } else {
+      final preferredInitialProbeLength =
+          prefixHints?.minimumBytes(session.id, 0) ?? 0;
+      final artifactReplay = artifactReplayRangeSourceWithControl;
+      attachment = session.attachSynchronizedIngressProjection(
+        projection,
+        control: attachmentControl,
+        preferredInitialProbeLength: preferredInitialProbeLength,
+        controlledArtifactReplayRangeChunks: artifactReplay == null
+            ? null
+            : (start, endExclusive,
+                    {required chunkSize, required control}) =>
+                artifactReplay(
+                  session,
+                  start,
+                  endExclusive,
+                  chunkSize: chunkSize,
+                  control: control,
+                ),
+        residentReplayChunks: session.residentBodyBacked
+            ? (endExclusive) {
+                final replay = residentReplaySource;
+                if (replay == null) {
+                  throw const Failure(
+                    code: ErrorCode.invalidState,
+                    message:
+                        'resident-cache Reader replay source is unavailable',
                   );
                 }
-              : null,
-    );
+                return replay(session, endExclusive);
+              }
+            : null,
+        controlledResidentReplayChunks:
+            session.residentBodyBacked &&
+                    residentReplaySourceWithControl != null
+                ? (endExclusive, {required control}) {
+                    return residentReplaySourceWithControl!(
+                      session,
+                      endExclusive,
+                      control: control,
+                    );
+                  }
+                : null,
+      );
+    }
+
     entry.attachment = attachment;
     unawaited(
       attachment.then<void>((_) {
@@ -609,7 +659,7 @@ final class DownloadIngressProjectionRegistry {
         }
       }).whenComplete(() {
         _activeReplays.remove(entry);
-        _pumpReplays();
+        _scheduleReplayPump();
       }),
     );
   }

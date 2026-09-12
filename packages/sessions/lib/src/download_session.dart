@@ -78,6 +78,26 @@ typedef DownloadResidentReplayRangeChunks = Future<Stream<List<int>>> Function(
 );
 typedef DownloadResidentReplayRangeClose = Future<void> Function();
 
+/// Reader-local replay of the mutable encoded body currently owned by this
+/// physical DownloadSession. Production composition binds this capability to
+/// its shared local-read scheduler so hot partial replay and durable READY
+/// replay compete in one I/O priority domain.
+typedef DownloadArtifactReplayRangeChunksWithControl =
+    Future<Stream<List<int>>> Function(
+  int start,
+  int endExclusive, {
+  required int chunkSize,
+  required TaskControl control,
+});
+typedef DownloadArtifactReplayRangeSourceWithControl =
+    Future<Stream<List<int>>> Function(
+  DownloadSession session,
+  int start,
+  int endExclusive, {
+  required int chunkSize,
+  required TaskControl control,
+});
+
 Stream<List<int>> _replayChunks(
   Stream<List<int>> chunks, {
   TaskControl? control,
@@ -2363,7 +2383,10 @@ final class DownloadSession {
     DownloadIngressProjection projection, {
     DownloadResidentReplayChunks? residentReplayChunks,
     DownloadResidentReplayChunksWithControl? controlledResidentReplayChunks,
+    DownloadArtifactReplayRangeChunksWithControl?
+        controlledArtifactReplayRangeChunks,
     TaskControl? control,
+    int preferredInitialProbeLength = 0,
   }) async {
     _requireNotDisposed();
     control?.throwIfCancelled();
@@ -2386,6 +2409,31 @@ final class DownloadSession {
     final attachmentToken = Object();
     _pendingIngressAttachments[projection.scopeId] = attachmentToken;
     projection.beginSynchronizedReplay();
+
+    Future<Stream<List<int>>> openArtifactReplay(
+      int start,
+      int endExclusive, {
+      required int chunkSize,
+    }) {
+      final scheduled = controlledArtifactReplayRangeChunks;
+      final attachmentControl = control;
+      if (scheduled != null && attachmentControl != null) {
+        return scheduled(
+          start,
+          endExclusive,
+          chunkSize: chunkSize,
+          control: attachmentControl,
+        );
+      }
+      return Future<Stream<List<int>>>.value(
+        artifact.readChunks(
+          chunkSize: chunkSize,
+          start: start,
+          endExclusive: endExclusive,
+        ),
+      );
+    }
+
     try {
       // A new Reader must not wait for a multi-megabyte physical WebP partial
       // to be copied in full before it can decode frame 0. Replay only the
@@ -2415,22 +2463,37 @@ final class DownloadSession {
           final epoch = _epoch;
           final targetLength = committedLength;
           final initialQuantum = webpDecodePrefixQuantumBytesFor(id);
-          final initialProbeLength = initialQuantum < targetLength
-              ? initialQuantum
+          // A Reader-local decoder retry floor is learned only from an explicit
+          // needMoreData result. Replaying directly to that already-proven
+          // insufficient boundary skips redundant decode wakeups without
+          // treating the floor as playability evidence or inheriting physical
+          // transport state from another Reader.
+          final requestedInitialProbeLength =
+              preferredInitialProbeLength > initialQuantum
+                  ? preferredInitialProbeLength
+                  : initialQuantum;
+          final initialProbeLength = requestedInitialProbeLength < targetLength
+              ? requestedInitialProbeLength
               : targetLength;
+          final initialReadChunkBytes =
+              initialProbeLength > localWebpDecodePrefixQuantumBytes
+                  ? localWebpDecodePrefixQuantumBytes
+                  : initialProbeLength;
           final totalLength = _totalLength;
           projection.expectLength(totalLength);
           final before = projection.snapshot;
+          final initialChunks = await openArtifactReplay(
+            0,
+            initialProbeLength,
+            chunkSize: initialReadChunkBytes > 0
+                ? initialReadChunkBytes
+                : 256 * 1024,
+          );
           await projection.rebuild(
             epoch: epoch,
             chunks: _replayEpochChunks(
               epoch,
-              artifact.readChunks(
-                chunkSize: initialProbeLength > 0
-                    ? initialProbeLength
-                    : 256 * 1024,
-                endExclusive: initialProbeLength,
-              ),
+              initialChunks,
               control: control,
             ),
             sealed: (_state == DownloadState.sealed ||
@@ -2466,7 +2529,11 @@ final class DownloadSession {
               'action': 'decoder-probe-published',
               'publishLength': initialProbeLength,
               'physicalCommittedLength': committedLength,
-              'replayBasis': 'reader-local-probe',
+              'preferredInitialProbeLength': preferredInitialProbeLength,
+              'initialReadChunkBytes': initialReadChunkBytes,
+              'replayBasis': preferredInitialProbeLength > initialQuantum
+                  ? 'reader-local-decoder-retry-floor'
+                  : 'reader-local-probe',
             },
           );
           break;
@@ -2510,13 +2577,14 @@ final class DownloadSession {
           var offset = current.length;
           final remainingSuffix = targetLength - offset;
           if (remainingSuffix > 0) {
+            final suffixChunks = await openArtifactReplay(
+              offset,
+              targetLength,
+              chunkSize: 256 * 1024,
+            );
             await for (final chunk in _replayEpochChunks(
               epoch,
-              artifact.readChunks(
-                chunkSize: 256 * 1024,
-                start: offset,
-                endExclusive: targetLength,
-              ),
+              suffixChunks,
               control: control,
             )) {
               control?.throwIfCancelled();
@@ -2550,12 +2618,14 @@ final class DownloadSession {
               control: control,
             );
           } else {
+            final artifactChunks = await openArtifactReplay(
+              0,
+              targetLength,
+              chunkSize: 256 * 1024,
+            );
             chunks = _replayEpochChunks(
               epoch,
-              artifact.readChunks(
-                chunkSize: 256 * 1024,
-                endExclusive: targetLength,
-              ),
+              artifactChunks,
               control: control,
             );
           }
@@ -2799,6 +2869,9 @@ final class DownloadSession {
         <String, Object?>{
           'kind': after.kind.name,
           'length': after.length,
+          'readerLocalLength': after.length,
+          'physicalCommittedLength': committedLength,
+          'physicalState': _state.name,
           'projectionScope': scopeId,
         },
       );

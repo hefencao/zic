@@ -12,12 +12,16 @@ int webpDecodePrefixQuantumBytesFor(DownloadId id) {
       : remoteWebpDecodePrefixQuantumBytes;
 }
 
-/// Composition-level minimum-prefix hints for incremental WebP frame decode.
+/// Composition-level retry-floor hints for incremental WebP frame decode.
 ///
-/// The hint is keyed by immutable page identity and frame index. A partial
-/// source that returns `needMoreData` advances only that frame's threshold by
-/// one source-appropriate quantum. A later successful decode records the
-/// smallest observed sufficient prefix for reuse after Reader re-entry.
+/// The hint is keyed by immutable page identity and frame index. Only an
+/// explicit `needMoreData` result proves that a prefix was insufficient, so
+/// only that result may advance the reusable retry floor. A successful decode
+/// at source length N merely proves that N is sufficient: the source can grow
+/// concurrently while decode is queued/running, therefore N is not evidence
+/// that every smaller prefix was insufficient and must never become a future
+/// Reader's mandatory wait boundary.
+///
 /// Terminal failures from sealed sources are deliberately excluded: increasing
 /// a chunk cannot repair a complete malformed/decoder-state failure.
 final class WebpDecodePrefixHints {
@@ -32,7 +36,7 @@ final class WebpDecodePrefixHints {
     final hint = _hints.remove(key);
     if (hint == null) return 0;
     _hints[key] = hint;
-    return hint.successfulBytes ?? hint.nextAttemptBytes;
+    return hint.nextAttemptBytes;
   }
 
   int recordNeedMoreData({
@@ -64,15 +68,11 @@ final class WebpDecodePrefixHints {
     if (sourceLength <= 0) return;
     final key = _PrefixHintKey(id, frameIndex);
     final prior = _hints.remove(key);
-    final priorSuccess = prior?.successfulBytes;
-    final successful = priorSuccess == null || sourceLength < priorSuccess
-        ? sourceLength
-        : priorSuccess;
-    _hints[key] = _PrefixHint(
-      nextAttemptBytes: successful,
-      successfulBytes: successful,
-    );
-    _trim();
+    if (prior == null) return;
+    // Success can happen after the source has grown well past the boundary the
+    // decoder actually requested. Preserve the failure-derived retry floor,
+    // but never strengthen it from the opportunistic success length.
+    _hints[key] = prior;
   }
 
   int _alignUp(int value, int quantum) =>
@@ -86,13 +86,9 @@ final class WebpDecodePrefixHints {
 }
 
 final class _PrefixHint {
-  const _PrefixHint({
-    required this.nextAttemptBytes,
-    this.successfulBytes,
-  });
+  const _PrefixHint({required this.nextAttemptBytes});
 
   final int nextAttemptBytes;
-  final int? successfulBytes;
 }
 
 final class _PrefixHintKey {

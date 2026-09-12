@@ -685,6 +685,52 @@ final class CompositionDownloadTransferRuntime {
     }
   }
 
+  /// Replays the mutable encoded body owned by one hot physical session through
+  /// the same composition-wide local-read scheduler used by durable READY
+  /// bodies. The DownloadSession remains the byte authority; this capability
+  /// owns only read bandwidth/admission.
+  DownloadArtifactReplayRangeSourceWithControl
+      artifactReplayRangeSourceWithControl({
+    required int Function(DownloadId id) priorityFor,
+  }) =>
+          (session, start, endExclusive,
+              {required chunkSize, required control}) async {
+            control.throwIfCancelled();
+            if (_disposed || !identical(registry.find(session.id), session)) {
+              throw const Failure(
+                code: ErrorCode.invalidState,
+                message:
+                    'hot artifact replay requires the current physical session',
+              );
+            }
+            if (session.residentBodyBacked ||
+                start < 0 ||
+                endExclusive <= start ||
+                endExclusive > session.artifact.committedLength) {
+              throw Failure(
+                code: ErrorCode.artifactCorruption,
+                message: 'invalid hot artifact replay range '
+                    '$start..$endExclusive/${session.artifact.committedLength}',
+              );
+            }
+            int replayPriority() {
+              final controlled = control.priority;
+              if (controlled > 0) return controlled;
+              final physical = session.effectivePriority;
+              return physical > 0 ? physical : priorityFor(session.id);
+            }
+
+            return _scheduledResidentReplay(
+              session.artifact.readChunks(
+                start: start,
+                endExclusive: endExclusive,
+                chunkSize: chunkSize,
+              ),
+              priority: replayPriority,
+              control: control,
+            );
+          };
+
   /// Returns the composition-owned resident-body replay service for one
   /// consumer. Storage/source backend selection stays here; consumers supply
   /// only a dynamic priority projection for the shared local-read scheduler.

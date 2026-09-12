@@ -1208,6 +1208,108 @@ void main() {
     expect(starts, <DownloadId>[blocker.id, high.id, low.id]);
   });
 
+  test('deferred READY and hot partial share same-turn replay admission rank',
+      () async {
+    final resident = DownloadSession(
+      id: _idWithSource('same-turn-resident'),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/same-turn-resident.webp',
+        finalPath: '${temp.path}/cache/same-turn-resident.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    final hot = DownloadSession(
+      id: _idWithSource('same-turn-hot'),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/same-turn-hot.webp',
+        finalPath: '${temp.path}/cache/same-turn-hot.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    addTearDown(() async {
+      await resident.dispose();
+      await hot.dispose();
+    });
+    await resident.restore();
+    await hot.restore();
+
+    final residentBytes = <int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.filled(128 * 1024, 1),
+    ];
+    resident.bindResidentImmutableAuthority(
+      validators: const Validators(),
+      totalLength: residentBytes.length,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: residentBytes.sublist(0, 64),
+      residentReplayAccessMode: 'direct',
+    );
+    final hotBytes = <int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.filled(128 * 1024, 2),
+    ];
+    final hotWriter = hot.acquireWriter();
+    await hot.append(hotWriter, 0, hotBytes);
+    await hot.pause(hotWriter);
+
+    final residentDemand =
+        resident.attachDemand(scopeId: 'reader', priority: 820);
+    final hotDemand = hot.attachDemand(scopeId: 'reader', priority: 1000);
+    addTearDown(() {
+      residentDemand.detach();
+      hotDemand.detach();
+    });
+
+    final starts = <DownloadId>[];
+    final hotRelease = Completer<void>();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024 * 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-same-turn-rank',
+      maxActiveReplays: 1,
+      residentReplayRangeSourceWithControl:
+          (physical, start, endExclusive, {required control}) async {
+        starts.add(physical.id);
+        control.throwIfCancelled();
+        return Stream<List<int>>.value(
+          residentBytes.sublist(start, endExclusive),
+        );
+      },
+      artifactReplayRangeSourceWithControl:
+          (physical, start, endExclusive,
+              {required chunkSize, required control}) async {
+        starts.add(physical.id);
+        await hotRelease.future;
+        control.throwIfCancelled();
+        return physical.artifact.readChunks(
+          start: start,
+          endExclusive: endExclusive,
+          chunkSize: chunkSize,
+        );
+      },
+    );
+    addTearDown(() {
+      ingresses.dispose();
+      sources.dispose();
+    });
+
+    // The lower-ranked deferred READY arrives first in program order. Both
+    // attach calls belong to the same synchronous Reader reconcile turn, so
+    // admission must wait for that rank set rather than granting the first
+    // free slot to the first callback.
+    ingresses.get(resident);
+    ingresses.get(hot);
+    await Future<void>.delayed(Duration.zero);
+    expect(starts, <DownloadId>[hot.id]);
+
+    hotRelease.complete();
+    await ingresses.settled(resident.id);
+    expect(starts, <DownloadId>[hot.id, resident.id]);
+  });
+
   test('deferred durable resident hydrates only decoder-requested ranges',
       () async {
     final id = _idWithSource('deferred-durable-ready');
@@ -1467,6 +1569,77 @@ void main() {
     expect(lateJoin.payload['replayBasis'], 'reader-local-probe');
     expect(lateJoin.payload.containsKey('firstPlayablePrefixBytes'), isFalse);
     expect(lateJoin.payload.containsKey('firstFrameRequiredPrefixBytes'), isFalse);
+    final sourceReady = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.sourceReady,
+    );
+    expect(sourceReady.payload['length'], remoteWebpDecodePrefixQuantumBytes);
+    expect(
+      sourceReady.payload['readerLocalLength'],
+      remoteWebpDecodePrefixQuantumBytes,
+    );
+    expect(sourceReady.payload['physicalCommittedLength'], body.length);
+
+    await join;
+    expect(projection.snapshot.length, body.length);
+  });
+
+  test('late WebP Reader skips prefixes already proven insufficient', () async {
+    await session.dispose();
+    final trace = MemoryTraceSink();
+    session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/late-retry-floor.webp',
+        finalPath: '${temp.path}/cache/late-retry-floor.webp',
+      ),
+      clock: FakeMonoClock(),
+      traceSink: trace,
+    );
+    await session.restore();
+    final writer = session.acquireWriter();
+    final body = <int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.filled(3 * 1024 * 1024, 1),
+    ];
+    await session.append(writer, 0, body);
+
+    final hints = WebpDecodePrefixHints();
+    final retryFloor = hints.recordNeedMoreData(
+      id: session.id,
+      frameIndex: 0,
+      sourceLength: 800000,
+    );
+    expect(retryFloor, 1024 * 1024);
+
+    final projection = DownloadIngressProjection(
+      scopeId: 'reader-retry-floor',
+      ingress: Ingress(
+        factory: _TestSourceFactory(),
+        maxBytes: 4 * 1024 * 1024,
+      ),
+    );
+    final ready = Completer<IngressSnap>();
+    projection.addSourceListener((snapshot) {
+      if (snapshot.sourceReady && !ready.isCompleted) ready.complete(snapshot);
+    });
+
+    final join = session.attachSynchronizedIngressProjection(
+      projection,
+      preferredInitialProbeLength: hints.minimumBytes(session.id, 0),
+    );
+    final firstReady = await ready.future;
+    expect(firstReady.length, retryFloor);
+    final lateJoin = trace.events.singleWhere(
+      (event) =>
+          event.kind == TraceEventKind.artifactSource &&
+          event.payload['stage'] == 'reader-ingress-late-join',
+    );
+    expect(lateJoin.payload['publishLength'], retryFloor);
+    expect(lateJoin.payload['preferredInitialProbeLength'], retryFloor);
+    expect(
+      lateJoin.payload['replayBasis'],
+      'reader-local-decoder-retry-floor',
+    );
 
     await join;
     expect(projection.snapshot.length, body.length);
