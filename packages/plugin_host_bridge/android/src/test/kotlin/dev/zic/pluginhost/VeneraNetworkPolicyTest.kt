@@ -102,4 +102,43 @@ class VeneraNetworkPolicyTest {
         )
     }
 
+    @Test
+    fun explicitFreshResolverMissInvalidatesOnlyTheTouchedCacheEntry() {
+        val cache = VeneraHttpCacheStore()
+        val namespace = VeneraHttpCacheNamespace("plugin", "v1", "source-a")
+        val headers = linkedMapOf("Cookie" to "session=a")
+        val response = VeneraHttpResponse(200, JSONObject(), "resolver".encodeToByteArray())
+        cache.store(namespace, "https://fixture/page-a", headers, response, 1_000L)
+        cache.store(namespace, "https://fixture/page-b", headers, response, 1_000L)
+
+        assertNull(
+            cache.lookup(
+                namespace = namespace,
+                url = "https://fixture/page-a",
+                requestHeaders = headers,
+                cacheTime = "long",
+                forceMiss = true,
+                nowNanos = 2_000L,
+            ),
+        )
+        assertNull(
+            cache.lookup(
+                namespace,
+                "https://fixture/page-a",
+                headers,
+                "long",
+                nowNanos = 2_000L,
+            ),
+        )
+        assertNotNull(
+            cache.lookup(
+                namespace,
+                "https://fixture/page-b",
+                headers,
+                "long",
+                nowNanos = 2_000L,
+            ),
+        )
+    }
+
 }

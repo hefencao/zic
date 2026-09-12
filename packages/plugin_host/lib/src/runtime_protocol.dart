@@ -501,9 +501,24 @@ void _validateArguments(
       _expectSingleNonEmptyString(arguments, 'chapterId');
       return;
     case ExternalPluginRuntimeOperation.loadResource:
-    case ExternalPluginRuntimeOperation.resolveResource:
     case ExternalPluginRuntimeOperation.retryResource:
       _expectSingleNonEmptyString(arguments, 'uri');
+      final uri = Uri.tryParse(arguments['uri']! as String);
+      if (uri == null || !uri.hasScheme) {
+        throw const FormatException('resource URI is invalid');
+      }
+      return;
+    case ExternalPluginRuntimeOperation.resolveResource:
+      _expectKeys(
+        arguments,
+        const <String>{'uri'},
+        optional: const <String>{'fresh'},
+      );
+      _expectNonEmptyString(arguments, 'uri');
+      final fresh = arguments['fresh'];
+      if (fresh != null && fresh is! bool) {
+        throw const FormatException('resource fresh flag is invalid');
+      }
       final uri = Uri.tryParse(arguments['uri']! as String);
       if (uri == null || !uri.hasScheme) {
         throw const FormatException('resource URI is invalid');

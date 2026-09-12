@@ -343,6 +343,27 @@ void main() {
     );
   });
 
+  test('Venera resource refresh requests a fresh source generation', () async {
+    final connection = _FixtureConnection();
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    final locator = Uri.parse('venera-resource:refresh-generation');
+
+    await (source as RefreshableComicResourceSource).refreshResource(locator);
+
+    expect(
+      connection.lastRequest?.operation,
+      ExternalPluginRuntimeOperation.resolveResource,
+    );
+    expect(connection.lastRequest?.arguments['uri'], locator.toString());
+    expect(connection.lastRequest?.arguments['fresh'], isTrue);
+  });
+
   test('resolved page list replaces an unknown reported page count', () async {
     final session = ExternalPluginRuntimeSession(
       plugin: _plugin(),

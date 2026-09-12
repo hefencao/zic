@@ -674,6 +674,7 @@ private class VeneraNativeBridge(
         var method = message.optString("http_method", "GET").uppercase(Locale.US)
         val rawHeaders = message.optJSONObject("headers")
         val cacheTime = rawHeaders.veneraControlHeader("cache-time")
+        val forceResolverCacheMiss = message.optBoolean("__zicFreshResolver", false)
         // `cache-time` and `prevent-parallel` are Venera Network.* control
         // fields, not origin HTTP headers. The source runtime is physically
         // single-invocation, so prevent-parallel is already stronger than the
@@ -741,6 +742,7 @@ private class VeneraNativeBridge(
                     url = cacheUrl,
                     requestHeaders = requestHeaders,
                     cacheTime = cacheTime,
+                    forceMiss = forceResolverCacheMiss,
                 )
                 if (requestId == null && Log.isLoggable(VENERA_RUNTIME_LOG_TAG, Log.DEBUG)) {
                     val cacheState = if (cached == null) "miss" else "hit"
@@ -1386,8 +1388,13 @@ internal class VeneraHttpCacheStore {
         requestHeaders: Map<String, String>,
         cacheTime: String?,
         nowNanos: Long = System.nanoTime(),
+        forceMiss: Boolean = false,
     ): VeneraHttpResponse? {
         val key = VeneraHttpCacheKey(namespace, url)
+        if (forceMiss) {
+            remove(key)
+            return null
+        }
         val entry = entries[key] ?: return null
         if (!veneraCacheHeadersMatch(requestHeaders, entry.requestHeaders)) {
             return null
@@ -1634,6 +1641,7 @@ function __zicEncode(value) {
   return value;
 }
 let __zicActiveRequestId=null;
+let __zicFreshResolverDepth=0;
 const __zicBridgeMetrics=new Map();
 const __zicBridgeWaiters=new Map();
 let __zicBridgeCallKey=0;
@@ -1670,6 +1678,7 @@ function sendMessage(message) {
   }
   if(message.method==='delay')return __zicDelay(message.time,requestId);
   const networkCall=message.method==='http'||message.method==='http_binary'||message.method==='http_image_binary';
+  if(networkCall&&__zicFreshResolverDepth>0&&message.__zicFreshResolver!==true){message={...message,__zicFreshResolver:true}}
   if(networkCall&&typeof ZicNative.requestAsync==='function'){
     const networkStarted=__zicNowMicros();
     const asyncResult=__zicRequestAsync(message).then(value=>{if(requestId){const metric=__zicBridgeMetric(requestId);metric.networkMicros+=Math.max(0,__zicNowMicros()-networkStarted);metric.networkCalls++;if(__zicBridgeCacheHit(value))metric.networkCacheHits++;else metric.networkOriginCalls++}return value},error=>{if(requestId){const metric=__zicBridgeMetric(requestId);metric.networkMicros+=Math.max(0,__zicNowMicros()-networkStarted);metric.networkCalls++;metric.networkOriginCalls++}throw error});
@@ -1923,10 +1932,15 @@ async function __zicOperation(request){
  if(request.operation==='updateSourceSetting')return await __zicUpdateSourceSetting(source,String(args.key||''),args.value);
  if(request.operation==='resolveResource'){
   const uri=String(args.uri||'');const isResource=uri.startsWith('venera-resource:');let config;
+  const fresh=args.fresh===true;
+  if(fresh){__zicResourceConfigs.delete(uri);__zicResourceResolutions.delete(uri)}
   const planStarted=__zicNowMicros(),bridgeBefore=__zicBridgeNetworkSnapshot(request.requestId);
-  if(isResource){config=await __zicResolveResourceConfig(uri,source)}
-  else if(/^https?:\/\//i.test(uri)){config=await __zicResolveHttpArtworkConfig(uri,source)}
-  else throw new Error('Venera resource URI must be a source locator or HTTP(S) URL');
+  if(fresh)__zicFreshResolverDepth++;
+  try{
+   if(isResource){config=await __zicResolveResourceConfig(uri,source)}
+   else if(/^https?:\/\//i.test(uri)){config=await __zicResolveHttpArtworkConfig(uri,source)}
+   else throw new Error('Venera resource URI must be a source locator or HTTP(S) URL');
+  }finally{if(fresh)__zicFreshResolverDepth=Math.max(0,__zicFreshResolverDepth-1)}
   const bridgeAfter=__zicBridgeNetworkSnapshot(request.requestId),described=__zicDescribeResourceRequest(config);
   described.__zicDiagnostics={sourcePlanHookMicros:Math.max(0,__zicNowMicros()-planStarted),sourcePlanBridgeNetworkMicros:Math.max(0,bridgeAfter.networkMicros-bridgeBefore.networkMicros),sourcePlanBridgeNetworkCalls:Math.max(0,bridgeAfter.networkCalls-bridgeBefore.networkCalls),sourcePlanBridgeNetworkCacheHits:Math.max(0,bridgeAfter.networkCacheHits-bridgeBefore.networkCacheHits),sourcePlanBridgeNetworkOriginCalls:Math.max(0,bridgeAfter.networkOriginCalls-bridgeBefore.networkOriginCalls)};
   return described;

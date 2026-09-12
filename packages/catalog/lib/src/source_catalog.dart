@@ -981,11 +981,23 @@ abstract interface class ControlledRetryableComicResourceSource {
   });
 }
 
-abstract interface class ControlledComicResourceSource {
-  Future<Uint8List> loadResourceControlled(
+/// Optional source-generation boundary for an explicit new logical resource
+/// attempt. This is deliberately separate from retryResource: provider/source
+/// retries within one attempt must keep consuming the same bounded recovery
+/// chain, while a user-started retry may rebuild the initial source config.
+abstract interface class RefreshableComicResourceSource {
+  Future<void> refreshResource(Uri uri);
+}
+
+abstract interface class ControlledRefreshableComicResourceSource {
+  Future<void> refreshResourceControlled(
     Uri uri, {
     TaskControl? control,
   });
+}
+
+abstract interface class ControlledComicResourceSource {
+  Future<Uint8List> loadResourceControlled(Uri uri, {TaskControl? control});
 }
 
 abstract interface class BrowsableComicSource implements ComicSource {

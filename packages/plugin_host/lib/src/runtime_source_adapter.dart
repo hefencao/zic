@@ -381,6 +381,7 @@ final class _RuntimeBrowsableComicSource
         ResolvableComicResourceSource, ControlledResolvableComicResourceSource,
         BoundedComicResourceSource,
         RetryableComicResourceSource, ControlledRetryableComicResourceSource,
+        RefreshableComicResourceSource, ControlledRefreshableComicResourceSource,
         ControlledComicResourceSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
@@ -895,6 +896,27 @@ final class _RuntimeBrowsableComicSource
     return _resourceRequestFromPayload(
       message['request'],
       'runtime retry resource request',
+    );
+  }
+
+  @override
+  Future<void> refreshResource(Uri uri) =>
+      refreshResourceControlled(uri);
+
+  @override
+  Future<void> refreshResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  }) async {
+    if (_format == ExternalComicPluginFormat.mihonExtension) {
+      // Mihon resolveResource is already a fresh deferred page resolution.
+      return;
+    }
+    await _invoke(
+      ExternalPluginRuntimeOperation.resolveResource,
+      _externalId,
+      <String, Object?>{'uri': uri.toString(), 'fresh': true},
+      control: control,
     );
   }
 
