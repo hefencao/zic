@@ -42,9 +42,11 @@ final class CanonicalMediaActiveRange {
 /// One instance owns one hydrated manifest, not one row per page. Runtime
 /// lookup validates [DownloadId.pageIndexHint] against the exact manifest slot
 /// before consuming either a stable URI content identity or a persisted
-/// canonical projection. URI identities win because they are immutable from
-/// the first exact manifest; metadata-only checksum enrichment never owns a
-/// physical key and therefore cannot rename a segment-backed owner.
+/// canonical projection. An active family projection wins so mixed strong/
+/// opaque provider locators still converge on one version-family physical
+/// owner. Stable URI identity remains the direct fallback outside active
+/// projection ranges; metadata-only checksum enrichment never owns a physical
+/// key and therefore cannot rename a segment-backed owner.
 final class CanonicalMediaChapterAuthority {
   CanonicalMediaChapterAuthority({
     required this.manifest,
@@ -87,11 +89,6 @@ final class CanonicalMediaChapterAuthority {
         page.uri != id.canonicalUri) {
       return null;
     }
-    final stable = verifiedPhysicalMediaId(
-      sourceId: manifest.sourceId,
-      page: page,
-    );
-    if (stable != null) return stable;
     final projection = this.projection;
     if (projection != null &&
         activeProjectionRanges.any((range) => range.contains(index))) {
@@ -100,7 +97,10 @@ final class CanonicalMediaChapterAuthority {
         return PhysicalMediaId.canonical(coordinate.stableKey);
       }
     }
-    return null;
+    return verifiedPhysicalMediaId(
+      sourceId: manifest.sourceId,
+      page: page,
+    );
   }
 }
 
