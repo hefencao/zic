@@ -303,6 +303,41 @@ final class ComicSourceResourceGateway {
     };
   }
 
+  /// Reader streaming variant of [pageControlledResponseLoaderFor] that feeds
+  /// naturally observed strong page identity back into the existing bounded
+  /// version-evidence owner. It never buffers or duplicates response bytes.
+  ExternalPluginControlledResourceResponseLoader
+      observedPageControlledResponseLoaderFor(
+    ChapterManifest manifest,
+    PageAsset page,
+  ) {
+    _requireOpen();
+    if (page.chapterId != manifest.chapter.chapterId ||
+        page.index < 0 ||
+        page.index >= manifest.pages.length ||
+        manifest.pages[page.index].pageId != page.pageId ||
+        manifest.pages[page.index].uri != page.uri) {
+      throw ArgumentError('page must be the exact manifest page at its index');
+    }
+    final loader = pageControlledResponseLoaderFor(manifest.sourceId, page.uri);
+    return ({ByteRange? range, Validators? validators, TaskControl? control}) async {
+      final response = await loader(
+        range: range,
+        validators: validators,
+        control: control,
+      );
+      final identity = response.diagnostics['sourceVerifiedReuseIdentity'];
+      if (identity is String && identity.isNotEmpty) {
+        try {
+          _verifiedPageReuseObserver?.call(manifest, page, identity);
+        } on Object {
+          // Optional version evidence must never alter Reader transport success.
+        }
+      }
+      return response;
+    };
+  }
+
   ExternalPluginResourceResponseLoader pageResponseLoaderFor(
     String sourceId,
     Uri uri,

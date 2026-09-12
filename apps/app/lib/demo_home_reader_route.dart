@@ -303,20 +303,21 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
     // large SAF/POSIX foreground pages wait for complete Uint8List materialization.
     final byteLoaders = <String, LocalImageFileBytesLoader>{};
     const byteProbeMs = 0;
+    final readerManifest = current.chapter.toManifest();
     final responseSources = current.chapter.sourceId == 'local-folder'
         ? const <String, LocalImageResponseSource>{}
         : <String, LocalImageResponseSource>{
-            for (final page in current.chapter.pages)
-              if (!byteLoaders.containsKey(page.sourceId))
-                page.sourceId: LocalImageResponseSource(
+            for (final page in readerManifest.pages)
+              if (!byteLoaders.containsKey(page.uri.toString()))
+                page.uri.toString(): LocalImageResponseSource(
                   openControlledResponse:
-                      _sourceResources.pageControlledResponseLoaderFor(
-                    current.chapter.sourceId,
-                    Uri.parse(page.sourceId),
+                      _sourceResources.observedPageControlledResponseLoaderFor(
+                    readerManifest,
+                    page,
                   ),
                   selfBoundedOpen: _sourceResources.pageOpenSelfBoundedFor(
-                    current.chapter.sourceId,
-                    Uri.parse(page.sourceId),
+                    readerManifest.sourceId,
+                    page.uri,
                   ),
                 ),
           };

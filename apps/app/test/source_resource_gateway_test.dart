@@ -399,6 +399,65 @@ void main() {
     expect(source.loads, 0);
   });
 
+  test(
+    'observed Reader page streaming feeds strong identity to version evidence',
+    () async {
+      final locator = Uri.parse('venera-resource:reader-page');
+      final resolved = Uri.parse(
+        'https://cdn.invalid/0123456789abcdef0123456789abcdef.webp',
+      );
+      final source = _ResolvedSource(
+        resolvedUri: resolved,
+        bytes: Uint8List.fromList(<int>[1, 2, 3]),
+        requiresRuntimeTransform: false,
+      );
+      final gateway = ComicSourceResourceGateway(
+        sourceForId: (sourceId) => sourceId == source.sourceId ? source : null,
+        directTransport: _SelfBoundedDirectTransport(),
+      );
+      addTearDown(gateway.close);
+      final page = PageAsset(
+        pageId: 'page-0',
+        chapterId: 'chapter',
+        index: 0,
+        uri: locator,
+      );
+      final manifest = ChapterManifest(
+        sourceId: source.sourceId,
+        comicId: 'comic',
+        chapter: const Chapter(
+          chapterId: 'chapter',
+          comicId: 'comic',
+          title: 'chapter',
+          sequence: 0,
+          pageCount: 1,
+          sourceRevision: 'r1',
+        ),
+        pages: <PageAsset>[page],
+        readingDirection: ReadingDirection.ltr,
+      );
+      ChapterManifest? observedManifest;
+      PageAsset? observedPage;
+      String? observedIdentity;
+      gateway.setVerifiedPageReuseObserver((manifest, page, identity) {
+        observedManifest = manifest;
+        observedPage = page;
+        observedIdentity = identity;
+      });
+
+      final loader = gateway.observedPageControlledResponseLoaderFor(
+        manifest,
+        page,
+      );
+      final response = await loader();
+
+      expect(observedManifest, same(manifest));
+      expect(observedPage, same(page));
+      expect(observedIdentity, 'hash:0123456789abcdef0123456789abcdef');
+      await response.discard();
+    },
+  );
+
   test('page loader creation does not require a published source', () async {
     final gateway = ComicSourceResourceGateway(
       sourceForId: (_) => null,
@@ -579,10 +638,12 @@ final class _ResolvedSource
     required this.resolvedUri,
     required this.bytes,
     this.resourceOperationTimeout,
+    this.requiresRuntimeTransform = true,
   });
 
   final Uri resolvedUri;
   final Uint8List bytes;
+  final bool requiresRuntimeTransform;
   @override
   final Duration? resourceOperationTimeout;
   int resolveCalls = 0;
@@ -604,7 +665,7 @@ final class _ResolvedSource
     resolveCalls += 1;
     return ComicResourceRequest(
       uri: resolvedUri,
-      requiresRuntimeTransform: true,
+      requiresRuntimeTransform: requiresRuntimeTransform,
     );
   }
 
