@@ -440,6 +440,119 @@ void main() {
     },
   );
 
+  test(
+    'canonical partial handoff lets a later version adopt the same durable spool',
+    () async {
+      final durableRoot = await Directory.systemTemp.createTemp(
+        'canonical-partial-durable-',
+      );
+      final firstHotRoot = await Directory.systemTemp.createTemp(
+        'canonical-partial-hot-a-',
+      );
+      final secondHotRoot = await Directory.systemTemp.createTemp(
+        'canonical-partial-hot-b-',
+      );
+      addTearDown(() async {
+        await durableRoot.delete(recursive: true);
+        await firstHotRoot.delete(recursive: true);
+        await secondHotRoot.delete(recursive: true);
+      });
+      DownloadId idFor(String version) => DownloadId(
+        content: ContentId(
+          sourceId: 'source',
+          comicId: 'comic-$version',
+          chapterId: 'chapter-$version',
+          pageId: 'page-$version',
+        ),
+        sourceRevision: 'revision-$version',
+        canonicalUri: Uri.parse('https://example.test/$version.webp'),
+      );
+      final first = idFor('a');
+      final second = idFor('b');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000029',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(4096, (index) => (index * 7) & 0xff),
+      );
+      final store = await PersistentDownloadArtifactStore.open(
+        durableRoot.path,
+      );
+      final firstHot = DownloadRegistry(
+        layout: CacheLayout(firstHotRoot.path),
+        clock: SystemClock(),
+      );
+      final secondHot = DownloadRegistry(
+        layout: CacheLayout(secondHotRoot.path),
+        clock: SystemClock(),
+      );
+      addTearDown(() async {
+        await firstHot.dispose();
+        await secondHot.dispose();
+        await store.close();
+      });
+      var candidateLookups = 0;
+      final handoff = PartialDownloadHandoff(
+        store: store,
+        equivalentCandidates: (_) {
+          candidateLookups++;
+          return <DownloadId>[first];
+        },
+      );
+
+      firstHot.bindPhysicalMedia(id: first, physicalId: physical);
+      final firstSession = firstHot.get(first);
+      await firstSession.restore();
+      await firstSession.bindResponse(
+        validators: const Validators(etag: 'a-etag'),
+        totalLength: bytes.lengthInBytes * 2,
+      );
+      final writer = firstSession.acquireWriter();
+      await firstSession.append(writer, 0, bytes);
+      await firstSession.pause(writer);
+      expect(await handoff.persist(firstSession), isTrue);
+      final physicalIndex = store.index as PhysicalPartialIndex;
+      final durable = await physicalIndex.getPhysicalPartial(physical);
+      expect(durable, isNotNull);
+      expect(await store.index.get(first.key), isNull);
+
+      await firstHot.dispose();
+      secondHot.bindPhysicalMedia(id: second, physicalId: physical);
+      final secondSession = secondHot.get(second);
+      await handoff.restoreInto(secondSession);
+
+      expect(candidateLookups, 0);
+      expect(secondSession.physicalId, physical);
+      expect(secondSession.id, second);
+      expect(secondSession.committedLength, bytes.lengthInBytes);
+      expect(secondSession.validators.isEmpty, isTrue);
+      expect(secondSession.totalLength, bytes.lengthInBytes * 2);
+      expect(secondSession.hasBorrowedDurableSpool, isTrue);
+      expect(secondSession.artifact.partialPath, durable!.path);
+      expect(await secondSession.artifact.readBytes(), bytes);
+
+      // Once continuity against the new provider has been proven, the borrowed
+      // Artifact writes its ordinary session-v3 sidecar. A later physical open
+      // must retain that newly learned body length even though the v3 metadata
+      // intentionally has no providerDownload field understood by the physical
+      // store and its HTTP validators cannot cross to a third provider.
+      final refreshedTotal = bytes.lengthInBytes * 3;
+      await secondSession.bindResponse(
+        validators: const Validators(etag: 'b-etag'),
+        totalLength: refreshedTotal,
+      );
+      await secondSession.dispose();
+      final third = idFor('c');
+      final thirdOpen = await store.openPhysicalPartialDownload(
+        physicalId: physical,
+        requestId: third,
+      );
+      expect(thirdOpen, isNotNull);
+      expect(thirdOpen!.validators.isEmpty, isTrue);
+      expect(thirdOpen.totalLength, refreshedTotal);
+    },
+  );
+
   test('partial survives Reader-session workspace replacement without promotion',
       () async {
     final firstRoot = await Directory.systemTemp.createTemp('partial-source-');

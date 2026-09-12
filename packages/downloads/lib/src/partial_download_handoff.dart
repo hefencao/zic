@@ -84,6 +84,7 @@ final class PartialDownloadHandoff {
     // requires a retained range reader, whose open includes the exact-length
     // physical proof; any miss/failure falls back to the complete restore path.
     _PartialRestoreCandidate? exactCandidate;
+    PartialDownloadEntry? physicalPartial;
     var exactCandidateChecked = false;
     if (!await session.artifact.hasRestorableBody()) {
       control?.throwIfCancelled();
@@ -115,20 +116,34 @@ final class PartialDownloadHandoff {
           return;
         }
       }
-      exactCandidateChecked = true;
-      exactCandidate = await _restoreExactCandidate(
-        session.id,
-        control: control,
-      );
-      final exactEntry = exactCandidate?.entry;
-      if (exactEntry != null &&
-          exactEntry.exactDurableFinal &&
-          await _tryBindExactReadyWithoutSessionRestore(
-            session,
-            exactEntry,
-            control: control,
-          )) {
-        return;
+      if (!session.physicalId.isExactFallback) {
+        final physicalStore = store;
+        if (physicalStore is PhysicalPartialDownloadStore) {
+          physicalPartial =
+              await (physicalStore as PhysicalPartialDownloadStore)
+                  .openPhysicalPartialDownload(
+            physicalId: session.physicalId,
+            requestId: session.id,
+          );
+          control?.throwIfCancelled();
+        }
+      }
+      if (physicalPartial == null) {
+        exactCandidateChecked = true;
+        exactCandidate = await _restoreExactCandidate(
+          session.id,
+          control: control,
+        );
+        final exactEntry = exactCandidate?.entry;
+        if (exactEntry != null &&
+            exactEntry.exactDurableFinal &&
+            await _tryBindExactReadyWithoutSessionRestore(
+              session,
+              exactEntry,
+              control: control,
+            )) {
+          return;
+        }
       }
     }
 
@@ -139,6 +154,66 @@ final class PartialDownloadHandoff {
     control?.throwIfCancelled();
     if (session.state == DownloadState.promoted ||
         session.artifact.committedLength > 0) {
+      return;
+    }
+    final physicalEntry = physicalPartial;
+    if (physicalEntry != null && physicalEntry.length > 0) {
+      final adoptInto = physicalEntry.adoptInto;
+      if (adoptInto != null) {
+        final startedAtMicros = clock?.nowMicros();
+        final adopted = await adoptInto(session, control: control);
+        control?.throwIfCancelled();
+        if (adopted) {
+          _record(
+            session,
+            action: 'adopted-physical',
+            bytes: session.committedLength,
+            startedAtMicros: startedAtMicros,
+          );
+          return;
+        }
+      }
+      final startedAtMicros = clock?.nowMicros();
+      await session.bindResponse(
+        validators: physicalEntry.validators,
+        totalLength: physicalEntry.totalLength,
+      );
+      control?.throwIfCancelled();
+      final writer = session.acquireWriter();
+      var offset = 0;
+      try {
+        offset = await _restoreEntry(
+          session,
+          writer,
+          physicalEntry,
+          priority: () => session.effectivePriority,
+          control: control,
+        );
+        if (offset != physicalEntry.length) {
+          throw StateError(
+            'physical durable partial length changed while restoring '
+            '${session.physicalId.key}: $offset/${physicalEntry.length}',
+          );
+        }
+        control?.throwIfCancelled();
+        await session.pause(writer);
+        control?.throwIfCancelled();
+      } on Object catch (error, stackTrace) {
+        if (session.hasWriter) {
+          try {
+            await session.fail(writer, error);
+          } on Object {
+            // Preserve the restore failure.
+          }
+        }
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      _record(
+        session,
+        action: 'restored-physical',
+        bytes: offset,
+        startedAtMicros: startedAtMicros,
+      );
       return;
     }
     final candidate = exactCandidate ??
@@ -1019,21 +1094,44 @@ final class PartialDownloadHandoff {
     final startedAtMicros = clock?.nowMicros();
     final targetId = session.id;
     try {
-      await store.storePartialDownload(
-        id: targetId,
-        entry: PartialDownloadEntry(
-          length: length,
-          validators: session.resumeValidatorsFor(targetId.canonicalUri),
-          totalLength: session.totalLength,
-          open: ({required int start}) => session.artifact.readChunks(
-            start: start,
-            endExclusive: length,
+      final physicalStore = store;
+      final storedPhysically = !session.physicalId.isExactFallback &&
+          physicalStore is PhysicalPartialDownloadStore;
+      if (storedPhysically) {
+        await (physicalStore as PhysicalPartialDownloadStore)
+            .storePhysicalPartialDownload(
+          physicalId: session.physicalId,
+          providerHint: targetId,
+          entry: PartialDownloadEntry(
+            length: length,
+            // Validators are provider-scoped. A canonical physical prefix may
+            // outlive this exact provider request, so only body length is
+            // shared until a later exact request re-establishes continuity.
+            validators: const Validators(),
+            totalLength: session.totalLength,
+            open: ({required int start}) => session.artifact.readChunks(
+              start: start,
+              endExclusive: length,
+            ),
           ),
-        ),
-      );
+        );
+      } else {
+        await store.storePartialDownload(
+          id: targetId,
+          entry: PartialDownloadEntry(
+            length: length,
+            validators: session.resumeValidatorsFor(targetId.canonicalUri),
+            totalLength: session.totalLength,
+            open: ({required int start}) => session.artifact.readChunks(
+              start: start,
+              endExclusive: length,
+            ),
+          ),
+        );
+      }
       _record(
         session,
-        action: 'stored',
+        action: storedPhysically ? 'stored-physical' : 'stored',
         bytes: length,
         startedAtMicros: startedAtMicros,
         reason: reason,
