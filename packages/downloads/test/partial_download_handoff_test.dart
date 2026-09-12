@@ -1671,6 +1671,73 @@ void main() {
     expect(session.committedLength, bytes.lengthInBytes);
   });
 
+  test('recoverable owner probe waits for shared local-read capacity', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'recoverable-owner-read-scheduler-',
+    );
+    addTearDown(() async => root.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'recoverable-owner-scheduler',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse(
+        'https://example.test/recoverable-owner-scheduler.webp',
+      ),
+    );
+    final bytes = Uint8List.fromList(<int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.generate(256, (index) => index & 0xff),
+    ]);
+    final firstRegistry = DownloadRegistry(
+      layout: CacheLayout(root.path),
+      clock: const SystemClock(),
+    );
+    final first = firstRegistry.get(id);
+    await first.restore();
+    await first.bindResponse(
+      validators: const Validators(etag: 'recoverable-owner-v1'),
+      totalLength: bytes.lengthInBytes + 512,
+    );
+    final writer = first.acquireWriter();
+    await first.append(writer, 0, bytes);
+    await first.pause(writer);
+    await firstRegistry.dispose();
+
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 2);
+    final blockerA = await scheduler.acquire(priority: () => 1000);
+    final blockerB = await scheduler.acquire(priority: () => 1000);
+    final replacementRegistry = DownloadRegistry(
+      layout: CacheLayout(root.path),
+      clock: const SystemClock(),
+    );
+    addTearDown(replacementRegistry.dispose);
+    final replacement = replacementRegistry.get(id);
+    final handoff = PartialDownloadHandoff(
+      store: _PartialStore(),
+      readScheduler: scheduler,
+    );
+    var completed = false;
+    final restore = handoff.restoreInto(replacement).then<void>((_) {
+      completed = true;
+    });
+
+    await Future<void>.delayed(Duration.zero);
+    expect(completed, isFalse);
+    expect(replacement.committedLength, 0,
+        reason: 'owned checkpoint stat/sidecar work must not bypass the scheduler');
+
+    blockerA.release();
+    await restore.timeout(const Duration(seconds: 1));
+    expect(completed, isTrue);
+    expect(replacement.committedLength, bytes.lengthInBytes);
+    blockerB.release();
+    expect(scheduler.activeCount, 0);
+  });
+
   test(
     'deterministic session body keeps priority over exact READY fast path',
     () async {

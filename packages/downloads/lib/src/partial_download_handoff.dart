@@ -77,15 +77,21 @@ final class PartialDownloadHandoff {
       return;
     }
 
-    // Let the recoverable session-local artifact prove itself first. The
-    // owned-checkpoint restore validates its sidecar/path/physical identity and
-    // exact file length; a mere path existence probe is not ownership proof.
-    // If the local body is absent, restore leaves one empty ephemeral Artifact
-    // ready for a later durable physical-partial adoption/copy fallback.
-    await session.restore(
-      verifyPromotedChecksum: false,
-      preferOwnedPartialCheckpoint: true,
-      ownedCheckpointProbeOnly: true,
+    // The recoverable owner probe is filesystem work too. Route it through the
+    // same composition read scheduler as durable prefix/range reads so two
+    // parallel local preparations cannot bypass Reader startup pressure with
+    // unscheduled stat/sidecar work. Keep the lease narrow: later canonical
+    // lookup and prefix proof get their own ranked quanta instead of one long
+    // foreground lease that would push every successor preparation into the
+    // current frame's native decode window.
+    await _withReadLease(
+      session,
+      () => session.restore(
+        verifyPromotedChecksum: false,
+        preferOwnedPartialCheckpoint: true,
+        ownedCheckpointProbeOnly: true,
+        control: control,
+      ),
       control: control,
     );
     control?.throwIfCancelled();
@@ -534,6 +540,26 @@ final class PartialDownloadHandoff {
       equivalentCandidatesChecked: candidatesChecked,
     );
     return true;
+  }
+
+  Future<T> _withReadLease<T>(
+    DownloadSession session,
+    Future<T> Function() operation, {
+    TaskControl? control,
+  }) async {
+    ArtifactCacheReadLease? lease;
+    final scheduler = readScheduler;
+    if (scheduler != null) {
+      lease = await scheduler.acquire(
+        priority: () => session.effectivePriority,
+        control: control,
+      );
+    }
+    try {
+      return await operation();
+    } finally {
+      lease?.release();
+    }
   }
 
   Future<List<int>> _readEntryPrefix(
