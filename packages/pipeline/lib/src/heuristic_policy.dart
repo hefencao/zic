@@ -67,6 +67,7 @@ final class HeuristicPolicy {
         content: content,
         sourceRevision: chapter.chapter.sourceRevision,
         canonicalUri: page.uri,
+        pageIndexHint: entry.key,
       );
       final decode = DecodeId(
         download: download,
@@ -189,6 +190,7 @@ final class HeuristicPolicy {
         content: content,
         sourceRevision: chapter.chapter.sourceRevision,
         canonicalUri: page.uri,
+        pageIndexHint: retainedIndex,
       );
       final decode = DecodeId(
         download: download,

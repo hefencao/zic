@@ -95,6 +95,21 @@ void main() {
       plan.decodes.values.where((value) => value.role == PageRole.transition),
       hasLength(1),
     );
+    for (final id in plan.downloads.keys) {
+      expect(id.pageIndexHint, int.parse(id.content.pageId.substring(1)));
+    }
+    for (final id in plan.decodes.keys) {
+      expect(
+        id.download.pageIndexHint,
+        int.parse(id.download.content.pageId.substring(1)),
+      );
+    }
+    for (final id in plan.uploads.keys) {
+      expect(
+        id.download.pageIndexHint,
+        int.parse(id.download.content.pageId.substring(1)),
+      );
+    }
     expect(
       plan.decodes.values.singleWhere(
         (value) => value.role == PageRole.current,
@@ -404,6 +419,10 @@ void main() {
       isNot(contains('p2')),
       reason: 'a far retained output must not create redundant decode demand',
     );
+    final retainedUpload = latest.plan.uploads.entries.singleWhere(
+      (entry) => entry.key.download.content.pageId == 'p2',
+    );
+    expect(retainedUpload.key.download.pageIndexHint, 2);
     expect(
       latest.plan.uploads.entries.singleWhere(
         (entry) => entry.key.download.content.pageId == 'p2',
