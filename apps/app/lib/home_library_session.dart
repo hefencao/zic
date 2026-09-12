@@ -275,6 +275,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   HomeLibrarySession({
     required this.library,
     required this.chapterDownloads,
+    this.downloadComposition,
     required this.wholeComicDownloads,
     required List<BrowsableComicSource> sources,
     required this.ownsLibrary,
@@ -298,6 +299,7 @@ final class HomeLibrarySession extends ChangeNotifier {
 
   ImportedLibraryStore library;
   ChapterDownloadService chapterDownloads;
+  ChapterDownloadTransferRuntimeProvider? downloadComposition;
   WholeComicDownloadQueue wholeComicDownloads;
   List<BrowsableComicSource> _sources;
   List<BrowsableComicSource> get sources => _sources;
@@ -336,6 +338,13 @@ final class HomeLibrarySession extends ChangeNotifier {
   Map<String, ComicSourcePreference> _sourcePreferences =
       const <String, ComicSourcePreference>{};
   List<ComicVersionRelation> _versionRelations = const <ComicVersionRelation>[];
+  Map<String, VersionChapterCanonicalProjection> _canonicalMediaProjections =
+      const <String, VersionChapterCanonicalProjection>{};
+  ComicVersionCanonicalMediaLedger _canonicalMediaLedger =
+      ComicVersionCanonicalMediaLedger();
+  Future<void> _canonicalMediaWriteTail = Future<void>.value();
+  Future<void> _canonicalPhysicalBackfillTail = Future<void>.value();
+  String? _canonicalPhysicalBackfillFingerprint;
   ComicVersionBaselineProjection _versionBaselines =
       ComicVersionBaselineProjection.empty;
   Map<String, ChapterDownloadSnapshot> _downloadSnapshots =
@@ -412,28 +421,237 @@ final class HomeLibrarySession extends ChangeNotifier {
               comicId: snapshot.comicId,
             ),
       ],
+      cacheReuseComics: <ComicVersionIdentity>[
+        for (final entry in <ImportedLibraryEntry>[
+          ..._entries,
+          ..._orphanedDownloadEntries,
+        ])
+          ComicVersionIdentity(
+            sourceId: entry.chapter.sourceId,
+            comicId: entry.chapter.comicId,
+          ),
+      ],
     );
-    // Manual/export consumers receive only direct predecessor -> current
-    // download-head mappings. Artifact cache reuse is independent from manual
-    // adoption and keeps the full source-verified relation set.
+    // Manual/export consumers receive only predecessor -> current download-head
+    // mappings. Artifact cache/hot reuse instead receives compact direct
+    // projections composed between versions that have actually materialized.
     chapterDownloads.updateVersionBaselines(
       _versionBaselines.downloadHeadRelations,
     );
-    chapterDownloads.updateCacheVersionRelations(_versionRelations);
+    chapterDownloads.updateCacheVersionRelations(
+      _versionBaselines.cacheReuseRelations,
+    );
     _refreshVersionPageAuthority();
   }
 
-  void _refreshVersionPageAuthority() {
-    final provider = chapterDownloads is ChapterDownloadTransferRuntimeProvider
-        ? chapterDownloads as ChapterDownloadTransferRuntimeProvider
-        : null;
+  ChapterDownloadTransferRuntimeProvider? get _downloadCompositionProvider =>
+      downloadComposition ??
+      (chapterDownloads is ChapterDownloadTransferRuntimeProvider
+          ? chapterDownloads as ChapterDownloadTransferRuntimeProvider
+          : null);
+
+  Future<List<VersionChapterCanonicalProjection>>
+      _queryCanonicalMediaProjections() async {
+    final provider = _downloadCompositionProvider;
+    if (provider == null) {
+      return const <VersionChapterCanonicalProjection>[];
+    }
+    return provider.artifactStore.loadCanonicalMediaProjections();
+  }
+
+  void _replaceCanonicalMediaProjections(
+    Iterable<VersionChapterCanonicalProjection> projections,
+  ) {
+    final values = projections.toList(growable: false);
+    _canonicalMediaLedger = ComicVersionCanonicalMediaLedger(
+      projections: values,
+    );
+    _canonicalMediaProjections =
+        Map<String, VersionChapterCanonicalProjection>.unmodifiable(
+      <String, VersionChapterCanonicalProjection>{
+        for (final projection in values) projection.exactKey: projection,
+      },
+    );
+    _refreshVersionPageAuthority();
+  }
+
+  Future<void> _assimilateCanonicalMediaRelation(
+    ComicVersionRelation relation,
+  ) =>
+      _assimilateCanonicalMediaRelations(<ComicVersionRelation>[relation]);
+
+  Future<void> _assimilateCanonicalMediaRelations(
+    Iterable<ComicVersionRelation> relations,
+  ) {
+    final captured = relations.toList(growable: false);
+    final operation = _canonicalMediaWriteTail.then(
+      (_) => _assimilateCanonicalMediaRelationsNow(captured),
+    );
+    _canonicalMediaWriteTail = operation.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return operation;
+  }
+
+  Future<void> _assimilateCanonicalMediaRelationsNow(
+    Iterable<ComicVersionRelation> relations,
+  ) async {
+    final provider = _downloadCompositionProvider;
     if (provider == null) return;
-    final entriesByKey = <String, ImportedLibraryEntry>{
-      ..._versionAuthorityHydratedEntries,
-      for (final entry in _entries) _versionAuthorityEntryKey(entry): entry,
+    final nextLedger = ComicVersionCanonicalMediaLedger(
+      projections: _canonicalMediaLedger.projections,
+    );
+    final affected = <String, VersionChapterCanonicalProjection>{};
+    var conflictCount = 0;
+    for (final relation in relations) {
+      for (final mapping in relation.pageMappings) {
+        final predecessorRevision = mapping.predecessorSourceRevision;
+        final successorRevision = mapping.successorSourceRevision;
+        final verifiedIntervals = mapping.effectiveVerifiedIntervals;
+        if (predecessorRevision == null ||
+            successorRevision == null ||
+            verifiedIntervals.isEmpty) {
+          continue;
+        }
+        final predecessor = _versionAuthorityEntryFor(
+          relation.sourceId,
+          relation.predecessorComicId,
+          mapping.predecessorChapterId,
+        );
+        final successor = _versionAuthorityEntryFor(
+          relation.sourceId,
+          relation.successorComicId,
+          mapping.successorChapterId,
+        );
+        if (predecessor == null || successor == null) continue;
+        if (predecessor.chapter.sourceRevision != predecessorRevision ||
+            successor.chapter.sourceRevision != successorRevision ||
+            predecessor.chapter.pages.length != mapping.predecessorPageCount ||
+            successor.chapter.pages.length != mapping.successorPageCount) {
+          continue;
+        }
+        final result = nextLedger.mergeVerifiedMapping(
+          sourceId: relation.sourceId,
+          predecessorComicId: relation.predecessorComicId,
+          successorComicId: relation.successorComicId,
+          predecessorChapterId: mapping.predecessorChapterId,
+          successorChapterId: mapping.successorChapterId,
+          predecessorSourceRevision: predecessorRevision,
+          successorSourceRevision: successorRevision,
+          predecessorPageCount: mapping.predecessorPageCount,
+          successorPageCount: mapping.successorPageCount,
+          verifiedIntervals: verifiedIntervals,
+        );
+        if (result.predecessorChanged) {
+          affected[result.predecessor.exactKey] = result.predecessor;
+        }
+        if (result.successorChanged) {
+          affected[result.successor.exactKey] = result.successor;
+        }
+        conflictCount += result.conflicts.length;
+      }
+    }
+    if (affected.isEmpty) return;
+    await provider.artifactStore.persistCanonicalMediaProjections(
+      affected.values,
+    );
+    _canonicalMediaLedger = nextLedger;
+    _canonicalMediaProjections =
+        Map<String, VersionChapterCanonicalProjection>.unmodifiable(
+      <String, VersionChapterCanonicalProjection>{
+        for (final projection in nextLedger.projections)
+          projection.exactKey: projection,
+      },
+    );
+    _refreshVersionPageAuthority();
+    await _canonicalPhysicalBackfillTail;
+    if (conflictCount > 0) {
+      _homeLog(
+        'canonical-media-assimilation-conflict conflicts=$conflictCount',
+      );
+    }
+  }
+
+  Future<void> _assimilateCanonicalMediaForEntries(
+    Iterable<ImportedLibraryEntry> entries,
+  ) async {
+    final changedComics = <String>{
+      for (final entry in entries)
+        comicLibraryIdentity(entry.chapter.sourceId, entry.chapter.comicId),
     };
+    if (changedComics.isEmpty) return;
+    final relations = <ComicVersionRelation>[
+      for (final relation in _versionRelations)
+        if (changedComics.contains(
+              comicLibraryIdentity(
+                relation.sourceId,
+                relation.predecessorComicId,
+              ),
+            ) ||
+            changedComics.contains(
+              comicLibraryIdentity(
+                relation.sourceId,
+                relation.successorComicId,
+              ),
+            ))
+          relation,
+    ];
+    if (relations.isEmpty) return;
+    await _assimilateCanonicalMediaRelations(relations);
+  }
+
+  void _refreshVersionPageAuthority() {
+    final provider = _downloadCompositionProvider;
+    if (provider == null) return;
+    final runtime = provider.transferRuntime;
+    // Hydrated chapters own the real page ids/URIs. Compact Home snapshot
+    // entries deliberately contain placeholder pages, so they must never
+    // shadow a manifest already hydrated for version/media authority. Keep
+    // this precedence aligned with versionAuthorityEntry():
+    // hydrated > live Home entry > orphaned download entry.
+    final entriesByKey = <String, ImportedLibraryEntry>{
+      for (final entry in _orphanedDownloadEntries)
+        _versionAuthorityEntryKey(entry): entry,
+      for (final entry in _entries) _versionAuthorityEntryKey(entry): entry,
+      ..._versionAuthorityHydratedEntries,
+    };
+    final activeProjectionRanges =
+        canonicalMediaActiveRangesFromRelations(_versionRelations);
+    final canonicalAuthorities = <CanonicalMediaChapterAuthority>[];
+    for (final entry in entriesByKey.values) {
+      final manifest = entry.chapter.toManifest();
+      final exactKey = canonicalMediaExactChapterKey(
+        sourceId: manifest.sourceId,
+        comicId: manifest.comicId,
+        chapterId: manifest.chapter.chapterId,
+        sourceRevision: manifest.chapter.sourceRevision,
+      );
+      final storedProjection = _canonicalMediaProjections[exactKey];
+      final projection = storedProjection != null &&
+              storedProjection.pageCount == manifest.pages.length
+          ? storedProjection
+          : null;
+      final ranges = <CanonicalMediaActiveRange>[
+        for (final range in activeProjectionRanges[exactKey] ??
+            const <CanonicalMediaActiveRange>[])
+          if (range.endExclusive <= manifest.pages.length) range,
+      ];
+      canonicalAuthorities.add(
+        CanonicalMediaChapterAuthority(
+          manifest: manifest,
+          projection: projection,
+          activeProjectionRanges: ranges,
+        ),
+      );
+    }
+    runtime.replaceCanonicalMediaAuthorityScope(
+      'library-canonical-media',
+      canonicalAuthorities,
+    );
+    _scheduleCanonicalPhysicalBackfill(provider, canonicalAuthorities);
     final resolvers = <String, VersionPageReuseResolver>{};
-    for (final relation in _versionRelations) {
+    for (final relation in _versionBaselines.cacheReuseRelations) {
       for (final mapping in relation.pageMappings) {
         if (mapping.effectiveVerifiedIntervals.isEmpty ||
             mapping.predecessorSourceRevision == null ||
@@ -483,10 +701,106 @@ final class HomeLibrarySession extends ChangeNotifier {
         resolvers['$key:reverse'] = successorToPredecessor.resolve;
       }
     }
-    provider.transferRuntime.versionPageAuthority.replaceScope(
+    runtime.versionPageAuthority.replaceScope(
       'library-version-relations',
       resolvers,
     );
+  }
+
+  void _scheduleCanonicalPhysicalBackfill(
+    ChapterDownloadTransferRuntimeProvider provider,
+    List<CanonicalMediaChapterAuthority> authorities,
+  ) {
+    final ordered = authorities.toList(growable: false)
+      ..sort((left, right) => left.exactKey.compareTo(right.exactKey));
+    final fingerprint = StringBuffer();
+    for (final authority in ordered) {
+      fingerprint
+        ..write(authority.exactKey)
+        ..write('|')
+        ..write(authority.manifest.pages.length)
+        ..write('|');
+      final projection = authority.projection;
+      if (projection != null) {
+        fingerprint
+          ..write(projection.familyId.value)
+          ..write('|')
+          ..write(projection.canonicalChapterId.value)
+          ..write('|');
+        for (final interval in projection.intervals) {
+          fingerprint
+            ..write(interval.exactStart)
+            ..write(':')
+            ..write(interval.exactEndExclusive)
+            ..write(':')
+            ..write(interval.segmentId.value)
+            ..write(':')
+            ..write(interval.segmentStart)
+            ..write(';');
+        }
+      }
+      fingerprint.write('|active=');
+      for (final range in authority.activeProjectionRanges) {
+        fingerprint
+          ..write(range.start)
+          ..write(':')
+          ..write(range.endExclusive)
+          ..write(';');
+      }
+      fingerprint.write('\n');
+    }
+    final nextFingerprint = fingerprint.toString();
+    if (_canonicalPhysicalBackfillFingerprint == nextFingerprint) return;
+    _canonicalPhysicalBackfillFingerprint = nextFingerprint;
+
+    final captured = List<CanonicalMediaChapterAuthority>.unmodifiable(ordered);
+    final previous = _canonicalPhysicalBackfillTail;
+    late final Future<void> operation;
+    operation = previous.then((_) async {
+      if (_closed) return;
+      if (!identical(_downloadCompositionProvider, provider)) {
+        if (_canonicalPhysicalBackfillFingerprint == nextFingerprint) {
+          _canonicalPhysicalBackfillFingerprint = null;
+        }
+        return;
+      }
+      try {
+        final bound =
+            await provider.artifactStore.backfillCanonicalReadyArtifacts(captured);
+        final migratedPartials =
+            await provider.artifactStore.backfillCanonicalPartials(captured);
+        if (bound > 0 || migratedPartials > 0) {
+          _homeLog(
+            'canonical-physical-backfill-complete '
+            'ready=$bound partials=$migratedPartials',
+          );
+        }
+      } on Object catch (error) {
+        if (_canonicalPhysicalBackfillFingerprint == nextFingerprint) {
+          _canonicalPhysicalBackfillFingerprint = null;
+        }
+        _homeLog('canonical-physical-backfill-failed error=$error');
+      }
+    });
+    _canonicalPhysicalBackfillTail = operation;
+    unawaited(operation);
+  }
+
+  ImportedLibraryEntry? versionAuthorityEntry({
+    required String sourceId,
+    required String comicId,
+    required String chapterId,
+  }) {
+    final key = '$sourceId\u0000$comicId\u0000$chapterId';
+    final hydrated = _versionAuthorityHydratedEntries[key];
+    if (hydrated != null) return hydrated;
+    for (final entry in _entries) {
+      if (_versionAuthorityEntryKey(entry) == key) return entry;
+    }
+    for (final entry in _orphanedDownloadEntries) {
+      if (_versionAuthorityEntryKey(entry) == key) return entry;
+    }
+    return null;
   }
 
   void _rememberVersionAuthorityEntries(
@@ -660,6 +974,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<void> adoptServices({
     required ImportedLibraryStore library,
     required ChapterDownloadService chapterDownloads,
+    ChapterDownloadTransferRuntimeProvider? downloadComposition,
     required WholeComicDownloadQueue wholeComicDownloads,
     required List<BrowsableComicSource> sources,
     required bool persistSnapshot,
@@ -673,6 +988,7 @@ final class HomeLibrarySession extends ChangeNotifier {
         _adoptServices(
           library: library,
           chapterDownloads: chapterDownloads,
+          downloadComposition: downloadComposition,
           wholeComicDownloads: wholeComicDownloads,
           sources: sources,
           persistSnapshot: persistSnapshot,
@@ -688,6 +1004,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<void> _adoptServices({
     required ImportedLibraryStore library,
     required ChapterDownloadService chapterDownloads,
+    required ChapterDownloadTransferRuntimeProvider? downloadComposition,
     required WholeComicDownloadQueue wholeComicDownloads,
     required List<BrowsableComicSource> sources,
     required bool persistSnapshot,
@@ -699,6 +1016,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
     if (identical(this.library, library) &&
         identical(this.chapterDownloads, chapterDownloads) &&
+        identical(this.downloadComposition, downloadComposition) &&
         identical(this.wholeComicDownloads, wholeComicDownloads)) {
       this.persistSnapshot = persistSnapshot;
       return;
@@ -715,7 +1033,9 @@ final class HomeLibrarySession extends ChangeNotifier {
 
     this.library = library;
     this.chapterDownloads = chapterDownloads;
+    this.downloadComposition = downloadComposition;
     this.wholeComicDownloads = wholeComicDownloads;
+    _canonicalPhysicalBackfillFingerprint = null;
     _recomputeVersionBaselines();
     // Preserve the snapshot-projected orphan entries until the adopted
     // service publishes its first authoritative download projection.
@@ -772,7 +1092,14 @@ final class HomeLibrarySession extends ChangeNotifier {
   }
 
   Future<void> _reconcileAdoptedServices() async {
+    final canonicalMediaProjectionsFuture = _traceStartupOperation<
+        List<VersionChapterCanonicalProjection>>(
+      'handoff-query-canonical-media-projections',
+      _queryCanonicalMediaProjections,
+      summary: (projections) => 'count=${projections.length}',
+    );
     await library.open();
+    _replaceCanonicalMediaProjections(await canonicalMediaProjectionsFuture);
     final snapshotRevision = _snapshotLibraryRevision;
     final currentRevision = snapshotRevision == null
         ? null
@@ -879,6 +1206,13 @@ final class HomeLibrarySession extends ChangeNotifier {
         'match=${currentRevision == snapshotRevision}',
       );
       if (currentRevision != null && currentRevision == snapshotRevision) {
+        final canonicalMediaProjections = await _traceStartupOperation<
+            List<VersionChapterCanonicalProjection>>(
+          'query-canonical-media-projections',
+          _queryCanonicalMediaProjections,
+          summary: (projections) => 'count=${projections.length}',
+        );
+        _replaceCanonicalMediaProjections(canonicalMediaProjections);
         _activeSourceId = _activeSourceIdForCurrentSources();
         _error = null;
         _loading = false;
@@ -903,6 +1237,12 @@ final class HomeLibrarySession extends ChangeNotifier {
       }
     }
     final projectionRevisionAtStart = _libraryProjectionRevision;
+    final canonicalMediaProjectionsFuture = _traceStartupOperation<
+        List<VersionChapterCanonicalProjection>>(
+      'query-canonical-media-projections',
+      _queryCanonicalMediaProjections,
+      summary: (projections) => 'count=${projections.length}',
+    );
     _homeLog('primary-query-batch-start');
     final entriesFuture = _traceStartupOperation<List<ImportedLibraryEntry>>(
       'query-entries',
@@ -955,6 +1295,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     final savedComics = await savedComicsFuture;
     final storedPreferences = await preferencesFuture;
     final versionRelations = await versionRelationsFuture;
+    final canonicalMediaProjections = await canonicalMediaProjectionsFuture;
     final preferences = <String, ComicPreference>{
       for (final preference in storedPreferences)
         preference.identity: preference,
@@ -973,6 +1314,7 @@ final class HomeLibrarySession extends ChangeNotifier {
         _versionRelations = List<ComicVersionRelation>.unmodifiable(
           versionRelations,
         );
+        _replaceCanonicalMediaProjections(canonicalMediaProjections);
         _recomputeVersionBaselines();
       }
       _error = null;
@@ -1132,6 +1474,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       _versionRelations = List<ComicVersionRelation>.unmodifiable(
         versionRelations,
       );
+      _replaceCanonicalMediaProjections(canonicalMediaProjections);
       _recomputeVersionBaselines();
     }
     _categories = List<LibraryCategory>.unmodifiable(categories);
@@ -1193,6 +1536,14 @@ final class HomeLibrarySession extends ChangeNotifier {
   /// only the page count and cover metadata, so they are intentionally not
   /// suitable for page loading.
   Future<ImportedLibraryEntry> hydrateEntry(ImportedLibraryEntry entry) async {
+    final cached = _versionAuthorityHydratedEntries[
+      _versionAuthorityEntryKey(entry)
+    ];
+    if (cached != null &&
+        cached.chapter.sourceRevision == entry.chapter.sourceRevision &&
+        cached.chapter.pages.length == entry.chapter.pages.length) {
+      return cached;
+    }
     final hydrated = await _traceStartupOperation<ImportedLibraryEntry?>(
       'chapter-hydrate',
       () => library.get(entry.chapter.sourceId, entry.chapter.chapterId),
@@ -1200,7 +1551,15 @@ final class HomeLibrarySession extends ChangeNotifier {
     );
     final resolved = hydrated ?? entry;
     _rememberVersionAuthorityEntries(<ImportedLibraryEntry>[resolved]);
+    await _assimilateCanonicalMediaForEntries(<ImportedLibraryEntry>[resolved]);
     return resolved;
+  }
+
+  Future<void> ensureCanonicalMediaForEntry(
+    ImportedLibraryEntry entry,
+  ) async {
+    _rememberVersionAuthorityEntries(<ImportedLibraryEntry>[entry]);
+    await _assimilateCanonicalMediaForEntries(<ImportedLibraryEntry>[entry]);
   }
 
   Future<Map<String, ImportedLibraryEntry>> hydrateChapterBatch(
@@ -1228,6 +1587,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       summary: (value) => 'requested=${keys.length} present=${value.length}',
     );
     _rememberVersionAuthorityEntries(entries);
+    await _assimilateCanonicalMediaForEntries(entries);
     return <String, ImportedLibraryEntry>{
       for (final entry in entries) entry.identity: entry,
     };
@@ -1452,6 +1812,13 @@ final class HomeLibrarySession extends ChangeNotifier {
         return entry;
       }
     }
+    for (final entry in _orphanedDownloadEntries) {
+      if (entry.chapter.sourceId == sourceId &&
+          entry.chapter.comicId == comicId &&
+          entry.chapter.chapterId == chapterId) {
+        return entry;
+      }
+    }
     return null;
   }
 
@@ -1460,6 +1827,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<void> upsertVersionRelation(ComicVersionRelation relation) async {
     await _persistVersionRelation(relation);
     replaceVersionRelation(relation);
+    await _canonicalPhysicalBackfillTail;
   }
 
   /// Persists derived page-reuse evidence without publishing a Home mutation.
@@ -1473,6 +1841,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   ) async {
     await _persistVersionRelation(relation);
     _replaceVersionRelation(relation, publishHome: false, writeSnapshot: false);
+    await _canonicalPhysicalBackfillTail;
   }
 
   Future<void> _persistVersionRelation(ComicVersionRelation relation) async {
@@ -1483,6 +1852,14 @@ final class HomeLibrarySession extends ChangeNotifier {
       throw StateError('library does not persist comic version relations');
     }
     await store.saveComicVersionRelation(relation);
+    try {
+      await _assimilateCanonicalMediaRelation(relation);
+    } on Object catch (error) {
+      _homeLog(
+        'canonical-media-assimilation-failed '
+        'sourceId=${relation.sourceId} errorType=${error.runtimeType}',
+      );
+    }
   }
 
   void replaceVersionRelation(ComicVersionRelation relation) {
@@ -1564,6 +1941,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       throw StateError('chapter write completed without a readable entry');
     }
     _replaceEntry(entry);
+    await _assimilateCanonicalMediaForEntries(<ImportedLibraryEntry>[entry]);
     _refreshVersionPageAuthority();
     return entry;
   }
@@ -1994,6 +2372,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       return;
     }
     await _versionEvidenceWriteTail;
+    await _canonicalPhysicalBackfillTail;
     _closed = true;
     await _downloadSubscription.cancel();
     await _wholeComicSubscription.cancel();

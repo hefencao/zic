@@ -6,6 +6,7 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:downloads/downloads.dart';
+import 'package:storage/storage.dart';
 import 'package:storage_bridge/storage_bridge.dart';
 import 'package:zic/home_library_session.dart';
 
@@ -50,6 +51,734 @@ void main() {
 
     expect(session.preferences[preference.identity]?.liked, isTrue);
     expect(notifications, 1);
+  });
+
+  test('durable adoption carries separate composition into canonical owner',
+      () async {
+    final root = await Directory.systemTemp.createTemp('canonical-adoption-');
+    final composition = await PersistentDownloadComposition.open(root.path);
+    final bootstrapLibrary = MemoryImportedLibraryStore();
+    final bootstrapDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final bootstrapQueue = WholeComicDownloadQueue(downloads: bootstrapDownloads);
+    final session = HomeLibrarySession(
+      library: bootstrapLibrary,
+      chapterDownloads: bootstrapDownloads,
+      wholeComicDownloads: bootstrapQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    final durableLibrary = MemoryImportedLibraryStore();
+    final durableDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final durableQueue = WholeComicDownloadQueue(downloads: durableDownloads);
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await durableQueue.close();
+      await durableDownloads.close();
+      await composition.close();
+      await durableLibrary.close();
+      await root.delete(recursive: true);
+    });
+    await durableLibrary.open();
+    final oldManifest = _versionManifest(
+      comicId: 'adopt-old',
+      chapterId: 'adopt-old-chapter',
+      revision: 'adopt-old-r1',
+      pageCount: 2,
+    );
+    final newManifest = _versionManifest(
+      comicId: 'adopt-new',
+      chapterId: 'adopt-new-chapter',
+      revision: 'adopt-new-r1',
+      pageCount: 3,
+    );
+    await durableLibrary.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic(oldManifest.comicId),
+        manifest: oldManifest,
+      ),
+    );
+    await durableLibrary.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic(newManifest.comicId),
+        manifest: newManifest,
+      ),
+    );
+    await durableLibrary.saveComicVersionRelation(
+      ComicVersionRelation(
+        sourceId: oldManifest.sourceId,
+        predecessorComicId: oldManifest.comicId,
+        successorComicId: newManifest.comicId,
+        pageMappings: <ComicVersionPageMapping>[
+          ComicVersionPageMapping(
+            predecessorChapterId: oldManifest.chapter.chapterId,
+            successorChapterId: newManifest.chapter.chapterId,
+            predecessorPageCount: oldManifest.pages.length,
+            successorPageCount: newManifest.pages.length,
+            successorOffset: 1,
+            predecessorSourceRevision: oldManifest.chapter.sourceRevision,
+            successorSourceRevision: newManifest.chapter.sourceRevision,
+            verifiedIntervals: const <VerifiedComicVersionPageInterval>[
+              VerifiedComicVersionPageInterval(
+                predecessorStart: 0,
+                predecessorEndExclusive: 2,
+                successorOffset: 1,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+
+    await session.ready;
+    await session.adoptServices(
+      library: durableLibrary,
+      chapterDownloads: durableDownloads,
+      downloadComposition: composition,
+      wholeComicDownloads: durableQueue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    );
+    final current = session.entries.singleWhere(
+      (entry) => entry.chapter.comicId == oldManifest.comicId,
+    );
+    await session.ensureCanonicalMediaForEntry(current);
+
+    final projections = await composition.artifactStore
+        .loadCanonicalMediaProjections();
+    expect(projections, hasLength(2));
+    final oldId = readerPageDownloadId(oldManifest, oldManifest.pages[0]);
+    final newId = readerPageDownloadId(newManifest, newManifest.pages[1]);
+    final oldPhysical = composition.transferRuntime.physicalMediaIdFor(oldId);
+    expect(oldPhysical.isExactFallback, isFalse);
+    expect(composition.transferRuntime.physicalMediaIdFor(newId), oldPhysical);
+  });
+
+  test('persisted sparse canonical projection publishes physical owner on startup',
+      () async {
+    final root = await Directory.systemTemp.createTemp('canonical-projection-home-');
+    final composition = await PersistentDownloadComposition.open(root.path);
+    final library = MemoryImportedLibraryStore();
+    await library.open();
+    final oldManifest = _versionManifest(
+      comicId: 'canonical-old',
+      chapterId: 'canonical-old-chapter',
+      revision: 'canonical-old-r1',
+      pageCount: 2,
+    );
+    final newManifest = _versionManifest(
+      comicId: 'canonical-new',
+      chapterId: 'canonical-new-chapter',
+      revision: 'canonical-new-r1',
+      pageCount: 3,
+    );
+    await library.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic('canonical-old'),
+        manifest: oldManifest,
+      ),
+    );
+    await library.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic('canonical-new'),
+        manifest: newManifest,
+      ),
+    );
+    await library.saveComicVersionRelation(
+      ComicVersionRelation(
+        sourceId: oldManifest.sourceId,
+        predecessorComicId: oldManifest.comicId,
+        successorComicId: newManifest.comicId,
+        pageMappings: <ComicVersionPageMapping>[
+          ComicVersionPageMapping(
+            predecessorChapterId: oldManifest.chapter.chapterId,
+            successorChapterId: newManifest.chapter.chapterId,
+            predecessorPageCount: oldManifest.pages.length,
+            successorPageCount: newManifest.pages.length,
+            successorOffset: 1,
+            predecessorSourceRevision: oldManifest.chapter.sourceRevision,
+            successorSourceRevision: newManifest.chapter.sourceRevision,
+            verifiedIntervals: const <VerifiedComicVersionPageInterval>[
+              VerifiedComicVersionPageInterval(
+                predecessorStart: 0,
+                predecessorEndExclusive: 1,
+                successorOffset: 1,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+    const family = VersionFamilyId('canonical-family');
+    const canonicalChapter = CanonicalChapterId('canonical-chapter');
+    const segment = CanonicalMediaSegmentId('shared-segment');
+    await composition.artifactStore.persistCanonicalMediaProjections(
+      <VersionChapterCanonicalProjection>[
+        VersionChapterCanonicalProjection(
+          familyId: family,
+          canonicalChapterId: canonicalChapter,
+          sourceId: oldManifest.sourceId,
+          comicId: oldManifest.comicId,
+          chapterId: oldManifest.chapter.chapterId,
+          sourceRevision: oldManifest.chapter.sourceRevision,
+          pageCount: oldManifest.pages.length,
+          intervals: const <CanonicalMediaBindingInterval>[
+            CanonicalMediaBindingInterval(
+              exactStart: 0,
+              exactEndExclusive: 1,
+              segmentId: segment,
+              segmentStart: 0,
+            ),
+          ],
+        ),
+        VersionChapterCanonicalProjection(
+          familyId: family,
+          canonicalChapterId: canonicalChapter,
+          sourceId: newManifest.sourceId,
+          comicId: newManifest.comicId,
+          chapterId: newManifest.chapter.chapterId,
+          sourceRevision: newManifest.chapter.sourceRevision,
+          pageCount: newManifest.pages.length,
+          intervals: const <CanonicalMediaBindingInterval>[
+            CanonicalMediaBindingInterval(
+              exactStart: 1,
+              exactEndExclusive: 2,
+              segmentId: segment,
+              segmentStart: 0,
+            ),
+          ],
+        ),
+      ],
+    );
+    final queue = WholeComicDownloadQueue(downloads: composition.chapterDownloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: composition.chapterDownloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: false,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await composition.close();
+      await root.delete(recursive: true);
+    });
+
+    await session.ready;
+    final oldId = readerPageDownloadId(oldManifest, oldManifest.pages[0]);
+    final newId = readerPageDownloadId(newManifest, newManifest.pages[1]);
+    expect(composition.transferRuntime.canonicalMediaAuthorityCount, 2);
+    expect(
+      composition.transferRuntime.physicalMediaIdFor(oldId),
+      composition.transferRuntime.physicalMediaIdFor(newId),
+    );
+    expect(
+      composition.transferRuntime.sessionFor(newId),
+      same(composition.transferRuntime.sessionFor(oldId)),
+    );
+    expect(
+      composition.transferRuntime.registry.isPhysicalAlias(newId, oldId),
+      isFalse,
+    );
+  });
+
+  test(
+    'hydrated chapter outranks compact Home snapshot for canonical media authority',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'canonical-compact-hydrate-',
+      );
+      final snapshotStore = HomeProjectionSnapshotStore.atPath(
+        '${root.path}/home_snapshot.json',
+      );
+      final composition = await PersistentDownloadComposition.open(root.path);
+      final library = MemoryImportedLibraryStore();
+      await library.open();
+      final oldManifest = _versionManifest(
+        comicId: 'compact-old',
+        chapterId: 'compact-old-chapter',
+        revision: 'compact-old-r1',
+        pageCount: 2,
+      );
+      final newManifest = _versionManifest(
+        comicId: 'compact-new',
+        chapterId: 'compact-new-chapter',
+        revision: 'compact-new-r1',
+        pageCount: 3,
+      );
+      final oldChapter = ImportedChapterRecord.remote(
+        comic: _versionComic('compact-old'),
+        manifest: oldManifest,
+      );
+      final newChapter = ImportedChapterRecord.remote(
+        comic: _versionComic('compact-new'),
+        manifest: newManifest,
+      );
+      await library.upsertChapter(oldChapter);
+      await library.upsertChapter(newChapter);
+      final relation = ComicVersionRelation(
+        sourceId: oldManifest.sourceId,
+        predecessorComicId: oldManifest.comicId,
+        successorComicId: newManifest.comicId,
+        pageMappings: <ComicVersionPageMapping>[
+          ComicVersionPageMapping(
+            predecessorChapterId: oldManifest.chapter.chapterId,
+            successorChapterId: newManifest.chapter.chapterId,
+            predecessorPageCount: oldManifest.pages.length,
+            successorPageCount: newManifest.pages.length,
+            successorOffset: 1,
+            predecessorSourceRevision: oldManifest.chapter.sourceRevision,
+            successorSourceRevision: newManifest.chapter.sourceRevision,
+            verifiedIntervals: const <VerifiedComicVersionPageInterval>[
+              VerifiedComicVersionPageInterval(
+                predecessorStart: 0,
+                predecessorEndExclusive: 1,
+                successorOffset: 1,
+              ),
+            ],
+          ),
+        ],
+      );
+      await library.saveComicVersionRelation(relation);
+      await snapshotStore.write(
+        HomeProjectionSnapshot(
+          entries: <ImportedLibraryEntry>[
+            ImportedLibraryEntry(chapter: oldChapter),
+            ImportedLibraryEntry(chapter: newChapter),
+          ],
+          savedComics: const <SavedComicRecord>[],
+          categories: const <LibraryCategory>[],
+          preferences: const <ComicPreference>[],
+          readStates: const <ChapterReadState>[],
+          sourcePreferences: const <ComicSourcePreference>[],
+          versionRelations: <ComicVersionRelation>[relation],
+          libraryRevision: 7,
+        ),
+      );
+      const family = VersionFamilyId('compact-family');
+      const canonicalChapter = CanonicalChapterId('compact-chapter');
+      const segment = CanonicalMediaSegmentId('compact-segment');
+      await composition.artifactStore.persistCanonicalMediaProjection(
+        VersionChapterCanonicalProjection(
+          familyId: family,
+          canonicalChapterId: canonicalChapter,
+          sourceId: newManifest.sourceId,
+          comicId: newManifest.comicId,
+          chapterId: newManifest.chapter.chapterId,
+          sourceRevision: newManifest.chapter.sourceRevision,
+          pageCount: newManifest.pages.length,
+          intervals: const <CanonicalMediaBindingInterval>[
+            CanonicalMediaBindingInterval(
+              exactStart: 1,
+              exactEndExclusive: 2,
+              segmentId: segment,
+              segmentStart: 0,
+            ),
+          ],
+        ),
+      );
+      final durable = _GatedLibraryStore(
+        library,
+        Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+        libraryRevision: 7,
+      );
+      final queue = WholeComicDownloadQueue(
+        downloads: composition.chapterDownloads,
+      );
+      final session = HomeLibrarySession(
+        library: durable,
+        snapshotStore: snapshotStore,
+        chapterDownloads: composition.chapterDownloads,
+        downloadComposition: composition,
+        wholeComicDownloads: queue,
+        sources: const <BrowsableComicSource>[],
+        ownsLibrary: true,
+        ownsChapterDownloads: false,
+        ownsWholeComicDownloads: true,
+      );
+      addTearDown(() async {
+        await session.close();
+        session.dispose();
+        await composition.close();
+        if (await root.exists()) await root.delete(recursive: true);
+      });
+
+      await session.ready;
+      final compact = session.entries.singleWhere(
+        (entry) => entry.chapter.comicId == newManifest.comicId,
+      );
+      expect(
+        compact.chapter.pages[1].sourceId,
+        startsWith('zic-home-snapshot-page:'),
+      );
+      final hydrated = await session.hydrateEntry(compact);
+      expect(hydrated.chapter.pages[1].uri, newManifest.pages[1].uri);
+
+      final newId = readerPageDownloadId(newManifest, newManifest.pages[1]);
+      expect(
+        composition.transferRuntime.physicalMediaIdFor(newId).isExactFallback,
+        isFalse,
+      );
+    },
+  );
+
+  test('verified relation allocates stable canonical media across proof revocation',
+      () async {
+    final root = await Directory.systemTemp.createTemp('canonical-ledger-home-');
+    final composition = await PersistentDownloadComposition.open(root.path);
+    final library = MemoryImportedLibraryStore();
+    await library.open();
+    final oldManifest = _versionManifest(
+      comicId: 'ledger-old',
+      chapterId: 'ledger-old-chapter',
+      revision: 'ledger-old-r1',
+      pageCount: 2,
+    );
+    final newManifest = _versionManifest(
+      comicId: 'ledger-new',
+      chapterId: 'ledger-new-chapter',
+      revision: 'ledger-new-r1',
+      pageCount: 3,
+    );
+    await library.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic('ledger-old'),
+        manifest: oldManifest,
+      ),
+    );
+    await library.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic('ledger-new'),
+        manifest: newManifest,
+      ),
+    );
+    final queue = WholeComicDownloadQueue(downloads: composition.chapterDownloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: composition.chapterDownloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: false,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await composition.close();
+      await root.delete(recursive: true);
+    });
+    await session.ready;
+
+    ComicVersionRelation relation({required bool verified}) =>
+        ComicVersionRelation(
+          sourceId: oldManifest.sourceId,
+          predecessorComicId: oldManifest.comicId,
+          successorComicId: newManifest.comicId,
+          pageMappings: <ComicVersionPageMapping>[
+            ComicVersionPageMapping(
+              predecessorChapterId: oldManifest.chapter.chapterId,
+              successorChapterId: newManifest.chapter.chapterId,
+              predecessorPageCount: oldManifest.pages.length,
+              successorPageCount: newManifest.pages.length,
+              successorOffset: 1,
+              predecessorSourceRevision: oldManifest.chapter.sourceRevision,
+              successorSourceRevision: newManifest.chapter.sourceRevision,
+              verifiedIntervals: verified
+                  ? const <VerifiedComicVersionPageInterval>[
+                      VerifiedComicVersionPageInterval(
+                        predecessorStart: 0,
+                        predecessorEndExclusive: 1,
+                        successorOffset: 1,
+                      ),
+                    ]
+                  : const <VerifiedComicVersionPageInterval>[],
+            ),
+          ],
+        );
+
+    final oldId = readerPageDownloadId(oldManifest, oldManifest.pages[0]);
+    final newId = readerPageDownloadId(newManifest, newManifest.pages[1]);
+    expect(
+      composition.transferRuntime.physicalMediaIdFor(oldId).isExactFallback,
+      isTrue,
+    );
+    expect(
+      composition.transferRuntime.physicalMediaIdFor(newId).isExactFallback,
+      isTrue,
+    );
+    final historicalBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    await composition.artifactStore.storePromotedArtifact(
+      id: oldId,
+      bytes: historicalBytes,
+    );
+
+    await session.upsertVersionRelation(relation(verified: true));
+    final canonical = composition.transferRuntime.physicalMediaIdFor(oldId);
+    expect(canonical.isExactFallback, isFalse);
+    expect(composition.transferRuntime.physicalMediaIdFor(newId), canonical);
+    final canonicalArtifact =
+        await composition.artifactCacheManager.openPhysicalArtifact(canonical);
+    expect(canonicalArtifact, isNotNull);
+    expect(canonicalArtifact!.length, historicalBytes.length);
+    expect(
+      await composition.artifactStore.loadCanonicalMediaProjections(),
+      hasLength(2),
+    );
+
+    await session.upsertVersionRelationDerivedState(relation(verified: false));
+    expect(
+      composition.transferRuntime.physicalMediaIdFor(oldId).isExactFallback,
+      isTrue,
+    );
+    expect(
+      composition.transferRuntime.physicalMediaIdFor(newId).isExactFallback,
+      isTrue,
+    );
+    expect(
+      await composition.artifactStore.loadCanonicalMediaProjections(),
+      hasLength(2),
+    );
+
+    await session.upsertVersionRelationDerivedState(relation(verified: true));
+    expect(composition.transferRuntime.physicalMediaIdFor(oldId), canonical);
+    expect(composition.transferRuntime.physicalMediaIdFor(newId), canonical);
+  });
+
+  test('failed canonical persist does not advance the in-memory ledger',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'canonical-ledger-persist-failure-',
+    );
+    final composition = await PersistentDownloadComposition.open(root.path);
+    final library = MemoryImportedLibraryStore();
+    await library.open();
+    final oldManifest = _versionManifest(
+      comicId: 'failed-ledger-old',
+      chapterId: 'failed-ledger-old-chapter',
+      revision: 'failed-ledger-old-r1',
+      pageCount: 1,
+    );
+    final newManifest = _versionManifest(
+      comicId: 'failed-ledger-new',
+      chapterId: 'failed-ledger-new-chapter',
+      revision: 'failed-ledger-new-r1',
+      pageCount: 1,
+    );
+    for (final manifest in <ChapterManifest>[oldManifest, newManifest]) {
+      await library.upsertChapter(
+        ImportedChapterRecord.remote(
+          comic: _versionComic(manifest.comicId),
+          manifest: manifest,
+        ),
+      );
+    }
+    final queue = WholeComicDownloadQueue(
+      downloads: composition.chapterDownloads,
+    );
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: composition.chapterDownloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: false,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await composition.close();
+      await root.delete(recursive: true);
+    });
+    await session.ready;
+
+    final conflict = VersionChapterCanonicalProjection(
+      familyId: const VersionFamilyId('conflicting-family'),
+      canonicalChapterId: const CanonicalChapterId('conflicting-chapter'),
+      sourceId: oldManifest.sourceId,
+      comicId: oldManifest.comicId,
+      chapterId: oldManifest.chapter.chapterId,
+      sourceRevision: oldManifest.chapter.sourceRevision,
+      pageCount: 1,
+      intervals: const <CanonicalMediaBindingInterval>[
+        CanonicalMediaBindingInterval(
+          exactStart: 0,
+          exactEndExclusive: 1,
+          segmentId: CanonicalMediaSegmentId('conflicting-segment'),
+          segmentStart: 0,
+        ),
+      ],
+    );
+    await composition.artifactStore.persistCanonicalMediaProjection(conflict);
+
+    final relation = ComicVersionRelation(
+      sourceId: oldManifest.sourceId,
+      predecessorComicId: oldManifest.comicId,
+      successorComicId: newManifest.comicId,
+      pageMappings: <ComicVersionPageMapping>[
+        ComicVersionPageMapping(
+          predecessorChapterId: oldManifest.chapter.chapterId,
+          successorChapterId: newManifest.chapter.chapterId,
+          predecessorPageCount: 1,
+          successorPageCount: 1,
+          successorOffset: 0,
+          predecessorSourceRevision: oldManifest.chapter.sourceRevision,
+          successorSourceRevision: newManifest.chapter.sourceRevision,
+          verifiedIntervals: const <VerifiedComicVersionPageInterval>[
+            VerifiedComicVersionPageInterval(
+              predecessorStart: 0,
+              predecessorEndExclusive: 1,
+              successorOffset: 0,
+            ),
+          ],
+        ),
+      ],
+    );
+
+    await session.upsertVersionRelationDerivedState(relation);
+    final failedPersist =
+        await composition.artifactStore.loadCanonicalMediaProjections();
+    expect(failedPersist, hasLength(1));
+    expect(failedPersist.single.exactKey, conflict.exactKey);
+    expect(failedPersist.single.familyId, conflict.familyId);
+    expect(
+      failedPersist.single.coordinateForPageIndex(0),
+      conflict.coordinateForPageIndex(0),
+    );
+
+    await (composition.artifactStore.index as PhysicalMediaProjectionIndex)
+        .removePhysicalMediaProjection(conflict.exactKey);
+    final oldEntry = session.entries.singleWhere(
+      (entry) => entry.chapter.comicId == oldManifest.comicId,
+    );
+    await session.ensureCanonicalMediaForEntry(oldEntry);
+
+    final recovered =
+        await composition.artifactStore.loadCanonicalMediaProjections();
+    expect(recovered, hasLength(2));
+    expect(recovered.map((value) => value.familyId).toSet(), hasLength(1));
+    expect(
+      recovered.map((value) => value.exactKey).toSet(),
+      <String>{
+        canonicalMediaExactChapterKey(
+          sourceId: oldManifest.sourceId,
+          comicId: oldManifest.comicId,
+          chapterId: oldManifest.chapter.chapterId,
+          sourceRevision: oldManifest.chapter.sourceRevision,
+        ),
+        canonicalMediaExactChapterKey(
+          sourceId: newManifest.sourceId,
+          comicId: newManifest.comicId,
+          chapterId: newManifest.chapter.chapterId,
+          sourceRevision: newManifest.chapter.sourceRevision,
+        ),
+      },
+    );
+  });
+
+  test('concurrent verified relations serialize one canonical media ledger',
+      () async {
+    final root = await Directory.systemTemp.createTemp('canonical-ledger-write-tail-');
+    final composition = await PersistentDownloadComposition.open(root.path);
+    final library = MemoryImportedLibraryStore();
+    await library.open();
+    final a = _versionManifest(
+      comicId: 'tail-a',
+      chapterId: 'tail-a-chapter',
+      revision: 'tail-a-r1',
+      pageCount: 1,
+    );
+    final b = _versionManifest(
+      comicId: 'tail-b',
+      chapterId: 'tail-b-chapter',
+      revision: 'tail-b-r1',
+      pageCount: 1,
+    );
+    final c = _versionManifest(
+      comicId: 'tail-c',
+      chapterId: 'tail-c-chapter',
+      revision: 'tail-c-r1',
+      pageCount: 1,
+    );
+    for (final manifest in <ChapterManifest>[a, b, c]) {
+      await library.upsertChapter(
+        ImportedChapterRecord.remote(
+          comic: _versionComic(manifest.comicId),
+          manifest: manifest,
+        ),
+      );
+    }
+    final queue = WholeComicDownloadQueue(downloads: composition.chapterDownloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: composition.chapterDownloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: false,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await composition.close();
+      await root.delete(recursive: true);
+    });
+    await session.ready;
+
+    ComicVersionRelation relation(ChapterManifest left, ChapterManifest right) =>
+        ComicVersionRelation(
+          sourceId: left.sourceId,
+          predecessorComicId: left.comicId,
+          successorComicId: right.comicId,
+          pageMappings: <ComicVersionPageMapping>[
+            ComicVersionPageMapping(
+              predecessorChapterId: left.chapter.chapterId,
+              successorChapterId: right.chapter.chapterId,
+              predecessorPageCount: 1,
+              successorPageCount: 1,
+              successorOffset: 0,
+              predecessorSourceRevision: left.chapter.sourceRevision,
+              successorSourceRevision: right.chapter.sourceRevision,
+              verifiedIntervals: const <VerifiedComicVersionPageInterval>[
+                VerifiedComicVersionPageInterval(
+                  predecessorStart: 0,
+                  predecessorEndExclusive: 1,
+                  successorOffset: 0,
+                ),
+              ],
+            ),
+          ],
+        );
+
+    await Future.wait(<Future<void>>[
+      session.upsertVersionRelationDerivedState(relation(a, b)),
+      session.upsertVersionRelationDerivedState(relation(b, c)),
+    ]);
+
+    final aId = readerPageDownloadId(a, a.pages.single);
+    final bId = readerPageDownloadId(b, b.pages.single);
+    final cId = readerPageDownloadId(c, c.pages.single);
+    final physical = composition.transferRuntime.physicalMediaIdFor(aId);
+    expect(physical.isExactFallback, isFalse);
+    expect(composition.transferRuntime.physicalMediaIdFor(bId), physical);
+    expect(composition.transferRuntime.physicalMediaIdFor(cId), physical);
+    final projections = await composition.artifactStore.loadCanonicalMediaProjections();
+    expect(projections, hasLength(3));
+    expect(projections.map((value) => value.familyId).toSet(), hasLength(1));
   });
 
   test('version relations publish page reuse candidates without Reader entry',
@@ -128,7 +857,76 @@ void main() {
     expect(composition.transferRuntime.versionCandidatesFor(oldId), isEmpty);
   });
 
-  test('batch hydration publishes reuse candidates without growing Home entries',
+  test('strong page identity publishes one canonical physical owner across versions',
+      () async {
+    final root = await Directory.systemTemp.createTemp('version-physical-home-');
+    final composition = await PersistentDownloadComposition.open(root.path);
+    final library = MemoryImportedLibraryStore();
+    await library.open();
+    const sharedKey = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const addedKey = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    final oldManifest = _versionManifestWithImageKeys(
+      comicId: 'physical-old',
+      chapterId: 'physical-old-chapter',
+      revision: 'physical-old-r1',
+      imageKeys: const <String>[sharedKey],
+    );
+    final newManifest = _versionManifestWithImageKeys(
+      comicId: 'physical-new',
+      chapterId: 'physical-new-chapter',
+      revision: 'physical-new-r1',
+      imageKeys: const <String>[addedKey, sharedKey],
+    );
+    await library.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic('physical-old'),
+        manifest: oldManifest,
+      ),
+    );
+    await library.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: _versionComic('physical-new'),
+        manifest: newManifest,
+      ),
+    );
+    final queue = WholeComicDownloadQueue(downloads: composition.chapterDownloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: composition.chapterDownloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: false,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await composition.close();
+      await root.delete(recursive: true);
+    });
+    await session.ready;
+
+    final oldId = readerPageDownloadId(oldManifest, oldManifest.pages.single);
+    final newSharedId = readerPageDownloadId(newManifest, newManifest.pages[1]);
+    final newAddedId = readerPageDownloadId(newManifest, newManifest.pages[0]);
+    final oldPhysical = composition.transferRuntime.physicalMediaIdFor(oldId);
+    final sharedPhysical =
+        composition.transferRuntime.physicalMediaIdFor(newSharedId);
+    final addedPhysical = composition.transferRuntime.physicalMediaIdFor(newAddedId);
+
+    expect(oldPhysical.isExactFallback, isFalse);
+    expect(sharedPhysical, oldPhysical);
+    expect(addedPhysical, isNot(oldPhysical));
+    final oldSession = composition.transferRuntime.sessionFor(oldId);
+    final newSession = composition.transferRuntime.sessionFor(newSharedId);
+    expect(newSession, same(oldSession));
+    expect(oldSession.physicalId, oldPhysical);
+    expect(composition.transferRuntime.registry.isPhysicalAlias(newSharedId, oldId),
+        isFalse);
+  });
+
+  test('batch hydration publishes canonical media without growing Home entries',
       () async {
     final root = await Directory.systemTemp.createTemp('version-owner-hydrate-');
     final composition = await PersistentDownloadComposition.open(root.path);
@@ -213,8 +1011,15 @@ void main() {
     );
     expect(hydrated, hasLength(2));
     expect(session.entries, isEmpty);
-    expect(composition.transferRuntime.versionCandidatesFor(oldId), contains(newId));
-    expect(composition.transferRuntime.versionCandidatesFor(newId), contains(oldId));
+    final oldPhysical = composition.transferRuntime.physicalMediaIdFor(oldId);
+    expect(oldPhysical.isExactFallback, isFalse);
+    expect(composition.transferRuntime.physicalMediaIdFor(newId), oldPhysical);
+    expect(
+      composition.transferRuntime.sessionFor(newId),
+      same(composition.transferRuntime.sessionFor(oldId)),
+    );
+    expect(composition.transferRuntime.versionCandidatesFor(oldId), isEmpty);
+    expect(composition.transferRuntime.versionCandidatesFor(newId), isEmpty);
   });
 
   test('natural page evidence discovers a changed affine offset from observed identity',
@@ -1453,6 +2258,69 @@ void main() {
   });
 
 
+  test('chapter hydration reuses matching full entry and rejects stale revision',
+      () async {
+    final delegate = MemoryImportedLibraryStore();
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+
+    final firstManifest = _versionManifest(
+      comicId: 'hydrate-cache-comic',
+      chapterId: 'hydrate-cache-chapter',
+      revision: 'hydrate-r1',
+      pageCount: 2,
+    );
+    final firstRecord = ImportedChapterRecord.remote(
+      comic: _versionComic(firstManifest.comicId),
+      manifest: firstManifest,
+    );
+    await delegate.upsertChapter(firstRecord);
+    final requested = ImportedLibraryEntry(chapter: firstRecord);
+
+    final first = await session.hydrateEntry(requested);
+    final second = await session.hydrateEntry(requested);
+    expect(first.chapter.sourceRevision, 'hydrate-r1');
+    expect(second, same(first));
+    expect(library.getCalls, 1);
+
+    final secondManifest = _versionManifest(
+      comicId: 'hydrate-cache-comic',
+      chapterId: 'hydrate-cache-chapter',
+      revision: 'hydrate-r2',
+      pageCount: 2,
+    );
+    final secondRecord = ImportedChapterRecord.remote(
+      comic: _versionComic(secondManifest.comicId),
+      manifest: secondManifest,
+    );
+    await delegate.upsertChapter(secondRecord);
+    final refreshed = await session.hydrateEntry(
+      ImportedLibraryEntry(chapter: secondRecord),
+    );
+    expect(refreshed.chapter.sourceRevision, 'hydrate-r2');
+    expect(library.getCalls, 2);
+  });
+
   test('hydrated chapter cache follows newer Reader progress projection',
       () async {
     final delegate = MemoryImportedLibraryStore();
@@ -1613,6 +2481,40 @@ Comic _versionComic(String comicId) => Comic(
       authors: const <String>[],
       readingDirection: ReadingDirection.ltr,
     );
+
+ChapterManifest _versionManifestWithImageKeys({
+  required String comicId,
+  required String chapterId,
+  required String revision,
+  required List<String> imageKeys,
+}) {
+  final chapter = Chapter(
+    chapterId: chapterId,
+    comicId: comicId,
+    title: chapterId,
+    sequence: 1,
+    pageCount: imageKeys.length,
+    sourceRevision: revision,
+  );
+  return ChapterManifest(
+    sourceId: 'version-source',
+    comicId: comicId,
+    chapter: chapter,
+    readingDirection: ReadingDirection.ltr,
+    pages: <PageAsset>[
+      for (var index = 0; index < imageKeys.length; index++)
+        PageAsset(
+          pageId: '$chapterId-page-$index',
+          chapterId: chapterId,
+          index: index,
+          uri: Uri.parse(
+            'https://e-hentai.org/s/${imageKeys[index]}/100-$index',
+          ),
+          contentKindHint: ContentKindHint.webp,
+        ),
+    ],
+  );
+}
 
 ChapterManifest _versionManifest({
   required String comicId,
