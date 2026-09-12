@@ -3,6 +3,7 @@ export 'src/external_plugin_catalog.dart';
 export 'src/cached_comic_source.dart';
 export 'src/comic_source_migration.dart';
 export 'src/comic_version_baseline.dart';
+export 'src/comic_version_canonical_media.dart';
 
 export 'src/comic_source.dart';
 export 'src/local_manifest_source.dart';

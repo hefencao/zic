@@ -55,18 +55,29 @@ final class ComicVersionBaselineProjection {
   ComicVersionBaselineProjection({
     required Iterable<ComicVersionFamilyBaseline> families,
     required Iterable<ComicVersionRelation> downloadHeadRelations,
+    Iterable<ComicVersionRelation> cacheReuseRelations =
+        const <ComicVersionRelation>[],
   })  : families = List<ComicVersionFamilyBaseline>.unmodifiable(families),
         downloadHeadRelations =
-            List<ComicVersionRelation>.unmodifiable(downloadHeadRelations);
+            List<ComicVersionRelation>.unmodifiable(downloadHeadRelations),
+        cacheReuseRelations =
+            List<ComicVersionRelation>.unmodifiable(cacheReuseRelations);
 
   const ComicVersionBaselineProjection._empty()
       : families = const <ComicVersionFamilyBaseline>[],
-        downloadHeadRelations = const <ComicVersionRelation>[];
+        downloadHeadRelations = const <ComicVersionRelation>[],
+        cacheReuseRelations = const <ComicVersionRelation>[];
 
   static const empty = ComicVersionBaselineProjection._empty();
 
   final List<ComicVersionFamilyBaseline> families;
   final List<ComicVersionRelation> downloadHeadRelations;
+
+  /// Transitional direct reuse relations between materialized versions.
+  /// Historical paths are never composed for cache/hot reuse; canonical media
+  /// owns cross-version physical identity. This field remains while legacy
+  /// exact-cache fallback consumers are retired.
+  final List<ComicVersionRelation> cacheReuseRelations;
 
   ComicVersionFamilyBaseline? familyFor(String sourceId, String comicId) {
     for (final family in families) {
@@ -103,6 +114,8 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
   Iterable<ComicVersionIdentity> shelfComics = const <ComicVersionIdentity>[],
   Iterable<ComicVersionIdentity> manualDownloadComics =
       const <ComicVersionIdentity>[],
+  Iterable<ComicVersionIdentity> cacheReuseComics =
+      const <ComicVersionIdentity>[],
 }) {
   final history = List<ComicVersionRelation>.unmodifiable(relations);
   final nodesBySource = <String, Set<String>>{};
@@ -125,14 +138,20 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
     undirected[predecessor]!.add(successor);
     undirected[successor]!.add(predecessor);
   }
-  for (final identity in <ComicVersionIdentity>[...shelfComics, ...manualDownloadComics]) {
+  for (final identity in <ComicVersionIdentity>[
+    ...shelfComics,
+    ...manualDownloadComics,
+    ...cacheReuseComics,
+  ]) {
     addNode(identity.sourceId, identity.comicId);
   }
 
   final shelfKeys = <String>{for (final item in shelfComics) item.key};
   final downloadKeys = <String>{for (final item in manualDownloadComics) item.key};
+  final cacheReuseKeys = <String>{for (final item in cacheReuseComics) item.key};
   final families = <ComicVersionFamilyBaseline>[];
   final directDownloadRelations = <ComicVersionRelation>[];
+  final directCacheReuseRelations = <ComicVersionRelation>[];
   final visited = <String>{};
 
   bool reaches(String sourceId, String fromComicId, String toComicId) {
@@ -392,6 +411,35 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
         ),
       );
 
+      final cacheMembers = <String>{
+        for (final member in component)
+          if (cacheReuseKeys.contains(node(sourceId, member))) member,
+      };
+      // Cache/hot reuse no longer composes A->B->C into pairwise runtime
+      // edges. Canonical media owns trans-version physical identity; this
+      // transitional list keeps only source-confirmed direct relations whose
+      // two endpoints are already materialized.
+      for (final predecessor in cacheMembers) {
+        for (final relation in outgoing[node(sourceId, predecessor)] ??
+            const <ComicVersionRelation>[]) {
+          if (!cacheMembers.contains(relation.successorComicId)) continue;
+          final mappings = relation.pageMappings
+              .where((mapping) => mapping.effectiveVerifiedIntervals.isNotEmpty)
+              .toList(growable: false);
+          if (mappings.isEmpty) continue;
+          directCacheReuseRelations.add(
+            ComicVersionRelation(
+              sourceId: relation.sourceId,
+              predecessorComicId: relation.predecessorComicId,
+              successorComicId: relation.successorComicId,
+              predecessorTitle: relation.predecessorTitle,
+              discoveredAt: relation.discoveredAt,
+              pageMappings: mappings,
+            ),
+          );
+        }
+      }
+
       if (downloadHead == null) continue;
       for (final member in component) {
         if (member == downloadHead || !reaches(sourceId, member, downloadHead)) {
@@ -438,8 +486,16 @@ ComicVersionBaselineProjection resolveComicVersionBaselines({
     if (predecessor != 0) return predecessor;
     return left.successorComicId.compareTo(right.successorComicId);
   });
+  directCacheReuseRelations.sort((left, right) {
+    final source = left.sourceId.compareTo(right.sourceId);
+    if (source != 0) return source;
+    final predecessor = left.predecessorComicId.compareTo(right.predecessorComicId);
+    if (predecessor != 0) return predecessor;
+    return left.successorComicId.compareTo(right.successorComicId);
+  });
   return ComicVersionBaselineProjection(
     families: families,
     downloadHeadRelations: directDownloadRelations,
+    cacheReuseRelations: directCacheReuseRelations,
   );
 }

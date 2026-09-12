@@ -317,4 +317,89 @@ void main() {
       isFalse,
     );
   });
+
+  test('cache reuse keeps only direct verified relations between materialized versions', () {
+    const relations = <ComicVersionRelation>[
+      ComicVersionRelation(
+        sourceId: 's',
+        predecessorComicId: 'A',
+        successorComicId: 'B',
+        pageMappings: <ComicVersionPageMapping>[
+          ComicVersionPageMapping(
+            predecessorChapterId: 'a',
+            successorChapterId: 'b',
+            predecessorPageCount: 4,
+            successorPageCount: 5,
+            successorOffset: 1,
+            predecessorSourceRevision: 'a-r1',
+            successorSourceRevision: 'b-r1',
+            verifiedIntervals: <VerifiedComicVersionPageInterval>[
+              VerifiedComicVersionPageInterval(
+                predecessorStart: 0,
+                predecessorEndExclusive: 4,
+                successorOffset: 1,
+              ),
+            ],
+          ),
+        ],
+      ),
+      ComicVersionRelation(
+        sourceId: 's',
+        predecessorComicId: 'B',
+        successorComicId: 'C',
+        pageMappings: <ComicVersionPageMapping>[
+          ComicVersionPageMapping(
+            predecessorChapterId: 'b',
+            successorChapterId: 'c',
+            predecessorPageCount: 5,
+            successorPageCount: 7,
+            successorOffset: 2,
+            predecessorSourceRevision: 'b-r1',
+            successorSourceRevision: 'c-r1',
+            verifiedIntervals: <VerifiedComicVersionPageInterval>[
+              VerifiedComicVersionPageInterval(
+                predecessorStart: 1,
+                predecessorEndExclusive: 5,
+                successorOffset: 2,
+              ),
+            ],
+          ),
+        ],
+      ),
+    ];
+
+    final endpointsOnly = resolveComicVersionBaselines(
+      relations: relations,
+      cacheReuseComics: const <ComicVersionIdentity>[
+        ComicVersionIdentity(sourceId: 's', comicId: 'A'),
+        ComicVersionIdentity(sourceId: 's', comicId: 'C'),
+      ],
+    );
+    expect(endpointsOnly.cacheReuseRelations, isEmpty);
+
+    final allMaterialized = resolveComicVersionBaselines(
+      relations: relations,
+      cacheReuseComics: const <ComicVersionIdentity>[
+        ComicVersionIdentity(sourceId: 's', comicId: 'A'),
+        ComicVersionIdentity(sourceId: 's', comicId: 'B'),
+        ComicVersionIdentity(sourceId: 's', comicId: 'C'),
+      ],
+    );
+    expect(allMaterialized.cacheReuseRelations, hasLength(2));
+    expect(
+      allMaterialized.cacheReuseRelations
+          .map((relation) =>
+              '${relation.predecessorComicId}->${relation.successorComicId}')
+          .toSet(),
+      <String>{'A->B', 'B->C'},
+    );
+    expect(
+      allMaterialized.cacheReuseRelations.any(
+        (relation) =>
+            relation.predecessorComicId == 'A' &&
+            relation.successorComicId == 'C',
+      ),
+      isFalse,
+    );
+  });
 }
