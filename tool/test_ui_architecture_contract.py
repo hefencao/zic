@@ -12,6 +12,9 @@ def require(source: str, needle: str, label: str) -> None:
 def main() -> None:
     app_reader = (ROOT / 'apps/app/lib/reader_runtime.dart').read_text()
     app_webp = (ROOT / 'apps/app/lib/webp_demo.dart').read_text()
+    app_media_composition = (
+        ROOT / 'apps/app/lib/local_media_composition.dart'
+    ).read_text()
     runtime = (
         ROOT / 'packages/reader_runtime/lib/src/reader_runtime_screen.dart'
     ).read_text()
@@ -35,7 +38,16 @@ def main() -> None:
     require(app_webp, "export 'package:local_media_ui/local_media_ui.dart';", 'media UI facade')
     require(pipeline_runtime, 'PipelineMediaRuntimeFactory', 'atomic media abstraction')
     require(pipeline_runtime, 'factory: _media.sources,', 'Pipeline source ownership')
-    require(app_webp, 'NativePipelineMediaRuntimeFactory()', 'App native composition')
+    require(
+        app_webp,
+        "export 'local_media_composition.dart';",
+        'App media composition facade',
+    )
+    require(
+        app_media_composition,
+        'NativePipelineMediaRuntimeFactory()',
+        'App native composition',
+    )
     if 'pipeline_native' in media_ui or 'NativePipelineMediaRuntimeFactory' in media_ui:
         raise SystemExit('local_media_ui must remain platform-composition neutral')
     require(pipeline_host, '_ownerFactory.acquire(', 'pipeline composition owner')
@@ -48,8 +60,10 @@ def main() -> None:
         'show parseWebpPrefixInfo, webpPrefixDeclaresAnimation;',
         'WebP prefix owner',
     )
-    if len(app_reader.splitlines()) > 8 or len(app_webp.splitlines()) > 16:
-        raise SystemExit('App facades/composition must stay thin')
+    if len(app_reader.splitlines()) > 8 or len(app_webp.splitlines()) > 8:
+        raise SystemExit('App facades must stay thin')
+    if len(app_media_composition.splitlines()) > 40:
+        raise SystemExit('App local-media composition must stay focused')
     for part in (ROOT / 'packages/local_media_ui/lib/src').glob('*.dart'):
         if len(part.read_text().splitlines()) > 1600:
             raise SystemExit(f'local media UI part is too large: {part.name}')

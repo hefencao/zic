@@ -28,7 +28,7 @@ def main() -> None:
     media_screens = (ROOT / 'packages/local_media_ui/lib/src/local_media_screens.dart').read_text()
     media_player = (ROOT / 'packages/local_media_ui/lib/src/local_image_player.dart').read_text()
     reader = (ROOT / 'packages/reader_runtime/lib/src/reader_runtime_screen.dart').read_text()
-    app_composition = (ROOT / 'apps/app/lib/webp_demo.dart').read_text()
+    app_composition = (ROOT / 'apps/app/lib/local_media_composition.dart').read_text()
 
     require(session, 'required PipelineMediaRuntimeFactory mediaRuntimeFactory', 'atomic media factory')
     require(session, 'factory: _media.sources,', 'Pipeline source composition')

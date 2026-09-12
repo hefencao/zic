@@ -48,6 +48,10 @@ require(
 )
 require(
     'apps/app/lib/webp_demo.dart',
+    "export 'local_media_composition.dart';",
+)
+require(
+    'apps/app/lib/local_media_composition.dart',
     'final _defaultNativeMediaRuntimeFactory = NativePipelineMediaRuntimeFactory();',
     'Future<void> prewarmDefaultLocalMediaPipeline()',
 )

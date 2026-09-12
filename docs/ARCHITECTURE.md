@@ -153,7 +153,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
 - `network_bridge`：浏览器、Cookie/localStorage 快照、challenge 恢复和共享网络能力。
 - `bridge`：Dart FFI、native source/cursor/frame ABI 和两个进程常驻 decode isolate。
 - `texture_bridge`：Android texture lease、SurfaceProducer、单 lane RGBA blit、schedule 和 release；精确尺寸的 idle prewarm 在同一 blit lane 先 materialize surface，满池时只淘汰最旧 idle lease，不能把 surface 初始化或无界资源持有转移到 Flutter UI。
-- `apps/app`：composition、导航和产品页面；不得定义资源算法。
+- `apps/app`：composition、导航和产品页面；不得定义资源算法。`webp_demo.dart` 只保留兼容 UI facade/re-export；native media runtime、shared download resource coordinator 与 retained-session shutdown 必须集中在 `local_media_composition.dart`，避免 UI facade 同时成为平台资源 composition owner。
 
 ## 4. Reader 数据流
 
