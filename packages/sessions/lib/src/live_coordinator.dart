@@ -1350,10 +1350,18 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         );
       }
       final uploadRegistry = uploads;
-      if (uploadRegistry != null &&
-          (entry.value.role == PageRole.current ||
-              entry.value.role == PageRole.transition)) {
-        uploadRegistry.resumePlayback(entry.key);
+      if (uploadRegistry != null) {
+        if (entry.value.role == PageRole.current ||
+            entry.value.role == PageRole.transition) {
+          uploadRegistry.resumePlayback(entry.key);
+        } else if (entry.value.role == PageRole.next) {
+          // Paged next may own one speculative first-frame output so a swipe
+          // does not pay RGBA->SurfaceProducer work after the host mounts.
+          // Freeze before prepare/presentation: the detached prewarm may
+          // present frame zero, but it must never start hidden animation
+          // playback. Promotion to transition/current resumes the same output.
+          uploadRegistry.get(entry.key).freezePlayback();
+        }
       }
       if (entry.value.role == PageRole.last && uploadRegistry != null) {
         upload.cancel(entry.key.key);

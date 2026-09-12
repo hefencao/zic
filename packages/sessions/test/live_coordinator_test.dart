@@ -1871,6 +1871,156 @@ void main() {
     expect(source, isNot(contains('isStartupBuffering')));
   });
 
+  test('paged next preupload stays frozen until role promotion', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_paged_next_preupload_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'next',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/next.webp'),
+    );
+    final decodeId = DecodeId(
+      download: id,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final clock = _Clock();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'test',
+    );
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      ingresses: ingresses,
+      cursors: _TestCursorFactory(),
+      clock: clock,
+    );
+    final uploads = UploadRegistry(
+      decodes: decodes,
+      uploader: _TestUploader(),
+      clock: clock,
+    );
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      ingresses: ingresses,
+      transportFor: (_) => _ImmediateTransport(
+        'RIFF....WEBPnext'.codeUnits,
+      ),
+      clock: clock,
+      decodes: decodes,
+      uploads: uploads,
+      net: NetLane(maxActive: 1),
+      decode: DecodeLane(maxActive: 1),
+      upload: UploadLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      uploads.dispose();
+      decodes.dispose();
+      ingresses.dispose();
+      sources.dispose();
+      await downloads.dispose();
+    });
+
+    DemandPlan plan({
+      required int revision,
+      required PageRole role,
+      required int priority,
+    }) =>
+        DemandPlan(
+          revision: revision,
+          downloads: <DownloadId, DownloadDemand>{
+            id: DownloadDemand(
+              role: role,
+              priority: priority,
+              reason: 'paged-next-preupload',
+              expirationRevision: revision + 1,
+            ),
+          },
+          decodes: <DecodeId, DecodeDemand>{
+            decodeId: DecodeDemand(
+              role: role,
+              priority: priority,
+              targetWatermark: 1,
+              reason: 'paged-next-preupload',
+              expirationRevision: revision + 1,
+            ),
+          },
+          uploads: <DecodeId, UploadDemand>{
+            decodeId: UploadDemand(
+              role: role,
+              priority: priority,
+              reason: 'paged-next-preupload',
+              expirationRevision: revision + 1,
+            ),
+          },
+          keep: <ResourceId>{
+            ResourceId.download(id),
+            ResourceId.decode(decodeId),
+          },
+        );
+
+    final nextPlan = plan(
+      revision: 1,
+      role: PageRole.next,
+      priority: 820,
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: nextPlan,
+        diff: DemandDiff.between(DemandPlan.empty(), nextPlan),
+        window: RoleWindow(const <int, PageRole>{1: PageRole.next}),
+      ),
+    );
+    await coordinator.idle();
+    final nextUpload = uploads.find(decodeId);
+    expect(nextUpload, isNotNull);
+    expect(nextUpload!.state, UploadState.ready);
+    final claim = nextUpload.claimPresent();
+    expect(claim, isNotNull);
+    await nextUpload.present(claim!);
+    expect(nextUpload.playbackState, PlaybackState.frozen);
+    expect(nextUpload.playbackDeadlineMicros, isNull);
+    claim.release();
+
+    final transitionPlan = plan(
+      revision: 2,
+      role: PageRole.transition,
+      priority: 900,
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: transitionPlan,
+        diff: DemandDiff.between(nextPlan, transitionPlan),
+        window: RoleWindow(
+          const <int, PageRole>{1: PageRole.transition},
+        ),
+      ),
+    );
+    await coordinator.idle();
+    expect(nextUpload.playbackState, PlaybackState.running);
+    expect(nextUpload.playbackDeadlineMicros, isNotNull);
+  });
+
   test('source-ready prefetch refill is directed to its own decode id',
       () async {
     final temp = await Directory.systemTemp.createTemp(

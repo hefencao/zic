@@ -25,7 +25,8 @@ final class ReaderPipelineProfile {
   /// Transport and plugin differences belong below the policy plane. Reader
   /// demand remains source-neutral for local, Mihon, Venera and direct HTTP
   /// pages alike: seven ahead, three behind, staged c/n/m/p decode waterlines,
-  /// current/transition upload, one frozen last output, and 5/3/2 lanes.
+  /// current/transition upload plus one frozen paged-next first-frame output,
+  /// one frozen last output, and 5/3/2 lanes.
   static const stable = ReaderPipelineProfile(
     windowResolver: RoleResolver(
       forwardEncodedPages: 7,

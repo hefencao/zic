@@ -1222,13 +1222,20 @@ void main() {
       decodeTarget: target,
     );
     expect(initial.decodes, hasLength(4));
-    expect(initial.uploads, hasLength(1));
+    expect(initial.uploads, hasLength(2));
     expect(
       initial.uploads.values.where(
         (demand) => demand.reason.startsWith('heuristic:static-'),
       ),
       isEmpty,
       reason: 'omitted animation metadata must remain unresolved',
+    );
+    expect(
+      initial.uploads.values.where(
+        (demand) => demand.reason == 'heuristic:paged-next-preupload',
+      ),
+      hasLength(1),
+      reason: 'paged next preupload must not be mistaken for static evidence',
     );
 
     final inferred = policy.createPlan(

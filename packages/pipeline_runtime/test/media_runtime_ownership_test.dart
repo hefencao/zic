@@ -395,14 +395,14 @@ void main() {
     await session.dispose();
   });
 
-  test('animated next prewarms output lease without opening upload demand', () async {
+  test('animated paged next owns one frozen first-frame upload demand', () async {
     final trace = MemoryTraceSink();
     final runtime = _Runtime(renderer: RendererKind.androidTexture);
     final session = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
     ).create(
       chapter: _galleryChapter(pageCount: 4),
-      sessionId: 'decode-only-next-output-prewarm-test',
+      sessionId: 'paged-next-first-frame-preupload-test',
       traceSink: trace,
     );
     session.attach(
@@ -441,10 +441,14 @@ void main() {
       prewarms.map((event) => event.payload['role']),
       containsAll(<String>['current', 'next']),
     );
+    final initialUploadDemands = trace.events
+        .where((event) => event.kind == TraceEventKind.uploadDemand)
+        .toList(growable: false);
+    expect(initialUploadDemands, hasLength(2));
     expect(
-      trace.events.where((event) => event.kind == TraceEventKind.uploadDemand),
-      hasLength(1),
-      reason: 'next output lease prewarm must not create frame upload work',
+      initialUploadDemands.map((event) => event.payload['priority']),
+      containsAll(<Object?>[1000, 820]),
+      reason: 'paged next should preupload one first frame before host mount',
     );
 
     final next = session.chapter.pages[1];
@@ -475,7 +479,8 @@ void main() {
     expect(runtime.prewarmCalls, 2);
     expect(
       trace.events.where((event) => event.kind == TraceEventKind.uploadDemand),
-      hasLength(1),
+      hasLength(2),
+      reason: 'an unchanged paged-next plan must not duplicate upload demand',
     );
 
     await session.dispose();

@@ -121,6 +121,10 @@ final class HeuristicPolicy {
 
       final primaryUpload = role == PageRole.current ||
           role == PageRole.transition;
+      final pagedNextPreupload =
+          observation.direction != ReadingDirection.vertical &&
+              role == PageRole.next &&
+              decodeWatermark > 0;
       final localStaticReady =
           runtimeLocalStaticPages.contains(entry.key) &&
               runtimeAnimatedPages[entry.key] == false;
@@ -131,7 +135,8 @@ final class HeuristicPolicy {
               !visibleStatic &&
               !localStaticReady &&
               _verticalPresentationActive(observation.interaction);
-      if ((primaryUpload || staticWarm) && !deferHiddenVerticalStaticUpload) {
+      if ((primaryUpload || staticWarm || pagedNextPreupload) &&
+          !deferHiddenVerticalStaticUpload) {
         uploads[decode] = UploadDemand(
           role: role,
           priority: primaryUpload
@@ -141,18 +146,22 @@ final class HeuristicPolicy {
                   PageRole.last => 850,
                   _ => 0,
                 }
-              : _staticWarmPriority(
-                  role,
-                  visible: visibleStatic,
-                  pageIndex: entry.key,
-                  currentIndex: observation.currentIndex,
-                  readDirection: readDirection,
-                ),
-          reason: staticWarm && !primaryUpload
-              ? visibleStatic
-                  ? 'heuristic:static-visible:${role.name}'
-                  : 'heuristic:static-warm:${role.name}'
-              : 'heuristic:${role.name}',
+              : pagedNextPreupload && !staticWarm
+                  ? 820
+                  : _staticWarmPriority(
+                      role,
+                      visible: visibleStatic,
+                      pageIndex: entry.key,
+                      currentIndex: observation.currentIndex,
+                      readDirection: readDirection,
+                    ),
+          reason: pagedNextPreupload && !staticWarm
+              ? 'heuristic:paged-next-preupload'
+              : staticWarm && !primaryUpload
+                  ? visibleStatic
+                      ? 'heuristic:static-visible:${role.name}'
+                      : 'heuristic:static-warm:${role.name}'
+                  : 'heuristic:${role.name}',
           expirationRevision: revision + 1,
           // A decoded static page backed by immutable local/durable bytes may
           // prepare its external texture before it reaches the viewport. Keep
