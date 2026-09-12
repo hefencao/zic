@@ -227,34 +227,39 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       ),
     );
 
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => DeferredReaderRoute<_PreparedImportedChapter>(
-          title: title,
-          traceSink: widget.debugTrace,
-          traceSessionId: 'reader-entry',
-          load: () => _prepareImportedChapter(
-            loadChapter,
-            refreshRemote: refreshRemote,
-            initialPageIndex: initialPageIndex,
-          ),
-          builder: (_, prepared) => this._buildImportedChapterScreen(
-            prepared,
-            onProgressChanged: onProgressChanged,
-          ),
+    final route = MaterialPageRoute<void>(
+      builder: (_) => DeferredReaderRoute<_PreparedImportedChapter>(
+        title: title,
+        traceSink: widget.debugTrace,
+        traceSessionId: 'reader-entry',
+        load: () => _prepareImportedChapter(
+          loadChapter,
+          refreshRemote: refreshRemote,
+          initialPageIndex: initialPageIndex,
+        ),
+        builder: (_, prepared) => this._buildImportedChapterScreen(
+          prepared,
+          onProgressChanged: onProgressChanged,
         ),
       ),
     );
+
+    _beginReaderRoute();
     try {
-      await _flushReaderProgressCheckpoints();
-    } on Object catch (error) {
-      debugPrint('reader post-pop progress flush failed: $error');
+      await Navigator.of(context).push(route);
+      try {
+        await _flushReaderProgressCheckpoints();
+      } on Object catch (error) {
+        debugPrint('reader post-pop progress flush failed: $error');
+      }
+      final progress = latestProgress;
+      if (progress != null) {
+        _librarySession.replaceProgress(progress);
+      }
+      return progress;
+    } finally {
+      _endReaderRoute();
     }
-    final progress = latestProgress;
-    if (progress != null) {
-      _librarySession.replaceProgress(progress);
-    }
-    return progress;
   }
 
   Future<_PreparedImportedChapter> _prepareImportedChapter(

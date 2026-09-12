@@ -2012,6 +2012,78 @@ void main() {
     await tester.pump(const Duration(minutes: 2));
   });
 
+  testWidgets('Reader session updates defer covered Home rebuild until route exit',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    const sourceId = 'fixture-reader-home-rebuild';
+    final source = _FixtureSource(sourceId, 'Reader后台Home刷新源');
+    final manifest = await source.loadChapter(source._chapterId);
+    await store.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: source._comic,
+        manifest: manifest,
+      ),
+    );
+    await store.saveComicPreference(
+      ComicPreference.defaults(
+        sourceId: sourceId,
+        comicId: source._comicId,
+        sourceKind: ComicSourceKind.remote,
+      ),
+    );
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        comicSources: <BrowsableComicSource>[source],
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pump();
+    await _tapVisible(
+      tester,
+      find.byKey(comicCoverKey(sourceId, source._comicId)),
+    );
+    await _pumpUntilFound(tester, find.byType(ImportedImageChapterScreen));
+    expect(find.byType(NavigationBar), findsOneWidget);
+    final coveredHomeNavigation = tester.widget<NavigationBar>(
+      find.byType(NavigationBar),
+    );
+    final reader = tester.widget<ImportedImageChapterScreen>(
+      find.byType(ImportedImageChapterScreen),
+    );
+
+    await Future<void>.sync(() => reader.onFavoriteChanged!(true));
+    await tester.pump();
+
+    expect(
+      tester.widget<NavigationBar>(find.byType(NavigationBar)),
+      same(coveredHomeNavigation),
+      reason: 'Home presentation must not rebuild under an active Reader route',
+    );
+    expect(
+      (await store.getComicPreference(sourceId, source._comicId))?.collected,
+      isTrue,
+      reason: 'only Home presentation rebuild is deferred; persistence continues',
+    );
+
+    Navigator.of(tester.element(find.byType(ImportedImageChapterScreen))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byType(ImportedImageChapterScreen), findsNothing);
+    expect(
+      tester.widget<NavigationBar>(find.byType(NavigationBar)),
+      isNot(same(coveredHomeNavigation)),
+      reason: 'Reader exit must publish one catch-up Home rebuild',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(minutes: 2));
+  });
+
   testWidgets(
       'Reader metadata refresh retries one foreground runtime preemption',
       (tester) async {

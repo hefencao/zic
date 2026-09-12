@@ -201,6 +201,7 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<void>? _externalSourceRefresh;
   bool _externalSourceRefreshPending = false;
   bool _suppressLibrarySessionRebuild = false;
+  bool _readerRouteOpen = false;
   bool _downloadManagerRouteOpen = false;
 
   bool _picking = false;
@@ -588,9 +589,21 @@ final class _DemoHomeState extends State<DemoHome> {
     }
   }
 
+  void _beginReaderRoute() {
+    _readerRouteOpen = true;
+  }
+
+  void _endReaderRoute() {
+    if (!_readerRouteOpen) return;
+    _readerRouteOpen = false;
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   void _handleLibrarySessionChanged() {
     _syncWholeComicCompletionBadges();
-    if (_suppressLibrarySessionRebuild) {
+    if (_suppressLibrarySessionRebuild || _readerRouteOpen) {
       return;
     }
     if (mounted) {
