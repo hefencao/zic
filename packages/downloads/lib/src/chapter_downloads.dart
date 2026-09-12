@@ -1224,6 +1224,9 @@ final class PersistentDownloadArtifactStore
     implements
         ArtifactCacheBackend,
         ArtifactCacheBindingBackend,
+        PhysicalArtifactCacheBackend,
+        PhysicalArtifactCandidateBindingBackend,
+        PhysicalArtifactExactBindingBackend,
         PartialDownloadStore,
         PartialDownloadMetadataStore,
         ArtifactCacheMaintenance {
@@ -1247,6 +1250,29 @@ final class PersistentDownloadArtifactStore
 
   final TraceSink _traceSink;
   final MonoClock _clock;
+
+  final StreamController<void> _managementProjectionChanges =
+      StreamController<void>.broadcast(sync: true);
+
+  Stream<void> get managementProjectionChanges =>
+      _managementProjectionChanges.stream;
+
+  void _notifyManagementProjectionChanged() {
+    if (!_managementProjectionChanges.isClosed) {
+      _managementProjectionChanges.add(null);
+    }
+  }
+
+  Future<T> _notifyManagementAfter<T>(
+    Future<T> operation, {
+    bool Function(T result)? when,
+  }) async {
+    final result = await operation;
+    if (when == null || when(result)) {
+      _notifyManagementProjectionChanged();
+    }
+    return result;
+  }
 
   List<ComicVersionRelation> _downloadHeadRelations =
       const <ComicVersionRelation>[];
@@ -2170,6 +2196,8 @@ final class PersistentDownloadArtifactStore
       _artifactWriteProofs = <DownloadId, ({int length, String checksum})>{};
   final Map<DownloadId, Future<void>> _artifactMutationTails =
       <DownloadId, Future<void>>{};
+  final Map<PhysicalMediaId, Future<void>> _physicalArtifactMutationTails =
+      <PhysicalMediaId, Future<void>>{};
   final Map<String, Future<void>> _artifactReplicaMutationTails =
       <String, Future<void>>{};
   static final Object _artifactReplicaMutationZoneKey = Object();
@@ -3414,6 +3442,25 @@ final class PersistentDownloadArtifactStore
     return current.whenComplete(() {
       if (identical(_artifactMutationTails[id], tail)) {
         _artifactMutationTails.remove(id);
+      }
+    });
+  }
+
+  Future<T> _serializePhysicalArtifactMutation<T>(
+    PhysicalMediaId id,
+    Future<T> Function() operation,
+  ) {
+    final previous = _physicalArtifactMutationTails[id] ?? Future<void>.value();
+    final current = previous.then<T>(
+      (_) => operation(),
+      onError: (Object _, StackTrace __) => operation(),
+    );
+    late final Future<void> tail;
+    tail = current.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    _physicalArtifactMutationTails[id] = tail;
+    return current.whenComplete(() {
+      if (identical(_physicalArtifactMutationTails[id], tail)) {
+        _physicalArtifactMutationTails.remove(id);
       }
     });
   }
@@ -5153,6 +5200,394 @@ final class PersistentDownloadArtifactStore
     return builder.takeBytes();
   }
 
+  @override
+  Future<ArtifactCacheStreamEntry?> openPhysicalArtifact(
+    PhysicalMediaId id,
+  ) async {
+        _requireOpen();
+    final record = await _index.getPhysicalMediaArtifact(id);
+    if (record == null || record.bytes <= 0) return null;
+    final durableReplicas = await _index.listArtifactReplicas(
+      record.artifactId,
+    );
+    if (durableReplicas.isEmpty) {
+      await _index.removePhysicalMediaArtifactBinding(id);
+      _notifyManagementProjectionChanged();
+      return null;
+          }
+    final replicas = durableReplicas
+        .where((replica) => replica.accessLocator.isNotEmpty)
+        .map(
+          (replica) => _ArtifactAccessRecord(
+            artifactId: record.artifactId,
+            replicaId: replica.replicaId,
+            accessLocator: replica.accessLocator,
+            bytes: record.bytes,
+            checksum: record.checksum,
+            checksumAlgorithm: record.checksumAlgorithm,
+            storageRootId: replica.storageRootId,
+          ),
+        )
+        .toList(growable: false);
+    if (replicas.isEmpty) return null;
+
+    ArtifactReadFailure? lastFailure;
+    for (final replica in replicas) {
+      if (!await _artifactReplicaIsAccessible(replica)) continue;
+      final candidates = await _artifactAccessCandidates(replica);
+      late final ({_ArtifactAccessCandidate candidate, int length}) selected;
+          try {
+        selected = await _selectReadableArtifactAccess(candidates);
+      } on ArtifactReadFailure catch (error) {
+        lastFailure = error;
+        if (_isStructuralReplicaFailure(error.kind)) {
+          await _retireArtifactReplica(
+            replica.artifactId,
+            replica.replicaId,
+            replica.accessLocator,
+          );
+          }
+        continue;
+          }
+      final selectedAccess = selected.candidate.access;
+      await _index.touchPhysicalMediaArtifact(
+        id,
+        DateTime.now().toUtc().microsecondsSinceEpoch,
+      );
+      if (selectedAccess.checksumAlgorithm.toLowerCase() != 'crc32') {
+        await _retireArtifactReplica(
+          selectedAccess.artifactId,
+          selectedAccess.replicaId,
+          selectedAccess.accessLocator,
+        );
+        continue;
+      }
+      final selectedCandidates = <_ArtifactAccessCandidate>[
+        selected.candidate,
+        ...candidates.where(
+          (candidate) =>
+              candidate.access.accessLocator != selectedAccess.accessLocator,
+        ),
+      ];
+      return ArtifactCacheStreamEntry(
+        length: selected.length,
+        open: ({required int start, int? endExclusive}) =>
+            _readArtifactCandidates(
+              selectedCandidates,
+              start: start,
+              endExclusive: endExclusive,
+            ),
+        readAll: () => _readArtifactAllVerifiedCandidates(
+          selectedCandidates,
+          selected.length,
+          selectedAccess.checksum.trim().toLowerCase(),
+        ),
+        readAllControlled: ({required control}) =>
+            _readArtifactAllControlledCandidates(
+              selectedCandidates,
+              selected.length,
+              selectedAccess.checksum.trim().toLowerCase(),
+              control,
+            ),
+        openBoundRangeReader: () => _openBoundArtifactRangeReader(
+          selectedCandidates,
+          expectedLength: selected.length,
+        ),
+        openPresentationFile: presentationFileLeaseFactory == null
+            ? null
+            : () => presentationFileLeaseFactory!.open(
+                selectedAccess.accessLocator,
+                expectedLength: selected.length,
+              ),
+        accessMode: parseSafRecordPath(selectedAccess.accessLocator) == null
+            ? 'direct'
+            : 'saf',
+        streamIntegrity: ArtifactReadIntegrityBasis.sealedMetadataLength,
+        fullReadIntegrity: ArtifactReadIntegrityBasis.crc32Verified,
+      );
+    }
+    if ((await _index.listArtifactReplicas(record.artifactId)).isEmpty) {
+      await _index.removePhysicalMediaArtifactBinding(id);
+      _notifyManagementProjectionChanged();
+    }
+    if (lastFailure != null) throw lastFailure;
+    return null;
+  }
+
+  @override
+  Future<bool> bindPhysicalArtifact({
+    required PhysicalMediaId physicalId,
+    required DownloadId sourceId,
+  }) => _notifyManagementAfter(
+    _serializePhysicalArtifactMutation(
+      physicalId,
+      () => _serializeArtifactMutation(sourceId, () async {
+    _requireOpen();
+    final source = await _index.get(sourceId.key);
+    if (source == null ||
+        source.id != sourceId ||
+        !_isVerifiedReadyRecord(source)) {
+      return false;
+    }
+    final existing = await _index.getPhysicalMediaArtifact(physicalId);
+    if (existing != null) {
+      return existing.artifactId == source.effectiveArtifactId;
+    }
+    ArtifactCacheStreamEntry? preflight;
+    try {
+      preflight = await _openArtifactStreamExact(sourceId);
+    } on ArtifactReadFailure {
+      return false;
+    }
+    if (preflight == null || preflight.length != source.bytes) return false;
+    final current = await _index.get(sourceId.key);
+    if (current == null ||
+        current.id != sourceId ||
+        !_isVerifiedReadyRecord(current) ||
+        current.effectiveArtifactId != source.effectiveArtifactId ||
+        current.bytes != source.bytes ||
+        current.checksum.trim().toLowerCase() !=
+            source.checksum.trim().toLowerCase()) {
+      return false;
+    }
+    final nowUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+    await _index.putPhysicalMediaArtifactBinding(
+      id: physicalId,
+      artifactId: current.effectiveArtifactId,
+      createdUs: existing?.createdUs ?? nowUs,
+      touchedUs: nowUs,
+    );
+    return true;
+      }),
+    ),
+    when: (changed) => changed,
+  );
+
+  @override
+  Future<bool> bindExactArtifactFromPhysical({
+    required PhysicalMediaId physicalId,
+    required DownloadId targetId,
+  }) => _notifyManagementAfter(
+    _serializeArtifactMutation(targetId, () async {
+      _requireOpen();
+      if (physicalId.isExactFallback || _borrowedPartialIds.contains(targetId)) {
+        return false;
+      }
+      final existingTarget = await _index.get(targetId.key);
+      final initialPhysical = await _index.getPhysicalMediaArtifact(physicalId);
+      if (initialPhysical == null) return false;
+      if (existingTarget != null) {
+        return existingTarget.id == targetId &&
+            _isVerifiedReadyRecord(existingTarget) &&
+            existingTarget.effectiveArtifactId == initialPhysical.artifactId;
+      }
+
+      ArtifactCacheStreamEntry? preflight;
+      try {
+        preflight = await openPhysicalArtifact(physicalId);
+      } on ArtifactReadFailure {
+        return false;
+      }
+      if (preflight == null || preflight.length != initialPhysical.bytes) {
+        return false;
+      }
+
+      final currentPhysical = await _index.getPhysicalMediaArtifact(physicalId);
+      if (currentPhysical == null ||
+          currentPhysical.artifactId != initialPhysical.artifactId ||
+          currentPhysical.bytes != initialPhysical.bytes ||
+          currentPhysical.checksum.trim().toLowerCase() !=
+              initialPhysical.checksum.trim().toLowerCase() ||
+          currentPhysical.checksumAlgorithm.trim().toLowerCase() !=
+              initialPhysical.checksumAlgorithm.trim().toLowerCase()) {
+        return false;
+      }
+      if (await _index.get(targetId.key) != null) return false;
+
+      final nowUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+      await _index.putExistingArtifactBinding(
+        CacheRec(
+          id: targetId,
+          state: CacheState.ready,
+          path: currentPhysical.accessLocator,
+          bytes: currentPhysical.bytes,
+          checksum: currentPhysical.checksum,
+          createdUs: nowUs,
+          touchedUs: nowUs,
+          pinned: false,
+          checksumAlgorithm: currentPhysical.checksumAlgorithm,
+          artifactId: currentPhysical.artifactId,
+          storageRootId: currentPhysical.storageRootId,
+        ),
+      );
+      return true;
+    }),
+    when: (changed) => changed,
+  );
+
+  @override
+  Future<bool> bindPhysicalArtifactFromCandidates({
+    required PhysicalMediaId physicalId,
+    required Iterable<DownloadId> candidates,
+  }) => _notifyManagementAfter(
+    _serializePhysicalArtifactMutation(physicalId, () async {
+    _requireOpen();
+    if (physicalId.isExactFallback) return false;
+    final existing = await _index.getPhysicalMediaArtifact(physicalId);
+    if (existing != null) return true;
+
+    final query = _index as CacheLogicalBindingQuery;
+    var logicalReadyMatches = 0;
+    var verifiedReadyMatches = 0;
+    var preflightFailures = 0;
+    var preflightMisses = 0;
+    final candidateOrder = <(String, String), int>{};
+    final candidateIds = <DownloadId>[];
+    final usable = <CacheRec>[];
+    void recordRecovery(String action, {int? signatureCount, int? selectedBytes}) {
+      try {
+        _traceSink.record(
+          traceEvent(
+            clock: _clock,
+            sessionId: 'physical-artifact-recovery',
+            kind: TraceEventKind.artifactSource,
+            identityHash: physicalId.key,
+            payload: <String, Object?>{
+              'action': action,
+              'candidateCount': candidateIds.length,
+              'logicalReadyMatches': logicalReadyMatches,
+              'verifiedReadyMatches': verifiedReadyMatches,
+              'preflightFailures': preflightFailures,
+              'preflightMisses': preflightMisses,
+              'usableCount': usable.length,
+              if (signatureCount != null) 'signatureCount': signatureCount,
+              if (selectedBytes != null) 'selectedBytes': selectedBytes,
+            },
+          ),
+        );
+      } on Object {
+        // Recovery diagnostics must never alter cache authority.
+      }
+    }
+    for (final candidate in candidates) {
+      final logicalKey = (candidate.content.key, candidate.sourceRevision);
+      if (candidateOrder.containsKey(logicalKey)) continue;
+      candidateOrder[logicalKey] = candidateIds.length;
+      candidateIds.add(candidate);
+    }
+    if (candidateIds.isEmpty) {
+      recordRecovery('no-candidates');
+      return false;
+    }
+
+    for (final candidate in candidateIds) {
+      final records = await query.listLogicalBindings(
+        content: candidate.content,
+        sourceRevision: candidate.sourceRevision,
+        state: CacheState.ready,
+      );
+      logicalReadyMatches += records.length;
+      for (final record in records) {
+        if (!_isVerifiedReadyRecord(record)) continue;
+        verifiedReadyMatches++;
+        ArtifactCacheStreamEntry? preflight;
+        try {
+          preflight = await _openArtifactStreamExact(record.id);
+        } on ArtifactReadFailure {
+          preflightFailures++;
+          continue;
+        }
+        if (preflight == null || preflight.length != record.bytes) {
+          preflightMisses++;
+          continue;
+        }
+        usable.add(record);
+      }
+    }
+    if (usable.isEmpty) {
+      recordRecovery('no-usable-ready');
+      return false;
+    }
+
+    // URI churn may leave several exact bindings for one logical page.
+    // They may all point at the same immutable artifact/content proof. If
+    // different byte proofs exist, fail closed rather than guessing which
+    // historical URI represents the canonical body.
+    final signatures = <(int, String, String)>{
+      for (final record in usable)
+        (
+          record.bytes,
+          record.checksumAlgorithm.trim().toLowerCase(),
+          record.checksum.trim().toLowerCase(),
+        ),
+    };
+    if (signatures.length != 1) {
+      recordRecovery(
+        'conflicting-ready-proofs',
+        signatureCount: signatures.length,
+      );
+      return false;
+    }
+
+    usable.sort((left, right) {
+      int orderFor(CacheRec record) =>
+          candidateOrder[(record.id.content.key, record.id.sourceRevision)] ??
+          candidateIds.length;
+      final order = orderFor(left).compareTo(orderFor(right));
+      if (order != 0) return order;
+      final exactLeft = candidateIds.any((id) => id == left.id);
+      final exactRight = candidateIds.any((id) => id == right.id);
+      if (exactLeft != exactRight) return exactLeft ? -1 : 1;
+      return right.touchedUs.compareTo(left.touchedUs);
+    });
+    final selected = usable.first;
+    final current = await _index.get(selected.key);
+    if (current == null ||
+        !_isVerifiedReadyRecord(current) ||
+        current.effectiveArtifactId != selected.effectiveArtifactId ||
+        current.bytes != selected.bytes ||
+        current.checksum.trim().toLowerCase() !=
+            selected.checksum.trim().toLowerCase()) {
+      recordRecovery('selected-ready-changed', signatureCount: signatures.length);
+      return false;
+    }
+    final nowUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+    await _index.putPhysicalMediaArtifactBinding(
+      id: physicalId,
+      artifactId: current.effectiveArtifactId,
+      createdUs: nowUs,
+      touchedUs: nowUs,
+    );
+    recordRecovery(
+      'bound-existing-ready',
+      signatureCount: signatures.length,
+      selectedBytes: current.bytes,
+    );
+    return true;
+  }),
+    when: (changed) => changed,
+  );
+
+  @override
+  Future<void> invalidatePhysicalArtifact(PhysicalMediaId id) async {
+    _requireOpen();
+    final record = await _index.getPhysicalMediaArtifact(id);
+    if (record == null) return;
+    final replicas = await _index.listArtifactReplicas(record.artifactId);
+    await _index.removePhysicalMediaArtifactBinding(id);
+    _notifyManagementProjectionChanged();
+    if (await _index.getArtifactObject(record.artifactId) != null) return;
+    for (final replica in replicas) {
+      try {
+        await _bytes.delete(replica.accessLocator);
+        await _deleteArtifactSidecar(replica.accessLocator);
+      } on Object {
+        // The durable binding is already retired. Cleanup may be retried later.
+      }
+    }
+  }
+
+  @override
   @override
   Future<bool> bindExistingArtifact({
     required DownloadId sourceId,
@@ -7152,6 +7587,7 @@ final class PersistentDownloadArtifactStore
       final pending = <Future<void>>{
         ..._artifactWrites.values,
         ..._artifactMutationTails.values,
+        ..._physicalArtifactMutationTails.values,
         ..._structuredWriteTails.values,
         ..._placementWrites.values,
       };
@@ -7165,6 +7601,7 @@ final class PersistentDownloadArtifactStore
         }
       }
     }
+    await _managementProjectionChanges.close();
     await _registry.dispose();
     await _index.close();
   }

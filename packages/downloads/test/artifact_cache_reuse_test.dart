@@ -205,6 +205,69 @@ void main() {
     expect((await reopenedCache.readForeground(newId))?.bytes, replacement);
   });
 
+  test(
+    'physical artifact binding survives exact carrier removal and cold reopen',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-physical-artifact-reopen-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final store = await PersistentDownloadArtifactStore.open(root.path);
+      final cache = ArtifactCacheManager(backend: store);
+      final chapter = _chapter(
+        comicId: 'physical-source-a',
+        revision: 'a',
+        urls: const <String>['https://e-hentai.org/s/aaaaaaaaaaaaaaaa/1-1'],
+      );
+      final exact = readerPageDownloadId(chapter, chapter.pages.single);
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u00003',
+      );
+      final bytes = Uint8List.fromList(<int>[
+        0x52,
+        0x49,
+        0x46,
+        0x46,
+        0x18,
+        0x00,
+        0x00,
+        0x00,
+        0x57,
+        0x45,
+        0x42,
+        0x50,
+        0x56,
+        0x50,
+        0x38,
+        0x20,
+      ]);
+
+      await cache.storePromotedArtifact(id: exact, bytes: bytes);
+      expect(
+        await cache.bindPhysicalArtifact(
+          physicalId: physical,
+          sourceId: exact,
+        ),
+        isTrue,
+      );
+      final physicalEntry = await cache.openPhysicalArtifact(physical);
+      expect(physicalEntry, isNotNull);
+      expect(await physicalEntry!.readAll!(), bytes);
+
+      await store.index.remove(exact.key);
+      expect(await store.index.get(exact.key), isNull);
+      await store.close();
+
+      final reopened = await PersistentDownloadArtifactStore.open(root.path);
+      addTearDown(reopened.close);
+      final reopenedCache = ArtifactCacheManager(backend: reopened);
+      final reopenedPhysical =
+          await reopenedCache.openPhysicalArtifact(physical);
+      expect(reopenedPhysical, isNotNull);
+      expect(await reopenedPhysical!.readAll!(), bytes);
+    },
+  );
+
   test('checksum reuse includes algorithm and normalizes digest case', () {
     final oldChapter = _chapter(
       comicId: 'old-checksum',
