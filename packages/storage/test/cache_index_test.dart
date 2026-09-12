@@ -1845,6 +1845,36 @@ void runCacheSchemaV2Tests() {
     },
   );
 
+  test('physical media projection batch rejects partial publication', () async {
+    final index = SqliteIndex.memory();
+    await index.open();
+    addTearDown(index.close);
+    const first = PhysicalMediaProjectionRecord(
+      exactKey: 'source\u0000comic-a\u0000chapter\u0000r1',
+      familyKey: 'family-1',
+      projectionJson: '{"intervals":[[0,1,"segment",0]]}',
+      createdUs: 1,
+      touchedUs: 2,
+    );
+    const invalidSecond = PhysicalMediaProjectionRecord(
+      exactKey: 'source\u0000comic-b\u0000chapter\u0000r1',
+      familyKey: '',
+      projectionJson: '{"intervals":[[0,1,"segment",0]]}',
+      createdUs: 1,
+      touchedUs: 2,
+    );
+
+    await expectLater(
+      index.putPhysicalMediaProjections(
+        const <PhysicalMediaProjectionRecord>[first, invalidSecond],
+      ),
+      throwsArgumentError,
+    );
+
+    expect(await index.getPhysicalMediaProjection(first.exactKey), isNull);
+    expect(await index.listPhysicalMediaProjections(), isEmpty);
+  });
+
   test(
     'schema 14 backfills indexed logical page identity without changing DownloadId',
     () async {

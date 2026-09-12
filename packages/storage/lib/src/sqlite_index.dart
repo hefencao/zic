@@ -1375,31 +1375,50 @@ final class SqliteIndex
   @override
   Future<void> putPhysicalMediaProjection(
     PhysicalMediaProjectionRecord record,
+  ) => putPhysicalMediaProjections(<PhysicalMediaProjectionRecord>[record]);
+
+  @override
+  Future<void> putPhysicalMediaProjections(
+    Iterable<PhysicalMediaProjectionRecord> records,
   ) async {
-    if (record.exactKey.isEmpty ||
-        record.familyKey.isEmpty ||
-        record.projectionJson.isEmpty) {
-      throw ArgumentError('physical media projection fields must not be empty');
+    final values = records.toList(growable: false);
+    if (values.isEmpty) return;
+    for (final record in values) {
+      if (record.exactKey.isEmpty ||
+          record.familyKey.isEmpty ||
+          record.projectionJson.isEmpty) {
+        throw ArgumentError('physical media projection fields must not be empty');
+      }
     }
-    _requireDb().execute(
-      '''
-      INSERT INTO physical_media_projection (
-        exact_key, family_key, projection_json, created_us, touched_us
-      ) VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(exact_key) DO UPDATE SET
-        family_key = excluded.family_key,
-        projection_json = excluded.projection_json,
-        created_us = physical_media_projection.created_us,
-        touched_us = excluded.touched_us
-    ''',
-      <Object?>[
-        record.exactKey,
-        record.familyKey,
-        record.projectionJson,
-        record.createdUs,
-        record.touchedUs,
-      ],
-    );
+    final db = _requireDb();
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      for (final record in values) {
+        db.execute(
+          '''
+          INSERT INTO physical_media_projection (
+            exact_key, family_key, projection_json, created_us, touched_us
+          ) VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(exact_key) DO UPDATE SET
+            family_key = excluded.family_key,
+            projection_json = excluded.projection_json,
+            created_us = physical_media_projection.created_us,
+            touched_us = excluded.touched_us
+        ''',
+          <Object?>[
+            record.exactKey,
+            record.familyKey,
+            record.projectionJson,
+            record.createdUs,
+            record.touchedUs,
+          ],
+        );
+      }
+      db.execute('COMMIT');
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
   }
 
   @override

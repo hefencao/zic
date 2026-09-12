@@ -44,5 +44,12 @@ abstract interface class PhysicalMediaProjectionIndex {
 
   Future<void> putPhysicalMediaProjection(PhysicalMediaProjectionRecord record);
 
+  /// Atomically commits one logical canonical-projection update. Callers use
+  /// this for the predecessor/successor rows produced by one verified mapping
+  /// so a crash cannot publish only one side of the family relation.
+  Future<void> putPhysicalMediaProjections(
+    Iterable<PhysicalMediaProjectionRecord> records,
+  );
+
   Future<void> removePhysicalMediaProjection(String exactKey);
 }
