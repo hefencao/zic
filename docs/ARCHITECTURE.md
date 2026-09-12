@@ -2,7 +2,6 @@
 本文件描述当前生产代码的稳定所有权、依赖方向、数据流和生命周期。
 ## 1. 架构目标
 - Reader route 进入 `inactive/hidden/paused/detached` 后，用户播放状态不变，但 Pipeline playback MUST 临时视为 paused；`resumed` 后按用户原 `paused/speed` 恢复。后台不得继续 Animated WebP decode/upload/present，也不得用 worker 重建、CPU affinity 或 raster 降质掩盖生命周期问题。
-- 前台 current Animated WebP 的 decode raster MAY 由 `PipelineReaderSession` 内部的 measured-throughput governor 临时降档，但唯一输入必须是该动画实际 `nativeDecodeMicros` 与自身 frame cadence，不得读取 power-save/cpuset/CPU affinity 作为策略事实。full raster 连续超预算后允许降到2/3，若 lower raster 仍连续超预算可继续单向降到1/2；降档在同一 Reader session 的 animated/未决相邻页间保留，避免每页重复支付 full-raster 慢帧。恢复 full 必须先在降档态连续证明明显快于 cadence，再只于后续 page boundary 执行；当前页确认 static 可直接恢复。Reader route detach/re-attach 重置该瞬时性能状态。该策略只改变 DecodeTarget/presentation pixel carrier，不得改变 source geometry、3/7 download window、decode waterline、网络/缓存 authority 或用户 playback state。
 - Android SurfaceProducer 的 `scheduleFrame()` 合并由 texture bridge 按 producer 持续到下一次 vsync；同一 producer 的重复请求共享一次真实平台调度，不同 producer 保持独立首帧调度。
 - current 具有最高资源优先级，但目标页首帧不得依赖 current 的下载完成或 holder 深度。
 - 同一稳定 identity 只有一个权威 request、session、artifact、cursor 和活动 writer。ContentId/DownloadId/DecodeId 的新 `key` 使用长度 framing，不能把带分隔符的来源字段折叠成同一字符串；旧 cache metadata/SQLite key 只作为兼容恢复输入，新的写入使用 framed key。

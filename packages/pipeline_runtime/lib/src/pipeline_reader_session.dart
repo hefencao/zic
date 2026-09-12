@@ -10,7 +10,6 @@ import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
-import 'animated_decode_target_governor.dart';
 import 'asset_bundle_transport.dart';
 import 'media_load_token.dart';
 import 'pipeline_frame_scheduler.dart';
@@ -615,7 +614,6 @@ final class PipelineReaderSession {
       prefixHints: decodePrefixHints,
       onAnimationResolved: _handleAnimationResolved,
       onFrameDecoded: _handleFrameDecoded,
-      onFrameDecodedTiming: _handleFrameDecodedTiming,
       traceSink: trace,
     );
     _uploads = UploadRegistry(
@@ -723,10 +721,6 @@ final class PipelineReaderSession {
       <DownloadId, _PresentationArtifactAuthority>{};
   final Set<DownloadId> _automaticPresentationRecoveries = <DownloadId>{};
   final Set<DecodeId> _animatedOutputs = <DecodeId>{};
-  final Set<DownloadId> _knownAnimatedDownloads = <DownloadId>{};
-  final Set<DownloadId> _knownStaticDownloads = <DownloadId>{};
-  final AnimatedDecodeTargetGovernor _animatedDecodeGovernor =
-      AnimatedDecodeTargetGovernor();
   // DownloadSession publishes source-canvas metadata as soon as the WebP
   // prefix is available. Keep one listener per physical session so the
   // matching output lease can be created before the first decoded frame is
@@ -779,7 +773,6 @@ final class PipelineReaderSession {
 
   void attach(DecodeTarget target) {
     _requireOpen();
-    final effectiveTarget = _animatedDecodeGovernor.attach(target);
     _invalidateObservationQueue();
     _lastAcceptedControlObservation = null;
     _lastControlCurrentDownload = null;
@@ -797,7 +790,7 @@ final class PipelineReaderSession {
     _readerSessionId = null;
     _binding = ReaderBinding(
       chapter: chapter,
-      decodeTarget: effectiveTarget,
+      decodeTarget: target,
       clock: clock,
       traceSink: trace,
       coordinator: _coordinator,
@@ -826,8 +819,7 @@ final class PipelineReaderSession {
     if (binding == null) {
       throw StateError('pipeline Reader session is not attached');
     }
-    final effectiveTarget = _animatedDecodeGovernor.updateBaseTarget(target);
-    binding.updateDecodeTarget(effectiveTarget);
+    binding.updateDecodeTarget(target);
     _observationControlDirty = true;
   }
 
@@ -1013,39 +1005,6 @@ final class PipelineReaderSession {
         .toInt();
     final currentAsset = chapter.pages[pageIndex];
     final currentDownload = readerPageDownloadId(chapter, currentAsset);
-    final pageChanged = _lastControlCurrentDownload != null &&
-        _lastControlCurrentDownload != currentDownload;
-    if (pageChanged) {
-      final change = _animatedDecodeGovernor.onPageBoundary(
-        knownStatic: _knownStaticDownloads.contains(currentDownload),
-      );
-      if (change != null) {
-        binding.updateDecodeTarget(change.target);
-        _recordAnimatedDecodeTargetChange(
-          change,
-          download: currentDownload,
-        );
-      } else if (_animatedDecodeGovernor.degraded) {
-        trace.record(
-          traceEvent(
-            clock: clock,
-            sessionId: sessionId,
-            kind: TraceEventKind.policyDecision,
-            identityHash: currentDownload.key,
-            revision: revision,
-            payload: <String, Object?>{
-              'stage': 'animated-decode-raster-retain',
-              'tier': _animatedDecodeGovernor.tier.name,
-              'reason': _knownAnimatedDownloads.contains(currentDownload)
-                  ? 'next-current-animated'
-                  : 'next-current-unresolved',
-              'physicalWidth': binding.pipeline.decodeTarget.physicalWidth,
-              'physicalHeight': binding.pipeline.decodeTarget.physicalHeight,
-            },
-          ),
-        );
-      }
-    }
     final target = binding.pipeline.decodeTarget;
     final controlIdentityChanged =
         _lastControlCurrentDownload != currentDownload ||
@@ -2441,73 +2400,6 @@ final class PipelineReaderSession {
     });
   }
 
-  void _handleFrameDecodedTiming(
-    DecodeId id,
-    DecodedFrameTiming timing,
-    int frameDurationMicros,
-  ) {
-    if (_disposed || _retainedForReaderReentry) return;
-    final binding = _binding;
-    final observation = _lastAcceptedControlObservation;
-    if (binding == null || observation == null) return;
-    if (binding.pipeline.currentPlan.decodes[id]?.role != PageRole.current) {
-      return;
-    }
-    final currentAsset = chapter.pages[observation.currentIndex];
-    final currentDownload = readerPageDownloadId(chapter, currentAsset);
-    if (id.download != currentDownload) return;
-
-    final animated = _knownAnimatedDownloads.contains(id.download) ||
-        frameDurationMicros > 0;
-    final change = _animatedDecodeGovernor.observe(
-      timing: timing,
-      frameDurationMicros: frameDurationMicros,
-      animated: animated,
-    );
-    if (change == null) return;
-
-    binding.updateDecodeTarget(change.target);
-    _observationControlDirty = true;
-    _recordAnimatedDecodeTargetChange(
-      change,
-      download: id.download,
-      timing: timing,
-      frameDurationMicros: frameDurationMicros,
-    );
-    enqueueObservation(observation);
-  }
-
-  void _recordAnimatedDecodeTargetChange(
-    AnimatedDecodeTargetChange change, {
-    required DownloadId download,
-    DecodedFrameTiming? timing,
-    int? frameDurationMicros,
-  }) {
-    trace.record(
-      traceEvent(
-        clock: clock,
-        sessionId: sessionId,
-        kind: TraceEventKind.policyDecision,
-        identityHash: download.key,
-        revision: revision,
-        payload: <String, Object?>{
-          'stage': change.toTier == AnimatedDecodeRasterTier.full
-              ? 'animated-decode-raster-restore'
-              : 'animated-decode-raster-degrade',
-          'fromTier': change.fromTier.name,
-          'toTier': change.toTier.name,
-          'reason': change.reason,
-          'physicalWidth': change.target.physicalWidth,
-          'physicalHeight': change.target.physicalHeight,
-          if (timing != null) ...<String, Object?>{
-            'nativeDecodeMicros': timing.nativeDecodeMicros,
-            'frameDurationMicros': frameDurationMicros ?? 0,
-          },
-        },
-      ),
-    );
-  }
-
   void _handleFrameDecoded(DecodeId id, DecodeSnapshot snapshot) {
     final decodedWidth = snapshot.decodedWidth;
     final decodedHeight = snapshot.decodedHeight;
@@ -2621,35 +2513,13 @@ final class PipelineReaderSession {
   void _handleAnimationResolved(DecodeId id, AnimationInfo animation) {
     if (animation.frameCount > 1) {
       _animatedOutputs.add(id);
-      _knownAnimatedDownloads.add(id.download);
-      _knownStaticDownloads.remove(id.download);
     } else {
       _animatedOutputs.remove(id);
-      if (animation.complete) {
-        _knownStaticDownloads.add(id.download);
-        _knownAnimatedDownloads.remove(id.download);
-      }
     }
     scheduleMicrotask(() {
       if (_disposed) return;
       final pageIndex = _pageIndexByPageId[id.download.content.pageId];
       if (pageIndex == null) return;
-      if (animation.complete &&
-          animation.frameCount <= 1 &&
-          _lastControlCurrentDownload == id.download) {
-        final binding = _binding;
-        final observation = _lastAcceptedControlObservation;
-        final change = _animatedDecodeGovernor.onCurrentClassifiedStatic();
-        if (binding != null && observation != null && change != null) {
-          binding.updateDecodeTarget(change.target);
-          _observationControlDirty = true;
-          _recordAnimatedDecodeTargetChange(
-            change,
-            download: id.download,
-          );
-          enqueueObservation(observation);
-        }
-      }
       // Classification can arrive after the upload snapshot. Promote the
       // detached projection immediately so a ready first frame is resident
       // before PageView mounts, even when the classification result itself
