@@ -74,6 +74,34 @@ void main() {
     expect(DownloadId.fromJson(id.toJson()), id);
   });
 
+  test('physical media identity separates exact fallback from canonical body', () {
+    final download = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/page.webp'),
+    );
+    final exact = PhysicalMediaId.exact(download);
+    final canonical = PhysicalMediaId.canonical(download.key);
+
+    expect(exact.kind, PhysicalMediaIdKind.exact);
+    expect(exact.value, download.key);
+    expect(exact, isNot(canonical));
+    expect(exact.key, isNot(canonical.key));
+  });
+
+  test('physical media identity has a stable JSON round trip', () {
+    final canonical = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000segment\u0000123',
+    );
+
+    expect(PhysicalMediaId.fromJson(canonical.toJson()), canonical);
+  });
+
 
   test('page index hint is execution metadata, never download identity', () {
     const content = ContentId(

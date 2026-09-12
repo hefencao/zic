@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:domain/domain.dart';
 import 'download_placement.dart';
+import 'physical_media_artifact_index.dart';
+import 'physical_partial_index.dart';
 
 enum CacheState { partial, ready }
 
@@ -228,10 +230,7 @@ final class ArtifactReplicaMigrationRecord {
 /// verified logical identities, but an explicit overwrite must replace the
 /// old logical bindings in the same SQLite transaction as the new one.
 abstract interface class CachePathBindingQuery {
-  Future<List<CacheRec>> listPathBindings(
-    String path, {
-    String? excludingKey,
-  });
+  Future<List<CacheRec>> listPathBindings(String path, {String? excludingKey});
 }
 
 abstract interface class CacheBindingOperations {
@@ -243,6 +242,20 @@ abstract interface class CacheBindingOperations {
   Future<void> replacePathBindings({
     required CacheRec record,
     required String path,
+  });
+}
+
+/// Indexed lookup for historical exact bindings that represent the same
+/// logical source page/revision but were written with a different provider URI.
+///
+/// This is deliberately narrower than [CacheIndex.list]: canonical-media
+/// recovery may query one already-authorized logical page without scanning the
+/// cache or weakening [DownloadId] equality.
+abstract interface class CacheLogicalBindingQuery {
+  Future<List<CacheRec>> listLogicalBindings({
+    required ContentId content,
+    required String sourceRevision,
+    CacheState? state,
   });
 }
 
@@ -280,9 +293,7 @@ abstract interface class CacheIndex {
     required String chapterId,
   });
 
-  Future<void> putExportPageBindings(
-    Iterable<ExportPageBinding> bindings,
-  );
+  Future<void> putExportPageBindings(Iterable<ExportPageBinding> bindings);
 
   Future<void> removePlacement({
     required String sourceId,
@@ -299,8 +310,18 @@ abstract interface class CacheIndex {
 }
 
 final class MemIndex
-    implements CacheIndex, CacheBindingOperations, CachePathBindingQuery {
+    implements
+        CacheIndex,
+        CacheBindingOperations,
+        CachePathBindingQuery,
+        CacheLogicalBindingQuery,
+        PhysicalMediaArtifactIndex,
+        PhysicalPartialIndex {
   final Map<String, CacheRec> _records = <String, CacheRec>{};
+  final Map<String, PhysicalMediaArtifactRecord> _physicalArtifacts =
+      <String, PhysicalMediaArtifactRecord>{};
+  final Map<String, PhysicalPartialRecord> _physicalPartials =
+      <String, PhysicalPartialRecord>{};
   final Map<String, DownloadPlacement> _placements =
       <String, DownloadPlacement>{};
   final Map<String, ExportPageBinding> _exportPageBindings =
@@ -330,9 +351,33 @@ final class MemIndex
   }
 
   @override
+  Future<List<CacheRec>> listLogicalBindings({
+    required ContentId content,
+    required String sourceRevision,
+    CacheState? state,
+  }) async {
+    _requireOpen();
+    final records =
+        _records.values
+            .where(
+              (record) =>
+                  record.id.content == content &&
+                  record.id.sourceRevision == sourceRevision &&
+                  (state == null || record.state == state),
+            )
+            .toList(growable: false)
+          ..sort((left, right) {
+            final touched = right.touchedUs.compareTo(left.touchedUs);
+            return touched != 0 ? touched : left.key.compareTo(right.key);
+          });
+    return records;
+  }
+
+  @override
   Future<List<CacheRec>> list({CacheState? state}) async {
     _requireOpen();
-    final records = _records.values
+    final records =
+        _records.values
         .where((record) => state == null || record.state == state)
         .toList(growable: false)
       ..sort((a, b) => a.key.compareTo(b.key));
@@ -345,7 +390,8 @@ final class MemIndex
     String? excludingKey,
   }) async {
     _requireOpen();
-    final records = _records.values
+    final records =
+        _records.values
         .where(
           (record) => record.path == path && record.key != excludingKey,
         )
@@ -367,17 +413,131 @@ final class MemIndex
   }
 
   @override
+  Future<PhysicalPartialRecord?> getPhysicalPartial(PhysicalMediaId id) async {
+    _requireOpen();
+    return _physicalPartials[id.key];
+  }
+
+  @override
+  Future<List<PhysicalPartialRecord>> listPhysicalPartials() async {
+    _requireOpen();
+    final records = _physicalPartials.values.toList(growable: false)
+      ..sort((left, right) => left.key.compareTo(right.key));
+    return records;
+  }
+
+  @override
+  Future<void> putPhysicalPartial(PhysicalPartialRecord record) async {
+    _requireOpen();
+    _physicalPartials[record.key] = record;
+  }
+
+  @override
+  Future<void> removePhysicalPartial(PhysicalMediaId id) async {
+    _requireOpen();
+    _physicalPartials.remove(id.key);
+  }
+
+  @override
+  Future<void> touchPhysicalPartial(PhysicalMediaId id, int touchedUs) async {
+    _requireOpen();
+    final current = _physicalPartials[id.key];
+    if (current != null) {
+      _physicalPartials[id.key] = current.copyWith(touchedUs: touchedUs);
+    }
+  }
+
+  @override
+  Future<PhysicalMediaArtifactRecord?> getPhysicalMediaArtifact(
+    PhysicalMediaId id,
+  ) async {
+    _requireOpen();
+    return _physicalArtifacts[id.key];
+  }
+
+  @override
+  Future<List<PhysicalMediaArtifactRecord>> listPhysicalMediaArtifacts() async {
+    _requireOpen();
+    final records = _physicalArtifacts.values.toList(growable: false)
+      ..sort((left, right) => left.id.key.compareTo(right.id.key));
+    return records;
+  }
+
+  @override
+  Future<void> putPhysicalMediaArtifactBinding({
+    required PhysicalMediaId id,
+    required String artifactId,
+    required int createdUs,
+    required int touchedUs,
+  }) async {
+    _requireOpen();
+    final normalized = artifactId.trim();
+    final source = _records.values
+        .where(
+          (record) =>
+              record.state == CacheState.ready &&
+              record.effectiveArtifactId == normalized,
+        )
+        .firstOrNull;
+    if (source == null) {
+      throw StateError('artifact identity $artifactId does not exist');
+    }
+    _physicalArtifacts[id.key] = PhysicalMediaArtifactRecord(
+      id: id,
+      artifactId: normalized,
+      accessLocator: source.path,
+      bytes: source.bytes,
+      checksum: source.checksum,
+      checksumAlgorithm: source.checksumAlgorithm,
+      storageRootId: source.storageRootId,
+      createdUs: createdUs,
+      touchedUs: touchedUs,
+    );
+  }
+
+  @override
+  Future<void> touchPhysicalMediaArtifact(
+    PhysicalMediaId id,
+    int touchedUs,
+  ) async {
+    _requireOpen();
+    final current = _physicalArtifacts[id.key];
+    if (current == null) return;
+    _physicalArtifacts[id.key] = PhysicalMediaArtifactRecord(
+      id: current.id,
+      artifactId: current.artifactId,
+      accessLocator: current.accessLocator,
+      bytes: current.bytes,
+      checksum: current.checksum,
+      checksumAlgorithm: current.checksumAlgorithm,
+      storageRootId: current.storageRootId,
+      createdUs: current.createdUs,
+      touchedUs: touchedUs,
+    );
+  }
+
+  @override
+  Future<void> removePhysicalMediaArtifactBinding(PhysicalMediaId id) async {
+    _requireOpen();
+    _physicalArtifacts.remove(id.key);
+  }
+
+  @override
   Future<void> putExistingArtifactBinding(CacheRec record) async {
     _requireOpen();
     final artifactId = record.artifactId.trim();
     if (record.state != CacheState.ready || artifactId.isEmpty) {
-      throw ArgumentError('existing artifact bindings require ready artifactId');
+      throw ArgumentError(
+        'existing artifact bindings require ready artifactId',
+      );
     }
-    final source = _records.values.where(
+    final source = _records.values
+        .where(
       (candidate) =>
           candidate.state == CacheState.ready &&
           candidate.effectiveArtifactId == artifactId,
-    ).firstOrNull;
+        )
+        .firstOrNull;
     if (source == null) {
       throw StateError('artifact identity $artifactId does not exist');
     }
@@ -416,9 +576,7 @@ final class MemIndex
   Future<int> totalBytes({CacheState? state}) async {
     _requireOpen();
     return physicalCacheBytes(
-      _records.values.where(
-        (record) => state == null || record.state == state,
-      ),
+      _records.values.where((record) => state == null || record.state == state),
     );
   }
 
@@ -478,11 +636,14 @@ final class MemIndex
   }) async {
     _requireOpen();
     final prefix = '$sourceId\u0000$comicId\u0000$chapterId\u0000';
-    final result = _exportPageBindings.entries
+    final result =
+        _exportPageBindings.entries
         .where((entry) => entry.key.startsWith(prefix))
         .map((entry) => entry.value)
         .toList(growable: false)
-      ..sort((left, right) => left.exportOrdinal.compareTo(right.exportOrdinal));
+          ..sort(
+            (left, right) => left.exportOrdinal.compareTo(right.exportOrdinal),
+          );
     return result;
   }
 
@@ -505,8 +666,7 @@ final class MemIndex
       }
       final key = '${binding.ownerKey}\u0000${binding.pageId}';
       final existing = next[key];
-      if (existing != null &&
-          existing.exportOrdinal != binding.exportOrdinal) {
+      if (existing != null && existing.exportOrdinal != binding.exportOrdinal) {
         throw StateError(
           'export ordinal is immutable for '
           '${binding.sourceId}:${binding.comicId}:${binding.chapterId}:${binding.pageId}',
@@ -549,13 +709,20 @@ final class MemIndex
     String? excludingKey,
   }) async {
     _requireOpen();
-    final effectiveTargetArtifactId =
-        artifactId.isEmpty ? defaultArtifactIdForPath(path) : artifactId;
-    return _records.values.any(
+    final effectiveTargetArtifactId = artifactId.isEmpty
+        ? defaultArtifactIdForPath(path)
+        : artifactId;
+    final logicalReferenced = _records.values.any(
       (r) =>
           r.key != excludingKey &&
           (r.path == path ||
               r.effectiveArtifactId == effectiveTargetArtifactId),
+    );
+    if (logicalReferenced) return true;
+    return _physicalArtifacts.values.any(
+      (record) =>
+          record.accessLocator == path ||
+          record.artifactId == effectiveTargetArtifactId,
     );
   }
 

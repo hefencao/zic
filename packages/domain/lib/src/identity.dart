@@ -120,6 +120,74 @@ final class DownloadId {
   String toString() => 'DownloadId($key)';
 }
 
+enum PhysicalMediaIdKind { exact, canonical }
+
+/// Version/provider-independent identity for one mutable encoded-body owner.
+///
+/// [DownloadId] remains the exact logical/provider identity. A physical media
+/// id only answers "which encoded body / single writer is this?" and therefore
+/// deliberately carries no request URI, source revision or provider policy.
+///
+/// [exact] is the compatibility fallback for media that has no stronger
+/// canonical projection yet. Its payload is the framed [DownloadId.key], so a
+/// storage layout can preserve the historical exact staging token without
+/// treating that exact id as the physical type. [canonical] accepts an opaque
+/// composition-owned stable key such as a version-family media coordinate.
+final class PhysicalMediaId {
+  const PhysicalMediaId._({required this.kind, required this.value})
+      : assert(value != '');
+
+  factory PhysicalMediaId.exact(DownloadId id) => PhysicalMediaId._(
+        kind: PhysicalMediaIdKind.exact,
+        value: id.key,
+      );
+
+  factory PhysicalMediaId.canonical(String stableKey) {
+    if (stableKey.isEmpty) {
+      throw ArgumentError.value(stableKey, 'stableKey', 'must not be empty');
+    }
+    return PhysicalMediaId._(
+      kind: PhysicalMediaIdKind.canonical,
+      value: stableKey,
+    );
+  }
+
+  final PhysicalMediaIdKind kind;
+  final String value;
+
+  bool get isExactFallback => kind == PhysicalMediaIdKind.exact;
+
+  /// Collision-free physical identity used by registries and durable records.
+  String get key =>
+      'physical-media:v1${_frame(kind.name)}${_frame(value)}';
+
+  Map<String, Object> toJson() => <String, Object>{
+        'kind': kind.name,
+        'value': value,
+      };
+
+  factory PhysicalMediaId.fromJson(Map<String, Object?> json) {
+    final rawKind = json['kind'];
+    final rawValue = json['value'];
+    if (rawKind is! String || rawValue is! String || rawValue.isEmpty) {
+      throw const FormatException('invalid physical media identity');
+    }
+    final kind = PhysicalMediaIdKind.values.byName(rawKind);
+    return PhysicalMediaId._(kind: kind, value: rawValue);
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PhysicalMediaId && kind == other.kind && value == other.value;
+
+  @override
+  int get hashCode => Object.hash(kind, value);
+
+  @override
+  String toString() => 'PhysicalMediaId($key)';
+}
+
 final class DecodeId {
   DecodeId({
     required this.download,

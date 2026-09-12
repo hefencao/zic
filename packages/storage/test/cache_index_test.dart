@@ -24,6 +24,156 @@ void main() {
     'memory': MemIndex.new,
     'sqlite': SqliteIndex.memory,
   }.entries) {
+    test(
+      '${fixture.key} physical partials are independent from exact cache bindings',
+      () async {
+        final index = fixture.value();
+        await index.open();
+        addTearDown(index.close);
+        final physical = index as PhysicalPartialIndex;
+        final physicalId = PhysicalMediaId.canonical(
+          'family\u0000chapter\u0000segment\u00007',
+        );
+        final record = PhysicalPartialRecord(
+          id: physicalId,
+          path: '/tmp/canonical.part',
+          bytes: 123,
+          checksum: '',
+          createdUs: 10,
+          touchedUs: 11,
+          storageRootId: 'root',
+        );
+
+        await physical.putPhysicalPartial(record);
+        expect(await index.get(physicalId.key), isNull);
+        expect(await physical.getPhysicalPartial(physicalId), record);
+        expect(await physical.listPhysicalPartials(), <PhysicalPartialRecord>[
+          record,
+        ]);
+
+        await physical.touchPhysicalPartial(physicalId, 12);
+        expect((await physical.getPhysicalPartial(physicalId))?.touchedUs, 12);
+        await physical.removePhysicalPartial(physicalId);
+        expect(await physical.getPhysicalPartial(physicalId), isNull);
+      },
+    );
+
+    test(
+      '${fixture.key} physical artifact survives removal of its exact binding',
+      () async {
+        final index = fixture.value();
+        await index.open();
+        addTearDown(index.close);
+        final physical = index as PhysicalMediaArtifactIndex;
+        final physicalId = PhysicalMediaId.canonical(
+          'family\u0000chapter\u0000segment\u00009',
+        );
+        final ready = CacheRec(
+          id: id,
+          state: CacheState.ready,
+          path: '/tmp/canonical.bin',
+          bytes: 77,
+          checksum: 'abcd1234',
+          createdUs: 20,
+          touchedUs: 21,
+          artifactId: 'canonical-object',
+        );
+        await index.put(ready);
+        await physical.putPhysicalMediaArtifactBinding(
+          id: physicalId,
+          artifactId: ready.artifactId,
+          createdUs: 22,
+          touchedUs: 23,
+        );
+
+        final bound = await physical.getPhysicalMediaArtifact(physicalId);
+        expect(bound?.artifactId, 'canonical-object');
+        expect(bound?.bytes, 77);
+        await index.remove(id.key);
+        expect(await index.get(id.key), isNull);
+        expect(
+          (await physical.getPhysicalMediaArtifact(physicalId))?.artifactId,
+          'canonical-object',
+        );
+        expect(
+          await index.isPathOrArtifactReferenced(
+            path: ready.path,
+            artifactId: ready.artifactId,
+            excludingKey: id.key,
+          ),
+          isTrue,
+          reason: 'canonical physical binding owns the immutable body even '
+              'after its exact logical binding is removed',
+        );
+
+        await physical.removePhysicalMediaArtifactBinding(physicalId);
+        expect(await physical.getPhysicalMediaArtifact(physicalId), isNull);
+        expect(
+          await index.isPathOrArtifactReferenced(
+            path: ready.path,
+            artifactId: ready.artifactId,
+            excludingKey: id.key,
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      '${fixture.key} logical binding lookup survives provider URI churn',
+      () async {
+        final index = fixture.value();
+        await index.open();
+        addTearDown(index.close);
+        final query = index as CacheLogicalBindingQuery;
+        final historical = DownloadId(
+          content: id.content,
+          sourceRevision: id.sourceRevision,
+          canonicalUri: Uri.parse('venera-resource:historical'),
+        );
+        final unrelated = DownloadId(
+          content: ContentId(
+            sourceId: id.content.sourceId,
+            comicId: id.content.comicId,
+            chapterId: id.content.chapterId,
+            pageId: 'other-page',
+          ),
+          sourceRevision: id.sourceRevision,
+          canonicalUri: Uri.parse('venera-resource:other'),
+        );
+        await index.put(
+          CacheRec(
+            id: historical,
+            state: CacheState.ready,
+            path: '/tmp/historical.bin',
+            bytes: 77,
+            checksum: 'abcd1234',
+            createdUs: 1,
+            touchedUs: 3,
+          ),
+        );
+        await index.put(
+          CacheRec(
+            id: unrelated,
+            state: CacheState.ready,
+            path: '/tmp/other.bin',
+            bytes: 88,
+            checksum: 'dcba4321',
+            createdUs: 1,
+            touchedUs: 4,
+          ),
+        );
+
+        final records = await query.listLogicalBindings(
+          content: id.content,
+          sourceRevision: id.sourceRevision,
+          state: CacheState.ready,
+        );
+
+        expect(records.map((record) => record.id), <DownloadId>[historical]);
+      },
+    );
+
     test('${fixture.key} index upserts and totals records', () async {
       final index = fixture.value();
       await index.open();
@@ -68,7 +218,10 @@ void main() {
         updatedAt: DateTime.now().toUtc(),
       );
       await index.putPlacement(placement);
-      final retrieved = await index.getPlacement(sourceId: 'source', comicId: 'comic');
+      final retrieved = await index.getPlacement(
+        sourceId: 'source',
+        comicId: 'comic',
+      );
       expect(retrieved, isNotNull);
       expect(retrieved!.relativeDirectory, '漫画测试');
       expect(retrieved.mode, DownloadPlacementMode.createNew);
@@ -78,8 +231,10 @@ void main() {
         throwsA(isA<StateError>()),
       );
       expect(
-        (await index.getPlacement(sourceId: 'source', comicId: 'comic'))
-            ?.relativeDirectory,
+        (await index.getPlacement(
+          sourceId: 'source',
+          comicId: 'comic',
+        ))?.relativeDirectory,
         '漫画测试',
       );
 
@@ -98,8 +253,10 @@ void main() {
         throwsA(isA<StateError>()),
       );
       expect(
-        (await index.getPlacement(sourceId: 'source', comicId: 'comic'))
-            ?.fingerprint,
+        (await index.getPlacement(
+          sourceId: 'source',
+          comicId: 'comic',
+        ))?.fingerprint,
         'fingerprint-a',
       );
 
@@ -110,17 +267,24 @@ void main() {
           fingerprint: 'fingerprint-c',
         ),
       );
-      final replacedPlacement =
-          await index.getPlacement(sourceId: 'source', comicId: 'comic');
+      final replacedPlacement = await index.getPlacement(
+        sourceId: 'source',
+        comicId: 'comic',
+      );
       expect(replacedPlacement?.placementId, 'source\u0000comic-v2');
       expect(replacedPlacement?.generation, 2);
       expect(await index.listPlacements(), hasLength(1));
 
       await index.removePlacement(sourceId: 'source', comicId: 'comic');
-      expect(await index.getPlacement(sourceId: 'source', comicId: 'comic'), isNull);
+      expect(
+        await index.getPlacement(sourceId: 'source', comicId: 'comic'),
+        isNull,
+      );
     });
 
-    test('${fixture.key} index batches exact-key lookups without unrelated rows', () async {
+    test(
+      '${fixture.key} index batches exact-key lookups without unrelated rows',
+      () async {
       final index = fixture.value();
       await index.open();
       addTearDown(index.close);
@@ -156,11 +320,18 @@ void main() {
       ]) {
         await index.put(record);
       }
-      final rows = await index.getMany(<String>[id.key, id.key, 'missing-key']);
+        final rows = await index.getMany(<String>[
+          id.key,
+          id.key,
+          'missing-key',
+        ]);
       expect(rows.map((record) => record.key), <String>[id.key]);
-    });
+      },
+    );
 
-    test('${fixture.key} index separates identities that shared a legacy key', () async {
+    test(
+      '${fixture.key} index separates identities that shared a legacy key',
+      () async {
       final first = DownloadId(
         content: const ContentId(
           sourceId: 'source/a',
@@ -213,14 +384,16 @@ void main() {
       expect((await index.get(first.key))?.path, '/tmp/first.part');
       expect((await index.get(second.key))?.path, '/tmp/second.part');
       expect(await index.list(), hasLength(2));
-    });
+      },
+    );
   }
 
   for (final fixture in <String, Object Function()>{
     'memory': MemIndex.new,
     'sqlite': SqliteIndex.memory,
   }.entries) {
-    test('${fixture.key} path binding query is exact and excludes one logical key',
+    test(
+      '${fixture.key} path binding query is exact and excludes one logical key',
         () async {
       final candidate = fixture.value();
       final index = candidate as CacheIndex;
@@ -275,24 +448,24 @@ void main() {
       expect(await index.list(), hasLength(3));
 
       expect(
-        (await pathQuery.listPathBindings(sharedPath))
-            .map((record) => record.key)
-            .toSet(),
+          (await pathQuery.listPathBindings(
+            sharedPath,
+          )).map((record) => record.key).toSet(),
         <String>{first.key, second.key},
       );
       expect(
         (await pathQuery.listPathBindings(
           sharedPath,
           excludingKey: first.key,
-        ))
-            .map((record) => record.key)
-            .toList(),
+          )).map((record) => record.key).toList(),
         <String>[second.key],
       );
-    });
+      },
+    );
   }
 
-  test('sqlite artifact_object locator is independent from logical binding path',
+  test(
+    'sqlite artifact_object locator is independent from logical binding path',
       () async {
     final index = SqliteIndex.memory();
     await index.open();
@@ -317,7 +490,9 @@ void main() {
           pageId: 'locator-successor',
         ),
         sourceRevision: 'r1',
-        canonicalUri: Uri.parse('https://example.test/locator-successor.webp'),
+          canonicalUri: Uri.parse(
+            'https://example.test/locator-successor.webp',
+          ),
       ),
       state: CacheState.ready,
       path: '/tmp/shared-current.bin',
@@ -331,17 +506,24 @@ void main() {
     await index.put(first);
     await index.put(second);
 
-    expect(await index.totalBytes(), 3,
-        reason: 'logical siblings sharing one artifact count physical bytes once');
+      expect(
+        await index.totalBytes(),
+        3,
+        reason:
+            'logical siblings sharing one artifact count physical bytes once',
+      );
     expect((await index.get(first.key))!.path, '/tmp/shared-old.bin');
     final object = await index.getArtifactObject('shared-locator-artifact');
     expect(object, isNotNull);
     expect(object!.accessLocator, '/tmp/shared-current.bin');
     expect(object.bytes, 3);
     expect(object.checksum, '01020304');
-  });
+    },
+  );
 
-  test('existing artifact binding preserves the physical object locator', () async {
+  test(
+    'existing artifact binding preserves the physical object locator',
+    () async {
     final index = SqliteIndex.memory();
     await index.open();
     addTearDown(index.close);
@@ -381,11 +563,18 @@ void main() {
 
     final object = await index.getArtifactObject('binding-only-artifact');
     expect(object, isNotNull);
-    expect(object!.accessLocator, '/tmp/source-authority.bin',
-        reason: 'binding-only commit must not redirect physical authority');
-    expect((await index.get(target.key))?.artifactId, 'binding-only-artifact');
+      expect(
+        object!.accessLocator,
+        '/tmp/source-authority.bin',
+        reason: 'binding-only commit must not redirect physical authority',
+      );
+      expect(
+        (await index.get(target.key))?.artifactId,
+        'binding-only-artifact',
+      );
     expect(await index.totalBytes(), 3);
-  });
+    },
+  );
 
   test('existing artifact binding rejects a different content proof', () async {
     final index = MemIndex();
@@ -429,7 +618,9 @@ void main() {
     expect(await index.get(target.key), isNull);
   });
 
-  test('sqlite rejects conflicting ready bindings for one artifact identity', () async {
+  test(
+    'sqlite rejects conflicting ready bindings for one artifact identity',
+    () async {
     final index = SqliteIndex.memory();
     await index.open();
     addTearDown(index.close);
@@ -466,14 +657,15 @@ void main() {
     await expectLater(index.put(second), throwsA(isA<StateError>()));
     expect((await index.get(first.key))?.checksum, '01020304');
     expect(await index.get(second.key), isNull);
-  });
+    },
+  );
 }
+
 void runCacheSchemaV2Tests() {
   test('v1 cache databases migrate to v2 and keep records readable', () async {
     final temp = await Directory.systemTemp.createTemp('cache_index_v2_');
     addTearDown(() => temp.delete(recursive: true));
-    final dbPath =
-        '${temp.path}${Platform.pathSeparator}cache.sqlite';
+    final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
 
     final legacy = sql.sqlite3.open(dbPath);
     legacy.execute('PRAGMA user_version = 1');
@@ -522,7 +714,9 @@ void runCacheSchemaV2Tests() {
     final record = await index.get(id.key);
     expect(record, isNotNull);
     expect(record!.pinned, isFalse);
-    final legacyObject = await index.getArtifactObject(record.effectiveArtifactId);
+    final legacyObject = await index.getArtifactObject(
+      record.effectiveArtifactId,
+    );
     expect(legacyObject, isNotNull);
     expect(legacyObject!.accessLocator, record.path);
     expect(legacyObject.storageRootId, record.storageRootId);
@@ -567,7 +761,8 @@ void runCacheSchemaV2Tests() {
     final read = await index.getPlacement(sourceId: 'source', comicId: 'comic');
     expect(read?.pageOrder, ComicPageOrder.chronological);
   });
-  test('memory export page bindings enforce the same sparse ordinal contract',
+  test(
+    'memory export page bindings enforce the same sparse ordinal contract',
       () async {
     final index = MemIndex();
     await index.open();
@@ -590,8 +785,7 @@ void runCacheSchemaV2Tests() {
       const <ExportPageBinding>[first],
     );
     await expectLater(
-      index.putExportPageBindings(
-        const <ExportPageBinding>[
+        index.putExportPageBindings(const <ExportPageBinding>[
           ExportPageBinding(
             sourceId: 'source',
             comicId: 'comic',
@@ -600,14 +794,18 @@ void runCacheSchemaV2Tests() {
             logicalIndex: 4,
             exportOrdinal: 9,
           ),
-        ],
-      ),
+        ]),
       throwsStateError,
     );
-  });
+    },
+  );
 
-  test('sqlite export page bindings persist sparse immutable ordinals', () async {
-    final directory = await Directory.systemTemp.createTemp('export-binding-');
+  test(
+    'sqlite export page bindings persist sparse immutable ordinals',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'export-binding-',
+      );
     addTearDown(() => directory.delete(recursive: true));
     final dbPath = '${directory.path}/export-binding.sqlite';
     final index = SqliteIndex(dbPath);
@@ -661,9 +859,7 @@ void runCacheSchemaV2Tests() {
         sourceId: 'source',
         comicId: 'comic',
         chapterId: 'chapter',
-      ))
-          .singleWhere((binding) => binding.pageId == 'old-a')
-          .logicalIndex,
+        )).singleWhere((binding) => binding.pageId == 'old-a').logicalIndex,
       4,
     );
 
@@ -680,10 +876,15 @@ void runCacheSchemaV2Tests() {
       ]),
       throwsStateError,
     );
-  });
+    },
+  );
 
-  test('v6 cache metadata migrates existing root identities into schema 7', () async {
-    final temp = await Directory.systemTemp.createTemp('cache_index_v6_root_');
+  test(
+    'v6 cache metadata migrates existing root identities into schema 7',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'cache_index_v6_root_',
+      );
     addTearDown(() => temp.delete(recursive: true));
     final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
     const rootIdentity = '/storage/emulated/0/Books';
@@ -730,10 +931,15 @@ void runCacheSchemaV2Tests() {
     expect(root.accessLocators.single.kind, StorageAccessLocatorKind.direct);
     expect(root.accessLocators.single.locator, rootIdentity);
     expect(root.accessLocators.single.health, StorageAccessHealth.unknown);
-  });
+    },
+  );
 
-  test('v7 cache metadata backfills the compatibility object as replica one', () async {
-    final temp = await Directory.systemTemp.createTemp('cache_index_v7_replica_');
+  test(
+    'v7 cache metadata backfills the compatibility object as replica one',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'cache_index_v7_replica_',
+      );
     addTearDown(() => temp.delete(recursive: true));
     final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
     final id = DownloadId(
@@ -778,10 +984,15 @@ void runCacheSchemaV2Tests() {
     expect(replicas.single.replicaId, artifactId);
     expect(replicas.single.accessLocator, '$root/final/page.bin');
     expect(replicas.single.storageRootId, root);
-  });
+    },
+  );
 
-  test('v8 cache metadata adds durable replica migration state through schema 12', () async {
-    final temp = await Directory.systemTemp.createTemp('cache_index_v8_migration_');
+  test(
+    'v8 cache metadata adds durable replica migration state through schema 14',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'cache_index_v8_migration_',
+      );
     addTearDown(() => temp.delete(recursive: true));
     final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
     final id = DownloadId(
@@ -836,7 +1047,7 @@ void runCacheSchemaV2Tests() {
     await migrated.close();
 
     final schema = sql.sqlite3.open(dbPath);
-    expect(schema.select('PRAGMA user_version').single.values.single, 12);
+      expect(schema.select('PRAGMA user_version').single.values.single, 15);
     expect(
       schema
           .select(
@@ -847,10 +1058,15 @@ void runCacheSchemaV2Tests() {
       1,
     );
     schema.dispose();
-  });
+    },
+  );
 
-  test('v10 migration clears cache-final and partial legacy pins only', () async {
-    final temp = await Directory.systemTemp.createTemp('cache_index_v10_pin_migration_');
+  test(
+    'v10 migration clears cache-final and partial legacy pins only',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'cache_index_v10_pin_migration_',
+      );
     addTearDown(() => temp.delete(recursive: true));
     final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
     DownloadId id(String pageId) => DownloadId(
@@ -929,14 +1145,20 @@ void runCacheSchemaV2Tests() {
     expect((await migrated.get(cacheFinal.key))!.pinned, isFalse);
     expect((await migrated.get(partial.key))!.pinned, isFalse);
     expect((await migrated.get(structuredPinned.key))!.pinned, isTrue);
-    expect((await migrated.get(structuredUnpinned.key))!.pinned, isFalse,
-        reason: 'migration must not invent manual intent for ambiguous old rows');
+      expect(
+        (await migrated.get(structuredUnpinned.key))!.pinned,
+        isFalse,
+        reason:
+            'migration must not invent manual intent for ambiguous old rows',
+      );
     final raw = sql.sqlite3.open(dbPath);
-    expect(raw.select('PRAGMA user_version').single.values.single, 12);
+      expect(raw.select('PRAGMA user_version').single.values.single, 15);
     raw.dispose();
-  });
+    },
+  );
 
-  test('v11 upgrade adds path index without rerunning legacy identity migration',
+  test(
+    'v11 upgrade adds path/physical-partial schema without legacy rewrites',
       () async {
     final temp = await Directory.systemTemp.createTemp(
       'cache_index_v11_path_index_',
@@ -988,7 +1210,7 @@ void runCacheSchemaV2Tests() {
 
     final checked = sql.sqlite3.open(dbPath);
     addTearDown(checked.dispose);
-    expect(checked.select('PRAGMA user_version').single.values.single, 12);
+      expect(checked.select('PRAGMA user_version').single.values.single, 15);
     expect(
       checked.select(
         "SELECT name FROM sqlite_master WHERE type = 'index' "
@@ -996,13 +1218,19 @@ void runCacheSchemaV2Tests() {
       ),
       hasLength(1),
     );
+      expect(
+        checked.select('SELECT key FROM cache_entry WHERE key = ?', <Object?>[
+          legacyId.legacyKey,
+        ]),
+        hasLength(1),
+        reason: '11→14 must add schema only, not rerun old key migration',
+      );
     expect(
       checked.select(
-        'SELECT key FROM cache_entry WHERE key = ?',
-        <Object?>[legacyId.legacyKey],
+          "SELECT name FROM sqlite_master WHERE type = 'table' "
+          "AND name = 'physical_partial'",
       ),
       hasLength(1),
-      reason: '11→12 must only add the path index, not rerun old key migration',
     );
     final plan = checked.select(
       'EXPLAIN QUERY PLAN SELECT * FROM cache_entry '
@@ -1014,9 +1242,75 @@ void runCacheSchemaV2Tests() {
       contains('cache_entry_path'),
       reason: 'the structured-path query must use the new persistent index',
     );
-  });
+    },
+  );
 
-  test('current cache schema does not rerun legacy identity migration on reopen',
+  test(
+    'v12 upgrade only adds physical partial table and keeps cache rows exact',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'cache_index_v12_physical_partial_',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
+      final id = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'legacy-partial',
+        ),
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('https://example.test/legacy-partial.webp'),
+      );
+      final current = SqliteIndex(dbPath);
+      await current.open();
+      await current.put(
+        CacheRec(
+          id: id,
+          state: CacheState.partial,
+          path: '${temp.path}/partial/legacy.part',
+          bytes: 9,
+          checksum: '',
+          createdUs: 1,
+          touchedUs: 2,
+        ),
+      );
+      await current.close();
+
+      final legacy = sql.sqlite3.open(dbPath);
+      legacy.execute('DROP TABLE physical_partial');
+      legacy.execute('PRAGMA user_version = 12');
+      legacy.dispose();
+
+      final migrated = SqliteIndex(dbPath);
+      await migrated.open();
+      expect(
+        (await migrated.get(id.key))?.path,
+        '${temp.path}/partial/legacy.part',
+      );
+      expect(
+        await migrated.listPhysicalPartials(),
+        isEmpty,
+        reason: 'schema upgrade must not eagerly rewrite legacy exact partials',
+      );
+      await migrated.close();
+
+      final checked = sql.sqlite3.open(dbPath);
+      addTearDown(checked.dispose);
+      expect(checked.select('PRAGMA user_version').single.values.single, 15);
+      expect(
+        checked.select(
+          "SELECT name FROM sqlite_master WHERE type = 'table' "
+          "AND name = 'physical_partial'",
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'current cache schema does not rerun legacy identity migration on reopen',
       () async {
     final temp = await Directory.systemTemp.createTemp(
       'cache_index_current_reopen_',
@@ -1038,7 +1332,7 @@ void runCacheSchemaV2Tests() {
       canonicalUri: Uri.parse('https://example.test/current-reopen.webp'),
     );
     final raw = sql.sqlite3.open(dbPath);
-    expect(raw.select('PRAGMA user_version').single.values.single, 12);
+      expect(raw.select('PRAGMA user_version').single.values.single, 15);
     raw.execute(
       'INSERT INTO cache_entry '
       '(key, download_json, state, path, bytes, checksum, created_us, touched_us, '
@@ -1070,10 +1364,15 @@ void runCacheSchemaV2Tests() {
       isNull,
       reason: 'schema-11 reopen must not rescan/rewrite all cache identities',
     );
-  });
+    },
+  );
 
-  test('replica migration authority switch and cleanup debt survive reopen', () async {
-    final temp = await Directory.systemTemp.createTemp('cache_index_migration_state_');
+  test(
+    'replica migration authority switch and cleanup debt survive reopen',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'cache_index_migration_state_',
+      );
     addTearDown(() => temp.delete(recursive: true));
     final dbPath = '${temp.path}${Platform.pathSeparator}cache.sqlite';
     final id = DownloadId(
@@ -1126,7 +1425,9 @@ void runCacheSchemaV2Tests() {
 
     final second = SqliteIndex(dbPath);
     await second.open();
-    final restored = await second.getArtifactReplicaMigration(replica.replicaId);
+      final restored = await second.getArtifactReplicaMigration(
+        replica.replicaId,
+      );
     expect(restored, isNotNull);
     expect(restored!.phase, ArtifactReplicaMigrationPhase.copying);
     expect(restored.temporaryAccessLocator, temporaryPath);
@@ -1159,11 +1460,17 @@ void runCacheSchemaV2Tests() {
       destinationPath,
     );
     await third.finishArtifactReplicaMigrationCleanup(replica.replicaId);
-    expect(await third.getArtifactReplicaMigration(replica.replicaId), isNull);
+      expect(
+        await third.getArtifactReplicaMigration(replica.replicaId),
+        isNull,
+      );
     await third.close();
-  });
+    },
+  );
 
-  test('mutable partial records never become immutable artifact replicas', () async {
+  test(
+    'mutable partial records never become immutable artifact replicas',
+    () async {
     final index = SqliteIndex.memory();
     await index.open();
     addTearDown(index.close);
@@ -1191,9 +1498,12 @@ void runCacheSchemaV2Tests() {
       ),
     );
     expect(await index.listArtifactReplicas('partial-object'), isEmpty);
-  });
+    },
+  );
 
-  test('one artifact keeps independent replicas on two physical roots', () async {
+  test(
+    'one artifact keeps independent replicas on two physical roots',
+    () async {
     final index = SqliteIndex.memory();
     await index.open();
     addTearDown(index.close);
@@ -1243,15 +1553,18 @@ void runCacheSchemaV2Tests() {
 
     final replicas = await index.listArtifactReplicas(artifactId);
     expect(replicas, hasLength(2));
-    expect(
-      replicas.map((value) => value.accessLocator).toSet(),
-      <String>{'$rootA/final/page.bin', '$rootB/final/page.bin'},
-    );
+      expect(replicas.map((value) => value.accessLocator).toSet(), <String>{
+        '$rootA/final/page.bin',
+        '$rootB/final/page.bin',
+      });
     expect(replicas.map((value) => value.replicaId).toSet(), hasLength(2));
     expect(replicas.any((value) => value.replicaId == artifactId), isTrue);
-    expect((await index.getArtifactObject(artifactId))?.accessLocator,
+      expect(
+        (await index.getArtifactObject(artifactId))?.accessLocator,
         '$rootA/final/page.bin',
-        reason: 'adding a replica must not silently move the compatibility object');
+        reason:
+            'adding a replica must not silently move the compatibility object',
+      );
 
     await index.put(
       CacheRec(
@@ -1267,9 +1580,14 @@ void runCacheSchemaV2Tests() {
       ),
     );
     final afterBindingWrite = await index.listArtifactReplicas(artifactId);
-    expect(afterBindingWrite, hasLength(2),
-        reason: 'ordinary binding/object updates are not implicit replica copies');
-  });
+      expect(
+        afterBindingWrite,
+        hasLength(2),
+        reason:
+            'ordinary binding/object updates are not implicit replica copies',
+      );
+    },
+  );
 
   test('schema 7 backfills one durable locator for a storage root', () async {
     final index = SqliteIndex.memory();
@@ -1375,7 +1693,8 @@ void runCacheSchemaV2Tests() {
     );
     expect(
       merged.accessLocators.every(
-        (value) => value.health == StorageAccessHealth.healthy &&
+        (value) =>
+            value.health == StorageAccessHealth.healthy &&
             value.verifiedUs == 99,
       ),
       isTrue,
@@ -1384,17 +1703,19 @@ void runCacheSchemaV2Tests() {
     expect((await index.getStorageRoot(saf))?.rootId, merged.rootId);
     final directRecord = await index.get(directId.key);
     final safRecord = await index.get(safId.key);
-    final directReplica = (
-      await index.listArtifactReplicas(directRecord!.effectiveArtifactId)
-    ).single;
-    final safReplica = (
-      await index.listArtifactReplicas(safRecord!.effectiveArtifactId)
-    ).single;
+    final directReplica = (await index.listArtifactReplicas(
+      directRecord!.effectiveArtifactId,
+    )).single;
+    final safReplica = (await index.listArtifactReplicas(
+      safRecord!.effectiveArtifactId,
+    )).single;
     expect(directReplica.storageRootId, merged.rootId);
     expect(safReplica.storageRootId, merged.rootId);
   });
 
-  test('storage-root alias merge keeps durable migration roots aligned', () async {
+  test(
+    'storage-root alias merge keeps durable migration roots aligned',
+    () async {
     final index = SqliteIndex.memory();
     await index.open();
     addTearDown(index.close);
@@ -1409,7 +1730,9 @@ void runCacheSchemaV2Tests() {
         pageId: 'page',
       ),
       sourceRevision: 'r1',
-      canonicalUri: Uri.parse('https://example.test/migration-root-merge.webp'),
+        canonicalUri: Uri.parse(
+          'https://example.test/migration-root-merge.webp',
+        ),
     );
     const artifactId = 'migration-root-merge-artifact';
     await index.put(
@@ -1444,14 +1767,19 @@ void runCacheSchemaV2Tests() {
       verifiedUs: 3,
     );
 
-    final afterReplica = (await index.listArtifactReplicas(artifactId)).single;
-    final migration = await index.getArtifactReplicaMigration(replica.replicaId);
+      final afterReplica = (await index.listArtifactReplicas(
+        artifactId,
+      )).single;
+      final migration = await index.getArtifactReplicaMigration(
+        replica.replicaId,
+      );
     expect(afterReplica.storageRootId, merged.rootId);
     expect(migration, isNotNull);
     expect(migration!.sourceStorageRootId, merged.rootId);
     expect(migration.destinationStorageRootId, merged.rootId);
     expect(migration.phase, ArtifactReplicaMigrationPhase.copying);
-  });
+    },
+  );
 
   test('access health changes do not alter root identity', () async {
     final index = SqliteIndex.memory();
@@ -1488,6 +1816,168 @@ void runCacheSchemaV2Tests() {
     expect(current.rootId, root.rootId);
   });
 
+  test(
+    'physical media projection rows roundtrip compact control-plane json',
+    () async {
+      final index = SqliteIndex.memory();
+      await index.open();
+      addTearDown(index.close);
+      const record = PhysicalMediaProjectionRecord(
+        exactKey: 'source\u0000comic\u0000chapter\u0000r1',
+        familyKey: 'family-1',
+        projectionJson: '{"intervals":[[0,8000,"segment",0]]}',
+        createdUs: 1,
+        touchedUs: 2,
+      );
+
+      await index.putPhysicalMediaProjection(record);
+
+      expect(
+        await index.getPhysicalMediaProjection(record.exactKey),
+        isNotNull,
+      );
+      final restored = await index.getPhysicalMediaProjection(record.exactKey);
+      expect(restored?.familyKey, record.familyKey);
+      expect(restored?.projectionJson, record.projectionJson);
+      expect(await index.listPhysicalMediaProjections(), hasLength(1));
+      await index.removePhysicalMediaProjection(record.exactKey);
+      expect(await index.getPhysicalMediaProjection(record.exactKey), isNull);
+    },
+  );
+
+  test(
+    'schema 14 backfills indexed logical page identity without changing DownloadId',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'cache_index_v14_logical_binding_migration_',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final path = '${temp.path}/cache.sqlite';
+      final historical = DownloadId(
+        content: const ContentId(
+          sourceId: 'venera:ehentai',
+          comicId: 'old-comic',
+          chapterId: 'old-chapter',
+          pageId: 'old-page-311',
+        ),
+        sourceRevision: 'single',
+        canonicalUri: Uri.parse('venera-resource:expired-provider-uri'),
+      );
+      final legacy = sql.sqlite3.open(path);
+      legacy.execute('''
+      CREATE TABLE cache_entry (
+        key TEXT NOT NULL PRIMARY KEY,
+        download_json TEXT NOT NULL,
+        state TEXT NOT NULL,
+        path TEXT NOT NULL,
+        bytes INTEGER NOT NULL,
+        checksum TEXT NOT NULL,
+        created_us INTEGER NOT NULL,
+        touched_us INTEGER NOT NULL,
+        pinned INTEGER NOT NULL DEFAULT 0,
+        checksum_algorithm TEXT NOT NULL DEFAULT 'crc32',
+        artifact_id TEXT NOT NULL DEFAULT '',
+        storage_root_id TEXT NOT NULL DEFAULT 'default'
+      )
+    ''');
+      legacy.execute(
+        'INSERT INTO cache_entry '
+        '(key, download_json, state, path, bytes, checksum, created_us, touched_us, '
+        'pinned, checksum_algorithm, artifact_id, storage_root_id) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        <Object?>[
+          historical.key,
+          jsonEncode(historical.toJson()),
+          'ready',
+          '/tmp/historical.bin',
+          77,
+          'abcd1234',
+          1,
+          2,
+          0,
+          'crc32',
+          'historical-artifact',
+          'default',
+        ],
+      );
+      legacy.execute('PRAGMA user_version = 14');
+      legacy.dispose();
+
+      final migrated = SqliteIndex(path);
+      await migrated.open();
+      final records = await migrated.listLogicalBindings(
+        content: historical.content,
+        sourceRevision: historical.sourceRevision,
+        state: CacheState.ready,
+      );
+      expect(records.map((record) => record.id), <DownloadId>[historical]);
+      await migrated.close();
+
+      final checked = sql.sqlite3.open(path);
+      addTearDown(checked.dispose);
+      expect(checked.select('PRAGMA user_version').single.values.single, 15);
+      final columns = checked
+          .select('PRAGMA table_info(cache_entry)')
+          .map((row) => row['name'])
+          .toSet();
+      expect(columns, containsAll(<String>['content_key', 'source_revision']));
+      expect(
+        checked.select(
+          "SELECT name FROM sqlite_master WHERE type='index' "
+          "AND name='cache_entry_logical_identity'",
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'schema 13 reaches current physical media and logical identity schema once',
+    () async {
+      final temp = await Directory.systemTemp.createTemp(
+        'cache_index_v13_projection_migration_',
+      );
+      addTearDown(() => temp.delete(recursive: true));
+      final path = '${temp.path}/cache.sqlite';
+      final seed = SqliteIndex(path);
+      await seed.open();
+      await seed.close();
+
+      final legacy = sql.sqlite3.open(path);
+      legacy.execute('DROP TABLE physical_media_projection');
+      legacy.execute('PRAGMA user_version = 13');
+      legacy.dispose();
+
+      final migrated = SqliteIndex(path);
+      await migrated.open();
+      await migrated.putPhysicalMediaProjection(
+        const PhysicalMediaProjectionRecord(
+          exactKey: 'exact',
+          familyKey: 'family',
+          projectionJson: '{}',
+          createdUs: 1,
+          touchedUs: 1,
+        ),
+      );
+      await migrated.close();
+
+      final checked = sql.sqlite3.open(path);
+      addTearDown(checked.dispose);
+      expect(checked.select('PRAGMA user_version').single.values.single, 15);
+      expect(
+        checked.select(
+          "SELECT name FROM sqlite_master WHERE type='table' "
+          "AND name='physical_media_projection'",
+        ),
+        hasLength(1),
+      );
+      expect(
+        checked.select('SELECT exact_key FROM physical_media_projection'),
+        hasLength(1),
+      );
+    },
+  );
+
   test('DownloadPlacement equality includes export page order', () {
     final now = DateTime.utc(2026, 9, 6);
     final origin = DownloadPlacement(
@@ -1506,5 +1996,4 @@ void runCacheSchemaV2Tests() {
       isNot(origin.copyWith(pageOrder: ComicPageOrder.chronological)),
     );
   });
-
 }

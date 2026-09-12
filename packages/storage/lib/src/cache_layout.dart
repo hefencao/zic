@@ -16,6 +16,9 @@ final class CacheLayout {
 
   Artifact artifactFor(DownloadId id) => _artifactForToken(tokenFor(id));
 
+  Artifact artifactForPhysical(PhysicalMediaId id) =>
+      _artifactForToken(tokenForPhysical(id));
+
   /// Returns the pre-v2 artifact location used by older cache roots. Recovery
   /// may probe this path for an indexed record, but new writes always use
   /// [artifactFor] so delimiter collisions cannot select the same filename.
@@ -23,6 +26,14 @@ final class CacheLayout {
       _artifactForToken(legacyTokenFor(id));
 
   String tokenFor(DownloadId id) => _fnv64(id.key);
+
+  /// Stable mutable-body token independent from provider identity.
+  ///
+  /// Exact fallback preserves the historical `DownloadId.key` token so
+  /// adopting the physical-id split does not move existing ordinary staging
+  /// files. Canonical media hashes its framed physical identity instead.
+  String tokenForPhysical(PhysicalMediaId id) =>
+      _fnv64(id.isExactFallback ? id.value : id.key);
 
   String legacyTokenFor(DownloadId id) => _fnv64(id.legacyKey);
 
