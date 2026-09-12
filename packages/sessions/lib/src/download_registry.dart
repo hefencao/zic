@@ -32,12 +32,49 @@ final class DownloadRegistry {
 
   final Map<DownloadId, DownloadSession> _sessions =
       <DownloadId, DownloadSession>{};
+  final Map<DownloadId, PhysicalMediaId> _physicalMediaBindings =
+      <DownloadId, PhysicalMediaId>{};
+  final Map<PhysicalMediaId, DownloadId> _physicalMediaAnchors =
+      <PhysicalMediaId, DownloadId>{};
   final Map<DownloadId, DownloadId> _physicalAliases =
       <DownloadId, DownloadId>{};
 
   Iterable<DownloadSession> get sessions => _sessions.values;
 
-  DownloadId resolvePhysicalId(DownloadId id) {
+  /// Publishes a direct exact-provider -> physical-media binding.
+  ///
+  /// This is intentionally not an alias to another DownloadId. Once an exact
+  /// page owns a live session it cannot be rebound to a different physical
+  /// body; late equivalence evidence must affect future generations only.
+  void bindPhysicalMedia({
+    required DownloadId id,
+    required PhysicalMediaId physicalId,
+  }) {
+    final existing = _physicalMediaBindings[id];
+    if (existing != null && existing != physicalId) {
+      throw StateError(
+        'cannot rebind ${id.key} from ${existing.key} to ${physicalId.key}',
+      );
+    }
+    final live = find(id);
+    if (live != null && live.physicalId != physicalId) {
+      throw StateError(
+        'cannot change physical media after session creation for ${id.key}',
+      );
+    }
+    _physicalMediaBindings[id] = physicalId;
+    _physicalMediaAnchors.putIfAbsent(physicalId, () => id);
+  }
+
+  PhysicalMediaId physicalMediaIdFor(DownloadId id) {
+    final direct = _physicalMediaBindings[id];
+    if (direct != null) return direct;
+    final legacyAnchor = _resolveLegacyAlias(id);
+    return _physicalMediaBindings[legacyAnchor] ??
+        PhysicalMediaId.exact(legacyAnchor);
+  }
+
+  DownloadId _resolveLegacyAlias(DownloadId id) {
     var current = id;
     final visited = <DownloadId>{id};
     while (true) {
@@ -50,10 +87,30 @@ final class DownloadRegistry {
     }
   }
 
+  DownloadId resolvePhysicalId(DownloadId id) {
+    final directMedia = _physicalMediaBindings[id];
+    if (directMedia != null) {
+      return _physicalMediaAnchors[directMedia] ?? id;
+    }
+    return _resolveLegacyAlias(id);
+  }
+
   DownloadSession? findExact(DownloadId id) => _sessions[id];
 
-  bool isPhysicalAlias(DownloadId id, DownloadId target) =>
-      id != target && resolvePhysicalId(id) == resolvePhysicalId(target);
+  bool hasDirectPhysicalMediaBinding(DownloadId id) =>
+      _physicalMediaBindings.containsKey(id);
+
+  bool sharesPhysicalMedia(DownloadId first, DownloadId second) =>
+      physicalMediaIdFor(first) == physicalMediaIdFor(second);
+
+  /// Legacy exact-id alias query. Direct canonical physical bindings are not
+  /// aliases and deliberately return false here even when they share media.
+  bool isPhysicalAlias(DownloadId id, DownloadId target) {
+    if (id == target) return false;
+    final left = _resolveLegacyAlias(id);
+    final right = _resolveLegacyAlias(target);
+    return left == right && (left != id || right != target);
+  }
 
   /// Binds an exact consumer identity to an already-existing physical session.
   ///
@@ -95,28 +152,34 @@ final class DownloadRegistry {
   }
 
   DownloadSession get(DownloadId id) {
-    final physicalId = resolvePhysicalId(id);
+    final physicalId = physicalMediaIdFor(id);
+    final physicalAnchor = resolvePhysicalId(id);
     return _sessions.putIfAbsent(
-      physicalId,
+      physicalAnchor,
       () => _createSession(
-        physicalId,
-        artifact: layoutFor(physicalId).artifactFor(physicalId),
-        storageRootId: layoutFor(physicalId).root,
+        physicalAnchor,
+        physicalMediaId: physicalId,
+        artifact: layoutFor(physicalAnchor).artifactForPhysical(physicalId),
+        storageRootId: layoutFor(physicalAnchor).root,
       ),
     );
   }
 
   DownloadSession _createSession(
-    DownloadId physicalId, {
+    DownloadId physicalAnchor, {
+    PhysicalMediaId? physicalMediaId,
     required Artifact artifact,
     required String storageRootId,
   }) {
+    final effectivePhysicalId =
+        physicalMediaId ?? PhysicalMediaId.exact(physicalAnchor);
     final session = DownloadSession(
-      id: physicalId,
+      id: physicalAnchor,
+      physicalId: effectivePhysicalId,
       artifact: artifact,
       clock: clock,
       traceSink: traceSink,
-      sessionId: 'download:${layout.tokenFor(physicalId)}',
+      sessionId: 'download:${layout.tokenForPhysical(effectivePhysicalId)}',
       index: index,
       storageRootId: storageRootId,
       initiallyDemanded: false,
@@ -296,6 +359,8 @@ final class DownloadRegistry {
       await session.dispose();
     }
     _sessions.clear();
+    _physicalMediaBindings.clear();
+    _physicalMediaAnchors.clear();
     _physicalAliases.clear();
   }
 }

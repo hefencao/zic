@@ -167,6 +167,7 @@ final class WriterLease {
 final class DownloadSnapshot {
   const DownloadSnapshot({
     required this.id,
+    this.physicalId,
     required this.state,
     required this.epoch,
     required this.committedLength,
@@ -190,6 +191,7 @@ final class DownloadSnapshot {
   });
 
   final DownloadId id;
+  final PhysicalMediaId? physicalId;
   final DownloadState state;
   final SourceEpoch epoch;
   final int committedLength;
@@ -232,6 +234,7 @@ final class DownloadSnapshot {
 final class DownloadSession {
   DownloadSession({
     required this.id,
+    PhysicalMediaId? physicalId,
     required Artifact artifact,
     required this.clock,
     this.traceSink = const NoopTraceSink(),
@@ -239,12 +242,17 @@ final class DownloadSession {
     CacheIndex? index,
     String storageRootId = 'default',
     bool initiallyDemanded = true,
-  })  : _artifact = artifact,
+  })  : physicalId = physicalId ?? PhysicalMediaId.exact(id),
+        _artifact = artifact,
         _index = index,
         _storageRootId = storageRootId,
         _legacyDemanded = initiallyDemanded;
 
+  /// Compatibility/exact provider anchor for this physical generation.
+  /// Physical ownership is [physicalId]; transport opens use the active claim's
+  /// exact DownloadId rather than assuming this anchor is the provider.
   final DownloadId id;
+  final PhysicalMediaId physicalId;
   Artifact _artifact;
   final MonoClock clock;
   final TraceSink traceSink;
@@ -412,6 +420,7 @@ final class DownloadSession {
 
   DownloadSnapshot get snapshot => DownloadSnapshot(
         id: id,
+        physicalId: physicalId,
         state: _state,
         epoch: _epoch,
         committedLength: committedLength,
@@ -940,9 +949,10 @@ final class DownloadSession {
     _expectIngressLength(totalLength);
     await artifact.writeMeta(<String, Object?>{
       'version': 3,
+      'physicalMedia': physicalId.toJson(),
       'downloadKey': id.key,
       'download': id.toJson(),
-      'uri': id.canonicalUri.toString(),
+      'uri': (validatorRequestUri ?? id.canonicalUri).toString(),
       'sourceRevision': id.sourceRevision,
       'validators': validators.toJson(),
       if (_validatorRequestUri != null)
@@ -1930,8 +1940,18 @@ final class DownloadSession {
       // reset and can otherwise repopulate a logically deleted row during
       // resetIfIdle(removeCacheRecord: false).
       await _enqueueCacheMutation<void>(() async {
+        final cache = index;
+        if (!physicalId.isExactFallback && cache is PhysicalPartialIndex) {
+          await (cache as PhysicalPartialIndex).removePhysicalPartial(physicalId);
+        }
+        if (deleteFinalArtifact &&
+            !physicalId.isExactFallback &&
+            cache is PhysicalMediaArtifactIndex) {
+          await (cache as PhysicalMediaArtifactIndex)
+              .removePhysicalMediaArtifactBinding(physicalId);
+        }
         if (removeCacheRecord) {
-          await index?.remove(id.key);
+          await cache?.remove(id.key);
         }
       });
     } on Object catch (error) {
@@ -1987,7 +2007,16 @@ final class DownloadSession {
       _sourceCanvasHeight = null;
       _resetPlayablePrefixEvidence();
       await _enqueueCacheMutation<void>(() async {
-        await index?.remove(id.key);
+        final cache = index;
+        if (!physicalId.isExactFallback && cache is PhysicalPartialIndex) {
+          await (cache as PhysicalPartialIndex).removePhysicalPartial(physicalId);
+        }
+        if (!physicalId.isExactFallback &&
+            cache is PhysicalMediaArtifactIndex) {
+          await (cache as PhysicalMediaArtifactIndex)
+              .removePhysicalMediaArtifactBinding(physicalId);
+        }
+        await cache?.remove(id.key);
       });
       _recordTrace(
         TraceEventKind.downloadState,
@@ -2777,6 +2806,17 @@ final class DownloadSession {
   }
 
   bool _metaMatches(Map<String, Object?> meta) {
+    final rawPhysical = meta['physicalMedia'];
+    if (rawPhysical is Map) {
+      try {
+        return PhysicalMediaId.fromJson(
+              Map<String, Object?>.from(rawPhysical),
+            ) ==
+            physicalId;
+      } on Object {
+        return false;
+      }
+    }
     if (meta['downloadKey'] == id.key) {
       return true;
     }
@@ -2792,6 +2832,18 @@ final class DownloadSession {
   }
 
   bool _metaExplicitlyClaimsDifferentOwner(Map<String, Object?> meta) {
+    final rawPhysical = meta['physicalMedia'];
+    if (rawPhysical is Map) {
+      try {
+        return PhysicalMediaId.fromJson(
+              Map<String, Object?>.from(rawPhysical),
+            ) !=
+            physicalId;
+      } on Object {
+        // Malformed metadata is not enough evidence to delete media bytes.
+        return false;
+      }
+    }
     final key = meta['downloadKey'];
     if (key == id.key) return false;
     final raw = meta['download'];
@@ -2826,6 +2878,34 @@ final class DownloadSession {
           return;
         }
         final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+        if (state == CacheState.partial &&
+            !physicalId.isExactFallback &&
+            cache is PhysicalPartialIndex) {
+          final physicalCache = cache as PhysicalPartialIndex;
+          final existingPhysical =
+              await physicalCache.getPhysicalPartial(physicalId);
+          if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
+            return;
+          }
+          final writtenPhysical = PhysicalPartialRecord(
+            id: physicalId,
+            path: artifact.partialPath,
+            bytes: artifact.committedLength,
+            checksum: artifact.checksum,
+            createdUs: existingPhysical?.createdUs ?? now,
+            touchedUs: now,
+            checksumAlgorithm: existingPhysical?.checksumAlgorithm ?? 'crc32',
+            storageRootId: storageRootId,
+          );
+          await physicalCache.putPhysicalPartial(writtenPhysical);
+          if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
+            final current = await physicalCache.getPhysicalPartial(physicalId);
+            if (current == writtenPhysical) {
+              await (cache as PhysicalPartialIndex).removePhysicalPartial(physicalId);
+            }
+          }
+          return;
+        }
         final existing = await cache.get(id.key);
         if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
           return;
@@ -2847,6 +2927,22 @@ final class DownloadSession {
           storageRootId: storageRootId,
         );
         await cache.put(written);
+        if (state == CacheState.ready &&
+            !physicalId.isExactFallback &&
+            cache is PhysicalMediaArtifactIndex) {
+          await (cache as PhysicalMediaArtifactIndex)
+              .putPhysicalMediaArtifactBinding(
+            id: physicalId,
+            artifactId: written.effectiveArtifactId,
+            createdUs: written.createdUs,
+            touchedUs: written.touchedUs,
+          );
+          if (_epoch == expectedEpoch &&
+              _state != DownloadState.disposed &&
+              cache is PhysicalPartialIndex) {
+            await (cache as PhysicalPartialIndex).removePhysicalPartial(physicalId);
+          }
+        }
         if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
           // The lifecycle boundary can advance while the backend put is in
           // flight. A pre-put epoch check cannot prevent that stale write;
@@ -2855,6 +2951,16 @@ final class DownloadSession {
           final current = await cache.get(id.key);
           if (current != null && _sameCacheRecord(current, written)) {
             await cache.remove(id.key);
+          }
+          if (!physicalId.isExactFallback &&
+              cache is PhysicalMediaArtifactIndex) {
+            final currentPhysical =
+                await (cache as PhysicalMediaArtifactIndex)
+                    .getPhysicalMediaArtifact(physicalId);
+            if (currentPhysical?.artifactId == written.effectiveArtifactId) {
+              await (cache as PhysicalMediaArtifactIndex)
+              .removePhysicalMediaArtifactBinding(physicalId);
+            }
           }
         }
       });

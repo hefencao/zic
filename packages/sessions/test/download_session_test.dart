@@ -341,6 +341,137 @@ void main() {
     expect(registry.resolvePhysicalId(logical), first.id);
   });
 
+  test('canonical physical binding joins exact versions before session creation',
+      () async {
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/canonical-registry'),
+      clock: FakeMonoClock(),
+    );
+    addTearDown(registry.dispose);
+    DownloadId idWithPage(String pageId) => DownloadId(
+          content: ContentId(
+            sourceId: 'source',
+            comicId: 'comic-$pageId',
+            chapterId: 'chapter-$pageId',
+            pageId: pageId,
+          ),
+          sourceRevision: 'revision-$pageId',
+          canonicalUri: Uri.parse('https://example.test/$pageId.webp'),
+        );
+    final first = idWithPage('version-a');
+    final second = idWithPage('version-b');
+    final physical = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000segment\u00007',
+    );
+
+    registry.bindPhysicalMedia(id: first, physicalId: physical);
+    registry.bindPhysicalMedia(id: second, physicalId: physical);
+    final firstSession = registry.get(first);
+    final secondSession = registry.get(second);
+    await firstSession.restore();
+
+    expect(secondSession, same(firstSession));
+    expect(firstSession.physicalId, physical);
+    expect(firstSession.id, first);
+    expect(
+      firstSession.artifact.partialPath,
+      registry.layout.artifactForPhysical(physical).partialPath,
+    );
+    final writer = firstSession.acquireWriter();
+    expect(secondSession.hasWriter, isTrue);
+    expect(secondSession.acquireWriter, throwsA(isA<Failure>()));
+    await firstSession.pause(writer);
+  });
+
+  test('canonical partial and promoted artifact survive without exact carrier',
+      () async {
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final exact = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'version-a',
+        chapterId: 'chapter-a',
+        pageId: 'page-a',
+      ),
+      sourceRevision: 'revision-a',
+      canonicalUri: Uri.parse('https://example.test/a.webp'),
+    );
+    final physical = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000segment\u000011',
+    );
+    final layout = CacheLayout('${temp.path}/canonical-persistence');
+    final canonical = DownloadSession(
+      id: exact,
+      physicalId: physical,
+      artifact: layout.artifactForPhysical(physical),
+      clock: FakeMonoClock(),
+      index: index,
+      storageRootId: layout.root,
+    );
+    addTearDown(() async {
+      if (canonical.state != DownloadState.disposed) {
+        await canonical.dispose();
+      }
+    });
+    await canonical.restore();
+    await canonical.bindResponse(
+      validators: const Validators(),
+      totalLength: 4,
+    );
+    final writer = canonical.acquireWriter();
+    await canonical.append(writer, 0, <int>[1, 2, 3, 4]);
+    await canonical.pause(writer);
+
+    expect(await index.get(exact.key), isNull);
+    expect(
+      (await index.getPhysicalPartial(physical))?.path,
+      canonical.artifact.partialPath,
+    );
+
+    final sealingWriter = canonical.acquireWriter();
+    await canonical.seal(sealingWriter, expectedLength: 4);
+    await canonical.promote();
+    final exactReady = await index.get(exact.key);
+    expect(exactReady?.state, CacheState.ready);
+    expect(await index.getPhysicalPartial(physical), isNull);
+    final physicalReady = await index.getPhysicalMediaArtifact(physical);
+    expect(physicalReady?.artifactId, exactReady?.effectiveArtifactId);
+
+    await index.remove(exact.key);
+    expect(await index.get(exact.key), isNull);
+    expect(
+      (await index.getPhysicalMediaArtifact(physical))?.artifactId,
+      physicalReady?.artifactId,
+    );
+
+    final otherExact = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'version-b',
+        chapterId: 'chapter-b',
+        pageId: 'page-b',
+      ),
+      sourceRevision: 'revision-b',
+      canonicalUri: Uri.parse('https://example.test/b.webp'),
+    );
+    final reopened = DownloadSession(
+      id: otherExact,
+      physicalId: physical,
+      artifact: layout.artifactForPhysical(physical),
+      clock: FakeMonoClock(),
+      index: index,
+      storageRootId: layout.root,
+    );
+    addTearDown(() async {
+      if (reopened.state != DownloadState.disposed) await reopened.dispose();
+    });
+    await reopened.restore();
+    expect(reopened.state, DownloadState.promoted);
+    expect(reopened.committedLength, 4);
+  });
+
   test('reset rejects late chunks from the old epoch', () async {
     final writer = session.acquireWriter();
     await session.append(writer, 0, <int>[1, 2]);

@@ -1753,6 +1753,10 @@ final class DownloadTransferOwner {
           'error': '$prepareError',
           'committedLength': session.committedLength,
           'demanded': session.demanded,
+          'physicalMediaKind': session.physicalId.kind.name,
+          'physicalMediaKey': session.physicalId.key,
+          'canonicalPhysicalOwner': !session.physicalId.isExactFallback,
+          'physicalAnchorIsRequestedId': session.id == id,
           'prepareMicros':
               (clock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
         },
@@ -1806,6 +1810,10 @@ final class DownloadTransferOwner {
           if (recoveryError != null) 'recoveryError': '$recoveryError',
           'committedLength': session.committedLength,
           'demanded': session.demanded,
+          'physicalMediaKind': session.physicalId.kind.name,
+          'physicalMediaKey': session.physicalId.key,
+          'canonicalPhysicalOwner': !session.physicalId.isExactFallback,
+          'physicalAnchorIsRequestedId': session.id == id,
           'prepareMicros':
               (clock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
         },
@@ -1827,6 +1835,10 @@ final class DownloadTransferOwner {
         'state': session.state.name,
         'committedLength': session.committedLength,
         'demanded': session.demanded,
+        'physicalMediaKind': session.physicalId.kind.name,
+        'physicalMediaKey': session.physicalId.key,
+        'canonicalPhysicalOwner': !session.physicalId.isExactFallback,
+        'physicalAnchorIsRequestedId': session.id == id,
         'prepareMicros':
             (clock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
         'networkAdmissionRequired': !completedLocally && session.demanded,
