@@ -597,7 +597,14 @@ final class DownloadJob {
           await Future<void>.value();
           session.requireRun(runLease);
         }
-        session.sealResidentImmutableIngress();
+        final residentScheme = _requestUri.scheme.toLowerCase();
+        session.sealResidentImmutableIngress(
+          deferFutureReaderIngress:
+              response.bodyAuthority == ByteResponseBodyAuthority.artifactCache ||
+              residentScheme == 'file' ||
+              residentScheme == 'content' ||
+              residentScheme == 'asset',
+        );
         return;
       } catch (error) {
         await _cancelIteratorAndDiscard(

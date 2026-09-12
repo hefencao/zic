@@ -1821,6 +1821,66 @@ void main() {
     sources.dispose();
   });
 
+  test('sealed resident source publishes probe before full late Reader replay',
+      () async {
+    final bytes = <int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.filled((1024 * 1024) - 12, 1),
+    ];
+    session.beginResidentImmutableIngress(
+      validators: const Validators(),
+      totalLength: bytes.length,
+    );
+    session.appendResidentImmutableIngress(0, bytes);
+    session.sealResidentImmutableIngress(
+      deferFutureReaderIngress: true,
+    );
+
+    expect(session.residentBodyBacked, isTrue);
+    expect(session.residentIngressDeferred, isTrue);
+
+    final requestedRanges = <(int, int)>[];
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 2 * 1024 * 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-resident-probe-first',
+      residentReplayRangeSource: (physical, start, endExclusive) async {
+        expect(physical, same(session));
+        requestedRanges.add((start, endExclusive));
+        return Stream<List<int>>.value(bytes.sublist(start, endExclusive));
+      },
+    );
+
+    final projection = ingresses.get(session);
+    expect(projection.snapshot.length, 0);
+    await ingresses.settled(session.id);
+
+    expect(
+      requestedRanges,
+      <(int, int)>[(0, 256 * 1024)],
+    );
+    expect(projection.snapshot.sourceReady, isTrue);
+    expect(projection.snapshot.length, 256 * 1024);
+    expect(projection.snapshot.sealed, isFalse);
+
+    await ingresses.ensureResidentPrefix(session, 512 * 1024);
+    expect(
+      requestedRanges,
+      <(int, int)>[
+        (0, 256 * 1024),
+        (256 * 1024, 512 * 1024),
+      ],
+    );
+    expect(projection.snapshot.length, 512 * 1024);
+    expect(projection.snapshot.sealed, isFalse);
+
+    ingresses.dispose();
+    sources.dispose();
+  });
+
   test('disposing an ingress registry cancels resident replay attachment', () async {
     final bytes = <int>[...'RIFF....WEBP'.codeUnits, 1, 2, 3, 4, 5, 6];
     session.beginResidentImmutableIngress(

@@ -1177,7 +1177,9 @@ final class DownloadSession {
     _requireEpoch(epoch);
   }
 
-  DownloadSnapshot sealResidentImmutableIngress() {
+  DownloadSnapshot sealResidentImmutableIngress({
+    bool deferFutureReaderIngress = false,
+  }) {
     _requireNotDisposed();
     if (!_residentBodyBacked || _state != DownloadState.receiving) {
       throw const Failure(
@@ -1204,12 +1206,21 @@ final class DownloadSession {
     _sealIngressProjections(epoch);
     _requireEpoch(epoch);
     _contentKind = contentKind;
+    // The response has now been consumed to one complete immutable authority.
+    // Existing Reader projections already own their live source and remain
+    // untouched. Future Reader attachments may instead hydrate this immutable
+    // body by exact ranges, avoiding a whole-body replay before frame 0. The
+    // caller opts in only when its composition guarantees resident range replay.
+    if (deferFutureReaderIngress) {
+      _residentIngressDeferred = true;
+    }
     _state = DownloadState.promoted;
     _flushCommittedTrace();
     _recordTrace(TraceEventKind.artifactPromoted, <String, Object?>{
       'length': committedLength,
       'cacheResident': true,
       'residentBodyBacked': true,
+      'residentIngressDeferred': _residentIngressDeferred,
       if (residentBodyAuthority != null)
         'residentBodyAuthority': residentBodyAuthority!.name,
       if (residentSource != null) 'residentSource': residentSource,

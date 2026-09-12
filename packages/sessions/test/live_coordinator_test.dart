@@ -2780,6 +2780,11 @@ void main() {
         expect(identical(physical, downloads.get(id)), isTrue);
         return source.openRead(0, endExclusive);
       },
+      residentReplayRangeSource:
+          (physical, start, endExclusive) async {
+        expect(identical(physical, downloads.get(id)), isTrue);
+        return source.openRead(start, endExclusive);
+      },
     );
     final decodes = DecodeRegistry(
       downloads: downloads,
