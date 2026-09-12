@@ -56,6 +56,55 @@ void main() {
     expect(backend.values[id], bytes);
   });
 
+  test('canonical physical media is bound automatically after promotion',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-promoted-cache-physical-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'version-a',
+        chapterId: 'chapter-a',
+        pageId: 'page-a',
+      ),
+      sourceRevision: 'revision-a',
+      canonicalUri: Uri.parse('memory://physical-promoted-page'),
+    );
+    final physical = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000segment\u00005',
+    );
+    final backend = _RecordingArtifactStore();
+    final cache = ArtifactCacheManager(backend: backend);
+    final handoff = PromotedArtifactCacheHandoff(cache: cache);
+    final registry = DownloadRegistry(
+      layout: CacheLayout(directory.path),
+      clock: SystemClock(),
+      onSessionCreated: handoff.observe,
+    );
+    addTearDown(() async {
+      handoff.detach();
+      await registry.dispose();
+    });
+    registry.bindPhysicalMedia(id: id, physicalId: physical);
+    final session = registry.get(id);
+    final bytes = Uint8List.fromList(<int>[2, 7, 1, 8]);
+    final transport = LoaderTransport(<Uri, LoaderTransportSource>{
+      id.canonicalUri: LoaderTransportSource(
+        revision: 'fixture-a',
+        loadBytes: () async => bytes,
+      ),
+    });
+
+    await DownloadJob(transport: transport, session: session).run();
+    await handoff.drain(<DownloadSession>[session]);
+
+    expect(backend.values[id], bytes);
+    expect(backend.physicalSources[physical], id);
+    expect((await cache.openPhysicalArtifact(physical))?.length, bytes.length);
+  });
+
   test('a new physical epoch receives a fresh automatic handoff', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-promoted-cache-handoff-epoch-',
@@ -418,8 +467,11 @@ void main() {
 
 }
 
-final class _RecordingArtifactStore implements ArtifactCacheBackend {
+final class _RecordingArtifactStore
+    implements ArtifactCacheBackend, PhysicalArtifactCacheBackend {
   final Map<DownloadId, Uint8List> values = <DownloadId, Uint8List>{};
+  final Map<PhysicalMediaId, DownloadId> physicalSources =
+      <PhysicalMediaId, DownloadId>{};
 
   @override
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
@@ -428,6 +480,33 @@ final class _RecordingArtifactStore implements ArtifactCacheBackend {
     return _entry(bytes);
   }
 
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openPhysicalArtifact(
+    PhysicalMediaId id,
+  ) async {
+    final source = physicalSources[id];
+    if (source == null) return null;
+    final bytes = values[source];
+    return bytes == null ? null : _entry(bytes);
+  }
+
+  @override
+  Future<bool> bindPhysicalArtifact({
+    required PhysicalMediaId physicalId,
+    required DownloadId sourceId,
+  }) async {
+    if (!values.containsKey(sourceId)) return false;
+    final existing = physicalSources[physicalId];
+    if (existing != null) return existing == sourceId;
+    physicalSources[physicalId] = sourceId;
+    return true;
+  }
+
+  @override
+  Future<void> invalidatePhysicalArtifact(PhysicalMediaId id) async {
+    physicalSources.remove(id);
+  }
 
   @override
   Future<void> storePromotedArtifact({

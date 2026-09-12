@@ -7,6 +7,7 @@ import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
 import 'artifact_cache_manager.dart';
+import 'artifact_cache_store.dart';
 
 typedef ArtifactCacheHandoffError = void Function(
   Object error,
@@ -124,11 +125,13 @@ final class PromotedArtifactCacheHandoff {
       if (pending == null) break;
       await pending;
     }
+    final targetId = exactId ?? session.id;
     await _commitTarget(
       session,
-      exactId ?? session.id,
+      targetId,
       requireExactDurableBody: true,
     );
+    await _bindCanonicalPhysicalAuthority(session, targetId);
   }
 
   void detach() {
@@ -165,7 +168,9 @@ final class PromotedArtifactCacheHandoff {
       final targets = requiredExactTargets?.call(session).toSet() ??
           <DownloadId>{};
       if (targets.isEmpty) {
-        await _commitTarget(session, defaultTarget?.call(session) ?? session.id);
+        final target = defaultTarget?.call(session) ?? session.id;
+        await _commitTarget(session, target);
+        await _bindCanonicalPhysicalAuthority(session, target);
       } else {
         for (final target in targets) {
           await _commitTarget(
@@ -173,6 +178,7 @@ final class PromotedArtifactCacheHandoff {
             target,
             requireExactDurableBody: true,
           );
+          await _bindCanonicalPhysicalAuthority(session, target);
         }
       }
       if (session.state == DownloadState.promoted && session.epoch == epoch) {
@@ -196,6 +202,36 @@ final class PromotedArtifactCacheHandoff {
           _completedAutomaticCommits[id] != session.epoch) {
         _submit(session);
       }
+    }
+  }
+
+  Future<void> _bindCanonicalPhysicalAuthority(
+    DownloadSession session,
+    DownloadId targetId,
+  ) async {
+    final physicalId = session.physicalId;
+    if (physicalId.isExactFallback ||
+        cache.backend is! PhysicalArtifactCacheBackend ||
+        session.state != DownloadState.promoted) {
+      return;
+    }
+    var sourceId = targetId;
+    var durable = await cache.lookupAuthoritative(targetId);
+    if (durable?.durable != true) {
+      final reusable = await cache.lookup(targetId);
+      if (reusable?.durable != true) return;
+      sourceId = reusable!.storageId;
+      durable = reusable;
+    }
+    final bound = await cache.bindPhysicalArtifact(
+      physicalId: physicalId,
+      sourceId: sourceId,
+    );
+    if (!bound) {
+      throw StateError(
+        'canonical physical media ${physicalId.key} conflicts with durable '
+        'artifact authority for ${sourceId.key}',
+      );
     }
   }
 
