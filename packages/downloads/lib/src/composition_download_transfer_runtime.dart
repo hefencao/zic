@@ -74,9 +74,11 @@ final class CompositionDownloadTransferRuntime {
         clock: clock,
         traceSink: traceHub,
         sessionId: 'composition-transfer-owner',
-        residentReplaySource: (session, endExclusive) => owner.openResidentReplay(
-          session.id,
-          endExclusive: endExclusive,
+        residentReplaySource: (session, endExclusive) => _openResidentReplay(
+          session,
+          0,
+          endExclusive,
+          priority: () => session.effectivePriority,
         ),
         requiredExactTargets: (session) =>
             owner.requiredExactDurableTargets(session.id),
@@ -939,10 +941,9 @@ final class CompositionDownloadTransferRuntime {
     final handoff = artifactCacheHandoff;
     final cache = artifactCacheManager;
     if (handoff == null || cache == null) return;
-    if (id != session.id && !registry.isPhysicalAlias(id, session.id)) {
+    if (id != session.id && !registry.sharesPhysicalMedia(id, session.id)) {
       throw StateError(
-        'exact durable materialization requires an acquire-time verified '
-        'physical alias',
+        'exact durable materialization requires shared physical media authority',
       );
     }
     await handoff.persist(session, exactId: id);

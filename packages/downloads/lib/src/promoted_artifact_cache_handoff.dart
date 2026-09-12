@@ -340,6 +340,27 @@ final class PromotedArtifactCacheHandoff {
         return;
       }
 
+      if (requireExactDurableBody && !session.physicalId.isExactFallback) {
+        final bound = await cache.materializeExactFromPhysical(
+          physicalId: session.physicalId,
+          targetId: targetId,
+        );
+        if (bound) {
+          if (session.state != DownloadState.promoted ||
+              session.epoch != expectedEpoch) {
+            return;
+          }
+          _recordCommit(
+            session,
+            targetId: targetId,
+            action: 'bound-required-exact-physical',
+            bytes: expectedLength,
+            startedAtMicros: startedAtMicros,
+          );
+          return;
+        }
+      }
+
       final lookup = await cache.lookup(targetId);
       if (lookup != null && lookup.entry.length == expectedLength) {
         if (lookup.storageId != targetId &&
@@ -402,13 +423,6 @@ final class PromotedArtifactCacheHandoff {
           startedAtMicros: startedAtMicros,
         );
         return;
-      }
-      if (session.residentBodyAuthority ==
-          ByteResponseBodyAuthority.artifactCache) {
-        throw StateError(
-          'durable artifact-cache authority disappeared before persistence for '
-          '${session.id.key}',
-        );
       }
       final replay = residentReplaySource;
       if (replay == null) {

@@ -1,10 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
-import 'package:test/test.dart';
 import 'package:downloads/downloads.dart';
+import 'package:test/test.dart';
 
 ImportedLibraryEntry _entry(
   int chapter, {
@@ -149,6 +150,136 @@ void main() {
       (job) => job.phase == WholeComicQueuePhase.complete,
     );
     expect(complete.completedChapters, 3);
+  });
+
+  test(
+      'whole-comic canonical cache materializes exact pinned chapter without network',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-whole-canonical-owner-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    var sourceCalls = 0;
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        loadBytes: (_, __) async {
+          sourceCalls++;
+          return bytes;
+        },
+      ),
+    );
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:queue-canonical-owner',
+        displayName: '第 1 话',
+        sourceId: 'queue-source',
+        comicId: 'queue-comic',
+        comicTitle: '队列漫画',
+        chapterId: 'queue-chapter-1',
+        sourceRevision: 'queue-r1',
+        sequence: 1,
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'venera-resource:queue-canonical-current',
+            pageId: 'queue-page-1-1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: bytes.length,
+          ),
+        ],
+      ),
+    );
+    final manifest = entry.chapter.toManifest();
+    final page = manifest.pages.single;
+    final currentId = readerPageDownloadId(manifest, page);
+    final oldId = DownloadId(
+      content: const ContentId(
+        sourceId: 'queue-source',
+        comicId: 'queue-old-comic',
+        chapterId: 'queue-old-chapter',
+        pageId: 'queue-old-page',
+      ),
+      sourceRevision: 'queue-old-r1',
+      canonicalUri: Uri.parse('venera-resource:queue-canonical-old'),
+      pageIndexHint: 0,
+    );
+    final projection = VersionChapterCanonicalProjection(
+      familyId: const VersionFamilyId('queue-family'),
+      canonicalChapterId: const CanonicalChapterId('queue-canonical-chapter'),
+      sourceId: manifest.sourceId,
+      comicId: manifest.comicId,
+      chapterId: manifest.chapter.chapterId,
+      sourceRevision: manifest.chapter.sourceRevision,
+      pageCount: 1,
+      intervals: const <CanonicalMediaBindingInterval>[
+        CanonicalMediaBindingInterval(
+          exactStart: 0,
+          exactEndExclusive: 1,
+          segmentId: CanonicalMediaSegmentId('queue-shared-segment'),
+          segmentStart: 0,
+        ),
+      ],
+    );
+    final physicalId = PhysicalMediaId.canonical(
+      projection.coordinateForPageIndex(0).stableKey,
+    );
+    await service.artifactStore.persistCanonicalMediaProjection(projection);
+    await service.storePromotedArtifact(id: oldId, bytes: bytes);
+    expect(
+      await service.artifactCacheManager.bindPhysicalArtifact(
+        physicalId: physicalId,
+        sourceId: oldId,
+      ),
+      isTrue,
+    );
+    await service.invalidateArtifact(oldId);
+    service.transferRuntime.replaceCanonicalMediaAuthorityScope(
+      'whole-comic-canonical-test',
+      <CanonicalMediaChapterAuthority>[
+        CanonicalMediaChapterAuthority(
+          manifest: manifest,
+          projection: projection,
+          activeProjectionRanges: const <CanonicalMediaActiveRange>[
+            CanonicalMediaActiveRange(start: 0, endExclusive: 1),
+          ],
+        ),
+      ],
+    );
+    expect(await service.artifactStore.index.get(currentId.key), isNull);
+    expect(sourceCalls, 0);
+
+    final queue = WholeComicDownloadQueue(downloads: service);
+    addTearDown(queue.close);
+    await queue.ready;
+    await queue.enqueue(
+      sourceId: 'queue-source',
+      comicId: 'queue-comic',
+      comicTitle: '队列漫画',
+      chapters: <ImportedLibraryEntry>[entry],
+    );
+    final complete = await _waitForJob(
+      queue,
+      (job) => job.phase == WholeComicQueuePhase.complete,
+    );
+
+    expect(complete.completedChapters, 1);
+    expect(complete.completedPages, 1);
+    expect(sourceCalls, 0);
+    final downloaded = await service.inspect(entry);
+    expect(downloaded.isComplete, isTrue);
+    expect(downloaded.exactCompletedPages, 1);
+    expect(downloaded.pinnedPages, 1);
+    final exact = await service.artifactStore.index.get(currentId.key);
+    expect(exact, isNotNull);
+    expect(exact!.pinned, isTrue);
+    expect(await service.artifactCacheManager.openPhysicalArtifact(physicalId),
+        isNotNull);
   });
 
   test('whole-comic snapshot projects live page progress', () async {

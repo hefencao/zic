@@ -10659,6 +10659,7 @@ final class PersistentChapterDownloadService
         ),
         sourceRevision: manifest.chapter.sourceRevision,
         canonicalUri: page.uri,
+        pageIndexHint: page.index,
       );
 
   void _requireOpen() {

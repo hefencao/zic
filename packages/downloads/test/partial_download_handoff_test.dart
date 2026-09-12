@@ -110,6 +110,263 @@ void main() {
   });
 
   test(
+    'canonical physical artifact restores before exact or equivalent carrier lookup',
+    () async {
+      final durableRoot = await Directory.systemTemp.createTemp(
+        'physical-ready-durable-',
+      );
+      final hotRoot = await Directory.systemTemp.createTemp(
+        'physical-ready-hot-',
+      );
+      addTearDown(() async {
+        await durableRoot.delete(recursive: true);
+        await hotRoot.delete(recursive: true);
+      });
+      DownloadId idFor(String version) => DownloadId(
+        content: ContentId(
+          sourceId: 'source',
+          comicId: 'comic-$version',
+          chapterId: 'chapter-$version',
+          pageId: 'page-$version',
+        ),
+        sourceRevision: 'revision-$version',
+        canonicalUri: Uri.parse('https://example.test/$version.webp'),
+      );
+      final first = idFor('a');
+      final second = idFor('b');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000019',
+      );
+      final bytes = Uint8List.fromList(<int>[
+        0x52,
+        0x49,
+        0x46,
+        0x46,
+        0x08,
+        0x00,
+        0x00,
+        0x00,
+        0x57,
+        0x45,
+        0x42,
+        0x50,
+        0x56,
+        0x50,
+        0x38,
+        0x20,
+      ]);
+      final store = await PersistentDownloadArtifactStore.open(
+        durableRoot.path,
+      );
+      final cache = ArtifactCacheManager(backend: store);
+      final hot = DownloadRegistry(
+        layout: CacheLayout(hotRoot.path),
+        clock: SystemClock(),
+      );
+      addTearDown(() async {
+        await hot.dispose();
+        await store.close();
+      });
+      await cache.storePromotedArtifact(id: first, bytes: bytes);
+      expect(
+        await cache.bindPhysicalArtifact(physicalId: physical, sourceId: first),
+        isTrue,
+      );
+      await store.index.remove(first.key);
+      hot.bindPhysicalMedia(id: second, physicalId: physical);
+      final session = hot.get(second);
+      var candidateLookups = 0;
+      final handoff = PartialDownloadHandoff(
+        store: store,
+        physicalArtifactCache: cache,
+        equivalentCandidates: (_) {
+          candidateLookups++;
+          return <DownloadId>[first];
+        },
+      );
+
+      await handoff.restoreInto(session);
+
+      expect(session.state, DownloadState.promoted);
+      expect(session.residentBodyBacked, isTrue);
+      expect(session.physicalId, physical);
+      expect(session.id, second);
+      expect(session.committedLength, bytes.lengthInBytes);
+      expect(candidateLookups, 0);
+    },
+  );
+
+  test(
+    'canonical physical restore backfills a historical provider URI through a verified direct candidate',
+    () async {
+      final durableRoot = await Directory.systemTemp.createTemp(
+        'physical-uri-backfill-durable-',
+      );
+      final hotRoot = await Directory.systemTemp.createTemp(
+        'physical-uri-backfill-hot-',
+      );
+      addTearDown(() async {
+        await durableRoot.delete(recursive: true);
+        await hotRoot.delete(recursive: true);
+      });
+      final oldContent = ContentId(
+        sourceId: 'source',
+        comicId: 'old-comic',
+        chapterId: 'old-chapter',
+        pageId: 'old-page-311',
+      );
+      final historicalOld = DownloadId(
+        content: oldContent,
+        sourceRevision: 'single',
+        canonicalUri: Uri.parse('venera-resource:expired-old-uri'),
+      );
+      final currentOldCandidate = DownloadId(
+        content: oldContent,
+        sourceRevision: 'single',
+        canonicalUri: Uri.parse('venera-resource:current-old-uri'),
+        pageIndexHint: 311,
+      );
+      final currentNew = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'new-comic',
+          chapterId: 'new-chapter',
+          pageId: 'new-page-368',
+        ),
+        sourceRevision: 'single',
+        canonicalUri: Uri.parse('venera-resource:current-new-uri'),
+        pageIndexHint: 368,
+      );
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u0000311',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(513, (index) => (index * 17) & 0xff),
+      );
+      final store = await PersistentDownloadArtifactStore.open(
+        durableRoot.path,
+      );
+      final cache = ArtifactCacheManager(backend: store);
+      final hot = DownloadRegistry(
+        layout: CacheLayout(hotRoot.path),
+        clock: SystemClock(),
+      );
+      addTearDown(() async {
+        await hot.dispose();
+        await store.close();
+      });
+
+      // The durable body predates both the current provider URI and the
+      // canonical physical-media index. No exact current binding exists.
+      await cache.storePromotedArtifact(id: historicalOld, bytes: bytes);
+      expect(await cache.lookupAuthoritative(currentOldCandidate), isNull);
+      expect(await cache.openPhysicalArtifact(physical), isNull);
+
+      cache.registerEquivalentResolver(
+        key: 'verified-direct-version-page',
+        resolver: (id) sync* {
+          if (id == currentNew && id.pageIndexHint == 368) {
+            yield currentOldCandidate;
+          }
+        },
+      );
+      hot.bindPhysicalMedia(id: currentNew, physicalId: physical);
+      final session = hot.get(currentNew);
+      expect(session.id.pageIndexHint, 368);
+      final handoff = PartialDownloadHandoff(
+        store: store,
+        physicalArtifactCache: cache,
+        equivalentCandidates: cache.directEquivalents,
+      );
+
+      await handoff.restoreInto(session);
+
+      expect(session.state, DownloadState.promoted);
+      expect(session.residentBodyBacked, isTrue);
+      expect(session.committedLength, bytes.lengthInBytes);
+      expect(await cache.lookupAuthoritative(currentOldCandidate), isNull);
+      expect(
+        (await cache.openPhysicalArtifact(physical))?.length,
+        bytes.lengthInBytes,
+      );
+    },
+  );
+
+  test(
+    'physical partial keeps total length but drops provider validators across versions',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'physical-partial-provider-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final store = await PersistentDownloadArtifactStore.open(root.path);
+      addTearDown(store.close);
+      DownloadId idFor(String version) => DownloadId(
+        content: ContentId(
+          sourceId: 'source',
+          comicId: 'comic-$version',
+          chapterId: 'chapter-$version',
+          pageId: 'page-$version',
+        ),
+        sourceRevision: 'revision-$version',
+        canonicalUri: Uri.parse('https://example.test/$version.webp'),
+      );
+      final first = idFor('a');
+      final second = idFor('b');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000023',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(257, (index) => index & 0xff),
+      );
+
+      await store.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: first,
+        entry: PartialDownloadEntry(
+          length: bytes.lengthInBytes,
+          validators: const Validators(etag: 'provider-a'),
+          totalLength: 1024,
+          open: ({required int start}) =>
+              Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+        ),
+      );
+      final initial = await store.index.list(state: CacheState.partial);
+      expect(
+        initial,
+        isEmpty,
+        reason: 'physical partial must not create exact rows',
+      );
+      final firstOpen = await store.openPhysicalPartialDownload(
+        physicalId: physical,
+        requestId: first,
+      );
+      expect(firstOpen, isNotNull);
+      expect(firstOpen!.validators.etag, 'provider-a');
+      expect(firstOpen.totalLength, 1024);
+      final physicalRecord = (store.index as PhysicalPartialIndex);
+      final before = await physicalRecord.getPhysicalPartial(physical);
+      expect(before, isNotNull);
+
+      final secondOpen = await store.openPhysicalPartialDownload(
+        physicalId: physical,
+        requestId: second,
+      );
+      expect(secondOpen, isNotNull);
+      expect(secondOpen!.validators.isEmpty, isTrue);
+      expect(secondOpen.totalLength, 1024);
+      final builder = BytesBuilder(copy: false);
+      await for (final chunk in secondOpen.open(start: 0)) {
+        builder.add(chunk);
+      }
+      expect(builder.takeBytes(), bytes);
+      final after = await physicalRecord.getPhysicalPartial(physical);
+      expect(after?.path, before?.path);
+      expect(after?.id, physical);
+    },
+  );
+
+  test(
     'physical partial keeps total length but drops provider validators across versions',
     () async {
       final root = await Directory.systemTemp.createTemp(

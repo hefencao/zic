@@ -7,6 +7,7 @@ import 'package:transport/transport.dart';
 
 import 'artifact_cache_manager.dart';
 import 'artifact_cache_read_scheduler.dart';
+import 'artifact_cache_store.dart';
 import 'partial_download_store.dart';
 
 typedef PartialDownloadHandoffError = void Function(
@@ -86,6 +87,34 @@ final class PartialDownloadHandoff {
     var exactCandidateChecked = false;
     if (!await session.artifact.hasRestorableBody()) {
       control?.throwIfCancelled();
+      if (!session.physicalId.isExactFallback && cache != null) {
+        var physical = await cache.openPhysicalArtifact(session.physicalId);
+        var recoveredHistoricalBinding = false;
+        if (physical == null) {
+          recoveredHistoricalBinding =
+              await cache.bindPhysicalArtifactFromCandidates(
+            physicalId: session.physicalId,
+            candidates: <DownloadId>[
+              session.id,
+              ...?equivalentCandidates?.call(session.id),
+            ],
+          );
+          control?.throwIfCancelled();
+          if (recoveredHistoricalBinding) {
+            physical = await cache.openPhysicalArtifact(session.physicalId);
+          }
+        }
+        control?.throwIfCancelled();
+        if (physical != null &&
+            await _tryBindEquivalentReadyAuthority(
+              session,
+              _physicalArtifactEntry(physical),
+              candidatesChecked: 0,
+              control: control,
+            )) {
+          return;
+        }
+      }
       exactCandidateChecked = true;
       exactCandidate = await _restoreExactCandidate(
         session.id,
@@ -310,6 +339,29 @@ final class PartialDownloadHandoff {
     final bytes = await reader.readRange(start, endExclusive);
     if (bytes.isNotEmpty) yield bytes;
   }
+
+  PartialDownloadEntry _physicalArtifactEntry(ArtifactCacheStreamEntry entry) =>
+      PartialDownloadEntry(
+        length: entry.length,
+        validators: const Validators(),
+        totalLength: entry.length,
+        open: ({required int start}) => entry.open(start: start),
+        openRange: ({required int start, required int endExclusive}) =>
+            entry.open(start: start, endExclusive: endExclusive),
+        openBoundRangeReader: entry.openBoundRangeReader == null
+            ? null
+            : () async {
+                final reader = await entry.openBoundRangeReader!();
+                if (reader == null) return null;
+                return (
+                  accessMode: reader.accessMode,
+                  readRange: reader.readRange,
+                  close: reader.close,
+                );
+              },
+        accessMode: entry.accessMode,
+        exactDurableFinal: true,
+      );
 
   Future<bool> _tryBindEquivalentReadyAuthority(
     DownloadSession session,

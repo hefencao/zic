@@ -4713,6 +4713,182 @@ void main() {
     expect(manualSnapshot.hasAutoCache, isFalse);
   });
 
+  test(
+      'new-version manual download materializes canonical physical-only cache without network',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-canonical-physical-convert-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final trace = MemoryTraceSink();
+    final service = await PersistentChapterDownloadService.open(
+      root.path,
+      traceSink: trace,
+    );
+    addTearDown(service.close);
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    var sourceCalls = 0;
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        loadBytes: (_, __) async {
+          sourceCalls++;
+          return bytes;
+        },
+      ),
+    );
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'lib:canonical-new-version',
+        displayName: '第一话',
+        sourceId: 'venera:fixture',
+        comicId: 'version-new',
+        comicTitle: 'Canonical convert',
+        chapterId: 'chapter-new',
+        sourceRevision: 'new-r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'venera-resource:new-version-page',
+            pageId: 'page-new-0',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: bytes.length,
+          ),
+        ],
+      ),
+    );
+    final manifest = entry.chapter.toManifest();
+    final page = manifest.pages.single;
+    final newId = DownloadId(
+      content: ContentId(
+        sourceId: manifest.sourceId,
+        comicId: manifest.comicId,
+        chapterId: manifest.chapter.chapterId,
+        pageId: page.pageId,
+      ),
+      sourceRevision: manifest.chapter.sourceRevision,
+      canonicalUri: page.uri,
+      pageIndexHint: page.index,
+    );
+    final oldId = DownloadId(
+      content: const ContentId(
+        sourceId: 'venera:fixture',
+        comicId: 'version-old',
+        chapterId: 'chapter-old',
+        pageId: 'page-old-0',
+      ),
+      sourceRevision: 'old-r1',
+      canonicalUri: Uri.parse('venera-resource:old-version-page'),
+      pageIndexHint: 0,
+    );
+    const segment = CanonicalMediaSegmentId('shared-version-page');
+    final projection = VersionChapterCanonicalProjection(
+      familyId: const VersionFamilyId('family'),
+      canonicalChapterId: const CanonicalChapterId('chapter'),
+      sourceId: manifest.sourceId,
+      comicId: manifest.comicId,
+      chapterId: manifest.chapter.chapterId,
+      sourceRevision: manifest.chapter.sourceRevision,
+      pageCount: 1,
+      intervals: const <CanonicalMediaBindingInterval>[
+        CanonicalMediaBindingInterval(
+          exactStart: 0,
+          exactEndExclusive: 1,
+          segmentId: segment,
+          segmentStart: 0,
+        ),
+      ],
+    );
+    final physicalId = PhysicalMediaId.canonical(
+      projection.coordinateForPageIndex(0).stableKey,
+    );
+    await service.artifactStore.persistCanonicalMediaProjection(projection);
+    await service.storePromotedArtifact(id: oldId, bytes: bytes);
+    expect(
+      await service.artifactCacheManager.bindPhysicalArtifact(
+        physicalId: physicalId,
+        sourceId: oldId,
+      ),
+      isTrue,
+    );
+    await service.invalidateArtifact(oldId);
+    expect(await service.artifactStore.index.get(oldId.key), isNull);
+    expect(await service.artifactStore.index.get(newId.key), isNull);
+    expect(
+      await (service.artifactStore.index as PhysicalMediaArtifactIndex)
+          .getPhysicalMediaArtifact(physicalId),
+      isNotNull,
+    );
+    service.transferRuntime.replaceCanonicalMediaAuthorityScope(
+      'canonical-convert-test',
+      <CanonicalMediaChapterAuthority>[
+        CanonicalMediaChapterAuthority(
+          manifest: manifest,
+          projection: projection,
+          activeProjectionRanges: const <CanonicalMediaActiveRange>[
+            CanonicalMediaActiveRange(start: 0, endExclusive: 1),
+          ],
+        ),
+      ],
+    );
+
+    expect(await service.artifactStore.index.get(newId.key), isNull);
+    expect(sourceCalls, 0);
+
+    await service.download(entry);
+
+    expect(
+      sourceCalls,
+      0,
+      reason: trace.events
+          .where(
+            (event) =>
+                event.kind == TraceEventKind.artifactSource ||
+                event.kind == TraceEventKind.downloadState,
+          )
+          .map((event) => '${event.kind.name}:${event.payload}')
+          .join('\n'),
+    );
+    final exact = await service.artifactStore.index.get(newId.key);
+    expect(exact, isNotNull);
+    expect(exact!.state, CacheState.ready);
+    expect(exact.pinned, isTrue);
+    final physical = await (service.artifactStore.index
+            as PhysicalMediaArtifactIndex)
+        .getPhysicalMediaArtifact(physicalId);
+    expect(physical, isNotNull);
+    expect(exact.effectiveArtifactId, physical!.artifactId);
+    expect(await service.artifactStore.index.get(oldId.key), isNull);
+    final downloaded = await service.inspect(entry);
+    expect(downloaded.phase, ChapterDownloadPhase.complete);
+    expect(downloaded.exactCompletedPages, 1);
+    expect(downloaded.pinnedPages, 1);
+    expect(downloaded.autoCachedPages, 0);
+    expect(downloaded.isManualDownload, isTrue);
+    expect(downloaded.hasAutoCache, isFalse);
+
+    // Canonical physical-cache retirement is a lower-level cache operation,
+    // not a manual-download delete. Retiring that binding must therefore keep
+    // the exact pinned object readable; future Canonical-row deletion can
+    // reuse this primitive without silently deleting the user's download.
+    await service.artifactCacheManager.invalidatePhysicalArtifact(physicalId);
+    expect(
+      await (service.artifactStore.index as PhysicalMediaArtifactIndex)
+          .getPhysicalMediaArtifact(physicalId),
+      isNull,
+    );
+    final preservedExact = await service.artifactStore.index.get(newId.key);
+    expect(preservedExact, isNotNull);
+    expect(preservedExact!.pinned, isTrue);
+    expect(await _readBackendArtifact(service, newId), bytes);
+    final preservedDownload = await service.inspect(entry);
+    expect(preservedDownload.phase, ChapterDownloadPhase.complete);
+    expect(preservedDownload.exactCompletedPages, 1);
+    expect(preservedDownload.pinnedPages, 1);
+  });
+
   test('structured materialization sniffs image bytes when hint is unknown',
       () async {
     final root = await Directory.systemTemp.createTemp('unknown-image-sniff-test-');
