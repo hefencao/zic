@@ -125,7 +125,8 @@ final class HeuristicPolicy {
       final pagedNextPreupload =
           observation.direction != ReadingDirection.vertical &&
               role == PageRole.next &&
-              decodeWatermark > 0;
+              decodeWatermark > 0 &&
+              _pagedPresentationActive(observation.interaction);
       final localStaticReady =
           runtimeLocalStaticPages.contains(entry.key) &&
               runtimeAnimatedPages[entry.key] == false;
@@ -221,6 +222,15 @@ final class HeuristicPolicy {
   }
 
   bool _verticalPresentationActive(Interaction interaction) => switch (interaction) {
+        Interaction.dragging ||
+        Interaction.scrolling ||
+        Interaction.settling => true,
+        Interaction.idle ||
+        Interaction.scrubbing ||
+        Interaction.jumping => false,
+      };
+
+  bool _pagedPresentationActive(Interaction interaction) => switch (interaction) {
         Interaction.dragging ||
         Interaction.scrolling ||
         Interaction.settling => true,

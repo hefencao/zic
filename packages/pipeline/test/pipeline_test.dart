@@ -1241,7 +1241,7 @@ void main() {
       decodeTarget: target,
     );
     expect(initial.decodes, hasLength(4));
-    expect(initial.uploads, hasLength(2));
+    expect(initial.uploads, hasLength(1));
     expect(
       initial.uploads.values.where(
         (demand) => demand.reason.startsWith('heuristic:static-'),
@@ -1253,8 +1253,52 @@ void main() {
       initial.uploads.values.where(
         (demand) => demand.reason == 'heuristic:paged-next-preupload',
       ),
+      isEmpty,
+      reason: 'idle paged next must stay decode-only',
+    );
+
+    final drag = ReaderObs(
+      sessionId: 'opaque-reader',
+      currentIndex: 1,
+      stableIndex: 1,
+      interaction: Interaction.dragging,
+      logicalPosition: 1.01,
+      velocity: 1,
+      currentCoverage: Coverage(
+        pageIndex: 1,
+        assetKey: opaqueChapter.pages[1].assetKey,
+        fraction: 0.99,
+      ),
+      targetCoverage: Coverage(
+        pageIndex: 2,
+        assetKey: opaqueChapter.pages[2].assetKey,
+        fraction: 0.01,
+      ),
+      direction: ReadingDirection.ltr,
+      timestamp: DateTime.utc(2026, 9, 9),
+      monotonicMicros: 2,
+    );
+    final dragWindow = const RoleResolver(
+      forwardEncodedPages: 7,
+      backwardEncodedPages: 3,
+      forwardDecodePages: 2,
+      backwardDecodePages: 1,
+      nearRadius: 0,
+    ).resolve(opaqueChapter, drag);
+    final active = policy.createPlan(
+      revision: 2,
+      chapter: opaqueChapter,
+      observation: drag,
+      window: dragWindow,
+      decodeTarget: target,
+    );
+    expect(dragWindow.roleOf(2), PageRole.next);
+    expect(
+      active.uploads.values.where(
+        (demand) => demand.reason == 'heuristic:paged-next-preupload',
+      ),
       hasLength(1),
-      reason: 'paged next preupload must not be mistaken for static evidence',
+      reason: 'an actual paged gesture may preupload the decoded next frame',
     );
 
     final inferred = policy.createPlan(
