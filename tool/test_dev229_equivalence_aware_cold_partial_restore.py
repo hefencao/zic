@@ -23,7 +23,7 @@ for token in (
     'final PartialEquivalentCandidates? equivalentCandidates;',
     'store.openPartialDownload(id)',
     'for (final equivalent in candidates(id)) {',
-    'if (selected == null || entry.length > selected.length)',
+    'if (selected == null || entry.length > selected.entry.length)',
     '? const Validators()',
     "action: candidate.equivalent ? 'restored-equivalent' : 'restored'",
     "'verifiedEquivalentReuse': true",
@@ -31,7 +31,7 @@ for token in (
     require(handoff, token, 'equivalence-aware durable partial restore')
 
 runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
-require(runtime, 'equivalentCandidates: cache?.directEquivalents,', 'composition proof injection')
+require(runtime, 'equivalentCandidates: _verifiedEquivalentCandidates,', 'composition proof injection')
 
 migration = read('apps/app/lib/demo_home_source_migration.dart')
 home = read('apps/app/lib/demo_home.dart')
@@ -44,6 +44,8 @@ forbid(reuse, 'applyDurablePartials', 'reuse-plan partial copy')
 test = read('packages/downloads/test/partial_download_handoff_test.dart')
 for token in (
     'verified equivalent cold partial restores without copying exact entry',
+    'longer verified equivalent cold partial outranks shorter exact',
+    'equal verified cold partial keeps exact target authority',
     'expect(session.validators.isEmpty, isTrue);',
     'expect(backend.partial.containsKey(newId), isFalse);',
     'expect(backend.partial.containsKey(oldId), isTrue);',

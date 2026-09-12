@@ -77,15 +77,12 @@ final class PartialDownloadHandoff {
       return;
     }
 
-    // A chapter-owned exact READY body may bypass an empty deterministic
-    // session artifact only after the Artifact owner itself proves that no
-    // local partial/final body exists. This preserves the historical authority
-    // order when both representations exist. The fast path additionally
-    // requires a retained range reader, whose open includes the exact-length
-    // physical proof; any miss/failure falls back to the complete restore path.
-    _PartialRestoreCandidate? exactCandidate;
+    // A recoverable session-local artifact remains the first physical owner.
+    // Only when it proves empty do exact and direct verified durable candidates
+    // compete. This path is compatibility for historical/non-canonical state;
+    // canonical physical READY/partial ownership is still checked first below.
+    _PartialRestoreCandidate? durableCandidate;
     PartialDownloadEntry? physicalPartial;
-    var exactCandidateChecked = false;
     if (!await session.artifact.hasRestorableBody()) {
       control?.throwIfCancelled();
       if (!session.physicalId.isExactFallback && cache != null) {
@@ -129,20 +126,25 @@ final class PartialDownloadHandoff {
         }
       }
       if (physicalPartial == null) {
-        exactCandidateChecked = true;
-        exactCandidate = await _restoreExactCandidate(
+        durableCandidate = await _restoreCandidate(
           session.id,
           control: control,
         );
-        final exactEntry = exactCandidate?.entry;
-        if (exactEntry != null &&
-            exactEntry.exactDurableFinal &&
-            await _tryBindExactReadyWithoutSessionRestore(
-              session,
-              exactEntry,
-              control: control,
-            )) {
-          return;
+        final durableEntry = durableCandidate?.entry;
+        if (durableEntry != null && durableEntry.exactDurableFinal) {
+          final bound = durableCandidate!.equivalent
+              ? await _tryBindEquivalentReadyAuthority(
+                  session,
+                  durableEntry,
+                  candidatesChecked: durableCandidate.candidatesChecked,
+                  control: control,
+                )
+              : await _tryBindExactReadyWithoutSessionRestore(
+                  session,
+                  durableEntry,
+                  control: control,
+                );
+          if (bound) return;
         }
       }
     }
@@ -216,10 +218,9 @@ final class PartialDownloadHandoff {
       );
       return;
     }
-    final candidate = exactCandidate ??
+    final candidate = durableCandidate ??
         await _restoreCandidate(
           session.id,
-          skipExact: exactCandidateChecked,
           control: control,
         );
     if (candidate == null || candidate.entry.length <= 0) return;
@@ -857,136 +858,183 @@ final class PartialDownloadHandoff {
 
   Future<_PartialRestoreCandidate?> _restoreCandidate(
     DownloadId id, {
-    bool skipExact = false,
     TaskControl? control,
   }) async {
-    if (!skipExact) {
-      final exact = await _restoreExactCandidate(id, control: control);
-      if (exact != null) return exact;
-    }
     final candidates = equivalentCandidates;
-    if (candidates == null) return null;
+    if (candidates == null) {
+      return _restoreExactCandidate(id, control: control);
+    }
     final metadataStore = store is PartialDownloadMetadataStore
         ? store as PartialDownloadMetadataStore
         : null;
     if (metadataStore != null) {
-      return _restoreEquivalentCandidateByMetadata(
+      return _restoreCandidateByMetadata(
         id,
         candidates,
         metadataStore,
         control: control,
       );
     }
-    return _restoreEquivalentCandidateLegacy(
+    return _restoreCandidateLegacy(
       id,
       candidates(id),
       control: control,
     );
   }
 
-  Future<_PartialRestoreCandidate?> _restoreEquivalentCandidateByMetadata(
+  Future<_PartialRestoreCandidate?> _restoreCandidateByMetadata(
     DownloadId id,
     PartialEquivalentCandidates candidates,
     PartialDownloadMetadataStore metadataStore, {
     TaskControl? control,
   }) async {
-    final candidateIds = <DownloadId>[];
-    final ranked = <_RankedPartialCandidate>[];
+    final equivalentIds = <DownloadId>[];
+    final seen = <DownloadId>{id};
+    for (final equivalent in candidates(id)) {
+      if (seen.add(equivalent)) equivalentIds.add(equivalent);
+    }
     var checked = 0;
     var order = 0;
-    for (final equivalent in candidates(id)) {
+    final ranked = <_RankedPartialCandidate>[];
+
+    final exactMetadata = await _awaitCancellable(
+      metadataStore.inspectPartialDownloadMetadata(id),
+      control,
+    );
+    if (exactMetadata != null && exactMetadata.length > 0) {
+      if (exactMetadata.exactDurableFinal) {
+        final entry = await _awaitCancellable(
+          store.openPartialDownload(id),
+          control,
+        );
+        if (entry != null && entry.length > 0) {
+          if (entry.length != exactMetadata.length ||
+              !entry.exactDurableFinal) {
+            return _restoreCandidateLegacy(
+              id,
+              equivalentIds,
+              control: control,
+            );
+          }
+          return _PartialRestoreCandidate(
+            entry: entry,
+            equivalent: false,
+            candidatesChecked: checked,
+          );
+        }
+      } else {
+        ranked.add(
+          _RankedPartialCandidate(
+            id: id,
+            metadataLength: exactMetadata.length,
+            equivalent: false,
+            order: order++,
+          ),
+        );
+      }
+    }
+
+    for (final equivalent in equivalentIds) {
       control?.throwIfCancelled();
-      if (equivalent == id) continue;
-      candidateIds.add(equivalent);
       checked++;
       final metadata = await _awaitCancellable(
         metadataStore.inspectPartialDownloadMetadata(equivalent),
         control,
       );
-      if (metadata == null || metadata.length <= 0) {
-        order++;
-        continue;
-      }
+      if (metadata == null || metadata.length <= 0) continue;
       if (metadata.exactDurableFinal) {
+        // Exact is already known not to be READY, so one physically verified
+        // READY equivalent outranks every incomplete partial without scanning
+        // the remainder of a potentially wide direct-candidate set.
         final entry = await _awaitCancellable(
           store.openPartialDownload(equivalent),
           control,
         );
-        if (entry == null || entry.length <= 0) {
-          order++;
-          continue;
-        }
-        if (entry.exactDurableFinal) {
-          return _PartialRestoreCandidate(
-            entry: entry,
-            equivalent: true,
-            candidatesChecked: checked,
+        if (entry == null || entry.length <= 0) continue;
+        if (entry.length != metadata.length || !entry.exactDurableFinal) {
+          return _restoreCandidateLegacy(
+            id,
+            equivalentIds,
+            control: control,
           );
         }
-        ranked.add(_RankedPartialCandidate(
-          id: equivalent,
-          metadataLength: entry.length,
-          order: order,
-          openedEntry: entry,
-        ));
-        order++;
-        continue;
-      }
-      ranked.add(_RankedPartialCandidate(
-        id: equivalent,
-        metadataLength: metadata.length,
-        order: order,
-      ));
-      order++;
-    }
-    ranked.sort((a, b) {
-      final length = b.metadataLength.compareTo(a.metadataLength);
-      return length != 0 ? length : a.order.compareTo(b.order);
-    });
-    for (final candidate in ranked) {
-      control?.throwIfCancelled();
-      final entry = candidate.openedEntry ??
-          await _awaitCancellable(
-            store.openPartialDownload(candidate.id),
-            control,
-          );
-      if (entry == null || entry.length <= 0) continue;
-      if (entry.exactDurableFinal) {
         return _PartialRestoreCandidate(
           entry: entry,
           equivalent: true,
           candidatesChecked: checked,
         );
       }
-      if (entry.length != candidate.metadataLength) {
-        // The metadata snapshot changed while candidates were ranked. Fall
-        // back to the historical physical-open scan so longest-prefix
-        // selection remains authoritative under concurrent mutation.
-        return _restoreEquivalentCandidateLegacy(
+      ranked.add(
+        _RankedPartialCandidate(
+          id: equivalent,
+          metadataLength: metadata.length,
+          equivalent: true,
+          order: order++,
+        ),
+      );
+    }
+
+    ranked.sort((a, b) {
+      final length = b.metadataLength.compareTo(a.metadataLength);
+      if (length != 0) return length;
+      if (a.equivalent != b.equivalent) return a.equivalent ? 1 : -1;
+      return a.order.compareTo(b.order);
+    });
+    for (final candidate in ranked) {
+      control?.throwIfCancelled();
+      final entry = await _awaitCancellable(
+        store.openPartialDownload(candidate.id),
+        control,
+      );
+      if (entry == null || entry.length <= 0) continue;
+      if (entry.length != candidate.metadataLength || entry.exactDurableFinal) {
+        // Metadata is only a ranking hint. If the physical open disagrees,
+        // rescan exact + direct equivalents using physical state as authority.
+        return _restoreCandidateLegacy(
           id,
-          candidateIds,
+          equivalentIds,
           control: control,
         );
       }
       return _PartialRestoreCandidate(
         entry: entry,
-        equivalent: true,
+        equivalent: candidate.equivalent,
         candidatesChecked: checked,
       );
     }
     return null;
   }
 
-  Future<_PartialRestoreCandidate?> _restoreEquivalentCandidateLegacy(
+  Future<_PartialRestoreCandidate?> _restoreCandidateLegacy(
     DownloadId id,
     Iterable<DownloadId> candidates, {
     TaskControl? control,
   }) async {
-    PartialDownloadEntry? selected;
+    _PartialRestoreCandidate? selected;
+    final exact = await _awaitCancellable(
+      store.openPartialDownload(id),
+      control,
+    );
+    if (exact != null && exact.length > 0) {
+      if (exact.exactDurableFinal) {
+        return _PartialRestoreCandidate(
+          entry: exact,
+          equivalent: false,
+          candidatesChecked: 0,
+        );
+      }
+      selected = _PartialRestoreCandidate(
+        entry: exact,
+        equivalent: false,
+        candidatesChecked: 0,
+      );
+    }
+
+    final seen = <DownloadId>{id};
     var checked = 0;
     for (final equivalent in candidates) {
       control?.throwIfCancelled();
-      if (equivalent == id) continue;
+      if (!seen.add(equivalent)) continue;
       checked++;
       final entry = await _awaitCancellable(
         store.openPartialDownload(equivalent),
@@ -1000,14 +1048,18 @@ final class PartialDownloadHandoff {
           candidatesChecked: checked,
         );
       }
-      if (selected == null || entry.length > selected.length) {
-        selected = entry;
+      if (selected == null || entry.length > selected.entry.length) {
+        selected = _PartialRestoreCandidate(
+          entry: entry,
+          equivalent: true,
+          candidatesChecked: checked,
+        );
       }
     }
     if (selected == null) return null;
     return _PartialRestoreCandidate(
-      entry: selected,
-      equivalent: true,
+      entry: selected.entry,
+      equivalent: selected.equivalent,
       candidatesChecked: checked,
     );
   }
@@ -1202,14 +1254,14 @@ final class _RankedPartialCandidate {
   const _RankedPartialCandidate({
     required this.id,
     required this.metadataLength,
+    required this.equivalent,
     required this.order,
-    this.openedEntry,
   });
 
   final DownloadId id;
   final int metadataLength;
+  final bool equivalent;
   final int order;
-  final PartialDownloadEntry? openedEntry;
 }
 
 final class _PartialRestoreCandidate {

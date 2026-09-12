@@ -1138,6 +1138,134 @@ void main() {
     expect(await session.artifact.readBytes(), orderedEquals(longBytes));
   });
 
+  test(
+    'longer verified equivalent cold partial outranks shorter exact',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'partial-equivalent-beats-short-exact-',
+      );
+      addTearDown(() async => root.delete(recursive: true));
+      final exactId = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'target',
+          chapterId: 'chapter-target',
+          pageId: 'page-target',
+        ),
+        sourceRevision: 'target-r2',
+        canonicalUri: Uri.parse('https://example.test/target.webp'),
+      );
+      final equivalentId = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'old',
+          chapterId: 'chapter-old',
+          pageId: 'page-old',
+        ),
+        sourceRevision: 'old-r1',
+        canonicalUri: Uri.parse('https://example.test/old.webp'),
+      );
+      final exactBytes = Uint8List.fromList(<int>[1, 2, 3]);
+      final equivalentBytes = Uint8List.fromList(<int>[1, 2, 3, 4, 5, 6, 7, 8]);
+      final backend = _PartialStore();
+      backend.partial[exactId] = _StoredPartial(
+        bytes: exactBytes,
+        validators: const Validators(etag: 'exact-etag'),
+        totalLength: 1024,
+      );
+      backend.partial[equivalentId] = _StoredPartial(
+        bytes: equivalentBytes,
+        validators: const Validators(etag: 'foreign-etag'),
+        totalLength: 1024,
+      );
+      final handoff = PartialDownloadHandoff(
+        store: backend,
+        equivalentCandidates: (id) =>
+            id == exactId ? <DownloadId>[equivalentId] : const <DownloadId>[],
+      );
+      final registry = DownloadRegistry(
+        layout: CacheLayout(root.path),
+        clock: SystemClock(),
+      );
+      addTearDown(registry.dispose);
+
+      final session = registry.get(exactId);
+      await handoff.restoreInto(session);
+
+      expect(session.committedLength, equivalentBytes.lengthInBytes);
+      expect(
+        await session.artifact.readBytes(),
+        orderedEquals(equivalentBytes),
+      );
+      expect(
+        session.validators.isEmpty,
+        isTrue,
+        reason: 'foreign provider validators must not cross version identity',
+      );
+      expect(
+        backend.partial[exactId]?.bytes,
+        exactBytes,
+        reason: 'carrier selection must not rewrite the exact durable partial',
+      );
+    },
+  );
+
+  test('equal verified cold partial keeps exact target authority', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'partial-equivalent-exact-tie-',
+    );
+    addTearDown(() async => root.delete(recursive: true));
+    final exactId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'target-tie',
+        chapterId: 'chapter-target',
+        pageId: 'page-target',
+      ),
+      sourceRevision: 'target-r2',
+      canonicalUri: Uri.parse('https://example.test/target-tie.webp'),
+    );
+    final equivalentId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'old-tie',
+        chapterId: 'chapter-old',
+        pageId: 'page-old',
+      ),
+      sourceRevision: 'old-r1',
+      canonicalUri: Uri.parse('https://example.test/old-tie.webp'),
+    );
+    final exactBytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
+    final equivalentBytes = Uint8List.fromList(<int>[9, 8, 7, 6]);
+    final backend = _PartialStore();
+    backend.partial[exactId] = _StoredPartial(
+      bytes: exactBytes,
+      validators: const Validators(etag: 'exact-etag'),
+      totalLength: 1024,
+    );
+    backend.partial[equivalentId] = _StoredPartial(
+      bytes: equivalentBytes,
+      validators: const Validators(etag: 'foreign-etag'),
+      totalLength: 1024,
+    );
+    final handoff = PartialDownloadHandoff(
+      store: backend,
+      equivalentCandidates: (id) =>
+          id == exactId ? <DownloadId>[equivalentId] : const <DownloadId>[],
+    );
+    final registry = DownloadRegistry(
+      layout: CacheLayout(root.path),
+      clock: SystemClock(),
+    );
+    addTearDown(registry.dispose);
+
+    final session = registry.get(exactId);
+    await handoff.restoreInto(session);
+
+    expect(await session.artifact.readBytes(), orderedEquals(exactBytes));
+    expect(session.validators.etag, 'exact-etag');
+  });
+
   test('metadata ranking opens only the longest verified equivalent partial',
       () async {
     final root = await Directory.systemTemp.createTemp(
@@ -1192,7 +1320,7 @@ void main() {
     final session = registry.get(targetId);
     await handoff.restoreInto(session);
 
-    expect(backend.metadataRequests, candidates);
+    expect(backend.metadataRequests, <DownloadId>[targetId, ...candidates]);
     expect(
       backend.openRequests.where((id) => id != targetId),
       <DownloadId>[candidates.last],
@@ -1203,6 +1331,76 @@ void main() {
       backend.partial[candidates.last]!.bytes.lengthInBytes,
     );
   });
+
+  test(
+    'metadata READY equivalent stops before later partial candidates',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'partial-equivalent-metadata-ready-stop-',
+      );
+      addTearDown(() async => root.delete(recursive: true));
+      DownloadId candidate(String name) => DownloadId(
+        content: ContentId(
+          sourceId: 'source',
+          comicId: name,
+          chapterId: '$name-chapter',
+          pageId: '$name-page',
+        ),
+        sourceRevision: '$name-r1',
+        canonicalUri: Uri.parse('https://example.test/$name.webp'),
+      );
+      final targetId = candidate('target');
+      final first = candidate('first');
+      final ready = candidate('ready');
+      final later = candidate('later');
+      final backend = _MetadataPartialStore();
+      backend.partial[targetId] = _StoredPartial(
+        bytes: Uint8List(128),
+        validators: const Validators(etag: 'target-etag'),
+        totalLength: 4096,
+      );
+      backend.partial[first] = _StoredPartial(
+        bytes: Uint8List(256),
+        validators: const Validators(),
+        totalLength: 4096,
+      );
+      backend.partial[ready] = _StoredPartial(
+        bytes: Uint8List(512),
+        validators: const Validators(),
+        totalLength: 512,
+      );
+      backend.partial[later] = _StoredPartial(
+        bytes: Uint8List(2048),
+        validators: const Validators(),
+        totalLength: 4096,
+      );
+      backend.durableFinalIds.add(ready);
+      final handoff = PartialDownloadHandoff(
+        store: backend,
+        equivalentCandidates: (id) => id == targetId
+            ? <DownloadId>[first, ready, later]
+            : const <DownloadId>[],
+      );
+      final registry = DownloadRegistry(
+        layout: CacheLayout(root.path),
+        clock: SystemClock(),
+      );
+      addTearDown(registry.dispose);
+
+      final session = registry.get(targetId);
+      await handoff.restoreInto(session);
+
+      expect(
+        backend.metadataRequests,
+        <DownloadId>[targetId, first, ready],
+        reason:
+            'a physically verified READY carrier outranks every later partial',
+      );
+      expect(backend.openRequests, <DownloadId>[ready]);
+      expect(session.committedLength, 512);
+      expect(session.validators.isEmpty, isTrue);
+    },
+  );
 
   test('metadata ranking falls back when selected partial changes', () async {
     final root = await Directory.systemTemp.createTemp(
@@ -1831,6 +2029,7 @@ final class _MetadataPartialStore
   final Map<DownloadId, _StoredPartial> partial =
       <DownloadId, _StoredPartial>{};
   final Map<DownloadId, int> metadataLengthOverrides = <DownloadId, int>{};
+  final Set<DownloadId> durableFinalIds = <DownloadId>{};
   final List<DownloadId> metadataRequests = <DownloadId>[];
   final List<DownloadId> openRequests = <DownloadId>[];
 
@@ -1843,7 +2042,7 @@ final class _MetadataPartialStore
     if (stored == null) return null;
     return PartialDownloadMetadata(
       length: metadataLengthOverrides[id] ?? stored.bytes.lengthInBytes,
-      exactDurableFinal: false,
+      exactDurableFinal: durableFinalIds.contains(id),
     );
   }
 
@@ -1859,6 +2058,7 @@ final class _MetadataPartialStore
       open: ({required int start}) async* {
         yield Uint8List.sublistView(stored.bytes, start);
       },
+      exactDurableFinal: durableFinalIds.contains(id),
     );
   }
 
