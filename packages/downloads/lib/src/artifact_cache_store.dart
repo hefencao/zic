@@ -167,6 +167,16 @@ abstract interface class ArtifactCacheBindingBackend {
   });
 }
 
+/// Optional exact-binding retention query used by presentation recovery.
+///
+/// A force reload may reject bytes for presentation without revoking the
+/// user's explicit offline-download intent. Backends exposing this capability
+/// report only the exact binding's retention flag; they do not choose reload
+/// policy or physical-media ownership.
+abstract interface class ArtifactCacheRetentionQuery {
+  Future<bool> isPinnedExactArtifact(DownloadId id);
+}
+
 abstract interface class ArtifactCacheBackend {
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id);
 

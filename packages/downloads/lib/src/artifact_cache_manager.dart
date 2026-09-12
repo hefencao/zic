@@ -245,6 +245,14 @@ final class ArtifactCacheManager {
   }) =>
       _lookupCandidatesInOrder(id, _lookupCandidates(id), control: control);
 
+  Future<bool> isPinnedBackendExact(DownloadId id) {
+    final retention = backend;
+    if (retention is! ArtifactCacheRetentionQuery) {
+      return Future<bool>.value(false);
+    }
+    return (retention as ArtifactCacheRetentionQuery).isPinnedExactArtifact(id);
+  }
+
   /// Looks up only this exact identity's authoritative durable storage.
   ///
   /// Verified equivalence is intentionally excluded. Promotion and other
@@ -647,6 +655,27 @@ final class ArtifactCacheManager {
       }
       // Retain durable memory projection: remember(id: id, bytes: bytes, durable: true)
       _rememberExact(id: id, bytes: ownedBytes, durable: true);
+    }
+  }
+
+  /// Completes an armed fresh-source quarantine after a promoted physical
+  /// generation is intentionally kept hot-only because an explicit pinned
+  /// exact artifact must remain untouched.
+  void completeFreshSourceRecoveryWithoutReplacement(DownloadId id) {
+    _completeFreshSourceRecovery(id);
+  }
+
+  /// Cancels a fresh-source quarantine when the physical reset transaction
+  /// cannot be completed. This restores the previous durable routing policy;
+  /// it never deletes or rewrites artifact bytes.
+  void cancelFreshSourceRecovery(int group) {
+    _armedFreshSourceRecoveryGroups.remove(group);
+    final members = _freshSourceRecoveryMembers.remove(group);
+    if (members == null) return;
+    for (final member in members) {
+      if (_freshSourceRecoveryGroups[member] == group) {
+        _freshSourceRecoveryGroups.remove(member);
+      }
     }
   }
 

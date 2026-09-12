@@ -682,6 +682,134 @@ void main() {
     serviceClosed = true;
   });
 
+  test(
+      'force reload during chapter download keeps required claim on same physical owner',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-chapter-force-reload-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final uri = Uri.parse('https://example.test/chapter-force-reload.webp');
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:force-reload-comic',
+        displayName: '强刷传输章节',
+        sourceId: 'venera:fixture',
+        comicId: 'force-reload-comic',
+        comicTitle: '强刷传输测试',
+        chapterId: 'force-reload-chapter',
+        sourceRevision: 'force-r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.webp',
+            sourceId: uri.toString(),
+            pageId: 'force-page',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: bytes.lengthInBytes,
+          ),
+        ],
+      ),
+    );
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(service.close);
+    final firstOpened = Completer<void>();
+    final firstCancelled = Completer<void>();
+    var opens = 0;
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        openControlledResponse: (
+          sourceId,
+          requestUri, {
+          ByteRange? range,
+          Validators? validators,
+          TaskControl? control,
+        }) async {
+          opens++;
+          if (opens == 1) {
+            if (!firstOpened.isCompleted) firstOpened.complete();
+            final activeControl = control;
+            if (activeControl == null) {
+              throw StateError('chapter command must propagate TaskControl');
+            }
+            await activeControl.whenCancelled;
+            if (!firstCancelled.isCompleted) firstCancelled.complete();
+            throw const Failure(
+              code: ErrorCode.cancelled,
+              message: 'first chapter attempt cancelled by force reload',
+            );
+          }
+          return ByteResponse(
+            bytes: Stream<List<int>>.value(bytes),
+            statusCode: 200,
+            rangeStart: 0,
+            totalLength: bytes.lengthInBytes,
+            validators: const Validators(etag: 'force-reload-fresh'),
+            rangeSupported: false,
+          );
+        },
+      ),
+    );
+    final manifest = entry.chapter.toManifest();
+    final page = manifest.pages.single;
+    final id = DownloadId(
+      content: ContentId(
+        sourceId: manifest.sourceId,
+        comicId: manifest.comicId,
+        chapterId: manifest.chapter.chapterId,
+        pageId: page.pageId,
+      ),
+      sourceRevision: manifest.chapter.sourceRevision,
+      canonicalUri: page.uri,
+      pageIndexHint: page.index,
+    );
+
+    final chapterRun = service.download(entry);
+    await firstOpened.future.timeout(const Duration(seconds: 5));
+    await _waitUntil(
+      () => service.transferRuntime.owner
+          .requiredExactDurableTargets(id)
+          .contains(id),
+    );
+    final session = service.transferRuntime.registry.find(id);
+    expect(session, isNotNull);
+    final epochBefore = session!.epoch;
+
+    expect(
+      await service.transferRuntime.recoverPresentationArtifact(
+        id,
+        reason: 'test-force-reload-active-manual',
+        userInitiated: true,
+      ),
+      isTrue,
+    );
+    await firstCancelled.future.timeout(const Duration(seconds: 5));
+    expect(
+      identical(service.transferRuntime.registry.find(id), session),
+      isTrue,
+    );
+    expect(session.epoch, isNot(epochBefore));
+    expect(
+      service.transferRuntime.owner.requiredExactDurableTargets(id),
+      contains(id),
+    );
+
+    await chapterRun.timeout(const Duration(seconds: 5));
+    expect(opens, 2);
+    expect(identical(service.transferRuntime.registry.find(id), session), isTrue);
+    final exact = await service.artifactStore.index.get(id.key);
+    expect(exact, isNotNull);
+    expect(exact!.pinned, isTrue);
+    expect(await service.readPage(entry, 0), bytes);
+    final downloaded = await service.inspect(entry);
+    expect(downloaded.phase, ChapterDownloadPhase.complete);
+    expect(downloaded.exactCompletedPages, 1);
+    expect(downloaded.pinnedPages, 1);
+  });
+
   test('verified equivalent chapter joins existing physical transfer before acquire',
       () async {
     final directory = await Directory.systemTemp.createTemp(

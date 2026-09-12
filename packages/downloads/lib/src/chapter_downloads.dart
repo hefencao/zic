@@ -1224,6 +1224,7 @@ final class ArtifactReplicaMigrationResult {
 final class PersistentDownloadArtifactStore
     implements
         ArtifactCacheBackend,
+        ArtifactCacheRetentionQuery,
         ArtifactCacheBindingBackend,
         PhysicalArtifactCacheBackend,
         PhysicalArtifactCandidateBindingBackend,
@@ -5447,6 +5448,16 @@ final class PersistentDownloadArtifactStore
         await _registry.evict(id);
       }
     }
+  }
+
+  @override
+  Future<bool> isPinnedExactArtifact(DownloadId id) async {
+    _requireOpen();
+    final record = await _index.get(id.key);
+    return record != null &&
+        record.id == id &&
+        record.pinned &&
+        _isVerifiedReadyRecord(record);
   }
 
   Future<Uint8List> readPromoted(DownloadId id) async {

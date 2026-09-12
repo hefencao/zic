@@ -71,6 +71,86 @@ void main() {
     expect(registry.sessions, hasLength(1));
   });
 
+  test(
+      'presentation recovery restarts one active required transfer on the same physical session',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_presentation_recovery_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final bytes = _ownerAnimatedWebp(<int>[64, 64, 64]);
+    final transport = _CancelThenSucceedTransport(bytes: bytes);
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+
+    final id = _id('presentation-active-required');
+    final consumer = owner.attachConsumer(
+      scopeId: 'chapter-command',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+    consumer.replaceDemands(
+      'chapter-command',
+      1,
+      <DownloadId, TransferDemand>{
+        id: const TransferDemand(
+          priority: 120,
+          reason: 'chapter-download-command',
+          completionIntent: TransferCompletionIntent.required,
+        ),
+      },
+    );
+    await transport.firstOpened.future.timeout(const Duration(seconds: 2));
+    final session = registry.get(id);
+    final epochBefore = session.epoch;
+    expect(owner.claimCount(id), 1);
+    expect(owner.requiredExactDurableTargets(id), contains(id));
+
+    var invalidations = 0;
+    var resetCallbacks = 0;
+    expect(
+      await owner.recoverPresentationArtifact(
+        id,
+        invalidateArtifact: () async {
+          invalidations++;
+          return true;
+        },
+        afterPhysicalReset: () async => resetCallbacks++,
+      ),
+      isTrue,
+    );
+    expect(transport.firstCancelled.isCompleted, isTrue);
+    expect(identical(registry.get(id), session), isTrue);
+    expect(session.epoch, isNot(epochBefore));
+    expect(owner.claimCount(id), 1);
+    expect(owner.requiredExactDurableTargets(id), contains(id));
+    expect(invalidations, 1);
+    expect(resetCallbacks, 1);
+
+    consumer.refreshScheduling();
+    await consumer.idle().timeout(const Duration(seconds: 2));
+    expect(transport.opens, 2);
+    expect(identical(registry.get(id), session), isTrue);
+    expect(session.state, DownloadState.promoted);
+    expect(session.committedLength, bytes.length);
+    expect(owner.claimCount(id), 1);
+    expect(owner.requiredExactDurableTargets(id), contains(id));
+
+    await consumer.dispose();
+  });
+
   test('prepared local completion bypasses provider transport admission', () async {
     final temp = await Directory.systemTemp.createTemp(
       'transfer_owner_local_completion_',

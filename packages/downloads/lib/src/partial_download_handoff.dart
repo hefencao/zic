@@ -5,6 +5,7 @@ import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
+import 'artifact_cache_manager.dart';
 import 'artifact_cache_read_scheduler.dart';
 import 'partial_download_store.dart';
 
@@ -26,6 +27,7 @@ final class PartialDownloadHandoff {
     this.equivalentCandidates,
     this.clock,
     this.readScheduler,
+    this.physicalArtifactCache,
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'partial-download-handoff',
   });
@@ -35,6 +37,7 @@ final class PartialDownloadHandoff {
   final PartialEquivalentCandidates? equivalentCandidates;
   final MonoClock? clock;
   final ArtifactCacheReadScheduler? readScheduler;
+  final ArtifactCacheManager? physicalArtifactCache;
   final TraceSink traceSink;
   final String sessionId;
   final Map<DownloadSession, Future<bool>> _stores =
@@ -62,6 +65,16 @@ final class PartialDownloadHandoff {
     control?.throwIfCancelled();
     _exactDurableRestoreProofs[session] = null;
     if (session.committedLength > 0) return;
+    final cache = physicalArtifactCache;
+    if (cache != null && cache.requiresFreshSource(session.id)) {
+      _record(
+        session,
+        action: 'fresh-source-skip-durable-restore',
+        bytes: 0,
+        startedAtMicros: clock?.nowMicros(),
+      );
+      return;
+    }
 
     // A chapter-owned exact READY body may bypass an empty deterministic
     // session artifact only after the Artifact owner itself proves that no

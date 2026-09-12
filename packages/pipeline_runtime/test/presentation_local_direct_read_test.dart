@@ -417,6 +417,171 @@ void main() {
   );
 
   test(
+    'canonical force reload preserves pinned exact download and refreshes one physical epoch',
+    () async {
+      final uri = Uri.parse('https://example.invalid/canonical-pinned-reload.jpg');
+      final chapter = _chapter(uri: uri);
+      final asset = chapter.pages.single;
+      final id = readerPageDownloadId(chapter, asset);
+      final cachedImage = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+        'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      );
+      final physicalId = PhysicalMediaId.canonical('canonical-pinned-page');
+      final store = _RejectedCachedImageStore(
+        id: id,
+        bytes: cachedImage,
+        completePartial: true,
+        pinnedExact: true,
+        physicalId: physicalId,
+      );
+      final cache = ArtifactCacheManager(backend: store);
+      final transferRuntime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: cache,
+        partialDownloadStore: store,
+        net: NetLane(maxActive: 1),
+      );
+      transferRuntime.registry.bindPhysicalMedia(
+        id: id,
+        physicalId: physicalId,
+      );
+      const fresh = <int>[0xff, 0xd8, 0xff, 0xd9];
+      var sourceOpens = 0;
+      final factory = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _FreshFactory(),
+      ).withTransferRuntime(transferRuntime).withLoaderSources(
+        <Uri, LoaderTransportSource>{
+          uri: LoaderTransportSource(
+            revision: 'fresh-r1',
+            openControlledResponse: ({range, validators, control}) async {
+              sourceOpens++;
+              return ByteResponse(
+                bytes: Stream<List<int>>.value(fresh),
+                statusCode: 200,
+                rangeStart: 0,
+                totalLength: fresh.length,
+              );
+            },
+          ),
+        },
+      );
+      final reader = factory.create(
+        chapter: chapter,
+        sessionId: 'presentation-canonical-pinned-reload',
+      );
+
+      try {
+        reader.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+        reader.accept(_observation(reader.sessionId, chapter));
+        await _waitForCondition(
+          () => transferRuntime.registry.find(id)?.state == DownloadState.promoted,
+        );
+        expect(
+          await reader.loadBytes(asset, MediaLoadToken()).timeout(
+                const Duration(seconds: 5),
+              ),
+          cachedImage,
+        );
+        final physicalBindsBeforeReload = store.physicalBinds;
+
+        expect(
+          await reader
+              .forceReloadPresentation(asset)
+              .timeout(const Duration(seconds: 5)),
+          isTrue,
+        );
+        await _waitForCondition(() => sourceOpens == 1);
+        expect(
+          await reader.loadBytes(asset, MediaLoadToken()).timeout(
+                const Duration(seconds: 5),
+              ),
+          Uint8List.fromList(fresh),
+        );
+        expect(store.invalidations, 0);
+        expect(store.physicalInvalidations, 1);
+        expect(store.physicalPartialInvalidations, 1);
+        final preservedExact = await store.openArtifactStream(id);
+        expect(preservedExact, isNotNull);
+        expect(await preservedExact!.readAll!(), cachedImage);
+
+        await _waitForCondition(
+          () => transferRuntime.registry.find(id)?.state == DownloadState.promoted,
+        );
+        final freshSession = transferRuntime.registry.find(id)!;
+        expect(
+          await transferRuntime.artifactCacheHandoff!
+              .settleAutomatic(freshSession)
+              .timeout(const Duration(seconds: 5)),
+          isTrue,
+        );
+        expect(cache.requiresFreshSource(id), isFalse);
+        expect(store.stores, 0);
+        expect(store.physicalBinds, physicalBindsBeforeReload);
+      } finally {
+        await reader.dispose().timeout(const Duration(seconds: 5));
+        await transferRuntime.dispose().timeout(const Duration(seconds: 5));
+      }
+    },
+  );
+
+  test(
+    'force reload also protects requested pinned exact when presentation authority differs',
+    () async {
+      final uri = Uri.parse('https://example.invalid/requested-pinned-fallback.jpg');
+      final chapter = _chapter(uri: uri);
+      final asset = chapter.pages.single;
+      final id = readerPageDownloadId(chapter, asset);
+      final siblingId = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'older-comic',
+          chapterId: 'chapter',
+          pageId: 'page-0',
+        ),
+        sourceRevision: 'older-r1',
+        canonicalUri: Uri.parse(
+          'https://example.invalid/requested-pinned-fallback-old.jpg',
+        ),
+      );
+      final cachedImage = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+        'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      );
+      final store = _RejectedCachedImageStore(
+        id: id,
+        equivalentId: siblingId,
+        bytes: cachedImage,
+        pinnedExact: true,
+      );
+      final cache = ArtifactCacheManager(backend: store);
+      final runtime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: cache,
+        partialDownloadStore: store,
+        net: NetLane(maxActive: 1),
+      );
+      try {
+        expect(
+          await runtime.recoverPresentationArtifact(
+            id,
+            reason: 'requested-pinned-different-storage-authority',
+            userInitiated: true,
+            rejectedStorageId: siblingId,
+            rejectedGeneration: cache.generationFor(siblingId),
+          ),
+          isTrue,
+        );
+        expect(store.retentionQueries, <DownloadId>[siblingId, id]);
+        expect(store.invalidations, 0);
+        final preserved = await store.openArtifactStream(id);
+        expect(preserved, isNotNull);
+        expect(await preserved!.readAll!(), cachedImage);
+      } finally {
+        await runtime.dispose().timeout(const Duration(seconds: 5));
+      }
+    },
+  );
+
+  test(
     'presentation loadBytes reads immutable local sources before promotion',
     () async {
       const payload = <int>[7, 8, 9];
@@ -584,13 +749,20 @@ final class _PresentationFileBackend implements ArtifactCacheBackend {
 }
 
 final class _RejectedCachedImageStore
-    implements ArtifactCacheBackend, PartialDownloadStore {
+    implements
+        ArtifactCacheBackend,
+        ArtifactCacheRetentionQuery,
+        PhysicalArtifactCacheBackend,
+        PhysicalPartialDownloadStore,
+        PartialDownloadStore {
   _RejectedCachedImageStore({
     required this.id,
     required this.bytes,
     this.equivalentId,
     this.completePartial = false,
     this.partialCompletionGate,
+    this.pinnedExact = false,
+    this.physicalId,
   });
 
   final DownloadId id;
@@ -598,9 +770,17 @@ final class _RejectedCachedImageStore
   final DownloadId? equivalentId;
   final bool completePartial;
   final Completer<void>? partialCompletionGate;
+  final bool pinnedExact;
+  final PhysicalMediaId? physicalId;
   final Completer<void> partialOpened = Completer<void>();
   bool invalidated = false;
+  bool physicalInvalidated = false;
   int invalidations = 0;
+  int physicalInvalidations = 0;
+  int physicalPartialInvalidations = 0;
+  int physicalBinds = 0;
+  int stores = 0;
+  final List<DownloadId> retentionQueries = <DownloadId>[];
 
   bool _canRead(DownloadId candidate) =>
       (candidate == id && !invalidated) || candidate == equivalentId;
@@ -666,6 +846,66 @@ final class _RejectedCachedImageStore
   }
 
   @override
+  Future<bool> isPinnedExactArtifact(DownloadId candidate) async {
+    retentionQueries.add(candidate);
+    return pinnedExact && candidate == id && !invalidated;
+  }
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openPhysicalArtifact(
+    PhysicalMediaId candidate,
+  ) async {
+    if (candidate != physicalId || physicalInvalidated) return null;
+    return ArtifactCacheStreamEntry(
+      length: bytes.lengthInBytes,
+      open: ({required int start, int? endExclusive}) async* {
+        final end = endExclusive ?? bytes.lengthInBytes;
+        yield Uint8List.sublistView(bytes, start, end);
+      },
+      readAll: () async => bytes,
+      fullReadIntegrity: ArtifactReadIntegrityBasis.crc32Verified,
+    );
+  }
+
+  @override
+  Future<bool> bindPhysicalArtifact({
+    required PhysicalMediaId physicalId,
+    required DownloadId sourceId,
+  }) async {
+    if (this.physicalId != physicalId) return false;
+    physicalBinds++;
+    physicalInvalidated = false;
+    return true;
+  }
+
+  @override
+  Future<void> invalidatePhysicalArtifact(PhysicalMediaId candidate) async {
+    if (candidate != physicalId) return;
+    physicalInvalidated = true;
+    physicalInvalidations++;
+  }
+
+  @override
+  Future<PartialDownloadEntry?> openPhysicalPartialDownload({
+    required PhysicalMediaId physicalId,
+    required DownloadId requestId,
+  }) async => null;
+
+  @override
+  Future<void> storePhysicalPartialDownload({
+    required PhysicalMediaId physicalId,
+    required DownloadId providerHint,
+    required PartialDownloadEntry entry,
+  }) async {}
+
+  @override
+  Future<void> invalidatePhysicalPartialDownload(
+    PhysicalMediaId candidate,
+  ) async {
+    if (candidate == physicalId) physicalPartialInvalidations++;
+  }
+
+  @override
   Future<void> invalidateArtifact(DownloadId candidate) async {
     if (candidate != id) return;
     invalidated = true;
@@ -688,7 +928,9 @@ final class _RejectedCachedImageStore
   Future<void> storePromotedArtifact({
     required DownloadId id,
     required Uint8List bytes,
-  }) async {}
+  }) async {
+    stores++;
+  }
 }
 
 final class _Backend implements ArtifactCacheBackend {

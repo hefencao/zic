@@ -62,6 +62,7 @@ final class CompositionDownloadTransferRuntime {
         onError: (error, stackTrace) {},
         clock: clock,
         readScheduler: localReadScheduler,
+        physicalArtifactCache: cache,
         traceSink: traceHub,
         sessionId: 'composition-transfer-owner',
       );
@@ -80,6 +81,7 @@ final class CompositionDownloadTransferRuntime {
         requiredExactTargets: (session) =>
             owner.requiredExactDurableTargets(session.id),
         exactDurableRestoreProof: partialDownloadHandoff?.provesExactDurableBody,
+        suppressAutomaticCommit: _consumePreservedPinnedReload,
       );
     }
     registry = DownloadRegistry(
@@ -146,6 +148,8 @@ final class CompositionDownloadTransferRuntime {
       <DownloadId, PhysicalMediaId>{};
   final Map<DownloadId, String> _lastTracedCanonicalMediaConflict =
       <DownloadId, String>{};
+  final Map<DownloadId, SourceEpoch?> _preservedPinnedReloadEpochs =
+      <DownloadId, SourceEpoch?>{};
   final Map<String, Map<String, CanonicalMediaChapterAuthority>>
       _canonicalMediaAuthorityScopes =
       <String, Map<String, CanonicalMediaChapterAuthority>>{};
@@ -538,6 +542,14 @@ final class CompositionDownloadTransferRuntime {
   Future<Uint8List> readArtifact(Artifact artifact) =>
       workspace.readArtifact(artifact);
 
+  bool _consumePreservedPinnedReload(DownloadSession session) {
+    if (!_preservedPinnedReloadEpochs.containsKey(session.id)) return false;
+    final rejectedEpoch = _preservedPinnedReloadEpochs[session.id];
+    if (rejectedEpoch != null && session.epoch == rejectedEpoch) return false;
+    _preservedPinnedReloadEpochs.remove(session.id);
+    return true;
+  }
+
   /// Invalidates the exact byte authority rejected by presentation and
   /// reopens the same demanded physical transfer as a fresh epoch. The
   /// rejected storage identity/generation comes from the actual cache read; a
@@ -573,13 +585,26 @@ final class CompositionDownloadTransferRuntime {
       generation = lookup?.generation ?? cache.generationFor(storageId);
     }
     storageId ??= id;
+    _applyCanonicalPhysicalMedia(id);
+    final physicalAnchor = registry.resolvePhysicalId(id);
+    final physicalMediaId = physicalMediaIdFor(id);
+    final sessionBeforeRecovery = registry.find(physicalAnchor);
+    final preservePinnedExact = cache != null &&
+        (await cache.isPinnedBackendExact(storageId) ||
+            (storageId != id && await cache.isPinnedBackendExact(id)));
+    if (preservePinnedExact) {
+      _preservedPinnedReloadEpochs[physicalAnchor] =
+          sessionBeforeRecovery?.epoch;
+    } else {
+      _preservedPinnedReloadEpochs.remove(physicalAnchor);
+    }
     int? freshSourceRecoveryGroup;
 
     return owner.recoverPresentationArtifact(
       id,
       invalidateArtifact: () async {
         var invalidated = true;
-        if (cache != null) {
+        if (cache != null && !preservePinnedExact) {
           final expectedGeneration = generation;
           if (expectedGeneration == null) {
             await cache.invalidate(storageId!);
@@ -593,7 +618,7 @@ final class CompositionDownloadTransferRuntime {
         if (invalidated && cache != null) {
           freshSourceRecoveryGroup = cache.beginFreshSourceRecovery(<DownloadId>{
             id,
-            registry.resolvePhysicalId(id),
+            physicalAnchor,
           });
         }
         _recordPresentationRecoveryTrace(
@@ -601,14 +626,33 @@ final class CompositionDownloadTransferRuntime {
           storageId: storageId!,
           reason: reason,
           action: invalidated
-              ? (userInitiated ? 'manual-retry' : 'automatic-retry')
+              ? preservePinnedExact
+                  ? userInitiated
+                      ? 'preserve-pinned-manual-retry'
+                      : 'preserve-pinned-automatic-retry'
+                  : (userInitiated ? 'manual-retry' : 'automatic-retry')
               : 'stale-generation-reload',
         );
         return invalidated;
       },
       afterPhysicalReset: () async {
         final group = freshSourceRecoveryGroup;
-        if (group != null) cache?.armFreshSourceRecovery(group);
+        if (group == null || cache == null) return;
+        try {
+          if (!physicalMediaId.isExactFallback) {
+            await cache.invalidatePhysicalArtifact(physicalMediaId);
+            final partialStore = partialDownloadStore;
+            if (partialStore is PhysicalPartialDownloadStore) {
+              await (partialStore as PhysicalPartialDownloadStore)
+                  .invalidatePhysicalPartialDownload(physicalMediaId);
+            }
+          }
+          cache.armFreshSourceRecovery(group);
+        } on Object {
+          cache.cancelFreshSourceRecovery(group);
+          _preservedPinnedReloadEpochs.remove(physicalAnchor);
+          rethrow;
+        }
       },
     );
   }
@@ -947,6 +991,7 @@ final class CompositionDownloadTransferRuntime {
     _canonicalMediaAuthorityScopes.clear();
     _lastTracedPhysicalMediaOwner.clear();
     _lastTracedCanonicalMediaConflict.clear();
+    _preservedPinnedReloadEpochs.clear();
     artifactCacheManager?.removeEquivalentResolver(
       _versionPageAuthorityResolverKey,
     );

@@ -24,6 +24,9 @@ typedef ExactDurableRestoreProof = bool Function(
   DownloadId targetId,
   int length,
 );
+typedef SuppressAutomaticArtifactCommit = bool Function(
+  DownloadSession session,
+);
 
 /// Commits only fully promoted session artifacts to the persistent cache tier.
 ///
@@ -41,6 +44,7 @@ final class PromotedArtifactCacheHandoff {
     this.defaultTarget,
     this.requiredExactTargets,
     this.exactDurableRestoreProof,
+    this.suppressAutomaticCommit,
   });
 
   final ArtifactCacheManager cache;
@@ -52,6 +56,7 @@ final class PromotedArtifactCacheHandoff {
   final DefaultArtifactTarget? defaultTarget;
   final RequiredArtifactTargets? requiredExactTargets;
   final ExactDurableRestoreProof? exactDurableRestoreProof;
+  final SuppressAutomaticArtifactCommit? suppressAutomaticCommit;
   final Map<DownloadSession, DownloadSnapshotListener> _listeners =
       <DownloadSession, DownloadSnapshotListener>{};
   final Map<DownloadId, Future<void>> _commits =
@@ -168,9 +173,28 @@ final class PromotedArtifactCacheHandoff {
       final targets = requiredExactTargets?.call(session).toSet() ??
           <DownloadId>{};
       if (targets.isEmpty) {
-        final target = defaultTarget?.call(session) ?? session.id;
-        await _commitTarget(session, target);
-        await _bindCanonicalPhysicalAuthority(session, target);
+        if (suppressAutomaticCommit?.call(session) == true) {
+          // Keep this branch asynchronous so [_submit] has installed the
+          // tracked Future before [_runCommit]'s finally removes it. Ordinary
+          // commit branches already cross an async durable boundary.
+          await Future<void>.delayed(Duration.zero);
+          // A manual/offline exact binding is an explicit user-retention fact.
+          // Presentation force-reload may refresh the hot physical epoch, but
+          // must not silently replace or unpin that durable download. Keep the
+          // fresh epoch hot-only and release its transient cache quarantine.
+          cache.completeFreshSourceRecoveryWithoutReplacement(session.id);
+          _recordCommit(
+            session,
+            targetId: session.id,
+            action: 'skip-preserved-pinned-exact',
+            bytes: session.committedLength,
+            startedAtMicros: clock?.nowMicros(),
+          );
+        } else {
+          final target = defaultTarget?.call(session) ?? session.id;
+          await _commitTarget(session, target);
+          await _bindCanonicalPhysicalAuthority(session, target);
+        }
       } else {
         for (final target in targets) {
           await _commitTarget(
