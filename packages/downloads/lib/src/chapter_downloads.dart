@@ -21,6 +21,7 @@ import 'comic_conflict_inspector.dart';
 import 'composition_download_transfer_runtime.dart';
 import 'download_resource_coordinator.dart';
 import 'partial_download_store.dart';
+import 'reader_page_identity.dart';
 
 enum ChapterDownloadPhase {
   idle,
@@ -2330,6 +2331,155 @@ final class PersistentDownloadArtifactStore
   Future<Map<String, CacheRec>> indexedRecords() async => <String, CacheRec>{
         for (final record in await _index.list()) record.key: record,
       };
+
+  Future<int> backfillCanonicalReadyArtifacts(
+    Iterable<CanonicalMediaChapterAuthority> authorities,
+  ) async {
+    _requireOpen();
+    final authorityList = authorities.toList(growable: false);
+    if (authorityList.isEmpty) return 0;
+
+    final readyByChapter = <String, List<CacheRec>>{};
+    for (final record in await _index.list(state: CacheState.ready)) {
+      if (!_isVerifiedReadyRecord(record)) continue;
+      readyByChapter
+          .putIfAbsent(
+            canonicalMediaExactChapterKeyForDownload(record.id),
+            () => <CacheRec>[],
+          )
+          .add(record);
+    }
+    if (readyByChapter.isEmpty) return 0;
+
+    final candidatesByPhysical = <PhysicalMediaId, Map<String, DownloadId>>{};
+    for (final authority in authorityList) {
+      final records = readyByChapter[authority.exactKey];
+      if (records == null || records.isEmpty) continue;
+      final manifest = authority.manifest;
+      final exactPages = <String, DownloadId>{};
+      for (final page in manifest.pages) {
+        final exactId = readerPageDownloadId(manifest, page);
+        exactPages[exactId.key] = exactId;
+      }
+      for (final record in records) {
+        final exactId = exactPages[record.id.key];
+        if (exactId == null) continue;
+        final physicalId = authority.resolve(exactId);
+        if (physicalId == null || physicalId.isExactFallback) continue;
+        candidatesByPhysical
+            .putIfAbsent(physicalId, () => <String, DownloadId>{})
+            .putIfAbsent(exactId.key, () => exactId);
+      }
+    }
+
+    var newlyBound = 0;
+    for (final entry in candidatesByPhysical.entries) {
+      if (await _index.getPhysicalMediaArtifact(entry.key) != null) continue;
+      final bound = await bindPhysicalArtifactFromCandidates(
+        physicalId: entry.key,
+        candidates: entry.value.values,
+      );
+      if (bound) newlyBound++;
+    }
+    return newlyBound;
+  }
+
+
+  /// Migrates legacy exact mutable prefixes into the canonical physical
+  /// partial owner when the current composition authority proves that exact
+  /// page belongs to a canonical media coordinate.
+  ///
+  /// This is deliberately a bounded cache-residency pass: it scans only
+  /// existing exact partial rows, never the source chapter page space. The
+  /// physical prefix is committed before the exact row is retired, so a crash
+  /// can leave a harmless duplicate but cannot destroy the only durable copy.
+  /// Gap / revoked-proof rows are skipped because [CanonicalMediaChapterAuthority]
+  /// refuses to resolve them.
+  Future<int> backfillCanonicalPartials(
+    Iterable<CanonicalMediaChapterAuthority> authorities,
+  ) async {
+    _requireOpen();
+    final authorityList = authorities.toList(growable: false);
+    if (authorityList.isEmpty) return 0;
+
+    final partialByChapter = <String, List<CacheRec>>{};
+    for (final record in await _index.list(state: CacheState.partial)) {
+      if (record.bytes <= 0) continue;
+      partialByChapter
+          .putIfAbsent(
+            canonicalMediaExactChapterKeyForDownload(record.id),
+            () => <CacheRec>[],
+          )
+          .add(record);
+    }
+    if (partialByChapter.isEmpty) return 0;
+
+    final candidatesByPhysical =
+        <PhysicalMediaId, List<({CacheRec record, DownloadId id})>>{};
+    for (final authority in authorityList) {
+      final records = partialByChapter[authority.exactKey];
+      if (records == null || records.isEmpty) continue;
+      final exactPages = <String, DownloadId>{};
+      for (final page in authority.manifest.pages) {
+        final exactId = readerPageDownloadId(authority.manifest, page);
+        exactPages[exactId.key] = exactId;
+      }
+      for (final record in records) {
+        // Rebuild from the current exact manifest rather than trusting legacy
+        // pageIndexHint metadata; the download key remains the exact identity.
+        final exactId = exactPages[record.id.key];
+        if (exactId == null) continue;
+        final physicalId = authority.resolve(exactId);
+        if (physicalId == null || physicalId.isExactFallback) continue;
+        candidatesByPhysical
+            .putIfAbsent(
+              physicalId,
+              () => <({CacheRec record, DownloadId id})>[],
+            )
+            .add((record: record, id: exactId));
+      }
+    }
+
+    var retiredExactPartials = 0;
+    for (final entry in candidatesByPhysical.entries) {
+      // Start from the longest known prefix. Shorter duplicate exact prefixes
+      // can then retire without copying over a longer canonical body.
+      final candidates = entry.value
+        ..sort((left, right) => right.record.bytes.compareTo(left.record.bytes));
+      for (final candidate in candidates) {
+        final source = await openPartialDownload(candidate.id);
+        if (source == null || source.length <= 0) continue;
+        // openPartialDownload may legitimately touch the exact row. Capture
+        // the post-open generation so expected-record eviction below rejects
+        // only mutations that race the physical commit, not our own access.
+        final openedRecord = await _index.get(candidate.id.key);
+        if (openedRecord == null ||
+            openedRecord.state != CacheState.partial ||
+            openedRecord.bytes != source.length) {
+          continue;
+        }
+        await storePhysicalPartialDownload(
+          physicalId: entry.key,
+          providerHint: candidate.id,
+          entry: source,
+        );
+        final canonicalArtifact = await _index.getPhysicalMediaArtifact(entry.key);
+        final canonicalPartial = await _index.getPhysicalPartial(entry.key);
+        final safelyCovered = canonicalArtifact != null ||
+            (canonicalPartial != null &&
+                canonicalPartial.bytes >= candidate.record.bytes);
+        if (!safelyCovered) continue;
+
+        // Expected-record eviction prevents a concurrent longer/newer exact
+        // generation from being deleted after we copied an older snapshot.
+        await _evictCacheRecord(candidate.id, expected: openedRecord);
+        if (await _index.get(candidate.id.key) == null) {
+          retiredExactPartials++;
+        }
+      }
+    }
+    return retiredExactPartials;
+  }
 
   /// Batched exact-key existence query used by temporary version-cache alias
   /// restoration. This mirrors VibeVenera's `findExistingKeys`, extended for

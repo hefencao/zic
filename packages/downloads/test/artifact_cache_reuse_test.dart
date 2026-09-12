@@ -1162,6 +1162,120 @@ void main() {
     );
   });
 
+  test('canonical backfill migrates only active exact cache state', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-canonical-backfill-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    final chapter = ChapterManifest(
+      sourceId: 'venera:fixture',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'Canonical backfill',
+        sequence: 0,
+        pageCount: 3,
+        sourceRevision: 'r1',
+      ),
+      pages: <PageAsset>[
+        for (var index = 0; index < 3; index++)
+          PageAsset(
+            pageId: 'page-$index',
+            chapterId: 'chapter',
+            index: index,
+            uri: Uri.parse('venera-resource:backfill:$index'),
+          ),
+      ],
+      readingDirection: ReadingDirection.vertical,
+    );
+    final projection = VersionChapterCanonicalProjection(
+      familyId: const VersionFamilyId('family'),
+      canonicalChapterId: const CanonicalChapterId('canonical-chapter'),
+      sourceId: chapter.sourceId,
+      comicId: chapter.comicId,
+      chapterId: chapter.chapter.chapterId,
+      sourceRevision: chapter.chapter.sourceRevision,
+      pageCount: chapter.pages.length,
+      intervals: const <CanonicalMediaBindingInterval>[
+        CanonicalMediaBindingInterval(
+          exactStart: 0,
+          exactEndExclusive: 3,
+          segmentId: CanonicalMediaSegmentId('segment'),
+          segmentStart: 0,
+        ),
+      ],
+    );
+    final authority = CanonicalMediaChapterAuthority(
+      manifest: chapter,
+      projection: projection,
+      activeProjectionRanges: const <CanonicalMediaActiveRange>[
+        CanonicalMediaActiveRange(start: 0, endExclusive: 2),
+      ],
+    );
+    final readyId = readerPageDownloadId(chapter, chapter.pages[0]);
+    final activePartialId = readerPageDownloadId(chapter, chapter.pages[1]);
+    final gapPartialId = readerPageDownloadId(chapter, chapter.pages[2]);
+    final readyBytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
+    final activeBytes = Uint8List.fromList(<int>[5, 6, 7]);
+    final gapBytes = Uint8List.fromList(<int>[8, 9]);
+
+    await store.storePromotedArtifact(id: readyId, bytes: readyBytes);
+    for (final entry in <(DownloadId, Uint8List)>[
+      (activePartialId, activeBytes),
+      (gapPartialId, gapBytes),
+    ]) {
+      await store.storePartialDownload(
+        id: entry.$1,
+        entry: PartialDownloadEntry(
+          length: entry.$2.lengthInBytes,
+          validators: const Validators(),
+          totalLength: 12,
+          open: ({required int start}) async* {
+            yield Uint8List.sublistView(entry.$2, start);
+          },
+        ),
+      );
+    }
+
+    expect(
+      await store.backfillCanonicalReadyArtifacts(<CanonicalMediaChapterAuthority>[
+        authority,
+      ]),
+      1,
+    );
+    final readyPhysical = PhysicalMediaId.canonical(
+      projection.coordinateForPageIndex(0).stableKey,
+    );
+    expect((await store.openPhysicalArtifact(readyPhysical))?.length, readyBytes.lengthInBytes);
+
+    expect(
+      await store.backfillCanonicalPartials(<CanonicalMediaChapterAuthority>[
+        authority,
+      ]),
+      1,
+    );
+    final activePhysical = PhysicalMediaId.canonical(
+      projection.coordinateForPageIndex(1).stableKey,
+    );
+    expect(await store.index.get(activePartialId.key), isNull);
+    expect(
+      (await store.openPhysicalPartialDownload(
+        physicalId: activePhysical,
+        requestId: activePartialId,
+      ))
+          ?.length,
+      activeBytes.lengthInBytes,
+    );
+    expect(
+      (await store.index.get(gapPartialId.key))?.bytes,
+      gapBytes.lengthInBytes,
+      reason: 'inactive projection gaps must remain exact',
+    );
+  });
+
   test('resource reuse identity accepts only strong media keys', () {
     expect(
       verifiedComicResourceIdentity(
