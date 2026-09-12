@@ -210,6 +210,9 @@ final class ExternalPluginRuntimeSession
     final gateWaitWatch = Stopwatch()..start();
     var gateWaitMicros = 0;
     var runtimeInvocationMicros = 0;
+    String? gateBlockedByOperation;
+    int? gateBlockedByPriority;
+    var gateBlockedByControlled = false;
     try {
       response = await _gate.run(
         () {
@@ -243,6 +246,12 @@ final class ExternalPluginRuntimeSession
         },
         control: control,
         onPreempt: () => _cancelInvocation(request.requestId),
+        debugLabel: operation.name,
+        onQueuedBehind: (blocker) {
+          gateBlockedByOperation = blocker.operation;
+          gateBlockedByPriority = blocker.priority;
+          gateBlockedByControlled = blocker.controlled;
+        },
       );
     } on TimeoutException catch (error) {
       unawaited(_cancelInvocation(request.requestId));
@@ -301,6 +310,9 @@ final class ExternalPluginRuntimeSession
       payload: payload,
       gateWaitMicros: gateWaitMicros,
       runtimeInvocationMicros: runtimeInvocationMicros,
+      gateBlockedByOperation: gateBlockedByOperation,
+      gateBlockedByPriority: gateBlockedByPriority,
+      gateBlockedByControlled: gateBlockedByControlled,
     );
   }
 
@@ -864,6 +876,14 @@ final class _RuntimeBrowsableComicSource
         'sourcePlanGateWaitMicros': invocation.gateWaitMicros,
         'sourcePlanRuntimeInvocationMicros':
             invocation.runtimeInvocationMicros,
+        if (invocation.gateBlockedByOperation != null)
+          'sourcePlanGateBlockedByOperation':
+              invocation.gateBlockedByOperation!,
+        if (invocation.gateBlockedByPriority != null)
+          'sourcePlanGateBlockedByPriority': invocation.gateBlockedByPriority!,
+        if (invocation.gateBlockedByOperation != null)
+          'sourcePlanGateBlockedByControlled':
+              invocation.gateBlockedByControlled,
       },
     );
   }
@@ -1103,11 +1123,29 @@ final class _RuntimeInvocationResult {
     required this.payload,
     required this.gateWaitMicros,
     required this.runtimeInvocationMicros,
+    required this.gateBlockedByOperation,
+    required this.gateBlockedByPriority,
+    required this.gateBlockedByControlled,
   });
 
   final Object payload;
   final int gateWaitMicros;
   final int runtimeInvocationMicros;
+  final String? gateBlockedByOperation;
+  final int? gateBlockedByPriority;
+  final bool gateBlockedByControlled;
+}
+
+final class _RuntimeGateBlocker {
+  const _RuntimeGateBlocker({
+    required this.operation,
+    required this.priority,
+    required this.controlled,
+  });
+
+  final String? operation;
+  final int? priority;
+  final bool controlled;
 }
 
 final class _RuntimeInvocationWaiter {
@@ -1138,10 +1176,12 @@ final class _RuntimeActiveInvocation {
   _RuntimeActiveInvocation({
     required this.control,
     required this.onPreempt,
+    required this.debugLabel,
   });
 
-  final TaskControl control;
+  final TaskControl? control;
   final Future<void> Function()? onPreempt;
+  final String? debugLabel;
   StreamSubscription<int>? prioritySubscription;
   bool preemptRequested = false;
 
@@ -1180,18 +1220,32 @@ final class _RuntimeInvocationGate {
   int _nextWaiterSequence = 0;
   bool _closing = false;
   _RuntimeActiveInvocation? _controlledActive;
+  _RuntimeActiveInvocation? _singleActive;
 
   Future<T> run<T>(
     Future<T> Function() action, {
     TaskControl? control,
     Future<void> Function()? onPreempt,
+    String? debugLabel,
+    void Function(_RuntimeGateBlocker blocker)? onQueuedBehind,
   }) async {
     if (_closing) {
       throw StateError('external plugin runtime is closing');
     }
     _throwIfTaskCancelled(control);
     if (_active >= maxConcurrentInvocations) {
-      _maybePreemptControlledActive(control);
+      final active = _singleActive;
+      if (active != null) {
+        final activeControl = active.control;
+        onQueuedBehind?.call(
+          _RuntimeGateBlocker(
+            operation: active.debugLabel,
+            priority: activeControl?.priority,
+            controlled: activeControl != null,
+          ),
+        );
+      }
+      _maybePreemptActiveForControlled(control);
       final waiter = _RuntimeInvocationWaiter(
         control: control,
         sequence: _nextWaiterSequence++,
@@ -1210,7 +1264,7 @@ final class _RuntimeInvocationGate {
                     priority >= dynamicPreemptionPriorityThreshold;
             observedPriority = priority;
             if (crossedDynamicThreshold) {
-              _maybePreemptControlledActive(waiter.control);
+              _maybePreemptActiveForControlled(waiter.control);
             }
           },
         );
@@ -1247,11 +1301,20 @@ final class _RuntimeInvocationGate {
     } else {
       _active++;
     }
-    final activeInvocation =
-        controlledPreemptionPriorityFloor < (1 << 30) && control != null
-            ? _RuntimeActiveInvocation(control: control, onPreempt: onPreempt)
-            : null;
-    if (activeInvocation != null) {
+    final tracksSingleActive = maxConcurrentInvocations == 1;
+    final tracksControlledPreemption =
+        controlledPreemptionPriorityFloor < (1 << 30) && control != null;
+    final activeInvocation = tracksSingleActive || tracksControlledPreemption
+        ? _RuntimeActiveInvocation(
+            control: control,
+            onPreempt: onPreempt,
+            debugLabel: debugLabel,
+          )
+        : null;
+    if (tracksSingleActive && activeInvocation != null) {
+      _singleActive = activeInvocation;
+    }
+    if (tracksControlledPreemption && activeInvocation != null) {
       _controlledActive = activeInvocation;
       final taskControl = control;
       if (taskControl is PriorityObservableTaskControl) {
@@ -1273,7 +1336,7 @@ final class _RuntimeInvocationGate {
               waiter.priority < dynamicPreemptionPriorityThreshold) {
             return;
           }
-          _maybePreemptControlledActive(waiter.control);
+          _maybePreemptActiveForControlled(waiter.control);
         });
       }
     }
@@ -1292,14 +1355,25 @@ final class _RuntimeInvocationGate {
     return operation.timeout(limits.invocationTimeout);
   }
 
-  void _maybePreemptControlledActive(TaskControl? incoming) {
+  void _maybePreemptActiveForControlled(TaskControl? incoming) {
     if (incoming == null ||
         incoming.priority < controlledPreemptionPriorityFloor) {
       return;
     }
-    final active = _controlledActive;
+    // A Venera runtime exposes one physical JS context. High-priority
+    // scheduler-controlled resource work must therefore be able to cancel not
+    // only a lower-ranked controlled request-plan, but also an unprioritized
+    // generic operation (for example a Reader-post-frame metadata loadChapter)
+    // that happens to own that sole context. The active invocation still keeps
+    // the permit until its physical Future exits; cancellation only asks the
+    // runtime to yield the context sooner.
+    final active = _controlledActive ?? _singleActive;
     if (active == null || active.preemptRequested) return;
-    if (incoming.priority - active.control.priority < preemptionThreshold) return;
+    final activeControl = active.control;
+    if (activeControl != null &&
+        incoming.priority - activeControl.priority < preemptionThreshold) {
+      return;
+    }
     final callback = active.onPreempt;
     if (callback == null) return;
     active.preemptRequested = true;
@@ -1333,6 +1407,9 @@ final class _RuntimeInvocationGate {
       activeInvocation.disposePrioritySubscription();
       if (identical(_controlledActive, activeInvocation)) {
         _controlledActive = null;
+      }
+      if (identical(_singleActive, activeInvocation)) {
+        _singleActive = null;
       }
     }
     if (!_closing) {

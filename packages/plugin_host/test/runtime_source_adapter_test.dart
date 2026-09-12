@@ -551,6 +551,90 @@ void main() {
   });
 
   test(
+      'controlled Venera resource plan reports a generic operation occupying the single gate',
+      () async {
+    final gate = Completer<void>();
+    final connection = _SequencedConnection(firstGate: gate.future);
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source =
+        session.sources.single as ControlledResolvableComicResourceSource;
+    final currentControl = _MutableTaskControl(priority: 1000);
+
+    final browse = session.sources.single.browse();
+    await Future<void>.delayed(Duration.zero);
+    final current = source.resolveResourceControlled(
+      Uri.parse('venera-resource:current-behind-browse'),
+      control: currentControl,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    gate.complete();
+    await browse;
+    final request = await current;
+    expect(
+      request.diagnostics['sourcePlanGateBlockedByOperation'],
+      ExternalPluginRuntimeOperation.browse.name,
+    );
+    expect(request.diagnostics['sourcePlanGateBlockedByControlled'], isFalse);
+    expect(
+      request.diagnostics.containsKey('sourcePlanGateBlockedByPriority'),
+      isFalse,
+    );
+    expect(connection.maxActive, 1);
+  });
+
+  test(
+      'controlled Venera current preempts an unprioritized generic gate owner',
+      () async {
+    final connection = _PriorityResolveConnection();
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    final controlled = source as ControlledResolvableComicResourceSource;
+    final currentControl = _MutableTaskControl(priority: 1000);
+
+    final background = source.loadChapter('chapter-1');
+    await connection.firstStarted.future;
+    final current = controlled.resolveResourceControlled(
+      Uri.parse('venera-resource:current-behind-loadChapter'),
+      control: currentControl,
+    );
+
+    await expectLater(
+      background,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect(
+      (await current).uri,
+      Uri.parse('https://cdn.invalid/current-behind-loadChapter'),
+    );
+    expect(
+      connection.startedUris,
+      <String>[
+        'loadChapter:chapter-1',
+        'venera-resource:current-behind-loadChapter',
+      ],
+    );
+    expect(connection.cancelledRequestIds, hasLength(1));
+    expect(connection.maxActive, 1);
+  });
+
+  test(
       'controlled Venera resource work cancels active prefetch and admits current before queued prefetch',
       () async {
     final connection = _PriorityResolveConnection(releaseOnCancel: false);
@@ -1383,11 +1467,17 @@ final class _PriorityResolveConnection
     ExternalPluginRuntimeRequest request,
   ) async {
     final rawUri = request.arguments['uri'];
-    if (request.operation != ExternalPluginRuntimeOperation.resolveResource ||
-        rawUri is! String) {
-      throw StateError('priority fixture accepts resolveResource only');
+    final chapterId = request.arguments['chapterId'];
+    final isResolve =
+        request.operation == ExternalPluginRuntimeOperation.resolveResource &&
+        rawUri is String;
+    final isChapter =
+        request.operation == ExternalPluginRuntimeOperation.loadChapter &&
+        chapterId is String;
+    if (!isResolve && !isChapter) {
+      throw StateError('priority fixture accepts resolveResource/loadChapter only');
     }
-    startedUris.add(rawUri);
+    startedUris.add(isResolve ? rawUri : 'loadChapter:$chapterId');
     active++;
     if (active > maxActive) maxActive = active;
     try {
@@ -1405,7 +1495,29 @@ final class _PriorityResolveConnection
           ),
         );
       }
-      final suffix = Uri.parse(rawUri).path.split(':').last;
+      if (isChapter) {
+        return ExternalPluginRuntimeResponse.success(
+          requestId: request.requestId,
+          payload: <String, Object?>{
+            'comicId': 'comic-1',
+            'chapter': <String, Object?>{
+              'chapterId': chapterId,
+              'title': 'Chapter',
+              'pageCount': 1,
+              'sourceRevision': 'r1',
+            },
+            'pages': <Object?>[
+              <String, Object?>{
+                'chapterId': chapterId,
+                'pageId': 'page-1',
+                'index': 0,
+                'uri': 'https://cdn.invalid/page-1.webp',
+              },
+            ],
+          },
+        );
+      }
+      final suffix = Uri.parse(rawUri as String).path.split(':').last;
       return ExternalPluginRuntimeResponse.success(
         requestId: request.requestId,
         payload: <String, Object?>{
@@ -1526,7 +1638,13 @@ final class _SequencedConnection implements ExternalPluginRuntimeConnection {
           ExternalPluginRuntimeOperation.loadResource =>
             throw UnimplementedError(),
           ExternalPluginRuntimeOperation.resolveResource =>
-            throw UnimplementedError(),
+            <String, Object?>{
+              'url': 'https://cdn.invalid/${request.arguments['uri']}',
+              'method': 'GET',
+              'headers': <String, Object?>{},
+              'body': null,
+              'requiresRuntimeTransform': false,
+            },
           ExternalPluginRuntimeOperation.retryResource =>
             throw UnimplementedError(),
           ExternalPluginRuntimeOperation.loadSourceSettings =>
