@@ -226,17 +226,32 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
         },
       ),
     );
+    // Decode workers are process-lifetime Reader infrastructure, but warming
+    // them during Home startup used to compete with first raster/cover work.
+    // Reader entry already has an asynchronous chapter-preparation window, so
+    // overlap the one-time worker startup with that work instead of charging
+    // the first decoded frame. Prewarm remains acceleration-only: if it fails,
+    // the normal decode path retains authority to retry/report the failure.
+    final mediaPrewarm = prewarmDefaultLocalMediaPipeline();
 
     final route = MaterialPageRoute<void>(
       builder: (_) => DeferredReaderRoute<_PreparedImportedChapter>(
         title: title,
         traceSink: widget.debugTrace,
         traceSessionId: 'reader-entry',
-        load: () => _prepareImportedChapter(
-          loadChapter,
-          refreshRemote: refreshRemote,
-          initialPageIndex: initialPageIndex,
-        ),
+        load: () async {
+          final prepared = await _prepareImportedChapter(
+            loadChapter,
+            refreshRemote: refreshRemote,
+            initialPageIndex: initialPageIndex,
+          );
+          try {
+            await mediaPrewarm;
+          } on Object catch (error) {
+            debugPrint('Reader media prewarm unavailable: $error');
+          }
+          return prepared;
+        },
         builder: (_, prepared) => this._buildImportedChapterScreen(
           prepared,
           onProgressChanged: onProgressChanged,
