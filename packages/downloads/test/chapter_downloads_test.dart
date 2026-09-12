@@ -4881,6 +4881,175 @@ void main() {
     }
   });
 
+  test('manual retry refreshes only the failed source resource generation', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-source-generation-retry-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final locator = Uri.parse('venera-resource:semantic-generation-page');
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    var loadCalls = 0;
+    final refreshed = <Uri>[];
+    service.setChapterResourceAccess(
+      ChapterResourceAccess(
+        loadBytes: (sourceId, uri) async {
+          expect(sourceId, 'venera:fixture');
+          expect(uri, locator);
+          loadCalls++;
+          if (loadCalls == 1) {
+            throw const Failure(
+              code: ErrorCode.source,
+              message: 'source image recovery returned non-media bytes',
+            );
+          }
+          return bytes;
+        },
+        refreshResourceGeneration: (sourceId, uri, {control}) async {
+          expect(sourceId, 'venera:fixture');
+          expect(control, isNull);
+          refreshed.add(uri);
+        },
+      ),
+    );
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'lib:source-generation-retry',
+        displayName: '第一话',
+        sourceId: 'venera:fixture',
+        comicId: 'source-generation-comic',
+        comicTitle: 'Source generation retry',
+        chapterId: 'chapter-1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: locator.toString(),
+            pageId: 'page-1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: bytes.length,
+          ),
+        ],
+      ),
+    );
+
+    await expectLater(
+      service.download(entry),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.source,
+        ),
+      ),
+    );
+    expect(refreshed, isEmpty);
+
+    await service.retry(entry);
+
+    expect(refreshed, <Uri>[locator]);
+    expect(loadCalls, 2);
+    final snapshot = await service.inspect(entry);
+    expect(snapshot.phase, ChapterDownloadPhase.complete);
+    expect(snapshot.completedPages, 1);
+  });
+
+  test(
+      'manual retry rediscovers historical source failure after service reopen',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-historical-source-generation-retry-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final locator = Uri.parse('venera-resource:historical-semantic-page');
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'lib:historical-source-generation-retry',
+        displayName: '第一话',
+        sourceId: 'venera:fixture',
+        comicId: 'historical-source-generation-comic',
+        comicTitle: 'Historical source generation retry',
+        chapterId: 'chapter-1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: locator.toString(),
+            pageId: 'page-1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: bytes.length,
+          ),
+        ],
+      ),
+    );
+
+    final firstService = await PersistentChapterDownloadService.open(root.path);
+    firstService.setChapterResourceAccess(
+      ChapterResourceAccess(
+        loadBytes: (sourceId, uri) async {
+          throw const Failure(
+            code: ErrorCode.source,
+            message: 'source image recovery returned non-media bytes',
+          );
+        },
+      ),
+    );
+    await expectLater(
+      firstService.download(entry),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.source,
+        ),
+      ),
+    );
+    await firstService.close();
+
+    final secondService = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(secondService.close);
+    var refreshed = false;
+    var secondGenerationLoads = 0;
+    secondService.setChapterResourceAccess(
+      ChapterResourceAccess(
+        loadBytes: (sourceId, uri) async {
+          expect(sourceId, 'venera:fixture');
+          expect(uri, locator);
+          secondGenerationLoads++;
+          if (!refreshed) {
+            throw const Failure(
+              code: ErrorCode.source,
+              message: 'source image recovery returned non-media bytes',
+            );
+          }
+          return bytes;
+        },
+        refreshResourceGeneration: (sourceId, uri, {control}) async {
+          expect(sourceId, 'venera:fixture');
+          expect(uri, locator);
+          expect(control, isNull);
+          refreshed = true;
+        },
+      ),
+    );
+
+    await secondService.retry(entry);
+
+    expect(refreshed, isTrue);
+    expect(secondGenerationLoads, 2);
+    final snapshot = await secondService.inspect(entry);
+    expect(snapshot.phase, ChapterDownloadPhase.complete);
+    expect(snapshot.completedPages, 1);
+  });
+
   test('unpinned auto-cached chapter snapshot remains idle and hasAutoCache true', () async {
     final root = await Directory.systemTemp.createTemp('zic-autocache-idle-test-');
     addTearDown(() => root.delete(recursive: true));
