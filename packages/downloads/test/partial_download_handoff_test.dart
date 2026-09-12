@@ -109,6 +109,80 @@ void main() {
     expect(await store.index.get(id.key), isNull);
   });
 
+  test(
+    'physical partial keeps total length but drops provider validators across versions',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'physical-partial-provider-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final store = await PersistentDownloadArtifactStore.open(root.path);
+      addTearDown(store.close);
+      DownloadId idFor(String version) => DownloadId(
+        content: ContentId(
+          sourceId: 'source',
+          comicId: 'comic-$version',
+          chapterId: 'chapter-$version',
+          pageId: 'page-$version',
+        ),
+        sourceRevision: 'revision-$version',
+        canonicalUri: Uri.parse('https://example.test/$version.webp'),
+      );
+      final first = idFor('a');
+      final second = idFor('b');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000023',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(257, (index) => index & 0xff),
+      );
+
+      await store.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: first,
+        entry: PartialDownloadEntry(
+          length: bytes.lengthInBytes,
+          validators: const Validators(etag: 'provider-a'),
+          totalLength: 1024,
+          open: ({required int start}) =>
+              Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+        ),
+      );
+      final initial = await store.index.list(state: CacheState.partial);
+      expect(
+        initial,
+        isEmpty,
+        reason: 'physical partial must not create exact rows',
+      );
+      final firstOpen = await store.openPhysicalPartialDownload(
+        physicalId: physical,
+        requestId: first,
+      );
+      expect(firstOpen, isNotNull);
+      expect(firstOpen!.validators.etag, 'provider-a');
+      expect(firstOpen.totalLength, 1024);
+      final physicalRecord = (store.index as PhysicalPartialIndex);
+      final before = await physicalRecord.getPhysicalPartial(physical);
+      expect(before, isNotNull);
+
+      final secondOpen = await store.openPhysicalPartialDownload(
+        physicalId: physical,
+        requestId: second,
+      );
+      expect(secondOpen, isNotNull);
+      expect(secondOpen!.validators.isEmpty, isTrue);
+      expect(secondOpen.totalLength, 1024);
+      final builder = BytesBuilder(copy: false);
+      await for (final chunk in secondOpen.open(start: 0)) {
+        builder.add(chunk);
+      }
+      expect(builder.takeBytes(), bytes);
+      final after = await physicalRecord.getPhysicalPartial(physical);
+      expect(after?.path, before?.path);
+      expect(after?.id, physical);
+    },
+  );
+
   test('partial survives Reader-session workspace replacement without promotion',
       () async {
     final firstRoot = await Directory.systemTemp.createTemp('partial-source-');

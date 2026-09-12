@@ -1227,6 +1227,7 @@ final class PersistentDownloadArtifactStore
         PhysicalArtifactCacheBackend,
         PhysicalArtifactCandidateBindingBackend,
         PhysicalArtifactExactBindingBackend,
+        PhysicalPartialDownloadStore,
         PartialDownloadStore,
         PartialDownloadMetadataStore,
         ArtifactCacheMaintenance {
@@ -2196,12 +2197,15 @@ final class PersistentDownloadArtifactStore
       _artifactWriteProofs = <DownloadId, ({int length, String checksum})>{};
   final Map<DownloadId, Future<void>> _artifactMutationTails =
       <DownloadId, Future<void>>{};
+  final Map<PhysicalMediaId, Future<void>> _physicalPartialMutationTails =
+      <PhysicalMediaId, Future<void>>{};
   final Map<PhysicalMediaId, Future<void>> _physicalArtifactMutationTails =
       <PhysicalMediaId, Future<void>>{};
   final Map<String, Future<void>> _artifactReplicaMutationTails =
       <String, Future<void>>{};
   static final Object _artifactReplicaMutationZoneKey = Object();
   final Set<DownloadId> _borrowedPartialIds = <DownloadId>{};
+  final Set<PhysicalMediaId> _borrowedPhysicalPartialIds = <PhysicalMediaId>{};
   final Map<String, Future<void>> _structuredWriteTails =
       <String, Future<void>>{};
   final Map<String, String> _structuredDirectoriesByOwner = <String, String>{};
@@ -3442,6 +3446,25 @@ final class PersistentDownloadArtifactStore
     return current.whenComplete(() {
       if (identical(_artifactMutationTails[id], tail)) {
         _artifactMutationTails.remove(id);
+      }
+    });
+  }
+
+  Future<T> _serializePhysicalPartialMutation<T>(
+    PhysicalMediaId id,
+    Future<T> Function() operation,
+  ) {
+    final previous = _physicalPartialMutationTails[id] ?? Future<void>.value();
+    final current = previous.then<T>(
+      (_) => operation(),
+      onError: (Object _, StackTrace __) => operation(),
+    );
+    late final Future<void> tail;
+    tail = current.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    _physicalPartialMutationTails[id] = tail;
+    return current.whenComplete(() {
+      if (identical(_physicalPartialMutationTails[id], tail)) {
+        _physicalPartialMutationTails.remove(id);
       }
     });
   }
@@ -6623,6 +6646,736 @@ final class PersistentDownloadArtifactStore
   }
 
   @override
+  Future<PartialDownloadEntry?> openPhysicalPartialDownload({
+    required PhysicalMediaId physicalId,
+    required DownloadId requestId,
+  }) => _serializePhysicalPartialMutation(
+    physicalId,
+    () => _openPhysicalPartialDownload(
+      physicalId: physicalId,
+      requestId: requestId,
+    ),
+  );
+
+  Future<PartialDownloadEntry?> _openPhysicalPartialDownload({
+    required PhysicalMediaId physicalId,
+    required DownloadId requestId,
+  }) async {
+    _requireOpen();
+    if (_borrowedPhysicalPartialIds.contains(physicalId)) return null;
+    final record = await _index.getPhysicalPartial(physicalId);
+    if (record == null || record.bytes <= 0) return null;
+    if (await _index.getPhysicalMediaArtifact(physicalId) != null) {
+      await _removePhysicalPartialRecord(record, deleteBody: true);
+      return null;
+    }
+
+    final parsed = parseSafRecordPath(record.path);
+    if (parsed != null) {
+      if (safTreeUri == null || parsed.treeUri != safTreeUri) return null;
+      final directAlias = await _physicalPartialDirectAlias(
+        record: record,
+        relativePath: parsed.relativePath,
+        safTreeUri: parsed.treeUri,
+      );
+      if (directAlias != null) {
+        final resume = await _readPhysicalPartialResumeState(
+          directAlias.artifact.partialPath,
+          physicalId,
+          requestId,
+        );
+        if (resume.explicitDifferentOwner) {
+          await _index.removePhysicalPartial(physicalId);
+          return null;
+        }
+        final touchedUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+        final touched = record.copyWith(touchedUs: touchedUs);
+        await _index.touchPhysicalPartial(physicalId, touchedUs);
+        return PartialDownloadEntry(
+          length: record.bytes,
+          validators: resume.validators,
+          totalLength: resume.totalLength,
+          // SAF remains the correctness fallback until POSIX adoption commits.
+          // The proven Direct path is only an alternate access capability for
+          // this same storage root; it never creates a second physical body.
+          open: ({required int start}) => _bytes.readChunks(
+            record.path,
+            start: start,
+            endExclusive: record.bytes,
+          ),
+          accessMode: 'saf',
+          adoptInto: (session, {TaskControl? control}) =>
+              _adoptPhysicalSafDirectAlias(
+                session,
+                expected: touched,
+                directRoot: directAlias.directRoot,
+                directAccess: directAlias.access,
+                control: control,
+              ),
+        );
+      }
+      final length = await _bytes.length(record.path);
+      if (length <= 0 || length != record.bytes) {
+        await _removePhysicalPartialRecord(record, deleteBody: true);
+        return null;
+      }
+      final resume = await _readSafPhysicalPartialResumeState(
+        record.path,
+        physicalId,
+        requestId,
+      );
+      if (resume.explicitDifferentOwner) {
+        await _index.removePhysicalPartial(physicalId);
+        return null;
+      }
+      final touchedUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+      await _index.touchPhysicalPartial(physicalId, touchedUs);
+      return PartialDownloadEntry(
+        length: length,
+        validators: resume.validators,
+        totalLength: resume.totalLength,
+        open: ({required int start}) =>
+            _bytes.readChunks(record.path, start: start, endExclusive: length),
+        accessMode: 'saf',
+      );
+    }
+
+    final root = record.storageRootId.trim();
+    if (root.isEmpty || root == 'default') return null;
+    final expectedArtifact = CacheLayout(root).artifactForPhysical(physicalId);
+    if (File(expectedArtifact.partialPath).absolute.path !=
+        File(record.path).absolute.path) {
+      // A physical partial row may not redirect a stable media id to an
+      // arbitrary direct path. Preserve the bytes for diagnostics, but stop
+      // advertising this row as canonical authority.
+      await _index.removePhysicalPartial(physicalId);
+      return null;
+    }
+    final file = File(record.path);
+    if (!await file.exists() || await file.length() != record.bytes) {
+      await _removePhysicalPartialRecord(record, deleteBody: true);
+      return null;
+    }
+    final resume = await _readPhysicalPartialResumeState(
+      record.path,
+      physicalId,
+      requestId,
+    );
+    if (resume.explicitDifferentOwner) {
+      await _index.removePhysicalPartial(physicalId);
+      return null;
+    }
+    final touchedUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+    final touched = record.copyWith(touchedUs: touchedUs);
+    await _index.putPhysicalPartial(touched);
+    return PartialDownloadEntry(
+      length: record.bytes,
+      validators: resume.validators,
+      totalLength: resume.totalLength,
+      open: ({required int start}) =>
+          _readIndexedChunks(record.path, length: record.bytes, start: start),
+      accessMode: 'direct',
+      adoptInto: (session, {TaskControl? control}) =>
+          _adoptPhysicalPosixPartial(
+            session,
+            expected: touched,
+            control: control,
+          ),
+    );
+  }
+
+  Future<({
+    String directRoot,
+    Artifact artifact,
+    StorageAccessLocatorRecord access,
+  })?> _physicalPartialDirectAlias({
+    required PhysicalPartialRecord record,
+    required String relativePath,
+    required String safTreeUri,
+  }) async {
+    final root = await _index.getStorageRoot(safTreeUri);
+    if (root == null) return null;
+    final directAccesses = root.accessLocators
+        .where(
+          (access) =>
+              access.kind == StorageAccessLocatorKind.direct &&
+              access.health != StorageAccessHealth.accessDenied,
+        )
+        .toList(growable: false)
+      ..sort(_compareStorageAccessPreference);
+    for (final access in directAccesses) {
+      final directRoot = access.locator.trim();
+      if (directRoot.isEmpty) continue;
+      final artifact = CacheLayout(directRoot).artifactForPhysical(record.id);
+      final aliasedPath = _joinDirectArtifactPath(directRoot, relativePath);
+      if (File(artifact.partialPath).absolute.path !=
+          File(aliasedPath).absolute.path) {
+        continue;
+      }
+      try {
+        final stat = await File(aliasedPath).stat();
+        if (stat.type != FileSystemEntityType.file || stat.size != record.bytes) {
+          continue;
+        }
+        if (access.health != StorageAccessHealth.healthy) {
+          await _index.updateStorageAccessHealth(
+            kind: access.kind,
+            locator: access.locator,
+            health: StorageAccessHealth.healthy,
+            touchedUs: DateTime.now().toUtc().microsecondsSinceEpoch,
+          );
+        }
+        return (directRoot: directRoot, artifact: artifact, access: access);
+      } on FileSystemException catch (error) {
+        final code = error.osError?.errorCode;
+        if (code == 1 || code == 5 || code == 13) {
+          await _index.updateStorageAccessHealth(
+            kind: access.kind,
+            locator: access.locator,
+            health: StorageAccessHealth.accessDenied,
+            touchedUs: DateTime.now().toUtc().microsecondsSinceEpoch,
+          );
+        }
+      }
+    }
+    return null;
+  }
+
+  Future<bool> _adoptPhysicalSafDirectAlias(
+    DownloadSession target, {
+    required PhysicalPartialRecord expected,
+    required String directRoot,
+    required StorageAccessLocatorRecord directAccess,
+    TaskControl? control,
+  }) => _serializePhysicalPartialMutation(expected.id, () async {
+    _requireOpen();
+    control?.throwIfCancelled();
+    final physicalId = expected.id;
+    if (target.physicalId != physicalId ||
+        _borrowedPhysicalPartialIds.contains(physicalId)) {
+      return false;
+    }
+    final current = await _index.getPhysicalPartial(physicalId);
+    if (current == null ||
+        !_samePhysicalPartialRecord(expected, current) ||
+        parseSafRecordPath(current.path) == null) {
+      return false;
+    }
+    final root = await _index.getStorageRoot(current.storageRootId);
+    final directStillProven = root?.accessLocators.any(
+          (access) =>
+              access.kind == StorageAccessLocatorKind.direct &&
+              access.locator == directRoot &&
+              access.health != StorageAccessHealth.accessDenied,
+        ) ==
+        true;
+    if (!directStillProven) return false;
+
+    final artifact = CacheLayout(directRoot).artifactForPhysical(physicalId);
+    _borrowedPhysicalPartialIds.add(physicalId);
+    try {
+      final resume = await _readPhysicalPartialResumeState(
+        artifact.partialPath,
+        physicalId,
+        target.id,
+      );
+      if (resume.explicitDifferentOwner) {
+        _borrowedPhysicalPartialIds.remove(physicalId);
+        return false;
+      }
+      await target.adoptDurablePartialBacking(
+        artifact: artifact,
+        index: _index,
+        storageRootId: directRoot,
+        expectedLength: current.bytes,
+        validators: resume.validators,
+        totalLength: resume.totalLength,
+        releaseBacking: () {
+          _borrowedPhysicalPartialIds.remove(physicalId);
+        },
+        control: control,
+      );
+      if (directAccess.health != StorageAccessHealth.healthy) {
+        await _index.updateStorageAccessHealth(
+          kind: directAccess.kind,
+          locator: directAccess.locator,
+          health: StorageAccessHealth.healthy,
+          touchedUs: DateTime.now().toUtc().microsecondsSinceEpoch,
+        );
+      }
+      return true;
+    } on FileSystemException catch (error) {
+      if (!target.hasBorrowedDurableSpool) {
+        _borrowedPhysicalPartialIds.remove(physicalId);
+      }
+      final code = error.osError?.errorCode;
+      if (!target.hasBorrowedDurableSpool &&
+          (code == 1 || code == 5 || code == 13)) {
+        await _index.updateStorageAccessHealth(
+          kind: directAccess.kind,
+          locator: directAccess.locator,
+          health: StorageAccessHealth.accessDenied,
+          touchedUs: DateTime.now().toUtc().microsecondsSinceEpoch,
+        );
+        return false;
+      }
+      rethrow;
+    } catch (_) {
+      if (!target.hasBorrowedDurableSpool) {
+        // Direct access is only an optimization for a SAF-owned physical
+        // partial. Until the session commits the borrowed backing, the SAF
+        // entry remains the complete authority and can safely service the
+        // existing stream-copy fallback.
+        _borrowedPhysicalPartialIds.remove(physicalId);
+        return false;
+      }
+      rethrow;
+    }
+  });
+
+  Future<bool> _adoptPhysicalPosixPartial(
+    DownloadSession target, {
+    required PhysicalPartialRecord expected,
+    TaskControl? control,
+  }) => _serializePhysicalPartialMutation(expected.id, () async {
+    _requireOpen();
+    control?.throwIfCancelled();
+    final physicalId = expected.id;
+    if (target.physicalId != physicalId ||
+        _borrowedPhysicalPartialIds.contains(physicalId)) {
+      return false;
+    }
+    final current = await _index.getPhysicalPartial(physicalId);
+    if (current == null ||
+        !_samePhysicalPartialRecord(expected, current) ||
+        parseSafRecordPath(current.path) != null) {
+      return false;
+    }
+    final root = current.storageRootId.trim();
+    if (root.isEmpty || root == 'default') return false;
+    final adoptedArtifact = CacheLayout(root).artifactForPhysical(physicalId);
+    if (File(adoptedArtifact.partialPath).absolute.path !=
+        File(current.path).absolute.path) {
+      return false;
+    }
+    final file = File(current.path);
+    if (!await file.exists() || await file.length() != current.bytes) {
+      return false;
+    }
+    final resume = await _readPhysicalPartialResumeState(
+      current.path,
+      physicalId,
+      target.id,
+    );
+    if (resume.explicitDifferentOwner) return false;
+
+    _borrowedPhysicalPartialIds.add(physicalId);
+    try {
+      await target.adoptDurablePartialBacking(
+        artifact: adoptedArtifact,
+        index: _index,
+        storageRootId: current.storageRootId,
+        expectedLength: current.bytes,
+        validators: resume.validators,
+        totalLength: resume.totalLength,
+        releaseBacking: () {
+          _borrowedPhysicalPartialIds.remove(physicalId);
+        },
+        control: control,
+      );
+      return true;
+    } catch (_) {
+      if (!target.hasBorrowedDurableSpool) {
+        _borrowedPhysicalPartialIds.remove(physicalId);
+      }
+      rethrow;
+    }
+  });
+
+  @override
+  Future<void> storePhysicalPartialDownload({
+    required PhysicalMediaId physicalId,
+    required DownloadId providerHint,
+    required PartialDownloadEntry entry,
+  }) => _notifyManagementAfter(
+    _serializePhysicalPartialMutation(
+      physicalId,
+      () => _storePhysicalPartialDownload(
+        physicalId: physicalId,
+        providerHint: providerHint,
+        entry: entry,
+      ),
+    ),
+  );
+
+  Future<void> _storePhysicalPartialDownload({
+    required PhysicalMediaId physicalId,
+    required DownloadId providerHint,
+    required PartialDownloadEntry entry,
+  }) async {
+    _requireOpen();
+    if (_borrowedPhysicalPartialIds.contains(physicalId)) {
+      throw const Failure(
+        code: ErrorCode.sessionBusy,
+        message: 'physical durable partial is borrowed by the transfer owner',
+      );
+    }
+    if (entry.length <= 0) return;
+    if (await _index.getPhysicalMediaArtifact(physicalId) != null) return;
+    final existing = await _index.getPhysicalPartial(physicalId);
+    if (existing != null && existing.bytes >= entry.length) return;
+
+    if (existing != null && parseSafRecordPath(existing.path) != null) {
+      await _storePhysicalPartialInSaf(
+        physicalId: physicalId,
+        providerHint: providerHint,
+        entry: entry,
+        existing: existing,
+      );
+      return;
+    }
+    if (existing == null && safTreeIo != null && safTreeUri != null) {
+      await _storePhysicalPartialInSaf(
+        physicalId: physicalId,
+        providerHint: providerHint,
+        entry: entry,
+      );
+      return;
+    }
+    await _storePhysicalPartialDirect(
+      physicalId: physicalId,
+      providerHint: providerHint,
+      entry: entry,
+      existing: existing,
+    );
+  }
+
+  Future<void> _storePhysicalPartialDirect({
+    required PhysicalMediaId physicalId,
+    required DownloadId providerHint,
+    required PartialDownloadEntry entry,
+    PhysicalPartialRecord? existing,
+  }) async {
+    final CacheLayout targetLayout;
+    if (existing == null) {
+      targetLayout = layoutFor(providerHint);
+    } else {
+      final root = existing.storageRootId.trim();
+      if (root.isEmpty || root == 'default') {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'physical partial has no stable direct storage root',
+        );
+      }
+      targetLayout = CacheLayout(root);
+    }
+    final artifact = targetLayout.artifactForPhysical(physicalId);
+    if (existing != null &&
+        File(artifact.partialPath).absolute.path !=
+            File(existing.path).absolute.path) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'physical partial path disagrees with its stable identity',
+      );
+    }
+    if (existing == null && await artifact.hasRestorableBody()) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'unindexed body already occupies physical partial path',
+      );
+    }
+
+    try {
+      if (existing == null) {
+        await artifact.restore(verifyPromotedChecksum: false);
+      } else {
+        final file = File(existing.path);
+        if (!await file.exists() || await file.length() != existing.bytes) {
+          throw const Failure(
+            code: ErrorCode.artifactCorruption,
+            message: 'physical partial changed before durable update',
+          );
+        }
+        await artifact.adoptExistingPartial(expectedLength: existing.bytes);
+      }
+      var offset = artifact.committedLength;
+      try {
+        await for (final chunk in entry.open(start: offset)) {
+          if (chunk.isEmpty) continue;
+          await artifact.append(offset, chunk);
+          offset += chunk.length;
+          if (offset >= entry.length) break;
+        }
+        if (offset != entry.length) {
+          throw StateError(
+            'physical partial source changed while storing ${physicalId.key}: '
+            '$offset/${entry.length}',
+          );
+        }
+      } catch (error, stackTrace) {
+        if (artifact.committedLength > 0) {
+          try {
+            await artifact.pause();
+            await _commitPhysicalPartialMetadata(
+              artifact: artifact,
+              physicalId: physicalId,
+              providerHint: providerHint,
+              validators: entry.validators,
+              totalLength: entry.totalLength,
+              createdUs: existing?.createdUs,
+              storageRootId: targetLayout.root,
+            );
+          } on Object {
+            // Preserve the source/store failure. A later length check will
+            // reject an unindexed tail rather than inventing authority.
+          }
+        }
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      await artifact.pause();
+      await _commitPhysicalPartialMetadata(
+        artifact: artifact,
+        physicalId: physicalId,
+        providerHint: providerHint,
+        validators: entry.validators,
+        totalLength: entry.totalLength,
+        createdUs: existing?.createdUs,
+        storageRootId: targetLayout.root,
+      );
+    } finally {
+      await artifact.dispose();
+    }
+  }
+
+  Future<void> _commitPhysicalPartialMetadata({
+    required Artifact artifact,
+    required PhysicalMediaId physicalId,
+    required DownloadId providerHint,
+    required Validators validators,
+    required int? totalLength,
+    required int? createdUs,
+    required String storageRootId,
+  }) async {
+    if (artifact.committedLength <= 0) return;
+    await artifact.writeMeta(<String, Object?>{
+      'version': 1,
+      'physicalMedia': physicalId.toJson(),
+      'providerDownload': providerHint.toJson(),
+      'validators': validators.toJson(),
+      'totalLength': totalLength,
+      'validatorRequestUri': providerHint.canonicalUri.toString(),
+    });
+    final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+    await _index.putPhysicalPartial(
+      PhysicalPartialRecord(
+        id: physicalId,
+        path: artifact.partialPath,
+        bytes: artifact.committedLength,
+        checksum: artifact.checksum,
+        createdUs: createdUs ?? now,
+        touchedUs: now,
+        storageRootId: storageRootId,
+      ),
+    );
+  }
+
+  Future<void> _storePhysicalPartialInSaf({
+    required PhysicalMediaId physicalId,
+    required DownloadId providerHint,
+    required PartialDownloadEntry entry,
+    PhysicalPartialRecord? existing,
+  }) async {
+    final io = safTreeIo;
+    final treeUri = safTreeUri;
+    if (io == null || treeUri == null) {
+      throw const Failure(
+        code: ErrorCode.policy,
+        message: 'physical SAF partial is not accessible in this store',
+      );
+    }
+    final existingParsed = existing == null
+        ? null
+        : parseSafRecordPath(existing.path);
+    if (existingParsed != null && existingParsed.treeUri != treeUri) {
+      throw const Failure(
+        code: ErrorCode.policy,
+        message: 'physical SAF partial belongs to an unavailable storage root',
+      );
+    }
+    final relativePath =
+        existingParsed?.relativePath ??
+        'partial/${layoutFor(providerHint).tokenForPhysical(physicalId)}.part';
+    final recordPath = encodeSafRecordPath(
+      treeUri: treeUri,
+      relativePath: relativePath,
+    );
+    await _serializeStructuredWrite(recordPath, () async {
+      final temporaryPath =
+          '$relativePath.zic-tmp-${DateTime.now().microsecondsSinceEpoch}';
+      final handle = await _withStorageWriteQuantum(
+        () => io.open(temporaryPath, mode: SafWriteMode.writeTruncate),
+      );
+      if (handle == null) {
+        throw StateError('SAF tree refused create for $temporaryPath');
+      }
+      var written = 0;
+      try {
+        await for (final chunk in entry.open(start: 0)) {
+          if (chunk.isEmpty) continue;
+          final bytes = chunk is Uint8List ? chunk : Uint8List.fromList(chunk);
+          await _withStorageWriteQuantum(() => io.write(handle, bytes));
+          written += chunk.length;
+          if (written >= entry.length) break;
+        }
+      } finally {
+        await _withStorageWriteQuantum(() => io.close(handle));
+      }
+      try {
+        if (written != entry.length) {
+          throw StateError(
+            'physical SAF partial source changed while storing '
+            '${physicalId.key}: $written/${entry.length}',
+          );
+        }
+        await _withStorageWriteQuantum(
+          () => commitSafTemporary(io, temporaryPath, relativePath),
+        );
+      } finally {
+        if (await _withStorageWriteQuantum(() => io.exists(temporaryPath))) {
+          await _withStorageWriteQuantum(() => io.delete(temporaryPath));
+        }
+      }
+      final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+      await _index.putPhysicalPartial(
+        PhysicalPartialRecord(
+          id: physicalId,
+          path: recordPath,
+          bytes: written,
+          checksum: '',
+          createdUs: existing?.createdUs ?? now,
+          touchedUs: now,
+          storageRootId: treeUri,
+        ),
+      );
+      try {
+        await _withStorageWriteQuantum(
+          () => writeBytesToSaf(
+            io,
+            '$relativePath.meta',
+            Uint8List.fromList(
+              utf8.encode(
+                jsonEncode(<String, Object?>{
+                  'version': 1,
+                  'physicalMedia': physicalId.toJson(),
+                  'providerDownload': providerHint.toJson(),
+                  'validators': entry.validators.toJson(),
+                  'totalLength': entry.totalLength,
+                  'validatorRequestUri': providerHint.canonicalUri.toString(),
+                }),
+              ),
+            ),
+          ),
+        );
+      } on Object {
+        // Resume metadata is acceleration only; the indexed body remains the
+        // physical partial authority without it.
+      }
+    });
+  }
+
+  Future<_IndexedPartialResumeState> _readSafPhysicalPartialResumeState(
+    String path,
+    PhysicalMediaId physicalId,
+    DownloadId requestId,
+  ) async {
+    final parsed = parseSafRecordPath(path);
+    final io = safTreeIo;
+    final treeUri = safTreeUri;
+    if (parsed == null ||
+        io == null ||
+        treeUri == null ||
+        parsed.treeUri != treeUri) {
+      return const _IndexedPartialResumeState();
+    }
+    final metadataPath = '${parsed.relativePath}.meta';
+    int? handle;
+    try {
+      // open() already resolves existence and establishes the descriptor used
+      // below. A separate SAF exists() probe repeats the same provider path
+      // traversal on a cold directory and can dominate Reader local prepare.
+      handle = await io.open(metadataPath, mode: SafWriteMode.read);
+      if (handle == null) return const _IndexedPartialResumeState();
+      final length = await io.length(handle) ?? 0;
+      if (length <= 0) return const _IndexedPartialResumeState();
+      final bytes = await io.read(handle, length);
+      final decoded = jsonDecode(utf8.decode(bytes));
+      if (decoded is! Map) return const _IndexedPartialResumeState();
+      return _parsePhysicalPartialResumeState(
+        Map<String, Object?>.from(decoded),
+        physicalId,
+        requestId,
+      );
+    } on Object {
+      // Resume metadata is acceleration only. Missing/stale/temporarily
+      // inaccessible sidecars do not invalidate the already length-checked
+      // physical media prefix.
+      return const _IndexedPartialResumeState();
+    } finally {
+      if (handle != null) await io.close(handle);
+    }
+  }
+
+  @override
+  Future<void> invalidatePhysicalPartialDownload(PhysicalMediaId physicalId) =>
+      _notifyManagementAfter(
+        _serializePhysicalPartialMutation(physicalId, () async {
+        _requireOpen();
+        if (_borrowedPhysicalPartialIds.contains(physicalId)) {
+          throw const Failure(
+            code: ErrorCode.sessionBusy,
+            message:
+                'physical durable partial is borrowed by the transfer owner',
+          );
+        }
+        final record = await _index.getPhysicalPartial(physicalId);
+        if (record == null) return;
+        await _removePhysicalPartialRecord(record, deleteBody: true);
+      }),
+      );
+
+  Future<void> _removePhysicalPartialRecord(
+    PhysicalPartialRecord record, {
+    required bool deleteBody,
+  }) async {
+    if (deleteBody) {
+      try {
+        await _bytes.delete(record.path);
+      } on Object {
+        // Index retirement below prevents reuse; inaccessible bytes can be
+        // cleaned by later storage repair.
+    }
+    final parsed = parseSafRecordPath(record.path);
+      if (parsed != null && safTreeIo != null && parsed.treeUri == safTreeUri) {
+        try {
+          await safTreeIo!.delete('${parsed.relativePath}.meta');
+        } on Object {}
+      } else {
+        final meta = File('${record.path}.meta');
+        try {
+          if (await meta.exists()) await meta.delete();
+        } on Object {}
+    }
+    }
+    await _index.removePhysicalPartial(record.id);
+  }
+
+  bool _samePhysicalPartialRecord(
+    PhysicalPartialRecord first,
+    PhysicalPartialRecord second,
+  ) => first == second;
+
+  @override
+  @override
   Future<PartialDownloadEntry?> openPartialDownload(DownloadId id) =>
       _serializeArtifactMutation(id, () => _openPartialDownload(id));
 
@@ -7572,7 +8325,8 @@ final class PersistentDownloadArtifactStore
 
   Future<void> close() async {
     if (_closed) return;
-    if (_borrowedPartialIds.isNotEmpty) {
+    if (_borrowedPartialIds.isNotEmpty ||
+        _borrowedPhysicalPartialIds.isNotEmpty) {
       throw StateError(
         'cannot close persistent artifact store with borrowed durable partials',
       );
@@ -7587,6 +8341,7 @@ final class PersistentDownloadArtifactStore
       final pending = <Future<void>>{
         ..._artifactWrites.values,
         ..._artifactMutationTails.values,
+        ..._physicalPartialMutationTails.values,
         ..._physicalArtifactMutationTails.values,
         ..._structuredWriteTails.values,
         ..._placementWrites.values,
@@ -9672,6 +10427,90 @@ final class _IndexedPartialResumeState {
   final Validators validators;
   final int? totalLength;
   final bool explicitDifferentOwner;
+}
+
+Future<_IndexedPartialResumeState> _readPhysicalPartialResumeState(
+  String partialPath,
+  PhysicalMediaId physicalId,
+  DownloadId requestId,
+) async {
+  final file = File('$partialPath.meta');
+  if (!await file.exists()) return const _IndexedPartialResumeState();
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(await file.readAsString());
+  } on Object {
+    return const _IndexedPartialResumeState();
+  }
+  if (decoded is! Map) return const _IndexedPartialResumeState();
+  return _parsePhysicalPartialResumeState(
+    Map<String, Object?>.from(decoded),
+    physicalId,
+    requestId,
+  );
+}
+
+_IndexedPartialResumeState _parsePhysicalPartialResumeState(
+  Map<String, Object?> meta,
+  PhysicalMediaId physicalId,
+  DownloadId requestId,
+) {
+  final rawPhysical = meta['physicalMedia'];
+  if (rawPhysical is Map) {
+    try {
+      final metadataPhysical = PhysicalMediaId.fromJson(
+        Map<String, Object?>.from(rawPhysical),
+      );
+      if (metadataPhysical != physicalId) {
+        return const _IndexedPartialResumeState(explicitDifferentOwner: true);
+      }
+    } on Object {
+      // Malformed acceleration metadata is not proof that indexed bytes are
+      // foreign. Keep the prefix but resume without provider knowledge.
+      return const _IndexedPartialResumeState();
+    }
+  }
+
+  final rawLength = meta['totalLength'];
+  final totalLength = rawLength is int ? rawLength : null;
+  final rawProvider = meta['providerDownload'];
+  if (rawProvider is! Map) {
+    return _IndexedPartialResumeState(totalLength: totalLength);
+  }
+  final DownloadId provider;
+  try {
+    provider = DownloadId.fromJson(Map<String, Object?>.from(rawProvider));
+  } on Object {
+    return _IndexedPartialResumeState(totalLength: totalLength);
+  }
+  if (provider != requestId) {
+    // Physical bytes and the encoded body's total length remain canonical
+    // continuity facts. Only provider-scoped HTTP validators are discarded.
+    return _IndexedPartialResumeState(totalLength: totalLength);
+  }
+
+  final rawValidators = meta['validators'];
+  if (rawValidators is! Map || (rawLength != null && rawLength is! int)) {
+    return _IndexedPartialResumeState(totalLength: totalLength);
+  }
+  try {
+    var validators = Validators.fromJson(
+      Map<String, Object?>.from(rawValidators),
+    );
+    final rawRequestUri = meta['validatorRequestUri'];
+    final validatorRequestUri = rawRequestUri is String
+        ? Uri.tryParse(rawRequestUri)
+        : null;
+    if (validators.canResume && validatorRequestUri != requestId.canonicalUri) {
+      validators = const Validators();
+    }
+    return _IndexedPartialResumeState(
+      validators: validators,
+      totalLength: rawLength as int?,
+    );
+  } on Object {
+    return const _IndexedPartialResumeState();
+  }
 }
 
 Future<_IndexedPartialResumeState> _readIndexedPartialResumeState(
