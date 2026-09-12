@@ -109,6 +109,26 @@ final class ExternalPluginResourceTransportPool {
   ) =>
       _transportFor(source).verifiedReuseIdentity(locator);
 
+  Future<void> refreshResourceFor(
+    BrowsableComicSource source,
+    Uri locator, {
+    TaskControl? control,
+  }) async {
+    final transport = _transportFor(source);
+    transport.beginFreshResourceGeneration(locator);
+    final controlled = source is ControlledRefreshableComicResourceSource
+        ? source as ControlledRefreshableComicResourceSource
+        : null;
+    if (controlled != null) {
+      await controlled.refreshResourceControlled(locator, control: control);
+      return;
+    }
+    final refreshable = source is RefreshableComicResourceSource
+        ? source as RefreshableComicResourceSource
+        : null;
+    await refreshable?.refreshResource(locator);
+  }
+
   _SourceResourceTransport _transportFor(BrowsableComicSource source) {
     final sourceId = source.sourceId;
     final transport = _transports.putIfAbsent(
@@ -162,7 +182,15 @@ final class _SourceResourceTransport
   final LinkedHashMap<Uri, _RequestPlanEntry> _requestPlans =
       LinkedHashMap<Uri, _RequestPlanEntry>();
   final Set<Uri> _failedStreams = <Uri>{};
+  final Map<Uri, int> _resourceGenerations = <Uri, int>{};
   int _sourceRevision = 0;
+
+  void beginFreshResourceGeneration(Uri locator) {
+    _resourceGenerations[locator] = (_resourceGenerations[locator] ?? 0) + 1;
+    _requestLoads.remove(locator);
+    _requestPlans.remove(locator);
+    _failedStreams.remove(locator);
+  }
 
   void updateSource(BrowsableComicSource source) {
     if (identical(_source, source)) return;
@@ -263,6 +291,7 @@ final class _SourceResourceTransport
           verifiedReuseIdentity = null;
           final retried = await _recoverSourceRequest(
             uri,
+            initialRequestUri: request.uri,
             range: range,
             validators: validators,
             control: control,
@@ -285,6 +314,7 @@ final class _SourceResourceTransport
             verifiedReuseIdentity = null;
             final retried = await _recoverSourceRequest(
               uri,
+              initialRequestUri: request.uri,
               range: range,
               validators: validators,
               control: control,
@@ -305,6 +335,7 @@ final class _SourceResourceTransport
           verifiedReuseIdentity = null;
           final retried = await _recoverSourceRequest(
             uri,
+            initialRequestUri: request.uri,
             range: range,
             validators: validators,
             control: control,
@@ -357,6 +388,7 @@ final class _SourceResourceTransport
 
   Future<({ByteResponse response, String openPath})> _recoverSourceRequest(
     Uri locator, {
+    required Uri initialRequestUri,
     ByteRange? range,
     Validators? validators,
     TaskControl? control,
@@ -364,6 +396,11 @@ final class _SourceResourceTransport
     bool requireRetry = true,
   }) async {
     Object? lastCause = cause;
+    var acceptedPlans = 0;
+    var sameUrlPlans = 0;
+    var changedUrlPlans = 0;
+    var runtimeTransformPlans = 0;
+    var previousUri = initialRequestUri;
     for (var retryIndex = 0;
         retryIndex < _maxSourceSemanticRetries;
         retryIndex++) {
@@ -373,8 +410,26 @@ final class _SourceResourceTransport
         if (!requireRetry && retryIndex == 0) {
           throw const _NoSourceRecoveryAvailable();
         }
-        throw _sourceMediaSemanticFailure(locator, cause: lastCause);
+        throw _sourceMediaSemanticFailure(
+          locator,
+          cause: lastCause,
+          acceptedPlans: acceptedPlans,
+          sameUrlPlans: sameUrlPlans,
+          changedUrlPlans: changedUrlPlans,
+          runtimeTransformPlans: runtimeTransformPlans,
+          recoveryUnavailable: true,
+        );
       }
+      acceptedPlans++;
+      if (_sameSemanticRequestUri(previousUri, replacement.uri)) {
+        sameUrlPlans++;
+      } else {
+        changedUrlPlans++;
+      }
+      if (replacement.requiresRuntimeTransform) {
+        runtimeTransformPlans++;
+      }
+      previousUri = replacement.uri;
       try {
         return await _openRetryPlan(
           locator,
@@ -389,7 +444,15 @@ final class _SourceResourceTransport
         _invalidate(locator);
       }
     }
-    throw _sourceMediaSemanticFailure(locator, cause: lastCause);
+    throw _sourceMediaSemanticFailure(
+      locator,
+      cause: lastCause,
+      acceptedPlans: acceptedPlans,
+      sameUrlPlans: sameUrlPlans,
+      changedUrlPlans: changedUrlPlans,
+      runtimeTransformPlans: runtimeTransformPlans,
+      recoveryUnavailable: false,
+    );
   }
 
   Future<({ComicResourceRequest request, bool cacheHit})> _resolve(
@@ -429,12 +492,16 @@ final class _SourceResourceTransport
       );
     }
     final sourceRevision = _sourceRevision;
+    final resourceGeneration = _resourceGenerations[locator] ?? 0;
+    bool generationChanged() =>
+        _sourceRevision != sourceRevision ||
+        (_resourceGenerations[locator] ?? 0) != resourceGeneration;
     if (control != null) {
       final request = await (controlled != null
           ? controlled.resolveResourceControlled(locator, control: control)
           : resolvable!.resolveResource(locator));
       _throwIfTaskCancelled(control);
-      if (_sourceRevision != sourceRevision) {
+      if (generationChanged()) {
         return _resolve(locator, control: control);
       }
       _remember(locator, request);
@@ -445,7 +512,7 @@ final class _SourceResourceTransport
             ? controlled.resolveResourceControlled(locator)
             : resolvable!.resolveResource(locator))
         .then((request) {
-      if (_sourceRevision == sourceRevision) {
+      if (!generationChanged()) {
         _remember(locator, request);
       }
       return request;
@@ -456,7 +523,7 @@ final class _SourceResourceTransport
     });
     _requestLoads[locator] = load;
     final request = await load;
-    if (_sourceRevision != sourceRevision) {
+    if (generationChanged()) {
       return _resolve(locator);
     }
     return (request: request, cacheHit: false);
@@ -517,25 +584,30 @@ final class _SourceResourceTransport
         ),
         openPath: 'retry-direct',
       );
-    } on Failure catch (error) {
+    } on Failure catch (error, stackTrace) {
       if (error.code != ErrorCode.network) rethrow;
       if (_isSourceMediaSemanticRejection(error)) {
         rethrow;
       }
-    } on IOException {
-      // A source-owned OkHttp interceptor, cookie jar or TLS stack can make
-      // the host request unusable. Preserve complete-body compatibility only
-      // after the streaming request plan has actually failed.
+      if (_requiresSourceClientState(error)) {
+        return (
+          response: await _openRuntimeFallback(
+            locator,
+            range: range,
+            validators: validators,
+            control: control,
+          ),
+          openPath: 'retry-client-runtime-fallback',
+        );
+      }
+      Error.throwWithStackTrace(error, stackTrace);
+    } on IOException catch (error) {
+      throw Failure(
+        code: ErrorCode.network,
+        message: 'source retry transport failure for ${request.uri}',
+        cause: error,
+      );
     }
-    return (
-      response: await _openRuntimeFallback(
-        locator,
-        range: range,
-        validators: validators,
-        control: control,
-      ),
-      openPath: 'retry-runtime-fallback',
-    );
   }
 
   Future<ByteResponse> _openDirect(
@@ -798,14 +870,41 @@ bool _isSourceMediaSemanticRejection(Failure error) =>
 bool _requiresSourceClientState(Failure error) =>
     error.details['sourceClientStateRequired'] == true;
 
-Failure _sourceMediaSemanticFailure(Uri locator, {Object? cause}) => Failure(
+bool _sameSemanticRequestUri(Uri left, Uri right) {
+  String normalized(Uri value) {
+    final raw = value.toString();
+    return raw.startsWith('//') ? 'https:$raw' : raw;
+  }
+
+  return normalized(left) == normalized(right);
+}
+
+Failure _sourceMediaSemanticFailure(
+  Uri locator, {
+  Object? cause,
+  int? acceptedPlans,
+  int? sameUrlPlans,
+  int? changedUrlPlans,
+  int? runtimeTransformPlans,
+  bool? recoveryUnavailable,
+}) =>
+    Failure(
       code: ErrorCode.source,
       message: 'source image recovery returned non-media bytes for $locator',
       cause: cause,
-      details: const <String, Object?>{
+      details: <String, Object?>{
         'sourceMediaProtocolMismatch': true,
         'sourceMediaSemanticRejected': true,
         'sourceSemanticRetryExhausted': true,
+        if (acceptedPlans != null)
+          'sourceSemanticAcceptedPlans': acceptedPlans,
+        if (sameUrlPlans != null) 'sourceSemanticSameUrlPlans': sameUrlPlans,
+        if (changedUrlPlans != null)
+          'sourceSemanticChangedUrlPlans': changedUrlPlans,
+        if (runtimeTransformPlans != null)
+          'sourceSemanticRuntimeTransformPlans': runtimeTransformPlans,
+        if (recoveryUnavailable != null)
+          'sourceSemanticRecoveryUnavailable': recoveryUnavailable,
       },
     );
 

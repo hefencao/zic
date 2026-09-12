@@ -33,6 +33,46 @@ void main() {
     );
   });
 
+
+  test('fresh resource generation drops a retained request plan', () async {
+    final locator = Uri.parse('venera-resource:fresh-generation');
+    final source = _FixtureSource(
+      request: ComicResourceRequest(uri: Uri.parse('https://fixture/stale')),
+      refreshRequest: ComicResourceRequest(uri: Uri.parse('https://fixture/fresh')),
+    );
+    final opened = <Uri>[];
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (request) async {
+        opened.add(request.uri);
+        return ByteResponse(
+          bytes: Stream<List<int>>.value(<int>[1, 2, 3]),
+          statusCode: HttpStatus.ok,
+          rangeStart: 0,
+          totalLength: 3,
+        );
+      },
+    );
+    addTearDown(pool.close);
+
+    final first = await pool.loaderFor(source, locator)();
+    await _collect(first.bytes);
+    final cached = await pool.loaderFor(source, locator)();
+    await _collect(cached.bytes);
+    expect(source.resolveCalls, 1);
+
+    await pool.refreshResourceFor(source, locator);
+    final refreshed = await pool.loaderFor(source, locator)();
+    await _collect(refreshed.bytes);
+
+    expect(source.refreshCalls, 1);
+    expect(source.resolveCalls, 2);
+    expect(opened, <Uri>[
+      Uri.parse('https://fixture/stale'),
+      Uri.parse('https://fixture/stale'),
+      Uri.parse('https://fixture/fresh'),
+    ]);
+  });
+
   test('resolved source request exposes the first chunk before completion',
       () async {
     final body = _ControlledBody();
@@ -431,7 +471,7 @@ void main() {
     await secondWrite.future;
   });
 
-  test('failed direct retry falls back to the source-owned byte transform',
+  test('retry request with explicit transform uses source-owned byte transform',
       () async {
     final failed = Uri.parse('https://fixture/failed');
     final retried = Uri.parse('https://fixture/retried');
@@ -439,7 +479,10 @@ void main() {
         Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 6, 5, 4, 3, 0xff, 0xd9]);
     final source = _FixtureSource(
       request: ComicResourceRequest(uri: failed),
-      retryRequest: ComicResourceRequest(uri: retried),
+      retryRequest: ComicResourceRequest(
+        uri: retried,
+        requiresRuntimeTransform: true,
+      ),
       runtimeBytes: runtimeImage,
     );
     final pool = ExternalPluginResourceTransportPool(
@@ -657,6 +700,26 @@ void main() {
               (error) => error.details['sourceSemanticRetryExhausted'],
               'semantic retry exhausted',
               isTrue,
+            )
+            .having(
+              (error) => error.details['sourceSemanticAcceptedPlans'],
+              'accepted replacement plans',
+              5,
+            )
+            .having(
+              (error) => error.details['sourceSemanticSameUrlPlans'],
+              'same-url replacement plans',
+              0,
+            )
+            .having(
+              (error) => error.details['sourceSemanticChangedUrlPlans'],
+              'changed-url replacement plans',
+              5,
+            )
+            .having(
+              (error) => error.details['sourceSemanticRuntimeTransformPlans'],
+              'runtime-transform replacement plans',
+              0,
             ),
       ),
     );
@@ -726,6 +789,93 @@ void main() {
     expect(source.resolveCalls, 1);
     expect(source.retryCalls, 1);
     expect(source.loadCalls, 0);
+  });
+
+  test('retry replacement network failure stays on streaming transport', () async {
+    final failed = Uri.parse('https://fixture/failed');
+    final replacement = Uri.parse('https://fixture/replacement');
+    final source = _FixtureSource(
+      request: ComicResourceRequest(uri: failed),
+      retryRequest: ComicResourceRequest(uri: replacement),
+      runtimeBytes: Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 1]),
+    );
+    final replacementFailure = Failure(
+      code: ErrorCode.network,
+      message: 'replacement transport is temporarily unavailable',
+    );
+    final opened = <Uri>[];
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (request) async {
+        opened.add(request.uri);
+        if (request.uri == failed) {
+          throw const Failure(
+            code: ErrorCode.network,
+            message: 'initial transport failure',
+          );
+        }
+        throw replacementFailure;
+      },
+    );
+    addTearDown(pool.close);
+
+    Object? observed;
+    try {
+      await pool
+          .loaderFor(source, Uri.parse('venera-resource:retry-network'))();
+    } on Object catch (error) {
+      observed = error;
+    }
+
+    expect(observed, same(replacementFailure));
+    expect(opened, <Uri>[failed, replacement]);
+    expect(source.resolveCalls, 1);
+    expect(source.retryCalls, 1);
+    expect(source.loadCalls, 0);
+  });
+
+  test('retry replacement client-state failure keeps runtime compatibility', () async {
+    final failed = Uri.parse('https://fixture/failed-client-state');
+    final replacement = Uri.parse('https://fixture/replacement-client-state');
+    final runtimeImage =
+        Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 9, 8, 7, 0xff, 0xd9]);
+    final source = _FixtureSource(
+      request: ComicResourceRequest(uri: failed),
+      retryRequest: ComicResourceRequest(uri: replacement),
+      runtimeBytes: runtimeImage,
+    );
+    final opened = <Uri>[];
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (request) async {
+        opened.add(request.uri);
+        if (request.uri == failed) {
+          throw const Failure(
+            code: ErrorCode.network,
+            message: 'initial transport failure',
+          );
+        }
+        throw const Failure(
+          code: ErrorCode.network,
+          message: 'source client state is required',
+          details: <String, Object?>{
+            'sourceClientStateRequired': true,
+          },
+        );
+      },
+    );
+    addTearDown(pool.close);
+
+    final response = await pool
+        .loaderFor(source, Uri.parse('venera-resource:retry-client-state'))();
+
+    expect(await _collect(response.bytes), runtimeImage);
+    expect(opened, <Uri>[failed, replacement]);
+    expect(source.resolveCalls, 1);
+    expect(source.retryCalls, 1);
+    expect(source.loadCalls, 1);
+    expect(
+      response.diagnostics['sourceOpenPath'],
+      'retry-client-runtime-fallback',
+    );
   });
 
   test('source retry replaces only the failed request plan', () async {
@@ -876,11 +1026,14 @@ class _FixtureSource
         ControlledResolvableComicResourceSource,
         RetryableComicResourceSource,
         ControlledRetryableComicResourceSource,
+        RefreshableComicResourceSource,
+        ControlledRefreshableComicResourceSource,
         ControlledComicResourceSource {
   _FixtureSource({
     required this.request,
     this.retryRequest,
     this.retryRequests,
+    this.refreshRequest,
     this.resolveGate,
     Uint8List? runtimeBytes,
   }) : runtimeBytes = runtimeBytes ?? Uint8List(0);
@@ -888,11 +1041,14 @@ class _FixtureSource
   final ComicResourceRequest request;
   final ComicResourceRequest? retryRequest;
   final List<ComicResourceRequest?>? retryRequests;
+  final ComicResourceRequest? refreshRequest;
   final Completer<ComicResourceRequest>? resolveGate;
   final Uint8List runtimeBytes;
   int resolveCalls = 0;
   int retryCalls = 0;
+  int refreshCalls = 0;
   int loadCalls = 0;
+  bool _refreshed = false;
   TaskControl? lastResolveControl;
 
   @override
@@ -919,7 +1075,19 @@ class _FixtureSource
     lastResolveControl = control;
     final gate = resolveGate;
     if (gate != null) return gate.future;
-    return request;
+    return _refreshed ? (refreshRequest ?? request) : request;
+  }
+
+  @override
+  Future<void> refreshResource(Uri uri) => refreshResourceControlled(uri);
+
+  @override
+  Future<void> refreshResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  }) async {
+    refreshCalls++;
+    _refreshed = true;
   }
 
   @override
