@@ -73,6 +73,27 @@ abstract interface class PartialDownloadMetadataStore {
   Future<PartialDownloadMetadata?> inspectPartialDownloadMetadata(DownloadId id);
 }
 
+abstract interface class PhysicalPartialDownloadStore {
+  /// Opens the mutable prefix owned by [physicalId]. [requestId] is only the
+  /// current provider hint used to decide whether stored resume validators are
+  /// still applicable; it is never part of physical ownership.
+  Future<PartialDownloadEntry?> openPhysicalPartialDownload({
+    required PhysicalMediaId physicalId,
+    required DownloadId requestId,
+  });
+
+  /// Persists one mutable prefix under [physicalId]. [providerHint] may select
+  /// a storage root and records provider-scoped resume metadata, but changing
+  /// it must never change the physical partial key/path identity.
+  Future<void> storePhysicalPartialDownload({
+    required PhysicalMediaId physicalId,
+    required DownloadId providerHint,
+    required PartialDownloadEntry entry,
+  });
+
+  Future<void> invalidatePhysicalPartialDownload(PhysicalMediaId physicalId);
+}
+
 abstract interface class PartialDownloadStore {
   Future<PartialDownloadEntry?> openPartialDownload(DownloadId id);
 

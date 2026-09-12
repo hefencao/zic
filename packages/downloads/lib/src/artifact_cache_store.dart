@@ -108,11 +108,54 @@ final class ArtifactCacheStreamEntry {
       readAllControlled;
 }
 
-
 /// Replaceable storage primitive behind the composition-owned cache manager.
 ///
 /// Backends do not own tier order, presence policy, in-flight joining, hot-byte
 /// retention or invalidation. Those rules belong to [ArtifactCacheManager].
+abstract interface class PhysicalArtifactCacheBackend {
+  /// Opens one immutable artifact by its version-independent physical identity.
+  /// No exact DownloadId carrier lookup is permitted inside this operation.
+  Future<ArtifactCacheStreamEntry?> openPhysicalArtifact(PhysicalMediaId id);
+
+  /// Adds a physical-media binding to an already-authoritative exact artifact.
+  /// The backend must not copy bytes or rewrite the immutable object.
+  Future<bool> bindPhysicalArtifact({
+    required PhysicalMediaId physicalId,
+    required DownloadId sourceId,
+  });
+
+  Future<void> invalidatePhysicalArtifact(PhysicalMediaId id);
+}
+
+/// Optional compatibility bridge for durable READY artifacts written before a
+/// stable physical-media binding existed, or before a provider URI changed.
+///
+/// The caller supplies only already-authorized exact/direct candidates. The
+/// backend may use an indexed logical-page lookup to bind an existing immutable
+/// artifact to [physicalId], but must not scan unrelated cache rows or infer
+/// version equivalence itself.
+abstract interface class PhysicalArtifactCandidateBindingBackend {
+  Future<bool> bindPhysicalArtifactFromCandidates({
+    required PhysicalMediaId physicalId,
+    required Iterable<DownloadId> candidates,
+  });
+}
+
+/// Optional zero-copy bridge from canonical physical ownership back to one
+/// exact logical download identity.
+///
+/// The physical artifact is already the immutable byte authority. A manual
+/// download only needs an exact durable binding/pin; it must not manufacture a
+/// second artifact object merely because the historical exact provider row was
+/// retired. Implementations must revalidate [physicalId] before binding
+/// [targetId] to that same object.
+abstract interface class PhysicalArtifactExactBindingBackend {
+  Future<bool> bindExactArtifactFromPhysical({
+    required PhysicalMediaId physicalId,
+    required DownloadId targetId,
+  });
+}
+
 abstract interface class ArtifactCacheBindingBackend {
   /// Adds [targetId] as another exact logical binding to [sourceId]'s existing
   /// immutable durable artifact. The caller owns semantic equivalence proof;

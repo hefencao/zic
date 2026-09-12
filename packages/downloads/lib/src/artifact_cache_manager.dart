@@ -257,6 +257,82 @@ final class ArtifactCacheManager {
       ? Future<ArtifactCacheLookup?>.value()
       : _lookupCandidatesInOrder(id, <DownloadId>[id], control: control);
 
+  Future<ArtifactCacheStreamEntry?> openPhysicalArtifact(PhysicalMediaId id) {
+    final physicalBackend = backend;
+    if (physicalBackend is! PhysicalArtifactCacheBackend) {
+      return Future<ArtifactCacheStreamEntry?>.value();
+    }
+    return (physicalBackend as PhysicalArtifactCacheBackend)
+        .openPhysicalArtifact(id);
+  }
+
+  Future<bool> bindPhysicalArtifact({
+    required PhysicalMediaId physicalId,
+    required DownloadId sourceId,
+  }) {
+    final physicalBackend = backend;
+    if (physicalBackend is! PhysicalArtifactCacheBackend) {
+      return Future<bool>.value(false);
+    }
+    return (physicalBackend as PhysicalArtifactCacheBackend)
+        .bindPhysicalArtifact(physicalId: physicalId, sourceId: sourceId);
+  }
+
+  Future<bool> bindPhysicalArtifactFromCandidates({
+    required PhysicalMediaId physicalId,
+    required Iterable<DownloadId> candidates,
+  }) {
+    final physicalBackend = backend;
+    if (physicalBackend is! PhysicalArtifactCandidateBindingBackend) {
+      return Future<bool>.value(false);
+    }
+    final allowed = candidates
+        .where((candidate) => !requiresFreshSource(candidate))
+        .toList(growable: false);
+    if (allowed.isEmpty) return Future<bool>.value(false);
+    return (physicalBackend as PhysicalArtifactCandidateBindingBackend)
+        .bindPhysicalArtifactFromCandidates(
+          physicalId: physicalId,
+          candidates: allowed,
+        );
+  }
+
+  Future<bool> materializeExactFromPhysical({
+    required PhysicalMediaId physicalId,
+    required DownloadId targetId,
+  }) async {
+    if (physicalId.isExactFallback || requiresFreshSource(targetId)) {
+      return false;
+    }
+    final existing = await lookupAuthoritative(targetId);
+    if (existing?.durable == true) return true;
+    final physicalBackend = backend;
+    if (physicalBackend is! PhysicalArtifactExactBindingBackend) {
+      return false;
+    }
+
+    _advanceMutationGeneration(targetId);
+    _invalidateMemoryExact(targetId);
+    var bound = false;
+    await _serializeMutation(targetId, () async {
+      bound = await (physicalBackend as PhysicalArtifactExactBindingBackend)
+          .bindExactArtifactFromPhysical(
+        physicalId: physicalId,
+        targetId: targetId,
+      );
+    });
+    return bound;
+  }
+
+  Future<void> invalidatePhysicalArtifact(PhysicalMediaId id) {
+    final physicalBackend = backend;
+    if (physicalBackend is! PhysicalArtifactCacheBackend) {
+      return Future<void>.value();
+    }
+    return (physicalBackend as PhysicalArtifactCacheBackend)
+        .invalidatePhysicalArtifact(id);
+  }
+
   /// Opens a durable engine-readable file/descriptor lease without
   /// materializing the encoded body in Dart.
   ///
