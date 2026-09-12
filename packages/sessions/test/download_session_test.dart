@@ -129,6 +129,177 @@ void main() {
     expect(released, 1);
   });
 
+  test('transfer-staging adoption updates only physical partial authority',
+      () async {
+    await session.dispose();
+    final id = _idWithSource('transfer-staging');
+    final physical = PhysicalMediaId.canonical('transfer-staging-physical');
+    session = DownloadSession(
+      id: id,
+      physicalId: physical,
+      artifact: Artifact(
+        partialPath: '${temp.path}/ephemeral/partial/page.webp',
+        finalPath: '${temp.path}/ephemeral/final/page.webp',
+      ),
+      clock: FakeMonoClock(),
+      initiallyDemanded: false,
+    );
+    await session.restore();
+
+    final staging = Artifact(
+      partialPath: '${temp.path}/staging/partial/page.webp',
+      finalPath: '${temp.path}/staging/final/page.webp',
+    );
+    await staging.restore();
+    final prefix = <int>[...'RIFF....WEBP'.codeUnits, ...List<int>.filled(64, 1)];
+    await staging.append(0, prefix);
+    await staging.pause();
+    await staging.dispose();
+
+    final stagingArtifact = Artifact(
+      partialPath: '${temp.path}/staging/partial/page.webp',
+      finalPath: '${temp.path}/staging/final/page.webp',
+    );
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    var released = 0;
+
+    await session.adoptDurablePartialBacking(
+      artifact: stagingArtifact,
+      index: index,
+      storageRootId: '${temp.path}/staging',
+      expectedLength: prefix.length,
+      validators: const Validators(etag: 'staging-v1'),
+      totalLength: prefix.length + 16,
+      releaseBacking: () => released++,
+      transferStaging: true,
+    );
+
+    expect(session.index, isNull,
+        reason: 'transfer staging must not acquire exact-cache authority');
+    expect(session.hasBorrowedPartialBacking, isTrue);
+    expect(session.hasBorrowedDurableSpool, isFalse);
+
+    final writer = session.acquireWriter();
+    final suffix = List<int>.filled(16, 2);
+    await session.append(writer, prefix.length, suffix);
+    await session.pause(writer);
+    final physicalRecord = await index.getPhysicalPartial(physical);
+    expect(physicalRecord, isNotNull);
+    expect(physicalRecord!.bytes, prefix.length + suffix.length);
+    expect(await index.get(id.key), isNull,
+        reason: 'partial growth may update only physical-partial metadata');
+
+    final sealingWriter = session.acquireWriter();
+    await session.seal(
+      sealingWriter,
+      expectedLength: prefix.length + suffix.length,
+    );
+    await session.promote();
+    expect(session.state, DownloadState.promoted);
+    expect(await index.get(id.key), isNull,
+        reason: 'staging promotion is not a durable exact binding');
+    expect(session.hasBorrowedDurableSpool, isFalse);
+
+    await session.dispose();
+    expect(released, 1);
+  });
+
+  test('owned partial checkpoint restores without eager whole-body checksum',
+      () async {
+    await session.dispose();
+    final id = _idWithSource('owned-partial-checkpoint');
+    final physical = PhysicalMediaId.canonical('owned-partial-checkpoint');
+    final partialPath = '${temp.path}/recoverable/partial/page.webp';
+    final finalPath = '${temp.path}/recoverable/final/page.webp';
+    final first = DownloadSession(
+      id: id,
+      physicalId: physical,
+      artifact: Artifact(
+        partialPath: partialPath,
+        finalPath: finalPath,
+      ),
+      clock: FakeMonoClock(),
+      initiallyDemanded: false,
+    );
+    await first.restore();
+    await first.bindResponse(
+      validators: const Validators(etag: 'checkpoint-v1'),
+      totalLength: 8192,
+    );
+    final writer = first.acquireWriter();
+    final prefix = List<int>.generate(4096, (index) => index & 0xff);
+    await first.append(writer, 0, prefix);
+    await first.pause(writer);
+    await first.dispose();
+
+    session = DownloadSession(
+      id: id,
+      physicalId: physical,
+      artifact: Artifact(
+        partialPath: partialPath,
+        finalPath: finalPath,
+      ),
+      clock: FakeMonoClock(),
+      initiallyDemanded: false,
+    );
+    final restored = await session.restore(
+      verifyPromotedChecksum: false,
+      preferOwnedPartialCheckpoint: true,
+    );
+
+    expect(restored.state, DownloadState.idle);
+    expect(restored.committedLength, prefix.length);
+    expect(session.artifact.checksum, isEmpty,
+        reason: 'owned mutable staging defers whole-body CRC until seal');
+    expect(session.validators.etag, 'checkpoint-v1');
+    expect(session.totalLength, 8192);
+  });
+
+  test('owned checkpoint recovers an unpaused crash tail without meta bytes',
+      () async {
+    await session.dispose();
+    final id = _idWithSource('owned-crash-tail');
+    final physical = PhysicalMediaId.canonical('owned-crash-tail');
+    final partialPath = '${temp.path}/crash-tail/partial/page.webp';
+    final finalPath = '${temp.path}/crash-tail/final/page.webp';
+    final first = DownloadSession(
+      id: id,
+      physicalId: physical,
+      artifact: Artifact(partialPath: partialPath, finalPath: finalPath),
+      clock: FakeMonoClock(),
+      initiallyDemanded: false,
+    );
+    await first.restore();
+    await first.bindResponse(
+      validators: const Validators(etag: 'crash-tail-v1'),
+      totalLength: 8192,
+    );
+    final writer = first.acquireWriter();
+    final prefix = List<int>.generate(4096, (index) => (index * 3) & 0xff);
+    await first.append(writer, 0, prefix);
+    // Simulate process death after the body flushes but before pause() refreshes
+    // the sidecar with a `bytes` field. Artifact disposal closes the sink only.
+    await first.artifact.dispose();
+
+    session = DownloadSession(
+      id: id,
+      physicalId: physical,
+      artifact: Artifact(partialPath: partialPath, finalPath: finalPath),
+      clock: FakeMonoClock(),
+      initiallyDemanded: false,
+    );
+    final restored = await session.restore(
+      verifyPromotedChecksum: false,
+      preferOwnedPartialCheckpoint: true,
+    );
+
+    expect(restored.committedLength, prefix.length);
+    expect(session.validators.etag, 'crash-tail-v1');
+    expect(session.totalLength, 8192);
+  });
+
   test('writer is exclusive', () {
     final writer = session.acquireWriter();
     expect(writer.epoch, const SourceEpoch(0));

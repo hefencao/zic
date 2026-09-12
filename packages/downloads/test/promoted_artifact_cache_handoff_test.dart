@@ -56,6 +56,93 @@ void main() {
     expect(backend.values[id], bytes);
   });
 
+  test('transfer staging still materializes the promoted durable artifact',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-promoted-transfer-staging-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'staging-page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('memory://transfer-staging-page'),
+    );
+    final physical = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000segment\u0000staging',
+    );
+    final backend = _RecordingArtifactStore();
+    final cache = ArtifactCacheManager(backend: backend);
+    final trace = MemoryTraceSink();
+    final handoff = PromotedArtifactCacheHandoff(
+      cache: cache,
+      clock: SystemClock(),
+      traceSink: trace,
+    );
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+
+    final original = CacheLayout('${directory.path}/ephemeral')
+        .artifactForPhysical(physical);
+    final session = DownloadSession(
+      id: id,
+      physicalId: physical,
+      artifact: original,
+      clock: SystemClock(),
+      initiallyDemanded: false,
+    );
+    await session.restore();
+    handoff.observe(session);
+    addTearDown(() async {
+      handoff.detach();
+      if (session.state != DownloadState.disposed) await session.dispose();
+    });
+
+    final staging = CacheLayout('${directory.path}/staging')
+        .artifactForPhysical(physical);
+    await staging.restore();
+    final bytes = Uint8List.fromList(
+      <int>[...'RIFF....WEBP'.codeUnits, ...List<int>.filled(128, 7)],
+    );
+    await staging.append(0, bytes);
+    await staging.pause();
+    await staging.dispose();
+    final adopted = CacheLayout('${directory.path}/staging')
+        .artifactForPhysical(physical);
+
+    await session.adoptDurablePartialBacking(
+      artifact: adopted,
+      index: index,
+      storageRootId: '${directory.path}/staging',
+      expectedLength: bytes.lengthInBytes,
+      validators: const Validators(etag: 'staging-v1'),
+      totalLength: bytes.lengthInBytes,
+      releaseBacking: () {},
+      transferStaging: true,
+    );
+    expect(session.hasBorrowedDurableSpool, isFalse);
+
+    final writer = session.acquireWriter();
+    await session.seal(writer, expectedLength: bytes.lengthInBytes);
+    await session.promote();
+    await handoff.drain(<DownloadSession>[session]);
+
+    expect(backend.values[id], bytes,
+        reason: 'staging cannot use the adopted-durable zero-copy skip');
+    expect(backend.physicalSources[physical], id);
+    expect(
+      trace.events.any(
+        (event) => event.payload['action'] == 'skip-adopted-durable',
+      ),
+      isFalse,
+    );
+  });
+
   test('canonical physical media is bound automatically after promotion',
       () async {
     final directory = await Directory.systemTemp.createTemp(

@@ -185,11 +185,13 @@ final class DownloadJob {
       session.requireRun(runLease);
       return;
     }
-    await session.restore(
-      verifyPromotedChecksum: false,
-      expectedRun: runLease,
-      control: cancel,
-    );
+    if (session.artifact.state != ArtifactState.partial) {
+      await session.restore(
+        verifyPromotedChecksum: false,
+        expectedRun: runLease,
+        control: cancel,
+      );
+    }
     session.requireRun(runLease);
     cancel?.throwIfCancelled();
     session.requireRun(runLease);

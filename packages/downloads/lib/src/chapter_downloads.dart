@@ -2263,6 +2263,8 @@ final class PersistentDownloadArtifactStore
   final CacheOps _cacheOps;
   final ArtifactBytes _bytes;
   final StorageWriteScheduler _storageWriteScheduler;
+  final _StoreLifetimeTaskControl _deferredPhysicalArtifactTouchControl =
+      _StoreLifetimeTaskControl();
 
   StorageWriteScheduler get storageWriteScheduler => _storageWriteScheduler;
 
@@ -5593,7 +5595,13 @@ final class PersistentDownloadArtifactStore
       final candidates = await _artifactAccessCandidates(replica);
       late final ({_ArtifactAccessCandidate candidate, int length}) selected;
           try {
-        selected = await _selectReadableArtifactAccess(candidates);
+        selected = await _selectReadableArtifactAccess(
+          candidates,
+          skipExistsProbe: candidates.every(
+            (candidate) =>
+                parseSafRecordPath(candidate.access.accessLocator) == null,
+          ),
+        );
       } on ArtifactReadFailure catch (error) {
         lastFailure = error;
         if (_isStructuralReplicaFailure(error.kind)) {
@@ -5606,10 +5614,7 @@ final class PersistentDownloadArtifactStore
         continue;
           }
       final selectedAccess = selected.candidate.access;
-      await _index.touchPhysicalMediaArtifact(
-        id,
-        DateTime.now().toUtc().microsecondsSinceEpoch,
-      );
+      _schedulePhysicalArtifactTouch(id, record.artifactId);
       if (selectedAccess.checksumAlgorithm.toLowerCase() != 'crc32') {
         await _retireArtifactReplica(
           selectedAccess.artifactId,
@@ -5668,6 +5673,48 @@ final class PersistentDownloadArtifactStore
     }
     if (lastFailure != null) throw lastFailure;
     return null;
+  }
+
+  void _schedulePhysicalArtifactTouch(
+    PhysicalMediaId id,
+    String expectedArtifactId,
+  ) {
+    final touchedUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+    unawaited(
+      _runDeferredPhysicalArtifactTouch(
+        id,
+        expectedArtifactId,
+        touchedUs,
+      ),
+    );
+  }
+
+  Future<void> _runDeferredPhysicalArtifactTouch(
+    PhysicalMediaId id,
+    String expectedArtifactId,
+    int touchedUs,
+  ) async {
+    StorageWriteLease? lease;
+    try {
+      lease = await _storageWriteScheduler.acquireQuantum(
+        control: _deferredPhysicalArtifactTouchControl,
+      );
+      if (_closed || _deferredPhysicalArtifactTouchControl.cancelled) return;
+      await _serializePhysicalArtifactMutation(id, () async {
+        if (_closed) return;
+        final current = await _index.getPhysicalMediaArtifact(id);
+        if (current == null || current.artifactId != expectedArtifactId) return;
+        await _index.touchPhysicalMediaArtifact(id, touchedUs);
+      });
+    } on Failure catch (error) {
+      if (error.code != ErrorCode.cancelled) {
+        // Recency metadata is best-effort and never part of artifact authority.
+      }
+    } on Object {
+      // Recency metadata is best-effort and never part of artifact authority.
+    } finally {
+      lease?.release();
+    }
   }
 
   @override
@@ -7101,6 +7148,7 @@ final class PersistentDownloadArtifactStore
     final touchedUs = DateTime.now().toUtc().microsecondsSinceEpoch;
     final touched = record.copyWith(touchedUs: touchedUs);
     await _index.putPhysicalPartial(touched);
+    final transferStaging = safTreeUri != null && root == layout.root;
     return PartialDownloadEntry(
       length: record.bytes,
       validators: resume.validators,
@@ -7112,6 +7160,7 @@ final class PersistentDownloadArtifactStore
           _adoptPhysicalPosixPartial(
             session,
             expected: touched,
+            transferStaging: transferStaging,
             control: control,
           ),
     );
@@ -7269,6 +7318,7 @@ final class PersistentDownloadArtifactStore
   Future<bool> _adoptPhysicalPosixPartial(
     DownloadSession target, {
     required PhysicalPartialRecord expected,
+    required bool transferStaging,
     TaskControl? control,
   }) => _serializePhysicalPartialMutation(expected.id, () async {
     _requireOpen();
@@ -7314,11 +7364,12 @@ final class PersistentDownloadArtifactStore
         releaseBacking: () {
           _borrowedPhysicalPartialIds.remove(physicalId);
         },
+        transferStaging: transferStaging,
         control: control,
       );
       return true;
     } catch (_) {
-      if (!target.hasBorrowedDurableSpool) {
+      if (!target.hasBorrowedPartialBacking) {
         _borrowedPhysicalPartialIds.remove(physicalId);
       }
       rethrow;
@@ -7330,6 +7381,7 @@ final class PersistentDownloadArtifactStore
     required PhysicalMediaId physicalId,
     required DownloadId providerHint,
     required PartialDownloadEntry entry,
+    bool preferDirectStaging = false,
   }) => _notifyManagementAfter(
     _serializePhysicalPartialMutation(
       physicalId,
@@ -7337,6 +7389,7 @@ final class PersistentDownloadArtifactStore
         physicalId: physicalId,
         providerHint: providerHint,
         entry: entry,
+        preferDirectStaging: preferDirectStaging,
       ),
     ),
   );
@@ -7345,6 +7398,7 @@ final class PersistentDownloadArtifactStore
     required PhysicalMediaId physicalId,
     required DownloadId providerHint,
     required PartialDownloadEntry entry,
+    required bool preferDirectStaging,
   }) async {
     _requireOpen();
     if (_borrowedPhysicalPartialIds.contains(physicalId)) {
@@ -7356,7 +7410,44 @@ final class PersistentDownloadArtifactStore
     if (entry.length <= 0) return;
     if (await _index.getPhysicalMediaArtifact(physicalId) != null) return;
     final existing = await _index.getPhysicalPartial(physicalId);
-    if (existing != null && existing.bytes >= entry.length) return;
+    if (existing != null && existing.bytes > entry.length) return;
+    final existingIsPreferredStaging = existing != null &&
+        parseSafRecordPath(existing.path) == null &&
+        existing.storageRootId == layout.root;
+    if (existing != null &&
+        existing.bytes == entry.length &&
+        (!preferDirectStaging || existingIsPreferredStaging)) {
+      return;
+    }
+
+    if (preferDirectStaging) {
+      // Transfer checkpoints are mutable recovery state, not user-selected
+      // final placement. Keep them on the store's App-private direct layout so
+      // a later physical session can adopt the same spool without replaying a
+      // multi-megabyte SAF body. Legacy SAF/external partials are migrated only
+      // when this checkpoint has at least the same authoritative prefix.
+      if (existingIsPreferredStaging) {
+        await _storePhysicalPartialDirect(
+          physicalId: physicalId,
+          providerHint: providerHint,
+          entry: entry,
+          existing: existing,
+          targetLayoutOverride: layout,
+        );
+      } else {
+        await _storePhysicalPartialDirect(
+          physicalId: physicalId,
+          providerHint: providerHint,
+          entry: entry,
+          targetLayoutOverride: layout,
+          createdUsOverride: existing?.createdUs,
+        );
+        if (existing != null) {
+          await _deletePhysicalPartialBody(existing);
+        }
+      }
+      return;
+    }
 
     if (existing != null && parseSafRecordPath(existing.path) != null) {
       await _storePhysicalPartialInSaf(
@@ -7388,9 +7479,13 @@ final class PersistentDownloadArtifactStore
     required DownloadId providerHint,
     required PartialDownloadEntry entry,
     PhysicalPartialRecord? existing,
+    CacheLayout? targetLayoutOverride,
+    int? createdUsOverride,
   }) async {
     final CacheLayout targetLayout;
-    if (existing == null) {
+    if (targetLayoutOverride != null) {
+      targetLayout = targetLayoutOverride;
+    } else if (existing == null) {
       targetLayout = layoutFor(providerHint);
     } else {
       final root = existing.storageRootId.trim();
@@ -7455,7 +7550,7 @@ final class PersistentDownloadArtifactStore
               providerHint: providerHint,
               validators: entry.validators,
               totalLength: entry.totalLength,
-              createdUs: existing?.createdUs,
+              createdUs: existing?.createdUs ?? createdUsOverride,
               storageRootId: targetLayout.root,
             );
           } on Object {
@@ -7472,7 +7567,7 @@ final class PersistentDownloadArtifactStore
         providerHint: providerHint,
         validators: entry.validators,
         totalLength: entry.totalLength,
-        createdUs: existing?.createdUs,
+        createdUs: existing?.createdUs ?? createdUsOverride,
         storageRootId: targetLayout.root,
       );
     } finally {
@@ -7676,28 +7771,32 @@ final class PersistentDownloadArtifactStore
       }),
       );
 
+  Future<void> _deletePhysicalPartialBody(PhysicalPartialRecord record) async {
+    try {
+      await _bytes.delete(record.path);
+    } on Object {
+      // A replacement index row is already authoritative before migration
+      // cleanup. Inaccessible legacy bytes can be repaired later.
+    }
+    final parsed = parseSafRecordPath(record.path);
+    if (parsed != null && safTreeIo != null && parsed.treeUri == safTreeUri) {
+      try {
+        await safTreeIo!.delete('${parsed.relativePath}.meta');
+      } on Object {}
+    } else {
+      final meta = File('${record.path}.meta');
+      try {
+        if (await meta.exists()) await meta.delete();
+      } on Object {}
+    }
+  }
+
   Future<void> _removePhysicalPartialRecord(
     PhysicalPartialRecord record, {
     required bool deleteBody,
   }) async {
     if (deleteBody) {
-      try {
-        await _bytes.delete(record.path);
-      } on Object {
-        // Index retirement below prevents reuse; inaccessible bytes can be
-        // cleaned by later storage repair.
-    }
-    final parsed = parseSafRecordPath(record.path);
-      if (parsed != null && safTreeIo != null && parsed.treeUri == safTreeUri) {
-        try {
-          await safTreeIo!.delete('${parsed.relativePath}.meta');
-        } on Object {}
-      } else {
-        final meta = File('${record.path}.meta');
-        try {
-          if (await meta.exists()) await meta.delete();
-        } on Object {}
-    }
+      await _deletePhysicalPartialBody(record);
     }
     await _index.removePhysicalPartial(record.id);
   }
@@ -8830,6 +8929,7 @@ final class PersistentDownloadArtifactStore
         'cannot close persistent artifact store with borrowed durable partials',
       );
     }
+    _deferredPhysicalArtifactTouchControl.cancel();
     _closed = true;
     // Public methods reject new work after _closed, but operations that were
     // already admitted can still enqueue a per-id/path tail while their
@@ -8862,6 +8962,23 @@ final class PersistentDownloadArtifactStore
 
   void _requireOpen() {
     if (_closed) throw StateError('persistent download artifact store is closed');
+  }
+}
+
+final class _StoreLifetimeTaskControl implements TaskControl {
+  final Completer<void> _cancelled = Completer<void>();
+
+  @override
+  bool get cancelled => _cancelled.isCompleted;
+
+  @override
+  Future<void> get whenCancelled => _cancelled.future;
+
+  @override
+  int get priority => 0;
+
+  void cancel() {
+    if (!_cancelled.isCompleted) _cancelled.complete();
   }
 }
 

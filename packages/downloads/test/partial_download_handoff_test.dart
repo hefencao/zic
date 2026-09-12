@@ -189,6 +189,8 @@ void main() {
 
       expect(session.state, DownloadState.promoted);
       expect(session.residentBodyBacked, isTrue);
+      expect(session.artifact.state, ArtifactState.empty,
+          reason: 'canonical READY must not pay for empty writable staging');
       expect(session.physicalId, physical);
       expect(session.id, second);
       expect(session.committedLength, bytes.lengthInBytes);
@@ -883,6 +885,8 @@ void main() {
 
     expect(partialStore.partial, isEmpty,
         reason: 'restart recovery must not depend on durable partial handoff');
+    expect(partialStore.openRequests, 0,
+        reason: 'owned recoverable body must short-circuit durable lookup');
     expect(transport.rangeStarts, <int>[prefixLength]);
     final restored = runtime.registry.findExact(id);
     expect(restored, isNotNull);
@@ -2078,12 +2082,14 @@ final class _PartialStore implements PartialDownloadStore {
   _PartialStore({this.onRead, this.streamFor});
 
   final void Function()? onRead;
+  int openRequests = 0;
   final Stream<List<int>> Function(Uint8List bytes)? streamFor;
   final Map<DownloadId, _StoredPartial> partial =
       <DownloadId, _StoredPartial>{};
 
   @override
   Future<PartialDownloadEntry?> openPartialDownload(DownloadId id) async {
+    openRequests++;
     final stored = partial[id];
     if (stored == null) return null;
     return PartialDownloadEntry(

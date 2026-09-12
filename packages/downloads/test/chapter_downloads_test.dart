@@ -482,6 +482,140 @@ void main() {
   );
 
   test(
+    'transfer checkpoint stores a new physical partial in App-private staging',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-physical-direct-staging-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      const treeUri = 'content://tree/physical-direct-staging';
+      final storage = <String, Uint8List>{};
+      final service = await PersistentChapterDownloadService.open(
+        root.path,
+        safTreeIo: _MemorySafIo(storage),
+        safTreeUri: treeUri,
+      );
+      addTearDown(service.close);
+      final id = _readerArtifactId('physical-direct-staging');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u0000staging',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(256 * 1024, (index) => index & 0xff),
+      );
+
+      await service.artifactStore.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        preferDirectStaging: true,
+        entry: PartialDownloadEntry(
+          length: bytes.lengthInBytes,
+          validators: const Validators(),
+          totalLength: bytes.lengthInBytes * 2,
+          open: ({required int start}) =>
+              Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+        ),
+      );
+
+      final physicalIndex = service.artifactStore.index as PhysicalPartialIndex;
+      final record = await physicalIndex.getPhysicalPartial(physical);
+      expect(record, isNotNull);
+      expect(parseSafRecordPath(record!.path), isNull);
+      expect(record.storageRootId, service.artifactStore.layout.root);
+      expect(await File(record.path).readAsBytes(), orderedEquals(bytes));
+      expect(
+        storage.keys.where((path) => path.startsWith('partial/')),
+        isEmpty,
+        reason: 'mutable transfer checkpoint must not first round-trip through SAF',
+      );
+
+      final partial = await service.artifactStore.openPhysicalPartialDownload(
+        physicalId: physical,
+        requestId: id,
+      );
+      expect(partial, isNotNull);
+      expect(partial!.accessMode, 'direct');
+      expect(partial.adoptInto, isNotNull);
+
+      final session = DownloadSession(
+        id: id,
+        physicalId: physical,
+        artifact: CacheLayout('${root.path}/ephemeral')
+            .artifactForPhysical(physical),
+        clock: SystemClock(),
+        initiallyDemanded: false,
+      );
+      addTearDown(() async {
+        if (session.state != DownloadState.disposed) await session.dispose();
+      });
+      expect(await partial.adoptInto!(session), isTrue);
+      expect(session.hasBorrowedPartialBacking, isTrue);
+      expect(session.hasBorrowedDurableSpool, isFalse,
+          reason: 'App-private transfer staging is not exact durable final authority');
+      expect(session.index, isNull);
+    },
+  );
+
+  test(
+    'transfer checkpoint migrates an equal SAF physical partial to direct staging',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-physical-saf-to-staging-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      const treeUri = 'content://tree/physical-saf-to-staging';
+      final storage = <String, Uint8List>{};
+      final service = await PersistentChapterDownloadService.open(
+        root.path,
+        safTreeIo: _MemorySafIo(storage),
+        safTreeUri: treeUri,
+      );
+      addTearDown(service.close);
+      final id = _readerArtifactId('physical-saf-to-staging');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u0000migrate',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(128 * 1024, (index) => (index * 3) & 0xff),
+      );
+      final entry = PartialDownloadEntry(
+        length: bytes.lengthInBytes,
+        validators: const Validators(),
+        totalLength: bytes.lengthInBytes * 2,
+        open: ({required int start}) =>
+            Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+      );
+
+      await service.artifactStore.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        entry: entry,
+      );
+      final physicalIndex = service.artifactStore.index as PhysicalPartialIndex;
+      final safRecord = await physicalIndex.getPhysicalPartial(physical);
+      expect(safRecord, isNotNull);
+      final parsed = parseSafRecordPath(safRecord!.path);
+      expect(parsed, isNotNull);
+      expect(storage[parsed!.relativePath], orderedEquals(bytes));
+
+      await service.artifactStore.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        entry: entry,
+        preferDirectStaging: true,
+      );
+
+      final staged = await physicalIndex.getPhysicalPartial(physical);
+      expect(staged, isNotNull);
+      expect(parseSafRecordPath(staged!.path), isNull);
+      expect(staged.storageRootId, service.artifactStore.layout.root);
+      expect(await File(staged.path).readAsBytes(), orderedEquals(bytes));
+      expect(storage.containsKey(parsed.relativePath), isFalse);
+      expect(storage.containsKey('${parsed.relativePath}.meta'), isFalse);
+    },
+  );
+
+  test(
     'physical SAF partial skips redundant resume metadata existence probe',
     () async {
       final root = await Directory.systemTemp.createTemp(
@@ -2913,6 +3047,119 @@ void main() {
       ),
     );
     expect(await service.artifactStore.openArtifactStream(id), isNull);
+  });
+
+  test('physical READY open defers recency touch behind foreground read pressure',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-physical-ready-touch-deferred-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final reads = ArtifactCacheReadScheduler();
+    final composition = await PersistentDownloadComposition.open(
+      root.path,
+      localReadScheduler: reads,
+    );
+    addTearDown(composition.close);
+    final store = composition.artifactStore;
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'physical-ready-touch',
+        chapterId: 'ch',
+        pageId: 'p',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/physical-ready-touch.webp'),
+    );
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x18, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
+    await store.storePromotedArtifact(id: id, bytes: bytes);
+    final physicalId = PhysicalMediaId.canonical('physical-ready-touch');
+    expect(
+      await composition.artifactCacheManager.bindPhysicalArtifact(
+        physicalId: physicalId,
+        sourceId: id,
+      ),
+      isTrue,
+    );
+    final index = store.index as PhysicalMediaArtifactIndex;
+    final before = await index.getPhysicalMediaArtifact(physicalId);
+    expect(before, isNotNull);
+
+    final pressure = reads.holdForegroundPressure();
+    var pressureReleased = false;
+    addTearDown(() {
+      if (!pressureReleased) pressure.release();
+    });
+    final entry = await store.openPhysicalArtifact(physicalId);
+    expect(entry, isNotNull);
+    final whilePressured = await index.getPhysicalMediaArtifact(physicalId);
+    expect(whilePressured?.touchedUs, before!.touchedUs,
+        reason: 'READY authority must not await recency metadata writes');
+
+    pressure.release();
+    pressureReleased = true;
+    PhysicalMediaArtifactRecord? after;
+    for (var attempt = 0; attempt < 100; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      after = await index.getPhysicalMediaArtifact(physicalId);
+      if (after != null && after.touchedUs > before.touchedUs) break;
+    }
+    expect(after?.touchedUs, greaterThan(before.touchedUs),
+        reason: 'deferred LRU recency must still be persisted');
+  });
+
+  test('physical READY direct preflight rejects a symlink without exists probe',
+      () async {
+    if (Platform.isWindows) return;
+    final root = await Directory.systemTemp.createTemp(
+      'zic-physical-ready-symlink-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final composition = await PersistentDownloadComposition.open(root.path);
+    addTearDown(composition.close);
+    final store = composition.artifactStore;
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'physical-ready-symlink',
+        chapterId: 'ch',
+        pageId: 'p',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/physical-ready-symlink.webp'),
+    );
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x18, 0x00, 0x00, 0x00,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
+    await store.storePromotedArtifact(id: id, bytes: bytes);
+    final physicalId = PhysicalMediaId.canonical('physical-ready-symlink');
+    expect(
+      await composition.artifactCacheManager.bindPhysicalArtifact(
+        physicalId: physicalId,
+        sourceId: id,
+      ),
+      isTrue,
+    );
+    final index = store.index as PhysicalMediaArtifactIndex;
+    final physical = await index.getPhysicalMediaArtifact(physicalId);
+    expect(physical, isNotNull);
+    final outside = File('${root.path}/outside.webp');
+    await outside.writeAsBytes(bytes);
+    await File(physical!.accessLocator).delete();
+    await Link(physical.accessLocator).create(outside.path);
+
+    await expectLater(
+      store.openPhysicalArtifact(physicalId),
+      throwsA(isA<ArtifactReadFailure>()),
+    );
+    expect(await outside.readAsBytes(), bytes);
+    expect(await index.getPhysicalMediaArtifact(physicalId), isNull,
+        reason: 'unsafe READY replica must retire rather than follow the link');
   });
 
   test('shared cache bindings charge and release physical bytes once', () async {

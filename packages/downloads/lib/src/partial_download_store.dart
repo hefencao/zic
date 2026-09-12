@@ -89,6 +89,7 @@ abstract interface class PhysicalPartialDownloadStore {
     required PhysicalMediaId physicalId,
     required DownloadId providerHint,
     required PartialDownloadEntry entry,
+    bool preferDirectStaging = false,
   });
 
   Future<void> invalidatePhysicalPartialDownload(PhysicalMediaId physicalId);

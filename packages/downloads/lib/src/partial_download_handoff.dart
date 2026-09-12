@@ -77,80 +77,15 @@ final class PartialDownloadHandoff {
       return;
     }
 
-    // A recoverable session-local artifact remains the first physical owner.
-    // Only when it proves empty do exact and direct verified durable candidates
-    // compete. This path is compatibility for historical/non-canonical state;
-    // canonical physical READY/partial ownership is still checked first below.
-    _PartialRestoreCandidate? durableCandidate;
-    PartialDownloadEntry? physicalPartial;
-    if (!await session.artifact.hasRestorableBody()) {
-      control?.throwIfCancelled();
-      if (!session.physicalId.isExactFallback && cache != null) {
-        var physical = await cache.openPhysicalArtifact(session.physicalId);
-        var recoveredHistoricalBinding = false;
-        if (physical == null) {
-          recoveredHistoricalBinding =
-              await cache.bindPhysicalArtifactFromCandidates(
-            physicalId: session.physicalId,
-            candidates: <DownloadId>[
-              session.id,
-              ...?equivalentCandidates?.call(session.id),
-            ],
-          );
-          control?.throwIfCancelled();
-          if (recoveredHistoricalBinding) {
-            physical = await cache.openPhysicalArtifact(session.physicalId);
-          }
-        }
-        control?.throwIfCancelled();
-        if (physical != null &&
-            await _tryBindEquivalentReadyAuthority(
-              session,
-              _physicalArtifactEntry(physical),
-              candidatesChecked: 0,
-              control: control,
-            )) {
-          return;
-        }
-      }
-      if (!session.physicalId.isExactFallback) {
-        final physicalStore = store;
-        if (physicalStore is PhysicalPartialDownloadStore) {
-          physicalPartial =
-              await (physicalStore as PhysicalPartialDownloadStore)
-                  .openPhysicalPartialDownload(
-            physicalId: session.physicalId,
-            requestId: session.id,
-          );
-          control?.throwIfCancelled();
-        }
-      }
-      if (physicalPartial == null) {
-        durableCandidate = await _restoreCandidate(
-          session.id,
-          control: control,
-        );
-        final durableEntry = durableCandidate?.entry;
-        if (durableEntry != null && durableEntry.exactDurableFinal) {
-          final bound = durableCandidate!.equivalent
-              ? await _tryBindEquivalentReadyAuthority(
-                  session,
-                  durableEntry,
-                  candidatesChecked: durableCandidate.candidatesChecked,
-                  control: control,
-                )
-              : await _tryBindExactReadyWithoutSessionRestore(
-                  session,
-                  durableEntry,
-                  control: control,
-                );
-          if (bound) return;
-        }
-      }
-    }
-
+    // Let the recoverable session-local artifact prove itself first. The
+    // owned-checkpoint restore validates its sidecar/path/physical identity and
+    // exact file length; a mere path existence probe is not ownership proof.
+    // If the local body is absent, restore leaves one empty ephemeral Artifact
+    // ready for a later durable physical-partial adoption/copy fallback.
     await session.restore(
       verifyPromotedChecksum: false,
+      preferOwnedPartialCheckpoint: true,
+      ownedCheckpointProbeOnly: true,
       control: control,
     );
     control?.throwIfCancelled();
@@ -158,6 +93,61 @@ final class PartialDownloadHandoff {
         session.artifact.committedLength > 0) {
       return;
     }
+
+    _PartialRestoreCandidate? durableCandidate;
+    PartialDownloadEntry? physicalPartial;
+    if (!session.physicalId.isExactFallback && cache != null) {
+      var physical = await cache.openPhysicalArtifact(session.physicalId);
+      var recoveredHistoricalBinding = false;
+      if (physical == null) {
+        recoveredHistoricalBinding =
+            await cache.bindPhysicalArtifactFromCandidates(
+          physicalId: session.physicalId,
+          candidates: <DownloadId>[
+            session.id,
+            ...?equivalentCandidates?.call(session.id),
+          ],
+        );
+        control?.throwIfCancelled();
+        if (recoveredHistoricalBinding) {
+          physical = await cache.openPhysicalArtifact(session.physicalId);
+        }
+      }
+      control?.throwIfCancelled();
+      if (physical != null &&
+          await _tryBindEquivalentReadyAuthority(
+            session,
+            _physicalArtifactEntry(physical),
+            candidatesChecked: 0,
+            control: control,
+          )) {
+        return;
+      }
+    }
+    // The probe above already falls through to generic restore when any
+    // deterministic final/partial body exists but lacks a valid owned
+    // checkpoint. Reaching here therefore proves there is no session-local
+    // body to recover; do not materialize an empty writable staging artifact
+    // before consulting canonical durable authorities.
+    if (!session.physicalId.isExactFallback) {
+      final physicalStore = store;
+      if (physicalStore is PhysicalPartialDownloadStore) {
+        physicalPartial =
+            await (physicalStore as PhysicalPartialDownloadStore)
+                .openPhysicalPartialDownload(
+          physicalId: session.physicalId,
+          requestId: session.id,
+        );
+        control?.throwIfCancelled();
+      }
+    }
+    if (physicalPartial == null) {
+      durableCandidate = await _restoreCandidate(
+        session.id,
+        control: control,
+      );
+    }
+
     final physicalEntry = physicalPartial;
     if (physicalEntry != null && physicalEntry.length > 0) {
       final adoptInto = physicalEntry.adoptInto;
@@ -542,93 +532,6 @@ final class PartialDownloadHandoff {
       startedAtMicros: startedAtMicros,
       equivalent: true,
       equivalentCandidatesChecked: candidatesChecked,
-    );
-    return true;
-  }
-
-  Future<bool> _tryBindExactReadyWithoutSessionRestore(
-    DownloadSession session,
-    PartialDownloadEntry entry, {
-    TaskControl? control,
-  }) async {
-    final startedAtMicros = clock?.nowMicros();
-    final totalLength = entry.totalLength ?? entry.length;
-    if (entry.length <= 0 || totalLength != entry.length) return false;
-    final openBoundReader = entry.openBoundRangeReader;
-    if (openBoundReader == null) return false;
-
-    PartialDownloadBoundRangeReader? boundReader;
-    ArtifactCacheReadLease? lease;
-    try {
-      final scheduler = readScheduler;
-      if (scheduler != null) {
-        lease = await scheduler.acquire(
-          priority: () => session.effectivePriority,
-          control: control,
-        );
-      }
-      boundReader = await openBoundReader();
-    } on Object {
-      boundReader = null;
-    } finally {
-      lease?.release();
-    }
-    control?.throwIfCancelled();
-    final reader = boundReader;
-    if (reader == null) return false;
-
-    final List<int> prefix;
-    try {
-      prefix = await _readEntryPrefix(
-        entry,
-        boundReader: reader,
-        priority: () => session.effectivePriority,
-        control: control,
-      );
-    } on Object {
-      try {
-        await reader.close();
-      } on Object {
-        // Prefix metadata is required for the fast path. If it cannot be
-        // proven, fall back to the ordinary restore path instead of binding a
-        // promoted body whose content kind would remain permanently unknown.
-      }
-      return false;
-    }
-
-    final proof = _ExactDurableRestoreProof(
-      id: session.id,
-      epoch: session.epoch,
-      length: entry.length,
-    );
-    _exactDurableRestoreProofs[session] = proof;
-    try {
-      session.bindResidentImmutableAuthority(
-        validators: entry.validators,
-        totalLength: totalLength,
-        validatorRequestUri: session.id.canonicalUri,
-        bodyAuthority: ByteResponseBodyAuthority.artifactCache,
-        metadataPrefix: prefix,
-        residentReplayRangeChunks: (start, endExclusive) async =>
-            _openBoundRange(reader, start, endExclusive),
-        residentReplayRangeClose: reader.close,
-        residentReplayAccessMode: reader.accessMode,
-      );
-      boundReader = null;
-    } on Object {
-      _exactDurableRestoreProofs[session] = null;
-      try {
-        await reader.close();
-      } on Object {
-        // Preserve the bind failure.
-      }
-      rethrow;
-    }
-    _record(
-      session,
-      action: 'bound-ready-authority',
-      bytes: entry.length,
-      startedAtMicros: startedAtMicros,
     );
     return true;
   }
@@ -1130,7 +1033,7 @@ final class PartialDownloadHandoff {
     if (session.state == DownloadState.promoted || session.residentBodyBacked) {
       return true;
     }
-    if (session.hasBorrowedDurableSpool) {
+    if (session.hasBorrowedPartialBacking) {
       await session.settleCacheMutations();
       _record(
         session,
@@ -1154,6 +1057,9 @@ final class PartialDownloadHandoff {
             .storePhysicalPartialDownload(
           physicalId: session.physicalId,
           providerHint: targetId,
+          // Mutable transfer checkpoints prefer App-private Direct staging.
+          // Final/manual placement remains a separate promoted-artifact step.
+          preferDirectStaging: true,
           entry: PartialDownloadEntry(
             length: length,
             // Validators are provider-scoped. A canonical physical prefix may

@@ -2637,7 +2637,9 @@ final class PipelineReaderSession {
     }
     _releaseStartupArtifactPressure();
     _startupArtifactPressureDownload = current;
-    _startupArtifactPressure = artifactReadScheduler.holdForegroundPressure();
+    _startupArtifactPressure = artifactReadScheduler.holdForegroundPressure(
+      reserveFirstForegroundQuantum: true,
+    );
   }
 
   void _syncStartupArtifactPressure() {

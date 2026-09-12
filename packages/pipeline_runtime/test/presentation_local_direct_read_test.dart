@@ -896,6 +896,7 @@ final class _RejectedCachedImageStore
     required PhysicalMediaId physicalId,
     required DownloadId providerHint,
     required PartialDownloadEntry entry,
+    bool preferDirectStaging = false,
   }) async {}
 
   @override

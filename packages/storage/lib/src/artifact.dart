@@ -103,6 +103,35 @@ final class Artifact {
     return false;
   }
 
+  /// Reads the mutable partial sidecar after rejecting a symlink at the
+  /// sidecar path or its immediate parent. This is the narrow metadata probe
+  /// used before [adoptExistingPartial]; it does not inspect final paths that
+  /// the caller will not touch until promotion.
+  Future<Map<String, Object?>?> readPartialMetaForAdoption() async {
+    await _mutationTail;
+    _requireNotDisposed();
+    // _readJson owns the symlink + existence probe; do not preflight the same
+    // path a second time on this latency-sensitive cold-restore path.
+    return _readJson(File(metaPath));
+  }
+
+  /// Reads the mutable partial length for crash-tail adoption without ever
+  /// following a symlink. This is only needed when the last sidecar refresh
+  /// predates the final flushed bytes and therefore has no `bytes` field.
+  Future<int?> readPartialLengthForAdoption() async {
+    await _mutationTail;
+    _requireNotDisposed();
+    final type = await _artifactPathType(partialPath);
+    if (type == FileSystemEntityType.notFound) return null;
+    if (type != FileSystemEntityType.file) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'mutable partial path is not a regular file',
+      );
+    }
+    return File(partialPath).length();
+  }
+
   /// Opens an already-indexed mutable partial without hashing its whole body.
   ///
   /// This is deliberately narrower than [restore]: the caller must already own
@@ -134,14 +163,17 @@ final class Artifact {
       );
     }
     await _closeWriter();
-    await _rejectArtifactLinks();
-    final partial = File(partialPath);
-    if (!await partial.exists()) {
+    // Adoption reads only the mutable body. Final/ready paths remain outside
+    // this operation and are revalidated by the full promotion boundary. The
+    // type probe is also the existence proof, avoiding a second stat().
+    final type = await _artifactPathType(partialPath);
+    if (type != FileSystemEntityType.file) {
       throw const Failure(
         code: ErrorCode.artifactCorruption,
         message: 'indexed partial disappeared before adoption',
       );
     }
+    final partial = File(partialPath);
     final actualLength = await partial.length();
     if (actualLength != expectedLength) {
       throw Failure(

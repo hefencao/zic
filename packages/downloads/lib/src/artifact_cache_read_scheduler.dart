@@ -30,6 +30,8 @@ final class ArtifactCacheReadScheduler {
   int _activeForeground = 0;
   int _activeBackground = 0;
   int _foregroundPressureHolds = 0;
+  int _pressureReservationSequence = 0;
+  final Set<int> _pendingFirstForegroundReservations = <int>{};
   int _sequence = 0;
 
   int get activeCount => _active;
@@ -79,8 +81,16 @@ final class ArtifactCacheReadScheduler {
   /// Reader startup uses this while the current output is not yet presented
   /// with its successor watermark. Background reads remain queued or limited,
   /// but the current artifact stream still has access to the full read pool.
-  ArtifactCachePressureLease holdForegroundPressure() {
+  ArtifactCachePressureLease holdForegroundPressure({
+    bool reserveFirstForegroundQuantum = false,
+  }) {
     _foregroundPressureHolds++;
+    final reservation = reserveFirstForegroundQuantum
+        ? _pressureReservationSequence++
+        : null;
+    if (reservation != null) {
+      _pendingFirstForegroundReservations.add(reservation);
+    }
     _pump();
     var released = false;
     return ArtifactCachePressureLease._(() {
@@ -88,6 +98,9 @@ final class ArtifactCacheReadScheduler {
       released = true;
       if (_foregroundPressureHolds > 0) {
         _foregroundPressureHolds--;
+      }
+      if (reservation != null) {
+        _pendingFirstForegroundReservations.remove(reservation);
       }
       _pump();
     });
@@ -167,6 +180,7 @@ final class ArtifactCacheReadScheduler {
   }) {
     if (_active >= maxActive) return false;
     if (foreground) return true;
+    if (_pendingFirstForegroundReservations.isNotEmpty) return false;
     if (_hasForegroundPressure) {
       if (!allowBackgroundDuringForegroundPressure) return false;
       return _activeBackground < maxBackgroundWhileForeground;
@@ -181,6 +195,9 @@ final class ArtifactCacheReadScheduler {
     } else {
       _activeBackground++;
     }
+    final satisfiedReservations = foreground
+        ? Set<int>.of(_pendingFirstForegroundReservations)
+        : const <int>{};
     var released = false;
     return ArtifactCacheReadLease._(
       priority: priority,
@@ -191,6 +208,7 @@ final class ArtifactCacheReadScheduler {
         _active--;
         if (foreground) {
           _activeForeground--;
+          _pendingFirstForegroundReservations.removeAll(satisfiedReservations);
         } else {
           _activeBackground--;
         }

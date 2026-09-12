@@ -180,6 +180,33 @@ void main() {
     next.release();
   });
 
+  test('reserved startup pressure gives the first foreground quantum exclusivity',
+      () async {
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 3);
+    final pressure = scheduler.holdForegroundPressure(
+      reserveFirstForegroundQuantum: true,
+    );
+    var backgroundStarted = false;
+    final background = scheduler.acquire(priority: () => 820).then((lease) {
+      backgroundStarted = true;
+      return lease;
+    });
+
+    await Future<void>.delayed(Duration.zero);
+    expect(backgroundStarted, isFalse);
+    final current = await scheduler.acquire(priority: () => 1000);
+    await Future<void>.delayed(Duration.zero);
+    expect(backgroundStarted, isFalse);
+
+    current.release();
+    final next = await background;
+    expect(backgroundStarted, isTrue);
+    expect(scheduler.foregroundPressure, isTrue);
+
+    pressure.release();
+    next.release();
+  });
+
   test('strict background waits until startup foreground pressure clears',
       () async {
     final scheduler = ArtifactCacheReadScheduler(maxActive: 3);

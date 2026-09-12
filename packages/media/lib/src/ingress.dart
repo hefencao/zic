@@ -173,7 +173,12 @@ final class Ingress {
           operation: 'reserve expected length',
         );
       }
-      final replay = <int>[...prior, ...bytes];
+      // If the very first chunk is already enough to identify WebP, it is
+      // already the complete replay prefix. Reuse it synchronously instead of
+      // allocating/copying the whole chunk once in Dart before NativeSource
+      // copies it into its owned buffer. Split-prefix detection still needs to
+      // prepend the bytes retained in [prior].
+      final replay = prior.isEmpty ? bytes : <int>[...prior, ...bytes];
       _invoke(
         () => created.append(
           epoch: epoch.value,

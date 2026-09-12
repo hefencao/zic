@@ -265,6 +265,9 @@ final class DownloadSession {
   })  : physicalId = physicalId ?? PhysicalMediaId.exact(id),
         _artifact = artifact,
         _index = index,
+        _physicalPartialIndex = index is PhysicalPartialIndex
+            ? index as PhysicalPartialIndex
+            : null,
         _storageRootId = storageRootId,
         _legacyDemanded = initiallyDemanded;
 
@@ -278,13 +281,17 @@ final class DownloadSession {
   final TraceSink traceSink;
   final String sessionId;
   CacheIndex? _index;
+  PhysicalPartialIndex? _physicalPartialIndex;
   String _storageRootId;
   void Function()? _borrowedBackingRelease;
+  bool _borrowedBackingCanBecomeDurableFinal = false;
 
   Artifact get artifact => _artifact;
   CacheIndex? get index => _index;
   String get storageRootId => _storageRootId;
-  bool get hasBorrowedDurableSpool => _borrowedBackingRelease != null;
+  bool get hasBorrowedPartialBacking => _borrowedBackingRelease != null;
+  bool get hasBorrowedDurableSpool =>
+      _borrowedBackingRelease != null && _borrowedBackingCanBecomeDurableFinal;
 
   DownloadState _state = DownloadState.idle;
   SourceEpoch _epoch = const SourceEpoch(0);
@@ -536,12 +543,16 @@ final class DownloadSession {
     _notifySnapshot();
   }
 
-  /// Rebinds this still-empty physical session to one verified durable POSIX
-  /// partial while preserving session identity, demand leases and Reader ingress.
+  /// Rebinds this still-empty physical session to one verified direct partial
+  /// while preserving session identity, demand leases and Reader ingress.
   ///
-  /// The backing is exclusive until [dispose] invokes the release callback. Reset
-  /// and network append continue to operate on the adopted durable artifact and
-  /// its original index/root; no second mutable spool is created.
+  /// The backing is exclusive until [dispose] invokes the release callback.
+  /// Ordinary durable adoption also transfers exact-cache index ownership so a
+  /// later promotion may become the durable final in place. [transferStaging]
+  /// keeps exact-cache ownership with the persistent store instead: only the
+  /// physical-partial index follows the mutable backing while network Range
+  /// append continues. Promotion of such staging must therefore be handed off
+  /// through the normal promoted-artifact owner before it becomes durable.
   Future<DownloadSnapshot> adoptDurablePartialBacking({
     required Artifact artifact,
     required CacheIndex index,
@@ -550,6 +561,7 @@ final class DownloadSession {
     required Validators validators,
     required int? totalLength,
     required void Function() releaseBacking,
+    bool transferStaging = false,
     TaskControl? control,
   }) async {
     _requireNotDisposed();
@@ -584,9 +596,15 @@ final class DownloadSession {
 
       final previousArtifact = _artifact;
       _artifact = artifact;
-      _index = index;
+      if (!transferStaging) {
+        _index = index;
+      }
+      _physicalPartialIndex = index is PhysicalPartialIndex
+          ? index as PhysicalPartialIndex
+          : _physicalPartialIndex;
       _storageRootId = storageRootId;
       _borrowedBackingRelease = releaseBacking;
+      _borrowedBackingCanBecomeDurableFinal = !transferStaging;
       backingCommitted = true;
       await previousArtifact.dispose();
 
@@ -649,6 +667,8 @@ final class DownloadSession {
 
   Future<DownloadSnapshot> restore({
     bool verifyPromotedChecksum = true,
+    bool preferOwnedPartialCheckpoint = false,
+    bool ownedCheckpointProbeOnly = false,
     RunLease? expectedRun,
     TaskControl? control,
   }) async {
@@ -676,6 +696,8 @@ final class DownloadSession {
     try {
       return await _restore(
         verifyPromotedChecksum: verifyPromotedChecksum,
+        preferOwnedPartialCheckpoint: preferOwnedPartialCheckpoint,
+        ownedCheckpointProbeOnly: ownedCheckpointProbeOnly,
         expectedEpoch: epoch,
         control: control,
       );
@@ -717,6 +739,8 @@ final class DownloadSession {
 
   Future<DownloadSnapshot> _restore({
     required bool verifyPromotedChecksum,
+    required bool preferOwnedPartialCheckpoint,
+    required bool ownedCheckpointProbeOnly,
     required SourceEpoch expectedEpoch,
     TaskControl? control,
   }) async {
@@ -735,24 +759,51 @@ final class DownloadSession {
     _residentBodyAuthority = null;
     _dropResidentReplayRangeCapability();
     await _residentReplayCloseTail;
-    // Artifact.restore must not first bind a final file that explicitly
-    // belongs to another DownloadId. Preflight the ready sidecar while the
-    // Artifact is still empty so a collision cannot leave its in-memory state
-    // promoted after this restore fails. The post-restore check below remains
-    // a defense for a sidecar that changes during the preflight/restore gap.
-    final promotedMeta = await _readPromotedMetaForOwnership();
-    _requireEpoch(epoch);
-    control?.throwIfCancelled();
-    if (promotedMeta != null &&
-        _metaExplicitlyClaimsDifferentOwner(promotedMeta)) {
-      throw const Failure(
-        code: ErrorCode.artifactCorruption,
-        message: 'promoted artifact metadata belongs to another download',
-      );
+    // The owned App-private partial path can prove itself without first
+    // probing unrelated final/ready paths. It rejects any existing final and
+    // validates the partial sidecar + body path before adoption. If that fast
+    // path does not apply, retain the generic promoted ownership preflight.
+    final ownedRecovery = preferOwnedPartialCheckpoint
+        ? await _restoreOwnedPartialCheckpoint(control: control)
+        : null;
+    final ownedCheckpoint = ownedRecovery?.snapshot == null
+        ? null
+        : (snapshot: ownedRecovery!.snapshot!, meta: ownedRecovery.meta!);
+    if (ownedCheckpoint == null &&
+        ownedCheckpointProbeOnly &&
+        ownedRecovery != null &&
+        !ownedRecovery.requiresGenericRestore) {
+      _prefix.clear();
+      _contentKind = ContentKind.unknown;
+      _validators = const Validators();
+      _validatorRequestUri = null;
+      _totalLength = null;
+      _networkStartLength = 0;
+      _failure = null;
+      _state = DownloadState.idle;
+      return snapshot;
     }
-    final restored = await artifact.restore(
-      verifyPromotedChecksum: verifyPromotedChecksum,
-    );
+    if (ownedCheckpoint == null) {
+      // Artifact.restore must not first bind a final file that explicitly
+      // belongs to another DownloadId. Preflight the ready sidecar while the
+      // Artifact is still empty so a collision cannot leave its in-memory state
+      // promoted after this restore fails. The post-restore check below remains
+      // a defense for a sidecar that changes during the preflight/restore gap.
+      final promotedMeta = await _readPromotedMetaForOwnership();
+      _requireEpoch(epoch);
+      control?.throwIfCancelled();
+      if (promotedMeta != null &&
+          _metaExplicitlyClaimsDifferentOwner(promotedMeta)) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'promoted artifact metadata belongs to another download',
+        );
+      }
+    }
+    final restored = ownedCheckpoint?.snapshot ??
+        await artifact.restore(
+          verifyPromotedChecksum: verifyPromotedChecksum,
+        );
     _requireEpoch(epoch);
     control?.throwIfCancelled();
     final restoredPrefix = await artifact.readPrefix(_sourceMetadataPrefixLength);
@@ -802,7 +853,7 @@ final class DownloadSession {
       var validMeta = false;
       var wrongOwner = false;
       try {
-        final meta = await artifact.readMeta();
+        final meta = ownedCheckpoint?.meta ?? await artifact.readMeta();
         _requireEpoch(epoch);
         control?.throwIfCancelled();
         if (meta != null) {
@@ -865,6 +916,81 @@ final class DownloadSession {
     _requireEpoch(epoch);
     _notifySnapshot();
     return snapshot;
+  }
+
+  /// Restores one exclusively-owned mutable transfer spool from its atomic
+  /// owner sidecar and current file length without eagerly hashing the body.
+  ///
+  /// This fast path is only for composition-owned App-private/rebound transfer
+  /// staging. The generic restore path still re-hashes unknown partial files.
+  /// The adopted checksum stays dirty, so a later seal performs the same
+  /// authoritative whole-body CRC before promotion.
+  Future<({
+    ArtifactSnapshot? snapshot,
+    Map<String, Object?>? meta,
+    bool requiresGenericRestore,
+  })> _restoreOwnedPartialCheckpoint({
+    TaskControl? control,
+  }) async {
+    final finalType = await FileSystemEntity.type(
+      artifact.finalPath,
+      followLinks: false,
+    );
+    control?.throwIfCancelled();
+    if (finalType != FileSystemEntityType.notFound) {
+      return (snapshot: null, meta: null, requiresGenericRestore: true);
+    }
+    final meta = await artifact.readPartialMetaForAdoption();
+    control?.throwIfCancelled();
+    if (meta == null ||
+        meta['artifactState'] != 'partial' ||
+        meta['path'] != artifact.partialPath ||
+        !_metaMatches(meta)) {
+      final partialType = await FileSystemEntity.type(
+        artifact.partialPath,
+        followLinks: false,
+      );
+      control?.throwIfCancelled();
+      return (
+        snapshot: null,
+        meta: null,
+        requiresGenericRestore:
+            partialType != FileSystemEntityType.notFound,
+      );
+    }
+    final rawBytes = meta['bytes'];
+    final expectedLength = rawBytes is int && rawBytes > 0
+        ? rawBytes
+        : await artifact.readPartialLengthForAdoption() ?? 0;
+    control?.throwIfCancelled();
+    if (expectedLength <= 0) {
+      final partialType = await FileSystemEntity.type(
+        artifact.partialPath,
+        followLinks: false,
+      );
+      return (
+        snapshot: null,
+        meta: null,
+        requiresGenericRestore:
+            partialType != FileSystemEntityType.notFound,
+      );
+    }
+    final restored = await artifact.adoptExistingPartial(
+      expectedLength: expectedLength,
+    );
+    _recordTrace(
+      TraceEventKind.artifactSource,
+      <String, Object?>{
+        'stage': 'recoverable-partial',
+        'action': 'adopt-owned-checkpoint',
+        'bytes': restored.committedLength,
+      },
+    );
+    return (
+      snapshot: restored,
+      meta: meta,
+      requiresGenericRestore: false,
+    );
   }
 
   /// Publishes the transport cursor for one physical network attempt.
@@ -1972,8 +2098,9 @@ final class DownloadSession {
       // resetIfIdle(removeCacheRecord: false).
       await _enqueueCacheMutation<void>(() async {
         final cache = index;
-        if (!physicalId.isExactFallback && cache is PhysicalPartialIndex) {
-          await (cache as PhysicalPartialIndex).removePhysicalPartial(physicalId);
+        final physicalCache = _physicalPartialIndex;
+        if (!physicalId.isExactFallback && physicalCache != null) {
+          await physicalCache.removePhysicalPartial(physicalId);
         }
         if (deleteFinalArtifact &&
             !physicalId.isExactFallback &&
@@ -2039,8 +2166,9 @@ final class DownloadSession {
       _resetPlayablePrefixEvidence();
       await _enqueueCacheMutation<void>(() async {
         final cache = index;
-        if (!physicalId.isExactFallback && cache is PhysicalPartialIndex) {
-          await (cache as PhysicalPartialIndex).removePhysicalPartial(physicalId);
+        final physicalCache = _physicalPartialIndex;
+        if (!physicalId.isExactFallback && physicalCache != null) {
+          await physicalCache.removePhysicalPartial(physicalId);
         }
         if (!physicalId.isExactFallback &&
             cache is PhysicalMediaArtifactIndex) {
@@ -2146,6 +2274,7 @@ final class DownloadSession {
       if (releaseBacking != null) {
         releaseBacking();
         _borrowedBackingRelease = null;
+        _borrowedBackingCanBecomeDurableFinal = false;
       }
       _state = DownloadState.disposed;
       _notifySnapshot();
@@ -2956,16 +3085,15 @@ final class DownloadSession {
           return;
         }
         final cache = index;
-        if (cache == null ||
-            artifact.state == ArtifactState.empty ||
+        final physicalCache = _physicalPartialIndex;
+        if (artifact.state == ArtifactState.empty ||
             (state == CacheState.partial && artifact.committedLength == 0)) {
           return;
         }
         final now = DateTime.now().toUtc().microsecondsSinceEpoch;
         if (state == CacheState.partial &&
             !physicalId.isExactFallback &&
-            cache is PhysicalPartialIndex) {
-          final physicalCache = cache as PhysicalPartialIndex;
+            physicalCache != null) {
           final existingPhysical =
               await physicalCache.getPhysicalPartial(physicalId);
           if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
@@ -2985,11 +3113,12 @@ final class DownloadSession {
           if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
             final current = await physicalCache.getPhysicalPartial(physicalId);
             if (current == writtenPhysical) {
-              await (cache as PhysicalPartialIndex).removePhysicalPartial(physicalId);
+              await physicalCache.removePhysicalPartial(physicalId);
             }
           }
           return;
         }
+        if (cache == null) return;
         final existing = await cache.get(id.key);
         if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
           return;

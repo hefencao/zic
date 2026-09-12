@@ -66,6 +66,24 @@ void main() {
     expect(await outside.readAsBytes(), <int>[4, 5, 6]);
   });
 
+  test('partial adoption metadata rejects a symlinked sidecar', () async {
+    if (Platform.isWindows) return;
+    final artifact = createArtifact();
+    final outside = File('${temp.path}/outside-meta.json');
+    await outside.writeAsString('{"fixture":true}');
+    await Link(artifact.metaPath).create(outside.path, recursive: true);
+
+    await expectLater(
+      artifact.readPartialMetaForAdoption(),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.artifactCorruption,
+      )),
+    );
+    expect(await outside.readAsString(), '{"fixture":true}');
+  });
+
   test('allows artifact paths under a symbolic-link ancestor mount point',
       () async {
     if (Platform.isWindows) return;
