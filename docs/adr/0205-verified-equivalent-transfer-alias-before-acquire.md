@@ -2,6 +2,7 @@
 
 - 状态：Accepted
 - 日期：2026-08-11
+- 2026-09-12：由 ADR 0310 细化。`DownloadId` 的 exact consumer/provider 语义、已有两个 live session 不做 late merge 的合同继续有效；“只能 alias 到既有 exact physical carrier”属于过渡实现，production 已改为 exact page 直接解析稳定 canonical `PhysicalMediaId`。
 
 ## 背景
 
