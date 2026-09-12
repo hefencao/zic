@@ -2258,6 +2258,10 @@ final class _BlockingPutCacheIndex implements CacheIndex {
   Future<CacheRec?> get(String key) => delegate.get(key);
 
   @override
+  Future<List<CacheRec>> getMany(Iterable<String> keys) =>
+      delegate.getMany(keys);
+
+  @override
   Future<List<CacheRec>> list({CacheState? state}) => delegate.list(state: state);
 
   @override
@@ -2350,6 +2354,10 @@ final class _BlockingCacheIndex implements CacheIndex {
     }
     return delegate.get(key);
   }
+
+  @override
+  Future<List<CacheRec>> getMany(Iterable<String> keys) =>
+      delegate.getMany(keys);
 
   @override
   Future<List<CacheRec>> list({CacheState? state}) => delegate.list(state: state);
