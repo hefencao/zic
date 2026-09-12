@@ -1005,7 +1005,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                 ? (_) {
                     _decodeRecoveryAttempts.remove(id);
                     _decodeRecoveryPending.remove(id);
-                    _wakeUpload(sessionId, id);
+                    _wakeUploadFromDecode(sessionId, id);
                   }
                 : null,
           );
@@ -1057,8 +1057,10 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             }
           }
         }
-        if (work != null || _decodeChangeNeedsUpload(before, after)) {
+        if (work != null) {
           _wakeUpload(sessionId, id);
+        } else if (_decodeChangeNeedsUpload(before, after)) {
+          _wakeUploadFromDecode(sessionId, id);
         }
         _enforceBudget(sessionId);
             if (registry != null) {
@@ -1401,6 +1403,21 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         upload.cancelQueued(entry.key.key);
         continue;
       }
+      if (uploadRegistry != null && entry.value.role == PageRole.next) {
+        final decodeHolder = decodes?.find(entry.key)?.holder;
+        final residentOutput =
+            uploadRegistry.find(entry.key)?.snapshot.frameIndex;
+        if (residentOutput == null &&
+            (decodeHolder == null || decodeHolder.isEmpty)) {
+          // Hidden paged-next preupload is producer-driven. Its UploadDemand
+          // owns the right to prepare one output, but an empty decode holder is
+          // not upload work yet. The first decoded-frame callback wakes this
+          // lane once real input exists instead of burning an initial no-op
+          // task before decode and then another task for the same frame.
+          upload.cancelQueued(entry.key.key);
+          continue;
+        }
+      }
       _submitUpload(
         sessionId,
         entry.key,
@@ -1412,6 +1429,28 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     for (final id in removedDownloads) {
       _releaseSourceIfUnused(id);
     }
+  }
+
+  void _wakeUploadFromDecode(String sessionId, DecodeId id) {
+    final uploadRegistry = uploads;
+    if (uploadRegistry != null) {
+      final snapshot = uploadRegistry.find(id)?.snapshot;
+      if (snapshot != null) {
+        // Decode refill may run ahead while a resident output is intentionally
+        // frozen (paged next) or waiting for its playback deadline (current).
+        // That new decoded depth is producer inventory, not immediate upload
+        // work. Only the first output, an explicitly awaited successor, or a
+        // session without a resident frame may re-enter UploadLane.
+        if (snapshot.state == UploadState.uploading) {
+          return;
+        }
+        if (snapshot.frameIndex != null &&
+            snapshot.state != UploadState.waitingFrame) {
+          return;
+        }
+      }
+    }
+    _wakeUpload(sessionId, id);
   }
 
   void _wakeUpload(String sessionId, DecodeId id) {

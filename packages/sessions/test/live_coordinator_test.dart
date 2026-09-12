@@ -1894,6 +1894,7 @@ void main() {
       renderer: RendererKind.flutterImage,
     );
     final clock = _Clock();
+    final trace = MemoryTraceSink();
     final sources = SourcePool(
       factory: _TestSourceFactory(),
       budgetFor: (_) => 1024,
@@ -1909,7 +1910,7 @@ void main() {
     final decodes = DecodeRegistry(
       downloads: downloads,
       ingresses: ingresses,
-      cursors: _TestCursorFactory(),
+      cursors: _LatePartialLoopCursorFactory(frameCount: 5),
       clock: clock,
     );
     final uploads = UploadRegistry(
@@ -1924,6 +1925,7 @@ void main() {
         'RIFF....WEBPnext'.codeUnits,
       ),
       clock: clock,
+      traceSink: trace,
       decodes: decodes,
       uploads: uploads,
       net: NetLane(maxActive: 1),
@@ -1958,7 +1960,7 @@ void main() {
             decodeId: DecodeDemand(
               role: role,
               priority: priority,
-              targetWatermark: 1,
+              targetWatermark: role == PageRole.next ? 3 : 1,
               reason: 'paged-next-preupload',
               expirationRevision: revision + 1,
             ),
@@ -2000,6 +2002,16 @@ void main() {
     expect(nextUpload.playbackState, PlaybackState.frozen);
     expect(nextUpload.playbackDeadlineMicros, isNull);
     claim.release();
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.uploadStarted &&
+            event.identityHash == decodeId.key &&
+            event.payload['priority'] == 820,
+      ),
+      hasLength(1),
+      reason: 'decode refill behind frozen next must not re-enter UploadLane',
+    );
 
     final transitionPlan = plan(
       revision: 2,
