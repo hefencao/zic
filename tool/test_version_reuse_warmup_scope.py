@@ -10,25 +10,40 @@ compat = (ROOT / 'apps/app/lib/demo_home_source_compat.dart').read_text()
 # explicit version viewing and Reader entry are the three preparation owners.
 assert '_scheduleVersionReuseWarmup(' not in compat
 
-# Reader consumes a pending detail->Reader preparation before physical demand,
-# can synchronously fill a missing focused mapping, then refreshes metadata and
-# version relations asynchronously after the Reader is allowed to start.
+# Reader may block before physical demand only for an explicitly selected
+# version-view Future. Generic history proof stays asynchronous and starts only
+# after the first actual presentation frame; ordinary Reader entry consumes only
+# the already-published compact version authority.
 for token in (
     'final viewReusePreparation = _versionViewReusePreparationFor(current);',
-    'await viewReusePreparation;',
-    'await _prepareVersionReuseWarmup(versionSource, current);',
-    '_scheduleReaderMetadataVersionRefresh(versionSource, current);',
+    'await viewReusePreparation.future;',
+    'targetComicId: viewReusePreparation.originComicId',
+    'onFirstPresentationFrame: versionSource == null',
+    '_scheduleReaderMetadataVersionRefresh(',
 ):
     assert token in reader, token
-assert '_scheduleVersionReuseWarmup(versionSource, current);' not in reader
+prepare_start = reader.index('  Future<_PreparedImportedChapter> _prepareImportedChapter(')
+prepare_end = reader.index('\n}\n', prepare_start)
+assert '_scheduleReaderMetadataVersionRefresh(' not in reader[prepare_start:prepare_end]
+for token in (
+    '_preferredReusableVersionProofTarget(',
+    "'stage': 'version-reuse-preproof-selected'",
+    'await _prepareVersionReuseWarmup(versionSource, current);',
+    '_scheduleVersionReuseWarmup(versionSource, current);',
+):
+    assert token not in reader, token
 
 # Warmup remains chapter-generation scoped and never owns version discovery.
+# A selected target gets its own single-flight key and filters the relation set
+# before any bounded source proof is attempted.
 prepare_start = migration.index('  Future<void> _prepareVersionReuseWarmup(')
 prepare_end = migration.index('  void _scheduleVersionReuseWarmup(', prepare_start)
 prepare = migration[prepare_start:prepare_end]
 assert 'ImportedLibraryEntry focus' in prepare
-assert '_versionReuseWarmupKey(source, focus)' in prepare
-assert '_warmVersionRelationPageMappings(source, relation, focus)' in prepare
+assert 'String? targetComicId' in prepare
+assert 'targetComicId: targetComicId' in prepare
+assert 'if (targetComicId != null && relatedComicId != targetComicId)' in prepare
+assert 'upgradeLegacyIntervalProof: targetComicId != null' in prepare
 assert '_ensureSourceVersionReuseAuthority(focus)' in prepare
 assert 'findComicVersions' not in prepare
 
@@ -40,8 +55,9 @@ warm = migration[warm_start:warm_end]
 assert warm.count('source.loadComic(') == 1
 assert 'candidate.sequence == focus.chapter.sequence' in warm
 assert 'final focusManifest = focus.chapter.toManifest();' in warm
-assert '_chapterHasReusableVersionSourceState(predecessorManifest)' in warm
-assert '_chapterHasReusableVersionSourceState(successorManifest)' in warm
+assert warm.count('_chapterHasReusableVersionSourceState(') >= 2
+assert 'predecessorManifest' in warm
+assert 'successorManifest' in warm
 
 # Version-state refresh is allowed to warm cached-page matching just like
 # VibeVenera details, while explicit "view version" carries the same Future to
@@ -57,6 +73,14 @@ view_end = migration.index('  Future<void> _migrateSourceVersion(', view_start)
 view = migration[view_start:view_end]
 assert '_startVersionViewReusePreparation(' in view
 assert '_versionViewReusePreparations' in migration
+assert 'targetComicId: targetComicId' in migration
+assert 'finally {' in view
+assert '_versionViewReusePreparations.remove(key);' in view
+start_begin = migration.index('_startVersionViewReusePreparation(')
+start_end = migration.index('_versionViewReusePreparationFor(', start_begin)
+start = migration[start_begin:start_end]
+assert '.whenComplete(' not in start
+assert 'originComicId: currentComicId' in start
 
 # Missing-mapping eligibility is chapter-scoped: it must not enumerate every
 # page merely to learn whether READY/partial/hot reusable state exists.

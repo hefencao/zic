@@ -25,10 +25,24 @@ for token in (
 demo_home = read('apps/app/lib/demo_home.dart') + read('apps/app/lib/demo_home_reader_route.dart')
 for token in (
     'final viewReusePreparation = _versionViewReusePreparationFor(current);',
-    'await _prepareVersionReuseWarmup(versionSource, current);',
-    '_scheduleReaderMetadataVersionRefresh(versionSource, current);',
+    'await viewReusePreparation.future;',
+    'targetComicId: viewReusePreparation.originComicId',
+    'onFirstPresentationFrame: versionSource == null',
+    '_scheduleReaderMetadataVersionRefresh(',
 ):
     require(demo_home, token, 'Reader persisted-map reuse composition')
+prepare_start = demo_home.index('  Future<_PreparedImportedChapter> _prepareImportedChapter(')
+prepare_end = demo_home.index('\n}\n', prepare_start)
+forbid(
+    demo_home[prepare_start:prepare_end],
+    '_scheduleReaderMetadataVersionRefresh(',
+    'metadata/version discovery before Reader first presentation',
+)
+forbid(
+    demo_home,
+    'await _prepareVersionReuseWarmup(versionSource, current);',
+    'generic history warmup blocking ordinary Reader entry',
+)
 forbid(
     demo_home,
     'await _prepareSourceVersionArtifactReuse(current);',

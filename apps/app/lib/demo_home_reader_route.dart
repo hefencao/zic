@@ -282,20 +282,20 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
     }
     final authorityWatch = Stopwatch()..start();
     final viewReusePreparation = _versionViewReusePreparationFor(current);
-    if (viewReusePreparation != null) {
-      await viewReusePreparation;
-    }
     final versionSource = _sourceForId(current.chapter.sourceId);
-    var authorityMappingCount = await _ensureSourceVersionReuseAuthority(current);
-    if (authorityMappingCount == 0 &&
-        versionSource != null &&
-        _sourceVersionRelationsForComic(
-          current.chapter.sourceId,
-          current.chapter.comicId,
-        ).isNotEmpty) {
-      await _prepareVersionReuseWarmup(versionSource, current);
-      authorityMappingCount = await _ensureSourceVersionReuseAuthority(current);
+    if (viewReusePreparation != null) {
+      await viewReusePreparation.future;
+      if (versionSource != null) {
+        await _prepareVersionReuseWarmup(
+          versionSource,
+          current,
+          targetComicId: viewReusePreparation.originComicId,
+        );
+      }
     }
+    final authorityMappingCount = await _ensureSourceVersionReuseAuthority(
+      current,
+    );
     final authorityMs = authorityWatch.elapsedMilliseconds;
     // Persistent remote bytes are owned by ArtifactCacheTransport. Do not
     // pre-probe the chapter index or register a full-page readPage() loader:

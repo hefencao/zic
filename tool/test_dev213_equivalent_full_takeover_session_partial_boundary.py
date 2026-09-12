@@ -63,7 +63,7 @@ if transfer_runtime_path.exists():
         ):
             forbid(transfer_runtime, token, 'retired composition late-takeover wiring')
         for token in (
-            'cache.directEquivalents(exactId)',
+            '_verifiedEquivalentCandidates(exactId)',
             'registry.aliasPhysical(id: exactId, target:',
             "'stage': 'verified-transfer-acquire-alias'",
         ):
@@ -151,13 +151,20 @@ else:
 
 migration = read('apps/app/lib/demo_home_source_migration.dart')
 for token in (
-    'bool _versionPageMappingIsFresh(',
-    'final revalidationNow = DateTime.now().toUtc();',
-    '_versionPageMappingIsFresh(currentMapping, revalidationNow)',
-    'final plan = await VerifiedArtifactReusePlan.matchResolvedRelated(',
+    'currentMapping.predecessorSourceRevision ==',
+    'predecessorChapter.sourceRevision',
+    'currentMapping.successorSourceRevision ==',
+    'successorChapter.sourceRevision',
+    'final intervalProof =\n        await VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(',
+    'verifiedIntervals: intervalProof.verifiedIntervals,',
     'verifiedAt: DateTime.now().toUtc(),',
 ):
-    require(migration, token, 'stale mapping strong revalidation')
+    require(migration, token, 'revision-bound verified interval mapping')
+for token in (
+    'bool _versionPageMappingIsFresh(',
+    'final revalidationNow = DateTime.now().toUtc();',
+):
+    forbid(migration, token, 'retired time-based mapping freshness gate')
 forbid(
     migration,
     "existing.any(\n        (mapping) =>\n            mapping.predecessorPageCount == predecessorChapter.pageCount",

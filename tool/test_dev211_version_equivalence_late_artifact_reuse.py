@@ -47,12 +47,17 @@ else:
 migration = read('apps/app/lib/demo_home_source_migration.dart')
 for token in (
     'Future<int> _ensureSourceVersionReuseAuthority(',
-    '_librarySession.hydrateChapterBatch(sourceChapterKeys.values)',
+    'await _librarySession.ensureCanonicalMediaForEntry(current);',
     "'stage': 'version-reuse-authority-ready'",
     "'materializedEquivalenceEdges': 0",
-    "'restoreMode': 'compact-version-authority'",
+    "'restoreMode': 'canonical-media-direct'",
 ):
-    require(migration, token, 'Reader compact version-authority preparation')
+    require(migration, token, 'Reader canonical media preparation')
+forbid(
+    migration,
+    '_librarySession.hydrateChapterBatch(sourceChapterKeys.values)',
+    'Reader synchronous historical version hydration',
+)
 for token in (
     'artifactCache.linkEquivalent(',
     "'registeredEquivalentPages':",
@@ -62,12 +67,19 @@ for token in (
 
 runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
 for token in (
-    'cache.registerEquivalentResolver(',
-    'resolver: this.versionPageAuthority.directCandidates',
-    'equivalentCandidates: _verifiedEquivalentCandidates',
-    "action: 'joined-existing-physical'",
+    'replaceCanonicalMediaAuthorityScope(',
+    'PhysicalMediaId? _resolveCanonicalPhysicalMedia(DownloadId id)',
+    '_applyCanonicalPhysicalMedia(exactId);',
+    'registry.hasDirectPhysicalMediaBinding(exactId)',
 ):
-    require(runtime, token, 'shared version candidate authority across cache/partial/hot')
+    require(runtime, token, 'canonical physical authority across cache/partial/hot')
+# Candidate/equivalence paths remain migration compatibility only; canonical
+# pages must have a direct physical binding before those branches are reached.
+require(
+    runtime,
+    'if (registry.hasDirectPhysicalMediaBinding(exactId) ||',
+    'canonical acquire bypass before legacy candidates',
+)
 
 
 promoted = read('packages/downloads/lib/src/promoted_artifact_cache_handoff.dart')

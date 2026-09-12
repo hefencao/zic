@@ -40,12 +40,17 @@ for token in (
     "_versionRelations",
     "Future<int> _ensureSourceVersionReuseAuthority(",
     "_sourceVersionRelationsForComic(",
-    "_librarySession.hydrateChapterBatch(sourceChapterKeys.values)",
+    "await _librarySession.ensureCanonicalMediaForEntry(current);",
     "VerifiedArtifactReusePlan.matchResolvedRelated(",
     "'stage': 'version-reuse-authority-ready'",
+    "'restoreMode': 'canonical-media-direct'",
+):
+    require(migration, token, "version projection / canonical media authority")
+for token in (
+    "_librarySession.hydrateChapterBatch(sourceChapterKeys.values)",
     "'restoreMode': 'compact-version-authority'",
 ):
-    require(migration, token, "version projection / compact reuse authority")
+    forbid(migration, token, "superseded Reader history hydration authority")
 for token in (
     "artifactCache.linkEquivalent(",
     "candidatePages",
@@ -55,20 +60,21 @@ for token in (
 
 home_session = read("apps/app/lib/home_library_session.dart")
 for token in (
-    "VersionPageReuseResolver",
+    "ComicVersionCanonicalMediaLedger _canonicalMediaLedger",
     "_versionAuthorityHydratedEntries",
-    "versionPageAuthority.replaceScope(",
-    "VerifiedArtifactReuseResolver.predecessorToSuccessor(",
+    "CanonicalMediaChapterAuthority(",
+    "runtime.replaceCanonicalMediaAuthorityScope(",
+    "mapping.effectiveVerifiedIntervals",
 ):
-    require(home_session, token, "Home compact version authority projection")
+    require(home_session, token, "Home canonical media projection owner")
 
 runtime = read("packages/downloads/lib/src/composition_download_transfer_runtime.dart")
 for token in (
-    "resolver: this.versionPageAuthority.directCandidates",
-    "equivalentCandidates: _verifiedEquivalentCandidates",
-    "Iterable<DownloadId> versionCandidatesFor(DownloadId id)",
+    "replaceCanonicalMediaAuthorityScope(",
+    "PhysicalMediaId? _resolveCanonicalPhysicalMedia(DownloadId id)",
+    "registry.hasDirectPhysicalMediaBinding(exactId)",
 ):
-    require(runtime, token, "shared READY/partial/hot version candidate authority")
+    require(runtime, token, "direct canonical physical media authority")
 forbid(
     migration,
     "if (relations.isEmpty) return 0;",

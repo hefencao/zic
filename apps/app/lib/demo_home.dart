@@ -216,8 +216,9 @@ final class _DemoHomeState extends State<DemoHome> {
   final Map<String, Future<void>> _versionReuseWarmups = <String, Future<void>>{};
   final Map<String, Future<void>> _readerVersionRefreshes =
       <String, Future<void>>{};
-  final Map<String, Future<void>> _versionViewReusePreparations =
-      <String, Future<void>>{};
+  final Map<String, ({String originComicId, Future<void> future})>
+      _versionViewReusePreparations =
+      <String, ({String originComicId, Future<void> future})>{};
   final Map<String, _DownloadCompletionKind> _downloadCompletionBadges =
       <String, _DownloadCompletionKind>{};
   final Map<String, String> _pendingWholeComicCompletionBadges =

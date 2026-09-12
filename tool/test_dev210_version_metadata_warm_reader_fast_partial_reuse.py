@@ -45,7 +45,7 @@ for token in (
     'Future<int> _ensureSourceVersionReuseAuthority(',
     'hasReusableChapterState(',
     'hasReusablePhysicalStateForChapter(',
-    "'restoreMode': 'compact-version-authority'",
+    "'restoreMode': 'canonical-media-direct'",
     "'stage': 'version-reuse-authority-ready'",
     "'stage': 'version-page-mapping-warmed'",
     'verifiedIntervals: intervalProof.verifiedIntervals',
@@ -69,10 +69,24 @@ forbid(
 home = read('apps/app/lib/demo_home.dart') + read('apps/app/lib/demo_home_reader_route.dart')
 for token in (
     '_versionViewReusePreparationFor(current)',
-    'await _prepareVersionReuseWarmup(versionSource, current);',
-    '_scheduleReaderMetadataVersionRefresh(versionSource, current);',
+    'await viewReusePreparation.future;',
+    'targetComicId: viewReusePreparation.originComicId',
+    'onFirstPresentationFrame: versionSource == null',
+    '_scheduleReaderMetadataVersionRefresh(',
 ):
-    require(home, token, 'Reader fast local restore + async refresh')
+    require(home, token, 'Reader fast local restore + post-presentation async refresh')
+prepare_start = home.index('  Future<_PreparedImportedChapter> _prepareImportedChapter(')
+prepare_end = home.index('\n}\n', prepare_start)
+forbid(
+    home[prepare_start:prepare_end],
+    '_scheduleReaderMetadataVersionRefresh(',
+    'metadata/version discovery competing with first-page source plan',
+)
+forbid(
+    home,
+    'await _prepareVersionReuseWarmup(versionSource, current);',
+    'generic history warmup blocking ordinary Reader entry',
+)
 forbid(
     home,
     'await _prepareSourceVersionArtifactReuse(current);',
@@ -128,11 +142,23 @@ forbid(
 
 baseline = read('packages/catalog/lib/src/comic_version_baseline.dart')
 for token in (
-    'List<VerifiedComicVersionPageInterval> composeVerifiedIntervals(',
-    'rightInterval.predecessorStart - leftInterval.successorOffset',
-    'verifiedIntervals: composedIntervals',
+    '// Cache/hot reuse no longer composes A->B->C into pairwise runtime',
+    'for (final relation in outgoing[node(sourceId, predecessor)] ??',
+    'directCacheReuseRelations.add(',
 ):
-    require(baseline, token, 'multi-hop verified interval composition')
+    require(baseline, token, 'direct-only transitional cache relation projection')
+for token in (
+    'for (var leftIndex = 0; leftIndex < cacheMembers.length; leftIndex++)',
+    'final left = cacheMembers[leftIndex];',
+):
+    forbid(baseline, token, 'synthetic multi-hop cache relation composition')
+# Download-head management may still compose a unique historical path; that is
+# separate from Reader/cache physical ownership.
+require(
+    baseline,
+    'List<VerifiedComicVersionPageInterval> composeVerifiedIntervals(',
+    'download-head historical proof composition',
+)
 
 source_transport = read('packages/downloads/lib/src/source_resource_transport.dart')
 for token in (
@@ -144,7 +170,8 @@ for token in (
 
 chapter_downloads = read('packages/downloads/lib/src/chapter_downloads.dart')
 for token in (
-    'typedef ChapterVerifiedPageReuseObserver = void Function(',
+    'typedef ChapterVerifiedPageReuseObserver =',
+    'void Function(ChapterManifest manifest, PageAsset page, String identity);',
     'this.onVerifiedPageReuseIdentity,',
     "response.diagnostics['sourceVerifiedReuseIdentity']",
     '_resourceAccess?.onVerifiedPageReuseIdentity?.call(',
@@ -168,6 +195,14 @@ forbid(
     'verifiedPageReuseIdentity(',
     'Home evidence owner performing source resolution',
 )
+for token in (
+    'ComicVersionCanonicalMediaLedger _canonicalMediaLedger',
+    'Future<void> _assimilateCanonicalMediaRelationsNow(',
+    'persistCanonicalMediaProjections(',
+    'final ranges = <CanonicalMediaActiveRange>[',
+    "runtime.replaceCanonicalMediaAuthorityScope(",
+):
+    require(home_session, token, 'canonical media projection / active proof owner')
 
 job = read('packages/sessions/lib/src/download_job.dart')
 for token in (

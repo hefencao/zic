@@ -115,6 +115,8 @@ It is never:
 
 Historical pairwise relations may be consumed by a control-plane builder while learning a family projection, but the published state is always direct exact-version→canonical-segment projection. Reader/download/cache hot paths do not BFS version history, compose predecessor offsets, enumerate all versions or materialize an all-pairs page matrix.
 
+Ordinary Reader entry follows the same boundary: it may assimilate the current already-materialized chapter and any already-materialized direct counterpart into the canonical ledger, but it must not synchronously hydrate unopened version history or run a generic relation proof before first presentation. A user-explicit “view this version” transition may carry one target-scoped bounded proof future across details→Reader so the selected pair is ready without widening the Reader path into history discovery. Generic metadata/version discovery remains post-presentation background work.
+
 ### 9. Complexity is structural-change bounded
 
 Persistent/runtime canonical state scales with:

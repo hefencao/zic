@@ -431,8 +431,9 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   Future<void> _warmVersionRelationPageMappings(
     BrowsableComicSource source,
     ComicVersionRelation relation,
-    ImportedLibraryEntry focus,
-  ) async {
+    ImportedLibraryEntry focus, {
+    bool upgradeLegacyIntervalProof = false,
+  }) async {
     final focusIsPredecessor =
         relation.predecessorComicId == focus.chapter.comicId;
     final focusIsSuccessor =
@@ -449,10 +450,14 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       final focusedPageCount = focusIsPredecessor
           ? mapping.predecessorPageCount
           : mapping.successorPageCount;
+      final proofAlreadyUsable = upgradeLegacyIntervalProof
+          ? !VerifiedArtifactReusePlan.needsIntervalProbe(mapping)
+          : mapping.verifiedPredecessorPageIndexes.isNotEmpty;
       if (focusedChapterId == focus.chapter.chapterId &&
           focusedRevision == focus.chapter.sourceRevision &&
           focusedPageCount == focus.chapter.pages.length &&
-          mapping.verifiedPredecessorPageIndexes.isNotEmpty) {
+          proofAlreadyUsable &&
+          !upgradeLegacyIntervalProof) {
         return;
       }
     }
@@ -490,11 +495,18 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         break;
       }
     }
+    final currentProofAlreadyUsable =
+        currentMapping != null &&
+        (upgradeLegacyIntervalProof
+            ? !VerifiedArtifactReusePlan.needsIntervalProbe(currentMapping)
+            : currentMapping.verifiedPredecessorPageIndexes.isNotEmpty);
     if (currentMapping != null &&
         currentMapping.predecessorSourceRevision ==
             predecessorChapter.sourceRevision &&
-        currentMapping.successorSourceRevision == successorChapter.sourceRevision &&
-        currentMapping.verifiedPredecessorPageIndexes.isNotEmpty) {
+        currentMapping.successorSourceRevision ==
+            successorChapter.sourceRevision &&
+        currentProofAlreadyUsable &&
+        !upgradeLegacyIntervalProof) {
       return;
     }
 
@@ -508,6 +520,17 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     final predecessorManifest =
         focusIsPredecessor ? focusManifest : relatedManifest;
     final successorManifest = focusIsSuccessor ? focusManifest : relatedManifest;
+    if (currentMapping != null &&
+        currentMapping.predecessorSourceRevision ==
+            predecessorManifest.chapter.sourceRevision &&
+        currentMapping.successorSourceRevision ==
+            successorManifest.chapter.sourceRevision &&
+        currentProofAlreadyUsable) {
+      // Explicit version view must materialize both endpoints so Home can
+      // publish an existing verified interval into the canonical ledger, but
+      // an already-current bounded proof must not be re-probed from source.
+      return;
+    }
     final predecessorReusable =
         await _chapterHasReusableVersionSourceState(predecessorManifest);
     final successorReusable =
@@ -543,6 +566,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       successorSourceRevision: successorManifest.chapter.sourceRevision,
       verifiedPredecessorPageIndexes: intervalProof.verifiedSourceIndexes,
       verifiedIntervals: intervalProof.verifiedIntervals,
+      intervalProbeVersion: VerifiedArtifactReusePlan.intervalProbeVersion,
       verifiedAt: DateTime.now().toUtc(),
     );
     final updatedRelation = ComicVersionRelation(
@@ -584,16 +608,23 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
 
   String _versionReuseWarmupKey(
     BrowsableComicSource source,
-    ImportedLibraryEntry focus,
-  ) =>
+    ImportedLibraryEntry focus, {
+    String? targetComicId,
+  }) =>
       '${source.sourceId}\u0000${focus.chapter.comicId}'
-      '\u0000${focus.chapter.chapterId}\u0000${focus.chapter.sourceRevision}';
+      '\u0000${focus.chapter.chapterId}\u0000${focus.chapter.sourceRevision}'
+      '\u0000${targetComicId ?? ''}';
 
   Future<void> _prepareVersionReuseWarmup(
     BrowsableComicSource source,
-    ImportedLibraryEntry focus,
-  ) {
-    final key = _versionReuseWarmupKey(source, focus);
+    ImportedLibraryEntry focus, {
+    String? targetComicId,
+  }) {
+    final key = _versionReuseWarmupKey(
+      source,
+      focus,
+      targetComicId: targetComicId,
+    );
     final existing = _versionReuseWarmups[key];
     if (existing != null) return existing;
     late Future<void> future;
@@ -603,8 +634,20 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         focus.chapter.comicId,
       );
       for (final relation in relations) {
+        final relatedComicId =
+            relation.predecessorComicId == focus.chapter.comicId
+                ? relation.successorComicId
+                : relation.predecessorComicId;
+        if (targetComicId != null && relatedComicId != targetComicId) {
+          continue;
+        }
         try {
-          await _warmVersionRelationPageMappings(source, relation, focus);
+          await _warmVersionRelationPageMappings(
+            source,
+            relation,
+            focus,
+            upgradeLegacyIntervalProof: targetComicId != null,
+          );
         } on Object catch (error) {
           widget.debugTrace.record(
             TraceEvent(
@@ -740,63 +783,23 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   Future<int> _ensureSourceVersionReuseAuthority(
     ImportedLibraryEntry current,
   ) async {
+    // Reader entry may catch up only already-materialized direct canonical
+    // endpoints. It must not hydrate unopened version history or compose paths.
+    await _librarySession.ensureCanonicalMediaForEntry(current);
     final chapterKey =
         '${current.chapter.sourceId}\u0000${current.chapter.comicId}'
         '\u0000${current.chapter.chapterId}\u0000${current.chapter.sourceRevision}';
-    final relations = _sourceVersionRelationsForComic(
-      current.chapter.sourceId,
-      current.chapter.comicId,
-    );
+    final relations = _librarySession.versionRelations
+        .where(
+          (relation) =>
+              relation.sourceId == current.chapter.sourceId &&
+              (relation.predecessorComicId == current.chapter.comicId ||
+                  relation.successorComicId == current.chapter.comicId),
+        )
+        .toList(growable: false);
     final relationFingerprintParts = <String>[];
-    final sourceChapterKeys = <String, ImportedLibraryChapterKey>{};
-    for (final relation in relations) {
-      final currentIsSuccessor =
-          relation.successorComicId == current.chapter.comicId;
-      final currentIsPredecessor =
-          relation.predecessorComicId == current.chapter.comicId;
-      if (!currentIsSuccessor && !currentIsPredecessor) continue;
-      for (final mapping in relation.pageMappings) {
-        final targetChapterId = currentIsSuccessor
-            ? mapping.successorChapterId
-            : mapping.predecessorChapterId;
-        if (targetChapterId != current.chapter.chapterId) continue;
-        final sourceChapterId = currentIsSuccessor
-            ? mapping.predecessorChapterId
-            : mapping.successorChapterId;
-        final sourceChapterKey = ImportedLibraryChapterKey(
-          sourceId: current.chapter.sourceId,
-          chapterId: sourceChapterId,
-        );
-        sourceChapterKeys.putIfAbsent(
-          sourceChapterKey.identity,
-          () => sourceChapterKey,
-        );
-        relationFingerprintParts.add(
-          '${relation.predecessorComicId}\u0000${relation.successorComicId}'
-          '\u0000${mapping.predecessorChapterId}'
-          '\u0000${mapping.successorChapterId}'
-          '\u0000${mapping.predecessorPageCount}'
-          '\u0000${mapping.successorPageCount}'
-          '\u0000${mapping.successorOffset}'
-          '\u0000${mapping.predecessorSourceRevision ?? ''}'
-          '\u0000${mapping.successorSourceRevision ?? ''}'
-          '\u0000${mapping.verifiedPredecessorPageIndexes.join(',')}'
-          '\u0000${mapping.effectiveVerifiedIntervals.map((interval) => '${interval.predecessorStart}:${interval.predecessorEndExclusive}:${interval.successorOffset}').join(',')}'
-          '\u0000${mapping.verifiedAt?.microsecondsSinceEpoch ?? 0}',
-        );
-      }
-    }
-    relationFingerprintParts.sort();
-    final relationFingerprint = relationFingerprintParts.join('\u0001');
-    final previous = _versionReuseAuthorityStates[chapterKey];
-    if (previous?.fingerprint == relationFingerprint) {
-      return previous!.acceptedMappings;
-    }
-
     final targetManifest = current.chapter.toManifest();
-    final hydratedSourceEntries =
-        await _librarySession.hydrateChapterBatch(sourceChapterKeys.values);
-    final cachedManifests = <String, ChapterManifest>{};
+    final materializedRelatedChapters = <String>{};
     var acceptedMappings = 0;
     var skippedMissingSourceManifests = 0;
     for (final relation in relations) {
@@ -810,47 +813,71 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
             ? mapping.successorChapterId
             : mapping.predecessorChapterId;
         if (targetChapterId != current.chapter.chapterId) continue;
-        final sourceChapterId = currentIsSuccessor
+        relationFingerprintParts.add(
+          '${relation.predecessorComicId}\u0000${relation.successorComicId}'
+          '\u0000${mapping.predecessorChapterId}'
+          '\u0000${mapping.successorChapterId}'
+          '\u0000${mapping.predecessorPageCount}'
+          '\u0000${mapping.successorPageCount}'
+          '\u0000${mapping.predecessorSourceRevision ?? ''}'
+          '\u0000${mapping.successorSourceRevision ?? ''}'
+          '\u0000${mapping.effectiveVerifiedIntervals.map((interval) => '${interval.predecessorStart}:${interval.predecessorEndExclusive}:${interval.successorOffset}').join(',')}'
+          '\u0000${mapping.intervalProbeVersion}'
+          '\u0000${mapping.verifiedAt?.microsecondsSinceEpoch ?? 0}',
+        );
+        final intervals = mapping.effectiveVerifiedIntervals;
+        final predecessorRevision = mapping.predecessorSourceRevision;
+        final successorRevision = mapping.successorSourceRevision;
+        if (intervals.isEmpty ||
+            predecessorRevision == null ||
+            successorRevision == null) {
+          continue;
+        }
+        final targetExpectedRevision = currentIsSuccessor
+            ? successorRevision
+            : predecessorRevision;
+        final targetExpectedCount = currentIsSuccessor
+            ? mapping.successorPageCount
+            : mapping.predecessorPageCount;
+        if (targetExpectedRevision != targetManifest.chapter.sourceRevision ||
+            targetExpectedCount != targetManifest.pages.length) {
+          continue;
+        }
+        final relatedComicId = currentIsSuccessor
+            ? relation.predecessorComicId
+            : relation.successorComicId;
+        final relatedChapterId = currentIsSuccessor
             ? mapping.predecessorChapterId
             : mapping.successorChapterId;
-        var sourceManifest = cachedManifests[sourceChapterId];
-        if (sourceManifest == null) {
-          final sourceIdentity = chapterLibraryIdentity(
-            current.chapter.sourceId,
-            sourceChapterId,
-          );
-          final sourceEntry = hydratedSourceEntries[sourceIdentity] ??
-              _exactChapterEntry(current.chapter.sourceId, sourceChapterId);
-          if (sourceEntry == null) {
-            skippedMissingSourceManifests++;
-            continue;
-          }
-          sourceManifest = sourceEntry.chapter.toManifest();
-          cachedManifests[sourceChapterId] = sourceManifest;
-        }
-        if (currentIsSuccessor &&
-            (mapping.successorPageCount != targetManifest.pages.length ||
-                mapping.predecessorPageCount != sourceManifest.pages.length)) {
+        final relatedExpectedRevision = currentIsSuccessor
+            ? predecessorRevision
+            : successorRevision;
+        final relatedExpectedCount = currentIsSuccessor
+            ? mapping.predecessorPageCount
+            : mapping.successorPageCount;
+        final relatedEntry = _librarySession.versionAuthorityEntry(
+          sourceId: current.chapter.sourceId,
+          comicId: relatedComicId,
+          chapterId: relatedChapterId,
+        );
+        if (relatedEntry == null) {
+          skippedMissingSourceManifests++;
           continue;
         }
-        if (currentIsPredecessor &&
-            (mapping.predecessorPageCount != targetManifest.pages.length ||
-                mapping.successorPageCount != sourceManifest.pages.length)) {
+        if (relatedEntry.chapter.sourceRevision != relatedExpectedRevision ||
+            relatedEntry.chapter.pages.length != relatedExpectedCount) {
           continue;
         }
-        final predecessorRevision = currentIsSuccessor
-            ? sourceManifest.chapter.sourceRevision
-            : targetManifest.chapter.sourceRevision;
-        final successorRevision = currentIsSuccessor
-            ? targetManifest.chapter.sourceRevision
-            : sourceManifest.chapter.sourceRevision;
-        if (mapping.predecessorSourceRevision != predecessorRevision ||
-            mapping.successorSourceRevision != successorRevision ||
-            mapping.verifiedPredecessorPageIndexes.isEmpty) {
-          continue;
-        }
+        materializedRelatedChapters.add(relatedEntry.identity);
         acceptedMappings++;
       }
+    }
+    relationFingerprintParts.sort();
+    final relationFingerprint = relationFingerprintParts.join('\u0001');
+    final previous = _versionReuseAuthorityStates[chapterKey];
+    if (previous?.fingerprint == relationFingerprint &&
+        previous?.acceptedMappings == acceptedMappings) {
+      return previous!.acceptedMappings;
     }
 
     _versionReuseAuthorityStates[chapterKey] = (
@@ -867,10 +894,10 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         payload: <String, Object?>{
           'stage': 'version-reuse-authority-ready',
           'acceptedMappings': acceptedMappings,
-          'hydratedSourceChapters': hydratedSourceEntries.length,
+          'hydratedSourceChapters': materializedRelatedChapters.length,
           'skippedMissingSourceManifests': skippedMissingSourceManifests,
           'materializedEquivalenceEdges': 0,
-          'restoreMode': 'compact-version-authority',
+          'restoreMode': 'canonical-media-direct',
         },
       ),
     );
@@ -1428,42 +1455,42 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   ) =>
       '$sourceId\u0000$comicId';
 
-  Future<void>? _startVersionViewReusePreparation(
+  ({String originComicId, Future<void> future})
+      _startVersionViewReusePreparation(
     BrowsableComicSource source,
     String currentComicId,
     String targetComicId,
   ) {
+    final key = _versionViewReusePreparationKey(source.sourceId, targetComicId);
+    final existing = _versionViewReusePreparations[key];
+    if (existing != null) return existing;
     final current = _exactLibraryComicForSourceIdentity(
       source.sourceId,
       currentComicId,
     );
-    if (current == null || current.chapters.length != 1) return null;
-    final key = _versionViewReusePreparationKey(source.sourceId, targetComicId);
-    final existing = _versionViewReusePreparations[key];
-    if (existing != null) return existing;
-    final focus = current.chapters.single;
-    late Future<void> future;
-    future = _prepareVersionReuseWarmup(source, focus);
-    _versionViewReusePreparations[key] = future;
-    unawaited(
-      future.whenComplete(() {
-        if (identical(_versionViewReusePreparations[key], future)) {
-          _versionViewReusePreparations.remove(key);
-        }
-      }),
+    final future = current != null && current.chapters.length == 1
+        ? _prepareVersionReuseWarmup(
+            source,
+            current.chapters.single,
+            targetComicId: targetComicId,
+          )
+        : Future<void>.value();
+    final preparation = (
+      originComicId: currentComicId,
+      future: future,
     );
-    return future;
+    _versionViewReusePreparations[key] = preparation;
+    return preparation;
   }
 
-  Future<void>? _versionViewReusePreparationFor(
-    ImportedLibraryEntry entry,
-  ) =>
-      _versionViewReusePreparations[
-        _versionViewReusePreparationKey(
-          entry.chapter.sourceId,
-          entry.chapter.comicId,
-        )
-      ];
+  ({String originComicId, Future<void> future})?
+      _versionViewReusePreparationFor(ImportedLibraryEntry entry) =>
+          _versionViewReusePreparations[
+            _versionViewReusePreparationKey(
+              entry.chapter.sourceId,
+              entry.chapter.comicId,
+            )
+          ];
 
   Future<void> _viewSourceVersion(
     BrowsableComicSource source,
@@ -1471,26 +1498,36 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     SourceComicVersion version,
   ) async {
     if (version.sourceId != source.sourceId || version.comicId.isEmpty) return;
-    _startVersionViewReusePreparation(
+    final key = _versionViewReusePreparationKey(
+      source.sourceId,
+      version.comicId,
+    );
+    final preparation = _startVersionViewReusePreparation(
       source,
       currentComicId,
       version.comicId,
     );
-    await _openSourceComic(
-      source,
-      SourceComicSummary(
-        sourceId: source.sourceId,
-        comicId: version.comicId,
-        title: version.title.trim().isEmpty ? version.comicId : version.title,
-        authors: const <String>[],
-      ),
-      resolveCanonicalAlias: false,
-      openingIdentity: sourceVersionViewIdentity(
-        sourceId: source.sourceId,
-        currentComicId: currentComicId,
-        targetComicId: version.comicId,
-      ),
-    );
+    try {
+      await _openSourceComic(
+        source,
+        SourceComicSummary(
+          sourceId: source.sourceId,
+          comicId: version.comicId,
+          title: version.title.trim().isEmpty ? version.comicId : version.title,
+          authors: const <String>[],
+        ),
+        resolveCanonicalAlias: false,
+        openingIdentity: sourceVersionViewIdentity(
+          sourceId: source.sourceId,
+          currentComicId: currentComicId,
+          targetComicId: version.comicId,
+        ),
+      );
+    } finally {
+      if (identical(_versionViewReusePreparations[key], preparation)) {
+        _versionViewReusePreparations.remove(key);
+      }
+    }
   }
 
   Future<void> _migrateSourceVersion(
