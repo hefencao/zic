@@ -8610,14 +8610,116 @@ final class PersistentDownloadArtifactStore
       first.effectiveArtifactId == second.effectiveArtifactId &&
       first.storageRootId == second.storageRootId;
 
+  Future<ArtifactCacheUsage> _inspectPersistentArtifactUsage() async {
+    final records = await _index.list();
+    final physicalPartials = await _index.listPhysicalPartials();
+    final physicalArtifacts = await _index.listPhysicalMediaArtifacts();
+    final exactReadyArtifactIds = <String>{
+      for (final record in records)
+        if (record.state == CacheState.ready) record.effectiveArtifactId,
+    };
+    final physicalOnlyArtifactBytes = <String, int>{};
+    for (final physical in physicalArtifacts) {
+      if (exactReadyArtifactIds.contains(physical.artifactId)) continue;
+      final previous = physicalOnlyArtifactBytes[physical.artifactId] ?? 0;
+      if (physical.bytes > previous) {
+        physicalOnlyArtifactBytes[physical.artifactId] = physical.bytes;
+      }
+    }
+    final physicalPartialBytes = physicalPartials.fold<int>(
+      0,
+      (sum, record) => sum + record.bytes,
+    );
+    return ArtifactCacheUsage(
+      bytes: physicalCacheBytes(records) +
+          physicalPartialBytes +
+          physicalOnlyArtifactBytes.values.fold<int>(
+            0,
+            (sum, bytes) => sum + bytes,
+          ),
+      // `entries` remains a record count rather than a unique-byte-object
+      // count. Exact aliases already count independently, so canonical physical
+      // ownership records follow the same maintenance-summary convention.
+      entries:
+          records.length + physicalPartials.length + physicalArtifacts.length,
+    );
+  }
+
   @override
   Future<ArtifactCacheUsage> inspectArtifacts() async {
     _requireOpen();
+    return _inspectPersistentArtifactUsage();
+  }
+
+  Future<({int evicted, int skippedBusy})> _trimPhysicalPartialsTo(
+    int targetBytes,
+  ) async {
+    final values = await _index.listPhysicalPartials()
+      ..sort((left, right) => left.touchedUs.compareTo(right.touchedUs));
+    var evicted = 0;
+    var skippedBusy = 0;
+    for (final record in values) {
+      if ((await _inspectPersistentArtifactUsage()).bytes <= targetBytes) break;
+      if (_borrowedPhysicalPartialIds.contains(record.id)) {
+        skippedBusy++;
+        continue;
+      }
+      final current = await _index.getPhysicalPartial(record.id);
+      if (current == null || current != record) continue;
+      await invalidatePhysicalPartialDownload(record.id);
+      if (await _index.getPhysicalPartial(record.id) == null) {
+        evicted++;
+      }
+    }
+    return (evicted: evicted, skippedBusy: skippedBusy);
+  }
+
+  Future<int> _physicalOnlyArtifactBytes() async {
     final records = await _index.list();
-    return ArtifactCacheUsage(
-      bytes: physicalCacheBytes(records),
-      entries: records.length,
-    );
+    final exactReadyArtifactIds = <String>{
+      for (final record in records)
+        if (record.state == CacheState.ready) record.effectiveArtifactId,
+    };
+    final bytes = <String, int>{};
+    for (final physical in await _index.listPhysicalMediaArtifacts()) {
+      if (exactReadyArtifactIds.contains(physical.artifactId)) continue;
+      final previous = bytes[physical.artifactId] ?? 0;
+      if (physical.bytes > previous) {
+        bytes[physical.artifactId] = physical.bytes;
+      }
+    }
+    return bytes.values.fold<int>(0, (sum, value) => sum + value);
+  }
+
+  Future<int> _physicalPartialBytes() async =>
+      (await _index.listPhysicalPartials()).fold<int>(
+        0,
+        (sum, record) => sum + record.bytes,
+      );
+
+  Future<int> _trimPhysicalArtifactsTo(int targetBytes) async {
+    final values = await _index.listPhysicalMediaArtifacts()
+      ..sort((left, right) => left.touchedUs.compareTo(right.touchedUs));
+    var evicted = 0;
+    for (final record in values) {
+      if ((await _inspectPersistentArtifactUsage()).bytes <= targetBytes) break;
+      final current = await _index.getPhysicalMediaArtifact(record.id);
+      if (current == null || current.artifactId != record.artifactId) continue;
+      final exactBindings = (await _index.list()).where(
+        (binding) =>
+            binding.state == CacheState.ready &&
+            binding.effectiveArtifactId == current.artifactId,
+      );
+      // Removing only the physical binding cannot release capacity while an
+      // exact READY binding still owns the same immutable object. Leave the
+      // canonical owner intact and let exact cache policy handle that object.
+      if (exactBindings.isNotEmpty) continue;
+      await invalidatePhysicalArtifact(record.id);
+      if (await _index.getArtifactObject(current.artifactId) == null) {
+        evicted++;
+      }
+    }
+    return evicted;
   }
 
   @override
@@ -8626,33 +8728,97 @@ final class PersistentDownloadArtifactStore
     required int targetBytes,
   }) async {
     _requireOpen();
-    final before = await _index.totalBytes();
-    final report = await _cacheOps.trim(
-      CacheLimits(maxBytes: maxBytes, targetBytes: targetBytes),
-      busy: _borrowedPartialIds,
+    if (maxBytes < 0 || targetBytes < 0 || targetBytes > maxBytes) {
+      throw ArgumentError('invalid artifact cache limits');
+    }
+    final before = await _inspectPersistentArtifactUsage();
+    if (before.bytes <= maxBytes) {
+      return ArtifactCacheReport(
+        beforeBytes: before.bytes,
+        releasedBytes: 0,
+        remainingBytes: before.bytes,
+        evictedEntries: 0,
+        skippedBusy: 0,
+      );
+    }
+
+    // Mutable canonical prefixes are lower-value than completed immutable
+    // bodies, so shed them first before applying the existing exact-cache LRU.
+    final partial = await _trimPhysicalPartialsTo(targetBytes);
+    var exactReport = const CacheReport(
+      requestedBytes: 0,
+      releasedBytes: 0,
+      evicted: 0,
+      skippedBusy: 0,
+      skippedProtected: 0,
+      remainingBytes: 0,
     );
+    if ((await _inspectPersistentArtifactUsage()).bytes > targetBytes) {
+      final reserved =
+          await _physicalOnlyArtifactBytes() + await _physicalPartialBytes();
+      final exactMax = maxBytes > reserved ? maxBytes - reserved : 0;
+      final exactTarget = targetBytes > reserved ? targetBytes - reserved : 0;
+      exactReport = await _cacheOps.trim(
+        CacheLimits(maxBytes: exactMax, targetBytes: exactTarget),
+        busy: _borrowedPartialIds,
+      );
+    }
+    final physicalArtifacts = await _trimPhysicalArtifactsTo(targetBytes);
+    final after = await _inspectPersistentArtifactUsage();
     return ArtifactCacheReport(
-      beforeBytes: before,
-      releasedBytes: report.releasedBytes,
-      remainingBytes: report.remainingBytes,
-      evictedEntries: report.evicted,
-      skippedBusy: report.skippedBusy,
+      beforeBytes: before.bytes,
+      releasedBytes: before.bytes - after.bytes,
+      remainingBytes: after.bytes,
+      evictedEntries: partial.evicted + exactReport.evicted + physicalArtifacts,
+      skippedBusy: partial.skippedBusy + exactReport.skippedBusy,
     );
   }
 
   @override
   Future<ArtifactCacheReport> clearArtifacts() async {
     _requireOpen();
-    final before = await _index.totalBytes();
-    final report = await _cacheOps.clear(
-      busy: _borrowedPartialIds,
-    );
+    final before = await _inspectPersistentArtifactUsage();
+    final exactReport = await _cacheOps.clear(busy: _borrowedPartialIds);
+    var physicalPartialEvicted = 0;
+    var skippedPhysicalBusy = 0;
+    for (final record in await _index.listPhysicalPartials()) {
+      if (_borrowedPhysicalPartialIds.contains(record.id)) {
+        skippedPhysicalBusy++;
+        continue;
+      }
+      final current = await _index.getPhysicalPartial(record.id);
+      if (current == null || current != record) continue;
+      await invalidatePhysicalPartialDownload(record.id);
+      if (await _index.getPhysicalPartial(record.id) == null) {
+        physicalPartialEvicted++;
+      }
+    }
+    var physicalArtifactEvicted = 0;
+    for (final record in await _index.listPhysicalMediaArtifacts()) {
+      final current = await _index.getPhysicalMediaArtifact(record.id);
+      if (current == null || current.artifactId != record.artifactId) continue;
+      final exactBindings = (await _index.list()).where(
+        (binding) =>
+            binding.state == CacheState.ready &&
+            binding.effectiveArtifactId == current.artifactId,
+      );
+      // Pinned or busy exact rows survive CacheOps.clear(). Their physical
+      // owner must survive too; dropping only canonical metadata would not
+      // release bytes and would split subsequent version-family routing.
+      if (exactBindings.isNotEmpty) continue;
+      await invalidatePhysicalArtifact(record.id);
+      if (await _index.getArtifactObject(current.artifactId) == null) {
+        physicalArtifactEvicted++;
+      }
+    }
+    final after = await _inspectPersistentArtifactUsage();
     return ArtifactCacheReport(
-      beforeBytes: before,
-      releasedBytes: report.releasedBytes,
-      remainingBytes: report.remainingBytes,
-      evictedEntries: report.evicted,
-      skippedBusy: report.skippedBusy,
+      beforeBytes: before.bytes,
+      releasedBytes: before.bytes - after.bytes,
+      remainingBytes: after.bytes,
+      evictedEntries:
+          exactReport.evicted + physicalPartialEvicted + physicalArtifactEvicted,
+      skippedBusy: exactReport.skippedBusy + skippedPhysicalBusy,
     );
   }
 

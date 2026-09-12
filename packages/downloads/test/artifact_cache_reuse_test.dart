@@ -268,6 +268,128 @@ void main() {
     },
   );
 
+  test('physical-only immutable artifact participates in cache clear',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-physical-artifact-maintenance-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    final cache = ArtifactCacheManager(backend: store);
+    final chapter = _chapter(
+      comicId: 'physical-maintenance-clear',
+      revision: 'a',
+      urls: const <String>['https://e-hentai.org/s/aaaaaaaaaaaaaaaa/1-1'],
+    );
+    final exact = readerPageDownloadId(chapter, chapter.pages.single);
+    final physical = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000segment\u000037',
+    );
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x08, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
+    await cache.storePromotedArtifact(id: exact, bytes: bytes);
+    expect(
+      await cache.bindPhysicalArtifact(
+        physicalId: physical,
+        sourceId: exact,
+      ),
+      isTrue,
+    );
+    await store.index.remove(exact.key);
+
+    final usage = await store.inspectArtifacts();
+    expect(usage.bytes, bytes.lengthInBytes);
+    expect(usage.entries, 1);
+    final report = await store.clearArtifacts();
+    expect(report.releasedBytes, bytes.lengthInBytes);
+    expect(report.remainingBytes, 0);
+    expect(report.evictedEntries, 1);
+    expect(await cache.openPhysicalArtifact(physical), isNull);
+  });
+
+  test('physical-only immutable artifact participates in capacity trim',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-physical-artifact-trim-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    final cache = ArtifactCacheManager(backend: store);
+    final chapter = _chapter(
+      comicId: 'physical-maintenance-trim',
+      revision: 'a',
+      urls: const <String>['https://e-hentai.org/s/bbbbbbbbbbbbbbbb/1-1'],
+    );
+    final exact = readerPageDownloadId(chapter, chapter.pages.single);
+    final physical = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000segment\u000038',
+    );
+    final bytes = Uint8List.fromList(List<int>.generate(64, (index) => index));
+    await cache.storePromotedArtifact(id: exact, bytes: bytes);
+    expect(
+      await cache.bindPhysicalArtifact(
+        physicalId: physical,
+        sourceId: exact,
+      ),
+      isTrue,
+    );
+    await store.index.remove(exact.key);
+
+    final report = await store.trimArtifacts(maxBytes: 32, targetBytes: 0);
+    expect(report.beforeBytes, bytes.lengthInBytes);
+    expect(report.releasedBytes, bytes.lengthInBytes);
+    expect(report.remainingBytes, 0);
+    expect(report.evictedEntries, 1);
+    expect(await cache.openPhysicalArtifact(physical), isNull);
+  });
+
+  test('clear keeps canonical physical owner when pinned exact survives',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-pinned-canonical-maintenance-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    final cache = ArtifactCacheManager(backend: store);
+    final chapter = _chapter(
+      comicId: 'physical-maintenance-pinned',
+      revision: 'a',
+      urls: const <String>['https://e-hentai.org/s/cccccccccccccccc/1-1'],
+    );
+    final exact = readerPageDownloadId(chapter, chapter.pages.single);
+    final physical = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000segment\u000039',
+    );
+    final bytes = Uint8List.fromList(List<int>.filled(48, 9));
+    await cache.storePromotedArtifact(id: exact, bytes: bytes);
+    final record = await store.index.get(exact.key);
+    expect(record, isNotNull);
+    await store.index.put(record!.copyWith(pinned: true));
+    expect(
+      await cache.bindPhysicalArtifact(
+        physicalId: physical,
+        sourceId: exact,
+      ),
+      isTrue,
+    );
+
+    final usage = await store.inspectArtifacts();
+    expect(usage.bytes, bytes.lengthInBytes,
+        reason: 'canonical binding must not double-count one immutable body');
+    expect(usage.entries, 2);
+    final report = await store.clearArtifacts();
+    expect(report.releasedBytes, 0);
+    expect(report.remainingBytes, bytes.lengthInBytes);
+    expect(report.evictedEntries, 0);
+    expect(await store.index.get(exact.key), isNotNull);
+    expect(await cache.openPhysicalArtifact(physical), isNotNull);
+  });
+
   test('checksum reuse includes algorithm and normalizes digest case', () {
     final oldChapter = _chapter(
       comicId: 'old-checksum',

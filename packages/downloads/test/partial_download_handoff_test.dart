@@ -440,6 +440,100 @@ void main() {
     },
   );
 
+  test('physical partial participates in cache usage and clear', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'physical-partial-maintenance-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    final provider = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'revision',
+      canonicalUri: Uri.parse('https://example.test/page.webp'),
+    );
+    final physical = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000segment\u000031',
+    );
+    final bytes = Uint8List.fromList(List<int>.filled(333, 7));
+    await store.storePhysicalPartialDownload(
+      physicalId: physical,
+      providerHint: provider,
+      entry: PartialDownloadEntry(
+        length: bytes.lengthInBytes,
+        validators: const Validators(),
+        open: ({required int start}) =>
+            Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+      ),
+    );
+
+    final usage = await store.inspectArtifacts();
+    expect(usage.bytes, bytes.lengthInBytes);
+    expect(usage.entries, 1);
+    final report = await store.clearArtifacts();
+    expect(report.releasedBytes, bytes.lengthInBytes);
+    expect(report.remainingBytes, 0);
+    expect(report.evictedEntries, 1);
+    expect(
+      await store.openPhysicalPartialDownload(
+        physicalId: physical,
+        requestId: provider,
+      ),
+      isNull,
+    );
+  });
+
+  test('physical partial participates in capacity trim', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'physical-partial-trim-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    final provider = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'trim-page',
+      ),
+      sourceRevision: 'revision',
+      canonicalUri: Uri.parse('https://example.test/trim.webp'),
+    );
+    final physical = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000segment\u000032',
+    );
+    final bytes = Uint8List.fromList(List<int>.filled(333, 8));
+    await store.storePhysicalPartialDownload(
+      physicalId: physical,
+      providerHint: provider,
+      entry: PartialDownloadEntry(
+        length: bytes.lengthInBytes,
+        validators: const Validators(),
+        open: ({required int start}) =>
+            Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+      ),
+    );
+
+    final report = await store.trimArtifacts(maxBytes: 256, targetBytes: 0);
+    expect(report.beforeBytes, bytes.lengthInBytes);
+    expect(report.releasedBytes, bytes.lengthInBytes);
+    expect(report.remainingBytes, 0);
+    expect(report.evictedEntries, 1);
+    expect(
+      await store.openPhysicalPartialDownload(
+        physicalId: physical,
+        requestId: provider,
+      ),
+      isNull,
+    );
+  });
+
   test(
     'canonical partial handoff lets a later version adopt the same durable spool',
     () async {
