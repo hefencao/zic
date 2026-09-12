@@ -675,50 +675,52 @@ void main() {
     );
   });
 
-  test('version resolver requires a validated non-identity page index hint', () {
-    final source = _chapter(
-      comicId: 'source-hint',
-      revision: 'source-hint-r1',
-      urls: const <String>[
-        'https://example.test/source-0.webp',
-        'https://example.test/source-1.webp',
-      ],
-    );
-    final target = _chapter(
-      comicId: 'target-hint',
-      revision: 'target-hint-r1',
-      urls: const <String>[
-        'https://example.test/target-0.webp',
-        'https://example.test/target-1.webp',
-      ],
-    );
-    final resolver = VerifiedArtifactReuseResolver(targetChapter: target)
-      ..addVerifiedInterval(
-        sourceChapter: source,
-        sourceStart: 0,
-        sourceEndExclusive: 2,
-        targetOffsetFromSource: 0,
+  test(
+    'version resolver requires a validated non-identity page index hint',
+    () {
+      final source = _chapter(
+        comicId: 'source-hint',
+        revision: 'source-hint-r1',
+        urls: const <String>[
+          'https://example.test/source-0.webp',
+          'https://example.test/source-1.webp',
+        ],
       );
-    final exact = readerPageDownloadId(target, target.pages[1]);
-    final noHint = DownloadId(
-      content: exact.content,
-      sourceRevision: exact.sourceRevision,
-      canonicalUri: exact.canonicalUri,
-    );
-    final wrongHint = DownloadId(
-      content: exact.content,
-      sourceRevision: exact.sourceRevision,
-      canonicalUri: exact.canonicalUri,
-      pageIndexHint: 0,
-    );
+      final target = _chapter(
+        comicId: 'target-hint',
+        revision: 'target-hint-r1',
+        urls: const <String>[
+          'https://example.test/target-0.webp',
+          'https://example.test/target-1.webp',
+        ],
+      );
+      final resolver = VerifiedArtifactReuseResolver(targetChapter: target)
+        ..addVerifiedInterval(
+          sourceChapter: source,
+          sourceStart: 0,
+          sourceEndExclusive: 2,
+          targetOffsetFromSource: 0,
+        );
+      final exact = readerPageDownloadId(target, target.pages[1]);
+      final noHint = DownloadId(
+        content: exact.content,
+        sourceRevision: exact.sourceRevision,
+        canonicalUri: exact.canonicalUri,
+      );
+      final wrongHint = DownloadId(
+        content: exact.content,
+        sourceRevision: exact.sourceRevision,
+        canonicalUri: exact.canonicalUri,
+        pageIndexHint: 0,
+      );
 
-    expect(resolver.resolve(noHint), isEmpty);
-    expect(resolver.resolve(wrongHint), isEmpty);
-    expect(
-      resolver.resolve(exact),
-      <DownloadId>[readerPageDownloadId(source, source.pages[1])],
-    );
-  });
+      expect(resolver.resolve(noHint), isEmpty);
+      expect(resolver.resolve(wrongHint), isEmpty);
+      expect(resolver.resolve(exact), <DownloadId>[
+        readerPageDownloadId(source, source.pages[1]),
+      ]);
+    },
+  );
 
   test('verified affine intervals keep gaps and offset changes local', () {
     final predecessor = _chapter(
@@ -799,142 +801,158 @@ void main() {
     );
   });
 
-  test('bounded interval probe finds a middle insertion with constant budget',
-      () async {
-    final source = _chapter(
-      comicId: 'binary-source-insert',
-      revision: 'binary-source-insert-r1',
-      urls: <String>[
+  test(
+    'bounded interval probe finds a middle insertion with constant budget',
+    () async {
+      final source = _chapter(
+        comicId: 'binary-source-insert',
+        revision: 'binary-source-insert-r1',
+        urls: <String>[
+          for (var index = 0; index < 8; index++)
+            'venera-resource:source-insert-$index',
+        ],
+      );
+      final target = _chapter(
+        comicId: 'binary-target-insert',
+        revision: 'binary-target-insert-r1',
+        urls: <String>[
+          for (var index = 0; index < 9; index++)
+            'venera-resource:target-insert-$index',
+        ],
+      );
+      final identities = <String, String>{
         for (var index = 0; index < 8; index++)
-          'venera-resource:source-insert-$index',
-      ],
-    );
-    final target = _chapter(
-      comicId: 'binary-target-insert',
-      revision: 'binary-target-insert-r1',
-      urls: <String>[
-        for (var index = 0; index < 9; index++)
-          'venera-resource:target-insert-$index',
-      ],
-    );
-    final identities = <String, String>{
-      for (var index = 0; index < 8; index++)
-        'venera-resource:source-insert-$index': 'media:$index',
-      for (var index = 0; index < 4; index++)
-        'venera-resource:target-insert-$index': 'media:$index',
-      'venera-resource:target-insert-4': 'media:inserted',
-      for (var index = 5; index < 9; index++)
-        'venera-resource:target-insert-$index': 'media:${index - 1}',
-    };
-    var resolveCalls = 0;
-    final proof = await VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(
-      sourceChapter: source,
-      targetChapter: target,
-      resolveIdentity: (page) async {
-        resolveCalls++;
-        return identities[page.uri.toString()];
-      },
-    );
+          'venera-resource:source-insert-$index': 'media:$index',
+        for (var index = 0; index < 4; index++)
+          'venera-resource:target-insert-$index': 'media:$index',
+        'venera-resource:target-insert-4': 'media:inserted',
+        for (var index = 5; index < 9; index++)
+          'venera-resource:target-insert-$index': 'media:${index - 1}',
+      };
+      var resolveCalls = 0;
+      final proof =
+          await VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(
+            sourceChapter: source,
+            targetChapter: target,
+            resolveIdentity: (page) async {
+              resolveCalls++;
+              return identities[page.uri.toString()];
+            },
+          );
 
-    expect(proof, isNotNull);
-    expect(proof!.probeCount, lessThanOrEqualTo(8));
-    expect(resolveCalls, lessThanOrEqualTo(24));
-    expect(
-      proof.verifiedIntervals
-          .map((interval) => (
+      expect(proof, isNotNull);
+      expect(proof!.probeCount, lessThanOrEqualTo(8));
+      expect(resolveCalls, lessThanOrEqualTo(24));
+      expect(
+        proof.verifiedIntervals
+            .map(
+              (interval) => (
                 interval.predecessorStart,
                 interval.predecessorEndExclusive,
                 interval.successorOffset,
-              ))
-          .toList(),
-      <(int, int, int)>[(0, 4, 0), (4, 8, 1)],
-    );
-  });
+              ),
+            )
+            .toList(),
+        <(int, int, int)>[(0, 4, 0), (4, 8, 1)],
+      );
+    },
+  );
 
-  test('bounded interval probe source work stays constant at 80k pages',
-      () async {
-    const pageCount = 80000;
-    final source = _chapter(
-      comicId: 'binary-source-80k',
-      revision: 'binary-source-80k-r1',
-      urls: <String>[
-        for (var index = 0; index < pageCount; index++)
-          'venera-resource:source-80k-$index',
-      ],
-    );
-    final target = _chapter(
-      comicId: 'binary-target-80k',
-      revision: 'binary-target-80k-r1',
-      urls: <String>[
-        for (var index = 0; index < pageCount; index++)
-          'venera-resource:target-80k-$index',
-      ],
-    );
-    var resolveCalls = 0;
-    final proof = await VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(
-      sourceChapter: source,
-      targetChapter: target,
-      resolveIdentity: (page) async {
-        resolveCalls++;
-        final value = page.uri.toString();
-        final index = int.parse(value.substring(value.lastIndexOf('-') + 1));
-        return 'media:$index';
-      },
-    );
+  test(
+    'bounded interval probe source work stays constant at 80k pages',
+    () async {
+      const pageCount = 80000;
+      final source = _chapter(
+        comicId: 'binary-source-80k',
+        revision: 'binary-source-80k-r1',
+        urls: <String>[
+          for (var index = 0; index < pageCount; index++)
+            'venera-resource:source-80k-$index',
+        ],
+      );
+      final target = _chapter(
+        comicId: 'binary-target-80k',
+        revision: 'binary-target-80k-r1',
+        urls: <String>[
+          for (var index = 0; index < pageCount; index++)
+            'venera-resource:target-80k-$index',
+        ],
+      );
+      var resolveCalls = 0;
+      final proof =
+          await VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(
+            sourceChapter: source,
+            targetChapter: target,
+            resolveIdentity: (page) async {
+              resolveCalls++;
+              final value = page.uri.toString();
+              final index = int.parse(
+                value.substring(value.lastIndexOf('-') + 1),
+              );
+              return 'media:$index';
+            },
+          );
 
-    expect(proof, isNotNull);
-    expect(proof!.probeCount, 3);
-    expect(resolveCalls, 6);
-    expect(proof.verifiedIntervals, hasLength(1));
-    expect(proof.verifiedIntervals.single.predecessorStart, 0);
-    expect(proof.verifiedIntervals.single.predecessorEndExclusive, pageCount);
-    expect(proof.verifiedIntervals.single.successorOffset, 0);
-  });
+      expect(proof, isNotNull);
+      expect(proof!.probeCount, 3);
+      expect(resolveCalls, 6);
+      expect(proof.verifiedIntervals, hasLength(1));
+      expect(proof.verifiedIntervals.single.predecessorStart, 0);
+      expect(proof.verifiedIntervals.single.predecessorEndExclusive, pageCount);
+      expect(proof.verifiedIntervals.single.successorOffset, 0);
+    },
+  );
 
-  test('bounded interval probe leaves a replacement as an unverified gap',
-      () async {
-    final source = _chapter(
-      comicId: 'binary-source-replace',
-      revision: 'binary-source-replace-r1',
-      urls: <String>[
+  test(
+    'bounded interval probe leaves a replacement as an unverified gap',
+    () async {
+      final source = _chapter(
+        comicId: 'binary-source-replace',
+        revision: 'binary-source-replace-r1',
+        urls: <String>[
+          for (var index = 0; index < 8; index++)
+            'venera-resource:source-replace-$index',
+        ],
+      );
+      final target = _chapter(
+        comicId: 'binary-target-replace',
+        revision: 'binary-target-replace-r1',
+        urls: <String>[
+          for (var index = 0; index < 8; index++)
+            'venera-resource:target-replace-$index',
+        ],
+      );
+      final identities = <String, String>{
         for (var index = 0; index < 8; index++)
-          'venera-resource:source-replace-$index',
-      ],
-    );
-    final target = _chapter(
-      comicId: 'binary-target-replace',
-      revision: 'binary-target-replace-r1',
-      urls: <String>[
+          'venera-resource:source-replace-$index': 'media:$index',
         for (var index = 0; index < 8; index++)
-          'venera-resource:target-replace-$index',
-      ],
-    );
-    final identities = <String, String>{
-      for (var index = 0; index < 8; index++)
-        'venera-resource:source-replace-$index': 'media:$index',
-      for (var index = 0; index < 8; index++)
-        'venera-resource:target-replace-$index':
-            index == 4 ? 'media:replacement' : 'media:$index',
-    };
-    final proof = await VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(
-      sourceChapter: source,
-      targetChapter: target,
-      resolveIdentity: (page) async => identities[page.uri.toString()],
-    );
+          'venera-resource:target-replace-$index': index == 4
+              ? 'media:replacement'
+              : 'media:$index',
+      };
+      final proof =
+          await VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(
+            sourceChapter: source,
+            targetChapter: target,
+            resolveIdentity: (page) async => identities[page.uri.toString()],
+          );
 
-    expect(proof, isNotNull);
-    expect(proof!.probeCount, lessThanOrEqualTo(8));
-    expect(
-      proof.verifiedIntervals
-          .map((interval) => (
+      expect(proof, isNotNull);
+      expect(proof!.probeCount, lessThanOrEqualTo(8));
+      expect(
+        proof.verifiedIntervals
+            .map(
+              (interval) => (
                 interval.predecessorStart,
                 interval.predecessorEndExclusive,
                 interval.successorOffset,
-              ))
-          .toList(),
-      <(int, int, int)>[(0, 4, 0), (5, 8, 0)],
-    );
-  });
+              ),
+            )
+            .toList(),
+        <(int, int, int)>[(0, 4, 0), (5, 8, 0)],
+      );
+    },
+  );
 
   test('resolved offset requires verified anchor agreement', () async {
     final oldChapter = _chapter(
@@ -964,6 +982,44 @@ void main() {
 
     expect(plan.mappings, isEmpty);
   });
+
+  test(
+    'persisted mappings are re-probed only when interval model is stale',
+    () {
+      const legacy = ComicVersionPageMapping(
+        predecessorChapterId: 'old',
+        successorChapterId: 'new',
+        predecessorPageCount: 4,
+        successorPageCount: 5,
+        successorOffset: 1,
+        verifiedPredecessorPageIndexes: <int>[0, 3],
+      );
+      const current = ComicVersionPageMapping(
+        predecessorChapterId: 'old',
+        successorChapterId: 'new',
+        predecessorPageCount: 4,
+        successorPageCount: 5,
+        successorOffset: 1,
+        verifiedPredecessorPageIndexes: <int>[0, 3],
+        verifiedIntervals: <VerifiedComicVersionPageInterval>[
+          VerifiedComicVersionPageInterval(
+            predecessorStart: 0,
+            predecessorEndExclusive: 2,
+            successorOffset: 1,
+          ),
+        ],
+        intervalProbeVersion: VerifiedArtifactReusePlan.intervalProbeVersion,
+      );
+
+      expect(VerifiedArtifactReusePlan.needsIntervalProbe(legacy), isTrue);
+      expect(VerifiedArtifactReusePlan.needsIntervalProbe(current), isFalse);
+      final expanded = current.recordVerifiedPageMatch(
+        predecessorIndex: 3,
+        successorIndex: 4,
+      );
+      expect(expanded.intervalProbeVersion, current.intervalProbeVersion);
+    },
+  );
 
   test('resource reuse identity accepts only strong media keys', () {
     expect(

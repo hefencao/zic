@@ -5,9 +5,182 @@ import 'package:storage/storage.dart' show CacheRec;
 import 'artifact_cache_manager.dart';
 import 'reader_page_identity.dart';
 
-typedef VerifiedPageReuseIdentityResolver = Future<String?> Function(
-  PageAsset page,
-);
+typedef VerifiedPageReuseIdentityResolver =
+    Future<String?> Function(PageAsset page);
+
+String canonicalMediaExactChapterKey({
+  required String sourceId,
+  required String comicId,
+  required String chapterId,
+  required String sourceRevision,
+}) =>
+    '$sourceId\u0000$comicId\u0000$chapterId\u0000$sourceRevision';
+
+String canonicalMediaExactChapterKeyForDownload(DownloadId id) =>
+    canonicalMediaExactChapterKey(
+      sourceId: id.content.sourceId,
+      comicId: id.content.comicId,
+      chapterId: id.content.chapterId,
+      sourceRevision: id.sourceRevision,
+    );
+
+final class CanonicalMediaActiveRange {
+  const CanonicalMediaActiveRange({
+    required this.start,
+    required this.endExclusive,
+  })  : assert(start >= 0),
+        assert(endExclusive > start);
+
+  final int start;
+  final int endExclusive;
+
+  bool contains(int index) => index >= start && index < endExclusive;
+}
+
+/// Compact direct exact-chapter -> canonical physical-media authority.
+///
+/// One instance owns one hydrated manifest, not one row per page. Runtime
+/// lookup validates [DownloadId.pageIndexHint] against the exact manifest slot
+/// before consuming either a stable URI content identity or a persisted
+/// canonical projection. URI identities win because they are immutable from
+/// the first exact manifest; metadata-only checksum enrichment never owns a
+/// physical key and therefore cannot rename a segment-backed owner.
+final class CanonicalMediaChapterAuthority {
+  CanonicalMediaChapterAuthority({
+    required this.manifest,
+    this.projection,
+    Iterable<CanonicalMediaActiveRange> activeProjectionRanges =
+        const <CanonicalMediaActiveRange>[],
+  }) : activeProjectionRanges =
+           List<CanonicalMediaActiveRange>.unmodifiable(
+             _normalizeCanonicalMediaActiveRanges(activeProjectionRanges),
+           ) {
+    final projection = this.projection;
+    if (projection != null &&
+        (projection.sourceId != manifest.sourceId ||
+            projection.comicId != manifest.comicId ||
+            projection.chapterId != manifest.chapter.chapterId ||
+            projection.sourceRevision != manifest.chapter.sourceRevision ||
+            projection.pageCount != manifest.pages.length)) {
+      throw ArgumentError('canonical projection does not match manifest');
+    }
+  }
+
+  final ChapterManifest manifest;
+  final VersionChapterCanonicalProjection? projection;
+  final List<CanonicalMediaActiveRange> activeProjectionRanges;
+
+  String get exactKey => canonicalMediaExactChapterKey(
+        sourceId: manifest.sourceId,
+        comicId: manifest.comicId,
+        chapterId: manifest.chapter.chapterId,
+        sourceRevision: manifest.chapter.sourceRevision,
+      );
+
+  PhysicalMediaId? resolve(DownloadId id) {
+    if (canonicalMediaExactChapterKeyForDownload(id) != exactKey) return null;
+    final index = id.pageIndexHint;
+    if (index == null || index < 0 || index >= manifest.pages.length) return null;
+    final page = manifest.pages[index];
+    if (page.index != index ||
+        page.pageId != id.content.pageId ||
+        page.uri != id.canonicalUri) {
+      return null;
+    }
+    final stable = verifiedPhysicalMediaId(
+      sourceId: manifest.sourceId,
+      page: page,
+    );
+    if (stable != null) return stable;
+    final projection = this.projection;
+    if (projection != null &&
+        activeProjectionRanges.any((range) => range.contains(index))) {
+      final coordinate = projection.coordinateForPageIndexOrNull(index);
+      if (coordinate != null) {
+        return PhysicalMediaId.canonical(coordinate.stableKey);
+      }
+    }
+    return null;
+  }
+}
+
+Map<String, List<CanonicalMediaActiveRange>>
+    canonicalMediaActiveRangesFromRelations(
+  Iterable<ComicVersionRelation> relations,
+) {
+  final ranges = <String, List<CanonicalMediaActiveRange>>{};
+
+  void add(String exactKey, int start, int endExclusive) {
+    if (start < 0 || endExclusive <= start) return;
+    ranges
+        .putIfAbsent(exactKey, () => <CanonicalMediaActiveRange>[])
+        .add(
+          CanonicalMediaActiveRange(start: start, endExclusive: endExclusive),
+        );
+  }
+
+  for (final relation in relations) {
+    for (final mapping in relation.pageMappings) {
+      final predecessorRevision = mapping.predecessorSourceRevision;
+      final successorRevision = mapping.successorSourceRevision;
+      if (predecessorRevision == null || successorRevision == null) continue;
+      final predecessorKey = canonicalMediaExactChapterKey(
+        sourceId: relation.sourceId,
+        comicId: relation.predecessorComicId,
+        chapterId: mapping.predecessorChapterId,
+        sourceRevision: predecessorRevision,
+      );
+      final successorKey = canonicalMediaExactChapterKey(
+        sourceId: relation.sourceId,
+        comicId: relation.successorComicId,
+        chapterId: mapping.successorChapterId,
+        sourceRevision: successorRevision,
+      );
+      for (final interval in mapping.effectiveVerifiedIntervals) {
+        add(
+          predecessorKey,
+          interval.predecessorStart,
+          interval.predecessorEndExclusive,
+        );
+        add(
+          successorKey,
+          interval.predecessorStart + interval.successorOffset,
+          interval.predecessorEndExclusive + interval.successorOffset,
+        );
+      }
+    }
+  }
+
+  return <String, List<CanonicalMediaActiveRange>>{
+    for (final entry in ranges.entries)
+      entry.key: List<CanonicalMediaActiveRange>.unmodifiable(
+        _normalizeCanonicalMediaActiveRanges(entry.value),
+      ),
+  };
+}
+
+List<CanonicalMediaActiveRange> _normalizeCanonicalMediaActiveRanges(
+  Iterable<CanonicalMediaActiveRange> values,
+) {
+  final ordered = values.toList()
+    ..sort((left, right) => left.start.compareTo(right.start));
+  final result = <CanonicalMediaActiveRange>[];
+  for (final current in ordered) {
+    if (result.isEmpty || current.start > result.last.endExclusive) {
+      result.add(current);
+      continue;
+    }
+    final previous = result.last;
+    final end = current.endExclusive > previous.endExclusive
+        ? current.endExclusive
+        : previous.endExclusive;
+    result[result.length - 1] = CanonicalMediaActiveRange(
+      start: previous.start,
+      endExclusive: end,
+    );
+  }
+  return result;
+}
 
 /// Compact affine page mapping plus the bounded anchor indexes used to prove
 /// that mapping. Once the offset is accepted, every page in the affine overlap
@@ -18,8 +191,8 @@ final class VerifiedArtifactOffsetProof {
     required this.targetOffsetFromSource,
     required Iterable<int> verifiedSourceIndexes,
   }) : verifiedSourceIndexes = List<int>.unmodifiable(
-          (verifiedSourceIndexes.toSet().toList()..sort()),
-        );
+         (verifiedSourceIndexes.toSet().toList()..sort()),
+       );
 
   final int targetOffsetFromSource;
   final List<int> verifiedSourceIndexes;
@@ -30,12 +203,12 @@ final class VerifiedArtifactIntervalProof {
     required Iterable<VerifiedComicVersionPageInterval> verifiedIntervals,
     required Iterable<int> verifiedSourceIndexes,
     required this.probeCount,
-  })  : verifiedIntervals = List<VerifiedComicVersionPageInterval>.unmodifiable(
-          verifiedIntervals,
-        ),
-        verifiedSourceIndexes = List<int>.unmodifiable(
-          (verifiedSourceIndexes.toSet().toList()..sort()),
-        );
+  }) : verifiedIntervals = List<VerifiedComicVersionPageInterval>.unmodifiable(
+         verifiedIntervals,
+       ),
+       verifiedSourceIndexes = List<int>.unmodifiable(
+         (verifiedSourceIndexes.toSet().toList()..sort()),
+       );
 
   final List<VerifiedComicVersionPageInterval> verifiedIntervals;
   final List<int> verifiedSourceIndexes;
@@ -121,8 +294,10 @@ final class VerifiedArtifactReuseResolver {
     final anchors = <int>{};
     for (final sourceIndex in verifiedSourceIndexes) {
       final targetIndex = sourceIndex + targetOffsetFromSource;
-      if (sourceIndex < 0 || sourceIndex >= sourceChapter.pages.length ||
-          targetIndex < 0 || targetIndex >= targetChapter.pages.length) {
+      if (sourceIndex < 0 ||
+          sourceIndex >= sourceChapter.pages.length ||
+          targetIndex < 0 ||
+          targetIndex >= targetChapter.pages.length) {
         continue;
       }
       anchors.add(sourceIndex);
@@ -131,9 +306,7 @@ final class VerifiedArtifactReuseResolver {
     final sourceStart = targetOffsetFromSource < 0
         ? -targetOffsetFromSource
         : 0;
-    final targetStart = targetOffsetFromSource > 0
-        ? targetOffsetFromSource
-        : 0;
+    final targetStart = targetOffsetFromSource > 0 ? targetOffsetFromSource : 0;
     final sourceRemaining = sourceChapter.pages.length - sourceStart;
     final targetRemaining = targetChapter.pages.length - targetStart;
     final overlap = sourceRemaining < targetRemaining
@@ -190,8 +363,15 @@ final class VerifiedArtifactReuseResolver {
 /// hash in the resolved URI. This is the conservative portion of
 /// VibeVenera's version-cache migration model.
 final class VerifiedArtifactReusePlan {
+  /// Bump when the bounded interval-classification contract changes in a way
+  /// that requires persisted relation mappings to be probed again once.
+  static const int intervalProbeVersion = 1;
+
+  static bool needsIntervalProbe(ComicVersionPageMapping mapping) =>
+      mapping.intervalProbeVersion < intervalProbeVersion;
+
   VerifiedArtifactReusePlan._(Map<DownloadId, DownloadId> mappings)
-      : mappings = Map<DownloadId, DownloadId>.unmodifiable(mappings);
+    : mappings = Map<DownloadId, DownloadId>.unmodifiable(mappings);
 
   factory VerifiedArtifactReusePlan.match({
     required ChapterManifest oldChapter,
@@ -203,9 +383,8 @@ final class VerifiedArtifactReusePlan {
     for (final entry in newByIdentity.entries) {
       final oldPage = oldByIdentity[entry.key];
       if (oldPage == null) continue;
-      mappings[
-        readerPageDownloadId(newChapter, entry.value)
-      ] = readerPageDownloadId(oldChapter, oldPage);
+      mappings[readerPageDownloadId(newChapter, entry.value)] =
+          readerPageDownloadId(oldChapter, oldPage);
     }
     return VerifiedArtifactReusePlan._(mappings);
   }
@@ -232,8 +411,7 @@ final class VerifiedArtifactReusePlan {
     final candidateOffsets = <int>{
       0,
       targetChapter.pages.length - sourceChapter.pages.length,
-    }.toList(growable: false)
-      ..sort();
+    }.toList(growable: false)..sort();
     final sourceIdentityCache = <int, Future<String?>>{};
     final targetIdentityCache = <int, Future<String?>>{};
     final classifications = <int, int?>{};
@@ -243,14 +421,13 @@ final class VerifiedArtifactReusePlan {
       ChapterManifest chapter,
       int index,
       Map<int, Future<String?>> cache,
-    ) =>
-        cache.putIfAbsent(index, () {
-          final page = chapter.pages[index];
-          final direct = verifiedPageIdentity(page);
-          return direct != null
-              ? Future<String?>.value(direct)
-              : resolveIdentity(page);
-        });
+    ) => cache.putIfAbsent(index, () {
+      final page = chapter.pages[index];
+      final direct = verifiedPageIdentity(page);
+      return direct != null
+          ? Future<String?>.value(direct)
+          : resolveIdentity(page);
+    });
 
     Future<int?> classify(int sourceIndex) async {
       if (classifications.containsKey(sourceIndex)) {
@@ -300,11 +477,9 @@ final class VerifiedArtifactReusePlan {
         start,
         start + length ~/ 2,
         endExclusive - 1,
-      }.toList(growable: false)
-        ..sort();
+      }.toList(growable: false)..sort();
       for (final point in points) {
-        if (!classifications.containsKey(point) &&
-            probeCount < maxProbeCount) {
+        if (!classifications.containsKey(point) && probeCount < maxProbeCount) {
           await classify(point);
         }
       }
@@ -362,8 +537,9 @@ final class VerifiedArtifactReusePlan {
     accepted.sort((left, right) {
       final start = left.predecessorStart.compareTo(right.predecessorStart);
       if (start != 0) return start;
-      return left.predecessorEndExclusive
-          .compareTo(right.predecessorEndExclusive);
+      return left.predecessorEndExclusive.compareTo(
+        right.predecessorEndExclusive,
+      );
     });
     final normalized = <VerifiedComicVersionPageInterval>[];
     for (final interval in accepted) {
@@ -371,13 +547,13 @@ final class VerifiedArtifactReusePlan {
         final previous = normalized.last;
         if (previous.successorOffset == interval.successorOffset &&
             interval.predecessorStart <= previous.predecessorEndExclusive) {
-          normalized[normalized.length - 1] =
-              VerifiedComicVersionPageInterval(
+          normalized[normalized.length - 1] = VerifiedComicVersionPageInterval(
             predecessorStart: previous.predecessorStart,
             predecessorEndExclusive:
-                interval.predecessorEndExclusive > previous.predecessorEndExclusive
-                    ? interval.predecessorEndExclusive
-                    : previous.predecessorEndExclusive,
+                interval.predecessorEndExclusive >
+                    previous.predecessorEndExclusive
+                ? interval.predecessorEndExclusive
+                : previous.predecessorEndExclusive,
             successorOffset: previous.successorOffset,
           );
           continue;
@@ -385,11 +561,12 @@ final class VerifiedArtifactReusePlan {
       }
       normalized.add(interval);
     }
-    final verifiedIndexes = classifications.entries
-        .where((entry) => entry.value != null)
-        .map((entry) => entry.key)
-        .toList(growable: false)
-      ..sort();
+    final verifiedIndexes =
+        classifications.entries
+            .where((entry) => entry.value != null)
+            .map((entry) => entry.key)
+            .toList(growable: false)
+          ..sort();
     final diagnosticIndexes = verifiedIndexes.length <= 3
         ? verifiedIndexes
         : <int>[
@@ -430,11 +607,7 @@ final class VerifiedArtifactReusePlan {
       final indexes = directVerifiedSourceIndexes..sort();
       final anchors = indexes.length <= 3
           ? indexes
-          : <int>[
-              indexes.first,
-              indexes[indexes.length ~/ 2],
-              indexes.last,
-            ];
+          : <int>[indexes.first, indexes[indexes.length ~/ 2], indexes.last];
       return VerifiedArtifactOffsetProof(
         targetOffsetFromSource: directOffsets.single,
         verifiedSourceIndexes: anchors,
@@ -444,10 +617,7 @@ final class VerifiedArtifactReusePlan {
 
     final sourcePages = sourceChapter.pages;
     final targetPages = targetChapter.pages;
-    final shifts = <int>{
-      sourcePages.length - targetPages.length,
-      0,
-    };
+    final shifts = <int>{sourcePages.length - targetPages.length, 0};
     for (final shift in shifts) {
       final targetStart = shift < 0 ? -shift : 0;
       final targetEndCandidate = sourcePages.length - shift;
@@ -465,8 +635,7 @@ final class VerifiedArtifactReusePlan {
             }.toList(growable: false);
       final sourceIdentities = await Future.wait(
         anchorTargets.map(
-          (targetIndex) =>
-              resolveIdentity(sourcePages[targetIndex + shift]),
+          (targetIndex) => resolveIdentity(sourcePages[targetIndex + shift]),
         ),
       );
       if (sourceIdentities.any((identity) => identity == null)) continue;
@@ -540,10 +709,10 @@ final class VerifiedArtifactReusePlan {
     required ChapterManifest newChapter,
     required VerifiedPageReuseIdentityResolver resolveIdentity,
   }) => matchResolvedRelated(
-        sourceChapter: oldChapter,
-        targetChapter: newChapter,
-        resolveIdentity: resolveIdentity,
-      );
+    sourceChapter: oldChapter,
+    targetChapter: newChapter,
+    resolveIdentity: resolveIdentity,
+  );
 
   /// Rebuilds a plan from a previously source-verified positional mapping.
   ///
@@ -566,9 +735,8 @@ final class VerifiedArtifactReusePlan {
     for (var sourceIndex = 0; sourceIndex < sourcePages.length; sourceIndex++) {
       final targetIndex = sourceIndex + targetOffsetFromSource;
       if (targetIndex < 0 || targetIndex >= targetPages.length) continue;
-      mappings[
-        readerPageDownloadId(targetChapter, targetPages[targetIndex])
-      ] = readerPageDownloadId(sourceChapter, sourcePages[sourceIndex]);
+      mappings[readerPageDownloadId(targetChapter, targetPages[targetIndex])] =
+          readerPageDownloadId(sourceChapter, sourcePages[sourceIndex]);
     }
     return VerifiedArtifactReusePlan._(mappings);
   }
@@ -658,8 +826,10 @@ Iterable<String> verifiedPageIdentities(PageAsset page) sync* {
   // adapters have historically used the same field for MD5, SHA and opaque
   // provider tokens. Do not create a cross-version alias from an untyped
   // value ('checksum:$checksum'); strong URI/image identities below remain available.
-  if (checksum != null && checksum.isNotEmpty &&
-      algorithm != null && algorithm.isNotEmpty) {
+  if (checksum != null &&
+      checksum.isNotEmpty &&
+      algorithm != null &&
+      algorithm.isNotEmpty) {
     yield 'checksum:$algorithm:$checksum';
   }
   final segments = page.uri.pathSegments;
@@ -670,10 +840,9 @@ Iterable<String> verifiedPageIdentities(PageAsset page) sync* {
       yield 'eh:$imageKey';
     }
   }
-  final hash = RegExp(r'[a-fA-F0-9]{32,64}')
-      .firstMatch(page.uri.toString())
-      ?.group(0)
-      ?.toLowerCase();
+  final hash = RegExp(
+    r'[a-fA-F0-9]{32,64}',
+  ).firstMatch(page.uri.toString())?.group(0)?.toLowerCase();
   if (hash != null) {
     yield 'hash:$hash';
   }
@@ -682,6 +851,35 @@ Iterable<String> verifiedPageIdentities(PageAsset page) sync* {
 /// Primary verified identity for a page asset.
 String? verifiedPageIdentity(PageAsset page) =>
     verifiedPageIdentities(page).firstOrNull;
+
+/// Stable content identity suitable for a persistent physical-media key.
+///
+/// Only locator-derived identities may directly own physical media.
+///
+/// Typed checksums remain strong equivalence evidence, but metadata may be
+/// enriched after a page first materializes. Letting such enrichment rename a
+/// physical owner would recreate the rebind problem canonical media removes.
+String? stablePhysicalPageIdentity(PageAsset page) {
+  final identities = verifiedPageIdentities(page).toList(growable: false);
+  for (final prefix in const <String>['eh:', 'hash:']) {
+    for (final identity in identities) {
+      if (identity.startsWith(prefix)) return identity;
+    }
+  }
+  return null;
+}
+
+PhysicalMediaId? verifiedPhysicalMediaId({
+  required String sourceId,
+  required PageAsset page,
+}) {
+  final identity = stablePhysicalPageIdentity(page);
+  if (identity == null || sourceId.isEmpty) return null;
+  String frame(String value) => '${value.length}:$value';
+  return PhysicalMediaId.canonical(
+    'verified-page:v1${frame(sourceId)}${frame(identity)}',
+  );
+}
 
 /// Computes all content-based verified identities for an indexed cache record.
 Iterable<String> verifiedRecordIdentities(CacheRec record) sync* {
@@ -699,10 +897,9 @@ Iterable<String> verifiedRecordIdentities(CacheRec record) sync* {
       yield 'eh:$imageKey';
     }
   }
-  final hash = RegExp(r'[a-fA-F0-9]{32,64}')
-      .firstMatch(uri.toString())
-      ?.group(0)
-      ?.toLowerCase();
+  final hash = RegExp(
+    r'[a-fA-F0-9]{32,64}',
+  ).firstMatch(uri.toString())?.group(0)?.toLowerCase();
   if (hash != null) {
     yield 'hash:$hash';
   }
