@@ -9,6 +9,7 @@ import 'package:transport/transport.dart';
 
 import 'artifact_cache_manager.dart';
 import 'artifact_cache_read_scheduler.dart';
+import 'artifact_cache_reuse.dart';
 import 'partial_download_handoff.dart';
 import 'partial_download_store.dart';
 import 'physical_transfer_retention.dart';
@@ -141,6 +142,13 @@ final class CompositionDownloadTransferRuntime {
   PhysicalTransferRetention? _physicalTransferRetention;
   late final DownloadRegistry registry;
   late final DownloadTransferOwner owner;
+  final Map<DownloadId, PhysicalMediaId> _lastTracedPhysicalMediaOwner =
+      <DownloadId, PhysicalMediaId>{};
+  final Map<DownloadId, String> _lastTracedCanonicalMediaConflict =
+      <DownloadId, String>{};
+  final Map<String, Map<String, CanonicalMediaChapterAuthority>>
+      _canonicalMediaAuthorityScopes =
+      <String, Map<String, CanonicalMediaChapterAuthority>>{};
   bool _disposed = false;
 
   bool get disposed => _disposed;
@@ -148,6 +156,108 @@ final class CompositionDownloadTransferRuntime {
 
   Iterable<DownloadId> versionCandidatesFor(DownloadId id) =>
       versionPageAuthority.directCandidates(id);
+
+  PhysicalMediaId physicalMediaIdFor(DownloadId id) =>
+      _resolveCanonicalPhysicalMedia(id) ?? registry.physicalMediaIdFor(id);
+
+  int get canonicalMediaAuthorityCount => _canonicalMediaAuthorityScopes.values
+      .fold<int>(0, (total, values) => total + values.length);
+
+  void replaceCanonicalMediaAuthorityScope(
+    String scope,
+    Iterable<CanonicalMediaChapterAuthority> authorities,
+  ) {
+    if (_disposed) return;
+    if (scope.isEmpty) {
+      throw ArgumentError.value(scope, 'scope', 'must not be empty');
+    }
+    final next = <String, CanonicalMediaChapterAuthority>{};
+    for (final authority in authorities) {
+      if (next.containsKey(authority.exactKey)) {
+        throw StateError(
+          'duplicate canonical media authority for ${authority.exactKey}',
+        );
+      }
+      next[authority.exactKey] = authority;
+    }
+    if (next.isEmpty) {
+      _canonicalMediaAuthorityScopes.remove(scope);
+    } else {
+      _canonicalMediaAuthorityScopes[scope] = next;
+    }
+  }
+
+  PhysicalMediaId? _resolveCanonicalPhysicalMedia(DownloadId id) {
+    final candidates = <PhysicalMediaId>{};
+    final exactKey = canonicalMediaExactChapterKeyForDownload(id);
+    for (final scope in _canonicalMediaAuthorityScopes.values) {
+      final authority = scope[exactKey];
+      if (authority == null) continue;
+      final candidate = authority.resolve(id);
+      if (candidate != null) candidates.add(candidate);
+    }
+    if (candidates.length <= 1) {
+      _lastTracedCanonicalMediaConflict.remove(id);
+      return candidates.isEmpty ? null : candidates.single;
+    }
+    _recordCanonicalMediaAuthorityConflict(id, candidates);
+    // Conflicting control-plane scopes are not enough authority to merge two
+    // physical bodies. Stay exact until the scopes converge rather than
+    // guessing one canonical owner.
+    return null;
+  }
+
+  bool _applyCanonicalPhysicalMedia(DownloadId id) {
+    final physicalId = _resolveCanonicalPhysicalMedia(id);
+    if (physicalId == null) return false;
+    try {
+      registry.bindPhysicalMedia(id: id, physicalId: physicalId);
+      return true;
+    } on StateError {
+      // Existing exact/legacy physical state keeps its current generation.
+      // The canonical identity is recomputed from the current authority scope
+      // on a later acquire after that state has retired; this is not a rebind.
+      return false;
+    }
+  }
+
+  void _recordCanonicalMediaAuthorityConflict(
+    DownloadId exactId,
+    Set<PhysicalMediaId> candidates,
+  ) {
+    final ordered = candidates.toList(growable: false)
+      ..sort((left, right) => left.key.compareTo(right.key));
+    final signature = ordered.map((value) => value.key).join('\\n');
+    if (_lastTracedCanonicalMediaConflict[exactId] == signature) return;
+    _lastTracedCanonicalMediaConflict[exactId] = signature;
+    try {
+      traceHub.record(
+        traceEvent(
+          clock: clock,
+          sessionId: 'composition-transfer-owner',
+          kind: TraceEventKind.artifactSource,
+          identityHash: exactId.key,
+          payload: <String, Object?>{
+            'stage': 'canonical-media-authority-conflict',
+            'sourceId': exactId.content.sourceId,
+            'comicId': exactId.content.comicId,
+            'chapterId': exactId.content.chapterId,
+            'pageId': exactId.content.pageId,
+            if (exactId.pageIndexHint != null)
+              'pageIndex': exactId.pageIndexHint,
+            'sourceRevision': exactId.sourceRevision,
+            'candidateCount': ordered.length,
+            'candidatePhysicalKeys': ordered
+                .map((value) => value.key)
+                .toList(growable: false),
+            'fallback': 'exact',
+          },
+        ),
+      );
+    } on Object {
+      // Control-plane diagnostics must never alter transfer acquisition.
+    }
+  }
 
   Iterable<DownloadId> _verifiedEquivalentCandidates(DownloadId id) sync* {
     final cache = artifactCacheManager;
@@ -167,8 +277,10 @@ final class CompositionDownloadTransferRuntime {
   /// Read-only logical-session lookup using the same physical-candidate set as
   /// acquire, without creating a new alias or session.
   DownloadSession? findSession(DownloadId logicalId) {
+    _applyCanonicalPhysicalMedia(logicalId);
     final resolvedExact = registry.resolvePhysicalId(logicalId);
-    if (resolvedExact != logicalId) {
+    if (registry.hasDirectPhysicalMediaBinding(logicalId) ||
+        resolvedExact != logicalId) {
       return registry.find(resolvedExact);
     }
     final exact = registry.findExact(logicalId);
@@ -190,8 +302,13 @@ final class CompositionDownloadTransferRuntime {
   }
 
   DownloadId _resolveTransferIdForAcquire(DownloadId exactId) {
+    _applyCanonicalPhysicalMedia(exactId);
     final resolvedExact = registry.resolvePhysicalId(exactId);
-    if (resolvedExact != exactId) return resolvedExact;
+    _recordPhysicalMediaOwnerResolution(exactId, resolvedExact);
+    if (registry.hasDirectPhysicalMediaBinding(exactId) ||
+        resolvedExact != exactId) {
+      return resolvedExact;
+    }
     final exact = registry.findExact(exactId);
     // Never redirect a logical page while its exact physical session still has
     // consumer demand. A retained/parked exact session with no demand is only
@@ -227,6 +344,46 @@ final class CompositionDownloadTransferRuntime {
       candidateOwners: ordered.length,
     );
     return selected.key;
+  }
+
+  void _recordPhysicalMediaOwnerResolution(
+    DownloadId exactId,
+    DownloadId physicalAnchor,
+  ) {
+    final physicalId = registry.physicalMediaIdFor(exactId);
+    if (_lastTracedPhysicalMediaOwner[exactId] == physicalId) return;
+    _lastTracedPhysicalMediaOwner[exactId] = physicalId;
+    try {
+      traceHub.record(
+        traceEvent(
+          clock: clock,
+          sessionId: 'composition-transfer-owner',
+          kind: TraceEventKind.artifactSource,
+          identityHash: exactId.key,
+          payload: <String, Object?>{
+            'stage': 'physical-media-owner-resolved',
+            'sourceId': exactId.content.sourceId,
+            'comicId': exactId.content.comicId,
+            'chapterId': exactId.content.chapterId,
+            'pageId': exactId.content.pageId,
+            if (exactId.pageIndexHint != null)
+              'pageIndex': exactId.pageIndexHint,
+            'sourceRevision': exactId.sourceRevision,
+            'physicalMediaKind': physicalId.kind.name,
+            'physicalMediaKey': physicalId.key,
+            'physicalMediaValue': physicalId.value,
+            'physicalSessionAnchor': physicalAnchor.key,
+            'canonicalDirect':
+                registry.hasDirectPhysicalMediaBinding(exactId) &&
+                !physicalId.isExactFallback,
+            'legacyAlias': physicalAnchor != exactId &&
+                !registry.hasDirectPhysicalMediaBinding(exactId),
+          },
+        ),
+      );
+    } on Object {
+      // Physical-owner diagnostics must never alter transfer acquisition.
+    }
   }
 
   void _recordAcquireAlias(
@@ -787,6 +944,9 @@ final class CompositionDownloadTransferRuntime {
       throw StateError('cannot dispose composition transfer with active consumers');
     }
     _disposed = true;
+    _canonicalMediaAuthorityScopes.clear();
+    _lastTracedPhysicalMediaOwner.clear();
+    _lastTracedCanonicalMediaConflict.clear();
     artifactCacheManager?.removeEquivalentResolver(
       _versionPageAuthorityResolverKey,
     );
