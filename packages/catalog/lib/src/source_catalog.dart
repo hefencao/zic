@@ -544,6 +544,7 @@ final class ComicVersionPageMapping {
     this.successorSourceRevision,
     this.verifiedPredecessorPageIndexes = const <int>[],
     this.verifiedIntervals = const <VerifiedComicVersionPageInterval>[],
+    this.intervalProbeVersion = 0,
     this.verifiedAt,
   });
 
@@ -559,6 +560,12 @@ final class ComicVersionPageMapping {
   final String? successorSourceRevision;
   final List<int> verifiedPredecessorPageIndexes;
   final List<VerifiedComicVersionPageInterval> verifiedIntervals;
+
+  /// Version of the bounded interval-probe model that produced this mapping.
+  /// Zero means the record predates an explicit probe marker (or was formed
+  /// only from later natural page evidence) and may be re-probed once by the
+  /// current Reader/version preparation path.
+  final int intervalProbeVersion;
   final DateTime? verifiedAt;
 
   List<VerifiedComicVersionPageInterval> get effectiveVerifiedIntervals {
@@ -620,8 +627,10 @@ final class ComicVersionPageMapping {
     required int successorIndex,
     DateTime? observedAt,
   }) {
-    if (predecessorIndex < 0 || predecessorIndex >= predecessorPageCount ||
-        successorIndex < 0 || successorIndex >= successorPageCount) {
+    if (predecessorIndex < 0 ||
+        predecessorIndex >= predecessorPageCount ||
+        successorIndex < 0 ||
+        successorIndex >= successorPageCount) {
       return this;
     }
     final offset = successorIndex - predecessorIndex;
@@ -680,8 +689,10 @@ final class ComicVersionPageMapping {
     required int successorIndex,
     DateTime? observedAt,
   }) {
-    if (predecessorIndex < 0 || predecessorIndex >= predecessorPageCount ||
-        successorIndex < 0 || successorIndex >= successorPageCount) {
+    if (predecessorIndex < 0 ||
+        predecessorIndex >= predecessorPageCount ||
+        successorIndex < 0 ||
+        successorIndex >= successorPageCount) {
       return this;
     }
     var changed = false;
@@ -729,39 +740,39 @@ final class ComicVersionPageMapping {
     required List<VerifiedComicVersionPageInterval> intervals,
     required List<int> anchors,
     DateTime? observedAt,
-  }) =>
-      ComicVersionPageMapping(
-        predecessorChapterId: predecessorChapterId,
-        successorChapterId: successorChapterId,
-        predecessorPageCount: predecessorPageCount,
-        successorPageCount: successorPageCount,
-        successorOffset: successorOffset,
-        predecessorSourceRevision: predecessorSourceRevision,
-        successorSourceRevision: successorSourceRevision,
-        verifiedPredecessorPageIndexes: List<int>.unmodifiable(anchors),
-        verifiedIntervals: intervals,
-        verifiedAt: observedAt?.toUtc() ?? DateTime.now().toUtc(),
-      );
+  }) => ComicVersionPageMapping(
+    predecessorChapterId: predecessorChapterId,
+    successorChapterId: successorChapterId,
+    predecessorPageCount: predecessorPageCount,
+    successorPageCount: successorPageCount,
+    successorOffset: successorOffset,
+    predecessorSourceRevision: predecessorSourceRevision,
+    successorSourceRevision: successorSourceRevision,
+    verifiedPredecessorPageIndexes: List<int>.unmodifiable(anchors),
+    verifiedIntervals: intervals,
+    intervalProbeVersion: intervalProbeVersion,
+    verifiedAt: observedAt?.toUtc() ?? DateTime.now().toUtc(),
+  );
 
   Map<String, Object?> toJson() => <String, Object?>{
-        'predecessorChapterId': predecessorChapterId,
-        'successorChapterId': successorChapterId,
-        'predecessorPageCount': predecessorPageCount,
-        'successorPageCount': successorPageCount,
-        'successorOffset': successorOffset,
-        if (predecessorSourceRevision != null)
-          'predecessorSourceRevision': predecessorSourceRevision,
-        if (successorSourceRevision != null)
-          'successorSourceRevision': successorSourceRevision,
-        if (verifiedPredecessorPageIndexes.isNotEmpty)
-          'verifiedPredecessorPageIndexes': verifiedPredecessorPageIndexes,
-        if (verifiedIntervals.isNotEmpty)
-          'verifiedIntervals': verifiedIntervals
-              .map((interval) => interval.toJson())
-              .toList(growable: false),
-        if (verifiedAt != null)
-          'verifiedAt': verifiedAt!.toUtc().toIso8601String(),
-      };
+    'predecessorChapterId': predecessorChapterId,
+    'successorChapterId': successorChapterId,
+    'predecessorPageCount': predecessorPageCount,
+    'successorPageCount': successorPageCount,
+    'successorOffset': successorOffset,
+    if (predecessorSourceRevision != null)
+      'predecessorSourceRevision': predecessorSourceRevision,
+    if (successorSourceRevision != null)
+      'successorSourceRevision': successorSourceRevision,
+    if (verifiedPredecessorPageIndexes.isNotEmpty)
+      'verifiedPredecessorPageIndexes': verifiedPredecessorPageIndexes,
+    if (verifiedIntervals.isNotEmpty)
+      'verifiedIntervals': verifiedIntervals
+          .map((interval) => interval.toJson())
+          .toList(growable: false),
+    if (intervalProbeVersion > 0) 'intervalProbeVersion': intervalProbeVersion,
+    if (verifiedAt != null) 'verifiedAt': verifiedAt!.toUtc().toIso8601String(),
+  };
 
   factory ComicVersionPageMapping.fromJson(Map<String, Object?> json) {
     final predecessorChapterId = json['predecessorChapterId'];
@@ -773,6 +784,7 @@ final class ComicVersionPageMapping {
     final successorSourceRevision = json['successorSourceRevision'];
     final verifiedIndexesValue = json['verifiedPredecessorPageIndexes'];
     final verifiedIntervalsValue = json['verifiedIntervals'];
+    final intervalProbeVersionValue = json['intervalProbeVersion'];
     final verifiedAtValue = json['verifiedAt'];
     if (predecessorChapterId is! String ||
         predecessorChapterId.isEmpty ||
@@ -787,9 +799,13 @@ final class ComicVersionPageMapping {
             (predecessorSourceRevision is! String ||
                 predecessorSourceRevision.isEmpty)) ||
         (successorSourceRevision != null &&
-            (successorSourceRevision is! String || successorSourceRevision.isEmpty)) ||
+            (successorSourceRevision is! String ||
+                successorSourceRevision.isEmpty)) ||
         (verifiedIndexesValue != null && verifiedIndexesValue is! List) ||
         (verifiedIntervalsValue != null && verifiedIntervalsValue is! List) ||
+        (intervalProbeVersionValue != null &&
+            (intervalProbeVersionValue is! int ||
+                intervalProbeVersionValue < 0)) ||
         (verifiedAtValue != null && verifiedAtValue is! String)) {
       throw const FormatException('invalid comic version page mapping');
     }
@@ -827,8 +843,9 @@ final class ComicVersionPageMapping {
         verifiedIntervals.add(interval);
       }
     }
-    final normalizedIntervals =
-        _normalizeVerifiedPageIntervals(verifiedIntervals);
+    final normalizedIntervals = _normalizeVerifiedPageIntervals(
+      verifiedIntervals,
+    );
     DateTime? verifiedAt;
     if (verifiedAtValue is String) {
       final parsed = DateTime.tryParse(verifiedAtValue);
@@ -845,9 +862,9 @@ final class ComicVersionPageMapping {
       successorOffset: successorOffset,
       predecessorSourceRevision: predecessorSourceRevision as String?,
       successorSourceRevision: successorSourceRevision as String?,
-      verifiedPredecessorPageIndexes:
-          List<int>.unmodifiable(verifiedIndexes),
+      verifiedPredecessorPageIndexes: List<int>.unmodifiable(verifiedIndexes),
       verifiedIntervals: normalizedIntervals,
+      intervalProbeVersion: intervalProbeVersionValue as int? ?? 0,
       verifiedAt: verifiedAt,
     );
   }

@@ -4,74 +4,71 @@ import 'package:test/test.dart';
 
 void main() {
   test('comic version page mapping parses verified time strictly', () {
-    final mapping = ComicVersionPageMapping.fromJson(
-      <String, Object?>{
+    final mapping = ComicVersionPageMapping.fromJson(<String, Object?>{
+      'predecessorChapterId': 'old-chapter',
+      'successorChapterId': 'new-chapter',
+      'predecessorPageCount': 370,
+      'successorPageCount': 371,
+      'successorOffset': 1,
+      'verifiedAt': '2026-08-11T02:00:00+08:00',
+    });
+    expect(mapping.verifiedAt, DateTime.utc(2026, 8, 10, 18));
+    expect(
+      () => ComicVersionPageMapping.fromJson(<String, Object?>{
         'predecessorChapterId': 'old-chapter',
         'successorChapterId': 'new-chapter',
         'predecessorPageCount': 370,
         'successorPageCount': 371,
         'successorOffset': 1,
-        'verifiedAt': '2026-08-11T02:00:00+08:00',
-      },
-    );
-    expect(mapping.verifiedAt, DateTime.utc(2026, 8, 10, 18));
-    expect(
-      () => ComicVersionPageMapping.fromJson(
-        <String, Object?>{
-          'predecessorChapterId': 'old-chapter',
-          'successorChapterId': 'new-chapter',
-          'predecessorPageCount': 370,
-          'successorPageCount': 371,
-          'successorOffset': 1,
-          'verifiedAt': 123,
-        },
-      ),
+        'verifiedAt': 123,
+      }),
       throwsFormatException,
     );
     expect(
-      () => ComicVersionPageMapping.fromJson(
-        <String, Object?>{
-          'predecessorChapterId': 'old-chapter',
-          'successorChapterId': 'new-chapter',
-          'predecessorPageCount': 370,
-          'successorPageCount': 371,
-          'successorOffset': 1,
-          'verifiedAt': 'not-a-date',
-        },
-      ),
+      () => ComicVersionPageMapping.fromJson(<String, Object?>{
+        'predecessorChapterId': 'old-chapter',
+        'successorChapterId': 'new-chapter',
+        'predecessorPageCount': 370,
+        'successorPageCount': 371,
+        'successorOffset': 1,
+        'verifiedAt': 'not-a-date',
+      }),
       throwsFormatException,
     );
   });
 
-  test('version mapping preserves verified affine intervals and legacy fallback', () {
-    final legacy = ComicVersionPageMapping.fromJson(
-      <String, Object?>{
+  test(
+    'version mapping preserves verified affine intervals and legacy fallback',
+    () {
+      final legacy = ComicVersionPageMapping.fromJson(<String, Object?>{
         'predecessorChapterId': 'old',
         'successorChapterId': 'new',
         'predecessorPageCount': 4,
         'successorPageCount': 5,
         'successorOffset': 1,
         'verifiedPredecessorPageIndexes': <int>[0, 3],
-      },
-    );
-    expect(
-      legacy.effectiveVerifiedIntervals
-          .map((interval) => (
+      });
+      expect(legacy.intervalProbeVersion, 0);
+      expect(
+        legacy.effectiveVerifiedIntervals
+            .map(
+              (interval) => (
                 interval.predecessorStart,
                 interval.predecessorEndExclusive,
                 interval.successorOffset,
-              ))
-          .toList(),
-      <(int, int, int)>[(0, 4, 1)],
-    );
+              ),
+            )
+            .toList(),
+        <(int, int, int)>[(0, 4, 1)],
+      );
 
-    final mapping = ComicVersionPageMapping.fromJson(
-      <String, Object?>{
+      final mapping = ComicVersionPageMapping.fromJson(<String, Object?>{
         'predecessorChapterId': 'old',
         'successorChapterId': 'new',
         'predecessorPageCount': 6,
         'successorPageCount': 7,
         'successorOffset': 0,
+        'intervalProbeVersion': 1,
         'verifiedIntervals': <Object?>[
           <String, Object?>{
             'predecessorStart': 0,
@@ -89,88 +86,101 @@ void main() {
             'successorOffset': 1,
           },
         ],
-      },
-    );
-    expect(
-      mapping.effectiveVerifiedIntervals
-          .map((interval) => (
+      });
+      expect(
+        mapping.effectiveVerifiedIntervals
+            .map(
+              (interval) => (
                 interval.predecessorStart,
                 interval.predecessorEndExclusive,
                 interval.successorOffset,
-              ))
-          .toList(),
-      <(int, int, int)>[(0, 3, 0), (4, 6, 1)],
-    );
-    expect(mapping.uniqueVerifiedSuccessorIndexForPredecessor(2), 2);
-    expect(mapping.uniqueVerifiedSuccessorIndexForPredecessor(3), isNull);
-    expect(mapping.uniqueVerifiedSuccessorIndexForPredecessor(4), 5);
-    final roundTrip = ComicVersionPageMapping.fromJson(mapping.toJson());
-    expect(roundTrip.verifiedIntervals, hasLength(2));
-    expect(roundTrip.uniqueVerifiedPredecessorIndexForSuccessor(6), 5);
-  });
+              ),
+            )
+            .toList(),
+        <(int, int, int)>[(0, 3, 0), (4, 6, 1)],
+      );
+      expect(mapping.uniqueVerifiedSuccessorIndexForPredecessor(2), 2);
+      expect(mapping.uniqueVerifiedSuccessorIndexForPredecessor(3), isNull);
+      expect(mapping.uniqueVerifiedSuccessorIndexForPredecessor(4), 5);
+      expect(mapping.intervalProbeVersion, 1);
+      final roundTrip = ComicVersionPageMapping.fromJson(mapping.toJson());
+      expect(roundTrip.verifiedIntervals, hasLength(2));
+      expect(roundTrip.intervalProbeVersion, 1);
+      expect(roundTrip.uniqueVerifiedPredecessorIndexForSuccessor(6), 5);
+    },
+  );
 
-  test('verified affine evidence expands, splits, and changes local offset', () {
-    const mapping = ComicVersionPageMapping(
-      predecessorChapterId: 'old',
-      successorChapterId: 'new',
-      predecessorPageCount: 6,
-      successorPageCount: 7,
-      successorOffset: 1,
-      verifiedIntervals: <VerifiedComicVersionPageInterval>[
-        VerifiedComicVersionPageInterval(
-          predecessorStart: 0,
-          predecessorEndExclusive: 4,
-          successorOffset: 1,
-        ),
-      ],
-    );
+  test(
+    'verified affine evidence expands, splits, and changes local offset',
+    () {
+      const mapping = ComicVersionPageMapping(
+        predecessorChapterId: 'old',
+        successorChapterId: 'new',
+        predecessorPageCount: 6,
+        successorPageCount: 7,
+        successorOffset: 1,
+        verifiedIntervals: <VerifiedComicVersionPageInterval>[
+          VerifiedComicVersionPageInterval(
+            predecessorStart: 0,
+            predecessorEndExclusive: 4,
+            successorOffset: 1,
+          ),
+        ],
+      );
 
-    final split = mapping.recordVerifiedPageMismatch(
-      predecessorIndex: 2,
-      successorIndex: 3,
-      observedAt: DateTime.utc(2026, 9, 9),
-    );
-    expect(
-      split.effectiveVerifiedIntervals
-          .map((interval) => (
+      final split = mapping.recordVerifiedPageMismatch(
+        predecessorIndex: 2,
+        successorIndex: 3,
+        observedAt: DateTime.utc(2026, 9, 9),
+      );
+      expect(
+        split.effectiveVerifiedIntervals
+            .map(
+              (interval) => (
                 interval.predecessorStart,
                 interval.predecessorEndExclusive,
                 interval.successorOffset,
-              ))
-          .toList(),
-      <(int, int, int)>[(0, 2, 1), (3, 4, 1)],
-    );
+              ),
+            )
+            .toList(),
+        <(int, int, int)>[(0, 2, 1), (3, 4, 1)],
+      );
 
-    final restored = split.recordVerifiedPageMatch(
-      predecessorIndex: 2,
-      successorIndex: 3,
-    );
-    expect(
-      restored.effectiveVerifiedIntervals
-          .map((interval) => (
+      final restored = split.recordVerifiedPageMatch(
+        predecessorIndex: 2,
+        successorIndex: 3,
+      );
+      expect(
+        restored.effectiveVerifiedIntervals
+            .map(
+              (interval) => (
                 interval.predecessorStart,
                 interval.predecessorEndExclusive,
                 interval.successorOffset,
-              ))
-          .toList(),
-      <(int, int, int)>[(0, 4, 1)],
-    );
+              ),
+            )
+            .toList(),
+        <(int, int, int)>[(0, 4, 1)],
+      );
 
-    final changedOffset = restored.recordVerifiedPageMatch(
-      predecessorIndex: 2,
-      successorIndex: 2,
-    );
-    expect(
-      changedOffset.effectiveVerifiedIntervals
-          .map((interval) => (
+      final changedOffset = restored.recordVerifiedPageMatch(
+        predecessorIndex: 2,
+        successorIndex: 2,
+      );
+      expect(
+        changedOffset.effectiveVerifiedIntervals
+            .map(
+              (interval) => (
                 interval.predecessorStart,
                 interval.predecessorEndExclusive,
                 interval.successorOffset,
-              ))
-          .toList(),
-      <(int, int, int)>[(0, 2, 1), (2, 3, 0), (3, 4, 1)],
-    );
-  });
+              ),
+            )
+            .toList(),
+        <(int, int, int)>[(0, 2, 1), (2, 3, 0), (3, 4, 1)],
+      );
+    },
+  );
 
   test('memory imported library stores comic version predecessors', () async {
     final store = MemoryImportedLibraryStore();
