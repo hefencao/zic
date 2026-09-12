@@ -48,19 +48,17 @@ final class ComicSourceResourceGateway {
       loadBytesControlled: loadPageBytesControlled,
       openResponse: (sourceId, uri, {range, validators}) =>
           pageResponseLoaderFor(sourceId, uri)(
-        range: range,
-        validators: validators,
-      ),
-      openControlledResponse: (sourceId, uri, {
-        range,
-        validators,
-        control,
-      }) => pageControlledResponseLoaderFor(sourceId, uri)(
-        range: range,
-        validators: validators,
-        control: control,
-      ),
+            range: range,
+            validators: validators,
+          ),
+      openControlledResponse: (sourceId, uri, {range, validators, control}) =>
+          pageControlledResponseLoaderFor(sourceId, uri)(
+            range: range,
+            validators: validators,
+            control: control,
+          ),
       selfBoundsOpen: pageOpenSelfBoundedFor,
+      refreshResourceGeneration: refreshPageResourceGeneration,
       onVerifiedPageReuseIdentity: (manifest, page, identity) =>
           _verifiedPageReuseObserver?.call(manifest, page, identity),
     );
@@ -321,6 +319,22 @@ final class ComicSourceResourceGateway {
         validators: validators,
       );
     };
+  }
+
+  Future<void> refreshPageResourceGeneration(
+    String sourceId,
+    Uri locator, {
+    TaskControl? control,
+  }) async {
+    _requireOpen();
+    await _waitForSource?.call(sourceId);
+    control?.throwIfCancelled();
+    final source = _requireSource(sourceId, locator);
+    await _transports.refreshResourceFor(
+      source,
+      locator,
+      control: control,
+    );
   }
 
   Future<String?> verifiedPageReuseIdentity({

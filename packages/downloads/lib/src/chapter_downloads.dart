@@ -351,11 +351,13 @@ typedef ChapterResourceControlledTransport = Future<ByteResponse> Function(
 });
 
 typedef ChapterResourceOpenBound = bool Function(String sourceId, Uri uri);
-typedef ChapterVerifiedPageReuseObserver = void Function(
-  ChapterManifest manifest,
-  PageAsset page,
-  String identity,
-);
+typedef ChapterResourceGenerationRefresh = Future<void> Function(
+  String sourceId,
+  Uri uri, {
+  TaskControl? control,
+});
+typedef ChapterVerifiedPageReuseObserver =
+    void Function(ChapterManifest manifest, PageAsset page, String identity);
 
 /// Atomic source-resource binding used by application composition.
 ///
@@ -370,6 +372,7 @@ final class ChapterResourceAccess {
     this.openResponse,
     this.openControlledResponse,
     this.selfBoundsOpen,
+    this.refreshResourceGeneration,
     this.onVerifiedPageReuseIdentity,
   }) {
     if (loadBytes == null &&
@@ -385,6 +388,7 @@ final class ChapterResourceAccess {
   final ChapterResourceTransport? openResponse;
   final ChapterResourceControlledTransport? openControlledResponse;
   final ChapterResourceOpenBound? selfBoundsOpen;
+  final ChapterResourceGenerationRefresh? refreshResourceGeneration;
   final ChapterVerifiedPageReuseObserver? onVerifiedPageReuseIdentity;
 }
 
@@ -7423,6 +7427,8 @@ final class PersistentChapterDownloadService
   final Set<String> _deletedIdentities = <String>{};
   final Map<String, ChapterDownloadPhase> _terminalPhases =
       <String, ChapterDownloadPhase>{};
+  final Map<String, Set<Uri>> _failedSourceResourceLocators =
+      <String, Set<Uri>>{};
 
   /// Identities whose run has admitted at least one page task to the
   /// transfer layer — the snapshot `started` flag the UI's starting/started
@@ -7537,7 +7543,55 @@ final class PersistentChapterDownloadService
   Future<void> retry(ImportedLibraryEntry entry) async {
     _requireOpen();
     await cancel(entry);
-    return download(entry);
+    final identity = _identity(entry);
+    final refresh = _resourceAccess?.refreshResourceGeneration;
+    final refreshedThisRetry = <Uri>{};
+
+    Future<void> refreshFailedLocators(String reason) async {
+      if (refresh == null) return;
+      final failedLocators = _failedSourceResourceLocators[identity];
+      if (failedLocators == null || failedLocators.isEmpty) return;
+      final pending = failedLocators
+          .where((locator) => !refreshedThisRetry.contains(locator))
+          .toList(growable: false);
+      if (pending.isEmpty) return;
+      _recordCommandTrace(identity, 'chapter-retry-source-refresh', <String, Object?>{
+        'reason': reason,
+        'locators': pending.length,
+      });
+      for (final locator in pending) {
+        await refresh(entry.chapter.sourceId, locator);
+        refreshedThisRetry.add(locator);
+        failedLocators.remove(locator);
+      }
+      if (failedLocators.isEmpty) {
+        _failedSourceResourceLocators.remove(identity);
+      }
+    }
+
+    await refreshFailedLocators('known-terminal-source');
+    try {
+      await download(entry);
+    } on Failure catch (error, stackTrace) {
+      // Pre-v327 / previous-process failed chapter state can survive after the
+      // in-memory locator set that identified its source-terminal page has
+      // disappeared. The explicit user Retry still authorizes one fresh
+      // download generation. If that first retry run rediscovers an exact
+      // source-terminal locator, refresh only that locator and continue the
+      // same user command once. Never refresh unreached pages, and never
+      // freshen the same locator twice for one Retry press.
+      if (error.code != ErrorCode.source || refresh == null) {
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      final discovered = _failedSourceResourceLocators[identity];
+      final hasNewLocator = discovered != null &&
+          discovered.any((locator) => !refreshedThisRetry.contains(locator));
+      if (!hasNewLocator) {
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      await refreshFailedLocators('rediscovered-historical-terminal-source');
+      await download(entry);
+    }
   }
 
   @override
@@ -8027,13 +8081,25 @@ final class PersistentChapterDownloadService
       if (error.code == ErrorCode.cancelled || token.cancelled) {
         _cancelled.add(identity);
         _terminalPhases[identity] = ChapterDownloadPhase.cancelled;
-        _recordCommandTrace(identity, 'chapter-run-cancelled', const <String, Object?>{});
+        _recordCommandTrace(
+          identity,
+          'chapter-run-cancelled',
+          const <String, Object?>{},
+        );
         await _emitInspection(entry, phase: ChapterDownloadPhase.cancelled);
         return;
       }
       _terminalPhases[identity] = ChapterDownloadPhase.failed;
       _recordCommandTrace(identity, 'chapter-run-failed', <String, Object?>{
         'error': error.toString(),
+        for (final key in const <String>[
+          'sourceSemanticAcceptedPlans',
+          'sourceSemanticSameUrlPlans',
+          'sourceSemanticChangedUrlPlans',
+          'sourceSemanticRuntimeTransformPlans',
+          'sourceSemanticRecoveryUnavailable',
+        ])
+          if (error.details.containsKey(key)) key: error.details[key],
       });
       await _emitInspection(
         entry,
@@ -8092,7 +8158,15 @@ final class PersistentChapterDownloadService
     token.throwIfCancelled();
     if (snapshot.state != DownloadState.promoted) {
       final failure = snapshot.failure;
-      if (failure is Failure) throw failure;
+      if (failure is Failure) {
+        if (failure.code == ErrorCode.source &&
+            _isSourceOwnedResource(entry.chapter.sourceId, id.canonicalUri)) {
+          _failedSourceResourceLocators
+              .putIfAbsent(_identity(entry), () => <Uri>{})
+              .add(id.canonicalUri);
+        }
+        throw failure;
+      }
       throw Failure(
         code: ErrorCode.network,
         message: 'physical transfer did not promote ${id.key}',
@@ -8471,6 +8545,9 @@ final class PersistentChapterDownloadService
     _startedRuns.removeWhere((id) => id.startsWith(chapterPrefix) || id == identity);
     _cancelled.removeWhere((id) => id.startsWith(chapterPrefix) || id == identity);
     _terminalPhases.removeWhere((k, _) => k.startsWith(chapterPrefix) || k == identity);
+    _failedSourceResourceLocators.removeWhere(
+      (k, _) => k.startsWith(chapterPrefix) || k == identity,
+    );
     _existingPagesCache.removeWhere((k, _) => k.startsWith(chapterPrefix) || k == identity);
     _emit(ChapterDownloadSnapshot.idle(entry));
   }
