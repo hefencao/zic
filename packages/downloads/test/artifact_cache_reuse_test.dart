@@ -1084,6 +1084,84 @@ void main() {
     },
   );
 
+  test('canonical projection survives reopen and rejects coordinate rebase',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-canonical-projection-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final original = VersionChapterCanonicalProjection(
+      familyId: const VersionFamilyId('family'),
+      canonicalChapterId: const CanonicalChapterId('chapter'),
+      sourceId: 'source',
+      comicId: 'comic',
+      chapterId: 'chapter-r1',
+      sourceRevision: 'r1',
+      pageCount: 8003,
+      intervals: const <CanonicalMediaBindingInterval>[
+        CanonicalMediaBindingInterval(
+          exactStart: 0,
+          exactEndExclusive: 4000,
+          segmentId: CanonicalMediaSegmentId('segment'),
+          segmentStart: 0,
+        ),
+        CanonicalMediaBindingInterval(
+          exactStart: 4003,
+          exactEndExclusive: 8003,
+          segmentId: CanonicalMediaSegmentId('segment'),
+          segmentStart: 4000,
+        ),
+      ],
+    );
+    final first = await PersistentDownloadArtifactStore.open(root.path);
+    await first.persistCanonicalMediaProjection(original);
+    await first.close();
+
+    final reopened = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(reopened.close);
+    final loaded = await reopened.loadCanonicalMediaProjections();
+    expect(loaded, hasLength(1));
+    final restored = loaded.single;
+    expect(restored.exactKey, original.exactKey);
+    expect(restored.coordinateForPageIndexOrNull(4000), isNull);
+    expect(
+      restored.coordinateForPageIndex(4003),
+      original.coordinateForPageIndex(4003),
+    );
+
+    final rebased = restored.copyWithIntervals(
+      const <CanonicalMediaBindingInterval>[
+        CanonicalMediaBindingInterval(
+          exactStart: 0,
+          exactEndExclusive: 4000,
+          segmentId: CanonicalMediaSegmentId('replacement-segment'),
+          segmentStart: 0,
+        ),
+        CanonicalMediaBindingInterval(
+          exactStart: 4003,
+          exactEndExclusive: 8003,
+          segmentId: CanonicalMediaSegmentId('segment'),
+          segmentStart: 4000,
+        ),
+      ],
+    );
+    await expectLater(
+      reopened.persistCanonicalMediaProjection(rebased),
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.policy,
+        ),
+      ),
+    );
+    final afterRejectedWrite = await reopened.loadCanonicalMediaProjections();
+    expect(
+      afterRejectedWrite.single.coordinateForPageIndex(0),
+      original.coordinateForPageIndex(0),
+    );
+  });
+
   test('resource reuse identity accepts only strong media keys', () {
     expect(
       verifiedComicResourceIdentity(

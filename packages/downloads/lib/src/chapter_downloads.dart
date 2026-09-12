@@ -2250,6 +2250,83 @@ final class PersistentDownloadArtifactStore
 
   CacheIndex get index => _index;
 
+  Future<List<VersionChapterCanonicalProjection>>
+  loadCanonicalMediaProjections() async {
+    final projectionIndex = _index as PhysicalMediaProjectionIndex;
+    final projections = <VersionChapterCanonicalProjection>[];
+    for (final record in await projectionIndex.listPhysicalMediaProjections()) {
+      try {
+        projections.add(_decodeCanonicalMediaProjection(record));
+      } on Object {
+        // A malformed control-plane row is never enough authority to merge
+        // two exact versions. Ignore it for runtime reuse; persist below will
+        // refuse to overwrite the malformed row, keeping repair explicit.
+      }
+    }
+    return List<VersionChapterCanonicalProjection>.unmodifiable(projections);
+  }
+
+  Future<void> persistCanonicalMediaProjection(
+    VersionChapterCanonicalProjection projection,
+  ) async {
+    _requireOpen();
+    final projectionIndex = _index as PhysicalMediaProjectionIndex;
+    final existingRecord = await projectionIndex.getPhysicalMediaProjection(
+      projection.exactKey,
+    );
+    if (existingRecord != null) {
+      final existing = _decodeCanonicalMediaProjection(existingRecord);
+      if (!_isMonotonicCanonicalProjectionExpansion(existing, projection)) {
+        throw const Failure(
+          code: ErrorCode.policy,
+          message: 'canonical media projection cannot rebase existing media',
+        );
+      }
+    }
+    final nowUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+    await projectionIndex.putPhysicalMediaProjection(
+      PhysicalMediaProjectionRecord(
+        exactKey: projection.exactKey,
+        familyKey: projection.familyId.value,
+        projectionJson: jsonEncode(projection.toJson()),
+        createdUs: existingRecord?.createdUs ?? nowUs,
+        touchedUs: nowUs,
+      ),
+    );
+    _notifyManagementProjectionChanged();
+  }
+
+  Future<void> persistCanonicalMediaProjections(
+    Iterable<VersionChapterCanonicalProjection> projections,
+  ) async {
+    for (final projection in projections) {
+      await persistCanonicalMediaProjection(projection);
+    }
+  }
+
+  VersionChapterCanonicalProjection _decodeCanonicalMediaProjection(
+    PhysicalMediaProjectionRecord record,
+  ) {
+    final decoded = jsonDecode(record.projectionJson);
+    if (decoded is! Map) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'canonical media projection is malformed',
+      );
+    }
+    final projection = VersionChapterCanonicalProjection.fromJson(
+      Map<String, Object?>.from(decoded),
+    );
+    if (projection.exactKey != record.exactKey ||
+        projection.familyId.value != record.familyKey) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'canonical media projection ownership metadata mismatches',
+      );
+    }
+    return projection;
+  }
+
   Future<Map<String, CacheRec>> indexedRecords() async => <String, CacheRec>{
         for (final record in await _index.list()) record.key: record,
       };
@@ -10415,6 +10492,47 @@ final class PersistentChapterDownloadService
       throw StateError('chapter download service is closed');
     }
   }
+}
+
+bool _isMonotonicCanonicalProjectionExpansion(
+  VersionChapterCanonicalProjection previous,
+  VersionChapterCanonicalProjection next,
+) {
+  if (previous.familyId != next.familyId ||
+      previous.canonicalChapterId != next.canonicalChapterId ||
+      previous.sourceId != next.sourceId ||
+      previous.comicId != next.comicId ||
+      previous.chapterId != next.chapterId ||
+      previous.sourceRevision != next.sourceRevision ||
+      previous.pageCount != next.pageCount) {
+    return false;
+  }
+  var nextIndex = 0;
+  for (final oldBinding in previous.intervals) {
+    var cursor = oldBinding.exactStart;
+    while (cursor < oldBinding.exactEndExclusive) {
+      while (nextIndex < next.intervals.length &&
+          next.intervals[nextIndex].exactEndExclusive <= cursor) {
+        nextIndex++;
+      }
+      if (nextIndex >= next.intervals.length) return false;
+      final newBinding = next.intervals[nextIndex];
+      if (newBinding.exactStart > cursor ||
+          newBinding.segmentId != oldBinding.segmentId) {
+        return false;
+      }
+      final oldOffset =
+          oldBinding.segmentStart + cursor - oldBinding.exactStart;
+      final newOffset =
+          newBinding.segmentStart + cursor - newBinding.exactStart;
+      if (oldOffset != newOffset) return false;
+      final end = newBinding.exactEndExclusive < oldBinding.exactEndExclusive
+          ? newBinding.exactEndExclusive
+          : oldBinding.exactEndExclusive;
+      cursor = end;
+    }
+  }
+  return true;
 }
 
 final class _IndexedPartialResumeState {
