@@ -226,14 +226,86 @@ abstract interface class ChapterDownloadService {
 /// One authoritative download-management projection built from a single
 /// artifact-index snapshot. The route consumes this projection; it does not
 /// independently enumerate storage.
+final class CanonicalChapterCacheSnapshot {
+  CanonicalChapterCacheSnapshot({
+    required this.familyId,
+    required this.canonicalChapterId,
+    required this.readyPages,
+    required this.partialPages,
+    required this.receivedBytes,
+    required this.manualReferencedPages,
+    required Iterable<String> memberChapterIdentities,
+  }) : memberChapterIdentities =
+           List<String>.unmodifiable(memberChapterIdentities);
+
+  final VersionFamilyId familyId;
+  final CanonicalChapterId canonicalChapterId;
+  final int readyPages;
+  final int partialPages;
+  final int receivedBytes;
+  final int manualReferencedPages;
+  final List<String> memberChapterIdentities;
+
+  int get cachedPages => readyPages + partialPages;
+  int get memberVersionCount => memberChapterIdentities.length;
+
+  String get identity =>
+      'canonical-cache:v1${familyId.value.length}:${familyId.value}'
+      '${canonicalChapterId.value.length}:${canonicalChapterId.value}';
+}
+
+final class ExactChapterCacheSnapshot {
+  const ExactChapterCacheSnapshot({
+    required this.sourceId,
+    required this.comicId,
+    required this.comicTitle,
+    required this.chapterId,
+    required this.sourceRevision,
+    required this.title,
+    required this.readyPages,
+    required this.partialPages,
+    required this.receivedBytes,
+  });
+
+  final String sourceId;
+  final String comicId;
+  final String comicTitle;
+  final String chapterId;
+  final String sourceRevision;
+  final String title;
+  final int readyPages;
+  final int partialPages;
+  final int receivedBytes;
+
+  int get cachedPages => readyPages + partialPages;
+  String get identity =>
+      chapterDownloadIdentity(sourceId, comicId, chapterId, sourceRevision);
+}
+
+final class ChapterCacheManagementProjection {
+  ChapterCacheManagementProjection({
+    required Iterable<CanonicalChapterCacheSnapshot> canonical,
+    required Iterable<ExactChapterCacheSnapshot> exact,
+  })  : canonical = List<CanonicalChapterCacheSnapshot>.unmodifiable(canonical),
+        exact = List<ExactChapterCacheSnapshot>.unmodifiable(exact);
+
+  final List<CanonicalChapterCacheSnapshot> canonical;
+  final List<ExactChapterCacheSnapshot> exact;
+}
+
 final class ChapterDownloadManagementProjection {
   const ChapterDownloadManagementProjection({
     required this.orphanedEntries,
     required this.snapshots,
+    this.cache,
   });
 
   final List<ImportedLibraryEntry> orphanedEntries;
   final List<ChapterDownloadSnapshot> snapshots;
+
+  /// Physical cache ownership projected independently from exact download
+  /// lifecycle. Null means the backing service cannot provide this authority.
+  final ChapterCacheManagementProjection? cache;
 }
 
 /// Optional bulk capability for owners that can discover orphaned chapters
@@ -242,6 +314,16 @@ abstract interface class ChapterDownloadManagementProjectionReader {
   Future<ChapterDownloadManagementProjection> inspectDownloadManagement(
     Iterable<ImportedLibraryEntry> knownEntries,
   );
+}
+
+/// Lightweight invalidation for durable download-management state.
+///
+/// This is intentionally not a progress stream. Reader auto-cache and other
+/// background artifact mutations use it only to say that the next management
+/// projection should be re-read. Explicit chapter commands continue publishing
+/// their ordinary [ChapterDownloadSnapshot] lifecycle/progress stream.
+abstract interface class ChapterDownloadManagementChangeSource {
+  Stream<void> get managementProjectionChanges;
 }
 
 /// Chapter command lifecycle used by app composition.
@@ -8764,10 +8846,239 @@ Future<_PersistentDownloadAuthorities> _openPersistentDownloadAuthorities(
   );
 }
 
+final class _CanonicalCachePageState {
+  const _CanonicalCachePageState({
+    required this.ready,
+    required this.bytes,
+    required this.manualReferenced,
+  });
+
+  final bool ready;
+  final int bytes;
+  final bool manualReferenced;
+
+  _CanonicalCachePageState merge({
+    required bool ready,
+    required int bytes,
+    required bool manualReferenced,
+  }) =>
+      _CanonicalCachePageState(
+        ready: this.ready || ready,
+        bytes: this.bytes > bytes ? this.bytes : bytes,
+        manualReferenced: this.manualReferenced || manualReferenced,
+      );
+}
+
+final class _CanonicalChapterCacheSnapshotBuilder {
+  _CanonicalChapterCacheSnapshotBuilder({
+    required this.familyId,
+    required this.canonicalChapterId,
+  });
+
+  final VersionFamilyId familyId;
+  final CanonicalChapterId canonicalChapterId;
+  final Set<String> _members = <String>{};
+  final Map<PhysicalMediaId, _CanonicalCachePageState> _pages =
+      <PhysicalMediaId, _CanonicalCachePageState>{};
+
+  void addMember(String identity) => _members.add(identity);
+
+  void addPage({
+    required PhysicalMediaId physicalId,
+    required bool ready,
+    required int bytes,
+    required bool manualReferenced,
+  }) {
+    final current = _pages[physicalId];
+    _pages[physicalId] = current == null
+        ? _CanonicalCachePageState(
+            ready: ready,
+            bytes: bytes,
+            manualReferenced: manualReferenced,
+          )
+        : current.merge(
+            ready: ready,
+            bytes: bytes,
+            manualReferenced: manualReferenced,
+          );
+  }
+
+  int get cachedPages => _pages.length;
+
+  CanonicalChapterCacheSnapshot build() {
+    var readyPages = 0;
+    var partialPages = 0;
+    var receivedBytes = 0;
+    var manualReferencedPages = 0;
+    for (final page in _pages.values) {
+      if (page.ready) {
+        readyPages++;
+      } else {
+        partialPages++;
+      }
+      receivedBytes += page.bytes;
+      if (page.manualReferenced) manualReferencedPages++;
+    }
+    final members = _members.toList(growable: false)..sort();
+    return CanonicalChapterCacheSnapshot(
+      familyId: familyId,
+      canonicalChapterId: canonicalChapterId,
+      readyPages: readyPages,
+      partialPages: partialPages,
+      receivedBytes: receivedBytes,
+      manualReferencedPages: manualReferencedPages,
+      memberChapterIdentities: members,
+    );
+  }
+}
+
+final class _ExactChapterCacheSnapshotBuilder {
+  _ExactChapterCacheSnapshotBuilder(ImportedLibraryEntry entry)
+      : sourceId = entry.chapter.sourceId,
+        comicId = entry.chapter.comicId,
+        comicTitle = entry.chapter.comicTitle,
+        chapterId = entry.chapter.chapterId,
+        sourceRevision = entry.chapter.sourceRevision,
+        title = entry.chapter.displayName;
+
+  final String sourceId;
+  final String comicId;
+  final String comicTitle;
+  final String chapterId;
+  final String sourceRevision;
+  final String title;
+  int readyPages = 0;
+  int partialPages = 0;
+  int receivedBytes = 0;
+
+  String get identity =>
+      chapterDownloadIdentity(sourceId, comicId, chapterId, sourceRevision);
+  int get cachedPages => readyPages + partialPages;
+
+  void addPage({required bool ready, required int bytes}) {
+    if (ready) {
+      readyPages++;
+    } else {
+      partialPages++;
+    }
+    receivedBytes += bytes;
+  }
+
+  ExactChapterCacheSnapshot build() => ExactChapterCacheSnapshot(
+        sourceId: sourceId,
+        comicId: comicId,
+        comicTitle: comicTitle,
+        chapterId: chapterId,
+        sourceRevision: sourceRevision,
+        title: title,
+        readyPages: readyPages,
+        partialPages: partialPages,
+        receivedBytes: receivedBytes,
+      );
+}
+
+final class _DownloadManagementPhysicalState {
+  _DownloadManagementPhysicalState({
+    required Iterable<PhysicalMediaArtifactRecord> artifacts,
+    required Iterable<PhysicalPartialRecord> partials,
+    required Iterable<VersionChapterCanonicalProjection> projections,
+    required Map<String, List<CanonicalMediaActiveRange>> activeProjectionRanges,
+  })  : artifacts = <PhysicalMediaId, PhysicalMediaArtifactRecord>{
+          for (final record in artifacts) record.id: record,
+        },
+        partials = <PhysicalMediaId, PhysicalPartialRecord>{
+          for (final record in partials) record.id: record,
+        },
+        projections = <String, VersionChapterCanonicalProjection>{
+          for (final projection in projections)
+            projection.exactKey: projection,
+        },
+        activeProjectionRanges = <String, List<CanonicalMediaActiveRange>>{
+          for (final entry in activeProjectionRanges.entries)
+            entry.key: List<CanonicalMediaActiveRange>.unmodifiable(entry.value),
+        };
+
+  final Map<PhysicalMediaId, PhysicalMediaArtifactRecord> artifacts;
+  final Map<PhysicalMediaId, PhysicalPartialRecord> partials;
+  final Map<String, VersionChapterCanonicalProjection> projections;
+  final Map<String, List<CanonicalMediaActiveRange>> activeProjectionRanges;
+
+  VersionChapterCanonicalProjection? projectionFor(
+    ImportedLibraryEntry entry,
+  ) {
+    final exactKey = canonicalMediaExactChapterKey(
+      sourceId: entry.chapter.sourceId,
+      comicId: entry.chapter.comicId,
+      chapterId: entry.chapter.chapterId,
+      sourceRevision: entry.chapter.sourceRevision,
+    );
+    final projection = projections[exactKey];
+    if (projection == null || projection.pageCount != entry.chapter.pages.length) {
+      return null;
+    }
+    return projection;
+  }
+
+  bool isProjectionActive({
+    required ImportedLibraryEntry entry,
+    required int pageIndex,
+  }) {
+    final projection = projectionFor(entry);
+    if (projection == null) return false;
+    final ranges = activeProjectionRanges[projection.exactKey];
+    if (ranges == null) return false;
+    return ranges.any((range) => range.contains(pageIndex));
+  }
+
+  CanonicalMediaCoordinate? canonicalCoordinateFor({
+    required ImportedLibraryEntry entry,
+    required int pageIndex,
+  }) => projectionFor(entry)?.coordinateForPageIndexOrNull(pageIndex);
+
+  ({PhysicalMediaArtifactRecord? artifact, PhysicalPartialRecord? partial})?
+      pageState({
+    required ImportedLibraryEntry entry,
+    required PageAsset page,
+    required int pageIndex,
+  }) {
+    final projected = _projectedPhysicalId(entry, pageIndex);
+    if (projected != null) {
+      final artifact = artifacts[projected];
+      final partial = artifact == null ? partials[projected] : null;
+      if (artifact != null || partial != null) {
+        return (artifact: artifact, partial: partial);
+      }
+    }
+    final stable = verifiedPhysicalMediaId(
+      sourceId: entry.chapter.sourceId,
+      page: page,
+    );
+    if (stable == null) return null;
+    final artifact = artifacts[stable];
+    final partial = artifact == null ? partials[stable] : null;
+    if (artifact == null && partial == null) return null;
+    return (artifact: artifact, partial: partial);
+  }
+
+  PhysicalMediaId? _projectedPhysicalId(
+    ImportedLibraryEntry entry,
+    int pageIndex,
+  ) {
+    final coordinate = canonicalCoordinateFor(
+      entry: entry,
+      pageIndex: pageIndex,
+    );
+    return coordinate == null
+        ? null
+        : PhysicalMediaId.canonical(coordinate.stableKey);
+  }
+}
+
 final class PersistentChapterDownloadService
     implements
         ManagedChapterDownloadService,
         ChapterDownloadManagementProjectionReader,
+        ChapterDownloadManagementChangeSource,
         ArtifactCacheMaintenance,
         ArtifactCacheBackend,
         ArtifactCacheBindingBackend,
@@ -8804,7 +9115,12 @@ final class PersistentChapterDownloadService
   })  : _transport = transport,
         _ownsTransferComposition = ownsTransferComposition,
         _pageStallTimeout = pageStallTimeout,
-        _traceSink = traceSink ?? const NoopTraceSink();
+        _traceSink = traceSink ?? const NoopTraceSink() {
+    _artifactManagementProjectionSubscription =
+        artifactStore.managementProjectionChanges.listen(
+      (_) => _handleArtifactManagementProjectionChanged(),
+    );
+  }
 
   static Future<PersistentChapterDownloadService> open(
     String root, {
@@ -8860,6 +9176,54 @@ final class PersistentChapterDownloadService
   final MonoClock _traceClock = const SystemClock();
   bool _ownedTransferCompositionDisposed = false;
   ChapterResourceAccess? _resourceAccess;
+  List<ComicVersionRelation> _cacheVersionRelations =
+      const <ComicVersionRelation>[];
+  final StreamController<void> _managementProjectionChanges =
+      StreamController<void>.broadcast(sync: true);
+  StreamSubscription<void>? _artifactManagementProjectionSubscription;
+  bool _managementProjectionDirtyWhileRun = false;
+
+  @override
+  Stream<void> get managementProjectionChanges =>
+      _managementProjectionChanges.stream;
+
+  void _handleArtifactManagementProjectionChanged() {
+    if (_closed) return;
+    if (_runs.isNotEmpty) {
+      _managementProjectionDirtyWhileRun = true;
+      return;
+    }
+    if (!_managementProjectionChanges.isClosed) {
+      _managementProjectionChanges.add(null);
+    }
+  }
+
+  void _flushDeferredManagementProjectionChange() {
+    if (!_managementProjectionDirtyWhileRun || _runs.isNotEmpty || _closed) {
+      return;
+    }
+    _managementProjectionDirtyWhileRun = false;
+    if (!_managementProjectionChanges.isClosed) {
+      _managementProjectionChanges.add(null);
+    }
+  }
+
+  Future<_DownloadManagementPhysicalState> _loadManagementPhysicalState() async {
+    final index = artifactStore.index;
+    final artifacts =
+        await (index as PhysicalMediaArtifactIndex).listPhysicalMediaArtifacts();
+    final partials =
+        await (index as PhysicalPartialIndex).listPhysicalPartials();
+    final projections = await artifactStore.loadCanonicalMediaProjections();
+    return _DownloadManagementPhysicalState(
+      artifacts: artifacts,
+      partials: partials,
+      projections: projections,
+      activeProjectionRanges:
+          canonicalMediaActiveRangesFromRelations(_cacheVersionRelations),
+    );
+  }
+
   final StreamController<ChapterDownloadSnapshot> _changes =
       StreamController<ChapterDownloadSnapshot>.broadcast(sync: true);
   final Map<String, CancelToken> _tokens = <String, CancelToken>{};
@@ -8906,6 +9270,7 @@ final class PersistentChapterDownloadService
 
   @override
   void updateCacheVersionRelations(List<ComicVersionRelation> relations) {
+    _cacheVersionRelations = List<ComicVersionRelation>.unmodifiable(relations);
     artifactStore.updateCacheVersionRelations(relations);
   }
 
@@ -9052,6 +9417,7 @@ final class PersistentChapterDownloadService
       _tokens.remove(identity);
       _startedRuns.remove(identity);
       _deletedIdentities.remove(identity);
+      _flushDeferredManagementProjectionChange();
     });
   }
 
@@ -9996,9 +10362,12 @@ final class PersistentChapterDownloadService
   }
 
   @override
-  Future<ChapterDownloadSnapshot> inspect(ImportedLibraryEntry entry) {
+  Future<ChapterDownloadSnapshot> inspect(ImportedLibraryEntry entry) async {
     _requireOpen();
-    return _buildSnapshot(entry);
+    return _buildSnapshot(
+      entry,
+      physicalState: await _loadManagementPhysicalState(),
+    );
   }
 
   @override
@@ -10134,9 +10503,12 @@ final class PersistentChapterDownloadService
     if (requested.isEmpty) {
       return const <ChapterDownloadSnapshot>[];
     }
+    final indexed = await artifactStore.indexedRecords();
+    final physicalState = await _loadManagementPhysicalState();
     return _inspectManyFromRecords(
       requested,
-      await artifactStore.indexedRecords(),
+      indexed,
+      physicalState: physicalState,
     );
   }
 
@@ -10147,16 +10519,24 @@ final class PersistentChapterDownloadService
     _requireOpen();
     final known = knownEntries.toList(growable: false);
     final indexed = await artifactStore.indexedRecords();
+    final physicalState = await _loadManagementPhysicalState();
     final orphaned = _discoverOrphanedEntriesFromRecords(
       known,
       indexed,
       compactEntriesAreKnown: true,
     );
+    final visibleEntries = <ImportedLibraryEntry>[...known, ...orphaned];
     return ChapterDownloadManagementProjection(
       orphanedEntries: orphaned,
       snapshots: await _inspectManyFromRecords(
-        <ImportedLibraryEntry>[...known, ...orphaned],
+        visibleEntries,
         indexed,
+        physicalState: physicalState,
+      ),
+      cache: _buildCacheManagementProjection(
+        visibleEntries,
+        indexed,
+        physicalState,
       ),
     );
   }
@@ -10222,10 +10602,111 @@ final class PersistentChapterDownloadService
     return List<ImportedLibraryEntry>.unmodifiable(orphaned);
   }
 
-  Future<List<ChapterDownloadSnapshot>> _inspectManyFromRecords(
+  ChapterCacheManagementProjection _buildCacheManagementProjection(
     Iterable<ImportedLibraryEntry> entries,
     Map<String, CacheRec> indexed,
-  ) async {
+    _DownloadManagementPhysicalState physicalState,
+  ) {
+    final canonicalBuilders =
+        <String, _CanonicalChapterCacheSnapshotBuilder>{};
+    final exactBuilders = <String, _ExactChapterCacheSnapshotBuilder>{};
+
+    for (final entry in entries) {
+      final manifest = entry.chapter.toManifest();
+      final projection = physicalState.projectionFor(entry);
+      _CanonicalChapterCacheSnapshotBuilder? canonicalBuilder;
+      if (projection != null) {
+        final key =
+            '${projection.familyId.value}\u0000${projection.canonicalChapterId.value}';
+        canonicalBuilder = canonicalBuilders.putIfAbsent(
+          key,
+          () => _CanonicalChapterCacheSnapshotBuilder(
+            familyId: projection.familyId,
+            canonicalChapterId: projection.canonicalChapterId,
+          ),
+        );
+        canonicalBuilder.addMember(_identity(entry));
+      }
+
+      _ExactChapterCacheSnapshotBuilder? exactBuilder;
+      for (var index = 0; index < manifest.pages.length; index++) {
+        final page = manifest.pages[index];
+        final id = _downloadId(manifest, page);
+        final exactIndexed = indexed[id.key];
+        final exactReady = exactIndexed != null &&
+            artifactStore._isVerifiedReadyRecord(exactIndexed);
+        final physical = physicalState.pageState(
+          entry: entry,
+          page: page,
+          pageIndex: index,
+        );
+        final session = transferRuntime.registry.find(id)?.snapshot;
+        final ready = session?.state == DownloadState.promoted ||
+            exactReady ||
+            physical?.artifact != null;
+        final bytes = session?.committedLength ??
+            exactIndexed?.bytes ??
+            physical?.artifact?.bytes ??
+            physical?.partial?.bytes ??
+            0;
+        final partial = !ready && bytes > 0;
+        if (!ready && !partial) continue;
+
+        final manualReferenced = exactReady &&
+            (exactIndexed.pinned ||
+                (!exactIndexed.path.contains('/final/') ||
+                    parseSafRecordPath(exactIndexed.path) != null));
+        final coordinate = projection?.coordinateForPageIndexOrNull(index);
+        if (coordinate != null && canonicalBuilder != null) {
+          final physicalId = PhysicalMediaId.canonical(coordinate.stableKey);
+          final hasCanonicalPhysical =
+              physicalState.artifacts.containsKey(physicalId) ||
+              physicalState.partials.containsKey(physicalId);
+          final active = physicalState.isProjectionActive(
+            entry: entry,
+            pageIndex: index,
+          );
+          final hasCanonicalHotSession = active && session != null;
+          if (hasCanonicalPhysical ||
+              (active && exactReady) ||
+              hasCanonicalHotSession) {
+            canonicalBuilder.addPage(
+              physicalId: physicalId,
+              ready: ready,
+              bytes: bytes,
+              manualReferenced: manualReferenced,
+            );
+            continue;
+          }
+        }
+
+        // Exact manual/offline ownership belongs on the manual tab. The cache
+        // remainder contains only pages that still have no canonical media
+        // coordinate and are not protected solely by an exact download.
+        if (manualReferenced) continue;
+        exactBuilder ??= _ExactChapterCacheSnapshotBuilder(entry);
+        exactBuilder.addPage(ready: ready, bytes: bytes);
+      }
+      if (exactBuilder != null && exactBuilder.cachedPages > 0) {
+        exactBuilders[exactBuilder.identity] = exactBuilder;
+      }
+    }
+
+    final canonical = <CanonicalChapterCacheSnapshot>[
+      for (final builder in canonicalBuilders.values)
+        if (builder.cachedPages > 0) builder.build(),
+    ]..sort((left, right) => left.identity.compareTo(right.identity));
+    final exact = <ExactChapterCacheSnapshot>[
+      for (final builder in exactBuilders.values) builder.build(),
+    ]..sort((left, right) => left.identity.compareTo(right.identity));
+    return ChapterCacheManagementProjection(canonical: canonical, exact: exact);
+  }
+
+  Future<List<ChapterDownloadSnapshot>> _inspectManyFromRecords(
+    Iterable<ImportedLibraryEntry> entries,
+    Map<String, CacheRec> indexed, {
+    _DownloadManagementPhysicalState? physicalState,
+  }) async {
     final recordsByChapter = <String, List<CacheRec>>{};
     final readyIndex = _DurableReadyRecordIndex(
       indexed.values,
@@ -10238,9 +10719,7 @@ final class PersistentChapterDownloadService
       final content = record.id.content;
       final chapterKey =
           '${content.sourceId}\u0000${content.comicId}\u0000${content.chapterId}\u0000${record.id.sourceRevision}';
-      recordsByChapter
-          .putIfAbsent(chapterKey, () => <CacheRec>[])
-          .add(record);
+      recordsByChapter.putIfAbsent(chapterKey, () => <CacheRec>[]).add(record);
     }
     final snapshots = <ChapterDownloadSnapshot>[];
     for (final entry in entries) {
@@ -10252,6 +10731,7 @@ final class PersistentChapterDownloadService
           indexedRecords: indexed,
           chapterRecords: recordsByChapter[chapterKey],
           readyIndex: readyIndex,
+          physicalState: physicalState,
         ),
       );
     }
@@ -10265,9 +10745,11 @@ final class PersistentChapterDownloadService
     Map<String, CacheRec>? indexedRecords,
     Iterable<CacheRec>? chapterRecords,
     _DurableReadyRecordIndex? readyIndex,
+    _DownloadManagementPhysicalState? physicalState,
   }) async {
     final manifest = entry.chapter.toManifest();
-    final records = indexedRecords ??
+    final records =
+        indexedRecords ??
         (chapterRecords == null
             ? await artifactStore.indexedRecords()
             : const <String, CacheRec>{});
@@ -10286,7 +10768,8 @@ final class PersistentChapterDownloadService
         recordsByPage.putIfAbsent(rec.id.content.pageId, () => rec);
       }
     }
-    final resolvedReadyIndex = readyIndex ??
+    final resolvedReadyIndex =
+        readyIndex ??
         _DurableReadyRecordIndex(
           records.values,
           isReady: artifactStore._isVerifiedReadyRecord,
@@ -10311,14 +10794,19 @@ final class PersistentChapterDownloadService
     for (var index = 0; index < effectivePages.length; index++) {
       final page = effectivePages[index];
       final id = _downloadId(manifest, page);
-      final resolvedSessionSnapshot = transferRuntime.registry.find(id)?.snapshot;
-      final snapshot = resolvedSessionSnapshot != null &&
+      final resolvedSessionSnapshot = transferRuntime.registry
+          .find(id)
+          ?.snapshot;
+      final snapshot =
+          resolvedSessionSnapshot != null &&
               (resolvedSessionSnapshot.state != DownloadState.idle ||
                   resolvedSessionSnapshot.activeRun ||
                   resolvedSessionSnapshot.hasWriter)
           ? resolvedSessionSnapshot
           : null;
-      final exactSessionSnapshot = transferRuntime.registry.findExact(id)?.snapshot;
+      final exactSessionSnapshot = transferRuntime.registry
+          .findExact(id)
+          ?.snapshot;
       final exactIndexed = records[id.key];
       final reusable = exactIndexed == null
           ? await _resolveReusablePageRecord(
@@ -10331,15 +10819,31 @@ final class PersistentChapterDownloadService
             )
           : null;
       final indexed = exactIndexed ?? reusable?.record;
-      final committedLength = snapshot?.committedLength ?? indexed?.bytes ?? 0;
+      final physical = physicalState?.pageState(
+        entry: entry,
+        page: page,
+        pageIndex: index,
+      );
+      final physicalArtifact = physical?.artifact;
+      final physicalPartial = physical?.partial;
+      final committedLength =
+          snapshot?.committedLength ??
+          indexed?.bytes ??
+          physicalArtifact?.bytes ??
+          physicalPartial?.bytes ??
+          0;
       receivedBytes += committedLength;
-      final exactPromoted = exactSessionSnapshot?.state == DownloadState.promoted ||
+      final exactPromoted =
+          exactSessionSnapshot?.state == DownloadState.promoted ||
           (exactIndexed != null &&
               artifactStore._isVerifiedReadyRecord(exactIndexed));
-      final promoted = snapshot?.state == DownloadState.promoted ||
+      final promoted =
+          snapshot?.state == DownloadState.promoted ||
           exactPromoted ||
-          (indexed != null && artifactStore._isVerifiedReadyRecord(indexed));
-      final isExactPinned = exactIndexed != null &&
+          (indexed != null && artifactStore._isVerifiedReadyRecord(indexed)) ||
+          physicalArtifact != null;
+      final isExactPinned =
+          exactIndexed != null &&
           artifactStore._isVerifiedReadyRecord(exactIndexed) &&
           (exactIndexed.pinned ||
               (!exactIndexed.path.contains('/final/') ||
@@ -10354,18 +10858,21 @@ final class PersistentChapterDownloadService
         completedPages++;
         pageProgressUnits += 1;
       }
-      final knownLength = snapshot?.totalLength ??
+      final knownLength =
+          snapshot?.totalLength ??
           (index < entry.chapter.pages.length
               ? entry.chapter.pages[index].byteLength
               : null) ??
-          indexed?.bytes;
+          indexed?.bytes ??
+          physicalArtifact?.bytes;
       if (knownLength == null) {
         knowsTotalBytes = false;
       } else {
         totalBytes += knownLength;
         if (!promoted && knownLength > 0 && committedLength > 0) {
-          pageProgressUnits +=
-              (committedLength / knownLength).clamp(0, 1).toDouble();
+          pageProgressUnits += (committedLength / knownLength)
+              .clamp(0, 1)
+              .toDouble();
         }
       }
       if (snapshot?.state == DownloadState.failed) {
@@ -10374,13 +10881,15 @@ final class PersistentChapterDownloadService
       }
     }
     final identity = _identity(entry);
-    final hasActiveRun = _runs.containsKey(identity) ||
+    final hasActiveRun =
+        _runs.containsKey(identity) ||
         _runs.keys.any((k) => k.startsWith(_chapterDownloadPrefix(entry)));
-    final runStarted = _startedRuns.contains(identity) ||
-        _startedRunsKeysAnyPrefix(entry);
+    final runStarted =
+        _startedRuns.contains(identity) || _startedRunsKeysAnyPrefix(entry);
     final isExplicitlyTracked =
         pinnedPages > 0 || runStarted || _terminalPhases.containsKey(identity);
-    final resolvedPhase = phase ??
+    final resolvedPhase =
+        phase ??
         _terminalPhases[identity] ??
         (hasActiveRun
             ? ChapterDownloadPhase.downloading
@@ -10612,6 +11121,8 @@ final class PersistentChapterDownloadService
     if (!_closed) {
       _closed = true;
       _resourceAccess = null;
+      await _artifactManagementProjectionSubscription?.cancel();
+      _artifactManagementProjectionSubscription = null;
       for (final token in _tokens.values) {
         token.cancel();
       }
@@ -10630,6 +11141,7 @@ final class PersistentChapterDownloadService
       _deletedIdentities.clear();
       _transport.close(force: true);
       await _changes.close();
+      await _managementProjectionChanges.close();
     }
     if (_ownsTransferComposition && !_ownedTransferCompositionDisposed) {
       if (transferRuntime.hasConsumers) {

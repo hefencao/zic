@@ -4713,6 +4713,591 @@ void main() {
     expect(manualSnapshot.hasAutoCache, isFalse);
   });
 
+  test('auto-cache projection counts canonical physical-only artifacts', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-management-canonical-physical-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'lib:canonical-management',
+        displayName: '第一话',
+        sourceId: 'venera:fixture',
+        comicId: 'version-b',
+        comicTitle: 'Canonical cache',
+        chapterId: 'chapter-b',
+        sourceRevision: 'b-r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'venera-resource:canonical-page',
+            pageId: 'page-b-0',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: bytes.length,
+          ),
+        ],
+      ),
+    );
+    final manifest = entry.chapter.toManifest();
+    final page = manifest.pages.single;
+    final exactId = DownloadId(
+      content: ContentId(
+        sourceId: manifest.sourceId,
+        comicId: manifest.comicId,
+        chapterId: manifest.chapter.chapterId,
+        pageId: page.pageId,
+      ),
+      sourceRevision: manifest.chapter.sourceRevision,
+      canonicalUri: page.uri,
+    );
+    const segment = CanonicalMediaSegmentId('shared-page');
+    final projection = VersionChapterCanonicalProjection(
+      familyId: const VersionFamilyId('family'),
+      canonicalChapterId: const CanonicalChapterId('chapter'),
+      sourceId: manifest.sourceId,
+      comicId: manifest.comicId,
+      chapterId: manifest.chapter.chapterId,
+      sourceRevision: manifest.chapter.sourceRevision,
+      pageCount: 1,
+      intervals: const <CanonicalMediaBindingInterval>[
+        CanonicalMediaBindingInterval(
+          exactStart: 0,
+          exactEndExclusive: 1,
+          segmentId: segment,
+          segmentStart: 0,
+        ),
+      ],
+    );
+    await service.artifactStore.persistCanonicalMediaProjection(projection);
+    await service.storePromotedArtifact(id: exactId, bytes: bytes);
+    final physicalId = PhysicalMediaId.canonical(
+      projection.coordinateForPageIndex(0).stableKey,
+    );
+    expect(
+      await service.artifactCacheManager.bindPhysicalArtifact(
+        physicalId: physicalId,
+        sourceId: exactId,
+      ),
+      isTrue,
+    );
+
+    await service.invalidateArtifact(exactId);
+    expect(await service.artifactStore.index.get(exactId.key), isNull);
+    expect(
+      await (service.artifactStore.index as PhysicalMediaArtifactIndex)
+          .getPhysicalMediaArtifact(physicalId),
+      isNotNull,
+    );
+
+    final snapshot = await service.inspect(entry);
+    expect(snapshot.completedPages, 1);
+    expect(snapshot.exactCompletedPages, 0);
+    expect(snapshot.pinnedPages, 0);
+    expect(snapshot.autoCachedPages, 1);
+    expect(snapshot.hasAutoCache, isTrue);
+    expect(snapshot.receivedBytes, bytes.length);
+  });
+
+  test(
+      'management cache projection collapses version caches into canonical and keeps gaps exact',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-canonical-management-union-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final sharedBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    final gapBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 5, 6, 7, 8,
+    ]);
+    ImportedLibraryEntry entry({
+      required String comicId,
+      required String revision,
+      required List<String> pageIds,
+    }) =>
+        ImportedLibraryEntry(
+          chapter: ImportedChapterRecord(
+            directoryId: 'lib:$comicId',
+            displayName: '第一话',
+            sourceId: 'venera:fixture',
+            comicId: comicId,
+            comicTitle: 'Canonical family',
+            chapterId: 'chapter',
+            sourceRevision: revision,
+            pages: <ImportedPageRecord>[
+              for (final pageId in pageIds)
+                ImportedPageRecord(
+                  displayName: '$pageId.webp',
+                  sourceId: 'venera-resource:$comicId:$pageId',
+                  pageId: pageId,
+                  contentKindHint: ContentKindHint.webp,
+                  byteLength: sharedBytes.length,
+                ),
+            ],
+          ),
+        );
+    final old = entry(
+      comicId: 'version-old',
+      revision: 'old-r1',
+      pageIds: <String>['old-shared'],
+    );
+    final current = entry(
+      comicId: 'version-new',
+      revision: 'new-r1',
+      pageIds: <String>['new-shared', 'new-gap'],
+    );
+    final oldManifest = old.chapter.toManifest();
+    final currentManifest = current.chapter.toManifest();
+    final oldShared = readerPageDownloadId(
+      oldManifest,
+      oldManifest.pages.first,
+    );
+    final currentShared = readerPageDownloadId(
+      currentManifest,
+      currentManifest.pages.first,
+    );
+    final currentGap = readerPageDownloadId(
+      currentManifest,
+      currentManifest.pages.last,
+    );
+    const family = VersionFamilyId('family');
+    const canonicalChapter = CanonicalChapterId('chapter-family');
+    const segment = CanonicalMediaSegmentId('shared');
+    await service.artifactStore.persistCanonicalMediaProjections(
+      <VersionChapterCanonicalProjection>[
+        VersionChapterCanonicalProjection(
+          familyId: family,
+          canonicalChapterId: canonicalChapter,
+          sourceId: oldManifest.sourceId,
+          comicId: oldManifest.comicId,
+          chapterId: oldManifest.chapter.chapterId,
+          sourceRevision: oldManifest.chapter.sourceRevision,
+          pageCount: 1,
+          intervals: const <CanonicalMediaBindingInterval>[
+            CanonicalMediaBindingInterval(
+              exactStart: 0,
+              exactEndExclusive: 1,
+              segmentId: segment,
+              segmentStart: 0,
+            ),
+          ],
+        ),
+        VersionChapterCanonicalProjection(
+          familyId: family,
+          canonicalChapterId: canonicalChapter,
+          sourceId: currentManifest.sourceId,
+          comicId: currentManifest.comicId,
+          chapterId: currentManifest.chapter.chapterId,
+          sourceRevision: currentManifest.chapter.sourceRevision,
+          pageCount: 2,
+          intervals: const <CanonicalMediaBindingInterval>[
+            CanonicalMediaBindingInterval(
+              exactStart: 0,
+              exactEndExclusive: 1,
+              segmentId: segment,
+              segmentStart: 0,
+            ),
+          ],
+        ),
+      ],
+    );
+    service.updateCacheVersionRelations(
+      <ComicVersionRelation>[
+        ComicVersionRelation(
+          sourceId: oldManifest.sourceId,
+          predecessorComicId: oldManifest.comicId,
+          successorComicId: currentManifest.comicId,
+          pageMappings: <ComicVersionPageMapping>[
+            ComicVersionPageMapping(
+              predecessorChapterId: oldManifest.chapter.chapterId,
+              successorChapterId: currentManifest.chapter.chapterId,
+              predecessorPageCount: oldManifest.pages.length,
+              successorPageCount: currentManifest.pages.length,
+              successorOffset: 0,
+              predecessorSourceRevision: oldManifest.chapter.sourceRevision,
+              successorSourceRevision: currentManifest.chapter.sourceRevision,
+              verifiedIntervals: const <VerifiedComicVersionPageInterval>[
+                VerifiedComicVersionPageInterval(
+                  predecessorStart: 0,
+                  predecessorEndExclusive: 1,
+                  successorOffset: 0,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+    await service.storePromotedArtifact(id: oldShared, bytes: sharedBytes);
+    await service.storePromotedArtifact(id: currentShared, bytes: sharedBytes);
+    await service.storePromotedArtifact(id: currentGap, bytes: gapBytes);
+    await service.artifactStore.pinExactRecords(<DownloadId>[currentShared]);
+
+    final projection = await service.inspectDownloadManagement(
+      <ImportedLibraryEntry>[old, current],
+    );
+    final cache = projection.cache;
+    expect(cache, isNotNull);
+    expect(cache!.canonical, hasLength(1));
+    final canonical = cache.canonical.single;
+    expect(canonical.familyId, family);
+    expect(canonical.canonicalChapterId, canonicalChapter);
+    expect(canonical.readyPages, 1);
+    expect(canonical.partialPages, 0);
+    expect(canonical.receivedBytes, sharedBytes.length);
+    expect(canonical.manualReferencedPages, 1);
+    expect(canonical.memberVersionCount, 2);
+    expect(
+      canonical.memberChapterIdentities,
+      containsAll(<String>[
+        chapterDownloadIdentity(
+          old.chapter.sourceId,
+          old.chapter.comicId,
+          old.chapter.chapterId,
+          old.chapter.sourceRevision,
+        ),
+        chapterDownloadIdentity(
+          current.chapter.sourceId,
+          current.chapter.comicId,
+          current.chapter.chapterId,
+          current.chapter.sourceRevision,
+        ),
+      ]),
+    );
+    expect(cache.exact, hasLength(1));
+    final exact = cache.exact.single;
+    expect(exact.identity, chapterDownloadIdentity(
+      current.chapter.sourceId,
+      current.chapter.comicId,
+      current.chapter.chapterId,
+      current.chapter.sourceRevision,
+    ));
+    expect(exact.readyPages, 1);
+    expect(exact.partialPages, 0);
+    expect(exact.receivedBytes, gapBytes.length);
+  });
+
+  test(
+      'active projection migrates historical exact partial into physical ownership',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-canonical-management-exact-partial-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final partialBytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'lib:partial-old',
+        displayName: '第一话',
+        sourceId: 'venera:fixture',
+        comicId: 'partial-old',
+        comicTitle: 'Canonical partial',
+        chapterId: 'chapter',
+        sourceRevision: 'old-r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'venera-resource:partial-old:0',
+            pageId: 'page-0',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: 12,
+          ),
+        ],
+      ),
+    );
+    final manifest = entry.chapter.toManifest();
+    final id = readerPageDownloadId(manifest, manifest.pages.single);
+    const family = VersionFamilyId('family');
+    const canonicalChapter = CanonicalChapterId('chapter-family');
+    const segment = CanonicalMediaSegmentId('shared');
+    final canonicalProjection = VersionChapterCanonicalProjection(
+      familyId: family,
+      canonicalChapterId: canonicalChapter,
+      sourceId: manifest.sourceId,
+      comicId: manifest.comicId,
+      chapterId: manifest.chapter.chapterId,
+      sourceRevision: manifest.chapter.sourceRevision,
+      pageCount: 1,
+      intervals: const <CanonicalMediaBindingInterval>[
+        CanonicalMediaBindingInterval(
+          exactStart: 0,
+          exactEndExclusive: 1,
+          segmentId: segment,
+          segmentStart: 0,
+        ),
+      ],
+    );
+    await service.artifactStore.persistCanonicalMediaProjection(
+      canonicalProjection,
+    );
+    service.updateCacheVersionRelations(
+      <ComicVersionRelation>[
+        ComicVersionRelation(
+          sourceId: manifest.sourceId,
+          predecessorComicId: manifest.comicId,
+          successorComicId: 'partial-new',
+          pageMappings: <ComicVersionPageMapping>[
+            ComicVersionPageMapping(
+              predecessorChapterId: manifest.chapter.chapterId,
+              successorChapterId: 'chapter-new',
+              predecessorPageCount: 1,
+              successorPageCount: 1,
+              successorOffset: 0,
+              predecessorSourceRevision: manifest.chapter.sourceRevision,
+              successorSourceRevision: 'new-r1',
+              verifiedIntervals: const <VerifiedComicVersionPageInterval>[
+                VerifiedComicVersionPageInterval(
+                  predecessorStart: 0,
+                  predecessorEndExclusive: 1,
+                  successorOffset: 0,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+    await service.artifactStore.storePartialDownload(
+      id: id,
+      entry: PartialDownloadEntry(
+        length: partialBytes.length,
+        validators: const Validators(),
+        totalLength: 12,
+        open: ({required int start}) async* {
+          yield Uint8List.sublistView(partialBytes, start);
+        },
+      ),
+    );
+
+    final before = await service.inspectDownloadManagement(
+      <ImportedLibraryEntry>[entry],
+    );
+    expect(before.cache, isNotNull);
+    expect(before.cache!.canonical, isEmpty);
+    expect(before.cache!.exact, hasLength(1));
+    expect(before.cache!.exact.single.partialPages, 1);
+
+    final migrated = await service.artifactStore.backfillCanonicalPartials(
+      <CanonicalMediaChapterAuthority>[
+        CanonicalMediaChapterAuthority(
+          manifest: manifest,
+          projection: canonicalProjection,
+          activeProjectionRanges: const <CanonicalMediaActiveRange>[
+            CanonicalMediaActiveRange(start: 0, endExclusive: 1),
+          ],
+        ),
+      ],
+    );
+    expect(migrated, 1);
+    expect(await service.artifactStore.index.get(id.key), isNull);
+
+    final physicalId = PhysicalMediaId.canonical(
+      canonicalProjection.coordinateForPageIndex(0).stableKey,
+    );
+    final physicalPartial = await (service.artifactStore.index
+            as PhysicalPartialIndex)
+        .getPhysicalPartial(physicalId);
+    expect(physicalPartial, isNotNull);
+    expect(physicalPartial!.bytes, partialBytes.length);
+
+    final after = await service.inspectDownloadManagement(
+      <ImportedLibraryEntry>[entry],
+    );
+    expect(after.cache, isNotNull);
+    expect(after.cache!.canonical, hasLength(1));
+    expect(after.cache!.canonical.single.readyPages, 0);
+    expect(after.cache!.canonical.single.partialPages, 1);
+    expect(after.cache!.canonical.single.receivedBytes, partialBytes.length);
+    expect(after.cache!.exact, isEmpty);
+  });
+
+  test('canonical partial backfill preserves an unverified exact gap', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-canonical-partial-gap-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final partialBytes = Uint8List.fromList(<int>[9, 8, 7]);
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'lib:partial-gap',
+        displayName: '第一话',
+        sourceId: 'venera:fixture',
+        comicId: 'partial-gap',
+        comicTitle: 'Canonical gap',
+        chapterId: 'chapter',
+        sourceRevision: 'gap-r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'venera-resource:partial-gap:0',
+            pageId: 'page-0',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: 12,
+          ),
+        ],
+      ),
+    );
+    final manifest = entry.chapter.toManifest();
+    final id = readerPageDownloadId(manifest, manifest.pages.single);
+    const family = VersionFamilyId('gap-family');
+    const canonicalChapter = CanonicalChapterId('gap-chapter-family');
+    const segment = CanonicalMediaSegmentId('gap-shared');
+    final canonicalProjection = VersionChapterCanonicalProjection(
+      familyId: family,
+      canonicalChapterId: canonicalChapter,
+      sourceId: manifest.sourceId,
+      comicId: manifest.comicId,
+      chapterId: manifest.chapter.chapterId,
+      sourceRevision: manifest.chapter.sourceRevision,
+      pageCount: 1,
+      intervals: const <CanonicalMediaBindingInterval>[
+        CanonicalMediaBindingInterval(
+          exactStart: 0,
+          exactEndExclusive: 1,
+          segmentId: segment,
+          segmentStart: 0,
+        ),
+      ],
+    );
+    await service.artifactStore.persistCanonicalMediaProjection(
+      canonicalProjection,
+    );
+    await service.artifactStore.storePartialDownload(
+      id: id,
+      entry: PartialDownloadEntry(
+        length: partialBytes.length,
+        validators: const Validators(),
+        totalLength: 12,
+        open: ({required int start}) async* {
+          yield Uint8List.sublistView(partialBytes, start);
+        },
+      ),
+    );
+
+    final migrated = await service.artifactStore.backfillCanonicalPartials(
+      <CanonicalMediaChapterAuthority>[
+        CanonicalMediaChapterAuthority(
+          manifest: manifest,
+          projection: canonicalProjection,
+          // Persisted coordinates are not live proof. An empty active range
+          // represents a gap/revoked relation and must not claim the prefix.
+          activeProjectionRanges: const <CanonicalMediaActiveRange>[],
+        ),
+      ],
+    );
+
+    expect(migrated, 0);
+    expect(await service.artifactStore.index.get(id.key), isNotNull);
+    final physicalId = PhysicalMediaId.canonical(
+      canonicalProjection.coordinateForPageIndex(0).stableKey,
+    );
+    expect(
+      await (service.artifactStore.index as PhysicalPartialIndex)
+          .getPhysicalPartial(physicalId),
+      isNull,
+    );
+    final projection = await service.inspectDownloadManagement(
+      <ImportedLibraryEntry>[entry],
+    );
+    expect(projection.cache, isNotNull);
+    expect(projection.cache!.canonical, isEmpty);
+    expect(projection.cache!.exact, hasLength(1));
+    expect(projection.cache!.exact.single.partialPages, 1);
+  });
+
+  test(
+      'management projection does not canonicalize historical exact READY after proof revocation',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-canonical-management-revoked-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(root.path);
+    addTearDown(service.close);
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    ImportedLibraryEntry entry(String comicId, String pageId) =>
+        ImportedLibraryEntry(
+          chapter: ImportedChapterRecord(
+            directoryId: 'lib:$comicId',
+            displayName: '第一话',
+            sourceId: 'venera:fixture',
+            comicId: comicId,
+            comicTitle: 'Canonical revoked',
+            chapterId: 'chapter',
+            sourceRevision: '$comicId-r1',
+            pages: <ImportedPageRecord>[
+              ImportedPageRecord(
+                displayName: '$pageId.webp',
+                sourceId: 'venera-resource:$comicId:$pageId',
+                pageId: pageId,
+                contentKindHint: ContentKindHint.webp,
+                byteLength: bytes.length,
+              ),
+            ],
+          ),
+        );
+    final old = entry('revoked-old', 'old-page');
+    final current = entry('revoked-new', 'new-page');
+    final oldManifest = old.chapter.toManifest();
+    final currentManifest = current.chapter.toManifest();
+    const family = VersionFamilyId('family');
+    const chapter = CanonicalChapterId('chapter-family');
+    const segment = CanonicalMediaSegmentId('shared');
+    for (final manifest in <ChapterManifest>[oldManifest, currentManifest]) {
+      await service.artifactStore.persistCanonicalMediaProjection(
+        VersionChapterCanonicalProjection(
+          familyId: family,
+          canonicalChapterId: chapter,
+          sourceId: manifest.sourceId,
+          comicId: manifest.comicId,
+          chapterId: manifest.chapter.chapterId,
+          sourceRevision: manifest.chapter.sourceRevision,
+          pageCount: 1,
+          intervals: const <CanonicalMediaBindingInterval>[
+            CanonicalMediaBindingInterval(
+              exactStart: 0,
+              exactEndExclusive: 1,
+              segmentId: segment,
+              segmentStart: 0,
+            ),
+          ],
+        ),
+      );
+      await service.storePromotedArtifact(
+        id: readerPageDownloadId(manifest, manifest.pages.single),
+        bytes: bytes,
+      );
+    }
+
+    // Persisted coordinates remain stable, but no current verified range owns
+    // cross-version runtime reuse after the proof is revoked.
+    service.updateCacheVersionRelations(const <ComicVersionRelation>[]);
+    final projection = await service.inspectDownloadManagement(
+      <ImportedLibraryEntry>[old, current],
+    );
+    expect(projection.cache, isNotNull);
+    expect(projection.cache!.canonical, isEmpty);
+    expect(projection.cache!.exact, hasLength(2));
+  });
+
   test(
       'new-version manual download materializes canonical physical-only cache without network',
       () async {
