@@ -1481,7 +1481,7 @@ def check_compile_regressions() -> None:
         ROOT / 'packages/storage/lib/src/sqlite_imported_library_store.dart'
     ).read_text(encoding='utf-8')
     for required in (
-        'const _schemaVersion = 10',
+        'const _schemaVersion = 11',
         'PRAGMA user_version = $_schemaVersion',
         'PRIMARY KEY(source_id, chapter_id)',
         'PRIMARY KEY(source_id, comic_id)',
@@ -1548,7 +1548,8 @@ def check_compile_regressions() -> None:
     for required in (
         'final prepared = <_PreparedChapterMigration>[]',
         'targetProgress: targetEntry?.progress',
-        'targetReadState: targetReadStates',
+        'targetReadState:',
+        'targetReadStates[chapterLibraryIdentity(',
         'final mergedPreference = plan.mergePreference',
     ):
         if required not in app_home:
@@ -2191,7 +2192,7 @@ def check_compile_regressions() -> None:
         ROOT / 'packages/storage/lib/src/home_projection_snapshot.dart'
     ).read_text(encoding='utf-8')
     for required in (
-        'const _homeProjectionSnapshotVersion = 3;',
+        'const _homeProjectionSnapshotVersion = 4;',
         'final class HomeChapterDownloadSummary',
         "'orphanedDownloadEntries':",
         "'chapterDownloads':",
@@ -2709,7 +2710,8 @@ def check_current_iteration() -> None:
     for required in (
         'enum EncodedResourceOrigin',
         'final class MemoryEncodedResourceSource',
-        'super(origin: EncodedResourceOrigin.localFile)',
+        'EncodedResourceOrigin origin = EncodedResourceOrigin.localFile',
+        'super(origin: origin)',
     ):
         if required not in resource_cache:
             fail(f'encoded-resource lifetime closure is incomplete: {required}')
