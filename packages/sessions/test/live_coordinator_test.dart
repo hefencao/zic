@@ -2031,6 +2031,42 @@ void main() {
     await coordinator.idle();
     expect(nextUpload.playbackState, PlaybackState.running);
     expect(nextUpload.playbackDeadlineMicros, isNotNull);
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.uploadStarted &&
+            event.identityHash == decodeId.key,
+      ),
+      hasLength(1),
+      reason: 'role promotion must reuse the resident animated output',
+    );
+
+    final nextAgainPlan = plan(
+      revision: 3,
+      role: PageRole.next,
+      priority: 820,
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: nextAgainPlan,
+        diff: DemandDiff.between(transitionPlan, nextAgainPlan),
+        window: RoleWindow(const <int, PageRole>{1: PageRole.next}),
+      ),
+    );
+    await coordinator.idle();
+    expect(nextUpload.playbackState, PlaybackState.frozen);
+    expect(nextUpload.playbackDeadlineMicros, isNull);
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.uploadStarted &&
+            event.identityHash == decodeId.key &&
+            event.payload['priority'] == 820,
+      ),
+      hasLength(1),
+      reason: 'viewport role oscillation must not restart hidden next upload',
+    );
   });
 
   test('source-ready prefetch refill is directed to its own decode id',

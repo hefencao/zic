@@ -187,6 +187,48 @@ final class UploadSession {
         failure: _failure,
       );
 
+  /// Rebinds a resident animated/unresolved output to a new policy role without
+  /// scheduling another upload-lane task.
+  ///
+  /// A role/priority migration does not make an already-presented frame stale.
+  /// Animated successors remain deadline-owned: only [advance] may mark the
+  /// current slot as awaiting a successor. Until then, decoded holder growth is
+  /// producer inventory and the resident output is still the authoritative
+  /// presentation.
+  bool rebindResidentAnimatedForDemand({
+    required UploadDemand demand,
+    required int revision,
+  }) {
+    _requireOpen();
+    final slot = _slot;
+    final decodeSnapshot = decode.snapshot;
+    final animation = decodeSnapshot.animation;
+    final animatedOrUnresolved =
+        !animation.complete ||
+        animation.frameCount > 1 ||
+        (slot?.frame.duration.inMicroseconds ?? 0) > 0;
+    if (_pendingPrepares != 0 ||
+        _state != UploadState.ready ||
+        slot == null ||
+        slot.frame.disposed ||
+        _awaitingSuccessor ||
+        !animatedOrUnresolved ||
+        decodeSnapshot.failure != null ||
+        decodeSnapshot.state == DecodeState.failed ||
+        decodeSnapshot.state == DecodeState.disposed) {
+      return false;
+    }
+    final wasRetainedWithoutDemand = _retainedWithoutDemand;
+    _retainedWithoutDemand = false;
+    _releaseUploaderWhenIdle = false;
+    _revision = revision;
+    _latestDemandRole = demand.role;
+    if (wasRetainedWithoutDemand) {
+      _notifySnapshot();
+    }
+    return true;
+  }
+
   /// Rebinds an already-complete authoritative static output to a new role
   /// without scheduling another upload-lane task.
   ///

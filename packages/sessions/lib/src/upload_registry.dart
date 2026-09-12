@@ -76,6 +76,17 @@ final class UploadRegistry {
 
   int preparedDepth(DecodeId id) => _sessions[id]?.preparedDepth ?? 0;
 
+  bool rebindResidentAnimatedForDemand(
+    DecodeId id,
+    UploadDemand demand, {
+    required int revision,
+  }) =>
+      _sessions[id]?.rebindResidentAnimatedForDemand(
+        demand: demand,
+        revision: revision,
+      ) ??
+      false;
+
   bool reusePreparedStaticForDemand(
     DecodeId id,
     UploadDemand demand, {

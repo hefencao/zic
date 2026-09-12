@@ -1392,6 +1392,19 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         continue;
       }
       if (uploadRegistry != null &&
+          uploadRegistry.rebindResidentAnimatedForDemand(
+            entry.key,
+            entry.value,
+            revision: demandRevision,
+          )) {
+        // Role/priority-only migrations do not invalidate a resident animated
+        // output. Playback owns when its successor becomes eligible; submitting
+        // UploadLane here would only run prepare() into its resident-frame
+        // no-op branch and can repeat as the viewport oscillates around 50%.
+        upload.cancelQueued(entry.key.key);
+        continue;
+      }
+      if (uploadRegistry != null &&
           uploadRegistry.reusePreparedStaticForDemand(
             entry.key,
             entry.value,
