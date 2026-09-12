@@ -6,6 +6,22 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('cached source preserves controlled resource refresh capability', () async {
+    final raw = _RefreshableCountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+    final uri = Uri.parse('venera-resource:stale-page');
+
+    expect(source, isA<RefreshableComicResourceSource>());
+    expect(source, isA<ControlledRefreshableComicResourceSource>());
+
+    await source.refreshResourceControlled(uri);
+
+    expect(raw.refreshes, 1);
+    expect(raw.lastRefreshedUri, uri);
+  });
+
   test('cached source preserves resource-operation timeout capability', () {
     final raw = _BoundedCountingSource();
     final cache = ResourceCacheManager();
@@ -491,6 +507,28 @@ ComicCommentPage _commentPage(String content) => ComicCommentPage(
         ComicComment(userName: 'Reader', content: content),
       ],
     );
+
+
+final class _RefreshableCountingSource extends _CountingSource
+    implements
+        RefreshableComicResourceSource,
+        ControlledRefreshableComicResourceSource {
+  var refreshes = 0;
+  Uri? lastRefreshedUri;
+
+  @override
+  Future<void> refreshResource(Uri uri) => refreshResourceControlled(uri);
+
+  @override
+  Future<void> refreshResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
+    refreshes++;
+    lastRefreshedUri = uri;
+  }
+}
 
 final class _BoundedCountingSource extends _CountingSource
     implements BoundedComicResourceSource {

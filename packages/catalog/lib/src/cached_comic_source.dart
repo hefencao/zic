@@ -99,6 +99,8 @@ final class CachedBrowsableComicSource
         BoundedComicResourceSource,
         RetryableComicResourceSource,
         ControlledRetryableComicResourceSource,
+        RefreshableComicResourceSource,
+        ControlledRefreshableComicResourceSource,
         ControlledComicResourceSource {
   CachedBrowsableComicSource({
     required this.source,
@@ -791,6 +793,27 @@ final class CachedBrowsableComicSource
       return Future<ComicResourceRequest?>.value(null);
     }
     return retryable.retryResource(uri);
+  }
+
+  @override
+  Future<void> refreshResource(Uri uri) =>
+      refreshResourceControlled(uri);
+
+  @override
+  Future<void> refreshResourceControlled(
+    Uri uri, {
+    TaskControl? control,
+  }) {
+    final controlled = source is ControlledRefreshableComicResourceSource
+        ? source as ControlledRefreshableComicResourceSource
+        : null;
+    if (controlled != null) {
+      return controlled.refreshResourceControlled(uri, control: control);
+    }
+    final refreshable = source is RefreshableComicResourceSource
+        ? source as RefreshableComicResourceSource
+        : null;
+    return refreshable?.refreshResource(uri) ?? Future<void>.value();
   }
 
   /// Invalidates one chapter metadata response without touching page artifacts.
