@@ -2269,40 +2269,53 @@ final class PersistentDownloadArtifactStore
 
   Future<void> persistCanonicalMediaProjection(
     VersionChapterCanonicalProjection projection,
-  ) async {
-    _requireOpen();
-    final projectionIndex = _index as PhysicalMediaProjectionIndex;
-    final existingRecord = await projectionIndex.getPhysicalMediaProjection(
-      projection.exactKey,
-    );
-    if (existingRecord != null) {
-      final existing = _decodeCanonicalMediaProjection(existingRecord);
-      if (!_isMonotonicCanonicalProjectionExpansion(existing, projection)) {
-        throw const Failure(
-          code: ErrorCode.policy,
-          message: 'canonical media projection cannot rebase existing media',
-        );
-      }
-    }
-    final nowUs = DateTime.now().toUtc().microsecondsSinceEpoch;
-    await projectionIndex.putPhysicalMediaProjection(
-      PhysicalMediaProjectionRecord(
-        exactKey: projection.exactKey,
-        familyKey: projection.familyId.value,
-        projectionJson: jsonEncode(projection.toJson()),
-        createdUs: existingRecord?.createdUs ?? nowUs,
-        touchedUs: nowUs,
-      ),
-    );
-    _notifyManagementProjectionChanged();
-  }
+  ) => persistCanonicalMediaProjections(
+    <VersionChapterCanonicalProjection>[projection],
+  );
 
   Future<void> persistCanonicalMediaProjections(
     Iterable<VersionChapterCanonicalProjection> projections,
   ) async {
-    for (final projection in projections) {
-      await persistCanonicalMediaProjection(projection);
+    _requireOpen();
+    final values = projections.toList(growable: false);
+    if (values.isEmpty) return;
+    final exactKeys = <String>{};
+    for (final projection in values) {
+      if (!exactKeys.add(projection.exactKey)) {
+        throw StateError(
+          'canonical projection batch contains duplicate ${projection.exactKey}',
+        );
+      }
     }
+
+    final projectionIndex = _index as PhysicalMediaProjectionIndex;
+    final nowUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+    final records = <PhysicalMediaProjectionRecord>[];
+    for (final projection in values) {
+      final existingRecord = await projectionIndex.getPhysicalMediaProjection(
+        projection.exactKey,
+      );
+      if (existingRecord != null) {
+        final existing = _decodeCanonicalMediaProjection(existingRecord);
+        if (!_isMonotonicCanonicalProjectionExpansion(existing, projection)) {
+          throw const Failure(
+            code: ErrorCode.policy,
+            message: 'canonical media projection cannot rebase existing media',
+          );
+        }
+      }
+      records.add(
+        PhysicalMediaProjectionRecord(
+          exactKey: projection.exactKey,
+          familyKey: projection.familyId.value,
+          projectionJson: jsonEncode(projection.toJson()),
+          createdUs: existingRecord?.createdUs ?? nowUs,
+          touchedUs: nowUs,
+        ),
+      );
+    }
+    await projectionIndex.putPhysicalMediaProjections(records);
+    _notifyManagementProjectionChanged();
   }
 
   VersionChapterCanonicalProjection _decodeCanonicalMediaProjection(

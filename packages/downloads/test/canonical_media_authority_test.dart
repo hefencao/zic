@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
@@ -70,4 +72,84 @@ void main() {
     );
     expect(inactive.resolve(id), stable);
   });
+
+  test('canonical projection batch rejects partial durable publication', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-canonical-projection-batch-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    const family = VersionFamilyId('family');
+    const chapterFamily = CanonicalChapterId('chapter-family');
+    const originalSegment = CanonicalMediaSegmentId('original');
+    final original = VersionChapterCanonicalProjection(
+      familyId: family,
+      canonicalChapterId: chapterFamily,
+      sourceId: 'source',
+      comicId: 'comic-a',
+      chapterId: 'chapter-a',
+      sourceRevision: 'a-r1',
+      pageCount: 1,
+      intervals: const <CanonicalMediaBindingInterval>[
+        CanonicalMediaBindingInterval(
+          exactStart: 0,
+          exactEndExclusive: 1,
+          segmentId: originalSegment,
+          segmentStart: 0,
+        ),
+      ],
+    );
+    await store.persistCanonicalMediaProjection(original);
+
+    final sibling = VersionChapterCanonicalProjection(
+      familyId: family,
+      canonicalChapterId: chapterFamily,
+      sourceId: 'source',
+      comicId: 'comic-b',
+      chapterId: 'chapter-b',
+      sourceRevision: 'b-r1',
+      pageCount: 1,
+      intervals: const <CanonicalMediaBindingInterval>[
+        CanonicalMediaBindingInterval(
+          exactStart: 0,
+          exactEndExclusive: 1,
+          segmentId: originalSegment,
+          segmentStart: 0,
+        ),
+      ],
+    );
+    final rebased = original.copyWithIntervals(
+      const <CanonicalMediaBindingInterval>[
+        CanonicalMediaBindingInterval(
+          exactStart: 0,
+          exactEndExclusive: 1,
+          segmentId: CanonicalMediaSegmentId('replacement'),
+          segmentStart: 0,
+        ),
+      ],
+    );
+
+    await expectLater(
+      store.persistCanonicalMediaProjections(
+        <VersionChapterCanonicalProjection>[sibling, rebased],
+      ),
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.policy,
+        ),
+      ),
+    );
+
+    final loaded = await store.loadCanonicalMediaProjections();
+    expect(loaded, hasLength(1));
+    expect(loaded.single.exactKey, original.exactKey);
+    expect(
+      loaded.single.coordinateForPageIndex(0),
+      original.coordinateForPageIndex(0),
+    );
+  });
+
 }
