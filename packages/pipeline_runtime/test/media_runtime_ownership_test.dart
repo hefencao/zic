@@ -395,7 +395,7 @@ void main() {
     await session.dispose();
   });
 
-  test('animated paged next owns one frozen first-frame upload demand', () async {
+  test('animated paged next prewarms output without idle upload', () async {
     final trace = MemoryTraceSink();
     final runtime = _Runtime(renderer: RendererKind.androidTexture);
     final session = PipelineReaderSessionFactory(
@@ -444,11 +444,12 @@ void main() {
     final initialUploadDemands = trace.events
         .where((event) => event.kind == TraceEventKind.uploadDemand)
         .toList(growable: false);
-    expect(initialUploadDemands, hasLength(2));
+    expect(initialUploadDemands, hasLength(1));
+    expect(initialUploadDemands.single.payload['priority'], 1000);
     expect(
-      initialUploadDemands.map((event) => event.payload['priority']),
-      containsAll(<Object?>[1000, 820]),
-      reason: 'paged next should preupload one first frame before host mount',
+      initialUploadDemands.any((event) => event.payload['priority'] == 820),
+      isFalse,
+      reason: 'idle paged next must stay decode-only',
     );
 
     final next = session.chapter.pages[1];
@@ -479,8 +480,8 @@ void main() {
     expect(runtime.prewarmCalls, 2);
     expect(
       trace.events.where((event) => event.kind == TraceEventKind.uploadDemand),
-      hasLength(2),
-      reason: 'an unchanged paged-next plan must not duplicate upload demand',
+      hasLength(1),
+      reason: 'an unchanged idle plan must not create paged-next upload demand',
     );
 
     await session.dispose();
