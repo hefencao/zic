@@ -52,6 +52,7 @@ for ABI in "${ABI_LIST[@]}"; do
   }
   SYMBOLS="$($READELF -Ws "$LIB")"
   for symbol in \
+    Java_dev_zic_texture_NativeBlitter_prepare \
     Java_dev_zic_texture_NativeBlitter_retain \
     Java_dev_zic_texture_NativeBlitter_release \
     Java_dev_zic_texture_NativeBlitter_blit; do

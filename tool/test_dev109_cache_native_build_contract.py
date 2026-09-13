@@ -65,6 +65,7 @@ require(
     "ANativeWindow_getHeight",
     "ANativeWindow_getFormat",
     "configure_if_needed(",
+    "Java_dev_zic_texture_NativeBlitter_prepare",
     "Java_dev_zic_texture_NativeBlitter_blit",
 )
 forbid(
@@ -73,7 +74,9 @@ forbid(
 )
 require(
     "packages/texture_bridge/android/src/main/kotlin/dev/zic/texture/TextureBridgePlugin.kt",
+    "external fun prepare(surface: Surface, width: Int, height: Int): Int",
     "external fun blit(surface: Surface, frameAddress: Long): Int",
+    "NativeBlitter.prepare(surface(), width, height)",
     "BLIT_OK_RECONFIGURED",
     '"surfaceReconfigureCount"',
 )

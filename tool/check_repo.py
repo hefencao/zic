@@ -1433,6 +1433,7 @@ def check_compile_regressions() -> None:
         'NativeBlitter.retain',
         'NativeBlitter.blit',
         'NativeBlitter.release',
+        'NativeBlitter.prepare',
         'onSurfaceAvailable',
         'onSurfaceCleanup',
         'scheduleRedraw',
@@ -1454,6 +1455,7 @@ def check_compile_regressions() -> None:
     for required in (
         'Java_dev_zic_texture_NativeBlitter_retain',
         'Java_dev_zic_texture_NativeBlitter_release',
+        'Java_dev_zic_texture_NativeBlitter_prepare',
         'Java_dev_zic_texture_NativeBlitter_blit',
         'ANativeWindow_lock',
         'ANativeWindow_unlockAndPost',

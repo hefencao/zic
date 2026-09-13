@@ -134,6 +134,28 @@ mod android {
     }
 
     #[no_mangle]
+    pub unsafe extern "system" fn Java_dev_zic_texture_NativeBlitter_prepare(
+        env: *mut c_void,
+        _class: *mut c_void,
+        surface: *mut c_void,
+        width: i32,
+        height: i32,
+    ) -> i32 {
+        if env.is_null() || surface.is_null() || width <= 0 || height <= 0 {
+            return BLIT_NULL;
+        }
+        let window = ANativeWindow_fromSurface(env, surface);
+        if window.is_null() {
+            return BLIT_SURFACE_FAILED;
+        }
+        let window = WindowOwner(window);
+        match configure_if_needed(window.0, width, height, false) {
+            Ok(_) => BLIT_OK,
+            Err(status) => status,
+        }
+    }
+
+    #[no_mangle]
     pub unsafe extern "system" fn Java_dev_zic_texture_NativeBlitter_retain(
         _env: *mut c_void,
         _class: *mut c_void,

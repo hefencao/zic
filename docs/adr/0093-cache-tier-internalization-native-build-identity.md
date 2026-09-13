@@ -2,6 +2,8 @@
 
 **状态：Provisional**
 
+> 2026-09-13 clarification：ADR 0313 后续恢复了一个 **acceleration-only** `NativeBlitter.prepare` JNI，仅供 exact-size idle texture prewarm 在真实 frame 到达前预配置 RGBA geometry。它不恢复本 ADR 否决的独立 correctness `configure` authority：`blit` 仍必须独立检查 geometry 并在需要时配置/重试；废弃的 `NativeBlitter.configure` 仍被 build/symbol gate 拒绝。
+
 ## 背景
 
 dev.108 设备 Trace 证明统一 `ArtifactCacheManager` 已命中 memory tier，Reader dispose 也已收敛到百毫秒内；但全部逐帧样本仍走 Flutter fallback。错误为 Android 运行库不存在 Kotlin 新声明的 `NativeBlitter.configure` JNI 方法。源码、Kotlin 与实际 APK 中的 `.so` 形成了不完整的公共 API 迁移。

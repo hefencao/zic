@@ -28,6 +28,9 @@ internal object NativeBlitter {
     external fun release(frameAddress: Long)
 
     @JvmStatic
+    external fun prepare(surface: Surface, width: Int, height: Int): Int
+
+    @JvmStatic
     external fun blit(surface: Surface, frameAddress: Long): Int
 }
 
@@ -874,7 +877,10 @@ class TextureBridgePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
             check(!released) { "texture output is released" }
             check(surfaceAvailable) { "SurfaceProducer surface is unavailable" }
             check(canPresent()) { "texture bridge is detached" }
-            surface()
+            val status = NativeBlitter.prepare(surface(), width, height)
+            check(status == BLIT_OK) {
+                "native texture prepare failed with status $status"
+            }
         }
 
         fun redraw() {
