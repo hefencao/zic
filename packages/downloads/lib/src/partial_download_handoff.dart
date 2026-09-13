@@ -79,8 +79,9 @@ final class PartialDownloadHandoff {
 
     // The recoverable owner probe is filesystem work too. Route it through the
     // same composition read scheduler as durable prefix/range reads so two
-    // parallel local preparations cannot bypass Reader startup pressure with
-    // unscheduled stat/sidecar work. Keep the lease narrow: later canonical
+    // parallel local preparations cannot bypass actual foreground local-read
+    // pressure with unscheduled stat/sidecar work. Keep the lease narrow: later
+    // canonical
     // lookup and prefix proof get their own ranked quanta instead of one long
     // foreground lease that would push every successor preparation into the
     // current frame's native decode window.

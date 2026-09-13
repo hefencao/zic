@@ -1,6 +1,8 @@
 # ADR 0108：启动 Current 前缀独占与精确 Output 预热
 
-**状态：Provisional**
+**状态：Superseded**
+
+> 后续 durable READY deferred ingress、composition `ArtifactCacheReadScheduler` 与 source/local-read priority 已把首帧竞争收口到实际 I/O owner。精确 DecodeTarget output prewarm 继续保留；“首个 output 前把 local NetLane bucket 从 2 改为 1”的 presentation→transport 门控已撤销，稳定 local bucket 始终由 `ReaderPipelineProfile` 提供。
 
 > dev.125 修订：`.zic-workspace.json` 改为机器本地配置，不进入发行 ZIP 或生成 patch；环境变量 `ZIC_PATCH_DIR` 可覆盖。后台恢复与 partial failure 见 ADR 0109。
 

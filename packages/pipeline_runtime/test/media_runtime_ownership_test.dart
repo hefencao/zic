@@ -57,6 +57,72 @@ void main() {
     );
   });
 
+  test('Reader current does not pre-arm composition local-read pressure', () async {
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 3);
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(_Runtime()),
+      artifactCacheManager: ArtifactCacheManager(backend: _Backend()),
+      artifactReadScheduler: scheduler,
+    ).create(
+      chapter: _chapter(),
+      sessionId: 'no-presentation-pressure-coupling-test',
+    );
+    addTearDown(session.dispose);
+    session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+
+    session.accept(_currentObservation(session.chapter));
+
+    expect(
+      scheduler.foregroundPressure,
+      isFalse,
+      reason: 'current/output lifecycle must not manufacture local-read pressure; '
+          'only an actual foreground read may do so',
+    );
+  });
+
+  test('local source bucket remains the stable profile limit before first output',
+      () async {
+    final trace = MemoryTraceSink();
+    final uri = Uri.parse('asset:///local-startup.webp');
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(_Runtime()),
+      loaderSources: <Uri, LoaderTransportSource>{
+        uri: LoaderTransportSource(
+          revision: 'local-startup-r1',
+          loadBytes: () async => Uint8List.fromList(<int>[
+            0x52, 0x49, 0x46, 0x46,
+            0x04, 0x00, 0x00, 0x00,
+            0x57, 0x45, 0x42, 0x50,
+          ]),
+        ),
+      },
+    ).create(
+      chapter: _chapter(uri: uri),
+      sessionId: 'stable-local-bucket-test',
+      traceSink: trace,
+    );
+    addTearDown(session.dispose);
+    session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+    session.accept(_currentObservation(session.chapter));
+
+    TraceEvent? started;
+    for (var attempt = 0; attempt < 100 && started == null; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      for (final event in trace.events) {
+        if (event.kind == TraceEventKind.downloadStarted) {
+          started = event;
+          break;
+        }
+      }
+    }
+    expect(started, isNotNull);
+    expect(
+      started!.payload['bucketLimit'],
+      ReaderPipelineProfile.stable.localSourceConcurrency,
+      reason: 'presentation readiness must not rewrite NetLane source capacity',
+    );
+  });
+
   test('Reader reentry reuses the authoritative resource session', () async {
     final runtime = _Runtime();
     final trace = MemoryTraceSink();
@@ -735,6 +801,23 @@ void main() {
     expect(runtime.closed, isTrue);
   });
 }
+
+ReaderObs _currentObservation(ChapterManifest chapter) => ReaderObs(
+      sessionId: 'reader',
+      currentIndex: 0,
+      stableIndex: 0,
+      interaction: Interaction.idle,
+      logicalPosition: 0,
+      velocity: 0,
+      currentCoverage: Coverage(
+        pageIndex: 0,
+        assetKey: chapter.pages.first.assetKey,
+        fraction: 1,
+      ),
+      direction: ReadingDirection.ltr,
+      timestamp: DateTime.utc(2026),
+      monotonicMicros: 1,
+    );
 
 ChapterManifest _galleryChapter({int pageCount = 3}) {
   final pages = List<PageAsset>.generate(

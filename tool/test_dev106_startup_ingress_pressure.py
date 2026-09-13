@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard dev.106 startup foreground pressure and whole-body artifact ingress."""
+"""Guard the post-dev.106 local-read pressure ownership boundary."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,7 +11,7 @@ def read(path: str) -> str:
 
 def require(text: str, token: str, owner: str) -> None:
     if token not in text:
-        raise SystemExit(f"{owner} is missing dev.106 contract: {token}")
+        raise SystemExit(f"{owner} is missing local-read pressure contract: {token}")
 
 
 scheduler = read("packages/downloads/lib/src/artifact_cache_read_scheduler.dart")
@@ -21,43 +21,30 @@ check = read("tool/check.sh")
 adr = read("docs/adr/0090-startup-foreground-pressure-whole-body-ingress.md")
 
 for token in (
-    "int _foregroundPressureHolds = 0;",
-    "ArtifactCachePressureLease holdForegroundPressure()",
-    "_foregroundPressureHolds > 0 || _activeForeground > 0",
-    "final class ArtifactCachePressureLease",
+    "int _activeForeground = 0;",
+    "_isForeground(pending.currentPriority)",
+    "_activeForeground > 0",
+    "maxBackgroundWhileForeground",
 ):
     require(scheduler, token, "artifact read scheduler")
 
-for token in (
-    "_holdStartupArtifactPressureFor(currentDownload);",
-    "binding.accept(observation);",
-    "artifactReadScheduler.holdForegroundPressure()",
-    "upload.presentClaims <= 0",
-    "decode.depth > 4",
-    "_maybeReleaseStartupArtifactPressure();",
-    "_releaseStartupArtifactPressure();",
+for forbidden in (
+    "_startupArtifactPressure",
+    "_holdStartupArtifactPressureFor",
+    "reserveFirstForegroundQuantum",
+    "artifactReadScheduler.holdForegroundPressure(",
 ):
-    require(pipeline, token, "pipeline Reader startup pressure")
-if pipeline.index("_holdStartupArtifactPressureFor(currentDownload);") > pipeline.index(
-    "binding.accept(observation);"
-):
-    raise SystemExit("startup pressure must be established before binding.accept")
+    if forbidden in pipeline:
+        raise SystemExit(
+            f"Pipeline presentation must not pre-arm local-read pressure: {forbidden}"
+        )
 
-require(
-    scheduler_test,
-    "startup pressure admits only one ranked background quantum",
-    "scheduler owner test",
-)
+for token in (
+    "foreground pressure limits simultaneous background quanta",
+    "queued foreground work outranks queued background work",
+):
+    require(scheduler_test, token, "scheduler owner test")
 require(check, "test_dev106_startup_ingress_pressure.py", "repository check")
 require(adr, "**状态：Superseded**", "dev.106 ADR status")
-require(adr, "ADR 0091", "dev.106 superseding decision")
 
-for path in (
-    "docs/adr/0090-startup-foreground-pressure-whole-body-ingress.md",
-    "docs/audits/dev106-startup-ingress-pressure-audit.md",
-    "docs/audits/dev106-validation-results.md",
-):
-    if not (ROOT / path).is_file():
-        raise SystemExit(f"dev.106 evidence is missing: {path}")
-
-print("dev.106 startup ingress pressure: OK")
+print("post-dev.106 local-read pressure ownership: OK")

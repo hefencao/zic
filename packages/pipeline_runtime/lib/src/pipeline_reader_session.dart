@@ -611,7 +611,7 @@ final class PipelineReaderSession {
       sharedPhysicalTraceSink: _sharedTraceSink,
       retry: _profile.retry,
       downloadBucketFor: _profile.downloadBucket,
-      downloadBucketLimitFor: _downloadBucketLimit,
+      downloadBucketLimitFor: _profile.downloadBucketLimit,
     );
     _decodes = DecodeRegistry(
       downloads: _downloads,
@@ -656,7 +656,7 @@ final class PipelineReaderSession {
       onMemoryPressureObserved: _handleMemoryPressureObserved,
       net: pageDownloadLane,
       downloadBucketFor: _profile.downloadBucket,
-      downloadBucketLimitFor: _downloadBucketLimit,
+      downloadBucketLimitFor: _profile.downloadBucketLimit,
       // Match VibeVenera's current-page execution reservation. Download
       // priority alone cannot make first-frame latency stable if speculative
       // decode/upload work has already filled every execution slot. Current
@@ -763,9 +763,6 @@ final class PipelineReaderSession {
   final Map<String, int> _pageIndexByPageId;
   PipelinePageDimensionsFeed get pageDimensions => _pageDimensions;
   final ArtifactCacheReadScheduler artifactReadScheduler;
-  ArtifactCachePressureLease? _startupArtifactPressure;
-  DownloadId? _startupArtifactPressureDownload;
-  DownloadId? _startupCurrentDownload;
   bool _disposed = false;
   bool _retainedForReaderReentry = false;
   ReaderObs? _pendingObservation;
@@ -1039,13 +1036,6 @@ final class PipelineReaderSession {
           );
         }
       }
-      final currentOutput = _pageOutputs[currentDownload.key]?.snapshot;
-      if (currentOutput?.hasSurface != true) {
-        _startupCurrentDownload = currentDownload;
-      } else if (_startupCurrentDownload == currentDownload) {
-        _releaseStartupCurrentDownload();
-      }
-      _holdStartupArtifactPressureFor(currentDownload);
     }
     final revisionBefore = binding.pipeline.revision;
     binding.accept(observation);
@@ -1057,7 +1047,6 @@ final class PipelineReaderSession {
     }
     _syncPageStreams();
     transferProgress.select(_downloads.find(currentDownload));
-    _syncStartupArtifactPressure();
     artifactReadScheduler.refresh();
     // The first accepted plan is already authoritative for detached gallery
     // prewarm, even though the retained observation is written only after the
@@ -1294,8 +1283,6 @@ final class PipelineReaderSession {
     _binding?.detach(readerSessionId);
     _binding = null;
     _readerSessionId = null;
-    _releaseStartupArtifactPressure();
-    _releaseStartupCurrentDownload();
     artifactReadScheduler.refresh();
     transferProgress.clear();
   }
@@ -1313,8 +1300,6 @@ final class PipelineReaderSession {
     _binding = null;
     _readerSessionId = null;
     binding?.detach(readerSessionId ?? sessionId);
-    _releaseStartupArtifactPressure();
-    _releaseStartupCurrentDownload();
     artifactReadScheduler.refresh();
     transferProgress.clear();
     for (final output in _pageOutputs.values) {
@@ -2615,175 +2600,6 @@ final class PipelineReaderSession {
     if (!isReadyAnimatedFrame) {
       _ensurePlaybackTicker();
     }
-    // Once an Animated WebP is classified, ready notifications are frame
-    // presentation updates. The startup guards below scan the whole current
-    // upload plan and normally become no-ops after the first frame; repeating
-    // those scans for every animation frame needlessly runs on the UI isolate.
-    // Keep them for the first/unknown frame and while either startup lease is
-    // still held so release timing and pressure semantics remain unchanged.
-    if (!isReadyAnimatedFrame ||
-        _startupCurrentDownload != null ||
-        _startupArtifactPressureDownload != null) {
-      _maybeReleaseStartupCurrentDownload();
-      _maybeReleaseStartupArtifactPressure();
-    }
-  }
-
-  void _holdStartupArtifactPressureFor(DownloadId current) {
-    if (_artifactCacheTransport == null || _disposed) return;
-    if (_startupArtifactPressureDownload == current &&
-        _startupArtifactPressure != null) {
-      return;
-    }
-    _releaseStartupArtifactPressure();
-    _startupArtifactPressureDownload = current;
-    _startupArtifactPressure = artifactReadScheduler.holdForegroundPressure(
-      reserveFirstForegroundQuantum: true,
-    );
-  }
-
-  void _syncStartupArtifactPressure() {
-    if (_artifactCacheTransport == null || _disposed) {
-      _releaseStartupArtifactPressure();
-      return;
-    }
-    final uploads = _binding?.pipeline.currentPlan.uploads;
-    DecodeId? current;
-    if (uploads != null) {
-      for (final entry in uploads.entries) {
-        if (entry.value.role == PageRole.current) {
-          current = entry.key;
-          break;
-        }
-      }
-    }
-    if (current == null) {
-      _releaseStartupArtifactPressure();
-      return;
-    }
-    if (_startupOutputReady(current)) {
-      _releaseStartupArtifactPressure();
-      _releaseStartupCurrentDownload();
-      return;
-    }
-    _holdStartupArtifactPressureFor(current.download);
-  }
-
-  void _maybeReleaseStartupCurrentDownload() {
-    final held = _startupCurrentDownload;
-    if (held == null) return;
-    final uploads = _binding?.pipeline.currentPlan.uploads;
-    if (uploads == null) {
-      _releaseStartupCurrentDownload();
-      return;
-    }
-    DecodeId? current;
-    for (final entry in uploads.entries) {
-      if (entry.value.role == PageRole.current) {
-        current = entry.key;
-        break;
-      }
-    }
-    if (current == null || current.download != held) {
-      _releaseStartupCurrentDownload();
-      return;
-    }
-    if (_startupFirstOutputReady(current)) {
-      _releaseStartupCurrentDownload();
-    }
-  }
-
-  void _maybeReleaseStartupArtifactPressure() {
-    final held = _startupArtifactPressureDownload;
-    if (held == null) return;
-    final uploads = _binding?.pipeline.currentPlan.uploads;
-    if (uploads == null) {
-      _releaseStartupArtifactPressure();
-      return;
-    }
-    DecodeId? current;
-    for (final entry in uploads.entries) {
-      if (entry.value.role == PageRole.current) {
-        current = entry.key;
-        break;
-      }
-    }
-    if (current == null || current.download != held) {
-      _syncStartupArtifactPressure();
-      return;
-    }
-    if (_startupOutputReady(current)) {
-      _releaseStartupArtifactPressure();
-      _releaseStartupCurrentDownload();
-    }
-  }
-
-  bool _startupFirstOutputReady(DecodeId id) {
-    final session = _downloads.find(id.download);
-    if (session == null) return false;
-    final download = session.snapshot;
-    if (download.state == DownloadState.failed ||
-        download.state == DownloadState.disposed) {
-      return true;
-    }
-    final upload = _uploads.find(id)?.snapshot;
-    if (upload == null) return false;
-    return upload.state == UploadState.failed ||
-        upload.state == UploadState.disposed ||
-        (upload.state == UploadState.ready && upload.presentClaims > 0);
-  }
-
-  bool _startupOutputReady(DecodeId id) {
-    final session = _downloads.find(id.download);
-    if (session == null) return false;
-    final download = session.snapshot;
-    if (download.state == DownloadState.failed ||
-        download.state == DownloadState.disposed) {
-      return true;
-    }
-    final upload = _uploads.find(id)?.snapshot;
-    if (upload == null) return false;
-    if (upload.state == UploadState.failed ||
-        upload.state == UploadState.disposed) {
-      return true;
-    }
-    if (upload.state != UploadState.ready || upload.presentClaims <= 0) {
-      return false;
-    }
-    final decode = _decodes.find(id)?.snapshot;
-    if (decode == null) return true;
-    final animation = decode.animation;
-    final authoritativeStatic =
-        animation.complete && animation.frameCount <= 1;
-    return authoritativeStatic ||
-        decode.state == DecodeState.ended ||
-        decode.state == DecodeState.failed ||
-        decode.state == DecodeState.disposed ||
-        decode.depth > 4;
-  }
-
-  void _releaseStartupCurrentDownload() {
-    if (_startupCurrentDownload == null) return;
-    _startupCurrentDownload = null;
-    _coordinator.refreshDownloadScheduling(sessionId);
-  }
-
-  void _releaseStartupArtifactPressure() {
-    _startupArtifactPressure?.release();
-    _startupArtifactPressure = null;
-    _startupArtifactPressureDownload = null;
-  }
-
-  int _downloadBucketLimit(DownloadId id) {
-    final stableLimit = _profile.downloadBucketLimit(id);
-    final current = _startupCurrentDownload;
-    if (stableLimit <= 1 || current == null) {
-      return stableLimit;
-    }
-    final currentBucket = _profile.downloadBucket(current);
-    return currentBucket == 'local' && _profile.downloadBucket(id) == 'local'
-        ? 1
-        : stableLimit;
   }
 
   int _artifactReadPriority(DownloadId id) =>
@@ -2981,8 +2797,6 @@ final class PipelineReaderSession {
     for (final id in uploads.toList(growable: false)) {
       _coordinator.advanceDueFrame(sessionId, id);
     }
-    _maybeReleaseStartupCurrentDownload();
-    _maybeReleaseStartupArtifactPressure();
     _ensurePlaybackTicker();
   }
 
@@ -3007,8 +2821,6 @@ final class PipelineReaderSession {
       ),
     );
     _cancelPlaybackWake();
-    _releaseStartupArtifactPressure();
-    _startupCurrentDownload = null;
     final binding = _binding;
     final readerSessionId = _readerSessionId;
     _binding = null;

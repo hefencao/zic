@@ -230,28 +230,27 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
     // them during Home startup used to compete with first raster/cover work.
     // Reader entry already has an asynchronous chapter-preparation window, so
     // overlap the one-time worker startup with that work instead of charging
-    // the first decoded frame. Prewarm remains acceleration-only: if it fails,
-    // the normal decode path retains authority to retry/report the failure.
+    // the first decoded frame. Prewarm remains acceleration-only: chapter
+    // preparation never waits for it, and the normal decode/presentation path
+    // retains authority to join/retry/report the capability if it is still
+    // starting or the speculative warmup fails.
     final mediaPrewarm = prewarmDefaultLocalMediaPipeline();
+    unawaited(
+      mediaPrewarm.catchError((Object error, StackTrace _) {
+        debugPrint('Reader media prewarm unavailable: $error');
+      }),
+    );
 
     final route = MaterialPageRoute<void>(
       builder: (_) => DeferredReaderRoute<_PreparedImportedChapter>(
         title: title,
         traceSink: widget.debugTrace,
         traceSessionId: 'reader-entry',
-        load: () async {
-          final prepared = await _prepareImportedChapter(
-            loadChapter,
-            refreshRemote: refreshRemote,
-            initialPageIndex: initialPageIndex,
-          );
-          try {
-            await mediaPrewarm;
-          } on Object catch (error) {
-            debugPrint('Reader media prewarm unavailable: $error');
-          }
-          return prepared;
-        },
+        load: () => _prepareImportedChapter(
+          loadChapter,
+          refreshRemote: refreshRemote,
+          initialPageIndex: initialPageIndex,
+        ),
         builder: (_, prepared) => this._buildImportedChapterScreen(
           prepared,
           onProgressChanged: onProgressChanged,

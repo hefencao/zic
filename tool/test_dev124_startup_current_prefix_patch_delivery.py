@@ -24,25 +24,25 @@ ownership_test = read("packages/pipeline_runtime/test/media_runtime_ownership_te
 analyzer = read("tool/analyze_frame_pipeline_trace.py")
 delivery = read("docs/AI_ITERATION_PROMPT.md")
 check = read("tool/check.sh")
+adr = read("docs/adr/0108-startup-current-prefix-exact-output-prewarm.md")
 
 for token in (
     "final target = binding.pipeline.decodeTarget",
     "width: size.width",
     "height: size.height",
-    "DownloadId? _startupCurrentDownload",
-    "currentBucket == 'local' && _profile.downloadBucket(id) == 'local'",
-    "? 1",
-    "_startupFirstOutputReady(current)",
-    "upload.state == UploadState.ready && upload.presentClaims > 0",
-    "_coordinator.refreshDownloadScheduling(sessionId)",
-    "_releaseStartupCurrentDownload();",
+    "downloadBucketLimitFor: _profile.downloadBucketLimit",
 ):
-    require(session, token, "Pipeline startup current-source gate")
-require(coordinator, "void refreshDownloadScheduling(String sessionId)", "download scheduling refresh")
-if "download_transfer_owner.dart" in read("packages/sessions/lib/sessions.dart"):
-    require(coordinator, "_downloadTransfer.refreshScheduling();", "composition download scheduling refresh")
-else:
-    require(coordinator, "_ensureDownloadTask(sessionId, entry.key, session)", "Reader-local download scheduling refresh")
+    require(session, token, "Pipeline exact output prewarm / stable bucket boundary")
+for forbidden in (
+    "_startupCurrentDownload",
+    "_startupFirstOutputReady",
+    "_releaseStartupCurrentDownload",
+    "currentBucket == 'local'",
+):
+    if forbidden in session:
+        raise SystemExit(
+            f"first-output presentation state must not rewrite NetLane bucket policy: {forbidden}"
+        )
 for token in (
     "localSourceConcurrency: 2",
     "remoteSourceConcurrency: 5",
@@ -69,6 +69,7 @@ for token in (
 ):
     require(delivery, token, "release delivery rules")
 require(check, "test_dev124_startup_current_prefix_patch_delivery.py", "repository check")
+require(adr, "**状态：Superseded**", "dev.124 startup bucket ADR status")
 
 environment_patch_dir = "../dev124-test-patches"
 resolved = subprocess.check_output(
