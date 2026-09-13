@@ -253,6 +253,11 @@ void main() {
     );
     expect(await service.artifactStore.index.get(currentId.key), isNull);
     expect(sourceCalls, 0);
+    final cached = await service.inspect(entry);
+    expect(cached.completedPages, 1);
+    expect(cached.exactCompletedPages, 0);
+    expect(cached.isComplete, isFalse);
+    expect(cached.isManualDownload, isFalse);
 
     final queue = WholeComicDownloadQueue(downloads: service);
     addTearDown(queue.close);

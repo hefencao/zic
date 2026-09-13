@@ -20,6 +20,67 @@ void main() {
     canonicalUri: Uri.parse('https://example.test/page.webp'),
   );
 
+  test('sqlite maintenance removal is atomic against exact READY and touches',
+      () async {
+    final index = SqliteIndex.memory();
+    await index.open();
+    addTearDown(index.close);
+    final physicalId = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000segment\u000010',
+    );
+    final ready = CacheRec(
+      id: id,
+      state: CacheState.ready,
+      path: '/tmp/maintenance-ready.bin',
+      bytes: 11,
+      checksum: 'abcd',
+      createdUs: 1,
+      touchedUs: 2,
+      artifactId: 'maintenance-ready-object',
+    );
+    await index.put(ready);
+    await index.putPhysicalMediaArtifactBinding(
+      id: physicalId,
+      artifactId: ready.artifactId,
+      createdUs: 3,
+      touchedUs: 4,
+    );
+
+    expect(
+      await index.removePhysicalMediaArtifactBindingForMaintenance(
+        id: physicalId,
+        expectedArtifactId: ready.artifactId,
+        expectedTouchedUs: 4,
+      ),
+      isFalse,
+      reason: 'a surviving exact READY binding protects canonical routing',
+    );
+    expect(await index.getPhysicalMediaArtifact(physicalId), isNotNull);
+
+    await index.remove(id.key);
+    await index.touchPhysicalMediaArtifact(physicalId, 5);
+    expect(
+      await index.removePhysicalMediaArtifactBindingForMaintenance(
+        id: physicalId,
+        expectedArtifactId: ready.artifactId,
+        expectedTouchedUs: 4,
+      ),
+      isFalse,
+      reason: 'an LRU touch after the maintenance snapshot makes it stale',
+    );
+    expect(await index.getPhysicalMediaArtifact(physicalId), isNotNull);
+    expect(
+      await index.removePhysicalMediaArtifactBindingForMaintenance(
+        id: physicalId,
+        expectedArtifactId: ready.artifactId,
+        expectedTouchedUs: 5,
+      ),
+      isTrue,
+    );
+    expect(await index.getPhysicalMediaArtifact(physicalId), isNull);
+    expect(await index.getArtifactObject(ready.artifactId), isNull);
+  });
+
   for (final fixture in <String, CacheIndex Function()>{
     'memory': MemIndex.new,
     'sqlite': SqliteIndex.memory,

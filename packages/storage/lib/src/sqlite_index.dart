@@ -1171,6 +1171,59 @@ final class SqliteIndex
     );
   }
 
+  /// Atomically retires one canonical physical binding only when the exact
+  /// physical generation is unchanged and no exact READY binding still owns
+  /// the same immutable artifact. Maintenance uses this to close the window
+  /// between its LRU snapshot and physical-row deletion without taking a
+  /// process-global lock.
+  Future<bool> removePhysicalMediaArtifactBindingForMaintenance({
+    required PhysicalMediaId id,
+    required String expectedArtifactId,
+    required int expectedTouchedUs,
+  }) async {
+    final normalized = expectedArtifactId.trim();
+    if (normalized.isEmpty) return false;
+    final db = _requireDb();
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      final rows = db.select(
+        'SELECT artifact_id, touched_us FROM physical_media_artifact '
+        'WHERE physical_key = ? LIMIT 1',
+        <Object?>[id.key],
+      );
+      if (rows.isEmpty ||
+          rows.first['artifact_id'] != normalized ||
+          rows.first['touched_us'] != expectedTouchedUs) {
+        db.execute('COMMIT');
+        return false;
+      }
+      final exact = db.select(
+        "SELECT 1 FROM cache_entry WHERE artifact_id = ? AND state = 'ready' LIMIT 1",
+        <Object?>[normalized],
+      );
+      if (exact.isNotEmpty) {
+        db.execute('COMMIT');
+        return false;
+      }
+      db.execute(
+        'DELETE FROM physical_media_artifact '
+        'WHERE physical_key = ? AND artifact_id = ? AND touched_us = ?',
+        <Object?>[id.key, normalized, expectedTouchedUs],
+      );
+      db.execute(
+        'DELETE FROM artifact_object WHERE artifact_id = ? '
+        'AND NOT EXISTS (SELECT 1 FROM cache_entry WHERE artifact_id = ?) '
+        'AND NOT EXISTS (SELECT 1 FROM physical_media_artifact WHERE artifact_id = ?)',
+        <Object?>[normalized, normalized, normalized],
+      );
+      db.execute('COMMIT');
+      return true;
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
   @override
   Future<List<PhysicalMediaArtifactRecord>> listPhysicalMediaArtifacts() async {
     final rows = _requireDb().select('''

@@ -2309,6 +2309,15 @@ final class PersistentDownloadArtifactStore
 
   CacheLayout layoutFor(DownloadId id) => _registry.layoutFor(id);
 
+  bool _isAutomaticCacheFinalRecord(CacheRec record) {
+    if (parseSafRecordPath(record.path) != null) return false;
+    final root = record.storageRootId.trim();
+    final recordLayout = root.isEmpty || root == 'default'
+        ? layoutFor(record.id)
+        : CacheLayout(root);
+    return recordLayout.containsFinalArtifactPath(record.path);
+  }
+
   CacheLayout layoutForSource(String sourceId) =>
       _registry.layoutForSource(sourceId);
 
@@ -2545,35 +2554,42 @@ final class PersistentDownloadArtifactStore
       final candidates = entry.value
         ..sort((left, right) => right.record.bytes.compareTo(left.record.bytes));
       for (final candidate in candidates) {
-        final source = await openPartialDownload(candidate.id);
-        if (source == null || source.length <= 0) continue;
-        // openPartialDownload may legitimately touch the exact row. Capture
-        // the post-open generation so expected-record eviction below rejects
-        // only mutations that race the physical commit, not our own access.
-        final openedRecord = await _index.get(candidate.id.key);
-        if (openedRecord == null ||
-            openedRecord.state != CacheState.partial ||
-            openedRecord.bytes != source.length) {
-          continue;
-        }
-        await storePhysicalPartialDownload(
-          physicalId: entry.key,
-          providerHint: candidate.id,
-          entry: source,
-        );
-        final canonicalArtifact = await _index.getPhysicalMediaArtifact(entry.key);
-        final canonicalPartial = await _index.getPhysicalPartial(entry.key);
-        final safelyCovered = canonicalArtifact != null ||
-            (canonicalPartial != null &&
-                canonicalPartial.bytes >= candidate.record.bytes);
-        if (!safelyCovered) continue;
-
-        // Expected-record eviction prevents a concurrent longer/newer exact
-        // generation from being deleted after we copied an older snapshot.
-        await _evictCacheRecord(candidate.id, expected: openedRecord);
-        if (await _index.get(candidate.id.key) == null) {
-          retiredExactPartials++;
-        }
+        final retired = await _serializeArtifactMutation(candidate.id, () async {
+          // Hold the existing per-exact mutation boundary across source
+          // validation, canonical copy and exact retirement. Without this,
+          // expected-record eviction can avoid deleting a newer row but the
+          // physical copy itself can still observe a moving exact partial.
+          final source = await _openPartialDownload(candidate.id);
+          if (source == null || source.length <= 0) return false;
+          final openedRecord = await _index.get(candidate.id.key);
+          if (openedRecord == null ||
+              openedRecord.state != CacheState.partial ||
+              openedRecord.bytes != source.length) {
+            return false;
+          }
+          await storePhysicalPartialDownload(
+            physicalId: entry.key,
+            providerHint: candidate.id,
+            entry: source,
+          );
+          final canonicalArtifact =
+              await _index.getPhysicalMediaArtifact(entry.key);
+          final canonicalPartial = await _index.getPhysicalPartial(entry.key);
+          final safelyCovered = canonicalArtifact != null ||
+              (canonicalPartial != null &&
+                  canonicalPartial.bytes >= openedRecord.bytes);
+          if (!safelyCovered) return false;
+          final current = await _index.get(candidate.id.key);
+          if (current == null || !_sameIndexedRecord(openedRecord, current)) {
+            return false;
+          }
+          await _invalidateIndexedArtifact(
+            candidate.id,
+            record: openedRecord,
+          );
+          return await _index.get(candidate.id.key) == null;
+        });
+        if (retired) retiredExactPartials++;
       }
     }
     return retiredExactPartials;
@@ -8750,27 +8766,94 @@ final class PersistentDownloadArtifactStore
     return _inspectPersistentArtifactUsage();
   }
 
-  Future<({int evicted, int skippedBusy})> _trimPhysicalPartialsTo(
-    int targetBytes,
-  ) async {
+  Future<bool> _evictPhysicalPartialForMaintenance(
+    PhysicalPartialRecord expected,
+  ) => _serializePhysicalPartialMutation(expected.id, () async {
+        _requireOpen();
+        if (_borrowedPhysicalPartialIds.contains(expected.id)) {
+          throw const Failure(
+            code: ErrorCode.sessionBusy,
+            message: 'physical durable partial is borrowed by the transfer owner',
+          );
+        }
+        final current = await _index.getPhysicalPartial(expected.id);
+        if (current == null || current != expected) return false;
+        await _removePhysicalPartialRecord(current, deleteBody: true);
+        return true;
+      });
+
+  Future<({bool changed, bool released})>
+      _evictPhysicalArtifactForMaintenance(
+    PhysicalMediaArtifactRecord expected,
+  ) => _serializePhysicalArtifactMutation(expected.id, () async {
+        _requireOpen();
+        final current = await _index.getPhysicalMediaArtifact(expected.id);
+        if (current == null || current != expected) {
+          return (changed: false, released: false);
+        }
+        // A surviving exact READY binding (pinned, busy, or created after the
+        // maintenance snapshot) must retain canonical routing metadata. The
+        // SQLite owner rechecks both exact references and the physical LRU
+        // generation in one IMMEDIATE transaction, closing the final
+        // check/delete race without rescanning the whole cache index.
+        final replicas = await _index.listArtifactReplicas(current.artifactId);
+        final removed =
+            await _index.removePhysicalMediaArtifactBindingForMaintenance(
+          id: current.id,
+          expectedArtifactId: current.artifactId,
+          expectedTouchedUs: current.touchedUs,
+        );
+        if (!removed) return (changed: false, released: false);
+        if (await _index.getArtifactObject(current.artifactId) != null) {
+          return (changed: true, released: false);
+        }
+        for (final replica in replicas) {
+          try {
+            await _bytes.delete(replica.accessLocator);
+            await _deleteArtifactSidecar(replica.accessLocator);
+          } on Object {
+            // The durable binding is already retired. Cleanup may be retried.
+          }
+        }
+        return (changed: true, released: true);
+      });
+
+  Future<({int evicted, int skippedBusy, int remainingBytes})>
+      _trimPhysicalPartialsTo(
+    int targetBytes, {
+    required int initialBytes,
+  }) async {
     final values = await _index.listPhysicalPartials()
       ..sort((left, right) => left.touchedUs.compareTo(right.touchedUs));
     var evicted = 0;
     var skippedBusy = 0;
+    var remainingBytes = initialBytes;
     for (final record in values) {
-      if ((await _inspectPersistentArtifactUsage()).bytes <= targetBytes) break;
+      if (remainingBytes <= targetBytes) break;
       if (_borrowedPhysicalPartialIds.contains(record.id)) {
         skippedBusy++;
         continue;
       }
-      final current = await _index.getPhysicalPartial(record.id);
-      if (current == null || current != record) continue;
-      await invalidatePhysicalPartialDownload(record.id);
-      if (await _index.getPhysicalPartial(record.id) == null) {
+      try {
+        final removed = await _evictPhysicalPartialForMaintenance(record);
+        if (!removed) continue;
         evicted++;
+        remainingBytes = (remainingBytes - record.bytes).clamp(0, 1 << 62);
+      } on Failure catch (error) {
+        if (error.code == ErrorCode.sessionBusy ||
+            error.code == ErrorCode.writerBusy) {
+          skippedBusy++;
+          continue;
+        }
+        rethrow;
       }
     }
-    return (evicted: evicted, skippedBusy: skippedBusy);
+    if (evicted > 0) _notifyManagementProjectionChanged();
+    return (
+      evicted: evicted,
+      skippedBusy: skippedBusy,
+      remainingBytes: remainingBytes,
+    );
   }
 
   Future<int> _physicalOnlyArtifactBytes() async {
@@ -8796,29 +8879,25 @@ final class PersistentDownloadArtifactStore
         (sum, record) => sum + record.bytes,
       );
 
-  Future<int> _trimPhysicalArtifactsTo(int targetBytes) async {
+  Future<({int evicted, int remainingBytes})> _trimPhysicalArtifactsTo(
+    int targetBytes, {
+    required int initialBytes,
+  }) async {
     final values = await _index.listPhysicalMediaArtifacts()
       ..sort((left, right) => left.touchedUs.compareTo(right.touchedUs));
     var evicted = 0;
+    var remainingBytes = initialBytes;
+    var changed = false;
     for (final record in values) {
-      if ((await _inspectPersistentArtifactUsage()).bytes <= targetBytes) break;
-      final current = await _index.getPhysicalMediaArtifact(record.id);
-      if (current == null || current.artifactId != record.artifactId) continue;
-      final exactBindings = (await _index.list()).where(
-        (binding) =>
-            binding.state == CacheState.ready &&
-            binding.effectiveArtifactId == current.artifactId,
-      );
-      // Removing only the physical binding cannot release capacity while an
-      // exact READY binding still owns the same immutable object. Leave the
-      // canonical owner intact and let exact cache policy handle that object.
-      if (exactBindings.isNotEmpty) continue;
-      await invalidatePhysicalArtifact(record.id);
-      if (await _index.getArtifactObject(current.artifactId) == null) {
-        evicted++;
-      }
+      if (remainingBytes <= targetBytes) break;
+      final result = await _evictPhysicalArtifactForMaintenance(record);
+      changed = changed || result.changed;
+      if (!result.released) continue;
+      evicted++;
+      remainingBytes = (remainingBytes - record.bytes).clamp(0, 1 << 62);
     }
-    return evicted;
+    if (changed) _notifyManagementProjectionChanged();
+    return (evicted: evicted, remainingBytes: remainingBytes);
   }
 
   @override
@@ -8841,9 +8920,10 @@ final class PersistentDownloadArtifactStore
       );
     }
 
-    // Mutable canonical prefixes are lower-value than completed immutable
-    // bodies, so shed them first before applying the existing exact-cache LRU.
-    final partial = await _trimPhysicalPartialsTo(targetBytes);
+    final partial = await _trimPhysicalPartialsTo(
+      targetBytes,
+      initialBytes: before.bytes,
+    );
     var exactReport = const CacheReport(
       requestedBytes: 0,
       releasedBytes: 0,
@@ -8852,7 +8932,7 @@ final class PersistentDownloadArtifactStore
       skippedProtected: 0,
       remainingBytes: 0,
     );
-    if ((await _inspectPersistentArtifactUsage()).bytes > targetBytes) {
+    if (partial.remainingBytes > targetBytes) {
       final reserved =
           await _physicalOnlyArtifactBytes() + await _physicalPartialBytes();
       final exactMax = maxBytes > reserved ? maxBytes - reserved : 0;
@@ -8862,13 +8942,21 @@ final class PersistentDownloadArtifactStore
         busy: _borrowedPartialIds,
       );
     }
-    final physicalArtifacts = await _trimPhysicalArtifactsTo(targetBytes);
+    // CacheOps reports only exact-index bytes. Reconcile once between phases,
+    // then keep a running physical-byte total instead of rescanning all three
+    // persistent indexes once for every physical artifact candidate.
+    final afterExact = await _inspectPersistentArtifactUsage();
+    final physicalArtifacts = await _trimPhysicalArtifactsTo(
+      targetBytes,
+      initialBytes: afterExact.bytes,
+    );
     final after = await _inspectPersistentArtifactUsage();
     return ArtifactCacheReport(
       beforeBytes: before.bytes,
       releasedBytes: before.bytes - after.bytes,
       remainingBytes: after.bytes,
-      evictedEntries: partial.evicted + exactReport.evicted + physicalArtifacts,
+      evictedEntries:
+          partial.evicted + exactReport.evicted + physicalArtifacts.evicted,
       skippedBusy: partial.skippedBusy + exactReport.skippedBusy,
     );
   }
@@ -8880,43 +8968,42 @@ final class PersistentDownloadArtifactStore
     final exactReport = await _cacheOps.clear(busy: _borrowedPartialIds);
     var physicalPartialEvicted = 0;
     var skippedPhysicalBusy = 0;
+    var changed = false;
     for (final record in await _index.listPhysicalPartials()) {
       if (_borrowedPhysicalPartialIds.contains(record.id)) {
         skippedPhysicalBusy++;
         continue;
       }
-      final current = await _index.getPhysicalPartial(record.id);
-      if (current == null || current != record) continue;
-      await invalidatePhysicalPartialDownload(record.id);
-      if (await _index.getPhysicalPartial(record.id) == null) {
+      try {
+        final removed = await _evictPhysicalPartialForMaintenance(record);
+        if (!removed) continue;
         physicalPartialEvicted++;
+        changed = true;
+      } on Failure catch (error) {
+        if (error.code == ErrorCode.sessionBusy ||
+            error.code == ErrorCode.writerBusy) {
+          skippedPhysicalBusy++;
+          continue;
+        }
+        rethrow;
       }
     }
     var physicalArtifactEvicted = 0;
     for (final record in await _index.listPhysicalMediaArtifacts()) {
-      final current = await _index.getPhysicalMediaArtifact(record.id);
-      if (current == null || current.artifactId != record.artifactId) continue;
-      final exactBindings = (await _index.list()).where(
-        (binding) =>
-            binding.state == CacheState.ready &&
-            binding.effectiveArtifactId == current.artifactId,
-      );
-      // Pinned or busy exact rows survive CacheOps.clear(). Their physical
-      // owner must survive too; dropping only canonical metadata would not
-      // release bytes and would split subsequent version-family routing.
-      if (exactBindings.isNotEmpty) continue;
-      await invalidatePhysicalArtifact(record.id);
-      if (await _index.getArtifactObject(current.artifactId) == null) {
-        physicalArtifactEvicted++;
-      }
+      final result = await _evictPhysicalArtifactForMaintenance(record);
+      changed = changed || result.changed;
+      if (result.released) physicalArtifactEvicted++;
     }
+    if (changed) _notifyManagementProjectionChanged();
     final after = await _inspectPersistentArtifactUsage();
     return ArtifactCacheReport(
       beforeBytes: before.bytes,
       releasedBytes: before.bytes - after.bytes,
       remainingBytes: after.bytes,
       evictedEntries:
-          exactReport.evicted + physicalPartialEvicted + physicalArtifactEvicted,
+          exactReport.evicted +
+          physicalPartialEvicted +
+          physicalArtifactEvicted,
       skippedBusy: exactReport.skippedBusy + skippedPhysicalBusy,
     );
   }
@@ -9992,9 +10079,8 @@ final class PersistentChapterDownloadService
           final active = transferRuntime.findSession(id);
           final isBusy = active != null &&
               (active.activeRun || active.hasWriter);
-          final isAlreadyStructured = record.pinned &&
-              (!record.path.contains('/final/') ||
-                  parseSafRecordPath(record.path) != null);
+          final isAlreadyStructured =
+              record.pinned && !artifactStore._isAutomaticCacheFinalRecord(record);
           if (!isBusy) {
             // Explicit retry revalidates the exact physical locator even for
             // an already-structured page. openArtifactStream performs the
@@ -10937,8 +11023,7 @@ final class PersistentChapterDownloadService
 
         final manualReferenced = exactReady &&
             (exactIndexed.pinned ||
-                (!exactIndexed.path.contains('/final/') ||
-                    parseSafRecordPath(exactIndexed.path) != null));
+                !artifactStore._isAutomaticCacheFinalRecord(exactIndexed));
         final coordinate = projection?.coordinateForPageIndexOrNull(index);
         if (coordinate != null && canonicalBuilder != null) {
           final physicalId = PhysicalMediaId.canonical(coordinate.stableKey);
@@ -11129,8 +11214,7 @@ final class PersistentChapterDownloadService
           exactIndexed != null &&
           artifactStore._isVerifiedReadyRecord(exactIndexed) &&
           (exactIndexed.pinned ||
-              (!exactIndexed.path.contains('/final/') ||
-                  parseSafRecordPath(exactIndexed.path) != null));
+              !artifactStore._isAutomaticCacheFinalRecord(exactIndexed));
       if (isExactPinned) {
         pinnedPages++;
       }

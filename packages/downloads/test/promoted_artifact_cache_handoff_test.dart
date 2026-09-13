@@ -192,6 +192,78 @@ void main() {
     expect((await cache.openPhysicalArtifact(physical))?.length, bytes.length);
   });
 
+  test('canonical bind conflict falls back to exact once per promoted epoch',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-promoted-cache-physical-conflict-',
+    );
+    addTearDown(() => directory.delete(recursive: true));
+    DownloadId idFor(String version) => DownloadId(
+      content: ContentId(
+        sourceId: 'source',
+        comicId: 'version-$version',
+        chapterId: 'chapter-$version',
+        pageId: 'page-$version',
+      ),
+      sourceRevision: 'revision-$version',
+      canonicalUri: Uri.parse('memory://physical-conflict-$version'),
+    );
+    final incumbent = idFor('old');
+    final target = idFor('new');
+    final physical = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000segment\u00009',
+    );
+    final incumbentBytes = Uint8List.fromList(<int>[1, 1, 2, 3]);
+    final targetBytes = Uint8List.fromList(<int>[5, 8, 13, 21]);
+    final backend = _RecordingArtifactStore()
+      ..values[incumbent] = incumbentBytes
+      ..physicalSources[physical] = incumbent;
+    final cache = ArtifactCacheManager(backend: backend);
+    final trace = MemoryTraceSink();
+    final handoff = PromotedArtifactCacheHandoff(
+      cache: cache,
+      clock: const SystemClock(),
+      traceSink: trace,
+    );
+    final registry = DownloadRegistry(
+      layout: CacheLayout(directory.path),
+      clock: const SystemClock(),
+      onSessionCreated: handoff.observe,
+    );
+    addTearDown(() async {
+      handoff.detach();
+      await registry.dispose();
+    });
+    registry.bindPhysicalMedia(id: target, physicalId: physical);
+    final session = registry.get(target);
+    final transport = LoaderTransport(<Uri, LoaderTransportSource>{
+      target.canonicalUri: LoaderTransportSource(
+        revision: 'fixture-new',
+        loadBytes: () async => targetBytes,
+      ),
+    });
+
+    await DownloadJob(transport: transport, session: session).run();
+    await handoff.drain(<DownloadSession>[session]);
+
+    expect(backend.values[target], targetBytes);
+    expect(backend.physicalSources[physical], incumbent);
+    expect(backend.physicalBindCalls, 1);
+    expect(await handoff.settleAutomatic(session), isTrue);
+    expect(backend.physicalBindCalls, 1,
+        reason: 'one canonical conflict must not resubmit the same epoch');
+    expect(
+      trace.events.any(
+        (event) =>
+            event.kind == TraceEventKind.artifactSource &&
+            event.payload['action'] ==
+                'canonical-bind-unavailable-exact-fallback' &&
+            event.payload['physicalMediaKey'] == physical.key,
+      ),
+      isTrue,
+    );
+  });
+
   test('a new physical epoch receives a fresh automatic handoff', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-promoted-cache-handoff-epoch-',
@@ -559,6 +631,7 @@ final class _RecordingArtifactStore
   final Map<DownloadId, Uint8List> values = <DownloadId, Uint8List>{};
   final Map<PhysicalMediaId, DownloadId> physicalSources =
       <PhysicalMediaId, DownloadId>{};
+  int physicalBindCalls = 0;
 
   @override
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {
@@ -583,6 +656,7 @@ final class _RecordingArtifactStore
     required PhysicalMediaId physicalId,
     required DownloadId sourceId,
   }) async {
+    physicalBindCalls++;
     if (!values.containsKey(sourceId)) return false;
     final existing = physicalSources[physicalId];
     if (existing != null) return existing == sourceId;

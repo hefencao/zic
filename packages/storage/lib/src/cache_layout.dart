@@ -14,6 +14,16 @@ final class CacheLayout {
   String get finalDir => '${Directory(root).path}${Platform.pathSeparator}final';
   String get dbPath => '${Directory(root).path}${Platform.pathSeparator}cache.sqlite';
 
+  /// Whether [path] is one of this cache root's deterministic immutable
+  /// final-artifact locators. Shared logical bindings may point at another
+  /// DownloadId's file, so callers should test the storage-root directory
+  /// contract rather than reconstructing one exact token.
+  bool containsFinalArtifactPath(String path) {
+    if (path.trim().isEmpty) return false;
+    final parent = File(path).absolute.parent.path;
+    return parent == Directory(finalDir).absolute.path;
+  }
+
   Artifact artifactFor(DownloadId id) => _artifactForToken(tokenFor(id));
 
   Artifact artifactForPhysical(PhysicalMediaId id) =>

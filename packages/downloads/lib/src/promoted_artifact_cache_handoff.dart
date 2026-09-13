@@ -247,16 +247,34 @@ final class PromotedArtifactCacheHandoff {
       sourceId = reusable!.storageId;
       durable = reusable;
     }
+    final startedAtMicros = clock?.nowMicros();
     final bound = await cache.bindPhysicalArtifact(
       physicalId: physicalId,
       sourceId: sourceId,
     );
     if (!bound) {
-      throw StateError(
-        'canonical physical media ${physicalId.key} conflicts with durable '
-        'artifact authority for ${sourceId.key}',
+      // The exact durable commit above is already a complete storage result.
+      // Canonical binding is an additional version-family routing fact; a
+      // conflicting/stale physical row must not turn the promoted epoch into
+      // an endlessly retryable cache handoff. Preserve both durable facts,
+      // fall back to exact routing for this epoch, and let the control-plane
+      // backfill/reconciliation path repair canonical ownership later.
+      _recordCanonicalBind(
+        session,
+        sourceId: sourceId,
+        physicalId: physicalId,
+        action: 'canonical-bind-unavailable-exact-fallback',
+        startedAtMicros: startedAtMicros,
       );
+      return;
     }
+    _recordCanonicalBind(
+      session,
+      sourceId: sourceId,
+      physicalId: physicalId,
+      action: 'canonical-bound',
+      startedAtMicros: startedAtMicros,
+    );
   }
 
   Future<void> _commitTarget(
@@ -568,6 +586,35 @@ final class PromotedArtifactCacheHandoff {
           : 'stored-required-exact-alias',
       bytes: bytes.lengthInBytes,
       startedAtMicros: startedAtMicros,
+    );
+  }
+
+  void _recordCanonicalBind(
+    DownloadSession session, {
+    required DownloadId sourceId,
+    required PhysicalMediaId physicalId,
+    required String action,
+    required int? startedAtMicros,
+  }) {
+    final sourceClock = clock;
+    if (sourceClock == null) return;
+    traceSink.record(
+      traceEvent(
+        clock: sourceClock,
+        sessionId: sessionId,
+        kind: TraceEventKind.artifactSource,
+        identityHash: sourceId.key,
+        payload: <String, Object?>{
+          'source': 'session-artifact-handoff',
+          'consumer': 'canonical-physical-binding',
+          'action': action,
+          'physicalMediaKey': physicalId.key,
+          if (startedAtMicros != null)
+            'handoffMicros': (sourceClock.nowMicros() - startedAtMicros)
+                .clamp(0, 1 << 62)
+                .toInt(),
+        },
+      ),
     );
   }
 
