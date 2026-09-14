@@ -28,6 +28,8 @@ final class ArtifactCacheManager {
   final int equivalenceResolverMaxEntries;
   final LinkedHashMap<_ArtifactByteKey, Uint8List> _memory =
       LinkedHashMap<_ArtifactByteKey, Uint8List>();
+  final LinkedHashMap<Object, Uint8List> _residentReplayPrefixes =
+      LinkedHashMap<Object, Uint8List>();
   final Map<_ArtifactByteKey, _InFlightArtifactRead> _inFlight =
       <_ArtifactByteKey, _InFlightArtifactRead>{};
   final Map<DownloadId, int> _mutationGenerations = <DownloadId, int>{};
@@ -52,9 +54,12 @@ final class ArtifactCacheManager {
   final Set<int> _armedFreshSourceRecoveryGroups = <int>{};
   int _freshSourceRecoverySequence = 0;
   int _memoryBytes = 0;
+  int _residentReplayPrefixBytes = 0;
 
   int get memoryEntryCount => _memory.length;
   int get memoryBytes => _memoryBytes;
+  int get residentReplayPrefixEntryCount => _residentReplayPrefixes.length;
+  int get residentReplayPrefixBytes => _residentReplayPrefixBytes;
   int get equivalenceCount => _equivalenceOrder.length;
   int get equivalenceResolverCount => _equivalenceResolvers.length;
   bool hasEquivalentResolver(String key) => _equivalenceResolvers.containsKey(key);
@@ -199,6 +204,42 @@ final class ArtifactCacheManager {
   Uint8List? lookupMemory(DownloadId id, {int? length}) =>
       lookupMemoryWithAuthority(id, length: length)?.bytes;
 
+  /// Returns a previously observed immutable resident-body bootstrap prefix.
+  ///
+  /// The opaque token is owned by the concrete physical resident generation,
+  /// so these bytes are only an acceleration of an authority the caller
+  /// already holds. They never participate in artifact lookup, equivalence,
+  /// durability, or mutation decisions.
+  Uint8List? lookupResidentReplayPrefix(
+    Object generationToken, {
+    required int endExclusive,
+  }) {
+    if (endExclusive <= 0) return null;
+    final bytes = _residentReplayPrefixes.remove(generationToken);
+    if (bytes == null) return null;
+    _residentReplayPrefixes[generationToken] = bytes;
+    if (bytes.lengthInBytes < endExclusive) return null;
+    return Uint8List.sublistView(bytes, 0, endExclusive).asUnmodifiableView();
+  }
+
+  /// Remembers only a generation-scoped replay prefix. This is deliberately
+  /// separate from the full immutable-artifact memory tier: a prefix must
+  /// never be mistaken for a complete cache hit or storage proof.
+  void rememberResidentReplayPrefix({
+    required Object generationToken,
+    required Uint8List bytes,
+  }) {
+    if (bytes.isEmpty || bytes.lengthInBytes > memoryMaxBytes) return;
+    final owned = bytes.asUnmodifiableView();
+    final previous = _residentReplayPrefixes.remove(generationToken);
+    if (previous != null) {
+      _residentReplayPrefixBytes -= previous.lengthInBytes;
+    }
+    _residentReplayPrefixes[generationToken] = owned;
+    _residentReplayPrefixBytes += owned.lengthInBytes;
+    _trimMemoryBudget();
+  }
+
   ArtifactCacheMemoryRead? lookupMemoryWithAuthority(
     DownloadId id, {
     int? length,
@@ -273,6 +314,20 @@ final class ArtifactCacheManager {
     return (physicalBackend as PhysicalArtifactCacheBackend)
         .openPhysicalArtifact(id);
   }
+
+  Future<ArtifactCacheStreamEntry?> openPhysicalArtifactForBoundReplay(
+    PhysicalMediaId id,
+  ) {
+    final physicalBackend = backend;
+    if (physicalBackend is PhysicalArtifactBoundReplayBackend) {
+      return (physicalBackend as PhysicalArtifactBoundReplayBackend)
+          .openPhysicalArtifactForBoundReplay(id);
+    }
+    return openPhysicalArtifact(id);
+  }
+
+  bool get supportsPhysicalArtifactBoundReplay =>
+      backend is PhysicalArtifactBoundReplayBackend;
 
   Future<bool> bindPhysicalArtifact({
     required PhysicalMediaId physicalId,
@@ -729,10 +784,38 @@ final class ArtifactCacheManager {
     _memory[key] = ownedBytes;
     if (durable) _durableMemory.add(key);
     _memoryBytes += ownedBytes.lengthInBytes;
-    while (_memory.length > memoryMaxEntries || _memoryBytes > memoryMaxBytes) {
+    _trimMemoryBudget();
+  }
+
+  void _trimMemoryBudget() {
+    while (_residentReplayPrefixes.length > memoryMaxEntries) {
+      _removeOldestResidentReplayPrefix();
+    }
+    while (_memory.length > memoryMaxEntries) {
       final oldest = _memory.keys.first;
       _durableMemory.remove(oldest);
       _memoryBytes -= _memory.remove(oldest)!.lengthInBytes;
+    }
+    while (_memoryBytes + _residentReplayPrefixBytes > memoryMaxBytes) {
+      // A small replay prefix is only a latency accelerator; full immutable
+      // artifact bytes remain the more valuable central cache entry.
+      if (_residentReplayPrefixes.isNotEmpty) {
+        _removeOldestResidentReplayPrefix();
+        continue;
+      }
+      if (_memory.isEmpty) break;
+      final oldest = _memory.keys.first;
+      _durableMemory.remove(oldest);
+      _memoryBytes -= _memory.remove(oldest)!.lengthInBytes;
+    }
+  }
+
+  void _removeOldestResidentReplayPrefix() {
+    if (_residentReplayPrefixes.isEmpty) return;
+    final oldest = _residentReplayPrefixes.keys.first;
+    final removed = _residentReplayPrefixes.remove(oldest);
+    if (removed != null) {
+      _residentReplayPrefixBytes -= removed.lengthInBytes;
     }
   }
 
@@ -798,10 +881,12 @@ final class ArtifactCacheManager {
     }
     _memory.clear();
     _durableMemory.clear();
+    _residentReplayPrefixes.clear();
     _equivalents.clear();
     _equivalenceOrder.clear();
     _equivalenceResolvers.clear();
     _memoryBytes = 0;
+    _residentReplayPrefixBytes = 0;
   }
 
   Future<ArtifactCacheRead> _readJoined({

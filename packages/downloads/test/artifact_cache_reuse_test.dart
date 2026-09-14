@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
+import 'package:storage/storage.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -268,6 +269,361 @@ void main() {
     },
   );
 
+  test(
+    'physical READY binding retires an older physical partial',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-physical-ready-retires-partial-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final store = await PersistentDownloadArtifactStore.open(root.path);
+      addTearDown(store.close);
+      final cache = ArtifactCacheManager(backend: store);
+      final chapter = _chapter(
+        comicId: 'physical-ready-retires-partial',
+        revision: 'a',
+        urls: const <String>['https://e-hentai.org/s/abababababababab/1-1'],
+      );
+      final exact = readerPageDownloadId(chapter, chapter.pages.single);
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000041',
+      );
+      final bytes = Uint8List.fromList(<int>[
+        0x52, 0x49, 0x46, 0x46, 0x08, 0, 0, 0,
+        0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+      ]);
+
+      await store.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: exact,
+        preferDirectStaging: true,
+        entry: PartialDownloadEntry(
+          length: bytes.lengthInBytes,
+          totalLength: bytes.lengthInBytes * 2,
+          validators: const Validators(),
+          open: ({required int start}) =>
+              Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+        ),
+      );
+      final partialIndex = store.index as PhysicalPartialIndex;
+      final oldPartial = await partialIndex.getPhysicalPartial(physical);
+      expect(oldPartial, isNotNull);
+      expect(await File(oldPartial!.path).exists(), isTrue);
+
+      await cache.storePromotedArtifact(id: exact, bytes: bytes);
+      expect(
+        await cache.bindPhysicalArtifact(
+          physicalId: physical,
+          sourceId: exact,
+        ),
+        isTrue,
+      );
+
+      for (var attempt = 0; attempt < 100; attempt++) {
+        if (await partialIndex.getPhysicalPartial(physical) == null) break;
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      expect(await partialIndex.getPhysicalPartial(physical), isNull);
+      expect(await File(oldPartial.path).exists(), isFalse);
+      expect(await cache.openPhysicalArtifact(physical), isNotNull);
+    },
+  );
+
+  test(
+    'opening physical READY retires a historical stale partial row',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-physical-ready-stale-partial-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final store = await PersistentDownloadArtifactStore.open(root.path);
+      addTearDown(store.close);
+      final cache = ArtifactCacheManager(backend: store);
+      final chapter = _chapter(
+        comicId: 'physical-ready-stale-partial',
+        revision: 'a',
+        urls: const <String>['https://e-hentai.org/s/cdcdcdcdcdcdcdcd/1-1'],
+      );
+      final exact = readerPageDownloadId(chapter, chapter.pages.single);
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000042',
+      );
+      final bytes = Uint8List.fromList(<int>[
+        0x52, 0x49, 0x46, 0x46, 0x08, 0, 0, 0,
+        0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+      ]);
+
+      await cache.storePromotedArtifact(id: exact, bytes: bytes);
+      expect(
+        await cache.bindPhysicalArtifact(
+          physicalId: physical,
+          sourceId: exact,
+        ),
+        isTrue,
+      );
+      final exactRecord = await store.index.get(exact.key);
+      expect(exactRecord, isNotNull);
+      final staleArtifact = store.layout.artifactForPhysical(physical);
+      await File(staleArtifact.partialPath).parent.create(recursive: true);
+      await File(staleArtifact.partialPath).writeAsBytes(bytes);
+      final partialIndex = store.index as PhysicalPartialIndex;
+      await partialIndex.putPhysicalPartial(
+        PhysicalPartialRecord(
+          id: physical,
+          path: staleArtifact.partialPath,
+          bytes: bytes.lengthInBytes,
+          checksum: exactRecord!.checksum,
+          createdUs: 1,
+          touchedUs: 2,
+          storageRootId: store.layout.root,
+        ),
+      );
+
+      final ready = await cache.openPhysicalArtifact(physical);
+      expect(ready, isNotNull);
+      expect(await ready!.readAll!(), bytes);
+      for (var attempt = 0; attempt < 100; attempt++) {
+        if (await partialIndex.getPhysicalPartial(physical) == null) break;
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      expect(await partialIndex.getPhysicalPartial(physical), isNull);
+      expect(await File(staleArtifact.partialPath).exists(), isFalse);
+      expect(await cache.openPhysicalArtifact(physical), isNotNull);
+    },
+  );
+
+  test(
+    'physical partial read defers READY overlap cleanup to persistent maintenance',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-ready-partial-read-defers-cleanup-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final readScheduler = ArtifactCacheReadScheduler();
+      final writeScheduler = StorageWriteScheduler(
+        localReadScheduler: readScheduler,
+      );
+      final store = await PersistentDownloadArtifactStore.open(
+        root.path,
+        storageWriteScheduler: writeScheduler,
+      );
+      addTearDown(store.close);
+      final cache = ArtifactCacheManager(backend: store);
+      final chapter = _chapter(
+        comicId: 'ready-partial-read-defers-cleanup',
+        revision: 'a',
+        urls: const <String>['https://e-hentai.org/s/fefefefefefefefe/1-1'],
+      );
+      final exact = readerPageDownloadId(chapter, chapter.pages.single);
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000045',
+      );
+      final bytes = Uint8List.fromList(<int>[
+        0x52, 0x49, 0x46, 0x46, 0x08, 0, 0, 0,
+        0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+      ]);
+
+      await cache.storePromotedArtifact(id: exact, bytes: bytes);
+      final exactRecord = await store.index.get(exact.key);
+      expect(exactRecord, isNotNull);
+      final artifactIndex = store.index as PhysicalMediaArtifactIndex;
+      await artifactIndex.putPhysicalMediaArtifactBinding(
+        id: physical,
+        artifactId: exactRecord!.effectiveArtifactId,
+        createdUs: 1,
+        touchedUs: 1,
+      );
+
+      final stale = store.layout.artifactForPhysical(physical);
+      await File(stale.partialPath).parent.create(recursive: true);
+      await File(stale.partialPath).writeAsBytes(bytes);
+      final partialIndex = store.index as PhysicalPartialIndex;
+      await partialIndex.putPhysicalPartial(
+        PhysicalPartialRecord(
+          id: physical,
+          path: stale.partialPath,
+          bytes: bytes.lengthInBytes,
+          checksum: exactRecord.checksum,
+          createdUs: 1,
+          touchedUs: 2,
+          storageRootId: store.layout.root,
+        ),
+      );
+      final blocker = await writeScheduler.acquireQuantum();
+
+      final opened = await store.openPhysicalPartialDownload(
+        physicalId: physical,
+        requestId: exact,
+      );
+      expect(opened, isNull);
+      await Future<void>.delayed(Duration.zero);
+      expect(await partialIndex.getPhysicalPartial(physical), isNotNull);
+      expect(await File(stale.partialPath).exists(), isTrue);
+      expect(writeScheduler.pendingCount, 1,
+          reason: 'read path must delegate cleanup through storage maintenance');
+
+      blocker.release();
+      for (var attempt = 0; attempt < 100; attempt++) {
+        if (await partialIndex.getPhysicalPartial(physical) == null) break;
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      expect(await partialIndex.getPhysicalPartial(physical), isNull);
+      expect(await File(stale.partialPath).exists(), isFalse);
+      expect(await cache.openPhysicalArtifact(physical), isNotNull);
+    },
+  );
+
+  test(
+    'cold store open sweeps historical READY plus physical-partial overlap',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-physical-ready-cold-overlap-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final store = await PersistentDownloadArtifactStore.open(root.path);
+      final cache = ArtifactCacheManager(backend: store);
+      final chapter = _chapter(
+        comicId: 'physical-ready-cold-overlap',
+        revision: 'a',
+        urls: const <String>['https://e-hentai.org/s/efefefefefefefef/1-1'],
+      );
+      final exact = readerPageDownloadId(chapter, chapter.pages.single);
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000043',
+      );
+      final bytes = Uint8List.fromList(<int>[
+        0x52, 0x49, 0x46, 0x46, 0x08, 0, 0, 0,
+        0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+      ]);
+
+      await cache.storePromotedArtifact(id: exact, bytes: bytes);
+      expect(
+        await cache.bindPhysicalArtifact(
+          physicalId: physical,
+          sourceId: exact,
+        ),
+        isTrue,
+      );
+      final exactRecord = await store.index.get(exact.key);
+      expect(exactRecord, isNotNull);
+      final dbPath = store.layout.dbPath;
+      final staleArtifact = store.layout.artifactForPhysical(physical);
+      await store.close();
+
+      await File(staleArtifact.partialPath).parent.create(recursive: true);
+      await File(staleArtifact.partialPath).writeAsBytes(bytes);
+      final seeded = SqliteIndex(dbPath);
+      await seeded.open();
+      await seeded.putPhysicalPartial(
+        PhysicalPartialRecord(
+          id: physical,
+          path: staleArtifact.partialPath,
+          bytes: bytes.lengthInBytes,
+          checksum: exactRecord!.checksum,
+          createdUs: 1,
+          touchedUs: 2,
+          storageRootId: root.path,
+        ),
+      );
+      expect(await seeded.getPhysicalMediaArtifact(physical), isNotNull);
+      await seeded.close();
+
+      final reopened = await PersistentDownloadArtifactStore.open(root.path);
+      addTearDown(reopened.close);
+      final partialIndex = reopened.index as PhysicalPartialIndex;
+      for (var attempt = 0; attempt < 100; attempt++) {
+        if (await partialIndex.getPhysicalPartial(physical) == null) break;
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      expect(await partialIndex.getPhysicalPartial(physical), isNull);
+      expect(await File(staleArtifact.partialPath).exists(), isFalse);
+      expect(
+        await (reopened.index as PhysicalMediaArtifactIndex)
+            .getPhysicalMediaArtifact(physical),
+        isNotNull,
+      );
+    },
+  );
+
+  test(
+    'READY dominates same-key physical partial in usage trim and clear',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-ready-dominates-partial-maintenance-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final store = await PersistentDownloadArtifactStore.open(root.path);
+      addTearDown(store.close);
+      final cache = ArtifactCacheManager(backend: store);
+      final chapter = _chapter(
+        comicId: 'ready-dominates-partial-maintenance',
+        revision: 'a',
+        urls: const <String>['https://e-hentai.org/s/edededededededed/1-1'],
+      );
+      final exact = readerPageDownloadId(chapter, chapter.pages.single);
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000044',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(64, (index) => index),
+      );
+
+      await cache.storePromotedArtifact(id: exact, bytes: bytes);
+      expect(
+        await cache.bindPhysicalArtifact(
+          physicalId: physical,
+          sourceId: exact,
+        ),
+        isTrue,
+      );
+      final baseline = await store.inspectArtifacts();
+      expect(baseline.bytes, bytes.lengthInBytes);
+      expect(baseline.entries, 2);
+
+      final exactRecord = await store.index.get(exact.key);
+      expect(exactRecord, isNotNull);
+      final stale = store.layout.artifactForPhysical(physical);
+      await File(stale.partialPath).parent.create(recursive: true);
+      await File(stale.partialPath).writeAsBytes(bytes);
+      final partialIndex = store.index as PhysicalPartialIndex;
+      await partialIndex.putPhysicalPartial(
+        PhysicalPartialRecord(
+          id: physical,
+          path: stale.partialPath,
+          bytes: bytes.lengthInBytes,
+          checksum: exactRecord!.checksum,
+          createdUs: 1,
+          touchedUs: 2,
+          storageRootId: store.layout.root,
+        ),
+      );
+
+      final overlapped = await store.inspectArtifacts();
+      expect(overlapped.bytes, baseline.bytes);
+      expect(overlapped.entries, baseline.entries);
+
+      final trim = await store.trimArtifacts(
+        maxBytes: baseline.bytes,
+        targetBytes: 0,
+      );
+      expect(trim.beforeBytes, baseline.bytes);
+      expect(trim.releasedBytes, 0);
+      expect(trim.evictedEntries, 0);
+      expect(await partialIndex.getPhysicalPartial(physical), isNotNull);
+      expect(await File(stale.partialPath).exists(), isTrue);
+      expect(await cache.openPhysicalArtifact(physical), isNotNull);
+
+      final clear = await store.clearArtifacts();
+      expect(clear.beforeBytes, baseline.bytes);
+      expect(clear.releasedBytes, baseline.bytes);
+      expect(clear.remainingBytes, 0);
+      expect(clear.evictedEntries, 1);
+      expect(await partialIndex.getPhysicalPartial(physical), isNull);
+      expect(await File(stale.partialPath).exists(), isFalse);
+      expect(await cache.openPhysicalArtifact(physical), isNull);
+    },
+  );
+
   test('physical-only immutable artifact participates in cache clear',
       () async {
     final root = await Directory.systemTemp.createTemp(
@@ -308,6 +664,71 @@ void main() {
     expect(report.remainingBytes, 0);
     expect(report.evictedEntries, 1);
     expect(await cache.openPhysicalArtifact(physical), isNull);
+  });
+
+  test('physical clear persists cleanup debt when replica delete fails',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-physical-artifact-cleanup-debt-',
+    );
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final failingBytes = _FailDeleteOnceArtifactBytes();
+    final store = await PersistentDownloadArtifactStore.open(
+      root.path,
+      bytes: failingBytes,
+    );
+    final cache = ArtifactCacheManager(backend: store);
+    final chapter = _chapter(
+      comicId: 'physical-maintenance-cleanup-debt',
+      revision: 'a',
+      urls: const <String>['https://e-hentai.org/s/dddddddddddddddd/1-1'],
+    );
+    final exact = readerPageDownloadId(chapter, chapter.pages.single);
+    final physical = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000segment\u000040',
+    );
+    final bytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x08, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 0x56, 0x50, 0x38, 0x20,
+    ]);
+    await cache.storePromotedArtifact(id: exact, bytes: bytes);
+    final exactRecord = await store.index.get(exact.key);
+    expect(exactRecord, isNotNull);
+    final oldBody = File(exactRecord!.path);
+    expect(
+      await cache.bindPhysicalArtifact(
+        physicalId: physical,
+        sourceId: exact,
+      ),
+      isTrue,
+    );
+    await store.index.remove(exact.key);
+    failingBytes.failDeletePath = oldBody.path;
+
+    final report = await store.clearArtifacts();
+    expect(report.releasedBytes, bytes.lengthInBytes);
+    expect(report.remainingBytes, 0);
+    expect(await cache.openPhysicalArtifact(physical), isNull);
+    expect(await oldBody.exists(), isTrue,
+        reason: 'failed post-retirement unlink must be durable cleanup debt');
+    final debtIndex = SqliteIndex(store.layout.dbPath);
+    await debtIndex.open();
+    final debt = (await debtIndex.listStorageCleanupDebts()).single;
+    expect(debt.kind, StorageCleanupDebtKind.obsoleteSealedSource);
+    expect(debt.accessLocator, oldBody.path);
+    expect(debt.expectedBytes, bytes.lengthInBytes);
+    await debtIndex.close();
+    await store.close();
+
+    final reopened = await PersistentDownloadArtifactStore.open(root.path);
+    await reopened.close();
+    expect(await oldBody.exists(), isFalse);
+    final checked = SqliteIndex(store.layout.dbPath);
+    await checked.open();
+    expect(await checked.listStorageCleanupDebts(), isEmpty);
+    await checked.close();
   });
 
   test('physical-only immutable artifact participates in capacity trim',
@@ -1501,6 +1922,35 @@ final class _RecordingArtifactBytes implements ArtifactBytes {
 
   @override
   Future<void> delete(String path) => _delegate.delete(path);
+}
+
+final class _FailDeleteOnceArtifactBytes implements ArtifactBytes {
+  final ArtifactBytes _delegate = const LocalArtifactBytes();
+  String? failDeletePath;
+  bool _failed = false;
+
+  @override
+  Future<bool> exists(String path) => _delegate.exists(path);
+
+  @override
+  Future<int> length(String path) => _delegate.length(path);
+
+  @override
+  Stream<Uint8List> readChunks(
+    String path, {
+    required int start,
+    int? endExclusive,
+  }) =>
+      _delegate.readChunks(path, start: start, endExclusive: endExclusive);
+
+  @override
+  Future<void> delete(String path) async {
+    if (!_failed && path == failDeletePath) {
+      _failed = true;
+      throw FileSystemException('simulated physical cleanup failure', path);
+    }
+    await _delegate.delete(path);
+  }
 }
 
 final class _Backend implements ArtifactCacheBackend {

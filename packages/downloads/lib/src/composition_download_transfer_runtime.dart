@@ -59,7 +59,11 @@ final class CompositionDownloadTransferRuntime {
       partialDownloadHandoff = PartialDownloadHandoff(
         store: partialStore,
         equivalentCandidates: _verifiedEquivalentCandidates,
-        onError: (error, stackTrace) {},
+        onError: (error, stackTrace) => _recordHandoffError(
+          'partial-download-handoff',
+          error,
+          stackTrace,
+        ),
         clock: clock,
         readScheduler: localReadScheduler,
         physicalArtifactCache: cache,
@@ -70,7 +74,11 @@ final class CompositionDownloadTransferRuntime {
     if (cache != null) {
       artifactCacheHandoff = PromotedArtifactCacheHandoff(
         cache: cache,
-        onError: (error, stackTrace) {},
+        onError: (error, stackTrace) => _recordHandoffError(
+          'promoted-artifact-handoff',
+          error,
+          stackTrace,
+        ),
         clock: clock,
         traceSink: traceHub,
         sessionId: 'composition-transfer-owner',
@@ -98,11 +106,13 @@ final class CompositionDownloadTransferRuntime {
     owner = DownloadTransferOwner(
       registry: registry,
       clock: clock,
-      prepareDownload: partialDownloadHandoff?.restoreInto,
+      prepareDownload: partialDownloadHandoff == null
+          ? null
+          : (session) => _restoreLocalSingleFlight(session),
       prepareDownloadWithControl: partialDownloadHandoff == null
           ? null
           : (session, {required control}) =>
-              partialDownloadHandoff!.restoreInto(
+              _restoreLocalSingleFlight(
                 session,
                 control: control,
               ),
@@ -140,6 +150,25 @@ final class CompositionDownloadTransferRuntime {
   final int maxIdlePartialBytes;
   final MonoClock clock;
   final _CompositionTransferTraceHub traceHub;
+
+  void _recordHandoffError(
+    String stage,
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    traceHub.record(
+      traceEvent(
+        clock: clock,
+        sessionId: 'composition-transfer-owner',
+        kind: TraceEventKind.taskFailed,
+        payload: <String, Object?>{
+          'stage': stage,
+          'error': '$error',
+          'stackTrace': '$stackTrace',
+        },
+      ),
+    );
+  }
   final EphemeralCacheWorkspace workspace;
   PromotedArtifactCacheHandoff? artifactCacheHandoff;
   PartialDownloadHandoff? partialDownloadHandoff;
@@ -150,6 +179,9 @@ final class CompositionDownloadTransferRuntime {
       <DownloadId, PhysicalMediaId>{};
   final Map<DownloadId, String> _lastTracedCanonicalMediaConflict =
       <DownloadId, String>{};
+  final Map<DownloadSession, ({SourceEpoch epoch, Future<void> future})>
+      _localRestoreFlights =
+      <DownloadSession, ({SourceEpoch epoch, Future<void> future})>{};
   final Map<DownloadId, SourceEpoch?> _preservedPinnedReloadEpochs =
       <DownloadId, SourceEpoch?>{};
   final Map<String, Map<String, CanonicalMediaChapterAuthority>>
@@ -279,6 +311,90 @@ final class CompositionDownloadTransferRuntime {
   /// exact; version relations only supply verified candidates.
   DownloadSession sessionFor(DownloadId logicalId) =>
       registry.get(_resolveTransferIdForAcquire(logicalId));
+
+  Future<void> _restoreLocalSingleFlight(
+    DownloadSession session, {
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
+    final handoff = partialDownloadHandoff;
+    if (handoff == null || _disposed) return;
+    final epoch = session.epoch;
+    final existing = _localRestoreFlights[session];
+    if (existing != null && existing.epoch == epoch) {
+      await existing.future;
+      control?.throwIfCancelled();
+      return;
+    }
+
+    late final Future<void> tracked;
+    tracked = handoff.restoreInto(session, control: control).whenComplete(() {
+      final current = _localRestoreFlights[session];
+      if (current != null && identical(current.future, tracked)) {
+        _localRestoreFlights.remove(session);
+      }
+    });
+    _localRestoreFlights[session] = (epoch: epoch, future: tracked);
+    await tracked;
+    control?.throwIfCancelled();
+  }
+
+  /// Starts only the durable/local authority phase for one exact Reader page.
+  ///
+  /// This never creates network admission or source demand. If the Reader
+  /// attaches while the operation is in flight, the owner's normal local
+  /// preparation joins the same session+epoch future. A miss simply leaves the
+  /// session empty so authoritative demand can choose the normal provider path.
+  Future<bool> prewarmLocalArtifact(DownloadId logicalId) async {
+    if (_disposed || partialDownloadHandoff == null) return false;
+    final startedAtMicros = clock.nowMicros();
+    final session = sessionFor(logicalId);
+    if (session.state == DownloadState.disposed) return false;
+    try {
+      if (session.state != DownloadState.promoted &&
+          session.committedLength == 0) {
+        await _restoreLocalSingleFlight(session);
+      }
+      final ready = session.state == DownloadState.promoted ||
+          session.committedLength > 0;
+      traceHub.record(
+        traceEvent(
+          clock: clock,
+          sessionId: 'composition-transfer-owner',
+          kind: TraceEventKind.artifactSource,
+          identityHash: logicalId.key,
+          payload: <String, Object?>{
+            'stage': 'local-authority-prewarm',
+            'ready': ready,
+            'state': session.state.name,
+            'committedLength': session.committedLength,
+            'physicalMediaKind': session.physicalId.kind.name,
+            'physicalMediaKey': session.physicalId.key,
+            'prewarmMicros':
+                (clock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
+          },
+        ),
+      );
+      return ready;
+    } on Object catch (error) {
+      traceHub.record(
+        traceEvent(
+          clock: clock,
+          sessionId: 'composition-transfer-owner',
+          kind: TraceEventKind.artifactSource,
+          identityHash: logicalId.key,
+          payload: <String, Object?>{
+            'stage': 'local-authority-prewarm',
+            'ready': false,
+            'error': '$error',
+            'prewarmMicros':
+                (clock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
+          },
+        ),
+      );
+      return false;
+    }
+  }
 
   /// Read-only logical-session lookup using the same physical-candidate set as
   /// acquire, without creating a new alias or session.
@@ -720,6 +836,12 @@ final class CompositionDownloadTransferRuntime {
               return physical > 0 ? physical : priorityFor(session.id);
             }
 
+            final initialReplayCreditBytes =
+                session.contentKind == ContentKind.webp &&
+                        start == 0 &&
+                        chunkSize <= webpDecodePrefixQuantumBytesFor(session.id)
+                    ? chunkSize
+                    : 0;
             return _scheduledResidentReplay(
               session.artifact.readChunks(
                 start: start,
@@ -728,6 +850,9 @@ final class CompositionDownloadTransferRuntime {
               ),
               priority: replayPriority,
               control: control,
+              initialReplayCreditBytes: initialReplayCreditBytes,
+              traceId: session.id,
+              replaySource: 'hot-artifact',
             );
           };
 
@@ -810,6 +935,32 @@ final class CompositionDownloadTransferRuntime {
             '${session.committedLength}',
       );
     }
+    final initialReplayCreditBytes =
+        session.contentKind == ContentKind.webp &&
+                start == 0 &&
+                endExclusive <= remoteWebpDecodePrefixQuantumBytes
+            ? endExclusive
+            : 0;
+    final cache = artifactCacheManager;
+    final residentReplayGenerationToken = session.residentReplayGenerationToken;
+    if (initialReplayCreditBytes > 0 &&
+        residentReplayGenerationToken != null &&
+        cache != null) {
+      final prefix = cache.lookupResidentReplayPrefix(
+        residentReplayGenerationToken,
+        endExclusive: endExclusive,
+      );
+      if (prefix != null) {
+        return _scheduledResidentReplay(
+          Stream<List<int>>.value(prefix),
+          priority: replayPriority,
+          control: control,
+          initialReplayCreditBytes: initialReplayCreditBytes,
+          traceId: session.id,
+          replaySource: 'resident-bootstrap-memory',
+        );
+      }
+    }
 
     final boundReplay = session.residentReplayRangeChunks;
     if (boundReplay != null) {
@@ -824,10 +975,13 @@ final class CompositionDownloadTransferRuntime {
         control: control,
         allowBackgroundDuringForegroundPressure:
             session.residentReplayAccessMode != 'saf',
+        initialReplayCreditBytes: initialReplayCreditBytes,
+        traceId: session.id,
+        replaySource: 'resident-bound',
+        rememberResidentReplayPrefixToken: residentReplayGenerationToken,
       );
     }
 
-    final cache = artifactCacheManager;
     if (cache != null) {
       final lookup = await cache.lookup(session.id, control: control);
       control?.throwIfCancelled();
@@ -844,6 +998,9 @@ final class CompositionDownloadTransferRuntime {
             control: control,
             allowBackgroundDuringForegroundPressure:
                 lookup.entry.accessMode != 'saf',
+            initialReplayCreditBytes: initialReplayCreditBytes,
+            traceId: session.id,
+            replaySource: 'artifact-cache',
           );
         }
       }
@@ -867,6 +1024,9 @@ final class CompositionDownloadTransferRuntime {
       chunks,
       priority: replayPriority,
       control: control,
+      initialReplayCreditBytes: initialReplayCreditBytes,
+      traceId: session.id,
+      replaySource: 'local-source',
     );
   }
 
@@ -907,30 +1067,120 @@ final class CompositionDownloadTransferRuntime {
     required int Function() priority,
     TaskControl? control,
     bool allowBackgroundDuringForegroundPressure = true,
+    int initialReplayCreditBytes = 0,
+    DownloadId? traceId,
+    String? replaySource,
+    Object? rememberResidentReplayPrefixToken,
   }) async* {
     final iterator = StreamIterator<List<int>>(chunks);
+    var replayCreditRemaining = initialReplayCreditBytes;
+    var bootstrapTracePending = initialReplayCreditBytes > 0 && traceId != null;
+    BytesBuilder? residentReplayPrefix =
+        initialReplayCreditBytes > 0 &&
+                rememberResidentReplayPrefixToken != null &&
+                artifactCacheManager != null
+            ? BytesBuilder(copy: false)
+            : null;
     try {
       final budgetAccount = control == null
           ? null
           : speculativeEncodedReadBudget.accountFor(control, control: control);
       while (true) {
-        await budgetAccount?.waitForRead(control: control);
+        final usesReplayCredit = replayCreditRemaining > 0;
+        final budgetWaitStartedAt = clock.nowMicros();
+        if (!usesReplayCredit) {
+          await budgetAccount?.waitForRead(control: control);
+        }
+        final budgetWaitMicros = clock.nowMicros() - budgetWaitStartedAt;
+        final schedulerActiveAtRequest = localReadScheduler.activeCount;
+        final schedulerForegroundAtRequest =
+            localReadScheduler.activeForegroundCount;
+        final schedulerBackgroundAtRequest =
+            localReadScheduler.activeBackgroundCount;
+        final schedulerPendingAtRequest = localReadScheduler.pendingCount;
+        final schedulerWaitStartedAt = clock.nowMicros();
         final lease = await localReadScheduler.acquire(
           priority: priority,
           control: control,
           allowBackgroundDuringForegroundPressure:
               allowBackgroundDuringForegroundPressure,
         );
+        final schedulerWaitMicros = clock.nowMicros() - schedulerWaitStartedAt;
         final bool hasChunk;
+        final readStartedAt = clock.nowMicros();
         try {
           hasChunk = await _moveNextResidentReplayChunk(iterator, control);
         } finally {
           lease.release();
         }
+        final readMicros = clock.nowMicros() - readStartedAt;
         if (!hasChunk) break;
         control?.throwIfCancelled();
         final chunk = iterator.current;
         if (chunk.isNotEmpty) {
+          final prefixBuilder = residentReplayPrefix;
+          if (prefixBuilder != null) {
+            final remaining = initialReplayCreditBytes - prefixBuilder.length;
+            if (remaining > 0) {
+              if (chunk.length <= remaining) {
+                prefixBuilder.add(chunk);
+              } else {
+                prefixBuilder.add(Uint8List.sublistView(
+                  chunk is Uint8List ? chunk : Uint8List.fromList(chunk),
+                  0,
+                  remaining,
+                ));
+              }
+            }
+            if (prefixBuilder.length >= initialReplayCreditBytes) {
+              artifactCacheManager!.rememberResidentReplayPrefix(
+                generationToken: rememberResidentReplayPrefixToken!,
+                bytes: prefixBuilder.takeBytes(),
+              );
+              residentReplayPrefix = null;
+            }
+          }
+          if (bootstrapTracePending && usesReplayCredit) {
+            bootstrapTracePending = false;
+            traceHub.record(
+              traceEvent(
+                clock: clock,
+                sessionId: 'composition-transfer-owner',
+                kind: TraceEventKind.artifactSource,
+                identityHash: traceId!.key,
+                payload: <String, Object?>{
+                  'stage': 'reader-local-replay-bootstrap',
+                  'action': 'first-quantum',
+                  if (replaySource != null) 'source': replaySource,
+                  'priority': priority(),
+                  'bytes': chunk.length,
+                  'budgetWaitMicros': budgetWaitMicros,
+                  'schedulerWaitMicros': schedulerWaitMicros,
+                  'readMicros': readMicros,
+                  'schedulerActiveAtRequest': schedulerActiveAtRequest,
+                  'schedulerForegroundAtRequest':
+                      schedulerForegroundAtRequest,
+                  'schedulerBackgroundAtRequest':
+                      schedulerBackgroundAtRequest,
+                  'schedulerPendingAtRequest': schedulerPendingAtRequest,
+                },
+              ),
+            );
+          }
+          if (usesReplayCredit) {
+            // A Reader joining an already-owned hot partial needs one bounded
+            // local decoder bootstrap quantum even when older speculative
+            // physical tasks have saturated the shared read-ahead budget. The
+            // bytes already exist in the physical artifact, so this does not
+            // admit more network growth; all later local replay returns to the
+            // normal speculative budget. The granted quantum is still charged
+            // after the read so the cap remains an accounting threshold rather
+            // than a hidden unmetered path.
+            replayCreditRemaining -= chunk.length;
+            if (replayCreditRemaining < 0) {
+              replayCreditRemaining = 0;
+            }
+          }
           budgetAccount?.recordRead(chunk.length);
           yield chunk;
         }
@@ -1044,6 +1294,13 @@ final class CompositionDownloadTransferRuntime {
     );
     await _physicalTransferRetention?.dispose();
     await owner.dispose();
+    final standaloneRestores = _localRestoreFlights.values
+        .map((entry) => entry.future)
+        .toList(growable: false);
+    if (standaloneRestores.isNotEmpty) {
+      await Future.wait<void>(standaloneRestores);
+    }
+    _localRestoreFlights.clear();
     await artifactCacheHandoff?.drain(registry.sessions);
     artifactCacheHandoff?.detach();
     await partialDownloadHandoff?.drain(registry.sessions);

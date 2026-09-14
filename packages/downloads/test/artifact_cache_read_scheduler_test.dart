@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:domain/domain.dart' show PriorityObservableTaskControl;
 import 'package:downloads/downloads.dart';
 import 'package:test/test.dart';
 
@@ -157,6 +158,39 @@ void main() {
     foreground.release();
   });
 
+  test('observable priority promotion wakes a queued local read immediately',
+      () async {
+    final scheduler = ArtifactCacheReadScheduler(maxActive: 3);
+    final foreground = await scheduler.acquire(priority: () => 1000);
+    final background = await scheduler.acquire(priority: () => 400);
+    final control = _ObservableTestTaskControl(priority: 400);
+    var promotedStarted = false;
+    final promoted = scheduler
+        .acquire(
+          priority: () => control.priority,
+          control: control,
+        )
+        .then((lease) {
+      promotedStarted = true;
+      return lease;
+    });
+
+    await Future<void>.delayed(Duration.zero);
+    expect(promotedStarted, isFalse,
+        reason: 'background pressure already owns its one admitted quantum');
+
+    control.updatePriority(1000);
+    final lease = await promoted.timeout(const Duration(seconds: 1));
+    expect(promotedStarted, isTrue,
+        reason: 'foreground promotion must not wait for an unrelated lease release');
+    expect(lease.priority, 1000);
+    expect(lease.foreground, isTrue);
+
+    lease.release();
+    background.release();
+    foreground.release();
+  });
+
   test('startup pressure admits only one ranked background quantum', () async {
     final scheduler = ArtifactCacheReadScheduler(maxActive: 3);
     final pressure = scheduler.holdForegroundPressure();
@@ -229,5 +263,33 @@ final class _TestTaskControl implements TaskControl {
 
   void cancel() {
     if (!_cancelled.isCompleted) _cancelled.complete();
+  }
+}
+
+final class _ObservableTestTaskControl
+    implements PriorityObservableTaskControl {
+  _ObservableTestTaskControl({required int priority}) : _priority = priority;
+
+  final Completer<void> _cancelled = Completer<void>();
+  final StreamController<int> _priorities =
+      StreamController<int>.broadcast(sync: true);
+  int _priority;
+
+  @override
+  int get priority => _priority;
+
+  @override
+  Stream<int> get priorityChanges => _priorities.stream;
+
+  @override
+  bool get cancelled => _cancelled.isCompleted;
+
+  @override
+  Future<void> get whenCancelled => _cancelled.future;
+
+  void updatePriority(int priority) {
+    if (_priority == priority) return;
+    _priority = priority;
+    _priorities.add(priority);
   }
 }

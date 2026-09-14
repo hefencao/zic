@@ -18,9 +18,11 @@ typedef PartialEquivalentCandidates = Iterable<DownloadId> Function(
   DownloadId id,
 );
 
-/// Bridges a truly evicted hot DownloadSession to the chapter-owned durable
-/// partial store. Ordinary Reader detach/reentry must never use this handoff:
-/// the retained PipelineReaderSession remains the hot owner.
+/// Bridges an authoritative hot DownloadSession prefix to the chapter-owned
+/// durable partial store. Physical transfer progress may checkpoint here, and
+/// true hot-session retirement drains here as a final barrier. Reader route
+/// detach/reentry never owns either decision: the physical session remains the
+/// hot writer while this owner snapshots only committed bytes.
 final class PartialDownloadHandoff {
   PartialDownloadHandoff({
     required this.store,
@@ -45,6 +47,11 @@ final class PartialDownloadHandoff {
       <DownloadSession, Future<bool>>{};
   final Expando<_ExactDurableRestoreProof> _exactDurableRestoreProofs =
       Expando<_ExactDurableRestoreProof>('exact-durable-restore');
+  final Expando<int> _durablePartialLengths =
+      Expando<int>('durable-partial-length');
+
+  int durablePartialLength(DownloadSession session) =>
+      _durablePartialLengths[session] ?? 0;
 
   bool provesExactDurableBody(
     DownloadSession session,
@@ -63,6 +70,7 @@ final class PartialDownloadHandoff {
     DownloadSession session, {
     TaskControl? control,
   }) async {
+    final restoreStartedAtMicros = clock?.nowMicros();
     control?.throwIfCancelled();
     _exactDurableRestoreProofs[session] = null;
     if (session.committedLength > 0) return;
@@ -80,11 +88,11 @@ final class PartialDownloadHandoff {
     // The recoverable owner probe is filesystem work too. Route it through the
     // same composition read scheduler as durable prefix/range reads so two
     // parallel local preparations cannot bypass actual foreground local-read
-    // pressure with unscheduled stat/sidecar work. Keep the lease narrow: later
-    // canonical
+    // pressure with unscheduled stat/sidecar work. Keep the lease narrow: later canonical
     // lookup and prefix proof get their own ranked quanta instead of one long
     // foreground lease that would push every successor preparation into the
     // current frame's native decode window.
+    final ownedProbeStartedAtMicros = clock?.nowMicros();
     await _withReadLease(
       session,
       () => session.restore(
@@ -95,6 +103,16 @@ final class PartialDownloadHandoff {
       ),
       control: control,
     );
+    _recordRestoreStage(
+      session,
+      stage: 'owned-checkpoint-probe',
+      startedAtMicros: ownedProbeStartedAtMicros,
+      restoreStartedAtMicros: restoreStartedAtMicros,
+      extra: <String, Object?>{
+        'state': session.state.name,
+        'committedLength': session.committedLength,
+      },
+    );
     control?.throwIfCancelled();
     if (session.state == DownloadState.promoted ||
         session.artifact.committedLength > 0) {
@@ -104,9 +122,26 @@ final class PartialDownloadHandoff {
     _PartialRestoreCandidate? durableCandidate;
     PartialDownloadEntry? physicalPartial;
     if (!session.physicalId.isExactFallback && cache != null) {
-      var physical = await cache.openPhysicalArtifact(session.physicalId);
+      final requiresBoundReplay = cache.supportsPhysicalArtifactBoundReplay;
+      final physicalOpenStartedAtMicros = clock?.nowMicros();
+      var physical = requiresBoundReplay
+          ? await cache.openPhysicalArtifactForBoundReplay(session.physicalId)
+          : await cache.openPhysicalArtifact(session.physicalId);
+      _recordRestoreStage(
+        session,
+        stage: 'physical-artifact-open',
+        startedAtMicros: physicalOpenStartedAtMicros,
+        restoreStartedAtMicros: restoreStartedAtMicros,
+        extra: <String, Object?>{
+          'hit': physical != null,
+          'boundReplayLookup': requiresBoundReplay,
+          if (physical != null) 'accessMode': physical.accessMode,
+          if (physical != null) 'bytes': physical.length,
+        },
+      );
       var recoveredHistoricalBinding = false;
       if (physical == null) {
+        final historicalBindStartedAtMicros = clock?.nowMicros();
         recoveredHistoricalBinding =
             await cache.bindPhysicalArtifactFromCandidates(
           physicalId: session.physicalId,
@@ -115,20 +150,82 @@ final class PartialDownloadHandoff {
             ...?equivalentCandidates?.call(session.id),
           ],
         );
+        _recordRestoreStage(
+          session,
+          stage: 'physical-artifact-historical-bind',
+          startedAtMicros: historicalBindStartedAtMicros,
+          restoreStartedAtMicros: restoreStartedAtMicros,
+          extra: <String, Object?>{'bound': recoveredHistoricalBinding},
+        );
         control?.throwIfCancelled();
         if (recoveredHistoricalBinding) {
-          physical = await cache.openPhysicalArtifact(session.physicalId);
+          final reboundOpenStartedAtMicros = clock?.nowMicros();
+          physical = requiresBoundReplay
+              ? await cache.openPhysicalArtifactForBoundReplay(session.physicalId)
+              : await cache.openPhysicalArtifact(session.physicalId);
+          _recordRestoreStage(
+            session,
+            stage: 'physical-artifact-reopen-after-bind',
+            startedAtMicros: reboundOpenStartedAtMicros,
+            restoreStartedAtMicros: restoreStartedAtMicros,
+            extra: <String, Object?>{
+              'hit': physical != null,
+              'boundReplayLookup': requiresBoundReplay,
+              if (physical != null) 'accessMode': physical.accessMode,
+              if (physical != null) 'bytes': physical.length,
+            },
+          );
         }
       }
       control?.throwIfCancelled();
-      if (physical != null &&
-          await _tryBindEquivalentReadyAuthority(
+      if (physical != null) {
+        final readyBindStartedAtMicros = clock?.nowMicros();
+        final boundReady = await _tryBindEquivalentReadyAuthority(
             session,
             _physicalArtifactEntry(physical),
             candidatesChecked: 0,
             control: control,
-          )) {
-        return;
+            requireBoundReader: requiresBoundReplay,
+          );
+        _recordRestoreStage(
+          session,
+          stage: 'physical-ready-bind',
+          startedAtMicros: readyBindStartedAtMicros,
+          restoreStartedAtMicros: restoreStartedAtMicros,
+          extra: <String, Object?>{
+            'bound': boundReady,
+            'accessMode': physical.accessMode,
+          },
+        );
+        if (boundReady) return;
+        if (requiresBoundReplay) {
+          // The optimized lookup deliberately deferred provider validation to
+          // the retained descriptor open. If that operation cannot establish
+          // a bound reader, run the historical fully-preflighted path once so
+          // stale-replica cleanup and generic range fallback stay unchanged.
+          final fallbackOpenStartedAtMicros = clock?.nowMicros();
+          physical = await cache.openPhysicalArtifact(session.physicalId);
+          _recordRestoreStage(
+            session,
+            stage: 'physical-artifact-fallback-open',
+            startedAtMicros: fallbackOpenStartedAtMicros,
+            restoreStartedAtMicros: restoreStartedAtMicros,
+            extra: <String, Object?>{
+              'hit': physical != null,
+              if (physical != null) 'accessMode': physical.accessMode,
+              if (physical != null) 'bytes': physical.length,
+            },
+          );
+          if (physical != null &&
+              await _tryBindEquivalentReadyAuthority(
+                session,
+                _physicalArtifactEntry(physical),
+                candidatesChecked: 0,
+                control: control,
+              )) {
+            return;
+          }
+        }
       }
     }
     // The probe above already falls through to generic restore when any
@@ -441,6 +538,7 @@ final class PartialDownloadHandoff {
     PartialDownloadEntry entry, {
     required int candidatesChecked,
     TaskControl? control,
+    bool requireBoundReader = false,
   }) async {
     final startedAtMicros = clock?.nowMicros();
     final totalLength = entry.totalLength ?? entry.length;
@@ -452,17 +550,45 @@ final class PartialDownloadHandoff {
 
     PartialDownloadBoundRangeReader? boundReader;
     final openBoundReader = entry.openBoundRangeReader;
+    final sourceClock = clock;
+    final boundReaderOpenStartedAtMicros = sourceClock?.nowMicros();
+    var schedulerWaitMicros = 0;
+    var boundReaderProviderOpenMicros = 0;
+    var schedulerActiveAtRequest = 0;
+    var schedulerForegroundAtRequest = 0;
+    var schedulerBackgroundAtRequest = 0;
+    var schedulerPendingAtRequest = 0;
     if (openBoundReader != null) {
       ArtifactCacheReadLease? lease;
       try {
         final scheduler = readScheduler;
         if (scheduler != null) {
+          schedulerActiveAtRequest = scheduler.activeCount;
+          schedulerForegroundAtRequest = scheduler.activeForegroundCount;
+          schedulerBackgroundAtRequest = scheduler.activeBackgroundCount;
+          schedulerPendingAtRequest = scheduler.pendingCount;
+          final schedulerWaitStartedAtMicros = sourceClock?.nowMicros();
           lease = await scheduler.acquire(
             priority: () => session.effectivePriority,
             control: control,
           );
+          final acquiredAtMicros = sourceClock?.nowMicros();
+          if (schedulerWaitStartedAtMicros != null && acquiredAtMicros != null) {
+            schedulerWaitMicros =
+                (acquiredAtMicros - schedulerWaitStartedAtMicros)
+                    .clamp(0, 1 << 62)
+                    .toInt();
+          }
         }
+        final providerOpenStartedAtMicros = sourceClock?.nowMicros();
         boundReader = await openBoundReader();
+        final providerOpenedAtMicros = sourceClock?.nowMicros();
+        if (providerOpenStartedAtMicros != null && providerOpenedAtMicros != null) {
+          boundReaderProviderOpenMicros =
+              (providerOpenedAtMicros - providerOpenStartedAtMicros)
+                  .clamp(0, 1 << 62)
+                  .toInt();
+        }
       } on Object {
         // Retained descriptor reuse is an optimization. The verified durable
         // range authority below remains a correctness fallback.
@@ -471,8 +597,26 @@ final class PartialDownloadHandoff {
         lease?.release();
       }
     }
+    _recordRestoreStage(
+      session,
+      stage: 'ready-bound-reader-open',
+      startedAtMicros: boundReaderOpenStartedAtMicros,
+      restoreStartedAtMicros: startedAtMicros,
+      extra: <String, Object?>{
+        'bound': boundReader != null,
+        if (boundReader != null) 'accessMode': boundReader.accessMode,
+        'schedulerWaitMicros': schedulerWaitMicros,
+        'boundReaderProviderOpenMicros': boundReaderProviderOpenMicros,
+        'schedulerActiveAtRequest': schedulerActiveAtRequest,
+        'schedulerForegroundAtRequest': schedulerForegroundAtRequest,
+        'schedulerBackgroundAtRequest': schedulerBackgroundAtRequest,
+        'schedulerPendingAtRequest': schedulerPendingAtRequest,
+      },
+    );
     control?.throwIfCancelled();
+    if (requireBoundReader && boundReader == null) return false;
 
+    final prefixReadStartedAtMicros = clock?.nowMicros();
     final List<int> prefix;
     try {
       prefix = await _readEntryPrefix(
@@ -494,6 +638,13 @@ final class PartialDownloadHandoff {
       }
       return false;
     }
+    _recordRestoreStage(
+      session,
+      stage: 'ready-metadata-prefix-read',
+      startedAtMicros: prefixReadStartedAtMicros,
+      restoreStartedAtMicros: startedAtMicros,
+      extra: <String, Object?>{'bytes': prefix.length},
+    );
     control?.throwIfCancelled();
 
     final openRange = entry.openRange;
@@ -501,6 +652,7 @@ final class PartialDownloadHandoff {
     if (reader == null && openRange == null) {
       return false;
     }
+    final bindPublishStartedAtMicros = clock?.nowMicros();
     try {
       session.bindResidentImmutableAuthority(
         // Equivalent source revisions may not share resume validators even
@@ -520,6 +672,13 @@ final class PartialDownloadHandoff {
         residentReplayAccessMode: reader?.accessMode ?? entry.accessMode,
       );
       boundReader = null; // DownloadSession now owns the retained reader.
+      _recordRestoreStage(
+        session,
+        stage: 'ready-resident-bind-publish',
+        startedAtMicros: bindPublishStartedAtMicros,
+        restoreStartedAtMicros: startedAtMicros,
+        extra: <String, Object?>{'metadataPrefixBytes': prefix.length},
+      );
     } on Object {
       final reader = boundReader;
       boundReader = null;
@@ -1062,6 +1221,7 @@ final class PartialDownloadHandoff {
     }
     if (session.hasBorrowedPartialBacking) {
       await session.settleCacheMutations();
+      _durablePartialLengths[session] = session.committedLength;
       _record(
         session,
         action: 'retained-adopted',
@@ -1114,6 +1274,7 @@ final class PartialDownloadHandoff {
           ),
         );
       }
+      _durablePartialLengths[session] = length;
       _record(
         session,
         action: storedPhysically ? 'stored-physical' : 'stored',
@@ -1166,6 +1327,35 @@ final class PartialDownloadHandoff {
           'equivalentCandidatesChecked': equivalentCandidatesChecked,
         if (startedAtMicros != null)
           'handoffMicros': (sourceClock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
+      },
+    ));
+  }
+
+  void _recordRestoreStage(
+    DownloadSession session, {
+    required String stage,
+    required int? startedAtMicros,
+    required int? restoreStartedAtMicros,
+    Map<String, Object?> extra = const <String, Object?>{},
+  }) {
+    final sourceClock = clock;
+    if (sourceClock == null || startedAtMicros == null) return;
+    final now = sourceClock.nowMicros();
+    traceSink.record(traceEvent(
+      clock: sourceClock,
+      sessionId: sessionId,
+      kind: TraceEventKind.artifactSource,
+      identityHash: session.id.key,
+      payload: <String, Object?>{
+        'source': 'session-partial-handoff',
+        'consumer': 'durable-partial',
+        'action': 'restore-stage',
+        'stage': stage,
+        'stageMicros': (now - startedAtMicros).clamp(0, 1 << 62).toInt(),
+        if (restoreStartedAtMicros != null)
+          'restoreElapsedMicros':
+              (now - restoreStartedAtMicros).clamp(0, 1 << 62).toInt(),
+        ...extra,
       },
     ));
   }

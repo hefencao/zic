@@ -16,6 +16,7 @@ enum ArtifactReadIntegrityBasis {
   sealedMetadataLength,
   crc32Verified,
   sessionArtifact,
+  directImmutableSource,
 }
 
 abstract interface class ArtifactCacheBoundRangeReader {
@@ -70,6 +71,8 @@ final class ArtifactCacheStreamEntry {
     this.openBoundRangeReader,
     this.openPresentationFile,
     this.accessMode = 'unknown',
+    this.sealedChecksum,
+    this.sealedChecksumAlgorithm,
     this.streamIntegrity = ArtifactReadIntegrityBasis.unspecified,
     this.fullReadIntegrity = ArtifactReadIntegrityBasis.unspecified,
   });
@@ -93,6 +96,13 @@ final class ArtifactCacheStreamEntry {
 
   /// Non-sensitive diagnostics for the selected physical access path.
   final String accessMode;
+
+  /// Seal metadata for the immutable persistent generation, when the backend
+  /// can expose it without reading the body again. Callers may use this only
+  /// together with [length] and the declared algorithm; it is not a substitute
+  /// for a backend accessibility/preflight check.
+  final String? sealedChecksum;
+  final String? sealedChecksumAlgorithm;
 
   /// Integrity basis of [open]. A normal sealed persistent read should expose
   /// its previously-established seal proof rather than pretending to rehash.
@@ -125,6 +135,20 @@ abstract interface class PhysicalArtifactCacheBackend {
   });
 
   Future<void> invalidatePhysicalArtifact(PhysicalMediaId id);
+}
+
+/// Optional physical READY lookup optimized for a caller that immediately
+/// binds a generation-scoped range reader.
+///
+/// Unlike [PhysicalArtifactCacheBackend.openPhysicalArtifact], this capability
+/// may defer provider existence/length I/O until [ArtifactCacheStreamEntry.openBoundRangeReader]
+/// and must make that reader perform the authoritative exact-length preflight.
+/// This lets provider-backed storage validate and retain one descriptor in the
+/// same operation instead of stat/open/close followed by an immediate reopen.
+abstract interface class PhysicalArtifactBoundReplayBackend {
+  Future<ArtifactCacheStreamEntry?> openPhysicalArtifactForBoundReplay(
+    PhysicalMediaId id,
+  );
 }
 
 /// Optional compatibility bridge for durable READY artifacts written before a

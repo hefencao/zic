@@ -304,6 +304,42 @@ void main() {
     expect(opened?.headers['User-Agent'], 'source-owned-ua');
   });
 
+  test('transport ByteRange owns Range and If-Range request headers', () async {
+    ComicResourceRequest? opened;
+    final source = _FixtureSource(
+      request: ComicResourceRequest(
+        uri: Uri.parse('https://fixture/page'),
+        headers: const <String, String>{'X-Fixture': 'kept'},
+      ),
+    );
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (request) async {
+        opened = request;
+        return ByteResponse(
+          bytes: Stream<List<int>>.value(<int>[1, 2, 3, 4]),
+          statusCode: HttpStatus.ok,
+          rangeStart: 0,
+          totalLength: 4,
+        );
+      },
+    );
+    addTearDown(pool.close);
+
+    final response = await pool.loaderFor(
+      source,
+      Uri.parse('venera-resource:range-provenance'),
+    )(
+      range: const ByteRange(start: 6743904),
+      validators: const Validators(etag: '"fixture-etag"'),
+    );
+
+    expect(await _collect(response.bytes), <int>[1, 2, 3, 4]);
+    expect(opened?.headers[HttpHeaders.rangeHeader], 'bytes=6743904-');
+    expect(opened?.headers[HttpHeaders.ifRangeHeader], '"fixture-etag"');
+    expect(opened?.headers['X-Fixture'], 'kept');
+    expect(opened?.headers[HttpHeaders.acceptEncodingHeader], 'identity');
+  });
+
   test('GET request normalization removes body and entity headers', () async {
     ComicResourceRequest? opened;
     final source = _FixtureSource(
@@ -506,6 +542,7 @@ void main() {
 
   test('runtime body path is reserved for actual response transforms',
       () async {
+    final control = _MutableTaskControl(priority: 1000);
     final runtimeImage =
         Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 7, 8, 9, 0xff, 0xd9]);
     final source = _FixtureSource(
@@ -521,12 +558,15 @@ void main() {
     addTearDown(pool.close);
 
     final response = await pool
-        .loaderFor(source, Uri.parse('venera-resource:fixture'))();
+        .controlledLoaderFor(source, Uri.parse('venera-resource:fixture'))(
+      control: control,
+    );
 
     expect(await _collect(response.bytes), runtimeImage);
     expect(response.diagnostics.containsKey('sourceVerifiedReuseIdentity'), isFalse);
     expect(source.resolveCalls, 1);
     expect(source.loadCalls, 1);
+    expect(identical(source.lastLoadControl, control), isTrue);
   });
 
   test('runtime body rejects non-image bytes before transfer admission',
@@ -1050,6 +1090,7 @@ class _FixtureSource
   int loadCalls = 0;
   bool _refreshed = false;
   TaskControl? lastResolveControl;
+  TaskControl? lastLoadControl;
 
   @override
   String get sourceId => 'venera:fixture';
@@ -1118,6 +1159,7 @@ class _FixtureSource
     TaskControl? control,
   }) async {
     loadCalls++;
+    lastLoadControl = control;
     return runtimeBytes;
   }
 

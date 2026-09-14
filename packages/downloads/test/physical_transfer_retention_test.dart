@@ -152,6 +152,89 @@ void main() {
     expect(runtime.registry.sessions, hasLength(1));
   });
 
+  test(
+      'active transfer progress checkpoints durable partial without detach or close',
+      () async {
+    final backend = _RetentionStore();
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: backend,
+      net: NetLane(maxActive: 1),
+      maxIdlePartialSessions: 32,
+      maxIdlePartialBytes: 256 * 1024 * 1024,
+    );
+    addTearDown(runtime.dispose);
+    final id = _id('online-checkpoint');
+    final session = runtime.registry.get(id);
+    await session.bindResponse(
+      validators: const Validators(etag: 'online-checkpoint'),
+      totalLength: 5 * 1024 * 1024,
+    );
+    final writer = session.acquireWriter();
+    final halfMiB = Uint8List(512 * 1024);
+
+    await session.append(writer, 0, halfMiB);
+    await runtime.settlePhysicalRetention();
+    expect(backend.partials.containsKey(id), isFalse);
+
+    await session.append(writer, 512 * 1024, halfMiB);
+    await runtime.settlePhysicalRetention();
+    expect(backend.partials[id]?.bytes.lengthInBytes, 1024 * 1024);
+    expect(session.state, DownloadState.receiving);
+    expect(session.hasWriter, isTrue);
+
+    await session.append(writer, 1024 * 1024, Uint8List(1024 * 1024));
+    await runtime.settlePhysicalRetention();
+    expect(backend.partials[id]?.bytes.lengthInBytes, 1024 * 1024,
+        reason: 'online checkpoint stride is 2 MiB after the first MiB');
+
+    await session.append(writer, 2 * 1024 * 1024, Uint8List(1024 * 1024));
+    await runtime.settlePhysicalRetention();
+    expect(backend.partials[id]?.bytes.lengthInBytes, 3 * 1024 * 1024);
+    expect(session.state, DownloadState.receiving);
+    expect(session.hasWriter, isTrue,
+        reason: 'durability checkpoint must not retire or pause the hot writer');
+
+    await session.pause(writer);
+  });
+
+  test(
+      'failed progress checkpoint never pauses writer and retries after another stride',
+      () async {
+    final backend = _RetentionStore()..failPartialStores = true;
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: ArtifactCacheManager(backend: backend),
+      partialDownloadStore: backend,
+      net: NetLane(maxActive: 1),
+    );
+    addTearDown(runtime.dispose);
+    final id = _id('online-checkpoint-failure');
+    final session = runtime.registry.get(id);
+    await session.bindResponse(
+      validators: const Validators(),
+      totalLength: 5 * 1024 * 1024,
+    );
+    final writer = session.acquireWriter();
+
+    await session.append(writer, 0, Uint8List(1024 * 1024));
+    await runtime.settlePhysicalRetention();
+    expect(backend.partials.containsKey(id), isFalse);
+    expect(session.state, DownloadState.receiving);
+    expect(session.hasWriter, isTrue);
+
+    backend.failPartialStores = false;
+    await session.append(
+      writer,
+      1024 * 1024,
+      Uint8List(2 * 1024 * 1024),
+    );
+    await runtime.settlePhysicalRetention();
+    expect(backend.partials[id]?.bytes.lengthInBytes, 3 * 1024 * 1024);
+    expect(session.state, DownloadState.receiving);
+    expect(session.hasWriter, isTrue);
+    await session.pause(writer);
+  });
+
   test('explicit runtime checkpoint persists hot partial without retiring owner',
       () async {
     final backend = _RetentionStore();

@@ -557,6 +557,52 @@ void main() {
   );
 
   test(
+    'repeated direct transfer checkpoint appends only the new suffix',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-physical-direct-incremental-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final service = await PersistentChapterDownloadService.open(root.path);
+      addTearDown(service.close);
+      final id = _readerArtifactId('physical-direct-incremental');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u0000incremental',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(512 * 1024, (index) => (index * 5) & 0xff),
+      );
+      final starts = <int>[];
+
+      Future<void> checkpoint(int length) =>
+          service.artifactStore.storePhysicalPartialDownload(
+            physicalId: physical,
+            providerHint: id,
+            preferDirectStaging: true,
+            entry: PartialDownloadEntry(
+              length: length,
+              validators: const Validators(),
+              totalLength: bytes.lengthInBytes * 2,
+              open: ({required int start}) async* {
+                starts.add(start);
+                yield Uint8List.sublistView(bytes, start, length);
+              },
+            ),
+          );
+
+      await checkpoint(256 * 1024);
+      await checkpoint(bytes.lengthInBytes);
+
+      expect(starts, <int>[0, 256 * 1024]);
+      final physicalIndex = service.artifactStore.index as PhysicalPartialIndex;
+      final record = await physicalIndex.getPhysicalPartial(physical);
+      expect(record, isNotNull);
+      expect(record!.bytes, bytes.lengthInBytes);
+      expect(await File(record.path).readAsBytes(), orderedEquals(bytes));
+    },
+  );
+
+  test(
     'transfer checkpoint migrates an equal SAF physical partial to direct staging',
     () async {
       final root = await Directory.systemTemp.createTemp(
@@ -612,6 +658,393 @@ void main() {
       expect(await File(staged.path).readAsBytes(), orderedEquals(bytes));
       expect(storage.containsKey(parsed.relativePath), isFalse);
       expect(storage.containsKey('${parsed.relativePath}.meta'), isFalse);
+    },
+  );
+
+  test(
+    'exact direct to SAF replacement keeps old-locator cleanup debt on delete failure',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-exact-direct-saf-cleanup-',
+      );
+      addTearDown(() async {
+        if (await root.exists()) await root.delete(recursive: true);
+      });
+      final id = _readerArtifactId('exact-direct-saf-cleanup');
+      final bytes = Uint8List.fromList(
+        List<int>.generate(18 * 1024, (index) => (index * 17) & 0xff),
+      );
+      final entry = PartialDownloadEntry(
+        length: bytes.lengthInBytes,
+        validators: const Validators(),
+        totalLength: bytes.lengthInBytes * 2,
+        open: ({required int start}) =>
+            Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+      );
+
+      final seed = await PersistentDownloadArtifactStore.open(root.path);
+      await seed.storePartialDownload(id: id, entry: entry);
+      final old = (await seed.index.get(id.key))!;
+      expect(parseSafRecordPath(old.path), isNull);
+      await seed.close();
+
+      const treeUri = 'content://tree/exact-direct-saf-cleanup';
+      final storage = <String, Uint8List>{};
+      final saf = _MemorySafIo(storage);
+      final failingLocal = _FailDeleteOnceArtifactBytes()
+        ..failDeletePath = old.path;
+      final first = await PersistentDownloadArtifactStore.open(
+        root.path,
+        safMirror: saf,
+        safTreeUri: treeUri,
+        bytes: CompositeArtifactBytes(
+          local: failingLocal,
+          saf: SafArtifactBytes(saf, treeUri: treeUri),
+        ),
+      );
+      await first.storePartialDownload(id: id, entry: entry);
+      final current = (await first.index.get(id.key))!;
+      final currentSaf = parseSafRecordPath(current.path);
+      expect(currentSaf, isNotNull);
+      expect(await File(old.path).exists(), isTrue);
+      final debtIndex = SqliteIndex(first.layout.dbPath);
+      await debtIndex.open();
+      final debt = (await debtIndex.listStorageCleanupDebts()).single;
+      expect(debt.kind, StorageCleanupDebtKind.obsoletePartialSource);
+      expect(debt.accessLocator, old.path);
+      await debtIndex.close();
+      await first.close();
+
+      final reopened = await PersistentDownloadArtifactStore.open(
+        root.path,
+        safMirror: saf,
+        safTreeUri: treeUri,
+      );
+      await reopened.close();
+      expect(await File(old.path).exists(), isFalse);
+      expect(storage[currentSaf!.relativePath], orderedEquals(bytes));
+      final checked = SqliteIndex(reopened.layout.dbPath);
+      await checked.open();
+      expect(await checked.listStorageCleanupDebts(), isEmpty);
+      await checked.close();
+    },
+  );
+
+  test(
+    'cold exact partial retirement persists cleanup debt when body delete fails',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-exact-partial-cleanup-debt-',
+      );
+      addTearDown(() async {
+        if (await root.exists()) await root.delete(recursive: true);
+      });
+      final id = _readerArtifactId('exact-partial-cleanup-debt');
+      final bytes = Uint8List.fromList(
+        List<int>.generate(20 * 1024, (index) => (index * 13) & 0xff),
+      );
+      final seed = await PersistentDownloadArtifactStore.open(root.path);
+      await seed.storePartialDownload(
+        id: id,
+        entry: PartialDownloadEntry(
+          length: bytes.lengthInBytes,
+          validators: const Validators(),
+          totalLength: bytes.lengthInBytes * 2,
+          open: ({required int start}) =>
+              Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+        ),
+      );
+      final record = (await seed.index.get(id.key))!;
+      expect(record.state, CacheState.partial);
+      await seed.close();
+
+      final failingBytes = _FailDeleteOnceArtifactBytes()
+        ..failDeletePath = record.path;
+      final first = await PersistentDownloadArtifactStore.open(
+        root.path,
+        bytes: failingBytes,
+      );
+      await first.invalidatePartialDownload(id);
+      expect(await first.index.get(id.key), isNull);
+      expect(await File(record.path).exists(), isTrue);
+      final debtIndex = SqliteIndex(first.layout.dbPath);
+      await debtIndex.open();
+      final debt = (await debtIndex.listStorageCleanupDebts()).single;
+      expect(debt.kind, StorageCleanupDebtKind.obsoletePartialSource);
+      expect(debt.accessLocator, record.path);
+      expect(debt.expectedBytes, bytes.lengthInBytes);
+      await debtIndex.close();
+      await first.close();
+
+      final reopened = await PersistentDownloadArtifactStore.open(root.path);
+      await reopened.close();
+      expect(await File(record.path).exists(), isFalse);
+      final checked = SqliteIndex(reopened.layout.dbPath);
+      await checked.open();
+      expect(await checked.listStorageCleanupDebts(), isEmpty);
+      await checked.close();
+    },
+  );
+
+  test(
+    'physical partial invalidation keeps metadata authority when body delete fails',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-physical-partial-delete-failure-',
+      );
+      addTearDown(() async {
+        if (await root.exists()) await root.delete(recursive: true);
+      });
+      final failingBytes = _FailDeleteOnceArtifactBytes();
+      final store = await PersistentDownloadArtifactStore.open(
+        root.path,
+        bytes: failingBytes,
+      );
+      addTearDown(store.close);
+      final id = _readerArtifactId('physical-partial-delete-failure');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u0000delete-failure',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(12 * 1024, (index) => (index * 11) & 0xff),
+      );
+      await store.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        preferDirectStaging: true,
+        entry: PartialDownloadEntry(
+          length: bytes.lengthInBytes,
+          validators: const Validators(),
+          totalLength: bytes.lengthInBytes * 2,
+          open: ({required int start}) =>
+              Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+        ),
+      );
+      final index = store.index as PhysicalPartialIndex;
+      final record = (await index.getPhysicalPartial(physical))!;
+      failingBytes.failDeletePath = record.path;
+
+      await expectLater(
+        store.invalidatePhysicalPartialDownload(physical),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(await index.getPhysicalPartial(physical), record,
+          reason: 'failed body cleanup must keep the durable cleanup authority');
+      expect(await File(record.path).exists(), isTrue);
+
+      await store.invalidatePhysicalPartialDownload(physical);
+      expect(await index.getPhysicalPartial(physical), isNull);
+      expect(await File(record.path).exists(), isFalse);
+    },
+  );
+
+  test(
+    'physical partial invalidation fails closed when SAF access is unavailable',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-physical-partial-unavailable-saf-',
+      );
+      addTearDown(() async {
+        if (await root.exists()) await root.delete(recursive: true);
+      });
+      const treeUri = 'content://tree/physical-partial-unavailable-saf';
+      final storage = <String, Uint8List>{};
+      final saf = _MemorySafIo(storage);
+      final first = await PersistentDownloadArtifactStore.open(
+        root.path,
+        safMirror: saf,
+        safTreeUri: treeUri,
+      );
+      final id = _readerArtifactId('physical-partial-unavailable-saf');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u0000unavailable-saf',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(16 * 1024, (index) => (index * 13) & 0xff),
+      );
+      await first.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        entry: PartialDownloadEntry(
+          length: bytes.lengthInBytes,
+          validators: const Validators(),
+          totalLength: bytes.lengthInBytes * 2,
+          open: ({required int start}) =>
+              Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+        ),
+      );
+      final firstIndex = first.index as PhysicalPartialIndex;
+      final record = (await firstIndex.getPhysicalPartial(physical))!;
+      final parsed = parseSafRecordPath(record.path)!;
+      expect(storage[parsed.relativePath], orderedEquals(bytes));
+      await first.close();
+
+      final reopened = await PersistentDownloadArtifactStore.open(root.path);
+      try {
+        await expectLater(
+          reopened.invalidatePhysicalPartialDownload(physical),
+          throwsA(
+            isA<Failure>().having(
+              (failure) => failure.code,
+              'code',
+              ErrorCode.policy,
+            ),
+          ),
+        );
+        final reopenedIndex = reopened.index as PhysicalPartialIndex;
+        expect(await reopenedIndex.getPhysicalPartial(physical), record,
+            reason: 'unreachable SAF bytes must keep their durable locator authority');
+        expect(storage[parsed.relativePath], orderedEquals(bytes));
+      } finally {
+        await reopened.close();
+      }
+    },
+  );
+
+  test(
+    'SAF physical partial replacement keeps cleanup debt after old delete failure',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-physical-partial-cleanup-debt-',
+      );
+      addTearDown(() async {
+        if (await root.exists()) await root.delete(recursive: true);
+      });
+      const treeUri = 'content://tree/physical-partial-cleanup-debt';
+      final storage = <String, Uint8List>{};
+      final saf = _MemorySafIo(storage);
+      final first = await PersistentDownloadArtifactStore.open(
+        root.path,
+        safMirror: saf,
+        safTreeUri: treeUri,
+      );
+      final id = _readerArtifactId('physical-partial-cleanup-debt');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u0000cleanup-debt',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(96 * 1024, (index) => (index * 7) & 0xff),
+      );
+      final entry = PartialDownloadEntry(
+        length: bytes.lengthInBytes,
+        validators: const Validators(),
+        totalLength: bytes.lengthInBytes * 2,
+        open: ({required int start}) =>
+            Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+      );
+
+      await first.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        entry: entry,
+      );
+      final physicalIndex = first.index as PhysicalPartialIndex;
+      final old = (await physicalIndex.getPhysicalPartial(physical))!;
+      final parsed = parseSafRecordPath(old.path)!;
+      saf.failDeletePaths.add(parsed.relativePath);
+
+      await first.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        entry: entry,
+        preferDirectStaging: true,
+      );
+      final current = (await physicalIndex.getPhysicalPartial(physical))!;
+      expect(parseSafRecordPath(current.path), isNull);
+      expect(await File(current.path).readAsBytes(), orderedEquals(bytes));
+      expect(storage[parsed.relativePath], orderedEquals(bytes));
+
+      final debtIndex = SqliteIndex(first.layout.dbPath);
+      await debtIndex.open();
+      final debts = await debtIndex.listStorageCleanupDebts();
+      expect(debts, hasLength(1));
+      expect(debts.single.kind, StorageCleanupDebtKind.obsoletePartialSource);
+      expect(debts.single.accessLocator, old.path);
+      expect(debts.single.expectedBytes, old.bytes);
+      await debtIndex.close();
+      await first.close();
+
+      saf.failDeletePaths.clear();
+      final reopened = await PersistentDownloadArtifactStore.open(
+        root.path,
+        safMirror: saf,
+        safTreeUri: treeUri,
+      );
+      await reopened.close();
+      expect(storage.containsKey(parsed.relativePath), isFalse);
+      expect(storage.containsKey('${parsed.relativePath}.meta'), isFalse);
+      final checked = SqliteIndex(reopened.layout.dbPath);
+      await checked.open();
+      expect(await checked.listStorageCleanupDebts(), isEmpty);
+      await checked.close();
+    },
+  );
+
+  test(
+    'obsolete physical partial debt preserves a changed old SAF path',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-physical-partial-changed-cleanup-',
+      );
+      addTearDown(() async {
+        if (await root.exists()) await root.delete(recursive: true);
+      });
+      const treeUri = 'content://tree/physical-partial-changed-cleanup';
+      final storage = <String, Uint8List>{};
+      final saf = _MemorySafIo(storage);
+      final first = await PersistentDownloadArtifactStore.open(
+        root.path,
+        safMirror: saf,
+        safTreeUri: treeUri,
+      );
+      final id = _readerArtifactId('physical-partial-changed-cleanup');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u0000changed-cleanup',
+      );
+      final bytes = Uint8List.fromList(
+        List<int>.generate(32 * 1024, (index) => (index * 5) & 0xff),
+      );
+      final entry = PartialDownloadEntry(
+        length: bytes.lengthInBytes,
+        validators: const Validators(),
+        totalLength: bytes.lengthInBytes * 2,
+        open: ({required int start}) =>
+            Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+      );
+      await first.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        entry: entry,
+      );
+      final physicalIndex = first.index as PhysicalPartialIndex;
+      final old = (await physicalIndex.getPhysicalPartial(physical))!;
+      final parsed = parseSafRecordPath(old.path)!;
+      saf.failDeletePaths.add(parsed.relativePath);
+      await first.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        entry: entry,
+        preferDirectStaging: true,
+      );
+      await first.close();
+
+      final replacement = Uint8List.fromList(
+        List<int>.filled(bytes.lengthInBytes, 0xa5),
+      );
+      storage[parsed.relativePath] = replacement;
+      saf.failDeletePaths.clear();
+      final reopened = await PersistentDownloadArtifactStore.open(
+        root.path,
+        safMirror: saf,
+        safTreeUri: treeUri,
+      );
+      await reopened.close();
+      expect(storage[parsed.relativePath], orderedEquals(replacement));
+      final checked = SqliteIndex(reopened.layout.dbPath);
+      await checked.open();
+      expect(await checked.listStorageCleanupDebts(), isEmpty,
+          reason: 'changed path must discard stale cleanup intent');
+      await checked.close();
     },
   );
 
@@ -965,7 +1398,10 @@ void main() {
       'zic-download-composition-owner-',
     );
     addTearDown(() => directory.delete(recursive: true));
-    final composition = await PersistentDownloadComposition.open(directory.path);
+    final composition = await PersistentDownloadComposition.open(
+      directory.path,
+      transferNet: NetLane(maxActive: 5),
+    );
 
     await composition.chapterDownloads.close();
 
@@ -3058,6 +3494,7 @@ void main() {
     final reads = ArtifactCacheReadScheduler();
     final composition = await PersistentDownloadComposition.open(
       root.path,
+      transferNet: NetLane(maxActive: 5),
       localReadScheduler: reads,
     );
     addTearDown(composition.close);
@@ -3119,7 +3556,10 @@ void main() {
       'zic-physical-ready-symlink-',
     );
     addTearDown(() => root.delete(recursive: true));
-    final composition = await PersistentDownloadComposition.open(root.path);
+    final composition = await PersistentDownloadComposition.open(
+      root.path,
+      transferNet: NetLane(maxActive: 5),
+    );
     addTearDown(composition.close);
     final store = composition.artifactStore;
     final id = DownloadId(
@@ -3224,6 +3664,7 @@ void main() {
 
     final composition = await PersistentDownloadComposition.open(
       tempDir.path,
+      transferNet: NetLane(maxActive: 5),
       safTreeIo: safIo,
       safTreeUri: 'content://tree/downloads',
     );
@@ -3464,6 +3905,90 @@ void main() {
       ).readAsBytes(),
       secondBytes,
     );
+  });
+
+  test('structured mirror persists cleanup debt when obsolete staging delete fails',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-structured-cleanup-debt-');
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final failingBytes = _FailDeleteOnceArtifactBytes();
+    final store = await PersistentDownloadArtifactStore.open(
+      root.path,
+      bytes: failingBytes,
+    );
+    final webpBytes = Uint8List.fromList(<int>[
+      0x52, 0x49, 0x46, 0x46, 0x10, 0, 0, 0,
+      0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+    ]);
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'test:cleanup-debt',
+        displayName: '第一话',
+        sourceId: 'test',
+        comicId: 'cleanup-debt-comic',
+        comicTitle: 'Cleanup Debt',
+        chapterId: 'ch1',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.test/cleanup-debt.webp',
+            pageId: 'p1',
+            contentKindHint: ContentKindHint.webp,
+            byteLength: webpBytes.lengthInBytes,
+          ),
+        ],
+      ),
+    );
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'test',
+        comicId: 'cleanup-debt-comic',
+        chapterId: 'ch1',
+        pageId: 'p1',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/cleanup-debt.webp'),
+    );
+    await store.storePromotedArtifact(id: id, bytes: webpBytes);
+    final before = (await store.indexedRecords())[id.key]!;
+    final oldStaging = File(before.path);
+    failingBytes.failDeletePath = oldStaging.path;
+    final destination = File('${store.layout.root}/Cleanup Debt/001.webp');
+    await destination.parent.create(recursive: true);
+    await destination.writeAsBytes(webpBytes, flush: true);
+
+    await store.mirrorPromotedToSafIfConfigured(
+      id,
+      entry: entry,
+      pageIndex: 1,
+      isSingleChapter: true,
+      comicDirectoryName: 'Cleanup Debt',
+    );
+
+    final after = (await store.indexedRecords())[id.key]!;
+    expect(after.path, destination.path);
+    expect(await oldStaging.exists(), isTrue,
+        reason: 'simulated post-commit unlink failure leaves only cleanup debt');
+    final debtIndex = SqliteIndex(store.layout.dbPath);
+    await debtIndex.open();
+    final debt = (await debtIndex.listStorageCleanupDebts()).single;
+    expect(debt.kind, StorageCleanupDebtKind.obsoleteSealedSource);
+    expect(debt.accessLocator, oldStaging.path);
+    expect(debt.expectedBytes, webpBytes.lengthInBytes);
+    await debtIndex.close();
+    await store.close();
+
+    final reopened = await PersistentDownloadArtifactStore.open(root.path);
+    await reopened.close();
+    expect(await oldStaging.exists(), isFalse);
+    expect(await destination.readAsBytes(), webpBytes);
+    final checked = SqliteIndex(store.layout.dbPath);
+    await checked.open();
+    expect(await checked.listStorageCleanupDebts(), isEmpty);
+    await checked.close();
   });
 
   test('delete cleanly clears chapter even if download session has active writer', () async {
@@ -5650,6 +6175,49 @@ void main() {
     expect(exact.readyPages, 1);
     expect(exact.partialPages, 0);
     expect(exact.receivedBytes, gapBytes.length);
+
+    final currentProjection =
+        (await service.artifactStore.loadCanonicalMediaProjections()).firstWhere(
+      (projection) => projection.comicId == currentManifest.comicId,
+    );
+    final sharedPhysicalId = PhysicalMediaId.canonical(
+      currentProjection.coordinateForPageIndex(0).stableKey,
+    );
+    expect(
+      await service.artifactCacheManager.bindPhysicalArtifact(
+        physicalId: sharedPhysicalId,
+        sourceId: currentShared,
+      ),
+      isTrue,
+    );
+    final sharedExact = await service.artifactStore.index.get(currentShared.key);
+    expect(sharedExact, isNotNull);
+    final stale = service.artifactStore.layout.artifactForPhysical(
+      sharedPhysicalId,
+    );
+    await File(stale.partialPath).parent.create(recursive: true);
+    await File(stale.partialPath).writeAsBytes(sharedBytes);
+    await (service.artifactStore.index as PhysicalPartialIndex)
+        .putPhysicalPartial(
+      PhysicalPartialRecord(
+        id: sharedPhysicalId,
+        path: stale.partialPath,
+        bytes: sharedBytes.length,
+        checksum: sharedExact!.checksum,
+        createdUs: 1,
+        touchedUs: 2,
+        storageRootId: service.artifactStore.layout.root,
+      ),
+    );
+
+    final overlappedProjection = await service.inspectDownloadManagement(
+      <ImportedLibraryEntry>[old, current],
+    );
+    final overlappedCache = overlappedProjection.cache!;
+    expect(overlappedCache.canonical, hasLength(1));
+    expect(overlappedCache.canonical.single.readyPages, 1);
+    expect(overlappedCache.canonical.single.partialPages, 0);
+    expect(overlappedCache.canonical.single.receivedBytes, sharedBytes.length);
   });
 
   test(
@@ -6376,6 +6944,35 @@ DownloadId _readerArtifactId(String pageId) => DownloadId(
       canonicalUri: Uri.parse('https://example.invalid/$pageId.bin'),
     );
 
+final class _FailDeleteOnceArtifactBytes implements ArtifactBytes {
+  final ArtifactBytes _delegate = const LocalArtifactBytes();
+  String? failDeletePath;
+  bool _failed = false;
+
+  @override
+  Future<bool> exists(String path) => _delegate.exists(path);
+
+  @override
+  Future<int> length(String path) => _delegate.length(path);
+
+  @override
+  Stream<Uint8List> readChunks(
+    String path, {
+    required int start,
+    int? endExclusive,
+  }) =>
+      _delegate.readChunks(path, start: start, endExclusive: endExclusive);
+
+  @override
+  Future<void> delete(String path) async {
+    if (!_failed && path == failDeletePath) {
+      _failed = true;
+      throw FileSystemException('simulated obsolete-source delete failure', path);
+    }
+    await _delegate.delete(path);
+  }
+}
+
 final class _MemorySafIo implements SafTreeIo {
   _MemorySafIo(this.storage);
 
@@ -6387,6 +6984,7 @@ final class _MemorySafIo implements SafTreeIo {
   int existsCalls = 0;
   final List<String> readPaths = <String>[];
   bool failNextClose = false;
+  final Set<String> failDeletePaths = <String>{};
 
   @override
   Future<int?> open(String relativePath, {SafWriteMode? mode}) async {
@@ -6453,8 +7051,12 @@ final class _MemorySafIo implements SafTreeIo {
   }
 
   @override
-  Future<bool> delete(String relativePath) async =>
-      storage.remove(relativePath) != null;
+  Future<bool> delete(String relativePath) async {
+    if (failDeletePaths.contains(relativePath)) {
+      throw StateError('simulated SAF delete failure for $relativePath');
+    }
+    return storage.remove(relativePath) != null;
+  }
 
   @override
   Future<bool> rename(String relativePath, String newRelativePath) async {

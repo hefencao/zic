@@ -128,6 +128,47 @@ void main() {
     expect(() => first![1] = 8, throwsUnsupportedError);
   });
 
+  test('resident replay prefixes are generation-scoped accelerators only', () {
+    final manager = ArtifactCacheManager(
+      backend: _Backend(<DownloadId, Uint8List>{}),
+      memoryMaxEntries: 2,
+      memoryMaxBytes: 8,
+    );
+    final firstGeneration = Object();
+    final secondGeneration = Object();
+    manager.rememberResidentReplayPrefix(
+      generationToken: firstGeneration,
+      bytes: Uint8List.fromList(<int>[1, 2, 3, 4]),
+    );
+
+    final prefix = manager.lookupResidentReplayPrefix(
+      firstGeneration,
+      endExclusive: 3,
+    );
+    expect(prefix, <int>[1, 2, 3]);
+    expect(() => prefix![0] = 9, throwsUnsupportedError);
+    expect(
+      manager.lookupResidentReplayPrefix(
+        secondGeneration,
+        endExclusive: 3,
+      ),
+      isNull,
+    );
+    expect(manager.memoryEntryCount, 0,
+        reason: 'a bootstrap prefix must never masquerade as a full cache hit');
+    expect(manager.residentReplayPrefixEntryCount, 1);
+    expect(manager.residentReplayPrefixBytes, 4);
+
+    final id = _id('full-memory-priority');
+    manager.remember(
+      id: id,
+      bytes: Uint8List.fromList(<int>[5, 6, 7, 8, 9, 10]),
+    );
+    expect(manager.lookupMemory(id), <int>[5, 6, 7, 8, 9, 10]);
+    expect(manager.residentReplayPrefixEntryCount, 0,
+        reason: 'bootstrap acceleration yields before the central full-body budget');
+  });
+
   test('memory stream reads return unmodifiable byte buffers', () async {
     final id = _id('memory-stream-ownership');
     final manager = ArtifactCacheManager(

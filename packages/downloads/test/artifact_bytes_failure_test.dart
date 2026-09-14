@@ -104,6 +104,33 @@ void main() {
     );
   });
 
+  test('SAF atomic temp lifecycle records debt before create and clears after absence',
+      () async {
+    final io = _AtomicSafIo();
+    final order = <String>[];
+
+    await writeBytesToSaf(
+      io,
+      'folder/page.bin',
+      Uint8List.fromList(<int>[1, 2, 3]),
+      beforeTemporaryCreate: (temporaryPath) async {
+        order.add('before');
+        expect(io.openedPaths, isEmpty,
+            reason: 'cleanup debt must be durable before temp creation');
+        expect(await io.exists(temporaryPath), isFalse);
+      },
+      afterTemporaryAbsent: (temporaryPath) async {
+        order.add('after');
+        expect(await io.exists(temporaryPath), isFalse,
+            reason: 'cleanup debt clears only after temp absence is proven');
+      },
+    );
+
+    expect(order, <String>['before', 'after']);
+    expect(io.openedPaths.single, startsWith('folder/page.bin.zic-tmp-'));
+    expect(io.storage['folder/page.bin'], orderedEquals(<int>[1, 2, 3]));
+  });
+
   test('SAF reusable range reader keeps one descriptor across ranges', () async {
     const tree = 'content://tree/reuse';
     final io = _CountingSafIo(Uint8List.fromList(List<int>.generate(32, (i) => i)));
@@ -125,6 +152,74 @@ void main() {
     await reader.close();
     expect(io.closeCalls, 1);
   });
+}
+
+final class _AtomicSafIo implements SafTreeIo {
+  final Map<String, Uint8List> storage = <String, Uint8List>{};
+  final List<String> openedPaths = <String>[];
+  final Map<int, String> _handles = <int, String>{};
+  int _nextHandle = 1;
+
+  @override
+  Future<int?> open(
+    String relativePath, {
+    SafWriteMode mode = SafWriteMode.read,
+  }) async {
+    openedPaths.add(relativePath);
+    if (mode == SafWriteMode.read && !storage.containsKey(relativePath)) {
+      return null;
+    }
+    if (mode == SafWriteMode.writeTruncate) {
+      storage[relativePath] = Uint8List(0);
+    }
+    final handle = _nextHandle++;
+    _handles[handle] = relativePath;
+    return handle;
+  }
+
+  @override
+  Future<void> write(int handle, Uint8List bytes) async {
+    final path = _handles[handle];
+    if (path == null) throw StateError('invalid handle');
+    storage[path] = Uint8List.fromList(bytes);
+  }
+
+  @override
+  Future<void> close(int handle) async {
+    _handles.remove(handle);
+  }
+
+  @override
+  Future<bool> exists(String relativePath) async =>
+      storage.containsKey(relativePath);
+
+  @override
+  Future<bool> delete(String relativePath) async =>
+      storage.remove(relativePath) != null;
+
+  @override
+  Future<bool> rename(String relativePath, String newRelativePath) async {
+    final bytes = storage.remove(relativePath);
+    if (bytes == null || storage.containsKey(newRelativePath)) return false;
+    storage[newRelativePath] = bytes;
+    return true;
+  }
+
+  @override
+  Future<Uint8List> read(int handle, int length) =>
+      throw UnsupportedError('write-only fixture');
+
+  @override
+  Future<int?> length(int handle) =>
+      throw UnsupportedError('write-only fixture');
+
+  @override
+  Future<void> seek(int handle, int position) =>
+      throw UnsupportedError('write-only fixture');
+
+  @override
+  Future<List<SafTreeFile>> list(String relativePath) async =>
+      const <SafTreeFile>[];
 }
 
 final class _CountingSafIo implements SafTreeIo, SafTreeRandomRead {

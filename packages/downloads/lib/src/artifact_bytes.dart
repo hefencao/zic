@@ -504,6 +504,16 @@ abstract interface class SafTreeRandomRead {
   Future<Uint8List> readAt(int handle, int position, int length);
 }
 
+/// Optional process-local acceleration for provider-backed read paths.
+///
+/// Implementations may perform a bounded read-only provider warmup, but must
+/// not create body authority, mutate namespace state, or retain a descriptor
+/// whose lifetime escapes the warmup operation. `false` means unavailable or
+/// unnecessary (for example a direct filesystem backend).
+abstract interface class SafTreeReadPrewarmer {
+  Future<bool> prewarmReadProvider();
+}
+
 abstract interface class SafTreeIo {
   Future<int?> open(
     String relativePath, {
@@ -809,12 +819,21 @@ ArtifactReadFailureKind _osReadFailureKind(int? errorCode) {
   };
 }
 
+typedef SafTemporaryLifecycleHook = Future<void> Function(
+  String temporaryPath,
+);
+
 Future<void> copyFileIntoSaf(
   SafTreeIo io,
   File sourceFile,
-  String relativePath,
-) async {
-  await _writeSafAtomically(io, relativePath, (temporaryPath) async {
+  String relativePath, {
+  SafTemporaryLifecycleHook? beforeTemporaryCreate,
+  SafTemporaryLifecycleHook? afterTemporaryAbsent,
+}) async {
+  await _writeSafAtomically(
+    io,
+    relativePath,
+    (temporaryPath) async {
     final handle = await io.open(
       temporaryPath,
       mode: SafWriteMode.writeTruncate,
@@ -836,7 +855,10 @@ Future<void> copyFileIntoSaf(
     } finally {
       await io.close(handle);
     }
-  });
+    },
+    beforeTemporaryCreate: beforeTemporaryCreate,
+    afterTemporaryAbsent: afterTemporaryAbsent,
+  );
 }
 
 /// Writes [bytes] into a committed SAF file without exposing a partially
@@ -844,9 +866,14 @@ Future<void> copyFileIntoSaf(
 Future<void> writeBytesToSaf(
   SafTreeIo io,
   String relativePath,
-  Uint8List bytes,
-) async {
-  await _writeSafAtomically(io, relativePath, (temporaryPath) async {
+  Uint8List bytes, {
+  SafTemporaryLifecycleHook? beforeTemporaryCreate,
+  SafTemporaryLifecycleHook? afterTemporaryAbsent,
+}) async {
+  await _writeSafAtomically(
+    io,
+    relativePath,
+    (temporaryPath) async {
     final handle = await io.open(
       temporaryPath,
       mode: SafWriteMode.writeTruncate,
@@ -859,7 +886,10 @@ Future<void> writeBytesToSaf(
     } finally {
       await io.close(handle);
     }
-  });
+    },
+    beforeTemporaryCreate: beforeTemporaryCreate,
+    afterTemporaryAbsent: afterTemporaryAbsent,
+  );
 }
 
 Future<void> commitSafTemporary(
@@ -887,19 +917,25 @@ Future<void> commitSafTemporary(
 Future<void> _writeSafAtomically(
   SafTreeIo io,
   String relativePath,
-  Future<void> Function(String temporaryPath) write,
-) async {
+  Future<void> Function(String temporaryPath) write, {
+  SafTemporaryLifecycleHook? beforeTemporaryCreate,
+  SafTemporaryLifecycleHook? afterTemporaryAbsent,
+}) async {
   if (!_isSafeSafRelativePath(relativePath)) {
     throw ArgumentError.value(relativePath, 'relativePath', 'must be safe');
   }
   final temporaryPath =
       '$relativePath.zic-tmp-${DateTime.now().microsecondsSinceEpoch}';
+  await beforeTemporaryCreate?.call(temporaryPath);
   try {
     await write(temporaryPath);
     await commitSafTemporary(io, temporaryPath, relativePath);
   } finally {
     if (await io.exists(temporaryPath)) {
       await io.delete(temporaryPath);
+    }
+    if (!await io.exists(temporaryPath)) {
+      await afterTemporaryAbsent?.call(temporaryPath);
     }
   }
 }

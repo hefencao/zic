@@ -192,6 +192,176 @@ void main() {
     expect((await cache.openPhysicalArtifact(physical))?.length, bytes.length);
   });
 
+  test(
+    'automatic handoff keeps matching canonical physical durable body without exact copy',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'zic-promoted-cache-physical-seal-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      DownloadId idFor(String version) => DownloadId(
+        content: ContentId(
+          sourceId: 'source',
+          comicId: 'version-$version',
+          chapterId: 'chapter-$version',
+          pageId: 'page-$version',
+        ),
+        sourceRevision: 'revision-$version',
+        canonicalUri: Uri.parse('memory://physical-seal-$version'),
+      );
+      final incumbent = idFor('old');
+      final target = idFor('new');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000011',
+      );
+      final bytes = Uint8List.fromList(<int>[1, 4, 1, 4, 2, 1, 3, 5]);
+      final backend = _RecordingArtifactStore()
+        ..values[incumbent] = Uint8List.fromList(bytes)
+        ..physicalSources[physical] = incumbent;
+      final cache = ArtifactCacheManager(backend: backend);
+      final trace = MemoryTraceSink();
+      final handoff = PromotedArtifactCacheHandoff(
+        cache: cache,
+        clock: const SystemClock(),
+        traceSink: trace,
+      );
+      final registry = DownloadRegistry(
+        layout: CacheLayout(directory.path),
+        clock: const SystemClock(),
+        onSessionCreated: handoff.observe,
+      );
+      addTearDown(() async {
+        handoff.detach();
+        await registry.dispose();
+      });
+      registry.bindPhysicalMedia(id: target, physicalId: physical);
+      final session = registry.get(target);
+      final transport = LoaderTransport(<Uri, LoaderTransportSource>{
+        target.canonicalUri: LoaderTransportSource(
+          revision: 'fixture-new',
+          loadBytes: () async => bytes,
+        ),
+      });
+
+      await DownloadJob(transport: transport, session: session).run();
+      await handoff.drain(<DownloadSession>[session]);
+
+      expect(backend.values[target], isNull,
+          reason: 'automatic Reader cache must keep the existing physical body');
+      expect(backend.physicalSources[physical], incumbent);
+      expect(
+        trace.events.any(
+          (event) => event.payload['action'] == 'skip-existing-physical-seal',
+        ),
+        isTrue,
+      );
+
+      await handoff.persist(session);
+      expect(backend.values[target], bytes,
+          reason: 'explicit exact durability still materializes the target');
+    },
+  );
+
+  test(
+    'persistent canonical body skips automatic copy and survives dirty reopen',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'zic-promoted-persistent-physical-seal-',
+      );
+      final hotRoot = await Directory.systemTemp.createTemp(
+        'zic-promoted-persistent-hot-',
+      );
+      addTearDown(() async {
+        if (await root.exists()) await root.delete(recursive: true);
+        if (await hotRoot.exists()) await hotRoot.delete(recursive: true);
+      });
+      DownloadId idFor(String version) => DownloadId(
+        content: ContentId(
+          sourceId: 'source',
+          comicId: 'version-$version',
+          chapterId: 'chapter-$version',
+          pageId: 'page-$version',
+        ),
+        sourceRevision: 'revision-$version',
+        canonicalUri: Uri.parse('memory://persistent-physical-seal-$version'),
+      );
+      final incumbent = idFor('old');
+      final target = idFor('new');
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000012',
+      );
+      final bytes = Uint8List.fromList(
+        <int>[...'RIFF....WEBP'.codeUnits, ...List<int>.filled(96, 7)],
+      );
+
+      final store = await PersistentDownloadArtifactStore.open(root.path);
+      final cache = ArtifactCacheManager(backend: store);
+      await cache.storePromotedArtifact(id: incumbent, bytes: bytes);
+      expect(
+        await cache.bindPhysicalArtifactFromCandidates(
+          physicalId: physical,
+          candidates: <DownloadId>[incumbent],
+        ),
+        isTrue,
+      );
+
+      final trace = MemoryTraceSink();
+      final handoff = PromotedArtifactCacheHandoff(
+        cache: cache,
+        clock: const SystemClock(),
+        traceSink: trace,
+      );
+      final session = DownloadSession(
+        id: target,
+        physicalId: physical,
+        artifact: CacheLayout(hotRoot.path).artifactForPhysical(physical),
+        clock: const SystemClock(),
+        initiallyDemanded: false,
+      );
+      handoff.observe(session);
+      final transport = LoaderTransport(<Uri, LoaderTransportSource>{
+        target.canonicalUri: LoaderTransportSource(
+          revision: 'fixture-new',
+          loadBytes: () async => bytes,
+        ),
+      });
+
+      await DownloadJob(transport: transport, session: session).run();
+      await handoff.drain(<DownloadSession>[session]);
+
+      expect(await store.openArtifactStream(target), isNull,
+          reason: 'automatic Reader caching must not create an exact body copy');
+      expect(
+        trace.events.any(
+          (event) => event.payload['action'] == 'skip-existing-physical-seal',
+        ),
+        isTrue,
+      );
+
+      await handoff.persist(session);
+      final exact = await store.openArtifactStream(target);
+      expect(exact, isNotNull,
+          reason: 'explicit persistence still creates an exact durable binding');
+      expect(exact!.length, bytes.lengthInBytes);
+
+      handoff.detach();
+      await session.dispose();
+      await store.close();
+
+      final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+      final marker = File(
+        '${layout.root}${Platform.pathSeparator}.zic-cache-recovery-required',
+      );
+      await marker.writeAsString('stale-process-owner', flush: true);
+      final reopened = await PersistentDownloadArtifactStore.open(root.path);
+      final physicalAfterRestart = await reopened.openPhysicalArtifact(physical);
+      expect(physicalAfterRestart, isNotNull);
+      expect(physicalAfterRestart!.length, bytes.lengthInBytes);
+      expect(await reopened.readPromoted(target), bytes);
+      await reopened.close();
+    },
+  );
+
   test('canonical bind conflict falls back to exact once per promoted epoch',
       () async {
     final directory = await Directory.systemTemp.createTemp(
@@ -648,7 +818,7 @@ final class _RecordingArtifactStore
     final source = physicalSources[id];
     if (source == null) return null;
     final bytes = values[source];
-    return bytes == null ? null : _entry(bytes);
+    return bytes == null ? null : _entry(bytes, sealed: true);
   }
 
   @override
@@ -709,7 +879,10 @@ final class _ExistingArtifactStore implements ArtifactCacheBackend {
   }
 }
 
-ArtifactCacheStreamEntry _entry(Uint8List bytes) => ArtifactCacheStreamEntry(
+ArtifactCacheStreamEntry _entry(Uint8List bytes, {bool sealed = false}) {
+  final crc = Crc32();
+  if (sealed) crc.add(bytes);
+  return ArtifactCacheStreamEntry(
       length: bytes.lengthInBytes,
       open: ({required int start, int? endExclusive}) async* {
         yield Uint8List.sublistView(
@@ -719,7 +892,10 @@ ArtifactCacheStreamEntry _entry(Uint8List bytes) => ArtifactCacheStreamEntry(
         );
       },
       readAll: () async => bytes,
+      sealedChecksum: sealed ? crc.hex : null,
+      sealedChecksumAlgorithm: sealed ? 'crc32' : null,
     );
+}
 
 
 final class _ResidentTransport implements Transport {

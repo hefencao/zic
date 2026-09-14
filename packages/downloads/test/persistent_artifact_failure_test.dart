@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -7,6 +8,597 @@ import 'package:storage/storage.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('unclean-store marker runs startup recovery without taxing clean opens',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-startup-recovery-');
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    await Directory(layout.finalDir).create(recursive: true);
+    final orphan = File(
+      '${layout.finalDir}${Platform.pathSeparator}crash-orphan.bin',
+    );
+    await orphan.writeAsBytes(<int>[1, 2, 3, 4], flush: true);
+    final marker = File(
+      '${layout.root}${Platform.pathSeparator}.zic-cache-recovery-required',
+    );
+    await marker.parent.create(recursive: true);
+    await marker.writeAsString('stale-process-owner', flush: true);
+
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+
+    expect(await orphan.exists(), isFalse,
+        reason: 'crash evidence must activate the existing CacheScanner');
+    expect(await marker.exists(), isTrue,
+        reason: 'the current open remains marked dirty until clean close');
+    await store.close();
+    expect(await marker.exists(), isFalse);
+  });
+
+  test('promoted cache body survives dirty-reopen startup recovery', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-promoted-dirty-reopen-',
+    );
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    final id = _id('promoted-dirty-reopen');
+    final bytes = Uint8List.fromList(<int>[1, 4, 1, 5, 9, 2, 6, 5]);
+
+    final first = await PersistentDownloadArtifactStore.open(root.path);
+    await first.storePromotedArtifact(id: id, bytes: bytes);
+
+    final artifact = layout.artifactFor(id);
+    final metaFile = File(artifact.finalMetaPath);
+    final rawMeta = jsonDecode(await metaFile.readAsString());
+    expect(rawMeta, isA<Map>());
+    final meta = Map<String, Object?>.from(rawMeta as Map);
+    expect(meta['artifactState'], 'ready');
+    final rawDownload = meta['download'];
+    expect(rawDownload, isA<Map>(),
+        reason: 'new session metadata remains self-describing before DB commit');
+    expect(
+      DownloadId.fromJson(Map<String, Object?>.from(rawDownload as Map)),
+      id,
+    );
+    await first.close();
+
+    final marker = File(
+      '${layout.root}${Platform.pathSeparator}.zic-cache-recovery-required',
+    );
+    await marker.writeAsString('stale-process-owner', flush: true);
+
+    final reopened = await PersistentDownloadArtifactStore.open(root.path);
+    expect(await reopened.readPromoted(id), bytes,
+        reason: 'dirty-reopen CacheScanner must preserve a valid promoted body');
+    expect(await File(artifact.finalPath).length(), bytes.lengthInBytes);
+    await reopened.close();
+  });
+
+  test('dirty reopen and repeated store ignore READY sidecar ownership',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-ready-sidecar-nonauthority-',
+    );
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    final id = _id('ready-sidecar-nonauthority');
+    final bytes = Uint8List.fromList(<int>[3, 1, 4, 1, 5, 9, 2, 6]);
+
+    final first = await PersistentDownloadArtifactStore.open(root.path);
+    await first.storePromotedArtifact(id: id, bytes: bytes);
+    final before = await first.index.get(id.key);
+    expect(before, isNotNull);
+    expect(before!.state, CacheState.ready);
+    expect(
+      await (first.index as SqliteIndex)
+          .listArtifactReplicas(before.effectiveArtifactId),
+      hasLength(1),
+    );
+    final artifact = layout.artifactFor(id);
+    await first.close();
+
+    final raw = Map<String, Object?>.from(
+      jsonDecode(await File(artifact.finalMetaPath).readAsString()) as Map,
+    )
+      ..remove('download')
+      ..remove('downloadKey');
+    await File(artifact.finalMetaPath).writeAsString(
+      jsonEncode(raw),
+      flush: true,
+    );
+    final marker = File(
+      '${layout.root}${Platform.pathSeparator}.zic-cache-recovery-required',
+    );
+    await marker.writeAsString('stale-process-owner', flush: true);
+
+    final reopened = await PersistentDownloadArtifactStore.open(root.path);
+    expect(await reopened.readPromoted(id), bytes,
+        reason: 'sealed replica authority must not depend on sidecar owner fields');
+    await reopened.storePromotedArtifact(id: id, bytes: bytes);
+    final afterMeta = Map<String, Object?>.from(
+      jsonDecode(await File(artifact.finalMetaPath).readAsString()) as Map,
+    );
+    expect(afterMeta['download'], isNull,
+        reason: 'reusing READY must not recreate a session to repair metadata');
+    final after = await reopened.index.get(id.key);
+    expect(after, isNotNull);
+    expect(after!.effectiveArtifactId, before.effectiveArtifactId);
+    expect(
+      await (reopened.index as SqliteIndex)
+          .listArtifactReplicas(after.effectiveArtifactId),
+      hasLength(1),
+    );
+    await reopened.close();
+  });
+
+  test('direct cleanup debt drains asynchronously without blocking store open',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-direct-cleanup-debt-');
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    await Directory(layout.finalDir).create(recursive: true);
+    final temporary = File(
+      '${layout.finalDir}${Platform.pathSeparator}orphan.zic-tmp-123',
+    );
+    await temporary.writeAsBytes(<int>[9, 8, 7], flush: true);
+    await _seedCleanupDebt(
+      layout.dbPath,
+      StorageCleanupDebtRecord(
+        accessLocator: temporary.path,
+        storageRootId: layout.root,
+        kind: StorageCleanupDebtKind.temporary,
+        createdUs: 1,
+        touchedUs: 1,
+      ),
+    );
+    final scheduler = StorageWriteScheduler(
+      localReadScheduler: ArtifactCacheReadScheduler(),
+    );
+    final blocker = await scheduler.acquireQuantum();
+
+    final store = await PersistentDownloadArtifactStore.open(
+      root.path,
+      storageWriteScheduler: scheduler,
+    );
+    expect(await temporary.exists(), isTrue,
+        reason: 'store open must not wait for asynchronous cleanup I/O');
+    await Future<void>.delayed(Duration.zero);
+    expect(scheduler.pendingCount, 1,
+        reason: 'cleanup should wait behind the shared storage-write capacity');
+
+    blocker.release();
+    await store.close();
+    expect(await temporary.exists(), isFalse);
+    final index = SqliteIndex(layout.dbPath);
+    await index.open();
+    expect(await index.listStorageCleanupDebts(), isEmpty);
+    await index.close();
+  });
+
+  test('signed padded migration temp token remains eligible cleanup debt', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-negative-migration-temp-debt-',
+    );
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    await Directory(layout.finalDir).create(recursive: true);
+    final temporary = File(
+      '${layout.finalDir}${Platform.pathSeparator}'
+      'orphan.zic-migrate-0-8747f636549eb2.part',
+    );
+    await temporary.writeAsBytes(<int>[9, 7, 5, 3], flush: true);
+    await _seedCleanupDebt(
+      layout.dbPath,
+      StorageCleanupDebtRecord(
+        accessLocator: temporary.path,
+        storageRootId: layout.root,
+        kind: StorageCleanupDebtKind.temporary,
+        createdUs: 1,
+        touchedUs: 1,
+      ),
+    );
+
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    await store.close();
+
+    expect(await temporary.exists(), isFalse);
+    final index = SqliteIndex(layout.dbPath);
+    await index.open();
+    expect(await index.listStorageCleanupDebts(), isEmpty);
+    await index.close();
+  });
+
+  test('negative migration temp token remains eligible cleanup debt', () async {
+    final root = await Directory.systemTemp.createTemp('zic-negative-migration-temp-');
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    await Directory(layout.finalDir).create(recursive: true);
+    final valid = File(
+      '${layout.finalDir}${Platform.pathSeparator}page.bin.zic-migrate--123456789abcdef.part',
+    );
+    final malformed = File(
+      '${layout.finalDir}${Platform.pathSeparator}page.bin.zic-migrate-1234-56789abcdef.part',
+    );
+    await valid.writeAsBytes(<int>[1, 2, 3], flush: true);
+    await malformed.writeAsBytes(<int>[4, 5, 6], flush: true);
+    await _seedCleanupDebt(
+      layout.dbPath,
+      StorageCleanupDebtRecord(
+        accessLocator: valid.path,
+        storageRootId: layout.root,
+        kind: StorageCleanupDebtKind.temporary,
+        createdUs: 1,
+        touchedUs: 1,
+      ),
+    );
+    await _seedCleanupDebt(
+      layout.dbPath,
+      StorageCleanupDebtRecord(
+        accessLocator: malformed.path,
+        storageRootId: layout.root,
+        kind: StorageCleanupDebtKind.temporary,
+        createdUs: 2,
+        touchedUs: 2,
+      ),
+    );
+
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    await store.close();
+
+    expect(await valid.exists(), isFalse);
+    expect(await malformed.exists(), isTrue);
+    final index = SqliteIndex(layout.dbPath);
+    await index.open();
+    final debts = await index.listStorageCleanupDebts();
+    expect(debts, hasLength(1));
+    expect(debts.single.accessLocator, malformed.path);
+    await index.close();
+  });
+
+  test('obsolete sealed source debt removes only still-matching old bytes',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-obsolete-source-debt-');
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    await Directory(layout.finalDir).create(recursive: true);
+    final oldBytes = Uint8List.fromList(<int>[1, 3, 3, 7]);
+    final obsolete = File(
+      '${layout.finalDir}${Platform.pathSeparator}obsolete.bin',
+    );
+    await obsolete.writeAsBytes(oldBytes, flush: true);
+    final checksum = (Crc32()..add(oldBytes)).hex;
+    await _seedCleanupDebt(
+      layout.dbPath,
+      StorageCleanupDebtRecord(
+        accessLocator: obsolete.path,
+        storageRootId: layout.root,
+        kind: StorageCleanupDebtKind.obsoleteSealedSource,
+        createdUs: 1,
+        touchedUs: 1,
+        expectedBytes: oldBytes.lengthInBytes,
+        expectedChecksum: checksum,
+        expectedChecksumAlgorithm: 'crc32',
+      ),
+    );
+
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    await store.close();
+
+    expect(await obsolete.exists(), isFalse);
+    final index = SqliteIndex(layout.dbPath);
+    await index.open();
+    expect(await index.listStorageCleanupDebts(), isEmpty);
+    await index.close();
+  });
+
+  test('obsolete sealed debt follows a re-proven Direct alias after remount',
+      () async {
+    final appRoot = await Directory.systemTemp.createTemp(
+      'zic-obsolete-remount-app-',
+    );
+    final oldRoot = await Directory.systemTemp.createTemp(
+      'zic-obsolete-remount-old-',
+    );
+    final newParent = await Directory.systemTemp.createTemp(
+      'zic-obsolete-remount-new-parent-',
+    );
+    final newRoot = Directory(
+      '${newParent.path}${Platform.pathSeparator}remounted',
+    );
+    addTearDown(() async {
+      for (final directory in <Directory>[appRoot, oldRoot, newParent]) {
+        if (await directory.exists()) await directory.delete(recursive: true);
+      }
+    });
+    const safTree =
+        'content://com.android.externalstorage.documents/tree/ABCD-1234%3ABooks';
+    final bytes = Uint8List.fromList(<int>[3, 1, 4, 1, 5, 9]);
+    final oldFile = File('${oldRoot.path}${Platform.pathSeparator}page.bin');
+    await oldFile.writeAsBytes(bytes, flush: true);
+    final checksum = (Crc32()..add(bytes)).hex;
+    final indexPath = defaultChapterDownloadMetadataPath(appRoot.path);
+    final index = SqliteIndex(indexPath);
+    await index.open();
+    final root = await index.registerStorageRootAccessAliasProof(
+      StorageRootAccessAliasProof(
+        direct: DirectStorageAccessLocator(oldRoot.path),
+        saf: const SafStorageAccessLocator(safTree),
+      ),
+      verifiedUs: 10,
+    );
+    await index.putStorageCleanupDebt(
+      StorageCleanupDebtRecord(
+        accessLocator: oldFile.path,
+        storageRootId: root.rootId,
+        kind: StorageCleanupDebtKind.obsoleteSealedSource,
+        createdUs: 11,
+        touchedUs: 11,
+        expectedBytes: bytes.lengthInBytes,
+        expectedChecksum: checksum,
+        expectedChecksumAlgorithm: 'crc32',
+      ),
+    );
+    await index.close();
+
+    await oldRoot.rename(newRoot.path);
+    final newFile = File('${newRoot.path}${Platform.pathSeparator}page.bin');
+    expect(await newFile.readAsBytes(), bytes);
+
+    final store = await PersistentDownloadArtifactStore.open(
+      appRoot.path,
+      directory: newRoot.path,
+      indexPath: indexPath,
+    );
+    await store.registerStorageRootAccessAliasProof(
+      StorageRootAccessAliasProof(
+        direct: DirectStorageAccessLocator(newRoot.path),
+        saf: const SafStorageAccessLocator(safTree),
+      ),
+    );
+    await store.close();
+
+    expect(await newFile.exists(), isFalse);
+    final checked = SqliteIndex(indexPath);
+    await checked.open();
+    expect(await checked.listStorageCleanupDebts(), isEmpty);
+    await checked.close();
+  });
+
+  test('obsolete sealed source debt never deletes changed replacement bytes',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-obsolete-replaced-');
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    await Directory(layout.finalDir).create(recursive: true);
+    final oldBytes = Uint8List.fromList(<int>[2, 4, 6, 8]);
+    final replacement = Uint8List.fromList(<int>[8, 6, 4, 2]);
+    final obsolete = File(
+      '${layout.finalDir}${Platform.pathSeparator}reused.bin',
+    );
+    await obsolete.writeAsBytes(replacement, flush: true);
+    final checksum = (Crc32()..add(oldBytes)).hex;
+    await _seedCleanupDebt(
+      layout.dbPath,
+      StorageCleanupDebtRecord(
+        accessLocator: obsolete.path,
+        storageRootId: layout.root,
+        kind: StorageCleanupDebtKind.obsoleteSealedSource,
+        createdUs: 1,
+        touchedUs: 1,
+        expectedBytes: oldBytes.lengthInBytes,
+        expectedChecksum: checksum,
+        expectedChecksumAlgorithm: 'crc32',
+      ),
+    );
+
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    await store.close();
+
+    expect(await obsolete.readAsBytes(), replacement);
+    final index = SqliteIndex(layout.dbPath);
+    await index.open();
+    expect(await index.listStorageCleanupDebts(), isEmpty,
+        reason: 'proof mismatch retires stale cleanup intent without deleting');
+    await index.close();
+  });
+
+  test('obsolete sealed source debt yields to a surviving durable replica authority',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-obsolete-authority-');
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    await Directory(layout.finalDir).create(recursive: true);
+    final bytes = Uint8List.fromList(<int>[5, 7, 11, 13]);
+    final file = File('${layout.finalDir}${Platform.pathSeparator}owned.bin');
+    await file.writeAsBytes(bytes, flush: true);
+    final checksum = (Crc32()..add(bytes)).hex;
+    final id = _id('obsolete-authority');
+    final index = SqliteIndex(layout.dbPath);
+    await index.open();
+    await index.put(
+      CacheRec(
+        id: id,
+        state: CacheState.ready,
+        path: file.path,
+        bytes: bytes.lengthInBytes,
+        checksum: checksum,
+        createdUs: 1,
+        touchedUs: 1,
+        artifactId: 'obsolete-authority-artifact',
+        storageRootId: layout.root,
+      ),
+    );
+    await index.putStorageCleanupDebt(
+      StorageCleanupDebtRecord(
+        accessLocator: file.path,
+        storageRootId: layout.root,
+        kind: StorageCleanupDebtKind.obsoleteSealedSource,
+        createdUs: 2,
+        touchedUs: 2,
+        expectedBytes: bytes.lengthInBytes,
+        expectedChecksum: checksum,
+        expectedChecksumAlgorithm: 'crc32',
+      ),
+    );
+    await index.close();
+
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    await store.close();
+
+    expect(await file.readAsBytes(), bytes);
+    final checked = SqliteIndex(layout.dbPath);
+    await checked.open();
+    expect(await checked.listStorageCleanupDebts(), isEmpty);
+    expect(await checked.get(id.key), isNotNull);
+    await checked.close();
+  });
+
+  test('SAF cleanup debt deletes only the exact locator without listing tree',
+      () async {
+    final root = await Directory.systemTemp.createTemp('zic-saf-cleanup-debt-');
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    const treeUri = 'content://cleanup-tree/root';
+    const relative = 'partial/page.part.zic-tmp-456';
+    final io = _CleanupDebtSafIo()
+      ..storage[relative] = Uint8List.fromList(<int>[1, 2, 3]);
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    final locator = encodeSafRecordPath(
+      treeUri: treeUri,
+      relativePath: relative,
+    );
+    await _seedCleanupDebt(
+      layout.dbPath,
+      const StorageCleanupDebtRecord(
+        accessLocator: 'saf-record://placeholder',
+        storageRootId: treeUri,
+        kind: StorageCleanupDebtKind.temporary,
+        createdUs: 1,
+        touchedUs: 1,
+      ),
+      replacementLocator: locator,
+    );
+
+    final store = await PersistentDownloadArtifactStore.open(
+      root.path,
+      safMirror: io,
+      safTreeUri: treeUri,
+    );
+    await store.close();
+
+    expect(io.storage.containsKey(relative), isFalse);
+    expect(io.listCalls, 0,
+        reason: 'cleanup recovery must never enumerate the SAF tree');
+    expect(io.deletedPaths, <String>[relative]);
+    final index = SqliteIndex(layout.dbPath);
+    await index.open();
+    expect(await index.listStorageCleanupDebts(), isEmpty);
+    await index.close();
+  });
+
+  test('SAF cleanup I/O failure keeps exact cleanup debt durable', () async {
+    final root = await Directory.systemTemp.createTemp('zic-saf-cleanup-failure-');
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    const treeUri = 'content://cleanup-failure-tree/root';
+    const relative = 'partial/page.part.zic-tmp-654';
+    final io = _CleanupDebtSafIo(failDelete: true)
+      ..storage[relative] = Uint8List.fromList(<int>[4, 5, 6]);
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    final locator = encodeSafRecordPath(
+      treeUri: treeUri,
+      relativePath: relative,
+    );
+    await _seedCleanupDebt(
+      layout.dbPath,
+      StorageCleanupDebtRecord(
+        accessLocator: locator,
+        storageRootId: treeUri,
+        kind: StorageCleanupDebtKind.temporary,
+        createdUs: 1,
+        touchedUs: 1,
+      ),
+    );
+
+    final store = await PersistentDownloadArtifactStore.open(
+      root.path,
+      safMirror: io,
+      safTreeUri: treeUri,
+    );
+    await store.close();
+
+    expect(io.storage.containsKey(relative), isTrue);
+    final index = SqliteIndex(layout.dbPath);
+    await index.open();
+    final debts = await index.listStorageCleanupDebts();
+    expect(debts, hasLength(1));
+    expect(debts.single.accessLocator, locator);
+    await index.close();
+  });
+
+  test('cleanup debt for an unavailable SAF tree remains durable', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-unavailable-saf-cleanup-debt-',
+    );
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    const oldTree = 'content://old-cleanup-tree/root';
+    const currentTree = 'content://current-cleanup-tree/root';
+    const relative = 'partial/page.part.zic-tmp-789';
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    final locator = encodeSafRecordPath(
+      treeUri: oldTree,
+      relativePath: relative,
+    );
+    await _seedCleanupDebt(
+      layout.dbPath,
+      StorageCleanupDebtRecord(
+        accessLocator: locator,
+        storageRootId: oldTree,
+        kind: StorageCleanupDebtKind.temporary,
+        createdUs: 1,
+        touchedUs: 1,
+      ),
+    );
+    final io = _CleanupDebtSafIo();
+
+    final store = await PersistentDownloadArtifactStore.open(
+      root.path,
+      safMirror: io,
+      safTreeUri: currentTree,
+    );
+    await store.close();
+
+    expect(io.deletedPaths, isEmpty);
+    expect(io.listCalls, 0);
+    final index = SqliteIndex(layout.dbPath);
+    await index.open();
+    final debts = await index.listStorageCleanupDebts();
+    expect(debts, hasLength(1));
+    expect(debts.single.accessLocator, locator);
+    await index.close();
+  });
+
   test('sealed persistent entry distinguishes hot-path trust from full CRC',
       () async {
     final root = await Directory.systemTemp.createTemp('zic-sealed-trust-');
@@ -438,6 +1030,72 @@ void main() {
     expect(await store.artifactReplicasFor(id), hasLength(1));
   });
 
+  test('remounted proven Direct alias serves and deletes a sealed replica',
+      () async {
+    final appRoot = await Directory.systemTemp.createTemp(
+      'zic-replica-remount-app-',
+    );
+    final oldRoot = await Directory.systemTemp.createTemp(
+      'zic-replica-remount-old-',
+    );
+    final newRoot = await Directory.systemTemp.createTemp(
+      'zic-replica-remount-new-',
+    );
+    addTearDown(() async {
+      for (final directory in <Directory>[appRoot, oldRoot, newRoot]) {
+        if (await directory.exists()) await directory.delete(recursive: true);
+      }
+    });
+    const safTree =
+        'content://com.android.externalstorage.documents/tree/CAFE-BEEF%3ABooks';
+    final id = _id('replica-remount-delete');
+    final bytes = Uint8List.fromList(<int>[9, 8, 7, 6, 5, 4, 3, 2]);
+    final store = await PersistentDownloadArtifactStore.open(
+      appRoot.path,
+      directory: oldRoot.path,
+      indexPath: defaultChapterDownloadMetadataPath(appRoot.path),
+    );
+    addTearDown(store.close);
+    await store.storePromotedArtifact(id: id, bytes: bytes);
+    await store.registerStorageRootAccessAliasProof(
+      StorageRootAccessAliasProof(
+        direct: DirectStorageAccessLocator(oldRoot.path),
+        saf: const SafStorageAccessLocator(safTree),
+      ),
+    );
+    final replica = (await store.artifactReplicasFor(id)).single;
+    final relative = replica.accessLocator.substring(oldRoot.path.length + 1);
+    final remountedBody = File(
+      '${newRoot.path}${Platform.pathSeparator}$relative',
+    );
+    await remountedBody.parent.create(recursive: true);
+    await File(replica.accessLocator).rename(remountedBody.path);
+    final oldSidecar = File('${replica.accessLocator}.meta');
+    final remountedSidecar = File('${remountedBody.path}.meta');
+    if (await oldSidecar.exists()) {
+      await remountedSidecar.parent.create(recursive: true);
+      await oldSidecar.rename(remountedSidecar.path);
+    }
+    await store.registerStorageRootAccessAliasProof(
+      StorageRootAccessAliasProof(
+        direct: DirectStorageAccessLocator(newRoot.path),
+        saf: const SafStorageAccessLocator(safTree),
+      ),
+    );
+
+    final reopened = await store.openArtifactStream(id);
+    expect(reopened, isNotNull);
+    expect(await reopened!.readAll!(), orderedEquals(bytes));
+
+    await store.invalidateArtifact(id);
+    expect((await store.indexedRecords()).containsKey(id.key), isFalse);
+    expect(await remountedBody.exists(), isFalse,
+        reason:
+            'destructive cleanup must resolve the current proven alias rather '
+            'than deleting only the stale compatibility locator');
+    expect(await remountedSidecar.exists(), isFalse);
+  });
+
   test('explicit invalidation removes every replica when no binding remains',
       () async {
     final appRoot = await Directory.systemTemp.createTemp('zic-replica-delete-app-');
@@ -660,6 +1318,130 @@ void main() {
     expect(await File(record.path).exists(), isTrue);
   });
 
+  test('duplicate same-process open does not recover another owner promotion',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-promotion-concurrent-open-',
+    );
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final first = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(first.close);
+    final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+    final id = _id('promotion-concurrent-open');
+    final physical = PhysicalMediaId.canonical('promotion:concurrent-open');
+    final artifact = layout.artifactForPhysical(physical);
+    final bytes = Uint8List.fromList(<int>[2, 7, 1, 8, 2, 8, 1, 8]);
+    final crc = Crc32()..add(bytes);
+    await File(artifact.partialPath).parent.create(recursive: true);
+    await File(artifact.partialPath).writeAsBytes(bytes, flush: true);
+    final index = first.index as SqliteIndex;
+    await index.putPhysicalPartial(
+      PhysicalPartialRecord(
+        id: physical,
+        path: artifact.partialPath,
+        bytes: bytes.lengthInBytes,
+        checksum: crc.hex,
+        createdUs: 1,
+        touchedUs: 2,
+        storageRootId: layout.root,
+      ),
+    );
+    await index.beginArtifactPromotion(
+      id: id,
+      physicalId: physical,
+      sourceAccessLocator: artifact.partialPath,
+      destinationAccessLocator: artifact.finalPath,
+      bytes: bytes.lengthInBytes,
+      checksum: crc.hex,
+      storageRootId: layout.root,
+    );
+
+    await expectLater(
+      PersistentDownloadArtifactStore.open(root.path),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(await index.listArtifactPromotions(), hasLength(1),
+        reason: 'the rejected second owner must not advance the journal');
+    expect(await index.getPhysicalPartial(physical), isNotNull);
+    expect(await index.get(id.key), isNull);
+    expect(await File(artifact.partialPath).readAsBytes(), bytes);
+    expect(await File(artifact.finalPath).exists(), isFalse);
+  });
+
+  for (final crashAfterRename in <bool>[false, true]) {
+    test(
+      'promotion journal recovers complete body ${crashAfterRename ? 'after' : 'before'} final rename',
+      () async {
+        final root = await Directory.systemTemp.createTemp(
+          'zic-promotion-crash-${crashAfterRename ? 'after' : 'before'}-',
+        );
+        addTearDown(() async {
+          if (await root.exists()) await root.delete(recursive: true);
+        });
+        final seeded = await _seedPromotionCrash(
+          root,
+          crashAfterRename ? 'after-rename' : 'before-rename',
+          renameToFinal: crashAfterRename,
+        );
+        expect(
+          await File(seeded.artifact.finalMetaPath).exists(),
+          isFalse,
+          reason: 'journal recovery must not require a final sidecar',
+        );
+
+        final store = await PersistentDownloadArtifactStore.open(root.path);
+        addTearDown(store.close);
+
+        expect(await store.readPromoted(seeded.id), seeded.bytes);
+        final index = store.index as SqliteIndex;
+        expect(await index.listArtifactPromotions(), isEmpty);
+        expect(await index.getPhysicalPartial(seeded.physical), isNull);
+        final physical = await index.getPhysicalMediaArtifact(seeded.physical);
+        expect(physical, isNotNull);
+        final ready = await index.get(seeded.id.key);
+        expect(ready?.state, CacheState.ready);
+        expect(physical!.artifactId, ready!.effectiveArtifactId);
+        expect(await File(seeded.artifact.finalPath).readAsBytes(), seeded.bytes);
+        expect(await File(seeded.artifact.partialPath).exists(), isFalse);
+      },
+    );
+  }
+
+  test('promotion collision rolls back to sealed partial without hijacking final',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-promotion-collision-',
+    );
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final foreign = Uint8List.fromList(<int>[9, 9, 9, 9, 9, 9, 9, 9]);
+    final seeded = await _seedPromotionCrash(
+      root,
+      'collision',
+      renameToFinal: false,
+      conflictingFinal: foreign,
+    );
+
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(store.close);
+    final index = store.index as SqliteIndex;
+
+    expect(await index.listArtifactPromotions(), isEmpty,
+        reason: 'conflicting destination rolls the transaction back');
+    expect(await index.get(seeded.id.key), isNull);
+    expect(await index.getPhysicalMediaArtifact(seeded.physical), isNull);
+    final partial = await index.getPhysicalPartial(seeded.physical);
+    expect(partial, isNotNull);
+    expect(partial!.path, seeded.artifact.partialPath);
+    expect(await File(seeded.artifact.partialPath).readAsBytes(), seeded.bytes);
+    expect(await File(seeded.artifact.finalPath).readAsBytes(), foreign,
+        reason: 'journal progress never authorizes overwriting a foreign final');
+  });
+
   test('mid-stream failure keeps emitted offset and replica identity', () async {
     final root = await Directory.systemTemp.createTemp('zic-replica-stream-');
     final store = await PersistentDownloadArtifactStore.open(root.path);
@@ -730,6 +1512,147 @@ DownloadId _id(String pageId) => DownloadId(
       sourceRevision: 'typed-read-r1',
       canonicalUri: Uri.parse('https://example.invalid/$pageId.bin'),
     );
+
+Future<({
+  DownloadId id,
+  PhysicalMediaId physical,
+  Artifact artifact,
+  Uint8List bytes,
+})> _seedPromotionCrash(
+  Directory root,
+  String pageId, {
+  required bool renameToFinal,
+  Uint8List? conflictingFinal,
+}) async {
+  final layout = CacheLayout(defaultChapterDownloadDirectory(root.path));
+  final id = _id('promotion-$pageId');
+  final physical = PhysicalMediaId.canonical('promotion:$pageId');
+  final artifact = layout.artifactForPhysical(physical);
+  final bytes = Uint8List.fromList(<int>[1, 4, 1, 5, 9, 2, 6, 5]);
+  final crc = Crc32()..add(bytes);
+  await File(artifact.partialPath).parent.create(recursive: true);
+  await File(artifact.partialPath).writeAsBytes(bytes, flush: true);
+  if (conflictingFinal != null) {
+    await File(artifact.finalPath).parent.create(recursive: true);
+    await File(artifact.finalPath).writeAsBytes(conflictingFinal, flush: true);
+  }
+
+  final index = SqliteIndex(layout.dbPath);
+  await index.open();
+  await index.putPhysicalPartial(
+    PhysicalPartialRecord(
+      id: physical,
+      path: artifact.partialPath,
+      bytes: bytes.lengthInBytes,
+      checksum: crc.hex,
+      createdUs: 1,
+      touchedUs: 2,
+      storageRootId: layout.root,
+    ),
+  );
+  await index.beginArtifactPromotion(
+    id: id,
+    physicalId: physical,
+    sourceAccessLocator: artifact.partialPath,
+    destinationAccessLocator: artifact.finalPath,
+    bytes: bytes.lengthInBytes,
+    checksum: crc.hex,
+    storageRootId: layout.root,
+  );
+  await index.close();
+
+  if (renameToFinal) {
+    await File(artifact.finalPath).parent.create(recursive: true);
+    await File(artifact.partialPath).rename(artifact.finalPath);
+  }
+  return (
+    id: id,
+    physical: physical,
+    artifact: artifact,
+    bytes: bytes,
+  );
+}
+
+Future<void> _seedCleanupDebt(
+  String dbPath,
+  StorageCleanupDebtRecord debt, {
+  String? replacementLocator,
+}) async {
+  final index = SqliteIndex(dbPath);
+  await index.open();
+  await index.putStorageCleanupDebt(
+    StorageCleanupDebtRecord(
+      accessLocator: replacementLocator ?? debt.accessLocator,
+      storageRootId: debt.storageRootId,
+      kind: debt.kind,
+      createdUs: debt.createdUs,
+      touchedUs: debt.touchedUs,
+      expectedBytes: debt.expectedBytes,
+      expectedChecksum: debt.expectedChecksum,
+      expectedChecksumAlgorithm: debt.expectedChecksumAlgorithm,
+    ),
+  );
+  await index.close();
+}
+
+final class _CleanupDebtSafIo implements SafTreeIo {
+  _CleanupDebtSafIo({this.failDelete = false});
+
+  final bool failDelete;
+  final Map<String, Uint8List> storage = <String, Uint8List>{};
+  final List<String> deletedPaths = <String>[];
+  int listCalls = 0;
+
+  @override
+  Future<bool> exists(String relativePath) async =>
+      storage.containsKey(relativePath);
+
+  @override
+  Future<bool> delete(String relativePath) async {
+    deletedPaths.add(relativePath);
+    if (failDelete) {
+      throw const SafTreeAccessFailure(
+        kind: ArtifactReadFailureKind.ioFailure,
+        operation: 'delete',
+      );
+    }
+    return storage.remove(relativePath) != null;
+  }
+
+  @override
+  Future<List<SafTreeFile>> list(String relativePath) async {
+    listCalls++;
+    return const <SafTreeFile>[];
+  }
+
+  @override
+  Future<int?> open(
+    String relativePath, {
+    SafWriteMode mode = SafWriteMode.read,
+  }) async => null;
+
+  @override
+  Future<Uint8List> read(int handle, int length) =>
+      throw UnsupportedError('cleanup fixture is delete-only');
+
+  @override
+  Future<void> write(int handle, Uint8List bytes) =>
+      throw UnsupportedError('cleanup fixture is delete-only');
+
+  @override
+  Future<int?> length(int handle) =>
+      throw UnsupportedError('cleanup fixture is delete-only');
+
+  @override
+  Future<void> seek(int handle, int position) =>
+      throw UnsupportedError('cleanup fixture is delete-only');
+
+  @override
+  Future<void> close(int handle) async {}
+
+  @override
+  Future<bool> rename(String relativePath, String newRelativePath) async => false;
+}
 
 final class _AliasFallbackArtifactBytes implements ArtifactBytes {
   _AliasFallbackArtifactBytes(this.bytes);

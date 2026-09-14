@@ -3,7 +3,6 @@ import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:sessions/sessions.dart';
 import 'package:test/test.dart';
-import 'package:transport/transport.dart';
 
 void main() {
   test('active exact projections share one canonical physical session', () async {

@@ -29,9 +29,13 @@ final class PhysicalTransferRetention {
     this.maxIdlePromotedSessions = 8,
     this.maxIdlePartialSessions = 32,
     this.maxIdlePartialBytes = 256 * 1024 * 1024,
+    this.partialCheckpointInitialBytes = 1024 * 1024,
+    this.partialCheckpointStrideBytes = 2 * 1024 * 1024,
   })  : assert(maxIdlePromotedSessions >= 0),
         assert(maxIdlePartialSessions >= 0),
-        assert(maxIdlePartialBytes >= 0);
+        assert(maxIdlePartialBytes >= 0),
+        assert(partialCheckpointInitialBytes > 0),
+        assert(partialCheckpointStrideBytes > 0);
 
   final DownloadRegistry registry;
   final DownloadTransferOwner owner;
@@ -43,9 +47,20 @@ final class PhysicalTransferRetention {
   final int maxIdlePromotedSessions;
   final int maxIdlePartialSessions;
   final int maxIdlePartialBytes;
+  final int partialCheckpointInitialBytes;
+  final int partialCheckpointStrideBytes;
 
   final Map<DownloadSession, DownloadSnapshotListener> _listeners =
       <DownloadSession, DownloadSnapshotListener>{};
+  final Map<DownloadSession, DownloadCommittedProgressListener>
+      _progressListeners =
+      <DownloadSession, DownloadCommittedProgressListener>{};
+  final Map<DownloadSession, int> _lastCheckpointAttemptLength =
+      <DownloadSession, int>{};
+  final Map<DownloadSession, Future<void>> _progressCheckpoints =
+      <DownloadSession, Future<void>>{};
+  final Map<DownloadSession, int> _checkpointTargets =
+      <DownloadSession, int>{};
   final Map<DownloadSession, int> _touchOrder = <DownloadSession, int>{};
   int _touchSequence = 0;
   bool _dirty = false;
@@ -60,18 +75,29 @@ final class PhysicalTransferRetention {
       if (_isIdle(snapshot)) _scheduleMaintenance();
     }
 
+    void progress(int committedLength) {
+      if (_disposed) return;
+      _observeCommittedProgress(session, committedLength);
+    }
+
     _listeners[session] = listener;
+    _progressListeners[session] = progress;
     _touchOrder[session] = ++_touchSequence;
     session.addSnapshotListener(listener, fireImmediately: false);
+    session.addCommittedProgressListener(progress);
   }
 
   Future<void> settle() async {
     _scheduleMaintenance();
     while (true) {
-      final running = _maintenance;
-      if (running == null) return;
-      await running;
-      if (!_dirty && _maintenance == null) return;
+      final maintenance = _maintenance;
+      final checkpoints = _progressCheckpoints.values.toList(growable: false);
+      if (maintenance == null && checkpoints.isEmpty) return;
+      if (maintenance != null) await maintenance;
+      if (checkpoints.isNotEmpty) await Future.wait(checkpoints);
+      if (!_dirty && _maintenance == null && _progressCheckpoints.isEmpty) {
+        return;
+      }
     }
   }
 
@@ -86,11 +112,114 @@ final class PhysicalTransferRetention {
     _disposed = true;
     final running = _maintenance;
     if (running != null) await running;
+    final checkpoints = _progressCheckpoints.values.toList(growable: false);
+    if (checkpoints.isNotEmpty) await Future.wait(checkpoints);
     for (final entry in _listeners.entries) {
       entry.key.removeSnapshotListener(entry.value);
     }
+    for (final entry in _progressListeners.entries) {
+      entry.key.removeCommittedProgressListener(entry.value);
+    }
     _listeners.clear();
+    _progressListeners.clear();
+    _lastCheckpointAttemptLength.clear();
+    _checkpointTargets.clear();
     _touchOrder.clear();
+  }
+
+  void _observeCommittedProgress(
+    DownloadSession session,
+    int committedLength,
+  ) {
+    final handoff = partialHandoff;
+    if (_disposed ||
+        handoff == null ||
+        committedLength <= 0 ||
+        session.state == DownloadState.promoted ||
+        session.state == DownloadState.disposed ||
+        session.residentBodyBacked) {
+      return;
+    }
+    final durableLength = handoff.durablePartialLength(session);
+    final attemptedLength = _lastCheckpointAttemptLength[session] ?? 0;
+    final base = durableLength > attemptedLength
+        ? durableLength
+        : attemptedLength;
+    final next = base == 0
+        ? partialCheckpointInitialBytes
+        : base + partialCheckpointStrideBytes;
+    if (committedLength < next) return;
+    final previous = _checkpointTargets[session] ?? 0;
+    if (committedLength > previous) {
+      _checkpointTargets[session] = committedLength;
+    }
+    _scheduleProgressCheckpoint(session);
+  }
+
+  void _scheduleProgressCheckpoint(DownloadSession session) {
+    if (_disposed || _progressCheckpoints.containsKey(session)) return;
+    late final Future<void> running;
+    running = Future<void>.microtask(
+      () => _runProgressCheckpoint(session),
+    ).whenComplete(() {
+      if (identical(_progressCheckpoints[session], running)) {
+        _progressCheckpoints.remove(session);
+      }
+      if (!_disposed && _checkpointTargets.containsKey(session)) {
+        _scheduleProgressCheckpoint(session);
+      }
+    });
+    _progressCheckpoints[session] = running;
+  }
+
+  Future<void> _runProgressCheckpoint(DownloadSession session) async {
+    final handoff = partialHandoff;
+    if (handoff == null) return;
+    while (!_disposed) {
+      _checkpointTargets.remove(session);
+      if (session.state == DownloadState.promoted ||
+          session.state == DownloadState.disposed ||
+          session.residentBodyBacked) {
+        return;
+      }
+      final currentLength = session.artifact.committedLength;
+      final durableLength = handoff.durablePartialLength(session);
+      final attemptedLength = _lastCheckpointAttemptLength[session] ?? 0;
+      final base = durableLength > attemptedLength
+          ? durableLength
+          : attemptedLength;
+      final next = base == 0
+          ? partialCheckpointInitialBytes
+          : base + partialCheckpointStrideBytes;
+      if (currentLength < next) return;
+
+      _lastCheckpointAttemptLength[session] = currentLength;
+      final stored = await handoff.persist(
+        session,
+        reason: 'transfer-progress-checkpoint',
+      );
+      if (!stored) return;
+      final storedLength = handoff.durablePartialLength(session);
+      if (storedLength > 0) {
+        _lastCheckpointAttemptLength[session] = storedLength;
+      }
+      if (session.state == DownloadState.promoted ||
+          session.state == DownloadState.disposed ||
+          session.residentBodyBacked) {
+        return;
+      }
+      final afterLength = session.artifact.committedLength;
+      final afterDurable = handoff.durablePartialLength(session);
+      final afterAttempted = _lastCheckpointAttemptLength[session] ?? 0;
+      final afterBase = afterDurable > afterAttempted
+          ? afterDurable
+          : afterAttempted;
+      final afterNext = afterBase == 0
+          ? partialCheckpointInitialBytes
+          : afterBase + partialCheckpointStrideBytes;
+      if (afterLength < afterNext) return;
+      _checkpointTargets[session] = afterLength;
+    }
   }
 
   void _scheduleMaintenance() {
@@ -217,6 +346,10 @@ final class PhysicalTransferRetention {
   void _forget(DownloadSession session) {
     final listener = _listeners.remove(session);
     if (listener != null) session.removeSnapshotListener(listener);
+    final progress = _progressListeners.remove(session);
+    if (progress != null) session.removeCommittedProgressListener(progress);
+    _lastCheckpointAttemptLength.remove(session);
+    _checkpointTargets.remove(session);
     _touchOrder.remove(session);
   }
 

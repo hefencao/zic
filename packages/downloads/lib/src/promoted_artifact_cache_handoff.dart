@@ -531,6 +531,31 @@ final class PromotedArtifactCacheHandoff {
       return;
     }
     if (!requireExactDurableBody) {
+      final physicalSeal = await _canonicalPhysicalSealMatch(
+        session,
+        targetId: targetId,
+        expectedLength: expectedLength,
+      );
+      if (physicalSeal.matches) {
+        if (session.state != DownloadState.promoted ||
+            session.epoch != expectedEpoch) {
+          return;
+        }
+        _recordCommit(
+          session,
+          targetId: targetId,
+          action: 'skip-existing-physical-seal',
+          bytes: expectedLength,
+          startedAtMicros: startedAtMicros,
+        );
+        return;
+      }
+      _recordPhysicalSealMiss(
+        session,
+        targetId: targetId,
+        expectedLength: expectedLength,
+        match: physicalSeal,
+      );
       final equivalent = await cache.lookup(targetId);
       if (equivalent != null &&
           equivalent.storageId != targetId &&
@@ -586,6 +611,140 @@ final class PromotedArtifactCacheHandoff {
           : 'stored-required-exact-alias',
       bytes: bytes.lengthInBytes,
       startedAtMicros: startedAtMicros,
+    );
+  }
+
+
+  Future<({
+    bool matches,
+    String reason,
+    int? physicalLength,
+    bool hotChecksumPresent,
+    bool physicalChecksumPresent,
+  })> _canonicalPhysicalSealMatch(
+    DownloadSession session, {
+    required DownloadId targetId,
+    required int expectedLength,
+  }) async {
+    if (session.physicalId.isExactFallback) {
+      return (
+        matches: false,
+        reason: 'exact-fallback',
+        physicalLength: null,
+        hotChecksumPresent: false,
+        physicalChecksumPresent: false,
+      );
+    }
+    if (cache.requiresFreshSource(targetId)) {
+      return (
+        matches: false,
+        reason: 'fresh-source',
+        physicalLength: null,
+        hotChecksumPresent: false,
+        physicalChecksumPresent: false,
+      );
+    }
+    final sessionChecksum = session.artifact.checksum.trim().toLowerCase();
+    if (sessionChecksum.isEmpty) {
+      return (
+        matches: false,
+        reason: 'hot-checksum-empty',
+        physicalLength: null,
+        hotChecksumPresent: false,
+        physicalChecksumPresent: false,
+      );
+    }
+    final physical = await cache.openPhysicalArtifact(session.physicalId);
+    if (physical == null) {
+      return (
+        matches: false,
+        reason: 'no-physical',
+        physicalLength: null,
+        hotChecksumPresent: true,
+        physicalChecksumPresent: false,
+      );
+    }
+    if (physical.length != expectedLength) {
+      return (
+        matches: false,
+        reason: 'length-mismatch',
+        physicalLength: physical.length,
+        hotChecksumPresent: true,
+        physicalChecksumPresent:
+            physical.sealedChecksum?.trim().isNotEmpty == true,
+      );
+    }
+    final algorithm = physical.sealedChecksumAlgorithm?.trim().toLowerCase();
+    final checksum = physical.sealedChecksum?.trim().toLowerCase();
+    if (algorithm != 'crc32') {
+      return (
+        matches: false,
+        reason: 'algorithm-mismatch',
+        physicalLength: physical.length,
+        hotChecksumPresent: true,
+        physicalChecksumPresent: checksum?.isNotEmpty == true,
+      );
+    }
+    if (checksum == null || checksum.isEmpty) {
+      return (
+        matches: false,
+        reason: 'physical-checksum-empty',
+        physicalLength: physical.length,
+        hotChecksumPresent: true,
+        physicalChecksumPresent: false,
+      );
+    }
+    if (checksum != sessionChecksum) {
+      return (
+        matches: false,
+        reason: 'checksum-mismatch',
+        physicalLength: physical.length,
+        hotChecksumPresent: true,
+        physicalChecksumPresent: true,
+      );
+    }
+    return (
+      matches: true,
+      reason: 'match',
+      physicalLength: physical.length,
+      hotChecksumPresent: true,
+      physicalChecksumPresent: true,
+    );
+  }
+
+  void _recordPhysicalSealMiss(
+    DownloadSession session, {
+    required DownloadId targetId,
+    required int expectedLength,
+    required ({
+      bool matches,
+      String reason,
+      int? physicalLength,
+      bool hotChecksumPresent,
+      bool physicalChecksumPresent,
+    }) match,
+  }) {
+    final sourceClock = clock;
+    if (sourceClock == null) return;
+    traceSink.record(
+      traceEvent(
+        clock: sourceClock,
+        sessionId: sessionId,
+        kind: TraceEventKind.artifactSource,
+        identityHash: targetId.key,
+        payload: <String, Object?>{
+          'source': 'session-artifact-handoff',
+          'consumer': 'persistent-cache',
+          'action': 'physical-seal-skip-unavailable',
+          'reason': match.reason,
+          'expectedLength': expectedLength,
+          if (match.physicalLength != null)
+            'physicalLength': match.physicalLength,
+          'hotChecksumPresent': match.hotChecksumPresent,
+          'physicalChecksumPresent': match.physicalChecksumPresent,
+          'physicalMediaKind': session.physicalId.kind.name,
+        },
+      ),
     );
   }
 

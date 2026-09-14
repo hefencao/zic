@@ -126,10 +126,21 @@ final class ArtifactCacheReadScheduler {
           allowBackgroundDuringForegroundPressure,
     );
     _pending.add(pending);
+    if (control is PriorityObservableTaskControl) {
+      pending.prioritySubscription = control.priorityChanges.listen((_) {
+        if (completer.isCompleted || !_pending.contains(pending)) return;
+        // The authoritative scheduler may promote an already queued page from
+        // speculative/background to transition/current without releasing an
+        // unrelated local-read lease. Re-evaluate immediately instead of
+        // waiting for incidental I/O completion to wake this queue.
+        _pump();
+      });
+    }
     if (control != null) {
       unawaited(
         control.whenCancelled.then<void>((_) {
           if (completer.isCompleted || !_pending.remove(pending)) return;
+          pending.disposePrioritySubscription();
           completer.completeError(const Failure(
             code: ErrorCode.cancelled,
             message:
@@ -207,6 +218,7 @@ final class ArtifactCacheReadScheduler {
           .where((pending) => pending.control?.cancelled == true)
           .toList(growable: false)) {
         _pending.remove(pending);
+        pending.disposePrioritySubscription();
         if (!pending.completer.isCompleted) {
           pending.completer.completeError(const Failure(
             code: ErrorCode.cancelled,
@@ -236,6 +248,7 @@ final class ArtifactCacheReadScheduler {
       }
       if (selected < 0) return;
       final pending = _pending.removeAt(selected);
+      pending.disposePrioritySubscription();
       if (!pending.completer.isCompleted) {
         final priority = pending.currentPriority;
         pending.completer.complete(
@@ -286,7 +299,7 @@ final class ArtifactCacheReadLease {
 }
 
 final class _PendingRead {
-  const _PendingRead({
+  _PendingRead({
     required this.priority,
     required this.sequence,
     required this.completer,
@@ -299,8 +312,17 @@ final class _PendingRead {
   final Completer<ArtifactCacheReadLease> completer;
   final TaskControl? control;
   final bool allowBackgroundDuringForegroundPressure;
+  StreamSubscription<int>? prioritySubscription;
 
   int get currentPriority => priority();
+
+  void disposePrioritySubscription() {
+    final subscription = prioritySubscription;
+    prioritySubscription = null;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
+    }
+  }
 }
 
 final class _PendingPressureRelief {
