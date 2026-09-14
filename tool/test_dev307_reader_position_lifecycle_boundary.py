@@ -12,7 +12,10 @@ def require(text: str, token: str, label: str) -> None:
         raise SystemExit(f'dev.307 missing {label}: {token}')
 
 controller = read('packages/reader/lib/src/reader_controller.dart')
-view = read('packages/reader/lib/src/reader_view.dart')
+view = (
+    read('packages/reader/lib/src/reader_view.dart')
+    + read('packages/reader/lib/src/reader_page_host.dart')
+)
 runtime = read('packages/reader_runtime/lib/src/reader_runtime_screen.dart')
 trace = read('packages/telemetry/lib/src/trace.dart')
 debug = read('apps/app/lib/debug_trace.dart')

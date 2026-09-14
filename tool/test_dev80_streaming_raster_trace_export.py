@@ -68,8 +68,15 @@ for token in (
     'final int transportBytes;',
 ):
     assert token in progress
-assert "PipelineTransferPhase.receiving => '正在接收页面数据'" in reader_progress
-assert "PipelineTransferPhase.connecting => '正在连接页面资源'" in reader_progress
+for token in (
+    "PipelineTransferPhase.receiving => hasPartial",
+    "? '已有页面partial，正在接收页面数据'",
+    ": '正在接收页面数据',",
+    "PipelineTransferPhase.connecting => hasPartial",
+    "? '已有页面partial，正在连接页面资源'",
+    ": '正在连接页面资源',",
+):
+    assert token in reader_progress
 
 assert "package:file_selector/file_selector.dart" not in trace_screen
 for token in (

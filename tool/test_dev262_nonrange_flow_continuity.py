@@ -28,7 +28,7 @@ if build >= 268:
             raise SystemExit(f'dev.262 response-lifetime branch must be superseded by dev.268: {stale}')
     require('packages/sessions/test/download_job_test.dart', 'range capability no longer changes flow-credit response lifetime', 'consumer-paced flow parks and resumes the same response')
     require('docs/adr/0240-nonrange-consumer-flow-continuity.md', 'dev.268', 'ADR 0246 supersede')
-    require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart', 'reservedHighPrioritySlots: 1')
+    require('packages/downloads/lib/src/download_resource_coordinator.dart', 'reservedHighPrioritySlots: 1')
     print('PASS: dev.262 non-Range continuity goal preserved by uniform dev.268 response parking')
     raise SystemExit(0)
 
@@ -68,7 +68,7 @@ require('tool/check.sh', 'test_dev262_nonrange_flow_continuity.py')
 
 # The user-facing window/concurrency targets remain unchanged.
 require(
-    'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
+    'packages/downloads/lib/src/download_resource_coordinator.dart',
     'reservedHighPrioritySlots: 1',
 )
 require(

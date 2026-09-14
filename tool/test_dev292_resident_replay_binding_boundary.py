@@ -46,9 +46,15 @@ forbid(
 )
 require(
     "packages/pipeline_runtime/lib/src/pipeline_page_stream.dart",
-    "DownloadResidentReplaySource? residentReplaySource",
-    "residentReplayChunks: replaySource == null",
-    "replaySource(session, endExclusive)",
+    "int get metadataPrefixLength",
+    "Uint8List readMetadataPrefix()",
+    "session.readSourceMetadataPrefix();",
+)
+forbid(
+    "packages/pipeline_runtime/lib/src/pipeline_page_stream.dart",
+    "DownloadResidentReplaySource",
+    "residentReplayChunks",
+    "readSourcePrefix(",
 )
 require(
     "packages/downloads/lib/src/composition_download_transfer_runtime.dart",
@@ -94,7 +100,7 @@ require(
 )
 require("docs/ARCHITECTURE.md", "DownloadResidentReplaySource", "DownloadResidentReplayChunks")
 require("docs/SPEC.md", "DownloadResidentReplaySource", "CompositionDownloadTransferRuntime")
-require("docs/IMPLEMENTATION_STATUS.md", "dev.292", "replay(this,end)")
+require("docs/IMPLEMENTATION_STATUS.md", "residentBodyBacked", "range hydrate256KiB")
 require("CHANGELOG.md", "0.31.0-dev.292", "Resident replay service binding boundary")
 req("test_dev292_resident_replay_binding_boundary.py" in text("tool/check.sh"),
     "dev.292 gate not wired into tool/check.sh")

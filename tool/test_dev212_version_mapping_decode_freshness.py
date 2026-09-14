@@ -30,12 +30,20 @@ forbid(catalog, 'DateTime.parse(verifiedAt)', 'Object-typed verifiedAt parse')
 
 migration = read('apps/app/lib/demo_home_source_migration.dart')
 for token in (
-    'const Duration _versionPageMappingRevalidationInterval = Duration(minutes: 10);',
-    'bool _versionPageMappingsAreFresh(',
-    'if (_versionPageMappingsAreFresh(relation, revalidationNow)) {',
-    'final versions = await versionSource.findComicVersions(comicId);',
+    'final proofAlreadyUsable = upgradeLegacyIntervalProof',
+    'focusedRevision == focus.chapter.sourceRevision',
+    'focusedPageCount == focus.chapter.pages.length',
+    'VerifiedArtifactReusePlan.needsIntervalProbe(mapping)',
+    'currentMapping.predecessorSourceRevision ==',
+    'currentMapping.successorSourceRevision ==',
+    'intervalProbeVersion: VerifiedArtifactReusePlan.intervalProbeVersion',
 ):
     require(migration, token, 'version mapping freshness ownership')
+for stale in (
+    '_versionPageMappingRevalidationInterval',
+    '_versionPageMappingsAreFresh',
+):
+    forbid(migration, stale, 'TTL-based version mapping freshness')
 
 version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 if version is None or int(version.group(1)) < 212:

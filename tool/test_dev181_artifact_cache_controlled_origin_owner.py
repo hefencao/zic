@@ -52,10 +52,16 @@ for token in (
 loader = read('packages/transport/lib/src/loader_transport.dart')
 source_transport = read('packages/downloads/lib/src/source_resource_transport.dart')
 runtime = read('packages/plugin_host/lib/src/runtime_source_adapter.dart')
-require(loader, 'final class LoaderTransport implements ControlledTransport', 'Loader control capability')
+require(loader, 'final class LoaderTransport', 'Loader control capability')
+require(
+    loader,
+    'implements ControlledTransport, SelfBoundedOpenTransport',
+    'Loader bounded control capability',
+)
 require(source_transport, 'resolveResourceControlled(locator, control: control)', 'source plan control')
 require(runtime, 'int get priority => control?.priority ?? 0;', 'runtime priority gate')
-require(runtime, '_maybePreemptControlledActive(control);', 'runtime current pressure preemption')
+require(runtime, '_maybePreemptActiveForControlled(control);', 'runtime current pressure preemption')
+require(runtime, 'taskControl.priorityChanges.listen', 'runtime dynamic priority observation')
 
 cache_test = read('packages/downloads/test/artifact_cache_transport_test.dart')
 for token in (

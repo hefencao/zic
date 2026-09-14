@@ -20,11 +20,17 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     if (plugins != null && !identical(_activeExternalPlugins, plugins)) {
       _activeExternalPlugins = plugins;
       _watchExternalPluginSources(plugins);
-      unawaited(_ensureExternalSourcesPublished());
-    } else if (plugins == null && _externalPluginLoader != null) {
-      // The loader may arrive without a core-service adoption on an install
-      // whose only durable state is the external-plugin manifest.
-      unawaited(_ensureExternalSourcesPublished());
+      // Handoff availability releases already-pending exact cover/page
+      // requests. It must not imply that every installed runtime is needed.
+      _completeInitialExternalSourcesPublished();
+      if (plugins.activeSources.isNotEmpty) {
+        _requestExternalSourceRefresh(plugins);
+      }
+    } else if (_externalPluginLoader != null) {
+      // The loader may arrive before the controller object itself. Wake the
+      // exact waiters so each can obtain the controller and activate only its
+      // persisted source owner.
+      _completeInitialExternalSourcesPublished();
     }
   }
 
@@ -107,6 +113,7 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     _library = library;
     _chapterDownloads = chapterDownloads;
     _downloadComposition = downloadComposition;
+    _scheduleLocalReadBackendPrewarm();
     _readerArtifactCache = readerArtifactCache;
     _wholeComicDownloads = wholeComicDownloads;
     _cacheCoordinator = cacheCoordinator;
@@ -121,9 +128,11 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
         )) {
       await previousCacheCoordinator.close();
     }
-    // Snapshot covers can be built before the deferred plugin host exists.
-    // Start the host after the durable service handoff so those failed cover
-    // widgets observe sourceAvailable=true and retry automatically.
-    unawaited(_ensureExternalSourcesPublished());
+    // Snapshot cover requests may already be waiting for the deferred plugin
+    // loader. Release that handoff gate only; each request retains its exact
+    // source identity and owns the decision to activate that one runtime.
+    if (_activeExternalPlugins != null || _externalPluginLoader != null) {
+      _completeInitialExternalSourcesPublished();
+    }
   }
 }

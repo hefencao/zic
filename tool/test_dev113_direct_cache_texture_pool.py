@@ -54,7 +54,7 @@ for token in (
 for token in (
     "response.disposition == ByteResponseDisposition.durableImmutable",
     "session.appendResidentImmutableIngress",
-    "await session.reset();",
+    "await session.reset(removeCacheRecord: false);",
 ):
     require(job, token, "direct durable ingress job")
 if "session.append(writer, residentOffset" in job:

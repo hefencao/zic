@@ -28,10 +28,13 @@ transport = text('packages/transport/lib/src/transport.dart')
 require('packages/transport/lib/src/transport.dart',
         'bool get isEmpty => etag == null && lastModified == null;',
         'bool get canResume => !isEmpty;')
-chapter = text('packages/downloads/lib/src/chapter_downloads.dart')
+chapter = (
+    text('packages/downloads/lib/src/chapter_downloads.dart')
+    + text('packages/downloads/lib/src/persistent_download_partial_resume.dart')
+)
 req('validators.isNotEmpty' not in chapter,
     'Validators has no isNotEmpty getter; compile-breaking call remains')
-require('packages/downloads/lib/src/chapter_downloads.dart',
+require('packages/downloads/lib/src/persistent_download_partial_resume.dart',
         'validators.canResume && validatorRequestUri != id.canonicalUri')
 
 owner = text('packages/sessions/lib/src/download_transfer_owner.dart')
@@ -48,8 +51,12 @@ end = owner.index('Future<void> _runLocalPreparation(', start)
 seam = owner[start:end]
 req('_preparedNetworkAdmissions[id] = session;' in seam,
     'completed local preparation must enter owner admission arbiter')
-req('_ensureDownloadTask(id, session);' not in seam,
-    'local completion must not directly submit network task by completion order')
+req('_drainPreparedNetworkAdmissions();' in seam,
+    'normal local completion must drain through the owner admission arbiter')
+req('control.cancelled &&' in seam and
+    'session.committedLength == 0' in seam and
+    '_ensureDownloadTask(id, session);' in seam,
+    'only a zero-byte priority-preempted local prepare may re-enter normal preparation')
 
 require('packages/sessions/test/download_transfer_owner_test.dart',
         'post-local network admission preserves higher demand priority',
@@ -61,12 +68,12 @@ for path in (
     'docs/audits/dev274-compile-and-local-admission-priority-audit.md',
 ):
     req((ROOT / path).is_file(), f'missing dev.274 governance file: {path}')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.274', 'local→network')
+require('docs/NEXT_CHAT_HANDOFF.md', 'post-local network-admission rank barrier', '0-byte victim 自动重排 local prepare')
 require('CHANGELOG.md', '0.31.0-dev.274', 'Validators.canResume')
 
 # Frozen concurrency/runtime safety boundaries remain unchanged.
 require('docs/NEXT_CHAT_HANDOFF.md',
-        'previous3/next7', '5/3/2/1', 'normal5+current reserved1')
+        '7/3', '2/1', '5个transport lease', 'current handoff')
 require('packages/plugin_host/lib/src/runtime_executors.dart',
         'maxConcurrentInvocations: 1')
 

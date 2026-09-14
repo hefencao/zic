@@ -112,6 +112,78 @@ void main() {
     expect(preferences.amoledDarkTheme, isTrue);
   });
 
+  test('theme invalidation ignores comic Reader settings', () {
+    final preferences = AppPreferencesController();
+    addTearDown(preferences.dispose);
+    var broadNotifications = 0;
+    var themeNotifications = 0;
+    preferences.addListener(() => broadNotifications++);
+    preferences.themeChanges.addListener(() => themeNotifications++);
+
+    preferences.setComicReaderSettings(
+      'source-a',
+      'comic-a',
+      const ComicReaderSettings(
+        adaptiveProfile: AdaptiveReaderProfile(
+          direction: ReadingDirection.ltr,
+          confidence: 1,
+          basis: 'decoded-animation',
+          animated: true,
+          samples: 4,
+          metadataFingerprint: 7,
+          modelVersion: AdaptiveReaderProfile.currentModelVersion,
+        ),
+      ),
+    );
+
+    expect(broadNotifications, 1);
+    expect(themeNotifications, 0);
+
+    preferences.setThemeMode(ThemeMode.light);
+    expect(broadNotifications, 2);
+    expect(themeNotifications, 1);
+
+    preferences.setAmoledDarkTheme(true);
+    expect(broadNotifications, 3);
+    expect(themeNotifications, 2);
+  });
+
+  testWidgets('App shell rebuilds only for theme preferences', (tester) async {
+    final preferences = AppPreferencesController();
+    addTearDown(preferences.dispose);
+    await tester.pumpWidget(App(preferences: preferences));
+    await _pumpUntilFound(tester, find.byType(MaterialApp));
+    final initial = tester.widget<MaterialApp>(find.byType(MaterialApp));
+
+    preferences.setComicReaderSettings(
+      'source-a',
+      'comic-a',
+      const ComicReaderSettings(
+        adaptiveProfile: AdaptiveReaderProfile(
+          direction: ReadingDirection.ltr,
+          confidence: 1,
+          basis: 'decoded-animation',
+          animated: true,
+          samples: 4,
+          metadataFingerprint: 11,
+          modelVersion: AdaptiveReaderProfile.currentModelVersion,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(
+      identical(tester.widget<MaterialApp>(find.byType(MaterialApp)), initial),
+      isTrue,
+    );
+
+    preferences.setThemeMode(ThemeMode.light);
+    await tester.pump();
+    expect(
+      identical(tester.widget<MaterialApp>(find.byType(MaterialApp)), initial),
+      isFalse,
+    );
+  });
+
   test('application preferences load and persist through injected storage', () async {
     final controller = AppPreferencesController();
     addTearDown(controller.dispose);

@@ -36,9 +36,13 @@ forbid(
 )
 require(
     'packages/pipeline/lib/src/viewport_phase.dart',
-    'this.dominantThreshold = 0.5',
+    'this.dominantThreshold = defaultDominantCoverageThreshold',
     'target.fraction > current.fraction',
     'new stable page wins an exact tie',
+)
+require(
+    'packages/pipeline/lib/src/coverage_thresholds.dart',
+    'const double defaultDominantCoverageThreshold = 0.5;',
 )
 require(
     'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',

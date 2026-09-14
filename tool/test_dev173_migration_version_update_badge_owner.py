@@ -43,7 +43,9 @@ for token in (
     'saved.sourceUpdateAt != null',
     '_openSourceUpdateForSummary(',
     '_loadSourceVersionState(',
-    'state.successors.first',
+    '_librarySession.versionBaselines.latestKnownHeadFor(',
+    '...state.successors,',
+    '...state.predecessors,',
     '_viewSourceVersion(',
     '_selectSourceMigrationTarget(',
     '_selectConfirmedSourceVersion(',
@@ -56,9 +58,9 @@ for token in (
     'showSourceMigrationComparison(',
     'ComicSourceMigrationPlan.build(',
     'await _savePreference(mergedPreference);',
-    'final neutralSourcePreference = ComicPreference(',
-    'await _library.saveComicPreference(neutralSourcePreference);',
-    '_librarySession.replacePreference(neutralSourcePreference);',
+    'final neutral = ComicPreference(',
+    'await _library.saveComicPreference(neutral);',
+    '_librarySession.replacePreference(neutral);',
 ):
     require(migration, token, 'unified migration/version/update ownership')
 forbid(migration, 'await _library.saveComicPreference(mergedPreference);', 'migration preference bypass')
@@ -75,7 +77,7 @@ compat = read('apps/app/lib/demo_home_source_compat.dart')
 for token in (
     'onMigrateSource: () {',
     'return _openSourceMigrationForSummary(active, comic);',
-    "onMigrateSource: source == null || comic.sourceId == 'local-folder'",
+    "onMigrateSource: resolvedSource == null ||\n                  comic.sourceId == 'local-folder'",
     ': () => _openSourceMigration(comic)',
 ):
     require(compat, token, 'detail migration composition')

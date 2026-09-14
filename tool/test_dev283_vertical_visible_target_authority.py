@@ -28,7 +28,7 @@ reader = text('packages/reader/lib/src/reader_view.dart')
 vertical_call = reader[reader.index('  void _emitFromVerticalMetrics('):reader.index('  Coverage? _verticalTargetCoverage(')]
 req('inferTargetFromLogicalPosition: false,' in vertical_call,
     'vertical observation still permits PageView logical-position target inference')
-emit = reader[reader.index('  void _emitObservation('):reader.index('\n}\n\n\nfinal class _ReaderPageShell')]
+emit = reader[reader.index('  void _emitObservation('):reader.index('\n}\n\nfinal class _ReaderFrameTimingTraceContext')]
 for marker in (
     'bool inferTargetFromLogicalPosition = true,',
     'targetCoverage == null &&',
@@ -54,7 +54,6 @@ require(
 )
 require('docs/ARCHITECTURE.md', 'targetCoverage', 'page-local fraction', '真实 viewport')
 require('docs/SPEC.md', 'targetCoverage', 'MUST 为 null', 'floor/ceil')
-require('docs/IMPLEMENTATION_STATUS.md', 'dev.283', '22次', 'current+1')
 require('CHANGELOG.md', '0.31.0-dev.283', 'Vertical visible-target authority')
 
 # Recent fixes remain present; dev.283 is an observation semantic correction,

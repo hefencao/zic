@@ -23,7 +23,7 @@ check = read("tool/check.sh")
 
 for token in (
     "entry.value.targetWatermark == 1",
-    "stage: 'one>0'",
+    "stage: DecodeWaterlineStage.oneFrame",
     "b.value.priority.compareTo(a.value.priority)",
     "return oneFramePriority > stagedPriority",
 ):

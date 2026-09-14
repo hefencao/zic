@@ -16,7 +16,17 @@ pipe=read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 test=read('packages/sessions/test/download_session_test.dart')
 live=read('packages/sessions/test/live_coordinator_test.dart')
 if version >= 292:
-    for token in ('typedef DownloadResidentReplayChunks', 'typedef DownloadResidentReplaySource', 'residentReplayChunks', 'if (_residentBodyBacked)', 'await replay(targetLength)', 'artifact.readChunks(endExclusive: targetLength)'):
+    for token in (
+        'typedef DownloadResidentReplayChunks',
+        'typedef DownloadResidentReplaySource',
+        'residentReplayChunks',
+        'if (_residentBodyBacked)',
+        'await replay(targetLength)',
+        'DownloadArtifactReplayRangeChunksWithControl?',
+        'controlledArtifactReplayRangeChunks',
+        'Future<Stream<List<int>>> openArtifactReplay(',
+        'artifact.readChunks(',
+    ):
         req(session, token, 'physical/replay split')
     for token in ('DownloadResidentReplaySource? residentReplaySource', 'session.residentBodyBacked', 'return replay(session, endExclusive);'):
         req(registry, token, 'Reader-local replay authority injection')

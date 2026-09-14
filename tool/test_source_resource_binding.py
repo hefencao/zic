@@ -34,6 +34,9 @@ def main() -> None:
         "final class ChapterResourceAccess",
         "abstract interface class ConfigurableChapterResourceAccess",
         "ConfigurableChapterResourceAccess {",
+    )
+    require(
+        "packages/downloads/lib/src/persistent_chapter_download_service.dart",
         "ChapterResourceAccess? _resourceAccess",
         "void setChapterResourceAccess(ChapterResourceAccess? access)",
         "final stream = access?.openResponse",

@@ -15,7 +15,10 @@ def require(text: str, token: str, owner: str) -> None:
         raise SystemExit(f"{owner} is missing dev.116 contract: {token}")
 
 manager = read("packages/downloads/lib/src/artifact_cache_manager.dart")
-reader = read("packages/reader/lib/src/reader_view.dart")
+reader = (
+    read("packages/reader/lib/src/reader_view.dart")
+    + read("packages/reader/lib/src/reader_page_host.dart")
+)
 policy = read("packages/pipeline/lib/src/heuristic_policy.dart")
 controller = read("packages/pipeline/lib/src/pipeline_controller.dart")
 binding = read("packages/sessions/lib/src/reader_binding.dart")
@@ -59,9 +62,13 @@ if "animatedHint" in reader[keep_alive_start:keep_alive_end]:
 for token in (
     "runtimeAnimatedPages",
     "assumeUnresolvedStatic",
-    "return assumeUnresolvedStatic || !chapter.pages[entry.key].animatedHint;",
+    "if (runtimeWebpCostPages.contains(entry.key)) return false;",
+    "if (assumeUnresolvedStatic) return true;",
+    "return hasStaticContentEvidence(page);",
 ):
     require(policy, token, "runtime static warming policy")
+if "return assumeUnresolvedStatic || !chapter.pages[entry.key].animatedHint;" in policy:
+    raise SystemExit("default animatedHint=false must not regain static authority")
 for token in (
     "bool classifyPage",
     "_assumeUnresolvedStatic",

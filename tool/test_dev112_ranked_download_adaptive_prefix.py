@@ -36,14 +36,19 @@ for token in (
 ):
     require(net, token, "global ranked download lane")
 for token in (
-    "NetLane? pageDownloadLane",
+    "required this.pageDownloadLane",
+    "final NetLane pageDownloadLane;",
     "pageDownloadLane: pageDownloadLane",
     "downloadBucketFor: _profile.downloadBucket",
-    "downloadBucketLimitFor: _downloadBucketLimit",
-    "final stableLimit = _profile.downloadBucketLimit(id)",
-    "decode.depth > 4",
+    "downloadBucketLimitFor: _profile.downloadBucketLimit",
 ):
     require(session, token, "pipeline composition")
+if "pageDownloadLane ??" in session:
+    raise SystemExit("pipeline composition must not create an implicit NetLane")
+if "_downloadBucketLimit" in session:
+    raise SystemExit(
+        "presentation/decode state must not override the stable source bucket limit"
+    )
 for token in (
     "networkConcurrency: 5",
     "localSourceConcurrency:",

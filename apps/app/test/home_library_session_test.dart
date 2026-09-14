@@ -53,10 +53,58 @@ void main() {
     expect(notifications, 1);
   });
 
+  test('dispose does not suppress later owned-resource close', () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    await session.ready;
+    final manifest = _versionManifest(
+      comicId: 'dispose-close-comic',
+      chapterId: 'dispose-close-chapter',
+      revision: 'dispose-close-r1',
+      pageCount: 1,
+    );
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord.remote(
+        comic: _versionComic(manifest.comicId),
+        manifest: manifest,
+      ),
+    );
+
+    session.dispose();
+    await session.close();
+
+    await expectLater(library.list(), throwsA(isA<StateError>()));
+    expect(() => downloads.download(entry), throwsA(isA<StateError>()));
+    await expectLater(
+      queue.enqueue(
+        sourceId: manifest.sourceId,
+        comicId: manifest.comicId,
+        comicTitle: manifest.comicId,
+        chapters: const <ImportedLibraryEntry>[],
+      ),
+      throwsA(isA<StateError>()),
+    );
+  });
+
   test('durable adoption carries separate composition into canonical owner',
       () async {
     final root = await Directory.systemTemp.createTemp('canonical-adoption-');
-    final composition = await PersistentDownloadComposition.open(root.path);
+    final composition = await PersistentDownloadComposition.open(
+      root.path,
+      transferNet: DownloadResourceCoordinator().networkLane,
+    );
     final bootstrapLibrary = MemoryImportedLibraryStore();
     final bootstrapDownloads = MemoryChapterDownloadService(
       pageLoader: (_, __) async => Uint8List(1),
@@ -163,7 +211,10 @@ void main() {
   test('persisted sparse canonical projection publishes physical owner on startup',
       () async {
     final root = await Directory.systemTemp.createTemp('canonical-projection-home-');
-    final composition = await PersistentDownloadComposition.open(root.path);
+    final composition = await PersistentDownloadComposition.open(
+      root.path,
+      transferNet: DownloadResourceCoordinator().networkLane,
+    );
     final library = MemoryImportedLibraryStore();
     await library.open();
     final oldManifest = _versionManifest(
@@ -300,7 +351,10 @@ void main() {
       final snapshotStore = HomeProjectionSnapshotStore.atPath(
         '${root.path}/home_snapshot.json',
       );
-      final composition = await PersistentDownloadComposition.open(root.path);
+      final composition = await PersistentDownloadComposition.open(
+        root.path,
+        transferNet: DownloadResourceCoordinator().networkLane,
+      );
       final library = MemoryImportedLibraryStore();
       await library.open();
       final oldManifest = _versionManifest(
@@ -434,7 +488,10 @@ void main() {
   test('verified relation allocates stable canonical media across proof revocation',
       () async {
     final root = await Directory.systemTemp.createTemp('canonical-ledger-home-');
-    final composition = await PersistentDownloadComposition.open(root.path);
+    final composition = await PersistentDownloadComposition.open(
+      root.path,
+      transferNet: DownloadResourceCoordinator().networkLane,
+    );
     final library = MemoryImportedLibraryStore();
     await library.open();
     final oldManifest = _versionManifest(
@@ -562,7 +619,10 @@ void main() {
     final root = await Directory.systemTemp.createTemp(
       'canonical-ledger-persist-failure-',
     );
-    final composition = await PersistentDownloadComposition.open(root.path);
+    final composition = await PersistentDownloadComposition.open(
+      root.path,
+      transferNet: DownloadResourceCoordinator().networkLane,
+    );
     final library = MemoryImportedLibraryStore();
     await library.open();
     final oldManifest = _versionManifest(
@@ -692,7 +752,10 @@ void main() {
   test('concurrent verified relations serialize one canonical media ledger',
       () async {
     final root = await Directory.systemTemp.createTemp('canonical-ledger-write-tail-');
-    final composition = await PersistentDownloadComposition.open(root.path);
+    final composition = await PersistentDownloadComposition.open(
+      root.path,
+      transferNet: DownloadResourceCoordinator().networkLane,
+    );
     final library = MemoryImportedLibraryStore();
     await library.open();
     final a = _versionManifest(
@@ -784,7 +847,10 @@ void main() {
   test('version relations publish page reuse candidates without Reader entry',
       () async {
     final root = await Directory.systemTemp.createTemp('version-owner-home-');
-    final composition = await PersistentDownloadComposition.open(root.path);
+    final composition = await PersistentDownloadComposition.open(
+      root.path,
+      transferNet: DownloadResourceCoordinator().networkLane,
+    );
     final library = MemoryImportedLibraryStore();
     await library.open();
     final oldManifest = _versionManifest(
@@ -860,7 +926,10 @@ void main() {
   test('strong page identity publishes one canonical physical owner across versions',
       () async {
     final root = await Directory.systemTemp.createTemp('version-physical-home-');
-    final composition = await PersistentDownloadComposition.open(root.path);
+    final composition = await PersistentDownloadComposition.open(
+      root.path,
+      transferNet: DownloadResourceCoordinator().networkLane,
+    );
     final library = MemoryImportedLibraryStore();
     await library.open();
     const sharedKey = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -929,7 +998,10 @@ void main() {
   test('batch hydration publishes canonical media without growing Home entries',
       () async {
     final root = await Directory.systemTemp.createTemp('version-owner-hydrate-');
-    final composition = await PersistentDownloadComposition.open(root.path);
+    final composition = await PersistentDownloadComposition.open(
+      root.path,
+      transferNet: DownloadResourceCoordinator().networkLane,
+    );
     final library = MemoryImportedLibraryStore();
     final queue = WholeComicDownloadQueue(downloads: composition.chapterDownloads);
     final session = HomeLibrarySession(
@@ -2372,7 +2444,11 @@ void main() {
 
     final first = await session.hydrateEntry(session.entries.single);
     expect(first.progress?.pageIndex, 2);
-    expect(library.getCalls, 1);
+    expect(
+      library.getCalls,
+      0,
+      reason: 'authoritative list() already supplied the full chapter payload',
+    );
 
     session.replaceProgress(
       ReadingProgress(
@@ -2396,8 +2472,8 @@ void main() {
     );
     expect(
       library.getCalls,
-      1,
-      reason: 'Reader reopen should still use the hydrated chapter cache',
+      0,
+      reason: 'Reader reopen should keep using the authoritative list payload',
     );
   });
 

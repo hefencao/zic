@@ -51,7 +51,9 @@ for token in (
 
 for token in (
     "Future<void> _runCommit(DownloadSession session) async",
-    "await _commitTarget(session, session.id)",
+    "final target = defaultTarget?.call(session) ?? session.id;",
+    "await _commitTarget(session, target);",
+    "requireExactDurableBody: true",
     "_commits.remove(id)",
 ):
     require(handoff, token, "artifact handoff task")

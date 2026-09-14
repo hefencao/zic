@@ -33,10 +33,10 @@ require(
     'if (readDistance == 1) return 5;',
     'if (readDistance == 2) return 3;',
     'if (readDistance == -1) return 2;',
-    "'c>4' => 1",
-    "'n>2' => 2",
-    "'c>6' => 3",
-    "'n>3' => 4",
+    'DecodeWaterlineStage.currentMid => 1',
+    'DecodeWaterlineStage.nextMid => 2',
+    'DecodeWaterlineStage.currentDeep => 3',
+    'DecodeWaterlineStage.nextDeep => 4',
 )
 require(
     'packages/pipeline/lib/src/heuristic_policy.dart',

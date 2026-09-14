@@ -23,6 +23,7 @@ store = read('packages/downloads/lib/src/artifact_cache_store.dart')
 partial_store = read('packages/downloads/lib/src/partial_download_store.dart')
 handoff = read('packages/downloads/lib/src/partial_download_handoff.dart')
 chapter = read('packages/downloads/lib/src/chapter_downloads.dart')
+persistent_store = read('packages/downloads/lib/src/persistent_download_artifact_store.dart')
 pipe = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 composition_runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
 decode = read('packages/sessions/lib/src/decode_session.dart')
@@ -67,7 +68,7 @@ for marker in ('final class PartialDownloadHandoff', 'Future<void> restoreInto('
     if marker not in handoff:
         raise SystemExit(f'partial handoff contract missing: {marker}')
 for marker in ('PersistentDownloadArtifactStore', 'PartialDownloadStore', 'openPartialDownload', 'storePartialDownload'):
-    if marker not in chapter:
+    if marker not in persistent_store:
         raise SystemExit(f'download artifact store durable partial owner missing: {marker}')
 
 retain_start = pipe.index('void retainReaderSession()')
@@ -102,7 +103,9 @@ if transfer_owner_path.exists():
             if marker in transfer_owner:
                 raise SystemExit(f'sessions owner leaked durable partial policy after dev.233: {marker}')
         for marker in (
-            'prepareDownload: partialDownloadHandoff?.restoreInto',
+            'prepareDownload: partialDownloadHandoff == null',
+            '_restoreLocalSingleFlight(',
+            'tracked = handoff.restoreInto(session, control: control)',
             'await partialDownloadHandoff?.drain(registry.sessions);',
         ):
             if marker not in composition_runtime:

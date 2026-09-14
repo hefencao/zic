@@ -36,7 +36,12 @@ for token in (
 ):
     require(policy, token, "7/5/3/2 pipeline watermarks")
 require(guard, "this.maxFrameWatermark = 7", "watermark guard")
-for token in ("'c>2'", "'c>4'", "'c>6'", "'n>4'"):
+for token in (
+    "DecodeWaterlineStage.currentBootstrap",
+    "DecodeWaterlineStage.currentMid",
+    "DecodeWaterlineStage.currentDeep",
+    "DecodeWaterlineStage.nextMax",
+):
     require(refill, token, "7/5/3/2 staged refill")
 for token in (
     "this.partialLoopMinFrames = 30",
@@ -59,9 +64,17 @@ for token in (
 for token in (
     "ValueNotifier<Map<String, double>> _pageAspectRatios",
     "relativeDifference < 0.01",
-    "ValueListenableBuilder<Map<String, double>>",
+    "pageAspectRatiosListenable: _pageAspectRatios",
 ):
     require(screen, token, "localized ratio updates")
+if "ValueListenableBuilder<Map<String, double>>" in screen:
+    raise SystemExit("runtime ratio updates must not rebuild the outer Reader screen")
+for token in (
+    "widget.pageAspectRatiosListenable?.addListener(_handlePageAspectRatiosChanged)",
+    "void _handlePageAspectRatiosChanged()",
+    "full PageView rebuild would amplify one media-header observation",
+):
+    require(reader, token, "ReaderView-owned live ratio updates")
 require(reader, ".abs() > 2.0", "stable vertical anchor threshold")
 require(decode_test, "cycles a thirty-frame partial prefix", "partial loop owner test")
 require(

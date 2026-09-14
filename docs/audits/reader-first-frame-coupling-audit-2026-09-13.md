@@ -27,7 +27,7 @@ The prewarm now runs fire-and-observe. Chapter preparation never waits for it. T
 ## First-frame optimizations retained because their ownership is local
 
 - Exact `DecodeTarget` output prewarm remains. It allocates only presentation resources, is bounded to current/transition/immediate-next roles, yields platform creation to an already scheduled Flutter frame for non-current roles, and does not create Download/Decode/Upload demand.
-- Paged-next first-frame UploadDemand remains interaction-gated. Idle next is decode-only; only dragging/scrolling/settling may add the explicit priority-820 upload. This is ordinary Reader observation → Pipeline policy, not a first-frame completion signal controlling another owner.
+- Paged active-target first-frame UploadDemand remains interaction-gated. Idle neighbors are decode-only; dragging/scrolling/settling may add the explicit priority-820 upload only for the actual adjacent `targetCoverage` page. This includes a temporarily `previous`-classified reverse target before the stable 3/7 direction flips, without changing direction state or widening the role/decode/download windows. This is ordinary Reader observation → Pipeline policy, not a first-frame completion signal controlling another owner.
 - Current decode/upload reserved handoff slots remain stable role policy. They are not armed or released by first-frame completion.
 - Exact durable restore proof remains operation-scoped to `(DownloadSession, exact DownloadId, SourceEpoch, final length)` and only avoids a duplicate backend preflight. It does not grant cross-version or cache authority.
 - `Ingress.append` first-chunk no-copy and Direct durable staging are storage/media implementation optimizations; neither changes policy or ownership.
@@ -42,7 +42,7 @@ The stable contracts are now:
 2. Accepting a current Reader observation does not itself make `ArtifactCacheReadScheduler.foregroundPressure` true.
 3. App Reader chapter preparation contains no `await mediaPrewarm`; process prewarm is observed asynchronously.
 4. No global `reserveFirstForegroundQuantum` mechanism exists in the local-read scheduler.
-5. Existing exact-output prewarm and interaction-gated paged-next tests remain intact.
+5. Existing exact-output prewarm and interaction-gated paged active-target tests remain intact; idle previous/next2 and vertical hidden animated upload remain excluded.
 
 Device validation should compare first-frame/source timing against the last release baseline after these ownership changes. In particular, source wait must not return to the earlier multi-hundred-millisecond durable replay path; if local contention regresses, fix it inside the local-read owner using actual queued work rather than reintroducing presentation-driven gates.
 

@@ -17,10 +17,14 @@ def require(text: str, token: str, owner: str) -> None:
 manager = read("packages/downloads/lib/src/artifact_cache_manager.dart")
 store = read("packages/downloads/lib/src/artifact_cache_store.dart")
 chapter = read("packages/downloads/lib/src/chapter_downloads.dart")
+persistent_store = read("packages/downloads/lib/src/persistent_download_artifact_store.dart")
 handoff = read("packages/downloads/lib/src/promoted_artifact_cache_handoff.dart")
 download = read("packages/sessions/lib/src/download_session.dart")
 job = read("packages/sessions/lib/src/download_job.dart")
-reader = read("packages/reader/lib/src/reader_view.dart")
+reader = (
+    read("packages/reader/lib/src/reader_view.dart")
+    + read("packages/reader/lib/src/reader_page_host.dart")
+)
 analyzer = read("tool/analyze_frame_pipeline_trace.py")
 check = read("tool/check.sh")
 
@@ -44,7 +48,7 @@ for token in (
     "_invalidateIndexedArtifact",
     "cannot cache an empty Reader artifact",
 ):
-    require(chapter, token, "chapter artifact backends")
+    require(chapter + persistent_store, token, "download artifact backends")
 for token in (
     "session.residentBodyBacked",
     "skip-cache-resident",

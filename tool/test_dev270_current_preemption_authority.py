@@ -40,10 +40,10 @@ resume = text.index('final blockedResume = _highestBlockedHighPriorityResume();'
 pending = text.index('final blockedHighPriority = _highestBlockedHighPriorityPending();', resume)
 req(resume < pending, 'blocked live-current resume must arbitrate before blocked pending admission')
 # Inactive retention destruction must no longer publish a priority snapshot.
-retention_start = ('bool _reclaimInactiveTransportLeaseForDemand()'
+retention_start = ('bool _reclaimTransportLeaseForDemand()'
                    if int(m.group(1)) >= 271
                    else 'void _enforceInactiveParkedResponseBound()')
-retention = text[text.index(retention_start):text.index('bool _inactiveParkedVictimBefore')]
+retention = text[text.index(retention_start):text.index('bool _inactiveTransportVictimBefore')]
 req('cancelForPreemption' not in retention, 'inactive retention must not reuse body-preemption transaction')
 req('cancelForRetentionEviction' in retention, 'inactive retention must use dedicated eviction transaction')
 
@@ -79,6 +79,6 @@ require('CHANGELOG.md', '0.31.0-dev.270', 'downloadEvicted', 'current body-read'
 require('docs/ARCHITECTURE.md', 'TaskRetentionEvictionSnapshot', 'live current response的read-permit reacquire优先于新high-priority pending destructive admission')
 require('docs/SPEC.md', 'downloadEvicted', 'MUST NOT伪装成`downloadPreempted`', 'current live-response reacquire MUST先于')
 require('docs/IMPLEMENTATION_STATUS.md', 'dev.271', 'current' if int(m.group(1)) >= 271 else 'current read-permit')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.270', 'downloadEvicted')
+require('docs/NEXT_CHAT_HANDOFF.md', 'ranked-transport-lease-reclaim', 'current handoff')
 require('tool/check.sh', 'test_dev270_current_preemption_authority.py')
 print('PASS: dev.270 current body-read preemption / inactive retention eviction authority')

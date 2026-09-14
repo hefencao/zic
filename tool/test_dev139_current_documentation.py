@@ -48,11 +48,16 @@ for token in (
 ):
     require(profile, token, "ReaderPipelineProfile")
 for token in (
-    "this.transitionThreshold = 0.15",
+    "this.transitionThreshold = defaultTransitionCoverageThreshold",
     "PageRole.transition",
     "PageRole.last",
 ):
     require(role_window, token, "RoleResolver")
+require(
+    read("packages/pipeline/lib/src/coverage_thresholds.dart"),
+    "const double defaultTransitionCoverageThreshold = 0.15;",
+    "RoleResolver threshold authority",
+)
 for token in (
     "PageRole.current => 7",
     "PageRole.transition => 5",
@@ -61,9 +66,9 @@ for token in (
 ):
     require(policy, token, "HeuristicPolicy")
 for token in (
-    "stage: 't>0'",
-    "_RefillStep(_WaterlineRole.current, 2, 'c>2')",
-    "_RefillStep(_WaterlineRole.next, 4, 'n>4')",
+    "stage: DecodeWaterlineStage.transitionFirstFrame",
+    "DecodeWaterlineStage.currentBootstrap",
+    "DecodeWaterlineStage.nextMax",
 ):
     require(refill, token, "StagedDecodeRefillPolicy")
 for token in (

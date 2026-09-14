@@ -19,6 +19,8 @@ registry = read('packages/sessions/lib/src/download_registry.dart')
 projection = read('packages/sessions/lib/src/download_ingress_projection.dart')
 ingress_registry = read('packages/sessions/lib/src/download_ingress_registry.dart')
 decode = read('packages/sessions/lib/src/decode_session.dart')
+coordinator = read('packages/sessions/lib/src/live_coordinator.dart')
+decode_registry = read('packages/sessions/lib/src/decode_registry.dart')
 pipe = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 page_stream = read('packages/pipeline_runtime/lib/src/pipeline_page_stream.dart')
 regression = read('packages/sessions/test/download_session_test.dart')
@@ -29,7 +31,11 @@ for token in (
     'Future<void> attachSynchronizedIngressProjection(',
     "message: 'late ingress projection requires synchronized attachment'",
     'final revision = _ingressProjectionRevision;',
-    'artifact.readChunks(endExclusive: targetLength)',
+    'Future<Stream<List<int>>> openArtifactReplay(',
+    'controlledArtifactReplayRangeChunks',
+    'artifact.readChunks(',
+    'if (_residentBodyBacked) {',
+    "message: 'resident-cache projection replay requires durable byte authority'",
     '_ingressProjections[projection.scopeId] = projection;',
 ):
     require(session, token, 'physical transfer / ingress projection split')
@@ -58,10 +64,24 @@ forbid(decode, 'download.ingress', 'decode reaching through physical download')
 for token in (
     '_ingresses = DownloadIngressProjectionRegistry(',
     'ingresses: _ingresses,',
-    '_ingresses.attach(session);',
     '_ingresses.dispose();',
 ):
     require(pipe, token, 'Reader composition owns ingress projections')
+for token in (
+    'final projection = ingresses?.get(session);',
+    'ingresses?.release(binding.session);',
+):
+    require(coordinator, token, 'media coordinator drives Reader-local ingress attachment')
+require(
+    decode_registry,
+    'final ingress = ingresses.get(download);',
+    'decode consumes the shared Reader-local ingress registry',
+)
+forbid(
+    pipe,
+    '_ingresses.attach(session);',
+    'Pipeline composition direct ingress attachment',
+)
 require(page_stream, 'kind: _contentKind(snapshot.contentKind)', 'page kind comes from physical transfer')
 
 for token in (

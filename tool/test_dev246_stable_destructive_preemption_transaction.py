@@ -45,8 +45,12 @@ reject(
     'pressurePreemptionPriorityFloor',
 )
 require(
-    'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
+    'packages/downloads/lib/src/download_resource_coordinator.dart',
     'preemptionCandidateGrace: const Duration(milliseconds: 100)',
+)
+reject(
+    'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
+    'preemptionCandidateGrace:',
 )
 require(
     'packages/sessions/lib/src/download_transfer_owner.dart',

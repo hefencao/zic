@@ -80,10 +80,15 @@ for stale in (
 
 for token in (
     '_ReaderComicVersionNoticeGate',
-    'listComicVersionSuccessors(',
+    '_librarySession.versionBaselines.latestKnownHeadFor(',
     '发现同源新版本，可在漫画详情页查看更新',
 ):
     require(reader, token, 'Reader first update notice')
+forbid(
+    reader,
+    'listComicVersionSuccessors(',
+    'Reader route direct version-relation storage query',
+)
 for token in (
     'comicVersionNoticeIdentity(',
     'hasAcknowledgedComicVersionNotice(',

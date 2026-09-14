@@ -125,13 +125,13 @@ for token in (
 ):
     require(home_session, token, 'interval-scoped version authority publication')
 
-downloads = read('packages/downloads/lib/src/chapter_downloads.dart')
+downloads = read('packages/downloads/lib/src/persistent_chapter_download_service.dart')
 record_start = downloads.index('  Future<({CacheRec record, String proof})?> _resolveReusablePageRecord(')
 record_end = downloads.index('  /// Lifecycle-edge diagnostic trail only', record_start)
 record_reuse = downloads[record_start:record_end]
 require(
     record_reuse,
-    'mapping.uniqueVerifiedPredecessorIndexForSuccessor(pageIndex)',
+    '.uniqueVerifiedPredecessorIndexForSuccessor(pageIndex);',
     'manual download interval-scoped byte reuse',
 )
 forbid(
@@ -168,7 +168,10 @@ for token in (
 ):
     require(source_transport, token, 'normal-open strong reuse evidence')
 
-chapter_downloads = read('packages/downloads/lib/src/chapter_downloads.dart')
+chapter_downloads = (
+    read('packages/downloads/lib/src/chapter_downloads.dart')
+    + read('packages/downloads/lib/src/persistent_chapter_download_service.dart')
+)
 for token in (
     'typedef ChapterVerifiedPageReuseObserver =',
     'void Function(ChapterManifest manifest, PageAsset page, String identity);',
@@ -197,9 +200,9 @@ forbid(
 )
 for token in (
     'ComicVersionCanonicalMediaLedger _canonicalMediaLedger',
-    'Future<void> _assimilateCanonicalMediaRelationsNow(',
+    'Future<({Future<void> backfill})> _assimilateCanonicalMediaRelationsNow(',
     'persistCanonicalMediaProjections(',
-    'final ranges = <CanonicalMediaActiveRange>[',
+    'canonicalMediaActiveRangesFromRelations(_versionRelations)',
     "runtime.replaceCanonicalMediaAuthorityScope(",
 ):
     require(home_session, token, 'canonical media projection / active proof owner')

@@ -23,7 +23,7 @@ require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
         '_staticPresentationContinuityIdentity(',
         '(pageIndex - viewport.currentPageIndex).abs() > 2',
         'final target = binding.pipeline.decodeTarget;',
-        'retainedStaticIdentity: uploadIdentity == null')
+        'retainedStaticIdentity: outputIdentity == null')
 require('packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart',
         'forwardDecodePages: 2','backwardDecodePages: 1')
 if current_dev() < 300:

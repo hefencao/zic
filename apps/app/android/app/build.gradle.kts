@@ -112,4 +112,5 @@ tasks.named("preBuild").configure {
 // directories (no storage permission; persisted tree grants only).
 dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
+    testImplementation("junit:junit:4.13.2")
 }

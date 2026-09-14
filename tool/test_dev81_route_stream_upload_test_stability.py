@@ -52,9 +52,24 @@ for token in (
     assert token in transport
 assert transport_test.count('HttpServer.bind') == 1
 assert 'controlled cancellation aborts an already streaming host response' in transport_test
-assert 'Duration(seconds: 30)' not in transport_test
+# dev.81 banned a historical 30s fixed wait in this suite. A later transport
+# contract intentionally uses a positive 30s *capability value* on
+# _BoundedFixtureSource to prove that source-operation and direct-open owners
+# jointly form SelfBoundedOpenTransport. Keep the timing-stability rule aimed
+# at blocking real waits instead of forbidding that bounded-source fixture.
+assert 'Future<void>.delayed(const Duration(seconds: 30))' not in transport_test
+assert 'pump(const Duration(seconds: 30))' not in transport_test
+assert (
+    'Duration get resourceOperationTimeout => const Duration(seconds: 30);'
+    in transport_test
+)
 assert '_ControlledBody' in transport_test
-assert 'failed direct retry falls back' in transport_test
+for transport_contract_test in (
+    'retry request with explicit transform uses source-owned byte transform',
+    'source-client state mismatch still falls back to runtime ownership',
+    'retry replacement network failure stays on streaming transport',
+):
+    assert transport_contract_test in transport_test
 
 for token in (
     'Future<void> _prepareTail = Future<void>.value();',
@@ -154,7 +169,6 @@ for unstable in (
     'ServerSocket.bind',
     'Future.delayed',
     'pumpAndSettle',
-    'Duration(seconds: 30)',
 ):
     assert unstable not in transport_test, (
         f'downloads transport test retains unstable {unstable}'

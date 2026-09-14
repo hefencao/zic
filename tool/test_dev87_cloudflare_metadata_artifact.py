@@ -32,6 +32,13 @@ def reject(path: str, *tokens: str) -> None:
         raise AssertionError(f"{path} restored rejected dev.87 tokens: {present}")
 
 
+def reject_combined(paths: tuple[str, ...], *tokens: str) -> None:
+    text = "\n".join(read(path) for path in paths)
+    present = [token for token in tokens if token in text]
+    if present:
+        raise AssertionError(f"{paths} restored rejected dev.87 tokens: {present}")
+
+
 def main() -> None:
     require(
         "packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/PluginHostBridgePlugin.kt",
@@ -107,16 +114,21 @@ def main() -> None:
         "_repairFinalMetaAfterVerification()",
         "Future<Uint8List> readBytes()",
     )
-    require(
+    download_sources = (
         "packages/downloads/lib/src/chapter_downloads.dart",
+        "packages/downloads/lib/src/persistent_chapter_download_service.dart",
+        "packages/downloads/lib/src/persistent_download_artifact_store.dart",
+    )
+    require_combined(
+        download_sources,
         "Future<Uint8List> readPromoted(DownloadId id) async",
         "final entry = await openArtifactStream(id);",
         "if (readAll != null) return readAll();",
         "return builder.takeBytes();",
         "return artifactStore.readPromoted(id);",
     )
-    reject(
-        "packages/downloads/lib/src/chapter_downloads.dart",
+    reject_combined(
+        download_sources,
         "artifact.restore(verifyPromotedChecksum: false)",
         "return artifact.readBytes();",
     )

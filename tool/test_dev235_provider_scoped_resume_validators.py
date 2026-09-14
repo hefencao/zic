@@ -27,6 +27,9 @@ job = read('packages/sessions/lib/src/download_job.dart')
 owner = read('packages/sessions/lib/src/download_transfer_owner.dart')
 partial = read('packages/downloads/lib/src/partial_download_handoff.dart')
 chapter = read('packages/downloads/lib/src/chapter_downloads.dart')
+persistent_store = read('packages/downloads/lib/src/persistent_download_artifact_store.dart')
+partial_resume = read('packages/downloads/lib/src/persistent_download_partial_resume.dart')
+download_storage = chapter + persistent_store + partial_resume
 pipeline = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 job_test = read('packages/sessions/test/download_job_test.dart')
 owner_test = read('packages/sessions/test/download_transfer_owner_test.dart')
@@ -67,10 +70,10 @@ for token in (
     'validators: resumeValidators.canResume ? resumeValidators : null,',
 ):
     require(owner, token, 'resident replay exact provider scope')
-require(partial, 'session.resumeValidatorsFor(session.id.canonicalUri)', 'cold partial physical validator scope')
+require(partial, 'session.resumeValidatorsFor(targetId.canonicalUri)', 'cold partial physical validator scope')
 if int(build.group(1)) >= 273:
-    require(chapter, 'validatorRequestUri != id.canonicalUri', 'persistent indexed partial validator scope')
-    require(chapter, '_readIndexedPartialResumeState(record.path, id)', 'persistent indexed partial resume authority')
+    require(download_storage, 'validatorRequestUri != id.canonicalUri', 'persistent indexed partial validator scope')
+    require(download_storage, '_readIndexedPartialResumeState(record.path, id)', 'persistent indexed partial resume authority')
 else:
     require(chapter, 'session.resumeValidatorsFor(id.canonicalUri)', 'persistent exact partial validator scope')
 if int(build.group(1)) >= 292:

@@ -106,12 +106,12 @@ for token in (
     require(trace_log, token, 'bounded raw trace export ring')
 for token in (
     '_filteredEvents(log.exportEvents)',
-    'DebugTraceFileExporter',
+    'DebugTraceEventsExporter',
     'DebugTraceClipboardWriter',
     'Trace 导出失败：$error',
 ):
     require(trace_screen, token, 'raw trace export capability')
-require(trace_export, 'exportDebugTraceDocument', 'raw trace platform export facade')
+require(trace_export, 'exportDebugTraceEvents', 'raw trace platform export facade')
 require(trace_export, 'application/x-ndjson', 'raw trace export MIME')
 require(
     trace_tests,

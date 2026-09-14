@@ -20,7 +20,7 @@ require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',"part '
 require('packages/pipeline_runtime/lib/src/pipeline_page_dimensions.dart','final class PipelinePageDimensions','abstract interface class PipelinePageDimensionsFeed','bool replay = true','bool publish(PipelinePageDimensions dimensions)')
 require('packages/reader_runtime/lib/src/reader_runtime_screen.dart','_pipeline.pageDimensions.addListener(_handlePipelinePageDimensions);','void _handlePipelinePageDimensions(PipelinePageDimensions dimensions)','basis: dimensions.basis,','_pipeline.pageDimensions.removeListener(_handlePipelinePageDimensions);')
 reader=text('packages/reader/lib/src/reader_view.dart')
-for marker in ('int? _lastVerticalVisibleMaxIndex;','_adoptFutureVerticalRatios(widget.pageAspectRatios);','void _adoptFutureVerticalRatios(','for (var index = visibleMax + 1; index < pages.length; index++)','TraceEventKind.pageGeometryPrepared',"'source': 'decode-ahead-ratio'"):
+for marker in ('int? _lastVerticalVisibleMaxIndex;','_adoptFutureVerticalRatios(latest);','void _adoptFutureVerticalRatios(','for (var index = visibleMax + 1; index < pages.length; index++)','TraceEventKind.pageGeometryPrepared',"'source': 'decode-ahead-ratio'"):
     req(marker in reader,f'Reader future geometry preparation missing: {marker}')
 for marker in ('reader-vertical-presentation:', 'presentationExtentAt(', 'final presentation = OverflowBox('):
     req(marker not in reader,f'dev.286 presentation workaround remains in Reader: {marker}')
@@ -31,7 +31,7 @@ req((ROOT/'docs/adr/0266-decode-ahead-vertical-geometry-preparation.md').is_file
 require('docs/audits/dev287-decode-ahead-vertical-geometry-audit.md','dev.287','pageDimensionsResolved','pageGeometryPrepared')
 require('docs/ARCHITECTURE.md','decodedWidth/decodedHeight','visible tail之后')
 require('docs/SPEC.md','DecodeSession首个成功frame','visible tail之后')
-require('docs/IMPLEMENTATION_STATUS.md','dev.287','5.884986s','pageDimensions')
+require('docs/IMPLEMENTATION_STATUS.md','pageDimensions','vertical模式')
 require('CHANGELOG.md','0.31.0-dev.287','Decode-ahead vertical geometry preparation')
 req('test_dev287_decode_ahead_vertical_geometry.py' in text('tool/check.sh'),'dev.287 gate not wired into tool/check.sh')
 print('PASS: dev.287 decode-ahead vertical geometry preparation')

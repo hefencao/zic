@@ -68,7 +68,9 @@ require(
     'packages/sessions/lib/src/decode_refill_policy.dart',
     'Current bootstrap is authoritative',
     'final bootstrapTarget = demand.targetWatermark.clamp(0, 3).toInt();',
-    "stage: bootstrapTarget == 1 ? 'one>0' : 'c>2'",
+    'stage: bootstrapTarget == 1',
+    '? DecodeWaterlineStage.oneFrame',
+    ': DecodeWaterlineStage.currentBootstrap',
     'return transitionFirstFrame();',
 )
 require(

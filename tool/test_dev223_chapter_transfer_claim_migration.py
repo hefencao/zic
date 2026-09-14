@@ -24,8 +24,13 @@ owner = read('packages/sessions/lib/src/download_transfer_owner.dart')
 live = read('packages/sessions/lib/src/live_coordinator.dart')
 pipeline = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 chapter = read('packages/downloads/lib/src/chapter_downloads.dart')
+persistent_chapter_service = read(
+    'packages/downloads/lib/src/persistent_chapter_download_service.dart'
+)
+persistent_store = read('packages/downloads/lib/src/persistent_download_artifact_store.dart')
 whole = read('packages/downloads/lib/src/whole_comic_downloads.dart')
 main = read('apps/app/lib/main.dart') + read('apps/app/lib/app_runtime.dart')
+local_media_composition = read('apps/app/lib/local_media_composition.dart')
 home = read('apps/app/lib/demo_home.dart')
 reader_route = read('apps/app/lib/demo_home_reader_route.dart')
 owner_test = read('packages/sessions/test/download_transfer_owner_test.dart')
@@ -79,18 +84,18 @@ for token in (
 ):
     require(live, token, 'Reader demand projection at LiveCoordinator boundary')
 
-require(chapter, 'final class PersistentDownloadArtifactStore', 'durable store split')
+require(persistent_store, 'final class PersistentDownloadArtifactStore', 'durable store split')
 require(chapter, 'final class PersistentDownloadComposition', 'application composition owner')
 require(chapter, 'abstract interface class ChapterDownloadTransferRuntimeProvider', 'composition provider seam')
-require(chapter, 'final CompositionDownloadTransferRuntime transferRuntime;', 'chapter command shared runtime')
-require(chapter, "scopeId: 'chapter-command:$identity'", 'chapter command scoped consumer')
-require(chapter, "reason: 'chapter-download-command'", 'chapter transfer claim reason')
-require(chapter, 'completionIntent: TransferCompletionIntent.required,', 'chapter durable completion intent')
-require(chapter, 'await transferRuntime.persistPromoted(id);', 'durable completion barrier')
-require(chapter, 'await consumer.dispose();', 'chapter claim lifecycle')
+require(persistent_chapter_service, 'final CompositionDownloadTransferRuntime transferRuntime;', 'chapter command shared runtime')
+require(persistent_chapter_service, "scopeId: 'chapter-command:$identity'", 'chapter command scoped consumer')
+require(persistent_chapter_service, "reason: 'chapter-download-command'", 'chapter transfer claim reason')
+require(persistent_chapter_service, 'completionIntent: TransferCompletionIntent.required,', 'chapter durable completion intent')
+require(persistent_chapter_service, 'await transferRuntime.persistPromoted(id);', 'durable completion barrier')
+require(persistent_chapter_service, 'await consumer.dispose();', 'chapter claim lifecycle')
 
-service_start = chapter.index('final class PersistentChapterDownloadService')
-service = chapter[service_start:]
+service_start = persistent_chapter_service.index('final class PersistentChapterDownloadService')
+service = persistent_chapter_service[service_start:]
 for token in ('DownloadJob(', 'DownloadRegistry(', 'NetLane('):
     forbid(service, token, 'chapter command physical transfer owner')
 
@@ -106,12 +111,26 @@ require(whole, 'final ChapterDownloadService _downloads;', 'whole-comic chapter-
 
 for token in (
     'PersistentDownloadComposition.open(',
-    'transferNet: defaultLocalMediaPipelineFactory.pageDownloadLane,',
+    'transferNet: defaultDownloadResourceCoordinator.networkLane,',
     'downloadComposition.artifactStore',
     'downloadComposition.chapterDownloads',
-    'defaultLocalMediaPipelineFactory.disposeRetainedSessions()',
+    'shutdownDefaultLocalMediaPipeline()',
 ):
     require(main, token, 'application composition shared owner wiring')
+for token in (
+    'final defaultDownloadResourceCoordinator = DownloadResourceCoordinator();',
+    'pageDownloadLane: defaultDownloadResourceCoordinator.networkLane,',
+    'defaultLocalMediaPipelineFactory.disposeRetainedSessions()',
+):
+    require(local_media_composition, token, 'application network resource composition root')
+require(pipeline, 'required this.pageDownloadLane,', 'Reader factory explicit NetLane ownership')
+forbid(pipeline, 'pageDownloadLane ??', 'Reader factory implicit NetLane fallback')
+require(live, 'required NetLane net,', 'LiveCoordinator explicit NetLane ownership')
+forbid(live, 'net ?? NetLane(', 'LiveCoordinator implicit NetLane fallback')
+composition_start = chapter.index('final class PersistentDownloadComposition')
+composition_end = chapter.index('typedef _PersistentDownloadAuthorities', composition_start)
+composition = chapter[composition_start:composition_end]
+require(composition, 'required NetLane transferNet,', 'persistent composition explicit NetLane ownership')
 for token in (
     'ChapterDownloadTransferRuntimeProvider',
     '.artifactCacheManager',
@@ -137,7 +156,7 @@ for token in (
     'ByteResponseBodyAuthority? get residentBodyAuthority',
     'void beginResidentImmutableIngress(',
     'void appendResidentImmutableIngress(',
-    'DownloadSnapshot sealResidentImmutableIngress()',
+    'DownloadSnapshot sealResidentImmutableIngress({',
 ):
     require(session, token, 'resident body/cache ownership terminology split')
 

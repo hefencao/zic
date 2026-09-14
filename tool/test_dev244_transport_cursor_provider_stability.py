@@ -75,8 +75,8 @@ require('const base = 128 * 1024.0;' in reader and
         'Color.lerp(Colors.red, Colors.amber' in reader and
         'Color.lerp(Colors.amber, Colors.green' in reader,
         'wave color must follow the inspected VibeVenera logarithmic speed ramp')
-require('正在重读已有页面前缀' in reader,
-        'UI must make re-download/catch-up distinct from real partial growth')
+require('已有页面partial，正在重读页面前缀' in reader,
+        'single-lane UI semantics must still identify transport prefix replay')
 require('replayingPrefix' in progress_test and 'transportBytes' in progress_test,
         'pipeline behavior regression must distinguish replay cursor from partial')
 

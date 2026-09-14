@@ -31,7 +31,7 @@ require(
     'int webpDecodePrefixQuantumBytesFor(DownloadId id)',
     'localWebpDecodePrefixQuantumBytes',
     'remoteWebpDecodePrefixQuantumBytes',
-    'final quantum = webpDecodePrefixQuantumBytesFor(id);',
+    'final quantum = quantumBytes ?? webpDecodePrefixQuantumBytesFor(id);',
 )
 require(
     'packages/sessions/lib/src/decode_session.dart',
@@ -140,7 +140,7 @@ else:
 require('tool/check.sh', 'test_dev258_decoder_playable_prefix_flow_authority.py')
 
 # This round is evidence-ownership only. Stable scheduling/window policy stays put.
-require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart', 'reservedHighPrioritySlots: 1')
+require('packages/downloads/lib/src/download_resource_coordinator.dart', 'reservedHighPrioritySlots: 1')
 require(
     'packages/pipeline/lib/src/animated_prefetch_policy.dart',
     'if (readDistance == 1) return 5;',

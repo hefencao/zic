@@ -46,7 +46,8 @@ require(
 )
 require(
     'apps/app/lib/demo_home_reader_route.dart',
-    '_sourceResources.pageControlledResponseLoaderFor(',
+    '_sourceResources.observedPageControlledResponseLoaderFor(',
+    '_sourceResources.pageOpenSelfBoundedFor(',
 )
 forbid('apps/app/lib/demo_home.dart', '_sourceResources.responseLoaderFor(')
 forbid('apps/app/lib/demo_home_reader_route.dart', '_sourceResources.responseLoaderFor(')
@@ -78,6 +79,8 @@ require(
     'Future<Uint8List> loadPageBytes(',
     'ExternalPluginResourceResponseLoader pageResponseLoaderFor(',
     'pageControlledResponseLoaderFor(',
+    'observedPageControlledResponseLoaderFor(',
+    'final loader = pageControlledResponseLoaderFor(manifest.sourceId, page.uri);',
     'Raw page-body streaming escape hatch.',
     'loadCachedComicImageSource(',
 )

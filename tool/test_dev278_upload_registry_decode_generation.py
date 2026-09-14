@@ -61,8 +61,8 @@ for path in (
 
 require('docs/ARCHITECTURE.md', 'UploadRegistry拥有UploadSession→DecodeSession concrete-generation binding不变量')
 require('docs/SPEC.md', 'UploadRegistry MUST把logical DecodeId与concrete DecodeSession generation区分')
-require('docs/IMPLEMENTATION_STATUS.md', 'dev.278', 'depth=7', 'waitingFrame')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.278', 'uploading→frameUploaded→framePresented→firstFrameReady')
+require('docs/IMPLEMENTATION_STATUS.md', 'SourceEpoch', 'decode/upload', 'generation')
+require('docs/NEXT_CHAT_HANDOFF.md', 'SourceEpoch', 'framePresented', 'generation')
 require('CHANGELOG.md', '0.31.0-dev.278', 'DecodeSession generation')
 
 print('PASS: dev.278 UploadRegistry concrete DecodeSession generation binding')

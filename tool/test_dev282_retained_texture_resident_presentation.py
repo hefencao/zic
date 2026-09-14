@@ -66,7 +66,7 @@ require(
 )
 require(
     'apps/app/lib/debug_trace.dart',
-    "'${event.payload['platformResidentReuse']}'",
+    "event.payload['platformResidentReuse']",
 )
 require(
     'packages/texture_bridge/test/android_texture_presenter_test.dart',
@@ -94,7 +94,7 @@ for path in (
 
 require('docs/ARCHITECTURE.md', 'platformResident', 'OutputFrame identity', 'SurfaceProducer')
 require('docs/SPEC.md', 'platformResident', 'RGBA Surface copy')
-require('docs/IMPLEMENTATION_STATUS.md', 'dev.282', '15–37ms', 'presentation ordinal')
+require('docs/IMPLEMENTATION_STATUS.md', 'presentationIdentity', 'resident surface', 'SurfaceProducer')
 require('docs/IMPLEMENTATION_PLAN.md', 'dev.282', 'platformResident', '首次新OutputFrame')
 require('CHANGELOG.md', '0.31.0-dev.282', 'resident')
 

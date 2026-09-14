@@ -89,8 +89,8 @@ for path in (
 
 require('docs/ARCHITECTURE.md', 'same DownloadId', 'generation retirement barrier')
 require('docs/SPEC.md', 'same DownloadId的新physical session', 'promotion的data-file rename')
-require('docs/IMPLEMENTATION_STATUS.md', 'dev.277', '5,906,374')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.277', 'frameUploaded')
+require('docs/IMPLEMENTATION_STATUS.md', 'SourceEpoch', 'frameUploaded', 'generation')
+require('docs/NEXT_CHAT_HANDOFF.md', 'SourceEpoch', 'frameUploaded', 'generation')
 require('CHANGELOG.md', '0.31.0-dev.277', 'generation')
 
 print('PASS: dev.277 Reader generation ingress/uploader lifecycle closure')

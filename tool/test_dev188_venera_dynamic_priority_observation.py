@@ -21,7 +21,8 @@ require(
 )
 require(
     "packages/sessions/lib/src/net_lane.dart",
-    "final class CancelToken implements PriorityObservableTaskControl",
+    "final class CancelToken",
+    "implements PriorityObservableTaskControl, OpenPhaseReportingTaskControl",
     "StreamController<int>.broadcast(sync: true)",
     "_priorityChanges.add(priority)",
     "if (removed != null) {",
@@ -31,7 +32,7 @@ require(
     "packages/plugin_host/lib/src/runtime_source_adapter.dart",
     "if (taskControl is PriorityObservableTaskControl)",
     "waiter.prioritySubscription = taskControl.priorityChanges.listen",
-    "_maybePreemptControlledActive(waiter.control)",
+    "_maybePreemptActiveForControlled(waiter.control)",
     "disposePrioritySubscription()",
 )
 require(

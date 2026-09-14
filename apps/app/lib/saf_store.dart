@@ -54,6 +54,20 @@ class SafStore {
     );
   }
 
+  /// Warms the platform provider read path using one previously successful
+  /// exact document id. Acceleration only: native opens and closes the
+  /// descriptor inside the operation and returns false when no safe candidate
+  /// is available.
+  Future<bool> prewarmRecentRead() {
+    return _invoke<bool>(
+      (channel) => channel.invokeMethod('safPrewarmRecentRead', <String, Object?>{
+        'treeUri': treeUri,
+      }),
+      () => false,
+      (raw) => raw == true,
+    );
+  }
+
   Future<Uint8List> read(int handle, int length) {
     return _invoke<Uint8List>(
       (channel) => channel.invokeMethod('safRead', <String, Object?>{

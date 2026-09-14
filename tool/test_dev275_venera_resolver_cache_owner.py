@@ -88,8 +88,8 @@ for path in (
     req((ROOT / path).is_file(), f'missing dev.275 governance file: {path}')
 require('docs/ARCHITECTURE.md', 'Venera source-requested resolver cache', 'NativeExternalPluginDriverHost')
 require('docs/SPEC.md', 'Venera source-requested resolver cache', 'pluginId/pluginVersion/sourceKey')
-require('docs/IMPLEMENTATION_STATUS.md', 'dev.275', 'VeneraHttpCacheStore')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.275', 'resolver cache')
+require('docs/IMPLEMENTATION_STATUS.md', 'VeneraHttpCacheStore', 'targeted force-miss', '6h')
+require('docs/NEXT_CHAT_HANDOFF.md', 'VeneraHttpCacheStore', 'targeted force-miss', '6h')
 require('CHANGELOG.md', '0.31.0-dev.275', 'VeneraHttpCacheStore')
 
 print('PASS: dev.275 Venera resolver network cache owner')

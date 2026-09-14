@@ -30,7 +30,8 @@ for token in (
 
 lane = read('packages/sessions/lib/src/net_lane.dart')
 for token in (
-    'final class CancelToken implements PriorityObservableTaskControl',
+    'final class CancelToken',
+    'implements PriorityObservableTaskControl, OpenPhaseReportingTaskControl',
     'int priority = 0,',
     'void updatePriority(int priority)',
     'bool _updateActivePriority(_ActiveTask task, int priority)',
@@ -57,7 +58,8 @@ for token in (
 for token in (
     'typedef ControlledTransportResponseLoader',
     'this.openControlledResponse,',
-    'final class LoaderTransport implements ControlledTransport',
+    'final class LoaderTransport',
+    'implements ControlledTransport, SelfBoundedOpenTransport',
     'openControlledResponse(',
     'control: control,',
 ):
@@ -83,7 +85,8 @@ source_transport = read('packages/downloads/lib/src/source_resource_transport.da
 for token in (
     'ExternalPluginControlledResourceResponseLoader',
     'controlledLoaderFor(',
-    'final class _SourceResourceTransport implements ControlledTransport',
+    'final class _SourceResourceTransport',
+    'implements ControlledTransport, SelfBoundedOpenTransport',
     'Future<ByteResponse> openControlled(',
     '_resolve(uri, control: control)',
     'resolveResourceControlled(locator, control: control)',
@@ -131,7 +134,11 @@ for token in (
     '_transports.controlledLoaderFor(',
 ):
     require(app_gateway, token, 'App Reader controlled source loader')
-require(app_home, 'pageControlledResponseLoaderFor(', 'Reader route controlled loader composition')
+require(
+    app_home,
+    'observedPageControlledResponseLoaderFor(',
+    'Reader route controlled loader composition',
+)
 
 runtime_test = read('packages/plugin_host/test/runtime_source_adapter_test.dart')
 for token in (
@@ -151,8 +158,12 @@ for token in (
 ):
     require(transport_test, token, 'source transport control propagation regression')
 for token in (
-    'Map<String, ControlledTransportResponseLoader> responseLoaders',
-    'openControlledResponse: responseLoader',
+    'final class LocalImageResponseSource',
+    'final ControlledTransportResponseLoader openControlledResponse;',
+    'final bool selfBoundedOpen;',
+    'final Map<String, LocalImageResponseSource> responseSources;',
+    'openControlledResponse: responseSource?.openControlledResponse',
+    'selfBoundedOpen: responseSource?.selfBoundedOpen ?? false',
 ):
     require(local_ui, token, 'local media Reader controlled loader boundary')
 

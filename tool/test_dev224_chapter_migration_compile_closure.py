@@ -4,6 +4,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 chapter = (ROOT / 'packages/downloads/lib/src/chapter_downloads.dart').read_text(encoding='utf-8')
+persistent_store = (ROOT / 'packages/downloads/lib/src/persistent_download_artifact_store.dart').read_text(encoding='utf-8')
 live = (ROOT / 'packages/sessions/lib/src/live_coordinator.dart').read_text(encoding='utf-8')
 
 required = (
@@ -11,7 +12,7 @@ required = (
     'for (final entry in _downloads.entries)',
 )
 for token in required:
-    text = chapter if '_artifactWrites' in token else live
+    text = persistent_store if '_artifactWrites' in token else live
     if token not in text:
         raise SystemExit(f'dev.224 missing compile-closure token: {token}')
 
@@ -27,6 +28,7 @@ for token in forbidden:
 # declarations in the two production files changed by this closure.
 for rel in (
     'packages/downloads/lib/src/chapter_downloads.dart',
+    'packages/downloads/lib/src/persistent_download_artifact_store.dart',
     'packages/sessions/lib/src/live_coordinator.dart',
 ):
     lines = (ROOT / rel).read_text(encoding='utf-8').splitlines()

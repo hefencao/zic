@@ -108,6 +108,9 @@ require(
 require(
     'packages/downloads/lib/src/chapter_downloads.dart',
     'const chunkSize = promotedArtifactReadChunkBytes;',
+)
+require(
+    'packages/downloads/lib/src/persistent_download_partial_resume.dart',
     'Stream<List<int>> _readIndexedChunks(',
     '.clamp(1, promotedArtifactReadChunkBytes)',
 )

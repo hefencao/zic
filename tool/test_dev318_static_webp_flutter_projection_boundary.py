@@ -74,8 +74,17 @@ else:
     require(player, 'detected.isWebp ? null : MemoryImage(bytes)',
             'native WebP presentation restoration')
 
-# Animation must not be routed by a pre-classification guess.
-forbid(player, 'snapshot.animation.frameCount > 1', 'animated projection switch')
+# Animation metadata may report playback capability once real multi-frame
+# evidence exists, but it must not route presentation or rebuild the Flutter
+# subtree. Surface/state/layout identity remains the visual authority.
+listener = player[
+    player.index('void _attachPageOutput(PipelinePageOutputStream output)'):
+    player.index('Future<void> _load()', player.index('void _attachPageOutput(PipelinePageOutputStream output)'))
+]
+visual = listener[listener.index('final visualChanged ='):listener.index('_pageOutputSnapshot = snapshot;')]
+forbid(visual, 'animation.frameCount', 'animated projection switch')
+require(listener, 'if (snapshot.animation.frameCount > 1) {', 'real multi-frame playback evidence')
+require(listener, '_reportPlaybackCapability(true);', 'playback capability projection')
 
 # New diagnostics distinguish frame cadence from motion cadence without driving policy.
 for token in ('scrollCadenceSummary,', 'staticFlutterPresentation,'):

@@ -83,8 +83,8 @@ def main() -> None:
         "retry: _profile.retry",
         "net: pageDownloadLane",
         "downloadBucketFor: _profile.downloadBucket",
-        "downloadBucketLimitFor: _downloadBucketLimit",
-        "final stableLimit = _profile.downloadBucketLimit(id)",
+        "required this.pageDownloadLane",
+        "downloadBucketLimitFor: _profile.downloadBucketLimit",
         "decode: DecodeLane(",
         "maxActive: _profile.decodeConcurrency",
         "upload: UploadLane(",
@@ -129,6 +129,9 @@ def main() -> None:
     require(
         "packages/downloads/lib/src/chapter_downloads.dart",
         "ConfigurableChapterResourceAccess",
+    )
+    require(
+        "packages/downloads/lib/src/persistent_chapter_download_service.dart",
         "openResponse:",
         "totalLength",
     )

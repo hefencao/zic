@@ -952,6 +952,10 @@ def check_compile_regressions() -> None:
     reader_view = (ROOT / 'packages/reader/lib/src/reader_view.dart').read_text(
         encoding='utf-8'
     )
+    reader_page_host = (ROOT / 'packages/reader/lib/src/reader_page_host.dart').read_text(
+        encoding='utf-8'
+    )
+    reader_view_sources = reader_view + reader_page_host
     for required in (
         'typedef ReaderPageBuilder',
         'final ReaderPageBuilder? pageBuilder',
@@ -965,7 +969,7 @@ def check_compile_regressions() -> None:
         'NeverScrollableScrollPhysics',
         'rotationQuarterTurns',
     ):
-        if required not in reader_view:
+        if required not in reader_view_sources:
             fail(f'Reader media integration seam is incomplete: {required}')
     for required in (
         'MediaPipelineReaderScreen',
@@ -1053,6 +1057,12 @@ def check_compile_regressions() -> None:
     chapter_downloads = (
         ROOT / 'packages/downloads/lib/src/chapter_downloads.dart'
     ).read_text(encoding='utf-8')
+    persistent_chapter_service = (
+        ROOT / 'packages/downloads/lib/src/persistent_chapter_download_service.dart'
+    ).read_text(encoding='utf-8')
+    persistent_download_store = (
+        ROOT / 'packages/downloads/lib/src/persistent_download_artifact_store.dart'
+    ).read_text(encoding='utf-8')
     managed_start = chapter_downloads.index(
         'abstract interface class ManagedChapterDownloadService'
     )
@@ -1061,12 +1071,18 @@ def check_compile_regressions() -> None:
     for required in (
         'abstract interface class ManagedChapterDownloadService',
         'implements ChapterDownloadService {}',
-        'final class PersistentDownloadArtifactStore',
         'final class PersistentDownloadComposition',
-        'final class PersistentChapterDownloadService',
     ):
         if required not in chapter_downloads:
             fail(f'Chapter command/store composition is incomplete: {required}')
+    if "part 'persistent_chapter_download_service.dart';" not in chapter_downloads:
+        fail('Persistent chapter service source split is not wired into chapter downloads')
+    if "part of 'chapter_downloads.dart';" not in persistent_chapter_service:
+        fail('Persistent chapter service part ownership is incomplete')
+    if 'final class PersistentChapterDownloadService' not in persistent_chapter_service:
+        fail('Persistent chapter service source split is incomplete')
+    if 'final class PersistentDownloadArtifactStore' not in persistent_download_store:
+        fail('Durable artifact store source split is incomplete')
     for forbidden in ('ArtifactCacheMaintenance', 'ArtifactCacheBackend'):
         if forbidden in managed_contract:
             fail(f'Chapter command contract regained cache ownership: {forbidden}')
@@ -1826,6 +1842,13 @@ def check_compile_regressions() -> None:
     downloads = (ROOT / 'packages/downloads/lib/src/chapter_downloads.dart').read_text(
         encoding='utf-8',
     )
+    persistent_chapter_service = (
+        ROOT / 'packages/downloads/lib/src/persistent_chapter_download_service.dart'
+    ).read_text(encoding='utf-8')
+    persistent_download_store = (
+        ROOT / 'packages/downloads/lib/src/persistent_download_artifact_store.dart'
+    ).read_text(encoding='utf-8')
+    download_sources = downloads + persistent_chapter_service + persistent_download_store
     for required in (
         'enum ChapterDownloadPhase',
         'final class ChapterDownloadSnapshot',
@@ -1840,11 +1863,11 @@ def check_compile_regressions() -> None:
         'ChapterPageLoader',
         'storePromotedArtifact(',
         'DownloadState.promoted',
-        ('offline_chapters' if 'offline_chapters' in downloads
+        ('offline_chapters' if 'offline_chapters' in download_sources
          else 'defaultChapterDownloadDirectory'),
         '_terminalPhases',
     ):
-        if required not in downloads:
+        if required not in download_sources:
             fail(f'durable chapter download service is incomplete: {required}')
     download_manager_path = ROOT / 'apps/app/lib/download_manager.dart'
     if not download_manager_path.is_file():
@@ -1978,6 +2001,10 @@ def check_compile_regressions() -> None:
     reader_view = (
         ROOT / 'packages/reader/lib/src/reader_view.dart'
     ).read_text(encoding='utf-8')
+    reader_page_host = (
+        ROOT / 'packages/reader/lib/src/reader_page_host.dart'
+    ).read_text(encoding='utf-8')
+    reader_view_sources = reader_view + reader_page_host
     for required in (
         "'reader-page-host:${widget.asset.assetKey}'",
         'required this.demandRevision',
@@ -1986,7 +2013,7 @@ def check_compile_regressions() -> None:
         'TraceEventKind.pageHostDisposed',
         'super.key,',
     ):
-        if required not in reader_view:
+        if required not in reader_view_sources:
             fail(f'stable Reader host attribution is incomplete: {required}')
 
     storage_bridge = (
@@ -2156,19 +2183,28 @@ def check_compile_regressions() -> None:
     chapter_downloads = (
         ROOT / 'packages/downloads/lib/src/chapter_downloads.dart'
     ).read_text(encoding='utf-8')
-    open_body = chapter_downloads.split(
+    persistent_chapter_service = (
+        ROOT / 'packages/downloads/lib/src/persistent_chapter_download_service.dart'
+    ).read_text(encoding='utf-8')
+    persistent_download_store = (
+        ROOT / 'packages/downloads/lib/src/persistent_download_artifact_store.dart'
+    ).read_text(encoding='utf-8')
+    chapter_download_sources = (
+        chapter_downloads + persistent_chapter_service + persistent_download_store
+    )
+    open_body = persistent_chapter_service.split(
         'static Future<PersistentChapterDownloadService> open', 1
-    )[1].split('final DownloadRegistry _registry', 1)[0]
+    )[1].split('final PersistentDownloadArtifactStore artifactStore', 1)[0]
     if 'restoreIndexed()' in open_body:
         fail('persistent chapter service eagerly restores every artifact at startup')
-    if 'materializedSessionCount' not in chapter_downloads:
+    if 'materializedSessionCount' not in persistent_chapter_service:
         fail('persistent chapter service lacks lazy-restore diagnostics')
     for required in (
         'Future<List<ChapterDownloadSnapshot>> inspectMany(',
         'for (final record in await _index.list()) record.key: record',
         'indexedRecords: indexed',
     ):
-        if required not in chapter_downloads:
+        if required not in chapter_download_sources:
             fail(f'bulk index-only download projection is incomplete: {required}')
 
     home_library_session = (
@@ -2253,6 +2289,9 @@ def check_compile_regressions() -> None:
             fail(f'unified cache coordinator contract is incomplete: {required}')
 
     chapter_downloads = (ROOT / 'packages/downloads/lib/src/chapter_downloads.dart').read_text(encoding='utf-8')
+    persistent_chapter_service = (ROOT / 'packages/downloads/lib/src/persistent_chapter_download_service.dart').read_text(encoding='utf-8')
+    persistent_download_store = (ROOT / 'packages/downloads/lib/src/persistent_download_artifact_store.dart').read_text(encoding='utf-8')
+    download_storage_sources = chapter_downloads + persistent_chapter_service + persistent_download_store
     for required in (
         'ArtifactCacheMaintenance',
         'CacheOps(',
@@ -2262,25 +2301,27 @@ def check_compile_regressions() -> None:
         '_storedPageCount(',
         '_storedPageBytes(',
     ):
-        if required not in chapter_downloads:
+        if required not in download_storage_sources:
             fail(f'artifact cache maintenance contract is incomplete: {required}')
     reader_view = (ROOT / 'packages/reader/lib/src/reader_view.dart').read_text(encoding='utf-8')
+    reader_page_host = (ROOT / 'packages/reader/lib/src/reader_page_host.dart').read_text(encoding='utf-8')
+    reader_view_sources = reader_view + reader_page_host
     for required in (
         "'zoom:${widget.asset.assetKey}'",
         "'reader-page-host:${widget.asset.assetKey}'",
         'void didUpdateWidget(covariant _ZoomableReaderPage oldWidget)',
     ):
-        if required not in reader_view:
+        if required not in reader_view_sources:
             fail(f'Reader stable page-host contract is incomplete: {required}')
     for forbidden in (
         'ReaderPageBytesCache',
         '_schedulePageWarmup(',
         'allowImplicitScrolling: true',
     ):
-        if forbidden in reader_runtime or forbidden in reader_view:
+        if forbidden in reader_runtime or forbidden in reader_view_sources:
             fail(f'Reader must not bypass pipeline demand with UI prefetch: {forbidden}')
     if "package:resource_cache/resource_cache.dart" in reader_runtime or \
-            "package:resource_cache/resource_cache.dart" in reader_view:
+            "package:resource_cache/resource_cache.dart" in reader_view_sources:
         fail('Reader presentation must not depend on response-cache policy')
     app_lib = '\n'.join(
         path.read_text(encoding='utf-8')

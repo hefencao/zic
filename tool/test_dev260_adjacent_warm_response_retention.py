@@ -41,7 +41,7 @@ if build >= 269:
     require('docs/adr/0239-adjacent-warm-response-bounded-flow-retention.md', 'dev.268', 'ADR 0246 supersede')
     require('docs/adr/0247-demanded-parking-inactive-retention-separation.md', 'demanded', 'inactive')
     require('packages/pipeline/lib/src/animated_prefetch_policy.dart', 'if (readDistance == 1) return 5;', 'if (readDistance == 2) return 3;', 'if (readDistance == -1) return 2;')
-    require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart', 'reservedHighPrioritySlots: 1')
+    require('packages/downloads/lib/src/download_resource_coordinator.dart', 'reservedHighPrioritySlots: 1')
     print('PASS: dev.260 adjacent continuity preserved; dev.269 separates demanded parking from inactive retention')
     raise SystemExit(0)
 if build >= 268:
@@ -53,7 +53,7 @@ if build >= 268:
     require('docs/adr/0239-adjacent-warm-response-bounded-flow-retention.md', 'dev.268', 'ADR 0246 supersede')
     require('docs/adr/0246-live-response-parking-body-read-permit-separation.md', 'live response', 'body-read permit')
     require('packages/pipeline/lib/src/animated_prefetch_policy.dart', 'if (readDistance == 1) return 5;', 'if (readDistance == 2) return 3;', 'if (readDistance == -1) return 2;')
-    require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart', 'reservedHighPrioritySlots: 1')
+    require('packages/downloads/lib/src/download_resource_coordinator.dart', 'reservedHighPrioritySlots: 1')
     print('PASS: dev.260 adjacent continuity preserved; retainFlowResponse superseded by dev.268 live response parking')
     raise SystemExit(0)
 
@@ -156,7 +156,7 @@ require(
     'if (readDistance == -1) return 2;',
 )
 require(
-    'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
+    'packages/downloads/lib/src/download_resource_coordinator.dart',
     'reservedHighPrioritySlots: 1',
 )
 print('dev.260 adjacent warm response retention: OK')

@@ -92,8 +92,12 @@ else:
             '_hasBodyPermitPreemptionInFlight' if build >= 270 else '_hasPreemptionInFlight',
         )
         require(
-            'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
+            'packages/downloads/lib/src/download_resource_coordinator.dart',
             'preemptionCandidateGrace: const Duration(milliseconds: 100)',
+        )
+        reject(
+            'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
+            'preemptionCandidateGrace:',
         )
         require(
             'packages/sessions/test/net_lane_test.dart',

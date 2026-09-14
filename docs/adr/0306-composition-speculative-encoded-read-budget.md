@@ -14,6 +14,7 @@ Reader 当前保持 canonical previous3/next7 encoded demand，Animated WebP 再
 4. 达到预算时只暂停**下一次 encoded read**。source response必须释放 NetLane body-read permit并保留同一 response/StreamIterator/transport lease；预算或priority变化后重新竞争 permit并原地继续。已提交 partial/writer/epoch均保持不变，因此真实 eviction/cancel 后仍沿既有 Range/validator/full-prefix 规则恢复。
 5. resident immutable replay在调用 retained bound range authority前再切为 256KiB physical quantum。decoder仍可请求更大的 logical prefix，但每个 quantum 前重新检查 TaskControl、foreground priority、local-read scheduler 与 speculative budget；取消后不得提交下一 quantum。平台/provider若不支持取消已进入的一次 `readAt`，该单次 256KiB operation仍可能物理退场到完成，不能伪称已经中断底层系统调用。
 6. budget 是 pause threshold，不是跨任意第三方 transport 的绝对 wire-byte hard cap。transport 已经交付给 Dart 的单个底层 chunk可使计数最多超出一个 provider chunk；local retained replay的该超调由256KiB quantum明确界定。`consumerPacing` transport仍不能承诺native upstream socket完全停止收包。
+7. Reader-local WebP source publication需要一个比后台read-ahead更基础的liveness边界：已有physical hot partial或可range-replay durable resident body的新projection首次建立decoder ingress时，允许0..256KiB首个probe在budget已到threshold时执行一个quantum。该quantum仍在读取后计入原budget，所以只允许一次bounded overshoot；随后range replay继续按普通budget等待。这个例外不授权network growth，也不改变3/7、role priority、decode/upload waterline或local-read scheduler；它只避免旧speculative accounts占满预算后，新Reader连已有physical bytes都无法建立decoder source。
 
 ## 否决方案
 

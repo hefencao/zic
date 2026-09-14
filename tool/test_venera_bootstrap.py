@@ -249,6 +249,49 @@ async function checkStreamableOnLoadFailedConfig(){
  if(failedCalls!==1||nativeCalls!==0)throw new Error('retryResource invoked the wrong path '+JSON.stringify({failedCalls,nativeCalls}));
 }
 
+async function checkFreshResourceGenerationRestartsInitialConfig(){
+ const locator='venera-resource:'+__zicB64({v:1,image:'fresh-resource',comicId:'comic',epId:'ep'});
+ let configCalls=0,failedCalls=0;
+ globalThis.__zicSource={comic:{
+   onImageLoad:async()=>{
+     configCalls++;
+     return {
+       url:'https://cdn.invalid/initial-'+configCalls+'.webp',
+       onLoadFailed:async()=>{
+         failedCalls++;
+         return {url:'https://cdn.invalid/replacement-'+failedCalls+'.webp'};
+       },
+     };
+   },
+ }};
+ const first=await __zicOperation({operation:'resolveResource',arguments:{uri:locator}});
+ const retry=await __zicOperation({operation:'retryResource',arguments:{uri:locator}});
+ if(first.url!=='https://cdn.invalid/initial-1.webp'||retry.request.url!=='https://cdn.invalid/replacement-1.webp'||configCalls!==1||failedCalls!==1)throw new Error('fresh generation fixture setup failed '+JSON.stringify({first,retry,configCalls,failedCalls}));
+ const retained=await __zicOperation({operation:'resolveResource',arguments:{uri:locator}});
+ if(retained.url!=='https://cdn.invalid/replacement-1.webp'||configCalls!==1)throw new Error('ordinary resolve escaped the retained semantic chain '+JSON.stringify({retained,configCalls}));
+ const fresh=await __zicOperation({operation:'resolveResource',arguments:{uri:locator,fresh:true}});
+ if(fresh.url!=='https://cdn.invalid/initial-2.webp'||configCalls!==2||failedCalls!==1)throw new Error('fresh resource generation did not rebuild initial source config '+JSON.stringify({fresh,configCalls,failedCalls}));
+}
+
+async function checkFreshResourceGenerationBypassesResolverCache(){
+ const locator='venera-resource:'+__zicB64({v:1,image:'fresh-resolver-cache',comicId:'comic',epId:'ep'});
+ const seen=[];let configCalls=0;
+ ZicNative.request=raw=>{
+   const message=__zicDecode(JSON.parse(raw));
+   if(message.method==='cookie'&&message.function==='get')return JSON.stringify({ok:true,value:__zicEncode([])});
+   if(message.method!=='http')throw new Error('unexpected fresh-resolver bridge method '+message.method);
+   seen.push(message.__zicFreshResolver===true);
+   return JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},body:'resolver'})});
+ };
+ globalThis.__zicSource={comic:{onImageLoad:async()=>{configCalls++;await Network.get('https://resolver.invalid/page');return {url:'https://cdn.invalid/page-'+configCalls+'.webp'}}}};
+ const ordinary=await __zicOperation({operation:'resolveResource',arguments:{uri:locator}});
+ if(ordinary.url!=='https://cdn.invalid/page-1.webp'||JSON.stringify(seen)!==JSON.stringify([false]))throw new Error('ordinary resource resolve unexpectedly bypassed resolver cache '+JSON.stringify({ordinary,seen}));
+ const fresh=await __zicOperation({operation:'resolveResource',arguments:{uri:locator,fresh:true}});
+ if(fresh.url!=='https://cdn.invalid/page-2.webp'||JSON.stringify(seen)!==JSON.stringify([false,true])||configCalls!==2)throw new Error('fresh resource resolve did not bypass resolver cache '+JSON.stringify({fresh,seen,configCalls}));
+ const retained=await __zicOperation({operation:'resolveResource',arguments:{uri:locator}});
+ if(retained.url!==fresh.url||seen.length!==2||configCalls!==2)throw new Error('ordinary retained resolve repeated fresh resolver work '+JSON.stringify({retained,seen,configCalls}));
+}
+
 async function checkNonImageBodyUsesSourceRecovery(){
  const locator='venera-resource:'+__zicB64({v:1,image:'semantic-retry',comicId:'comic',epId:'ep'});
  let failedCalls=0,requests=0;
@@ -466,6 +509,37 @@ async function checkRequestPlanStageDiagnostics(){
  if(completed?.seenRequestId!==requestId||finished!==requestId||resolved?.url!=='https://cdn.invalid/stage-image.webp'||!diagnostics||diagnostics.sourcePlanBridgeNetworkCalls!==1||diagnostics.sourcePlanBridgeNetworkCacheHits!==0||diagnostics.sourcePlanBridgeNetworkOriginCalls!==1||diagnostics.sourcePlanBridgeNetworkMicros<0||diagnostics.sourcePlanHookMicros<diagnostics.sourcePlanBridgeNetworkMicros||__zicBridgeMetrics.has(requestId))throw new Error('request-plan stage diagnostics failed '+JSON.stringify({completed,finished,resolved,retained:__zicBridgeMetrics.has(requestId)}));
 }
 
+async function checkResolverNetworkFailureRetryability(){
+ const requestId='resolver-network-failure';
+ const locator='venera-resource:'+__zicB64({v:1,image:'tls-image',comicId:'comic',epId:'ep'});
+ const previousRequestAsync=ZicNative.requestAsync;
+ let completed=null,finished=null,seen=null;
+ globalThis.__zicSource={comic:{
+   onImageLoad:async image=>{
+     await Network.get('https://resolver.invalid/key');
+     return {url:'https://cdn.invalid/'+image+'.webp'};
+   },
+ }};
+ ZicNative.requestAsync=raw=>{
+   const message=__zicDecode(JSON.parse(raw));seen=message;
+   setTimeout(()=>__zicBridgeResponse(message.bridgeCallId,JSON.stringify({
+     ok:false,
+     error:"venera-resolver-http-failed: [RhttpUnknownException] cannot decrypt peer's message",
+     errorCode:'venera-resolver-http-failed',
+     retryable:true,
+   })),0);
+ };
+ ZicNative.complete=(seenRequestId,envelope)=>{completed={seenRequestId,envelope:JSON.parse(envelope)}};
+ ZicNative.finished=seenRequestId=>{finished=seenRequestId};
+ try{
+   await __zicInvoke({requestId,operation:'resolveResource',arguments:{uri:locator}});
+ }finally{
+   if(previousRequestAsync===undefined)delete ZicNative.requestAsync;else ZicNative.requestAsync=previousRequestAsync;
+ }
+ const result=completed?.envelope;
+ if(seen?.requestId!==requestId||completed?.seenRequestId!==requestId||finished!==requestId||result?.ok!==false||result?.code!=='venera-operation-failed'||result?.retryable!==true||!String(result?.message||'').includes("cannot decrypt peer's message"))throw new Error('resolver network failure lost retryability '+JSON.stringify({seen,completed,finished}));
+}
+
 async function checkRequestScopedDelayCancellation(){
  const requestId='delay-cancel';
  __zicActiveRequestId=requestId;
@@ -523,7 +597,7 @@ async function checkInvokeRequestLifecycle(){
  if(seenRequestId!=='invoke-lifecycle'||completed?.requestId!=='invoke-lifecycle'||finished!=='invoke-lifecycle')throw new Error('invoke lifecycle did not retain the request id '+JSON.stringify({seenRequestId,completed,finished}));
 }
 
-(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkNonImageBodyUsesSourceRecovery();await checkExternalSemanticRetryContinuesCurrentReplacementChain();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkRequestScopedDelayCancellation();await checkAsyncNetworkBridgeAndActivationGate();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkFreshResourceGenerationRestartsInitialConfig();await checkFreshResourceGenerationBypassesResolverCache();await checkNonImageBodyUsesSourceRecovery();await checkExternalSemanticRetryContinuesCurrentReplacementChain();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkResolverNetworkFailureRetryability();await checkRequestScopedDelayCancellation();await checkAsyncNetworkBridgeAndActivationGate();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

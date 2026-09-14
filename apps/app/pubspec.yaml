@@ -38,6 +38,8 @@ dependencies:
     path: ../../packages/resource_cache
   reader_runtime:
     path: ../../packages/reader_runtime
+  reader:
+    path: ../../packages/reader
   storage_bridge:
     path: ../../packages/storage_bridge
   telemetry:
@@ -48,8 +50,6 @@ dev_dependencies:
     path: ../../packages/bridge
   pipeline:
     path: ../../packages/pipeline
-  reader:
-    path: ../../packages/reader
   transport:
     path: ../../packages/transport
   flutter_test:

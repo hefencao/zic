@@ -36,7 +36,7 @@ require(
     'staticWarm &&',
     '!primaryUpload',
     '!visibleStatic',
-    '_verticalPresentationActive(observation.interaction)',
+    'isPresentationMotionInteraction(observation.interaction)',
     '!deferHiddenVerticalStaticUpload',
 )
 forbid('packages/pipeline/lib/src/heuristic_policy.dart', 'final deferVerticalNext2Upload =')

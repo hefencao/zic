@@ -47,7 +47,10 @@ for forbidden in (
 ):
     req(forbidden not in geometry, f'superseded dev.284 geometry guard remains: {forbidden}')
 
-reader = text('packages/reader/lib/src/reader_view.dart')
+reader = (
+    text('packages/reader/lib/src/reader_view.dart')
+    + text('packages/reader/lib/src/reader_page_host.dart')
+)
 for forbidden in (
     '_compositionMountedAtCurrentIndex',
     '_compositionGuardActiveFor',

@@ -36,7 +36,7 @@ for marker in (
     'priority < dynamicPreemptionPriorityThreshold',
     'final waiter = _highestPriorityWaiter();',
     'waiter.priority < dynamicPreemptionPriorityThreshold',
-    '_maybePreemptControlledActive(waiter.control);',
+    '_maybePreemptActiveForControlled(waiter.control);',
     'activeInvocation.disposePrioritySubscription();',
 ):
     req(marker in adapter, f'active current handoff closure missing: {marker}')
@@ -67,8 +67,8 @@ for path in (
 
 require('docs/ARCHITECTURE.md', 'active current-class demotion', '同一40分preemption')
 require('docs/SPEC.md', 'controlled active从current=1000向下跨出', '非current active demotion')
-require('docs/IMPLEMENTATION_STATUS.md', 'dev.276', 'sourcePlanGateWaitMicros')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.276', 'active')
+require('docs/IMPLEMENTATION_STATUS.md', 'active current-class demotion', 'gate wait', '40分')
+require('docs/NEXT_CHAT_HANDOFF.md', 'active current-class demotion', '新current waiter', '40分')
 require('CHANGELOG.md', '0.31.0-dev.276', 'active')
 
 print('PASS: dev.276 Venera current handoff gate priority closure')

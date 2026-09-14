@@ -1,6 +1,6 @@
 # ADR 0209：Verified equivalence-aware cold partial restore
 
-- 状态：Accepted
+- 状态：Accepted（第2–3项的exact-first择优顺序已由ADR 0309修订；删除warmup复制等其余决策继续有效）
 - 日期：2026-08-12
 - 版本：dev.229
 

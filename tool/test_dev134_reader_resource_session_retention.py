@@ -96,8 +96,8 @@ if (ROOT / "native/media_core/src/android_performance.rs").exists():
 require(native_pool, "const placementStatus = 0", "stable Trace compatibility")
 if "pub const LIB_VERSION: u32 = 0x0012_1500" not in native_lib:
     raise SystemExit("dev.135 superseding native library version missing")
-if native_identity != "zic-media-core-dev135-abi6-lib00121500":
-    raise SystemExit(f"unexpected dev.135 superseding native identity: {native_identity}")
+if native_identity != "zic-media-core-dev136-abi7-lib00121600":
+    raise SystemExit(f"unexpected dev.136 superseding native identity: {native_identity}")
 
 for token in (
     "BLIT_LANE_COUNT = 1",

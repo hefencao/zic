@@ -81,7 +81,7 @@ assert 'expect(target.physicalWidth, 1024);' in decode_test
 for unstable in ('Directory.systemTemp', 'testWidgets(', 'pumpAndSettle', 'Future.delayed'):
     assert unstable not in progress_test, unstable
 assert 'pipelineTransferProgressFor(' in progress
-assert 'restored and completed artifacts never project network progress' in progress_test
+assert 'completed and failed artifacts never project transfer progress' in progress_test
 
 for path in (
     'docs/adr/0068-mihon-runtime-transform-catalog-and-details-metadata.md',

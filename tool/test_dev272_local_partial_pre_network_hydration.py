@@ -97,8 +97,8 @@ for path in (
     req((ROOT / path).is_file(), f'missing dev.272 governance file: {path}')
 require('docs/ARCHITECTURE.md', 'physical local prepare', '在任何NetLane task/transport lease/provider lookup之前启动')
 require('docs/SPEC.md', '该local prepare MUST在NetLane transport/source admission之前')
-require('docs/IMPLEMENTATION_STATUS.md', 'dev.272', '2.40s/3.09s')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.272', 'pre-NetLane local prepare')
+require('docs/IMPLEMENTATION_STATUS.md', 'physical-local-prepare', 'local-prepare operation', 'max2')
+require('docs/NEXT_CHAT_HANDOFF.md', 'physical-local-prepare', 'max2', 'NetLane task')
 require('CHANGELOG.md', '0.31.0-dev.272', 'NetLane transport admission前移')
 require('tool/check.sh', 'test_dev272_local_partial_pre_network_hydration.py')
 
@@ -107,7 +107,7 @@ require('packages/pipeline/lib/src/animated_prefetch_policy.dart',
         'if (readDistance == 1) return 5;',
         'if (readDistance == 2) return 3;',
         'if (readDistance == -1) return 2;')
-require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
+require('packages/downloads/lib/src/download_resource_coordinator.dart',
         'reservedHighPrioritySlots: 1')
 
 print('PASS: dev.272 local partial hydration before network admission')

@@ -39,7 +39,7 @@ for token in (
     'map_rect_endpoints(',
     '.saturating_add(source.width)',
     'left.x + left.width, right.x',
-    'bytes: self.canvas.clone(),',
+    'let bytes = self.canvas.clone();',
 ):
     assert token in webp
 assert 'scale_rect(' not in webp

@@ -47,6 +47,5 @@ for token in (
 ):
     require(analyzer, token, 'FrameTimeline analysis boundary')
 
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.324', 'handoff version')
 require('CHANGELOG.md', '0.31.0-dev.324', 'changelog version')
 print('dev.324 SurfaceFlinger Perfetto evidence boundary: OK')

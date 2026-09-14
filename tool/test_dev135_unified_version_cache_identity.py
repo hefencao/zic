@@ -110,6 +110,9 @@ artifact = (
 reuse = (
     ROOT / 'packages/downloads/lib/src/artifact_cache_reuse.dart'
 ).read_text(encoding='utf-8')
+reuse_test = (
+    ROOT / 'packages/downloads/test/artifact_cache_reuse_test.dart'
+).read_text(encoding='utf-8')
 build = int(version_code.group(1))
 if build >= 230:
     for token in (
@@ -146,8 +149,21 @@ for token in (
     "'checksum:$checksum'",
 ):
     require(reuse, token, 'verified E-Hentai-style cache reuse')
-for unsafe in ('title ==', 'authors', 'page.index'):
+for unsafe in ('title ==', 'authors'):
     reject(reuse, unsafe, 'unsafe cache-reuse matching')
+for token in (
+    'final index = id.pageIndexHint;',
+    'page.index != index',
+    'page.pageId != id.content.pageId',
+    'page.uri != id.canonicalUri',
+    'final identity = verifiedPageIdentity(page);',
+):
+    require(reuse, token, 'validated non-identity page-index hint')
+for token in (
+    'page index or title similarity alone never creates reuse aliases',
+    'version resolver requires a validated non-identity page index hint',
+):
+    require(reuse_test, token, 'cache-reuse negative identity coverage')
 
 # Production app has one active response-cache composition root and one active
 # Reader artifact-cache root. DemoHome constructs the bootstrap root and the

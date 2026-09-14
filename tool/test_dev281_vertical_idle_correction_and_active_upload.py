@@ -78,6 +78,7 @@ req('super.adjustPositionForNewDimensions(' in physics,
     'custom vertical physics does not preserve normal scroll dimension behavior')
 
 policy = text('packages/pipeline/lib/src/heuristic_policy.dart')
+interaction_policy = text('packages/pipeline/lib/src/interaction_policy.dart')
 if int(m.group(1)) == 315:
     policy_markers = (
         'final encodedFlutterPresentation =',
@@ -88,7 +89,7 @@ if int(m.group(1)) == 315:
         'staticWarm &&',
         '!primaryUpload',
         '!visibleStatic',
-        '_verticalPresentationActive(observation.interaction)',
+        'isPresentationMotionInteraction(observation.interaction)',
         '!encodedFlutterPresentation',
         '!deferHiddenVerticalStaticUpload',
     )
@@ -99,8 +100,11 @@ elif int(m.group(1)) >= 295:
         'staticWarm &&',
         '!primaryUpload',
         '!visibleStatic',
-        '_verticalPresentationActive(observation.interaction)',
-        'if ((primaryUpload || staticWarm) && !deferHiddenVerticalStaticUpload)',
+        'isPresentationMotionInteraction(observation.interaction)',
+        'observation.targetCoverage?.pageIndex == entry.key',
+        '(role == PageRole.next || role == PageRole.previous)',
+        'if ((primaryUpload || staticWarm || pagedTargetPreupload) &&',
+        '!deferHiddenVerticalStaticUpload',
     )
 else:
     policy_markers = (
@@ -108,11 +112,18 @@ else:
         'observation.direction == ReadingDirection.vertical',
         '!visibleStatic',
         'role == PageRole.next2',
-        '_verticalPresentationActive(observation.interaction)',
+        'isPresentationMotionInteraction(observation.interaction)',
         'if ((primaryUpload || staticWarm) && !deferVerticalNext2Upload)',
     )
-for marker in (*policy_markers, 'Interaction.dragging ||', 'Interaction.scrolling ||', 'Interaction.settling => true,'):
+for marker in policy_markers:
     req(marker in policy, f'vertical active static upload deferral missing: {marker}')
+for marker in (
+    'bool isPresentationMotionInteraction(Interaction interaction)',
+    'Interaction.dragging ||',
+    'Interaction.scrolling ||',
+    'Interaction.settling => true,',
+):
+    req(marker in interaction_policy, f'presentation-motion vocabulary missing: {marker}')
 
 require(
     'packages/reader/test/reader_navigation_test.dart',
@@ -143,7 +154,7 @@ elif int(m.group(1)) >= 295:
 else:
     require('docs/ARCHITECTURE.md', 'layout-time scroll correction', 'non-visible next2')
     require('docs/SPEC.md', 'layout-time correction', 'next2 texture upload')
-require('docs/IMPLEMENTATION_STATUS.md', 'dev.281', '10.432')
+require('docs/IMPLEMENTATION_STATUS.md', 'vertical hidden-upload规则不变', 'anchor/geometry rebuild')
 require('docs/IMPLEMENTATION_PLAN.md', 'dev.281', 'slow-release', 'ballistic')
 require('CHANGELOG.md', '0.31.0-dev.281', 'layout-time correction')
 

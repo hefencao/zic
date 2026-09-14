@@ -42,7 +42,9 @@ for stale in (
 for token in (
     'return MemoryEncodedResourceSource(bytes);',
     'origin: EncodedResourceOrigin.durableCacheFile',
-    'super(origin: EncodedResourceOrigin.localFile)',
+    'EncodedResourceOrigin origin = EncodedResourceOrigin.localFile',
+    'assert(origin != EncodedResourceOrigin.memory)',
+    'super(origin: origin)',
 ):
     require(cache, token, 'owned encoded artwork source')
 forbid(cache, 'EncodedResourceOrigin origin = EncodedResourceOrigin.durableCacheFile',

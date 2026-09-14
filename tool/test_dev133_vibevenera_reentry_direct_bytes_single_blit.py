@@ -51,7 +51,7 @@ for production in (native_lib,):
             )
 if "pub const LIB_VERSION: u32 = 0x0012_1500" not in native_lib:
     raise SystemExit("dev.135 superseding native library version missing")
-if native_identity != "zic-media-core-dev135-abi6-lib00121500":
+if native_identity != "zic-media-core-dev136-abi7-lib00121600":
     raise SystemExit(f"unexpected superseding native identity: {native_identity}")
 for forbidden in (
     "makeBackgroundTaskQueue",

@@ -32,7 +32,9 @@ handoff_test = read('packages/downloads/test/promoted_artifact_cache_handoff_tes
 for token in ('persistUnclaimed', '_persistUnclaimed', '_unclaimedFlushes'):
     forbid(owner, token, 'sessions-owned durable partial lifecycle')
 for token in (
-    'prepareDownload: partialDownloadHandoff?.restoreInto',
+    'prepareDownload: partialDownloadHandoff == null',
+    '_restoreLocalSingleFlight(',
+    'tracked = handoff.restoreInto(session, control: control)',
     'await owner.dispose();',
     'await partialDownloadHandoff?.drain(registry.sessions);',
 ):

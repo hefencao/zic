@@ -15,7 +15,7 @@ dev.205 的 12:24 trace 找对了两个 correctness 问题，但 durable partial
 1. hot partial 唯一 owner 是 retained `PipelineReaderSession` 内的 DownloadRegistry/DownloadSession/Artifact。普通 Reader detach/reentry只保留/恢复该 session，不 checkpoint、不复制 prefix。
 2. `ArtifactCacheManager` 只负责 promoted immutable artifact，不提供 partial capability，也不承担 mutable download lifecycle。
 3. 只有 session 真正 dispose/evict 时，`PartialDownloadHandoff` 才把 unfinished authoritative prefix 交给 `PersistentChapterDownloadService` 的 `PartialDownloadStore`；新 session 在 origin open 前按精确 DownloadId 恢复。它是 cold durability，不是热 reentry 主路径。
-4. dev.205 cursor-reentry 顺序保留。约30帧 partial loop/waterline只属于 DecodeSession/playback；它可消费 DownloadSession 提供的 partial，却不得决定 persistence、resume/admission、cache identity 或 Download owner。
+4. dev.205 cursor-reentry 顺序保留。partial-prefix loop只属于 DecodeSession/playback：旧约30帧门槛继续作为fallback，同时允许至少2个真实decoded frames且累计约1秒playable duration的低帧率prefix回绕；两者都只消费 DownloadSession 提供的 partial，不得决定 persistence、resume/admission、cache identity、transport水位或 Download owner。
 5. Venera JS/Kotlin继续拥有同步 bridge contract、Cookie、manual redirect、`cache-time`、`prevent-parallel`、requestId grouping与runtime cache。实际 HTTP execution迁到 isolated plugin Dart process 中 reusable rhttp/reqwest resolver client；Kotlin不得再创建 `HttpURLConnection`、DoH client或reflective OkHttp fallback。
 6. requestId cancellation映射到 rhttp `CancelToken`；manual redirect仍在 Kotlin semantics层逐跳执行，因此跨 origin移除Authorization/Cookie等既有规则保持。
 7. 主 App final-media rhttp 与 isolated plugin resolver rhttp 位于不同进程，不能共享同一物理 client/pool；要求统一的是 client family 与连接生命周期 owner，而不是跨进程 singleton。

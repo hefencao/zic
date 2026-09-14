@@ -80,7 +80,7 @@ require(
     'config.options.use_threads = 0;',
     'WebPInitDecoderConfigInternal',
     'map_rect_endpoints(',
-    'bytes: self.canvas.clone(),',
+    'let bytes = self.canvas.clone();',
 )
 forbid(
     'native/media_core/src/webp.rs',

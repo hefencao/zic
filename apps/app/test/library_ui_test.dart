@@ -923,6 +923,65 @@ void main() {
     );
   });
 
+  testWidgets('cover placeholder renders before final animated artwork',
+      (tester) async {
+    final chapter = _chapter(name: '双阶段封面');
+    final comic = LibraryComic.fromEntries(
+      <ImportedLibraryEntry>[ImportedLibraryEntry(chapter: chapter)],
+    );
+    final finalSource = Completer<EncodedResourceSource>();
+    final trace = MemoryTraceSink();
+    final telemetry = HomeStartupTelemetry(
+      clock: const SystemClock(),
+      sink: trace,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 150,
+            child: ComicCoverCard(
+              comic: comic,
+              preference: ComicPreference.defaults(
+                sourceId: chapter.sourceId,
+                comicId: chapter.comicId,
+                sourceKind: ComicSourceKind.remote,
+              ),
+              coverSource: () => finalSource.future,
+              coverPlaceholderSource: () async =>
+                  MemoryEncodedResourceSource(_tinyPng()),
+              coverIdentity: 'dual-stage-cover',
+              telemetryIdentity: 'home-history:dual-stage-cover',
+              startupTelemetry: telemetry,
+              onTap: () {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(find.byType(Image), findsOneWidget);
+    expect(finalSource.isCompleted, isFalse);
+    final readyBeforeFinal = trace.events
+        .where((event) => event.kind == TraceEventKind.homeCoverSourceReady)
+        .toList(growable: false);
+    expect(readyBeforeFinal, hasLength(1));
+    expect(readyBeforeFinal.single.payload['presentationStage'], 'placeholder');
+
+    finalSource.complete(MemoryEncodedResourceSource(_tinyPng()));
+    await tester.pumpAndSettle();
+
+    final readyAfterFinal = trace.events
+        .where((event) => event.kind == TraceEventKind.homeCoverSourceReady)
+        .toList(growable: false);
+    expect(readyAfterFinal, hasLength(2));
+    expect(readyAfterFinal.last.payload['presentationStage'], 'final');
+    expect(find.byType(Image), findsOneWidget);
+  });
+
   testWidgets('home cover cards render independently from a slow cover',
       (tester) async {
     final fastChapter = _chapter(name: '快速封面');

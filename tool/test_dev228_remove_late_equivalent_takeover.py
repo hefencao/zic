@@ -34,7 +34,8 @@ for token in (
     forbid(runtime + owner + cache, token, 'retired late-promotion takeover surface')
 
 for token in (
-    'cache.directEquivalents(exactId)',
+    'for (final equivalent in _verifiedEquivalentCandidates(exactId))',
+    'yield* cache.directEquivalents(id);',
     'registry.aliasPhysical(id: exactId, target:',
     "'stage': 'verified-transfer-acquire-alias'",
     "'action': action",

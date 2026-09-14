@@ -29,7 +29,7 @@ require(
     'controlledPreemptionPriorityFloor:',
     '? 780',
     'incoming.priority < controlledPreemptionPriorityFloor',
-    'incoming.priority - active.control.priority < preemptionThreshold',
+    'incoming.priority - activeControl.priority < preemptionThreshold',
     'active.preemptRequested = true;',
 )
 reject(

@@ -82,7 +82,7 @@ for token in (
     'controlledPreemptionPriorityFloor:',
     '? 780',
     'incoming.priority < controlledPreemptionPriorityFloor',
-    'incoming.priority - active.control.priority < preemptionThreshold',
+    'incoming.priority - activeControl.priority < preemptionThreshold',
     'active.preemptRequested = true;',
     "runtimeError.code == 'runtime-request-cancelled'",
     'ErrorCode.cancelled',
@@ -163,7 +163,7 @@ for token in (
 ):
     require(home_session, token, 'Home-owned download management projection')
 
-downloads = read('packages/downloads/lib/src/chapter_downloads.dart')
+downloads = read('packages/downloads/lib/src/persistent_chapter_download_service.dart')
 persistent_start = downloads.index('final class PersistentChapterDownloadService')
 management_start = downloads.index(
     'Future<ChapterDownloadManagementProjection> inspectDownloadManagement(',

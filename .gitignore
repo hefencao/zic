@@ -23,6 +23,7 @@ Cargo.lock
 # Runtime
 .codegraph/
 *.log
+.tmp-trace/
 coverage/
 
 # Reproducible third-party source/build cache and generated notices

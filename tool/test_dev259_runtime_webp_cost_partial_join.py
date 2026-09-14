@@ -34,7 +34,8 @@ require(
     'bool observeWebpTransportCost({',
     'final runtime = _runtimeAnimatedPages[pageIndex];',
     'if (runtime != null) return runtime;',
-    'if (_runtimeWebpCostPages.contains(pageIndex)) return true;',
+    'if (hasWebpCostEvidence(',
+    'runtimeObserved: _runtimeWebpCostPages.contains(pageIndex)',
     "'runtimeWebpCostPages': _runtimeWebpCostPages.length",
 )
 require(
@@ -79,7 +80,9 @@ require(
     'projection.publishSynchronizedReplayPrefix();',
     "'stage': 'reader-ingress-late-join'",
     "'action': 'decoder-probe-published'",
-    "'replayBasis': 'reader-local-probe'",
+    "'replayBasis': preferredInitialProbeLength > initialQuantum",
+    "'reader-local-decoder-retry-floor'",
+    ": 'reader-local-probe'",
     'artifact.readChunks(',
     'start: offset,',
 )
@@ -159,7 +162,7 @@ else:
 require('tool/check.sh', 'test_dev259_runtime_webp_cost_partial_join.py')
 
 # This round must not change the stable window/frame/network limits.
-require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart', 'reservedHighPrioritySlots: 1')
+require('packages/downloads/lib/src/download_resource_coordinator.dart', 'reservedHighPrioritySlots: 1')
 require(
     'packages/pipeline/lib/src/animated_prefetch_policy.dart',
     'if (readDistance == 1) return 5;',

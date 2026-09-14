@@ -122,9 +122,17 @@ require(
     'return RoleWindow(roles);',
 )
 require(
+    'packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart',
+    'networkConcurrency: 5',
+)
+require(
+    'packages/downloads/lib/src/download_resource_coordinator.dart',
+    'maxActive: 5',
+    'reservedHighPrioritySlots: 1',
+)
+reject(
     'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
     'maxActive: ReaderPipelineProfile.stable.networkConcurrency',
-    'reservedHighPrioritySlots: 1',
 )
 require(
     'packages/pipeline/lib/src/animated_prefetch_policy.dart',

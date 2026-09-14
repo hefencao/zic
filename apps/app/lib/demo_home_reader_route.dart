@@ -284,7 +284,10 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
     final totalWatch = Stopwatch()..start();
     final rawEntry = await loadChapter();
     final loadMs = totalWatch.elapsedMilliseconds;
-    final entry = await _librarySession.hydrateEntry(rawEntry);
+    final entry = await _librarySession.hydrateEntry(
+      rawEntry,
+      awaitCanonicalPhysicalBackfill: false,
+    );
     final hydrateMs = totalWatch.elapsedMilliseconds - loadMs;
     final legacyVenera = _hasLegacyVeneraLocators(entry.chapter);
     final remoteWatch = Stopwatch()..start();
@@ -323,6 +326,22 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
     final byteLoaders = <String, LocalImageFileBytesLoader>{};
     const byteProbeMs = 0;
     final readerManifest = current.chapter.toManifest();
+    final localAuthorityPrewarm = _downloadComposition?.transferRuntime;
+    var localAuthorityPrewarmStarted = false;
+    if (localAuthorityPrewarm != null && readerManifest.pages.isNotEmpty) {
+      final rawInitialPageIndex = (initialPageIndex ??
+              current.progress?.pageIndex ??
+              0)
+          .clamp(0, readerManifest.pages.length - 1)
+          .toInt();
+      final page = readerManifest.pages[rawInitialPageIndex];
+      localAuthorityPrewarmStarted = true;
+      unawaited(
+        localAuthorityPrewarm
+            .prewarmLocalArtifact(readerPageDownloadId(readerManifest, page))
+            .catchError((Object _, StackTrace __) => false),
+      );
+    }
     final responseSources = current.chapter.sourceId == 'local-folder'
         ? const <String, LocalImageResponseSource>{}
         : <String, LocalImageResponseSource>{
@@ -361,6 +380,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
           'remoteRefreshMs': remoteMs,
           'versionReuseAuthorityMs': authorityMs,
           'verifiedAuthorityMappings': authorityMappingCount,
+          'localAuthorityPrewarmStarted': localAuthorityPrewarmStarted,
           'byteProbeMs': byteProbeMs,
           'totalPrepareMs': totalMs,
         },

@@ -34,6 +34,24 @@ void main() {
     expect(downloads.access, isNull);
   });
 
+  test('unbind tolerates a download service already closed by replacement',
+      () async {
+    final source = _Source();
+    final downloads = _RecordingDownloads();
+    final gateway = ComicSourceResourceGateway(
+      sourceForId: (sourceId) => sourceId == source.sourceId ? source : null,
+    );
+    addTearDown(gateway.close);
+
+    gateway.bindTo(downloads);
+    expect(downloads.access, isNotNull);
+    await downloads.close();
+
+    expect(() => gateway.unbindFrom(downloads), returnsNormally);
+    expect(() => gateway.unbindFrom(downloads), returnsNormally,
+        reason: 'local binding retirement must remain idempotent');
+  });
+
   test('gateway forwards only proven source-open bounds to chapter access',
       () async {
     final locator = Uri.parse('venera-resource:bounded');
@@ -559,9 +577,11 @@ final class _RecordingDownloads
       null;
 
   ChapterResourceAccess? access;
+  bool _closed = false;
 
   @override
   void setChapterResourceAccess(ChapterResourceAccess? value) {
+    if (_closed) throw StateError('recording downloads is closed');
     access = value;
   }
 
@@ -572,7 +592,9 @@ final class _RecordingDownloads
   Future<void> cancel(ImportedLibraryEntry entry) async {}
 
   @override
-  Future<void> close() async {}
+  Future<void> close() async {
+    _closed = true;
+  }
 
   @override
   Future<void> delete(ImportedLibraryEntry entry) async {}

@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 
 import 'app_preferences.dart';
 import 'debug_trace.dart';
-import 'debug_trace_export.dart';
 import 'debug_trace_screen.dart';
 
 export 'debug_trace_screen.dart';

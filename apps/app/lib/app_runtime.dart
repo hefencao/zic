@@ -16,6 +16,7 @@ import 'package:storage_bridge/storage_bridge.dart';
 import 'package:telemetry/telemetry.dart';
 
 import 'app_preferences.dart';
+import 'chapter_download_directory.dart';
 import 'artifact_presentation_file_bridge.dart';
 import 'debug_trace.dart';
 import 'demo_home.dart';
@@ -617,9 +618,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     required _AppServices previous,
   }) async {
     try {
-      final safOverride = downloadDirectory.startsWith('saf://')
-          ? downloadDirectory.substring(5)
-          : null;
+      final safOverride = chapterDownloadSafTreeUri(downloadDirectory);
       defaultDownloadResourceCoordinator.speculativeEncodedReadBudget
           .updateLimitBytes(
         _preferences.readerPrefetchReadBudgetMiB * 1024 * 1024,
@@ -987,10 +986,18 @@ final class _AppServices {
 /// transport interface. Lives here because platform channels are an app
 /// concern; the package stays testable with fakes.
 class _SafTreeIoAdapter
-    implements SafTreeIo, SafTreeRandomRead, SafTreeAtomicReplace {
+    implements
+        SafTreeIo,
+        SafTreeRandomRead,
+        SafTreeReadPrewarmer,
+        SafTreeAtomicReplace {
   _SafTreeIoAdapter(this._store);
 
   final SafStore _store;
+
+  @override
+  Future<bool> prewarmReadProvider() =>
+      _readOperation<bool>('prewarm-read-provider', _store.prewarmRecentRead);
 
   Future<T> _readOperation<T>(
     String operation,
@@ -1311,9 +1318,7 @@ Future<_AppServices> _openServices(
     telemetry.serviceReady('library-store', startedAtMicros: stageStarted);
     stageStarted = telemetry.nowMicros();
     _startupLog('download-composition-open-start');
-    final safOverride = chapterDownloadDirectory.startsWith('saf://')
-        ? chapterDownloadDirectory.substring(5)
-        : null;
+    final safOverride = chapterDownloadSafTreeUri(chapterDownloadDirectory);
     defaultDownloadResourceCoordinator.speculativeEncodedReadBudget
         .updateLimitBytes(
       preferences.readerPrefetchReadBudgetMiB * 1024 * 1024,
@@ -1443,6 +1448,10 @@ Future<void> _attachExternalPlugins(
       // operation, not a Home startup dependency. The repository screen
       // explicitly refreshes device extensions when the user opens it.
       discoverDeviceMihonExtensions: false,
+      // Opening the durable manifest must not wake every installed runtime.
+      // Home/Reader exact-source misses activate only their owning plugin; the
+      // source-management page still requests the complete projection.
+      deferRuntimeActivation: true,
     );
     if (!services._closed && services.externalPlugins == null) {
       services.externalPlugins = controller;
@@ -1547,7 +1556,7 @@ final class _AppState extends State<App> {
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: _preferences,
+      animation: _preferences.themeChanges,
       builder: (context, _) => MaterialApp(
         title: 'zic',
         debugShowCheckedModeBanner: false,

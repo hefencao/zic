@@ -77,7 +77,7 @@ require(
     'role == PageRole.next || role == PageRole.previous',
 )
 require(
-    'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
+    'packages/downloads/lib/src/download_resource_coordinator.dart',
     'reservedHighPrioritySlots: 1',
 )
 print('dev.261 NetLane pending metadata closure: OK')

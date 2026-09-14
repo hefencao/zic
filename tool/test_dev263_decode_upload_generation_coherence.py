@@ -53,7 +53,7 @@ for path in (
 require('tool/check.sh', 'test_dev263_decode_upload_generation_coherence.py')
 
 # Frozen reader/network policy must remain intact.
-require('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart', 'reservedHighPrioritySlots: 1')
+require('packages/downloads/lib/src/download_resource_coordinator.dart', 'reservedHighPrioritySlots: 1')
 if int(m.group(1)) >= 268:
     require('packages/sessions/lib/src/download_job.dart', ": 'pseudo-parked'", 'responseRetained: true')
 else:

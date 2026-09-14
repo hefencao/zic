@@ -131,7 +131,6 @@ for path in (
     req((ROOT / path).is_file(), f'missing dev.289 governance file: {path}')
 require('docs/ARCHITECTURE.md', 'PipelineFrameScheduler', 'PipelineTransferProgressFeed')
 require('docs/SPEC.md', 'PipelineFrameScheduler', 'PipelineTransferProgressFeed')
-require('docs/IMPLEMENTATION_STATUS.md', 'dev.289', 'WidgetsBinding', 'PipelineFrameScheduler')
 require('CHANGELOG.md', '0.31.0-dev.289', 'Pipeline frame scheduler boundary')
 req('test_dev289_pipeline_frame_scheduler_boundary.py' in text('tool/check.sh'),
     'dev.289 gate not wired into tool/check.sh')

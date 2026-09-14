@@ -8,13 +8,19 @@ PIPELINE_HOST = (ROOT / 'packages/pipeline_runtime/lib/src/pipeline_reader_host.
 PAGE_STREAM = (ROOT / 'packages/pipeline_runtime/lib/src/pipeline_page_stream.dart').read_text()
 PAGE_OUTPUT = (ROOT / 'packages/pipeline_runtime/lib/src/pipeline_page_output.dart').read_text()
 PROGRESS = (ROOT / 'packages/pipeline_runtime/lib/src/pipeline_transfer_progress.dart').read_text()
-CHAPTER_DOWNLOADS = (ROOT / 'packages/downloads/lib/src/chapter_downloads.dart').read_text()
+CHAPTER_DOWNLOADS = (
+    (ROOT / 'packages/downloads/lib/src/chapter_downloads.dart').read_text()
+    + (ROOT / 'packages/downloads/lib/src/persistent_chapter_download_service.dart').read_text()
+)
 DOWNLOAD_UI = (ROOT / 'apps/app/lib/download_manager.dart').read_text()
 TRACE = (ROOT / 'packages/telemetry/lib/src/trace.dart').read_text()
 DOWNLOAD_JOB = (ROOT / 'packages/sessions/lib/src/download_job.dart').read_text()
 PLAYER_ROOT = ROOT / 'packages/local_media_ui/lib'
 PLAYER = '\n'.join(path.read_text() for path in [PLAYER_ROOT / 'local_media_ui.dart', *sorted((PLAYER_ROOT / 'src').glob('*.dart'))])
-READER = (ROOT / 'packages/reader/lib/src/reader_view.dart').read_text()
+READER = (
+    (ROOT / 'packages/reader/lib/src/reader_view.dart').read_text()
+    + (ROOT / 'packages/reader/lib/src/reader_page_host.dart').read_text()
+)
 CONTROLS_TEST = (ROOT / 'apps/app/test/reader_controls_test.dart').read_text()
 NAV_TEST = (ROOT / 'packages/reader/test/reader_navigation_test.dart').read_text()
 STARTUP = (
@@ -67,7 +73,7 @@ for forbidden in ('final EncodedSource', 'EncodedSource? get source', ' get sour
 for token in ('final class PipelinePageOutputStream', 'PipelinePageSurface?', '_uploads.claimPresent(', '_outputs.project('):
     if token not in PAGE_OUTPUT:
         raise SystemExit(f'Pipeline page-output projection missing: {token}')
-for token in ('final class PipelineTransferProgressPublisher', 'final class PipelineTransferProgressFeed', 'snapshot.state == DownloadState.promoted', 'partialBytes: snapshot.committedLength', 'transportBytes: snapshot.networkCursorLength', 'totalBytes: snapshot.totalLength', '_frameScheduler.afterFrame(() {'):
+for token in ('final class PipelineTransferProgressPublisher', 'final class PipelineTransferProgressFeed', 'snapshot.state == DownloadState.promoted', 'partialBytes: snapshot.committedLength', 'transportBytes: snapshot.networkCursorLength', 'snapshot.totalLength ?? snapshot.localEncodedTotalLengthHint', '_frameScheduler.afterFrame(() {'):
     if token not in PROGRESS:
         raise SystemExit(f'Pipeline progress publisher contract missing: {token}')
 if 'snapshot.committedLength > 0' in PROGRESS:

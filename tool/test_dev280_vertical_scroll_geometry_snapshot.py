@@ -34,7 +34,8 @@ for marker in (
     'Map<String, double>? _pendingVerticalLayoutRatios;',
     'bool get _verticalScrollActive',
     '_pendingVerticalLayoutRatios =',
-    '_adoptFutureVerticalRatios(widget.pageAspectRatios);',
+    '_adoptFutureVerticalRatios(latest);',
+    'void _adoptPageAspectRatios(',
     'final effectiveRatios = ratios ?? _verticalLayoutRatios;',
     'void _schedulePendingVerticalRatioCommit()',
     '_preserveVerticalAnchor(\n        oldRatios: _verticalLayoutRatios,',
@@ -44,15 +45,26 @@ for marker in (
 ):
     req(marker in reader, f'vertical geometry snapshot owner missing: {marker}')
 
-# Async ratio changes may preserve/restore an anchor only at the idle commit
-# boundary; didUpdateWidget must not directly anchor every measured map update.
-ratio_branch = reader[reader.index('if (ratiosChanged) {'):reader.index('\n  @override\n  void dispose()', reader.index('if (ratiosChanged) {'))]
-req('_pendingVerticalLayoutRatios =' in ratio_branch,
-    'prefix-affecting active-scroll ratio updates are not deferred')
-req('_adoptFutureVerticalRatios(widget.pageAspectRatios);' in ratio_branch,
-    'dev.287 future-tail safe adoption seam missing')
-req('_verticalLayoutRatios = widget.pageAspectRatios;' in ratio_branch,
-    'idle/non-vertical ratio adoption missing')
+# Async ratio changes from either didUpdateWidget or the live listenable must
+# converge through one geometry owner. Active-scroll prefix-affecting changes
+# stay pending; only future-page-safe facts may be adopted immediately.
+ratio_branch = reader[
+    reader.index('void _adoptPageAspectRatios('):
+    reader.index('void _adoptFutureVerticalRatios(', reader.index('void _adoptPageAspectRatios('))
+]
+for marker in (
+    '_pendingVerticalLayoutRatios =',
+    '_adoptFutureVerticalRatios(latest);',
+    '_verticalLayoutRatios = latest;',
+    '_preserveVerticalAnchor(',
+):
+    req(marker in ratio_branch, f'unified ratio adoption owner missing: {marker}')
+update_branch = reader[
+    reader.index('if (ratiosChanged) {'):
+    reader.index('\n  @override\n  void dispose()', reader.index('if (ratiosChanged) {'))
+]
+req('_adoptPageAspectRatios(' in update_branch,
+    'didUpdateWidget bypasses the unified ratio adoption owner')
 req('oldWidget.pageAspectRatios != widget.pageAspectRatios' not in reader,
     'legacy value-equality ratio trigger unexpectedly restored')
 
@@ -71,7 +83,7 @@ for path in (
 
 require('docs/ARCHITECTURE.md', 'scroll-stable layout snapshot', 'top-pixel')
 require('docs/SPEC.md', 'viewport prefix', 'latest-wins')
-require('docs/IMPLEMENTATION_STATUS.md', 'dev.280', 'geometry')
+require('docs/IMPLEMENTATION_STATUS.md', 'ratio live feed', 'vertical模式只有extent真实变化', 'anchor/geometry rebuild')
 require('docs/IMPLEMENTATION_PLAN.md', 'dev.280', 'scroll-stable geometry')
 require('CHANGELOG.md', '0.31.0-dev.280', '纵向滚动稳定 geometry snapshot')
 

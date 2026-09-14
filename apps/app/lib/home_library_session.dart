@@ -356,6 +356,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   bool _loading = true;
   String? _activeSourceId;
   bool _closed = false;
+  Future<void>? _closing;
   int _libraryProjectionRevision = 0;
   int? _snapshotLibraryRevision;
   bool _snapshotRewriteNeeded = false;
@@ -405,7 +406,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _publish();
   }
 
-  void _recomputeVersionBaselines() {
+  void _recomputeVersionBaselines({bool refreshAuthority = true}) {
     _versionBaselines = resolveComicVersionBaselines(
       relations: _versionRelations,
       shelfComics: <ComicVersionIdentity>[
@@ -444,7 +445,9 @@ final class HomeLibrarySession extends ChangeNotifier {
     chapterDownloads.updateCacheVersionRelations(
       _versionBaselines.cacheReuseRelations,
     );
-    _refreshVersionPageAuthority();
+    if (refreshAuthority) {
+      _refreshVersionReuseAuthority();
+    }
   }
 
   ChapterDownloadTransferRuntimeProvider? get _downloadCompositionProvider =>
@@ -463,8 +466,9 @@ final class HomeLibrarySession extends ChangeNotifier {
   }
 
   void _replaceCanonicalMediaProjections(
-    Iterable<VersionChapterCanonicalProjection> projections,
-  ) {
+    Iterable<VersionChapterCanonicalProjection> projections, {
+    bool refreshAuthority = true,
+  }) {
     final values = projections.toList(growable: false);
     _canonicalMediaLedger = ComicVersionCanonicalMediaLedger(
       projections: values,
@@ -475,7 +479,9 @@ final class HomeLibrarySession extends ChangeNotifier {
         for (final projection in values) projection.exactKey: projection,
       },
     );
-    _refreshVersionPageAuthority();
+    if (refreshAuthority) {
+      _refreshCanonicalMediaAuthority();
+    }
   }
 
   Future<void> _assimilateCanonicalMediaRelation(
@@ -484,24 +490,39 @@ final class HomeLibrarySession extends ChangeNotifier {
       _assimilateCanonicalMediaRelations(<ComicVersionRelation>[relation]);
 
   Future<void> _assimilateCanonicalMediaRelations(
-    Iterable<ComicVersionRelation> relations,
-  ) {
+    Iterable<ComicVersionRelation> relations, {
+    bool awaitPhysicalBackfill = true,
+  }) async {
     final captured = relations.toList(growable: false);
-    final operation = _canonicalMediaWriteTail.then(
-      (_) => _assimilateCanonicalMediaRelationsNow(captured),
-    );
+    final queuedAtMs = _homeStartupClock.elapsedMilliseconds;
+    final operation = _canonicalMediaWriteTail.then((_) {
+      final waitMs = _homeStartupClock.elapsedMilliseconds - queuedAtMs;
+      if (waitMs > 0) {
+        _homeLog(
+          'canonical-media-write-tail-acquired waitMs=$waitMs '
+          'relations=${captured.length}',
+        );
+      }
+      return _assimilateCanonicalMediaRelationsNow(captured);
+    });
     _canonicalMediaWriteTail = operation.then<void>(
       (_) {},
       onError: (Object _, StackTrace _) {},
     );
-    return operation;
+    final result = await operation;
+    if (awaitPhysicalBackfill) {
+      await result.backfill;
+    }
   }
 
-  Future<void> _assimilateCanonicalMediaRelationsNow(
+  Future<({Future<void> backfill})> _assimilateCanonicalMediaRelationsNow(
     Iterable<ComicVersionRelation> relations,
   ) async {
     final provider = _downloadCompositionProvider;
-    if (provider == null) return;
+    if (provider == null) {
+      return (backfill: Future<void>.value(),);
+    }
+    final mergeStartedAtMs = _homeStartupClock.elapsedMilliseconds;
     final nextLedger = ComicVersionCanonicalMediaLedger(
       projections: _canonicalMediaLedger.projections,
     );
@@ -555,9 +576,34 @@ final class HomeLibrarySession extends ChangeNotifier {
         conflictCount += result.conflicts.length;
       }
     }
-    if (affected.isEmpty) return;
+    final mergeMs = _homeStartupClock.elapsedMilliseconds - mergeStartedAtMs;
+    if (affected.isEmpty) {
+      if (mergeMs > 0) {
+        _homeLog(
+          'canonical-media-merge-complete durationMs=$mergeMs '
+          'relations=${relations.length} affected=0 conflicts=$conflictCount',
+        );
+      }
+      return (backfill: Future<void>.value(),);
+    }
+    _homeLog(
+      'canonical-media-merge-complete durationMs=$mergeMs '
+      'relations=${relations.length} affected=${affected.length} '
+      'conflicts=$conflictCount',
+    );
+
+    // Preserve the existing durable-authority contract: derived canonical
+    // projection persistence must succeed before the in-memory ledger/runtime
+    // advances. Reader latency is decoupled only from the historical physical
+    // ready/partial backfill that follows this published authority.
+    final persistStartedAtMs = _homeStartupClock.elapsedMilliseconds;
     await provider.artifactStore.persistCanonicalMediaProjections(
       affected.values,
+    );
+    _homeLog(
+      'canonical-media-projection-persist-complete '
+      'durationMs=${_homeStartupClock.elapsedMilliseconds - persistStartedAtMs} '
+      'affected=${affected.length}',
     );
     _canonicalMediaLedger = nextLedger;
     _canonicalMediaProjections =
@@ -567,18 +613,20 @@ final class HomeLibrarySession extends ChangeNotifier {
           projection.exactKey: projection,
       },
     );
-    _refreshVersionPageAuthority();
-    await _canonicalPhysicalBackfillTail;
+    _refreshCanonicalMediaAuthority();
+    final backfill = _canonicalPhysicalBackfillTail;
     if (conflictCount > 0) {
       _homeLog(
         'canonical-media-assimilation-conflict conflicts=$conflictCount',
       );
     }
+    return (backfill: backfill,);
   }
 
   Future<void> _assimilateCanonicalMediaForEntries(
-    Iterable<ImportedLibraryEntry> entries,
-  ) async {
+    Iterable<ImportedLibraryEntry> entries, {
+    bool awaitPhysicalBackfill = true,
+  }) async {
     final changedComics = <String>{
       for (final entry in entries)
         comicLibraryIdentity(entry.chapter.sourceId, entry.chapter.comicId),
@@ -601,24 +649,26 @@ final class HomeLibrarySession extends ChangeNotifier {
           relation,
     ];
     if (relations.isEmpty) return;
-    await _assimilateCanonicalMediaRelations(relations);
+    await _assimilateCanonicalMediaRelations(
+      relations,
+      awaitPhysicalBackfill: awaitPhysicalBackfill,
+    );
   }
 
+  Map<String, ImportedLibraryEntry> _versionAuthorityEntriesByKey() =>
+      Map<String, ImportedLibraryEntry>.of(_versionAuthorityHydratedEntries);
+
   void _refreshVersionPageAuthority() {
+    _refreshCanonicalMediaAuthority();
+    _refreshVersionReuseAuthority();
+  }
+
+  void _refreshCanonicalMediaAuthority() {
     final provider = _downloadCompositionProvider;
     if (provider == null) return;
+    final refreshStartedAtMs = _homeStartupClock.elapsedMilliseconds;
     final runtime = provider.transferRuntime;
-    // Hydrated chapters own the real page ids/URIs. Compact Home snapshot
-    // entries deliberately contain placeholder pages, so they must never
-    // shadow a manifest already hydrated for version/media authority. Keep
-    // this precedence aligned with versionAuthorityEntry():
-    // hydrated > live Home entry > orphaned download entry.
-    final entriesByKey = <String, ImportedLibraryEntry>{
-      for (final entry in _orphanedDownloadEntries)
-        _versionAuthorityEntryKey(entry): entry,
-      for (final entry in _entries) _versionAuthorityEntryKey(entry): entry,
-      ..._versionAuthorityHydratedEntries,
-    };
+    final entriesByKey = _versionAuthorityEntriesByKey();
     final activeProjectionRanges =
         canonicalMediaActiveRangesFromRelations(_versionRelations);
     final canonicalAuthorities = <CanonicalMediaChapterAuthority>[];
@@ -648,11 +698,32 @@ final class HomeLibrarySession extends ChangeNotifier {
         ),
       );
     }
+    final builtAtMs = _homeStartupClock.elapsedMilliseconds;
     runtime.replaceCanonicalMediaAuthorityScope(
       'library-canonical-media',
       canonicalAuthorities,
     );
+    final publishedAtMs = _homeStartupClock.elapsedMilliseconds;
     _scheduleCanonicalPhysicalBackfill(provider, canonicalAuthorities);
+    final completedAtMs = _homeStartupClock.elapsedMilliseconds;
+    final totalMs = completedAtMs - refreshStartedAtMs;
+    if (totalMs > 0) {
+      _homeLog(
+        'canonical-media-authority-refresh-complete totalMs=$totalMs '
+        'buildMs=${builtAtMs - refreshStartedAtMs} '
+        'publishMs=${publishedAtMs - builtAtMs} '
+        'backfillScheduleMs=${completedAtMs - publishedAtMs} '
+        'entries=${entriesByKey.length} authorities=${canonicalAuthorities.length}',
+      );
+    }
+  }
+
+  void _refreshVersionReuseAuthority() {
+    final provider = _downloadCompositionProvider;
+    if (provider == null) return;
+    final refreshStartedAtMs = _homeStartupClock.elapsedMilliseconds;
+    final runtime = provider.transferRuntime;
+    final entriesByKey = _versionAuthorityEntriesByKey();
     final resolvers = <String, VersionPageReuseResolver>{};
     for (final relation in _versionBaselines.cacheReuseRelations) {
       for (final mapping in relation.pageMappings) {
@@ -704,10 +775,21 @@ final class HomeLibrarySession extends ChangeNotifier {
         resolvers['$key:reverse'] = successorToPredecessor.resolve;
       }
     }
+    final builtAtMs = _homeStartupClock.elapsedMilliseconds;
     runtime.versionPageAuthority.replaceScope(
       'library-version-relations',
       resolvers,
     );
+    final completedAtMs = _homeStartupClock.elapsedMilliseconds;
+    final totalMs = completedAtMs - refreshStartedAtMs;
+    if (totalMs > 0) {
+      _homeLog(
+        'version-reuse-authority-refresh-complete totalMs=$totalMs '
+        'buildMs=${builtAtMs - refreshStartedAtMs} '
+        'publishMs=${completedAtMs - builtAtMs} '
+        'entries=${entriesByKey.length} resolvers=${resolvers.length}',
+      );
+    }
   }
 
   void _scheduleCanonicalPhysicalBackfill(
@@ -1137,6 +1219,20 @@ final class HomeLibrarySession extends ChangeNotifier {
     );
   }
 
+  void _replaceAuthoritativeLibraryEntries(
+    Iterable<ImportedLibraryEntry> entries,
+  ) {
+    final values = List<ImportedLibraryEntry>.unmodifiable(entries);
+    _entries = values;
+    _versionAuthorityHydratedEntries
+      ..clear()
+      ..addEntries(
+        values.map(
+          (entry) => MapEntry(_versionAuthorityEntryKey(entry), entry),
+        ),
+      );
+  }
+
   void _applySnapshot(HomeProjectionSnapshot snapshot, {bool publish = true}) {
     if (_closed) {
       return;
@@ -1312,15 +1408,18 @@ final class HomeLibrarySession extends ChangeNotifier {
     );
     if (publishPrimary) {
       if (_libraryProjectionRevision == projectionRevisionAtStart) {
-        _versionAuthorityHydratedEntries.clear();
-        _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
+        _replaceAuthoritativeLibraryEntries(entries);
         _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
         _preferences = Map<String, ComicPreference>.unmodifiable(preferences);
         _versionRelations = List<ComicVersionRelation>.unmodifiable(
           versionRelations,
         );
-        _replaceCanonicalMediaProjections(canonicalMediaProjections);
-        _recomputeVersionBaselines();
+        _replaceCanonicalMediaProjections(
+          canonicalMediaProjections,
+          refreshAuthority: false,
+        );
+        _recomputeVersionBaselines(refreshAuthority: false);
+        _refreshVersionPageAuthority();
       }
       _error = null;
       _publish();
@@ -1473,14 +1572,15 @@ final class HomeLibrarySession extends ChangeNotifier {
         : sourcePreferences;
 
     if (_libraryProjectionRevision == projectionRevisionAtStart) {
-      _versionAuthorityHydratedEntries.clear();
-      _entries = List<ImportedLibraryEntry>.unmodifiable(entries);
+      _replaceAuthoritativeLibraryEntries(entries);
       _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
       _versionRelations = List<ComicVersionRelation>.unmodifiable(
         versionRelations,
       );
-      _replaceCanonicalMediaProjections(canonicalMediaProjections);
-      _recomputeVersionBaselines();
+      _replaceCanonicalMediaProjections(
+        canonicalMediaProjections,
+        refreshAuthority: false,
+      );
     }
     _categories = List<LibraryCategory>.unmodifiable(categories);
     _preferences = Map<String, ComicPreference>.unmodifiable(seedPreferences);
@@ -1488,7 +1588,8 @@ final class HomeLibrarySession extends ChangeNotifier {
     _sourcePreferences = Map<String, ComicSourcePreference>.unmodifiable(
       seedSourcePreferences,
     );
-    _recomputeVersionBaselines();
+    _recomputeVersionBaselines(refreshAuthority: false);
+    _refreshVersionPageAuthority();
     _activeSourceId = nextActiveSourceId;
     _error = null;
     _loading = false;
@@ -1540,7 +1641,10 @@ final class HomeLibrarySession extends ChangeNotifier {
   /// locator is consumed by Reader or downloads. Compact snapshot entries keep
   /// only the page count and cover metadata, so they are intentionally not
   /// suitable for page loading.
-  Future<ImportedLibraryEntry> hydrateEntry(ImportedLibraryEntry entry) async {
+  Future<ImportedLibraryEntry> hydrateEntry(
+    ImportedLibraryEntry entry, {
+    bool awaitCanonicalPhysicalBackfill = true,
+  }) async {
     final cached = _versionAuthorityHydratedEntries[
       _versionAuthorityEntryKey(entry)
     ];
@@ -1556,7 +1660,10 @@ final class HomeLibrarySession extends ChangeNotifier {
     );
     final resolved = hydrated ?? entry;
     _rememberVersionAuthorityEntries(<ImportedLibraryEntry>[resolved]);
-    await _assimilateCanonicalMediaForEntries(<ImportedLibraryEntry>[resolved]);
+    await _assimilateCanonicalMediaForEntries(
+      <ImportedLibraryEntry>[resolved],
+      awaitPhysicalBackfill: awaitCanonicalPhysicalBackfill,
+    );
     return resolved;
   }
 
@@ -1900,6 +2007,11 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
     _versionRelations = List<ComicVersionRelation>.unmodifiable(next);
     _recomputeVersionBaselines();
+    // Canonical projection identity is durable and monotonic, but whether it
+    // is active for a page is relation-derived. Re-publish that scope after
+    // the relation mutation so proof revoke/reverify changes only active
+    // ranges without reallocating the persisted canonical coordinate.
+    _refreshCanonicalMediaAuthority();
     _libraryProjectionRevision++;
     if (publishHome) {
       _publish();
@@ -2377,11 +2489,17 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
   }
 
-  Future<void> close() async {
-    if (_closed) {
-      return;
-    }
+  Future<void> close() {
+    final existing = _closing;
+    if (existing != null) return existing;
+    final closing = _closeOwnedResources();
+    _closing = closing;
+    return closing;
+  }
+
+  Future<void> _closeOwnedResources() async {
     await _versionEvidenceWriteTail;
+    await _canonicalMediaWriteTail;
     await _canonicalPhysicalBackfillTail;
     _closed = true;
     await _downloadSubscription.cancel();

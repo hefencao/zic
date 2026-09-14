@@ -37,7 +37,7 @@ for token in (
     'observation.direction == ReadingDirection.vertical',
     '!primaryUpload',
     '!visibleStatic',
-    '_verticalPresentationActive(observation.interaction)',
+    'isPresentationMotionInteraction(observation.interaction)',
     'retainOutput: visibleStatic || localStaticReady',
 ):
     require(policy, token, 'active hidden-static boundary')

@@ -32,10 +32,10 @@ if build >= 249:
     require(
         'packages/pipeline/lib/src/animated_prefetch_policy.dart',
         'if (readDistance == 1) return 5;',
-        "'c>4' => 1",
-        "'n>2' => 2",
-        "'c>6' => 3",
-        "'n>3' => 4",
+        'DecodeWaterlineStage.currentMid => 1',
+        'DecodeWaterlineStage.nextMid => 2',
+        'DecodeWaterlineStage.currentDeep => 3',
+        'DecodeWaterlineStage.nextDeep => 4',
         'targetFramesByIndex',
     )
     require(
@@ -60,10 +60,10 @@ else:
         'maximumForwardPages = 7',
         'maximumBackwardPages = 3',
         'defaultAnimatedWebpPrefetchBudgetBytes = 50 * 1024 * 1024',
-        "'c>4' => 1",
-        "'n>2' => 2",
-        "'c>6' => 3",
-        "'n>3' => 4",
+        'DecodeWaterlineStage.currentMid => 1',
+        'DecodeWaterlineStage.nextMid => 2',
+        'DecodeWaterlineStage.currentDeep => 3',
+        'DecodeWaterlineStage.nextDeep => 4',
         'minimumExceedsBudget',
         'window.roleOf(index) == PageRole.detached',
     )

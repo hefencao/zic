@@ -48,11 +48,11 @@ for token in (
 for token in ('Future<int> applyExisting', 'Future<int> rekeyExisting', 'int apply(ArtifactCacheManager cache)'):
     forbid(reuse, token, 'directed artifact mutation plan')
 
-require(
-    migration,
-    'registeredPageEquivalences +=\n              item.artifactReuse.registerEquivalences(artifactCache);',
-    'explicit migration proof registration',
-)
+for token in (
+    'registeredPageEquivalences += item.artifactReuse',
+    '.registerEquivalences(artifactCache);',
+):
+    require(migration, token, 'explicit migration proof registration')
 forbid(migration, '.applyExisting(artifactCache)', 'explicit migration hard alias snapshot')
 require(transport, 'lookup.storageId != id', 'equivalent cache trace attribution')
 forbid(transport, 'resolveAlias(', 'artifact transport hard alias dependency')

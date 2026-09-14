@@ -75,7 +75,7 @@ for path in (
     req((ROOT/path).is_file(),f'missing dev.288 governance file: {path}')
 require('docs/ARCHITECTURE.md','PipelinePageDimensionsFeed','ValueNotifier','ValueListenable')
 require('docs/SPEC.md','PipelinePageDimensionsFeed','ValueListenable')
-require('docs/IMPLEMENTATION_STATUS.md','dev.288','ValueListenable','PipelinePageDimensionsFeed')
+require('docs/IMPLEMENTATION_STATUS.md','ValueListenable','pageDimensions')
 require('CHANGELOG.md','0.31.0-dev.288','Pipeline dimension projection boundary')
 req('test_dev288_pipeline_dimension_projection_boundary.py' in text('tool/check.sh'),'dev.288 gate not wired into tool/check.sh')
 print('PASS: dev.288 Pipeline dimension projection compile/ownership closure')

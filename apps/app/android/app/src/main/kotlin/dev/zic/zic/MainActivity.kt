@@ -11,6 +11,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.os.storage.StorageManager
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.provider.Settings
@@ -234,10 +235,59 @@ class MainActivity : FlutterActivity() {
 
     
     
+    /// Serializes SAF tree/path resolution and namespace mutation. These
+    /// operations may walk DocumentFile/provider metadata and therefore must
+    /// not sit in front of reads on descriptors that are already open.
     private val safExecutor: ExecutorService =
         Executors.newSingleThreadExecutor { runnable ->
-            Thread(runnable, "zic-saf").apply { isDaemon = true }
+            Thread(runnable, "zic-saf-path").apply { isDaemon = true }
         }
+
+    private val safReadOpenThreadCounter = java.util.concurrent.atomic.AtomicInteger(0)
+    private val safReadOpenExecutor: ExecutorService =
+        Executors.newFixedThreadPool(4) { runnable ->
+            val index = safReadOpenThreadCounter.getAndIncrement()
+            Thread(runnable, "zic-saf-read-open-$index").apply { isDaemon = true }
+        }
+
+    private val safNamespaceLock = java.util.concurrent.locks.ReentrantReadWriteLock()
+
+    private inline fun <T> withSafNamespaceRead(block: () -> T): T {
+        val lock = safNamespaceLock.readLock()
+        lock.lock()
+        try {
+            return block()
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    private inline fun <T> withSafNamespaceWrite(block: () -> T): T {
+        val lock = safNamespaceLock.writeLock()
+        lock.lock()
+        try {
+            return block()
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    /// Byte operations are striped by descriptor handle. One handle keeps strict
+    /// submission order (seek/read/write/close cannot race), while unrelated
+    /// read-only files may progress in parallel. Dart's ArtifactCacheReadScheduler
+    /// remains the admission/priority owner; these lanes only avoid serializing
+    /// independent descriptors behind one platform FIFO.
+    private val safDescriptorExecutors: List<ExecutorService> =
+        List(4) { index ->
+            Executors.newSingleThreadExecutor { runnable ->
+                Thread(runnable, "zic-saf-descriptor-$index").apply { isDaemon = true }
+            }
+        }
+
+    private fun safDescriptorExecutorFor(call: MethodCall): ExecutorService {
+        val handle = call.argument<Number>("handle")?.toInt() ?: 0
+        return safDescriptorExecutors[Math.floorMod(handle, safDescriptorExecutors.size)]
+    }
 
     private data class SafBridgeFailure(
         val code: String,
@@ -265,15 +315,36 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * SAF byte bridge. All DocumentFile/ContentResolver work runs on
-     * [safExecutor]; results are posted back to the platform thread because
+     * SAF byte bridge. Tree/path operations remain serialized on [safExecutor].
+     * Operations on an already-open descriptor are striped by handle across
+     * [safDescriptorExecutors]: one handle stays ordered, independent files may
+     * run concurrently. Results are posted back to the platform thread because
      * MethodChannel.Result is main-thread-only.
      */
     private fun handleSaf(call: MethodCall, result: MethodChannel.Result) {
-        safExecutor.execute {
+        val executor = when (call.method) {
+            "safOpen" -> if ((call.argument<String>("mode") ?: "read") == "read") {
+                safReadOpenExecutor
+            } else {
+                safExecutor
+            }
+            "safPrewarmRecentRead" -> safReadOpenExecutor
+            "presentationOpenSaf" -> safReadOpenExecutor
+            "safRead",
+            "safReadAt",
+            "safWrite",
+            "safSeek",
+            "safLength",
+            "safClose",
+            "presentationClose" -> safDescriptorExecutorFor(call)
+            else -> safExecutor
+        }
+        executor.execute {
             val reply: Pair<Boolean, Any?> = try {
                 when (call.method) {
                     "safOpen" -> runCatching { safOpen(call) }
+                        .fold({ true to it }, { false to safBridgeFailure(it) })
+                    "safPrewarmRecentRead" -> runCatching { safPrewarmRecentRead(call) }
                         .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safRead" -> runCatching { safRead(call) }
                         .fold({ true to it }, { false to safBridgeFailure(it) })
@@ -293,11 +364,11 @@ class MainActivity : FlutterActivity() {
                         .fold({ true to it }, { false to safBridgeFailure(it) })
                     "presentationClose" -> runCatching { safClose(call) }
                         .fold({ true to null }, { false to safBridgeFailure(it) })
-                    "safDelete" -> runCatching { safDelete(call) }
+                    "safDelete" -> runCatching { withSafNamespaceWrite { safDelete(call) } }
                         .fold({ true to it }, { false to safBridgeFailure(it) })
-                    "safRename" -> runCatching { safRename(call) }
+                    "safRename" -> runCatching { withSafNamespaceWrite { safRename(call) } }
                         .fold({ true to it }, { false to safBridgeFailure(it) })
-                    "safReplace" -> runCatching { safReplace(call) }
+                    "safReplace" -> runCatching { withSafNamespaceWrite { safReplace(call) } }
                         .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safExists" -> runCatching { safExists(call) }
                         .fold({ true to it }, { false to safBridgeFailure(it) })
@@ -354,7 +425,8 @@ class MainActivity : FlutterActivity() {
     // listing keyed by provider document id, so hundreds of sibling pages pay
     // one children query instead of repeating DocumentFile.findFile metadata
     // lookups for every page open.
-    private val safChildDocumentIds = mutableMapOf<String, Map<String, String>>()
+    private val safChildDocumentIds =
+        java.util.concurrent.ConcurrentHashMap<String, Map<String, String>>()
 
     // Process restarts lose the directory-listing cache above. Keep only a
     // bounded set of exact provider document ids that have already opened
@@ -366,53 +438,88 @@ class MainActivity : FlutterActivity() {
         0.75f,
         true,
     )
+    private val safExactDocumentIdsLock = Any()
     private var safExactDocumentIdsLoaded = false
 
     private fun safExactLocatorKey(treeUri: String, relativePath: String): String =
         "$treeUri\u0000$relativePath"
 
+    private fun normalizeLegacySafExactLocatorKey(key: String): String {
+        val separator = key.indexOf('\u0000')
+        if (separator <= 0) return key
+        val treeUri = key.substring(0, separator)
+        if (!treeUri.startsWith("/content://")) return key
+        return key.substring(1)
+    }
+
     private fun ensureSafExactDocumentIdsLoaded() {
-        if (safExactDocumentIdsLoaded) return
-        safExactDocumentIdsLoaded = true
-        val encoded = getSharedPreferences(SAF_LOCATOR_PREFS, Context.MODE_PRIVATE)
-            .getString(SAF_LOCATOR_STATE, null) ?: return
-        try {
-            val entries = JSONArray(encoded)
-            val start = maxOf(0, entries.length() - SAF_LOCATOR_MAX_ENTRIES)
-            for (index in start until entries.length()) {
-                val entry = entries.optJSONObject(index) ?: continue
-                val key = entry.optString("key")
-                val documentId = entry.optString("documentId")
-                if (key.isNotEmpty() && documentId.isNotEmpty()) {
-                    safExactDocumentIds[key] = documentId
+        synchronized(safExactDocumentIdsLock) {
+            if (safExactDocumentIdsLoaded) return
+            safExactDocumentIdsLoaded = true
+            val encoded = getSharedPreferences(SAF_LOCATOR_PREFS, Context.MODE_PRIVATE)
+                .getString(SAF_LOCATOR_STATE, null) ?: return
+            try {
+                val entries = JSONArray(encoded)
+                val start = maxOf(0, entries.length() - SAF_LOCATOR_MAX_ENTRIES)
+                var repairedLegacyTreeKey = false
+                for (index in start until entries.length()) {
+                    val entry = entries.optJSONObject(index) ?: continue
+                    val key = entry.optString("key")
+                    val documentId = entry.optString("documentId")
+                    if (key.isNotEmpty() && documentId.isNotEmpty()) {
+                        val normalizedKey = normalizeLegacySafExactLocatorKey(key)
+                        repairedLegacyTreeKey = repairedLegacyTreeKey || normalizedKey != key
+                        safExactDocumentIds[normalizedKey] = documentId
+                    }
                 }
+                if (repairedLegacyTreeKey) {
+                    // Acceleration-only metadata from the historical saf://
+                    // prefix off-by-one used `/content://...` as its tree key.
+                    // The opaque document id remains a hint: a stale id still
+                    // falls back to normal provider path resolution on open.
+                    val repairedEntries = JSONArray()
+                    for ((key, documentId) in safExactDocumentIds) {
+                        repairedEntries.put(
+                            JSONObject()
+                                .put("key", key)
+                                .put("documentId", documentId),
+                        )
+                    }
+                    getSharedPreferences(SAF_LOCATOR_PREFS, Context.MODE_PRIVATE)
+                        .edit()
+                        .putString(SAF_LOCATOR_STATE, repairedEntries.toString())
+                        .apply()
+                }
+            } catch (_: Throwable) {
+                safExactDocumentIds.clear()
             }
-        } catch (_: Throwable) {
-            safExactDocumentIds.clear()
         }
     }
 
     private fun persistSafExactDocumentIds() {
-        val entries = JSONArray()
-        for ((key, documentId) in safExactDocumentIds) {
-            entries.put(
-                JSONObject()
-                    .put("key", key)
-                    .put("documentId", documentId),
-            )
+        val encoded = synchronized(safExactDocumentIdsLock) {
+            val entries = JSONArray()
+            for ((key, documentId) in safExactDocumentIds) {
+                entries.put(
+                    JSONObject()
+                        .put("key", key)
+                        .put("documentId", documentId),
+                )
+            }
+            entries.toString()
         }
         getSharedPreferences(SAF_LOCATOR_PREFS, Context.MODE_PRIVATE)
             .edit()
-            .putString(SAF_LOCATOR_STATE, entries.toString())
+            .putString(SAF_LOCATOR_STATE, encoded)
             .apply()
     }
 
     private fun cachedSafExactDocumentId(
         treeUri: String,
         relativePath: String,
-    ): String? {
+    ): String? = synchronized(safExactDocumentIdsLock) {
         ensureSafExactDocumentIdsLoaded()
-        return safExactDocumentIds[safExactLocatorKey(treeUri, relativePath)]
+        safExactDocumentIds[safExactLocatorKey(treeUri, relativePath)]
     }
 
     private fun rememberSafExactDocumentId(
@@ -420,16 +527,20 @@ class MainActivity : FlutterActivity() {
         relativePath: String,
         documentId: String,
     ) {
-        ensureSafExactDocumentIdsLoaded()
-        val key = safExactLocatorKey(treeUri, relativePath)
-        val unchanged = safExactDocumentIds[key] == documentId
-        safExactDocumentIds[key] = documentId
-        if (unchanged) return
-        while (safExactDocumentIds.size > SAF_LOCATOR_MAX_ENTRIES) {
-            val eldest = safExactDocumentIds.entries.iterator().next()
-            safExactDocumentIds.remove(eldest.key)
+        val changed = synchronized(safExactDocumentIdsLock) {
+            ensureSafExactDocumentIdsLoaded()
+            val key = safExactLocatorKey(treeUri, relativePath)
+            val unchanged = safExactDocumentIds[key] == documentId
+            safExactDocumentIds[key] = documentId
+            if (!unchanged) {
+                while (safExactDocumentIds.size > SAF_LOCATOR_MAX_ENTRIES) {
+                    val eldest = safExactDocumentIds.entries.iterator().next()
+                    safExactDocumentIds.remove(eldest.key)
+                }
+            }
+            !unchanged
         }
-        persistSafExactDocumentIds()
+        if (changed) persistSafExactDocumentIds()
     }
 
     private fun forgetSafExactLocator(
@@ -437,16 +548,19 @@ class MainActivity : FlutterActivity() {
         relativePath: String,
         includeDescendants: Boolean = false,
     ) {
-        ensureSafExactDocumentIdsLoaded()
-        val key = safExactLocatorKey(treeUri, relativePath)
-        var changed = safExactDocumentIds.remove(key) != null
-        if (includeDescendants) {
-            val prefix = "$key/"
-            val staleKeys = safExactDocumentIds.keys
-                .filter { it.startsWith(prefix) }
-            for (staleKey in staleKeys) {
-                changed = safExactDocumentIds.remove(staleKey) != null || changed
+        val changed = synchronized(safExactDocumentIdsLock) {
+            ensureSafExactDocumentIdsLoaded()
+            val key = safExactLocatorKey(treeUri, relativePath)
+            var removed = safExactDocumentIds.remove(key) != null
+            if (includeDescendants) {
+                val prefix = "$key/"
+                val staleKeys = safExactDocumentIds.keys
+                    .filter { it.startsWith(prefix) }
+                for (staleKey in staleKeys) {
+                    removed = safExactDocumentIds.remove(staleKey) != null || removed
+                }
             }
+            removed
         }
         if (changed) persistSafExactDocumentIds()
     }
@@ -525,7 +639,7 @@ class MainActivity : FlutterActivity() {
         displayName: String,
     ): String? {
         val key = safChildCacheKey(treeUri.toString(), parentDocumentId)
-        val indexed = safChildDocumentIds[key] ?: run {
+        val indexed = safChildDocumentIds.computeIfAbsent(key) {
             val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
                 treeUri,
                 parentDocumentId,
@@ -553,7 +667,7 @@ class MainActivity : FlutterActivity() {
                     values.putIfAbsent(name, id)
                 }
             }
-            values.toMap().also { safChildDocumentIds[key] = it }
+            values.toMap()
         }
         return indexed[displayName]
     }
@@ -577,6 +691,13 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun openSafReadDescriptor(
+        treeUri: String,
+        relativePath: String,
+    ): android.os.ParcelFileDescriptor = withSafNamespaceRead {
+        openSafReadDescriptorUnlocked(treeUri, relativePath)
+    }
+
+    private fun openSafReadDescriptorUnlocked(
         treeUri: String,
         relativePath: String,
     ): android.os.ParcelFileDescriptor {
@@ -621,6 +742,36 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    private fun safPrewarmRecentRead(call: MethodCall): Boolean {
+        val treeUri = requireNotNull(call.argument<String>("treeUri"))
+        val keyPrefix = "$treeUri\u0000"
+        val documentId = synchronized(safExactDocumentIdsLock) {
+            ensureSafExactDocumentIdsLoaded()
+            safExactDocumentIds.entries
+                .toList()
+                .asReversed()
+                .firstOrNull { (key, _) -> key.startsWith(keyPrefix) }
+                ?.value
+        } ?: return false
+        return withSafNamespaceRead {
+            runCatching {
+                val uri = DocumentsContract.buildDocumentUriUsingTree(
+                    Uri.parse(treeUri),
+                    documentId,
+                )
+                contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                    // Touch descriptor metadata without reading body bytes. The
+                    // descriptor is closed before this acceleration completes.
+                    val statSize = descriptor.statSize
+                    if (statSize < 0L) {
+                        android.system.Os.fstat(descriptor.fileDescriptor).st_size
+                    }
+                } ?: return@runCatching false
+                true
+            }.getOrDefault(false)
+        }
+    }
+
     private fun safOpen(call: MethodCall): Int {
         val treeUri = requireNotNull(call.argument<String>("treeUri"))
         val relativePath = call.argument<String>("relativePath") ?: ""
@@ -631,7 +782,7 @@ class MainActivity : FlutterActivity() {
         }
         val pfd = if (mode == "read") {
             openSafReadDescriptor(treeUri, relativePath)
-        } else {
+        } else withSafNamespaceWrite {
             val root = safTreeRoot(treeUri)
                 ?: throw IllegalStateException("tree unavailable")
             val target: androidx.documentfile.provider.DocumentFile =
@@ -801,10 +952,8 @@ class MainActivity : FlutterActivity() {
 
     private fun safLength(call: MethodCall): Long {
         val pfd = safDescriptor(call)
-        val saved = android.system.Os.lseek(pfd.fileDescriptor, 0, android.system.OsConstants.SEEK_CUR)
-        val size = android.system.Os.lseek(pfd.fileDescriptor, 0, android.system.OsConstants.SEEK_END)
-        android.system.Os.lseek(pfd.fileDescriptor, saved, android.system.OsConstants.SEEK_SET)
-        return size
+        val statSize = pfd.statSize
+        return if (statSize >= 0L) statSize else android.system.Os.fstat(pfd.fileDescriptor).st_size
     }
 
     private fun safClose(call: MethodCall) {
@@ -993,30 +1142,21 @@ class MainActivity : FlutterActivity() {
         val documentId = runCatching {
             DocumentsContract.getTreeDocumentId(uri)
         }.getOrNull() ?: return null
-        val separator = documentId.indexOf(':')
-        if (separator < 0 ||
-            !documentId.substring(0, separator).equals("primary", ignoreCase = true)) {
-            // UUID/removable volumes need StorageVolume-backed mapping in a
-            // later boundary. Never guess /storage/<uuid> here.
-            return null
-        }
-        val relative = documentId.substring(separator + 1)
-        val segments = relative.split('/').filter { it.isNotEmpty() }
-        if (segments.any { it == "." || it == ".." }) return null
         return runCatching {
             @Suppress("DEPRECATION")
-            val root = Environment.getExternalStorageDirectory().canonicalFile
-            val candidate = segments.fold(root) { current, segment ->
-                File(current, segment)
-            }.canonicalFile
-            val rootPrefix = root.path + File.separator
-            if (candidate != root && !candidate.path.startsWith(rootPrefix)) {
-                null
-            } else if (!candidate.isDirectory) {
-                null
-            } else {
-                candidate.absolutePath
+            val primaryRoot = Environment.getExternalStorageDirectory()
+            val storageManager = getSystemService(StorageManager::class.java)
+            val volumes = storageManager.storageVolumes.map { volume ->
+                ExternalStorageVolumeRoot(
+                    uuid = volume.uuid,
+                    directory = volume.directory,
+                )
             }
+            resolveExternalStorageTreeDirectPath(
+                documentId = documentId,
+                primaryRoot = primaryRoot,
+                volumes = volumes,
+            )
         }.getOrNull()
     }
 
@@ -1574,6 +1714,17 @@ class MainActivity : FlutterActivity() {
         startupChannel?.setMethodCallHandler(null)
         startupChannel = null
         configuredEngine = null
+        safExecutor.shutdownNow()
+        safReadOpenExecutor.shutdownNow()
+        safDescriptorExecutors.forEach { it.shutdownNow() }
+        safDescriptors.values.forEach { descriptor ->
+            try {
+                descriptor.close()
+            } catch (_: Throwable) {
+                // Activity teardown owns final descriptor cleanup.
+            }
+        }
+        safDescriptors.clear()
         rhttpExecutor.shutdownNow()
         super.onDestroy()
         startupLog("activity-onDestroy-complete")

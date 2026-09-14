@@ -43,7 +43,7 @@ for token in (
     'final deferHiddenVerticalStaticUpload =',
     '!primaryUpload',
     '!visibleStatic',
-    '_verticalPresentationActive(observation.interaction)',
+    'isPresentationMotionInteraction(observation.interaction)',
 ):
     require(policy, token, 'dev.295 generic hidden-static deferral')
 

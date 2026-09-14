@@ -88,7 +88,14 @@ final class ComicSourceResourceGateway {
         ? downloads as ConfigurableChapterResourceAccess
         : null;
     if (configurable == null || !_boundDownloads.remove(configurable)) return;
-    configurable.setChapterResourceAccess(null);
+    try {
+      configurable.setChapterResourceAccess(null);
+    } on StateError {
+      // Service replacement closes the previous download owner before the
+      // gateway handoff can retire its bookkeeping. A closed service has no
+      // future resource consumers, so local unbinding is already complete;
+      // do not let teardown ordering abort the new service field swap.
+    }
   }
 
   Future<Uint8List> loadPageBytes(String sourceId, Uri uri) {

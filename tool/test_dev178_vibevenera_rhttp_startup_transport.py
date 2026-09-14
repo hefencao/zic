@@ -32,13 +32,15 @@ downloads_public = read('packages/downloads/lib/downloads.dart')
 require(bridge_pubspec, 'rhttp: 0.18.0', 'current compatible rhttp pin')
 bridge = read('packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart')
 for token in (
-    'implements SourceResourceDirectTransport',
+    'SourceResourceDirectTransport,',
+    'SelfBoundedSourceResourceDirectTransport',
+    'this.responseHeaderTimeout = const Duration(seconds: 15)',
     'prewarmPlatformSourceResourceTransport()',
     'rhttp.Rhttp.init()',
     'rhttp.RhttpClient.create(',
     'rhttp.RedirectSettings.',
     'keepAliveTimeout: Duration(seconds: 60)',
-    'client.requestStream(',
+    '.requestStream(',
     'final cancelToken = rhttp.CancelToken();',
     'taskControl.whenCancelled.then((_) => cancelToken.cancel())',
     'sourceMediaProtocolMismatch',

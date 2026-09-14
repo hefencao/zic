@@ -18,7 +18,7 @@ def forbid(text: str, token: str, label: str) -> None:
 registry = read('packages/sessions/lib/src/download_registry.dart')
 owner = read('packages/sessions/lib/src/download_transfer_owner.dart')
 runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
-chapter = read('packages/downloads/lib/src/chapter_downloads.dart')
+chapter = read('packages/downloads/lib/src/persistent_chapter_download_service.dart')
 test = read('packages/downloads/test/chapter_downloads_test.dart')
 pubspec = read('apps/app/pubspec.yaml')
 props = read('apps/app/android/zic-version.properties')
@@ -75,8 +75,10 @@ else:
 for token in (
     'resolveTransferId: _resolveTransferIdForAcquire,',
     'DownloadId _resolveTransferIdForAcquire(DownloadId exactId)',
-    'for (final equivalent in cache.directEquivalents(exactId))',
-    'if (registry.findExact(exactId) != null) return exactId;',
+    'for (final equivalent in _verifiedEquivalentCandidates(exactId))',
+    'Iterable<DownloadId> _verifiedEquivalentCandidates(DownloadId id)',
+    'yield* cache.directEquivalents(id);',
+    'if (exact?.demanded == true) return exactId;',
     'bool _canJoinEquivalentSession(DownloadSession session)',
     'session.residentBodyAuthority !=',
     'ByteResponseBodyAuthority.artifactCache',
@@ -101,7 +103,7 @@ else:
         require(runtime, token, 'historical ambiguous existing-owner rejection')
 
 for token in (
-    'registry.isPhysicalAlias(id, session.id)',
+    'registry.sharesPhysicalMedia(id, session.id)',
     'await handoff.persist(session, exactId: id);',
     'required exact durable artifact was not materialized',
 ):
@@ -112,8 +114,8 @@ forbid(
     'superseded physical-anchor durable copy bridge',
 )
 
-replace_pos = chapter.index('consumer.replaceDemands(\n          identity,')
-get_pos = chapter.index('final session = transferRuntime.registry.get(id);', replace_pos)
+replace_pos = chapter.index('Map<DownloadId, TransferDemand>.of(pendingDemands),')
+get_pos = chapter.index('final session = transferRuntime.sessionFor(id);', replace_pos)
 if replace_pos >= get_pos:
     raise SystemExit('dev.225 chapter command still creates exact session before claim acquire')
 

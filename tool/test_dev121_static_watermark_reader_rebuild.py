@@ -17,7 +17,10 @@ def require(text: str, token: str, owner: str) -> None:
 policy = read("packages/sessions/lib/src/decode_refill_policy.dart")
 coordinator = read("packages/sessions/lib/src/live_coordinator.dart")
 policy_test = read("packages/sessions/test/decode_refill_policy_test.dart")
-reader = read("packages/reader/lib/src/reader_view.dart")
+reader = (
+    read("packages/reader/lib/src/reader_view.dart")
+    + read("packages/reader/lib/src/reader_page_host.dart")
+)
 reader_test = read("packages/reader/test/reader_navigation_test.dart")
 screen = read("packages/reader_runtime/lib/src/reader_runtime_screen.dart")
 check = read("tool/check.sh")

@@ -160,6 +160,7 @@ String comicVersionNoticeIdentity(
 final class AppPreferencesController extends ChangeNotifier {
   AppPreferencesController();
 
+  final ChangeNotifier _themeChanges = ChangeNotifier();
   ThemeMode _themeMode = ThemeMode.dark;
   bool _amoledDarkTheme = false;
   bool _debugTraceEnabled = true;
@@ -198,6 +199,17 @@ final class AppPreferencesController extends ChangeNotifier {
   int _revision = 0;
   bool _disposed = false;
   bool _attached = false;
+
+  /// Narrow invalidation surface for the application theme shell.
+  ///
+  /// Most preferences are consumed by leaf screens or already-filtered Home
+  /// projections. Rebuilding MaterialApp for those changes also rebuilds the
+  /// covered Home route while Reader is active. Comic-level adaptive Reader
+  /// settings are a particularly hot example because they may be persisted as
+  /// runtime page evidence arrives. Keep the broad ChangeNotifier contract for
+  /// existing preference consumers, but let the app shell observe only values
+  /// that actually affect ThemeData/themeMode.
+  Listenable get themeChanges => _themeChanges;
 
   ThemeMode get themeMode => _themeMode;
   bool get amoledDarkTheme => _amoledDarkTheme;
@@ -302,6 +314,8 @@ final class AppPreferencesController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    final priorThemeMode = _themeMode;
+    final priorAmoledDarkTheme = _amoledDarkTheme;
     _themeMode = _enumByName(
       ThemeMode.values,
       values['themeMode'],
@@ -427,6 +441,10 @@ final class AppPreferencesController extends ChangeNotifier {
     );
     if (!_disposed) {
       _attached = true;
+      if (_themeMode != priorThemeMode ||
+          _amoledDarkTheme != priorAmoledDarkTheme) {
+        _themeChanges.notifyListeners();
+      }
       notifyListeners();
     }
   }
@@ -434,12 +452,14 @@ final class AppPreferencesController extends ChangeNotifier {
   void setThemeMode(ThemeMode value) {
     if (_disposed || _themeMode == value) return;
     _themeMode = value;
+    _themeChanges.notifyListeners();
     _changed();
   }
 
   void setAmoledDarkTheme(bool value) {
     if (_disposed || _amoledDarkTheme == value) return;
     _amoledDarkTheme = value;
+    _themeChanges.notifyListeners();
     _changed();
   }
 
@@ -798,6 +818,7 @@ final class AppPreferencesController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _themeChanges.dispose();
     super.dispose();
   }
 }

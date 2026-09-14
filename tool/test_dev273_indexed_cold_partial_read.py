@@ -24,10 +24,16 @@ props = text('apps/app/android/zic-version.properties')
 vm = re.search(r'^versionCode=(\d+)\s*$', props, re.M)
 req(vm is not None and int(vm.group(1)) >= 273, 'dev.273 Android version missing')
 
-chapter = text('packages/downloads/lib/src/chapter_downloads.dart')
-start = chapter.index('Future<PartialDownloadEntry?> _openPartialDownload(DownloadId id) async')
-end = chapter.index('\n  @override\n  Future<void> storePartialDownload', start)
-method = chapter[start:end]
+chapter_path = 'packages/downloads/lib/src/chapter_downloads.dart'
+persistent_store_path = 'packages/downloads/lib/src/persistent_download_artifact_store.dart'
+partial_resume_path = 'packages/downloads/lib/src/persistent_download_partial_resume.dart'
+chapter = text(chapter_path)
+persistent_store = text(persistent_store_path)
+partial_resume = text(partial_resume_path)
+download_storage = chapter + persistent_store + partial_resume
+start = persistent_store.index('Future<PartialDownloadEntry?> _openPartialDownload(DownloadId id) async')
+end = persistent_store.index('\n  @override\n  Future<void> storePartialDownload', start)
+method = persistent_store[start:end]
 for marker in (
     '_index.get(id.key)',
     'record.state != CacheState.partial',
@@ -38,13 +44,13 @@ for marker in (
     req(marker in method, f'indexed cold-partial read marker missing: {marker}')
 for forbidden in ('_registry.get(id)', 'session.restore(', 'storePartialDownload('):
     req(forbidden not in method, f'read lookup must not materialize/mutate session: {forbidden}')
-require(
-    'packages/downloads/lib/src/chapter_downloads.dart',
+for marker in (
     'final class _IndexedPartialResumeState',
     'explicitDifferentOwner',
     "File('$partialPath.meta')",
     'validatorRequestUri != id.canonicalUri',
-)
+):
+    req(marker in download_storage, f'indexed cold-partial support marker missing: {marker}')
 
 require(
     'packages/downloads/test/chapter_downloads_test.dart',
@@ -79,11 +85,11 @@ for path in (
     req((ROOT / path).is_file(), f'missing dev.273 governance file: {path}')
 require('docs/ARCHITECTURE.md', 'persistent index/file直接裁决', '不得为读取或存在性探测materialize durable-store `DownloadSession`')
 require('docs/SPEC.md', 'durable partial existence/read MUST由persistent index/file authority直接解析')
-require('docs/IMPLEMENTATION_STATUS.md', 'dev.273', '约87ms')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.273', 'indexed durable partial read')
+require('docs/IMPLEMENTATION_STATUS.md', 'cold partial', 'materialize durable-store')
+require('docs/NEXT_CHAT_HANDOFF.md', 'cold partial', 'verified-equivalent READY')
 require('CHANGELOG.md', '0.31.0-dev.273', 'durable partial read owner')
 
 # Frozen policy/resource boundaries remain unchanged.
-require('docs/NEXT_CHAT_HANDOFF.md', 'previous3/next7', '5/3/2/1', 'normal5+current reserved1')
+require('docs/NEXT_CHAT_HANDOFF.md', '7/3', '2/1', '5个transport lease', 'current handoff')
 
 print('PASS: dev.273 indexed cold-partial read authority')

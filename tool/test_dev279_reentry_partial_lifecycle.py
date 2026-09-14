@@ -76,13 +76,18 @@ for marker in (
     'requestAndroidApplicationBackground()',
 ):
     req(marker in app, f'app runtime safety/background contract missing: {marker}')
+lifecycle_start = app.index('void didChangeAppLifecycleState(AppLifecycleState state)')
+lifecycle_end = app.index('Future<void> _recordLifecycleSchedulingSnapshot(', lifecycle_start)
+lifecycle_body = app[lifecycle_start:lifecycle_end]
 for forbidden in (
-    'with WidgetsBindingObserver',
-    'AppLifecycleState.paused',
-    'AppLifecycleState.detached',
-    "checkpointPartials(reason: 'app-lifecycle-checkpoint')",
+    'checkpointTransferPartials(',
+    'checkpointPartials(',
+    "'app-lifecycle-checkpoint'",
 ):
-    req(forbidden not in app, f'ordinary background still checkpoints partial: {forbidden}')
+    req(forbidden not in lifecycle_body,
+        f'ordinary lifecycle observation still checkpoints partial: {forbidden}')
+req("checkpointPartials(reason: 'app-lifecycle-checkpoint')" not in app,
+    'obsolete app-lifecycle checkpoint reason remains')
 
 workspace = text('packages/storage/lib/src/ephemeral_workspace.dart')
 for marker in (
@@ -120,7 +125,7 @@ for path in (
 
 require('docs/ARCHITECTURE.md', 'physical object generation与Reader encoded generation边界', 'recoverable transfer workspace')
 require('docs/SPEC.md', 'physical object generation与Reader encoded generation', 'recoverable staging root')
-require('docs/IMPLEMENTATION_STATUS.md', 'dev.279', 'sealed-source-generation-preserved')
+require('docs/IMPLEMENTATION_STATUS.md', 'SourceEpoch', 'recoverable canonical partial', 'media-empty')
 require('CHANGELOG.md', '0.31.0-dev.279', 'lifecycle partial checkpoint')
 
 print('PASS: dev.279 continuity + recoverable staging/background supersession')

@@ -20,6 +20,7 @@ require(handoff, "import 'package:domain/domain.dart';", 'DownloadId import owne
 require(handoff, "import 'package:transport/transport.dart';", 'Validators import ownership')
 for token in (
     'typedef PartialEquivalentCandidates = Iterable<DownloadId> Function(',
+    'DownloadId id,',
     'final PartialEquivalentCandidates? equivalentCandidates;',
     'store.openPartialDownload(id)',
     'for (final equivalent in candidates(id)) {',

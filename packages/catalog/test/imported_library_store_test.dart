@@ -210,10 +210,7 @@ void main() {
     );
     expect(predecessors, hasLength(1));
     expect(predecessors.single.sourceId, relation.sourceId);
-    expect(
-      predecessors.single.predecessorComicId,
-      relation.predecessorComicId,
-    );
+    expect(predecessors.single.predecessorComicId, relation.predecessorComicId);
     expect(predecessors.single.successorComicId, relation.successorComicId);
     expect(predecessors.single.predecessorTitle, relation.predecessorTitle);
     expect(predecessors.single.pageMappings, hasLength(1));
@@ -265,68 +262,70 @@ void main() {
     expect(entry?.progress?.pageIndex, 2);
   });
 
+  test(
+    'chapter refresh preserves the same current source after insertion',
+    () async {
+      final store = MemoryImportedLibraryStore();
+      await store.open();
+      addTearDown(store.close);
 
-  test('chapter refresh preserves the same current source after insertion', () async {
-    final store = MemoryImportedLibraryStore();
-    await store.open();
-    addTearDown(store.close);
+      final first = ImportedChapterRecord.folder(
+        directoryId: '/library/chapter',
+        displayName: 'Chapter',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '2.png',
+            sourceId: '/library/chapter/2.png',
+            contentKindHint: ContentKindHint.png,
+          ),
+          ImportedPageRecord(
+            displayName: '3.png',
+            sourceId: '/library/chapter/3.png',
+            contentKindHint: ContentKindHint.png,
+          ),
+        ],
+      );
+      await store.upsertChapter(first);
+      await store.saveProgress(
+        ReadingProgress(
+          sourceId: first.sourceId,
+          comicId: first.comicId,
+          chapterId: first.chapterId,
+          pageIndex: 1,
+          subPageOffset: 0.5,
+          readerMode: ReaderMode.continuous,
+          updatedAt: DateTime.utc(2026, 7, 28),
+        ),
+      );
 
-    final first = ImportedChapterRecord.folder(
-      directoryId: '/library/chapter',
-      displayName: 'Chapter',
-      pages: const <ImportedPageRecord>[
-        ImportedPageRecord(
-          displayName: '2.png',
-          sourceId: '/library/chapter/2.png',
-          contentKindHint: ContentKindHint.png,
-        ),
-        ImportedPageRecord(
-          displayName: '3.png',
-          sourceId: '/library/chapter/3.png',
-          contentKindHint: ContentKindHint.png,
-        ),
-      ],
-    );
-    await store.upsertChapter(first);
-    await store.saveProgress(
-      ReadingProgress(
-        sourceId: first.sourceId,
-        comicId: first.comicId,
-        chapterId: first.chapterId,
-        pageIndex: 1,
-        subPageOffset: 0.5,
-        readerMode: ReaderMode.continuous,
-        updatedAt: DateTime.utc(2026, 7, 28),
-      ),
-    );
+      final refreshed = ImportedChapterRecord.folder(
+        directoryId: '/library/chapter',
+        displayName: 'Chapter',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.png',
+            sourceId: '/library/chapter/1.png',
+            contentKindHint: ContentKindHint.png,
+          ),
+          ImportedPageRecord(
+            displayName: '2.png',
+            sourceId: '/library/chapter/2.png',
+            contentKindHint: ContentKindHint.png,
+          ),
+          ImportedPageRecord(
+            displayName: '3.png',
+            sourceId: '/library/chapter/3.png',
+            contentKindHint: ContentKindHint.png,
+          ),
+        ],
+      );
+      await store.upsertChapter(refreshed);
 
-    final refreshed = ImportedChapterRecord.folder(
-      directoryId: '/library/chapter',
-      displayName: 'Chapter',
-      pages: const <ImportedPageRecord>[
-        ImportedPageRecord(
-          displayName: '1.png',
-          sourceId: '/library/chapter/1.png',
-          contentKindHint: ContentKindHint.png,
-        ),
-        ImportedPageRecord(
-          displayName: '2.png',
-          sourceId: '/library/chapter/2.png',
-          contentKindHint: ContentKindHint.png,
-        ),
-        ImportedPageRecord(
-          displayName: '3.png',
-          sourceId: '/library/chapter/3.png',
-          contentKindHint: ContentKindHint.png,
-        ),
-      ],
-    );
-    await store.upsertChapter(refreshed);
-
-    final entry = await store.get(refreshed.sourceId, refreshed.chapterId);
-    expect(entry?.progress?.pageIndex, 2);
-    expect(entry?.progress?.subPageOffset, 0.5);
-  });
+      final entry = await store.get(refreshed.sourceId, refreshed.chapterId);
+      expect(entry?.progress?.pageIndex, 2);
+      expect(entry?.progress?.subPageOffset, 0.5);
+    },
+  );
 
   test('chapter refresh clamps progress after pages are removed', () async {
     final store = MemoryImportedLibraryStore();
@@ -354,98 +353,117 @@ void main() {
     expect(entry?.progress?.readerMode, ReaderMode.continuous);
   });
 
-  test('memory library persists categories, comic preferences, and read state',
-      () async {
-    final store = MemoryImportedLibraryStore();
-    await store.open();
-    addTearDown(store.close);
-    final now = DateTime.utc(2026, 7, 28, 8);
-    final category = LibraryCategory(
-      categoryId: 'favorites',
-      name: '收藏夹',
-      sortOrder: 0,
-      createdAt: now,
-    );
-    await store.upsertCategory(category);
-    final preference = ComicPreference.defaults(sourceId: 'source-1', comicId: 'comic-1').copyWith(
-      liked: true,
-      collected: true,
-      categoryIds: const <String>{'favorites'},
-      customOrder: 3,
-      updatedAt: now,
-    );
-    await store.saveComicPreference(preference);
-    final readState = ChapterReadState(
-      sourceId: 'source-1',
-      comicId: 'comic-1',
-      chapterId: 'chapter-1',
-      isRead: true,
-      updatedAt: now,
-    );
-    await store.saveChapterReadState(readState);
+  test(
+    'memory library persists categories, comic preferences, and read state',
+    () async {
+      final store = MemoryImportedLibraryStore();
+      await store.open();
+      addTearDown(store.close);
+      final now = DateTime.utc(2026, 7, 28, 8);
+      final category = LibraryCategory(
+        categoryId: 'favorites',
+        name: '收藏夹',
+        sortOrder: 0,
+        createdAt: now,
+      );
+      await store.upsertCategory(category);
+      final preference =
+          ComicPreference.defaults(
+            sourceId: 'source-1',
+            comicId: 'comic-1',
+          ).copyWith(
+            liked: true,
+            collected: true,
+            categoryIds: const <String>{'favorites'},
+            customOrder: 3,
+            updatedAt: now,
+          );
+      await store.saveComicPreference(preference);
+      final readState = ChapterReadState(
+        sourceId: 'source-1',
+        comicId: 'comic-1',
+        chapterId: 'chapter-1',
+        isRead: true,
+        updatedAt: now,
+      );
+      await store.saveChapterReadState(readState);
 
-    expect((await store.listCategories()).single.toJson(), category.toJson());
-    expect(
-      (await store.getComicPreference('source-1', 'comic-1'))?.toJson(),
-      preference.toJson(),
-    );
-    expect(
-      (await store.listChapterReadStates('source-1', 'comic-1')).single.toJson(),
-      readState.toJson(),
-    );
-    expect(
-      (await store.listAllChapterReadStates()).single.toJson(),
-      readState.toJson(),
-    );
+      expect((await store.listCategories()).single.toJson(), category.toJson());
+      expect(
+        (await store.getComicPreference('source-1', 'comic-1'))?.toJson(),
+        preference.toJson(),
+      );
+      expect(
+        (await store.listChapterReadStates(
+          'source-1',
+          'comic-1',
+        )).single.toJson(),
+        readState.toJson(),
+      );
+      expect(
+        (await store.listAllChapterReadStates()).single.toJson(),
+        readState.toJson(),
+      );
 
-    await store.removeCategory('favorites');
-    expect(await store.listCategories(), isEmpty);
-    expect(
-      (await store.getComicPreference('source-1', 'comic-1'))?.categoryIds,
-      isEmpty,
-    );
-  });
+      await store.removeCategory('favorites');
+      expect(await store.listCategories(), isEmpty);
+      expect(
+        (await store.getComicPreference('source-1', 'comic-1'))?.categoryIds,
+        isEmpty,
+      );
+    },
+  );
 
-  test('memory library keeps a whole comic without an imported chapter', () async {
-    final store = MemoryImportedLibraryStore();
-    await store.open();
-    addTearDown(store.close);
-    final manifest = _savedManifest();
-    final saved = SavedComicRecord.fromManifest(
-      manifest,
-      savedAt: DateTime.utc(2026, 7, 28),
-      updatedAt: DateTime.utc(2026, 7, 28, 1),
-    );
-    final preference = ComicPreference.defaults(
-      sourceId: manifest.comic.sourceId,
-      comicId: manifest.comic.comicId,
-      sourceKind: ComicSourceKind.remote,
-    ).copyWith(
-      inShelf: true,
-      collected: true,
-      updatedAt: DateTime.utc(2026, 7, 28, 2),
-    );
+  test(
+    'memory library keeps a whole comic without an imported chapter',
+    () async {
+      final store = MemoryImportedLibraryStore();
+      await store.open();
+      addTearDown(store.close);
+      final manifest = _savedManifest();
+      final saved = SavedComicRecord.fromManifest(
+        manifest,
+        savedAt: DateTime.utc(2026, 7, 28),
+        updatedAt: DateTime.utc(2026, 7, 28, 1),
+      );
+      final preference =
+          ComicPreference.defaults(
+            sourceId: manifest.comic.sourceId,
+            comicId: manifest.comic.comicId,
+            sourceKind: ComicSourceKind.remote,
+          ).copyWith(
+            inShelf: true,
+            collected: true,
+            updatedAt: DateTime.utc(2026, 7, 28, 2),
+          );
 
-    await store.upsertSavedComic(saved);
-    await store.saveComicPreference(preference);
+      await store.upsertSavedComic(saved);
+      await store.saveComicPreference(preference);
 
-    expect(await store.list(), isEmpty);
-    expect(
-      (await store.getSavedComic('fixture-source', 'fixture-comic'))?.toJson(),
-      saved.toJson(),
-    );
-    expect(
-      aggregateImportedLibrary(
-        await store.list(),
-        savedComics: await store.listSavedComics(),
-      ).single.sourceChapters,
-      hasLength(2),
-    );
+      expect(await store.list(), isEmpty);
+      expect(
+        (await store.getSavedComic(
+          'fixture-source',
+          'fixture-comic',
+        ))?.toJson(),
+        saved.toJson(),
+      );
+      expect(
+        aggregateImportedLibrary(
+          await store.list(),
+          savedComics: await store.listSavedComics(),
+        ).single.sourceChapters,
+        hasLength(2),
+      );
 
-    await store.removeSavedComic('fixture-source', 'fixture-comic');
-    expect(await store.listSavedComics(), isEmpty);
-    expect(await store.getComicPreference('fixture-source', 'fixture-comic'), isNull);
-  });
+      await store.removeSavedComic('fixture-source', 'fixture-comic');
+      expect(await store.listSavedComics(), isEmpty);
+      expect(
+        await store.getComicPreference('fixture-source', 'fixture-comic'),
+        isNull,
+      );
+    },
+  );
 
   test('remote refresh keeps progress by stable page identity', () async {
     final previous = _remoteChapter(
@@ -481,28 +499,22 @@ void main() {
   });
 
   test('legacy preference and read-state JSON accept a source fallback', () {
-    final preference = ComicPreference.fromJson(
-      <String, Object?>{
-        'comicId': 'comic-legacy',
-        'sourceKind': ComicSourceKind.remote.name,
-        'inShelf': true,
-        'liked': false,
-        'collected': true,
-        'categoryIds': <Object?>[],
-        'customOrder': 4,
-        'updatedAt': DateTime.utc(2026, 7, 28).toIso8601String(),
-      },
-      fallbackSourceId: 'legacy-source',
-    );
-    final readState = ChapterReadState.fromJson(
-      <String, Object?>{
-        'comicId': 'comic-legacy',
-        'chapterId': 'chapter-legacy',
-        'isRead': true,
-        'updatedAt': DateTime.utc(2026, 7, 28).toIso8601String(),
-      },
-      fallbackSourceId: 'legacy-source',
-    );
+    final preference = ComicPreference.fromJson(<String, Object?>{
+      'comicId': 'comic-legacy',
+      'sourceKind': ComicSourceKind.remote.name,
+      'inShelf': true,
+      'liked': false,
+      'collected': true,
+      'categoryIds': <Object?>[],
+      'customOrder': 4,
+      'updatedAt': DateTime.utc(2026, 7, 28).toIso8601String(),
+    }, fallbackSourceId: 'legacy-source');
+    final readState = ChapterReadState.fromJson(<String, Object?>{
+      'comicId': 'comic-legacy',
+      'chapterId': 'chapter-legacy',
+      'isRead': true,
+      'updatedAt': DateTime.utc(2026, 7, 28).toIso8601String(),
+    }, fallbackSourceId: 'legacy-source');
 
     expect(preference.identity, 'legacy-source\u0000comic-legacy');
     expect(readState.identity, 'legacy-source\u0000chapter-legacy');
@@ -520,7 +532,9 @@ void main() {
 
     await store.saveSourcePreference(preference);
 
-    expect(await store.listSourcePreferences(), <ComicSourcePreference>[preference]);
+    expect(await store.listSourcePreferences(), <ComicSourcePreference>[
+      preference,
+    ]);
     await store.close();
   });
 
@@ -542,10 +556,9 @@ void main() {
 
     expect((await store.listMigrationIssues()).single.issueId, 7);
     final acknowledgedAt = DateTime.utc(2026, 7, 29, 1);
-    await store.acknowledgeMigrationIssues(
-      const <int>[7],
-      acknowledgedAt: acknowledgedAt,
-    );
+    await store.acknowledgeMigrationIssues(const <int>[
+      7,
+    ], acknowledgedAt: acknowledgedAt);
 
     expect(await store.listMigrationIssues(), isEmpty);
     final retained = await store.listMigrationIssues(includeAcknowledged: true);
@@ -572,7 +585,6 @@ ImportedChapterRecord _chapter({required int pageCount}) {
   );
 }
 
-
 ImportedChapterRecord _remoteChapter({required List<String> urls}) {
   return ImportedChapterRecord(
     directoryId: 'mangadex:comic-1',
@@ -594,31 +606,30 @@ ImportedChapterRecord _remoteChapter({required List<String> urls}) {
   );
 }
 
-
 ComicManifest _savedManifest() => ComicManifest(
-      comic: Comic(
-        comicId: 'fixture-comic',
-        sourceId: 'fixture-source',
-        title: '整部漫画',
-        authors: const <String>['作者'],
-        readingDirection: ReadingDirection.ltr,
-      ),
-      chapters: const <Chapter>[
-        Chapter(
-          chapterId: 'fixture-chapter-1',
-          comicId: 'fixture-comic',
-          title: '第 1 话',
-          sequence: 1,
-          pageCount: 1,
-          sourceRevision: 'r1',
-        ),
-        Chapter(
-          chapterId: 'fixture-chapter-2',
-          comicId: 'fixture-comic',
-          title: '第 2 话',
-          sequence: 2,
-          pageCount: 1,
-          sourceRevision: 'r2',
-        ),
-      ],
-    );
+  comic: Comic(
+    comicId: 'fixture-comic',
+    sourceId: 'fixture-source',
+    title: '整部漫画',
+    authors: const <String>['作者'],
+    readingDirection: ReadingDirection.ltr,
+  ),
+  chapters: const <Chapter>[
+    Chapter(
+      chapterId: 'fixture-chapter-1',
+      comicId: 'fixture-comic',
+      title: '第 1 话',
+      sequence: 1,
+      pageCount: 1,
+      sourceRevision: 'r1',
+    ),
+    Chapter(
+      chapterId: 'fixture-chapter-2',
+      comicId: 'fixture-comic',
+      title: '第 2 话',
+      sequence: 2,
+      pageCount: 1,
+      sourceRevision: 'r2',
+    ),
+  ],
+);

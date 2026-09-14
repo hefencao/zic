@@ -70,7 +70,7 @@ require(
     '.saturating_add(source.width)',
     'config.options.use_scaling = 1;',
     'config.options.scaled_width = width as c_int;',
-    'bytes: self.canvas.clone(),',
+    'let bytes = self.canvas.clone();',
     'endpoint_mapping_keeps_adjacent_strips_gapless',
 )
 forbid(

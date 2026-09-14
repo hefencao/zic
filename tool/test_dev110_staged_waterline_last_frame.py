@@ -53,14 +53,14 @@ require(
 )
 require(
     "packages/sessions/lib/src/decode_refill_policy.dart",
-    "c>2",
+    "DecodeWaterlineStage.currentBootstrap",
     "transition ?? byRole[PageRole.next]",
-    "n>1",
-    "m>1",
-    "p>1",
-    "c>4",
-    "c>6",
-    "n>4",
+    "DecodeWaterlineStage.nextShallow",
+    "DecodeWaterlineStage.next2Shallow",
+    "DecodeWaterlineStage.previousShallow",
+    "DecodeWaterlineStage.currentMid",
+    "DecodeWaterlineStage.currentDeep",
+    "DecodeWaterlineStage.nextMax",
 )
 require(
     "packages/sessions/lib/src/live_coordinator.dart",

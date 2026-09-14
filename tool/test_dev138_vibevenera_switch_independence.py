@@ -44,7 +44,7 @@ for token in (
     require(session, token, "NetLane current protection")
 
 for token in (
-    "stage: 't>0'",
+    "stage: DecodeWaterlineStage.transitionFirstFrame",
     "targetWatermark: 1",
     "transitionFirstFrameDecision",
 ):
@@ -61,7 +61,16 @@ for token in (
     require(policy_test, token, "decode refill owner tests")
 
 require(reader, "const PageScrollPhysics()", "Reader page switching")
-require(roles, "this.transitionThreshold = 0.15", "early transition promotion")
+require(
+    roles,
+    "this.transitionThreshold = defaultTransitionCoverageThreshold",
+    "early transition promotion",
+)
+require(
+    read("packages/pipeline/lib/src/coverage_thresholds.dart"),
+    "const double defaultTransitionCoverageThreshold = 0.15;",
+    "early transition threshold",
+)
 for token in (
     "forwardEncodedPages: 7",
     "backwardEncodedPages: 3",

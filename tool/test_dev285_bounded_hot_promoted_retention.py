@@ -55,7 +55,10 @@ for marker in (
     req(marker in runtime, f'composition runtime retention budget missing: {marker}')
 
 # Device-falsified dev.284 UI keepAlive behavior must actually be absent.
-reader = text('packages/reader/lib/src/reader_view.dart')
+reader = (
+    text('packages/reader/lib/src/reader_view.dart')
+    + text('packages/reader/lib/src/reader_page_host.dart')
+)
 geometry = text('packages/reader/lib/src/vertical_reader_geometry.dart')
 for forbidden in (
     '_compositionMountedAtCurrentIndex',
@@ -90,7 +93,7 @@ require(
 )
 require('docs/ARCHITECTURE.md', '8-session LRU hot tail', 'ordinary handoff')
 require('docs/SPEC.md', '默认最多8个', 'promoted hot budget')
-require('docs/IMPLEMENTATION_STATUS.md', 'dev.285', '84次', 'session-copy')
+require('docs/IMPLEMENTATION_STATUS.md', 'promoted LRU=8')
 require('CHANGELOG.md', '0.31.0-dev.285', 'Bounded hot promoted physical retention')
 
 check = text('tool/check.sh')

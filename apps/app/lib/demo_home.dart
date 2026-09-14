@@ -199,6 +199,7 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<void>? _durableAdoption;
   Future<void>? _sourceMigrationRecovery;
   Future<void>? _externalSourceRefresh;
+  ChapterDownloadTransferRuntimeProvider? _localReadBackendPrewarmTarget;
   bool _externalSourceRefreshPending = false;
   bool _suppressLibrarySessionRebuild = false;
   bool _readerRouteOpen = false;
@@ -332,6 +333,19 @@ final class _DemoHomeState extends State<DemoHome> {
     });
     _externalSourcesPublishing = publishing;
     return publishing;
+  }
+
+  Future<void> _ensureExternalSourcePublished(String sourceId) async {
+    if (_sourceForId(sourceId) != null) return;
+    final controller = await _ensureExternalPluginController();
+    if (!mounted || controller == null) return;
+    _activeExternalPlugins = controller;
+    _watchExternalPluginSources(controller);
+    await controller.ensureSourceActive(sourceId);
+    if (!mounted || !identical(_activeExternalPlugins, controller)) return;
+    _requestExternalSourceRefresh(controller);
+    final refresh = _externalSourceRefresh;
+    if (refresh != null) await refresh;
   }
 
   Future<void> _publishExternalSources() async {
@@ -487,9 +501,48 @@ final class _DemoHomeState extends State<DemoHome> {
     _activeExternalPlugins = externalPlugins;
     if (externalPlugins != null) {
       _watchExternalPluginSources(externalPlugins);
-      unawaited(_refreshExternalSourcesWhenReady(externalPlugins));
+      // A supplied controller may still be activation-deferred. Do not turn
+      // Home construction into an all-plugin `ready` barrier; exact resource
+      // waiters below activate only their persisted source owner.
+      _completeInitialExternalSourcesPublished();
+      if (externalPlugins.activeSources.isNotEmpty) {
+        _requestExternalSourceRefresh(externalPlugins);
+      }
     }
     _serviceHandoff?.addListener(_handleServiceHandoffChanged);
+    _scheduleLocalReadBackendPrewarm();
+  }
+
+  void _scheduleLocalReadBackendPrewarm() {
+    final target = _downloadComposition;
+    if (target == null || identical(target, _localReadBackendPrewarmTarget)) {
+      return;
+    }
+    _localReadBackendPrewarmTarget = target;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !identical(_downloadComposition, target)) return;
+      final startedAtMicros = _traceClock.elapsedMicroseconds;
+      unawaited(
+        target.prewarmLocalReadBackend().then<void>((warmed) {
+          if (!mounted) return;
+          widget.debugTrace.record(
+            TraceEvent(
+              monotonicMicros: _traceClock.elapsedMicroseconds,
+              sessionId: 'home-storage-prewarm',
+              kind: TraceEventKind.artifactSource,
+              payload: <String, Object?>{
+                'stage': 'local-read-backend-prewarm',
+                'warmed': warmed,
+                'durationMicros':
+                    _traceClock.elapsedMicroseconds - startedAtMicros,
+              },
+            ),
+          );
+        }).catchError((Object error, StackTrace _) {
+          // Acceleration only; the real Reader path retains normal authority.
+        }),
+      );
+    });
   }
 
   @override
@@ -514,45 +567,20 @@ final class _DemoHomeState extends State<DemoHome> {
         !_isDeferredExternalSourceId(sourceId)) {
       return;
     }
-    unawaited(_ensureExternalSourcesPublished());
-    final initialPublished = _initialExternalSourcesPublished;
-    while (_sourceForId(sourceId) == null) {
-      final controller = _activeExternalPlugins;
-      final publishing = _externalSourcesPublishing;
-      if (controller == null && publishing == null) {
-        break;
-      }
-      final refresh = _externalSourceRefresh;
-      if (refresh != null) {
-        await refresh;
-        continue;
-      }
-      if (initialPublished != null &&
-          initialPublished.isCompleted &&
-          publishing == null) {
-        break;
-      }
-      final changeFuture = controller?.sourceChanges.first;
-      final readyFuture =
-          (initialPublished != null && !initialPublished.isCompleted)
-              ? initialPublished.future
-              : publishing;
-      if (changeFuture == null && readyFuture == null) {
-        break;
-      }
-      try {
-        await Future.any<dynamic>(<Future<dynamic>>[
-          if (changeFuture != null) changeFuture,
-          if (readyFuture != null) readyFuture,
-        ]);
-      } on Object {
-        break;
-      }
-      final pendingRefresh = _externalSourceRefresh;
-      if (pendingRefresh != null) {
-        await pendingRefresh;
+    // Snapshot covers can start before the durable plugin controller/loader is
+    // handed to Home. Keep that exact request pending across the handoff; do
+    // not fail it and do not replace the wait with an all-plugin ready barrier.
+    if (_activeExternalPlugins == null && _externalPluginLoader == null) {
+      final handoff = _initialExternalSourcesPublished;
+      if (handoff != null && !handoff.isCompleted) {
+        await handoff.future;
       }
     }
+    if (!mounted || _sourceForId(sourceId) != null) return;
+    // Once the controller is obtainable, activate only the owner recorded for
+    // this source. The source-management page remains the explicit full-ready
+    // path for users who actually request the complete source projection.
+    await _ensureExternalSourcePublished(sourceId);
   }
 
   void _completeInitialExternalSourcesPublished() {
@@ -782,26 +810,6 @@ final class _DemoHomeState extends State<DemoHome> {
     // when visible, still needs one explicit presentation refresh.
     if (mounted && _navigationIndex == 2) {
       setState(() {});
-    }
-  }
-
-  Future<void> _refreshExternalSourcesWhenReady(
-    ExternalPluginController controller,
-  ) async {
-    try {
-      await controller.ready;
-    } on Object {
-      _completeInitialExternalSourcesPublished();
-      return;
-    }
-    if (!mounted || !identical(_activeExternalPlugins, controller)) {
-      _completeInitialExternalSourcesPublished();
-      return;
-    }
-    _requestExternalSourceRefresh(controller);
-    final refresh = _externalSourceRefresh;
-    if (refresh != null) {
-      await refresh;
     }
   }
 

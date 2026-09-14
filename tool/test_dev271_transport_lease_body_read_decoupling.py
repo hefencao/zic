@@ -40,7 +40,7 @@ require(
     '_decrementTransportLease(task.bucket);',
     'if (!responseRetained && task.transportLeaseHeld)',
     'if (task.responseReadPermitHeld || !task.transportLeaseHeld',
-    'bool _reclaimInactiveTransportLeaseForDemand()',
+    'bool _reclaimTransportLeaseForDemand()',
     '!task.responseRetainedWhilePermitReleased',
     'task.demanded ||',
     "reason: 'inactive-transport-lease-reclaim'",
@@ -52,7 +52,7 @@ release = text[text.index('void _releaseResponseReadPermit('):text.index('Future
 req('_decrementResponseReadPermit(task.bucket);' in release, 'parking must release body-read permit')
 req('if (!responseRetained && task.transportLeaseHeld)' in release,
     'retained response must keep transport lease while local-body takeover releases it')
-reclaim = text[text.index('bool _reclaimInactiveTransportLeaseForDemand()'):text.index('bool _inactiveParkedVictimBefore')]
+reclaim = text[text.index('bool _reclaimTransportLeaseForDemand()'):text.index('bool _inactiveTransportVictimBefore')]
 for token in ('!task.transportLeaseHeld', 'task.responseReadPermitHeld',
               '!task.responseRetainedWhilePermitReleased', 'task.demanded'):
     req(token in reclaim, f'inactive transport reclaim missing victim guard: {token}')
@@ -93,7 +93,7 @@ for path in (
 require('docs/ARCHITECTURE.md', 'transport/source `transportLeases`', 'inactive-transport-lease-reclaim')
 require('docs/SPEC.md', 'transport/source lease', 'inactive-transport-lease-reclaim')
 require('docs/IMPLEMENTATION_STATUS.md', 'dev.271', 'globalRunning')
-require('docs/NEXT_CHAT_HANDOFF.md', 'dev.271', 'globalTransportLeases<=5')
+require('docs/NEXT_CHAT_HANDOFF.md', '5个transport lease', 'ranked-transport-lease-reclaim')
 require('CHANGELOG.md', '0.31.0-dev.271', 'transport/source lease')
 require('tool/check.sh', 'test_dev271_transport_lease_body_read_decoupling.py')
 

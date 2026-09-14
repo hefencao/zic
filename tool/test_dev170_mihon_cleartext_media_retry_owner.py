@@ -75,7 +75,18 @@ for token in (
     require(source_browser, token, 'source-cover failure diagnostics')
 
 session_test = read('packages/sessions/test/live_coordinator_test.dart')
-require(session_test, 'terminal source failure is not hot-looped while demand is unchanged', 'terminal failure regression test')
+require(session_test, 'terminal source failure survives scheduling-only demand changes', 'terminal failure regression test')
+transfer_owner_test = read('packages/sessions/test/download_transfer_owner_test.dart')
+require(
+    transfer_owner_test,
+    'provider setup failures retry finitely and publish terminal failure',
+    'physical owner finite retry regression test',
+)
+require(
+    transfer_owner_test,
+    "reason: 'unchanged demand must not hot-loop'",
+    'physical owner unchanged-demand regression assertion',
+)
 plugin_test = read('packages/plugin_host/test/runtime_source_adapter_test.dart')
 require(plugin_test, 'maps retryable runtime failure to a typed network failure', 'runtime retryability regression test')
 

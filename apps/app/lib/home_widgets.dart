@@ -53,6 +53,7 @@ final class ComicCoverCard extends StatelessWidget {
     required this.coverSource,
     required this.coverIdentity,
     required this.onTap,
+    this.coverPlaceholderSource,
     this.sourceAvailable = true,
     this.telemetryIdentity,
     this.interactionKey,
@@ -70,6 +71,7 @@ final class ComicCoverCard extends StatelessWidget {
   final LibraryComic comic;
   final ComicPreference preference;
   final Future<EncodedResourceSource> Function() coverSource;
+  final Future<EncodedResourceSource?> Function()? coverPlaceholderSource;
   final String coverIdentity;
   final bool sourceAvailable;
   final String? telemetryIdentity;
@@ -114,6 +116,7 @@ final class ComicCoverCard extends StatelessWidget {
                     telemetryIdentity: telemetryIdentity ?? coverIdentity,
                     sourceAvailable: sourceAvailable,
                     loader: coverSource,
+                    placeholderLoader: coverPlaceholderSource,
                     startupTelemetry: startupTelemetry,
                   ),
                   if (downloadProgress != null)
@@ -203,6 +206,7 @@ final class _CoverImage extends StatefulWidget {
     required this.telemetryIdentity,
     required this.sourceAvailable,
     required this.loader,
+    this.placeholderLoader,
     this.startupTelemetry,
   });
 
@@ -210,6 +214,7 @@ final class _CoverImage extends StatefulWidget {
   final String telemetryIdentity;
   final bool sourceAvailable;
   final Future<EncodedResourceSource> Function() loader;
+  final Future<EncodedResourceSource?> Function()? placeholderLoader;
   final HomeStartupTelemetry? startupTelemetry;
 
   @override
@@ -218,7 +223,11 @@ final class _CoverImage extends StatefulWidget {
 
 final class _CoverImageState extends State<_CoverImage> {
   late Future<EncodedResourceSource> _source;
+  Future<EncodedResourceSource?>? _placeholderSource;
   bool _reportedFirstFrame = false;
+  bool _placeholderPresented = false;
+  bool _placeholderTransitionScheduled = false;
+  bool _finalFrameReported = false;
   bool _sourceFailed = false;
   int _loadGeneration = 0;
   HomeStartupTelemetry? _loadTelemetry;
@@ -228,6 +237,30 @@ final class _CoverImageState extends State<_CoverImage> {
   void initState() {
     super.initState();
     _source = _loadSource();
+    _placeholderSource = _loadPlaceholderSource();
+  }
+
+  Future<EncodedResourceSource?>? _loadPlaceholderSource() {
+    final loader = widget.placeholderLoader;
+    if (loader == null) return null;
+    return () async {
+      try {
+        final source = await loader();
+        if (source != null) {
+          widget.startupTelemetry?.coverSourceReady(
+            widget.telemetryIdentity,
+            source: source.origin.name,
+            byteLength: source.lengthInBytes,
+            presentationStage: 'placeholder',
+          );
+        }
+        return source;
+      } on Object {
+        // This is a presentation acceleration only. The authoritative cover
+        // source continues independently and owns visible failure semantics.
+        return null;
+      }
+    }();
   }
 
   Future<EncodedResourceSource> _loadSource() async {
@@ -245,6 +278,7 @@ final class _CoverImageState extends State<_CoverImage> {
         telemetryIdentity,
         source: source.origin.name,
         byteLength: source.lengthInBytes,
+        presentationStage: 'final',
       );
       return source;
     } on Object catch (error) {
@@ -269,6 +303,24 @@ final class _CoverImageState extends State<_CoverImage> {
     }
   }
 
+  void _reportPlaceholderFrame() {
+    _reportFirstFrame();
+    if (_placeholderPresented || _placeholderTransitionScheduled) return;
+    _placeholderTransitionScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {
+        _placeholderPresented = true;
+        _placeholderTransitionScheduled = false;
+      });
+    });
+  }
+
+  void _reportFinalFrame() {
+    _finalFrameReported = true;
+    _reportFirstFrame();
+  }
+
   void _reportDecodeFailure() {
     final identity = _loadTelemetryIdentity;
     if (identity != null) {
@@ -284,7 +336,13 @@ final class _CoverImageState extends State<_CoverImage> {
         !oldWidget.sourceAvailable && widget.sourceAvailable;
     if (cacheChanged || (_sourceFailed && sourceBecameAvailable)) {
       _reportedFirstFrame = false;
+      _placeholderPresented = false;
+      _placeholderTransitionScheduled = false;
+      _finalFrameReported = false;
       _source = _loadSource();
+      if (cacheChanged) {
+        _placeholderSource = _loadPlaceholderSource();
+      }
     }
   }
 
@@ -300,21 +358,51 @@ final class _CoverImageState extends State<_CoverImage> {
             .ceil()
             .clamp(64, 512)
             .toInt();
+        Widget artwork(
+          EncodedResourceSource source, {
+          required VoidCallback onFrameReady,
+        }) =>
+            StableArtworkImage(
+              source: source,
+              seed: widget.cacheIdentity,
+              cacheWidth: cacheWidth,
+              fit: BoxFit.cover,
+              onFrameReady: onFrameReady,
+              onDecodeFailure: _reportDecodeFailure,
+            );
         return FutureBuilder<EncodedResourceSource>(
           future: _source,
           builder: (context, snapshot) {
             final source = snapshot.data;
-            if (source != null) {
-              return StableArtworkImage(
-                source: source,
-                seed: widget.cacheIdentity,
-                cacheWidth: cacheWidth,
-                fit: BoxFit.cover,
-                onFrameReady: _reportFirstFrame,
-                onDecodeFailure: _reportDecodeFailure,
-              );
+            final placeholderSource = _placeholderSource;
+            if (placeholderSource == null) {
+              return source == null
+                  ? SoftArtworkPlaceholder(seed: widget.cacheIdentity)
+                  : artwork(source, onFrameReady: _reportFinalFrame);
             }
-            return SoftArtworkPlaceholder(seed: widget.cacheIdentity);
+            return FutureBuilder<EncodedResourceSource?>(
+              future: placeholderSource,
+              builder: (context, placeholderSnapshot) {
+                final placeholder = placeholderSnapshot.data;
+                if (placeholder != null &&
+                    !_placeholderPresented &&
+                    !_finalFrameReported) {
+                  return artwork(
+                    placeholder,
+                    onFrameReady: _reportPlaceholderFrame,
+                  );
+                }
+                if (source != null) {
+                  return artwork(source, onFrameReady: _reportFinalFrame);
+                }
+                return placeholder == null
+                    ? SoftArtworkPlaceholder(seed: widget.cacheIdentity)
+                    : artwork(
+                        placeholder,
+                        onFrameReady: _reportPlaceholderFrame,
+                      );
+              },
+            );
           },
         );
       },
@@ -432,6 +520,7 @@ final class ShelfListTile extends StatelessWidget {
     required this.coverSource,
     required this.coverIdentity,
     required this.downloadProgress,
+    this.coverPlaceholderSource,
     required this.selected,
     required this.onTap,
     this.sourceAvailable = true,
@@ -444,6 +533,7 @@ final class ShelfListTile extends StatelessWidget {
   final LibraryComic comic;
   final ComicPreference preference;
   final Future<EncodedResourceSource> Function() coverSource;
+  final Future<EncodedResourceSource?> Function()? coverPlaceholderSource;
   final String coverIdentity;
   final bool sourceAvailable;
   final ComicDownloadProgress? downloadProgress;
@@ -475,6 +565,7 @@ final class ShelfListTile extends StatelessWidget {
                     telemetryIdentity: coverIdentity,
                     sourceAvailable: sourceAvailable,
                     loader: coverSource,
+                    placeholderLoader: coverPlaceholderSource,
                     startupTelemetry: startupTelemetry,
                   ),
                   if (downloadProgress != null)
