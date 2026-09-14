@@ -583,6 +583,48 @@ void main() {
   );
 
   test(
+    'sqlite cache materializes fallback artifact identity before a path move',
+    () async {
+      final index = SqliteIndex.memory();
+      await index.open();
+      addTearDown(index.close);
+
+      await index.list();
+      final initial = CacheRec(
+        id: id,
+        state: CacheState.ready,
+        path: '/tmp/fallback-artifact-old.bin',
+        bytes: 3,
+        checksum: '01020304',
+        createdUs: 1,
+        touchedUs: 1,
+        storageRootId: '/tmp',
+      );
+      await index.put(initial);
+
+      final cached = await index.get(id.key);
+      expect(cached, isNotNull);
+      expect(cached!.artifactId, initial.effectiveArtifactId);
+      final stableArtifactId = cached.artifactId;
+
+      await index.put(
+        cached.copyWith(
+          path: '/tmp/fallback-artifact-new.bin',
+          touchedUs: 2,
+        ),
+      );
+
+      final moved = await index.get(id.key);
+      expect(moved, isNotNull);
+      expect(moved!.artifactId, stableArtifactId);
+      expect(moved.effectiveArtifactId, stableArtifactId);
+      final replicas = await index.listArtifactReplicas(stableArtifactId);
+      expect(replicas, hasLength(1));
+      expect(replicas.single.accessLocator, '/tmp/fallback-artifact-new.bin');
+    },
+  );
+
+  test(
     'existing artifact binding preserves the physical object locator',
     () async {
     final index = SqliteIndex.memory();
@@ -1108,7 +1150,7 @@ void runCacheSchemaV2Tests() {
     await migrated.close();
 
     final schema = sql.sqlite3.open(dbPath);
-      expect(schema.select('PRAGMA user_version').single.values.single, 15);
+      expect(schema.select('PRAGMA user_version').single.values.single, 18);
     expect(
       schema
           .select(
@@ -1213,7 +1255,7 @@ void runCacheSchemaV2Tests() {
             'migration must not invent manual intent for ambiguous old rows',
       );
     final raw = sql.sqlite3.open(dbPath);
-      expect(raw.select('PRAGMA user_version').single.values.single, 15);
+      expect(raw.select('PRAGMA user_version').single.values.single, 18);
     raw.dispose();
     },
   );
@@ -1271,7 +1313,7 @@ void runCacheSchemaV2Tests() {
 
     final checked = sql.sqlite3.open(dbPath);
     addTearDown(checked.dispose);
-      expect(checked.select('PRAGMA user_version').single.values.single, 15);
+      expect(checked.select('PRAGMA user_version').single.values.single, 18);
     expect(
       checked.select(
         "SELECT name FROM sqlite_master WHERE type = 'index' "
@@ -1359,7 +1401,7 @@ void runCacheSchemaV2Tests() {
 
       final checked = sql.sqlite3.open(dbPath);
       addTearDown(checked.dispose);
-      expect(checked.select('PRAGMA user_version').single.values.single, 15);
+      expect(checked.select('PRAGMA user_version').single.values.single, 18);
       expect(
         checked.select(
           "SELECT name FROM sqlite_master WHERE type = 'table' "
@@ -1393,7 +1435,7 @@ void runCacheSchemaV2Tests() {
       canonicalUri: Uri.parse('https://example.test/current-reopen.webp'),
     );
     final raw = sql.sqlite3.open(dbPath);
-      expect(raw.select('PRAGMA user_version').single.values.single, 15);
+      expect(raw.select('PRAGMA user_version').single.values.single, 18);
     raw.execute(
       'INSERT INTO cache_entry '
       '(key, download_json, state, path, bytes, checksum, created_us, touched_us, '
@@ -1482,6 +1524,12 @@ void runCacheSchemaV2Tests() {
       sourcePath,
       reason: 'copying progress must not become replica authority',
     );
+    expect(await first.isStorageAccessLocatorAuthoritative(sourcePath), isTrue);
+    expect(
+      await first.isStorageAccessLocatorAuthoritative(destinationPath),
+      isTrue,
+    );
+    expect(await first.isStorageAccessLocatorAuthoritative(temporaryPath), isTrue);
     await first.close();
 
     final second = SqliteIndex(dbPath);
@@ -1507,6 +1555,15 @@ void runCacheSchemaV2Tests() {
     expect(
       (await second.getArtifactReplicaMigration(replica.replicaId))!.phase,
       ArtifactReplicaMigrationPhase.cleanupPending,
+    );
+    expect(await second.isStorageAccessLocatorAuthoritative(sourcePath), isFalse);
+    expect(
+      await second.isStorageAccessLocatorAuthoritative(destinationPath),
+      isTrue,
+    );
+    expect(
+      await second.isStorageAccessLocatorAuthoritative(temporaryPath),
+      isFalse,
     );
     await second.close();
 
@@ -1775,6 +1832,61 @@ void runCacheSchemaV2Tests() {
   });
 
   test(
+    're-proven removable mount path keeps one durable SAF-root identity',
+    () async {
+      final index = SqliteIndex.memory();
+      await index.open();
+      addTearDown(index.close);
+      const saf =
+          'content://com.android.externalstorage.documents/tree/CAFE-BEEF%3ABooks';
+      const firstDirect = '/storage/CAFE-BEEF/Books';
+      const remountedDirect = '/mnt/media_rw/CAFE-BEEF/Books';
+
+      final initial = await index.registerStorageRootAccessAliasProof(
+        const StorageRootAccessAliasProof(
+          direct: DirectStorageAccessLocator(firstDirect),
+          saf: SafStorageAccessLocator(saf),
+        ),
+        verifiedUs: 10,
+      );
+      final remounted = await index.registerStorageRootAccessAliasProof(
+        const StorageRootAccessAliasProof(
+          direct: DirectStorageAccessLocator(remountedDirect),
+          saf: SafStorageAccessLocator(saf),
+        ),
+        verifiedUs: 20,
+      );
+
+      expect(remounted.rootId, initial.rootId);
+      expect((await index.getStorageRoot(firstDirect))?.rootId, initial.rootId);
+      expect(
+        (await index.getStorageRoot(remountedDirect))?.rootId,
+        initial.rootId,
+      );
+      final directLocators = remounted.accessLocators
+          .where((value) => value.kind == StorageAccessLocatorKind.direct)
+          .toList(growable: false);
+      expect(directLocators, hasLength(2));
+      expect(
+        directLocators.map((value) => value.locator).toSet(),
+        <String>{firstDirect, remountedDirect},
+      );
+      final latest = directLocators.singleWhere(
+        (value) => value.locator == remountedDirect,
+      );
+      expect(latest.verifiedUs, 20);
+      expect(latest.health, StorageAccessHealth.healthy);
+      expect(
+        remounted.accessLocators
+            .where((value) => value.kind == StorageAccessLocatorKind.saf)
+            .single
+            .verifiedUs,
+        20,
+      );
+    },
+  );
+
+  test(
     'storage-root alias merge keeps durable migration roots aligned',
     () async {
     final index = SqliteIndex.memory();
@@ -2006,7 +2118,7 @@ void runCacheSchemaV2Tests() {
 
       final checked = sql.sqlite3.open(path);
       addTearDown(checked.dispose);
-      expect(checked.select('PRAGMA user_version').single.values.single, 15);
+      expect(checked.select('PRAGMA user_version').single.values.single, 18);
       final columns = checked
           .select('PRAGMA table_info(cache_entry)')
           .map((row) => row['name'])
@@ -2054,7 +2166,7 @@ void runCacheSchemaV2Tests() {
 
       final checked = sql.sqlite3.open(path);
       addTearDown(checked.dispose);
-      expect(checked.select('PRAGMA user_version').single.values.single, 15);
+      expect(checked.select('PRAGMA user_version').single.values.single, 18);
       expect(
         checked.select(
           "SELECT name FROM sqlite_master WHERE type='table' "
@@ -2068,6 +2180,179 @@ void runCacheSchemaV2Tests() {
       );
     },
   );
+
+  test('schema 15 adds cleanup debt and upgrades through schema 18',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'cache_index_v15_cleanup_debt_',
+    );
+    addTearDown(() => temp.delete(recursive: true));
+    final path = '${temp.path}/cache.sqlite';
+    final seed = SqliteIndex(path);
+    await seed.open();
+    await seed.close();
+
+    final legacy = sql.sqlite3.open(path);
+    legacy.execute('DROP TABLE storage_cleanup_debt');
+    legacy.execute('PRAGMA user_version = 15');
+    legacy.dispose();
+
+    final migrated = SqliteIndex(path);
+    await migrated.open();
+    const debt = StorageCleanupDebtRecord(
+      accessLocator: 'saf-record://tree/partial/page.part.zic-tmp-1',
+      storageRootId: 'tree',
+      kind: StorageCleanupDebtKind.temporary,
+      createdUs: 10,
+      touchedUs: 11,
+    );
+    await migrated.putStorageCleanupDebt(debt);
+    expect(await migrated.listStorageCleanupDebts(), hasLength(1));
+    final restored = (await migrated.listStorageCleanupDebts()).single;
+    expect(restored.accessLocator, debt.accessLocator);
+    expect(restored.storageRootId, debt.storageRootId);
+    expect(restored.kind, StorageCleanupDebtKind.temporary);
+    await migrated.removeStorageCleanupDebt(debt.accessLocator);
+    expect(await migrated.listStorageCleanupDebts(), isEmpty);
+    const obsolete = StorageCleanupDebtRecord(
+      accessLocator: '/storage/old/page.bin',
+      storageRootId: '/storage/old',
+      kind: StorageCleanupDebtKind.obsoleteSealedSource,
+      createdUs: 12,
+      touchedUs: 13,
+      expectedBytes: 4,
+      expectedChecksum: '01020304',
+      expectedChecksumAlgorithm: 'crc32',
+    );
+    await migrated.putStorageCleanupDebt(obsolete);
+    final obsoleteRestored = (await migrated.listStorageCleanupDebts()).single;
+    expect(obsoleteRestored.kind, StorageCleanupDebtKind.obsoleteSealedSource);
+    expect(obsoleteRestored.expectedBytes, 4);
+    expect(obsoleteRestored.expectedChecksum, '01020304');
+    expect(obsoleteRestored.expectedChecksumAlgorithm, 'crc32');
+    await migrated.removeStorageCleanupDebt(obsolete.accessLocator);
+    const obsoletePartial = StorageCleanupDebtRecord(
+      accessLocator: '/storage/old/page.part',
+      storageRootId: '/storage/old',
+      kind: StorageCleanupDebtKind.obsoletePartialSource,
+      createdUs: 14,
+      touchedUs: 15,
+      expectedBytes: 4096,
+      expectedChecksum: '1234abcd',
+      expectedChecksumAlgorithm: 'crc32',
+    );
+    await migrated.putStorageCleanupDebt(obsoletePartial);
+    final partialRestored = (await migrated.listStorageCleanupDebts()).single;
+    expect(partialRestored.kind, StorageCleanupDebtKind.obsoletePartialSource);
+    expect(partialRestored.expectedBytes, 4096);
+    expect(partialRestored.expectedChecksum, '1234abcd');
+    await migrated.removeStorageCleanupDebt(obsoletePartial.accessLocator);
+    expect(
+      () => migrated.putStorageCleanupDebt(
+        const StorageCleanupDebtRecord(
+          accessLocator: '/storage/old/unproven.bin',
+          storageRootId: '/storage/old',
+          kind: StorageCleanupDebtKind.obsoleteSealedSource,
+          createdUs: 14,
+          touchedUs: 14,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    await migrated.close();
+
+    final checked = sql.sqlite3.open(path);
+    addTearDown(checked.dispose);
+    expect(checked.select('PRAGMA user_version').single.values.single, 18);
+    expect(
+      checked.select(
+        "SELECT name FROM sqlite_master WHERE type='table' "
+        "AND name='storage_cleanup_debt'",
+      ),
+      hasLength(1),
+    );
+  });
+
+  test('schema 17 repairs historical leading-slash SAF identity', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'cache_index_v17_saf_identity_',
+    );
+    addTearDown(() => temp.delete(recursive: true));
+    final path = '${temp.path}/cache.sqlite';
+    final seed = SqliteIndex(path);
+    await seed.open();
+    await seed.close();
+
+    const legacyTree =
+        '/content://com.android.externalstorage.documents/tree/primary%3Abooks';
+    const tree =
+        'content://com.android.externalstorage.documents/tree/primary%3Abooks';
+    final legacyLocator =
+        'saf:${Uri.encodeComponent(legacyTree)}?path=${Uri.encodeComponent('Comic/001.webp')}';
+    final repairedLocator =
+        'saf:${Uri.encodeComponent(tree)}?path=${Uri.encodeComponent('Comic/001.webp')}';
+
+    final legacy = sql.sqlite3.open(path);
+    legacy.execute(
+      'INSERT INTO storage_root (root_id, created_us, touched_us) VALUES (?, ?, ?)',
+      <Object?>[legacyTree, 10, 20],
+    );
+    legacy.execute(
+      'INSERT INTO storage_access_locator '
+      '(kind, locator, root_id, health, verified_us, touched_us) '
+      "VALUES ('direct', ?, ?, 'unknown', NULL, ?)",
+      <Object?>[legacyTree, legacyTree, 20],
+    );
+    legacy.execute(
+      'INSERT INTO artifact_object '
+      '(artifact_id, path, bytes, checksum, checksum_algorithm, storage_root_id, created_us, touched_us) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      <Object?>['artifact', legacyLocator, 4, '01020304', 'crc32', legacyTree, 10, 20],
+    );
+    legacy.execute(
+      'INSERT INTO artifact_replica '
+      '(replica_id, artifact_id, access_locator, storage_root_id, created_us, touched_us) '
+      'VALUES (?, ?, ?, ?, ?, ?)',
+      <Object?>['replica', 'artifact', legacyLocator, legacyTree, 10, 20],
+    );
+    legacy.execute('PRAGMA user_version = 17');
+    legacy.dispose();
+
+    final migrated = SqliteIndex(path);
+    await migrated.open();
+    await migrated.close();
+
+    final checked = sql.sqlite3.open(path);
+    addTearDown(checked.dispose);
+    expect(checked.select('PRAGMA user_version').single.values.single, 18);
+    expect(
+      checked.select('SELECT root_id FROM storage_root').map((row) => row['root_id']),
+      contains(tree),
+    );
+    expect(
+      checked.select('SELECT root_id FROM storage_root').map((row) => row['root_id']),
+      isNot(contains(legacyTree)),
+    );
+    final access = checked.select(
+      'SELECT kind, locator, root_id, health FROM storage_access_locator WHERE root_id = ?',
+      <Object?>[tree],
+    ).single;
+    expect(access['kind'], 'saf');
+    expect(access['locator'], tree);
+    expect(access['health'], 'unknown');
+    final replica = checked.select(
+      'SELECT access_locator, storage_root_id FROM artifact_replica WHERE replica_id = ?',
+      <Object?>['replica'],
+    ).single;
+    expect(replica['access_locator'], repairedLocator);
+    expect(replica['storage_root_id'], tree);
+    final object = checked.select(
+      'SELECT path, storage_root_id FROM artifact_object WHERE artifact_id = ?',
+      <Object?>['artifact'],
+    ).single;
+    expect(object['path'], repairedLocator);
+    expect(object['storage_root_id'], tree);
+  });
 
   test('DownloadPlacement equality includes export page order', () {
     final now = DateTime.utc(2026, 9, 6);

@@ -28,28 +28,6 @@ void main() {
     );
     expect(plan.candidates, isEmpty);
   });
-}
-
-CacheRec _rec(String page, int bytes, int touched) {
-  final id = DownloadId(
-    content: ContentId(
-      sourceId: 'source',
-      comicId: 'comic',
-      chapterId: 'chapter',
-      pageId: page,
-    ),
-    sourceRevision: 'r1',
-    canonicalUri: Uri.parse('https://example.test/$page'),
-  );
-  return CacheRec(
-    id: id,
-    state: CacheState.ready,
-    path: '/cache/$page',
-    bytes: bytes,
-    checksum: page,
-    createdUs: touched,
-    touchedUs: touched,
-  );
 
   test('shared ready bindings count one physical artifact and protect as a group', () {
     final first = _rec('shared-a', 40, 1).copyWith(artifactId: 'shared-artifact');
@@ -85,5 +63,26 @@ CacheRec _rec(String page, int bytes, int touched) {
     expect(plan.plannedBytes, 40);
     expect(plan.projectedBytes, 0);
   });
+}
 
+CacheRec _rec(String page, int bytes, int touched) {
+  final id = DownloadId(
+    content: ContentId(
+      sourceId: 'source',
+      comicId: 'comic',
+      chapterId: 'chapter',
+      pageId: page,
+    ),
+    sourceRevision: 'r1',
+    canonicalUri: Uri.parse('https://example.test/$page'),
+  );
+  return CacheRec(
+    id: id,
+    state: CacheState.ready,
+    path: '/cache/$page',
+    bytes: bytes,
+    checksum: page,
+    createdUs: touched,
+    touchedUs: touched,
+  );
 }

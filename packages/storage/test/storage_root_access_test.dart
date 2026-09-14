@@ -9,6 +9,60 @@ void main() {
     'content://com.android.externalstorage.documents/tree/primary%3ABooks',
   );
 
+  test('newest proven Direct alias wins after a removable-volume remount', () {
+    const oldDirect = StorageAccessLocatorRecord(
+      rootId: 'tree',
+      kind: StorageAccessLocatorKind.direct,
+      locator: '/mnt/media-old/Books',
+      health: StorageAccessHealth.healthy,
+      verifiedUs: 10,
+      touchedUs: 10,
+    );
+    const newDirect = StorageAccessLocatorRecord(
+      rootId: 'tree',
+      kind: StorageAccessLocatorKind.direct,
+      locator: '/mnt/media-new/Books',
+      health: StorageAccessHealth.healthy,
+      verifiedUs: 20,
+      touchedUs: 20,
+    );
+    const safAccess = StorageAccessLocatorRecord(
+      rootId: 'tree',
+      kind: StorageAccessLocatorKind.saf,
+      locator: 'content://tree/CAFE-BEEF%3ABooks',
+      health: StorageAccessHealth.healthy,
+      verifiedUs: 20,
+      touchedUs: 20,
+    );
+    final ordered = <StorageAccessLocatorRecord>[oldDirect, safAccess, newDirect]
+      ..sort(compareStorageAccessPreference);
+
+    expect(ordered, <StorageAccessLocatorRecord>[newDirect, oldDirect, safAccess]);
+  });
+
+  test('denied Direct alias stays behind a healthy SAF fallback', () {
+    const deniedDirect = StorageAccessLocatorRecord(
+      rootId: 'tree',
+      kind: StorageAccessLocatorKind.direct,
+      locator: '/mnt/denied/Books',
+      health: StorageAccessHealth.accessDenied,
+      verifiedUs: 30,
+      touchedUs: 30,
+    );
+    const safAccess = StorageAccessLocatorRecord(
+      rootId: 'tree',
+      kind: StorageAccessLocatorKind.saf,
+      locator: 'content://tree/CAFE-BEEF%3ABooks',
+      health: StorageAccessHealth.healthy,
+      verifiedUs: 20,
+      touchedUs: 20,
+    );
+    final ordered = <StorageAccessLocatorRecord>[deniedDirect, safAccess]
+      ..sort(compareStorageAccessPreference);
+
+    expect(ordered.first, safAccess);
+  });
+
   test('proves one root only after Direct→SAF and SAF→Direct visibility',
       () async {
     final io = _AliasProbeIo(shared: true);

@@ -8,7 +8,7 @@ import 'package:test/test.dart';
 void main() {
   late Directory temp;
   late CacheLayout layout;
-  late MemIndex index;
+  late SqliteIndex index;
 
   final id = DownloadId(
     content: ContentId(
@@ -24,7 +24,7 @@ void main() {
   setUp(() async {
     temp = await Directory.systemTemp.createTemp('cache_scanner_test_');
     layout = CacheLayout(temp.path);
-    index = MemIndex();
+    index = SqliteIndex.memory();
     await index.open();
   });
 
@@ -33,36 +33,33 @@ void main() {
     await temp.delete(recursive: true);
   });
 
-  test('rebuilds partial and ready records from artifact metadata', () async {
+  test('sidecar-only crash files never manufacture durable authority', () async {
     final artifact = layout.artifactFor(id);
     await artifact.restore();
     await artifact.writeMeta(<String, Object?>{'download': id.toJson()});
     await artifact.append(0, <int>[1, 2, 3]);
     await artifact.pause();
 
-    var report = await CacheScanner(layout: layout, index: index).scan();
-    expect(report.recovered, 1);
-    expect((await index.get(id.key))?.state, CacheState.partial);
+    final report = await CacheScanner(layout: layout, index: index).scan();
 
-    await artifact.restore();
-    await artifact.seal(expectedLength: 3);
-    await artifact.promote();
-    report = await CacheScanner(layout: layout, index: index).scan();
-    expect(report.recovered, 1);
-    final ready = await index.get(id.key);
-    expect(ready?.state, CacheState.ready);
-    expect(ready?.bytes, 3);
-    await artifact.dispose();
+    expect(report.recovered, 0);
+    expect(await index.get(id.key), isNull);
+    expect(await File(artifact.partialPath).exists(), isFalse);
+    expect(await File(artifact.metaPath).exists(), isFalse);
   });
 
-  test('rebuilding records preserves durable binding metadata', () async {
+  test('authoritative READY ignores missing owner metadata in sidecar', () async {
     final artifact = layout.artifactFor(id);
     await artifact.restore();
     await artifact.writeMeta(<String, Object?>{'download': id.toJson()});
-    await artifact.append(0, <int>[1, 2, 3]);
-    await artifact.seal(expectedLength: 3);
+    await artifact.append(0, <int>[1, 2, 3, 4]);
+    await artifact.seal(expectedLength: 4);
     await artifact.promote();
     final snapshot = artifact.snapshot;
+    const artifactId = 'scanner-ready-object';
+    final physical = PhysicalMediaId.canonical(
+      'family\u0000chapter\u0000segment\u0000scanner',
+    );
     await index.put(
       CacheRec(
         id: id,
@@ -72,81 +69,176 @@ void main() {
         checksum: snapshot.checksum,
         createdUs: 1,
         touchedUs: 2,
-        pinned: true,
+        pinned: false,
         checksumAlgorithm: 'crc32',
-        artifactId: 'shared-object',
-        storageRootId: 'source-root',
+        artifactId: artifactId,
+        storageRootId: layout.root,
       ),
     );
-
-    await CacheScanner(layout: layout, index: index).scan();
-
-    final rebuilt = await index.get(id.key);
-    expect(rebuilt?.pinned, isTrue);
-    expect(rebuilt?.artifactId, 'shared-object');
-    expect(rebuilt?.storageRootId, 'source-root');
-    await artifact.dispose();
-  });
-
-  test('rejects same-length final corruption against its metadata proof',
-      () async {
-    final artifact = layout.artifactFor(id);
-    await artifact.restore();
-    await artifact.writeMeta(<String, Object?>{'download': id.toJson()});
-    await artifact.append(0, <int>[1, 2, 3, 4]);
-    await artifact.seal(expectedLength: 4);
-    await artifact.promote();
-
-    final bytes = await File(artifact.finalPath).readAsBytes();
-    bytes[bytes.length - 1] ^= 0xff;
-    await File(artifact.finalPath).writeAsBytes(bytes, flush: true);
-
-    final report = await CacheScanner(layout: layout, index: index).scan();
-
-    expect(report.recovered, 0);
-    expect(report.invalidMeta, 1);
-    expect(await File(artifact.finalPath).exists(), isFalse);
-    expect(await File(artifact.finalMetaPath).exists(), isFalse);
-    expect(await index.get(id.key), isNull);
-  });
-
-  test('recovers staged final metadata after interrupted promote', () async {
-    final artifact = layout.artifactFor(id);
-    final data = File(artifact.finalPath);
-    await data.parent.create(recursive: true);
-    await data.writeAsBytes(<int>[1, 2, 3], flush: true);
-    await File('${artifact.finalMetaPath}.tmp').writeAsString(
-      jsonEncode(<String, Object?>{'download': id.toJson()}),
+    await index.putPhysicalMediaArtifactBinding(
+      id: physical,
+      artifactId: artifactId,
+      createdUs: 1,
+      touchedUs: 2,
+    );
+    await File(artifact.finalMetaPath).writeAsString(
+      jsonEncode(<String, Object?>{
+        'artifactState': 'ready',
+        'path': artifact.finalPath,
+        'bytes': snapshot.committedLength,
+        'checksum': snapshot.checksum,
+      }),
       flush: true,
     );
 
     final report = await CacheScanner(layout: layout, index: index).scan();
-    expect(report.recovered, 1);
-    expect(await File(artifact.finalMetaPath).exists(), isTrue);
+
+    expect(report.invalidMeta, 0);
+    expect(await File(artifact.finalPath).readAsBytes(), <int>[1, 2, 3, 4]);
     expect((await index.get(id.key))?.state, CacheState.ready);
+    expect(await index.getPhysicalMediaArtifact(physical), isNotNull);
+    expect(await index.listArtifactReplicas(artifactId), hasLength(1));
   });
 
-  test('recovers a final body renamed before its ready metadata', () async {
-    final artifact = layout.artifactFor(id);
-    await artifact.restore();
-    await artifact.writeMeta(<String, Object?>{'download': id.toJson()});
-    await artifact.append(0, <int>[1, 2, 3]);
-    await artifact.seal(expectedLength: 3);
-
-    // Simulate a process dying after the promotion data rename but before the
-    // final ready sidecar was installed.
-    expect(await File(artifact.partialPath).exists(), isTrue);
-    await Directory(artifact.finalPath).parent.create(recursive: true);
-    await File(artifact.partialPath).rename(artifact.finalPath);
+  test('READY compatibility path absence never removes logical authority',
+      () async {
+    final missing = '${layout.finalDir}${Platform.pathSeparator}missing.bin';
+    await index.put(
+      CacheRec(
+        id: id,
+        state: CacheState.ready,
+        path: missing,
+        bytes: 4,
+        checksum: 'b63cfbcd',
+        createdUs: 1,
+        touchedUs: 2,
+        checksumAlgorithm: 'crc32',
+        artifactId: 'missing-ready-object',
+        storageRootId: layout.root,
+      ),
+    );
 
     final report = await CacheScanner(layout: layout, index: index).scan();
 
-    expect(report.recovered, 1);
-    expect(await File(artifact.finalPath).exists(), isTrue);
-    expect(await File(artifact.finalMetaPath).exists(), isTrue);
-    expect(await File(artifact.metaPath).exists(), isFalse);
+    expect(report.removedRecords, 0);
     expect((await index.get(id.key))?.state, CacheState.ready);
-    expect((await index.get(id.key))?.path, artifact.finalPath);
+    expect(await index.listArtifactReplicas('missing-ready-object'), hasLength(1));
+  });
+
+  test('indexed partial body survives without sidecar', () async {
+    final path = '${layout.partialDir}${Platform.pathSeparator}indexed.part';
+    await Directory(layout.partialDir).create(recursive: true);
+    await File(path).writeAsBytes(<int>[1, 2, 3], flush: true);
+    await index.put(
+      CacheRec(
+        id: id,
+        state: CacheState.partial,
+        path: path,
+        bytes: 3,
+        checksum: '',
+        createdUs: 1,
+        touchedUs: 2,
+        storageRootId: layout.root,
+      ),
+    );
+
+    final report = await CacheScanner(layout: layout, index: index).scan();
+
+    expect(report.removedRecords, 0);
+    expect(await File(path).readAsBytes(), <int>[1, 2, 3]);
+    expect((await index.get(id.key))?.state, CacheState.partial);
+  });
+
+  test('missing indexed partial body removes only the partial binding', () async {
+    final path = '${layout.partialDir}${Platform.pathSeparator}missing.part';
+    await index.put(
+      CacheRec(
+        id: id,
+        state: CacheState.partial,
+        path: path,
+        bytes: 3,
+        checksum: '',
+        createdUs: 1,
+        touchedUs: 2,
+        storageRootId: layout.root,
+      ),
+    );
+
+    final report = await CacheScanner(layout: layout, index: index).scan();
+
+    expect(report.removedRecords, 1);
+    expect(await index.get(id.key), isNull);
+  });
+
+  test('uncommitted final body is orphan cleanup, not crash authority', () async {
+    final artifact = layout.artifactFor(id);
+    final data = File(artifact.finalPath);
+    await data.parent.create(recursive: true);
+    await data.writeAsBytes(<int>[1, 2, 3], flush: true);
+    await File(artifact.finalMetaPath).writeAsString(
+      jsonEncode(<String, Object?>{
+        'download': id.toJson(),
+        'artifactState': 'ready',
+        'path': artifact.finalPath,
+        'bytes': 3,
+      }),
+      flush: true,
+    );
+
+    final report = await CacheScanner(layout: layout, index: index).scan();
+
+    expect(report.recovered, 0);
+    expect(await index.get(id.key), isNull);
+    expect(await data.exists(), isFalse);
+    expect(await File(artifact.finalMetaPath).exists(), isFalse);
+  });
+
+  test('promotion journal protects both source and destination candidates',
+      () async {
+    final download = DownloadId(
+      content: const ContentId(
+        sourceId: 'promotion-source',
+        comicId: 'promotion-comic',
+        chapterId: 'promotion-chapter',
+        pageId: 'promotion-page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/promotion.webp'),
+    );
+    final physical = PhysicalMediaId.canonical('promotion-scanner');
+    final artifact = layout.artifactForPhysical(physical);
+    const body = <int>[1, 2, 3, 4];
+    final crc = Crc32()..add(body);
+    await File(artifact.partialPath).parent.create(recursive: true);
+    await File(artifact.partialPath).writeAsBytes(body, flush: true);
+    await File(artifact.finalPath).parent.create(recursive: true);
+    await File(artifact.finalPath).writeAsBytes(body, flush: true);
+    await index.putPhysicalPartial(
+      PhysicalPartialRecord(
+        id: physical,
+        path: artifact.partialPath,
+        bytes: body.length,
+        checksum: crc.hex,
+        createdUs: 1,
+        touchedUs: 2,
+        storageRootId: layout.root,
+      ),
+    );
+    await index.beginArtifactPromotion(
+      id: download,
+      physicalId: physical,
+      sourceAccessLocator: artifact.partialPath,
+      destinationAccessLocator: artifact.finalPath,
+      bytes: body.length,
+      checksum: crc.hex,
+      storageRootId: layout.root,
+    );
+
+    final report = await CacheScanner(layout: layout, index: index).scan();
+
+    expect(await File(artifact.partialPath).exists(), isTrue);
+    expect(await File(artifact.finalPath).exists(), isTrue);
+    expect(report.deletedOrphans, 0);
   });
 
   test('does not delete an active orphan', () async {

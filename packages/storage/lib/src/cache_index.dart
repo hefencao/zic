@@ -226,6 +226,105 @@ final class ArtifactReplicaMigrationRecord {
   final int touchedUs;
 }
 
+
+/// Durable transaction progress for one sealed partial becoming a READY artifact.
+///
+/// This row is deliberately not artifact authority. It only proves that the
+/// sealed bytes identified by [bytes]/[checksum] may live at either the source
+/// or destination locator while one promotion commit is incomplete. A
+/// successful metadata commit removes this row in the same SQLite transaction
+/// that creates the artifact/replica authority.
+final class ArtifactPromotionRecord {
+  const ArtifactPromotionRecord({
+    required this.promotionKey,
+    required this.id,
+    required this.physicalId,
+    required this.sourceAccessLocator,
+    required this.destinationAccessLocator,
+    required this.bytes,
+    required this.checksum,
+    required this.checksumAlgorithm,
+    required this.artifactId,
+    required this.storageRootId,
+    required this.createdUs,
+    required this.touchedUs,
+    required this.pinned,
+  });
+
+  final String promotionKey;
+  final DownloadId id;
+  final PhysicalMediaId? physicalId;
+  final String sourceAccessLocator;
+  final String destinationAccessLocator;
+  final int bytes;
+  final String checksum;
+  final String checksumAlgorithm;
+  final String artifactId;
+  final String storageRootId;
+  final int createdUs;
+  final int touchedUs;
+  final bool pinned;
+}
+
+/// Transactional progress owner for filesystem promotion into sealed READY.
+///
+/// Implementations MUST NOT expose [ArtifactPromotionRecord] as a readable
+/// artifact. It exists only to make the filesystem rename and the final SQLite
+/// artifact/replica commit crash-recoverable.
+abstract interface class ArtifactPromotionIndex {
+  Future<ArtifactPromotionRecord> beginArtifactPromotion({
+    required DownloadId id,
+    required PhysicalMediaId physicalId,
+    required String sourceAccessLocator,
+    required String destinationAccessLocator,
+    required int bytes,
+    required String checksum,
+    required String storageRootId,
+  });
+
+  Future<List<ArtifactPromotionRecord>> listArtifactPromotions();
+
+  Future<CacheRec> commitArtifactPromotion(String promotionKey);
+
+  Future<void> removeArtifactPromotion(String promotionKey);
+}
+
+enum StorageCleanupDebtKind {
+  temporary,
+  obsoleteSealedSource,
+  obsoletePartialSource,
+}
+
+/// Durable cleanup-only fact for one non-authoritative exact storage locator.
+///
+/// This record never owns artifact, replica, partial or download identity.
+/// [StorageCleanupDebtKind.temporary] is recorded before creating an App-owned
+/// atomic-write temporary. [StorageCleanupDebtKind.obsoleteSealedSource] is recorded
+/// before an authority switch/retirement that can make an exact old locator
+/// redundant. Recovery must re-check that an obsolete source is no longer a
+/// durable authority before deleting it, and never enumerates a storage tree.
+final class StorageCleanupDebtRecord {
+  const StorageCleanupDebtRecord({
+    required this.accessLocator,
+    required this.storageRootId,
+    required this.kind,
+    required this.createdUs,
+    required this.touchedUs,
+    this.expectedBytes,
+    this.expectedChecksum,
+    this.expectedChecksumAlgorithm,
+  });
+
+  final String accessLocator;
+  final String storageRootId;
+  final StorageCleanupDebtKind kind;
+  final int createdUs;
+  final int touchedUs;
+  final int? expectedBytes;
+  final String? expectedChecksum;
+  final String? expectedChecksumAlgorithm;
+}
+
 /// Optional transactional binding capability. A path may be shared by
 /// verified logical identities, but an explicit overwrite must replace the
 /// old logical bindings in the same SQLite transaction as the new one.
@@ -257,6 +356,15 @@ abstract interface class CacheLogicalBindingQuery {
     required String sourceRevision,
     CacheState? state,
   });
+}
+
+/// Read-only query for durable byte/progress authority at one storage locator.
+///
+/// Sealed READY authority belongs to artifact_replica; mutable durable prefixes
+/// belong to partial indexes/migration state. Recovery/cleanup code uses this
+/// boundary to avoid treating sidecar files or compatibility paths as owners.
+abstract interface class StorageAccessAuthorityQuery {
+  Future<bool> isStorageAccessLocatorAuthoritative(String accessLocator);
 }
 
 abstract interface class CacheIndex {

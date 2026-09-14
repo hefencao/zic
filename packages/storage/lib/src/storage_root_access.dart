@@ -62,6 +62,33 @@ final class StorageRootRecord {
   final List<StorageAccessLocatorRecord> accessLocators;
 }
 
+/// Orders equivalent access capabilities without changing storage authority.
+///
+/// Healthy/unknown Direct access keeps the historical preference over SAF,
+/// but when a removable volume is re-mounted the most recently proven locator
+/// must win over an older absolute mount path for the same durable root.
+int compareStorageAccessPreference(
+  StorageAccessLocatorRecord left,
+  StorageAccessLocatorRecord right,
+) {
+  int rank(StorageAccessLocatorRecord value) {
+    final healthPenalty = value.health == StorageAccessHealth.accessDenied
+        ? 100
+        : 0;
+    final kindPenalty = value.kind == StorageAccessLocatorKind.direct ? 0 : 10;
+    return healthPenalty + kindPenalty;
+  }
+
+  final rankOrder = rank(left).compareTo(rank(right));
+  if (rankOrder != 0) return rankOrder;
+  final verifiedOrder =
+      (right.verifiedUs ?? -1).compareTo(left.verifiedUs ?? -1);
+  if (verifiedOrder != 0) return verifiedOrder;
+  final touchedOrder = right.touchedUs.compareTo(left.touchedUs);
+  if (touchedOrder != 0) return touchedOrder;
+  return left.locator.compareTo(right.locator);
+}
+
 /// Ephemeral proof that two access locators observed the same physical root.
 ///
 /// The proof does not create storage ownership or choose a preferred access

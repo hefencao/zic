@@ -17,6 +17,8 @@ final class SqliteIndex
         CacheBindingOperations,
         CachePathBindingQuery,
         CacheLogicalBindingQuery,
+        StorageAccessAuthorityQuery,
+        ArtifactPromotionIndex,
         PhysicalMediaArtifactIndex,
         PhysicalMediaProjectionIndex,
         PhysicalPartialIndex {
@@ -24,7 +26,7 @@ final class SqliteIndex
 
   SqliteIndex.memory() : path = null;
 
-  static const int _schemaVersion = 15;
+  static const int _schemaVersion = 18;
 
   final String? path;
   sql.Database? _db;
@@ -49,6 +51,7 @@ final class SqliteIndex
     final db = _db!;
     db.execute('PRAGMA foreign_keys = ON');
     db.execute('PRAGMA journal_mode = WAL');
+    db.execute('PRAGMA busy_timeout = 5000');
     final version = db.select('PRAGMA user_version').first.values.first as int;
     if (version > _schemaVersion) {
       throw StateError('unsupported cache schema version: $version');
@@ -67,6 +70,9 @@ final class SqliteIndex
         );
         _createPhysicalMediaTables(db);
         _ensureCacheLogicalIdentityColumns(db);
+        _createStorageCleanupDebtTable(db);
+        _createArtifactPromotionTable(db);
+        _migrateLegacyLeadingSlashSafIdentity(db);
         db.execute('PRAGMA user_version = $_schemaVersion');
         db.execute('COMMIT');
       } on Object {
@@ -259,9 +265,12 @@ final class SqliteIndex
         'ON storage_access_locator(root_id)',
       );
       _createPhysicalMediaTables(db);
+      _createStorageCleanupDebtTable(db);
+      _createArtifactPromotionTable(db);
       _backfillArtifactObjects(db);
       _backfillArtifactReplicas(db);
       _backfillStorageRootRegistry(db);
+      _migrateLegacyLeadingSlashSafIdentity(db);
       _migrateDownloadIdentityKeys(db);
       _ensureCacheLogicalIdentityColumns(db);
       if (version < 11) {
@@ -404,6 +413,27 @@ final class SqliteIndex
         .toList(growable: false);
   }
 
+  Future<ArtifactReplicaRecord?> getArtifactReplica(String replicaId) async {
+    final normalized = replicaId.trim();
+    if (normalized.isEmpty) return null;
+    final rows = _requireDb().select(
+      'SELECT replica_id, artifact_id, access_locator, storage_root_id, '
+      'created_us, touched_us FROM artifact_replica WHERE replica_id = ? '
+      'LIMIT 1',
+      <Object?>[normalized],
+    );
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return ArtifactReplicaRecord(
+      replicaId: row['replica_id']! as String,
+      artifactId: row['artifact_id']! as String,
+      accessLocator: row['access_locator']! as String,
+      storageRootId: (row['storage_root_id'] as String?) ?? 'default',
+      createdUs: row['created_us']! as int,
+      touchedUs: row['touched_us']! as int,
+    );
+  }
+
   Future<List<ArtifactReplicaRecord>> listArtifactReplicasForStorageRoot(
     String storageRootId,
   ) async {
@@ -450,6 +480,382 @@ final class SqliteIndex
       createdUs: row['created_us']! as int,
       touchedUs: row['touched_us']! as int,
     );
+  }
+
+  Future<void> putStorageCleanupDebt(StorageCleanupDebtRecord record) async {
+    final locator = record.accessLocator.trim();
+    final root = record.storageRootId.trim();
+    final kind = record.kind;
+    if (locator.isEmpty) {
+      throw ArgumentError('cleanup debt requires an exact storage locator');
+    }
+    final expectedChecksum = record.expectedChecksum?.trim().toLowerCase();
+    final expectedAlgorithm =
+        record.expectedChecksumAlgorithm?.trim().toLowerCase();
+    if (kind != StorageCleanupDebtKind.temporary &&
+        ((record.expectedBytes ?? 0) <= 0 ||
+            expectedChecksum == null ||
+            expectedChecksum.isEmpty ||
+            expectedAlgorithm == null ||
+            expectedAlgorithm.isEmpty)) {
+      throw ArgumentError(
+        'obsolete cleanup debt requires exact content proof',
+      );
+    }
+    final effectiveRoot = root.isEmpty ? 'default' : root;
+    _requireDb().execute(
+      'INSERT INTO storage_cleanup_debt '
+      '(access_locator, storage_root_id, kind, created_us, touched_us, '
+      'expected_bytes, expected_checksum, expected_checksum_algorithm) '
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?) '
+      'ON CONFLICT(access_locator) DO UPDATE SET '
+      'storage_root_id = excluded.storage_root_id, kind = excluded.kind, '
+      'touched_us = excluded.touched_us, expected_bytes = excluded.expected_bytes, '
+      'expected_checksum = excluded.expected_checksum, '
+      'expected_checksum_algorithm = excluded.expected_checksum_algorithm',
+      <Object?>[
+        locator,
+        effectiveRoot,
+        kind.name,
+        record.createdUs,
+        record.touchedUs,
+        record.expectedBytes,
+        expectedChecksum,
+        expectedAlgorithm,
+      ],
+    );
+  }
+
+  Future<List<StorageCleanupDebtRecord>> listStorageCleanupDebts() async {
+    final rows = _requireDb().select(
+      'SELECT access_locator, storage_root_id, kind, created_us, touched_us, '
+      'expected_bytes, expected_checksum, expected_checksum_algorithm '
+      'FROM storage_cleanup_debt ORDER BY touched_us, access_locator',
+    );
+    return rows
+        .map(
+          (row) => StorageCleanupDebtRecord(
+            accessLocator: row['access_locator']! as String,
+            storageRootId: (row['storage_root_id'] as String?) ?? 'default',
+            kind: StorageCleanupDebtKind.values.byName(row['kind']! as String),
+            createdUs: row['created_us']! as int,
+            touchedUs: row['touched_us']! as int,
+            expectedBytes: row['expected_bytes'] as int?,
+            expectedChecksum: row['expected_checksum'] as String?,
+            expectedChecksumAlgorithm:
+                row['expected_checksum_algorithm'] as String?,
+          ),
+        )
+        .toList(growable: false);
+  }
+
+  Future<void> removeStorageCleanupDebt(String accessLocator) async {
+    final locator = accessLocator.trim();
+    if (locator.isEmpty) return;
+    _requireDb().execute(
+      'DELETE FROM storage_cleanup_debt WHERE access_locator = ?',
+      <Object?>[locator],
+    );
+  }
+
+  @override
+  Future<ArtifactPromotionRecord> beginArtifactPromotion({
+    required DownloadId id,
+    required PhysicalMediaId physicalId,
+    required String sourceAccessLocator,
+    required String destinationAccessLocator,
+    required int bytes,
+    required String checksum,
+    required String storageRootId,
+  }) async {
+    final source = sourceAccessLocator.trim();
+    final destination = destinationAccessLocator.trim();
+    final normalizedChecksum = checksum.trim().toLowerCase();
+    final effectiveRoot = storageRootId.trim().isEmpty
+        ? 'default'
+        : storageRootId.trim();
+    if (source.isEmpty ||
+        destination.isEmpty ||
+        source == destination ||
+        bytes <= 0 ||
+        normalizedChecksum.isEmpty) {
+      throw ArgumentError(
+        'artifact promotion requires sealed source/destination proof',
+      );
+    }
+    final promotionKey = physicalId.key;
+    final bindPhysical = !physicalId.isExactFallback;
+    final db = _requireDb();
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      final existingPromotion = db.select(
+        'SELECT * FROM artifact_promotion WHERE promotion_key = ? LIMIT 1',
+        <Object?>[promotionKey],
+      );
+      if (existingPromotion.isNotEmpty) {
+        final record = _readArtifactPromotion(existingPromotion.first);
+        if (record.id != id ||
+            record.physicalId != (bindPhysical ? physicalId : null) ||
+            record.sourceAccessLocator != source ||
+            record.destinationAccessLocator != destination ||
+            record.bytes != bytes ||
+            record.checksum.trim().toLowerCase() != normalizedChecksum ||
+            record.storageRootId != effectiveRoot) {
+          throw StateError(
+            'artifact promotion already exists with different transaction state',
+          );
+        }
+        db.execute('COMMIT');
+        return record;
+      }
+
+      String checksumAlgorithm;
+      int sourceCreatedUs;
+      if (bindPhysical) {
+        final rows = db.select(
+          'SELECT * FROM physical_partial WHERE physical_key = ? LIMIT 1',
+          <Object?>[physicalId.key],
+        );
+        if (rows.isEmpty) {
+          throw StateError('sealed physical partial authority is missing');
+        }
+        final partial = _readPhysicalPartial(rows.first);
+        if (partial.id != physicalId ||
+            partial.path != source ||
+            partial.bytes != bytes ||
+            partial.checksum.trim().toLowerCase() != normalizedChecksum) {
+          throw StateError(
+            'sealed physical partial proof changed before promotion',
+          );
+        }
+        checksumAlgorithm = partial.checksumAlgorithm.trim().toLowerCase();
+        sourceCreatedUs = partial.createdUs;
+      } else {
+        final rows = db.select(
+          "SELECT * FROM cache_entry WHERE key = ? AND state = 'partial' LIMIT 1",
+          <Object?>[id.key],
+        );
+        if (rows.isEmpty) {
+          throw StateError('sealed exact partial authority is missing');
+        }
+        final partial = _read(rows.first);
+        if (partial.id != id ||
+            partial.path != source ||
+            partial.bytes != bytes ||
+            partial.checksum.trim().toLowerCase() != normalizedChecksum) {
+          throw StateError(
+            'sealed exact partial proof changed before promotion',
+          );
+        }
+        checksumAlgorithm = partial.checksumAlgorithm.trim().toLowerCase();
+        sourceCreatedUs = partial.createdUs;
+      }
+      if (checksumAlgorithm.isEmpty) checksumAlgorithm = 'crc32';
+
+      final exactRows = db.select(
+        'SELECT * FROM cache_entry WHERE key = ? LIMIT 1',
+        <Object?>[id.key],
+      );
+      final existingExact = exactRows.isEmpty ? null : _read(exactRows.first);
+      final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+      final artifactId = existingExact != null &&
+              existingExact.state == CacheState.ready &&
+              existingExact.path == destination &&
+              existingExact.artifactId.isNotEmpty
+          ? existingExact.artifactId
+          : defaultArtifactIdForPath(destination);
+      final record = ArtifactPromotionRecord(
+        promotionKey: promotionKey,
+        id: id,
+        physicalId: bindPhysical ? physicalId : null,
+        sourceAccessLocator: source,
+        destinationAccessLocator: destination,
+        bytes: bytes,
+        checksum: normalizedChecksum,
+        checksumAlgorithm: checksumAlgorithm,
+        artifactId: artifactId,
+        storageRootId: effectiveRoot,
+        createdUs: existingExact?.createdUs ?? sourceCreatedUs,
+        touchedUs: now,
+        pinned: existingExact?.pinned ?? false,
+      );
+      _ensureStorageRootLocator(db, effectiveRoot, touchedUs: now);
+      db.execute(
+        'INSERT INTO artifact_promotion '
+        '(promotion_key, download_json, physical_json, source_access_locator, '
+        'destination_access_locator, bytes, checksum, checksum_algorithm, '
+        'artifact_id, storage_root_id, created_us, touched_us, pinned) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        <Object?>[
+          record.promotionKey,
+          jsonEncode(record.id.toJson()),
+          record.physicalId == null
+              ? null
+              : jsonEncode(record.physicalId!.toJson()),
+          record.sourceAccessLocator,
+          record.destinationAccessLocator,
+          record.bytes,
+          record.checksum,
+          record.checksumAlgorithm,
+          record.artifactId,
+          record.storageRootId,
+          record.createdUs,
+          record.touchedUs,
+          record.pinned ? 1 : 0,
+        ],
+      );
+      db.execute('COMMIT');
+      return record;
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<ArtifactPromotionRecord>> listArtifactPromotions() async =>
+      _requireDb()
+          .select(
+            'SELECT * FROM artifact_promotion ORDER BY touched_us, promotion_key',
+          )
+          .map(_readArtifactPromotion)
+          .toList(growable: false);
+
+  @override
+  Future<CacheRec> commitArtifactPromotion(String promotionKey) async {
+    final normalized = promotionKey.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError('artifact promotion key must not be empty');
+    }
+    final db = _requireDb();
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      final rows = db.select(
+        'SELECT * FROM artifact_promotion WHERE promotion_key = ? LIMIT 1',
+        <Object?>[normalized],
+      );
+      if (rows.isEmpty) {
+        throw StateError('artifact promotion transaction does not exist');
+      }
+      final promotion = _readArtifactPromotion(rows.first);
+      final collision = db.select(
+        'SELECT replica_id FROM artifact_replica WHERE access_locator = ? '
+        'AND artifact_id != ? LIMIT 1',
+        <Object?>[
+          promotion.destinationAccessLocator,
+          promotion.artifactId,
+        ],
+      );
+      if (collision.isNotEmpty) {
+        throw StateError(
+          'artifact promotion destination belongs to another replica',
+        );
+      }
+      final ready = CacheRec(
+        id: promotion.id,
+        state: CacheState.ready,
+        path: promotion.destinationAccessLocator,
+        bytes: promotion.bytes,
+        checksum: promotion.checksum,
+        createdUs: promotion.createdUs,
+        touchedUs: promotion.touchedUs,
+        pinned: promotion.pinned,
+        checksumAlgorithm: promotion.checksumAlgorithm,
+        artifactId: promotion.artifactId,
+        storageRootId: promotion.storageRootId,
+      );
+      _putArtifactObject(db, ready, promotion.artifactId);
+      _putBinding(db, ready, promotion.artifactId);
+      final physicalId = promotion.physicalId;
+      if (physicalId != null) {
+        db.execute(
+          '''
+          INSERT INTO physical_media_artifact (
+            physical_key, physical_json, artifact_id, created_us, touched_us
+          ) VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(physical_key) DO UPDATE SET
+            physical_json = excluded.physical_json,
+            artifact_id = excluded.artifact_id,
+            created_us = excluded.created_us,
+            touched_us = excluded.touched_us
+          ''',
+          <Object?>[
+            physicalId.key,
+            jsonEncode(physicalId.toJson()),
+            promotion.artifactId,
+            promotion.createdUs,
+            promotion.touchedUs,
+          ],
+        );
+        db.execute(
+          'DELETE FROM physical_partial WHERE physical_key = ?',
+          <Object?>[physicalId.key],
+        );
+      }
+      db.execute(
+        'DELETE FROM artifact_promotion WHERE promotion_key = ?',
+        <Object?>[normalized],
+      );
+      db.execute('COMMIT');
+      final cached = _cachedEntries;
+      if (cached != null) cached[ready.key] = ready;
+      return ready;
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<void> removeArtifactPromotion(String promotionKey) async {
+    final normalized = promotionKey.trim();
+    if (normalized.isEmpty) return;
+    _requireDb().execute(
+      'DELETE FROM artifact_promotion WHERE promotion_key = ?',
+      <Object?>[normalized],
+    );
+  }
+
+  /// Returns whether [accessLocator] still names durable body/progress
+  /// authority. Compatibility READY binding/object paths are intentionally
+  /// excluded: schema-8 [artifact_replica] is the sealed-body authority.
+  @override
+  Future<bool> isStorageAccessLocatorAuthoritative(String accessLocator) async {
+    final locator = accessLocator.trim();
+    if (locator.isEmpty) return false;
+    final db = _requireDb();
+    if (db.select(
+      "SELECT 1 FROM cache_entry WHERE state = 'partial' AND path = ? LIMIT 1",
+      <Object?>[locator],
+    ).isNotEmpty) {
+      return true;
+    }
+    if (db.select(
+      'SELECT 1 FROM physical_partial WHERE path = ? LIMIT 1',
+      <Object?>[locator],
+    ).isNotEmpty) {
+      return true;
+    }
+    if (db.select(
+      'SELECT 1 FROM artifact_replica WHERE access_locator = ? LIMIT 1',
+      <Object?>[locator],
+    ).isNotEmpty) {
+      return true;
+    }
+    if (db.select(
+      'SELECT 1 FROM artifact_promotion WHERE source_access_locator = ? '
+      'OR destination_access_locator = ? LIMIT 1',
+      <Object?>[locator, locator],
+    ).isNotEmpty) {
+      return true;
+    }
+    return db.select(
+      'SELECT 1 FROM artifact_replica_migration WHERE '
+      "(phase = 'copying' AND (source_access_locator = ? OR "
+      'destination_access_locator = ? OR temporary_access_locator = ?)) OR '
+      "(phase = 'cleanupPending' AND destination_access_locator = ?) LIMIT 1",
+      <Object?>[locator, locator, locator, locator],
+    ).isNotEmpty;
   }
 
   Future<ArtifactReplicaMigrationRecord?> getArtifactReplicaMigration(
@@ -605,6 +1011,102 @@ final class SqliteIndex
         temporaryAccessLocator: temporaryLocator,
         phase: ArtifactReplicaMigrationPhase.copying,
         createdUs: touchedUs,
+        touchedUs: touchedUs,
+      );
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
+  }
+
+  Future<ArtifactReplicaMigrationRecord>
+      rebindCopyingArtifactReplicaMigration({
+    required String replicaId,
+    required String expectedDestinationAccessLocator,
+    required String expectedTemporaryAccessLocator,
+    required String destinationAccessLocator,
+    required String destinationStorageRootId,
+    required String temporaryAccessLocator,
+    required int touchedUs,
+  }) async {
+    final normalizedReplicaId = replicaId.trim();
+    final expectedDestination = expectedDestinationAccessLocator.trim();
+    final expectedTemporary = expectedTemporaryAccessLocator.trim();
+    final destination = destinationAccessLocator.trim();
+    final destinationRoot = destinationStorageRootId.trim();
+    final temporary = temporaryAccessLocator.trim();
+    if (normalizedReplicaId.isEmpty ||
+        expectedDestination.isEmpty ||
+        expectedTemporary.isEmpty ||
+        destination.isEmpty ||
+        temporary.isEmpty) {
+      throw ArgumentError('replica migration rebind locators must not be empty');
+    }
+    final db = _requireDb();
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      final rows = db.select(
+        'SELECT replica_id, source_access_locator, source_storage_root_id, '
+        'destination_access_locator, destination_storage_root_id, '
+        'temporary_access_locator, phase, created_us, touched_us '
+        'FROM artifact_replica_migration WHERE replica_id = ? LIMIT 1',
+        <Object?>[normalizedReplicaId],
+      );
+      if (rows.isEmpty) {
+        throw StateError('artifact replica migration does not exist');
+      }
+      final current = _readArtifactReplicaMigration(rows.first);
+      if (current.phase != ArtifactReplicaMigrationPhase.copying ||
+          current.destinationAccessLocator != expectedDestination ||
+          current.temporaryAccessLocator != expectedTemporary) {
+        throw StateError('artifact replica migration changed before locator rebind');
+      }
+      final replicaRows = db.select(
+        'SELECT access_locator, storage_root_id FROM artifact_replica '
+        'WHERE replica_id = ? LIMIT 1',
+        <Object?>[normalizedReplicaId],
+      );
+      if (replicaRows.isEmpty ||
+          replicaRows.first['access_locator'] != current.sourceAccessLocator ||
+          ((replicaRows.first['storage_root_id'] as String?) ?? 'default') !=
+              current.sourceStorageRootId) {
+        throw StateError('replica source authority changed during migration rebind');
+      }
+      final collision = db.select(
+        'SELECT replica_id FROM artifact_replica WHERE access_locator = ? '
+        'AND replica_id != ? LIMIT 1',
+        <Object?>[destination, normalizedReplicaId],
+      );
+      if (collision.isNotEmpty) {
+        throw StateError(
+          'artifact replica migration destination is owned by another replica',
+        );
+      }
+      final effectiveRoot = destinationRoot.isEmpty ? 'default' : destinationRoot;
+      _ensureStorageRootLocator(db, effectiveRoot, touchedUs: touchedUs);
+      db.execute(
+        'UPDATE artifact_replica_migration SET destination_access_locator = ?, '
+        'destination_storage_root_id = ?, temporary_access_locator = ?, '
+        'touched_us = ? WHERE replica_id = ? AND phase = ?',
+        <Object?>[
+          destination,
+          effectiveRoot,
+          temporary,
+          touchedUs,
+          normalizedReplicaId,
+          ArtifactReplicaMigrationPhase.copying.name,
+        ],
+      );
+      db.execute('COMMIT');
+      return ArtifactReplicaMigrationRecord(
+        replicaId: current.replicaId,
+        sourceAccessLocator: current.sourceAccessLocator,
+        sourceStorageRootId: current.sourceStorageRootId,
+        destinationAccessLocator: destination,
+        destinationStorageRootId: effectiveRoot,
+        temporaryAccessLocator: temporary,
+        phase: current.phase,
+        createdUs: current.createdUs,
         touchedUs: touchedUs,
       );
     } on Object {
@@ -1088,7 +1590,7 @@ final class SqliteIndex
       db.execute('COMMIT');
       final cached = _cachedEntries;
       if (cached != null) {
-        cached[rec.key] = rec;
+        cached[rec.key] = rec.copyWith(artifactId: artifactId);
       }
     } on Object {
       db.execute('ROLLBACK');
@@ -1316,22 +1818,30 @@ final class SqliteIndex
   @override
   Future<void> removePhysicalMediaArtifactBinding(PhysicalMediaId id) async {
     final db = _requireDb();
-    final rows = db.select(
-      'SELECT artifact_id FROM physical_media_artifact WHERE physical_key = ? LIMIT 1',
-      <Object?>[id.key],
-    );
-    db.execute(
-      'DELETE FROM physical_media_artifact WHERE physical_key = ?',
-      <Object?>[id.key],
-    );
-    if (rows.isEmpty) return;
-    final artifactId = rows.first['artifact_id']! as String;
-    db.execute(
-      'DELETE FROM artifact_object WHERE artifact_id = ? '
-      'AND NOT EXISTS (SELECT 1 FROM cache_entry WHERE artifact_id = ?) '
-      'AND NOT EXISTS (SELECT 1 FROM physical_media_artifact WHERE artifact_id = ?)',
-      <Object?>[artifactId, artifactId, artifactId],
-    );
+    db.execute('BEGIN IMMEDIATE');
+    try {
+      final rows = db.select(
+        'SELECT artifact_id FROM physical_media_artifact WHERE physical_key = ? LIMIT 1',
+        <Object?>[id.key],
+      );
+      db.execute(
+        'DELETE FROM physical_media_artifact WHERE physical_key = ?',
+        <Object?>[id.key],
+      );
+      if (rows.isNotEmpty) {
+        final artifactId = rows.first['artifact_id']! as String;
+        db.execute(
+          'DELETE FROM artifact_object WHERE artifact_id = ? '
+          'AND NOT EXISTS (SELECT 1 FROM cache_entry WHERE artifact_id = ?) '
+          'AND NOT EXISTS (SELECT 1 FROM physical_media_artifact WHERE artifact_id = ?)',
+          <Object?>[artifactId, artifactId, artifactId],
+        );
+      }
+      db.execute('COMMIT');
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
   }
 
   @override
@@ -2255,6 +2765,62 @@ PhysicalMediaProjectionRecord _readPhysicalMediaProjection(sql.Row row) =>
       touchedUs: row['touched_us']! as int,
     );
 
+void _createArtifactPromotionTable(sql.Database db) {
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS artifact_promotion (
+      promotion_key TEXT NOT NULL PRIMARY KEY,
+      download_json TEXT NOT NULL,
+      physical_json TEXT,
+      source_access_locator TEXT NOT NULL,
+      destination_access_locator TEXT NOT NULL,
+      bytes INTEGER NOT NULL,
+      checksum TEXT NOT NULL,
+      checksum_algorithm TEXT NOT NULL DEFAULT 'crc32',
+      artifact_id TEXT NOT NULL,
+      storage_root_id TEXT NOT NULL DEFAULT 'default',
+      created_us INTEGER NOT NULL,
+      touched_us INTEGER NOT NULL,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      CHECK (bytes > 0),
+      CHECK (source_access_locator != destination_access_locator)
+    )
+  ''');
+  db.execute(
+    'CREATE INDEX IF NOT EXISTS artifact_promotion_source '
+    'ON artifact_promotion(source_access_locator)',
+  );
+  db.execute(
+    'CREATE INDEX IF NOT EXISTS artifact_promotion_destination '
+    'ON artifact_promotion(destination_access_locator)',
+  );
+}
+
+void _createStorageCleanupDebtTable(sql.Database db) {
+  db.execute('''
+    CREATE TABLE IF NOT EXISTS storage_cleanup_debt (
+      access_locator TEXT NOT NULL PRIMARY KEY,
+      storage_root_id TEXT NOT NULL DEFAULT 'default',
+      kind TEXT NOT NULL,
+      created_us INTEGER NOT NULL,
+      touched_us INTEGER NOT NULL,
+      expected_bytes INTEGER,
+      expected_checksum TEXT,
+      expected_checksum_algorithm TEXT,
+      CHECK (
+        (kind = 'temporary' AND expected_bytes IS NULL AND
+          expected_checksum IS NULL AND expected_checksum_algorithm IS NULL) OR
+        (kind IN ('obsoleteSealedSource', 'obsoletePartialSource') AND
+          expected_bytes > 0 AND length(expected_checksum) > 0 AND
+          length(expected_checksum_algorithm) > 0)
+      )
+    )
+  ''');
+  db.execute(
+    'CREATE INDEX IF NOT EXISTS storage_cleanup_debt_touch '
+    'ON storage_cleanup_debt(kind, touched_us)',
+  );
+}
+
 void _createPhysicalMediaTables(sql.Database db) {
   db.execute('''
     CREATE TABLE IF NOT EXISTS physical_media_artifact (
@@ -2392,6 +2958,39 @@ void _migrateDownloadIdentityKeys(sql.Database db) {
   }
 }
 
+ArtifactPromotionRecord _readArtifactPromotion(sql.Row row) {
+  final decodedDownload = jsonDecode(row['download_json']! as String);
+  if (decodedDownload is! Map) {
+    throw const FormatException('artifact promotion download identity is invalid');
+  }
+  final rawPhysical = row['physical_json'];
+  PhysicalMediaId? physicalId;
+  if (rawPhysical is String) {
+    final decodedPhysical = jsonDecode(rawPhysical);
+    if (decodedPhysical is! Map) {
+      throw const FormatException('artifact promotion physical identity is invalid');
+    }
+    physicalId = PhysicalMediaId.fromJson(
+      Map<String, Object?>.from(decodedPhysical),
+    );
+  }
+  return ArtifactPromotionRecord(
+    promotionKey: row['promotion_key']! as String,
+    id: DownloadId.fromJson(Map<String, Object?>.from(decodedDownload)),
+    physicalId: physicalId,
+    sourceAccessLocator: row['source_access_locator']! as String,
+    destinationAccessLocator: row['destination_access_locator']! as String,
+    bytes: row['bytes']! as int,
+    checksum: row['checksum']! as String,
+    checksumAlgorithm: (row['checksum_algorithm'] as String?) ?? 'crc32',
+    artifactId: row['artifact_id']! as String,
+    storageRootId: (row['storage_root_id'] as String?) ?? 'default',
+    createdUs: row['created_us']! as int,
+    touchedUs: row['touched_us']! as int,
+    pinned: row['pinned'] == 1,
+  );
+}
+
 ArtifactReplicaMigrationRecord _readArtifactReplicaMigration(sql.Row row) {
   return ArtifactReplicaMigrationRecord(
     replicaId: row['replica_id']! as String,
@@ -2439,6 +3038,211 @@ StorageRootRecord? _readStorageRoot(sql.Database db, String rootId) {
     touchedUs: root['touched_us']! as int,
     accessLocators: List<StorageAccessLocatorRecord>.unmodifiable(locators),
   );
+}
+
+String? _normalizeLegacyLeadingSlashSafIdentity(String value) {
+  final normalized = value.trim();
+  return normalized.startsWith('/content://') ? normalized.substring(1) : null;
+}
+
+String? _normalizeLegacyLeadingSlashSafRecord(String value) {
+  if (!value.startsWith('saf:')) return null;
+  final marker = value.indexOf('?path=');
+  if (marker < 0) return null;
+  final encodedTree = value.substring(4, marker);
+  final tree = Uri.decodeComponent(encodedTree);
+  final normalizedTree = _normalizeLegacyLeadingSlashSafIdentity(tree);
+  if (normalizedTree == null) return null;
+  return 'saf:${Uri.encodeComponent(normalizedTree)}${value.substring(marker)}';
+}
+
+/// Repairs the historical app-side `saf://` prefix off-by-one that persisted
+/// `/content://...` as the SAF tree identity. The signature is intentionally
+/// narrow: a leading-slash content URI cannot be a valid app-owned absolute
+/// filesystem root, so no POSIX locator is inferred or manufactured here.
+///
+/// Body bytes never move. Only App-private metadata is canonicalized so the
+/// existing SAF document remains the same immutable artifact/partial owner.
+void _migrateLegacyLeadingSlashSafIdentity(sql.Database db) {
+  bool tableExists(String table) => db.select(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+    <Object?>[table],
+  ).isNotEmpty;
+
+  final rootColumns = <(String, String)>[
+    ('artifact_object', 'storage_root_id'),
+    ('artifact_promotion', 'storage_root_id'),
+    ('artifact_replica', 'storage_root_id'),
+    ('artifact_replica_migration', 'source_storage_root_id'),
+    ('artifact_replica_migration', 'destination_storage_root_id'),
+    ('cache_entry', 'storage_root_id'),
+    ('download_placement', 'storage_root_id'),
+    ('physical_partial', 'storage_root_id'),
+    ('storage_cleanup_debt', 'storage_root_id'),
+    ('storage_access_locator', 'root_id'),
+  ];
+  final roots = <String>{};
+  if (tableExists('storage_root')) {
+    for (final row in db.select(
+      "SELECT root_id FROM storage_root WHERE root_id LIKE '/content://%'",
+    )) {
+      roots.add(row['root_id']! as String);
+    }
+  }
+  for (final (table, column) in rootColumns) {
+    if (!tableExists(table)) continue;
+    for (final row in db.select(
+      "SELECT DISTINCT $column AS value FROM $table WHERE $column LIKE '/content://%'",
+    )) {
+      roots.add(row['value']! as String);
+    }
+  }
+
+  final locatorColumns = <(String, String, String)>[
+    ('artifact_object', 'artifact_id', 'path'),
+    ('artifact_promotion', 'promotion_key', 'source_access_locator'),
+    ('artifact_promotion', 'promotion_key', 'destination_access_locator'),
+    ('artifact_replica', 'replica_id', 'access_locator'),
+    ('artifact_replica_migration', 'replica_id', 'source_access_locator'),
+    ('artifact_replica_migration', 'replica_id', 'destination_access_locator'),
+    ('artifact_replica_migration', 'replica_id', 'temporary_access_locator'),
+    ('cache_entry', 'key', 'path'),
+    ('physical_partial', 'physical_key', 'path'),
+  ];
+  for (final (table, keyColumn, valueColumn) in locatorColumns) {
+    if (!tableExists(table)) continue;
+    final rows = db.select('SELECT $keyColumn AS row_key, $valueColumn AS value FROM $table');
+    for (final row in rows) {
+      final value = row['value']! as String;
+      final repaired = _normalizeLegacyLeadingSlashSafRecord(value);
+      if (repaired == null || repaired == value) continue;
+      db.execute(
+        'UPDATE $table SET $valueColumn = ? WHERE $keyColumn = ?',
+        <Object?>[repaired, row['row_key']],
+      );
+    }
+  }
+
+  // cleanup debt is keyed by the locator itself, so rewrite it separately.
+  final debts = tableExists('storage_cleanup_debt')
+      ? db.select('SELECT * FROM storage_cleanup_debt')
+      : const <sql.Row>[];
+  for (final row in debts) {
+    final value = row['access_locator']! as String;
+    final repaired = _normalizeLegacyLeadingSlashSafRecord(value);
+    if (repaired == null || repaired == value) continue;
+    final conflict = db.select(
+      'SELECT 1 FROM storage_cleanup_debt WHERE access_locator = ? LIMIT 1',
+      <Object?>[repaired],
+    );
+    if (conflict.isNotEmpty) continue;
+    db.execute(
+      'UPDATE storage_cleanup_debt SET access_locator = ? WHERE access_locator = ?',
+      <Object?>[repaired, value],
+    );
+  }
+
+  if (!tableExists('storage_root')) return;
+
+  for (final legacyRoot in roots) {
+    final repairedRoot = _normalizeLegacyLeadingSlashSafIdentity(legacyRoot);
+    if (repairedRoot == null) continue;
+    final oldRows = db.select(
+      'SELECT created_us, touched_us FROM storage_root WHERE root_id = ? LIMIT 1',
+      <Object?>[legacyRoot],
+    );
+    final newRows = db.select(
+      'SELECT created_us, touched_us FROM storage_root WHERE root_id = ? LIMIT 1',
+      <Object?>[repairedRoot],
+    );
+    final nowUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+    final oldCreated = oldRows.isEmpty ? nowUs : oldRows.first['created_us']! as int;
+    final oldTouched = oldRows.isEmpty ? nowUs : oldRows.first['touched_us']! as int;
+    if (newRows.isEmpty) {
+      db.execute(
+        'INSERT INTO storage_root (root_id, created_us, touched_us) VALUES (?, ?, ?)',
+        <Object?>[repairedRoot, oldCreated, oldTouched],
+      );
+    } else {
+      final created = newRows.first['created_us']! as int;
+      final touched = newRows.first['touched_us']! as int;
+      db.execute(
+        'UPDATE storage_root SET created_us = ?, touched_us = ? WHERE root_id = ?',
+        <Object?>[
+          created < oldCreated ? created : oldCreated,
+          touched > oldTouched ? touched : oldTouched,
+          repairedRoot,
+        ],
+      );
+    }
+
+    for (final (table, column) in rootColumns) {
+      if (table == 'storage_access_locator' || !tableExists(table)) continue;
+      db.execute(
+        'UPDATE $table SET $column = ? WHERE $column = ?',
+        <Object?>[repairedRoot, legacyRoot],
+      );
+    }
+
+    final accessRows = tableExists('storage_access_locator')
+        ? db.select(
+            'SELECT kind, locator, health, verified_us, touched_us '
+            'FROM storage_access_locator WHERE root_id = ?',
+            <Object?>[legacyRoot],
+          )
+        : const <sql.Row>[];
+    for (final row in accessRows) {
+      final kind = row['kind']! as String;
+      final locator = row['locator']! as String;
+      final repairedLocator =
+          _normalizeLegacyLeadingSlashSafIdentity(locator) ?? locator;
+      final malformedTreeIdentity = locator.startsWith('/content://');
+      final repairedKind = malformedTreeIdentity ? 'saf' : kind;
+      final health = malformedTreeIdentity ? 'unknown' : row['health']! as String;
+      final verifiedUs = malformedTreeIdentity ? null : row['verified_us'];
+      final touchedUs = row['touched_us']! as int;
+      db.execute(
+        'DELETE FROM storage_access_locator WHERE kind = ? AND locator = ?',
+        <Object?>[kind, locator],
+      );
+      final existing = db.select(
+        'SELECT health, verified_us, touched_us FROM storage_access_locator '
+        'WHERE kind = ? AND locator = ? LIMIT 1',
+        <Object?>[repairedKind, repairedLocator],
+      );
+      if (existing.isEmpty) {
+        db.execute(
+          'INSERT INTO storage_access_locator '
+          '(kind, locator, root_id, health, verified_us, touched_us) '
+          'VALUES (?, ?, ?, ?, ?, ?)',
+          <Object?>[
+            repairedKind,
+            repairedLocator,
+            repairedRoot,
+            health,
+            verifiedUs,
+            touchedUs,
+          ],
+        );
+      } else {
+        final existingTouched = existing.first['touched_us']! as int;
+        db.execute(
+          'UPDATE storage_access_locator SET root_id = ?, touched_us = ? '
+          'WHERE kind = ? AND locator = ?',
+          <Object?>[
+            repairedRoot,
+            existingTouched > touchedUs ? existingTouched : touchedUs,
+            repairedKind,
+            repairedLocator,
+          ],
+        );
+      }
+    }
+    db.execute(
+      'DELETE FROM storage_root WHERE root_id = ?',
+      <Object?>[legacyRoot],
+    );
+  }
 }
 
 void _ensureStorageRootLocator(
