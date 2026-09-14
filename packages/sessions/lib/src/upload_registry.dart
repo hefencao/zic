@@ -32,6 +32,7 @@ final class UploadRegistry {
       <UploadRegistryListener>{};
 
   Iterable<UploadSession> get sessions => _sessions.values;
+  bool get playbackPaused => _playbackPaused;
   int get totalBytes =>
       _sessions.values.fold<int>(0, (sum, session) => sum + session.outputBytes);
 

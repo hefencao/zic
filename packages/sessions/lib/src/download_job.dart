@@ -532,6 +532,7 @@ final class DownloadJob {
     try {
       session.beginNetworkAttemptProgress(
         response.rangeStart,
+        totalLength: response.totalLength,
         expectedRun: runLease,
       );
     } on Object {

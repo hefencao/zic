@@ -110,7 +110,7 @@ final class ReaderBinding {
 
   bool observeDecodeWaterline({
     required int planRevision,
-    required String stage,
+    required DecodeWaterlineStage stage,
   }) {
     if (_detached) return false;
     return pipeline.observeDecodeWaterline(

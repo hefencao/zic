@@ -652,6 +652,146 @@ void main() {
     await temp.delete(recursive: true);
   });
 
+  test('cycles a one-second partial prefix before the thirty-frame fallback',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'decode_partial_duration_loop_test_',
+    );
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024 * 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpartial-animation'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
+      ingress: ingress,
+    );
+    download.attachIngressProjection(projection);
+    final trace = MemoryTraceSink();
+    final cursors = _PartialPrefixCursorFactory(
+      frameCount: 21,
+      frameDuration: const Duration(milliseconds: 50),
+    );
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      ingress: projection,
+      cursors: cursors,
+      clock: _Clock(),
+      traceSink: trace,
+    );
+    const demand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 1,
+      reason: 'partial-duration-loop',
+      expirationRevision: 64,
+    );
+
+    for (var revision = 1; revision <= 21; revision++) {
+      final snap = await decode.fill(
+        demand: demand,
+        revision: revision,
+        cancel: CancelToken(),
+      );
+      expect(snap.depth, 1);
+      expect(decode.holder!.consume(revision - 1), isTrue);
+    }
+
+    final looped = await decode.fill(
+      demand: demand,
+      revision: 22,
+      cancel: CancelToken(),
+    );
+    expect(looped.depth, 1);
+    expect(decode.holder!.frames.single.index, 0);
+    expect(looped.cycle, 1);
+    expect(cursors.created, 2);
+    final loop = trace.events.lastWhere(
+      (event) => event.kind == TraceEventKind.animationLoop,
+    );
+    expect(loop.payload['partialPrefix'], isTrue);
+    expect(loop.payload['frameCount'], 21);
+    expect(loop.payload['prefixDurationMicros'], 1050000);
+
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
+  test('sub-second short partial prefix still waits for source growth', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'decode_partial_duration_wait_test_',
+    );
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024 * 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: 'RIFF....WEBPpartial-animation'.codeUnits,
+    );
+    final download = DownloadSession(
+      id: _downloadId(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/page.part',
+        finalPath: '${temp.path}/page.webp',
+      ),
+      clock: _Clock(),
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'test:${download.id.key}',
+      ingress: ingress,
+    );
+    download.attachIngressProjection(projection);
+    final cursors = _PartialPrefixCursorFactory(
+      frameCount: 19,
+      frameDuration: const Duration(milliseconds: 50),
+    );
+    final decode = DecodeSession(
+      id: _decodeId(download.id),
+      ingress: projection,
+      cursors: cursors,
+      clock: _Clock(),
+    );
+    const demand = DecodeDemand(
+      role: PageRole.current,
+      priority: 1000,
+      targetWatermark: 1,
+      reason: 'partial-duration-wait',
+      expirationRevision: 64,
+    );
+
+    for (var revision = 1; revision <= 19; revision++) {
+      final snap = await decode.fill(
+        demand: demand,
+        revision: revision,
+        cancel: CancelToken(),
+      );
+      expect(snap.depth, 1);
+      expect(decode.holder!.consume(revision - 1), isTrue);
+    }
+
+    final waiting = await decode.fill(
+      demand: demand,
+      revision: 20,
+      cancel: CancelToken(),
+    );
+    expect(waiting.state, DecodeState.waitingSource);
+    expect(waiting.depth, 0);
+    expect(cursors.created, 1);
+
+    decode.dispose();
+    await download.dispose();
+    await temp.delete(recursive: true);
+  });
+
   test('decoder-driven local prefix requests growth instead of partial looping', () async {
     final temp =
         await Directory.systemTemp.createTemp('decode_deferred_prefix_growth_test_');
@@ -1583,7 +1723,11 @@ final class _Cursor implements ScheduledFrameCursor {
 }
 
 final class _Frame implements FrameRef {
-  _Frame(this.epoch, this.index);
+  _Frame(
+    this.epoch,
+    this.index, {
+    this.frameDuration = const Duration(milliseconds: 16),
+  });
 
   @override
   final int epoch;
@@ -1592,7 +1736,8 @@ final class _Frame implements FrameRef {
   @override
   int get byteLength => 4;
   @override
-  Duration get duration => const Duration(milliseconds: 16);
+  Duration get duration => frameDuration;
+  final Duration frameDuration;
   @override
   int get height => 1;
   @override
@@ -1651,9 +1796,13 @@ final class _PromotableCursor implements PrioritizableScheduledFrameCursor {
 }
 
 final class _PartialPrefixCursorFactory implements CursorFactory {
-  _PartialPrefixCursorFactory({required this.frameCount});
+  _PartialPrefixCursorFactory({
+    required this.frameCount,
+    this.frameDuration = const Duration(milliseconds: 16),
+  });
 
   final int frameCount;
+  final Duration frameDuration;
   int created = 0;
 
   @override
@@ -1663,17 +1812,18 @@ final class _PartialPrefixCursorFactory implements CursorFactory {
     required int epoch,
   }) {
     created++;
-    final cursor = _PartialPrefixCursor(epoch, frameCount);
+    final cursor = _PartialPrefixCursor(epoch, frameCount, frameDuration);
     return CursorBinding(frames: cursor, loop: cursor);
   }
 }
 
 final class _PartialPrefixCursor implements FrameCursor, LoopCursor {
-  _PartialPrefixCursor(this.epoch, this.frameCount);
+  _PartialPrefixCursor(this.epoch, this.frameCount, this.frameDuration);
 
   @override
   final int epoch;
   final int frameCount;
+  final Duration frameDuration;
   int _next = 0;
 
   @override
@@ -1691,7 +1841,9 @@ final class _PartialPrefixCursor implements FrameCursor, LoopCursor {
     if (_next >= frameCount) {
       return const CursorStep.needMoreData();
     }
-    return CursorStep.frame(_Frame(epoch, _next++));
+    return CursorStep.frame(
+      _Frame(epoch, _next++, frameDuration: frameDuration),
+    );
   }
 
   @override

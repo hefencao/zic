@@ -14,7 +14,7 @@ final class _Clock implements MonoClock {
 }
 
 void main() {
-  test('startup recovery scans metadata and restores sessions', () async {
+  test('startup recovery never promotes sidecar-only final into durable authority', () async {
     final temp = await Directory.systemTemp.createTemp('startup_recovery_test_');
     addTearDown(() async => temp.delete(recursive: true));
     final layout = CacheLayout(temp.path);
@@ -58,21 +58,22 @@ void main() {
     final report = await StartupRecovery(
       layout: layout,
       index: index,
-      registry: registry,
       clock: clock,
       traceSink: traces,
     ).run();
 
-    expect(report.scan.recovered, 1);
-    expect(report.sessions, 1);
-    expect(registry.find(id)?.state, DownloadState.promoted);
+    expect(report.scan.recovered, 0);
+    expect(report.sessions, 0);
+    expect(registry.find(id), isNull);
+    expect(await index.get(id.key), isNull);
+    expect(await File(artifact.finalPath).exists(), isFalse);
     expect(
       traces.events.where((event) => event.kind == TraceEventKind.cacheScan),
       hasLength(1),
     );
   });
 
-  test('startup recovery restores an indexed artifact from its historical root', () async {
+  test('startup preserves indexed READY without recreating a session', () async {
     final temp = await Directory.systemTemp.createTemp(
       'startup_recovery_historical_root_test_',
     );
@@ -130,13 +131,13 @@ void main() {
     final report = await StartupRecovery(
       layout: current,
       index: index,
-      registry: registry,
       clock: clock,
     ).run();
 
-    expect(report.sessions, 1);
-    expect(registry.find(id)?.state, DownloadState.promoted);
-    expect(registry.find(id)?.artifact.finalPath, artifact.finalPath);
+    expect(report.sessions, 0);
+    expect(registry.find(id), isNull);
+    expect((await index.get(id.key))?.state, CacheState.ready);
+    expect(await File(artifact.finalPath).exists(), isTrue);
   });
 
   test('startup preserves external export bindings without creating local sessions', () async {
@@ -183,7 +184,6 @@ void main() {
     final report = await StartupRecovery(
       layout: layout,
       index: index,
-      registry: registry,
       clock: _Clock(),
     ).run();
 

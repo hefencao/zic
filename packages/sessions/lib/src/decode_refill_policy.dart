@@ -19,7 +19,7 @@ final class DecodeRefillDecision {
 
   final DecodeId id;
   final PageRole role;
-  final String stage;
+  final DecodeWaterlineStage stage;
   final int depth;
   final int threshold;
   final int targetWatermark;
@@ -70,7 +70,7 @@ final class StagedDecodeRefillPolicy {
       return DecodeRefillDecision(
         id: id,
         role: demand.role,
-        stage: 't>0',
+        stage: DecodeWaterlineStage.transitionFirstFrame,
         depth: depthOf(id),
         threshold: 0,
         targetWatermark: 1,
@@ -89,7 +89,9 @@ final class StagedDecodeRefillPolicy {
           return DecodeRefillDecision(
             id: current,
             role: demand.role,
-            stage: bootstrapTarget == 1 ? 'one>0' : 'c>2',
+            stage: bootstrapTarget == 1
+                ? DecodeWaterlineStage.oneFrame
+                : DecodeWaterlineStage.currentBootstrap,
             depth: depth,
             threshold: bootstrapTarget == 1 ? 0 : 2,
             targetWatermark: bootstrapTarget,
@@ -122,7 +124,7 @@ final class StagedDecodeRefillPolicy {
         : DecodeRefillDecision(
             id: oneFrame.first.key,
             role: oneFrame.first.value.role,
-            stage: 'one>0',
+            stage: DecodeWaterlineStage.oneFrame,
             depth: depthOf(oneFrame.first.key),
             threshold: 0,
             targetWatermark: 1,
@@ -144,16 +146,24 @@ final class StagedDecodeRefillPolicy {
     };
 
     const steps = <_RefillStep>[
-      _RefillStep(_WaterlineRole.current, 2, 'c>2'),
-      _RefillStep(_WaterlineRole.next, 1, 'n>1'),
-      _RefillStep(_WaterlineRole.next2, 1, 'm>1'),
-      _RefillStep(_WaterlineRole.previous, 1, 'p>1'),
-      _RefillStep(_WaterlineRole.current, 4, 'c>4'),
-      _RefillStep(_WaterlineRole.next, 2, 'n>2'),
-      _RefillStep(_WaterlineRole.current, 6, 'c>6'),
-      _RefillStep(_WaterlineRole.next, 3, 'n>3'),
-      _RefillStep(_WaterlineRole.next2, 2, 'm>2'),
-      _RefillStep(_WaterlineRole.next, 4, 'n>4'),
+      _RefillStep(
+        _WaterlineRole.current,
+        2,
+        DecodeWaterlineStage.currentBootstrap,
+      ),
+      _RefillStep(_WaterlineRole.next, 1, DecodeWaterlineStage.nextShallow),
+      _RefillStep(_WaterlineRole.next2, 1, DecodeWaterlineStage.next2Shallow),
+      _RefillStep(
+        _WaterlineRole.previous,
+        1,
+        DecodeWaterlineStage.previousShallow,
+      ),
+      _RefillStep(_WaterlineRole.current, 4, DecodeWaterlineStage.currentMid),
+      _RefillStep(_WaterlineRole.next, 2, DecodeWaterlineStage.nextMid),
+      _RefillStep(_WaterlineRole.current, 6, DecodeWaterlineStage.currentDeep),
+      _RefillStep(_WaterlineRole.next, 3, DecodeWaterlineStage.nextDeep),
+      _RefillStep(_WaterlineRole.next2, 2, DecodeWaterlineStage.next2Deep),
+      _RefillStep(_WaterlineRole.next, 4, DecodeWaterlineStage.nextMax),
     ];
 
     DecodeRefillDecision? stagedDecision;
@@ -210,7 +220,7 @@ final class _RefillStep {
 
   final _WaterlineRole role;
   final int threshold;
-  final String stage;
+  final DecodeWaterlineStage stage;
 }
 
 bool _neverTerminal(DecodeId _) => false;

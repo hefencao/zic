@@ -149,6 +149,9 @@ final class DecodeSession {
     this.sessionId = 'decode',
   }) : prefixHints = prefixHints ?? WebpDecodePrefixHints();
 
+  static const int _partialLoopMinDurationMicros =
+      Duration.microsecondsPerSecond;
+
   final DecodeId id;
   final DownloadIngressProjection ingress;
   final CursorFactory cursors;
@@ -183,6 +186,7 @@ final class DecodeSession {
   int? _decodedHeight;
   AnimationInfo? _reportedAnimation;
   int _maxDecodedPrefixFrames = 0;
+  int _decodedPrefixDurationMicros = 0;
   int _partialPrefixCycle = 0;
   bool _partialPrefixAnimated = false;
   final Map<int, DecodedFrameTiming> _frameTimings =
@@ -447,6 +451,7 @@ final class DecodeSession {
                 <String, Object?>{
                   'cycle': _partialPrefixCycle,
                   'frameCount': availableFrames,
+                  'prefixDurationMicros': _decodedPrefixDurationMicros,
                   'loopCount': 0,
                   'partialPrefix': true,
                   'sourceLength': source.length,
@@ -475,6 +480,8 @@ final class DecodeSession {
                   'nextSourceLength': _requiredSourceLength,
                   'sealed': false,
                   'decodedPrefixFrames': _maxDecodedPrefixFrames,
+                  'decodedPrefixDurationMicros':
+                      _decodedPrefixDurationMicros,
                 },
               );
             }
@@ -525,6 +532,10 @@ final class DecodeSession {
               final decodedPrefixFrames = frame.index + 1;
               if (decodedPrefixFrames > _maxDecodedPrefixFrames) {
                 _maxDecodedPrefixFrames = decodedPrefixFrames;
+                final frameDurationMicros = frame.duration.inMicroseconds;
+                if (frameDurationMicros > 0) {
+                  _decodedPrefixDurationMicros += frameDurationMicros;
+                }
               }
               final animation = _cursor?.loop?.animation;
               if (frame.duration > Duration.zero ||
@@ -757,7 +768,9 @@ final class DecodeSession {
       !ingress.decoderDrivenSourceGrowth &&
       holder.isEmpty &&
       _partialPrefixAnimated &&
-      _maxDecodedPrefixFrames >= partialLoopMinFrames;
+      _maxDecodedPrefixFrames >= 2 &&
+      (_maxDecodedPrefixFrames >= partialLoopMinFrames ||
+          _decodedPrefixDurationMicros >= _partialLoopMinDurationMicros);
 
   void _restartPartialPrefix(EncodedSource source, SourceEpoch epoch) {
     _cursor?.frames.dispose();
@@ -836,6 +849,7 @@ final class DecodeSession {
 
   void _resetPartialPrefix() {
     _maxDecodedPrefixFrames = 0;
+    _decodedPrefixDurationMicros = 0;
     _partialPrefixCycle = 0;
     _partialPrefixAnimated = false;
   }

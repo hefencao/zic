@@ -2925,6 +2925,151 @@ void main() {
   });
 
   test(
+      'logical decode observes the same equivalent physical carrier selected by transfer owner',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_equivalent_physical_source_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final logicalId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'logical-page',
+      ),
+      sourceRevision: 'old',
+      canonicalUri: Uri.parse('file:///logical-page.webp'),
+    );
+    final physicalId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'physical-page',
+      ),
+      sourceRevision: 'new',
+      canonicalUri: Uri.parse('file:///physical-page.webp'),
+    );
+    final decodeId = DecodeId(
+      download: logicalId,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final bytes = Uint8List.fromList(
+      'RIFF....WEBPequivalent-physical-carrier'.codeUnits,
+    );
+    final clock = _Clock();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final idleExact = downloads.get(logicalId);
+    final physical = downloads.get(physicalId);
+    physical.bindResidentImmutableAuthority(
+      validators: const Validators(),
+      totalLength: bytes.lengthInBytes,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: bytes,
+      residentReplayRangeChunks: (start, endExclusive) async =>
+          Stream<List<int>>.value(bytes.sublist(start, endExclusive)),
+      residentReplayAccessMode: 'direct',
+    );
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'equivalent-physical-source',
+      residentReplayRangeSourceWithControl:
+          (session, start, endExclusive, {required control}) async {
+        expect(session, same(physical));
+        control.throwIfCancelled();
+        return Stream<List<int>>.value(bytes.sublist(start, endExclusive));
+      },
+    );
+    final net = NetLane(maxActive: 1);
+    final owner = DownloadTransferOwner(
+      registry: downloads,
+      clock: clock,
+      net: net,
+      resolveTransferId: (id) => id == logicalId ? physicalId : id,
+    );
+    final consumer = owner.attachConsumer(
+      scopeId: 'equivalent-physical-source',
+      transportFor: (_) => FakeTransport(bytes: bytes),
+      traceSink: const NoopTraceSink(),
+    );
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      ingresses: ingresses,
+      transportFor: (_) => FakeTransport(bytes: bytes),
+      clock: clock,
+      onDecode: (_, _, _) async {},
+      downloadTransfer: consumer,
+      downloadSessionFor: (id) => id == logicalId ? physical : downloads.get(id),
+      findDownloadSession: (id) => id == logicalId ? physical : downloads.find(id),
+      net: net,
+      decode: DecodeLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      await owner.dispose();
+      ingresses.dispose();
+      sources.dispose();
+      await downloads.dispose();
+    });
+
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        logicalId: const DownloadDemand(
+          role: PageRole.next,
+          priority: 820,
+          reason: 'reader-next',
+          expirationRevision: 2,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        decodeId: const DecodeDemand(
+          role: PageRole.next,
+          priority: 720,
+          targetWatermark: 2,
+          reason: 'reader-next',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{
+        ResourceId.download(logicalId),
+        ResourceId.decode(decodeId),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: plan,
+        diff: DemandDiff.between(DemandPlan.empty(), plan),
+        window: RoleWindow(const <int, PageRole>{1: PageRole.next}),
+      ),
+    );
+
+    await ingresses.settled(physicalId);
+    await Future<void>.delayed(Duration.zero);
+
+    final projection = ingresses.find(physicalId);
+    expect(projection, isNotNull);
+    expect(projection!.snapshot.length, bytes.lengthInBytes);
+    expect(projection.snapshot.sourceReady, isTrue);
+    expect(ingresses.find(logicalId), isNull);
+    expect(idleExact.demanded, isFalse);
+    expect(physical.demanded, isTrue);
+  });
+
+  test(
       'late Reader joins promoted physical download without blocking decode/upload reconcile',
       () async {
     final temp = await Directory.systemTemp.createTemp('live_late_reader_test_');

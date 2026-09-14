@@ -1,12 +1,14 @@
 import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
 
-import 'download_registry.dart';
-
 final class RecoveryReport {
   const RecoveryReport({required this.scan, required this.sessions});
 
   final ScanReport scan;
+
+  /// Kept for trace/API compatibility. Durable startup recovery no longer
+  /// recreates DownloadSessions from cache rows; sealed and partial bytes are
+  /// opened lazily by their durable owners when a consumer actually asks.
   final int sessions;
 }
 
@@ -14,14 +16,12 @@ final class StartupRecovery {
   const StartupRecovery({
     required this.layout,
     required this.index,
-    required this.registry,
     required this.clock,
     this.traceSink = const NoopTraceSink(),
   });
 
   final CacheLayout layout;
   final CacheIndex index;
-  final DownloadRegistry registry;
   final MonoClock clock;
   final TraceSink traceSink;
 
@@ -30,9 +30,7 @@ final class StartupRecovery {
     final scan = await CacheScanner(
       layout: layout,
       index: index,
-      activePaths: registry.activePaths,
     ).scan();
-    final sessions = await registry.restoreIndexed();
     traceSink.record(
       traceEvent(
         clock: clock,
@@ -44,10 +42,10 @@ final class StartupRecovery {
           'deletedOrphans': scan.deletedOrphans,
           'protected': scan.protected,
           'invalidMeta': scan.invalidMeta,
-          'sessions': sessions,
+          'sessions': 0,
         },
       ),
     );
-    return RecoveryReport(scan: scan, sessions: sessions);
+    return RecoveryReport(scan: scan, sessions: 0);
   }
 }

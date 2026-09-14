@@ -254,38 +254,6 @@ final class DownloadRegistry {
             session.artifact.finalPath,
       };
 
-  Future<int> restoreIndexed() async {
-    final cache = index;
-    if (cache == null) {
-      return 0;
-    }
-    var restored = 0;
-    for (final rec in await cache.list()) {
-      final physicalId = resolvePhysicalId(rec.id);
-      final artifact = _artifactForIndexedRecord(rec, physicalId);
-      if (artifact == null) {
-        // Indexed export/SAF bindings are already durable outside the
-        // session-owned partial/final workspace. Do not create a synthetic
-        // local Artifact for them: restore/evict would otherwise operate on a
-        // different path and leave the indexed bytes orphaned.
-        continue;
-      }
-      final session = _sessions.putIfAbsent(
-        physicalId,
-        () => _createSession(
-          physicalId,
-          artifact: artifact,
-          // The record's root id is the durable binding metadata. It is not a
-          // path resolver, but retaining it on the recovered session keeps a
-          // later cache write from silently changing the recorded ownership.
-          storageRootId: rec.storageRootId,
-        ),
-      );
-      await session.restore();
-      restored++;
-    }
-    return restored;
-  }
 
   /// Resolves only deterministic session-owned POSIX artifact layouts for an
   /// existing indexed binding. Arbitrary exports/SAF paths remain outside the

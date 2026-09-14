@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:domain/domain.dart';
+import 'package:fake_async/fake_async.dart';
 import 'package:sessions/sessions.dart';
 import 'package:test/test.dart';
 import 'package:testkit/testkit.dart';
@@ -126,103 +127,130 @@ void main() {
     await lane.idle();
   });
 
-  test('reactivated high-priority pending work gets a fresh grace window',
-      () async {
-    final lane = NetLane(
-      maxActive: 1,
-      highPriorityThreshold: 1000,
-      preemptionThreshold: 40,
-      preemptionCandidateGrace: const Duration(milliseconds: 80),
-    );
-    final activeCancelled = Completer<void>();
-    late CancelToken activeToken;
-    lane.submitRanked(
-      key: 'active',
-      priority: 0,
-      bucket: 'test',
-      bucketLimit: 1,
-      task: (token) async {
-        activeToken = token;
-        await token.whenCancelled;
-        activeCancelled.complete();
-      },
-    );
-    await Future<void>.delayed(Duration.zero);
+  test('reactivated high-priority pending work gets a fresh grace window', () {
+    fakeAsync((async) {
+      final clock = FakeMonoClock();
+      final lane = NetLane(
+        maxActive: 1,
+        highPriorityThreshold: 1000,
+        preemptionThreshold: 40,
+        preemptionCandidateGrace: const Duration(milliseconds: 80),
+        clock: clock,
+      );
+      final activeCancelled = Completer<void>();
+      late CancelToken activeToken;
+      lane.submitRanked(
+        key: 'active',
+        priority: 0,
+        bucket: 'test',
+        bucketLimit: 1,
+        task: (token) async {
+          activeToken = token;
+          await token.whenCancelled;
+          activeCancelled.complete();
+        },
+      );
+      async.flushMicrotasks();
 
-    lane.submitRanked(
-      key: 'candidate',
-      priority: 1000,
-      bucket: 'test',
-      bucketLimit: 1,
-      demanded: false,
-      task: (_) async {},
-    );
-    await Future<void>.delayed(const Duration(milliseconds: 30));
-    expect(lane.updateDemanded('candidate', true), isTrue);
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(activeToken.cancelled, isFalse);
+      lane.submitRanked(
+        key: 'candidate',
+        priority: 1000,
+        bucket: 'test',
+        bucketLimit: 1,
+        demanded: false,
+        task: (_) async {},
+      );
+      _elapseLaneTime(
+        async,
+        clock,
+        const Duration(milliseconds: 30),
+      );
+      expect(lane.updateDemanded('candidate', true), isTrue);
+      _elapseLaneTime(
+        async,
+        clock,
+        const Duration(milliseconds: 20),
+      );
+      expect(activeToken.cancelled, isFalse);
 
-    await activeCancelled.future.timeout(const Duration(seconds: 1));
-    await lane.idle();
+      _elapseLaneTime(
+        async,
+        clock,
+        const Duration(milliseconds: 60),
+      );
+      expect(activeCancelled.isCompleted, isTrue);
+      async.flushMicrotasks();
+      expect(lane.isIdle, isTrue);
+    });
   });
 
   test('cancelled preemption wake cannot strand a later high-priority task',
-      () async {
-    final lane = NetLane(
-      maxActive: 1,
-      highPriorityThreshold: 1000,
-      preemptionThreshold: 40,
-      preemptionCandidateGrace: const Duration(milliseconds: 80),
-    );
-    final activeCancelled = Completer<void>();
-    final activeStarted = Completer<void>();
-    lane.submitRanked(
-      key: 'active',
-      priority: 0,
-      bucket: 'source:active',
-      bucketLimit: 1,
-      task: (token) async {
-        activeStarted.complete();
-        await token.whenCancelled;
-        activeCancelled.complete();
-      },
-    );
-    await activeStarted.future;
-
-    // Batch the two candidates so the initially highest one owns the first
-    // wake. Removing it then moves the earlier-aged candidate into that wake.
-    lane.batch(() {
+      () {
+    fakeAsync((async) {
+      final clock = FakeMonoClock();
+      final lane = NetLane(
+        maxActive: 1,
+        highPriorityThreshold: 1000,
+        preemptionThreshold: 40,
+        preemptionCandidateGrace: const Duration(milliseconds: 80),
+        clock: clock,
+      );
+      final activeCancelled = Completer<void>();
+      final activeStarted = Completer<void>();
       lane.submitRanked(
-        key: 'candidate-a',
+        key: 'active',
+        priority: 0,
+        bucket: 'source:active',
+        bucketLimit: 1,
+        task: (token) async {
+          activeStarted.complete();
+          await token.whenCancelled;
+          activeCancelled.complete();
+        },
+      );
+      async.flushMicrotasks();
+      expect(activeStarted.isCompleted, isTrue);
+
+      // Batch the two candidates so the initially highest one owns the first
+      // wake. Removing it then moves the earlier-aged candidate into that wake.
+      lane.batch(() {
+        lane.submitRanked(
+          key: 'candidate-a',
+          priority: 1000,
+          bucket: 'source:a',
+          bucketLimit: 1,
+          task: (_) async {},
+        );
+        lane.submitRanked(
+          key: 'candidate-b',
+          priority: 1100,
+          bucket: 'source:b',
+          bucketLimit: 1,
+          task: (_) async {},
+        );
+      });
+      expect(lane.cancelQueued('candidate-b'), isTrue);
+      expect(lane.cancelQueued('candidate-a'), isTrue);
+
+      // The previous candidate's timer was cancelled while the active task was
+      // still running. A new candidate must install a new wake rather than
+      // trusting the stale scheduled timestamp.
+      lane.submitRanked(
+        key: 'candidate-c',
         priority: 1000,
-        bucket: 'source:a',
+        bucket: 'source:c',
         bucketLimit: 1,
         task: (_) async {},
       );
-      lane.submitRanked(
-        key: 'candidate-b',
-        priority: 1100,
-        bucket: 'source:b',
-        bucketLimit: 1,
-        task: (_) async {},
+      _elapseLaneTime(
+        async,
+        clock,
+        const Duration(milliseconds: 80),
       );
+      expect(activeCancelled.isCompleted, isTrue);
+      async.flushMicrotasks();
+      expect(lane.isIdle, isTrue);
     });
-    expect(lane.cancelQueued('candidate-b'), isTrue);
-    expect(lane.cancelQueued('candidate-a'), isTrue);
-
-    // The previous candidate's timer was cancelled while the active task was
-    // still running. A new candidate must install a new wake rather than
-    // trusting the stale scheduled timestamp.
-    lane.submitRanked(
-      key: 'candidate-c',
-      priority: 1000,
-      bucket: 'source:c',
-      bucketLimit: 1,
-      task: (_) async {},
-    );
-
-    await activeCancelled.future.timeout(const Duration(seconds: 1));
-    await lane.idle();
   });
 
   test('ranked duplicate bucket changes wake blocked admission', () async {
@@ -1108,6 +1136,16 @@ void main() {
 }
 
 // dev.123 current-page migration/preemption contracts.
+void _elapseLaneTime(
+  FakeAsync async,
+  FakeMonoClock clock,
+  Duration duration,
+) {
+  clock.advance(duration);
+  async.elapse(duration);
+  async.flushMicrotasks();
+}
+
 void _dev123NetLaneTests() {
   test('active same-key promotion updates rank without restarting transfer', () async {
     final lane = NetLane(maxActive: 1);
@@ -1365,125 +1403,154 @@ void _dev123NetLaneTests() {
 
   test(
       'transient blocked current does not destructively preempt before candidate grace',
-      () async {
-    final lane = NetLane(
-      maxActive: 1,
-      reservedHighPrioritySlots: 1,
-      highPriorityThreshold: 1000,
-      preemptionThreshold: 40,
-      preemptionCandidateGrace: const Duration(milliseconds: 30),
-    );
-    final retainedCancelled = Completer<void>();
-    final retainedRelease = Completer<void>();
-    final firstCurrentStarted = Completer<void>();
-    final firstCurrentRelease = Completer<void>();
-    final transientStarted = Completer<void>();
+      () {
+    fakeAsync((async) {
+      final clock = FakeMonoClock();
+      final lane = NetLane(
+        maxActive: 1,
+        reservedHighPrioritySlots: 1,
+        highPriorityThreshold: 1000,
+        preemptionThreshold: 40,
+        preemptionCandidateGrace: const Duration(milliseconds: 30),
+        clock: clock,
+      );
+      final retainedCancelled = Completer<void>();
+      final retainedRelease = Completer<void>();
+      final firstCurrentStarted = Completer<void>();
+      final firstCurrentRelease = Completer<void>();
+      final transientStarted = Completer<void>();
 
-    lane.submitRanked(
-      key: 'retained',
-      priority: 0,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      task: (token) async {
-        await Future.any<void>(<Future<void>>[
-          token.whenCancelled,
-          retainedRelease.future,
-        ]);
-        if (token.cancelled) retainedCancelled.complete();
-      },
-    );
-    await Future<void>.delayed(Duration.zero);
+      lane.submitRanked(
+        key: 'retained',
+        priority: 0,
+        bucket: 'remote:a',
+        bucketLimit: 1,
+        task: (token) async {
+          await Future.any<void>(<Future<void>>[
+            token.whenCancelled,
+            retainedRelease.future,
+          ]);
+          if (token.cancelled) retainedCancelled.complete();
+        },
+      );
+      async.flushMicrotasks();
 
-    lane.submitRanked(
-      key: 'current-a',
-      priority: 1000,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      task: (_) async {
-        firstCurrentStarted.complete();
-        await firstCurrentRelease.future;
-      },
-    );
-    await firstCurrentStarted.future;
-    expect(lane.active, 2);
-    expect(lane.handoffActive, 1);
+      lane.submitRanked(
+        key: 'current-a',
+        priority: 1000,
+        bucket: 'remote:a',
+        bucketLimit: 1,
+        task: (_) async {
+          firstCurrentStarted.complete();
+          await firstCurrentRelease.future;
+        },
+      );
+      async.flushMicrotasks();
+      expect(firstCurrentStarted.isCompleted, isTrue);
+      expect(lane.active, 2);
+      expect(lane.handoffActive, 1);
 
-    lane.submitRanked(
-      key: 'transient-current',
-      priority: 1000,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      task: (_) async => transientStarted.complete(),
-    );
+      lane.submitRanked(
+        key: 'transient-current',
+        priority: 1000,
+        bucket: 'remote:a',
+        bucketLimit: 1,
+        task: (_) async => transientStarted.complete(),
+      );
 
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-    expect(retainedCancelled.isCompleted, isFalse);
-    expect(transientStarted.isCompleted, isFalse);
+      _elapseLaneTime(
+        async,
+        clock,
+        const Duration(milliseconds: 5),
+      );
+      expect(retainedCancelled.isCompleted, isFalse);
+      expect(transientStarted.isCompleted, isFalse);
 
-    expect(lane.updatePriority('transient-current', 820), isTrue);
-    await Future<void>.delayed(const Duration(milliseconds: 40));
-    expect(retainedCancelled.isCompleted, isFalse);
-    expect(transientStarted.isCompleted, isFalse);
+      expect(lane.updatePriority('transient-current', 820), isTrue);
+      _elapseLaneTime(
+        async,
+        clock,
+        const Duration(milliseconds: 40),
+      );
+      expect(retainedCancelled.isCompleted, isFalse);
+      expect(transientStarted.isCompleted, isFalse);
 
-    firstCurrentRelease.complete();
-    retainedRelease.complete();
-    await lane.idle();
+      firstCurrentRelease.complete();
+      retainedRelease.complete();
+      async.flushMicrotasks();
+      expect(lane.isIdle, isTrue);
+    });
   });
 
-  test('stable blocked current preempts after candidate grace', () async {
-    final lane = NetLane(
-      maxActive: 1,
-      reservedHighPrioritySlots: 1,
-      highPriorityThreshold: 1000,
-      preemptionThreshold: 40,
-      preemptionCandidateGrace: const Duration(milliseconds: 30),
-    );
-    final retainedCancelled = Completer<void>();
-    final firstCurrentStarted = Completer<void>();
-    final firstCurrentRelease = Completer<void>();
-    final secondCurrentStarted = Completer<void>();
+  test('stable blocked current preempts after candidate grace', () {
+    fakeAsync((async) {
+      final clock = FakeMonoClock();
+      final lane = NetLane(
+        maxActive: 1,
+        reservedHighPrioritySlots: 1,
+        highPriorityThreshold: 1000,
+        preemptionThreshold: 40,
+        preemptionCandidateGrace: const Duration(milliseconds: 30),
+        clock: clock,
+      );
+      final retainedCancelled = Completer<void>();
+      final firstCurrentStarted = Completer<void>();
+      final firstCurrentRelease = Completer<void>();
+      final secondCurrentStarted = Completer<void>();
 
-    lane.submitRanked(
-      key: 'retained',
-      priority: 0,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      task: (token) async {
-        await token.whenCancelled;
-        retainedCancelled.complete();
-      },
-    );
-    await Future<void>.delayed(Duration.zero);
+      lane.submitRanked(
+        key: 'retained',
+        priority: 0,
+        bucket: 'remote:a',
+        bucketLimit: 1,
+        task: (token) async {
+          await token.whenCancelled;
+          retainedCancelled.complete();
+        },
+      );
+      async.flushMicrotasks();
 
-    lane.submitRanked(
-      key: 'current-a',
-      priority: 1000,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      task: (_) async {
-        firstCurrentStarted.complete();
-        await firstCurrentRelease.future;
-      },
-    );
-    await firstCurrentStarted.future;
+      lane.submitRanked(
+        key: 'current-a',
+        priority: 1000,
+        bucket: 'remote:a',
+        bucketLimit: 1,
+        task: (_) async {
+          firstCurrentStarted.complete();
+          await firstCurrentRelease.future;
+        },
+      );
+      async.flushMicrotasks();
+      expect(firstCurrentStarted.isCompleted, isTrue);
 
-    lane.submitRanked(
-      key: 'current-b',
-      priority: 1000,
-      bucket: 'remote:a',
-      bucketLimit: 1,
-      task: (_) async => secondCurrentStarted.complete(),
-    );
+      lane.submitRanked(
+        key: 'current-b',
+        priority: 1000,
+        bucket: 'remote:a',
+        bucketLimit: 1,
+        task: (_) async => secondCurrentStarted.complete(),
+      );
 
-    await Future<void>.delayed(const Duration(milliseconds: 5));
-    expect(retainedCancelled.isCompleted, isFalse);
-    expect(secondCurrentStarted.isCompleted, isFalse);
+      _elapseLaneTime(
+        async,
+        clock,
+        const Duration(milliseconds: 5),
+      );
+      expect(retainedCancelled.isCompleted, isFalse);
+      expect(secondCurrentStarted.isCompleted, isFalse);
 
-    await retainedCancelled.future.timeout(const Duration(seconds: 1));
-    await secondCurrentStarted.future.timeout(const Duration(seconds: 1));
+      _elapseLaneTime(
+        async,
+        clock,
+        const Duration(milliseconds: 25),
+      );
+      expect(retainedCancelled.isCompleted, isTrue);
+      expect(secondCurrentStarted.isCompleted, isTrue);
 
-    firstCurrentRelease.complete();
-    await lane.idle();
+      firstCurrentRelease.complete();
+      async.flushMicrotasks();
+      expect(lane.isIdle, isTrue);
+    });
   });
 
   test('only one destructive preemption may be in flight', () async {

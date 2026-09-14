@@ -40,6 +40,47 @@ void main() {
     }
   });
 
+  test('network attempt publishes transient response total without owning durable length',
+      () async {
+    expect(session.totalLength, isNull);
+    expect(session.networkAttemptTotalLength, isNull);
+
+    session.beginNetworkAttemptProgress(0, totalLength: 15_640_724);
+
+    expect(session.snapshot.networkAttemptActive, isTrue);
+    expect(session.snapshot.networkAttemptTotalLength, 15_640_724);
+    expect(session.snapshot.totalLength, isNull,
+        reason: 'attempt metadata must not become durable resume authority');
+
+    session.endNetworkAttemptProgress();
+    expect(session.snapshot.networkAttemptActive, isFalse);
+    expect(session.snapshot.networkAttemptTotalLength, isNull);
+    expect(session.snapshot.totalLength, isNull);
+  });
+
+  test('local WebP RIFF prefix exposes a display-only total length hint',
+      () async {
+    const declaredTotal = 15_640_724;
+    final riffPayload = declaredTotal - 8;
+    final prefix = <int>[
+      0x52, 0x49, 0x46, 0x46,
+      riffPayload & 0xff,
+      (riffPayload >> 8) & 0xff,
+      (riffPayload >> 16) & 0xff,
+      (riffPayload >> 24) & 0xff,
+      0x57, 0x45, 0x42, 0x50,
+      ...List<int>.filled(52, 0),
+    ];
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, prefix);
+
+    expect(session.totalLength, isNull);
+    expect(session.localEncodedTotalLengthHint, declaredTotal);
+    expect(session.snapshot.localEncodedTotalLengthHint, declaredTotal);
+    expect(session.snapshot.totalLength, isNull,
+        reason: 'RIFF length is presentation metadata, not resume authority');
+  });
+
   test('restore preserves an explicitly foreign colliding partial artifact',
       () async {
     final foreign = _idWithSource('foreign-source');
@@ -125,6 +166,57 @@ void main() {
     expect(projection.snapshot.length, 64);
     expect(projection.snapshot.failure, isNull);
     await session.pause(writer);
+    await session.dispose();
+    expect(released, 1);
+  });
+
+  test('borrowed durable backing delegates later cache mutations to its owner',
+      () async {
+    final durablePartial = '${temp.path}/owned/partial/page.webp';
+    final durableFinal = '${temp.path}/owned/final/page.webp';
+    final durableWriter = Artifact(
+      partialPath: durablePartial,
+      finalPath: durableFinal,
+    );
+    await durableWriter.restore();
+    final prefix = <int>[...'RIFF....WEBP'.codeUnits, ...List<int>.filled(32, 3)];
+    await durableWriter.append(0, prefix);
+    await durableWriter.pause();
+    await durableWriter.dispose();
+
+    final index = MemIndex();
+    await index.open();
+    addTearDown(index.close);
+    final owner = _RecordingCacheMutationOwner();
+    var released = 0;
+
+    await session.adoptDurablePartialBacking(
+      artifact: Artifact(
+        partialPath: durablePartial,
+        finalPath: durableFinal,
+      ),
+      index: index,
+      cacheMutationOwner: owner,
+      storageRootId: '${temp.path}/owned',
+      expectedLength: prefix.length,
+      validators: const Validators(etag: 'owned-v1'),
+      totalLength: prefix.length + 8,
+      releaseBacking: () => released++,
+    );
+
+    expect(owner.syncedStates, isEmpty,
+        reason: 'adoption itself is already inside the lending owner boundary');
+    expect((await index.get(session.id.key))?.bytes, prefix.length);
+
+    final writer = session.acquireWriter();
+    await session.append(writer, prefix.length, List<int>.filled(8, 4));
+    await session.pause(writer);
+    expect(owner.syncedStates, <CacheState>[CacheState.partial]);
+    expect((await index.get(session.id.key))?.bytes, prefix.length,
+        reason: 'the session must not bypass the delegated persistent owner');
+
+    await session.reset();
+    expect(owner.clearCalls, 1);
     await session.dispose();
     expect(released, 1);
   });
@@ -3164,6 +3256,45 @@ final class _BlockingCacheIndex implements CacheIndex {
 
   @override
   Future<void> close() => delegate.close();
+}
+
+final class _RecordingCacheMutationOwner implements DownloadCacheMutationOwner {
+  final List<CacheState> syncedStates = <CacheState>[];
+  int clearCalls = 0;
+
+  @override
+  Future<bool> beginDownloadCachePromotion(
+    DownloadSession session, {
+    required SourceEpoch expectedEpoch,
+  }) async =>
+      false;
+
+  @override
+  Future<void> commitDownloadCachePromotion(
+    DownloadSession session, {
+    required SourceEpoch expectedEpoch,
+  }) async {}
+
+  @override
+  Future<void> abortDownloadCachePromotion(DownloadSession session) async {}
+
+  @override
+  Future<void> syncDownloadCache(
+    DownloadSession session,
+    CacheState state, {
+    required SourceEpoch expectedEpoch,
+  }) async {
+    syncedStates.add(state);
+  }
+
+  @override
+  Future<void> clearDownloadCache(
+    DownloadSession session, {
+    required bool removeCacheRecord,
+    required bool deleteFinalArtifact,
+  }) async {
+    clearCalls++;
+  }
 }
 
 final class _TestSourceFactory implements SourceFactory {

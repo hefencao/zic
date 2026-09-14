@@ -2679,13 +2679,20 @@ final class _ResidentReplayBody {
       response.discard(control: control);
 }
 
-final class _LocalPreparationControl implements TaskControl {
-  _LocalPreparationControl({required this.priority});
+final class _LocalPreparationControl
+    implements PriorityObservableTaskControl {
+  _LocalPreparationControl({required int priority}) : _priority = priority;
 
   final Completer<void> _cancelledSignal = Completer<void>();
+  final StreamController<int> _priorityChanges =
+      StreamController<int>.broadcast(sync: true);
+  int _priority;
 
   @override
-  int priority;
+  int get priority => _priority;
+
+  @override
+  Stream<int> get priorityChanges => _priorityChanges.stream;
 
   @override
   bool get cancelled => _cancelledSignal.isCompleted;
@@ -2694,7 +2701,9 @@ final class _LocalPreparationControl implements TaskControl {
   Future<void> get whenCancelled => _cancelledSignal.future;
 
   void updatePriority(int value) {
-    priority = value;
+    if (_priority == value) return;
+    _priority = value;
+    _priorityChanges.add(value);
   }
 
   void cancel() {

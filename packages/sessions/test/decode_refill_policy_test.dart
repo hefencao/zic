@@ -80,7 +80,7 @@ void main() {
     );
 
     expect(decision?.id, animatedNext);
-    expect(decision?.stage, 'n>1');
+    expect(decision?.stage, DecodeWaterlineStage.nextShallow);
   });
 
   test('ended finite pages do not block neighbor refill', () {
@@ -126,7 +126,7 @@ void main() {
       depthOf: (id) => depth[id]!,
     );
     expect(decision?.id, current);
-    expect(decision?.stage, 'one>0');
+    expect(decision?.stage, DecodeWaterlineStage.oneFrame);
     expect(decision?.targetWatermark, 1);
     depth[current] = 1;
 
@@ -135,7 +135,7 @@ void main() {
       depthOf: (id) => depth[id]!,
     );
     expect(decision?.id, neighbor);
-    expect(decision?.stage, 'one>0');
+    expect(decision?.stage, DecodeWaterlineStage.oneFrame);
   });
 
   test('animated current waterline outranks lower-priority static warming', () {
@@ -158,7 +158,7 @@ void main() {
     );
 
     expect(decision?.id, current);
-    expect(decision?.stage, 'c>2');
+    expect(decision?.stage, DecodeWaterlineStage.currentBootstrap);
   });
 
   test('terminal single-frame demand does not block another bootstrap', () {
@@ -176,7 +176,7 @@ void main() {
     );
 
     expect(decision?.id, neighbor);
-    expect(decision?.stage, 'one>0');
+    expect(decision?.stage, DecodeWaterlineStage.oneFrame);
   });
 
   test('current source wait suppresses speculative neighbor decode bootstrap', () {
@@ -217,7 +217,7 @@ void main() {
     );
 
     expect(decision?.id, current);
-    expect(decision?.stage, 'c>2');
+    expect(decision?.stage, DecodeWaterlineStage.currentBootstrap);
     expect(decision?.targetWatermark, 3);
   });
 
@@ -242,7 +242,7 @@ void main() {
     );
 
     expect(decision?.id, transition);
-    expect(decision?.stage, 't>0');
+    expect(decision?.stage, DecodeWaterlineStage.transitionFirstFrame);
     expect(decision?.targetWatermark, 1);
   });
 
@@ -267,7 +267,7 @@ void main() {
     );
 
     expect(decision?.id, current);
-    expect(decision?.stage, 'c>2');
+    expect(decision?.stage, DecodeWaterlineStage.currentBootstrap);
     expect(decision?.targetWatermark, 3);
   });
 
@@ -285,14 +285,14 @@ void main() {
 
     var decision = policy.next(demands: demands, depthOf: (id) => depth[id]!);
     expect(decision?.id, transition);
-    expect(decision?.stage, 't>0');
+    expect(decision?.stage, DecodeWaterlineStage.transitionFirstFrame);
     depth[transition] = 2;
     depth[next2] = 2;
     depth[current] = 5;
 
     decision = policy.next(demands: demands, depthOf: (id) => depth[id]!);
     expect(decision?.id, transition);
-    expect(decision?.stage, 'n>2');
+    expect(decision?.stage, DecodeWaterlineStage.nextMid);
   });
 
 }

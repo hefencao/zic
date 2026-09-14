@@ -18,6 +18,7 @@ enum DownloadState { idle, queued, receiving, sealed, promoted, failed, disposed
 const int _sourceMetadataPrefixLength = 64;
 
 typedef DownloadSnapshotListener = void Function(DownloadSnapshot snapshot);
+typedef DownloadCommittedProgressListener = void Function(int committedLength);
 
 /// Resident-body replay capability already bound to one physical generation.
 ///
@@ -205,7 +206,9 @@ final class DownloadSnapshot {
     this.ingressProjectionCount = 0,
     this.networkAttemptSequence = 0,
     this.networkAttemptActive = false,
+    this.networkAttemptTotalLength,
     this.networkCursorLength = 0,
+    this.localEncodedTotalLengthHint,
     this.sourceCanvasWidth,
     this.sourceCanvasHeight,
   });
@@ -235,11 +238,26 @@ final class DownloadSnapshot {
   final int networkAttemptSequence;
   final bool networkAttemptActive;
 
+  /// Full object length reported by the current transport attempt, when known.
+  ///
+  /// This is transient projection metadata only. It may differ from [totalLength]
+  /// until a restarted full-body response has verified the preserved partial; it
+  /// must never authorize resume, sealing, promotion or durable cache mutation.
+  final int? networkAttemptTotalLength;
+
   /// Absolute byte position consumed by the current transport attempt.
   ///
   /// Unlike [committedLength], this may restart behind an existing playable
   /// partial when a server ignores Range and the task must re-read the prefix.
   final int networkCursorLength;
+
+  /// Encoded full-body length declared by bytes already available locally.
+  ///
+  /// Currently this is populated from a valid RIFF/WebP header when durable
+  /// response metadata does not already carry a total. It is projection-only
+  /// metadata: it must never authorize resume, sealing, promotion or cache
+  /// mutation.
+  final int? localEncodedTotalLengthHint;
 
   /// Source-container canvas dimensions derived from the authoritative ingress
   /// prefix for this physical generation. These are source metadata, not
@@ -251,6 +269,40 @@ final class DownloadSnapshot {
       sourceCanvasWidth != null && sourceCanvasHeight != null;
 }
 
+/// Durable cache-mutation owner for a DownloadSession whose mutable backing
+/// has been borrowed from another package-level owner.
+///
+/// Ordinary standalone sessions may continue to mutate their injected
+/// [CacheIndex] directly. Once a persistent store lends one of its partial
+/// bodies to a composition transfer session, however, writes to that store's
+/// index must re-enter the store's serialization domain instead of creating a
+/// second independent mutation tail inside the session.
+abstract interface class DownloadCacheMutationOwner {
+  Future<void> syncDownloadCache(
+    DownloadSession session,
+    CacheState state, {
+    required SourceEpoch expectedEpoch,
+  });
+
+  Future<bool> beginDownloadCachePromotion(
+    DownloadSession session, {
+    required SourceEpoch expectedEpoch,
+  });
+
+  Future<void> commitDownloadCachePromotion(
+    DownloadSession session, {
+    required SourceEpoch expectedEpoch,
+  });
+
+  Future<void> abortDownloadCachePromotion(DownloadSession session);
+
+  Future<void> clearDownloadCache(
+    DownloadSession session, {
+    required bool removeCacheRecord,
+    required bool deleteFinalArtifact,
+  });
+}
+
 final class DownloadSession {
   DownloadSession({
     required this.id,
@@ -260,11 +312,13 @@ final class DownloadSession {
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'download',
     CacheIndex? index,
+    DownloadCacheMutationOwner? cacheMutationOwner,
     String storageRootId = 'default',
     bool initiallyDemanded = true,
   })  : physicalId = physicalId ?? PhysicalMediaId.exact(id),
         _artifact = artifact,
         _index = index,
+        _cacheMutationOwner = cacheMutationOwner,
         _physicalPartialIndex = index is PhysicalPartialIndex
             ? index as PhysicalPartialIndex
             : null,
@@ -282,6 +336,7 @@ final class DownloadSession {
   final String sessionId;
   CacheIndex? _index;
   PhysicalPartialIndex? _physicalPartialIndex;
+  DownloadCacheMutationOwner? _cacheMutationOwner;
   String _storageRootId;
   void Function()? _borrowedBackingRelease;
   bool _borrowedBackingCanBecomeDurableFinal = false;
@@ -308,6 +363,7 @@ final class DownloadSession {
   int _networkStartLength = 0;
   int _networkAttemptSequence = 0;
   bool _networkAttemptActive = false;
+  int? _networkAttemptTotalLength;
   int _networkCursorLength = 0;
   int _networkCursorPublishedLength = 0;
   int? _residentLength;
@@ -316,6 +372,7 @@ final class DownloadSession {
   ByteResponseBodyAuthority? _residentBodyAuthority;
   DownloadResidentReplayRangeChunks? _residentReplayRangeChunks;
   DownloadResidentReplayRangeClose? _residentReplayRangeClose;
+  Object? _residentReplayGenerationToken;
   String _residentReplayAccessMode = 'unknown';
   Future<void> _residentReplayCloseTail = Future<void>.value();
   Failure? _failure;
@@ -350,6 +407,8 @@ final class DownloadSession {
   bool _restoring = false;
   final Set<DownloadSnapshotListener> _snapshotListeners =
       <DownloadSnapshotListener>{};
+  final Set<DownloadCommittedProgressListener> _committedProgressListeners =
+      <DownloadCommittedProgressListener>{};
 
   DownloadState get state => _state;
   SourceEpoch get epoch => _epoch;
@@ -363,6 +422,14 @@ final class DownloadSession {
 
   DownloadResidentReplayRangeChunks? get residentReplayRangeChunks =>
       residentIngressDeferred ? _residentReplayRangeChunks : null;
+
+  /// Opaque identity for the currently bound immutable resident-body
+  /// generation. Composition-owned accelerators may key derived replay bytes
+  /// by this token, but the token carries no body authority of its own. A
+  /// resident rebind/reset always replaces it before another Reader can reuse
+  /// those derived bytes.
+  Object? get residentReplayGenerationToken =>
+      residentIngressDeferred ? _residentReplayGenerationToken : null;
 
   String get residentReplayAccessMode =>
       residentIngressDeferred ? _residentReplayAccessMode : 'unknown';
@@ -394,7 +461,30 @@ final class DownloadSession {
   int get networkStartLength => _networkStartLength;
   int get networkAttemptSequence => _networkAttemptSequence;
   bool get networkAttemptActive => _networkAttemptActive;
+  int? get networkAttemptTotalLength => _networkAttemptTotalLength;
   int get networkCursorLength => _networkCursorLength;
+  int? get localEncodedTotalLengthHint {
+    if (_prefix.length < 12 ||
+        _prefix[0] != 0x52 ||
+        _prefix[1] != 0x49 ||
+        _prefix[2] != 0x46 ||
+        _prefix[3] != 0x46 ||
+        _prefix[8] != 0x57 ||
+        _prefix[9] != 0x45 ||
+        _prefix[10] != 0x42 ||
+        _prefix[11] != 0x50) {
+      return null;
+    }
+    final riffPayloadLength = _prefix[4] |
+        (_prefix[5] << 8) |
+        (_prefix[6] << 16) |
+        (_prefix[7] << 24);
+    final declaredTotal = riffPayloadLength + 8;
+    if (declaredTotal < 20 || declaredTotal < committedLength) {
+      return null;
+    }
+    return declaredTotal;
+  }
   ContentKind get contentKind => _contentKind;
   int get firstPlayablePrefixBytes => _firstPlayablePrefixBytes;
   int get firstFrameRequiredPrefixBytes => _firstFrameRequiredPrefixBytes;
@@ -465,7 +555,9 @@ final class DownloadSession {
         ingressProjectionCount: _ingressProjections.length,
         networkAttemptSequence: _networkAttemptSequence,
         networkAttemptActive: _networkAttemptActive,
+        networkAttemptTotalLength: _networkAttemptTotalLength,
         networkCursorLength: _networkCursorLength,
+        localEncodedTotalLengthHint: localEncodedTotalLengthHint,
         sourceCanvasWidth: _sourceCanvasWidth,
         sourceCanvasHeight: _sourceCanvasHeight,
       );
@@ -496,6 +588,21 @@ final class DownloadSession {
 
   void removeSnapshotListener(DownloadSnapshotListener listener) {
     _snapshotListeners.remove(listener);
+  }
+
+  /// Observes only successful physical byte commits. Unlike snapshot
+  /// listeners this signal does not publish scheduler/UI state and therefore
+  /// can be used by the physical durability owner without turning every
+  /// transport chunk into a broad DownloadSnapshot invalidation.
+  void addCommittedProgressListener(DownloadCommittedProgressListener listener) {
+    _requireNotDisposed();
+    _committedProgressListeners.add(listener);
+  }
+
+  void removeCommittedProgressListener(
+    DownloadCommittedProgressListener listener,
+  ) {
+    _committedProgressListeners.remove(listener);
   }
 
   RunLease beginRun() {
@@ -556,6 +663,7 @@ final class DownloadSession {
   Future<DownloadSnapshot> adoptDurablePartialBacking({
     required Artifact artifact,
     required CacheIndex index,
+    DownloadCacheMutationOwner? cacheMutationOwner,
     required String storageRootId,
     required int expectedLength,
     required Validators validators,
@@ -621,6 +729,7 @@ final class DownloadSession {
       _totalLength = totalLength;
       _networkStartLength = adopted.committedLength;
       _networkAttemptActive = false;
+      _networkAttemptTotalLength = null;
       // A durable local prefix is committed transfer state, not evidence that
       // the next transport attempt already consumed those bytes. Keep the
       // transient transport cursor at its reset value until DownloadJob starts
@@ -639,6 +748,12 @@ final class DownloadSession {
       control?.throwIfCancelled();
       await _syncCache(CacheState.partial, expectedEpoch: epoch);
       _requireEpoch(epoch);
+      // The initial adoption sync above still runs while the lending store's
+      // adoption serializer is held. Hand subsequent persistent mutations
+      // back to that owner only after this boundary is committed; otherwise a
+      // nested sync could wait on the very store operation that is adopting
+      // this backing.
+      _cacheMutationOwner = cacheMutationOwner;
       _recordTrace(
         TraceEventKind.artifactSource,
         <String, Object?>{
@@ -1001,6 +1116,7 @@ final class DownloadSession {
   /// without inventing a second partial owner.
   void beginNetworkAttemptProgress(
     int startOffset, {
+    int? totalLength,
     RunLease? expectedRun,
   }) {
     _requireNotDisposed();
@@ -1014,8 +1130,16 @@ final class DownloadSession {
         'must not be negative',
       );
     }
+    if (totalLength != null && totalLength <= 0) {
+      throw ArgumentError.value(
+        totalLength,
+        'totalLength',
+        'must be positive when known',
+      );
+    }
     _networkAttemptSequence++;
     _networkAttemptActive = true;
+    _networkAttemptTotalLength = totalLength;
     _networkCursorLength = startOffset;
     _networkCursorPublishedLength = startOffset;
     _notifySnapshot();
@@ -1060,6 +1184,7 @@ final class DownloadSession {
       return;
     }
     _networkAttemptActive = false;
+    _networkAttemptTotalLength = null;
     _networkCursorPublishedLength = _networkCursorLength;
     _notifySnapshot();
   }
@@ -1162,6 +1287,7 @@ final class DownloadSession {
     _dropResidentReplayRangeCapability();
     _residentReplayRangeChunks = residentReplayRangeChunks;
     _residentReplayRangeClose = residentReplayRangeClose;
+    _residentReplayGenerationToken = Object();
     _residentReplayAccessMode = residentReplayAccessMode;
     _residentLength = totalLength;
     _validators = validators;
@@ -1171,6 +1297,7 @@ final class DownloadSession {
     _totalLength = totalLength;
     _networkStartLength = 0;
     _networkAttemptActive = false;
+    _networkAttemptTotalLength = null;
     _networkCursorLength = 0;
     _networkCursorPublishedLength = 0;
     _prefix = <int>[];
@@ -1436,6 +1563,7 @@ final class DownloadSession {
       );
       _appendSourceMetadataPrefix(offset, chunk);
       _recordCommittedChunk(chunk.length);
+      _notifyCommittedProgress();
       _requireWriter(lease);
     } on Object catch (error, stackTrace) {
       // A direct session consumer may observe an artifact or ingress failure
@@ -1581,7 +1709,26 @@ final class DownloadSession {
           message: 'final artifact metadata belongs to another download',
         );
       }
+      final journaled = await _beginDurablePromotion(expectedEpoch: epoch);
+      _requireEpoch(epoch);
       promoted = await artifact.promote();
+      _requireEpoch(epoch);
+      _state = DownloadState.promoted;
+      _recordTrace(
+        TraceEventKind.artifactPromoted,
+        <String, Object?>{
+          'path': promoted.finalPath,
+          'length': promoted.committedLength,
+        },
+      );
+      _notifySnapshot();
+      if (journaled) {
+        await _commitDurablePromotion(expectedEpoch: epoch);
+      } else {
+        await _syncCache(CacheState.ready, expectedEpoch: epoch);
+      }
+      _requireEpoch(epoch);
+      return snapshot;
     } on Object catch (error) {
       if (_epoch != epoch || _state == DownloadState.disposed) rethrow;
       _state = DownloadState.failed;
@@ -1596,19 +1743,6 @@ final class DownloadSession {
       _notifySnapshot();
       rethrow;
     }
-    _requireEpoch(epoch);
-    _state = DownloadState.promoted;
-    _recordTrace(
-      TraceEventKind.artifactPromoted,
-      <String, Object?>{
-        'path': promoted.finalPath,
-        'length': promoted.committedLength,
-      },
-    );
-    _notifySnapshot();
-    await _syncCache(CacheState.ready, expectedEpoch: epoch);
-    _requireEpoch(epoch);
-    return snapshot;
   }
 
   /// Pauses an authoritative partial writer without converting the partial
@@ -2074,6 +2208,7 @@ final class DownloadSession {
     _totalLength = null;
     _networkStartLength = 0;
     _networkAttemptActive = false;
+    _networkAttemptTotalLength = null;
     _networkCursorLength = 0;
     _networkCursorPublishedLength = 0;
     _residentLength = null;
@@ -2097,6 +2232,15 @@ final class DownloadSession {
       // reset and can otherwise repopulate a logically deleted row during
       // resetIfIdle(removeCacheRecord: false).
       await _enqueueCacheMutation<void>(() async {
+        final mutationOwner = _cacheMutationOwner;
+        if (mutationOwner != null) {
+          await mutationOwner.clearDownloadCache(
+            this,
+            removeCacheRecord: removeCacheRecord,
+            deleteFinalArtifact: deleteFinalArtifact,
+          );
+          return;
+        }
         final cache = index;
         final physicalCache = _physicalPartialIndex;
         if (!physicalId.isExactFallback && physicalCache != null) {
@@ -2151,6 +2295,7 @@ final class DownloadSession {
       _totalLength = null;
       _networkStartLength = 0;
       _networkAttemptActive = false;
+      _networkAttemptTotalLength = null;
       _networkCursorLength = 0;
       _networkCursorPublishedLength = 0;
       _residentLength = null;
@@ -2165,6 +2310,15 @@ final class DownloadSession {
       _sourceCanvasHeight = null;
       _resetPlayablePrefixEvidence();
       await _enqueueCacheMutation<void>(() async {
+        final mutationOwner = _cacheMutationOwner;
+        if (mutationOwner != null) {
+          await mutationOwner.clearDownloadCache(
+            this,
+            removeCacheRecord: true,
+            deleteFinalArtifact: true,
+          );
+          return;
+        }
         final cache = index;
         final physicalCache = _physicalPartialIndex;
         if (!physicalId.isExactFallback && physicalCache != null) {
@@ -2195,6 +2349,7 @@ final class DownloadSession {
     final close = _residentReplayRangeClose;
     _residentReplayRangeChunks = null;
     _residentReplayRangeClose = null;
+    _residentReplayGenerationToken = null;
     _residentReplayAccessMode = 'unknown';
     if (close == null) return;
     _residentReplayCloseTail = _residentReplayCloseTail.then((_) async {
@@ -2276,9 +2431,11 @@ final class DownloadSession {
         _borrowedBackingRelease = null;
         _borrowedBackingCanBecomeDurableFinal = false;
       }
+      _cacheMutationOwner = null;
       _state = DownloadState.disposed;
       _notifySnapshot();
       _snapshotListeners.clear();
+      _committedProgressListeners.clear();
     } finally {
       _disposing = false;
     }
@@ -3077,10 +3234,74 @@ final class DownloadSession {
     return false;
   }
 
+  Future<bool> _beginDurablePromotion({
+    required SourceEpoch expectedEpoch,
+  }) async {
+    final mutationOwner = _cacheMutationOwner;
+    if (mutationOwner != null) {
+      final journaled = await mutationOwner.beginDownloadCachePromotion(
+        this,
+        expectedEpoch: expectedEpoch,
+      );
+      if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
+        if (journaled) {
+          await mutationOwner.abortDownloadCachePromotion(this);
+        }
+        _requireEpoch(expectedEpoch);
+      }
+      return journaled;
+    }
+    final cache = index;
+    if (cache is! ArtifactPromotionIndex) return false;
+    final promotionIndex = cache as ArtifactPromotionIndex;
+    await promotionIndex.beginArtifactPromotion(
+      id: id,
+      physicalId: physicalId,
+      sourceAccessLocator: artifact.partialPath,
+      destinationAccessLocator: artifact.finalPath,
+      bytes: artifact.committedLength,
+      checksum: artifact.checksum,
+      storageRootId: storageRootId,
+    );
+    if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
+      await promotionIndex.removeArtifactPromotion(physicalId.key);
+      _requireEpoch(expectedEpoch);
+    }
+    return true;
+  }
+
+  Future<void> _commitDurablePromotion({
+    required SourceEpoch expectedEpoch,
+  }) async {
+    if (_epoch != expectedEpoch || _state == DownloadState.disposed) return;
+    final mutationOwner = _cacheMutationOwner;
+    if (mutationOwner != null) {
+      await mutationOwner.commitDownloadCachePromotion(
+        this,
+        expectedEpoch: expectedEpoch,
+      );
+      return;
+    }
+    final cache = index;
+    if (cache is ArtifactPromotionIndex) {
+      final promotionIndex = cache as ArtifactPromotionIndex;
+      await promotionIndex.commitArtifactPromotion(physicalId.key);
+    }
+  }
+
   Future<void> _syncCache(
     CacheState state, {
     required SourceEpoch expectedEpoch,
   }) => _enqueueCacheMutation<void>(() async {
+        final mutationOwner = _cacheMutationOwner;
+        if (mutationOwner != null) {
+          await mutationOwner.syncDownloadCache(
+            this,
+            state,
+            expectedEpoch: expectedEpoch,
+          );
+          return;
+        }
         if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
           return;
         }
@@ -3201,7 +3422,16 @@ final class DownloadSession {
     );
     _cacheMutationTail = current.then<void>(
       (_) {},
-      onError: (Object _, StackTrace __) {},
+      onError: (Object error, StackTrace stackTrace) {
+        _recordTrace(
+          TraceEventKind.taskFailed,
+          <String, Object?>{
+            'stage': 'cache-mutation-tail',
+            'error': '$error',
+            'stackTrace': '$stackTrace',
+          },
+        );
+      },
     );
     return current;
   }
@@ -3335,6 +3565,20 @@ final class DownloadSession {
         payload: payload,
       ),
     );
+  }
+
+  void _notifyCommittedProgress() {
+    if (_committedProgressListeners.isEmpty) return;
+    final length = committedLength;
+    for (final listener in List<DownloadCommittedProgressListener>.of(
+      _committedProgressListeners,
+    )) {
+      try {
+        listener(length);
+      } on Object {
+        // Durability/diagnostic observers must never change writer success.
+      }
+    }
   }
 
   void _notifySnapshot() {

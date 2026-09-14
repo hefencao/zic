@@ -38,6 +38,8 @@ typedef Sleep = Future<void> Function(Duration delay);
 typedef DownloadPrepare = Future<void> Function(DownloadSession session);
 typedef DownloadPrepareWithControl = TransferPrepareWithControl;
 typedef DownloadObserve = void Function(DownloadSession session);
+typedef DownloadSessionAcquire = DownloadSession Function(DownloadId id);
+typedef DownloadSessionLookup = DownloadSession? Function(DownloadId id);
 typedef SourceKindObserve = void Function(DownloadId id, ContentKind kind);
 typedef DecodeRefillObserve = void Function(
   DecodeRefillDecision decision,
@@ -81,18 +83,22 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     DownloadPrepare? prepareDownload,
     DownloadPrepareWithControl? prepareDownloadWithControl,
     DownloadObserve? onDownloadObserved,
+    DownloadSessionAcquire? downloadSessionFor,
+    DownloadSessionLookup? findDownloadSession,
     this.onSourceKindObserved,
     this.onDecodeRefillObserved,
     this.onMemoryPressureObserved,
     DownloadTransferConsumer? downloadTransfer,
-    NetLane? net,
+    required NetLane net,
     DecodeLane? decode,
     UploadLane? upload,
     String Function(DownloadId id)? downloadBucketFor,
     int Function(DownloadId id)? downloadBucketLimitFor,
   })  : decode = decode ?? DecodeLane(maxActive: 2),
         upload = upload ?? UploadLane(maxActive: 1),
-        onDownloadObserved = onDownloadObserved {
+        onDownloadObserved = onDownloadObserved,
+        _downloadSessionFor = downloadSessionFor ?? registry.get,
+        _findDownloadSession = findDownloadSession ?? registry.find {
     retry.validate();
     if (onDecode != null && decodes != null) {
       throw ArgumentError('onDecode and decodes are mutually exclusive');
@@ -115,7 +121,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
           'downloadTransfer must use the coordinator DownloadRegistry',
         );
       }
-      if (net != null && !identical(net, external.net)) {
+      if (!identical(net, external.net)) {
         throw ArgumentError(
           'net must be the physical owner lane when downloadTransfer is set',
         );
@@ -123,13 +129,12 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       _downloadTransfer = external;
       this.net = external.net;
     } else {
-      final localNet = net ?? NetLane(maxActive: 3);
       final owner = DownloadTransferOwner(
         registry: registry,
         clock: clock,
         prepareDownload: prepareDownload,
         prepareDownloadWithControl: prepareDownloadWithControl,
-        net: localNet,
+        net: net,
       );
       _ownedDownloadTransferOwner = owner;
       _downloadTransfer = owner.attachConsumer(
@@ -141,7 +146,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         downloadBucketFor: downloadBucketFor,
         downloadBucketLimitFor: downloadBucketLimitFor,
       );
-      this.net = localNet;
+      this.net = net;
     }
   }
 
@@ -157,6 +162,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final FrameBudgeter? budgets;
   final StagedDecodeRefillPolicy refillPolicy;
   final DownloadObserve? onDownloadObserved;
+  final DownloadSessionAcquire _downloadSessionFor;
+  final DownloadSessionLookup _findDownloadSession;
   final SourceKindObserve? onSourceKindObserved;
   final DecodeRefillObserve? onDecodeRefillObserved;
   final void Function(bool isPressured)? onMemoryPressureObserved;
@@ -358,14 +365,14 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         if (registry == null) {
           return false;
         }
-        return registry.get(id).freezePlayback();
+        return registry.freezePlayback(id);
       },
       resume: (id) {
         final registry = uploads;
         if (registry == null) {
           return false;
         }
-        return registry.get(id).resumePlayback();
+        return registry.resumePlayback(id);
       },
     );
   }
@@ -475,11 +482,11 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     // in the transfer scheduler and does not repeatedly attach ingress or walk
     // Reader source-watch ownership on every page boundary.
     for (final entry in diff.added.entries) {
-      final session = registry.get(entry.key);
+      final session = _downloadSessionFor(entry.key);
       _observeDownloadIdentity(sessionId, entry.key, session);
     }
     for (final entry in diff.changed.entries) {
-      final session = registry.find(entry.key);
+      final session = _findDownloadSession(entry.key);
       final observed = _observedDownloadSessions[entry.key];
       if (session != null && !identical(observed, session)) {
         _observeDownloadIdentity(sessionId, entry.key, session);
@@ -743,7 +750,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       ...diff.changed.entries,
     ]) {
       final downloadSession = _observedDownloadSessions[entry.key.download] ??
-          this.registry.find(entry.key.download);
+          _findDownloadSession(entry.key.download);
       if (downloadSession != null) {
         _watchSource(sessionId, entry.key.download, downloadSession);
       }
@@ -939,7 +946,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
               role: current.role,
               priority: current.priority,
               targetWatermark: refill.targetWatermark,
-              reason: '${current.reason}:refill:${refill.stage}',
+              reason: '${current.reason}:refill:${refill.stage.wireName}',
               expirationRevision: current.expirationRevision,
               decisionId: current.decisionId,
             );
@@ -970,7 +977,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             revision: demandRevision,
             payload: <String, Object?>{
               'role': refill.role.name,
-              'stage': refill.stage,
+              'stage': refill.stage.wireName,
               'depth': refill.depth,
               'threshold': refill.threshold,
               'target': refill.targetWatermark,
@@ -1335,7 +1342,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       ...diff.changed.entries,
     ]) {
       final downloadSession = _observedDownloadSessions[entry.key.download] ??
-          this.registry.find(entry.key.download);
+          _findDownloadSession(entry.key.download);
       if (downloadSession != null) {
         _watchSource(sessionId, entry.key.download, downloadSession);
       }

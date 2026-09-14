@@ -10,6 +10,7 @@ void main() {
     final id = _decodeId();
     final calls = <String>[];
     final coordinator = LiveCoordinator(
+      net: NetLane(maxActive: 1),
       registry: DownloadRegistry(
         layout: CacheLayout('/tmp/resource_lanes_test'),
         clock: FakeMonoClock(),
