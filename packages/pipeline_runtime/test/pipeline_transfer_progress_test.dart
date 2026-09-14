@@ -63,6 +63,64 @@ void main() {
   });
 
 
+  test('local encoded total hint scales a partial before network response opens', () {
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'partial',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.invalid/partial.webp'),
+    );
+    final progress = pipelineTransferProgressFor(
+      DownloadSnapshot(
+        id: id,
+        state: DownloadState.queued,
+        epoch: const SourceEpoch(0),
+        committedLength: 12_329_700,
+        networkStartLength: 12_329_700,
+        contentKind: ContentKind.webp,
+        demanded: true,
+        hasWriter: false,
+        activeRun: true,
+        artifact: const ArtifactSnapshot(
+          state: ArtifactState.partial,
+          committedLength: 12_329_700,
+          checksum: '00000000',
+          partialPath: '/tmp/partial',
+          finalPath: '/tmp/final',
+          metaPath: '/tmp/partial.meta',
+          finalMetaPath: '/tmp/final.meta',
+        ),
+        localEncodedTotalLengthHint: 15_640_724,
+      ),
+    );
+
+    expect(progress.totalBytes, 15_640_724);
+    expect(progress.displayTotalBytes, 15_640_724);
+    expect(progress.partialFraction, closeTo(12_329_700 / 15_640_724, 1e-9));
+  });
+
+  test('full-body catchup uses transient response total without shrinking partial', () {
+    const progress = PipelineTransferProgress(
+      active: true,
+      partialBytes: 12_329_700,
+      transportBytes: 5_423_900,
+      totalBytes: null,
+      transportTotalBytes: 15_640_724,
+      transportAttemptActive: true,
+    );
+
+    expect(progress.phase, PipelineTransferPhase.replayingPrefix);
+    expect(progress.displayTotalBytes, 15_640_724);
+    expect(progress.partialFraction, closeTo(12_329_700 / 15_640_724, 1e-9));
+    expect(progress.transportFraction, closeTo(5_423_900 / 15_640_724, 1e-9));
+    expect(progress.partialFraction!, greaterThan(progress.transportFraction!));
+  });
+
+
   test('local immutable reads are not presented as downloads', () {
     final id = DownloadId(
       content: const ContentId(

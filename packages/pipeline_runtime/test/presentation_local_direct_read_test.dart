@@ -27,6 +27,7 @@ void main() {
       );
       final reader = PipelineReaderSessionFactory(
         mediaRuntimeFactory: const _FreshFactory(),
+        pageDownloadLane: NetLane(maxActive: 5),
       ).withTransferRuntime(transferRuntime).create(
         chapter: chapter,
         sessionId: 'presentation-file-capability',
@@ -67,6 +68,7 @@ void main() {
         );
         final reader = PipelineReaderSessionFactory(
           mediaRuntimeFactory: const _FreshFactory(),
+          pageDownloadLane: NetLane(maxActive: 5),
         ).withTransferRuntime(transferRuntime).create(
           chapter: chapter,
           sessionId: 'presentation-file-excluded-${hint.name}',
@@ -104,6 +106,7 @@ void main() {
       var opens = 0;
       final factory = PipelineReaderSessionFactory(
         mediaRuntimeFactory: const _FreshFactory(),
+        pageDownloadLane: NetLane(maxActive: 5),
       ).withTransferRuntime(transferRuntime).withLoaderSources(
         <Uri, LoaderTransportSource>{
           uri: LoaderTransportSource(
@@ -169,6 +172,7 @@ void main() {
       var sourceOpens = 0;
       final factory = PipelineReaderSessionFactory(
         mediaRuntimeFactory: const _FreshFactory(),
+        pageDownloadLane: NetLane(maxActive: 5),
       ).withTransferRuntime(transferRuntime).withLoaderSources(
         <Uri, LoaderTransportSource>{
           uri: LoaderTransportSource(
@@ -239,6 +243,7 @@ void main() {
       var sourceOpens = 0;
       final factory = PipelineReaderSessionFactory(
         mediaRuntimeFactory: const _FreshFactory(),
+        pageDownloadLane: NetLane(maxActive: 5),
       ).withTransferRuntime(transferRuntime).withLoaderSources(
         <Uri, LoaderTransportSource>{
           uri: LoaderTransportSource(
@@ -344,6 +349,7 @@ void main() {
       var sourceOpens = 0;
       final factory = PipelineReaderSessionFactory(
         mediaRuntimeFactory: const _FreshFactory(),
+        pageDownloadLane: NetLane(maxActive: 5),
       ).withTransferRuntime(transferRuntime).withLoaderSources(
         <Uri, LoaderTransportSource>{
           uri: LoaderTransportSource(
@@ -449,6 +455,7 @@ void main() {
       var sourceOpens = 0;
       final factory = PipelineReaderSessionFactory(
         mediaRuntimeFactory: const _FreshFactory(),
+        pageDownloadLane: NetLane(maxActive: 5),
       ).withTransferRuntime(transferRuntime).withLoaderSources(
         <Uri, LoaderTransportSource>{
           uri: LoaderTransportSource(
@@ -592,6 +599,7 @@ void main() {
       final id = readerPageDownloadId(chapter, chapter.pages.single);
       final factory = PipelineReaderSessionFactory(
         mediaRuntimeFactory: const _FreshFactory(),
+        pageDownloadLane: NetLane(maxActive: 5),
         artifactCacheManager: ArtifactCacheManager(backend: const _Backend()),
       ).withLoaderSources(<Uri, LoaderTransportSource>{
         id.canonicalUri: LoaderTransportSource(

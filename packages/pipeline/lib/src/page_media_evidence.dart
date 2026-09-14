@@ -1,5 +1,32 @@
 import 'package:domain/domain.dart';
 
+const _staticImageSuffixes = <String>[
+  '.jpg',
+  '.jpeg',
+  '.jpe',
+  '.png',
+  '.avif',
+  '.bmp',
+  '.dib',
+  '.tif',
+  '.tiff',
+  '.ico',
+  '.heif',
+  '.heic',
+];
+
+bool hasWebpUriSuffix(Uri uri) =>
+    uri.path.toLowerCase().endsWith('.webp');
+
+/// Whether a URI suffix already proves the encoded image is not WebP.
+///
+/// This is container evidence only. GIF remains potentially animated, while
+/// the remaining suffixes are static-image evidence.
+bool hasKnownNonWebpImageSuffix(Uri uri) {
+  final path = uri.path.toLowerCase();
+  return path.endsWith('.gif') || _staticImageSuffixes.any(path.endsWith);
+}
+
 /// Conservative encoded-cost evidence for a WebP whose animation capability
 /// has not yet been resolved by the decoder.
 ///
@@ -12,7 +39,7 @@ bool hasWebpCostEvidence(
 }) =>
     runtimeObserved ||
     page.contentKindHint == ContentKindHint.webp ||
-    page.uri.path.toLowerCase().endsWith('.webp');
+    hasWebpUriSuffix(page.uri);
 
 /// Positive source-level evidence that an unclassified page uses a static
 /// image container.
@@ -36,19 +63,5 @@ bool hasStaticContentEvidence(PageAsset page) {
       break;
   }
   final path = page.uri.path.toLowerCase();
-  const staticSuffixes = <String>[
-    '.jpg',
-    '.jpeg',
-    '.jpe',
-    '.png',
-    '.avif',
-    '.bmp',
-    '.dib',
-    '.tif',
-    '.tiff',
-    '.ico',
-    '.heif',
-    '.heic',
-  ];
-  return staticSuffixes.any(path.endsWith);
+  return _staticImageSuffixes.any(path.endsWith);
 }

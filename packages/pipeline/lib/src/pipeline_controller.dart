@@ -1,10 +1,12 @@
 import 'package:domain/domain.dart';
 import 'package:telemetry/telemetry.dart';
 
+import 'animated_prefetch_policy.dart';
 import 'browsing_direction_predictor.dart';
 import 'decode_target.dart';
 import 'demand.dart';
 import 'heuristic_policy.dart';
+import 'interaction_policy.dart';
 import 'page_media_evidence.dart';
 import 'policy_guard.dart';
 import 'role_window.dart';
@@ -180,7 +182,7 @@ final class PipelineController {
   /// previous page/session cannot increase the new current's body flow.
   bool observeDecodeWaterline({
     required int planRevision,
-    required String stage,
+    required DecodeWaterlineStage stage,
   }) {
     final observation = _lastObservation;
     final current = _currentIndex;
@@ -249,7 +251,7 @@ final class PipelineController {
     final visibleChanged =
         !_sameVisibleIndexes(_previousVisibleIndexes, currentVisibleIndexes);
     final verticalActive = observation.direction == ReadingDirection.vertical &&
-        _isVerticalPresentationActive(observation.interaction);
+        isPresentationMotionInteraction(observation.interaction);
     final verticalActiveChanged = _previousVerticalActive != verticalActive;
     final windowChanged =
         !_sameRoles(_previousRoles, window.roles) ||
@@ -579,15 +581,6 @@ bool _sameRoles(Map<int, PageRole>? previous, Map<int, PageRole> next) {
   }
   return true;
 }
-
-bool _isVerticalPresentationActive(Interaction interaction) => switch (interaction) {
-      Interaction.dragging ||
-      Interaction.scrolling ||
-      Interaction.settling => true,
-      Interaction.idle ||
-      Interaction.scrubbing ||
-      Interaction.jumping => false,
-    };
 
 bool _sameVisibleIndexes(Set<int>? previous, Set<int> next) {
   if (previous == null || previous.length != next.length) {

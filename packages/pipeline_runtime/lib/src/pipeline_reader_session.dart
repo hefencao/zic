@@ -206,7 +206,7 @@ final class PipelineReaderSessionFactory {
     this.partialDownloadStore,
     ArtifactCacheReadScheduler? artifactReadScheduler,
     SpeculativeEncodedReadBudget? speculativeEncodedReadBudget,
-    NetLane? pageDownloadLane,
+    required this.pageDownloadLane,
     WebpDecodePrefixHints? decodePrefixHints,
     this.loaderSources = const <Uri, LoaderTransportSource>{},
     this.bytesLoader,
@@ -222,15 +222,6 @@ final class PipelineReaderSessionFactory {
             artifactReadScheduler ?? ArtifactCacheReadScheduler(),
         speculativeEncodedReadBudget =
             speculativeEncodedReadBudget ?? SpeculativeEncodedReadBudget(),
-        pageDownloadLane =
-            pageDownloadLane ??
-            NetLane(
-              maxActive: ReaderPipelineProfile.stable.networkConcurrency,
-              reservedHighPrioritySlots: 1,
-              highPriorityThreshold: 1000,
-              preemptionThreshold: 40,
-              preemptionCandidateGrace: const Duration(milliseconds: 100),
-            ),
         decodePrefixHints = decodePrefixHints ?? WebpDecodePrefixHints();
 
   final PipelineMediaRuntimeFactory mediaRuntimeFactory;
@@ -650,6 +641,8 @@ final class PipelineReaderSession {
       uploads: _uploads,
       budgets: _frameBudgets,
       downloadTransfer: _downloadTransfer,
+      downloadSessionFor: _transferRuntime.sessionFor,
+      findDownloadSession: _transferRuntime.findSession,
       onDownloadObserved: _observeDownloadSession,
       onSourceKindObserved: _handleSourceKindObserved,
       onDecodeRefillObserved: _handleDecodeRefillObserved,
@@ -757,7 +750,6 @@ final class PipelineReaderSession {
   bool _outputPrewarmIdleScheduled = false;
   Timer? _playbackTicker;
   int? _playbackWakeAtMicros;
-  bool _playbackPaused = false;
   late final PipelineTransferProgressPublisher transferProgress;
   final _PipelinePageDimensionsPublisher _pageDimensions;
   final Map<String, int> _pageIndexByPageId;
@@ -948,7 +940,7 @@ final class PipelineReaderSession {
     // updates do not rerun Pipeline policy while preserving the exact role
     // boundary that can change demand.
     if (observation.direction == ReadingDirection.vertical) return 1;
-    return target.fraction >= 0.15 ? 2 : 1;
+    return target.fraction >= _profile.windowResolver.transitionThreshold ? 2 : 1;
   }
 
   int _playbackPhaseBucket(ReaderObs observation) {
@@ -961,10 +953,12 @@ final class PipelineReaderSession {
       return 0; // idle
     }
     final current = observation.currentCoverage;
-    if (target.fraction >= 0.5 || current.fraction >= 0.5) {
+    if (target.fraction >= defaultDominantCoverageThreshold ||
+        current.fraction >= defaultDominantCoverageThreshold) {
       return 1; // dominant
     }
-    if (current.fraction >= 0.15 && target.fraction >= 0.15) {
+    if (current.fraction >= defaultTransitionCoverageThreshold &&
+        target.fraction >= defaultTransitionCoverageThreshold) {
       return 2; // overlap
     }
     return 1; // dominant fallback used by ViewportResolver
@@ -982,14 +976,18 @@ final class PipelineReaderSession {
         : observation.currentCoverage.pageIndex;
   }
 
-  int _controlInteraction(Interaction interaction) => switch (interaction) {
-        Interaction.dragging ||
-        Interaction.scrolling ||
-        Interaction.settling => 1,
-        Interaction.idle => 2,
-        Interaction.scrubbing => 3,
-        Interaction.jumping => 4,
-      };
+  int _controlInteraction(Interaction interaction) {
+    if (isPresentationMotionInteraction(interaction)) return 1;
+    return switch (interaction) {
+      Interaction.idle => 2,
+      Interaction.scrubbing => 3,
+      Interaction.jumping => 4,
+      Interaction.dragging ||
+      Interaction.scrolling ||
+      Interaction.settling =>
+        throw StateError('presentation-motion interaction escaped grouping'),
+    };
+  }
 
   void _invalidateObservationQueue() {
     _observationGeneration++;
@@ -1274,7 +1272,6 @@ final class PipelineReaderSession {
       );
     }
     _uploads.setPlayback(paused: paused, speed: speed);
-    _playbackPaused = paused;
     _ensurePlaybackTicker();
   }
 
@@ -1589,22 +1586,8 @@ final class PipelineReaderSession {
       case null:
         break;
     }
-    final path = asset.uri.path.toLowerCase();
-    if (path.endsWith('.webp')) return true;
-    const nonWebpSuffixes = <String>[
-      '.gif',
-      '.jpg',
-      '.jpeg',
-      '.png',
-      '.avif',
-      '.bmp',
-      '.dib',
-      '.tif',
-      '.tiff',
-      '.ico',
-      '.heif',
-    ];
-    return !nonWebpSuffixes.any(path.endsWith);
+    if (hasWebpUriSuffix(asset.uri)) return true;
+    return !hasKnownNonWebpImageSuffix(asset.uri);
   }
 
   bool _mayUseEncodedPresentationFile(
@@ -2005,7 +1988,7 @@ final class PipelineReaderSession {
       readMicros: clock.nowMicros() - started,
       memoryHit: false,
       joined: false,
-      integrityBasis: 'directImmutableSource',
+      integrityBasis: ArtifactReadIntegrityBasis.directImmutableSource.name,
       sessionState: session.state.name,
     );
     return bytes;
@@ -2758,7 +2741,10 @@ final class PipelineReaderSession {
     final deadline = ids == null
         ? null
         : _uploads.earliestPlaybackDeadlineMicros(ids);
-    if (_playbackPaused || deadline == null || _disposed || _retainedForReaderReentry) {
+    if (_uploads.playbackPaused ||
+        deadline == null ||
+        _disposed ||
+        _retainedForReaderReentry) {
       _cancelPlaybackWake();
       return;
     }
@@ -2785,7 +2771,7 @@ final class PipelineReaderSession {
   }
 
   void _advanceDueFrames() {
-    if (_disposed || _playbackPaused || _retainedForReaderReentry) {
+    if (_disposed || _uploads.playbackPaused || _retainedForReaderReentry) {
       _ensurePlaybackTicker();
       return;
     }

@@ -1,5 +1,7 @@
 import 'package:domain/domain.dart';
 
+import 'coverage_thresholds.dart';
+
 enum PageRole {
   current,
   last,
@@ -37,7 +39,7 @@ final class RoleResolver {
     this.forwardDecodePages,
     this.backwardDecodePages,
     this.nearRadius = 3,
-    this.transitionThreshold = 0.15,
+    this.transitionThreshold = defaultTransitionCoverageThreshold,
   });
 
   final int forwardEncodedPages;

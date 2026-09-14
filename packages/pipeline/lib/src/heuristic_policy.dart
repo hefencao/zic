@@ -3,6 +3,7 @@ import 'package:domain/domain.dart';
 import 'animated_prefetch_policy.dart';
 import 'decode_target.dart';
 import 'demand.dart';
+import 'interaction_policy.dart';
 import 'page_media_evidence.dart';
 import 'role_window.dart';
 
@@ -122,11 +123,12 @@ final class HeuristicPolicy {
 
       final primaryUpload = role == PageRole.current ||
           role == PageRole.transition;
-      final pagedNextPreupload =
+      final pagedTargetPreupload =
           observation.direction != ReadingDirection.vertical &&
-              role == PageRole.next &&
+              observation.targetCoverage?.pageIndex == entry.key &&
+              (role == PageRole.next || role == PageRole.previous) &&
               decodeWatermark > 0 &&
-              _pagedPresentationActive(observation.interaction);
+              isPresentationMotionInteraction(observation.interaction);
       final localStaticReady =
           runtimeLocalStaticPages.contains(entry.key) &&
               runtimeAnimatedPages[entry.key] == false;
@@ -136,8 +138,8 @@ final class HeuristicPolicy {
               !primaryUpload &&
               !visibleStatic &&
               !localStaticReady &&
-              _verticalPresentationActive(observation.interaction);
-      if ((primaryUpload || staticWarm || pagedNextPreupload) &&
+              isPresentationMotionInteraction(observation.interaction);
+      if ((primaryUpload || staticWarm || pagedTargetPreupload) &&
           !deferHiddenVerticalStaticUpload) {
         uploads[decode] = UploadDemand(
           role: role,
@@ -148,7 +150,7 @@ final class HeuristicPolicy {
                   PageRole.last => 850,
                   _ => 0,
                 }
-              : pagedNextPreupload && !staticWarm
+              : pagedTargetPreupload && !staticWarm
                   ? 820
                   : _staticWarmPriority(
                       role,
@@ -157,8 +159,10 @@ final class HeuristicPolicy {
                       currentIndex: observation.currentIndex,
                       readDirection: readDirection,
                     ),
-          reason: pagedNextPreupload && !staticWarm
-              ? 'heuristic:paged-next-preupload'
+          reason: pagedTargetPreupload && !staticWarm
+              ? role == PageRole.previous
+                  ? 'heuristic:paged-previous-preupload'
+                  : 'heuristic:paged-next-preupload'
               : staticWarm && !primaryUpload
                   ? visibleStatic
                       ? 'heuristic:static-visible:${role.name}'
@@ -220,24 +224,6 @@ final class HeuristicPolicy {
       keep: keep,
     );
   }
-
-  bool _verticalPresentationActive(Interaction interaction) => switch (interaction) {
-        Interaction.dragging ||
-        Interaction.scrolling ||
-        Interaction.settling => true,
-        Interaction.idle ||
-        Interaction.scrubbing ||
-        Interaction.jumping => false,
-      };
-
-  bool _pagedPresentationActive(Interaction interaction) => switch (interaction) {
-        Interaction.dragging ||
-        Interaction.scrolling ||
-        Interaction.settling => true,
-        Interaction.idle ||
-        Interaction.scrubbing ||
-        Interaction.jumping => false,
-      };
 
   Set<int> _staticWarmPages({
     required ChapterManifest chapter,

@@ -51,6 +51,7 @@ final class HomeStartupTelemetry {
     String identity, {
     required String source,
     int? byteLength,
+    String? presentationStage,
   }) {
     _record(
       TraceEventKind.homeCoverSourceReady,
@@ -58,6 +59,8 @@ final class HomeStartupTelemetry {
       payload: <String, Object?>{
         'source': source,
         if (byteLength != null) 'byteLength': byteLength,
+        if (presentationStage != null)
+          'presentationStage': presentationStage,
       },
     );
   }

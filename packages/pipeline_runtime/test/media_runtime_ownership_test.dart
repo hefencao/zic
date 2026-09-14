@@ -17,6 +17,7 @@ void main() {
     final manager = ArtifactCacheManager(backend: _Backend());
     final factory = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(_Runtime()),
+      pageDownloadLane: NetLane(maxActive: 5),
       artifactCacheManager: manager,
     );
 
@@ -61,6 +62,7 @@ void main() {
     final scheduler = ArtifactCacheReadScheduler(maxActive: 3);
     final session = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(_Runtime()),
+      pageDownloadLane: NetLane(maxActive: 5),
       artifactCacheManager: ArtifactCacheManager(backend: _Backend()),
       artifactReadScheduler: scheduler,
     ).create(
@@ -86,6 +88,7 @@ void main() {
     final uri = Uri.parse('asset:///local-startup.webp');
     final session = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(_Runtime()),
+      pageDownloadLane: NetLane(maxActive: 5),
       loaderSources: <Uri, LoaderTransportSource>{
         uri: LoaderTransportSource(
           revision: 'local-startup-r1',
@@ -128,6 +131,7 @@ void main() {
     final trace = MemoryTraceSink();
     final base = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
+      pageDownloadLane: NetLane(maxActive: 5),
     );
     final uri = Uri.parse('content://local/page-0.webp');
     final chapter = _chapter(uri: uri);
@@ -216,6 +220,7 @@ void main() {
   test('retention keeps the two most recent media-empty Reader sessions', () async {
     final base = PipelineReaderSessionFactory(
       mediaRuntimeFactory: const _FreshFactory(),
+      pageDownloadLane: NetLane(maxActive: 5),
     );
     final chapterA = _chapterIdentity(
       comicId: 'comic-a',
@@ -258,6 +263,7 @@ void main() {
   test('a third retained Reader evicts only the oldest idle session', () async {
     final base = PipelineReaderSessionFactory(
       mediaRuntimeFactory: const _FreshFactory(),
+      pageDownloadLane: NetLane(maxActive: 5),
     );
     ChapterManifest chapter(String suffix) => _chapterIdentity(
           comicId: 'comic-$suffix',
@@ -314,6 +320,7 @@ void main() {
 
     final factory = PipelineReaderSessionFactory(
       mediaRuntimeFactory: const _FreshFactory(),
+      pageDownloadLane: NetLane(maxActive: 5),
     ).withTransferRuntime(transferRuntime).withLoaderSources(
       <Uri, LoaderTransportSource>{
         newUri: LoaderTransportSource(
@@ -368,6 +375,7 @@ void main() {
     final sharedTrace = MemoryTraceSink();
     final factory = PipelineReaderSessionFactory(
       mediaRuntimeFactory: const _FreshFactory(),
+      pageDownloadLane: NetLane(maxActive: 5),
     );
     final chapter = _chapter();
     final first = factory.create(
@@ -423,6 +431,7 @@ void main() {
     final runtime = _Runtime();
     final session = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
+      pageDownloadLane: NetLane(maxActive: 5),
     ).create(
       chapter: _chapter(width: 4096, height: 3072),
       sessionId: 'exact-output-prewarm-test',
@@ -466,6 +475,7 @@ void main() {
     final runtime = _Runtime(renderer: RendererKind.androidTexture);
     final session = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
+      pageDownloadLane: NetLane(maxActive: 5),
     ).create(
       chapter: _galleryChapter(pageCount: 4),
       sessionId: 'paged-next-first-frame-preupload-test',
@@ -561,6 +571,7 @@ void main() {
     );
     final session = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
+      pageDownloadLane: NetLane(maxActive: 5),
     ).create(
       chapter: _galleryChapter(pageCount: 1),
       sessionId: 'current-prewarm-frame-priority-test',
@@ -606,6 +617,7 @@ void main() {
     );
     final session = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
+      pageDownloadLane: NetLane(maxActive: 5),
     ).create(
       chapter: _galleryChapter(pageCount: 4),
       sessionId: 'deferred-gallery-prewarm-budget-test',
@@ -684,6 +696,7 @@ void main() {
     final runtime = _Runtime(renderer: RendererKind.androidTexture);
     final session = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
+      pageDownloadLane: NetLane(maxActive: 5),
     ).create(
       chapter: _chapter(contentKindHint: ContentKindHint.unknown),
       sessionId: 'unknown-kind-gallery-prewarm-test',
@@ -738,6 +751,7 @@ void main() {
     final runtime = _Runtime(renderer: RendererKind.androidTexture);
     final session = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(runtime),
+      pageDownloadLane: NetLane(maxActive: 5),
     ).create(
       chapter: _chapter(
         uri: Uri.parse('asset:///page-0.jpg'),
@@ -783,11 +797,66 @@ void main() {
     await session.dispose();
   });
 
+  test('static non-WebP suffixes reject unresolved native WebP prewarm',
+      () async {
+    for (final suffix in <String>['jpe', 'heic']) {
+      final trace = MemoryTraceSink();
+      final runtime = _Runtime(renderer: RendererKind.androidTexture);
+      final session = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: _Factory(runtime),
+        pageDownloadLane: NetLane(maxActive: 5),
+      ).create(
+        chapter: _chapter(
+          uri: Uri.parse('asset:///page-0.$suffix'),
+          contentKindHint: ContentKindHint.unknown,
+        ),
+        sessionId: 'non-webp-suffix-prewarm-$suffix',
+        traceSink: trace,
+      );
+      final page = session.chapter.pages.single;
+      session.attach(
+        DecodeTarget(
+          physicalWidth: 320,
+          physicalHeight: 480,
+          renderer: RendererKind.androidTexture,
+        ),
+      );
+      session.accept(
+        ReaderObs(
+          sessionId: 'reader-$suffix',
+          currentIndex: 0,
+          stableIndex: 0,
+          interaction: Interaction.idle,
+          logicalPosition: 0,
+          velocity: 0,
+          currentCoverage: Coverage(
+            pageIndex: 0,
+            assetKey: page.assetKey,
+            fraction: 1,
+          ),
+          direction: ReadingDirection.ltr,
+          timestamp: DateTime.utc(2026),
+          monotonicMicros: 1,
+        ),
+      );
+
+      expect(
+        trace.events.where(
+          (event) => event.kind == TraceEventKind.pageOutputPrewarmed,
+        ),
+        isEmpty,
+        reason: '.$suffix is already positive non-WebP container evidence',
+      );
+      await session.dispose();
+    }
+  });
+
   test('Reader session owns and closes one atomic media runtime', () async {
     final runtime = _Runtime();
     final factory = _Factory(runtime);
     final session = PipelineReaderSessionFactory(
       mediaRuntimeFactory: factory,
+      pageDownloadLane: NetLane(maxActive: 5),
     ).create(
       chapter: _chapter(),
       sessionId: 'atomic-media-test',

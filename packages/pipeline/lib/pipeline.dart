@@ -1,10 +1,12 @@
+export 'src/aligned_raster_size.dart';
 export 'src/animated_prefetch_policy.dart';
 export 'src/browsing_direction_predictor.dart';
-export 'src/aligned_raster_size.dart';
+export 'src/coverage_thresholds.dart';
 export 'src/decode_target.dart';
-
 export 'src/demand.dart';
 export 'src/heuristic_policy.dart';
+export 'src/interaction_policy.dart';
+export 'src/page_media_evidence.dart';
 export 'src/pipeline_controller.dart';
 export 'src/policy_guard.dart';
 export 'src/raster_plan.dart';

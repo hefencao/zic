@@ -1,5 +1,7 @@
 import 'package:domain/domain.dart';
 
+import 'coverage_thresholds.dart';
+
 enum ViewportPhase { idle, dominant, overlap, continuous }
 
 final class ViewportState {
@@ -21,8 +23,8 @@ final class ViewportState {
 
 final class ViewportResolver {
   const ViewportResolver({
-    this.dominantThreshold = 0.5,
-    this.overlapThreshold = 0.15,
+    this.dominantThreshold = defaultDominantCoverageThreshold,
+    this.overlapThreshold = defaultTransitionCoverageThreshold,
   })  : assert(dominantThreshold > 0 && dominantThreshold <= 1),
         assert(overlapThreshold >= 0 && overlapThreshold < dominantThreshold);
 

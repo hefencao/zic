@@ -15,6 +15,7 @@ final class PipelineTransferProgress {
     this.partialBytes = 0,
     this.transportBytes = 0,
     this.totalBytes,
+    this.transportTotalBytes,
     this.transportAttemptSequence = 0,
     this.transportAttemptActive = false,
     this.speedBytesPerSecond = 0,
@@ -32,7 +33,19 @@ final class PipelineTransferProgress {
   /// full-body response must replay the existing prefix. It is deliberately a
   /// transient projection, not a second partial or resume authority.
   final int transportBytes;
+  /// Full-body display scale already known from local state.
+  ///
+  /// This prefers durable response metadata but may fall back to a container
+  /// length declared by locally available encoded bytes. It is read-only
+  /// presentation state, never a resume/seal/cache authority.
   final int? totalBytes;
+
+  /// Full-body length reported by the current transport attempt.
+  ///
+  /// This is presentation-only attempt metadata. In a full-body catch-up it
+  /// can be known before the preserved partial is verified against that
+  /// response, so it must not be used as durable artifact authority.
+  final int? transportTotalBytes;
   final int transportAttemptSequence;
   final bool transportAttemptActive;
   final double speedBytesPerSecond;
@@ -49,15 +62,22 @@ final class PipelineTransferProgress {
 
   bool get replayingPrefix => phase == PipelineTransferPhase.replayingPrefix;
 
+  int? get displayTotalBytes {
+    final attemptTotal = transportAttemptActive ? transportTotalBytes : null;
+    if (attemptTotal != null && attemptTotal > 0) return attemptTotal;
+    final durableTotal = totalBytes;
+    return durableTotal != null && durableTotal > 0 ? durableTotal : null;
+  }
+
   double? get partialFraction {
-    final total = totalBytes;
+    final total = displayTotalBytes;
     return total == null || total <= 0
         ? null
         : (partialBytes / total).clamp(0.0, 1.0).toDouble();
   }
 
   double? get transportFraction {
-    final total = totalBytes;
+    final total = displayTotalBytes;
     return total == null || total <= 0
         ? null
         : (transportBytes / total).clamp(0.0, 1.0).toDouble();
@@ -71,6 +91,7 @@ final class PipelineTransferProgress {
           partialBytes == other.partialBytes &&
           transportBytes == other.transportBytes &&
           totalBytes == other.totalBytes &&
+          transportTotalBytes == other.transportTotalBytes &&
           transportAttemptSequence == other.transportAttemptSequence &&
           transportAttemptActive == other.transportAttemptActive &&
           speedBytesPerSecond == other.speedBytesPerSecond;
@@ -81,6 +102,7 @@ final class PipelineTransferProgress {
         partialBytes,
         transportBytes,
         totalBytes,
+        transportTotalBytes,
         transportAttemptSequence,
         transportAttemptActive,
         speedBytesPerSecond,
@@ -110,7 +132,9 @@ PipelineTransferProgress pipelineTransferProgressFor(
     active: active,
     partialBytes: snapshot.committedLength,
     transportBytes: snapshot.networkCursorLength,
-    totalBytes: snapshot.totalLength,
+    totalBytes:
+        snapshot.totalLength ?? snapshot.localEncodedTotalLengthHint,
+    transportTotalBytes: snapshot.networkAttemptTotalLength,
     transportAttemptSequence: snapshot.networkAttemptSequence,
     transportAttemptActive: snapshot.networkAttemptActive,
     speedBytesPerSecond: speedBytesPerSecond,

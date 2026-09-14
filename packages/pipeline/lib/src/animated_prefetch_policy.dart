@@ -2,6 +2,31 @@ import 'package:domain/domain.dart';
 
 import 'role_window.dart';
 
+/// Shared vocabulary for staged decode-waterline evidence.
+///
+/// Sessions produces these stages while Pipeline consumes a selected subset
+/// to expand animated transport frame credit. Keeping the vocabulary typed at
+/// this lower package boundary prevents a producer rename from silently
+/// degrading to expansion stage zero.
+enum DecodeWaterlineStage {
+  transitionFirstFrame('t>0'),
+  oneFrame('one>0'),
+  currentBootstrap('c>2'),
+  nextShallow('n>1'),
+  next2Shallow('m>1'),
+  previousShallow('p>1'),
+  currentMid('c>4'),
+  nextMid('n>2'),
+  currentDeep('c>6'),
+  nextDeep('n>3'),
+  next2Deep('m>2'),
+  nextMax('n>4');
+
+  const DecodeWaterlineStage(this.wireName);
+
+  final String wireName;
+}
+
 /// Animated WebP prefetch-flow policy inside the stable Reader 3/7 window.
 ///
 /// The policy never removes a logical/network demand from [RoleWindow]. Every
@@ -20,12 +45,21 @@ final class AnimatedPrefetchPolicy {
   /// Existing staged decode-waterline evidence remains the only expansion
   /// signal. dev.249 changes what expands: outer pages already have demand;
   /// these stages raise their retained response-body frame credit.
-  int expansionStageForWaterline(String waterline) => switch (waterline) {
-        'c>4' => 1,
-        'n>2' => 2,
-        'c>6' => 3,
-        'n>3' => 4,
-        _ => 0,
+  int expansionStageForWaterline(DecodeWaterlineStage waterline) =>
+      switch (waterline) {
+        DecodeWaterlineStage.currentMid => 1,
+        DecodeWaterlineStage.nextMid => 2,
+        DecodeWaterlineStage.currentDeep => 3,
+        DecodeWaterlineStage.nextDeep => 4,
+        DecodeWaterlineStage.transitionFirstFrame ||
+        DecodeWaterlineStage.oneFrame ||
+        DecodeWaterlineStage.currentBootstrap ||
+        DecodeWaterlineStage.nextShallow ||
+        DecodeWaterlineStage.next2Shallow ||
+        DecodeWaterlineStage.previousShallow ||
+        DecodeWaterlineStage.next2Deep ||
+        DecodeWaterlineStage.nextMax =>
+          0,
       };
 
   AnimatedPrefetchFlow plan({

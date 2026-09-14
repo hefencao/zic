@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_media_ui/local_media_ui.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
+import 'package:sessions/sessions.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
@@ -48,6 +49,7 @@ void main() {
           },
           pipelineFactory: PipelineReaderSessionFactory(
             mediaRuntimeFactory: _NeverMediaRuntimeFactory(),
+            pageDownloadLane: NetLane(maxActive: 5),
           ),
         ),
       ),

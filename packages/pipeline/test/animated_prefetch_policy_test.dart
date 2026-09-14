@@ -147,7 +147,7 @@ void main() {
     expect(
       controller.observeDecodeWaterline(
         planRevision: firstRevision,
-        stage: 'c>4',
+        stage: DecodeWaterlineStage.currentMid,
       ),
       isTrue,
     );
@@ -165,7 +165,7 @@ void main() {
     expect(
       controller.observeDecodeWaterline(
         planRevision: firstRevision,
-        stage: 'n>3',
+        stage: DecodeWaterlineStage.nextDeep,
       ),
       isFalse,
     );

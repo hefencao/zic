@@ -1387,12 +1387,16 @@ void main() {
       (entry) => entry.key.download.content.pageId == 'w1',
     );
     expect(page1Decode.value.role, PageRole.previous);
+    final reversePreupload = shallowPlan.uploads.entries.singleWhere(
+      (entry) => entry.key.download.content.pageId == 'w1',
+    );
+    expect(reversePreupload.value.role, PageRole.previous);
+    expect(reversePreupload.value.priority, 820);
     expect(
-      shallowPlan.uploads.keys
-          .where((id) => id.download.content.pageId == 'w1'),
-      isEmpty,
-      reason: 'runtime WebP cost must not masquerade as visible static output '
-          'before animation classification',
+      reversePreupload.value.reason,
+      'heuristic:paged-previous-preupload',
+      reason: 'the actual reverse gesture target may prepare frame zero even '
+          'while the stable 3/7 direction still classifies it as previous',
     );
     final inferredStaticPlan = policy.createPlan(
       revision: 2,
@@ -1403,12 +1407,15 @@ void main() {
       runtimeWebpCostPages: const <int>{1},
       assumeUnresolvedStatic: true,
     );
+    final inferredReversePreupload = inferredStaticPlan.uploads.entries.singleWhere(
+      (entry) => entry.key.download.content.pageId == 'w1',
+    );
     expect(
-      inferredStaticPlan.uploads.keys
-          .where((id) => id.download.content.pageId == 'w1'),
-      isEmpty,
+      inferredReversePreupload.value.reason,
+      'heuristic:paged-previous-preupload',
       reason: 'page-local runtime WebP evidence must remain stronger than '
-          'chapter-level unresolved-static inference',
+          'chapter-level unresolved-static inference; active target preupload '
+          'does not classify the page as static',
     );
 
     final classifiedStaticPlan = policy.createPlan(
