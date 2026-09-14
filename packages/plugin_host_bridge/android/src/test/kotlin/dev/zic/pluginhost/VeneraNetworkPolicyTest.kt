@@ -1,8 +1,10 @@
 package dev.zic.pluginhost
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.json.JSONObject
 import org.junit.Test
 
@@ -100,6 +102,26 @@ class VeneraNetworkPolicyTest {
                 2_000L,
             ),
         )
+    }
+
+    @Test
+    fun resolverHttpFailureKeepsTypedRetryabilityAcrossTheAsyncBridge() {
+        val networkFailure = veneraBridgeFailureEnvelope(
+            VeneraResolverHttpException(
+                resolverCode = "venera-resolver-http-failed",
+                retryable = true,
+                message = "cannot decrypt peer's message",
+            ),
+        )
+        assertEquals("venera-resolver-http-failed", networkFailure.getString("errorCode"))
+        assertTrue(networkFailure.getBoolean("retryable"))
+        assertTrue(networkFailure.getString("error").contains("cannot decrypt peer's message"))
+
+        val sourceFailure = veneraBridgeFailureEnvelope(
+            IllegalStateException("source script failed"),
+        )
+        assertFalse(sourceFailure.has("errorCode"))
+        assertFalse(sourceFailure.optBoolean("retryable", false))
     }
 
     @Test

@@ -20,6 +20,12 @@ internal data class VeneraResolverHttpResult(
     val body: ByteArray,
 )
 
+internal class VeneraResolverHttpException(
+    val resolverCode: String,
+    val retryable: Boolean,
+    message: String,
+) : IllegalStateException("$resolverCode: $message")
+
 internal interface VeneraResolverHttpTransport : Closeable {
     fun execute(
         target: URL,
@@ -85,7 +91,13 @@ internal class DartRhttpVeneraResolverTransport(
                     }
 
                     override fun error(code: String, message: String?, details: Any?) {
-                        failure.set(IllegalStateException("$code: ${message.orEmpty()}"))
+                        failure.set(
+                            VeneraResolverHttpException(
+                                resolverCode = code,
+                                retryable = code == "venera-resolver-http-failed",
+                                message = message.orEmpty(),
+                            ),
+                        )
                         latch.countDown()
                     }
 

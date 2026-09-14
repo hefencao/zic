@@ -418,6 +418,18 @@ private data class VeneraActivation(
     }
 }
 
+internal fun veneraBridgeFailureEnvelope(error: Throwable): JSONObject {
+    val envelope = JSONObject()
+        .put("ok", false)
+        .put("error", error.sanitizedMessage())
+    if (error is VeneraResolverHttpException) {
+        envelope
+            .put("errorCode", error.resolverCode)
+            .put("retryable", error.retryable)
+    }
+    return envelope
+}
+
 private class VeneraNativeBridge(
     context: Context,
     private val webView: WebView,
@@ -461,10 +473,7 @@ private class VeneraNativeBridge(
             val value = execute(message)
             JSONObject().put("ok", true).put("value", encodeWireValue(value)).toString()
         }.getOrElse { error ->
-            JSONObject()
-                .put("ok", false)
-                .put("error", error.sanitizedMessage())
-                .toString()
+            veneraBridgeFailureEnvelope(error).toString()
         }
         if (activationCall && startedAt != 0L) {
             veneraActivationLog(
@@ -514,9 +523,7 @@ private class VeneraNativeBridge(
                     val value = execute(executeMessage)
                     JSONObject().put("ok", true).put("value", encodeWireValue(value))
                 }.getOrElse { error ->
-                    JSONObject()
-                        .put("ok", false)
-                        .put("error", error.sanitizedMessage())
+                    veneraBridgeFailureEnvelope(error)
                 }
                 asyncCalls.remove(callId)
                 if (requestId == null) {
@@ -534,9 +541,7 @@ private class VeneraNativeBridge(
             asyncCalls.remove(callId)
             postAsyncResponse(
                 callId,
-                JSONObject()
-                    .put("ok", false)
-                    .put("error", error.sanitizedMessage()),
+                veneraBridgeFailureEnvelope(error),
             )
         }
     }
@@ -1648,8 +1653,9 @@ let __zicBridgeCallKey=0;
 const __zicActivationWork=new Set();
 let __zicActivationOpen=true;
 function __zicNowMicros(){const clock=globalThis.performance?.now?.bind(globalThis.performance);return Math.round((clock?clock():Date.now())*1000)}
-function __zicBridgeMetric(requestId){if(!requestId)return {networkMicros:0,networkCalls:0,networkCacheHits:0,networkOriginCalls:0};let metric=__zicBridgeMetrics.get(requestId);if(!metric){metric={networkMicros:0,networkCalls:0,networkCacheHits:0,networkOriginCalls:0};__zicBridgeMetrics.set(requestId,metric)}return metric}
-function __zicBridgeNetworkSnapshot(requestId){const metric=requestId?__zicBridgeMetrics.get(requestId):null;return {networkMicros:Number(metric?.networkMicros||0),networkCalls:Number(metric?.networkCalls||0),networkCacheHits:Number(metric?.networkCacheHits||0),networkOriginCalls:Number(metric?.networkOriginCalls||0)}}
+function __zicBridgeMetric(requestId){if(!requestId)return {networkMicros:0,networkCalls:0,networkCacheHits:0,networkOriginCalls:0,networkCallSummary:[]};let metric=__zicBridgeMetrics.get(requestId);if(!metric){metric={networkMicros:0,networkCalls:0,networkCacheHits:0,networkOriginCalls:0,networkCallSummary:[]};__zicBridgeMetrics.set(requestId,metric)}return metric}
+function __zicBridgeNetworkSnapshot(requestId){const metric=requestId?__zicBridgeMetrics.get(requestId):null;return {networkMicros:Number(metric?.networkMicros||0),networkCalls:Number(metric?.networkCalls||0),networkCacheHits:Number(metric?.networkCacheHits||0),networkOriginCalls:Number(metric?.networkOriginCalls||0),networkCallSummary:Array.isArray(metric?.networkCallSummary)?metric.networkCallSummary.slice():[]}}
+function __zicRecordBridgeNetworkCall(metric,message,started,value,error){const elapsed=Math.max(0,__zicNowMicros()-started),cache=!error&&__zicBridgeCacheHit(value),method=String(message?.http_method||'GET').toUpperCase();metric.networkMicros+=elapsed;metric.networkCalls++;if(cache)metric.networkCacheHits++;else metric.networkOriginCalls++;if(metric.networkCallSummary.length<8)metric.networkCallSummary.push(method+':'+(error?'error':cache?'cache':'origin')+':'+String(elapsed))}
 function __zicBridgeCacheHit(value){const headers=value?.headers;if(!headers||typeof headers!=='object')return false;for(const [name,raw] of Object.entries(headers)){if(String(name).toLowerCase()==='venera-cache'&&String(raw).toLowerCase()==='true')return true}return false}
 const __zicBrowserSetTimeout=globalThis.setTimeout.bind(globalThis);
 const __zicBrowserClearTimeout=globalThis.clearTimeout.bind(globalThis);
@@ -1666,7 +1672,8 @@ function __zicDelay(time,requestId){
 function __zicCancelDelays(requestId){const scoped=__zicDelayWaiters.get(requestId);if(!scoped)return;__zicDelayWaiters.delete(requestId);for(const waiter of scoped){__zicBrowserClearTimeout(waiter.timer);waiter.reject(new Error('Venera request was cancelled'))}}
 function __zicTrackActivationWork(promise){if(!__zicActivationOpen)return promise;let tracked;const settle=(value,error)=>new Promise((resolve,reject)=>{__zicBrowserSetTimeout(()=>{__zicActivationWork.delete(tracked);if(error)reject(error);else resolve(value)},0)});tracked=Promise.resolve(promise).then(value=>settle(value),error=>settle(null,error));__zicActivationWork.add(tracked);return tracked}
 async function __zicWaitForActivationWork(){while(__zicActivationWork.size)await Promise.allSettled(Array.from(__zicActivationWork))}
-function __zicBridgeResponse(callId,raw){const key=String(callId),waiter=__zicBridgeWaiters.get(key);if(!waiter)return;__zicBridgeWaiters.delete(key);try{const envelope=typeof raw==='string'?JSON.parse(raw):raw;if(!envelope?.ok){waiter.reject(new Error(envelope?.error||'Venera bridge failed'));return}waiter.resolve(__zicDecode(envelope.value))}catch(error){waiter.reject(error)}}
+function __zicBridgeFailure(envelope){const error=new Error(envelope?.error||'Venera bridge failed');if(envelope?.errorCode)error.code=String(envelope.errorCode);if(envelope?.retryable===true)error.retryable=true;return error}
+function __zicBridgeResponse(callId,raw){const key=String(callId),waiter=__zicBridgeWaiters.get(key);if(!waiter)return;__zicBridgeWaiters.delete(key);try{const envelope=typeof raw==='string'?JSON.parse(raw):raw;if(!envelope?.ok){waiter.reject(__zicBridgeFailure(envelope));return}waiter.resolve(__zicDecode(envelope.value))}catch(error){waiter.reject(error)}}
 function __zicRequestAsync(message){const callId='zic-async-'+String(++__zicBridgeCallKey);const request={...message,bridgeCallId:callId};return new Promise((resolve,reject)=>{__zicBridgeWaiters.set(callId,{resolve,reject});try{ZicNative.requestAsync(JSON.stringify(__zicEncode(request)))}catch(error){__zicBridgeWaiters.delete(callId);reject(error)}})}
 function sendMessage(message) {
   const requestId=message.requestId??__zicActiveRequestId;
@@ -1681,18 +1688,18 @@ function sendMessage(message) {
   if(networkCall&&__zicFreshResolverDepth>0&&message.__zicFreshResolver!==true){message={...message,__zicFreshResolver:true}}
   if(networkCall&&typeof ZicNative.requestAsync==='function'){
     const networkStarted=__zicNowMicros();
-    const asyncResult=__zicRequestAsync(message).then(value=>{if(requestId){const metric=__zicBridgeMetric(requestId);metric.networkMicros+=Math.max(0,__zicNowMicros()-networkStarted);metric.networkCalls++;if(__zicBridgeCacheHit(value))metric.networkCacheHits++;else metric.networkOriginCalls++}return value},error=>{if(requestId){const metric=__zicBridgeMetric(requestId);metric.networkMicros+=Math.max(0,__zicNowMicros()-networkStarted);metric.networkCalls++;metric.networkOriginCalls++}throw error});
+    const asyncResult=__zicRequestAsync(message).then(value=>{if(requestId)__zicRecordBridgeNetworkCall(__zicBridgeMetric(requestId),message,networkStarted,value,null);return value},error=>{if(requestId)__zicRecordBridgeNetworkCall(__zicBridgeMetric(requestId),message,networkStarted,null,error);throw error});
     return __zicTrackActivationWork(asyncResult);
   }
   const networkStarted=networkCall?__zicNowMicros():0;
   let decodedValue;
   try {
     const envelope = JSON.parse(ZicNative.request(JSON.stringify(__zicEncode(message))));
-    if (!envelope.ok) throw new Error(envelope.error || 'Venera bridge failed');
+    if (!envelope.ok) throw __zicBridgeFailure(envelope);
     decodedValue=__zicDecode(envelope.value);
     return decodedValue;
   } finally {
-    if(networkCall&&requestId){const metric=__zicBridgeMetric(requestId);metric.networkMicros+=Math.max(0,__zicNowMicros()-networkStarted);metric.networkCalls++;if(__zicBridgeCacheHit(decodedValue))metric.networkCacheHits++;else metric.networkOriginCalls++}
+    if(networkCall&&requestId)__zicRecordBridgeNetworkCall(__zicBridgeMetric(requestId),message,networkStarted,decodedValue,null)
   }
 }
 function Cookie({name,value,domain}) { this.name=name; this.value=value; this.domain=domain; }
@@ -1942,7 +1949,7 @@ async function __zicOperation(request){
    else throw new Error('Venera resource URI must be a source locator or HTTP(S) URL');
   }finally{if(fresh)__zicFreshResolverDepth=Math.max(0,__zicFreshResolverDepth-1)}
   const bridgeAfter=__zicBridgeNetworkSnapshot(request.requestId),described=__zicDescribeResourceRequest(config);
-  described.__zicDiagnostics={sourcePlanHookMicros:Math.max(0,__zicNowMicros()-planStarted),sourcePlanBridgeNetworkMicros:Math.max(0,bridgeAfter.networkMicros-bridgeBefore.networkMicros),sourcePlanBridgeNetworkCalls:Math.max(0,bridgeAfter.networkCalls-bridgeBefore.networkCalls),sourcePlanBridgeNetworkCacheHits:Math.max(0,bridgeAfter.networkCacheHits-bridgeBefore.networkCacheHits),sourcePlanBridgeNetworkOriginCalls:Math.max(0,bridgeAfter.networkOriginCalls-bridgeBefore.networkOriginCalls)};
+  described.__zicDiagnostics={sourcePlanHookMicros:Math.max(0,__zicNowMicros()-planStarted),sourcePlanBridgeNetworkMicros:Math.max(0,bridgeAfter.networkMicros-bridgeBefore.networkMicros),sourcePlanBridgeNetworkCalls:Math.max(0,bridgeAfter.networkCalls-bridgeBefore.networkCalls),sourcePlanBridgeNetworkCacheHits:Math.max(0,bridgeAfter.networkCacheHits-bridgeBefore.networkCacheHits),sourcePlanBridgeNetworkOriginCalls:Math.max(0,bridgeAfter.networkOriginCalls-bridgeBefore.networkOriginCalls),sourcePlanBridgeNetworkCallSummary:bridgeAfter.networkCallSummary.slice(bridgeBefore.networkCallSummary.length).join('|')};
   return described;
  }
  if(request.operation==='retryResource')return await __zicRetryResourceConfig(String(args.uri||''),source);
@@ -1955,6 +1962,6 @@ async function __zicOperation(request){
  }
  throw new Error('Unsupported Venera operation');
 }
-async function __zicInvoke(raw){const request=typeof raw==='string'?JSON.parse(raw):raw,previousRequestId=__zicActiveRequestId;try{await __zicWaitForActivationWork();if(__zicCancelled.has(request.requestId))throw new Error('Venera request was cancelled');__zicActiveRequestId=request.requestId;const value=await __zicOperation(request);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:true,value:__zicEncode(value)}))}catch(error){const message=__zicErrorMessage(error,request.operation),retryable=/timeout|timed out|connect|network|dns|temporar|HTTP 5\d\d/i.test(message);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:false,code:'venera-operation-failed',message,retryable}))}finally{__zicBridgeMetrics.delete(request.requestId);__zicCancelled.delete(request.requestId);__zicActiveRequestId=previousRequestId;ZicNative.finished(request.requestId)}}
+async function __zicInvoke(raw){const request=typeof raw==='string'?JSON.parse(raw):raw,previousRequestId=__zicActiveRequestId;try{await __zicWaitForActivationWork();if(__zicCancelled.has(request.requestId))throw new Error('Venera request was cancelled');__zicActiveRequestId=request.requestId;const value=await __zicOperation(request);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:true,value:__zicEncode(value)}))}catch(error){const message=__zicErrorMessage(error,request.operation),retryable=error?.retryable===true||/timeout|timed out|connect|network|dns|temporar|HTTP 5\d\d/i.test(message);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:false,code:'venera-operation-failed',message,retryable}))}finally{__zicBridgeMetrics.delete(request.requestId);__zicCancelled.delete(request.requestId);__zicActiveRequestId=previousRequestId;ZicNative.finished(request.requestId)}}
 function __zicCancel(requestId){__zicCancelled.add(requestId);__zicCancelDelays(requestId)}
 """

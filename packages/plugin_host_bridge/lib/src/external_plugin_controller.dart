@@ -77,6 +77,11 @@ final class ExternalPluginController {
   final Map<String, Object> _manifestRestoreFailures = <String, Object>{};
   final StreamController<void> _sourceChanges =
       StreamController<void>.broadcast();
+  // Repository/install traffic is plugin-management control-plane I/O, not
+  // Reader media data-plane work. Keep its socket lifetime under this owner
+  // instead of borrowing the composition NetLane or letting a local client
+  // survive controller teardown.
+  final Set<HttpClient> _activeRepositoryClients = <HttpClient>{};
   late final ExternalPluginPayloadLoader _payloads =
       CallbackExternalPluginPayloadLoader(_acquirePinnedPayload);
   late final MihonApkInspector _mihonInspector = MihonApkInspector(
@@ -112,7 +117,7 @@ final class ExternalPluginController {
       recordFor: _installedRecord,
     ),
   ]);
-  late final Future<void> _ready;
+  Future<void>? _ready;
   Future<void> _manifestWriteTail = Future<void>.value();
   bool _closed = false;
 
@@ -153,6 +158,7 @@ final class ExternalPluginController {
     String storageRoot, {
     String Function()? userAgentProvider,
     bool discoverDeviceMihonExtensions = true,
+    bool deferRuntimeActivation = false,
   }) async {
     final controller = ExternalPluginController._(
       storageRoot: storageRoot,
@@ -160,14 +166,48 @@ final class ExternalPluginController {
       discoverDeviceMihonExtensions: discoverDeviceMihonExtensions,
     );
     await controller._prepare();
-    controller._ready = controller._initializeInBackground();
+    if (!deferRuntimeActivation) {
+      unawaited(controller._ensureAllActivated());
+    }
     return controller;
   }
 
   /// Completes after optional device extension discovery and installed plugin
   /// activation have finished. Individual activation failures are retained in
   /// [activationFailures], matching the eager-open behavior.
-  Future<void> get ready => _ready;
+  Future<void> get ready => _ensureAllActivated();
+
+  Future<void> _ensureAllActivated() =>
+      _ready ??= _initializeInBackground();
+
+  /// Activates only the installed runtime known to own [sourceId].
+  ///
+  /// Home/Reader exact-source demand uses this path so one uncached cover or
+  /// page does not wake every installed plugin runtime. Source management can
+  /// still await [ready] when it explicitly needs the complete projection.
+  /// Returns whether the requested source is active after the attempt.
+  Future<bool> ensureSourceActive(String sourceId) async {
+    _requireOpen();
+    if (_registry.ownerOfSource(sourceId) != null) return true;
+    final candidates = _installed.values.where((record) {
+      if (record.sourceIds.contains(sourceId)) return true;
+      return record.plugin.sources.any((source) => source.sourceId == sourceId);
+    }).toList(growable: false);
+    if (candidates.length != 1) {
+      final hasUndiscoveredOwner = _installed.values.any(
+        (record) => record.sourceIds.isEmpty && record.plugin.requiresRuntimeDiscovery,
+      );
+      if (candidates.isEmpty && !hasUndiscoveredOwner) return false;
+      // Old/runtime-discovered manifests may not yet contain a stable source
+      // owner. Preserve compatibility by falling back to the complete
+      // activation pass only while such an owner can actually be undiscovered
+      // (or if persisted ownership is already ambiguous).
+      await _ensureAllActivated();
+      return _registry.ownerOfSource(sourceId) != null;
+    }
+    await _activateRecord(candidates.single);
+    return _registry.ownerOfSource(sourceId) != null;
+  }
 
   /// Emits whenever startup or an explicit lifecycle operation changes the
   /// active source projection. Consumers can publish each source as soon as
@@ -717,6 +757,10 @@ final class ExternalPluginController {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    for (final client in _activeRepositoryClients.toList(growable: false)) {
+      client.close(force: true);
+    }
+    _activeRepositoryClients.clear();
     try {
       // Enter registry shutdown immediately. Waiting for the aggregate ready
       // barrier first would let one stuck plugin delay teardown of all others.
@@ -800,34 +844,38 @@ final class ExternalPluginController {
       while (true) {
         final index = next++;
         if (index >= records.length) return;
-        final record = records[index];
-        try {
-          final sources = await _registry.activate(record.plugin);
-          final activatedIds = <String>[
-            for (final source in sources) source.sourceId,
-          ];
-          if (!_listEquals(record.sourceIds, activatedIds)) {
-            _installed[record.plugin.pluginId] =
-                _withDiscoveredSourceIds(record, activatedIds);
-            try {
-              await _writeManifest();
-            } on Object {
-              // The runtime session is already active; persisting the newly
-              // discovered identities must not fail the activation itself.
-              // The next successful user-facing manifest write records them.
-            }
-          }
-          _notifySourceChange();
-        } on Object catch (error) {
-          _activationFailures[record.plugin.pluginId] = error;
-          _notifySourceChange();
-        }
+        await _activateRecord(records[index]);
       }
     }
     final workerCount = records.length < 4 ? records.length : 4;
     await Future.wait<void>(
       List<Future<void>>.generate(workerCount, (_) => activateNext()),
     );
+  }
+
+  Future<void> _activateRecord(InstalledExternalPlugin record) async {
+    try {
+      final sources = await _registry.activate(record.plugin);
+      final activatedIds = <String>[
+        for (final source in sources) source.sourceId,
+      ];
+      if (!_listEquals(record.sourceIds, activatedIds)) {
+        _installed[record.plugin.pluginId] =
+            _withDiscoveredSourceIds(record, activatedIds);
+        try {
+          await _writeManifest();
+        } on Object {
+          // The runtime session is already active; persisting the newly
+          // discovered identities must not fail the activation itself.
+          // The next successful user-facing manifest write records them.
+        }
+      }
+      _activationFailures.remove(record.plugin.pluginId);
+      _notifySourceChange();
+    } on Object catch (error) {
+      _activationFailures[record.plugin.pluginId] = error;
+      _notifySourceChange();
+    }
   }
 
   void _notifySourceChange() {
@@ -991,10 +1039,12 @@ final class ExternalPluginController {
     required int maxBytes,
     required void Function(List<int> chunk) onChunk,
   }) async {
+    _requireOpen();
     _requireHttps(uri);
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 15)
       ..idleTimeout = const Duration(seconds: 15);
+    _activeRepositoryClients.add(client);
     try {
       var current = uri;
       for (var redirect = 0; redirect < 6; redirect++) {
@@ -1034,16 +1084,19 @@ final class ExternalPluginController {
         }
         var received = 0;
         await for (final chunk in response) {
+          _requireOpen();
           received += chunk.length;
           if (received > maxBytes) {
             throw const FormatException('plugin repository payload is too large');
           }
           onChunk(chunk);
         }
+        _requireOpen();
         return;
       }
       throw const HttpException('too many plugin repository redirects');
     } finally {
+      _activeRepositoryClients.remove(client);
       client.close(force: true);
     }
   }

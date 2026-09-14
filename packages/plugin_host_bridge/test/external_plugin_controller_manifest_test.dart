@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -6,6 +7,30 @@ import 'package:plugin_host/plugin_host.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 
 void main() {
+  test('controller close cancels an active repository request', () async {
+    final storage = await Directory.systemTemp.createTemp(
+      'zic-external-plugin-network-close-',
+    );
+    addTearDown(() => storage.delete(recursive: true));
+    final controller = await ExternalPluginController.openDeferred(
+      storage.path,
+      discoverDeviceMihonExtensions: false,
+    );
+    final client = _BlockingHttpClient();
+
+    await HttpOverrides.runZoned(() async {
+      final loading = controller.loadRepository(
+        format: ExternalComicPluginFormat.veneraJavaScript,
+        index: Uri.https('example.com', '/index.json'),
+      );
+      final failed = expectLater(loading, throwsA(anything));
+      await client.requestStarted.future;
+      await controller.close();
+      expect(client.forceClosed, isTrue);
+      await failed;
+    }, createHttpClient: (_) => client);
+  });
+
   test('manifest restore accepts only owned regular payload files', () async {
     final storage = await Directory.systemTemp.createTemp(
       'zic-external-plugin-manifest-',
@@ -56,6 +81,57 @@ void main() {
     expect(
       controller.activationFailures,
       containsPair('venera:test-owned', anything),
+    );
+  });
+
+  test('deferred controller activates only the requested persisted source',
+      () async {
+    final storage = await Directory.systemTemp.createTemp(
+      'zic-external-plugin-targeted-activation-',
+    );
+    addTearDown(() => storage.delete(recursive: true));
+    final pluginRoot = Directory('${storage.path}/external_plugins');
+    await pluginRoot.create(recursive: true);
+    final targetPayload = await File('${pluginRoot.path}/target.js')
+        .writeAsString('class TargetSource extends ComicSource {}');
+    final siblingPayload = await File('${pluginRoot.path}/sibling.js')
+        .writeAsString('class SiblingSource extends ComicSource {}');
+    await File('${pluginRoot.path}/installed.json').writeAsString(
+      jsonEncode(<String, Object?>{
+        'version': 1,
+        'plugins': <Object?>[
+          _record(
+            'target',
+            targetPayload.path,
+            sourceKey: 'target',
+            sourceIds: const <String>['venera:target'],
+          ),
+          _record(
+            'sibling',
+            siblingPayload.path,
+            sourceKey: 'sibling',
+            sourceIds: const <String>['venera:sibling'],
+          ),
+        ],
+      }),
+    );
+
+    final controller = await ExternalPluginController.openDeferred(
+      storage.path,
+      discoverDeviceMihonExtensions: false,
+      deferRuntimeActivation: true,
+    );
+    addTearDown(controller.close);
+    expect(controller.activationFailures, isEmpty);
+
+    expect(await controller.ensureSourceActive('venera:target'), isFalse);
+    expect(
+      controller.activationFailures.keys,
+      unorderedEquals(<String>['venera:test-target']),
+    );
+    expect(
+      controller.activationFailures,
+      isNot(contains('venera:test-sibling')),
     );
   });
 
@@ -312,6 +388,7 @@ Map<String, Object?> _record(
   String suffix,
   String payloadPath, {
   String? sourceKey,
+  List<String> sourceIds = const <String>[],
 }) =>
     <String, Object?>{
       'plugin': <String, Object?>{
@@ -329,4 +406,75 @@ Map<String, Object?> _record(
       'repositoryOrigin': 'https://example.com',
       'entryClasses': const <Object?>[],
       if (sourceKey != null) 'sourceKey': sourceKey,
+      if (sourceIds.isNotEmpty) 'sourceIds': sourceIds,
     };
+
+final class _BlockingHttpClient implements HttpClient {
+  Duration? _connectionTimeout;
+  Duration _idleTimeout = const Duration(seconds: 15);
+  final Completer<void> requestStarted = Completer<void>();
+  final _BlockingHttpClientRequest _request = _BlockingHttpClientRequest();
+  bool forceClosed = false;
+
+  @override
+  Duration? get connectionTimeout => _connectionTimeout;
+
+  @override
+  set connectionTimeout(Duration? value) => _connectionTimeout = value;
+
+  @override
+  Duration get idleTimeout => _idleTimeout;
+
+  @override
+  set idleTimeout(Duration value) => _idleTimeout = value;
+
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) async {
+    if (!requestStarted.isCompleted) requestStarted.complete();
+    return _request;
+  }
+
+  @override
+  void close({bool force = false}) {
+    forceClosed = forceClosed || force;
+    _request.fail();
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _BlockingHttpClientRequest implements HttpClientRequest {
+  final Completer<HttpClientResponse> _response =
+      Completer<HttpClientResponse>();
+  final HttpHeaders _headers = _NoopHttpHeaders();
+
+  @override
+  HttpHeaders get headers => _headers;
+
+  @override
+  bool followRedirects = true;
+
+  @override
+  int maxRedirects = 5;
+
+  @override
+  void add(List<int> data) {}
+
+  @override
+  Future<HttpClientResponse> close() => _response.future;
+
+  void fail() {
+    if (!_response.isCompleted) {
+      _response.completeError(const HttpException('client closed'));
+    }
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _NoopHttpHeaders implements HttpHeaders {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => null;
+}

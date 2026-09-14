@@ -113,6 +113,15 @@ final class RhttpSourceResourceDirectTransport
       unawaited(taskControl.whenCancelled.then((_) => cancelToken.cancel()));
     }
     final body = request.body;
+    final requestedRangeHeader = _requestHeaderValue(
+      request.headers,
+      HttpHeaders.rangeHeader,
+    );
+    final requestedIfRange = _requestHeaderValue(
+          request.headers,
+          HttpHeaders.ifRangeHeader,
+        ) !=
+        null;
     final receiveProgressDiagnosticsEnabled =
         _rhttpReceiveProgressDiagnosticsEnabled;
     final readDiagnostics = receiveProgressDiagnosticsEnabled
@@ -221,6 +230,9 @@ final class RhttpSourceResourceDirectTransport
           'sourceHostRemoteIpHash': _stableDiagnosticHash(response.remoteIp!),
         'sourceRhttpReceiveProgressEnabled':
             receiveProgressDiagnosticsEnabled,
+        if (requestedRangeHeader != null)
+          'sourceRequestRangeHeader': requestedRangeHeader,
+        if (requestedIfRange) 'sourceRequestIfRange': true,
       },
       readDiagnostics: readDiagnostics,
       onDiscard: responseBody.abort,
@@ -430,6 +442,14 @@ void _throwIfCancelled(TaskControl? control) {
     code: ErrorCode.cancelled,
     message: 'source media request cancelled by scheduler owner',
   );
+}
+
+String? _requestHeaderValue(Map<String, String> headers, String name) {
+  final lower = name.toLowerCase();
+  for (final entry in headers.entries) {
+    if (entry.key.toLowerCase() == lower) return entry.value;
+  }
+  return null;
 }
 
 List<String> _headerValues(

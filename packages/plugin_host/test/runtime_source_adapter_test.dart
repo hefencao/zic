@@ -860,6 +860,10 @@ void main() {
     expect(promotedRequest.diagnostics['sourcePlanBridgeNetworkCalls'], 2);
     expect(promotedRequest.diagnostics['sourcePlanBridgeNetworkCacheHits'], 1);
     expect(promotedRequest.diagnostics['sourcePlanBridgeNetworkOriginCalls'], 1);
+    expect(
+      promotedRequest.diagnostics['sourcePlanBridgeNetworkCallSummary'],
+      'GET:origin:500|POST:cache:300',
+    );
     expect(promotedRequest.diagnostics['sourcePlanGateWaitMicros'], isA<int>());
     expect(
       promotedRequest.diagnostics['sourcePlanRuntimeInvocationMicros'],
@@ -1532,6 +1536,8 @@ final class _PriorityResolveConnection
             'sourcePlanBridgeNetworkCalls': 2,
             'sourcePlanBridgeNetworkCacheHits': 1,
             'sourcePlanBridgeNetworkOriginCalls': 1,
+            'sourcePlanBridgeNetworkCallSummary':
+                'GET:origin:500|POST:cache:300',
           },
         },
       );
