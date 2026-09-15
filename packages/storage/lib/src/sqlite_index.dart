@@ -26,7 +26,7 @@ final class SqliteIndex
 
   SqliteIndex.memory() : path = null;
 
-  static const int _schemaVersion = 18;
+  static const int _schemaVersion = 19;
 
   final String? path;
   sql.Database? _db;
@@ -73,6 +73,9 @@ final class SqliteIndex
         _createStorageCleanupDebtTable(db);
         _createArtifactPromotionTable(db);
         _migrateLegacyLeadingSlashSafIdentity(db);
+        if (version == 18) {
+          _removeDeprecatedVolatilePagePhysicalBindings(db);
+        }
         db.execute('PRAGMA user_version = $_schemaVersion');
         db.execute('COMMIT');
       } on Object {
@@ -3054,6 +3057,17 @@ String? _normalizeLegacyLeadingSlashSafRecord(String value) {
   final normalizedTree = _normalizeLegacyLeadingSlashSafIdentity(tree);
   if (normalizedTree == null) return null;
   return 'saf:${Uri.encodeComponent(normalizedTree)}${value.substring(marker)}';
+}
+
+/// Removes the short-lived v18 logical-page Venera physical alias. Device
+/// evidence showed that one pageId/sourceRevision can resolve to different
+/// decoded pixels across provider carriers, so these rows are routing debt,
+/// not reusable media proof. Exact READY bindings and artifact replicas remain.
+void _removeDeprecatedVolatilePagePhysicalBindings(sql.Database db) {
+  db.execute(
+    "DELETE FROM physical_media_artifact "
+    "WHERE physical_json LIKE '%\"value\":\"volatile-page:v1%'",
+  );
 }
 
 /// Repairs the historical app-side `saf://` prefix off-by-one that persisted

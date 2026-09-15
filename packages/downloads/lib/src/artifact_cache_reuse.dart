@@ -41,16 +41,12 @@ final class CanonicalMediaActiveRange {
 ///
 /// One instance owns one hydrated manifest, not one row per page. Runtime
 /// lookup validates [DownloadId.pageIndexHint] against the exact manifest slot
-/// before consuming a persisted canonical projection, a source-declared
-/// volatile page coordinate, or a stable URI content identity. An active
-/// family projection wins so mixed strong/opaque provider locators still
-/// converge on one version-family physical owner. Venera `venera-resource:`
-/// locators are reconstructable request carriers whose embedded image value may
-/// change across `loadEp` calls, so their physical owner is the logical page
-/// within one exact chapter revision rather than the carrier URI itself.
-/// Stable URI identity remains the direct fallback outside those cases;
-/// metadata-only checksum enrichment never owns a physical key and therefore
-/// cannot rename a segment-backed owner.
+/// before consuming either a stable URI content identity or a persisted
+/// canonical projection. An active family projection wins so mixed strong/
+/// opaque provider locators still converge on one version-family physical
+/// owner. Stable URI identity remains the direct fallback outside active
+/// projection ranges; metadata-only checksum enrichment never owns a physical
+/// key and therefore cannot rename a segment-backed owner.
 final class CanonicalMediaChapterAuthority {
   CanonicalMediaChapterAuthority({
     required this.manifest,
@@ -100,16 +96,6 @@ final class CanonicalMediaChapterAuthority {
       if (coordinate != null) {
         return PhysicalMediaId.canonical(coordinate.stableKey);
       }
-    }
-    if (projection == null) {
-      final volatilePage = volatileProviderPagePhysicalMediaId(
-        sourceId: manifest.sourceId,
-        comicId: manifest.comicId,
-        chapterId: manifest.chapter.chapterId,
-        sourceRevision: manifest.chapter.sourceRevision,
-        page: page,
-      );
-      if (volatilePage != null) return volatilePage;
     }
     return verifiedPhysicalMediaId(
       sourceId: manifest.sourceId,
@@ -881,34 +867,6 @@ String? stablePhysicalPageIdentity(PageAsset page) {
     }
   }
   return null;
-}
-
-/// Physical owner for a source locator whose request carrier is reconstructable
-/// but not stable across source refreshes.
-///
-/// This is deliberately not returned from [verifiedPageIdentities]: it proves
-/// only that multiple exact request carriers address the same logical page in
-/// one source chapter revision, not that their encoded bytes are identical.
-/// Immutable historical READY rows still need their own length/checksum proof
-/// before they can be attached to this owner.
-PhysicalMediaId? volatileProviderPagePhysicalMediaId({
-  required String sourceId,
-  required String comicId,
-  required String chapterId,
-  required String sourceRevision,
-  required PageAsset page,
-}) {
-  final raw = page.uri.toString();
-  if (!sourceId.startsWith('venera:') ||
-      page.uri.scheme != 'venera-resource' ||
-      raw.startsWith('venera-resource://')) {
-    return null;
-  }
-  String frame(String value) => '${value.length}:$value';
-  return PhysicalMediaId.canonical(
-    'volatile-page:v1${frame(sourceId)}${frame(comicId)}'
-    '${frame(chapterId)}${frame(sourceRevision)}${frame(page.pageId)}',
-  );
 }
 
 PhysicalMediaId? verifiedPhysicalMediaId({

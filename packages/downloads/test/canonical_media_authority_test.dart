@@ -73,7 +73,7 @@ void main() {
     expect(inactive.resolve(id), stable);
   });
 
-  test('volatile Venera carriers share one exact-revision physical page owner', () {
+  test('volatile Venera carriers do not prove a physical page owner', () {
     ChapterManifest manifest(String carrier) => ChapterManifest(
           sourceId: 'venera:jm',
           comicId: 'comic',
@@ -103,11 +103,8 @@ void main() {
     final firstAuthority = CanonicalMediaChapterAuthority(manifest: first);
     final secondAuthority = CanonicalMediaChapterAuthority(manifest: second);
 
-    final firstPhysical = firstAuthority.resolve(firstId);
-    final secondPhysical = secondAuthority.resolve(secondId);
-    expect(firstPhysical, isNotNull);
-    expect(firstPhysical!.isExactFallback, isFalse);
-    expect(secondPhysical, firstPhysical);
+    expect(firstAuthority.resolve(firstId), isNull);
+    expect(secondAuthority.resolve(secondId), isNull);
     expect(
       firstAuthority.resolve(secondId),
       isNull,

@@ -1150,7 +1150,7 @@ void runCacheSchemaV2Tests() {
     await migrated.close();
 
     final schema = sql.sqlite3.open(dbPath);
-      expect(schema.select('PRAGMA user_version').single.values.single, 18);
+      expect(schema.select('PRAGMA user_version').single.values.single, 19);
     expect(
       schema
           .select(
@@ -1255,7 +1255,7 @@ void runCacheSchemaV2Tests() {
             'migration must not invent manual intent for ambiguous old rows',
       );
     final raw = sql.sqlite3.open(dbPath);
-      expect(raw.select('PRAGMA user_version').single.values.single, 18);
+      expect(raw.select('PRAGMA user_version').single.values.single, 19);
     raw.dispose();
     },
   );
@@ -1313,7 +1313,7 @@ void runCacheSchemaV2Tests() {
 
     final checked = sql.sqlite3.open(dbPath);
     addTearDown(checked.dispose);
-      expect(checked.select('PRAGMA user_version').single.values.single, 18);
+      expect(checked.select('PRAGMA user_version').single.values.single, 19);
     expect(
       checked.select(
         "SELECT name FROM sqlite_master WHERE type = 'index' "
@@ -1401,7 +1401,7 @@ void runCacheSchemaV2Tests() {
 
       final checked = sql.sqlite3.open(dbPath);
       addTearDown(checked.dispose);
-      expect(checked.select('PRAGMA user_version').single.values.single, 18);
+      expect(checked.select('PRAGMA user_version').single.values.single, 19);
       expect(
         checked.select(
           "SELECT name FROM sqlite_master WHERE type = 'table' "
@@ -1435,7 +1435,7 @@ void runCacheSchemaV2Tests() {
       canonicalUri: Uri.parse('https://example.test/current-reopen.webp'),
     );
     final raw = sql.sqlite3.open(dbPath);
-      expect(raw.select('PRAGMA user_version').single.values.single, 18);
+      expect(raw.select('PRAGMA user_version').single.values.single, 19);
     raw.execute(
       'INSERT INTO cache_entry '
       '(key, download_json, state, path, bytes, checksum, created_us, touched_us, '
@@ -2118,7 +2118,7 @@ void runCacheSchemaV2Tests() {
 
       final checked = sql.sqlite3.open(path);
       addTearDown(checked.dispose);
-      expect(checked.select('PRAGMA user_version').single.values.single, 18);
+      expect(checked.select('PRAGMA user_version').single.values.single, 19);
       final columns = checked
           .select('PRAGMA table_info(cache_entry)')
           .map((row) => row['name'])
@@ -2166,7 +2166,7 @@ void runCacheSchemaV2Tests() {
 
       final checked = sql.sqlite3.open(path);
       addTearDown(checked.dispose);
-      expect(checked.select('PRAGMA user_version').single.values.single, 18);
+      expect(checked.select('PRAGMA user_version').single.values.single, 19);
       expect(
         checked.select(
           "SELECT name FROM sqlite_master WHERE type='table' "
@@ -2263,7 +2263,7 @@ void runCacheSchemaV2Tests() {
 
     final checked = sql.sqlite3.open(path);
     addTearDown(checked.dispose);
-    expect(checked.select('PRAGMA user_version').single.values.single, 18);
+    expect(checked.select('PRAGMA user_version').single.values.single, 19);
     expect(
       checked.select(
         "SELECT name FROM sqlite_master WHERE type='table' "
@@ -2324,7 +2324,7 @@ void runCacheSchemaV2Tests() {
 
     final checked = sql.sqlite3.open(path);
     addTearDown(checked.dispose);
-    expect(checked.select('PRAGMA user_version').single.values.single, 18);
+    expect(checked.select('PRAGMA user_version').single.values.single, 19);
     expect(
       checked.select('SELECT root_id FROM storage_root').map((row) => row['root_id']),
       contains(tree),
@@ -2352,6 +2352,74 @@ void runCacheSchemaV2Tests() {
     ).single;
     expect(object['path'], repairedLocator);
     expect(object['storage_root_id'], tree);
+  });
+
+  test('schema 19 retires deprecated volatile Venera physical aliases only', () async {
+    final temp = await Directory.systemTemp.createTemp('zic-schema19-volatile-page-');
+    addTearDown(() => temp.delete(recursive: true));
+    final path = '${temp.path}/cache.sqlite';
+    final seed = SqliteIndex(path);
+    await seed.open();
+    final migrationId = DownloadId(
+      content: const ContentId(
+        sourceId: 'venera:jm',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'ep-1',
+      canonicalUri: Uri.parse('venera-resource:carrier'),
+    );
+    final ready = CacheRec(
+      id: migrationId,
+      state: CacheState.ready,
+      path: '${temp.path}/ready.bin',
+      bytes: 4,
+      checksum: '01020304',
+      createdUs: 10,
+      touchedUs: 20,
+      artifactId: 'schema19-ready',
+    );
+    await seed.put(ready);
+    final deprecated = PhysicalMediaId.canonical(
+      'volatile-page:v16:source5:comic7:chapter2:r14:page',
+    );
+    await seed.putPhysicalMediaArtifactBinding(
+      id: deprecated,
+      artifactId: ready.artifactId,
+      createdUs: 30,
+      touchedUs: 40,
+    );
+    await seed.close();
+
+    final legacy = sql.sqlite3.open(path);
+    legacy.execute('PRAGMA user_version = 18');
+    legacy.dispose();
+
+    final migrated = SqliteIndex(path);
+    await migrated.open();
+    expect(await migrated.getPhysicalMediaArtifact(deprecated), isNull);
+    expect(await migrated.get(migrationId.key), isNotNull);
+    await migrated.close();
+
+    final checked = sql.sqlite3.open(path);
+    addTearDown(checked.dispose);
+    expect(checked.select('PRAGMA user_version').single.values.single, 19);
+    expect(
+      checked.select(
+        'SELECT artifact_id FROM artifact_object WHERE artifact_id = ?',
+        <Object?>[ready.artifactId],
+      ),
+      hasLength(1),
+      reason: 'retiring the invalid routing alias must preserve body authority',
+    );
+    expect(
+      checked.select(
+        'SELECT artifact_id FROM artifact_replica WHERE artifact_id = ?',
+        <Object?>[ready.artifactId],
+      ),
+      hasLength(1),
+    );
   });
 
   test('DownloadPlacement equality includes export page order', () {
