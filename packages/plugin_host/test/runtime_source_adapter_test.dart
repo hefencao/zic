@@ -274,6 +274,33 @@ void main() {
     );
   });
 
+  test('Venera version capability skips non-gnd comic web routes', () async {
+    final connection = _FixtureConnection(
+      resource: Uint8List.fromList(utf8.encode('<div id="gnd"></div>')),
+    );
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    final currentPayload = base64Url.encode(utf8.encode(
+      jsonEncode(<String, Object?>{
+        'v': 2,
+        'id': 'https://example.invalid/photo/12345/',
+      }),
+    )).replaceAll('=', '');
+    final currentId = 'venera:comic:$currentPayload';
+
+    final versionSource = source as ComicVersionSource;
+    final versions = await versionSource.findComicVersions(currentId);
+
+    expect(versionSource.supportsComicVersions, isTrue);
+    expect(versions, isEmpty);
+    expect(connection.operations, isEmpty);
+  });
+
   test('Mihon search filters preserve typed source-owned state', () async {
     final connection = _FixtureConnection();
     final session = ExternalPluginRuntimeSession(

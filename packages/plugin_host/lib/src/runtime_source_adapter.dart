@@ -651,7 +651,7 @@ final class _RuntimeBrowsableComicSource
       return const <SourceComicVersion>[];
     }
     final uri = resolveComicWebUri(comicId);
-    if (uri == null) {
+    if (uri == null || !_isVeneraGndGalleryUri(uri)) {
       return const <SourceComicVersion>[];
     }
     // VibeVenera discovers E-Hentai successors from the current page's
@@ -1990,6 +1990,14 @@ SourceContentRating _contentRating(Object? value) {
   } on ArgumentError {
     throw FormatException('unknown content rating: $value');
   }
+}
+
+bool _isVeneraGndGalleryUri(Uri uri) {
+  final segments = uri.pathSegments.where((segment) => segment.isNotEmpty).toList();
+  return segments.length >= 3 &&
+      segments[0] == 'g' &&
+      segments[1].isNotEmpty &&
+      segments[2].isNotEmpty;
 }
 
 List<SourceComicVersion> _parseVeneraComicVersions({
