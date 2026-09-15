@@ -1526,10 +1526,17 @@ final class _DownloadManagementPhysicalState {
         return (artifact: artifact, partial: partial);
       }
     }
-    final stable = verifiedPhysicalMediaId(
-      sourceId: entry.chapter.sourceId,
-      page: page,
-    );
+    final stable = volatileProviderPagePhysicalMediaId(
+          sourceId: entry.chapter.sourceId,
+          comicId: entry.chapter.comicId,
+          chapterId: entry.chapter.chapterId,
+          sourceRevision: entry.chapter.sourceRevision,
+          page: page,
+        ) ??
+        verifiedPhysicalMediaId(
+          sourceId: entry.chapter.sourceId,
+          page: page,
+        );
     if (stable == null) return null;
     final artifact = artifacts[stable];
     final partial = artifact == null ? partials[stable] : null;

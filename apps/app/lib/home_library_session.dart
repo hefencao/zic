@@ -889,27 +889,39 @@ final class HomeLibrarySession extends ChangeNotifier {
   }
 
   void _rememberVersionAuthorityEntries(
-    Iterable<ImportedLibraryEntry> entries,
-  ) {
+    Iterable<ImportedLibraryEntry> entries, {
+    bool replaceChapterPayload = false,
+  }) {
     var changed = false;
     for (final entry in entries) {
       final key = _versionAuthorityEntryKey(entry);
       final previous = _versionAuthorityHydratedEntries[key];
       if (previous?.chapter.sourceRevision == entry.chapter.sourceRevision &&
           previous?.chapter.pages.length == entry.chapter.pages.length) {
-        // This cache owns a fully hydrated chapter payload for version/media
-        // authority, but Reader progress remains mutable. Preserve the cached
-        // full chapter while advancing its progress projection when Home has a
-        // newer checkpoint; otherwise a later hydrateEntry() can resurrect the
-        // page that was current when the chapter was first hydrated.
         final previousProgress = previous?.progress;
         final nextProgress = entry.progress;
-        if (previous != null &&
-            nextProgress != null &&
-            (previousProgress == null ||
-                !nextProgress.updatedAt.isBefore(previousProgress.updatedAt))) {
+        final latestProgress = previousProgress != null &&
+                (nextProgress == null ||
+                    previousProgress.updatedAt.isAfter(nextProgress.updatedAt))
+            ? previousProgress
+            : nextProgress;
+        if (replaceChapterPayload) {
+          // A source upsert carries a fully materialized chapter. Its provider
+          // request locators may legitimately change without a revision/count
+          // change (notably Venera resource carriers), so it must replace the
+          // version/media authority payload while preserving newer progress.
+          _versionAuthorityHydratedEntries[key] = latestProgress == null
+              ? entry
+              : entry.copyWith(progress: latestProgress);
+          changed = true;
+          continue;
+        }
+        // Ordinary Home/snapshot projection updates may be compact. Preserve
+        // the cached full chapter while advancing only its progress; otherwise
+        // a compact entry could erase the manifest used by Reader authority.
+        if (previous != null && latestProgress != previousProgress) {
           _versionAuthorityHydratedEntries[key] =
-              previous.copyWith(progress: nextProgress);
+              previous.copyWith(progress: latestProgress);
         }
         continue;
       }
@@ -2057,7 +2069,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     if (entry == null) {
       throw StateError('chapter write completed without a readable entry');
     }
-    _replaceEntry(entry);
+    _replaceEntry(entry, replaceVersionAuthorityChapterPayload: true);
     await _assimilateCanonicalMediaForEntries(<ImportedLibraryEntry>[entry]);
     _refreshVersionPageAuthority();
     return entry;
@@ -2162,7 +2174,10 @@ final class HomeLibrarySession extends ChangeNotifier {
     _replaceEntry(entry.copyWith(progress: normalized));
   }
 
-  void _replaceEntry(ImportedLibraryEntry entry) {
+  void _replaceEntry(
+    ImportedLibraryEntry entry, {
+    bool replaceVersionAuthorityChapterPayload = false,
+  }) {
     final next = _entries.toList(growable: true);
     final index = next.indexWhere(
       (current) => current.identity == entry.identity,
@@ -2173,7 +2188,10 @@ final class HomeLibrarySession extends ChangeNotifier {
       next[index] = entry;
     }
     _entries = List<ImportedLibraryEntry>.unmodifiable(next);
-    _rememberVersionAuthorityEntries(<ImportedLibraryEntry>[entry]);
+    _rememberVersionAuthorityEntries(
+      <ImportedLibraryEntry>[entry],
+      replaceChapterPayload: replaceVersionAuthorityChapterPayload,
+    );
     _libraryProjectionRevision++;
     _publish();
     _scheduleSnapshotWrite();

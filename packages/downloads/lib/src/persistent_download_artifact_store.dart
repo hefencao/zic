@@ -2101,16 +2101,22 @@ final class PersistentDownloadArtifactStore
       final records = readyByChapter[authority.exactKey];
       if (records == null || records.isEmpty) continue;
       final manifest = authority.manifest;
-      final exactPages = <String, DownloadId>{};
+      final readyLogicalKeys = <(String, String)>{
+        for (final record in records)
+          (record.id.content.key, record.id.sourceRevision),
+      };
       for (final page in manifest.pages) {
         final exactId = readerPageDownloadId(manifest, page);
-        exactPages[exactId.key] = exactId;
-      }
-      for (final record in records) {
-        final exactId = exactPages[record.id.key];
-        if (exactId == null) continue;
+        if (!readyLogicalKeys.contains(
+          (exactId.content.key, exactId.sourceRevision),
+        )) {
+          continue;
+        }
         final physicalId = authority.resolve(exactId);
         if (physicalId == null || physicalId.isExactFallback) continue;
+        // Pass the current exact carrier. Candidate binding then inspects every
+        // READY row for this logical page/revision and requires one immutable
+        // length+checksum proof before attaching historical URI churn.
         candidatesByPhysical
             .putIfAbsent(physicalId, () => <String, DownloadId>{})
             .putIfAbsent(exactId.key, () => exactId);

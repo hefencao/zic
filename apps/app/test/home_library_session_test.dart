@@ -2393,6 +2393,91 @@ void main() {
     expect(library.getCalls, 2);
   });
 
+  test('source upsert replaces same-revision hydrated provider locators',
+      () async {
+    final delegate = MemoryImportedLibraryStore();
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+
+    ChapterManifest manifest(String carrier) => ChapterManifest(
+          sourceId: 'venera:jm',
+          comicId: 'comic',
+          chapter: const Chapter(
+            chapterId: 'chapter',
+            comicId: 'comic',
+            title: 'Chapter',
+            sequence: 1,
+            pageCount: 1,
+            sourceRevision: 'ep-1',
+          ),
+          pages: <PageAsset>[
+            PageAsset(
+              pageId: 'chapter:0',
+              chapterId: 'chapter',
+              index: 0,
+              uri: Uri.parse('venera-resource:$carrier'),
+            ),
+          ],
+          readingDirection: ReadingDirection.ltr,
+        );
+    Comic comic() => Comic(
+          comicId: 'comic',
+          sourceId: 'venera:jm',
+          title: 'Comic',
+          authors: const <String>[],
+          readingDirection: ReadingDirection.ltr,
+        );
+
+    await session.upsertChapter(
+      ImportedChapterRecord.remote(comic: comic(), manifest: manifest('first')),
+    );
+    final progress = ReadingProgress(
+      sourceId: 'venera:jm',
+      comicId: 'comic',
+      chapterId: 'chapter',
+      pageIndex: 0,
+      subPageOffset: 0.5,
+      readerMode: ReaderMode.paged,
+      updatedAt: DateTime.utc(2026, 9, 15, 1),
+    );
+    await session.persistProgress(progress);
+
+    await session.upsertChapter(
+      ImportedChapterRecord.remote(comic: comic(), manifest: manifest('second')),
+    );
+    final authority = session.versionAuthorityEntry(
+      sourceId: 'venera:jm',
+      comicId: 'comic',
+      chapterId: 'chapter',
+    );
+    expect(authority, isNotNull);
+    expect(
+      authority!.chapter.toManifest().pages.single.uri,
+      Uri.parse('venera-resource:second'),
+    );
+    expect(authority.progress?.updatedAt, progress.updatedAt);
+  });
+
   test('hydrated chapter cache follows newer Reader progress projection',
       () async {
     final delegate = MemoryImportedLibraryStore();
