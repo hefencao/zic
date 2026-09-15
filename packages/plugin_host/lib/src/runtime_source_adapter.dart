@@ -133,6 +133,19 @@ final class ExternalPluginRuntimeSession
                   ? 1000
                   : 1 << 30,
           preemptionThreshold: 40,
+        ),
+        _transformGate = _RuntimeInvocationGate(
+          limits,
+          maxConcurrentInvocations: 1,
+          controlledPreemptionPriorityFloor:
+              plugin.format == ExternalComicPluginFormat.veneraJavaScript
+                  ? 780
+                  : 1 << 30,
+          dynamicPreemptionPriorityThreshold:
+              plugin.format == ExternalComicPluginFormat.veneraJavaScript
+                  ? 1000
+                  : 1 << 30,
+          preemptionThreshold: 40,
         ) {
     limits.validate();
     final descriptors = connection.sources;
@@ -166,6 +179,7 @@ final class ExternalPluginRuntimeSession
   final ExternalPluginRuntimeConnection _connection;
   final ExternalPluginRuntimeLimits _limits;
   final _RuntimeInvocationGate _gate;
+  final _RuntimeInvocationGate _transformGate;
   late final List<BrowsableComicSource> _sources;
   int _nextRequestId = 1;
   bool _closed = false;
@@ -214,7 +228,11 @@ final class ExternalPluginRuntimeSession
     int? gateBlockedByPriority;
     var gateBlockedByControlled = false;
     try {
-      response = await _gate.run(
+      final isolatedTransform =
+          operation == ExternalPluginRuntimeOperation.transformResource &&
+              arguments[_isolatedModifyImageArgument] is String;
+      final invocationGate = isolatedTransform ? _transformGate : _gate;
+      response = await invocationGate.run(
         () {
           gateWaitWatch.stop();
           gateWaitMicros = gateWaitWatch.elapsedMicroseconds;
@@ -246,7 +264,9 @@ final class ExternalPluginRuntimeSession
         },
         control: control,
         onPreempt: () => _cancelInvocation(request.requestId),
-        debugLabel: operation.name,
+        debugLabel: isolatedTransform
+            ? '${operation.name}:isolated'
+            : operation.name,
         onQueuedBehind: (blocker) {
           gateBlockedByOperation = blocker.operation;
           gateBlockedByPriority = blocker.priority;
@@ -347,6 +367,7 @@ final class ExternalPluginRuntimeSession
   Future<void> _close() async {
     _closed = true;
     final drained = _gate.beginClose();
+    final transformDrained = _transformGate.beginClose();
     Object? closeError;
     StackTrace? closeStackTrace;
     try {
@@ -356,6 +377,7 @@ final class ExternalPluginRuntimeSession
       closeStackTrace = stackTrace;
     }
     await drained;
+    await transformDrained;
     if (closeError != null) {
       Error.throwWithStackTrace(closeError, closeStackTrace!);
     }
@@ -382,19 +404,25 @@ typedef _RuntimeResolveResourceInvoke =
   TaskControl? control,
 });
 
+const _isolatedModifyImageArgument = '__zicIsolatedModifyImage';
+const _isolatedModifyImageCacheLimit = 128;
+
 final class _RuntimeBrowsableComicSource
     implements BrowsableComicSource, ConfigurableComicSource,
         AuthenticatableComicSource, ComicWebUriSource,
         CanonicalComicIdentitySource, ComicWebViewRequestSource,
-        ComicVersionSource,
+        ComicVersionSource, ControlledComicVersionSource,
         ComicPreviewSource, ComicCommentSource,
         SectionedBrowsableComicSource,
         FilterableBrowsableComicSource,
+        ControlledComicSource,
         ResolvableComicResourceSource, ControlledResolvableComicResourceSource,
         BoundedComicResourceSource,
         RetryableComicResourceSource, ControlledRetryableComicResourceSource,
         RefreshableComicResourceSource, ControlledRefreshableComicResourceSource,
-        ControlledComicResourceSource {
+        ControlledComicResourceSource,
+        TransformingComicResourceSource, ControlledTransformingComicResourceSource,
+        ComicResourceTransportGenerationSource {
   _RuntimeBrowsableComicSource({
     required ExternalComicPluginFormat format,
     required ExternalPluginRuntimeSourceDescriptor descriptor,
@@ -432,6 +460,12 @@ final class _RuntimeBrowsableComicSource
   final _RuntimeResolveResourceInvoke _resolveResourceInvoke;
   final Map<Uri, Future<Uint8List>> _resourceLoads =
       <Uri, Future<Uint8List>>{};
+  final Map<Uri, String> _isolatedModifyImages = <Uri, String>{};
+  Object _resourceTransportGenerationIdentity = Object();
+
+  @override
+  Object get resourceTransportGenerationIdentity =>
+      _resourceTransportGenerationIdentity;
 
   @override
   final String sourceId;
@@ -605,6 +639,14 @@ final class _RuntimeBrowsableComicSource
 
   @override
   Future<List<SourceComicVersion>> findComicVersions(String comicId) async {
+    return findComicVersionsControlled(comicId);
+  }
+
+  @override
+  Future<List<SourceComicVersion>> findComicVersionsControlled(
+    String comicId, {
+    TaskControl? control,
+  }) async {
     if (!supportsComicVersions) {
       return const <SourceComicVersion>[];
     }
@@ -616,7 +658,10 @@ final class _RuntimeBrowsableComicSource
     // #gnd relation instead of issuing a title search. Reuse the existing
     // Venera resource channel so its WebView cookie/session context remains
     // available, while keeping opaque comic IDs inside this adapter.
-    final html = utf8.decode(await loadResource(uri), allowMalformed: true);
+    final html = utf8.decode(
+      await loadResourceControlled(uri, control: control),
+      allowMalformed: true,
+    );
     return _parseVeneraComicVersions(
       sourceId: sourceId,
       baseUri: uri,
@@ -687,6 +732,14 @@ final class _RuntimeBrowsableComicSource
 
   @override
   Future<ComicManifest> loadComic(String comicId) async {
+    return loadComicControlled(comicId);
+  }
+
+  @override
+  Future<ComicManifest> loadComicControlled(
+    String comicId, {
+    TaskControl? control,
+  }) async {
     if (comicId.trim().isEmpty) {
       throw ArgumentError.value(comicId, 'comicId');
     }
@@ -694,6 +747,7 @@ final class _RuntimeBrowsableComicSource
       ExternalPluginRuntimeOperation.loadComic,
       _externalId,
       <String, Object?>{'comicId': comicId},
+      control: control,
     );
     final message = _map(payload, 'comic result');
     final comicValue = _map(message['comic'], 'comic');
@@ -731,6 +785,14 @@ final class _RuntimeBrowsableComicSource
 
   @override
   Future<ChapterManifest> loadChapter(String chapterId) async {
+    return loadChapterControlled(chapterId);
+  }
+
+  @override
+  Future<ChapterManifest> loadChapterControlled(
+    String chapterId, {
+    TaskControl? control,
+  }) async {
     if (chapterId.trim().isEmpty) {
       throw ArgumentError.value(chapterId, 'chapterId');
     }
@@ -738,6 +800,7 @@ final class _RuntimeBrowsableComicSource
       ExternalPluginRuntimeOperation.loadChapter,
       _externalId,
       <String, Object?>{'chapterId': chapterId},
+      control: control,
     );
     final message = _map(payload, 'chapter result');
     final comicId = _string(message, 'comicId');
@@ -848,6 +911,65 @@ final class _RuntimeBrowsableComicSource
   }
 
   @override
+  bool get supportsResourceTransformation =>
+      _format == ExternalComicPluginFormat.veneraJavaScript;
+
+  @override
+  Future<Uint8List> transformResource(Uri uri, Uint8List bytes) =>
+      transformResourceControlled(uri, bytes);
+
+  @override
+  Future<Uint8List> transformResourceControlled(
+    Uri uri,
+    Uint8List bytes, {
+    TaskControl? control,
+  }) async {
+    final isolatedModifyImage = _isolatedModifyImages[uri];
+    if (isolatedModifyImage != null) {
+      try {
+        final isolatedPayload = await _invoke(
+          ExternalPluginRuntimeOperation.transformResource,
+          _externalId,
+          <String, Object?>{
+            'uri': uri.toString(),
+            'bytes': bytes,
+            _isolatedModifyImageArgument: isolatedModifyImage,
+          },
+          control: control,
+        );
+        if (isolatedPayload is! Uint8List) {
+          throw const FormatException(
+            'runtime isolated transformed resource result must be a binary payload',
+          );
+        }
+        return isolatedPayload;
+      } on Failure catch (error) {
+        final runtimeErrorCode = error.details['runtimeErrorCode'];
+        if (runtimeErrorCode != 'venera-isolated-transform-incompatible' &&
+            runtimeErrorCode != 'venera-isolated-transform-unavailable') {
+          rethrow;
+        }
+        _isolatedModifyImages.remove(uri);
+      }
+    }
+    final payload = await _invoke(
+      ExternalPluginRuntimeOperation.transformResource,
+      _externalId,
+      <String, Object?>{
+        'uri': uri.toString(),
+        'bytes': bytes,
+      },
+      control: control,
+    );
+    if (payload is! Uint8List) {
+      throw const FormatException(
+        'runtime transformed resource result must be a binary payload',
+      );
+    }
+    return payload;
+  }
+
+  @override
   Future<ComicResourceRequest> resolveResource(Uri uri) =>
       resolveResourceControlled(uri);
 
@@ -860,6 +982,11 @@ final class _RuntimeBrowsableComicSource
       _externalId,
       uri,
       control: control,
+    );
+    _rememberIsolatedModifyImage(
+      uri,
+      invocation.payload,
+      'runtime resource request',
     );
     final request = _resourceRequestFromPayload(
       invocation.payload,
@@ -913,6 +1040,11 @@ final class _RuntimeBrowsableComicSource
     if (_optionalBool(message['available']) != true) {
       return null;
     }
+    _rememberIsolatedModifyImage(
+      uri,
+      message['request'],
+      'runtime retry resource request',
+    );
     return _resourceRequestFromPayload(
       message['request'],
       'runtime retry resource request',
@@ -938,6 +1070,26 @@ final class _RuntimeBrowsableComicSource
       <String, Object?>{'uri': uri.toString(), 'fresh': true},
       control: control,
     );
+  }
+
+  void _rememberIsolatedModifyImage(
+    Uri uri,
+    Object? payload,
+    String label,
+  ) {
+    final message = _map(payload, label);
+    final script = _optionalString(
+      message[_isolatedModifyImageArgument],
+      _isolatedModifyImageArgument,
+    );
+    _isolatedModifyImages.remove(uri);
+    if (script == null || script.trim().isEmpty) {
+      return;
+    }
+    _isolatedModifyImages[uri] = script;
+    while (_isolatedModifyImages.length > _isolatedModifyImageCacheLimit) {
+      _isolatedModifyImages.remove(_isolatedModifyImages.keys.first);
+    }
   }
 
   ComicResourceRequest _resourceRequestFromPayload(
@@ -1036,6 +1188,7 @@ final class _RuntimeBrowsableComicSource
       _externalId,
       <String, Object?>{'key': key, 'value': value},
     );
+    _advanceResourceTransportGeneration();
   }
 
 
@@ -1098,6 +1251,7 @@ final class _RuntimeBrowsableComicSource
       _externalId,
       <String, Object?>{'mode': mode, 'values': values},
     );
+    _advanceResourceTransportGeneration();
   }
 
   @override
@@ -1107,6 +1261,11 @@ final class _RuntimeBrowsableComicSource
       _externalId,
       const <String, Object?>{},
     );
+    _advanceResourceTransportGeneration();
+  }
+
+  void _advanceResourceTransportGeneration() {
+    _resourceTransportGenerationIdentity = Object();
   }
 }
 

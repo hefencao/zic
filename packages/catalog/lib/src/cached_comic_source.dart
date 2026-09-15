@@ -87,6 +87,7 @@ final class CachedBrowsableComicSource
         CanonicalComicIdentitySource,
         ComicWebViewRequestSource,
         ComicVersionSource,
+        ControlledComicVersionSource,
         ComicPreviewSource,
         ComicCommentSource,
         SectionedBrowsableComicSource,
@@ -94,6 +95,8 @@ final class CachedBrowsableComicSource
         CachedSourceBrowseProjection,
         CachedComicDetailsProjection,
         RefreshableChapterComicSource,
+        ControlledComicSource,
+        ControlledRefreshableChapterComicSource,
         ResolvableComicResourceSource,
         ControlledResolvableComicResourceSource,
         BoundedComicResourceSource,
@@ -101,7 +104,10 @@ final class CachedBrowsableComicSource
         ControlledRetryableComicResourceSource,
         RefreshableComicResourceSource,
         ControlledRefreshableComicResourceSource,
-        ControlledComicResourceSource {
+        ControlledComicResourceSource,
+        TransformingComicResourceSource,
+        ControlledTransformingComicResourceSource,
+        ComicResourceTransportGenerationSource {
   CachedBrowsableComicSource({
     required this.source,
     required this.cache,
@@ -121,6 +127,14 @@ final class CachedBrowsableComicSource
 
   @override
   ComicSourceDescriptor get descriptor => source.descriptor;
+
+  @override
+  Object get resourceTransportGenerationIdentity {
+    final generationSource = source is ComicResourceTransportGenerationSource
+        ? source as ComicResourceTransportGenerationSource
+        : null;
+    return generationSource?.resourceTransportGenerationIdentity ?? source;
+  }
 
   ResourceCacheKey _browseKey({
     required String normalizedQuery,
@@ -384,6 +398,14 @@ final class CachedBrowsableComicSource
 
   @override
   Future<List<SourceComicVersion>> findComicVersions(String comicId) {
+    return findComicVersionsControlled(comicId);
+  }
+
+  @override
+  Future<List<SourceComicVersion>> findComicVersionsControlled(
+    String comicId, {
+    TaskControl? control,
+  }) {
     final Object candidate = source;
     if (candidate is! ComicVersionSource) {
       return Future<List<SourceComicVersion>>.value(
@@ -396,7 +418,14 @@ final class CachedBrowsableComicSource
         const <SourceComicVersion>[],
       );
     }
-    return versionSource.findComicVersions(comicId);
+    final controlled = candidate is ControlledComicVersionSource
+        ? candidate as ControlledComicVersionSource
+        : null;
+    return controlled?.findComicVersionsControlled(
+          comicId,
+          control: control,
+        ) ??
+        versionSource.findComicVersions(comicId);
   }
 
   @override
@@ -602,6 +631,17 @@ final class CachedBrowsableComicSource
       _loadComic(comicId, forceRefresh: false);
 
   @override
+  Future<ComicManifest> loadComicControlled(
+    String comicId, {
+    TaskControl? control,
+  }) =>
+      _loadComic(
+        comicId,
+        forceRefresh: false,
+        control: control,
+      );
+
+  @override
   ComicManifest? peekComic(String comicId) {
     final identity = _comicIdentity(comicId);
     final manifest = cache.peek<ComicManifest>(_comicKey(identity));
@@ -631,16 +671,28 @@ final class CachedBrowsableComicSource
   Future<ComicManifest> _loadComic(
     String comicId, {
     required bool forceRefresh,
+    TaskControl? control,
   }) {
+    control?.throwIfCancelled();
     final identity = _comicIdentity(comicId);
     return cache
         .getOrLoad<ComicManifest>(
           key: _comicKey(identity),
-          loader: () => source.loadComic(comicId),
+          loader: () {
+            final controlled = source is ControlledComicSource
+                ? source as ControlledComicSource
+                : null;
+            return controlled?.loadComicControlled(
+                  comicId,
+                  control: control,
+                ) ??
+                source.loadComic(comicId);
+          },
           weightOf: _comicWeight,
           forceRefresh: forceRefresh,
         )
         .then((manifest) async {
+      control?.throwIfCancelled();
       _rememberComic(manifest);
       if (forceRefresh) {
         await _synchronizeEmbeddedComicDetailPages(identity, manifest);
@@ -692,6 +744,15 @@ final class CachedBrowsableComicSource
 
   @override
   Future<ChapterManifest> loadChapter(String chapterId) {
+    return loadChapterControlled(chapterId);
+  }
+
+  @override
+  Future<ChapterManifest> loadChapterControlled(
+    String chapterId, {
+    TaskControl? control,
+  }) {
+    control?.throwIfCancelled();
     final comicId = _chapterComicIds[chapterId];
     return cache
         .getOrLoad<ChapterManifest>(
@@ -706,10 +767,20 @@ final class CachedBrowsableComicSource
                 : _comicIdentity(comicId).namespace,
             revision: _chapterMetadataSchemaRevision,
           ),
-          loader: () => source.loadChapter(chapterId),
+          loader: () {
+            final controlled = source is ControlledComicSource
+                ? source as ControlledComicSource
+                : null;
+            return controlled?.loadChapterControlled(
+                  chapterId,
+                  control: control,
+                ) ??
+                source.loadChapter(chapterId);
+          },
           weightOf: _chapterWeight,
         )
         .then((manifest) {
+      control?.throwIfCancelled();
       _rememberChapter(chapterId, manifest.comicId);
       return manifest;
     });
@@ -729,6 +800,43 @@ final class CachedBrowsableComicSource
         : null;
     return controlled?.loadResourceControlled(uri, control: control) ??
         source.loadResource(uri);
+  }
+
+  @override
+  bool get supportsResourceTransformation {
+    final transforming = source is TransformingComicResourceSource
+        ? source as TransformingComicResourceSource
+        : null;
+    return transforming?.supportsResourceTransformation ?? false;
+  }
+
+  @override
+  Future<Uint8List> transformResource(Uri uri, Uint8List bytes) =>
+      transformResourceControlled(uri, bytes);
+
+  @override
+  Future<Uint8List> transformResourceControlled(
+    Uri uri,
+    Uint8List bytes, {
+    TaskControl? control,
+  }) {
+    final controlled = source is ControlledTransformingComicResourceSource
+        ? source as ControlledTransformingComicResourceSource
+        : null;
+    if (controlled != null) {
+      return controlled.transformResourceControlled(
+        uri,
+        bytes,
+        control: control,
+      );
+    }
+    final transforming = source is TransformingComicResourceSource
+        ? source as TransformingComicResourceSource
+        : null;
+    if (transforming == null) {
+      throw UnsupportedError('source does not expose resource transformation');
+    }
+    return transforming.transformResource(uri, bytes);
   }
 
   @override
@@ -824,6 +932,15 @@ final class CachedBrowsableComicSource
   /// removed here.
   @override
   Future<ChapterManifest> refreshChapter(String chapterId) {
+    return refreshChapterControlled(chapterId);
+  }
+
+  @override
+  Future<ChapterManifest> refreshChapterControlled(
+    String chapterId, {
+    TaskControl? control,
+  }) {
+    control?.throwIfCancelled();
     cache.invalidateWhere(
       (key) =>
           key.kind == ResourceCacheKind.chapterMetadata &&
@@ -833,12 +950,29 @@ final class CachedBrowsableComicSource
           ),
     );
     final comicId = _chapterComicIds.remove(chapterId);
+    final controlledRefreshable =
+        source is ControlledRefreshableChapterComicSource
+            ? source as ControlledRefreshableChapterComicSource
+            : null;
     final refreshable = source is RefreshableChapterComicSource
         ? source as RefreshableChapterComicSource
         : null;
-    final loader = refreshable != null
-        ? () => refreshable.refreshChapter(chapterId)
-        : () => source.loadChapter(chapterId);
+    final controlledChapter = source is ControlledComicSource
+        ? source as ControlledComicSource
+        : null;
+    final loader = controlledRefreshable != null
+        ? () => controlledRefreshable.refreshChapterControlled(
+              chapterId,
+              control: control,
+            )
+        : refreshable != null
+            ? () => refreshable.refreshChapter(chapterId)
+            : controlledChapter != null
+                ? () => controlledChapter.loadChapterControlled(
+                      chapterId,
+                      control: control,
+                    )
+                : () => source.loadChapter(chapterId);
     return cache
         .getOrLoad<ChapterManifest>(
           key: ResourceCacheKey(
@@ -856,6 +990,7 @@ final class CachedBrowsableComicSource
           weightOf: _chapterWeight,
         )
         .then((manifest) {
+      control?.throwIfCancelled();
       _rememberChapter(chapterId, manifest.comicId);
       return manifest;
     });

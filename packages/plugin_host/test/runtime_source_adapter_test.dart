@@ -428,6 +428,38 @@ void main() {
     expect(await second, <int>[82, 73, 70, 70]);
   });
 
+  test('resource transport generation advances after source state mutation',
+      () async {
+    final connection = _FixtureConnection();
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    final generationSource = source as ComicResourceTransportGenerationSource;
+    final configurable = source as ConfigurableComicSource;
+    final account = source as AuthenticatableComicSource;
+
+    final initial = generationSource.resourceTransportGenerationIdentity;
+    expect(generationSource.resourceTransportGenerationIdentity, same(initial));
+
+    await configurable.updateSetting('mirror', 'https://mirror.invalid');
+    final afterSetting = generationSource.resourceTransportGenerationIdentity;
+    expect(afterSetting, isNot(same(initial)));
+
+    await account.loginWithCredentials('reader', 'secret');
+    final afterLogin = generationSource.resourceTransportGenerationIdentity;
+    expect(afterLogin, isNot(same(afterSetting)));
+
+    await account.logout();
+    expect(
+      generationSource.resourceTransportGenerationIdentity,
+      isNot(same(afterLogin)),
+    );
+  });
+
   test('Mihon source settings round-trip through the runtime adapter', () async {
     final connection = _FixtureConnection();
     final session = ExternalPluginRuntimeSession(
@@ -550,6 +582,70 @@ void main() {
     expect(connection.maxActive, 1);
   });
 
+  test('isolated Venera modifyImage does not occupy the source invocation gate',
+      () async {
+    final connection = _IsolatedTransformConnection();
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    final resolver = source as ControlledResolvableComicResourceSource;
+    final transformer = source as ControlledTransformingComicResourceSource;
+    final transformedUri = Uri.parse('venera-resource:isolated-transform');
+
+    final transformPlan = await resolver.resolveResourceControlled(
+      transformedUri,
+      control: _MutableTaskControl(priority: 800),
+    );
+    expect(transformPlan.requiresRuntimeTransform, isTrue);
+    final transform = transformer.transformResourceControlled(
+      transformedUri,
+      Uint8List.fromList(<int>[1, 2, 3, 4]),
+      control: _MutableTaskControl(priority: 800),
+    );
+    await connection.transformStarted.future;
+
+    final current = await resolver.resolveResourceControlled(
+      Uri.parse('venera-resource:current-while-transforming'),
+      control: _MutableTaskControl(priority: 1000),
+    ).timeout(const Duration(milliseconds: 100));
+    expect(current.requiresRuntimeTransform, isTrue);
+    expect(
+      current.diagnostics.containsKey('sourcePlanGateBlockedByOperation'),
+      isFalse,
+    );
+    expect(connection.maxActive, 2);
+
+    connection.releaseTransform.complete();
+    expect(await transform, Uint8List.fromList(<int>[1, 2, 3, 4]));
+  });
+
+  test('incompatible isolated Venera modifyImage falls back through source gate',
+      () async {
+    final connection = _IsolatedTransformConnection(
+      rejectIsolatedTransform: true,
+    );
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    final resolver = source as ControlledResolvableComicResourceSource;
+    final transformer = source as ControlledTransformingComicResourceSource;
+    final uri = Uri.parse('venera-resource:isolated-fallback');
+    await resolver.resolveResourceControlled(uri);
+
+    final bytes = Uint8List.fromList(<int>[5, 6, 7]);
+    expect(await transformer.transformResourceControlled(uri, bytes), bytes);
+    expect(connection.isolatedTransformAttempts, 1);
+    expect(connection.canonicalTransformAttempts, 1);
+  });
+
   test(
       'controlled Venera resource plan reports a generic operation occupying the single gate',
       () async {
@@ -631,6 +727,55 @@ void main() {
       ],
     );
     expect(connection.cancelledRequestIds, hasLength(1));
+    expect(connection.maxActive, 1);
+  });
+
+  test(
+      'controlled Venera metadata yields to current without releasing its permit early',
+      () async {
+    final connection = _PriorityResolveConnection(releaseOnCancel: false);
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(maxConcurrentInvocations: 4),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    final metadata = source as ControlledComicSource;
+    final resolver = source as ControlledResolvableComicResourceSource;
+    final metadataControl = _MutableTaskControl(priority: 100);
+    final currentControl = _MutableTaskControl(priority: 1000);
+
+    final background = metadata.loadChapterControlled(
+      'chapter-1',
+      control: metadataControl,
+    );
+    await connection.firstStarted.future;
+    final current = resolver.resolveResourceControlled(
+      Uri.parse('venera-resource:current-behind-controlled-metadata'),
+      control: currentControl,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(connection.cancelledRequestIds, hasLength(1));
+    expect(connection.startedUris, <String>['loadChapter:chapter-1']);
+    expect(connection.active, 1);
+
+    connection.finishFirst();
+    await expectLater(
+      background,
+      throwsA(
+        isA<Failure>().having(
+          (failure) => failure.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    );
+    expect(
+      (await current).uri,
+      Uri.parse('https://cdn.invalid/current-behind-controlled-metadata'),
+    );
     expect(connection.maxActive, 1);
   });
 
@@ -1352,6 +1497,8 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
             'body': null,
             'requiresRuntimeTransform': false,
           },
+        ExternalPluginRuntimeOperation.transformResource =>
+          request.arguments['bytes']!,
         ExternalPluginRuntimeOperation.retryResource =>
           const <String, Object?>{'available': false},
         ExternalPluginRuntimeOperation.loadSourceSettings =>
@@ -1567,6 +1714,86 @@ final class _PriorityResolveConnection
   }
 }
 
+final class _IsolatedTransformConnection
+    implements ExternalPluginRuntimeConnection {
+  _IsolatedTransformConnection({this.rejectIsolatedTransform = false});
+
+  final bool rejectIsolatedTransform;
+  final Completer<void> transformStarted = Completer<void>();
+  final Completer<void> releaseTransform = Completer<void>();
+  int active = 0;
+  int maxActive = 0;
+  int isolatedTransformAttempts = 0;
+  int canonicalTransformAttempts = 0;
+
+  @override
+  List<ExternalPluginRuntimeSourceDescriptor> get sources =>
+      <ExternalPluginRuntimeSourceDescriptor>[
+        ExternalPluginRuntimeSourceDescriptor(
+          externalId: 'fixture',
+          name: 'Fixture',
+          language: 'en',
+          website: Uri.parse('https://example.invalid'),
+        ),
+      ];
+
+  @override
+  Future<ExternalPluginRuntimeResponse> invoke(
+    ExternalPluginRuntimeRequest request,
+  ) async {
+    active++;
+    if (active > maxActive) maxActive = active;
+    try {
+      if (request.operation == ExternalPluginRuntimeOperation.resolveResource) {
+        return ExternalPluginRuntimeResponse.success(
+          requestId: request.requestId,
+          payload: <String, Object?>{
+            'url': 'https://cdn.invalid/${request.arguments['uri']}',
+            'method': 'GET',
+            'headers': const <String, Object?>{},
+            'body': null,
+            'requiresRuntimeTransform': true,
+            '__zicIsolatedModifyImage':
+                'let modifyImage = (image) => image',
+          },
+        );
+      }
+      if (request.operation == ExternalPluginRuntimeOperation.transformResource) {
+        final isolated =
+            request.arguments['__zicIsolatedModifyImage'] is String;
+        if (isolated) {
+          isolatedTransformAttempts++;
+          if (rejectIsolatedTransform) {
+            return ExternalPluginRuntimeResponse.failure(
+              requestId: request.requestId,
+              error: ExternalPluginRuntimeError(
+                code: 'venera-isolated-transform-incompatible',
+                message: 'fixture requires source context',
+              ),
+            );
+          }
+          if (!transformStarted.isCompleted) transformStarted.complete();
+          await releaseTransform.future;
+        } else {
+          canonicalTransformAttempts++;
+        }
+        return ExternalPluginRuntimeResponse.success(
+          requestId: request.requestId,
+          payload: request.arguments['bytes']!,
+        );
+      }
+      throw UnimplementedError('${request.operation}');
+    } finally {
+      active--;
+    }
+  }
+
+  @override
+  Future<void> close() async {
+    if (!releaseTransform.isCompleted) releaseTransform.complete();
+  }
+}
+
 final class _SequencedConnection implements ExternalPluginRuntimeConnection {
   _SequencedConnection({required this.firstGate});
 
@@ -1651,6 +1878,8 @@ final class _SequencedConnection implements ExternalPluginRuntimeConnection {
               'body': null,
               'requiresRuntimeTransform': false,
             },
+          ExternalPluginRuntimeOperation.transformResource =>
+            throw UnimplementedError(),
           ExternalPluginRuntimeOperation.retryResource =>
             throw UnimplementedError(),
           ExternalPluginRuntimeOperation.loadSourceSettings =>

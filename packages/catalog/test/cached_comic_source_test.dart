@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
@@ -6,6 +7,20 @@ import 'package:resource_cache/resource_cache.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('cached source preserves resource transport generation identity', () {
+    final raw = _CountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final first = CachedBrowsableComicSource(source: raw, cache: cache);
+    final second = CachedBrowsableComicSource(source: raw, cache: cache);
+
+    expect(first.resourceTransportGenerationIdentity, same(raw));
+    expect(
+      second.resourceTransportGenerationIdentity,
+      same(first.resourceTransportGenerationIdentity),
+    );
+  });
+
   test('cached source preserves controlled resource refresh capability', () async {
     final raw = _RefreshableCountingSource();
     final cache = ResourceCacheManager();
@@ -20,6 +35,27 @@ void main() {
 
     expect(raw.refreshes, 1);
     expect(raw.lastRefreshedUri, uri);
+  });
+
+  test('cached source preserves controlled metadata and version ownership',
+      () async {
+    final raw = _ControlledMetadataCountingSource();
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final source = CachedBrowsableComicSource(source: raw, cache: cache);
+    final control = _TestTaskControl(priority: 100);
+
+    await source.loadComicControlled('comic-controlled', control: control);
+    expect(raw.lastComicControl, same(control));
+
+    await source.loadChapterControlled('chapter-controlled', control: control);
+    expect(raw.lastChapterControl, same(control));
+
+    await source.findComicVersionsControlled(
+      'comic-controlled',
+      control: control,
+    );
+    expect(raw.lastVersionControl, same(control));
   });
 
   test('cached source preserves resource-operation timeout capability', () {
@@ -528,6 +564,55 @@ final class _RefreshableCountingSource extends _CountingSource
     refreshes++;
     lastRefreshedUri = uri;
   }
+}
+
+final class _ControlledMetadataCountingSource extends _CountingSource
+    implements ControlledComicSource, ControlledComicVersionSource {
+  TaskControl? lastComicControl;
+  TaskControl? lastChapterControl;
+  TaskControl? lastVersionControl;
+
+  @override
+  Future<ComicManifest> loadComicControlled(
+    String comicId, {
+    TaskControl? control,
+  }) {
+    lastComicControl = control;
+    return super.loadComic(comicId);
+  }
+
+  @override
+  Future<ChapterManifest> loadChapterControlled(
+    String chapterId, {
+    TaskControl? control,
+  }) {
+    lastChapterControl = control;
+    return super.loadChapter(chapterId);
+  }
+
+  @override
+  Future<List<SourceComicVersion>> findComicVersionsControlled(
+    String comicId, {
+    TaskControl? control,
+  }) {
+    lastVersionControl = control;
+    return super.findComicVersions(comicId);
+  }
+}
+
+final class _TestTaskControl implements TaskControl {
+  _TestTaskControl({required this.priority});
+
+  final Completer<void> _cancelled = Completer<void>();
+
+  @override
+  bool get cancelled => _cancelled.isCompleted;
+
+  @override
+  final int priority;
+
+  @override
+  Future<void> get whenCancelled => _cancelled.future;
 }
 
 final class _BoundedCountingSource extends _CountingSource

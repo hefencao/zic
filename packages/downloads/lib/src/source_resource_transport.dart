@@ -105,9 +105,13 @@ final class ExternalPluginResourceTransportPool {
 
   Future<String?> verifiedReuseIdentityFor(
     BrowsableComicSource source,
-    Uri locator,
-  ) =>
-      _transportFor(source).verifiedReuseIdentity(locator);
+    Uri locator, {
+    TaskControl? control,
+  }) =>
+      _transportFor(source).verifiedReuseIdentity(
+        locator,
+        control: control,
+      );
 
   Future<void> refreshResourceFor(
     BrowsableComicSource source,
@@ -162,7 +166,7 @@ final class _SourceResourceTransport
     this._directOpen,
     this._controlledDirectOpen,
     this._defaultUserAgentProvider,
-  ) {
+  ) : _sourceGenerationIdentity = _resourceTransportGenerationIdentity(_source) {
     _client.connectionTimeout = const Duration(seconds: 15);
     _client.autoUncompress = false;
   }
@@ -170,8 +174,10 @@ final class _SourceResourceTransport
   static const _requestPlanTtl = Duration(minutes: 10);
   static const _maxRequestPlans = 256;
   static const _maxSourceSemanticRetries = 5;
+  static const _maxRuntimeTransformInputBytes = 30 * 1024 * 1024;
 
   BrowsableComicSource _source;
+  Object _sourceGenerationIdentity;
   final SourceResourceDirectTransport? _directTransport;
   final SourceResourceDirectOpen? _directOpen;
   final SourceResourceControlledDirectOpen? _controlledDirectOpen;
@@ -194,13 +200,17 @@ final class _SourceResourceTransport
 
   void updateSource(BrowsableComicSource source) {
     if (identical(_source, source)) return;
+    final nextGenerationIdentity = _resourceTransportGenerationIdentity(source);
+    final generationChanged =
+        !identical(_sourceGenerationIdentity, nextGenerationIdentity);
     _source = source;
+    if (!generationChanged) return;
+    _sourceGenerationIdentity = nextGenerationIdentity;
     _sourceRevision++;
-    // Authentication/settings may have changed with the wrapper. Keep the
-    // shared HttpClient and active response streams, but do not reuse plans
-    // resolved by the previous runtime instance. In-flight resolution futures
-    // cannot be cancelled through the source contract, so detach them and
-    // prevent their late completion from repopulating the new source's cache.
+    // A real source/runtime generation replacement invalidates request plans
+    // and in-flight resolver work. Pure presentation/cache decorators expose
+    // the same transport generation identity and therefore do not evict an
+    // expensive but still valid source-owned image plan.
     _requestLoads.clear();
     _requestPlans.clear();
     _failedStreams.clear();
@@ -226,8 +236,13 @@ final class _SourceResourceTransport
   }) =>
       openControlled(uri, range: range, validators: validators);
 
-  Future<String?> verifiedReuseIdentity(Uri locator) async {
-    final resolved = await _resolve(locator);
+  Future<String?> verifiedReuseIdentity(
+    Uri locator, {
+    TaskControl? control,
+  }) async {
+    _throwIfTaskCancelled(control);
+    final resolved = await _resolve(locator, control: control);
+    _throwIfTaskCancelled(control);
     return verifiedComicResourceIdentity(resolved.request.uri);
   }
 
@@ -259,75 +274,48 @@ final class _SourceResourceTransport
     requestPlanWatch.stop();
 
     final hostOpenWatch = Stopwatch()..start();
-    var openPath = request.requiresRuntimeTransform
-        ? 'runtime-transform'
-        : 'direct';
+    var openPath = 'direct';
     if (!request.requiresRuntimeTransform) {
       verifiedReuseIdentity = verifiedComicResourceIdentity(request.uri);
     }
     late final ByteResponse response;
-    if (request.requiresRuntimeTransform) {
-      response = await _openRuntimeFallback(
+    try {
+      final opened = await _openRequestPlan(
         uri,
+        request,
         range: range,
         validators: validators,
         control: control,
       );
-    } else {
+      response = opened.response;
+      openPath = opened.openPath;
+    } on Failure catch (error, stackTrace) {
+      if (error.code == ErrorCode.cancelled) rethrow;
+      final semanticFailure = _isSourceMediaSemanticRejection(error);
+      if (!semanticFailure && error.code != ErrorCode.network) rethrow;
+      if (semanticFailure &&
+          error.details['sourceSemanticRetryExhausted'] == true) {
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      _invalidate(uri);
+      retryUsed = true;
+      verifiedReuseIdentity = null;
       try {
-        response = await _openDirect(
+        final retried = await _recoverSourceRequest(
           uri,
-          request,
+          initialRequestUri: request.uri,
           range: range,
           validators: validators,
           control: control,
+          cause: error,
+          requireRetry: semanticFailure,
         );
-      } on Failure catch (error, stackTrace) {
-        if (error.code == ErrorCode.cancelled) rethrow;
-        if (error.code != ErrorCode.network) rethrow;
-        _invalidate(uri);
-        if (_isSourceMediaSemanticRejection(error)) {
-          retryUsed = true;
-          verifiedReuseIdentity = null;
-          final retried = await _recoverSourceRequest(
-            uri,
-            initialRequestUri: request.uri,
-            range: range,
-            validators: validators,
-            control: control,
-            cause: error,
-          );
-          response = retried.response;
-          openPath = retried.openPath;
-        } else if (_requiresSourceClientState(error)) {
-          verifiedReuseIdentity = null;
-          openPath = 'client-runtime-fallback';
-          response = await _openRuntimeFallback(
-            uri,
-            range: range,
-            validators: validators,
-            control: control,
-          );
-        } else {
-          retryUsed = true;
-          try {
-            verifiedReuseIdentity = null;
-            final retried = await _recoverSourceRequest(
-              uri,
-              initialRequestUri: request.uri,
-              range: range,
-              validators: validators,
-              control: control,
-              cause: error,
-              requireRetry: false,
-            );
-            response = retried.response;
-            openPath = retried.openPath;
-          } on _NoSourceRecoveryAvailable {
-            Error.throwWithStackTrace(error, stackTrace);
-          }
-        }
-      } on IOException catch (error) {
+        response = retried.response;
+        openPath = retried.openPath;
+      } on _NoSourceRecoveryAvailable {
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+    } on IOException catch (error) {
         _throwIfTaskCancelled(control);
         _invalidate(uri);
         retryUsed = true;
@@ -351,7 +339,6 @@ final class _SourceResourceTransport
             cause: error,
           );
         }
-      }
     }
     hostOpenWatch.stop();
     return _withSourceOpenDiagnostics(
@@ -554,23 +541,23 @@ final class _SourceResourceTransport
     _requestPlans.remove(locator);
   }
 
-  Future<({ByteResponse response, String openPath})> _openRetryPlan(
+  Future<({ByteResponse response, String openPath})> _openRequestPlan(
     Uri locator,
     ComicResourceRequest request, {
     ByteRange? range,
     Validators? validators,
     TaskControl? control,
+    String pathPrefix = '',
   }) async {
     _throwIfTaskCancelled(control);
     if (request.requiresRuntimeTransform) {
-      return (
-        response: await _openRuntimeFallback(
-          locator,
-          range: range,
-          validators: validators,
-          control: control,
-        ),
-        openPath: 'retry-runtime-fallback',
+      return _openRuntimeTransformPlan(
+        locator,
+        request,
+        range: range,
+        validators: validators,
+        control: control,
+        pathPrefix: pathPrefix,
       );
     }
     try {
@@ -582,24 +569,41 @@ final class _SourceResourceTransport
           validators: validators,
           control: control,
         ),
-        openPath: 'retry-direct',
+        openPath: '${pathPrefix}direct',
+      );
+    } on Failure catch (error) {
+      if (!_requiresSourceClientState(error)) rethrow;
+      return (
+        response: await _openRuntimeFallback(
+          locator,
+          range: range,
+          validators: validators,
+          control: control,
+        ),
+        openPath: '${pathPrefix}client-runtime-fallback',
+      );
+    }
+  }
+
+  Future<({ByteResponse response, String openPath})> _openRetryPlan(
+    Uri locator,
+    ComicResourceRequest request, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+  }) async {
+    try {
+      return await _openRequestPlan(
+        locator,
+        request,
+        range: range,
+        validators: validators,
+        control: control,
+        pathPrefix: 'retry-',
       );
     } on Failure catch (error, stackTrace) {
       if (error.code != ErrorCode.network) rethrow;
-      if (_isSourceMediaSemanticRejection(error)) {
-        rethrow;
-      }
-      if (_requiresSourceClientState(error)) {
-        return (
-          response: await _openRuntimeFallback(
-            locator,
-            range: range,
-            validators: validators,
-            control: control,
-          ),
-          openPath: 'retry-client-runtime-fallback',
-        );
-      }
+      if (_isSourceMediaSemanticRejection(error)) rethrow;
       Error.throwWithStackTrace(error, stackTrace);
     } on IOException catch (error) {
       throw Failure(
@@ -607,6 +611,144 @@ final class _SourceResourceTransport
         message: 'source retry transport failure for ${request.uri}',
         cause: error,
       );
+    }
+  }
+
+  Future<({ByteResponse response, String openPath})> _openRuntimeTransformPlan(
+    Uri locator,
+    ComicResourceRequest request, {
+    ByteRange? range,
+    Validators? validators,
+    TaskControl? control,
+    String pathPrefix = '',
+  }) async {
+    final source = _source;
+    final controlled = source is ControlledTransformingComicResourceSource
+        ? source as ControlledTransformingComicResourceSource
+        : null;
+    final transforming = source is TransformingComicResourceSource
+        ? source as TransformingComicResourceSource
+        : null;
+    if (transforming?.supportsResourceTransformation != true ||
+        (request.uri.scheme != 'http' && request.uri.scheme != 'https')) {
+      return (
+        response: await _openRuntimeFallback(
+          locator,
+          range: range,
+          validators: validators,
+          control: control,
+        ),
+        openPath: '${pathPrefix}runtime-transform',
+      );
+    }
+
+    late final ByteResponse rawResponse;
+    try {
+      rawResponse = await _openDirect(
+        locator,
+        request,
+        control: control,
+      );
+    } on Failure catch (error) {
+      if (!_requiresSourceClientState(error)) rethrow;
+      return (
+        response: await _openRuntimeFallback(
+          locator,
+          range: range,
+          validators: validators,
+          control: control,
+        ),
+        openPath: '${pathPrefix}transform-client-runtime-fallback',
+      );
+    }
+
+    if (rawResponse.totalLength != null &&
+        rawResponse.totalLength! > _maxRuntimeTransformInputBytes) {
+      await rawResponse.discard(control: control);
+      return (
+        response: await _openRuntimeFallback(
+          locator,
+          range: range,
+          validators: validators,
+          control: control,
+        ),
+        openPath: '${pathPrefix}runtime-transform-large-fallback',
+      );
+    }
+    final rawBytes = await _collectRuntimeTransformInput(
+      rawResponse,
+      control: control,
+    );
+    if (rawBytes == null) {
+      return (
+        response: await _openRuntimeFallback(
+          locator,
+          range: range,
+          validators: validators,
+          control: control,
+        ),
+        openPath: '${pathPrefix}runtime-transform-large-fallback',
+      );
+    }
+    _throwIfTaskCancelled(control);
+    late final Uint8List transformed;
+    try {
+      transformed = controlled != null
+          ? await controlled.transformResourceControlled(
+              locator,
+              rawBytes,
+              control: control,
+            )
+          : await transforming!.transformResource(locator, rawBytes);
+    } on Object catch (error, stackTrace) {
+      _throwIfTaskCancelled(control);
+      Error.throwWithStackTrace(
+        Failure(
+          code: ErrorCode.source,
+          message: 'source runtime transform failed for $locator',
+          cause: error,
+          details: const <String, Object?>{
+            'sourceMediaProtocolMismatch': true,
+            'sourceMediaSemanticRejected': true,
+            'runtimeTransformFailed': true,
+          },
+        ),
+        stackTrace,
+      );
+    }
+    _throwIfTaskCancelled(control);
+    return (
+      response: _runtimeBytesResponse(
+        locator,
+        transformed,
+        range: range,
+        validators: validators,
+        semanticRetryExhausted: false,
+        rejectionDetailKey: 'runtimeTransformImageSignatureRejected',
+      ),
+      openPath: '${pathPrefix}host-fetch-runtime-transform',
+    );
+  }
+
+  Future<Uint8List?> _collectRuntimeTransformInput(
+    ByteResponse response, {
+    TaskControl? control,
+  }) async {
+    final builder = BytesBuilder(copy: false);
+    try {
+      await for (final chunk in response.bytes) {
+        _throwIfTaskCancelled(control);
+        builder.add(chunk);
+        if (builder.length > _maxRuntimeTransformInputBytes) {
+          await response.discard(control: control);
+          return null;
+        }
+      }
+      _throwIfTaskCancelled(control);
+      return builder.takeBytes();
+    } on Object {
+      await response.discard(control: control);
+      rethrow;
     }
   }
 
@@ -705,6 +847,18 @@ final class _SourceResourceTransport
         },
       );
     }
+    if (response.headers.value(HttpHeaders.setCookieHeader) != null) {
+      await _abortHttpResponse(response);
+      throw Failure(
+        code: ErrorCode.network,
+        message:
+            'source host replay requires source-owned cookie state for ${effective.uri}',
+        details: const <String, Object?>{
+          'sourceMediaProtocolMismatch': true,
+          'sourceClientStateRequired': true,
+        },
+      );
+    }
     if (response.statusCode != HttpStatus.ok &&
         response.statusCode != HttpStatus.partialContent) {
       await _abortHttpResponse(response);
@@ -724,7 +878,8 @@ final class _SourceResourceTransport
       );
     }
     final modifiedValue = response.headers.value(HttpHeaders.lastModifiedHeader);
-    final responseBody = parsedRange != null && parsedRange.start > 0
+    final responseBody = effective.requiresRuntimeTransform ||
+            (parsedRange != null && parsedRange.start > 0)
         ? _HttpResponseBody(
             response,
             onError: () => _failedStreams.add(locator),
@@ -766,17 +921,37 @@ final class _SourceResourceTransport
             .loadResourceControlled(uri, control: control)
         : await source.loadResource(uri);
     _throwIfTaskCancelled(control);
+    return _runtimeBytesResponse(
+      uri,
+      bytes,
+      range: range,
+      validators: validators,
+      semanticRetryExhausted: true,
+      rejectionDetailKey: 'runtimeBodyImageSignatureRejected',
+    );
+  }
+
+  ByteResponse _runtimeBytesResponse(
+    Uri uri,
+    Uint8List bytes, {
+    ByteRange? range,
+    Validators? validators,
+    required bool semanticRetryExhausted,
+    required String rejectionDetailKey,
+  }) {
     if (!hasSupportedEncodedImageSignature(bytes)) {
       _invalidate(uri);
-      _failedStreams.add(uri);
+      if (semanticRetryExhausted) {
+        _failedStreams.add(uri);
+      }
       throw Failure(
         code: ErrorCode.source,
         message: 'source runtime returned non-image bytes for $uri',
-        details: const <String, Object?>{
+        details: <String, Object?>{
           'sourceMediaProtocolMismatch': true,
           'sourceMediaSemanticRejected': true,
-          'sourceSemanticRetryExhausted': true,
-          'runtimeBodyImageSignatureRejected': true,
+          if (semanticRetryExhausted) 'sourceSemanticRetryExhausted': true,
+          rejectionDetailKey: true,
         },
       );
     }
@@ -843,6 +1018,13 @@ final class _SourceResourceTransport
     _failedStreams.clear();
     _client.close(force: true);
   }
+}
+
+Object _resourceTransportGenerationIdentity(BrowsableComicSource source) {
+  final generationSource = source is ComicResourceTransportGenerationSource
+      ? source as ComicResourceTransportGenerationSource
+      : null;
+  return generationSource?.resourceTransportGenerationIdentity ?? source;
 }
 
 /// Stable media identity that is strong enough for temporary cross-version

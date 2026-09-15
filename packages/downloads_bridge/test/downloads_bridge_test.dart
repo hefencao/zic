@@ -34,6 +34,85 @@ void main() {
     );
   });
 
+  test('rhttp direct source open does not follow source-owned redirects',
+      () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    var finalRequests = 0;
+    unawaited(server.forEach((request) async {
+      if (request.uri.path == '/start') {
+        request.response.statusCode = HttpStatus.found;
+        request.response.headers.set(
+          HttpHeaders.locationHeader,
+          '/final',
+        );
+      } else {
+        finalRequests++;
+        request.response.statusCode = HttpStatus.ok;
+        request.response.add(<int>[0xff, 0xd8, 0xff, 0xd9]);
+      }
+      await request.response.close();
+    }));
+    final transport = RhttpSourceResourceDirectTransport();
+    addTearDown(transport.close);
+    final uri = Uri.parse(
+      'http://${server.address.address}:${server.port}/start',
+    );
+
+    await expectLater(
+      transport.open(
+        ComicResourceRequest(
+          uri: uri,
+          requiresRuntimeTransform: true,
+        ),
+      ),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.details['sourceClientStateRequired'],
+          'source client state required',
+          isTrue,
+        ),
+      ),
+    );
+    expect(finalRequests, 0);
+  });
+
+  test('rhttp direct source open returns Set-Cookie ownership to source client',
+      () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => server.close(force: true));
+    unawaited(server.forEach((request) async {
+      request.response.statusCode = HttpStatus.ok;
+      request.response.headers.add(
+        HttpHeaders.setCookieHeader,
+        'fixture=session; Path=/',
+      );
+      request.response.add(const <int>[1, 2, 3, 4]);
+      await request.response.close();
+    }));
+    final transport = RhttpSourceResourceDirectTransport();
+    addTearDown(transport.close);
+    final uri = Uri.parse(
+      'http://${server.address.address}:${server.port}/stateful',
+    );
+
+    await expectLater(
+      transport.open(
+        ComicResourceRequest(
+          uri: uri,
+          requiresRuntimeTransform: true,
+        ),
+      ),
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.details['sourceClientStateRequired'],
+          'source client state required',
+          isTrue,
+        ),
+      ),
+    );
+  });
+
   test('JSON queue adapter restores policy and pending chapters', () async {
     final directory = await Directory.systemTemp.createTemp('zic-whole-queue-');
     addTearDown(() => directory.delete(recursive: true));

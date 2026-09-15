@@ -1,5 +1,6 @@
 package dev.zic.pluginhost
 
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -105,6 +106,254 @@ class VeneraNetworkPolicyTest {
     }
 
     @Test
+    fun longResolverCacheSurvivesStoreRecreationButShortCacheDoesNot() {
+        val root = temporaryCacheRoot("survive")
+        try {
+            val namespace = VeneraHttpCacheNamespace("plugin", "v1", "source-a")
+            val headers = linkedMapOf(
+                "Cookie" to "session=a",
+                "Authorization" to "Bearer alpha",
+            )
+            val response = VeneraHttpResponse(
+                200,
+                JSONObject().put("content-type", "text/html"),
+                "resolver".encodeToByteArray(),
+            )
+            val first = VeneraHttpCacheStore(root)
+            first.store(
+                namespace,
+                "https://fixture/gallery",
+                headers,
+                response,
+                nowNanos = 1_000L,
+                cacheTime = "long",
+                nowEpochMillis = 1_000_000L,
+            )
+            first.store(
+                namespace,
+                "https://fixture/short",
+                headers,
+                response,
+                nowNanos = 1_000L,
+                cacheTime = null,
+                nowEpochMillis = 1_000_000L,
+            )
+            first.clearMemory()
+
+            val reopened = VeneraHttpCacheStore(root)
+            val durable = reopened.lookup(
+                namespace,
+                "https://fixture/gallery",
+                headers,
+                "long",
+                nowNanos = 500_001_000L,
+                nowEpochMillis = 1_000_500L,
+            )
+            assertNotNull(durable)
+            assertEquals("true", durable!!.headers.getString("venera-cache"))
+            assertNull(
+                reopened.lookup(
+                    namespace,
+                    "https://fixture/short",
+                    headers,
+                    null,
+                    nowNanos = 500_001_000L,
+                    nowEpochMillis = 1_000_500L,
+                ),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun longLookupPromotesAnExistingMemoryResponseIntoTheDurableTier() {
+        val root = temporaryCacheRoot("promote")
+        try {
+            val namespace = VeneraHttpCacheNamespace("plugin", "v1", "source-a")
+            val headers = linkedMapOf("Cookie" to "session=a")
+            val response = VeneraHttpResponse(
+                200,
+                JSONObject().put("content-type", "text/html"),
+                "gallery".encodeToByteArray(),
+            )
+            val cache = VeneraHttpCacheStore(root)
+            cache.store(
+                namespace,
+                "https://fixture/gallery",
+                headers,
+                response,
+                nowNanos = 1_000L,
+                cacheTime = null,
+                nowEpochMillis = 1_000_000L,
+            )
+            assertNotNull(
+                cache.lookup(
+                    namespace,
+                    "https://fixture/gallery",
+                    headers,
+                    "long",
+                    nowNanos = 2_000L,
+                    nowEpochMillis = 1_000_001L,
+                ),
+            )
+            cache.clearMemory()
+            assertNotNull(
+                VeneraHttpCacheStore(root).lookup(
+                    namespace,
+                    "https://fixture/gallery",
+                    headers,
+                    "long",
+                    nowNanos = 3_000L,
+                    nowEpochMillis = 1_000_002L,
+                ),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun durableLongCacheRejectsAuthChangesAndExpiredEntries() {
+        val root = temporaryCacheRoot("identity")
+        try {
+            val namespace = VeneraHttpCacheNamespace("plugin", "v1", "source-a")
+            val headers = linkedMapOf(
+                "Cookie" to "session=a",
+                "Authorization" to "Bearer alpha",
+            )
+            val response = VeneraHttpResponse(
+                200,
+                JSONObject().put("content-type", "text/html"),
+                "resolver".encodeToByteArray(),
+            )
+            VeneraHttpCacheStore(root).store(
+                namespace,
+                "https://fixture/gallery",
+                headers,
+                response,
+                cacheTime = "long",
+                nowEpochMillis = 2_000_000L,
+            )
+            assertNull(
+                VeneraHttpCacheStore(root).lookup(
+                    namespace,
+                    "https://fixture/gallery",
+                    linkedMapOf(
+                        "Cookie" to "session=a",
+                        "Authorization" to "Bearer beta",
+                    ),
+                    "long",
+                    nowEpochMillis = 2_000_100L,
+                ),
+            )
+
+            VeneraHttpCacheStore(root).store(
+                namespace,
+                "https://fixture/gallery",
+                headers,
+                response,
+                cacheTime = "long",
+                nowEpochMillis = 3_000_000L,
+            )
+            assertNull(
+                VeneraHttpCacheStore(root).lookup(
+                    namespace,
+                    "https://fixture/gallery",
+                    headers,
+                    "long",
+                    nowEpochMillis = 3_000_000L + 6L * 60L * 60L * 1_000L + 1L,
+                ),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun requestCacheIdentityIncludesAuthorization() {
+        assertFalse(
+            veneraCacheHeadersMatch(
+                mapOf("Authorization" to "Bearer alpha"),
+                mapOf("Authorization" to "Bearer beta"),
+            ),
+        )
+    }
+
+    @Test
+    fun defaultResolverCacheExposesOnlyFiveSecondToTwoHourRevalidationWindow() {
+        val cache = VeneraHttpCacheStore()
+        val namespace = VeneraHttpCacheNamespace("plugin", "v1", "source-a")
+        val headers = linkedMapOf("Cookie" to "session=a")
+        val response = VeneraHttpResponse(
+            200,
+            JSONObject()
+                .put("content-type", "text/html")
+                .put("etag", "fixture-v1")
+                .put("date", "old-date"),
+            "resolver".encodeToByteArray(),
+        )
+        cache.store(namespace, "https://fixture/gallery", headers, response, 1_000L)
+
+        assertNull(
+            cache.staleForRevalidation(
+                namespace,
+                "https://fixture/gallery",
+                headers,
+                null,
+                nowNanos = 4L * 1_000_000_000L,
+            ),
+        )
+        assertNotNull(
+            cache.staleForRevalidation(
+                namespace,
+                "https://fixture/gallery",
+                headers,
+                null,
+                nowNanos = 6L * 1_000_000_000L,
+            ),
+        )
+        assertNull(
+            cache.staleForRevalidation(
+                namespace,
+                "https://fixture/gallery",
+                headers,
+                null,
+                nowNanos = 2L * 60L * 60L * 1_000_000_000L + 2_000L,
+            ),
+        )
+        assertNull(
+            cache.staleForRevalidation(
+                namespace,
+                "https://fixture/gallery",
+                headers,
+                "long",
+                nowNanos = 6L * 1_000_000_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun resolverRevalidationIgnoresVolatileHeadersButRejectsBodyIdentityChanges() {
+        val cached = JSONObject()
+            .put("content-type", "text/html")
+            .put("content-length", "123")
+            .put("etag", "fixture-v1")
+            .put("date", "old-date")
+            .put("cf-ray", "old-ray")
+        val unchanged = JSONObject()
+            .put("content-type", "text/html")
+            .put("content-length", "123")
+            .put("etag", "fixture-v1")
+            .put("date", "new-date")
+            .put("cf-ray", "new-ray")
+        val changed = JSONObject(unchanged.toString()).put("etag", "fixture-v2")
+
+        assertTrue(veneraCacheResponseHeadersMatch(cached, unchanged))
+        assertFalse(veneraCacheResponseHeadersMatch(cached, changed))
+    }
+
+    @Test
     fun resolverHttpFailureKeepsTypedRetryabilityAcrossTheAsyncBridge() {
         val networkFailure = veneraBridgeFailureEnvelope(
             VeneraResolverHttpException(
@@ -162,5 +411,12 @@ class VeneraNetworkPolicyTest {
             ),
         )
     }
+
+
+    private fun temporaryCacheRoot(label: String): File =
+        File(
+            System.getProperty("java.io.tmpdir"),
+            "zic-venera-cache-$label-${System.nanoTime()}",
+        ).apply { mkdirs() }
 
 }

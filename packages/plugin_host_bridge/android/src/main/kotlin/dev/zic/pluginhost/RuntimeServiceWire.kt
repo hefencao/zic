@@ -16,9 +16,11 @@ internal object RuntimeServiceIpc {
     const val KEY_PAYLOAD_PATH = "payloadPath"
     const val KEY_PAYLOAD_LENGTH = "payloadLength"
     const val KEY_PAYLOAD_SHA256 = "payloadSha256"
-    const val MAX_REQUEST_BYTES = 512 * 1024
+    const val INLINE_REQUEST_BYTES = 512 * 1024
+    const val MAX_PACKET_BYTES = 32 * 1024 * 1024
+    const val MAX_REQUEST_BYTES = MAX_PACKET_BYTES
     const val INLINE_RESPONSE_BYTES = 128 * 1024
-    const val MAX_RESPONSE_BYTES = 32 * 1024 * 1024
+    const val MAX_RESPONSE_BYTES = MAX_PACKET_BYTES
     const val REQUEST_TIMEOUT_MILLIS = 65_000L
 }
 
@@ -53,7 +55,7 @@ internal data class RuntimeServicePacketReference(
         require((inlinePayload == null) != (payloadPath == null)) {
             "runtime IPC payload must have exactly one storage form"
         }
-        require(payloadLength in 0..RuntimeServiceIpc.MAX_RESPONSE_BYTES.toLong()) {
+        require(payloadLength in 0..RuntimeServiceIpc.MAX_PACKET_BYTES.toLong()) {
             "runtime IPC payload length is invalid"
         }
         require(SHA256_PATTERN.matches(payloadSha256)) {
@@ -71,18 +73,24 @@ internal data class RuntimeServicePacketReference(
     }
 }
 
-/// Pure file owner for large runtime responses.
+/// Pure file owner for large runtime request/response packets.
 ///
 /// This class is Android-free so service-death and packet-integrity behavior
 /// can be tested without creating a FlutterEngine. The Android Bundle adapter
 /// below only serializes this reference.
 internal class RuntimeServicePacketFiles(private val root: File) {
-    fun write(bytes: ByteArray): RuntimeServicePacketReference {
-        require(bytes.size <= RuntimeServiceIpc.MAX_RESPONSE_BYTES) {
-            "runtime response exceeds IPC limit"
+    fun write(
+        bytes: ByteArray,
+        inlineLimit: Int = RuntimeServiceIpc.INLINE_RESPONSE_BYTES,
+    ): RuntimeServicePacketReference {
+        require(bytes.size <= RuntimeServiceIpc.MAX_PACKET_BYTES) {
+            "runtime IPC payload exceeds limit"
+        }
+        require(inlineLimit in 0..RuntimeServiceIpc.MAX_PACKET_BYTES) {
+            "runtime IPC inline limit is invalid"
         }
         val digest = sha256(bytes)
-        if (bytes.size <= RuntimeServiceIpc.INLINE_RESPONSE_BYTES) {
+        if (bytes.size <= inlineLimit) {
             return RuntimeServicePacketReference(
                 inlinePayload = bytes,
                 payloadPath = null,
@@ -202,7 +210,11 @@ internal class RuntimeServicePacketStore(context: Context) {
         File(context.cacheDir, "zic-plugin-runtime-ipc"),
     )
 
-    fun writeResponse(bytes: ByteArray): Bundle = files.write(bytes).toBundle()
+    fun writeRequest(bytes: ByteArray): Bundle =
+        files.write(bytes, RuntimeServiceIpc.INLINE_REQUEST_BYTES).toBundle()
+
+    fun writeResponse(bytes: ByteArray): Bundle =
+        files.write(bytes, RuntimeServiceIpc.INLINE_RESPONSE_BYTES).toBundle()
 
     fun read(bundle: Bundle): ByteArray = files.read(bundle.toPacketReference())
 

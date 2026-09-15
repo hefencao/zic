@@ -382,13 +382,19 @@ final class ComicSourceResourceGateway {
   Future<String?> verifiedPageReuseIdentity({
     required String sourceId,
     required Uri locator,
+    TaskControl? control,
   }) {
     _requireOpen();
+    control?.throwIfCancelled();
     if (isLegacyVeneraRuntimeLocator(locator.toString())) {
       return Future<String?>.value(null);
     }
     final source = _requireSource(sourceId, locator);
-    return _transports.verifiedReuseIdentityFor(source, locator);
+    return _transports.verifiedReuseIdentityFor(
+      source,
+      locator,
+      control: control,
+    );
   }
 
   void close() {

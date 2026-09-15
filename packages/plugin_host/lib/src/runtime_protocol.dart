@@ -18,6 +18,7 @@ enum ExternalPluginRuntimeOperation {
   loadChapter,
   loadResource,
   resolveResource,
+  transformResource,
   retryResource,
   loadSourceSettings,
   updateSourceSetting,
@@ -506,6 +507,24 @@ void _validateArguments(
       final uri = Uri.tryParse(arguments['uri']! as String);
       if (uri == null || !uri.hasScheme) {
         throw const FormatException('resource URI is invalid');
+      }
+      return;
+    case ExternalPluginRuntimeOperation.transformResource:
+      _expectKeys(
+        arguments,
+        const <String>{'uri', 'bytes'},
+        optional: const <String>{'__zicIsolatedModifyImage'},
+      );
+      _expectNonEmptyString(arguments, 'uri');
+      final isolatedModifyImage = arguments['__zicIsolatedModifyImage'];
+      final uri = Uri.tryParse(arguments['uri']! as String);
+      if (uri == null ||
+          !uri.hasScheme ||
+          arguments['bytes'] is! Uint8List ||
+          (isolatedModifyImage != null &&
+              (isolatedModifyImage is! String ||
+                  isolatedModifyImage.trim().isEmpty))) {
+        throw const FormatException('resource transform arguments are invalid');
       }
       return;
     case ExternalPluginRuntimeOperation.resolveResource:

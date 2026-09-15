@@ -390,6 +390,18 @@ abstract interface class ComicVersionSource {
   Future<List<SourceComicVersion>> findComicVersions(String comicId);
 }
 
+/// Scheduler-controlled companion for source-owned version discovery.
+///
+/// This is primarily used by Reader-post-presentation background refresh so
+/// version probing competes in the same scheduler domain as foreground media
+/// work instead of silently occupying a plugin runtime context.
+abstract interface class ControlledComicVersionSource {
+  Future<List<SourceComicVersion>> findComicVersionsControlled(
+    String comicId, {
+    TaskControl? control,
+  });
+}
+
 /// Optional source-owned preview thumbnails for a comic detail page.
 ///
 /// The first page may be embedded in [ComicManifest.preview]. This capability
@@ -941,6 +953,15 @@ final class ComicResourceRequest {
   final Map<String, Object?> diagnostics;
 }
 
+/// Optional identity for the physical source/runtime generation that owns
+/// resource request plans. Presentation/cache decorators should forward the
+/// underlying generation identity so rebuilding a wrapper does not invalidate
+/// an otherwise valid source plan. A real runtime/session replacement must
+/// expose a different identity.
+abstract interface class ComicResourceTransportGenerationSource {
+  Object get resourceTransportGenerationIdentity;
+}
+
 /// Optional capability used by pipeline transports to stream source-owned
 /// resources without routing complete image bodies through a plugin RPC.
 abstract interface class ResolvableComicResourceSource {
@@ -952,6 +973,23 @@ abstract interface class ResolvableComicResourceSource {
 abstract interface class ControlledResolvableComicResourceSource {
   Future<ComicResourceRequest> resolveResourceControlled(
     Uri uri, {
+    TaskControl? control,
+  });
+}
+
+/// Optional capability for sources whose request body may be fetched by the
+/// host but whose final encoded media still requires source-runtime logic such
+/// as Venera `onResponse` or `modifyImage`.
+abstract interface class TransformingComicResourceSource {
+  bool get supportsResourceTransformation;
+
+  Future<Uint8List> transformResource(Uri uri, Uint8List bytes);
+}
+
+abstract interface class ControlledTransformingComicResourceSource {
+  Future<Uint8List> transformResourceControlled(
+    Uri uri,
+    Uint8List bytes, {
     TaskControl? control,
   });
 }

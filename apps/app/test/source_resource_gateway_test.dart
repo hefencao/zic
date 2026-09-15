@@ -112,6 +112,37 @@ void main() {
     await response.discard();
   });
 
+  test('gateway preserves page request plan across cached source wrapper churn',
+      () async {
+    final locator = Uri.parse('venera-resource:wrapper-churn');
+    final raw = _ResolvedSource(
+      resolvedUri: Uri.parse('https://example.invalid/page.webp'),
+      bytes: Uint8List.fromList(<int>[1, 2, 3]),
+      requiresRuntimeTransform: false,
+      resourceOperationTimeout: const Duration(seconds: 55),
+    );
+    final cache = ResourceCacheManager();
+    addTearDown(cache.close);
+    final first = CachedBrowsableComicSource(source: raw, cache: cache);
+    final second = CachedBrowsableComicSource(source: raw, cache: cache);
+    BrowsableComicSource current = first;
+    final gateway = ComicSourceResourceGateway(
+      sourceForId: (sourceId) => sourceId == raw.sourceId ? current : null,
+      directTransport: _SelfBoundedDirectTransport(),
+    );
+    addTearDown(gateway.close);
+
+    final firstResponse =
+        await gateway.pageResponseLoaderFor(raw.sourceId, locator)();
+    await firstResponse.discard();
+    current = second;
+    final secondResponse =
+        await gateway.pageResponseLoaderFor(raw.sourceId, locator)();
+    await secondResponse.discard();
+
+    expect(raw.resolveCalls, 1);
+  });
+
   test('artwork cache coalesces one source request-plan resolution', () async {
     final locator = Uri.parse('mihon:resource:cover');
     final source = _ResolvedSource(

@@ -33,6 +33,36 @@ class RuntimeServicePacketFilesTest {
     }
 
     @Test
+    fun requestAboveBinderInlineLimitUsesSameVerifiedPacketLifecycle() {
+        val root = temporary.newFolder("request-packets")
+        val store = RuntimeServicePacketFiles(root)
+        val bytes = ByteArray(RuntimeServiceIpc.INLINE_REQUEST_BYTES + 4096) {
+            (it % 239).toByte()
+        }
+
+        val reference = store.write(bytes, RuntimeServiceIpc.INLINE_REQUEST_BYTES)
+        val packet = File(requireNotNull(reference.payloadPath))
+        assertNull(reference.inlinePayload)
+        assertArrayEquals(bytes, store.read(reference))
+        assertFalse(packet.exists())
+        assertFalse(root.listFiles().orEmpty().any { it.name.endsWith(".part") })
+    }
+
+    @Test
+    fun requestAtBinderInlineLimitStaysInline() {
+        val root = temporary.newFolder("inline-request")
+        val store = RuntimeServicePacketFiles(root)
+        val bytes = ByteArray(RuntimeServiceIpc.INLINE_REQUEST_BYTES) { 11 }
+
+        val reference = store.write(bytes, RuntimeServiceIpc.INLINE_REQUEST_BYTES)
+
+        assertArrayEquals(bytes, reference.inlinePayload)
+        assertNull(reference.payloadPath)
+        assertArrayEquals(bytes, store.read(reference))
+        assertTrue(root.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
     fun tamperedPacketIsRejectedAndDeleted() {
         val root = temporary.newFolder("tampered")
         val store = RuntimeServicePacketFiles(root)

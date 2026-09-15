@@ -22,6 +22,10 @@ internal class PluginRuntimeServiceClient(context: Context) {
     private val appContext = context.applicationContext
     private val mainHandler = Handler(Looper.getMainLooper())
     private val packetStore = RuntimeServicePacketStore(appContext)
+    private val requestExecutor: ExecutorService =
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "zic-plugin-runtime-request").apply { isDaemon = true }
+        }
     private val responseExecutor: ExecutorService =
         Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "zic-plugin-runtime-response").apply { isDaemon = true }
@@ -100,7 +104,7 @@ internal class PluginRuntimeServiceClient(context: Context) {
         if (encoded.size > RuntimeServiceIpc.MAX_REQUEST_BYTES) {
             result.error(
                 "runtime-request-too-large",
-                "isolated runtime request exceeds Binder envelope",
+                "isolated runtime request exceeds logical transport limit",
                 encoded.size,
             )
             return
@@ -238,19 +242,72 @@ internal class PluginRuntimeServiceClient(context: Context) {
         ) {
             return
         }
+        if (request.payload.size <= RuntimeServiceIpc.INLINE_REQUEST_BYTES) {
+            sendRequestBundle(
+                messenger,
+                generation,
+                request.requestId,
+                Bundle().apply {
+                    putByteArray(RuntimeServiceIpc.KEY_INLINE_PAYLOAD, request.payload)
+                    putLong(
+                        RuntimeServiceIpc.KEY_PAYLOAD_LENGTH,
+                        request.payload.size.toLong(),
+                    )
+                },
+            )
+            return
+        }
+        requestExecutor.execute {
+            val packet = runCatching { packetStore.writeRequest(request.payload) }
+            mainHandler.post {
+                packet.fold(
+                    onSuccess = { bundle ->
+                        if (!pending.containsKey(request.requestId) ||
+                            bindingState.connectedGeneration != generation
+                        ) {
+                            packetStore.delete(bundle)
+                            return@fold
+                        }
+                        sendRequestBundle(
+                            messenger,
+                            generation,
+                            request.requestId,
+                            bundle,
+                        )
+                    },
+                    onFailure = { error ->
+                        completeError(
+                            request.requestId,
+                            "runtime-request-invalid",
+                            error.message ?: "isolated runtime request packet failed",
+                            null,
+                        )
+                    },
+                )
+            }
+        }
+    }
+
+    private fun sendRequestBundle(
+        messenger: Messenger,
+        generation: Long,
+        requestId: Long,
+        bundle: Bundle,
+    ) {
+        if (!pending.containsKey(requestId) ||
+            bindingState.connectedGeneration != generation
+        ) {
+            packetStore.delete(bundle)
+            return
+        }
         val message = Message.obtain(null, RuntimeServiceIpc.MESSAGE_REQUEST)
         message.replyTo = replyMessenger
-        message.data = Bundle().apply {
-            putLong(RuntimeServiceIpc.KEY_REQUEST_ID, request.requestId)
-            putByteArray(RuntimeServiceIpc.KEY_INLINE_PAYLOAD, request.payload)
-            putLong(
-                RuntimeServiceIpc.KEY_PAYLOAD_LENGTH,
-                request.payload.size.toLong(),
-            )
-        }
+        bundle.putLong(RuntimeServiceIpc.KEY_REQUEST_ID, requestId)
+        message.data = bundle
         try {
             messenger.send(message)
         } catch (_: RemoteException) {
+            packetStore.delete(bundle)
             handleServiceLoss(
                 generation,
                 "runtime-service-disconnected",
@@ -419,6 +476,7 @@ internal class PluginRuntimeServiceClient(context: Context) {
             safeUnbind(generation)
         }
         appContext.stopService(serviceIntent)
+        requestExecutor.shutdownNow()
         responseExecutor.shutdownNow()
         packetStore.clear()
     }

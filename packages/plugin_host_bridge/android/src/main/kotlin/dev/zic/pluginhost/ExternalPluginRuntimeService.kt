@@ -23,6 +23,10 @@ import java.util.concurrent.Executors
 /// Dart endpoint owns payload verification, drivers, sessions and cancellation.
 class ExternalPluginRuntimeService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val requestExecutor: ExecutorService =
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "zic-plugin-runtime-request-ipc").apply { isDaemon = true }
+        }
     private val responseExecutor: ExecutorService =
         Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "zic-plugin-runtime-ipc").apply { isDaemon = true }
@@ -67,6 +71,7 @@ class ExternalPluginRuntimeService : Service() {
         runtimeChannel = null
         engine?.destroy()
         engine = null
+        requestExecutor.shutdownNow()
         responseExecutor.shutdownNow()
         packetStore.clear()
         super.onDestroy()
@@ -130,20 +135,59 @@ class ExternalPluginRuntimeService : Service() {
         if (requestId < 0) {
             return
         }
-        val payload = message.data.getByteArray(RuntimeServiceIpc.KEY_INLINE_PAYLOAD)
-        val declaredLength = message.data.getLong(
-            RuntimeServiceIpc.KEY_PAYLOAD_LENGTH,
-            -1L,
-        )
-        if (payload == null ||
-            payload.size > RuntimeServiceIpc.MAX_REQUEST_BYTES ||
-            declaredLength != payload.size.toLong()
-        ) {
+        val requestBundle = Bundle(message.data)
+        val inlinePayload = requestBundle.getByteArray(RuntimeServiceIpc.KEY_INLINE_PAYLOAD)
+        if (inlinePayload != null) {
+            val declaredLength = requestBundle.getLong(
+                RuntimeServiceIpc.KEY_PAYLOAD_LENGTH,
+                -1L,
+            )
+            if (inlinePayload.size > RuntimeServiceIpc.INLINE_REQUEST_BYTES ||
+                declaredLength != inlinePayload.size.toLong() ||
+                requestBundle.getString(RuntimeServiceIpc.KEY_PAYLOAD_PATH) != null
+            ) {
+                replyError(
+                    requestId,
+                    replyTo,
+                    "runtime-request-invalid",
+                    "isolated runtime Binder request is invalid",
+                    null,
+                )
+                return
+            }
+            acceptPayload(requestId, replyTo, inlinePayload)
+            return
+        }
+        requestExecutor.execute {
+            val payload = runCatching { packetStore.read(requestBundle) }
+            mainHandler.post {
+                payload.fold(
+                    onSuccess = { acceptPayload(requestId, replyTo, it) },
+                    onFailure = { error ->
+                        replyError(
+                            requestId,
+                            replyTo,
+                            "runtime-request-invalid",
+                            error.message ?: "isolated runtime request packet is invalid",
+                            null,
+                        )
+                    },
+                )
+            }
+        }
+    }
+
+    private fun acceptPayload(
+        requestId: Long,
+        replyTo: Messenger,
+        payload: ByteArray,
+    ) {
+        if (payload.size > RuntimeServiceIpc.MAX_REQUEST_BYTES) {
             replyError(
                 requestId,
                 replyTo,
                 "runtime-request-invalid",
-                "isolated runtime Binder request is invalid",
+                "isolated runtime request exceeds logical limit",
                 null,
             )
             return

@@ -69,7 +69,7 @@ final class RhttpSourceResourceDirectTransport
       }
       return await rhttp.RhttpClient.create(
         settings: const rhttp.ClientSettings(
-          redirectSettings: rhttp.RedirectSettings.limited(5),
+          redirectSettings: rhttp.RedirectSettings.none(),
           timeoutSettings: rhttp.TimeoutSettings(
             connectTimeout: Duration(seconds: 15),
             keepAliveTimeout: Duration(seconds: 60),
@@ -178,6 +178,18 @@ final class RhttpSourceResourceDirectTransport
         },
       );
     }
+    if (_headerValue(headers, HttpHeaders.setCookieHeader) != null) {
+      cancelToken.cancel();
+      throw Failure(
+        code: ErrorCode.network,
+        message:
+            'source host replay requires source-owned cookie state for ${request.uri}',
+        details: const <String, Object?>{
+          'sourceMediaProtocolMismatch': true,
+          'sourceClientStateRequired': true,
+        },
+      );
+    }
     if (response.statusCode != HttpStatus.ok &&
         response.statusCode != HttpStatus.partialContent) {
       cancelToken.cancel();
@@ -203,7 +215,8 @@ final class RhttpSourceResourceDirectTransport
       cancelToken,
       control,
       readDiagnostics,
-      validatePrefix: parsedRange == null || parsedRange.start == 0,
+      validatePrefix: !request.requiresRuntimeTransform &&
+          (parsedRange == null || parsedRange.start == 0),
     );
     final contentLength = int.tryParse(
       _headerValue(headers, HttpHeaders.contentLengthHeader) ?? '',

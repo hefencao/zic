@@ -33,6 +33,90 @@ void main() {
     );
   });
 
+  test('verified reuse identity preserves scheduler control through resolver',
+      () async {
+    final locator = Uri.parse('venera-resource:reuse-identity');
+    final source = _FixtureSource(
+      request: ComicResourceRequest(
+        uri: Uri.parse('https://fixture/reuse-identity'),
+      ),
+    );
+    final pool = ExternalPluginResourceTransportPool();
+    addTearDown(pool.close);
+    final control = _MutableTaskControl(priority: 100);
+
+    await pool.verifiedReuseIdentityFor(
+      source,
+      locator,
+      control: control,
+    );
+    expect(source.lastResolveControl, same(control));
+  });
+
+
+  test('decorator churn preserves request plan for the same source generation',
+      () async {
+    final locator = Uri.parse('venera-resource:same-generation');
+    final generation = Object();
+    final first = _FixtureSource(
+      request: ComicResourceRequest(uri: Uri.parse('https://fixture/page')),
+      resourceGenerationIdentity: generation,
+    );
+    final second = _FixtureSource(
+      request: ComicResourceRequest(uri: Uri.parse('https://fixture/page')),
+      resourceGenerationIdentity: generation,
+    );
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (request) async => ByteResponse(
+        bytes: Stream<List<int>>.value(<int>[1, 2, 3]),
+        statusCode: HttpStatus.ok,
+        rangeStart: 0,
+        totalLength: 3,
+      ),
+    );
+    addTearDown(pool.close);
+
+    await _collect((await pool.loaderFor(first, locator)()).bytes);
+    await _collect((await pool.loaderFor(second, locator)()).bytes);
+
+    expect(first.resolveCalls, 1);
+    expect(second.resolveCalls, 0);
+  });
+
+  test('source generation replacement invalidates retained request plan', () async {
+    final locator = Uri.parse('venera-resource:new-generation');
+    final first = _FixtureSource(
+      request: ComicResourceRequest(uri: Uri.parse('https://fixture/old')),
+      resourceGenerationIdentity: Object(),
+    );
+    final second = _FixtureSource(
+      request: ComicResourceRequest(uri: Uri.parse('https://fixture/new')),
+      resourceGenerationIdentity: Object(),
+    );
+    final opened = <Uri>[];
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (request) async {
+        opened.add(request.uri);
+        return ByteResponse(
+          bytes: Stream<List<int>>.value(<int>[1, 2, 3]),
+          statusCode: HttpStatus.ok,
+          rangeStart: 0,
+          totalLength: 3,
+        );
+      },
+    );
+    addTearDown(pool.close);
+
+    await _collect((await pool.loaderFor(first, locator)()).bytes);
+    await _collect((await pool.loaderFor(second, locator)()).bytes);
+
+    expect(first.resolveCalls, 1);
+    expect(second.resolveCalls, 1);
+    expect(opened, <Uri>[
+      Uri.parse('https://fixture/old'),
+      Uri.parse('https://fixture/new'),
+    ]);
+  });
 
   test('fresh resource generation drops a retained request plan', () async {
     final locator = Uri.parse('venera-resource:fresh-generation');
@@ -569,6 +653,151 @@ void main() {
     expect(identical(source.lastLoadControl, control), isTrue);
   });
 
+  test('runtime transform fetches full body on host before source transform',
+      () async {
+    final control = _MutableTaskControl(priority: 1000);
+    final locator = Uri.parse('venera-resource:host-transform');
+    final rawBytes = Uint8List.fromList(<int>[3, 1, 4, 1, 5, 9]);
+    final transformed =
+        Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 6, 5, 4, 3, 0xff, 0xd9]);
+    final source = _FixtureSource(
+      request: ComicResourceRequest(
+        uri: Uri.parse('https://cdn.invalid/encrypted.bin'),
+        requiresRuntimeTransform: true,
+      ),
+      supportsTransform: true,
+      transform: (bytes) async {
+        expect(bytes, rawBytes);
+        return transformed;
+      },
+    );
+    ComicResourceRequest? hostRequest;
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (request) async {
+        hostRequest = request;
+        return ByteResponse(
+          bytes: Stream<List<int>>.value(rawBytes),
+          statusCode: HttpStatus.ok,
+          rangeStart: 0,
+          totalLength: rawBytes.length,
+        );
+      },
+    );
+    addTearDown(pool.close);
+
+    final response = await pool.controlledLoaderFor(source, locator)(
+      range: const ByteRange(start: 3, end: 5),
+      control: control,
+    );
+
+    expect(await _collect(response.bytes), transformed.sublist(3, 6));
+    expect(response.rangeStart, 3);
+    expect(response.totalLength, transformed.length);
+    expect(response.diagnostics['sourceOpenPath'], 'host-fetch-runtime-transform');
+    expect(hostRequest, isNotNull);
+    expect(hostRequest!.headers.keys.any(
+      (name) => name.toLowerCase() == HttpHeaders.rangeHeader,
+    ), isFalse);
+    expect(source.loadCalls, 0);
+    expect(source.transformCalls, 1);
+    expect(source.lastTransformInput, rawBytes);
+    expect(identical(source.lastTransformControl, control), isTrue);
+  });
+
+  test('runtime transform falls back to source client for stateful host response',
+      () async {
+    final locator = Uri.parse('venera-resource:stateful-transform');
+    final runtimeImage =
+        Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 7, 8, 9, 0xff, 0xd9]);
+    final source = _FixtureSource(
+      request: ComicResourceRequest(
+        uri: Uri.parse('https://cdn.invalid/stateful'),
+        requiresRuntimeTransform: true,
+      ),
+      supportsTransform: true,
+      runtimeBytes: runtimeImage,
+    );
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (_) => Future<ByteResponse>.error(
+        const Failure(
+          code: ErrorCode.network,
+          message: 'source session state required',
+          details: <String, Object?>{
+            'sourceMediaProtocolMismatch': true,
+            'sourceClientStateRequired': true,
+          },
+        ),
+      ),
+    );
+    addTearDown(pool.close);
+
+    final response = await pool.loaderFor(source, locator)();
+
+    expect(await _collect(response.bytes), runtimeImage);
+    expect(
+      response.diagnostics['sourceOpenPath'],
+      'transform-client-runtime-fallback',
+    );
+    expect(source.loadCalls, 1);
+    expect(source.transformCalls, 0);
+  });
+
+  test('runtime transform failure consumes existing five-plan semantic budget',
+      () async {
+    final locator = Uri.parse('venera-resource:transform-retry-budget');
+    ComicResourceRequest plan(int index) => ComicResourceRequest(
+          uri: Uri.parse('https://cdn.invalid/raw-$index.bin'),
+          requiresRuntimeTransform: true,
+        );
+    final source = _FixtureSource(
+      request: plan(0),
+      retryRequests: <ComicResourceRequest?>[
+        for (var index = 1; index <= 5; index++) plan(index),
+      ],
+      supportsTransform: true,
+      transform: (_) async => throw StateError('fixture transform rejected'),
+    );
+    var hostLoads = 0;
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (_) async {
+        hostLoads++;
+        return ByteResponse(
+          bytes: Stream<List<int>>.value(const <int>[1, 2, 3, 4]),
+          statusCode: HttpStatus.ok,
+          rangeStart: 0,
+          totalLength: 4,
+        );
+      },
+    );
+    addTearDown(pool.close);
+
+    await expectLater(
+      pool.loaderFor(source, locator)(),
+      throwsA(
+        isA<Failure>()
+            .having(
+              (error) => error.details['sourceSemanticRetryExhausted'],
+              'semantic retry exhausted',
+              isTrue,
+            )
+            .having(
+              (error) => error.details['sourceSemanticAcceptedPlans'],
+              'accepted retry plans',
+              5,
+            )
+            .having(
+              (error) => error.details['sourceSemanticRuntimeTransformPlans'],
+              'runtime transform plans',
+              5,
+            ),
+      ),
+    );
+    expect(source.retryCalls, 5);
+    expect(source.transformCalls, 6);
+    expect(source.loadCalls, 0);
+    expect(hostLoads, 6);
+  });
+
   test('runtime body rejects non-image bytes before transfer admission',
       () async {
     final locator = Uri.parse('venera-resource:invalid-runtime-body');
@@ -1068,15 +1297,23 @@ class _FixtureSource
         ControlledRetryableComicResourceSource,
         RefreshableComicResourceSource,
         ControlledRefreshableComicResourceSource,
-        ControlledComicResourceSource {
+        ControlledComicResourceSource,
+        TransformingComicResourceSource,
+        ControlledTransformingComicResourceSource,
+        ComicResourceTransportGenerationSource {
   _FixtureSource({
     required this.request,
     this.retryRequest,
     this.retryRequests,
     this.refreshRequest,
     this.resolveGate,
+    this.supportsTransform = false,
+    this.transform,
+    Object? resourceGenerationIdentity,
     Uint8List? runtimeBytes,
-  }) : runtimeBytes = runtimeBytes ?? Uint8List(0);
+  })  : resourceTransportGenerationIdentity =
+            resourceGenerationIdentity ?? Object(),
+        runtimeBytes = runtimeBytes ?? Uint8List(0);
 
   final ComicResourceRequest request;
   final ComicResourceRequest? retryRequest;
@@ -1084,13 +1321,20 @@ class _FixtureSource
   final ComicResourceRequest? refreshRequest;
   final Completer<ComicResourceRequest>? resolveGate;
   final Uint8List runtimeBytes;
+  final bool supportsTransform;
+  final Future<Uint8List> Function(Uint8List bytes)? transform;
+  @override
+  final Object resourceTransportGenerationIdentity;
   int resolveCalls = 0;
   int retryCalls = 0;
   int refreshCalls = 0;
   int loadCalls = 0;
+  int transformCalls = 0;
   bool _refreshed = false;
   TaskControl? lastResolveControl;
   TaskControl? lastLoadControl;
+  TaskControl? lastTransformControl;
+  Uint8List? lastTransformInput;
 
   @override
   String get sourceId => 'venera:fixture';
@@ -1161,6 +1405,28 @@ class _FixtureSource
     loadCalls++;
     lastLoadControl = control;
     return runtimeBytes;
+  }
+
+  @override
+  bool get supportsResourceTransformation => supportsTransform;
+
+  @override
+  Future<Uint8List> transformResource(Uri uri, Uint8List bytes) =>
+      transformResourceControlled(uri, bytes);
+
+  @override
+  Future<Uint8List> transformResourceControlled(
+    Uri uri,
+    Uint8List bytes, {
+    TaskControl? control,
+  }) async {
+    transformCalls++;
+    lastTransformControl = control;
+    lastTransformInput = Uint8List.fromList(bytes);
+    final callback = transform;
+    return callback == null
+        ? Uint8List.fromList(bytes)
+        : callback(Uint8List.fromList(bytes));
   }
 
   @override

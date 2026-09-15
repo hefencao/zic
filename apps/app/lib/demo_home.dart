@@ -1049,7 +1049,9 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<ImportedLibraryEntry> _refreshRemoteEntry(
     ImportedLibraryEntry entry, {
     bool forceSourceRefresh = false,
+    TaskControl? control,
   }) async {
+    control?.throwIfCancelled();
     if (entry.chapter.sourceId == 'local-folder') {
       return entry;
     }
@@ -1062,7 +1064,9 @@ final class _DemoHomeState extends State<DemoHome> {
       source,
       entry.chapter.chapterId,
       forceRefresh: forceSourceRefresh,
+      control: control,
     );
+    control?.throwIfCancelled();
     final comic = Comic(
       comicId: entry.chapter.comicId,
       sourceId: entry.chapter.sourceId,
@@ -1080,6 +1084,7 @@ final class _DemoHomeState extends State<DemoHome> {
       manifest: manifest,
       importedAt: entry.chapter.importedAt,
     );
+    control?.throwIfCancelled();
     return _librarySession.upsertChapter(refreshed);
   }
 

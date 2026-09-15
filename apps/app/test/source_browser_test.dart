@@ -2158,6 +2158,8 @@ void main() {
 
     expect(source.chapterLoads, 2);
     expect(source.versionLoadCalls, 1);
+    expect(source.controlledChapterPriorities, <int>[100, 100]);
+    expect(source.controlledVersionPriorities, <int>[100]);
     expect(
       trace.events.where(
         (event) =>
@@ -2183,6 +2185,7 @@ void main() {
     expect(completed.payload['metadataPreempted'], isTrue);
     expect(completed.payload['metadataRetryAttempted'], isTrue);
     expect(completed.payload['versionChecked'], isTrue);
+    expect(completed.payload['schedulerPriority'], 100);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump(const Duration(minutes: 2));
@@ -2933,8 +2936,10 @@ void main() {
 final class _FixtureSource
     implements
         BrowsableComicSource,
+        ControlledComicSource,
         CanonicalComicIdentitySource,
         ComicVersionSource,
+        ControlledComicVersionSource,
         RefreshableChapterComicSource,
         ComicPreviewSource,
         ComicCommentSource,
@@ -3011,6 +3016,9 @@ final class _FixtureSource
   int filteredBrowseCalls = 0;
   final List<Uri> loadedResources = <Uri>[];
   final List<String?> previewTokens = <String?>[];
+  final List<int> controlledComicPriorities = <int>[];
+  final List<int> controlledChapterPriorities = <int>[];
+  final List<int> controlledVersionPriorities = <int>[];
 
   int get comicLoads => _comicLoads;
   int get chapterLoads => _chapterLoads;
@@ -3146,6 +3154,15 @@ final class _FixtureSource
   }
 
   @override
+  Future<List<SourceComicVersion>> findComicVersionsControlled(
+    String comicId, {
+    TaskControl? control,
+  }) {
+    if (control != null) controlledVersionPriorities.add(control.priority);
+    return findComicVersions(comicId);
+  }
+
+  @override
   Future<ComicManifest> loadComic(String comicId) async {
     expectSync(comicId, _comicId);
     final loadIndex = _comicLoads++;
@@ -3192,6 +3209,15 @@ final class _FixtureSource
             )
           : null,
     );
+  }
+
+  @override
+  Future<ComicManifest> loadComicControlled(
+    String comicId, {
+    TaskControl? control,
+  }) {
+    if (control != null) controlledComicPriorities.add(control.priority);
+    return loadComic(comicId);
   }
 
   @override
@@ -3246,6 +3272,15 @@ final class _FixtureSource
       throw chapterLoadErrors[loadIndex];
     }
     return _chapterManifest(chapterId, durableRuntimeLocator: false);
+  }
+
+  @override
+  Future<ChapterManifest> loadChapterControlled(
+    String chapterId, {
+    TaskControl? control,
+  }) {
+    if (control != null) controlledChapterPriorities.add(control.priority);
+    return loadChapter(chapterId);
   }
 
   @override

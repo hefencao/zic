@@ -35,20 +35,48 @@ Future<ChapterManifest> _loadCompatibleSourceChapter(
   BrowsableComicSource source,
   String chapterId, {
   bool forceRefresh = false,
+  TaskControl? control,
 }) async {
+  control?.throwIfCancelled();
+  final controlledRefreshable =
+      source is ControlledRefreshableChapterComicSource
+          ? source as ControlledRefreshableChapterComicSource
+          : null;
   final RefreshableChapterComicSource? refreshable =
       source is RefreshableChapterComicSource
           ? source as RefreshableChapterComicSource
           : null;
-  final refreshedImmediately = forceRefresh && refreshable != null;
+  final controlledChapter = source is ControlledComicSource
+      ? source as ControlledComicSource
+      : null;
+  final refreshedImmediately =
+      forceRefresh && (controlledRefreshable != null || refreshable != null);
   var manifest = refreshedImmediately
-      ? await refreshable.refreshChapter(chapterId)
-      : await source.loadChapter(chapterId);
+      ? controlledRefreshable != null
+          ? await controlledRefreshable.refreshChapterControlled(
+              chapterId,
+              control: control,
+            )
+          : await refreshable!.refreshChapter(chapterId)
+      : controlledChapter != null
+          ? await controlledChapter.loadChapterControlled(
+              chapterId,
+              control: control,
+            )
+          : await source.loadChapter(chapterId);
+  control?.throwIfCancelled();
   if (!_manifestHasLegacyVeneraLocators(manifest)) {
     return manifest;
   }
-  if (refreshable != null && !refreshedImmediately) {
-    manifest = await refreshable.refreshChapter(chapterId);
+  if ((controlledRefreshable != null || refreshable != null) &&
+      !refreshedImmediately) {
+    manifest = controlledRefreshable != null
+        ? await controlledRefreshable.refreshChapterControlled(
+            chapterId,
+            control: control,
+          )
+        : await refreshable!.refreshChapter(chapterId);
+    control?.throwIfCancelled();
   }
   if (_manifestHasLegacyVeneraLocators(manifest)) {
     throw StateError(

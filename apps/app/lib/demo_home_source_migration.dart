@@ -1,5 +1,7 @@
 part of 'demo_home.dart';
 
+const int _readerMetadataVersionRefreshPriority = 100;
+
 String _sourceMigrationPreparedFingerprint(
   ComicManifest manifest,
   Iterable<_PreparedChapterMigration> prepared,
@@ -388,15 +390,26 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   Future<ImportedLibraryEntry> _loadVersionChapterEntry(
     BrowsableComicSource source,
     Comic comic,
-    Chapter chapter,
-  ) async {
+    Chapter chapter, {
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
     final existing = _exactChapterEntry(source.sourceId, chapter.chapterId);
     if (existing != null &&
         existing.chapter.pages.isNotEmpty &&
         !_hasLegacyVeneraLocators(existing.chapter)) {
       return _librarySession.hydrateEntry(existing);
     }
-    final manifest = await source.loadChapter(chapter.chapterId);
+    final controlled = source is ControlledComicSource
+        ? source as ControlledComicSource
+        : null;
+    final manifest = controlled != null
+        ? await controlled.loadChapterControlled(
+            chapter.chapterId,
+            control: control,
+          )
+        : await source.loadChapter(chapter.chapterId);
+    control?.throwIfCancelled();
     if (manifest.sourceId != source.sourceId ||
         manifest.comicId != chapter.comicId ||
         manifest.chapter.chapterId != chapter.chapterId) {
@@ -433,7 +446,9 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     ComicVersionRelation relation,
     ImportedLibraryEntry focus, {
     bool upgradeLegacyIntervalProof = false,
+    TaskControl? control,
   }) async {
+    control?.throwIfCancelled();
     final focusIsPredecessor =
         relation.predecessorComicId == focus.chapter.comicId;
     final focusIsSuccessor =
@@ -465,7 +480,16 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     final relatedComicId = focusIsPredecessor
         ? relation.successorComicId
         : relation.predecessorComicId;
-    final relatedComic = await source.loadComic(relatedComicId);
+    final controlled = source is ControlledComicSource
+        ? source as ControlledComicSource
+        : null;
+    final relatedComic = controlled != null
+        ? await controlled.loadComicControlled(
+            relatedComicId,
+            control: control,
+          )
+        : await source.loadComic(relatedComicId);
+    control?.throwIfCancelled();
     if (relatedComic.comic.sourceId != source.sourceId ||
         relatedComic.comic.comicId != relatedComicId) {
       throw StateError('同源版本漫画返回了不匹配的身份');
@@ -514,7 +538,9 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       source,
       relatedComic.comic,
       relatedChapter,
+      control: control,
     );
+    control?.throwIfCancelled();
     final focusManifest = focus.chapter.toManifest();
     final relatedManifest = relatedEntry.chapter.toManifest();
     final predecessorManifest =
@@ -543,6 +569,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       resolveIdentity: (page) => _sourceResources.verifiedPageReuseIdentity(
         sourceId: source.sourceId,
         locator: page.uri,
+        control: control,
       ),
     );
     if (intervalProof == null || intervalProof.verifiedIntervals.isEmpty) {
@@ -619,7 +646,20 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     BrowsableComicSource source,
     ImportedLibraryEntry focus, {
     String? targetComicId,
+    TaskControl? control,
   }) {
+    control?.throwIfCancelled();
+    if (control != null) {
+      // A scheduler-owned Reader refresh must never join an uncontrolled
+      // generic warmup Future: doing so would lose cancellation/priority at
+      // the source/runtime boundary. Generic callers keep coalescing below.
+      return _runVersionReuseWarmup(
+        source,
+        focus,
+        targetComicId: targetComicId,
+        control: control,
+      );
+    }
     final key = _versionReuseWarmupKey(
       source,
       focus,
@@ -628,45 +668,11 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     final existing = _versionReuseWarmups[key];
     if (existing != null) return existing;
     late Future<void> future;
-    future = Future<void>(() async {
-      final relations = _sourceVersionRelationsForComic(
-        source.sourceId,
-        focus.chapter.comicId,
-      );
-      for (final relation in relations) {
-        final relatedComicId =
-            relation.predecessorComicId == focus.chapter.comicId
-                ? relation.successorComicId
-                : relation.predecessorComicId;
-        if (targetComicId != null && relatedComicId != targetComicId) {
-          continue;
-        }
-        try {
-          await _warmVersionRelationPageMappings(
-            source,
-            relation,
-            focus,
-            upgradeLegacyIntervalProof: targetComicId != null,
-          );
-        } on Object catch (error) {
-          widget.debugTrace.record(
-            TraceEvent(
-              monotonicMicros: _traceClock.elapsedMicroseconds,
-              sessionId: 'source-version-reuse:${source.sourceId}',
-              kind: TraceEventKind.taskFailed,
-              identityHash:
-                  '${source.sourceId}\u0000${relation.predecessorComicId}\u0000${relation.successorComicId}',
-              payload: <String, Object?>{
-                'stage': 'version-page-mapping-warm-failed',
-                'focusChapterId': focus.chapter.chapterId,
-                'errorType': error.runtimeType.toString(),
-              },
-            ),
-          );
-        }
-      }
-      await _ensureSourceVersionReuseAuthority(focus);
-    });
+    future = _runVersionReuseWarmup(
+      source,
+      focus,
+      targetComicId: targetComicId,
+    );
     _versionReuseWarmups[key] = future;
     unawaited(
       future.whenComplete(() {
@@ -676,6 +682,56 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       }),
     );
     return future;
+  }
+
+  Future<void> _runVersionReuseWarmup(
+    BrowsableComicSource source,
+    ImportedLibraryEntry focus, {
+    String? targetComicId,
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
+    final relations = _sourceVersionRelationsForComic(
+      source.sourceId,
+      focus.chapter.comicId,
+    );
+    for (final relation in relations) {
+      control?.throwIfCancelled();
+      final relatedComicId =
+          relation.predecessorComicId == focus.chapter.comicId
+              ? relation.successorComicId
+              : relation.predecessorComicId;
+      if (targetComicId != null && relatedComicId != targetComicId) {
+        continue;
+      }
+      try {
+        await _warmVersionRelationPageMappings(
+          source,
+          relation,
+          focus,
+          upgradeLegacyIntervalProof: targetComicId != null,
+          control: control,
+        );
+      } on Object catch (error) {
+        if (control?.cancelled == true) rethrow;
+        widget.debugTrace.record(
+          TraceEvent(
+            monotonicMicros: _traceClock.elapsedMicroseconds,
+            sessionId: 'source-version-reuse:${source.sourceId}',
+            kind: TraceEventKind.taskFailed,
+            identityHash:
+                '${source.sourceId}\u0000${relation.predecessorComicId}\u0000${relation.successorComicId}',
+            payload: <String, Object?>{
+              'stage': 'version-page-mapping-warm-failed',
+              'focusChapterId': focus.chapter.chapterId,
+              'errorType': error.runtimeType.toString(),
+            },
+          ),
+        );
+      }
+    }
+    control?.throwIfCancelled();
+    await _ensureSourceVersionReuseAuthority(focus);
   }
 
   void _scheduleVersionReuseWarmup(
@@ -707,128 +763,193 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   ) {
     final key = _versionReuseWarmupKey(source, focus);
     if (_readerVersionRefreshes.containsKey(key)) return;
-    late Future<void> future;
-    future = Future<void>(() async {
-      var refreshed = focus;
-      final metadataFuture = _refreshRemoteEntry(focus);
-      final versionFuture = _loadSourceVersionState(
-        source,
-        focus.chapter.comicTitle,
-        focus.chapter.comicId,
-      );
-      var metadataUpdated = false;
-      var metadataPreempted = false;
-      var metadataRetryAttempted = false;
-      var versionChecked = false;
-      bool isRuntimeRequestPreemption(Object error) =>
-          error is Failure &&
-          error.code == ErrorCode.cancelled &&
-          error.details['runtimeErrorCode'] == 'runtime-request-cancelled';
-      Map<String, Object?> errorPayload(Object error) => <String, Object?>{
-            'errorType': error.runtimeType.toString(),
-            'errorMessage': error is Failure ? error.message : error.toString(),
-            if (error is Failure) ...<String, Object?>{
-              'errorCode': error.code.name,
-              if (error.details['runtimeErrorCode'] case final String code)
-                'runtimeErrorCode': code,
-            },
-          };
-      try {
-        refreshed = await metadataFuture;
-        metadataUpdated = true;
-      } on Object catch (error) {
-        final preempted = isRuntimeRequestPreemption(error);
-        metadataPreempted = preempted;
-        widget.debugTrace.record(
-          TraceEvent(
-            monotonicMicros: _traceClock.elapsedMicroseconds,
-            sessionId: 'reader-version-refresh:${source.sourceId}',
-            kind: preempted
-                ? TraceEventKind.artifactSource
-                : TraceEventKind.taskFailed,
-            identityHash: focus.chapter.chapterId,
-            payload: <String, Object?>{
-              'stage': preempted
-                  ? 'reader-metadata-refresh-preempted'
-                  : 'reader-metadata-refresh-failed',
-              ...errorPayload(error),
-            },
-          ),
-        );
-      }
-      try {
-        final state = await versionFuture;
-        final background = state.backgroundRefresh;
-        if (background != null) await background;
-        versionChecked = true;
-      } on Object catch (error) {
-        widget.debugTrace.record(
-          TraceEvent(
-            monotonicMicros: _traceClock.elapsedMicroseconds,
-            sessionId: 'reader-version-refresh:${source.sourceId}',
-            kind: TraceEventKind.taskFailed,
-            identityHash: focus.chapter.comicId,
-            payload: <String, Object?>{
-              'stage': 'reader-version-check-failed',
-              ...errorPayload(error),
-            },
-          ),
-        );
-      }
-      if (metadataPreempted) {
-        // Foreground Reader source work may preempt this post-presentation
-        // generic runtime request. Retry exactly once after the concurrent
-        // version check settles. Other cancellation/failure kinds keep their
-        // existing terminal behavior and are never retried here.
-        metadataRetryAttempted = true;
-        try {
-          refreshed = await _refreshRemoteEntry(focus);
-          metadataUpdated = true;
-        } on Object catch (error) {
-          final preemptedAgain = isRuntimeRequestPreemption(error);
-          widget.debugTrace.record(
-            TraceEvent(
-              monotonicMicros: _traceClock.elapsedMicroseconds,
-              sessionId: 'reader-version-refresh:${source.sourceId}',
-              kind: preemptedAgain
-                  ? TraceEventKind.artifactSource
-                  : TraceEventKind.taskFailed,
-              identityHash: focus.chapter.chapterId,
-              payload: <String, Object?>{
-                'stage': preemptedAgain
-                    ? 'reader-metadata-refresh-preempted-again'
-                    : 'reader-metadata-refresh-retry-failed',
-                ...errorPayload(error),
-              },
-            ),
-          );
-        }
-      }
-      await _prepareVersionReuseWarmup(source, refreshed);
-      widget.debugTrace.record(
-        TraceEvent(
-          monotonicMicros: _traceClock.elapsedMicroseconds,
-          sessionId: 'reader-version-refresh:${source.sourceId}',
-          kind: TraceEventKind.artifactSource,
-          identityHash: refreshed.chapter.chapterId,
-          payload: <String, Object?>{
-            'stage': 'reader-metadata-version-refresh-complete',
-            'metadataUpdated': metadataUpdated,
-            'metadataPreempted': metadataPreempted,
-            'metadataRetryAttempted': metadataRetryAttempted,
-            'versionChecked': versionChecked,
-            'sourceRevision': refreshed.chapter.sourceRevision,
-          },
-        ),
-      );
-    });
+    final completer = Completer<void>();
+    final future = completer.future;
     _readerVersionRefreshes[key] = future;
+    final laneKey = 'reader-metadata-version-refresh:'
+        '${identityHashCode(completer)}:$key';
+    final submitted = defaultDownloadResourceCoordinator.networkLane.submit(
+      key: laneKey,
+      priority: _readerMetadataVersionRefreshPriority,
+      task: (control) async {
+        try {
+          await _runReaderMetadataVersionRefresh(
+            source,
+            focus,
+            control,
+          );
+        } finally {
+          if (!completer.isCompleted) completer.complete();
+        }
+      },
+    );
+    if (!submitted && !completer.isCompleted) {
+      completer.complete();
+    }
     unawaited(
       future.whenComplete(() {
         if (identical(_readerVersionRefreshes[key], future)) {
           _readerVersionRefreshes.remove(key);
         }
       }),
+    );
+  }
+
+  Future<void> _runReaderMetadataVersionRefresh(
+    BrowsableComicSource source,
+    ImportedLibraryEntry focus,
+    TaskControl control,
+  ) async {
+    control.throwIfCancelled();
+    var refreshed = focus;
+    final metadataFuture = _refreshRemoteEntry(
+      focus,
+      control: control,
+    );
+    final versionFuture = _loadSourceVersionState(
+      source,
+      focus.chapter.comicTitle,
+      focus.chapter.comicId,
+      control: control,
+    );
+    var metadataUpdated = false;
+    var metadataPreempted = false;
+    var metadataRetryAttempted = false;
+    var versionChecked = false;
+    bool isRuntimeRequestPreemption(Object error) =>
+        error is Failure &&
+        error.code == ErrorCode.cancelled &&
+        error.details['runtimeErrorCode'] == 'runtime-request-cancelled';
+    Map<String, Object?> errorPayload(Object error) => <String, Object?>{
+          'errorType': error.runtimeType.toString(),
+          'errorMessage': error is Failure ? error.message : error.toString(),
+          if (error is Failure) ...<String, Object?>{
+            'errorCode': error.code.name,
+            if (error.details['runtimeErrorCode'] case final String code)
+              'runtimeErrorCode': code,
+          },
+        };
+    try {
+      refreshed = await metadataFuture;
+      metadataUpdated = true;
+    } on Object catch (error) {
+      final preempted = isRuntimeRequestPreemption(error);
+      metadataPreempted = preempted;
+      widget.debugTrace.record(
+        TraceEvent(
+          monotonicMicros: _traceClock.elapsedMicroseconds,
+          sessionId: 'reader-version-refresh:${source.sourceId}',
+          kind: preempted || control.cancelled
+              ? TraceEventKind.artifactSource
+              : TraceEventKind.taskFailed,
+          identityHash: focus.chapter.chapterId,
+          payload: <String, Object?>{
+            'stage': control.cancelled
+                ? 'reader-metadata-refresh-scheduler-preempted'
+                : preempted
+                    ? 'reader-metadata-refresh-preempted'
+                    : 'reader-metadata-refresh-failed',
+            ...errorPayload(error),
+          },
+        ),
+      );
+    }
+    try {
+      final state = await versionFuture;
+      final background = state.backgroundRefresh;
+      if (background != null) await background;
+      versionChecked = true;
+    } on Object catch (error) {
+      widget.debugTrace.record(
+        TraceEvent(
+          monotonicMicros: _traceClock.elapsedMicroseconds,
+          sessionId: 'reader-version-refresh:${source.sourceId}',
+          kind: control.cancelled
+              ? TraceEventKind.artifactSource
+              : TraceEventKind.taskFailed,
+          identityHash: focus.chapter.comicId,
+          payload: <String, Object?>{
+            'stage': control.cancelled
+                ? 'reader-version-check-scheduler-preempted'
+                : 'reader-version-check-failed',
+            ...errorPayload(error),
+          },
+        ),
+      );
+    }
+    if (control.cancelled) return;
+    if (metadataPreempted) {
+      // Runtime-level foreground pressure may preempt this low-rank source
+      // request before NetLane itself needs to reclaim the task. Retry once;
+      // the same scheduler token keeps the retry behind any queued page plan.
+      metadataRetryAttempted = true;
+      try {
+        refreshed = await _refreshRemoteEntry(
+          focus,
+          control: control,
+        );
+        metadataUpdated = true;
+      } on Object catch (error) {
+        final preemptedAgain = isRuntimeRequestPreemption(error);
+        widget.debugTrace.record(
+          TraceEvent(
+            monotonicMicros: _traceClock.elapsedMicroseconds,
+            sessionId: 'reader-version-refresh:${source.sourceId}',
+            kind: preemptedAgain || control.cancelled
+                ? TraceEventKind.artifactSource
+                : TraceEventKind.taskFailed,
+            identityHash: focus.chapter.chapterId,
+            payload: <String, Object?>{
+              'stage': control.cancelled
+                  ? 'reader-metadata-refresh-scheduler-preempted-again'
+                  : preemptedAgain
+                      ? 'reader-metadata-refresh-preempted-again'
+                      : 'reader-metadata-refresh-retry-failed',
+              ...errorPayload(error),
+            },
+          ),
+        );
+      }
+    }
+    if (control.cancelled) return;
+    try {
+      await _prepareVersionReuseWarmup(
+        source,
+        refreshed,
+        control: control,
+      );
+    } on Object catch (error) {
+      if (control.cancelled) return;
+      widget.debugTrace.record(
+        TraceEvent(
+          monotonicMicros: _traceClock.elapsedMicroseconds,
+          sessionId: 'reader-version-refresh:${source.sourceId}',
+          kind: TraceEventKind.taskFailed,
+          identityHash: refreshed.chapter.chapterId,
+          payload: <String, Object?>{
+            'stage': 'reader-version-reuse-warmup-failed',
+            ...errorPayload(error),
+          },
+        ),
+      );
+    }
+    if (control.cancelled) return;
+    widget.debugTrace.record(
+      TraceEvent(
+        monotonicMicros: _traceClock.elapsedMicroseconds,
+        sessionId: 'reader-version-refresh:${source.sourceId}',
+        kind: TraceEventKind.artifactSource,
+        identityHash: refreshed.chapter.chapterId,
+        payload: <String, Object?>{
+          'stage': 'reader-metadata-version-refresh-complete',
+          'metadataUpdated': metadataUpdated,
+          'metadataPreempted': metadataPreempted,
+          'metadataRetryAttempted': metadataRetryAttempted,
+          'versionChecked': versionChecked,
+          'schedulerPriority': control.priority,
+          'sourceRevision': refreshed.chapter.sourceRevision,
+        },
+      ),
     );
   }
 
@@ -960,8 +1081,10 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   Future<details.ComicDetailsVersionState> _loadSourceVersionState(
     BrowsableComicSource source,
     String title,
-    String currentComicId,
-  ) async {
+    String currentComicId, {
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
     final versionSource = _sourceVersionCapability(source);
     if (versionSource == null || !versionSource.supportsComicVersions) {
       return const details.ComicDetailsVersionState();
@@ -1044,7 +1167,17 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         );
 
     Future<List<SourceComicVersion>> refreshVersions() async {
-      final discovered = await versionSource.findComicVersions(currentComicId);
+      control?.throwIfCancelled();
+      final controlled = source is ControlledComicVersionSource
+          ? source as ControlledComicVersionSource
+          : null;
+      final discovered = controlled != null
+          ? await controlled.findComicVersionsControlled(
+              currentComicId,
+              control: control,
+            )
+          : await versionSource.findComicVersions(currentComicId);
+      control?.throwIfCancelled();
       await _rememberSourceSuccessors(
         source: source,
         predecessorComicId: currentComicId,
@@ -1055,7 +1188,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         source.sourceId,
         currentComicId,
       );
-      if (current != null && current.chapters.length == 1) {
+      if (control == null && current != null && current.chapters.length == 1) {
         _scheduleVersionReuseWarmup(
           source,
           current.chapters.single,
@@ -1070,6 +1203,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         try {
           return stateFor(await refreshVersions());
         } on Object {
+          if (control?.cancelled == true) rethrow;
           // A confirmed durable relation remains usable while offline.
           return stateFor(const <SourceComicVersion>[]);
         }
@@ -1084,6 +1218,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     try {
       discovered = await refreshVersions();
     } on Object {
+      if (control?.cancelled == true) rethrow;
       if (storedPredecessors.isEmpty) rethrow;
     }
     return stateFor(discovered);

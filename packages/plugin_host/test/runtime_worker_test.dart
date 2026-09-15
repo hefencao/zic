@@ -56,6 +56,12 @@ void main() {
       final request = await (source as ResolvableComicResourceSource)
           .resolveResource(Uri.parse('venera-resource:fixture'));
       expect(request.uri, Uri.parse('https://cdn.invalid/page.webp'));
+      final transformed = await (source as TransformingComicResourceSource)
+          .transformResource(
+        Uri.parse('venera-resource:fixture'),
+        Uint8List.fromList(<int>[1, 2, 3, 4]),
+      );
+      expect(transformed, <int>[1, 2, 3, 4]);
       expect(
         await (source as RetryableComicResourceSource)
             .retryResource(Uri.parse('venera-resource:fixture')),
@@ -394,6 +400,8 @@ class _FixtureDriver implements ExternalPluginRuntimeDriver {
           'body': null,
           'requiresRuntimeTransform': false,
         },
+      ExternalPluginRuntimeOperation.transformResource =>
+        request.arguments['bytes']!,
       ExternalPluginRuntimeOperation.retryResource =>
         const <String, Object?>{'available': false},
       ExternalPluginRuntimeOperation.loadSourceSettings =>

@@ -6,6 +6,7 @@ import android.os.Looper
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.Closeable
+import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
@@ -34,7 +35,9 @@ internal class NativeExternalPluginDriverHost(
     private val context: Context,
     private val veneraResolverHttp: VeneraResolverHttpTransport,
 ) : Closeable {
-    private val veneraNetworkCache = VeneraHttpCacheStore()
+    private val veneraNetworkCache = VeneraHttpCacheStore(
+        persistentRoot = File(context.cacheDir, "venera_http_long_cache"),
+    )
     private val mainHandler = Handler(Looper.getMainLooper())
     private val worker: ExecutorService = Executors.newCachedThreadPool { runnable ->
         Thread(runnable, "zic-native-plugin-driver").apply { isDaemon = true }
@@ -231,7 +234,7 @@ internal class NativeExternalPluginDriverHost(
         val values = drivers.values.toList()
         drivers.clear()
         values.forEach { runCatching { it.close() } }
-        veneraNetworkCache.clear()
+        veneraNetworkCache.clearMemory()
         veneraResolverHttp.close()
         worker.shutdownNow()
         cacheCleanup.shutdownNow()
