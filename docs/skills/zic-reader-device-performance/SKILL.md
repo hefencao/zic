@@ -1,6 +1,6 @@
 ---
 name: zic-reader-device-performance
-version: 1.1.0
+version: 1.2.0
 description: Repeatable real-device ZIC Reader startup, playback, and bidirectional preupload validation without confusing debug-build cost or stale Home accessibility semantics with product regressions.
 ---
 
@@ -60,6 +60,8 @@ Flutter/Android accessibility can preserve Home nodes while Reader covers Home. 
 Confirm Reader entry from app evidence such as the chapter hydrate/Reader session event plus the selected comic's media open and `pageHostMounted` / `firstFrameReady` / presentation events. Confirm exit with Reader retention/dispose evidence and, when interaction correctness matters, prove that a top-level Home control actually receives input after Back.
 
 Never choose a cover with a hard-coded coordinate. Resolve the intended Home/history node from the current streamed accessibility tree, then tap the center of its returned bounds. Coordinates are acceptable only for the subsequent continuous swipe gesture after the Reader viewport is already confirmed.
+
+For synthetic paged Reader navigation on the current 1080x2340 device workflow, the swipe path MUST stay on `y=900` (for example `900,900 -> 180,900` or the reverse) and MUST NOT cross the Home reading-history strip. Do not issue any swipe until Reader entry is already confirmed by Reader trace/session evidence. If Reader entry has not been proved, stop and re-resolve the intended cover instead of "trying a swipe". A swipe performed while Home is still active is a test failure and its resulting navigation/history state MUST NOT be used as product evidence.
 
 ## Bidirectional preupload validation
 
