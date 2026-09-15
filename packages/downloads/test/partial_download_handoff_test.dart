@@ -1906,6 +1906,106 @@ void main() {
     },
   );
 
+  test('sealed READY reader is re-leased without reopening the provider',
+      () async {
+    final root = await Directory.systemTemp.createTemp('ready-reader-pool-');
+    addTearDown(() => root.delete(recursive: true));
+    final oldId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'ready-reader-pool',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/ready-pool-old.webp'),
+    );
+    final newId = DownloadId(
+      content: oldId.content,
+      sourceRevision: 'r2',
+      canonicalUri: Uri.parse('https://example.test/ready-pool-new.webp'),
+    );
+    final bytes = Uint8List.fromList(<int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.filled((256 * 1024) - 12, 0x5a),
+    ]);
+    final store = _ReadyBoundStore(id: oldId, bytes: bytes);
+    final handoff = PartialDownloadHandoff(
+      store: store,
+      equivalentCandidates: (id) => id == newId
+          ? <DownloadId>[oldId]
+          : const <DownloadId>[],
+    );
+    final registry = DownloadRegistry(
+      layout: CacheLayout(root.path),
+      clock: SystemClock(),
+    );
+    addTearDown(registry.dispose);
+    final session = registry.get(newId);
+
+    await handoff.restoreInto(session);
+    final stableKey = session.residentReplayGenerationToken;
+    expect(stableKey, isNotNull);
+    expect(store.readerOpenCalls, 1);
+
+    await session.reset(deleteFinalArtifact: false);
+    expect(store.readerCloseCalls, 0,
+        reason: 'session retirement returns the lease to the handoff pool');
+    await handoff.restoreInto(session);
+    expect(session.state, DownloadState.promoted);
+    expect(session.residentReplayGenerationToken, stableKey);
+    expect(store.readerOpenCalls, 1,
+        reason: 'the same sealed generation must reuse the validated descriptor');
+
+    await session.reset(deleteFinalArtifact: false);
+    await handoff.close();
+    expect(store.readerCloseCalls, 1,
+        reason: 'handoff disposal owns the pooled descriptor lifetime');
+  });
+
+  test('sealed READY reader generation change reopens the provider', () async {
+    final root = await Directory.systemTemp.createTemp('ready-reader-pool-generation-');
+    addTearDown(() => root.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'ready-reader-pool-generation',
+        chapterId: 'chapter',
+        pageId: 'page',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/ready-pool-generation.webp'),
+    );
+    final bytes = Uint8List.fromList(<int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.filled((256 * 1024) - 12, 0x4a),
+    ]);
+    final store = _ReadyBoundStore(id: id, bytes: bytes);
+    final handoff = PartialDownloadHandoff(store: store);
+    final registry = DownloadRegistry(
+      layout: CacheLayout(root.path),
+      clock: SystemClock(),
+    );
+    addTearDown(registry.dispose);
+    final session = registry.get(id);
+
+    await handoff.restoreInto(session);
+    final firstKey = session.residentReplayGenerationToken;
+    expect(store.readerOpenCalls, 1);
+
+    await session.reset(deleteFinalArtifact: false);
+    store.sealedChecksum = 'cafebabe';
+    await handoff.restoreInto(session);
+    expect(store.readerOpenCalls, 2,
+        reason: 'a different immutable seal must not reuse the old descriptor');
+    expect(session.residentReplayGenerationToken, isNot(firstKey));
+
+    await session.reset(deleteFinalArtifact: false);
+    await handoff.close();
+    expect(store.readerCloseCalls, 2,
+        reason: 'both sealed generations remain independently owned by the pool');
+  });
+
   test('bound READY reader preserves metadata prefix and stays retained for ranges', () async {
     final root = await Directory.systemTemp.createTemp('ready-bound-reader-');
     addTearDown(() => root.delete(recursive: true));
@@ -1956,6 +2056,8 @@ void main() {
         reason: 'descriptor open must run inside the local-read scheduler');
     expect(activeWhileReading, 1,
         reason: 'binding reads only the bounded metadata prefix');
+    final firstReplayKey = session.residentReplayGenerationToken;
+    expect(firstReplayKey, isNotNull);
 
     final replay = session.residentReplayRangeChunks;
     expect(replay, isNotNull);
@@ -1972,9 +2074,19 @@ void main() {
         reason: 'one metadata read precedes the two decoder-demanded ranges');
 
     await session.reset(removeCacheRecord: false);
-    expect(store.readerCloseCalls, 1,
-        reason: 'reset is the generation boundary for the retained descriptor');
+    expect(store.readerCloseCalls, 0,
+        reason: 'reset releases only this session lease; the sealed descriptor stays pooled');
     expect(session.residentReplayRangeChunks, isNull);
+
+    await handoff.restoreInto(session);
+    expect(session.residentReplayGenerationToken, firstReplayKey,
+        reason: 'the same sealed physical generation should expose one stable replay acceleration key across session rebinds');
+    expect(store.readerOpenCalls, 1,
+        reason: 'rebind must lease the already-validated descriptor');
+    await session.reset(removeCacheRecord: false);
+    expect(store.readerCloseCalls, 0);
+    await handoff.close();
+    expect(store.readerCloseCalls, 1);
   });
 
 }
@@ -2046,6 +2158,7 @@ final class _ReadyBoundStore implements PartialDownloadStore {
   final Uint8List bytes;
   final void Function()? onReaderOpen;
   final void Function()? onReaderRead;
+  String sealedChecksum = 'deadbeef';
   int readerOpenCalls = 0;
   int readerReadCalls = 0;
   int readerCloseCalls = 0;
@@ -2062,6 +2175,8 @@ final class _ReadyBoundStore implements PartialDownloadStore {
       totalLength: bytes.lengthInBytes,
       exactDurableFinal: true,
       accessMode: 'saf',
+      sealedChecksum: sealedChecksum,
+      sealedChecksumAlgorithm: 'crc32',
       open: ({required int start}) async* {
         bodyOpenCalls++;
         yield Uint8List.sublistView(bytes, start);

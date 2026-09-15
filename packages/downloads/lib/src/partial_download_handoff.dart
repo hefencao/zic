@@ -9,6 +9,7 @@ import 'artifact_cache_manager.dart';
 import 'artifact_cache_read_scheduler.dart';
 import 'artifact_cache_store.dart';
 import 'partial_download_store.dart';
+import 'resident_replay_reader_pool.dart';
 
 typedef PartialDownloadHandoffError = void Function(
   Object error,
@@ -43,6 +44,8 @@ final class PartialDownloadHandoff {
   final ArtifactCacheManager? physicalArtifactCache;
   final TraceSink traceSink;
   final String sessionId;
+  final ResidentReplayReaderPool _residentReplayReaders =
+      ResidentReplayReaderPool();
   final Map<DownloadSession, Future<bool>> _stores =
       <DownloadSession, Future<bool>>{};
   final Expando<_ExactDurableRestoreProof> _exactDurableRestoreProofs =
@@ -52,6 +55,8 @@ final class PartialDownloadHandoff {
 
   int durablePartialLength(DownloadSession session) =>
       _durablePartialLengths[session] ?? 0;
+
+  Future<void> close() => _residentReplayReaders.close();
 
   bool provesExactDurableBody(
     DownloadSession session,
@@ -341,24 +346,18 @@ final class PartialDownloadHandoff {
       }
       final startedAtMicros = clock?.nowMicros();
       PartialDownloadBoundRangeReader? boundReader;
-      final openBoundReader = entry.openBoundRangeReader;
-      if (openBoundReader != null) {
-        ArtifactCacheReadLease? lease;
+      if (entry.openBoundRangeReader != null) {
         try {
-          final scheduler = readScheduler;
-          if (scheduler != null) {
-            lease = await scheduler.acquire(
-              priority: () => session.effectivePriority,
-              control: control,
-            );
-          }
-          boundReader = await openBoundReader();
+          boundReader = (await _openReadyBoundReader(
+            session,
+            entry,
+            control: control,
+          ))
+              .reader;
         } on Object {
           // Descriptor reuse is an optimization. The stateless exact-range
           // authority below remains the correctness fallback.
           boundReader = null;
-        } finally {
-          lease?.release();
         }
       }
       final prefix = await _readEntryPrefix(
@@ -398,6 +397,7 @@ final class PartialDownloadHandoff {
                       ),
           residentReplayRangeClose: reader?.close,
           residentReplayAccessMode: reader?.accessMode ?? entry.accessMode,
+          residentReplayCacheKey: _residentReplayCacheKey(session, entry),
         );
         boundReader = null; // DownloadSession now owns reader lifecycle.
       } on Object {
@@ -530,8 +530,124 @@ final class PartialDownloadHandoff {
                 );
               },
         accessMode: entry.accessMode,
+        sealedChecksum: entry.sealedChecksum,
+        sealedChecksumAlgorithm: entry.sealedChecksumAlgorithm,
         exactDurableFinal: true,
       );
+
+  ResidentReplayGenerationKey? _residentReplayCacheKey(
+    DownloadSession session,
+    PartialDownloadEntry entry,
+  ) {
+    if (!entry.exactDurableFinal || entry.length <= 0) return null;
+    final checksum = entry.sealedChecksum?.trim().toLowerCase();
+    final algorithm = entry.sealedChecksumAlgorithm?.trim().toLowerCase();
+    if (checksum == null || checksum.isEmpty ||
+        algorithm == null || algorithm.isEmpty) {
+      return null;
+    }
+    return ResidentReplayGenerationKey(
+      physicalMediaKey: session.physicalId.key,
+      length: entry.length,
+      checksumAlgorithm: algorithm,
+      checksum: checksum,
+    );
+  }
+
+  Future<({
+    PartialDownloadBoundRangeReader? reader,
+    bool poolHit,
+    int schedulerWaitMicros,
+    int providerOpenMicros,
+    int schedulerActiveAtRequest,
+    int schedulerForegroundAtRequest,
+    int schedulerBackgroundAtRequest,
+    int schedulerPendingAtRequest,
+  })> _openReadyBoundReader(
+    DownloadSession session,
+    PartialDownloadEntry entry, {
+    TaskControl? control,
+  }) async {
+    final openBoundReader = entry.openBoundRangeReader;
+    if (openBoundReader == null) {
+      return (
+        reader: null,
+        poolHit: false,
+        schedulerWaitMicros: 0,
+        providerOpenMicros: 0,
+        schedulerActiveAtRequest: 0,
+        schedulerForegroundAtRequest: 0,
+        schedulerBackgroundAtRequest: 0,
+        schedulerPendingAtRequest: 0,
+      );
+    }
+    var schedulerWaitMicros = 0;
+    var providerOpenMicros = 0;
+    var schedulerActiveAtRequest = 0;
+    var schedulerForegroundAtRequest = 0;
+    var schedulerBackgroundAtRequest = 0;
+    var schedulerPendingAtRequest = 0;
+    Future<PartialDownloadBoundRangeReader?> openProvider() async {
+      ArtifactCacheReadLease? lease;
+      try {
+        final scheduler = readScheduler;
+        if (scheduler != null) {
+          schedulerActiveAtRequest = scheduler.activeCount;
+          schedulerForegroundAtRequest = scheduler.activeForegroundCount;
+          schedulerBackgroundAtRequest = scheduler.activeBackgroundCount;
+          schedulerPendingAtRequest = scheduler.pendingCount;
+          final waitStarted = clock?.nowMicros();
+          lease = await scheduler.acquire(
+            priority: () => session.effectivePriority,
+            control: control,
+          );
+          final acquired = clock?.nowMicros();
+          if (waitStarted != null && acquired != null) {
+            schedulerWaitMicros =
+                (acquired - waitStarted).clamp(0, 1 << 62).toInt();
+          }
+        }
+        final providerStarted = clock?.nowMicros();
+        final reader = await openBoundReader();
+        final providerFinished = clock?.nowMicros();
+        if (providerStarted != null && providerFinished != null) {
+          providerOpenMicros =
+              (providerFinished - providerStarted).clamp(0, 1 << 62).toInt();
+        }
+        return reader;
+      } finally {
+        lease?.release();
+      }
+    }
+
+    final replayKey = _residentReplayCacheKey(session, entry);
+    if (replayKey != null) {
+      final lease = await _residentReplayReaders.acquire(
+        replayKey,
+        openProvider,
+      );
+      return (
+        reader: lease?.reader,
+        poolHit: lease?.reused ?? false,
+        schedulerWaitMicros: schedulerWaitMicros,
+        providerOpenMicros: providerOpenMicros,
+        schedulerActiveAtRequest: schedulerActiveAtRequest,
+        schedulerForegroundAtRequest: schedulerForegroundAtRequest,
+        schedulerBackgroundAtRequest: schedulerBackgroundAtRequest,
+        schedulerPendingAtRequest: schedulerPendingAtRequest,
+      );
+    }
+    return (
+      reader: await openProvider(),
+      poolHit: false,
+      schedulerWaitMicros: schedulerWaitMicros,
+      providerOpenMicros: providerOpenMicros,
+      schedulerActiveAtRequest: schedulerActiveAtRequest,
+      schedulerForegroundAtRequest: schedulerForegroundAtRequest,
+      schedulerBackgroundAtRequest: schedulerBackgroundAtRequest,
+      schedulerPendingAtRequest: schedulerPendingAtRequest,
+    );
+  }
 
   Future<bool> _tryBindEquivalentReadyAuthority(
     DownloadSession session,
@@ -549,52 +665,33 @@ final class PartialDownloadHandoff {
     }
 
     PartialDownloadBoundRangeReader? boundReader;
-    final openBoundReader = entry.openBoundRangeReader;
-    final sourceClock = clock;
-    final boundReaderOpenStartedAtMicros = sourceClock?.nowMicros();
+    final boundReaderOpenStartedAtMicros = clock?.nowMicros();
+    var poolHit = false;
     var schedulerWaitMicros = 0;
     var boundReaderProviderOpenMicros = 0;
     var schedulerActiveAtRequest = 0;
     var schedulerForegroundAtRequest = 0;
     var schedulerBackgroundAtRequest = 0;
     var schedulerPendingAtRequest = 0;
-    if (openBoundReader != null) {
-      ArtifactCacheReadLease? lease;
+    if (entry.openBoundRangeReader != null) {
       try {
-        final scheduler = readScheduler;
-        if (scheduler != null) {
-          schedulerActiveAtRequest = scheduler.activeCount;
-          schedulerForegroundAtRequest = scheduler.activeForegroundCount;
-          schedulerBackgroundAtRequest = scheduler.activeBackgroundCount;
-          schedulerPendingAtRequest = scheduler.pendingCount;
-          final schedulerWaitStartedAtMicros = sourceClock?.nowMicros();
-          lease = await scheduler.acquire(
-            priority: () => session.effectivePriority,
-            control: control,
-          );
-          final acquiredAtMicros = sourceClock?.nowMicros();
-          if (schedulerWaitStartedAtMicros != null && acquiredAtMicros != null) {
-            schedulerWaitMicros =
-                (acquiredAtMicros - schedulerWaitStartedAtMicros)
-                    .clamp(0, 1 << 62)
-                    .toInt();
-          }
-        }
-        final providerOpenStartedAtMicros = sourceClock?.nowMicros();
-        boundReader = await openBoundReader();
-        final providerOpenedAtMicros = sourceClock?.nowMicros();
-        if (providerOpenStartedAtMicros != null && providerOpenedAtMicros != null) {
-          boundReaderProviderOpenMicros =
-              (providerOpenedAtMicros - providerOpenStartedAtMicros)
-                  .clamp(0, 1 << 62)
-                  .toInt();
-        }
+        final opened = await _openReadyBoundReader(
+          session,
+          entry,
+          control: control,
+        );
+        boundReader = opened.reader;
+        poolHit = opened.poolHit;
+        schedulerWaitMicros = opened.schedulerWaitMicros;
+        boundReaderProviderOpenMicros = opened.providerOpenMicros;
+        schedulerActiveAtRequest = opened.schedulerActiveAtRequest;
+        schedulerForegroundAtRequest = opened.schedulerForegroundAtRequest;
+        schedulerBackgroundAtRequest = opened.schedulerBackgroundAtRequest;
+        schedulerPendingAtRequest = opened.schedulerPendingAtRequest;
       } on Object {
         // Retained descriptor reuse is an optimization. The verified durable
-        // range authority below remains a correctness fallback.
+        // range authority below remains the correctness fallback.
         boundReader = null;
-      } finally {
-        lease?.release();
       }
     }
     _recordRestoreStage(
@@ -605,6 +702,7 @@ final class PartialDownloadHandoff {
       extra: <String, Object?>{
         'bound': boundReader != null,
         if (boundReader != null) 'accessMode': boundReader.accessMode,
+        'residentReaderPoolHit': poolHit,
         'schedulerWaitMicros': schedulerWaitMicros,
         'boundReaderProviderOpenMicros': boundReaderProviderOpenMicros,
         'schedulerActiveAtRequest': schedulerActiveAtRequest,
@@ -649,9 +747,7 @@ final class PartialDownloadHandoff {
 
     final openRange = entry.openRange;
     final reader = boundReader;
-    if (reader == null && openRange == null) {
-      return false;
-    }
+    if (reader == null && openRange == null) return false;
     final bindPublishStartedAtMicros = clock?.nowMicros();
     try {
       session.bindResidentImmutableAuthority(
@@ -670,14 +766,18 @@ final class PartialDownloadHandoff {
                 ),
         residentReplayRangeClose: reader?.close,
         residentReplayAccessMode: reader?.accessMode ?? entry.accessMode,
+        residentReplayCacheKey: _residentReplayCacheKey(session, entry),
       );
-      boundReader = null; // DownloadSession now owns the retained reader.
+      boundReader = null; // DownloadSession now owns the retained reader lease.
       _recordRestoreStage(
         session,
         stage: 'ready-resident-bind-publish',
         startedAtMicros: bindPublishStartedAtMicros,
         restoreStartedAtMicros: startedAtMicros,
-        extra: <String, Object?>{'metadataPrefixBytes': prefix.length},
+        extra: <String, Object?>{
+          'metadataPrefixBytes': prefix.length,
+          'residentReaderPoolHit': poolHit,
+        },
       );
     } on Object {
       final reader = boundReader;

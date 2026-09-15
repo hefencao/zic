@@ -373,6 +373,7 @@ final class DownloadSession {
   DownloadResidentReplayRangeChunks? _residentReplayRangeChunks;
   DownloadResidentReplayRangeClose? _residentReplayRangeClose;
   Object? _residentReplayGenerationToken;
+  Object? _residentReplayCacheKey;
   String _residentReplayAccessMode = 'unknown';
   Future<void> _residentReplayCloseTail = Future<void>.value();
   Failure? _failure;
@@ -426,10 +427,12 @@ final class DownloadSession {
   /// Opaque identity for the currently bound immutable resident-body
   /// generation. Composition-owned accelerators may key derived replay bytes
   /// by this token, but the token carries no body authority of its own. A
-  /// resident rebind/reset always replaces it before another Reader can reuse
-  /// those derived bytes.
-  Object? get residentReplayGenerationToken =>
-      residentIngressDeferred ? _residentReplayGenerationToken : null;
+  /// sealed durable generation may supply a stable opaque acceleration key so
+  /// re-created sessions for the same immutable bytes can reuse that prefix;
+  /// otherwise each resident bind receives a fresh session-local token.
+  Object? get residentReplayGenerationToken => residentIngressDeferred
+      ? (_residentReplayCacheKey ?? _residentReplayGenerationToken)
+      : null;
 
   String get residentReplayAccessMode =>
       residentIngressDeferred ? _residentReplayAccessMode : 'unknown';
@@ -1252,6 +1255,7 @@ final class DownloadSession {
     DownloadResidentReplayRangeChunks? residentReplayRangeChunks,
     DownloadResidentReplayRangeClose? residentReplayRangeClose,
     String residentReplayAccessMode = 'unknown',
+    Object? residentReplayCacheKey,
   }) {
     _requireNotDisposed();
     _requireState(<DownloadState>{
@@ -1288,6 +1292,7 @@ final class DownloadSession {
     _residentReplayRangeChunks = residentReplayRangeChunks;
     _residentReplayRangeClose = residentReplayRangeClose;
     _residentReplayGenerationToken = Object();
+    _residentReplayCacheKey = residentReplayCacheKey;
     _residentReplayAccessMode = residentReplayAccessMode;
     _residentLength = totalLength;
     _validators = validators;
@@ -2350,6 +2355,7 @@ final class DownloadSession {
     _residentReplayRangeChunks = null;
     _residentReplayRangeClose = null;
     _residentReplayGenerationToken = null;
+    _residentReplayCacheKey = null;
     _residentReplayAccessMode = 'unknown';
     if (close == null) return;
     _residentReplayCloseTail = _residentReplayCloseTail.then((_) async {

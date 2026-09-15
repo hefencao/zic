@@ -22,6 +22,8 @@ final class PartialDownloadEntry {
     this.openBoundRangeReader,
     this.accessMode = 'unknown',
     this.totalLength,
+    this.sealedChecksum,
+    this.sealedChecksumAlgorithm,
     this.adoptInto,
     this.exactDurableFinal = false,
   });
@@ -41,6 +43,12 @@ final class PartialDownloadEntry {
 
   /// Non-sensitive selected access mode for diagnostics.
   final String accessMode;
+
+  /// Immutable seal metadata for a complete durable generation, when known.
+  /// These fields only scope transient replay acceleration; they never create
+  /// cache/durable authority by themselves.
+  final String? sealedChecksum;
+  final String? sealedChecksumAlgorithm;
 
   /// True only when this exact-id entry is already a complete durable final.
   /// A full restore can pass this operation-scoped proof to the promoted cache

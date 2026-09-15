@@ -5614,6 +5614,8 @@ final class PersistentDownloadArtifactStore
           fallbackRange(start, endExclusive),
       openBoundRangeReader: openBoundReader,
       accessMode: parseSafRecordPath(firstAccess) == null ? 'direct' : 'saf',
+      sealedChecksum: record.checksum.trim().toLowerCase(),
+      sealedChecksumAlgorithm: record.checksumAlgorithm.trim().toLowerCase(),
       exactDurableFinal: true,
     );
   }

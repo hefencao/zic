@@ -260,6 +260,66 @@ void main() {
 
     await session.reset(deleteFinalArtifact: false);
     expect(session.residentReplayGenerationToken, isNull);
+
+    physicalReads = 0;
+    const stableGeneration = 'sealed-generation-a';
+    session.bindResidentImmutableAuthority(
+      validators: const Validators(),
+      totalLength: bytes.lengthInBytes,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: Uint8List.sublistView(bytes, 0, 64),
+      residentReplayRangeChunks: (start, endExclusive) async {
+        physicalReads++;
+        return Stream<List<int>>.value(
+          Uint8List.sublistView(bytes, start, endExclusive),
+        );
+      },
+      residentReplayAccessMode: 'direct',
+      residentReplayCacheKey: stableGeneration,
+    );
+    final stableFirst = await source(session, 0, quantum).then(_collect);
+    expect(stableFirst, Uint8List.sublistView(bytes, 0, quantum));
+    expect(physicalReads, 1);
+
+    await session.reset(deleteFinalArtifact: false);
+    session.bindResidentImmutableAuthority(
+      validators: const Validators(),
+      totalLength: bytes.lengthInBytes,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: Uint8List.sublistView(bytes, 0, 64),
+      residentReplayRangeChunks: (start, endExclusive) async {
+        physicalReads++;
+        return Stream<List<int>>.value(
+          Uint8List.sublistView(bytes, start, endExclusive),
+        );
+      },
+      residentReplayAccessMode: 'direct',
+      residentReplayCacheKey: stableGeneration,
+    );
+    final stableReentry = await source(session, 0, quantum).then(_collect);
+    expect(stableReentry, Uint8List.sublistView(bytes, 0, quantum));
+    expect(physicalReads, 1,
+        reason: 'a recreated session for the same sealed generation should reuse the central bootstrap prefix');
+
+    await session.reset(deleteFinalArtifact: false);
+    session.bindResidentImmutableAuthority(
+      validators: const Validators(),
+      totalLength: bytes.lengthInBytes,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: Uint8List.sublistView(bytes, 0, 64),
+      residentReplayRangeChunks: (start, endExclusive) async {
+        physicalReads++;
+        return Stream<List<int>>.value(
+          Uint8List.sublistView(bytes, start, endExclusive),
+        );
+      },
+      residentReplayAccessMode: 'direct',
+      residentReplayCacheKey: 'sealed-generation-b',
+    );
+    final changedGeneration = await source(session, 0, quantum).then(_collect);
+    expect(changedGeneration, Uint8List.sublistView(bytes, 0, quantum));
+    expect(physicalReads, 2,
+        reason: 'a different sealed generation key must not reuse the old prefix');
   });
 
   test('bound resident replay splits decoder range into 256 KiB physical quanta',

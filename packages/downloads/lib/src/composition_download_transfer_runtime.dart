@@ -1305,6 +1305,7 @@ final class CompositionDownloadTransferRuntime {
     artifactCacheHandoff?.detach();
     await partialDownloadHandoff?.drain(registry.sessions);
     await registry.dispose();
+    await partialDownloadHandoff?.close();
     await workspace.dispose();
   }
 }
