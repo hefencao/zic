@@ -2599,6 +2599,17 @@ bool _isConfirmedFullBodyPrefixMismatch(Failure failure) =>
       payload: <String, Object?>{
         'lane': 'network',
         'error': '$error',
+        if (error is Failure)
+          for (final key in const <String>[
+            'sourceMediaSemanticRejected',
+            'sourceSemanticRetryExhausted',
+            'sourceSemanticAcceptedPlans',
+            'sourceSemanticSameUrlPlans',
+            'sourceSemanticChangedUrlPlans',
+            'sourceSemanticRuntimeTransformPlans',
+            'sourceSemanticRecoveryUnavailable',
+          ])
+            if (error.details.containsKey(key)) key: error.details[key],
         ...details,
       },
     );
