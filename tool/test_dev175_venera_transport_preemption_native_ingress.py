@@ -105,7 +105,8 @@ require(
 runtime = read('packages/plugin_host/lib/src/runtime_source_adapter.dart')
 for token in (
     'TaskControl? control,',
-    '_gate.run(',
+    'final invocationGate = isolatedTransform ? _transformGate : _gate;',
+    'invocationGate.run(',
     'control: control,',
     'await _cancelInvocation(request.requestId);',
     'final class _RuntimeInvocationWaiter',

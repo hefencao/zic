@@ -55,7 +55,8 @@ for token in (
 
 
 for token in (
-    'validatePrefix: parsedRange == null || parsedRange.start == 0',
+    'validatePrefix: !request.requiresRuntimeTransform &&',
+    '(parsedRange == null || parsedRange.start == 0),',
     'bool validatePrefix = true',
     'if (validatePrefix) {',
 ):

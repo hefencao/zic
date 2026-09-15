@@ -65,7 +65,9 @@ for token in (
 transport = read('packages/downloads/lib/src/source_resource_transport.dart')
 for token in (
     'Future<String?> verifiedReuseIdentityFor(',
-    'Future<String?> verifiedReuseIdentity(Uri locator) async {',
+    'TaskControl? control,',
+    'Future<String?> verifiedReuseIdentity(',
+    '_resolve(locator, control: control)',
     'return verifiedComicResourceIdentity(resolved.request.uri);',
     'String? verifiedComicResourceIdentity(Uri uri)',
 ):

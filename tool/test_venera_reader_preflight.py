@@ -35,10 +35,14 @@ def main() -> None:
         "apps/app/lib/demo_home_source_compat.dart",
         "isLegacyVeneraRuntimeLocator",
         "bool forceRefresh = false",
+        "TaskControl? control",
+        "ControlledRefreshableChapterComicSource",
         "RefreshableChapterComicSource? refreshable",
-        "await refreshable.refreshChapter(chapterId)",
-        "final refreshedImmediately = forceRefresh && refreshable != null",
-        "refreshable != null && !refreshedImmediately",
+        "refreshChapterControlled(",
+        "await refreshable!.refreshChapter(chapterId)",
+        "forceRefresh && (controlledRefreshable != null || refreshable != null)",
+        "(controlledRefreshable != null || refreshable != null) &&",
+        "loadChapterControlled(",
         "_loadSourcePageBytes(",
     )
     reject(

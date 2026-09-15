@@ -30,17 +30,29 @@ req(vm is not None and int(vm.group(1)) >= 275, 'dev.275 Android version missing
 
 host = text('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/NativeExternalPluginDriverHost.kt')
 for marker in (
-    'private val veneraNetworkCache = VeneraHttpCacheStore()',
+    'private val veneraNetworkCache = VeneraHttpCacheStore(',
+    'persistentRoot = File(context.cacheDir, "venera_http_long_cache")',
     'networkCache = veneraNetworkCache,',
-    'veneraNetworkCache.clear()',
+    'veneraNetworkCache.clearMemory()',
 ):
     req(marker in host, f'native driver host does not own shared resolver cache: {marker}')
+req('veneraNetworkCache.clear()' not in host,
+    'host close must preserve persistent long resolver cache')
 
 driver = text('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt')
 for marker in (
     'networkCache: VeneraHttpCacheStore,',
     'private val networkCache: VeneraHttpCacheStore,',
     'private val networkCacheNamespace: VeneraHttpCacheNamespace,',
+    'namespace = networkCacheNamespace,',
+):
+    req(marker in driver, f'shared Venera cache contract missing: {marker}')
+req('private val networkCache = VeneraHttpCache()' not in driver,
+    'obsolete per-bridge Venera cache owner remains')
+
+cache = text('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraHttpCacheStore.kt')
+for marker in (
+    'internal class VeneraHttpCacheStore(',
     'internal data class VeneraHttpCacheNamespace(',
     'val pluginId: String,',
     'val pluginVersion: String,',
@@ -50,11 +62,8 @@ for marker in (
     'VENERA_NETWORK_MAX_CACHE_BYTES = 10 * 1024 * 1024',
     'VENERA_NETWORK_LONG_CACHE_NANOS = 6L * 60L * 60L * 1_000_000_000L',
     'VENERA_NETWORK_SHORT_CACHE_NANOS = 5L * 1_000_000_000L',
-    'namespace = networkCacheNamespace,',
 ):
-    req(marker in driver, f'shared Venera cache contract missing: {marker}')
-req('private val networkCache = VeneraHttpCache()' not in driver,
-    'obsolete per-bridge Venera cache owner remains')
+    req(marker in cache, f'shared Venera cache implementation missing: {marker}')
 
 # Bridge close may release bridge-scoped resources but may not clear source/runtime cache.
 bridge_start = driver.index('private class VeneraNativeBridge(')
@@ -65,9 +74,10 @@ req('networkCache.clear()' not in close_body,
     'bridge close must not clear host-owned resolver cache')
 
 # Header/cookie identity remains part of cache safety; only runtime control headers are ignored.
-require('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt',
+require('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraHttpCacheStore.kt',
         'veneraCacheHeadersMatch(requestHeaders, entry.requestHeaders)',
-        'VENERA_CACHE_IGNORED_HEADERS',
+        'VENERA_CACHE_IGNORED_HEADERS')
+require('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt',
         'name.lowercase(Locale.US) !in VENERA_NETWORK_CONTROL_HEADERS')
 
 require('packages/plugin_host_bridge/android/src/test/kotlin/dev/zic/pluginhost/VeneraNetworkPolicyTest.kt',
