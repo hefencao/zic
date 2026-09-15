@@ -30,6 +30,19 @@ def ordered(path: str, first: str, second: str) -> None:
         )
 
 
+def ordered_after(path: str, anchor: str, first: str, second: str) -> None:
+    text = (ROOT / path).read_text(encoding="utf-8")
+    start = text.find(anchor)
+    if start < 0:
+        raise AssertionError(f"{path} missing ordered-section anchor {anchor!r}")
+    left = text.find(first, start)
+    right = text.find(second, start)
+    if left < 0 or right < 0 or left >= right:
+        raise AssertionError(
+            f"{path} does not enforce {first!r} before {second!r} after {anchor!r}"
+        )
+
+
 def main() -> None:
     require(
         "apps/app/lib/demo_home_source_compat.dart",
@@ -56,8 +69,9 @@ def main() -> None:
         "forceSourceRefresh: true",
         "Venera 章节仍包含已失效的运行时资源定位符",
     )
-    ordered(
+    ordered_after(
         "apps/app/lib/demo_home_reader_route.dart",
+        "Future<_PreparedImportedChapter> _prepareImportedChapter(",
         "if (_hasLegacyVeneraLocators(current.chapter))",
         "final byteLoaders =",
     )

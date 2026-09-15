@@ -99,6 +99,38 @@ Map<String, int> _indexChapterPages(ChapterManifest chapter) {
   return Map<String, int>.unmodifiable(result);
 }
 
+
+bool _sameRetainedReaderChapter(
+  ChapterManifest left,
+  ChapterManifest right,
+) {
+  if (left.sourceId != right.sourceId ||
+      left.comicId != right.comicId ||
+      left.chapter.chapterId != right.chapter.chapterId ||
+      left.chapter.sourceRevision != right.chapter.sourceRevision ||
+      left.readingDirection != right.readingDirection ||
+      left.pages.length != right.pages.length) {
+    return false;
+  }
+  for (var index = 0; index < left.pages.length; index++) {
+    final a = left.pages[index];
+    final b = right.pages[index];
+    if (a.pageId != b.pageId ||
+        a.index != b.index ||
+        a.uri != b.uri ||
+        a.width != b.width ||
+        a.height != b.height ||
+        a.byteLength != b.byteLength ||
+        a.contentKindHint != b.contentKindHint ||
+        a.animatedHint != b.animatedHint ||
+        a.checksum != b.checksum ||
+        a.checksumAlgorithm != b.checksumAlgorithm) {
+      return false;
+    }
+  }
+  return true;
+}
+
 final class _RetainedReaderSession {
   _RetainedReaderSession({
     required this.key,
@@ -123,19 +155,23 @@ final class _PipelineReaderSessionRetentionPool {
 
   PipelineReaderSession acquire({
     required String key,
+    required bool Function(PipelineReaderSession session) canReuse,
     required PipelineReaderSession Function() create,
   }) {
     final retained = _idle.remove(key);
     if (retained != null) {
       retained.expiry.cancel();
       final session = retained.session;
-      if (!session.isDisposed) {
+      if (!session.isDisposed && canReuse(session)) {
         _leased[session] = key;
         session.resumeRetainedReaderSession(
           retainedMicros:
               session.clock.nowMicros() - retained.retainedAtMicros,
         );
         return session;
+      }
+      if (!session.isDisposed) {
+        unawaited(session.dispose());
       }
     }
     final session = create();
@@ -421,6 +457,8 @@ final class PipelineReaderSessionFactory {
   }) =>
       _retentionPool.acquire(
         key: _retentionKey(chapter, traceSink),
+        canReuse: (session) =>
+            _sameRetainedReaderChapter(session.chapter, chapter),
         create: () => create(
           chapter: chapter,
           sessionId: sessionId,

@@ -7,6 +7,63 @@ typedef _PreparedImportedChapter = ({
   int? initialPageIndex,
 });
 
+typedef _ReaderPageGenerationRecovery = Future<bool> Function(
+  int rawPageIndex,
+  Object error, {
+  required bool userInitiated,
+});
+
+bool readerSourceGenerationRefreshEligible(Object error) {
+  if (error is! Failure || error.code != ErrorCode.source) return false;
+  final details = error.details;
+  return details['sourceMediaSemanticRejected'] == true &&
+      details['sourceSemanticRetryExhausted'] == true &&
+      details['sourceSemanticRecoveryUnavailable'] == true &&
+      details['sourceSemanticAcceptedPlans'] == 0;
+}
+
+int? readerFreshPageIndexForRecovery(
+  ImportedChapterRecord previous,
+  ImportedChapterRecord refreshed,
+  int previousIndex,
+) {
+  if (previousIndex < 0 || previousIndex >= previous.pages.length ||
+      refreshed.pages.isEmpty) {
+    return null;
+  }
+  final previousPage = previous.pages[previousIndex];
+  final pageId = previousPage.pageId;
+  if (pageId != null) {
+    for (var index = 0; index < refreshed.pages.length; index++) {
+      if (refreshed.pages[index].pageId == pageId) return index;
+    }
+    return null;
+  }
+  for (var index = 0; index < refreshed.pages.length; index++) {
+    if (refreshed.pages[index].sourceId == previousPage.sourceId) return index;
+  }
+  return previousIndex.clamp(0, refreshed.pages.length - 1).toInt();
+}
+
+bool readerPageAuthorityChanged(
+  ImportedChapterRecord previous,
+  ImportedChapterRecord refreshed,
+  int previousIndex,
+) {
+  final refreshedIndex = readerFreshPageIndexForRecovery(
+    previous,
+    refreshed,
+    previousIndex,
+  );
+  if (refreshedIndex == null) return false;
+  final previousPage = previous.pages[previousIndex];
+  final refreshedPage = refreshed.pages[refreshedIndex];
+  return previousPage.sourceId != refreshedPage.sourceId ||
+      previousPage.contentKindHint != refreshedPage.contentKindHint ||
+      previousPage.byteLength != refreshedPage.byteLength ||
+      previousPage.animatedHint != refreshedPage.animatedHint;
+}
+
 final class _ReaderComicVersionNoticeGate extends StatefulWidget {
   const _ReaderComicVersionNoticeGate({
     required this.sourceId,
@@ -70,6 +127,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
   Widget _buildImportedChapterScreen(
     _PreparedImportedChapter prepared, {
     required Future<void> Function(ReadingProgress) onProgressChanged,
+    _ReaderPageGenerationRecovery? onPageGenerationRecovery,
   }) {
     final current = prepared.entry;
     final preference = _preferences[
@@ -155,6 +213,14 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       onFirstPresentationFrame: versionSource == null
           ? null
           : () => _scheduleReaderMetadataVersionRefresh(versionSource, current),
+      onPagePresentationRecovery: onPageGenerationRecovery == null
+          ? null
+          : (asset, error, {required userInitiated}) =>
+              onPageGenerationRecovery(
+                mapIndexForStorage(asset.index),
+                error,
+                userInitiated: userInitiated,
+              ),
       pipelineFactory: defaultLocalMediaPipelineFactory
           .withArtifactCacheManager(_readerArtifactCache)
           .withPartialDownloadStore(
@@ -209,8 +275,10 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
   }) async {
     if (!mounted) return null;
     ReadingProgress? latestProgress;
+    var currentRawPageIndex = initialPageIndex;
     Future<void> onProgressChanged(ReadingProgress progress) {
       latestProgress = progress;
+      currentRawPageIndex = progress.pageIndex;
       return _enqueueReaderProgress(progress);
     }
     widget.debugTrace.record(
@@ -241,24 +309,183 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       }),
     );
 
+    final replacementPrepared =
+        ValueNotifier<_PreparedImportedChapter?>(null);
+    final automaticGenerationRecoveries = <String>{};
+    _PreparedImportedChapter? currentPrepared;
+    ({String pageKey, Future<bool> future})? activeGenerationRecovery;
+    var routeActive = false;
+
+    Future<bool> recoverPageGeneration(
+      int rawPageIndex,
+      Object error, {
+      required bool userInitiated,
+    }) async {
+      if (!readerSourceGenerationRefreshEligible(error)) return false;
+      final previous = currentPrepared;
+      if (previous == null ||
+          rawPageIndex < 0 ||
+          rawPageIndex >= previous.entry.chapter.pages.length) {
+        return false;
+      }
+      if (!userInitiated && currentRawPageIndex != rawPageIndex) return false;
+      final previousPage = previous.entry.chapter.pages[rawPageIndex];
+      final pageKey = previousPage.pageId ?? 'index:$rawPageIndex';
+      final active = activeGenerationRecovery;
+      if (active != null) {
+        return active.pageKey == pageKey ? active.future : false;
+      }
+      if (!userInitiated && !automaticGenerationRecoveries.add(pageKey)) {
+        return false;
+      }
+      late final Future<bool> recovery;
+      recovery = () async {
+        widget.debugTrace.record(
+          TraceEvent(
+            monotonicMicros: _traceClock.elapsedMicroseconds,
+            sessionId: 'reader-entry',
+            kind: TraceEventKind.readerObservation,
+            payload: <String, Object?>{
+              'stage': 'source-page-authority-refresh-start',
+              'pageIndex': rawPageIndex,
+              'userInitiated': userInitiated,
+              'sourceSemanticAcceptedPlans':
+                  (error as Failure).details['sourceSemanticAcceptedPlans'],
+              'sourceSemanticRecoveryUnavailable':
+                  error.details['sourceSemanticRecoveryUnavailable'],
+            },
+          ),
+        );
+        late final _PreparedImportedChapter refreshed;
+        try {
+          final refreshedEntry = await _refreshRemoteEntry(
+            previous.entry,
+            forceSourceRefresh: true,
+          );
+          if (_hasLegacyVeneraLocators(refreshedEntry.chapter)) {
+            throw StateError(
+              'Venera 章节刷新后仍包含已失效的运行时资源定位符',
+            );
+          }
+          final readerManifest = refreshedEntry.chapter.toManifest();
+          final byteLoaders = <String, LocalImageFileBytesLoader>{};
+          refreshed = (
+            entry: refreshedEntry,
+            byteLoaders: byteLoaders,
+            responseSources: _readerResponseSourcesFor(
+              readerManifest,
+              byteLoaders,
+            ),
+            initialPageIndex: rawPageIndex,
+          );
+        } on Object catch (refreshError) {
+          widget.debugTrace.record(
+            TraceEvent(
+              monotonicMicros: _traceClock.elapsedMicroseconds,
+              sessionId: 'reader-entry',
+              kind: TraceEventKind.taskFailed,
+              payload: <String, Object?>{
+                'stage': 'source-page-authority-refresh-failed',
+                'pageIndex': rawPageIndex,
+                'error': refreshError.toString(),
+              },
+            ),
+          );
+          return false;
+        }
+        final refreshedPageIndex = readerFreshPageIndexForRecovery(
+          previous.entry.chapter,
+          refreshed.entry.chapter,
+          rawPageIndex,
+        );
+        final authorityChanged = readerPageAuthorityChanged(
+          previous.entry.chapter,
+          refreshed.entry.chapter,
+          rawPageIndex,
+        );
+        if (!authorityChanged || refreshedPageIndex == null) {
+          widget.debugTrace.record(
+            TraceEvent(
+              monotonicMicros: _traceClock.elapsedMicroseconds,
+              sessionId: 'reader-entry',
+              kind: TraceEventKind.artifactSource,
+              payload: <String, Object?>{
+                'stage': 'source-page-authority-refresh-no-change',
+                'pageIndex': rawPageIndex,
+              },
+            ),
+          );
+          return false;
+        }
+        final replacement = (
+          entry: refreshed.entry,
+          byteLoaders: refreshed.byteLoaders,
+          responseSources: refreshed.responseSources,
+          initialPageIndex: refreshedPageIndex,
+        );
+        if (!routeActive) return false;
+        currentPrepared = replacement;
+        currentRawPageIndex = refreshedPageIndex;
+        replacementPrepared.value = replacement;
+        await WidgetsBinding.instance.endOfFrame;
+        final replaced = routeActive;
+        widget.debugTrace.record(
+          TraceEvent(
+            monotonicMicros: _traceClock.elapsedMicroseconds,
+            sessionId: 'reader-entry',
+            kind: TraceEventKind.artifactSource,
+            payload: <String, Object?>{
+              'stage': replaced
+                  ? 'source-page-authority-replaced'
+                  : 'source-page-authority-replace-unavailable',
+              'pageIndex': rawPageIndex,
+              'refreshedPageIndex': refreshedPageIndex,
+            },
+          ),
+        );
+        return replaced;
+      }();
+      activeGenerationRecovery = (pageKey: pageKey, future: recovery);
+      try {
+        return await recovery;
+      } finally {
+        if (identical(activeGenerationRecovery?.future, recovery)) {
+          activeGenerationRecovery = null;
+        }
+      }
+    }
+
     final route = MaterialPageRoute<void>(
       builder: (_) => DeferredReaderRoute<_PreparedImportedChapter>(
         title: title,
         traceSink: widget.debugTrace,
         traceSessionId: 'reader-entry',
-        load: () => _prepareImportedChapter(
-          loadChapter,
-          refreshRemote: refreshRemote,
-          initialPageIndex: initialPageIndex,
-        ),
-        builder: (_, prepared) => this._buildImportedChapterScreen(
-          prepared,
-          onProgressChanged: onProgressChanged,
+        load: () async {
+          final prepared = await _prepareImportedChapter(
+            loadChapter,
+            refreshRemote: refreshRemote,
+            initialPageIndex: initialPageIndex,
+          );
+          currentPrepared = prepared;
+          currentRawPageIndex = prepared.initialPageIndex ??
+              prepared.entry.progress?.pageIndex ??
+              0;
+          return prepared;
+        },
+        builder: (_, prepared) =>
+            ValueListenableBuilder<_PreparedImportedChapter?>(
+          valueListenable: replacementPrepared,
+          builder: (_, replacement, _) => _buildImportedChapterScreen(
+            replacement ?? prepared,
+            onProgressChanged: onProgressChanged,
+            onPageGenerationRecovery: recoverPageGeneration,
+          ),
         ),
       ),
     );
 
     _beginReaderRoute();
+    routeActive = true;
     try {
       await Navigator.of(context).push(route);
       try {
@@ -272,9 +499,33 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       }
       return progress;
     } finally {
+      routeActive = false;
+      replacementPrepared.dispose();
       _endReaderRoute();
     }
   }
+
+  Map<String, LocalImageResponseSource> _readerResponseSourcesFor(
+    ChapterManifest readerManifest,
+    Map<String, LocalImageFileBytesLoader> byteLoaders,
+  ) =>
+      readerManifest.sourceId == 'local-folder'
+          ? const <String, LocalImageResponseSource>{}
+          : <String, LocalImageResponseSource>{
+              for (final page in readerManifest.pages)
+                if (!byteLoaders.containsKey(page.uri.toString()))
+                  page.uri.toString(): LocalImageResponseSource(
+                    openControlledResponse: _sourceResources
+                        .observedPageControlledResponseLoaderFor(
+                      readerManifest,
+                      page,
+                    ),
+                    selfBoundedOpen: _sourceResources.pageOpenSelfBoundedFor(
+                      readerManifest.sourceId,
+                      page.uri,
+                    ),
+                  ),
+            };
 
   Future<_PreparedImportedChapter> _prepareImportedChapter(
     Future<ImportedLibraryEntry> Function() loadChapter, {
@@ -342,23 +593,10 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
             .catchError((Object _, StackTrace __) => false),
       );
     }
-    final responseSources = current.chapter.sourceId == 'local-folder'
-        ? const <String, LocalImageResponseSource>{}
-        : <String, LocalImageResponseSource>{
-            for (final page in readerManifest.pages)
-              if (!byteLoaders.containsKey(page.uri.toString()))
-                page.uri.toString(): LocalImageResponseSource(
-                  openControlledResponse:
-                      _sourceResources.observedPageControlledResponseLoaderFor(
-                    readerManifest,
-                    page,
-                  ),
-                  selfBoundedOpen: _sourceResources.pageOpenSelfBoundedFor(
-                    readerManifest.sourceId,
-                    page.uri,
-                  ),
-                ),
-          };
+    final responseSources = _readerResponseSourcesFor(
+      readerManifest,
+      byteLoaders,
+    );
     unawaited(_markChapterReadForNavigation(current));
     final totalMs = totalWatch.elapsedMilliseconds;
     widget.debugTrace.record(

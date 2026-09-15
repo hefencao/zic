@@ -59,6 +59,56 @@ final class ImageFolderScreen extends StatelessWidget {
   }
 }
 
+
+final class _ImportedChapterPipelineKey {
+  _ImportedChapterPipelineKey(ImportedChapterRecord record)
+      : chapterId = record.chapterId,
+        sourceRevision = record.sourceRevision,
+        pages = List<(String, String, int?, ContentKindHint, bool)>.unmodifiable(
+          record.pages.map(
+            (page) => (
+              page.stablePageId,
+              page.sourceId,
+              page.byteLength,
+              page.contentKindHint,
+              page.animatedHint,
+            ),
+          ),
+        );
+
+  final String chapterId;
+  final String sourceRevision;
+  final List<(String, String, int?, ContentKindHint, bool)> pages;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! _ImportedChapterPipelineKey ||
+        chapterId != other.chapterId ||
+        sourceRevision != other.sourceRevision ||
+        pages.length != other.pages.length) {
+      return false;
+    }
+    for (var index = 0; index < pages.length; index++) {
+      if (pages[index] != other.pages[index]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hash(
+        chapterId,
+        sourceRevision,
+        Object.hashAll(pages),
+      );
+}
+
+typedef ImportedPagePresentationRecovery = Future<bool> Function(
+  PageAsset asset,
+  Object error, {
+  required bool userInitiated,
+});
+
 final class LocalImageResponseSource {
   const LocalImageResponseSource({
     required this.openControlledResponse,
@@ -82,6 +132,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
     this.onFavoriteChanged,
     this.onDownloadRequested,
     this.onFirstPresentationFrame,
+    this.onPagePresentationRecovery,
     required this.pipelineFactory,
     this.initiallyImmersive = true,
     this.initialReaderSettings = const ReaderSessionSettings(),
@@ -101,6 +152,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
   final FutureOr<void> Function(bool favorite)? onFavoriteChanged;
   final FutureOr<void> Function()? onDownloadRequested;
   final VoidCallback? onFirstPresentationFrame;
+  final ImportedPagePresentationRecovery? onPagePresentationRecovery;
   final PipelineReaderSessionFactory pipelineFactory;
   final bool initiallyImmersive;
   final ReaderSessionSettings initialReaderSettings;
@@ -138,13 +190,8 @@ final class ImportedImageChapterScreen extends StatelessWidget {
     }
 
     return PipelineReaderSessionHost(
-      key: ValueKey<Object>(
-        (
-          record.chapterId,
-          record.sourceRevision,
-          byteLoaders.length,
-          responseSources.length,
-        ),
+      key: ValueKey<_ImportedChapterPipelineKey>(
+        _ImportedChapterPipelineKey(record),
       ),
       chapter: chapter,
       factory: pipelineFactory.withLoaderSources(sources),
@@ -207,9 +254,34 @@ final class ImportedImageChapterScreen extends StatelessWidget {
               image: image,
               tokenBytesLoader: (_, token) => runtime.loadBytes(token),
               presentationFileLoader: runtime.openEncodedPresentationFile,
-              onRecoverPresentationFailure:
-                  runtime.recoverPresentationFailure,
-              onRetry: runtime.retryPresentation,
+              onRecoverPresentationFailure: onPagePresentationRecovery == null
+                  ? runtime.recoverPresentationFailure
+                  : (error) async {
+                      if (await onPagePresentationRecovery!(
+                        asset,
+                        error,
+                        userInitiated: false,
+                      )) {
+                        return true;
+                      }
+                      return runtime.recoverPresentationFailure(error);
+                    },
+              onRetry: onPagePresentationRecovery == null
+                  ? runtime.retryPresentation
+                  : null,
+              onRetryWithError: onPagePresentationRecovery == null
+                  ? null
+                  : (error) async {
+                      if (error != null &&
+                          await onPagePresentationRecovery!(
+                            asset,
+                            error,
+                            userInitiated: true,
+                          )) {
+                        return true;
+                      }
+                      return runtime.retryPresentation();
+                    },
               onPreviewStateChanged: onPreviewStateChanged,
               onFirstFrame: reportFirstFrame,
               downloadIdentity: runtime.pageStream.identity,

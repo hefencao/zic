@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -44,11 +45,16 @@ require(
     'userAgentProvider: () => widget.preferences.networkUserAgent',
     'defaultUserAgentProvider: () => widget.preferences.networkUserAgent',
 )
-require(
-    'apps/app/lib/demo_home_reader_route.dart',
-    '_sourceResources.observedPageControlledResponseLoaderFor(',
-    '_sourceResources.pageOpenSelfBoundedFor(',
-)
+reader_route = read('apps/app/lib/demo_home_reader_route.dart')
+for seam in (
+    'observedPageControlledResponseLoaderFor',
+    'pageOpenSelfBoundedFor',
+):
+    if re.search(r'_sourceResources\s*\.\s*' + seam + r'\s*\(', reader_route) is None:
+        raise SystemExit(
+            'FAIL: apps/app/lib/demo_home_reader_route.dart missing '
+            f'dev.161 controlled source seam: {seam}',
+        )
 forbid('apps/app/lib/demo_home.dart', '_sourceResources.responseLoaderFor(')
 forbid('apps/app/lib/demo_home_reader_route.dart', '_sourceResources.responseLoaderFor(')
 require(

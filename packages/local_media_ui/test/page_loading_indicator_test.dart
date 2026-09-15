@@ -139,4 +139,48 @@ void main() {
     expect(find.byKey(imageFolderPreviewErrorKey), findsNothing);
   });
 
+  testWidgets('manual retry receives the original presentation error',
+      (tester) async {
+    var fresh = false;
+    Object? retryError;
+    final image = PickedImage(
+      file: XFile('manual-retry-error.png'),
+      format: LocalImageFormat.png,
+      displayName: 'manual-retry-error.png',
+      sourceId: 'memory:manual-retry-error.png',
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SizedBox(
+          width: 240,
+          height: 360,
+          child: LocalImagePlayer(
+            image: image,
+            bytesLoader: (_) async => fresh
+                ? base64Decode(
+                    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+                    'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+                  )
+                : Uint8List.fromList('<html>bad media</html>'.codeUnits),
+            onRecoverPresentationFailure: (_) async => false,
+            onRetryWithError: (error) async {
+              retryError = error;
+              fresh = true;
+              return true;
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(imageFolderPreviewErrorKey), findsOneWidget);
+    await tester.tap(find.byKey(imageFolderPreviewRetryKey));
+    await tester.pumpAndSettle();
+
+    expect(retryError, isNotNull);
+    expect(find.byKey(imageFolderPreviewErrorKey), findsNothing);
+  });
+
 }

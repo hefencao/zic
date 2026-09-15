@@ -11,6 +11,7 @@ final class LocalImagePlayer extends StatefulWidget {
     this.decodeProbe,
     this.onRecoverPresentationFailure,
     this.onRetry,
+    this.onRetryWithError,
     this.onPreviewStateChanged,
     this.onFirstFrame,
     this.downloadIdentity,
@@ -38,6 +39,7 @@ final class LocalImagePlayer extends StatefulWidget {
   final LocalImageDecodeProbe? decodeProbe;
   final Future<bool> Function(Object error)? onRecoverPresentationFailure;
   final Future<bool> Function()? onRetry;
+  final Future<bool> Function(Object? error)? onRetryWithError;
   final ImagePreviewStateChanged? onPreviewStateChanged;
   final VoidCallback? onFirstFrame;
   final DownloadId? downloadIdentity;
@@ -201,6 +203,14 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           authoritative: true,
         );
       }
+      if (snapshot.state == PipelinePageTransferState.failed) {
+        final error =
+            snapshot.failure ?? StateError('pipeline page transfer failed');
+        if (!_recoveryInFlight) {
+          unawaited(_handlePageStreamFailure(stream, error));
+        }
+        return;
+      }
       final kind = snapshot.kind;
       if (kind == PipelinePageContentKind.webp) {
         if (_detectedFormat != LocalImageFormat.webp) {
@@ -227,14 +237,6 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           !awaitingPipelineClassification) {
         _fallbackLoadStarted = true;
         unawaited(_load());
-      }
-      if (snapshot.state == PipelinePageTransferState.failed) {
-        _publish(
-          ImagePreviewState.invalid(
-            _detectedFormat,
-            snapshot.failure ?? StateError('pipeline page transfer failed'),
-          ),
-        );
       }
     }
     _pageStreamingListener = listener;
@@ -503,14 +505,38 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
   }
 
-  Future<bool> _tryAutomaticRecovery(Object error) async {
+  Future<void> _handlePageStreamFailure(
+    PipelinePageStream stream,
+    Object error,
+  ) async {
+    final generation = _generation;
+    final recovered = await _tryAutomaticRecovery(
+      error,
+      restartLoad: false,
+    );
+    if (recovered ||
+        !mounted ||
+        generation != _generation ||
+        widget.pageStream != stream ||
+        stream.snapshot.state != PipelinePageTransferState.failed) {
+      return;
+    }
+    _publish(ImagePreviewState.invalid(_detectedFormat, error));
+  }
+
+  Future<bool> _tryAutomaticRecovery(
+    Object error, {
+    bool restartLoad = true,
+  }) async {
     final recover = widget.onRecoverPresentationFailure;
     if (recover == null || _recoveryInFlight) return false;
     _recoveryInFlight = true;
     try {
       final recovered = await recover(error);
       if (!mounted || !recovered) return false;
-      _restartLoadAfterRecovery();
+      if (restartLoad) {
+        _restartLoadAfterRecovery();
+      }
       return true;
     } on Object {
       return false;
@@ -521,12 +547,15 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
 
   Future<void> _retry() async {
     final retry = widget.onRetry;
-    if (retry == null || _recoveryInFlight) return;
+    final retryWithError = widget.onRetryWithError;
+    if ((retry == null && retryWithError == null) || _recoveryInFlight) return;
     final prior = _state;
     _recoveryInFlight = true;
     _publish(ImagePreviewState.loading(_detectedFormat));
     try {
-      final recovered = await retry();
+      final recovered = retryWithError != null
+          ? await retryWithError(prior.error)
+          : await retry!();
       if (!mounted) return;
       if (recovered) {
         _restartLoadAfterRecovery();
@@ -864,7 +893,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
               icon: const Icon(Icons.copy),
               label: const Text('复制错误'),
             ),
-            if (widget.onRetry != null) ...<Widget>[
+            if (widget.onRetry != null || widget.onRetryWithError != null) ...<Widget>[
               const SizedBox(height: 12),
               OutlinedButton.icon(
                 key: imageFolderPreviewRetryKey,

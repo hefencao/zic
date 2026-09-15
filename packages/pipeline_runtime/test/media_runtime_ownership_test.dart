@@ -13,6 +13,45 @@ import 'package:telemetry/telemetry.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  testWidgets(
+      'Reader session host rejects page carrier mutation without key replacement',
+      (tester) async {
+    final factory = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(_Runtime()),
+      pageDownloadLane: NetLane(maxActive: 5),
+    );
+    const hostKey = ValueKey<String>('reader-host');
+
+    Widget host(ChapterManifest chapter) => Directionality(
+          textDirection: TextDirection.ltr,
+          child: PipelineReaderSessionHost(
+            key: hostKey,
+            chapter: chapter,
+            factory: factory,
+            builder: (_, _) => const SizedBox(),
+          ),
+        );
+
+    await tester.pumpWidget(
+      host(_chapter(uri: Uri.parse('https://old.example/page.webp'))),
+    );
+    await tester.pumpWidget(
+      host(_chapter(uri: Uri.parse('https://new.example/page.webp'))),
+    );
+
+    expect(
+      tester.takeException(),
+      isA<StateError>().having(
+        (error) => error.message,
+        'message',
+        contains('chapter identity is immutable'),
+      ),
+    );
+
+    await tester.pumpWidget(const SizedBox());
+    await factory.disposeRetainedSessions();
+  });
+
   test('factory clones retain the composition-owned artifact cache manager', () {
     final manager = ArtifactCacheManager(backend: _Backend());
     final factory = PipelineReaderSessionFactory(
@@ -215,6 +254,77 @@ void main() {
     secondFactory.release(second);
     await base.disposeRetainedSessions();
     expect(runtime.closed, isTrue);
+  });
+
+  test('changed page carrier cannot reuse a retained Reader session', () async {
+    final base = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: const _FreshFactory(),
+      pageDownloadLane: NetLane(maxActive: 5),
+    );
+    final oldUri = Uri.parse('https://old.example/page.webp');
+    final newUri = Uri.parse('https://new.example/page.webp');
+    final firstFactory = base.withLoaderSources(
+      <Uri, LoaderTransportSource>{
+        oldUri: LoaderTransportSource(
+          revision: 'r1:0',
+          loadBytes: () async => Uint8List(0),
+        ),
+      },
+    );
+    final first = firstFactory.acquire(
+      chapter: _chapter(uri: oldUri),
+      sessionId: 'old-carrier',
+    );
+    firstFactory.release(first);
+
+    final secondFactory = base.withLoaderSources(
+      <Uri, LoaderTransportSource>{
+        newUri: LoaderTransportSource(
+          revision: 'r1:0',
+          loadBytes: () async => Uint8List(0),
+        ),
+      },
+    );
+    final second = secondFactory.acquire(
+      chapter: _chapter(uri: newUri),
+      sessionId: 'new-carrier',
+    );
+
+    expect(second, isNot(same(first)));
+    expect(second.chapter.pages.single.uri, newUri);
+
+    secondFactory.release(second);
+    await base.disposeRetainedSessions();
+  });
+
+  test('changed page metadata cannot reuse a retained Reader session', () async {
+    final uri = Uri.parse('https://stable.example/page.webp');
+    final factory = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: const _FreshFactory(),
+      pageDownloadLane: NetLane(maxActive: 5),
+      loaderSources: <Uri, LoaderTransportSource>{
+        uri: LoaderTransportSource(
+          revision: 'r1:0',
+          loadBytes: () async => Uint8List(0),
+        ),
+      },
+    );
+    final first = factory.acquire(
+      chapter: _chapter(uri: uri, byteLength: 100),
+      sessionId: 'old-metadata',
+    );
+    factory.release(first);
+
+    final second = factory.acquire(
+      chapter: _chapter(uri: uri, byteLength: 200),
+      sessionId: 'new-metadata',
+    );
+
+    expect(second, isNot(same(first)));
+    expect(second.chapter.pages.single.byteLength, 200);
+
+    factory.release(second);
+    await factory.disposeRetainedSessions();
   });
 
   test('retention keeps the two most recent media-empty Reader sessions', () async {
@@ -947,6 +1057,7 @@ ChapterManifest _chapterIdentity({
 ChapterManifest _chapter({
   int? width,
   int? height,
+  int? byteLength,
   Uri? uri,
   ContentKindHint contentKindHint = ContentKindHint.webp,
 }) => ChapterManifest(
@@ -968,6 +1079,7 @@ ChapterManifest _chapter({
           uri: uri ?? Uri.parse('asset:///page-0.webp'),
           width: width,
           height: height,
+          byteLength: byteLength,
           contentKindHint: contentKindHint,
         ),
       ],

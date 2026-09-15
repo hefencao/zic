@@ -71,8 +71,30 @@ final class _PipelineReaderSessionHostState
   }
 }
 
-bool _sameChapter(ChapterManifest left, ChapterManifest right) =>
-    left.sourceId == right.sourceId &&
-    left.comicId == right.comicId &&
-    left.chapter.chapterId == right.chapter.chapterId &&
-    left.chapter.sourceRevision == right.chapter.sourceRevision;
+bool _sameChapter(ChapterManifest left, ChapterManifest right) {
+  if (left.sourceId != right.sourceId ||
+      left.comicId != right.comicId ||
+      left.chapter.chapterId != right.chapter.chapterId ||
+      left.chapter.sourceRevision != right.chapter.sourceRevision ||
+      left.readingDirection != right.readingDirection ||
+      left.pages.length != right.pages.length) {
+    return false;
+  }
+  for (var index = 0; index < left.pages.length; index++) {
+    final a = left.pages[index];
+    final b = right.pages[index];
+    if (a.pageId != b.pageId ||
+        a.index != b.index ||
+        a.uri != b.uri ||
+        a.width != b.width ||
+        a.height != b.height ||
+        a.byteLength != b.byteLength ||
+        a.contentKindHint != b.contentKindHint ||
+        a.animatedHint != b.animatedHint ||
+        a.checksum != b.checksum ||
+        a.checksumAlgorithm != b.checksumAlgorithm) {
+      return false;
+    }
+  }
+  return true;
+}
