@@ -80,9 +80,10 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
         );
     final externalPlugins =
         _incomingExternalPlugins ?? _externalSources.activeController;
-    final sources = _buildCachedSources(
+    final sources = _sourceProjection.composeForServices(
       cacheCoordinator,
-      externalPlugins: externalPlugins,
+      externalSources:
+          externalPlugins?.activeSources ?? const <BrowsableComicSource>[],
     );
 
     try {
@@ -112,7 +113,10 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     _wholeComicDownloads = wholeComicDownloads;
     _cacheCoordinator = cacheCoordinator;
     _ownsCacheCoordinator = suppliedCache == null;
-    _sources = sources;
+    _sourceProjection.adoptServiceProjection(
+      sources,
+      cache: cacheCoordinator,
+    );
     unawaited(_recoverCommittedSourceMigrations());
     if (previousOwnsCacheCoordinator &&
         !identical(previousCacheCoordinator, _cacheCoordinator) &&

@@ -111,33 +111,6 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
   int _manifestChapterCount(ComicManifest manifest) =>
       manifest.chapters.length;
 
-  Future<bool> _persistKnownCanonicalComicIds() async {
-    await _ensureLibraryReady();
-    var changed = false;
-    for (final saved in _savedComics) {
-      final sourceCanonical = _sourceCanonicalComicId(
-        saved.sourceId,
-        saved.comicId,
-      );
-      if (sourceCanonical == null) {
-        continue;
-      }
-      final canonical =
-          sourceCanonical == saved.comicId ? null : sourceCanonical;
-      if (canonical == saved.canonicalComicId) {
-        continue;
-      }
-      await _librarySession.upsertSavedComic(
-        saved.copyWith(
-          canonicalComicId: canonical,
-          clearCanonicalComicId: canonical == null,
-        ),
-      );
-      changed = true;
-    }
-    return changed;
-  }
-
   LibraryComic? _exactLibraryComicForSourceIdentity(
     String sourceId,
     String comicId,

@@ -1909,6 +1909,7 @@ def check_compile_regressions() -> None:
             ROOT / 'apps/app/lib/source_resource_gateway.dart',
             ROOT / 'apps/app/lib/home_widgets.dart',
             ROOT / 'apps/app/lib/home_library_session.dart',
+            ROOT / 'apps/app/lib/home_source_projection.dart',
         )
     )
     if len(home_path.read_text(encoding='utf-8').splitlines()) > 1800:

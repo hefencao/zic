@@ -34,6 +34,7 @@ import 'webp_demo.dart';
 import 'home_library_session.dart';
 import 'home_external_source_lifecycle.dart';
 import 'home_reader_composition.dart';
+import 'home_source_projection.dart';
 import 'home_widgets.dart';
 export 'home_widgets.dart' show ComicCoverCard, ComicDownloadProgress, ComicDownloadProgressKind;
 part 'demo_home_views.dart';
@@ -189,7 +190,7 @@ final class _DemoHomeState extends State<DemoHome> {
   late final ComicSourceResourceGateway _sourceResources;
   late final HomeReaderChapterComposition _readerChapterComposition;
   late WholeComicDownloadQueue _wholeComicDownloads;
-  late List<BrowsableComicSource> _sources;
+  late final HomeSourceProjection _sourceProjection;
   late final HomeLibrarySession _librarySession;
   late ResourceCacheCoordinator _cacheCoordinator;
   late bool _ownsCacheCoordinator;
@@ -293,29 +294,6 @@ final class _DemoHomeState extends State<DemoHome> {
     }
   }
 
-  List<BrowsableComicSource> _buildCachedSources(
-    ResourceCacheCoordinator cache, {
-    ExternalPluginController? externalPlugins,
-  }) {
-    final rawSources = widget.comicSources ??
-        <BrowsableComicSource>[
-          MangaDexSource(
-            userAgentProvider: () => widget.preferences.networkUserAgent,
-          ),
-          ...?externalPlugins?.activeSources,
-        ];
-    return List<BrowsableComicSource>.unmodifiable(
-      rawSources.map(
-        (source) => source is CachedBrowsableComicSource
-            ? source
-            : CachedBrowsableComicSource(
-                source: source,
-                cache: cache.responses,
-              ),
-      ),
-    );
-  }
-
   List<LibraryComic> get _libraryComics => collapseCanonicalLibraryComics(
         aggregateImportedLibrary(
           _libraryEntries,
@@ -357,14 +335,6 @@ final class _DemoHomeState extends State<DemoHome> {
                 backend: _chapterDownloads as ArtifactCacheBackend,
               )
             : null);
-    _externalSources = HomeExternalSourceLifecycle(
-      loaderProvider: () => _externalPluginLoader,
-      sourceAvailable: (sourceId) => _sourceForId(sourceId) != null,
-      isDeferredSource: _isDeferredExternalSourceId,
-      refreshProjection: _replaceExternalSourcesFor,
-      reportError: (stage, error) => debugPrint('$stage failed: $error'),
-    );
-    _syncCachedCarrierTrustMode();
     final suppliedCache = _incomingCacheCoordinator;
     _ownsCacheCoordinator = suppliedCache == null;
     _cacheCoordinator = suppliedCache ??
@@ -374,10 +344,33 @@ final class _DemoHomeState extends State<DemoHome> {
                   ? _chapterDownloads as ArtifactCacheMaintenance
                   : null),
         );
-    _sources = _buildCachedSources(
-      _cacheCoordinator,
-      externalPlugins: _incomingExternalPlugins,
+    _sourceProjection = HomeSourceProjection(
+      suppliedSources: widget.comicSources,
+      defaultSources: () => <BrowsableComicSource>[
+        MangaDexSource(
+          userAgentProvider: () => widget.preferences.networkUserAgent,
+        ),
+      ],
+      cache: _cacheCoordinator,
+      externalSources:
+          _incomingExternalPlugins?.activeSources ??
+          const <BrowsableComicSource>[],
+      publishSources: _publishSourceProjection,
+      ensureLibraryReady: _ensureLibraryReady,
+      savedComics: () => _savedComics,
+      upsertSavedComic: (comic) => _librarySession.upsertSavedComic(comic),
+      reloadLibrary: _reloadLibrary,
+      requestPresentationRefresh: _refreshSourcePagePresentation,
     );
+    _externalSources = HomeExternalSourceLifecycle(
+      loaderProvider: () => _externalPluginLoader,
+      sourceAvailable: (sourceId) => _sourceForId(sourceId) != null,
+      isDeferredSource: _isDeferredExternalSourceId,
+      refreshProjection: (controller) =>
+          _sourceProjection.refreshExternalSources(controller.activeSources),
+      reportError: (stage, error) => debugPrint('$stage failed: $error'),
+    );
+    _syncCachedCarrierTrustMode();
     _sourceResources = ComicSourceResourceGateway(
       sourceForId: _sourceForId,
       waitForSource: (sourceId) => _externalSources.waitForSource(sourceId),
@@ -396,7 +389,7 @@ final class _DemoHomeState extends State<DemoHome> {
       snapshotStore: widget.homeProjectionSnapshotStore,
       chapterDownloads: _chapterDownloads,
       wholeComicDownloads: _wholeComicDownloads,
-      sources: _sources,
+      sources: _sourceProjection.sources,
       ownsLibrary: ownsLibrary,
       ownsChapterDownloads: ownsChapterDownloads,
       ownsWholeComicDownloads: ownsWholeComicDownloads,
@@ -638,14 +631,8 @@ final class _DemoHomeState extends State<DemoHome> {
     }
   }
 
-  BrowsableComicSource? _sourceForId(String sourceId) {
-    for (final source in _sources) {
-      if (source.sourceId == sourceId) {
-        return source;
-      }
-    }
-    return null;
-  }
+  BrowsableComicSource? _sourceForId(String sourceId) =>
+      _sourceProjection.sourceForId(sourceId);
 
   List<BrowsableComicSource> get _enabledSources =>
       _librarySession.enabledSources;
@@ -658,42 +645,21 @@ final class _DemoHomeState extends State<DemoHome> {
     _librarySession.replaceSourcePreference(updated);
   }
 
-  Future<void> _replaceExternalSourcesFor(
-    ExternalPluginController controller,
+  Future<void> _publishSourceProjection(
+    List<BrowsableComicSource> sources,
   ) async {
-    final builtIn = _sources
-        .where((source) =>
-            !source.sourceId.startsWith('mihon:') &&
-            !source.sourceId.startsWith('venera:'))
-        .toList(growable: true);
-    final external = controller.activeSources;
-    _sources = List<BrowsableComicSource>.unmodifiable(
-      <BrowsableComicSource>[...builtIn, ...external].map(
-        (source) => source is CachedBrowsableComicSource
-            ? source
-            : CachedBrowsableComicSource(
-                source: source,
-                cache: _cacheCoordinator.responses,
-              ),
-      ),
-    );
-    // Publish the resolver-visible source set before canonical-id persistence
-    // and the follow-up library reload. Exact-source waiters are released by
-    // HomeExternalSourceLifecycle only after a controller/loader exists.
     _suppressLibrarySessionRebuild = true;
     try {
-      await _librarySession.replaceSources(_sources, reloadLibrary: false);
+      await _librarySession.replaceSources(sources, reloadLibrary: false);
     } finally {
       _suppressLibrarySessionRebuild = false;
     }
-    final canonicalIdsPersisted = await _persistKnownCanonicalComicIds();
-    if (canonicalIdsPersisted) {
-      await _reloadLibrary();
-    }
-    // Home cover loaders observe the updated resolver directly. Rebuilding
-    // the Home tree for a source-only publication recreates pending cover
-    // widgets just as the external source becomes ready. The source page,
-    // when visible, still needs one explicit presentation refresh.
+  }
+
+  void _refreshSourcePagePresentation() {
+    // Home cover loaders observe the source projection directly. Rebuilding
+    // the Home tree for source-only publication would recreate pending cover
+    // widgets. Only the visible source page needs an explicit refresh.
     if (mounted && _navigationIndex == 2) {
       setState(() {});
     }
@@ -707,7 +673,7 @@ final class _DemoHomeState extends State<DemoHome> {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => SourceManagementScreen(
-          sources: _sources,
+          sources: _sourceProjection.sources,
           preferences: _sourcePreferences,
           onPreferenceChanged: _saveSourcePreference,
           externalPlugins: externalPlugins,
