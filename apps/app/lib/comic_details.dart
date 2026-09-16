@@ -760,7 +760,7 @@ Future<bool> _confirmComicDownloadConflict({
   required bool conflictConfirmed,
   required void Function() markConflictConfirmed,
   required TraceSink traceSink,
-  required Stopwatch traceClock,
+  required int Function() traceMonotonicMicros,
 }) async {
   if (!forcePrompt && conflictConfirmed) return true;
   if (!forcePrompt) {
@@ -786,7 +786,7 @@ Future<bool> _confirmComicDownloadConflict({
       .toList();
   traceSink.record(
     TraceEvent(
-      monotonicMicros: traceClock.elapsedMicroseconds,
+      monotonicMicros: traceMonotonicMicros(),
       sessionId: 'comic-details:$sourceId',
       kind: TraceEventKind.downloadState,
       payload: <String, Object?>{
@@ -833,7 +833,7 @@ Future<bool> _confirmComicDownloadConflict({
   );
   traceSink.record(
     TraceEvent(
-      monotonicMicros: traceClock.elapsedMicroseconds,
+      monotonicMicros: traceMonotonicMicros(),
       sessionId: 'comic-details:$sourceId',
       kind: TraceEventKind.downloadState,
       payload: <String, Object?>{
@@ -902,6 +902,9 @@ final class _LocalComicDetailsScreenState
   var _deletionRevision = 0;
   final Stopwatch _traceClock = Stopwatch()..start();
 
+  int _traceNowMicros() =>
+      widget.traceMonotonicMicros?.call() ?? _traceClock.elapsedMicroseconds;
+
   void _recordRefreshTrace(
     TraceEventKind kind,
     String stage, {
@@ -909,8 +912,7 @@ final class _LocalComicDetailsScreenState
   }) {
     widget.traceSink.record(
       TraceEvent(
-        monotonicMicros:
-            widget.traceMonotonicMicros?.call() ?? _traceClock.elapsedMicroseconds,
+        monotonicMicros: _traceNowMicros(),
         sessionId: 'comic-details:${widget.comic.sourceId}',
         kind: kind,
         payload: <String, Object?>{
@@ -1600,7 +1602,7 @@ final class _LocalComicDetailsScreenState
         conflictConfirmed: _conflictConfirmed,
         markConflictConfirmed: () => _conflictConfirmed = true,
         traceSink: widget.traceSink,
-        traceClock: _traceClock,
+        traceMonotonicMicros: _traceNowMicros,
       );
 
   Future<void> _download(_ChapterViewModel chapter) async {
@@ -1629,7 +1631,7 @@ final class _LocalComicDetailsScreenState
         try {
           widget.traceSink.record(
             TraceEvent(
-              monotonicMicros: _traceClock.elapsedMicroseconds,
+              monotonicMicros: _traceNowMicros(),
               sessionId: 'comic-details-download-gate',
               kind: TraceEventKind.downloadState,
               identityHash: identity,
@@ -1679,7 +1681,7 @@ final class _LocalComicDetailsScreenState
       recordGate(skipConflictDialog ? 'resume-incremental' : 'fresh-download');
       widget.traceSink.record(
         TraceEvent(
-          monotonicMicros: _traceClock.elapsedMicroseconds,
+          monotonicMicros: _traceNowMicros(),
           sessionId: 'comic-details:${entry.chapter.sourceId}',
           kind: TraceEventKind.downloadState,
           identityHash: identity,
@@ -1791,7 +1793,7 @@ final class _LocalComicDetailsScreenState
         try {
           widget.traceSink.record(
             TraceEvent(
-              monotonicMicros: _traceClock.elapsedMicroseconds,
+              monotonicMicros: _traceNowMicros(),
               sessionId: 'comic-details-download-gate',
               kind: TraceEventKind.downloadState,
               identityHash: widget.comic.comicId,
@@ -1823,7 +1825,7 @@ final class _LocalComicDetailsScreenState
       try {
         widget.traceSink.record(
           TraceEvent(
-            monotonicMicros: _traceClock.elapsedMicroseconds,
+            monotonicMicros: _traceNowMicros(),
             sessionId: 'comic-details-download-gate',
             kind: TraceEventKind.downloadState,
             identityHash: widget.comic.comicId,
@@ -1919,7 +1921,7 @@ final class _LocalComicDetailsScreenState
     try {
       widget.traceSink.record(
         TraceEvent(
-          monotonicMicros: _traceClock.elapsedMicroseconds,
+          monotonicMicros: _traceNowMicros(),
           sessionId: 'comic-details',
           kind: TraceEventKind.taskFailed,
           identityHash: widget.comic.comicId,
@@ -2224,6 +2226,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     this.previewMaxItemsPerRow = 4,
     this.sameComicIdentity = _exactComicIdentity,
     this.traceSink = const NoopTraceSink(),
+    this.traceMonotonicMicros,
     super.key,
   });
 
@@ -2259,6 +2262,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final int previewMaxItemsPerRow;
   final ComicDetailsIdentityMatcher sameComicIdentity;
   final TraceSink traceSink;
+  final int Function()? traceMonotonicMicros;
 
   @override
   State<RemoteComicDetailsScreen> createState() =>
@@ -2292,6 +2296,9 @@ final class _RemoteComicDetailsScreenState
   var _deletionRevision = 0;
   final Stopwatch _traceClock = Stopwatch()..start();
   BrowsableComicSource? _activeSource;
+
+  int _traceNowMicros() =>
+      widget.traceMonotonicMicros?.call() ?? _traceClock.elapsedMicroseconds;
 
   BrowsableComicSource? get _currentSource {
     final resolver = widget.resolveSource;
@@ -2330,7 +2337,7 @@ final class _RemoteComicDetailsScreenState
   }) {
     widget.traceSink.record(
       TraceEvent(
-        monotonicMicros: _traceClock.elapsedMicroseconds,
+        monotonicMicros: _traceNowMicros(),
         sessionId: 'comic-details:${widget.source.sourceId}',
         kind: kind,
         payload: <String, Object?>{
@@ -3158,7 +3165,7 @@ final class _RemoteComicDetailsScreenState
         conflictConfirmed: _conflictConfirmed,
         markConflictConfirmed: () => _conflictConfirmed = true,
         traceSink: widget.traceSink,
-        traceClock: _traceClock,
+        traceMonotonicMicros: _traceNowMicros,
       );
 
   Future<void> _download(Chapter chapter) async {
@@ -3191,7 +3198,7 @@ final class _RemoteComicDetailsScreenState
         try {
           widget.traceSink.record(
             TraceEvent(
-              monotonicMicros: _traceClock.elapsedMicroseconds,
+              monotonicMicros: _traceNowMicros(),
               sessionId: 'comic-details-download-gate',
               kind: TraceEventKind.downloadState,
               identityHash: identity,
@@ -3326,7 +3333,7 @@ final class _RemoteComicDetailsScreenState
         try {
           widget.traceSink.record(
             TraceEvent(
-              monotonicMicros: _traceClock.elapsedMicroseconds,
+              monotonicMicros: _traceNowMicros(),
               sessionId: 'comic-details-download-gate',
               kind: TraceEventKind.downloadState,
               identityHash: manifest.comic.comicId,
@@ -3358,7 +3365,7 @@ final class _RemoteComicDetailsScreenState
       try {
         widget.traceSink.record(
           TraceEvent(
-            monotonicMicros: _traceClock.elapsedMicroseconds,
+            monotonicMicros: _traceNowMicros(),
             sessionId: 'comic-details-download-gate',
             kind: TraceEventKind.downloadState,
             identityHash: manifest.comic.comicId,
@@ -3445,7 +3452,7 @@ final class _RemoteComicDetailsScreenState
     try {
       widget.traceSink.record(
         TraceEvent(
-          monotonicMicros: _traceClock.elapsedMicroseconds,
+          monotonicMicros: _traceNowMicros(),
           sessionId: 'comic-details',
           kind: TraceEventKind.taskFailed,
           identityHash: _comic.comicId,
@@ -4450,7 +4457,12 @@ int _knownPageCount(Chapter chapter, ImportedLibraryEntry? entry) {
   if (chapter.pageCount > 0) {
     return chapter.pageCount;
   }
-  return entry?.chapter.pages.length ?? 0;
+  final cached = entry?.chapter;
+  if (cached == null ||
+      chapterHasHomeProjectionSnapshotPagePlaceholders(cached)) {
+    return 0;
+  }
+  return cached.pages.length;
 }
 
 String _comicSourceLabel(

@@ -1674,6 +1674,125 @@ void main() {
     );
   });
 
+  testWidgets(
+      'compact placeholder does not become a page count or mix trace clocks',
+      (tester) async {
+    const sourceId = 'fixture-compact-details';
+    const comicId = 'fixture-compact-details-comic';
+    const chapterId = 'fixture-compact-details-chapter';
+    const chapter = Chapter(
+      chapterId: chapterId,
+      comicId: comicId,
+      title: '第 1 话',
+      sequence: 1,
+      pageCount: 0,
+      sourceRevision: 'compact-r1',
+    );
+    final compact = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: '$sourceId:$comicId',
+        displayName: '第 1 话',
+        sourceId: sourceId,
+        comicId: comicId,
+        comicTitle: '紧凑详情漫画',
+        chapterId: chapterId,
+        sourceRevision: 'compact-r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: 'snapshot-page',
+            sourceId: 'zic-home-snapshot-page:0',
+            contentKindHint: ContentKindHint.unknown,
+          ),
+        ],
+      ),
+    );
+    final comic = LibraryComic(
+      sourceId: sourceId,
+      comicId: comicId,
+      title: '紧凑详情漫画',
+      authors: const <String>[],
+      tags: const <String>[],
+      description: null,
+      coverSourceId: null,
+      readingDirection: ReadingDirection.ltr,
+      chapters: <ImportedLibraryEntry>[compact],
+      sourceChapters: const <Chapter>[chapter],
+      savedAt: DateTime.utc(2026, 9, 16),
+      metadataUpdatedAt: DateTime.utc(2026, 9, 16),
+    );
+    final library = details.ComicDetailsLibrarySnapshot(
+      chapters: <ImportedLibraryEntry>[compact],
+      sourceChapters: const <Chapter>[chapter],
+      readStates: const <String, ChapterReadState>{},
+      preference: ComicPreference.defaults(
+        sourceId: sourceId,
+        comicId: comicId,
+      ),
+    );
+    final trace = DebugTraceLog(maxEvents: 100, maxExportEvents: 200);
+    addTearDown(trace.dispose);
+    var nowMicros = 5000000;
+    int traceNow() => nowMicros += 100;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: details.LocalComicDetailsScreen(
+          comic: comic,
+          initialLibrary: library,
+          categories: const <LibraryCategory>[],
+          loadCover: ({
+            required String sourceId,
+            required String comicId,
+            required Uri? coverUri,
+            required ImportedLibraryEntry? fallbackChapter,
+            required String resourceRole,
+          }) async => MemoryEncodedResourceSource(_tinyPng()),
+          reloadLibrary: ({required bool refreshContent}) async => library,
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (
+            _, {
+            required bool refreshRemote,
+            required String title,
+            int? initialPageIndex,
+          }) async => throw StateError('fixture-open-failure'),
+          onDownloadChapter: (_) async {},
+          inspectChapterDownload: (entry) async =>
+              ChapterDownloadSnapshot.idle(entry),
+          downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+          onDownloadComic: (_) async {},
+          traceSink: trace,
+          traceMonotonicMicros: traceNow,
+        ),
+      ),
+    );
+
+    final chapterTile = find.byKey(
+      details.comicDetailsChapterKey(sourceId, chapterId),
+    );
+    await _pumpUntilFound(tester, chapterTile);
+    expect(
+      find.descendant(of: chapterTile, matching: find.text('页数待加载')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: chapterTile, matching: find.text('1 页')),
+      findsNothing,
+      reason: 'Home snapshot placeholders are not a historical page-count proof',
+    );
+
+    await tester.tap(chapterTile);
+    await tester.pump();
+    final firstFrame = trace.events.firstWhere(
+      (event) => event.payload['stage'] == 'details-first-frame',
+    );
+    final failure = trace.events.firstWhere(
+      (event) => event.payload['stage'] == 'comic-details-failure',
+    );
+    expect(firstFrame.monotonicMicros, greaterThanOrEqualTo(5000000));
+    expect(failure.monotonicMicros, greaterThan(firstFrame.monotonicMicros));
+  });
+
   testWidgets('local details retries an unpersisted chapter against the live source resolver', (tester) async {
     final source = _FixtureSource('fixture-live-source', '动态源');
     final manifest = await source.loadComic(source._comicId);

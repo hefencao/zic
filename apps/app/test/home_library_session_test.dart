@@ -2384,6 +2384,25 @@ void main() {
     expect(second, same(first));
     expect(library.getCalls, 1);
 
+    final compactRequest = ImportedLibraryEntry(
+      chapter: firstRecord.copyWith(
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: 'snapshot-page',
+            sourceId: 'zic-home-snapshot-page:0',
+            contentKindHint: ContentKindHint.unknown,
+          ),
+        ],
+      ),
+    );
+    final compactHydrated = await session.hydrateEntry(compactRequest);
+    expect(compactHydrated, same(first));
+    expect(
+      library.getCalls,
+      1,
+      reason: 'a compact projection must reuse same-revision hydrated authority',
+    );
+
     final secondManifest = _versionManifest(
       comicId: 'hydrate-cache-comic',
       chapterId: 'hydrate-cache-chapter',

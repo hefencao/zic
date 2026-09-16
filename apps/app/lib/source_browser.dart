@@ -3490,6 +3490,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
     this.sameComicIdentity,
     this.previewMaxItemsPerRow = 4,
     this.traceSink = const NoopTraceSink(),
+    this.traceMonotonicMicros,
     super.key,
   });
 
@@ -3526,6 +3527,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
   final details.ComicDetailsIdentityMatcher? sameComicIdentity;
   final int previewMaxItemsPerRow;
   final TraceSink traceSink;
+  final int Function()? traceMonotonicMicros;
 
   @override
   Widget build(BuildContext context) {
@@ -3561,6 +3563,7 @@ final class SourceComicDetailsScreen extends StatelessWidget {
       previewMaxItemsPerRow: previewMaxItemsPerRow,
       sameComicIdentity: sameComicIdentity ?? (left, right) => left == right,
       traceSink: traceSink,
+      traceMonotonicMicros: traceMonotonicMicros,
     );
   }
 }

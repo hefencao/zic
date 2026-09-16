@@ -1668,10 +1668,7 @@ String _identity(ImportedLibraryEntry entry) => chapterDownloadIdentity(
     );
 
 bool _isCompactProjectionEntry(ImportedLibraryEntry entry) =>
-    entry.chapter.pages.isNotEmpty &&
-    entry.chapter.pages.every(
-      (page) => isHomeProjectionSnapshotPageSource(page.sourceId),
-    );
+    chapterHasHomeProjectionSnapshotPagePlaceholders(entry.chapter);
 
 List<PageAsset> _effectiveCompactPages(
   List<PageAsset> placeholders,

@@ -286,6 +286,38 @@ void main() {
       expect(snapshot.completedPages, 1);
       expect(snapshot.totalPages, 3);
       expect(snapshot.receivedBytes, 4);
+
+      final mixedCompact = ImportedLibraryEntry(
+        chapter: compact.chapter.copyWith(
+          pages: const <ImportedPageRecord>[
+            ImportedPageRecord(
+              displayName: 'page-1',
+              sourceId: 'zic-home-snapshot-page:0',
+              contentKindHint: ContentKindHint.unknown,
+            ),
+            ImportedPageRecord(
+              displayName: 'page-2',
+              sourceId: 'https://example.test/not-page-authority.webp',
+              pageId: 'mixed-page-2',
+              contentKindHint: ContentKindHint.webp,
+            ),
+            ImportedPageRecord(
+              displayName: 'page-3',
+              sourceId: 'zic-home-snapshot-page:2',
+              contentKindHint: ContentKindHint.unknown,
+            ),
+          ],
+        ),
+      );
+      final mixedSnapshot =
+          (await service.inspectMany(<ImportedLibraryEntry>[mixedCompact])).single;
+      expect(
+        mixedSnapshot.completedPages,
+        1,
+        reason: 'any Home snapshot placeholder keeps the chapter projection compact',
+      );
+      expect(mixedSnapshot.totalPages, 3);
+      expect(mixedSnapshot.receivedBytes, 4);
     },
   );
 

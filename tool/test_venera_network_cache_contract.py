@@ -81,7 +81,7 @@ fun main() {
     check(cache.lookup(VeneraHttpCacheNamespace("plugin", "v1", "source-a"), "https://fixture/gallery", headers + ("Cookie" to "nw=1; session=b"), "long", nowNanos = 2_000L) == null)
     check(cache.lookup(VeneraHttpCacheNamespace("plugin", "v1", "source-b"), "https://fixture/gallery", headers, "long", nowNanos = 2_000L) == null)
     check(cache.lookup(VeneraHttpCacheNamespace("plugin", "v2", "source-a"), "https://fixture/gallery", headers, "long", nowNanos = 2_000L) == null)
-    check(veneraCacheHeadersMatch(mapOf("Authorization" to "a", "Cookie" to "c"), mapOf("Authorization" to "b", "Cookie" to "c")))
+    check(!veneraCacheHeadersMatch(mapOf("Authorization" to "a", "Cookie" to "c"), mapOf("Authorization" to "b", "Cookie" to "c")))
     check(!veneraCacheHeadersMatch(mapOf("Cookie" to "a"), mapOf("Cookie" to "b")))
     cache.store(VeneraHttpCacheNamespace("plugin", "v1", "source-a"), "https://fixture/short", headers, response, nowNanos = 10_000L)
     check(cache.lookup(VeneraHttpCacheNamespace("plugin", "v1", "source-a"), "https://fixture/short", headers, null, nowNanos = 10_000L + 4L * 1_000_000_000L) != null)

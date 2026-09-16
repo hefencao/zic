@@ -29,7 +29,7 @@ for name in ('safOpen', 'safDelete', 'safRename', 'safReplace'):
     if 'clearSafPathCache(treeUri)' in body:
         raise SystemExit(f'{name} must not invalidate the entire SAF tree cache')
 
-read_body = function_body('openSafReadDescriptor')
+read_body = function_body('openSafReadDescriptorUnlocked')
 if 'invalidateSafReadParentListing(treeUri, relativePath)' not in read_body:
     raise SystemExit('stale exact SAF reads must invalidate the target parent first')
 if read_body.count('clearSafPathCache(treeUri)') != 1:

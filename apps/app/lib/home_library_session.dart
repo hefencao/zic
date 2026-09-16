@@ -1669,10 +1669,13 @@ final class HomeLibrarySession extends ChangeNotifier {
     final cached = _versionAuthorityHydratedEntries[
       _versionAuthorityEntryKey(entry)
     ];
+    final requestHasSnapshotPlaceholders =
+        chapterHasHomeProjectionSnapshotPagePlaceholders(entry.chapter);
     if (cached != null &&
         cached.chapter.sourceRevision == entry.chapter.sourceRevision &&
-        cached.chapter.pages.length == entry.chapter.pages.length &&
-        !chapterHasHomeProjectionSnapshotPagePlaceholders(cached.chapter)) {
+        !chapterHasHomeProjectionSnapshotPagePlaceholders(cached.chapter) &&
+        (requestHasSnapshotPlaceholders ||
+            cached.chapter.pages.length == entry.chapter.pages.length)) {
       return cached;
     }
     final hydrated = await _traceStartupOperation<ImportedLibraryEntry?>(
