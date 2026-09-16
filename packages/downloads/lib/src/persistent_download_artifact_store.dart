@@ -2655,7 +2655,9 @@ final class PersistentDownloadArtifactStore
         if (current == writtenPhysical) {
           await _index.removePhysicalPartial(session.physicalId);
         }
+        return;
       }
+      _notifyManagementProjectionChanged();
       return;
     }
 
@@ -2711,7 +2713,9 @@ final class PersistentDownloadArtifactStore
           await _index.removePhysicalMediaArtifactBinding(session.physicalId);
         }
       }
+      return;
     }
+    _notifyManagementProjectionChanged();
   }
 
   @override

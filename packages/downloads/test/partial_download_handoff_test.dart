@@ -79,6 +79,12 @@ void main() {
     expect(await store.index.get(id.key), isNotNull);
     expect(await File(durablePath).exists(), isTrue);
 
+    var managementChanges = 0;
+    final managementSubscription = store.managementProjectionChanges.listen(
+      (_) => managementChanges++,
+    );
+    addTearDown(managementSubscription.cancel);
+
     final backend = _CountingArtifactBackend(store);
     final cache = ArtifactCacheManager(backend: backend);
     final promoted = PromotedArtifactCacheHandoff(cache: cache)..observe(session);
@@ -93,6 +99,12 @@ void main() {
     );
     await session.promote();
     expect(await promoted.settleAutomatic(session), isTrue);
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      managementChanges,
+      greaterThan(0),
+      reason: 'borrowed Reader promotion must invalidate cache management projection',
+    );
     expect(
       backend.storeCalls,
       0,
@@ -711,6 +723,12 @@ void main() {
       expect(session.hasBorrowedDurableSpool, isTrue);
       expect(session.committedLength, prefix.lengthInBytes);
 
+      var managementChanges = 0;
+      final managementSubscription = store.managementProjectionChanges.listen(
+        (_) => managementChanges++,
+      );
+      addTearDown(managementSubscription.cancel);
+
       await session.bindResponse(
         validators: const Validators(etag: 'checkpoint-v1'),
         totalLength: expected.lengthInBytes * 2,
@@ -722,6 +740,12 @@ void main() {
       await session.append(writer, prefix.lengthInBytes, suffix);
       expect(session.committedLength, expected.lengthInBytes);
       expect(await handoff.persist(session, reason: 'test-checkpoint'), isTrue);
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        managementChanges,
+        greaterThan(0),
+        reason: 'durable canonical partial growth must invalidate management projection',
+      );
 
       final physicalIndex = store.index as PhysicalPartialIndex;
       final checkpoint = await physicalIndex.getPhysicalPartial(physical);
