@@ -32,6 +32,7 @@ import 'static_demo.dart';
 import 'startup_platform.dart';
 import 'webp_demo.dart';
 import 'home_library_session.dart';
+import 'home_reader_composition.dart';
 import 'home_widgets.dart';
 export 'home_widgets.dart' show ComicCoverCard, ComicDownloadProgress, ComicDownloadProgressKind;
 part 'demo_home_views.dart';
@@ -185,6 +186,7 @@ final class _DemoHomeState extends State<DemoHome> {
   late ChapterDownloadTransferRuntimeProvider? _downloadComposition;
   late ArtifactCacheManager? _readerArtifactCache;
   late final ComicSourceResourceGateway _sourceResources;
+  late final HomeReaderChapterComposition _readerChapterComposition;
   late WholeComicDownloadQueue _wholeComicDownloads;
   late List<BrowsableComicSource> _sources;
   late final HomeLibrarySession _librarySession;
@@ -485,6 +487,25 @@ final class _DemoHomeState extends State<DemoHome> {
       waitForPrimaryFrame: () => WidgetsBinding.instance.endOfFrame,
       startupTelemetry: widget.startupTelemetry,
     )..addListener(_handleLibrarySessionChanged);
+    _readerChapterComposition = HomeReaderChapterComposition(
+      hydrateEntry: (entry, {required awaitCanonicalPhysicalBackfill}) =>
+          _librarySession.hydrateEntry(
+        entry,
+        awaitCanonicalPhysicalBackfill: awaitCanonicalPhysicalBackfill,
+      ),
+      sourceResources: _sourceResources,
+      downloadComposition: () => _downloadComposition,
+      requiresSourceLocatorRefresh: chapterRequiresSourceLocatorRefresh,
+      refreshRemoteEntry: (entry, {required forceSourceRefresh}) =>
+          _refreshRemoteEntry(
+        entry,
+        forceSourceRefresh: forceSourceRefresh,
+      ),
+      prepareVersionAuthority: _prepareReaderVersionAuthority,
+      markChapterRead: _markChapterReadForNavigation,
+      trace: widget.debugTrace,
+      monotonicMicros: () => _traceClock.elapsedMicroseconds,
+    );
     _sourceResources.setVerifiedPageReuseObserver(
       _librarySession.observeVerifiedPageReuseIdentity,
     );
@@ -512,38 +533,6 @@ final class _DemoHomeState extends State<DemoHome> {
     }
     _serviceHandoff?.addListener(_handleServiceHandoffChanged);
     _scheduleLocalReadBackendPrewarm();
-  }
-
-  void _scheduleLocalReadBackendPrewarm() {
-    final target = _downloadComposition;
-    if (target == null || identical(target, _localReadBackendPrewarmTarget)) {
-      return;
-    }
-    _localReadBackendPrewarmTarget = target;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !identical(_downloadComposition, target)) return;
-      final startedAtMicros = _traceClock.elapsedMicroseconds;
-      unawaited(
-        target.prewarmLocalReadBackend().then<void>((warmed) {
-          if (!mounted) return;
-          widget.debugTrace.record(
-            TraceEvent(
-              monotonicMicros: _traceClock.elapsedMicroseconds,
-              sessionId: 'home-storage-prewarm',
-              kind: TraceEventKind.artifactSource,
-              payload: <String, Object?>{
-                'stage': 'local-read-backend-prewarm',
-                'warmed': warmed,
-                'durationMicros':
-                    _traceClock.elapsedMicroseconds - startedAtMicros,
-              },
-            ),
-          );
-        }).catchError((Object error, StackTrace _) {
-          // Acceleration only; the real Reader path retains normal authority.
-        }),
-      );
-    });
   }
 
   @override

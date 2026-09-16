@@ -136,4 +136,36 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
       _completeInitialExternalSourcesPublished();
     }
   }
+  void _scheduleLocalReadBackendPrewarm() {
+    final target = _downloadComposition;
+    if (target == null || identical(target, _localReadBackendPrewarmTarget)) {
+      return;
+    }
+    _localReadBackendPrewarmTarget = target;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !identical(_downloadComposition, target)) return;
+      final startedAtMicros = _traceClock.elapsedMicroseconds;
+      unawaited(
+        target.prewarmLocalReadBackend().then<void>((warmed) {
+          if (!mounted) return;
+          widget.debugTrace.record(
+            TraceEvent(
+              monotonicMicros: _traceClock.elapsedMicroseconds,
+              sessionId: 'home-storage-prewarm',
+              kind: TraceEventKind.artifactSource,
+              payload: <String, Object?>{
+                'stage': 'local-read-backend-prewarm',
+                'warmed': warmed,
+                'durationMicros':
+                    _traceClock.elapsedMicroseconds - startedAtMicros,
+              },
+            ),
+          );
+        }).catchError((Object error, StackTrace _) {
+          // Acceleration only; the real Reader path retains normal authority.
+        }),
+      );
+    });
+  }
+
 }

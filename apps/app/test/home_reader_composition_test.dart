@@ -1,0 +1,136 @@
+import 'package:catalog/catalog.dart';
+import 'package:domain/domain.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:telemetry/telemetry.dart';
+import 'package:zic/home_reader_composition.dart';
+import 'package:zic/source_resource_gateway.dart';
+
+void main() {
+  test('reader composition prepares local chapter without transport authority', () async {
+    final entry = _entry(
+      sourceId: 'local-folder',
+      pageSource: '/library/page-1.jpg',
+    );
+    var hydrateCalls = 0;
+    var refreshCalls = 0;
+    var authorityCalls = 0;
+    var readMarkerCalls = 0;
+    final trace = _CollectingTraceSink();
+    final gateway = ComicSourceResourceGateway(sourceForId: (_) => null);
+    addTearDown(gateway.close);
+    final composition = HomeReaderChapterComposition(
+      hydrateEntry: (candidate, {required awaitCanonicalPhysicalBackfill}) async {
+        hydrateCalls++;
+        expect(awaitCanonicalPhysicalBackfill, isFalse);
+        return candidate;
+      },
+      sourceResources: gateway,
+      downloadComposition: () => null,
+      requiresSourceLocatorRefresh: (_) => false,
+      refreshRemoteEntry: (candidate, {required forceSourceRefresh}) async {
+        refreshCalls++;
+        return candidate;
+      },
+      prepareVersionAuthority: (candidate) async {
+        authorityCalls++;
+        return 0;
+      },
+      markChapterRead: (candidate) async {
+        readMarkerCalls++;
+      },
+      trace: trace,
+      monotonicMicros: () => 1234,
+    );
+
+    final prepared = await composition.prepare(
+      () async => entry,
+      refreshRemote: false,
+      initialPageIndex: 0,
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(prepared.entry, same(entry));
+    expect(prepared.byteLoaders, isEmpty);
+    expect(prepared.responseSources, isEmpty);
+    expect(prepared.initialPageIndex, 0);
+    expect(hydrateCalls, 1);
+    expect(refreshCalls, 0);
+    expect(authorityCalls, 1);
+    expect(readMarkerCalls, 1);
+    expect(trace.events, hasLength(1));
+    expect(trace.events.single.payload['stage'], 'reader-prepare-complete');
+    expect(trace.events.single.monotonicMicros, 1234);
+  });
+
+  test('reader composition forces source refresh before projecting remote response', () async {
+    final stale = _entry(
+      sourceId: 'fixture-source',
+      pageSource: 'snapshot://placeholder',
+    );
+    final refreshed = _entry(
+      sourceId: 'fixture-source',
+      pageSource: 'https://example.invalid/page-1.jpg',
+    );
+    var forcedRefresh = false;
+    final gateway = ComicSourceResourceGateway(sourceForId: (_) => null);
+    addTearDown(gateway.close);
+    final composition = HomeReaderChapterComposition(
+      hydrateEntry: (candidate, {required awaitCanonicalPhysicalBackfill}) async =>
+          candidate,
+      sourceResources: gateway,
+      downloadComposition: () => null,
+      requiresSourceLocatorRefresh: (chapter) =>
+          chapter.pages.any((page) => page.sourceId.startsWith('snapshot://')),
+      refreshRemoteEntry: (candidate, {required forceSourceRefresh}) async {
+        forcedRefresh = forceSourceRefresh;
+        return refreshed;
+      },
+      prepareVersionAuthority: (_) async => 2,
+      markChapterRead: (_) async {},
+      trace: const NoopTraceSink(),
+      monotonicMicros: () => 1,
+    );
+
+    final prepared = await composition.prepare(
+      () async => stale,
+      refreshRemote: false,
+    );
+
+    expect(forcedRefresh, isTrue);
+    expect(prepared.entry, same(refreshed));
+    expect(prepared.byteLoaders, isEmpty);
+    expect(prepared.responseSources.keys, <String>[
+      'https://example.invalid/page-1.jpg',
+    ]);
+  });
+}
+
+ImportedLibraryEntry _entry({
+  required String sourceId,
+  required String pageSource,
+}) =>
+    ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: '$sourceId:comic',
+        displayName: 'Chapter',
+        sourceId: sourceId,
+        comicId: 'comic',
+        chapterId: 'chapter',
+        sourceRevision: 'r1',
+        pages: <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: 'Page 1',
+            sourceId: pageSource,
+            contentKindHint: ContentKindHint.jpeg,
+            pageId: 'page-1',
+          ),
+        ],
+      ),
+    );
+
+final class _CollectingTraceSink implements TraceSink {
+  final List<TraceEvent> events = <TraceEvent>[];
+
+  @override
+  void record(TraceEvent event) => events.add(event);
+}

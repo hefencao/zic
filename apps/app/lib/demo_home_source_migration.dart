@@ -956,6 +956,24 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   }
 
 
+  Future<int> _prepareReaderVersionAuthority(
+    ImportedLibraryEntry current,
+  ) async {
+    final viewReusePreparation = _versionViewReusePreparationFor(current);
+    final versionSource = _sourceForId(current.chapter.sourceId);
+    if (viewReusePreparation != null) {
+      await viewReusePreparation.future;
+      if (versionSource != null) {
+        await _prepareVersionReuseWarmup(
+          versionSource,
+          current,
+          targetComicId: viewReusePreparation.originComicId,
+        );
+      }
+    }
+    return _ensureSourceVersionReuseAuthority(current);
+  }
+
   Future<int> _ensureSourceVersionReuseAuthority(
     ImportedLibraryEntry current,
   ) async {

@@ -1,11 +1,6 @@
 part of 'demo_home.dart';
 
-typedef _PreparedImportedChapter = ({
-  ImportedLibraryEntry entry,
-  Map<String, LocalImageFileBytesLoader> byteLoaders,
-  Map<String, LocalImageResponseSource> responseSources,
-  int? initialPageIndex,
-});
+typedef _PreparedImportedChapter = HomeReaderPreparedChapter;
 
 typedef _ReaderPageGenerationRecovery = Future<bool> Function(
   int rawPageIndex,
@@ -430,10 +425,10 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
         }
         final readerManifest = replacementEntry.chapter.toManifest();
         final byteLoaders = <String, LocalImageFileBytesLoader>{};
-        final replacement = (
+        final replacement = HomeReaderPreparedChapter(
           entry: replacementEntry,
           byteLoaders: byteLoaders,
-          responseSources: _readerResponseSourcesFor(
+          responseSources: _readerChapterComposition.responseSourcesFor(
             readerManifest,
             byteLoaders,
           ),
@@ -477,7 +472,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
         traceSink: widget.debugTrace,
         traceSessionId: 'reader-entry',
         load: () async {
-          final prepared = await _prepareImportedChapter(
+          final prepared = await _readerChapterComposition.prepare(
             loadChapter,
             refreshRemote: refreshRemote,
             initialPageIndex: initialPageIndex,
@@ -521,132 +516,4 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
     }
   }
 
-  Map<String, LocalImageResponseSource> _readerResponseSourcesFor(
-    ChapterManifest readerManifest,
-    Map<String, LocalImageFileBytesLoader> byteLoaders,
-  ) =>
-      readerManifest.sourceId == 'local-folder'
-          ? const <String, LocalImageResponseSource>{}
-          : <String, LocalImageResponseSource>{
-              for (final page in readerManifest.pages)
-                if (!byteLoaders.containsKey(page.uri.toString()))
-                  page.uri.toString(): LocalImageResponseSource(
-                    openControlledResponse: _sourceResources
-                        .observedPageControlledResponseLoaderFor(
-                      readerManifest,
-                      page,
-                    ),
-                    selfBoundedOpen: _sourceResources.pageOpenSelfBoundedFor(
-                      readerManifest.sourceId,
-                      page.uri,
-                    ),
-                  ),
-            };
-
-  Future<_PreparedImportedChapter> _prepareImportedChapter(
-    Future<ImportedLibraryEntry> Function() loadChapter, {
-    required bool refreshRemote,
-    int? initialPageIndex,
-  }) async {
-    final totalWatch = Stopwatch()..start();
-    final rawEntry = await loadChapter();
-    final loadMs = totalWatch.elapsedMilliseconds;
-    final entry = await _librarySession.hydrateEntry(
-      rawEntry,
-      awaitCanonicalPhysicalBackfill: false,
-    );
-    final hydrateMs = totalWatch.elapsedMilliseconds - loadMs;
-    final sourceLocatorRefreshRequired =
-        chapterRequiresSourceLocatorRefresh(entry.chapter);
-    final remoteWatch = Stopwatch()..start();
-    final current = sourceLocatorRefreshRequired
-        ? await _refreshRemoteEntry(entry, forceSourceRefresh: true)
-        : refreshRemote
-            ? await _refreshRemoteEntry(entry)
-            : entry;
-    final remoteMs = remoteWatch.elapsedMilliseconds;
-    if (chapterRequiresSourceLocatorRefresh(current.chapter)) {
-      throw StateError(
-        '章节仍包含不可用于 Reader 的启动快照/运行时资源定位符',
-      );
-    }
-    final authorityWatch = Stopwatch()..start();
-    final viewReusePreparation = _versionViewReusePreparationFor(current);
-    final versionSource = _sourceForId(current.chapter.sourceId);
-    if (viewReusePreparation != null) {
-      await viewReusePreparation.future;
-      if (versionSource != null) {
-        await _prepareVersionReuseWarmup(
-          versionSource,
-          current,
-          targetComicId: viewReusePreparation.originComicId,
-        );
-      }
-    }
-    final authorityMappingCount = await _ensureSourceVersionReuseAuthority(
-      current,
-    );
-    final authorityMs = authorityWatch.elapsedMilliseconds;
-    // Persistent remote bytes are owned by ArtifactCacheTransport. Do not
-    // pre-probe the chapter index or register a full-page readPage() loader:
-    // that capability bypasses the streaming artifact response path and makes
-    // large SAF/POSIX foreground pages wait for complete Uint8List materialization.
-    final byteLoaders = <String, LocalImageFileBytesLoader>{};
-    const byteProbeMs = 0;
-    final readerManifest = current.chapter.toManifest();
-    final localAuthorityPrewarm = _downloadComposition?.transferRuntime;
-    var localAuthorityPrewarmStarted = false;
-    if (localAuthorityPrewarm != null && readerManifest.pages.isNotEmpty) {
-      final rawInitialPageIndex = (initialPageIndex ??
-              current.progress?.pageIndex ??
-              0)
-          .clamp(0, readerManifest.pages.length - 1)
-          .toInt();
-      final page = readerManifest.pages[rawInitialPageIndex];
-      localAuthorityPrewarmStarted = true;
-      unawaited(
-        localAuthorityPrewarm
-            .prewarmLocalArtifact(readerPageDownloadId(readerManifest, page))
-            .catchError((Object _, StackTrace __) => false),
-      );
-    }
-    final responseSources = _readerResponseSourcesFor(
-      readerManifest,
-      byteLoaders,
-    );
-    unawaited(_markChapterReadForNavigation(current));
-    final totalMs = totalWatch.elapsedMilliseconds;
-    widget.debugTrace.record(
-      TraceEvent(
-        monotonicMicros: _traceClock.elapsedMicroseconds,
-        sessionId: 'reader-entry',
-        kind: TraceEventKind.readerObservation,
-        payload: <String, Object?>{
-          'stage': 'reader-prepare-complete',
-          'sourceId': current.chapter.sourceId,
-          'comicId': current.chapter.comicId,
-          'chapterId': current.chapter.chapterId,
-          'refreshRemote': refreshRemote,
-          'sourceLocatorRefreshRequired': sourceLocatorRefreshRequired,
-          'totalPages': current.chapter.pages.length,
-          'localByteLoaders': byteLoaders.length,
-          'networkResponseLoaders': responseSources.length,
-          'loadChapterMs': loadMs,
-          'hydrateMs': hydrateMs,
-          'remoteRefreshMs': remoteMs,
-          'versionReuseAuthorityMs': authorityMs,
-          'verifiedAuthorityMappings': authorityMappingCount,
-          'localAuthorityPrewarmStarted': localAuthorityPrewarmStarted,
-          'byteProbeMs': byteProbeMs,
-          'totalPrepareMs': totalMs,
-        },
-      ),
-    );
-    return (
-      entry: current,
-      byteLoaders: byteLoaders,
-      responseSources: responseSources,
-      initialPageIndex: initialPageIndex,
-    );
-  }
 }
