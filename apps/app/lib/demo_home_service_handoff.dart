@@ -17,20 +17,13 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
       unawaited(_adoptDurableServices());
     }
     final plugins = _incomingExternalPlugins;
-    if (plugins != null && !identical(_activeExternalPlugins, plugins)) {
-      _activeExternalPlugins = plugins;
-      _watchExternalPluginSources(plugins);
-      // Handoff availability releases already-pending exact cover/page
-      // requests. It must not imply that every installed runtime is needed.
-      _completeInitialExternalSourcesPublished();
-      if (plugins.activeSources.isNotEmpty) {
-        _requestExternalSourceRefresh(plugins);
-      }
+    if (plugins != null &&
+        !identical(_externalSources.activeController, plugins)) {
+      _externalSources.adoptController(plugins);
     } else if (_externalPluginLoader != null) {
-      // The loader may arrive before the controller object itself. Wake the
-      // exact waiters so each can obtain the controller and activate only its
-      // persisted source owner.
-      _completeInitialExternalSourcesPublished();
+      // The loader may arrive before the controller object itself. Wake exact
+      // waiters; the lifecycle owner still activates only their source owner.
+      _externalSources.signalLoaderAvailable();
     }
   }
 
@@ -85,11 +78,11 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
                   ? chapterDownloads as ArtifactCacheMaintenance
                   : null),
         );
-    _activeExternalPlugins =
-        _incomingExternalPlugins ?? _activeExternalPlugins;
+    final externalPlugins =
+        _incomingExternalPlugins ?? _externalSources.activeController;
     final sources = _buildCachedSources(
       cacheCoordinator,
-      externalPlugins: _activeExternalPlugins,
+      externalPlugins: externalPlugins,
     );
 
     try {
@@ -132,8 +125,9 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     // Snapshot cover requests may already be waiting for the deferred plugin
     // loader. Release that handoff gate only; each request retains its exact
     // source identity and owns the decision to activate that one runtime.
-    if (_activeExternalPlugins != null || _externalPluginLoader != null) {
-      _completeInitialExternalSourcesPublished();
+    if (_externalSources.activeController != null ||
+        _externalPluginLoader != null) {
+      _externalSources.signalLoaderAvailable();
     }
   }
   void _scheduleLocalReadBackendPrewarm() {

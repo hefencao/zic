@@ -100,7 +100,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     if (entry.chapter.sourceId == 'local-folder') {
       return entry;
     }
-    await _waitForExternalSource(entry.chapter.sourceId);
+    await _externalSources.waitForSource(entry.chapter.sourceId);
     final source = _sourceForId(entry.chapter.sourceId);
     if (source == null) {
       throw StateError('漫画源 ${entry.chapter.sourceId} 当前不可用');
@@ -196,10 +196,10 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
       // existing restart behavior for now and is intentionally not changed in
       // this iteration.
       if (source.sourceId.startsWith('mihon:')) {
-        final controller = _activeExternalPlugins;
+        final controller = _externalSources.activeController;
         if (controller != null) {
           await controller.restartMihonSourceForBrowserHandoff(source.sourceId);
-          await _replaceExternalSources();
+          await _externalSources.refreshCurrentProjection();
         }
       }
       final active = _sourceForId(source.sourceId) ?? source;
@@ -234,7 +234,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     }
     final page = pages[pageIndex];
     if (entry.chapter.sourceId != 'local-folder') {
-      await _waitForExternalSource(entry.chapter.sourceId);
+      await _externalSources.waitForSource(entry.chapter.sourceId);
     }
     final source = _sourceForId(entry.chapter.sourceId);
     final uri = Uri.tryParse(page.sourceId);
@@ -494,7 +494,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
       context,
       source: source,
       networkBridge: widget.networkBridge,
-      onExternalSourcesChanged: _replaceExternalSources,
+      onExternalSourcesChanged: _externalSources.refreshCurrentProjection,
     );
     if (mounted) {
       await _reloadLibrary();
@@ -898,7 +898,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
         unawaited(
           Future<void>(() async {
             try {
-              await _waitForExternalSource(comic.sourceId);
+              await _externalSources.waitForSource(comic.sourceId);
               if (!mounted || !routeActive) {
                 if (!sourceCompleter.isCompleted) sourceCompleter.complete(null);
                 return;
@@ -1088,7 +1088,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     }
     if (comic.sourceChapters.length == 1) {
       if (comic.sourceId != 'local-folder') {
-        await _waitForExternalSource(comic.sourceId);
+        await _externalSources.waitForSource(comic.sourceId);
       }
       final source = _sourceForId(comic.sourceId);
       if (source != null) {

@@ -32,6 +32,7 @@ import 'static_demo.dart';
 import 'startup_platform.dart';
 import 'webp_demo.dart';
 import 'home_library_session.dart';
+import 'home_external_source_lifecycle.dart';
 import 'home_reader_composition.dart';
 import 'home_widgets.dart';
 export 'home_widgets.dart' show ComicCoverCard, ComicDownloadProgress, ComicDownloadProgressKind;
@@ -192,17 +193,10 @@ final class _DemoHomeState extends State<DemoHome> {
   late final HomeLibrarySession _librarySession;
   late ResourceCacheCoordinator _cacheCoordinator;
   late bool _ownsCacheCoordinator;
-  ExternalPluginController? _activeExternalPlugins;
-  ExternalPluginController? _watchedExternalPlugins;
-  StreamSubscription<void>? _externalPluginSourceChanges;
-  Completer<void>? _initialExternalSourcesPublished;
-  Future<ExternalPluginController?>? _externalPluginLoading;
-  Future<void>? _externalSourcesPublishing;
+  late final HomeExternalSourceLifecycle _externalSources;
   Future<void>? _durableAdoption;
   Future<void>? _sourceMigrationRecovery;
-  Future<void>? _externalSourceRefresh;
   ChapterDownloadTransferRuntimeProvider? _localReadBackendPrewarmTarget;
-  bool _externalSourceRefreshPending = false;
   bool _suppressLibrarySessionRebuild = false;
   bool _readerRouteOpen = false;
   bool _downloadManagerRouteOpen = false;
@@ -299,89 +293,6 @@ final class _DemoHomeState extends State<DemoHome> {
     }
   }
 
-  Future<ExternalPluginController?> _ensureExternalPluginController() {
-    final active = _activeExternalPlugins;
-    if (active != null) {
-      return Future<ExternalPluginController?>.value(active);
-    }
-    final existing = _externalPluginLoading;
-    if (existing != null) {
-      return existing;
-    }
-    final loader = _externalPluginLoader;
-    if (loader == null) {
-      return Future<ExternalPluginController?>.value();
-    }
-    late final Future<ExternalPluginController?> opening;
-    opening = Future<ExternalPluginController?>.sync(loader).whenComplete(() {
-      if (identical(_externalPluginLoading, opening)) {
-        _externalPluginLoading = null;
-      }
-    });
-    _externalPluginLoading = opening;
-    return opening;
-  }
-
-  Future<void> _ensureExternalSourcesPublished() {
-    final existing = _externalSourcesPublishing;
-    if (existing != null) {
-      return existing;
-    }
-    late final Future<void> publishing;
-    publishing = _publishExternalSources().whenComplete(() {
-      if (identical(_externalSourcesPublishing, publishing)) {
-        _externalSourcesPublishing = null;
-      }
-    });
-    _externalSourcesPublishing = publishing;
-    return publishing;
-  }
-
-  Future<void> _ensureExternalSourcePublished(String sourceId) async {
-    if (_sourceForId(sourceId) != null) return;
-    final controller = await _ensureExternalPluginController();
-    if (!mounted || controller == null) return;
-    _activeExternalPlugins = controller;
-    _watchExternalPluginSources(controller);
-    await controller.ensureSourceActive(sourceId);
-    if (!mounted || !identical(_activeExternalPlugins, controller)) return;
-    _requestExternalSourceRefresh(controller);
-    final refresh = _externalSourceRefresh;
-    if (refresh != null) await refresh;
-  }
-
-  Future<void> _publishExternalSources() async {
-    // The bootstrap Home is created before durable services install the
-    // external-plugin loader. Keep source waiters pending across this gap;
-    // completing the readiness gate here would turn "not started yet" into a
-    // permanent source-unavailable error for the first cover request.
-    if (_externalPluginLoader == null) {
-      return;
-    }
-    try {
-      final controller = await _ensureExternalPluginController();
-      if (!mounted) return;
-      if (controller != null) {
-        _activeExternalPlugins = controller;
-        _watchExternalPluginSources(controller);
-        try {
-          await controller.ready;
-        } on Object {
-          return;
-        }
-        _requestExternalSourceRefresh(controller);
-        final refresh = _externalSourceRefresh;
-        if (refresh != null) {
-          await refresh;
-        }
-      }
-    } on Object catch (error) {
-      debugPrint('external plugin runtime unavailable: $error');
-    } finally {
-      _completeInitialExternalSourcesPublished();
-    }
-  }
-
   List<BrowsableComicSource> _buildCachedSources(
     ResourceCacheCoordinator cache, {
     ExternalPluginController? externalPlugins,
@@ -446,6 +357,13 @@ final class _DemoHomeState extends State<DemoHome> {
                 backend: _chapterDownloads as ArtifactCacheBackend,
               )
             : null);
+    _externalSources = HomeExternalSourceLifecycle(
+      loaderProvider: () => _externalPluginLoader,
+      sourceAvailable: (sourceId) => _sourceForId(sourceId) != null,
+      isDeferredSource: _isDeferredExternalSourceId,
+      refreshProjection: _replaceExternalSourcesFor,
+      reportError: (stage, error) => debugPrint('$stage failed: $error'),
+    );
     _syncCachedCarrierTrustMode();
     final suppliedCache = _incomingCacheCoordinator;
     _ownsCacheCoordinator = suppliedCache == null;
@@ -462,7 +380,7 @@ final class _DemoHomeState extends State<DemoHome> {
     );
     _sourceResources = ComicSourceResourceGateway(
       sourceForId: _sourceForId,
-      waitForSource: _waitForExternalSource,
+      waitForSource: (sourceId) => _externalSources.waitForSource(sourceId),
       directTransport: RhttpSourceResourceDirectTransport(
         preparePlatform: prepareRhttpPlatform,
       ),
@@ -515,22 +433,7 @@ final class _DemoHomeState extends State<DemoHome> {
     _serviceHandoff?.setHomeProjectionCheckpoint(
       _librarySession.checkpointSnapshot,
     );
-    // Always armed so external-source cover requests stay pending (never
-    // fail source-unavailable) while the deferred plugin host is still
-    // opening; it completes once sources are published or refresh gives up.
-    _initialExternalSourcesPublished = Completer<void>();
-    final externalPlugins = _incomingExternalPlugins;
-    _activeExternalPlugins = externalPlugins;
-    if (externalPlugins != null) {
-      _watchExternalPluginSources(externalPlugins);
-      // A supplied controller may still be activation-deferred. Do not turn
-      // Home construction into an all-plugin `ready` barrier; exact resource
-      // waiters below activate only their persisted source owner.
-      _completeInitialExternalSourcesPublished();
-      if (externalPlugins.activeSources.isNotEmpty) {
-        _requestExternalSourceRefresh(externalPlugins);
-      }
-    }
+    _externalSources.initialize(_incomingExternalPlugins);
     _serviceHandoff?.addListener(_handleServiceHandoffChanged);
     _scheduleLocalReadBackendPrewarm();
   }
@@ -551,34 +454,6 @@ final class _DemoHomeState extends State<DemoHome> {
 
   bool _isDeferredExternalSourceId(String sourceId) =>
       sourceId.startsWith('mihon:') || sourceId.startsWith('venera:');
-
-  Future<void> _waitForExternalSource(String sourceId) async {
-    if (_sourceForId(sourceId) != null ||
-        !_isDeferredExternalSourceId(sourceId)) {
-      return;
-    }
-    // Snapshot covers can start before the durable plugin controller/loader is
-    // handed to Home. Keep that exact request pending across the handoff; do
-    // not fail it and do not replace the wait with an all-plugin ready barrier.
-    if (_activeExternalPlugins == null && _externalPluginLoader == null) {
-      final handoff = _initialExternalSourcesPublished;
-      if (handoff != null && !handoff.isCompleted) {
-        await handoff.future;
-      }
-    }
-    if (!mounted || _sourceForId(sourceId) != null) return;
-    // Once the controller is obtainable, activate only the owner recorded for
-    // this source. The source-management page remains the explicit full-ready
-    // path for users who actually request the complete source projection.
-    await _ensureExternalSourcePublished(sourceId);
-  }
-
-  void _completeInitialExternalSourcesPublished() {
-    final published = _initialExternalSourcesPublished;
-    if (published != null && !published.isCompleted) {
-      published.complete();
-    }
-  }
 
   void _syncReaderPrefetchReadBudget() {
     defaultDownloadResourceCoordinator.speculativeEncodedReadBudget
@@ -601,7 +476,7 @@ final class _DemoHomeState extends State<DemoHome> {
       },
     );
     cache.updateHistoricalCarrierSignatureConflictTrust((sourceId) {
-      final pluginId = _activeExternalPlugins?.ownerOfSource(sourceId);
+      final pluginId = _externalSources.ownerOfSource(sourceId);
       return pluginId != null &&
           widget.preferences
               .trustConflictingHistoricalCarriersForPlugin(pluginId);
@@ -745,8 +620,7 @@ final class _DemoHomeState extends State<DemoHome> {
     widget.preferences.removeListener(_handleAppPreferencesChanged);
     _serviceHandoff?.setHomeProjectionCheckpoint(null);
     _serviceHandoff?.removeListener(_handleServiceHandoffChanged);
-    unawaited(_externalPluginSourceChanges?.cancel());
-    _completeInitialExternalSourcesPublished();
+    unawaited(_externalSources.close());
     _librarySession.removeListener(_handleLibrarySessionChanged);
     _librarySession.downloadProjectionChanges.removeListener(
       _handleDownloadProjectionChanged,
@@ -784,14 +658,15 @@ final class _DemoHomeState extends State<DemoHome> {
     _librarySession.replaceSourcePreference(updated);
   }
 
-  Future<void> _replaceExternalSources() async {
+  Future<void> _replaceExternalSourcesFor(
+    ExternalPluginController controller,
+  ) async {
     final builtIn = _sources
         .where((source) =>
             !source.sourceId.startsWith('mihon:') &&
             !source.sourceId.startsWith('venera:'))
         .toList(growable: true);
-    final external = _activeExternalPlugins?.activeSources ??
-        const <BrowsableComicSource>[];
+    final external = controller.activeSources;
     _sources = List<BrowsableComicSource>.unmodifiable(
       <BrowsableComicSource>[...builtIn, ...external].map(
         (source) => source is CachedBrowsableComicSource
@@ -803,9 +678,8 @@ final class _DemoHomeState extends State<DemoHome> {
       ),
     );
     // Publish the resolver-visible source set before canonical-id persistence
-    // and the follow-up library reload. Artwork cache misses waiting on this
-    // transition can now proceed without a failed first request.
-    _completeInitialExternalSourcesPublished();
+    // and the follow-up library reload. Exact-source waiters are released by
+    // HomeExternalSourceLifecycle only after a controller/loader exists.
     _suppressLibrarySessionRebuild = true;
     try {
       await _librarySession.replaceSources(_sources, reloadLibrary: false);
@@ -825,89 +699,10 @@ final class _DemoHomeState extends State<DemoHome> {
     }
   }
 
-  void _watchExternalPluginSources(ExternalPluginController controller) {
-    if (identical(_watchedExternalPlugins, controller)) {
-      return;
-    }
-    final previous = _externalPluginSourceChanges;
-    _externalPluginSourceChanges = null;
-    _watchedExternalPlugins = controller;
-    if (previous != null) {
-      unawaited(previous.cancel());
-    }
-    _externalPluginSourceChanges = controller.sourceChanges.listen((_) {
-      _requestExternalSourceRefresh(controller);
-    });
-  }
-
-  void _requestExternalSourceRefresh(ExternalPluginController controller) {
-    if (!mounted || !identical(_activeExternalPlugins, controller)) {
-      return;
-    }
-    _externalSourceRefreshPending = true;
-    if (_externalSourceRefresh != null) {
-      return;
-    }
-    late final Future<void> refresh;
-    refresh = _drainExternalSourceRefresh(controller).whenComplete(() {
-      if (identical(_externalSourceRefresh, refresh)) {
-        _externalSourceRefresh = null;
-        // A sourceChanges event can arrive after the drain observes
-        // pending=false but before this completion callback releases the
-        // single-flight owner. Re-enter after releasing ownership so that
-        // tail event cannot be lost.
-        if (_externalSourceRefreshPending &&
-            mounted &&
-            identical(_activeExternalPlugins, controller)) {
-          _requestExternalSourceRefresh(controller);
-        }
-      }
-    });
-    _externalSourceRefresh = refresh;
-    unawaited(refresh);
-  }
-
-  Future<void> _drainExternalSourceRefresh(
-    ExternalPluginController controller,
-  ) async {
-    try {
-      while (_externalSourceRefreshPending &&
-          mounted &&
-          identical(_activeExternalPlugins, controller)) {
-        _externalSourceRefreshPending = false;
-        await _replaceExternalSources();
-      }
-    } on Object catch (error) {
-      debugPrint('external source projection refresh failed: $error');
-    }
-  }
-
-  Future<void> _retryExternalPluginFromSourcePage(
-    InstalledExternalPlugin plugin,
-  ) async {
-    final controller = _activeExternalPlugins;
-    if (controller == null) return;
-    await controller.retryActivation(plugin.plugin.pluginId);
-    _requestExternalSourceRefresh(controller);
-    final refresh = _externalSourceRefresh;
-    if (refresh != null) {
-      await refresh;
-    }
-  }
-
   Future<void> _openSourceManagement() async {
-    final externalPlugins = await _ensureExternalPluginController();
+    final externalPlugins = await _externalSources.ensureController();
     if (!mounted) return;
-    if (externalPlugins != null &&
-        !identical(_activeExternalPlugins, externalPlugins)) {
-      _activeExternalPlugins = externalPlugins;
-      _watchExternalPluginSources(externalPlugins);
-      _requestExternalSourceRefresh(externalPlugins);
-      final refresh = _externalSourceRefresh;
-      if (refresh != null) {
-        await refresh;
-      }
-    }
+    await _externalSources.refreshCurrentProjection();
     if (!mounted) return;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -917,7 +712,7 @@ final class _DemoHomeState extends State<DemoHome> {
           onPreferenceChanged: _saveSourcePreference,
           externalPlugins: externalPlugins,
           networkBridge: widget.networkBridge,
-          onExternalSourcesChanged: _replaceExternalSources,
+          onExternalSourcesChanged: _externalSources.refreshCurrentProjection,
           appPreferences: widget.preferences,
         ),
       ),
@@ -1774,7 +1569,7 @@ final class _DemoHomeState extends State<DemoHome> {
             // External runtimes are optional source capability. Opening the
             // source tab is an explicit demand boundary; it must not be part
             // of a fresh-install Home/background startup turn.
-            unawaited(_ensureExternalSourcesPublished());
+            unawaited(_externalSources.ensureSourcesPublished());
           }
         },
       ),
