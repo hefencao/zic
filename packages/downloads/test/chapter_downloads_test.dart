@@ -5991,6 +5991,21 @@ void main() {
     expect(snapshot.autoCachedPages, 1);
     expect(snapshot.hasAutoCache, isTrue);
     expect(snapshot.receivedBytes, bytes.length);
+
+    final management = await service.inspectDownloadManagement(
+      const <ImportedLibraryEntry>[],
+    );
+    expect(management.cache, isNotNull);
+    expect(
+      management.cache!.canonical,
+      hasLength(1),
+      reason:
+          'canonical physical inventory must remain visible after every exact/library carrier disappears',
+    );
+    expect(management.cache!.canonical.single.readyPages, 1);
+    expect(management.cache!.canonical.single.receivedBytes, bytes.length);
+    expect(management.cache!.canonical.single.memberVersionCount, 1);
+    expect(management.cache!.exact, isEmpty);
   });
 
   test(

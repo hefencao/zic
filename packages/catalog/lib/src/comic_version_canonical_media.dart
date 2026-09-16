@@ -75,6 +75,39 @@ final class CanonicalMediaCoordinate {
       '${_canonicalFrame(chapterId.value)}${_canonicalFrame(segmentId.value)}'
       '${_canonicalFrame(offset.toString())}';
 
+  /// Parses only the stable key emitted by [stableKey].
+  ///
+  /// Management projection uses this to classify already-materialized physical
+  /// canonical inventory without expanding every historical version page. A
+  /// malformed or unrelated opaque physical key is not a canonical-media fact.
+  static CanonicalMediaCoordinate? tryParseStableKey(String value) {
+    const prefix = 'version-family-media:v1';
+    if (!value.startsWith(prefix)) return null;
+    var cursor = prefix.length;
+    final frames = <String>[];
+    for (var index = 0; index < 4; index++) {
+      final frame = _readCanonicalFrame(value, cursor);
+      if (frame == null) return null;
+      frames.add(frame.value);
+      cursor = frame.end;
+    }
+    if (cursor != value.length) return null;
+    final offset = int.tryParse(frames[3]);
+    if (frames[0].isEmpty ||
+        frames[1].isEmpty ||
+        frames[2].isEmpty ||
+        offset == null ||
+        offset < 0) {
+      return null;
+    }
+    return CanonicalMediaCoordinate(
+      familyId: VersionFamilyId(frames[0]),
+      chapterId: CanonicalChapterId(frames[1]),
+      segmentId: CanonicalMediaSegmentId(frames[2]),
+      offset: offset,
+    );
+  }
+
   @override
   bool operator ==(Object other) =>
       other is CanonicalMediaCoordinate &&
@@ -1051,3 +1084,17 @@ int _min(int left, int right) => left < right ? left : right;
 int _max(int left, int right) => left > right ? left : right;
 
 String _canonicalFrame(String value) => '${value.length}:$value';
+
+({String value, int end})? _readCanonicalFrame(String source, int start) {
+  if (start < 0 || start >= source.length) return null;
+  final separator = source.indexOf(':', start);
+  if (separator < 0) return null;
+  final rawLength = source.substring(start, separator);
+  if (rawLength.isEmpty || rawLength.length > 10) return null;
+  final length = int.tryParse(rawLength);
+  if (length == null || length < 0) return null;
+  final valueStart = separator + 1;
+  final end = valueStart + length;
+  if (end > source.length) return null;
+  return (value: source.substring(valueStart, end), end: end);
+}

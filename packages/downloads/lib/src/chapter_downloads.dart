@@ -1454,6 +1454,13 @@ final class _ExactChapterCacheSnapshotBuilder {
       );
 }
 
+String _canonicalCacheGroupKey(
+  VersionFamilyId familyId,
+  CanonicalChapterId chapterId,
+) =>
+    '${familyId.value.length}:${familyId.value}'
+    '${chapterId.value.length}:${chapterId.value}';
+
 final class _DownloadManagementPhysicalState {
   _DownloadManagementPhysicalState({
     required Iterable<PhysicalMediaArtifactRecord> artifacts,
@@ -1479,6 +1486,67 @@ final class _DownloadManagementPhysicalState {
   final Map<PhysicalMediaId, PhysicalPartialRecord> partials;
   final Map<String, VersionChapterCanonicalProjection> projections;
   final Map<String, List<CanonicalMediaActiveRange>> activeProjectionRanges;
+
+  /// Builds cache-management rows from durable physical inventory first.
+  ///
+  /// A canonical artifact may legitimately outlive every exact READY row and
+  /// every currently visible library version. Requiring an ImportedLibraryEntry
+  /// to discover it makes Download Manager silently lose old shared cache and
+  /// forces management refresh to expand every historical chapter page.
+  Map<String, _CanonicalChapterCacheSnapshotBuilder>
+      canonicalInventoryBuilders() {
+    final builders = <String, _CanonicalChapterCacheSnapshotBuilder>{};
+    for (final projection in projections.values) {
+      final key = _canonicalCacheGroupKey(
+        projection.familyId,
+        projection.canonicalChapterId,
+      );
+      final builder = builders.putIfAbsent(
+        key,
+        () => _CanonicalChapterCacheSnapshotBuilder(
+          familyId: projection.familyId,
+          canonicalChapterId: projection.canonicalChapterId,
+        ),
+      );
+      builder.addMember(
+        chapterDownloadIdentity(
+          projection.sourceId,
+          projection.comicId,
+          projection.chapterId,
+          projection.sourceRevision,
+        ),
+      );
+    }
+
+    void addPhysical(
+      PhysicalMediaId id, {
+      required bool ready,
+      required int bytes,
+    }) {
+      if (id.kind != PhysicalMediaIdKind.canonical) return;
+      final coordinate = CanonicalMediaCoordinate.tryParseStableKey(id.value);
+      if (coordinate == null) return;
+      final builder = builders[
+        _canonicalCacheGroupKey(coordinate.familyId, coordinate.chapterId)
+      ];
+      if (builder == null) return;
+      builder.addPage(
+        physicalId: id,
+        ready: ready,
+        bytes: bytes,
+        manualReferenced: false,
+      );
+    }
+
+    for (final record in artifacts.values) {
+      addPhysical(record.id, ready: true, bytes: record.bytes);
+    }
+    for (final record in partials.values) {
+      if (artifacts.containsKey(record.id)) continue;
+      addPhysical(record.id, ready: false, bytes: record.bytes);
+    }
+    return builders;
+  }
 
   VersionChapterCanonicalProjection? projectionFor(
     ImportedLibraryEntry entry,

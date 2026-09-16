@@ -1483,88 +1483,114 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     BuildContext context,
     ChapterCacheManagementProjection projection,
   ) {
-    final children = <Widget>[];
+    final canonical = projection.canonical;
+    final exact = projection.exact;
+    final slivers = <Widget>[
+      const SliverToBoxAdapter(child: SizedBox(height: 8)),
+    ];
     if (_cacheCoordinator != null) {
-      children.add(
-        _DownloadCacheSummary(
-          usage: _cacheUsage,
-          busy: _cacheBusy,
-          onTrim: _trimCache,
-          onClear: _clearCache,
+      slivers.add(
+        SliverToBoxAdapter(
+          child: _DownloadCacheSummary(
+            usage: _cacheUsage,
+            busy: _cacheBusy,
+            onTrim: _trimCache,
+            onClear: _clearCache,
+          ),
         ),
       );
-      children.add(const Divider(height: 24));
+      slivers.add(const SliverToBoxAdapter(child: Divider(height: 24)));
     }
 
-    if (projection.canonical.isNotEmpty) {
-      children.add(
-        const _DownloadSectionHeader(title: 'Canonical 页面缓存'),
+    if (canonical.isNotEmpty) {
+      slivers.add(
+        const SliverToBoxAdapter(
+          child: _DownloadSectionHeader(title: 'Canonical 页面缓存'),
+        ),
       );
-      for (var index = 0; index < projection.canonical.length; index++) {
-        if (index > 0) children.add(const Divider(height: 1));
-        final cache = projection.canonical[index];
-        final target = _preferredCanonicalDownloadSnapshot(cache);
-        final canConvert = target != null && !target.isManualDownload;
-        children.add(
-          _CanonicalCacheTaskTile(
-            key: downloadManagerCanonicalCacheTaskKey(cache.identity),
-            cache: cache,
-            target: target,
-            isConverting: target != null &&
-                _isActionBusy(target.identity, 'convert'),
-            onConvert: canConvert
-                ? () => _convertCanonicalCacheToDownload(cache)
-                : null,
+      slivers.add(
+        SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              if (index.isOdd) return const Divider(height: 1);
+              final cache = canonical[index ~/ 2];
+              final target = _preferredCanonicalDownloadSnapshot(cache);
+              final canConvert = target != null && !target.isManualDownload;
+              return _CanonicalCacheTaskTile(
+                key: downloadManagerCanonicalCacheTaskKey(cache.identity),
+                cache: cache,
+                target: target,
+                isConverting: target != null &&
+                    _isActionBusy(target.identity, 'convert'),
+                onConvert: canConvert
+                    ? () => _convertCanonicalCacheToDownload(cache)
+                    : null,
+              );
+            },
+            childCount: canonical.length * 2 - 1,
           ),
-        );
-      }
-    }
-
-    if (projection.exact.isNotEmpty) {
-      if (projection.canonical.isNotEmpty) {
-        children.add(const Divider(height: 24));
-      }
-      children.add(
-        const _DownloadSectionHeader(title: '未归入 Canonical 的页面缓存'),
+        ),
       );
-      for (var index = 0; index < projection.exact.length; index++) {
-        if (index > 0) children.add(const Divider(height: 1));
-        final cache = projection.exact[index];
-        final snapshot = _snapshots[cache.identity];
-        final canMutate = snapshot != null &&
-            !snapshot.isManualDownload &&
-            _entryFor(snapshot) != null;
-        children.add(
-          _ExactCacheTaskTile(
-            key: downloadManagerAutoCacheTaskKey(cache.identity),
-            cache: cache,
-            isDeleting: canMutate &&
-                _isActionBusy(cache.identity, 'delete'),
-            isConverting: canMutate &&
-                _isActionBusy(cache.identity, 'convert'),
-            onDelete: canMutate ? () => _delete(snapshot) : null,
-            onConvert: canMutate
-                ? () => _convertCacheToDownload(snapshot)
-                : null,
-          ),
-        );
+    }
+
+    if (exact.isNotEmpty) {
+      if (canonical.isNotEmpty) {
+        slivers.add(const SliverToBoxAdapter(child: Divider(height: 24)));
       }
+      slivers.add(
+        const SliverToBoxAdapter(
+          child: _DownloadSectionHeader(title: '未归入 Canonical 的页面缓存'),
+        ),
+      );
+      slivers.add(
+        SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) {
+              if (index.isOdd) return const Divider(height: 1);
+              final cache = exact[index ~/ 2];
+              final snapshot = _snapshots[cache.identity];
+              final canMutate = snapshot != null &&
+                  !snapshot.isManualDownload &&
+                  _entryFor(snapshot) != null;
+              return _ExactCacheTaskTile(
+                key: downloadManagerAutoCacheTaskKey(cache.identity),
+                cache: cache,
+                isDeleting: canMutate &&
+                    _isActionBusy(cache.identity, 'delete'),
+                isConverting: canMutate &&
+                    _isActionBusy(cache.identity, 'convert'),
+                onDelete: canMutate ? () => _delete(snapshot) : null,
+                onConvert: canMutate
+                    ? () => _convertCacheToDownload(snapshot)
+                    : null,
+              );
+            },
+            childCount: exact.length * 2 - 1,
+          ),
+        ),
+      );
     }
 
-    if (projection.canonical.isEmpty && projection.exact.isEmpty) {
-      children.addAll(const <Widget>[
-        SizedBox(height: 72),
-        Icon(Icons.cached_outlined, size: 48),
-        SizedBox(height: 12),
-        Center(child: Text('暂无页面缓存')),
-        SizedBox(height: 72),
-      ]);
+    if (canonical.isEmpty && exact.isEmpty) {
+      slivers.add(
+        const SliverToBoxAdapter(
+          child: Column(
+            children: <Widget>[
+              SizedBox(height: 72),
+              Icon(Icons.cached_outlined, size: 48),
+              SizedBox(height: 12),
+              Text('暂无页面缓存'),
+              SizedBox(height: 72),
+            ],
+          ),
+        ),
+      );
     }
+    slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 8)));
 
-    return ListView(
+    return CustomScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      children: children,
+      slivers: slivers,
     );
   }
 

@@ -419,6 +419,13 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('正在读取 Canonical 缓存…'), findsNothing);
+      final canonicalSliver = tester.widget<SliverList>(find.byType(SliverList));
+      expect(
+        canonicalSliver.delegate,
+        isA<SliverChildBuilderDelegate>(),
+        reason:
+            'Canonical cache rows must stay lazy instead of allocating every historical tile during tab switch',
+      );
 
       await tester.pumpWidget(const SizedBox.shrink());
       projectionChanges.dispose();

@@ -1458,27 +1458,54 @@ final class PersistentChapterDownloadService
     Iterable<ImportedLibraryEntry> knownEntries,
   ) async {
     _requireOpen();
+    final startedUs = _traceClock.nowMicros();
     final known = knownEntries.toList(growable: false);
+    final indexedStartedUs = _traceClock.nowMicros();
     final indexed = await artifactStore.indexedRecords();
+    final indexedUs = _traceClock.nowMicros() - indexedStartedUs;
+    final physicalStartedUs = _traceClock.nowMicros();
     final physicalState = await _loadManagementPhysicalState();
+    final physicalUs = _traceClock.nowMicros() - physicalStartedUs;
+    final projectStartedUs = _traceClock.nowMicros();
     final orphaned = _discoverOrphanedEntriesFromRecords(
       known,
       indexed,
       compactEntriesAreKnown: true,
     );
     final visibleEntries = <ImportedLibraryEntry>[...known, ...orphaned];
+    final snapshots = await _inspectManyFromRecords(
+      visibleEntries,
+      indexed,
+      physicalState: physicalState,
+    );
+    final cache = _buildCacheManagementProjection(
+      visibleEntries,
+      indexed,
+      physicalState,
+    );
+    final projectUs = _traceClock.nowMicros() - projectStartedUs;
+    _recordCommandTrace(
+      'download-management',
+      'management-projection-built',
+      <String, Object?>{
+        'knownEntries': known.length,
+        'orphanedEntries': orphaned.length,
+        'indexedRecords': indexed.length,
+        'physicalArtifacts': physicalState.artifacts.length,
+        'physicalPartials': physicalState.partials.length,
+        'canonicalProjections': physicalState.projections.length,
+        'canonicalRows': cache.canonical.length,
+        'exactRows': cache.exact.length,
+        'indexedUs': indexedUs,
+        'physicalUs': physicalUs,
+        'projectUs': projectUs,
+        'totalUs': _traceClock.nowMicros() - startedUs,
+      },
+    );
     return ChapterDownloadManagementProjection(
       orphanedEntries: orphaned,
-      snapshots: await _inspectManyFromRecords(
-        visibleEntries,
-        indexed,
-        physicalState: physicalState,
-      ),
-      cache: _buildCacheManagementProjection(
-        visibleEntries,
-        indexed,
-        physicalState,
-      ),
+      snapshots: snapshots,
+      cache: cache,
     );
   }
 
@@ -1546,26 +1573,21 @@ final class PersistentChapterDownloadService
     Map<String, CacheRec> indexed,
     _DownloadManagementPhysicalState physicalState,
   ) {
-    final canonicalBuilders =
-        <String, _CanonicalChapterCacheSnapshotBuilder>{};
+    final canonicalBuilders = physicalState.canonicalInventoryBuilders();
     final exactBuilders = <String, _ExactChapterCacheSnapshotBuilder>{};
 
     for (final entry in entries) {
       final manifest = entry.chapter.toManifest();
       final projection = physicalState.projectionFor(entry);
-      _CanonicalChapterCacheSnapshotBuilder? canonicalBuilder;
-      if (projection != null) {
-        final key =
-            '${projection.familyId.value}\u0000${projection.canonicalChapterId.value}';
-        canonicalBuilder = canonicalBuilders.putIfAbsent(
-          key,
-          () => _CanonicalChapterCacheSnapshotBuilder(
-            familyId: projection.familyId,
-            canonicalChapterId: projection.canonicalChapterId,
-          ),
-        );
-        canonicalBuilder.addMember(_identity(entry));
-      }
+      final canonicalBuilder = projection == null
+          ? null
+          : canonicalBuilders[
+              _canonicalCacheGroupKey(
+                projection.familyId,
+                projection.canonicalChapterId,
+              )
+            ];
+      canonicalBuilder?.addMember(_identity(entry));
 
       _ExactChapterCacheSnapshotBuilder? exactBuilder;
       for (var index = 0; index < manifest.pages.length; index++) {

@@ -23,6 +23,30 @@ ComicVersionPageMapping _mapping({
     );
 
 void main() {
+  test('canonical media stable key round-trips without version expansion', () {
+    const coordinate = CanonicalMediaCoordinate(
+      familyId: VersionFamilyId('family:历史'),
+      chapterId: CanonicalChapterId('chapter:2'),
+      segmentId: CanonicalMediaSegmentId('segment:3'),
+      offset: 120004,
+    );
+
+    expect(
+      CanonicalMediaCoordinate.tryParseStableKey(coordinate.stableKey),
+      coordinate,
+    );
+    expect(
+      CanonicalMediaCoordinate.tryParseStableKey('unrelated-canonical-key'),
+      isNull,
+    );
+    expect(
+      CanonicalMediaCoordinate.tryParseStableKey(
+        '${coordinate.stableKey}trailing',
+      ),
+      isNull,
+    );
+  });
+
   test('large seed chapter is one stable canonical segment', () {
     final union = ComicVersionCanonicalMediaUnion(
       familyId: const VersionFamilyId('family'),
