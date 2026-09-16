@@ -1771,7 +1771,11 @@ void main() {
   });
 
   testWidgets('local details refreshes a stale revision before Reader open', (tester) async {
-    final source = _FixtureSource('fixture-stale-details', '详情旧章节源');
+    final source = _FixtureSource(
+      'fixture-stale-details',
+      '详情旧章节源',
+      catalogPageCount: 0,
+    );
     final manifest = await source.loadComic(source._comicId);
     final chapter = manifest.chapters.first;
     final freshEntry = ImportedLibraryEntry(
@@ -1854,9 +1858,15 @@ void main() {
       tester,
       find.byKey(details.comicDetailsChapterKey(source.sourceId, chapter.chapterId)),
     );
-    await tester.tap(
-      find.byKey(details.comicDetailsChapterKey(source.sourceId, chapter.chapterId)),
+    final chapterTile = find.byKey(
+      details.comicDetailsChapterKey(source.sourceId, chapter.chapterId),
     );
+    expect(
+      find.descendant(of: chapterTile, matching: find.text('1 页')),
+      findsOneWidget,
+      reason: 'historical page list may project count without becoming Reader authority',
+    );
+    await tester.tap(chapterTile);
     await tester.pump();
     expect(capturedLoader, isNotNull);
 

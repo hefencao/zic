@@ -1999,7 +1999,7 @@ final class _LocalComicDetailsScreenState
           title: chapter.title,
           chapterId: chapter.chapterId,
           sequence: chapter.sequence,
-          pageCount: _knownPageCount(chapter, entry),
+          pageCount: _knownPageCount(chapter, candidateEntry),
           publishedAt: chapter.publishedAt,
           entry: entry,
           sourceChapter: chapter,
@@ -3561,7 +3561,7 @@ final class _RemoteComicDetailsScreenState
           _deletedChapterIdentities.contains(identity)) {
         continue;
       }
-      final count = _knownPageCount(chapter, entry);
+      final count = _knownPageCount(chapter, candidateEntry);
       knownPageCount += count;
       if (count == 0) {
         pageCountPending = true;
