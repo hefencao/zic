@@ -3302,6 +3302,7 @@ final class _RecordingCacheMutationOwner implements DownloadCacheMutationOwner {
     DownloadSession session,
     CacheState state, {
     required SourceEpoch expectedEpoch,
+    int? committedLength,
   }) async {
     syncedStates.add(state);
   }

@@ -2582,6 +2582,7 @@ final class PersistentDownloadArtifactStore
     DownloadSession session,
     CacheState state, {
     required SourceEpoch expectedEpoch,
+    int? committedLength,
   }) {
     final physicalPartial = state == CacheState.partial &&
         !session.physicalId.isExactFallback;
@@ -2598,6 +2599,7 @@ final class PersistentDownloadArtifactStore
         session,
         state,
         expectedEpoch: expectedEpoch,
+        committedLength: committedLength,
       ),
     );
   }
@@ -2606,8 +2608,12 @@ final class PersistentDownloadArtifactStore
     DownloadSession session,
     CacheState state, {
     required SourceEpoch expectedEpoch,
+    int? committedLength,
   }) async {
     _requireOpen();
+    if (committedLength != null && state != CacheState.partial) {
+      throw StateError('explicit committed length is only valid for partial cache sync');
+    }
     if (!_ownsBorrowedSessionBacking(session)) {
       throw StateError(
         'persistent cache mutation requires a borrowed session backing',
@@ -2615,10 +2621,14 @@ final class PersistentDownloadArtifactStore
     }
     if (session.epoch != expectedEpoch ||
         session.state == DownloadState.disposed ||
-        session.artifact.state == ArtifactState.empty ||
-        (state == CacheState.partial && session.committedLength == 0)) {
+        session.artifact.state == ArtifactState.empty) {
       return;
     }
+    final persistedLength = committedLength ?? session.committedLength;
+    if (persistedLength < 0 || persistedLength > session.committedLength) {
+      throw StateError('cache sync length exceeds committed session prefix');
+    }
+    if (state == CacheState.partial && persistedLength == 0) return;
 
     final now = DateTime.now().toUtc().microsecondsSinceEpoch;
     if (state == CacheState.partial && !session.physicalId.isExactFallback) {
@@ -2631,7 +2641,7 @@ final class PersistentDownloadArtifactStore
       final writtenPhysical = PhysicalPartialRecord(
         id: session.physicalId,
         path: session.artifact.partialPath,
-        bytes: session.committedLength,
+        bytes: persistedLength,
         checksum: session.artifact.checksum,
         createdUs: existingPhysical?.createdUs ?? now,
         touchedUs: now,
@@ -2666,7 +2676,7 @@ final class PersistentDownloadArtifactStore
       id: session.id,
       state: state,
       path: writtenPath,
-      bytes: session.committedLength,
+      bytes: persistedLength,
       checksum: session.artifact.checksum,
       createdUs: existing?.createdUs ?? now,
       touchedUs: now,
@@ -4836,7 +4846,7 @@ final class PersistentDownloadArtifactStore
         );
       }
       final length = await _bytes.length(record.path);
-      if (length <= 0 || length != record.bytes) {
+      if (length < record.bytes) {
         await _removePhysicalPartialRecord(record, deleteBody: true);
         return null;
       }
@@ -4852,11 +4862,14 @@ final class PersistentDownloadArtifactStore
       final touchedUs = DateTime.now().toUtc().microsecondsSinceEpoch;
       await _index.touchPhysicalPartial(physicalId, touchedUs);
       return PartialDownloadEntry(
-        length: length,
+        length: record.bytes,
         validators: resume.validators,
         totalLength: resume.totalLength,
-        open: ({required int start}) =>
-            _bytes.readChunks(record.path, start: start, endExclusive: length),
+        open: ({required int start}) => _bytes.readChunks(
+          record.path,
+          start: start,
+          endExclusive: record.bytes,
+        ),
         accessMode: 'saf',
       );
     }
@@ -4873,7 +4886,12 @@ final class PersistentDownloadArtifactStore
       return null;
     }
     final file = File(record.path);
-    if (!await file.exists() || await file.length() != record.bytes) {
+    if (!await file.exists()) {
+      await _removePhysicalPartialRecord(record, deleteBody: true);
+      return null;
+    }
+    final physicalLength = await file.length();
+    if (physicalLength < record.bytes) {
       await _removePhysicalPartialRecord(record, deleteBody: true);
       return null;
     }
@@ -4937,7 +4955,7 @@ final class PersistentDownloadArtifactStore
       }
       try {
         final stat = await File(aliasedPath).stat();
-        if (stat.type != FileSystemEntityType.file || stat.size != record.bytes) {
+        if (stat.type != FileSystemEntityType.file || stat.size < record.bytes) {
           continue;
         }
         if (access.health != StorageAccessHealth.healthy) {
@@ -5084,7 +5102,7 @@ final class PersistentDownloadArtifactStore
       return false;
     }
     final file = File(current.path);
-    if (!await file.exists() || await file.length() != current.bytes) {
+    if (!await file.exists() || await file.length() < current.bytes) {
       return false;
     }
     final resume = await _readPhysicalPartialResumeState(
@@ -5745,7 +5763,7 @@ final class PersistentDownloadArtifactStore
     if (parsed != null) {
       if (safTreeUri == null || parsed.treeUri != safTreeUri) return null;
       final length = await _bytes.length(record.path);
-      if (length <= 0 || length != record.bytes) {
+      if (length < record.bytes) {
         await _invalidateIndexedArtifact(id, record: record);
         await safTreeIo?.delete('${parsed.relativePath}.meta');
         return null;
@@ -5761,11 +5779,14 @@ final class PersistentDownloadArtifactStore
       final touchedUs = DateTime.now().toUtc().microsecondsSinceEpoch;
       await _index.touch(id.key, touchedUs);
       return PartialDownloadEntry(
-        length: length,
+        length: record.bytes,
         validators: resume.validators,
         totalLength: resume.totalLength,
-        open: ({required int start}) =>
-            _bytes.readChunks(record.path, start: start, endExclusive: length),
+        open: ({required int start}) => _bytes.readChunks(
+          record.path,
+          start: start,
+          endExclusive: record.bytes,
+        ),
       );
     }
 
@@ -5775,7 +5796,7 @@ final class PersistentDownloadArtifactStore
       return null;
     }
     final length = await file.length();
-    if (length <= 0 || length != record.bytes) {
+    if (length < record.bytes) {
       await _invalidateIndexedArtifact(id, record: record);
       final metadata = File('${record.path}.meta');
       if (await metadata.exists()) await metadata.delete();
@@ -5794,11 +5815,14 @@ final class PersistentDownloadArtifactStore
     await _index.touch(id.key, touchedUs);
     final adoptionExpected = record.copyWith(touchedUs: touchedUs);
     return PartialDownloadEntry(
-      length: length,
+      length: record.bytes,
       validators: resume.validators,
       totalLength: resume.totalLength,
-      open: ({required int start}) =>
-          _readIndexedChunks(record.path, length: length, start: start),
+      open: ({required int start}) => _readIndexedChunks(
+        record.path,
+        length: record.bytes,
+        start: start,
+      ),
       adoptInto: (session, {TaskControl? control}) => _adoptIndexedPosixPartial(
         session,
         expected: adoptionExpected,
@@ -5832,7 +5856,7 @@ final class PersistentDownloadArtifactStore
           return false;
         }
         final file = File(current.path);
-        if (!await file.exists() || await file.length() != current.bytes) {
+        if (!await file.exists() || await file.length() < current.bytes) {
           return false;
         }
         final resume = await _readIndexedPartialResumeState(current.path, id);

@@ -649,6 +649,183 @@ void main() {
     },
   );
 
+  test(
+    'borrowed canonical spool checkpoint refreshes durable length before cold reopen',
+    () async {
+      final durableRoot = await Directory.systemTemp.createTemp(
+        'canonical-partial-checkpoint-',
+      );
+      final hotRoot = await Directory.systemTemp.createTemp(
+        'canonical-partial-checkpoint-hot-',
+      );
+      addTearDown(() async {
+        await durableRoot.delete(recursive: true);
+        await hotRoot.delete(recursive: true);
+      });
+      final id = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'page',
+        ),
+        sourceRevision: 'revision',
+        canonicalUri: Uri.parse('https://example.test/page.webp'),
+      );
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000041',
+      );
+      final prefix = Uint8List.fromList(
+        List<int>.generate(4096, (index) => index & 0xff),
+      );
+      final suffix = Uint8List.fromList(
+        List<int>.generate(2048, (index) => (index * 13) & 0xff),
+      );
+      final expected = Uint8List.fromList(<int>[...prefix, ...suffix]);
+      final store = await PersistentDownloadArtifactStore.open(
+        durableRoot.path,
+      );
+      final hot = DownloadRegistry(
+        layout: CacheLayout(hotRoot.path),
+        clock: SystemClock(),
+      );
+      addTearDown(() async {
+        await hot.dispose();
+        await store.close();
+      });
+      await store.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        entry: PartialDownloadEntry(
+          length: prefix.lengthInBytes,
+          validators: const Validators(etag: 'checkpoint-v1'),
+          totalLength: expected.lengthInBytes * 2,
+          open: ({required int start}) =>
+              Stream<List<int>>.value(Uint8List.sublistView(prefix, start)),
+        ),
+      );
+      hot.bindPhysicalMedia(id: id, physicalId: physical);
+      final session = hot.get(id);
+      final handoff = PartialDownloadHandoff(store: store);
+      await handoff.restoreInto(session);
+      expect(session.hasBorrowedDurableSpool, isTrue);
+      expect(session.committedLength, prefix.lengthInBytes);
+
+      await session.bindResponse(
+        validators: const Validators(etag: 'checkpoint-v1'),
+        totalLength: expected.lengthInBytes * 2,
+      );
+      final writer = session.acquireWriter();
+      addTearDown(() async {
+        if (session.hasWriter) await session.pause(writer);
+      });
+      await session.append(writer, prefix.lengthInBytes, suffix);
+      expect(session.committedLength, expected.lengthInBytes);
+      expect(await handoff.persist(session, reason: 'test-checkpoint'), isTrue);
+
+      final physicalIndex = store.index as PhysicalPartialIndex;
+      final checkpoint = await physicalIndex.getPhysicalPartial(physical);
+      expect(checkpoint?.bytes, expected.lengthInBytes,
+          reason: 'the durable index must describe the grown borrowed spool');
+      expect(await File(checkpoint!.path).length(), expected.lengthInBytes);
+      expect(await File(checkpoint.path).readAsBytes(), expected);
+    },
+  );
+
+  test(
+    'cold canonical partial preserves checkpoint and trims uncheckpointed crash tail on adoption',
+    () async {
+      final durableRoot = await Directory.systemTemp.createTemp(
+        'canonical-partial-crash-tail-',
+      );
+      final hotRoot = await Directory.systemTemp.createTemp(
+        'canonical-partial-crash-tail-hot-',
+      );
+      addTearDown(() async {
+        await durableRoot.delete(recursive: true);
+        await hotRoot.delete(recursive: true);
+      });
+      final id = DownloadId(
+        content: const ContentId(
+          sourceId: 'source',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          pageId: 'page',
+        ),
+        sourceRevision: 'revision',
+        canonicalUri: Uri.parse('https://example.test/crash-tail.webp'),
+      );
+      final physical = PhysicalMediaId.canonical(
+        'family\u0000chapter\u0000segment\u000042',
+      );
+      final checkpoint = Uint8List.fromList(
+        List<int>.generate(4096, (index) => (index * 5) & 0xff),
+      );
+      final crashTail = Uint8List.fromList(
+        List<int>.generate(1536, (index) => (index * 11) & 0xff),
+      );
+      final store = await PersistentDownloadArtifactStore.open(
+        durableRoot.path,
+      );
+      final hot = DownloadRegistry(
+        layout: CacheLayout(hotRoot.path),
+        clock: SystemClock(),
+      );
+      addTearDown(() async {
+        await hot.dispose();
+        await store.close();
+      });
+      await store.storePhysicalPartialDownload(
+        physicalId: physical,
+        providerHint: id,
+        preferDirectStaging: true,
+        entry: PartialDownloadEntry(
+          length: checkpoint.lengthInBytes,
+          validators: const Validators(etag: 'checkpoint-v1'),
+          totalLength: 16384,
+          open: ({required int start}) => Stream<List<int>>.value(
+            Uint8List.sublistView(checkpoint, start),
+          ),
+        ),
+      );
+      final physicalIndex = store.index as PhysicalPartialIndex;
+      final record = await physicalIndex.getPhysicalPartial(physical);
+      expect(record, isNotNull);
+      await File(record!.path).writeAsBytes(
+        crashTail,
+        mode: FileMode.append,
+        flush: true,
+      );
+      expect(
+        await File(record.path).length(),
+        checkpoint.lengthInBytes + crashTail.lengthInBytes,
+      );
+
+      final cold = await store.openPhysicalPartialDownload(
+        physicalId: physical,
+        requestId: id,
+      );
+      expect(cold, isNotNull,
+          reason: 'a longer body still contains the indexed durable checkpoint');
+      expect(cold!.length, checkpoint.lengthInBytes);
+      final visible = BytesBuilder(copy: false);
+      await for (final chunk in cold.open(start: 0)) {
+        visible.add(chunk);
+      }
+      expect(visible.takeBytes(), checkpoint);
+      expect(await File(record.path).exists(), isTrue);
+
+      hot.bindPhysicalMedia(id: id, physicalId: physical);
+      final session = hot.get(id);
+      await PartialDownloadHandoff(store: store).restoreInto(session);
+      expect(session.hasBorrowedPartialBacking, isTrue);
+      expect(session.committedLength, checkpoint.lengthInBytes);
+      expect(await File(record.path).length(), checkpoint.lengthInBytes,
+          reason: 'adoption must discard only the uncheckpointed crash tail');
+      expect(await session.artifact.readBytes(), checkpoint);
+    },
+  );
+
   test('partial survives Reader-session workspace replacement without promotion',
       () async {
     final firstRoot = await Directory.systemTemp.createTemp('partial-source-');

@@ -135,10 +135,12 @@ final class Artifact {
   /// Opens an already-indexed mutable partial without hashing its whole body.
   ///
   /// This is deliberately narrower than [restore]: the caller must already own
-  /// a durable partial binding and provide its exact indexed length. The body
-  /// remains unsealed and its checksum stays dirty, so [seal] performs the
-  /// authoritative whole-file CRC before promotion. This lets a transfer adopt
-  /// a large durable spool without an O(prefix) read before network resume.
+  /// a durable partial binding and provide its durable checkpoint length. A
+  /// longer body is an uncheckpointed crash tail and is truncated back to that
+  /// checkpoint; a shorter body is corruption. The body remains unsealed and
+  /// its checksum stays dirty, so [seal] performs the authoritative whole-file
+  /// CRC before promotion. This lets a transfer adopt a large durable spool
+  /// without an O(prefix) read before network resume.
   Future<ArtifactSnapshot> adoptExistingPartial({
     required int expectedLength,
   }) => _enqueueMutation(
@@ -174,13 +176,23 @@ final class Artifact {
       );
     }
     final partial = File(partialPath);
-    final actualLength = await partial.length();
-    if (actualLength != expectedLength) {
+    var actualLength = await partial.length();
+    if (actualLength < expectedLength) {
       throw Failure(
         code: ErrorCode.artifactCorruption,
-        message: 'indexed partial length changed before adoption: '
+        message: 'indexed partial is shorter than its durable checkpoint: '
             '$actualLength/$expectedLength',
       );
+    }
+    if (actualLength > expectedLength) {
+      final handle = await partial.open(mode: FileMode.append);
+      try {
+        await handle.truncate(expectedLength);
+        await handle.flush();
+      } finally {
+        await handle.close();
+      }
+      actualLength = expectedLength;
     }
     _crc = Crc32();
     _checksumDirty = true;
@@ -313,6 +325,15 @@ final class Artifact {
   Future<void> flush() => _enqueueMutation(() async {
         _requireNotDisposed();
         await _sink?.flush();
+      });
+
+  /// Flushes the current mutable prefix and returns the committed length from
+  /// the same mutation quantum. A later queued append cannot advance this
+  /// checkpoint value before it is captured.
+  Future<int> flushCommittedLength() => _enqueueMutation(() async {
+        _requireNotDisposed();
+        await _sink?.flush();
+        return _committed;
       });
 
   Future<void> pause() => _enqueueMutation(_pause);

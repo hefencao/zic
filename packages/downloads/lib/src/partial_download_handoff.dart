@@ -1320,12 +1320,16 @@ final class PartialDownloadHandoff {
       return true;
     }
     if (session.hasBorrowedPartialBacking) {
-      await session.settleCacheMutations();
-      _durablePartialLengths[session] = session.committedLength;
+      final checkpointLength = await session.checkpointPartialCache();
+      if (checkpointLength <= 0) {
+        await session.settleCacheMutations();
+        return true;
+      }
+      _durablePartialLengths[session] = checkpointLength;
       _record(
         session,
         action: 'retained-adopted',
-        bytes: session.committedLength,
+        bytes: checkpointLength,
         startedAtMicros: clock?.nowMicros(),
         reason: reason,
       );

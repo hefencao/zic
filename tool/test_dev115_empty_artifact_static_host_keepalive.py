@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard dev.115 empty-artifact self-heal and static host retention."""
+"""Guard dev.115 empty-artifact self-heal, partial bounds, and static host retention."""
 from pathlib import Path
 import re
 
@@ -18,6 +18,7 @@ manager = read("packages/downloads/lib/src/artifact_cache_manager.dart")
 store = read("packages/downloads/lib/src/artifact_cache_store.dart")
 chapter = read("packages/downloads/lib/src/chapter_downloads.dart")
 persistent_store = read("packages/downloads/lib/src/persistent_download_artifact_store.dart")
+artifact = read("packages/storage/lib/src/artifact.dart")
 handoff = read("packages/downloads/lib/src/promoted_artifact_cache_handoff.dart")
 download = read("packages/sessions/lib/src/download_session.dart")
 job = read("packages/sessions/lib/src/download_job.dart")
@@ -44,11 +45,18 @@ for token in (
     require(manager, token, "central artifact cache manager")
 for token in (
     "record.bytes <= 0",
-    "length <= 0 || length != record.bytes",
+    "physicalLength < record.bytes",
+    "endExclusive: record.bytes",
     "_invalidateIndexedArtifact",
     "cannot cache an empty Reader artifact",
 ):
     require(chapter + persistent_store, token, "download artifact backends")
+for token in (
+    "actualLength < expectedLength",
+    "actualLength > expectedLength",
+    "truncate(expectedLength)",
+):
+    require(artifact, token, "mutable partial adoption checkpoint bound")
 for token in (
     "session.residentBodyBacked",
     "skip-cache-resident",

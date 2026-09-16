@@ -115,6 +115,20 @@ void main() {
     );
   });
 
+  test('flush checkpoint captures length before a later queued append', () async {
+    final artifact = createArtifact();
+    await artifact.restore();
+    await artifact.append(0, <int>[1, 2, 3]);
+
+    final checkpoint = artifact.flushCommittedLength();
+    final laterAppend = artifact.append(3, <int>[4, 5]);
+
+    expect(await checkpoint, 3);
+    await laterAppend;
+    expect(artifact.committedLength, 5);
+    expect(await artifact.readBytes(), <int>[1, 2, 3, 4, 5]);
+  });
+
   test('adopts indexed partial length without eager whole-file checksum', () async {
     final first = createArtifact();
     await first.restore();

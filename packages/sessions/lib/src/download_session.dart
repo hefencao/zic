@@ -282,6 +282,7 @@ abstract interface class DownloadCacheMutationOwner {
     DownloadSession session,
     CacheState state, {
     required SourceEpoch expectedEpoch,
+    int? committedLength,
   });
 
   Future<bool> beginDownloadCachePromotion(
@@ -2375,6 +2376,27 @@ final class DownloadSession {
     _networkFlowProofLength = 0;
   }
 
+  /// Flushes the currently committed partial prefix and publishes exactly that
+  /// flushed length to the durable cache owner without pausing the active
+  /// writer. Bytes appended after the flush remain an uncheckpointed crash tail
+  /// until a later checkpoint advances the durable length.
+  Future<int> checkpointPartialCache() async {
+    _requireNotDisposed();
+    if (artifact.state != ArtifactState.partial || artifact.committedLength <= 0) {
+      return 0;
+    }
+    final epoch = _epoch;
+    final checkpointLength = await artifact.flushCommittedLength();
+    _requireEpoch(epoch);
+    await _syncCache(
+      CacheState.partial,
+      expectedEpoch: epoch,
+      committedLength: checkpointLength,
+    );
+    _requireEpoch(epoch);
+    return checkpointLength;
+  }
+
   /// Waits until cache/index synchronization already queued by this session
   /// has settled. Composition owners use this before removing an idle physical
   /// session from the registry, so a newly-created same-id generation cannot
@@ -3309,23 +3331,32 @@ final class DownloadSession {
   Future<void> _syncCache(
     CacheState state, {
     required SourceEpoch expectedEpoch,
+    int? committedLength,
   }) => _enqueueCacheMutation<void>(() async {
+        if (committedLength != null && state != CacheState.partial) {
+          throw StateError('explicit committed length is only valid for partial cache sync');
+        }
         final mutationOwner = _cacheMutationOwner;
         if (mutationOwner != null) {
           await mutationOwner.syncDownloadCache(
             this,
             state,
             expectedEpoch: expectedEpoch,
+            committedLength: committedLength,
           );
           return;
         }
         if (_epoch != expectedEpoch || _state == DownloadState.disposed) {
           return;
         }
+        final persistedLength = committedLength ?? artifact.committedLength;
+        if (persistedLength < 0 || persistedLength > artifact.committedLength) {
+          throw StateError('cache sync length exceeds committed artifact prefix');
+        }
         final cache = index;
         final physicalCache = _physicalPartialIndex;
         if (artifact.state == ArtifactState.empty ||
-            (state == CacheState.partial && artifact.committedLength == 0)) {
+            (state == CacheState.partial && persistedLength == 0)) {
           return;
         }
         final now = DateTime.now().toUtc().microsecondsSinceEpoch;
@@ -3340,7 +3371,7 @@ final class DownloadSession {
           final writtenPhysical = PhysicalPartialRecord(
             id: physicalId,
             path: artifact.partialPath,
-            bytes: artifact.committedLength,
+            bytes: persistedLength,
             checksum: artifact.checksum,
             createdUs: existingPhysical?.createdUs ?? now,
             touchedUs: now,
@@ -3368,7 +3399,7 @@ final class DownloadSession {
           id: id,
           state: state,
           path: writtenPath,
-          bytes: artifact.committedLength,
+          bytes: persistedLength,
           checksum: artifact.checksum,
           createdUs: existing?.createdUs ?? now,
           touchedUs: now,
