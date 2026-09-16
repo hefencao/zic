@@ -1573,6 +1573,215 @@ void main() {
     expect(starts, <DownloadId>[hot.id, resident.id]);
   });
 
+  test(
+      'higher-priority source-less Reader entry reserves replay capacity for late READY',
+      () async {
+    Future<DownloadSession> hotPartial(String name, int fill) async {
+      final session = DownloadSession(
+        id: _idWithSource(name),
+        artifact: Artifact(
+          partialPath: '${temp.path}/partial/$name.webp',
+          finalPath: '${temp.path}/cache/$name.webp',
+        ),
+        clock: FakeMonoClock(),
+      );
+      await session.restore();
+      final writer = session.acquireWriter();
+      await session.append(
+        writer,
+        0,
+        <int>[
+          ...'RIFF....WEBP'.codeUnits,
+          ...List<int>.filled(512 * 1024, fill),
+        ],
+      );
+      await session.pause(writer);
+      return session;
+    }
+
+    final current = DownloadSession(
+      id: _idWithSource('late-ready-current'),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/late-ready-current.webp',
+        finalPath: '${temp.path}/cache/late-ready-current.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    await current.restore();
+    final next = await hotPartial('late-ready-next', 1);
+    final next2 = await hotPartial('late-ready-next2', 2);
+    addTearDown(() async {
+      await current.dispose();
+      await next.dispose();
+      await next2.dispose();
+    });
+
+    final currentDemand =
+        current.attachDemand(scopeId: 'reader', priority: 1000);
+    final nextDemand = next.attachDemand(scopeId: 'reader', priority: 820);
+    final next2Demand = next2.attachDemand(scopeId: 'reader', priority: 800);
+    addTearDown(() {
+      currentDemand.detach();
+      nextDemand.detach();
+      next2Demand.detach();
+    });
+
+    final lowReleases = <DownloadId, Completer<void>>{
+      next.id: Completer<void>(),
+      next2.id: Completer<void>(),
+    };
+    addTearDown(() {
+      for (final release in lowReleases.values) {
+        if (!release.isCompleted) release.complete();
+      }
+    });
+    final starts = <DownloadId>[];
+    final currentBytes = <int>[
+      ...'RIFF....WEBP'.codeUnits,
+      ...List<int>.filled(512 * 1024, 3),
+    ];
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024 * 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-late-ready-capacity',
+      maxActiveReplays: 2,
+      residentReplayRangeSourceWithControl:
+          (physical, start, endExclusive, {required control}) async {
+        starts.add(physical.id);
+        control.throwIfCancelled();
+        return Stream<List<int>>.value(
+          currentBytes.sublist(start, endExclusive),
+        );
+      },
+      artifactReplayRangeSourceWithControl:
+          (physical, start, endExclusive,
+              {required chunkSize, required control}) async {
+        starts.add(physical.id);
+        await lowReleases[physical.id]!.future;
+        control.throwIfCancelled();
+        return physical.artifact.readChunks(
+          start: start,
+          endExclusive: endExclusive,
+          chunkSize: chunkSize,
+        );
+      },
+    );
+    addTearDown(() {
+      ingresses.dispose();
+      sources.dispose();
+    });
+
+    // The current page has no bytes yet while local preparation resolves its
+    // durable READY body. Lower-ranked replay work may use spare capacity, but
+    // must not consume every slot before that higher-ranked source can arrive.
+    ingresses.get(current);
+    ingresses.get(next);
+    ingresses.get(next2);
+    await Future<void>.delayed(Duration.zero);
+    expect(starts, hasLength(1));
+    expect(starts.single, next.id);
+
+    current.bindResidentImmutableAuthority(
+      validators: const Validators(),
+      totalLength: currentBytes.length,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: currentBytes.sublist(0, 64),
+      residentReplayAccessMode: 'direct',
+    );
+    for (var i = 0; i < 8 && !starts.contains(current.id); i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(starts, <DownloadId>[next.id, current.id]);
+
+    lowReleases[next.id]!.complete();
+    lowReleases[next2.id]!.complete();
+    await ingresses.settled(next2.id);
+  });
+
+  test('source-less replay reservation releases when higher priority queues network',
+      () async {
+    final current = DownloadSession(
+      id: _idWithSource('reserved-current-network'),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/reserved-current-network.webp',
+        finalPath: '${temp.path}/cache/reserved-current-network.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    final low = DownloadSession(
+      id: _idWithSource('reserved-low-replay'),
+      artifact: Artifact(
+        partialPath: '${temp.path}/partial/reserved-low-replay.webp',
+        finalPath: '${temp.path}/cache/reserved-low-replay.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    await current.restore();
+    await low.restore();
+    final writer = low.acquireWriter();
+    await low.append(
+      writer,
+      0,
+      <int>[
+        ...'RIFF....WEBP'.codeUnits,
+        ...List<int>.filled(128 * 1024, 1),
+      ],
+    );
+    await low.pause(writer);
+    addTearDown(() async {
+      await current.dispose();
+      await low.dispose();
+    });
+    final currentDemand =
+        current.attachDemand(scopeId: 'reader', priority: 1000);
+    final lowDemand = low.attachDemand(scopeId: 'reader', priority: 820);
+    addTearDown(() {
+      currentDemand.detach();
+      lowDemand.detach();
+    });
+
+    final starts = <DownloadId>[];
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024 * 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'reader-reservation-release',
+      maxActiveReplays: 1,
+      artifactReplayRangeSourceWithControl:
+          (physical, start, endExclusive,
+              {required chunkSize, required control}) async {
+        starts.add(physical.id);
+        control.throwIfCancelled();
+        return physical.artifact.readChunks(
+          start: start,
+          endExclusive: endExclusive,
+          chunkSize: chunkSize,
+        );
+      },
+    );
+    addTearDown(() {
+      ingresses.dispose();
+      sources.dispose();
+    });
+
+    ingresses.get(current);
+    ingresses.get(low);
+    await Future<void>.delayed(Duration.zero);
+    expect(starts, isEmpty);
+
+    current.queue();
+    for (var i = 0; i < 8 && starts.isEmpty; i++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(starts, <DownloadId>[low.id]);
+    await ingresses.settled(low.id);
+  });
+
   test('deferred durable resident hydrates only decoder-requested ranges',
       () async {
     final id = _idWithSource('deferred-durable-ready');

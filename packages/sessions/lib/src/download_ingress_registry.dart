@@ -268,6 +268,11 @@ final class DownloadIngressProjectionRegistry {
       entry.projection.setDecoderDrivenSourceGrowth(
         entry.session.residentIngressDeferred,
       );
+      // A source-less higher-priority Reader entry may temporarily reserve one
+      // replay slot while local preparation resolves its body authority. Any
+      // authoritative session-state transition can release that reservation,
+      // so the replay pump must reconsider pending lower-ranked work here.
+      _scheduleReplayPump();
       if (entry.session.residentIngressDeferred &&
           snapshot.state == DownloadState.promoted &&
           snapshot.committedLength > 0 &&
@@ -561,9 +566,35 @@ final class DownloadIngressProjectionRegistry {
         _pendingReplays.clear();
         return;
       }
-      final entry = _pendingReplays.removeAt(index);
+      final entry = _pendingReplays[index];
+      final reservedSlots = _hasHigherPrioritySourcePendingThan(entry) ? 1 : 0;
+      final admissionLimit = maxActiveReplays - reservedSlots;
+      if (_activeReplays.length >= admissionLimit) {
+        return;
+      }
+      _pendingReplays.removeAt(index);
       _startReplay(entry);
     }
+  }
+
+  bool _hasHigherPrioritySourcePendingThan(_IngressProjectionEntry candidate) {
+    for (final entry in _entries.values) {
+      if (!entry.active ||
+          identical(entry, candidate) ||
+          _pendingReplays.contains(entry) ||
+          _activeReplays.contains(entry) ||
+          !entry.session.demanded ||
+          entry.priority <= candidate.priority ||
+          entry.session.state != DownloadState.idle ||
+          entry.session.committedLength != 0) {
+        continue;
+      }
+      final source = entry.projection.snapshot;
+      if (source.length == 0 && source.failure == null) {
+        return true;
+      }
+    }
+    return false;
   }
 
   void _startReplay(_IngressProjectionEntry entry) {
