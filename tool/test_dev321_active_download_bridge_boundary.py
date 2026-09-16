@@ -36,8 +36,11 @@ profile = read('packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart')
 for token in (
     '_bridgeActiveVerticalDownloads(',
     'allowSpeculativeAdvance:',
-    'for (final id in desired.decodes.keys) id.download',
-    'for (final id in desired.uploads.keys) id.download',
+    'bool immediateMediaRole(PageRole role)',
+    'if (immediateMediaRole(entry.value.role)) entry.key.download',
+    'if (immediateMediaRole(entry.value.role) ||',
+    'entry.value.viewportVisible)',
+    'Far one-frame work follows the bridged source',
     'Advance at most one encoded-only speculative identity per committed page',
     'downloadBridgeActive',
     'downloadBridgeLocalMovement',

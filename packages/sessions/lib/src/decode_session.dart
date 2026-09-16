@@ -2,6 +2,7 @@ import 'package:domain/domain.dart';
 import 'package:media/media.dart';
 import 'package:pipeline/pipeline.dart';
 import 'package:telemetry/telemetry.dart';
+import 'package:transport/transport.dart' show ContentKind;
 
 import 'download_ingress_projection.dart';
 import 'frame_holder.dart';
@@ -23,6 +24,7 @@ final class DecodeSnapshot {
     required this.sourceLength,
     required this.sourceSealed,
     required this.requiredSourceLength,
+    this.externalPresentationRequired = false,
     this.partialPrefixLoopEligible = false,
     this.decodedPrefixFrames = 0,
     this.firstPlayablePrefixBytes = 0,
@@ -43,6 +45,16 @@ final class DecodeSnapshot {
   final int sourceLength;
   final bool sourceSealed;
   final int requiredSourceLength;
+
+  /// The authoritative encoded source is valid media, but this DecodeSession
+  /// intentionally has no native frame producer for it. The presentation
+  /// adapter must produce the one-frame readiness proof before a staged
+  /// `targetWatermark: 1` refill is considered satisfied.
+  ///
+  /// This is presentation capability evidence, not UI policy. It is set for
+  /// fallback/GIF sources that are rendered by Flutter rather than the native
+  /// WebP cursor.
+  final bool externalPresentationRequired;
 
   /// True only when this waiting decode can immediately rewind its already
   /// proven unsealed animation prefix without waiting for source growth.
@@ -189,6 +201,7 @@ final class DecodeSession {
   int _decodedPrefixDurationMicros = 0;
   int _partialPrefixCycle = 0;
   bool _partialPrefixAnimated = false;
+  bool _externalPresentationRequired = false;
   final Map<int, DecodedFrameTiming> _frameTimings =
       <int, DecodedFrameTiming>{};
 
@@ -266,6 +279,7 @@ final class DecodeSession {
       sourceLength: source?.length ?? 0,
       sourceSealed: source?.sealed ?? false,
       requiredSourceLength: _requiredSourceLength,
+      externalPresentationRequired: _externalPresentationRequired,
       partialPrefixLoopEligible: _partialPrefixLoopEligible,
       decodedWidth: _decodedWidth,
       decodedHeight: _decodedHeight,
@@ -309,9 +323,27 @@ final class DecodeSession {
     _failure = null;
     var source = ingress.source;
     if (source == null) {
-      _waitingSourceSinceMicros ??= clock.nowMicros();
-      _setState(DecodeState.waitingSource);
-      return snapshot;
+      switch (ingressSnapshot.kind) {
+        case ContentKind.gif:
+        case ContentKind.fallback:
+          // Non-WebP media deliberately has no native EncodedSource. Once the
+          // Reader-local ingress has authoritatively classified it, native
+          // decode is complete and the staged one-frame contract transfers to
+          // the external/Flutter presentation adapter.
+          _releaseBinding();
+          _externalPresentationRequired = true;
+          _restartCursorWhenHolderEmpty = false;
+          _failure = null;
+          _waitingSourceSinceMicros = null;
+          _setState(DecodeState.ended);
+          return snapshot;
+        case ContentKind.unknown:
+        case ContentKind.webp:
+          _externalPresentationRequired = false;
+          _waitingSourceSinceMicros ??= clock.nowMicros();
+          _setState(DecodeState.waitingSource);
+          return snapshot;
+      }
     }
 
     // Decode consumes the Reader-local ingress projection, so that projection
@@ -343,6 +375,7 @@ final class DecodeSession {
 
     switch (source.kind) {
       case SourceKind.unknown:
+        _externalPresentationRequired = false;
         // The authoritative source exists but its streamed header is not yet
         // sufficient to classify the codec. Count this interval as ingress
         // wait rather than hiding it inside the first successful decode.
@@ -351,12 +384,14 @@ final class DecodeSession {
         return snapshot;
       case SourceKind.gif:
       case SourceKind.other:
+        _externalPresentationRequired = true;
         _releaseBinding();
         _restartCursorWhenHolderEmpty = false;
         _failure = null;
         _setState(DecodeState.ended);
         return snapshot;
       case SourceKind.webp:
+        _externalPresentationRequired = false;
         break;
     }
 
@@ -795,6 +830,7 @@ final class DecodeSession {
     _requireOpen();
     _revision++;
     _releaseBinding();
+    _externalPresentationRequired = false;
     _restartCursorWhenHolderEmpty = false;
     _resetPartialPrefix();
     _epoch = epoch;
@@ -807,6 +843,7 @@ final class DecodeSession {
       return;
     }
     _releaseBinding();
+    _externalPresentationRequired = false;
     _restartCursorWhenHolderEmpty = false;
     _state = DecodeState.disposed;
     _disposed = true;

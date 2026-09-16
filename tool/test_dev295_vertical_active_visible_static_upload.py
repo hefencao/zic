@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ownership gate for dev.295 vertical active hidden-static upload deferral."""
+"""Ownership gate for dev.295 native-static defer plus ADR0314 external-static staging."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,21 +31,45 @@ if android_match is None or int(android_match.group(1)) < 295:
 current_dev = int(dev_match.group(1))
 require(
     'packages/pipeline/lib/src/heuristic_policy.dart',
-    'final deferHiddenVerticalStaticUpload =',
-    'observation.direction == ReadingDirection.vertical',
-    'staticWarm &&',
-    '!primaryUpload',
-    '!visibleStatic',
+    'final deferHiddenVerticalNativeStaticUpload =',
+    'runtimeExternalStaticPages.contains(entry.key)',
+    '!externalStatic',
     'isPresentationMotionInteraction(observation.interaction)',
-    '!deferHiddenVerticalStaticUpload',
+    '!deferHiddenVerticalNativeStaticUpload',
 )
-forbid('packages/pipeline/lib/src/heuristic_policy.dart', 'final deferVerticalNext2Upload =')
+forbid(
+    'packages/pipeline/lib/src/heuristic_policy.dart',
+    'final deferVerticalNext2Upload =',
+    'final deferHiddenVerticalStaticUpload =',
+)
+require(
+    'packages/pipeline/lib/src/pipeline_controller.dart',
+    '_runtimeExternalStaticPages',
+    'externalPresentationRequired = false',
+    "'runtimeExternalStaticPages': _runtimeExternalStaticPages.length",
+)
+require(
+    'packages/sessions/lib/src/reader_binding.dart',
+    'externalPresentationRequired = false',
+    'externalPresentationRequired: externalPresentationRequired',
+)
+require(
+    'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
+    'sniffEncodedImageKind(download.readSourceMetadataPrefix())',
+    '_isStaticFallbackImageKind(encodedKind)',
+    'externalPresentationRequired: true',
+    "'basis': 'encoded-prefix'",
+)
 require(
     'packages/pipeline/test/pipeline_test.dart',
-    "'a truly visible immediate next page still uploads'",
-    "'hidden immediate next keeps its decoded warm frame'",
-    "'hidden immediate next must not blit a static texture during active vertical scrolling'",
-    'final idlePlan = policy.createPlan(',
+    "'vertical active scroll stages hidden external static but defers native static'",
+    "'hidden static without external-presentation proof must not reintroduce native texture work during active scroll'",
+    "'an exact external-static next page must retain staged first-frame work while the viewport is moving'",
+)
+require(
+    'packages/pipeline_runtime/test/media_runtime_ownership_test.dart',
+    "'exact fallback image prefix becomes runtime static evidence'",
+    "'non-media fallback prefix never becomes runtime static evidence'",
 )
 require(
     'packages/reader/lib/src/reader_view.dart',
@@ -63,9 +87,16 @@ require(
 )
 require(
     'docs/adr/0274-vertical-active-visible-static-upload-boundary.md',
-    '24.4ms',
-    'hidden speculative static page',
-    'DecodeDemand继续按既有decode 2/1',
+    'Superseded。',
+    'ADR 0314',
+    'hidden native/provisional texture',
+)
+require(
+    'docs/adr/0314-vertical-external-static-first-frame-staging.md',
+    'Accepted。',
+    'runtimeExternalStaticPages',
+    '17/17 READY、0 BLACK',
+    'localPresentationReady=false',
 )
 require(
     'docs/audits/dev295-hidden-static-upload-jitter-audit.md',

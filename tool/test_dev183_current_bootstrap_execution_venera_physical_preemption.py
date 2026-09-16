@@ -48,16 +48,22 @@ require(
 
 require(
     'packages/pipeline/lib/src/heuristic_policy.dart',
-    'bool isStableDecodeRole(PageRole role)',
-    'visibleIndexes.contains(entry.key) ||',
-    'isStableDecodeRole(entry.value)',
+    '_staticWarmPages(',
+    '.where(isStaticCandidate)',
+    'targetWatermark: decodeWatermark',
     "'heuristic:static-visible:${role.name}'",
     "'heuristic:static-warm:${role.name}'",
 )
-reject('packages/pipeline/lib/src/heuristic_policy.dart', 'PageRole.visible')
+reject(
+    'packages/pipeline/lib/src/heuristic_policy.dart',
+    'PageRole.visible',
+    'bool isStableDecodeRole(PageRole role)',
+    '_estimatedStaticOutputBytes',
+    'staticOutputBudgetBytes',
+)
 require(
     'packages/pipeline/test/pipeline_test.dart',
-    'static evidence does not widen stable decode window into far pages',
+    'static evidence uses one-frame demands across the encoded window',
 )
 require(
     'packages/pipeline/test/vertical_visible_policy_test.dart',

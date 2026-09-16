@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resource_cache/resource_cache.dart';
@@ -32,6 +33,34 @@ void main() {
     expect(first, reopened);
     expect(first.hashCode, reopened.hashCode);
     expect(first, isNot(nextGeneration));
+  });
+
+  test('encoded image cache identity is independent from memory/file backing',
+      () {
+    final generation = Object();
+    final memory = encodedResourceImageProvider(
+      MemoryEncodedResourceSource(
+        Uint8List.fromList(const <int>[1, 2, 3]),
+        cacheIdentity: generation,
+      ),
+    );
+    final file = encodedResourceImageProvider(
+      FileEncodedResourceSource(
+        path: '/proc/self/fd/41',
+        origin: EncodedResourceOrigin.durableCacheFile,
+        cacheIdentity: generation,
+      ),
+    );
+    final nextGeneration = encodedResourceImageProvider(
+      MemoryEncodedResourceSource(
+        Uint8List.fromList(const <int>[1, 2, 3]),
+        cacheIdentity: Object(),
+      ),
+    );
+
+    expect(memory, file);
+    expect(memory.hashCode, file.hashCode);
+    expect(memory, isNot(nextGeneration));
   });
 
   test('file presentation metadata probe stays bounded', () async {

@@ -4,10 +4,10 @@ import 'role_window.dart';
 
 /// Shared vocabulary for staged decode-waterline evidence.
 ///
-/// Sessions produces these stages while Pipeline consumes a selected subset
-/// to expand animated transport frame credit. Keeping the vocabulary typed at
-/// this lower package boundary prevents a producer rename from silently
-/// degrading to expansion stage zero.
+/// These stages describe decode scheduling only. They must not control encoded
+/// network admission or body-flow credit: a slow/blocked nearer decode must not
+/// stall a farther page's transfer. Keeping the vocabulary typed still keeps
+/// refill tracing and tests stable across package boundaries.
 enum DecodeWaterlineStage {
   transitionFirstFrame('t>0'),
   oneFrame('one>0'),
@@ -34,40 +34,19 @@ enum DecodeWaterlineStage {
 /// can promote it without recreating identity or partial state. Instead, the
 /// policy assigns a frame-equivalent transport credit to speculative animated
 /// pages. DownloadJob enforces that credit by backpressuring the already-open
-/// response body; a later waterline/current promotion raises the same task's
-/// credit and resumes the same response.
+/// response body. Credit changes only when that page's own relative role
+/// changes; another page's decode waterline never controls its transfer.
 ///
 /// A target of zero means unlimited flow. Static media also receives zero so
 /// the historical 3/7 full prefetch behavior is preserved.
 final class AnimatedPrefetchPolicy {
   const AnimatedPrefetchPolicy();
 
-  /// Existing staged decode-waterline evidence remains the only expansion
-  /// signal. dev.249 changes what expands: outer pages already have demand;
-  /// these stages raise their retained response-body frame credit.
-  int expansionStageForWaterline(DecodeWaterlineStage waterline) =>
-      switch (waterline) {
-        DecodeWaterlineStage.currentMid => 1,
-        DecodeWaterlineStage.nextMid => 2,
-        DecodeWaterlineStage.currentDeep => 3,
-        DecodeWaterlineStage.nextDeep => 4,
-        DecodeWaterlineStage.transitionFirstFrame ||
-        DecodeWaterlineStage.oneFrame ||
-        DecodeWaterlineStage.currentBootstrap ||
-        DecodeWaterlineStage.nextShallow ||
-        DecodeWaterlineStage.next2Shallow ||
-        DecodeWaterlineStage.previousShallow ||
-        DecodeWaterlineStage.next2Deep ||
-        DecodeWaterlineStage.nextMax =>
-          0,
-      };
-
   AnimatedPrefetchFlow plan({
     required ChapterManifest chapter,
     required ReaderObs observation,
     required RoleWindow window,
     required bool active,
-    required int expansionStage,
     int readDirection = 1,
   }) {
     final current = observation.currentIndex
@@ -90,20 +69,15 @@ final class AnimatedPrefetchPolicy {
       }
       targets[index] = _targetFrames(
         readDistance: (index - current) * (readDirection < 0 ? -1 : 1),
-        expansionStage: expansionStage,
       );
     }
     return AnimatedPrefetchFlow(
       active: active,
-      expansionStage: expansionStage.clamp(0, 4).toInt(),
       targetFramesByIndex: targets,
     );
   }
 
-  int _targetFrames({
-    required int readDistance,
-    required int expansionStage,
-  }) {
+  int _targetFrames({required int readDistance}) {
     // Near neighbors mirror the existing holder maxima that matter for a fast
     // page change. They are shallow enough to avoid pulling full 154+ frame
     // WebPs while giving the next page useful playback immediately.
@@ -111,14 +85,10 @@ final class AnimatedPrefetchPolicy {
     if (readDistance == 2) return 3;
     if (readDistance == -1) return 2;
 
-    // All remaining positions in the stable 3/7 envelope start with one
-    // complete animation frame. Existing c/n staged-waterline evidence raises
-    // selected outer bands to two frames without changing their window
-    // membership or opening/closing the transport task itself.
-    if ((readDistance == 3 || readDistance == 4) && expansionStage >= 1) return 2;
-    if ((readDistance == -2 || readDistance == -3) && expansionStage >= 2) return 2;
-    if ((readDistance == 5 || readDistance == 6) && expansionStage >= 3) return 2;
-    if (readDistance == 7 && expansionStage >= 4) return 2;
+    // All remaining positions in the stable 3/7 envelope keep one
+    // task-local frame credit until their own role is promoted closer to the
+    // viewport. This credit never depends on another page's decode depth.
+    // Cross-page encoded pressure is owned by the shared actual-read budget.
     return 1;
   }
 
@@ -136,12 +106,10 @@ final class AnimatedPrefetchPolicy {
 final class AnimatedPrefetchFlow {
   AnimatedPrefetchFlow({
     required this.active,
-    required this.expansionStage,
     required Map<int, int> targetFramesByIndex,
   }) : targetFramesByIndex = Map<int, int>.unmodifiable(targetFramesByIndex);
 
   final bool active;
-  final int expansionStage;
 
   /// Zero means unlimited. Positive values are complete animated WebP frame
   /// credits enforced on the transport body without ending the physical task.

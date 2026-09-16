@@ -283,7 +283,10 @@ final class ImportedImageChapterScreen extends StatelessWidget {
                       return runtime.retryPresentation();
                     },
               onPreviewStateChanged: onPreviewStateChanged,
-              onFirstFrame: reportFirstFrame,
+              onFirstFrame: () {
+                runtime.reportPresentationFrameReady();
+                reportFirstFrame();
+              },
               downloadIdentity: runtime.pageStream.identity,
               traceClock: runtime.clock,
               traceSink: runtime.traceSink,

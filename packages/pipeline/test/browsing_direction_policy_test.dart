@@ -158,6 +158,51 @@ void main() {
     );
   });
 
+  test('static full-window warming still bridges a vertical direction flip', () {
+    final chapter = _verticalStaticChapter();
+    final updates = <PipelineDelta>[];
+    final trace = MemoryTraceSink();
+    final controller = PipelineController(
+      chapter: chapter,
+      decodeTarget: DecodeTarget(physicalWidth: 1080, physicalHeight: 1920),
+      clock: const _Clock(),
+      traceSink: trace,
+      windowResolver: const RoleResolver(
+        forwardEncodedPages: 7,
+        backwardEncodedPages: 3,
+        forwardDecodePages: 2,
+        backwardDecodePages: 1,
+        nearRadius: 0,
+      ),
+      policy: const HeuristicPolicy(decodeWarmPages: true),
+      guard: const PolicyGuard(maxDownloadDemands: 11),
+      onUpdate: updates.add,
+    );
+
+    controller.accept(_verticalObservation(chapter, 13, 1000000));
+    controller.accept(_verticalObservation(chapter, 12, 1500000));
+    final beforeFlipUpdates = updates.length;
+    controller.accept(_verticalObservation(chapter, 11, 2000000));
+
+    expect(updates.length, greaterThan(beforeFlipUpdates));
+    final flip = updates.last;
+    expect(flip.plan.downloads, hasLength(11));
+    expect(flip.diff.downloads.added.length, lessThanOrEqualTo(1));
+    expect(flip.diff.downloads.removed.length, lessThanOrEqualTo(1));
+    for (final id in flip.plan.decodes.keys) {
+      expect(flip.plan.downloads, contains(id.download));
+    }
+    for (final id in flip.plan.uploads.keys) {
+      expect(flip.plan.downloads, contains(id.download));
+    }
+    expect(
+      trace.events.where((event) =>
+          event.kind == TraceEventKind.policyDecision &&
+          event.payload['downloadBridgeActive'] == true),
+      isNotEmpty,
+    );
+  });
+
   test('animated flow credit uses browsing-relative distance', () {
     final chapter = _chapter();
     final obs = _observation(10, 1000000);
@@ -173,7 +218,6 @@ void main() {
       observation: obs,
       window: window,
       active: true,
-      expansionStage: 0,
       readDirection: -1,
     );
 
@@ -244,6 +288,30 @@ ChapterManifest _verticalChapter() => ChapterManifest(
           index: index,
           uri: Uri.parse('https://example.test/vertical/$index.webp'),
           animatedHint: true,
+        ),
+      ),
+      readingDirection: ReadingDirection.vertical,
+    );
+
+ChapterManifest _verticalStaticChapter() => ChapterManifest(
+      sourceId: 'source',
+      comicId: 'static-comic',
+      chapter: const Chapter(
+        chapterId: 'vertical-static-chapter',
+        comicId: 'static-comic',
+        title: 'Vertical static chapter',
+        sequence: 1,
+        pageCount: 30,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        30,
+        (index) => PageAsset(
+          pageId: 'vs$index',
+          chapterId: 'vertical-static-chapter',
+          index: index,
+          uri: Uri.parse('https://example.test/vertical/$index.png'),
+          contentKindHint: ContentKindHint.png,
         ),
       ),
       readingDirection: ReadingDirection.vertical,

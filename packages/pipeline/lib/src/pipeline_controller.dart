@@ -1,7 +1,6 @@
 import 'package:domain/domain.dart';
 import 'package:telemetry/telemetry.dart';
 
-import 'animated_prefetch_policy.dart';
 import 'browsing_direction_predictor.dart';
 import 'decode_target.dart';
 import 'demand.dart';
@@ -60,11 +59,11 @@ final class PipelineController {
   int _readDirection = 1;
   final Map<int, bool> _runtimeAnimatedPages = <int, bool>{};
   final Set<int> _runtimeLocalStaticPages = <int>{};
+  final Set<int> _runtimeExternalStaticPages = <int>{};
   final Set<int> _runtimeWebpCostPages = <int>{};
   ReaderObs? _lastObservation;
   Set<int>? _previousVisibleIndexes;
   bool? _previousVerticalActive;
-  int _animatedFlowStage = 0;
 
   int get revision => _revision;
   DemandPlan get currentPlan => _previous;
@@ -84,7 +83,6 @@ final class PipelineController {
     final previousIndex = _currentIndex;
     if (previousIndex != null && previousIndex != observation.currentIndex) {
       _lastCurrentIndex = previousIndex;
-      _animatedFlowStage = 0;
       final delta = observation.currentIndex - previousIndex;
       final directional = observation.interaction != Interaction.scrubbing &&
           observation.interaction != Interaction.jumping &&
@@ -115,91 +113,54 @@ final class PipelineController {
     required bool webp,
   }) {
     if (pageIndex < 0 || pageIndex >= chapter.pages.length) return false;
-    final before = _animatedFlowActiveFor(pageIndex);
     final changed = webp
         ? _runtimeWebpCostPages.add(pageIndex)
         : _runtimeWebpCostPages.remove(pageIndex);
     if (!changed) return false;
-    if (pageIndex == _currentIndex &&
-        before != _animatedFlowActiveFor(pageIndex)) {
-      _animatedFlowStage = 0;
-    }
     final observation = _lastObservation;
     if (observation != null) {
       _replan(observation, force: true);
     }
     return true;
   }
+
+  bool isRuntimeExternalStaticPage(int pageIndex) =>
+      pageIndex >= 0 &&
+      pageIndex < chapter.pages.length &&
+      _runtimeAnimatedPages[pageIndex] == false &&
+      _runtimeExternalStaticPages.contains(pageIndex);
 
   bool classifyPage({
     required int pageIndex,
     required bool animated,
     bool? localPresentationReady,
+    bool externalPresentationRequired = false,
   }) {
     if (pageIndex < 0 || pageIndex >= chapter.pages.length) return false;
-    final beforeFlowActive = pageIndex == _currentIndex
-        ? _animatedFlowActiveFor(pageIndex)
-        : false;
     final current = _runtimeAnimatedPages[pageIndex];
     var localityChanged = false;
+    var presentationChanged = false;
     if (animated) {
       localityChanged = _runtimeLocalStaticPages.remove(pageIndex);
-    } else if (localPresentationReady != null) {
-      localityChanged = localPresentationReady
-          ? _runtimeLocalStaticPages.add(pageIndex)
-          : _runtimeLocalStaticPages.remove(pageIndex);
+      presentationChanged = _runtimeExternalStaticPages.remove(pageIndex);
+    } else {
+      presentationChanged = externalPresentationRequired
+          ? _runtimeExternalStaticPages.add(pageIndex)
+          : _runtimeExternalStaticPages.remove(pageIndex);
+      if (localPresentationReady != null) {
+        localityChanged = localPresentationReady
+            ? _runtimeLocalStaticPages.add(pageIndex)
+            : _runtimeLocalStaticPages.remove(pageIndex);
+      }
     }
-    if (current == animated && !localityChanged) return false;
+    if (current == animated && !localityChanged && !presentationChanged) {
+      return false;
+    }
     _runtimeAnimatedPages[pageIndex] = animated;
-    if (pageIndex == _currentIndex &&
-        beforeFlowActive != _animatedFlowActiveFor(pageIndex)) {
-      _animatedFlowStage = 0;
-    }
     final observation = _lastObservation;
     if (observation != null) {
       _replan(observation, force: true);
     }
-    return true;
-  }
-
-  bool _memoryPressure = false;
-
-  bool observeMemoryPressure({required bool isPressured}) {
-    if (_memoryPressure == isPressured) return false;
-    _memoryPressure = isPressured;
-    if (_memoryPressure && _animatedFlowStage > 1) {
-      _animatedFlowStage = 1;
-      final observation = _lastObservation;
-      if (observation != null) {
-        _replan(observation, force: true);
-      }
-    }
-    return true;
-  }
-
-  /// Raises animated-WebP transport frame credits from completed decode
-  /// waterline evidence. The callback is revision-scoped so stale work from a
-  /// previous page/session cannot increase the new current's body flow.
-  bool observeDecodeWaterline({
-    required int planRevision,
-    required DecodeWaterlineStage stage,
-  }) {
-    final observation = _lastObservation;
-    final current = _currentIndex;
-    if (observation == null ||
-        current == null ||
-        planRevision != _revision ||
-        !_animatedFlowActiveFor(current)) {
-      return false;
-    }
-    var requested = policy.animatedPrefetchPolicy
-        .expansionStageForWaterline(stage);
-    if (_memoryPressure && requested > 1) {
-      requested = 1;
-    }
-    if (requested <= _animatedFlowStage) return false;
-    _animatedFlowStage = requested;
-    _replan(observation, force: true);
     return true;
   }
 
@@ -269,7 +230,6 @@ final class PipelineController {
       observation: observation,
       window: window,
       active: animatedFlowActive,
-      expansionStage: _animatedFlowStage,
       readDirection: _readDirection,
     );
     final proposal = policy.createPlan(
@@ -280,6 +240,7 @@ final class PipelineController {
       decodeTarget: _decodeTarget,
       runtimeAnimatedPages: _runtimeAnimatedPages,
       runtimeLocalStaticPages: _runtimeLocalStaticPages,
+      runtimeExternalStaticPages: _runtimeExternalStaticPages,
       runtimeWebpCostPages: _runtimeWebpCostPages,
       assumeUnresolvedStatic: _assumeUnresolvedStatic,
       downloadFlow: animatedFlow,
@@ -349,10 +310,10 @@ final class PipelineController {
               .where((animated) => !animated)
               .length,
           'runtimeLocalStaticPages': _runtimeLocalStaticPages.length,
+          'runtimeExternalStaticPages': _runtimeExternalStaticPages.length,
           'runtimeWebpCostPages': _runtimeWebpCostPages.length,
           'assumeUnresolvedStatic': _assumeUnresolvedStatic,
           'animatedFlowActive': animatedFlow.active,
-          'animatedFlowStage': animatedFlow.expansionStage,
           'animatedFlowFrameTargets': <String, int>{
             for (final entry in animatedFlow.targetFramesByIndex.entries)
               entry.key.toString(): entry.value,
@@ -389,9 +350,31 @@ final class PipelineController {
     // while the viewport is moving. This avoids flipping the whole asymmetric
     // 7/3 transport window in one UI-isolate event turn when readDirection
     // reverses.
+    bool immediateMediaRole(PageRole role) => switch (role) {
+          PageRole.current ||
+          PageRole.transition ||
+          PageRole.next ||
+          PageRole.next2 ||
+          PageRole.previous => true,
+          PageRole.last ||
+          PageRole.near ||
+          PageRole.far ||
+          PageRole.detached => false,
+        };
+    // Static one-frame warming can now cover the whole encoded window. Do not
+    // let those far speculative media intents turn every download into a
+    // mandatory source during a direction flip; that would bypass this bridge
+    // and swap the asymmetric 3/7 working set in one event turn. Current,
+    // transition, real viewport pages and the established 2/1 near-media
+    // envelope remain immediate. Far one-frame work follows the bridged source
+    // membership and becomes eligible as that membership advances.
     final mandatory = <DownloadId>{
-      for (final id in desired.decodes.keys) id.download,
-      for (final id in desired.uploads.keys) id.download,
+      for (final entry in desired.decodes.entries)
+        if (immediateMediaRole(entry.value.role)) entry.key.download,
+      for (final entry in desired.uploads.entries)
+        if (immediateMediaRole(entry.value.role) ||
+            entry.value.viewportVisible)
+          entry.key.download,
       for (final entry in desired.downloads.entries)
         if (entry.value.role == PageRole.current ||
             entry.value.role == PageRole.transition)
@@ -432,10 +415,10 @@ final class PipelineController {
           .compareTo(desired.downloads[a]!.priority));
     for (final id in shared) {
       if (downloads.length >= capacity) break;
-      downloads[id] = _refreshBridgedDownload(
-        _previous.downloads[id]!,
-        desiredRevision: desired.revision,
-      );
+      // Identity retention must not retain a stale semantic role. A previous
+      // current can become desired last/near on the very next observation;
+      // carrying its old role would manufacture a second current demand.
+      downloads[id] = desired.downloads[id]!;
       schedulingRetained++;
     }
 
@@ -505,12 +488,21 @@ final class PipelineController {
       keep.add(ResourceId.download(id));
     }
 
+    final decodes = <DecodeId, DecodeDemand>{
+      for (final entry in desired.decodes.entries)
+        if (downloads.containsKey(entry.key.download)) entry.key: entry.value,
+    };
+    final uploads = <DecodeId, UploadDemand>{
+      for (final entry in desired.uploads.entries)
+        if (downloads.containsKey(entry.key.download)) entry.key: entry.value,
+    };
+
     return _ActiveDownloadBridgeResult(
       plan: DemandPlan(
         revision: desired.revision,
         downloads: downloads,
-        decodes: desired.decodes,
-        uploads: desired.uploads,
+        decodes: decodes,
+        uploads: uploads,
         keep: keep,
       ),
       active: true,

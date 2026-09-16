@@ -917,6 +917,84 @@ void main() {
 
 
   testWidgets(
+    'idle measured ratio refresh republishes the real vertical visible set',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'vertical-idle-ratio-comic',
+        chapter: const Chapter(
+          chapterId: 'vertical-idle-ratio-chapter',
+          comicId: 'vertical-idle-ratio-comic',
+          title: 'vertical idle ratio',
+          sequence: 0,
+          pageCount: 3,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          3,
+          (index) => PageAsset(
+            pageId: 'vertical-idle-ratio-$index',
+            chapterId: 'vertical-idle-ratio-chapter',
+            index: index,
+            uri: Uri.parse('asset:///vertical-idle-ratio-$index.png'),
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final observations = <ReaderObs>[];
+      final controller = ReaderController(
+        sessionId: 'reader-vertical-idle-ratio-test',
+        chapter: chapter,
+        onObservation: observations.add,
+        clock: FakeClock(),
+      );
+      addTearDown(controller.dispose);
+      final ratios = ValueNotifier<Map<String, double>>(
+        const <String, double>{},
+      );
+      addTearDown(ratios.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 400,
+            height: 400,
+            child: ReaderView(
+              controller: controller,
+              clock: FakeClock(),
+              pageAspectRatiosListenable: ratios,
+              pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+                key: ValueKey<String>('vertical-idle-ratio:${asset.pageId}'),
+                color: Colors.black,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(observations.last.visibleCoverages.map((entry) => entry.pageIndex),
+          <int>[0]);
+
+      observations.clear();
+      ratios.value = <String, double>{chapter.pages.first.assetKey: 0.25};
+      await tester.pump();
+      await tester.pump();
+
+      expect(observations, isNotEmpty,
+          reason:
+              'a layout-only dimension change must publish new vertical visibility without waiting for a gesture');
+      expect(
+        observations.last.visibleCoverages.map((entry) => entry.pageIndex),
+        contains(1),
+        reason:
+            'the lower page is physically visible after the first page shrinks and must receive demand immediately',
+      );
+    },
+  );
+
+
+  testWidgets(
     'vertical measured ratios stay frozen until active scrolling is idle',
     (tester) async {
       final chapter = ChapterManifest(
@@ -1128,6 +1206,107 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
       expect(tester.getSize(priorPage).height, greaterThan(priorHeight));
+    },
+  );
+
+  testWidgets(
+    'vertical direction reversal adopts already-known incoming ratios before visibility',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'vertical-reverse-ratio-comic',
+        chapter: const Chapter(
+          chapterId: 'vertical-reverse-ratio-chapter',
+          comicId: 'vertical-reverse-ratio-comic',
+          title: 'vertical reverse ratio',
+          sequence: 0,
+          pageCount: 6,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          6,
+          (index) => PageAsset(
+            pageId: 'vertical-reverse-$index',
+            chapterId: 'vertical-reverse-ratio-chapter',
+            index: index,
+            uri: Uri.parse('asset:///vertical-reverse-$index.png'),
+            width: 1000,
+            height: 1000,
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final controller = ReaderController(
+        sessionId: 'reader-vertical-reverse-ratio-test',
+        chapter: chapter,
+        onObservation: (_) {},
+        clock: FakeClock(),
+        initialPage: 2,
+      );
+      addTearDown(controller.dispose);
+      final ratios = ValueNotifier<Map<String, double>>(
+        const <String, double>{},
+      );
+      addTearDown(ratios.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 400,
+            height: 400,
+            child: ValueListenableBuilder<Map<String, double>>(
+              valueListenable: ratios,
+              builder: (context, value, _) => ReaderView(
+                controller: controller,
+                clock: FakeClock(),
+                pageAspectRatios: value,
+                pageBuilder: (context, asset, reportFirstFrame) => ColoredBox(
+                  key: ValueKey<String>('vertical-reverse:${asset.pageId}'),
+                  color: Colors.black,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await _pumpUntilFound(
+        tester,
+        find.byKey(
+          const ValueKey<String>('reader-vertical-page:0'),
+          skipOffstage: false,
+        ),
+      );
+
+      final list = find.byKey(const ValueKey<String>('reader-vertical-list'));
+      final priorPage = find.byKey(
+        const ValueKey<String>('reader-vertical-page:0'),
+        skipOffstage: false,
+      );
+      final initialHeight = tester.getSize(priorPage).height;
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      await gesture.moveBy(const Offset(0, -120));
+      await tester.pump();
+
+      ratios.value = <String, double>{chapter.pages.first.assetKey: 3.0};
+      await tester.pump();
+      expect(
+        tester.getSize(priorPage).height,
+        initialHeight,
+        reason: 'a ratio behind the active travel direction must remain frozen',
+      );
+
+      await gesture.moveBy(const Offset(0, 30));
+      await tester.pump();
+      await tester.pump();
+      expect(
+        tester.getSize(priorPage).height,
+        greaterThan(initialHeight),
+        reason:
+            'once travel reverses, an already-known still-offscreen incoming page must install its real extent before visibility',
+      );
+
+      await gesture.up();
+      await tester.pumpAndSettle();
     },
   );
 

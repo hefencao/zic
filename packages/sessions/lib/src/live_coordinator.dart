@@ -41,10 +41,11 @@ typedef DownloadObserve = void Function(DownloadSession session);
 typedef DownloadSessionAcquire = DownloadSession Function(DownloadId id);
 typedef DownloadSessionLookup = DownloadSession? Function(DownloadId id);
 typedef SourceKindObserve = void Function(DownloadId id, ContentKind kind);
-typedef DecodeRefillObserve = void Function(
-  DecodeRefillDecision decision,
+typedef ExternalPresentationRequest = void Function(
+  DecodeId id,
   int demandRevision,
 );
+typedef ExternalPresentationAvailability = bool Function(DecodeId id);
 
 Future<void> _defaultSleep(Duration delay) => Future<void>.delayed(delay);
 
@@ -86,8 +87,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     DownloadSessionAcquire? downloadSessionFor,
     DownloadSessionLookup? findDownloadSession,
     this.onSourceKindObserved,
-    this.onDecodeRefillObserved,
-    this.onMemoryPressureObserved,
+    this.onExternalPresentationRequested,
+    this.externalPresentationAvailable,
+    this.maxSpeculativeExternalPresentationPending = 1,
     DownloadTransferConsumer? downloadTransfer,
     required NetLane net,
     DecodeLane? decode,
@@ -100,6 +102,13 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         _downloadSessionFor = downloadSessionFor ?? registry.get,
         _findDownloadSession = findDownloadSession ?? registry.find {
     retry.validate();
+    if (maxSpeculativeExternalPresentationPending <= 0) {
+      throw ArgumentError.value(
+        maxSpeculativeExternalPresentationPending,
+        'maxSpeculativeExternalPresentationPending',
+        'must be positive',
+      );
+    }
     if (onDecode != null && decodes != null) {
       throw ArgumentError('onDecode and decodes are mutually exclusive');
     }
@@ -165,8 +174,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   final DownloadSessionAcquire _downloadSessionFor;
   final DownloadSessionLookup _findDownloadSession;
   final SourceKindObserve? onSourceKindObserved;
-  final DecodeRefillObserve? onDecodeRefillObserved;
-  final void Function(bool isPressured)? onMemoryPressureObserved;
+  final ExternalPresentationRequest? onExternalPresentationRequested;
+  final ExternalPresentationAvailability? externalPresentationAvailable;
+  final int maxSpeculativeExternalPresentationPending;
   late final DownloadTransferConsumer _downloadTransfer;
   DownloadTransferOwner? _ownedDownloadTransferOwner;
   late final NetLane net;
@@ -178,6 +188,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       <DownloadId, DownloadDemand>{};
   final Map<DecodeId, DecodeDemand> _decodes = <DecodeId, DecodeDemand>{};
   final Map<DecodeId, int> _decodeDemandRevisions = <DecodeId, int>{};
+  final Set<DecodeId> _externalPresentationPending = <DecodeId>{};
+  final Set<DecodeId> _externalPresentationSatisfied = <DecodeId>{};
   final Map<DecodeId, UploadDemand> _uploads = <DecodeId, UploadDemand>{};
   final Map<DecodeId, int> _uploadDemandRevisions = <DecodeId, int>{};
   final Map<DownloadId, DownloadSession> _observedDownloadSessions =
@@ -439,6 +451,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _downloads.clear();
     _decodes.clear();
     _decodeDemandRevisions.clear();
+    _externalPresentationPending.clear();
+    _externalPresentationSatisfied.clear();
     _uploads.clear();
     _uploadDemandRevisions.clear();
     await Future.wait<void>(<Future<void>>[
@@ -520,6 +534,15 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }
   }
 
+  void _clearExternalPresentationForDownload(DownloadId id) {
+    _externalPresentationPending.removeWhere(
+      (decodeId) => decodeId.download == id,
+    );
+    _externalPresentationSatisfied.removeWhere(
+      (decodeId) => decodeId.download == id,
+    );
+  }
+
   void _releaseSourceIfUnused(DownloadId id) {
     if (_decodes.keys.any((candidate) => candidate.download == id) ||
         _uploads.keys.any((candidate) => candidate.download == id) ||
@@ -531,6 +554,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _sourceWakeLengths.remove(id);
     _sourceRebindWakes.remove(id);
     _clearSourceKind(id);
+    _clearExternalPresentationForDownload(id);
     if (binding == null) return;
     binding.projection.removeSourceListener(binding.listener);
     for (final decodeId in _decodeSourceRevisions.keys
@@ -588,6 +612,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       _sourceRevisions.remove(id);
       _sourceWakeLengths.remove(id);
       _clearSourceKind(id);
+      _clearExternalPresentationForDownload(id);
       for (final decodeId in _decodeSourceRevisions.keys
           .where((decodeId) => decodeId.download == id)
           .toList(growable: false)) {
@@ -637,6 +662,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         _sourceWakeLengths.remove(id);
         _sourceRevisions.remove(id);
         _clearSourceKind(id);
+        _clearExternalPresentationForDownload(id);
         final reboundDecodeIds = <DecodeId>{
           ..._decodes.keys.where((decodeId) => decodeId.download == id),
           ..._uploads.keys.where((decodeId) => decodeId.download == id),
@@ -681,7 +707,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       // URIs otherwise leave the Pipeline unable to activate bounded WebP body
       // flow until a full animation classification arrives.
       final priorKind = _sourceKinds[id];
-      if (priorKind != snapshot.kind) {
+      final kindChanged = priorKind != snapshot.kind;
+      if (kindChanged) {
         _sourceKinds[id] = snapshot.kind;
         try {
           onSourceKindObserved?.call(id, snapshot.kind);
@@ -690,13 +717,18 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         }
       }
       // Physical retry/terminal state is owned by DownloadTransferOwner. This
-      // Reader-local listener only projects source growth into decode wakeups.
+      // Reader-local listener projects both source growth and content
+      // classification into decode wakeups. Fallback/GIF can become
+      // classification-ready without ever exposing a native EncodedSource, so
+      // a non-unknown kind transition is sufficient evidence to rerun a decode
+      // that is waiting for source classification.
       final becameSourceReady = !binding.sourceReady && snapshot.sourceReady;
       binding.sourceReady = snapshot.sourceReady;
       _sourceRevisions[id] = snapshot.revision;
       final priorLength = _sourceWakeLengths[id];
       final shouldWake = snapshot.failure != null ||
           snapshot.sealed ||
+          (kindChanged && snapshot.kind != ContentKind.unknown) ||
           (snapshot.sourceReady &&
               (onDecode != null ||
                   becameSourceReady ||
@@ -742,6 +774,8 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       _decodeSourceRevisions.remove(id);
       _decodeRecoveryAttempts.remove(id);
       _decodeRecoveryPending.remove(id);
+      _externalPresentationPending.remove(id);
+      _externalPresentationSatisfied.remove(id);
       decode.cancel(id.key);
       decodes?.detach(id);
     }
@@ -773,6 +807,14 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         continue;
       }
       final decodeRegistry = decodes;
+      if (_externalPresentationSatisfied.contains(entry.key)) {
+        // A Flutter/fallback first frame is the one-frame readiness proof for
+        // this exact DecodeId. Role/priority migrations keep that proof just
+        // like a resident native static frame; they must not restart the
+        // no-native-frame DecodeSession merely because the plan revision moved.
+        decode.cancelQueued(entry.key.key);
+        continue;
+      }
       final pendingSourceWake = _hasPendingSourceRevision(entry.key);
       final before = decodeRegistry?.find(entry.key)?.snapshot;
       final preparedDepth = uploads?.preparedDepth(entry.key) ?? 0;
@@ -1050,27 +1092,37 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         if (after != null) {
           _decodeRecoveryAttempts.remove(id);
           _decodeRecoveryPending.remove(id);
-          final completedPreparedDepth =
-              uploads?.preparedDepth(id) ?? preparedDepth;
           if (refill != null &&
-              after.depth + completedPreparedDepth >= refill.targetWatermark) {
+              after.externalPresentationRequired &&
+              after.state == DecodeState.ended &&
+              after.failure == null &&
+              after.depth == 0 &&
+              _uploads.containsKey(id) &&
+              !_externalPresentationSatisfied.contains(id) &&
+              onExternalPresentationRequested != null &&
+              externalPresentationAvailable?.call(id) != false &&
+              _externalPresentationPending.add(id)) {
             try {
-              onDecodeRefillObserved?.call(
-                refill,
+              onExternalPresentationRequested?.call(
+                id,
                 _decodeDemandRevisions[id] ?? demandRevision,
               );
             } on Object {
-              // Read-only policy observers cannot break decode execution.
+              // A projection observer may disappear with its Reader host. Do
+              // not leave the staged refill permanently blocked if notifying
+              // that read-only projection fails.
+              _externalPresentationPending.remove(id);
             }
           }
         }
         if (work != null) {
           _wakeUpload(sessionId, id);
-        } else if (_decodeChangeNeedsUpload(before, after)) {
+        } else if (after?.externalPresentationRequired != true &&
+            _decodeChangeNeedsUpload(before, after)) {
           _wakeUploadFromDecode(sessionId, id);
         }
         _enforceBudget(sessionId);
-            if (registry != null) {
+        if (registry != null) {
           _wakeNextDecodeRefill(sessionId, except: id);
         }
       } on Object catch (error) {
@@ -1194,18 +1246,54 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     if (registry == null) {
       return null;
     }
+    final pendingExternal = _externalPresentationPending
+        .where(_decodes.containsKey)
+        .toSet();
+    final speculativePendingExternal = pendingExternal.where((id) {
+      final uploadDemand = _uploads[id];
+      if (uploadDemand?.viewportVisible == true) return false;
+      final role = _decodes[id]?.role;
+      return role != PageRole.current && role != PageRole.transition;
+    }).length;
+    bool admittedWhileExternalPresentationPending(DecodeId id) {
+      if (pendingExternal.contains(id)) return false;
+      // Visible/current/transition first frames may always preempt speculative
+      // external work. Offscreen static warming is separately bounded so fast
+      // vertical motion can prepare more than one upcoming Flutter image
+      // without turning the whole 3/7 window into unbounded UI work.
+      final uploadDemand = _uploads[id];
+      if (uploadDemand?.viewportVisible == true) return true;
+      final role = _decodes[id]?.role;
+      if (role == PageRole.current || role == PageRole.transition) return true;
+      return speculativePendingExternal <
+          maxSpeculativeExternalPresentationPending;
+    }
     return refillPolicy.next(
       demands: _decodes,
       depthOf: (id) => registry.find(id)?.snapshot.depth ?? 0,
       terminalOf: (id) {
         final snapshot = registry.find(id)?.snapshot;
-        return snapshot != null &&
-            snapshot.state == DecodeState.ended &&
-            snapshot.failure == null &&
-            snapshot.animation.complete &&
+        if (snapshot == null ||
+            snapshot.state != DecodeState.ended ||
+            snapshot.failure != null) {
+          return false;
+        }
+        if (snapshot.externalPresentationRequired &&
+            (onExternalPresentationRequested == null ||
+                !_uploads.containsKey(id))) {
+          // There is no active presentation consumer for this decode. Treat
+          // the native decode branch as terminal for now; promotion into an
+          // UploadDemand will make it eligible for the external first-frame
+          // handshake without manufacturing background UI work.
+          return true;
+        }
+        return snapshot.animation.complete &&
             snapshot.animation.frameCount > 1;
       },
       satisfiedOf: (id) {
+        if (_externalPresentationSatisfied.contains(id)) {
+          return true;
+        }
         final snapshot = registry.find(id)?.snapshot;
         if (snapshot == null || snapshot.failure != null) {
           return false;
@@ -1218,6 +1306,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         return snapshot.depth + preparedDepth >= 1;
       },
       eligibleOf: (id) {
+        if (!admittedWhileExternalPresentationPending(id)) {
+          return false;
+        }
         if (only != null && id != only) {
           return false;
         }
@@ -1226,6 +1317,14 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             snapshot.failure != null ||
             snapshot.state == DecodeState.failed) {
           return true;
+        }
+        if (snapshot.externalPresentationRequired &&
+            externalPresentationAvailable?.call(id) == false) {
+          // External first-frame work can only be granted to a concrete
+          // presentation consumer. A retained/offscreen static page may still
+          // keep its decode/upload intent, but it must not occupy the bounded
+          // speculative grant set while no adapter can ever report a frame.
+          return false;
         }
         return snapshot.state != DecodeState.waitingSource ||
             _hasPendingSourceRevision(id) ||
@@ -1243,6 +1342,61 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       sourceWake: _hasPendingSourceRevision(decision.id),
       force: true,
     );
+  }
+
+  bool get hasPendingExternalPresentation =>
+      _externalPresentationPending.any(_decodes.containsKey);
+
+  bool externalPresentationPendingFor(DecodeId id) =>
+      _externalPresentationPending.contains(id) && _decodes.containsKey(id);
+
+  bool externalPresentationSatisfiedFor(DecodeId id) =>
+      _externalPresentationSatisfied.contains(id) && _decodes.containsKey(id);
+
+  /// Updates the presentation-side ability to fulfill one external first
+  /// frame without transferring scheduling ownership out of the coordinator.
+  ///
+  /// Losing the last consumer invalidates both an outstanding grant and its
+  /// satisfied marker: a later host is a new presentation lifetime and must
+  /// receive a fresh exact grant. Becoming available only wakes this exact
+  /// decode identity; normal refill policy still decides whether it runs.
+  void updateExternalPresentationAvailability(
+    String sessionId,
+    DecodeId id, {
+    required bool available,
+  }) {
+    if (!_decodes.containsKey(id)) return;
+    if (available) {
+      refreshDecodeScheduling(sessionId, only: id);
+      return;
+    }
+    final releasedPending = _externalPresentationPending.remove(id);
+    // A satisfied external static DecodeId is presentation-cache readiness, not
+    // a widget-listener lifetime. Dropping the last page host must not erase a
+    // first-frame proof produced by a detached presentation prewarmer. Decode
+    // removal/source-generation reset still clears the proof at their existing
+    // ownership boundaries.
+    if (releasedPending) {
+      _wakeNextDecodeRefill(sessionId, except: id);
+    }
+  }
+
+  /// Completes the staged one-frame watermark for a source whose frame is
+  /// produced by the presentation adapter rather than DecodeRegistry.
+  ///
+  /// The caller reports an observed first frame only; it cannot choose which
+  /// page is eligible. Eligibility remains owned by [StagedDecodeRefillPolicy].
+  bool completeExternalPresentation(String sessionId, DecodeId id) {
+    if (!_externalPresentationPending.remove(id)) {
+      return false;
+    }
+    if (!_decodes.containsKey(id)) {
+      _externalPresentationSatisfied.remove(id);
+      return false;
+    }
+    _externalPresentationSatisfied.add(id);
+    _wakeNextDecodeRefill(sessionId);
+    return true;
   }
 
   void _wakeNextDecodeRefill(String sessionId, {DecodeId? except}) {
@@ -1319,9 +1473,13 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     MapDiff<DecodeId, UploadDemand> diff,
   ) {
     final removedDownloads = <DownloadId>{};
+    var releasedExternalPresentation = false;
     for (final id in diff.removed) {
       removedDownloads.add(id.download);
       _uploads.remove(id);
+      releasedExternalPresentation =
+          _externalPresentationPending.remove(id) ||
+              releasedExternalPresentation;
       _uploadDemandRevisions.remove(id);
       upload.cancel(id.key);
       final decodeDemanded = _decodes.containsKey(id);
@@ -1341,12 +1499,19 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       ...diff.added.entries,
       ...diff.changed.entries,
     ]) {
+      final priorUploadDemand = _uploads[entry.key];
       final downloadSession = _observedDownloadSessions[entry.key.download] ??
           _findDownloadSession(entry.key.download);
       if (downloadSession != null) {
         _watchSource(sessionId, entry.key.download, downloadSession);
       }
       _uploads[entry.key] = entry.value;
+      if (priorUploadDemand?.viewportVisible == true &&
+          !entry.value.viewportVisible) {
+        releasedExternalPresentation =
+            _externalPresentationPending.remove(entry.key) ||
+                releasedExternalPresentation;
+      }
       final demandRevision = _revision;
       _uploadDemandRevisions[entry.key] = demandRevision;
       if (diff.added.containsKey(entry.key)) {
@@ -1448,6 +1613,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }
     for (final id in removedDownloads) {
       _releaseSourceIfUnused(id);
+    }
+    if (releasedExternalPresentation) {
+      _wakeNextDecodeRefill(sessionId);
     }
   }
 
@@ -1580,12 +1748,6 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
       decodeDemands: _decodes,
       uploadDemands: _uploads,
     );
-    final isPressured = report.decodedFreed > 0 ||
-        report.outputFreed > 0 ||
-        report.decodedAfter >=
-            (budgeter.limits.decodedBytes -
-                budgeter.limits.currentDecodedReserve);
-    onMemoryPressureObserved?.call(isPressured);
     if (report.decodedFreed > 0 || report.outputFreed > 0) {
       for (final id in _sourceWatches.keys.toList(growable: false)) {
         _releaseSourceIfUnused(id);

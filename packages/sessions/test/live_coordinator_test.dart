@@ -3414,6 +3414,611 @@ void main() {
     );
   });
 
+
+  test('resident fallback current wakes after initial ingress hydration', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_resident_fallback_bootstrap_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'resident-fallback',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/resident-fallback.jpg'),
+    );
+    final decodeId = DecodeId(
+      download: id,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final bytes = <int>[
+      0xff, 0xd8, 0xff, 0xe0,
+      ...List<int>.filled(512 * 1024 - 4, 0),
+    ];
+    final clock = _Clock();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final physical = downloads.get(id);
+    physical.bindResidentImmutableAuthority(
+      validators: const Validators(etag: '"resident-fallback"'),
+      totalLength: bytes.length,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: bytes.sublist(0, 64),
+    );
+    final trace = MemoryTraceSink();
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => bytes.length + 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'resident-fallback-bootstrap',
+      traceSink: trace,
+      residentReplayRangeSourceWithControl:
+          (session, start, endExclusive, {required control}) async {
+        expect(session, same(physical));
+        control.throwIfCancelled();
+        return Stream<List<int>>.value(bytes.sublist(start, endExclusive));
+      },
+    );
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      ingresses: ingresses,
+      cursors: _NeverUsedCursorFactory(),
+      clock: clock,
+      traceSink: trace,
+    );
+    final requested = <DecodeId>[];
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      ingresses: ingresses,
+      decodes: decodes,
+      transportFor: (_) => const _ImmediateTransport(<int>[1]),
+      clock: clock,
+      traceSink: trace,
+      onExternalPresentationRequested: (id, revision) {
+        requested.add(id);
+      },
+      net: NetLane(maxActive: 1),
+      decode: DecodeLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      decodes.dispose();
+      ingresses.dispose();
+      sources.dispose();
+      await downloads.dispose();
+    });
+
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        id: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'resident-fallback',
+          expirationRevision: 2,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        decodeId: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'resident-fallback',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: <DecodeId, UploadDemand>{
+        decodeId: const UploadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'resident-fallback',
+          expirationRevision: 2,
+        ),
+      },
+      keep: <ResourceId>{
+        ResourceId.download(id),
+        ResourceId.decode(decodeId),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: plan,
+        diff: DemandDiff.between(DemandPlan.empty(), plan),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (requested.isEmpty) {
+      if (DateTime.now().isAfter(deadline)) {
+        final decodeSnapshot = decodes.find(decodeId)?.snapshot;
+        final ingressSnapshot = ingresses.find(id)?.snapshot;
+        fail(
+          'resident fallback current stalled after ingress hydration: '
+          'decodeState=${decodeSnapshot?.state} '
+          'decodeDepth=${decodeSnapshot?.depth} '
+          'external=${decodeSnapshot?.externalPresentationRequired} '
+          'ingressLength=${ingressSnapshot?.length} '
+          'ingressRevision=${ingressSnapshot?.revision} '
+          'ingressReady=${ingressSnapshot?.sourceReady} '
+          'ingressKind=${ingressSnapshot?.kind} '
+          'events=${trace.events.map((event) => "${event.kind.name}:${event.payload}").join(" | ")}',
+        );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(requested, <DecodeId>[decodeId]);
+  });
+
+  test('external fallback presentation releases one speculative page at a time', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_external_presentation_refill_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+
+    DownloadId download(String pageId, int index) => DownloadId(
+          content: ContentId(
+            sourceId: 'source',
+            comicId: 'comic',
+            chapterId: 'chapter',
+            pageId: pageId,
+          ),
+          sourceRevision: 'r1',
+          canonicalUri: Uri.parse('https://example.test/$pageId.jpg'),
+          pageIndexHint: index,
+        );
+    DecodeId decode(DownloadId id) => DecodeId(
+          download: id,
+          physicalWidth: 8,
+          physicalHeight: 8,
+          pixelFormat: PixelFormat.rgba8888,
+          renderer: RendererKind.flutterImage,
+        );
+    final firstId = download('first-fallback', 0);
+    final secondId = download('second-fallback', 1);
+    final firstDecode = decode(firstId);
+    final secondDecode = decode(secondId);
+    final clock = _Clock();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'external-presentation-refill',
+    );
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      ingresses: ingresses,
+      cursors: _NeverUsedCursorFactory(),
+      clock: clock,
+    );
+    final requested = <DecodeId>[];
+    final presentationAvailable = <DecodeId>{firstDecode};
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      ingresses: ingresses,
+      transportFor: (_) => const _ImmediateTransport(
+        <int>[0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      ),
+      clock: clock,
+      decodes: decodes,
+      onExternalPresentationRequested: (id, revision) {
+        requested.add(id);
+      },
+      externalPresentationAvailable: presentationAvailable.contains,
+      net: NetLane(maxActive: 2),
+      decode: DecodeLane(maxActive: 2),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      decodes.dispose();
+      ingresses.dispose();
+      sources.dispose();
+      await downloads.dispose();
+    });
+
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        firstId: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'first-fallback',
+          expirationRevision: 2,
+        ),
+        secondId: const DownloadDemand(
+          role: PageRole.next,
+          priority: 820,
+          reason: 'second-fallback',
+          expirationRevision: 2,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        firstDecode: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'first-fallback',
+          expirationRevision: 2,
+        ),
+        secondDecode: const DecodeDemand(
+          role: PageRole.next,
+          priority: 820,
+          targetWatermark: 1,
+          reason: 'second-fallback',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: <DecodeId, UploadDemand>{
+        firstDecode: const UploadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'first-fallback',
+          expirationRevision: 2,
+        ),
+        secondDecode: const UploadDemand(
+          role: PageRole.next,
+          priority: 820,
+          reason: 'second-fallback',
+          expirationRevision: 2,
+        ),
+      },
+      keep: <ResourceId>{
+        ResourceId.download(firstId),
+        ResourceId.download(secondId),
+        ResourceId.decode(firstDecode),
+        ResourceId.decode(secondDecode),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: plan,
+        diff: DemandDiff.between(DemandPlan.empty(), plan),
+        window: RoleWindow(
+          const <int, PageRole>{0: PageRole.current, 1: PageRole.next},
+        ),
+      ),
+    );
+
+    final firstDeadline = DateTime.now().add(const Duration(seconds: 2));
+    while (requested.isEmpty) {
+      if (DateTime.now().isAfter(firstDeadline)) {
+        fail('first external presentation request was not released');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(requested, <DecodeId>[firstDecode]);
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(requested, <DecodeId>[firstDecode],
+        reason: 'second fallback must wait for the first actual presented frame');
+
+    expect(
+      coordinator.completeExternalPresentation('reader', firstDecode),
+      isTrue,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(
+      requested,
+      <DecodeId>[firstDecode],
+      reason: 'an offscreen fallback without a presentation consumer must not occupy a grant',
+    );
+    presentationAvailable.add(secondDecode);
+    coordinator.updateExternalPresentationAvailability(
+      'reader',
+      secondDecode,
+      available: true,
+    );
+    final secondDeadline = DateTime.now().add(const Duration(seconds: 2));
+    while (requested.length < 2) {
+      if (DateTime.now().isAfter(secondDeadline)) {
+        fail('second external presentation request did not follow first-frame proof');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(requested, <DecodeId>[firstDecode, secondDecode]);
+  });
+
+  test('visible fallback preempts another visible external first-frame wait', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_visible_external_presentation_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+
+    DownloadId download(String pageId, int index) => DownloadId(
+          content: ContentId(
+            sourceId: 'source',
+            comicId: 'comic',
+            chapterId: 'chapter',
+            pageId: pageId,
+          ),
+          sourceRevision: 'r1',
+          canonicalUri: Uri.parse('https://example.test/$pageId.jpg'),
+          pageIndexHint: index,
+        );
+    DecodeId decode(DownloadId id) => DecodeId(
+          download: id,
+          physicalWidth: 8,
+          physicalHeight: 8,
+          pixelFormat: PixelFormat.rgba8888,
+          renderer: RendererKind.flutterImage,
+        );
+    final firstId = download('visible-first', 0);
+    final secondId = download('visible-second', 1);
+    final firstDecode = decode(firstId);
+    final secondDecode = decode(secondId);
+    final clock = _Clock();
+    final downloads = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final sources = SourcePool(
+      factory: _TestSourceFactory(),
+      budgetFor: (_) => 1024,
+    );
+    final ingresses = DownloadIngressProjectionRegistry(
+      sources: sources,
+      scopePrefix: 'visible-external-presentation',
+    );
+    final decodes = DecodeRegistry(
+      downloads: downloads,
+      ingresses: ingresses,
+      cursors: _NeverUsedCursorFactory(),
+      clock: clock,
+    );
+    final requested = <DecodeId>[];
+    final coordinator = LiveCoordinator(
+      registry: downloads,
+      ingresses: ingresses,
+      transportFor: (_) => const _ImmediateTransport(
+        <int>[0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+      ),
+      clock: clock,
+      decodes: decodes,
+      onExternalPresentationRequested: (id, revision) {
+        requested.add(id);
+      },
+      net: NetLane(maxActive: 2),
+      decode: DecodeLane(maxActive: 2),
+    );
+    addTearDown(() async {
+      await coordinator.dispose();
+      decodes.dispose();
+      ingresses.dispose();
+      sources.dispose();
+      await downloads.dispose();
+    });
+
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        firstId: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'visible-first',
+          expirationRevision: 2,
+        ),
+        secondId: const DownloadDemand(
+          role: PageRole.transition,
+          priority: 900,
+          reason: 'visible-second',
+          expirationRevision: 2,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        firstDecode: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'visible-first',
+          expirationRevision: 2,
+        ),
+        secondDecode: const DecodeDemand(
+          role: PageRole.transition,
+          priority: 900,
+          targetWatermark: 1,
+          reason: 'visible-second',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: <DecodeId, UploadDemand>{
+        firstDecode: const UploadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'visible-first',
+          expirationRevision: 2,
+          viewportVisible: true,
+        ),
+        secondDecode: const UploadDemand(
+          role: PageRole.transition,
+          priority: 900,
+          reason: 'visible-second',
+          expirationRevision: 2,
+          viewportVisible: true,
+        ),
+      },
+      keep: <ResourceId>{
+        ResourceId.download(firstId),
+        ResourceId.download(secondId),
+        ResourceId.decode(firstDecode),
+        ResourceId.decode(secondDecode),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: plan,
+        diff: DemandDiff.between(DemandPlan.empty(), plan),
+        window: RoleWindow(
+          const <int, PageRole>{
+            0: PageRole.current,
+            1: PageRole.transition,
+          },
+        ),
+      ),
+    );
+
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (requested.toSet().length < 2) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail(
+          'a visible fallback remained serialized behind another visible external first-frame wait: $requested',
+        );
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    expect(requested.toSet(), <DecodeId>{firstDecode, secondDecode});
+  });
+
+  test('stalled nearer decode never gates farther encoded transfer', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'live_decode_independent_download_test_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+
+    final nearId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'near',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/near.webp'),
+    );
+    final farId = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'far',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/far.webp'),
+    );
+    final nearDecode = DecodeId(
+      download: nearId,
+      physicalWidth: 8,
+      physicalHeight: 8,
+      pixelFormat: PixelFormat.rgba8888,
+      renderer: RendererKind.flutterImage,
+    );
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final nearTransport = _RetainedStreamTransport();
+    final decodeStarted = Completer<void>();
+    final releaseDecode = Completer<void>();
+    final coordinator = LiveCoordinator(
+      registry: registry,
+      transportFor: (uri) => uri == nearId.canonicalUri
+          ? nearTransport
+          : const _ImmediateTransport(<int>[1, 2, 3, 4]),
+      clock: clock,
+      onDecode: (id, demand, token) async {
+        if (id != nearDecode) return;
+        if (!decodeStarted.isCompleted) decodeStarted.complete();
+        await releaseDecode.future;
+      },
+      net: NetLane(maxActive: 2),
+      decode: DecodeLane(maxActive: 1),
+    );
+    addTearDown(() async {
+      if (!releaseDecode.isCompleted) releaseDecode.complete();
+      await nearTransport.close();
+      await coordinator.dispose();
+      await registry.dispose();
+    });
+
+    final plan = DemandPlan(
+      revision: 1,
+      downloads: <DownloadId, DownloadDemand>{
+        nearId: const DownloadDemand(
+          role: PageRole.next,
+          priority: 820,
+          reason: 'near-slow',
+          expirationRevision: 2,
+        ),
+        farId: const DownloadDemand(
+          role: PageRole.far,
+          priority: 680,
+          reason: 'far-prefetch',
+          expirationRevision: 2,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        nearDecode: const DecodeDemand(
+          role: PageRole.next,
+          priority: 820,
+          targetWatermark: 5,
+          reason: 'near-slow',
+          expirationRevision: 2,
+        ),
+      },
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{
+        ResourceId.download(nearId),
+        ResourceId.download(farId),
+        ResourceId.decode(nearDecode),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: plan,
+        diff: DemandDiff.between(DemandPlan.empty(), plan),
+        window: RoleWindow(
+          const <int, PageRole>{0: PageRole.next, 1: PageRole.far},
+        ),
+      ),
+    );
+
+    await nearTransport.opened.future.timeout(const Duration(seconds: 2));
+    await decodeStarted.future.timeout(const Duration(seconds: 2));
+
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (registry.find(farId)?.state != DownloadState.promoted) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('far download was gated by unrelated nearer decode progress');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+
+    expect(registry.find(farId)?.state, DownloadState.promoted);
+    expect(registry.find(nearId)?.state, isNot(DownloadState.promoted));
+  });
+
+}
+
+final class _NeverUsedCursorFactory implements CursorFactory {
+  const _NeverUsedCursorFactory();
+
+  @override
+  CursorBinding create({
+    required DecodeId id,
+    required EncodedSource source,
+    required int epoch,
+  }) {
+    throw StateError('fallback presentation must not create a native cursor');
+  }
 }
 
 final class _ImmediateTransport implements Transport {

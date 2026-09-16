@@ -127,6 +127,15 @@ def main() -> None:
         f"decode={med_field('decodeAdded')}/{med_field('decodeChanged')}/{med_field('decodeRemoved')} "
         f"upload={med_field('uploadAdded')}/{med_field('uploadChanged')}/{med_field('uploadRemoved')}"
     )
+    print(
+        "current_boundary_stages_us="
+        f"downloads={med_field('downloadsMicros')} "
+        f"decodes={med_field('decodesMicros')} "
+        f"uploads={med_field('uploadsMicros')} "
+        f"liveness={med_field('livenessMicros')} "
+        f"sourceWake={med_field('sourceWakeMicros')} "
+        f"budget={med_field('budgetMicros')}"
+    )
     if current_coverages and target_coverages:
         print(
             "current_boundary_coverage="

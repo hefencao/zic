@@ -43,7 +43,13 @@ ImageProvider<Object> encodedResourceImageProvider(
   EncodedResourceSource source,
 ) =>
     switch (source) {
-      MemoryEncodedResourceSource(:final bytes) => MemoryImage(bytes),
+      MemoryEncodedResourceSource(
+        :final bytes,
+        :final cacheIdentity,
+      ) =>
+        cacheIdentity == null
+            ? MemoryImage(bytes)
+            : _IdentityMemoryImage(bytes, cacheIdentity),
       FileEncodedResourceSource(
         :final path,
         :final cacheIdentity,
@@ -53,23 +59,52 @@ ImageProvider<Object> encodedResourceImageProvider(
             : _IdentityFileImage(File(path), cacheIdentity),
     };
 
-final class _IdentityFileImage extends FileImage {
-  const _IdentityFileImage(super.file, this.cacheIdentity);
+abstract interface class _IdentityEncodedImageProvider {
+  Object get cacheIdentity;
+  double get scale;
+}
 
+bool _sameEncodedImageIdentity(
+  _IdentityEncodedImageProvider self,
+  Object other,
+) =>
+    other is _IdentityEncodedImageProvider &&
+    other.scale == self.scale &&
+    other.cacheIdentity == self.cacheIdentity;
+
+int _encodedImageIdentityHash(_IdentityEncodedImageProvider provider) =>
+    Object.hash(
+      _IdentityEncodedImageProvider,
+      provider.scale,
+      provider.cacheIdentity,
+    );
+
+final class _IdentityMemoryImage extends MemoryImage
+    implements _IdentityEncodedImageProvider {
+  const _IdentityMemoryImage(super.bytes, this.cacheIdentity);
+
+  @override
   final Object cacheIdentity;
 
   @override
-  bool operator ==(Object other) =>
-      other is _IdentityFileImage &&
-      other.scale == scale &&
-      other.cacheIdentity == cacheIdentity;
+  bool operator ==(Object other) => _sameEncodedImageIdentity(this, other);
 
   @override
-  int get hashCode => Object.hash(
-        runtimeType,
-        scale,
-        cacheIdentity,
-      );
+  int get hashCode => _encodedImageIdentityHash(this);
+}
+
+final class _IdentityFileImage extends FileImage
+    implements _IdentityEncodedImageProvider {
+  const _IdentityFileImage(super.file, this.cacheIdentity);
+
+  @override
+  final Object cacheIdentity;
+
+  @override
+  bool operator ==(Object other) => _sameEncodedImageIdentity(this, other);
+
+  @override
+  int get hashCode => _encodedImageIdentityHash(this);
 }
 
 /// Materializes immutable encoded content behind the platform/storage boundary.

@@ -2587,12 +2587,23 @@ final class DownloadSession {
 
   void _refreshSourceCanvasFromPrefix() {
     if (_sourceCanvasWidth != null || _sourceCanvasHeight != null) return;
-    if (_prefix.length < 20) return;
+    if (_prefix.length < 8) return;
     try {
-      final info = parseWebpPrefixInfo(Uint8List.fromList(_prefix));
-      if (info == null) return;
-      _sourceCanvasWidth = info.width;
-      _sourceCanvasHeight = info.height;
+      final encodedKind = sniffEncodedImageKind(_prefix);
+      if (encodedKind == EncodedImageKind.webp) {
+        final info = parseWebpPrefixInfo(Uint8List.fromList(_prefix));
+        if (info == null) return;
+        _sourceCanvasWidth = info.width;
+        _sourceCanvasHeight = info.height;
+        return;
+      }
+      final dimensions = parseEncodedImageDimensions(
+        _prefix,
+        kind: encodedKind,
+      );
+      if (dimensions == null) return;
+      _sourceCanvasWidth = dimensions.width;
+      _sourceCanvasHeight = dimensions.height;
     } on FormatException {
       // Content sniffing remains the authority for type classification. A bad
       // or incomplete metadata header must not fail the transfer generation.

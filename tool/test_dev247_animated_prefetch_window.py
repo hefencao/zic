@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Guard dev.247 layered animated-WebP network admission without shrinking RoleWindow."""
+"""Guard the stable 3/7 animated transfer window and role-local flow credit."""
 from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
+
 def read(path: str) -> str:
     return (ROOT / path).read_text(encoding='utf-8')
+
 
 def require(path: str, *tokens: str) -> None:
     text = read(path)
@@ -14,115 +16,60 @@ def require(path: str, *tokens: str) -> None:
     if missing:
         raise SystemExit(f'{path} missing dev.247 contract: {missing}')
 
+
+def reject(path: str, *tokens: str) -> None:
+    text = read(path)
+    present = [token for token in tokens if token in text]
+    if present:
+        raise SystemExit(f'{path} contains superseded dev.247 coupling: {present}')
+
 pubspec = read('apps/app/pubspec.yaml')
 m = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', pubspec, re.M)
 if m is None or int(m.group(1)) < 247:
     raise SystemExit('App build must be >=247')
 require('apps/app/android/zic-version.properties', f'versionCode={m.group(1)}')
-build = int(m.group(1))
 
-if build >= 249:
-    require(
-        'packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart',
-        'forwardEncodedPages: 7',
-        'backwardEncodedPages: 3',
-        'forwardDecodePages: 2',
-        'backwardDecodePages: 1',
-    )
-    require(
-        'packages/pipeline/lib/src/animated_prefetch_policy.dart',
-        'if (readDistance == 1) return 5;',
-        'DecodeWaterlineStage.currentMid => 1',
-        'DecodeWaterlineStage.nextMid => 2',
-        'DecodeWaterlineStage.currentDeep => 3',
-        'DecodeWaterlineStage.nextDeep => 4',
-        'targetFramesByIndex',
-    )
-    require(
-        'packages/pipeline/test/animated_prefetch_policy_test.dart',
-        'keeps all logical 3/7 downloads',
-        'waterlines raise far frame credits',
-        'static classification restores unlimited 3/7 flow',
-    )
-else:
-    require(
-        'packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart',
-        'forwardEncodedPages: 7',
-        'backwardEncodedPages: 3',
-        'forwardDecodePages: 2',
-        'backwardDecodePages: 1',
-        'animatedPrefetchBudgetBytes',
-    )
-    require(
-        'packages/pipeline/lib/src/animated_prefetch_policy.dart',
-        'minimumForwardPages = 4',
-        'minimumBackwardPages = 2',
-        'maximumForwardPages = 7',
-        'maximumBackwardPages = 3',
-        'defaultAnimatedWebpPrefetchBudgetBytes = 50 * 1024 * 1024',
-        'DecodeWaterlineStage.currentMid => 1',
-        'DecodeWaterlineStage.nextMid => 2',
-        'DecodeWaterlineStage.currentDeep => 3',
-        'DecodeWaterlineStage.nextDeep => 4',
-        'minimumExceedsBudget',
-        'window.roleOf(index) == PageRole.detached',
-    )
-    require(
-        'packages/pipeline/lib/src/pipeline_controller.dart',
-        '_animatedPrefetchStage = 0',
-        'observeDecodeWaterline',
-        'planRevision != _revision',
-        'ContentKindHint.webp',
-        "endsWith('.webp')",
-        "'animatedPrefetchAdmittedIndexes'",
-        "'animatedPrefetchMinimumExceededBudget'",
-    )
-    require(
-        'packages/sessions/lib/src/live_coordinator.dart',
-        'typedef DecodeRefillObserve',
-        'onDecodeRefillObserved?.call(refill, demandRevision)',
-        'after.depth + completedPreparedDepth >= refill.targetWatermark',
-    )
-    require(
-        'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
-        'onDecodeRefillObserved: _handleDecodeRefillObserved',
-        '.observeDecodeWaterline(',
-        'withAnimatedPrefetchBudgetBytes',
-    )
-    require(
-        'apps/app/lib/app_preferences.dart',
-        '_animatedWebpPrefetchBudgetMiB = 50',
-        'setAnimatedWebpPrefetchBudgetMiB',
-        "'animatedWebpPrefetchBudgetMiB'",
-    )
-    require(
-        'apps/app/lib/demo_home_reader_route.dart',
-        '.withAnimatedPrefetchBudgetBytes(',
-        'animatedWebpPrefetchBudgetMiB * 1024 * 1024',
-    )
-    require(
-        'apps/app/lib/app_settings_screen.dart',
-        "'animated-webp-prefetch-budget'",
-        '动画 WebP 预下载预算',
-        'previous 2 / next 4',
-    )
-    prefetch_test = 'packages/pipeline/test/animated_prefetch_policy_test.dart'
-    if int(m.group(1)) < 248:
-        require(
-            prefetch_test,
-            'preserves logical 3/7 window',
-            'waterlines progressively open outer network pages',
-            'byte budget never shrinks mandatory 2/4 floor',
-            'resets staged expansion on jump',
-        )
-    else:
-        require(
-            prefetch_test,
-            'preserves logical 3/7 window',
-            'waterlines progressively open outer network pages',
-            'byte budget does not remove eligible 2/4 or waterline pages',
-            'resets staged expansion on jump',
-        )
+require(
+    'packages/pipeline_runtime/lib/src/reader_pipeline_profile.dart',
+    'forwardEncodedPages: 7',
+    'backwardEncodedPages: 3',
+    'forwardDecodePages: 2',
+    'backwardDecodePages: 1',
+)
+require(
+    'packages/pipeline/lib/src/animated_prefetch_policy.dart',
+    'These stages describe decode scheduling only.',
+    "another page's decode waterline never controls its transfer",
+    'if (readDistance == 1) return 5;',
+    'if (readDistance == 2) return 3;',
+    'if (readDistance == -1) return 2;',
+    'return 1;',
+    'targetFramesByIndex',
+)
+reject(
+    'packages/pipeline/lib/src/animated_prefetch_policy.dart',
+    'DecodeWaterlineStage.currentMid =>',
+    'DecodeWaterlineStage.nextMid =>',
+    'DecodeWaterlineStage.currentDeep =>',
+    'DecodeWaterlineStage.nextDeep =>',
+)
+reject(
+    'packages/pipeline/lib/src/pipeline_controller.dart',
+    'observeDecodeWaterline',
+    '_animatedPrefetchStage',
+)
+reject(
+    'packages/pipeline_runtime/lib/src/pipeline_reader_session.dart',
+    '_handleDecodeRefillObserved',
+    'onDecodeRefillObserved:',
+    '.observeDecodeWaterline(',
+)
+require(
+    'packages/pipeline/test/animated_prefetch_policy_test.dart',
+    'animation keeps all logical 3/7 downloads and assigns frame flow credits',
+    'far flow credit is role-local and independent of nearer decode progress',
+    'static classification restores unlimited 3/7 flow',
+)
 for path in (
     'docs/adr/0227-animated-webp-layered-prefetch-window.md',
     'docs/audits/dev247-animated-prefetch-window-root-cause-audit.md',
@@ -130,14 +77,7 @@ for path in (
 ):
     if not (ROOT / path).is_file():
         raise SystemExit(f'missing dev.247 governance file: {path}')
-if build >= 249:
-    require('docs/SPEC.md', 'encoded逻辑/retention与network-demand window', 'frame credit')
-    require('docs/ARCHITECTURE.md', 'previous3/next7同时是逻辑/retention与DownloadDemand窗口', 'frame credit')
-elif build < 248:
-    require('docs/SPEC.md', 'encoded逻辑/retention window', 'network下界previous2/next4')
-    require('docs/ARCHITECTURE.md', 'previous2/next4', 'c>4→next5')
-else:
-    require('docs/SPEC.md', 'encoded逻辑/retention window', '最低预下载资格窗口')
-    require('docs/ARCHITECTURE.md', 'previous2/next4', 'c>4→next5')
+require('docs/SPEC.md', 'network-demand window：前 7 / 后 3', '较近页的download/decode速度', 'frame credit')
+require('docs/ARCHITECTURE.md', '同一页面自己的 role', 'decode waterline', 'frame credit')
 require('tool/check.sh', 'test_dev247_animated_prefetch_window.py')
-print('dev.247 animated WebP layered prefetch window: OK')
+print('dev.247 stable 3/7 animated role-local flow contract: OK')

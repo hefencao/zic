@@ -1,6 +1,6 @@
 import 'package:downloads/downloads.dart';
+import 'package:local_media_ui/local_media_ui.dart';
 import 'package:pipeline_native/pipeline_native.dart';
-import 'package:pipeline_runtime/pipeline_runtime.dart';
 
 final _defaultNativeMediaRuntimeFactory = NativePipelineMediaRuntimeFactory();
 
@@ -12,6 +12,7 @@ final defaultLocalMediaPipelineFactory = PipelineReaderSessionFactory(
   speculativeEncodedReadBudget:
       defaultDownloadResourceCoordinator.speculativeEncodedReadBudget,
   pageDownloadLane: defaultDownloadResourceCoordinator.networkLane,
+  externalPresentationPrewarmer: prewarmPipelineExternalStaticPresentation,
 );
 
 Future<void> prewarmDefaultLocalMediaPipeline() =>

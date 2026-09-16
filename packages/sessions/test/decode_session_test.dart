@@ -10,6 +10,47 @@ import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 
 void main() {
+  test('classified fallback hands one-frame readiness to external presentation', () async {
+    final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);
+    ingress.append(
+      epoch: const SourceEpoch(0),
+      offset: 0,
+      bytes: const <int>[0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'fallback-external-presentation',
+      ingress: ingress,
+    );
+    final cursors = _CursorFactory();
+    final session = DecodeSession(
+      id: _decodeId(_downloadId()),
+      ingress: projection,
+      cursors: cursors,
+      clock: _Clock(),
+    );
+
+    final result = await session.fill(
+      demand: const DecodeDemand(
+        role: PageRole.next,
+        priority: 820,
+        targetWatermark: 1,
+        reason: 'fallback-one-frame',
+        expirationRevision: 2,
+      ),
+      revision: 1,
+      cancel: CancelToken(),
+    );
+
+    expect(result.state, DecodeState.ended);
+    expect(result.depth, 0);
+    expect(result.externalPresentationRequired, isTrue);
+    expect(cursors.created, 0,
+        reason: 'fallback media must not manufacture a native WebP cursor');
+
+    session.dispose();
+    ingress.dispose();
+  });
+
   test('fills the requested watermark and rebuilds on epoch change', () async {
     final temp = await Directory.systemTemp.createTemp('decode_session_test_');
     final ingress = Ingress(factory: _SourceFactory(), maxBytes: 1024);

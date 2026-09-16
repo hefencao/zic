@@ -73,8 +73,13 @@ void main() {
       final plan = profile.guard.enforce(proposal);
 
       expect(plan.downloads, hasLength(11), reason: scheme);
-      expect(plan.decodes, hasLength(4), reason: scheme);
-      expect(plan.uploads, hasLength(4), reason: scheme);
+      expect(plan.decodes, hasLength(11), reason: scheme);
+      expect(plan.uploads, hasLength(11), reason: scheme);
+      expect(
+        plan.decodes.values.every((demand) => demand.targetWatermark == 1),
+        isTrue,
+        reason: '$scheme static work must remain one-frame only',
+      );
       expect(
         plan.uploads.values.where((u) => u.role == PageRole.current),
         hasLength(1),
@@ -85,6 +90,11 @@ void main() {
       expect(profile.remoteSourceConcurrency, 5, reason: scheme);
       expect(profile.decodeConcurrency, 3, reason: scheme);
       expect(profile.uploadConcurrency, 2, reason: scheme);
+      expect(
+        profile.speculativeExternalPresentationConcurrency,
+        3,
+        reason: '$scheme fast vertical static warming stays bounded',
+      );
     }
   });
   test('download buckets separate local work and each remote source', () {

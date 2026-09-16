@@ -1,5 +1,10 @@
 part of '../local_media_ui.dart';
 
+LocalImageFormat? _fallbackFormatFromPipelinePrefix(Uint8List prefix) {
+  final detected = detectLocalImageFormat(prefix);
+  return detected == LocalImageFormat.webp ? null : detected;
+}
+
 final class WebpCatalogScreen extends StatelessWidget {
   const WebpCatalogScreen({
     this.entriesLoader = loadWebpDemoEntries,

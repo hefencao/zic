@@ -1,7 +1,7 @@
 # ADR 0274：纵排 active 阶段只允许可见静态输出上传
 
 ## 状态
-Accepted。supersede ADR 0260/dev.281 中“只 defer hidden next2，hidden immediate next仍可static warm upload”的局部角色特例；不改变其idle geometry correction结论。
+Superseded。ADR 0314 保留本ADR对hidden native/provisional texture active-scroll defer的设备结论，但撤销“所有hidden static presentation path一刀切defer”；external-static first-frame staging改由精确container evidence资格化。
 
 ## 设备证据
 `zic-debug-trace-2026-08-15T08-15-40.jsonl` 中333条 `pageLayoutSnapshot` 的实际RenderBox extent与Reader expected extent全部一致，`extentDeltaPx=0`，采样2x2 transform保持单位矩阵，因此没有证据继续修改Sliver item extent。dev.294的`layoutResidualPx`在active阶段出现偏差，是因为probe在post-frame读取RenderBox却使用调度时捕获的旧scroll pixels；这属于观测时序错误而非layout证据。

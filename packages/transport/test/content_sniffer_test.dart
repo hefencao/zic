@@ -89,10 +89,45 @@ void main() {
     );
   });
 
+  test('extracts fixed-header static image dimensions from metadata prefixes', () {
+    final png = <int>[
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      0x00, 0x00, 0x00, 0x0d,
+      ...'IHDR'.codeUnits,
+      0x00, 0x00, 0x02, 0xd0,
+      0x00, 0x00, 0x02, 0xbc,
+    ];
+    expect(parseEncodedImageDimensions(png), (width: 720, height: 700));
+    expect(
+      parseEncodedImageDimensions(<int>[
+        0xff, 0xd8,
+        0xff, 0xc0,
+        0x00, 0x11,
+        0x08,
+        0x02, 0xbc,
+        0x02, 0xd0,
+        0x03, 0x01, 0x11, 0x00,
+        0x02, 0x11, 0x00,
+        0x03, 0x11, 0x00,
+      ]),
+      (width: 720, height: 700),
+    );
+    expect(
+      parseEncodedImageDimensions(<int>[
+        ...'GIF89a'.codeUnits,
+        0xd0, 0x02,
+        0xbc, 0x02,
+      ]),
+      (width: 720, height: 700),
+    );
+    expect(parseEncodedImageDimensions(png.sublist(0, 20)), isNull);
+  });
+
   test('generic fallback classification is not image validity', () {
     final html = '<html>not an image</html>'.codeUnits;
     expect(sniffContent(html), ContentKind.fallback);
     expect(sniffEncodedImageKind(html), isNull);
     expect(hasSupportedEncodedImageSignature(html), isFalse);
+    expect(parseEncodedImageDimensions(html), isNull);
   });
 }

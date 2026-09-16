@@ -33,10 +33,13 @@ require(
     'if (readDistance == 1) return 5;',
     'if (readDistance == 2) return 3;',
     'if (readDistance == -1) return 2;',
-    'DecodeWaterlineStage.currentMid => 1',
-    'DecodeWaterlineStage.nextMid => 2',
-    'DecodeWaterlineStage.currentDeep => 3',
-    'DecodeWaterlineStage.nextDeep => 4',
+)
+reject(
+    'packages/pipeline/lib/src/animated_prefetch_policy.dart',
+    'DecodeWaterlineStage.currentMid =>',
+    'DecodeWaterlineStage.nextMid =>',
+    'DecodeWaterlineStage.currentDeep =>',
+    'DecodeWaterlineStage.nextDeep =>',
 )
 require(
     'packages/pipeline/lib/src/heuristic_policy.dart',

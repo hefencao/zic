@@ -275,9 +275,12 @@ final class ArtifactCacheManager {
       return null;
     }
     _memory[selected] = bytes;
-    // Uint8List is mutable. Return an unmodifiable view so callers
-    // cannot mutate the cached memory tier buffer in-place.
-    return bytes.asUnmodifiableView();
+    // _rememberExact stores an unmodifiable view. Return that exact object so
+    // presentation callers can reuse stable ImageProvider cache identity across
+    // speculative prewarm and the later visible mount without exposing mutable
+    // cache bytes. Re-wrapping here creates a new Uint8List identity each read
+    // and defeats Flutter MemoryImage/ImageCache reuse.
+    return bytes;
   }
 
   Future<ArtifactCacheLookup?> lookup(
@@ -975,7 +978,7 @@ final class ArtifactCacheManager {
         );
       }
       _rememberExact(id: id, bytes: ownedBytes, durable: durable);
-      return ownedBytes;
+      return _lookupMemoryExact(id, length: length) ?? ownedBytes;
     }).whenComplete(() {
       operation.futureCompleted = true;
       if (identical(_inFlight[key]?.future, tracked)) _inFlight.remove(key);

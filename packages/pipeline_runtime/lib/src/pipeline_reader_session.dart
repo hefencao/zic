@@ -47,6 +47,44 @@ final class PipelineEncodedPresentationFileLease {
   final Future<void> Function() release;
 }
 
+/// One coordinator-authorized external static presentation warm request.
+///
+/// The executor may decode only the supplied exact page capability. It does
+/// not choose page eligibility, create transfer demand, or own encoded-byte
+/// persistence. Successful completion means the presentation composition has
+/// a first static raster resident in its existing cache.
+final class PipelineExternalPresentationWarmRequest {
+  const PipelineExternalPresentationWarmRequest({
+    required this.asset,
+    required this.identity,
+    required this.cacheIdentity,
+    required this.token,
+    required this.openEncodedPresentationFile,
+    required this.loadBytes,
+    required this.maxPhysicalWidth,
+    required this.maxPhysicalHeight,
+  });
+
+  final PageAsset asset;
+  final DecodeId identity;
+  /// Opaque identity for this immutable external-presentation generation.
+  ///
+  /// Presentation adapters must use it independently from whether the bytes
+  /// are currently exposed from resident memory or a durable file lease.
+  final Object cacheIdentity;
+  final MediaLoadToken token;
+  final Future<PipelineEncodedPresentationFileLease?> Function(
+    MediaLoadToken token,
+  ) openEncodedPresentationFile;
+  final Future<Uint8List> Function(MediaLoadToken token) loadBytes;
+  final int maxPhysicalWidth;
+  final int maxPhysicalHeight;
+}
+
+typedef PipelineExternalPresentationPrewarmer = Future<void> Function(
+  PipelineExternalPresentationWarmRequest request,
+);
+
 final class _PresentationArtifactAuthority {
   const _PresentationArtifactAuthority({
     required this.storageId,
@@ -247,6 +285,7 @@ final class PipelineReaderSessionFactory {
     this.loaderSources = const <Uri, LoaderTransportSource>{},
     this.bytesLoader,
     this.userAgentProvider,
+    this.externalPresentationPrewarmer,
     _PipelineReaderSessionRetentionPool? retentionPool,
     CompositionDownloadTransferRuntimePool? transferRuntimePool,
     this.transferRuntime,
@@ -273,6 +312,7 @@ final class PipelineReaderSessionFactory {
   final Map<Uri, LoaderTransportSource> loaderSources;
   final PipelineArtifactBytesLoader? bytesLoader;
   final String Function()? userAgentProvider;
+  final PipelineExternalPresentationPrewarmer? externalPresentationPrewarmer;
 
   /// Returns a factory that keeps composition-owned cache/byte loaders while
   /// adding page-local transport sources.
@@ -293,6 +333,7 @@ final class PipelineReaderSessionFactory {
         },
         bytesLoader: bytesLoader,
         userAgentProvider: userAgentProvider,
+        externalPresentationPrewarmer: externalPresentationPrewarmer,
         retentionPool: _retentionPool,
         transferRuntimePool: _transferRuntimePool,
         transferRuntime: transferRuntime,
@@ -312,6 +353,7 @@ final class PipelineReaderSessionFactory {
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
         userAgentProvider: userAgentProvider,
+        externalPresentationPrewarmer: externalPresentationPrewarmer,
         retentionPool: _retentionPool,
         transferRuntimePool: _transferRuntimePool,
         transferRuntime: transferRuntime,
@@ -331,6 +373,7 @@ final class PipelineReaderSessionFactory {
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
         userAgentProvider: userAgentProvider,
+        externalPresentationPrewarmer: externalPresentationPrewarmer,
         retentionPool: _retentionPool,
         transferRuntimePool: _transferRuntimePool,
         transferRuntime: transferRuntime,
@@ -350,6 +393,7 @@ final class PipelineReaderSessionFactory {
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
         userAgentProvider: provider,
+        externalPresentationPrewarmer: externalPresentationPrewarmer,
         retentionPool: _retentionPool,
         transferRuntimePool: _transferRuntimePool,
         transferRuntime: transferRuntime,
@@ -369,6 +413,7 @@ final class PipelineReaderSessionFactory {
         loaderSources: loaderSources,
         bytesLoader: loader,
         userAgentProvider: userAgentProvider,
+        externalPresentationPrewarmer: externalPresentationPrewarmer,
         retentionPool: _retentionPool,
         transferRuntimePool: _transferRuntimePool,
         transferRuntime: transferRuntime,
@@ -394,6 +439,7 @@ final class PipelineReaderSessionFactory {
         loaderSources: loaderSources,
         bytesLoader: bytesLoader,
         userAgentProvider: userAgentProvider,
+        externalPresentationPrewarmer: externalPresentationPrewarmer,
         retentionPool: _retentionPool,
         transferRuntimePool: _transferRuntimePool,
         transferRuntime: runtime,
@@ -445,6 +491,7 @@ final class PipelineReaderSessionFactory {
       loaderSources: loaderSources,
       bytesLoader: bytesLoader,
       userAgentProvider: userAgentProvider,
+      externalPresentationPrewarmer: externalPresentationPrewarmer,
       traceSink: traceSink,
       transferRuntime: transferRuntime,
     );
@@ -511,6 +558,7 @@ final class PipelineReaderSessionFactory {
       identityHashCode(pageDownloadLane),
       identityHashCode(decodePrefixHints),
       identityHashCode(bytesLoader),
+      identityHashCode(externalPresentationPrewarmer),
       identityHashCode(traceSink),
       identityHashCode(transferRuntime),
       loaderFingerprint,
@@ -541,6 +589,7 @@ final class PipelineReaderSession {
         const <Uri, LoaderTransportSource>{},
     PipelineArtifactBytesLoader? bytesLoader,
     String Function()? userAgentProvider,
+    PipelineExternalPresentationPrewarmer? externalPresentationPrewarmer,
     TraceSink? traceSink,
     required CompositionDownloadTransferRuntime transferRuntime,
   })  : artifactReadScheduler = artifactReadScheduler,
@@ -548,6 +597,7 @@ final class PipelineReaderSession {
         _transferRuntime = transferRuntime,
         _sharedTraceSink = traceSink,
         _bytesLoader = bytesLoader,
+        _externalPresentationPrewarmer = externalPresentationPrewarmer,
         clock = SystemClock(),
         _profile = readerPipelineProfileFor(
           chapter,
@@ -683,8 +733,10 @@ final class PipelineReaderSession {
       findDownloadSession: _transferRuntime.findSession,
       onDownloadObserved: _observeDownloadSession,
       onSourceKindObserved: _handleSourceKindObserved,
-      onDecodeRefillObserved: _handleDecodeRefillObserved,
-      onMemoryPressureObserved: _handleMemoryPressureObserved,
+      onExternalPresentationRequested: _handleExternalPresentationRequested,
+      externalPresentationAvailable: _externalPresentationAvailable,
+      maxSpeculativeExternalPresentationPending:
+          _profile.speculativeExternalPresentationConcurrency,
       net: pageDownloadLane,
       downloadBucketFor: _profile.downloadBucket,
       downloadBucketLimitFor: _profile.downloadBucketLimit,
@@ -728,6 +780,7 @@ final class PipelineReaderSession {
   final ReaderPipelineProfile _profile;
   late final PipelineMediaRuntime _media;
   final PipelineArtifactBytesLoader? _bytesLoader;
+  final PipelineExternalPresentationPrewarmer? _externalPresentationPrewarmer;
   final AssetBundleTransport _assetTransport;
   final IoTransport _ioTransport;
   final LoaderTransport _loaderTransport;
@@ -761,6 +814,14 @@ final class PipelineReaderSession {
       <DownloadId, _PresentationArtifactAuthority>{};
   final Set<DownloadId> _automaticPresentationRecoveries = <DownloadId>{};
   final Set<DecodeId> _animatedOutputs = <DecodeId>{};
+  final Set<DecodeId> _externalPresentationRequests = <DecodeId>{};
+  final Set<DecodeId> _externalPresentationReady = <DecodeId>{};
+  final Set<DecodeId> _externalPresentationPrewarmFailures = <DecodeId>{};
+  final Map<DecodeId, MediaLoadToken> _externalPresentationPrewarmTokens =
+      <DecodeId, MediaLoadToken>{};
+  final Map<DecodeId, Object> _externalPresentationCacheIdentities =
+      <DecodeId, Object>{};
+  final Set<DecodeId> _externalPresentationVisibleFrames = <DecodeId>{};
   // DownloadSession publishes source-canvas metadata as soon as the WebP
   // prefix is available. Keep one listener per physical session so the
   // matching output lease can be created before the first decoded frame is
@@ -1074,11 +1135,20 @@ final class PipelineReaderSession {
       }
     }
     final revisionBefore = binding.pipeline.revision;
-    binding.accept(observation);
+    final playbackChanged = binding.accept(observation);
     final planChanged = binding.pipeline.revision != revisionBefore;
     _lastControlCurrentDownload = currentDownload;
     _lastControlDecodeTarget = target;
     if (!planChanged && !controlIdentityChanged) {
+      // Playback ownership can cross overlap->dominant without changing a
+      // demand role or DecodeId. In that case PlaybackGate may have just
+      // resumed a timer that was armed while the adjacent WebP was hidden.
+      // Rebuild the single Reader wake here; waiting for another demand or
+      // PageView observation makes the newly-current animation appear frozen
+      // until the user swipes again.
+      if (playbackChanged) {
+        _ensurePlaybackTicker();
+      }
       return;
     }
     _syncPageStreams();
@@ -1330,6 +1400,15 @@ final class PipelineReaderSession {
     _invalidateObservationQueue();
     _retainedForReaderReentry = true;
     _cancelPlaybackWake();
+    for (final token in _externalPresentationPrewarmTokens.values) {
+      token.cancel();
+    }
+    _externalPresentationPrewarmTokens.clear();
+    _externalPresentationCacheIdentities.clear();
+    _externalPresentationRequests.clear();
+    _externalPresentationReady.clear();
+    _externalPresentationPrewarmFailures.clear();
+    _externalPresentationVisibleFrames.clear();
     final binding = _binding;
     final readerSessionId = _readerSessionId;
     _binding = null;
@@ -1430,7 +1509,73 @@ final class PipelineReaderSession {
           ? _staticPresentationContinuityIdentity(id)
           : null,
     );
+    output._setExternalPresentationCacheIdentity(
+      outputIdentity == null
+          ? null
+          : _externalPresentationCacheIdentityFor(outputIdentity),
+    );
+    output._setExternalPresentationRequested(
+      outputIdentity != null &&
+          _externalPresentationRequests.contains(outputIdentity) &&
+          _coordinator.externalPresentationPendingFor(outputIdentity),
+    );
+    output._setExternalPresentationReady(
+      outputIdentity != null && _externalPresentationReadyForOutput(outputIdentity),
+    );
     return output;
+  }
+
+  /// Reports an actually presented first frame for an external/fallback
+  /// renderer. Native Pipeline surfaces ignore this because their readiness is
+  /// already owned by UploadRegistry/PresentClaim. A detached ImageCache warm
+  /// may already have satisfied the staged watermark; the visible frame still
+  /// gets traced, but it does not manufacture a second coordinator completion.
+  void reportPresentationFrameReady(PageAsset asset) {
+    if (_disposed) return;
+    final download = readerPageDownloadId(chapter, asset);
+    DecodeId? identity;
+    for (final candidate in _coordinator.decodeDemands.keys) {
+      if (candidate.download == download) {
+        identity = candidate;
+        break;
+      }
+    }
+    if (identity == null) return;
+    final firstVisible = _externalPresentationVisibleFrames.add(identity);
+    final pending = _externalPresentationRequests.contains(identity) &&
+        _coordinator.externalPresentationPendingFor(identity);
+    if (pending) {
+      _externalPresentationRequests.remove(identity);
+      _externalPresentationReady.add(identity);
+      _externalPresentationPrewarmTokens.remove(identity)?.cancel();
+      final output = _pageOutputs[download.key];
+      output?._setExternalPresentationRequested(false);
+      output?._setExternalPresentationReady(true);
+      if (_coordinator.completeExternalPresentation(sessionId, identity)) {
+        _recordExternalPresentationFirstFrame(
+          identity,
+          owner: 'mounted-presentation',
+          preparedOnly: false,
+        );
+      }
+      return;
+    }
+    if (firstVisible && _externalPresentationReady.contains(identity)) {
+      trace.record(
+        traceEvent(
+          clock: clock,
+          sessionId: sessionId,
+          kind: TraceEventKind.readerObservation,
+          identityHash: identity.key,
+          revision: revision,
+          payload: const <String, Object?>{
+            'stage': 'external-presentation-visible-first-frame',
+            'owner': 'mounted-presentation',
+            'prepared': true,
+          },
+        ),
+      );
+    }
   }
 
   PipelinePageOutputStream _newPageOutput(
@@ -1444,6 +1589,8 @@ final class PipelineReaderSession {
       outputs: _media.outputs,
       frameScheduler: _media.frameScheduler,
       onPlaybackWakeChanged: _ensurePlaybackTicker,
+      onExternalPresentationConsumerChanged:
+          _handleExternalPresentationConsumerChanged,
     );
     if (detachedPrewarm) {
       output._enableDetachedPrewarm();
@@ -1699,6 +1846,13 @@ final class PipelineReaderSession {
         storageId: read.storageId,
         generation: read.generation,
       );
+      _publishPageSourceDimensions(
+        id: id,
+        asset: asset,
+        width: width,
+        height: height,
+        source: 'presentation-file-lease',
+      );
       _recordPresentationFileLease(
         asset: asset,
         id: id,
@@ -1922,6 +2076,7 @@ final class PipelineReaderSession {
     );
     if (recovered) {
       _artifactCachePresentationAuthorities.remove(id);
+      _rotateExternalPresentationCacheIdentity(id);
       _downloadTransfer.refreshScheduling();
     }
     return recovered;
@@ -1941,6 +2096,7 @@ final class PipelineReaderSession {
     if (recovered) {
       _artifactCachePresentationAuthorities.remove(id);
       _automaticPresentationRecoveries.remove(id);
+      _rotateExternalPresentationCacheIdentity(id);
       _downloadTransfer.refreshScheduling();
     }
     return recovered;
@@ -2017,6 +2173,7 @@ final class PipelineReaderSession {
       bytes: bytes,
       generation: cacheGeneration,
     );
+    final presentationBytes = cache?.lookupMemory(id) ?? bytes;
     _recordPresentationCacheRead(
       asset: asset,
       id: id,
@@ -2029,7 +2186,7 @@ final class PipelineReaderSession {
       integrityBasis: ArtifactReadIntegrityBasis.directImmutableSource.name,
       sessionState: session.state.name,
     );
-    return bytes;
+    return presentationBytes;
   }
 
   Future<ByteResponse> _openDirectImmutableSourceResponse(
@@ -2325,12 +2482,23 @@ final class PipelineReaderSession {
   }
 
   void _handleDownloadSnapshotForOutputPrewarm(DownloadSnapshot snapshot) {
-    if (_disposed ||
-        _retainedForReaderReentry ||
-        !snapshot.hasSourceCanvas ||
-        _media.renderer != RendererKind.androidTexture) {
+    if (_disposed || _retainedForReaderReentry || !snapshot.hasSourceCanvas) {
       return;
     }
+    final sourcePageIndex = _pageIndexByPageId[snapshot.id.content.pageId];
+    if (sourcePageIndex != null) {
+      final asset = chapter.pages[sourcePageIndex];
+      _publishPageSourceDimensions(
+        id: snapshot.id,
+        asset: asset,
+        width: asset.width ?? snapshot.sourceCanvasWidth!,
+        height: asset.height ?? snapshot.sourceCanvasHeight!,
+        source: asset.width != null && asset.height != null
+            ? 'manifest-source-canvas'
+            : 'physical-ingress-source-canvas',
+      );
+    }
+    if (_media.renderer != RendererKind.androidTexture) return;
     final observation = _lastAcceptedControlObservation;
     if (observation == null || observation.direction == ReadingDirection.vertical) {
       return;
@@ -2368,51 +2536,397 @@ final class PipelineReaderSession {
       if (_disposed) return;
       final pageIndex = _pageIndexByPageId[id.content.pageId];
       if (pageIndex == null) return;
-      final changed = _binding?.observeWebpTransportCost(
+      final binding = _binding;
+      if (binding == null) return;
+      final download = _downloads.find(id);
+      var staticClassificationChanged = false;
+      EncodedImageKind? encodedKind;
+      if (kind == ContentKind.fallback && download != null) {
+        encodedKind = sniffEncodedImageKind(download.readSourceMetadataPrefix());
+        if (_isStaticFallbackImageKind(encodedKind)) {
+          final asset = chapter.pages[pageIndex];
+          final localPresentationReady =
+              _isDirectImmutableLocalUri(asset.uri) ||
+                  download.residentBodyBacked;
+          staticClassificationChanged = binding.classifyPage(
             pageIndex: pageIndex,
-            webp: kind == ContentKind.webp,
-          ) ??
-          false;
-      if (!changed) return;
+            animated: false,
+            localPresentationReady: localPresentationReady,
+            externalPresentationRequired: true,
+          );
+          if (staticClassificationChanged) {
+            trace.record(
+              traceEvent(
+                clock: clock,
+                sessionId: sessionId,
+                kind: TraceEventKind.mediaClassified,
+                identityHash: id.key,
+                revision: revision,
+                payload: <String, Object?>{
+                  'pageIndex': pageIndex,
+                  'animated': false,
+                  'localPresentationReady': localPresentationReady,
+                  'basis': 'encoded-prefix',
+                  'encodedKind': encodedKind!.name,
+                },
+              ),
+            );
+          }
+        }
+      }
+      final transportCostChanged = binding.observeWebpTransportCost(
+        pageIndex: pageIndex,
+        webp: kind == ContentKind.webp,
+      );
+      if (transportCostChanged) {
+        trace.record(
+          traceEvent(
+            clock: clock,
+            sessionId: sessionId,
+            kind: TraceEventKind.artifactSource,
+            identityHash: id.key,
+            revision: revision,
+            payload: <String, Object?>{
+              'stage': 'runtime-transport-cost',
+              'action': kind == ContentKind.webp
+                  ? 'webp-observed'
+                  : 'webp-cleared',
+              'pageIndex': pageIndex,
+              'contentKind': kind.name,
+            },
+          ),
+        );
+      }
+      if (!staticClassificationChanged && !transportCostChanged) return;
+      artifactReadScheduler.refresh();
+      if (staticClassificationChanged) {
+        _syncPageOutputs();
+      }
+    });
+  }
+
+  bool _isStaticFallbackImageKind(EncodedImageKind? kind) => switch (kind) {
+        EncodedImageKind.jpeg ||
+        EncodedImageKind.png ||
+        EncodedImageKind.bmp ||
+        EncodedImageKind.tiff ||
+        EncodedImageKind.ico ||
+        EncodedImageKind.avif ||
+        EncodedImageKind.heif =>
+          true,
+        EncodedImageKind.webp || EncodedImageKind.gif || null => false,
+      };
+
+  bool _hasMountedExternalPresentationConsumer(DecodeId id) {
+    final output = _pageOutputs[id.download.key];
+    return output != null &&
+        output._identity == id &&
+        output._listeners.isNotEmpty;
+  }
+
+  bool _canDetachedExternalPresentationPrewarm(DecodeId id) {
+    if (_externalPresentationPrewarmer == null ||
+        _externalPresentationPrewarmFailures.contains(id)) {
+      return false;
+    }
+    final pageIndex = _pageIndexByPageId[id.download.content.pageId];
+    final binding = _binding;
+    return pageIndex != null &&
+        binding != null &&
+        binding.pipeline.isRuntimeExternalStaticPage(pageIndex);
+  }
+
+  bool _externalPresentationAvailable(DecodeId id) =>
+      _hasMountedExternalPresentationConsumer(id) ||
+      _canDetachedExternalPresentationPrewarm(id);
+
+  Object _externalPresentationCacheIdentityFor(DecodeId id) =>
+      _externalPresentationCacheIdentities.putIfAbsent(id, () => Object());
+
+  void _rotateExternalPresentationCacheIdentity(DownloadId download) {
+    final identities = <DecodeId>{
+      ..._externalPresentationCacheIdentities.keys
+          .where((identity) => identity.download == download),
+      ..._coordinator.decodeDemands.keys
+          .where((identity) => identity.download == download),
+    };
+    for (final identity in identities) {
+      _externalPresentationPrewarmTokens.remove(identity)?.cancel();
+      _externalPresentationCacheIdentities[identity] = Object();
+      _externalPresentationReady.remove(identity);
+      _externalPresentationPrewarmFailures.remove(identity);
+      _externalPresentationVisibleFrames.remove(identity);
+    }
+    final output = _pageOutputs[download.key];
+    final outputIdentity = output?._identity;
+    if (output != null && outputIdentity != null) {
+      output._setExternalPresentationCacheIdentity(
+        _externalPresentationCacheIdentityFor(outputIdentity),
+      );
+      output._setExternalPresentationReady(false);
+    }
+  }
+
+  bool _externalPresentationIsForeground(DecodeId id) {
+    final demand = _coordinator.uploadDemands[id];
+    if (demand == null) return false;
+    return demand.viewportVisible ||
+        demand.role == PageRole.current ||
+        demand.role == PageRole.transition;
+  }
+
+  bool _preferDetachedExternalPresentation(DecodeId id) =>
+      _canDetachedExternalPresentationPrewarm(id) &&
+      !_externalPresentationIsForeground(id);
+
+  bool _externalPresentationReadyForOutput(DecodeId id) {
+    if (!_externalPresentationReady.contains(id) ||
+        !_coordinator.externalPresentationSatisfiedFor(id)) {
+      return false;
+    }
+    // The staged first-frame work has already completed in the composition's
+    // ImageCache. Do not make an already-mounted offscreen page wait until it
+    // becomes visible before attaching to that exact prepared cache entry.
+    // UploadDemand still bounds the presentation lifetime; this only exposes
+    // completed readiness and never creates a new grant or decode operation.
+    return _coordinator.uploadDemands.containsKey(id);
+  }
+
+  void _handleExternalPresentationConsumerChanged(
+    DecodeId? id,
+    bool available,
+  ) {
+    if (_disposed || id == null) return;
+    if (available) {
+      _coordinator.updateExternalPresentationAvailability(
+        sessionId,
+        id,
+        available: true,
+      );
+      final output = _pageOutputs[id.download.key];
+      final pending = _externalPresentationRequests.contains(id) &&
+          _coordinator.externalPresentationPendingFor(id);
+      final preferDetached = pending && _preferDetachedExternalPresentation(id);
+      if (pending && !preferDetached && output?._listeners.isNotEmpty == true) {
+        _externalPresentationPrewarmTokens.remove(id)?.cancel();
+      }
+      output?._setExternalPresentationRequested(pending && !preferDetached);
+      output?._setExternalPresentationReady(
+        _externalPresentationReadyForOutput(id),
+      );
+      if (preferDetached) {
+        _startExternalPresentationPrewarm(id, revision);
+      }
+      return;
+    }
+
+    // A detached static prewarmer is itself a real presentation consumer. A
+    // PageView/Sliver host leaving the tree therefore must not revoke its grant.
+    // Without that capability, preserve the historical listener-lifetime rule.
+    if (_canDetachedExternalPresentationPrewarm(id)) {
+      if (_externalPresentationRequests.contains(id) &&
+          _coordinator.externalPresentationPendingFor(id)) {
+        _startExternalPresentationPrewarm(id, revision);
+      }
+      return;
+    }
+    _externalPresentationRequests.remove(id);
+    final output = _pageOutputs[id.download.key];
+    output?._setExternalPresentationRequested(false);
+    output?._setExternalPresentationReady(false);
+    _coordinator.updateExternalPresentationAvailability(
+      sessionId,
+      id,
+      available: false,
+    );
+  }
+
+  void _handleExternalPresentationRequested(
+    DecodeId id,
+    int demandRevision,
+  ) {
+    scheduleMicrotask(() {
+      if (_disposed ||
+          !_coordinator.externalPresentationPendingFor(id) ||
+          !_coordinator.decodeDemands.containsKey(id)) {
+        return;
+      }
+      _externalPresentationRequests.add(id);
+      final mounted = _hasMountedExternalPresentationConsumer(id);
+      final detached = _canDetachedExternalPresentationPrewarm(id);
+      final preferDetached = detached && !_externalPresentationIsForeground(id);
+      final mountedOwnsRequest = mounted && !preferDetached;
+      _pageOutputs[id.download.key]
+          ?._setExternalPresentationRequested(mountedOwnsRequest);
       trace.record(
         traceEvent(
           clock: clock,
           sessionId: sessionId,
-          kind: TraceEventKind.artifactSource,
+          kind: TraceEventKind.readerObservation,
           identityHash: id.key,
-          revision: revision,
+          revision: demandRevision,
           payload: <String, Object?>{
-            'stage': 'runtime-transport-cost',
-            'action': kind == ContentKind.webp
-                ? 'webp-observed'
-                : 'webp-cleared',
-            'pageIndex': pageIndex,
-            'contentKind': kind.name,
+            'stage': 'external-presentation-requested',
+            'consumer': preferDetached || (!mounted && detached)
+                ? 'detached-image-cache'
+                : mountedOwnsRequest
+                    ? 'mounted-presentation'
+                    : 'none',
           },
         ),
       );
-      artifactReadScheduler.refresh();
+      if (preferDetached || (!mounted && detached)) {
+        _startExternalPresentationPrewarm(id, demandRevision);
+      }
     });
   }
 
-  void _handleDecodeRefillObserved(
-    DecodeRefillDecision decision,
+  void _startExternalPresentationPrewarm(
+    DecodeId id,
     int demandRevision,
   ) {
-    scheduleMicrotask(() {
-      if (_disposed) return;
-      _binding?.observeDecodeWaterline(
-        planRevision: demandRevision,
-        stage: decision.stage,
-      );
-    });
+    final prewarmer = _externalPresentationPrewarmer;
+    final binding = _binding;
+    if (prewarmer == null ||
+        binding == null ||
+        _externalPresentationPrewarmTokens.containsKey(id) ||
+        !_canDetachedExternalPresentationPrewarm(id) ||
+        !_coordinator.externalPresentationPendingFor(id)) {
+      return;
+    }
+    final pageIndex = _pageIndexByPageId[id.download.content.pageId];
+    if (pageIndex == null) return;
+    final asset = chapter.pages[pageIndex];
+    final token = MediaLoadToken();
+    final target = binding.pipeline.decodeTarget;
+    _externalPresentationPrewarmTokens[id] = token;
+    trace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.readerObservation,
+        identityHash: id.key,
+        revision: demandRevision,
+        payload: const <String, Object?>{
+          'stage': 'external-presentation-prewarm-started',
+          'owner': 'detached-image-cache',
+        },
+      ),
+    );
+    unawaited(() async {
+      try {
+        await prewarmer(
+          PipelineExternalPresentationWarmRequest(
+            asset: asset,
+            identity: id,
+            cacheIdentity: _externalPresentationCacheIdentityFor(id),
+            token: token,
+            openEncodedPresentationFile: (loadToken) =>
+                openEncodedPresentationFile(asset, loadToken),
+            loadBytes: (loadToken) => loadBytes(asset, loadToken),
+            maxPhysicalWidth: target.physicalWidth,
+            maxPhysicalHeight: target.physicalHeight,
+          ),
+        );
+        token.throwIfCancelled();
+        if (_disposed ||
+            !identical(_externalPresentationPrewarmTokens[id], token) ||
+            !_coordinator.externalPresentationPendingFor(id) ||
+            !_coordinator.decodeDemands.containsKey(id)) {
+          return;
+        }
+        _externalPresentationRequests.remove(id);
+        _externalPresentationReady.add(id);
+        _externalPresentationPrewarmFailures.remove(id);
+        final output = _pageOutputs[id.download.key];
+        output?._setExternalPresentationRequested(false);
+        output?._setExternalPresentationReady(
+          _externalPresentationReadyForOutput(id),
+        );
+        if (_coordinator.completeExternalPresentation(sessionId, id)) {
+          // completeExternalPresentation changes the satisfied query used by the
+          // ready projection, so refresh once after the coordinator commit.
+          output?._setExternalPresentationReady(
+            _externalPresentationReadyForOutput(id),
+          );
+          _recordExternalPresentationFirstFrame(
+            id,
+            owner: 'detached-image-cache',
+            preparedOnly: true,
+            demandRevision: demandRevision,
+          );
+        }
+      } on Object catch (error) {
+        if (token.isCancelled || _disposed) return;
+        if (!identical(_externalPresentationPrewarmTokens[id], token)) return;
+        _externalPresentationPrewarmFailures.add(id);
+        final mounted = _hasMountedExternalPresentationConsumer(id);
+        if (mounted) {
+          // The visible adapter may have attached while detached warming was
+          // in flight. A detached optimization miss must not revoke the exact
+          // staged grant from that real consumer; let its normal load/report
+          // path finish the same coordinator request.
+          _pageOutputs[id.download.key]?._setExternalPresentationRequested(
+            _externalPresentationRequests.contains(id) &&
+                _coordinator.externalPresentationPendingFor(id),
+          );
+          _coordinator.updateExternalPresentationAvailability(
+            sessionId,
+            id,
+            available: true,
+          );
+        } else {
+          _externalPresentationRequests.remove(id);
+          _pageOutputs[id.download.key]?._setExternalPresentationRequested(false);
+          _coordinator.updateExternalPresentationAvailability(
+            sessionId,
+            id,
+            available: false,
+          );
+        }
+        trace.record(
+          traceEvent(
+            clock: clock,
+            sessionId: sessionId,
+            kind: TraceEventKind.readerObservation,
+            identityHash: id.key,
+            revision: demandRevision,
+            payload: <String, Object?>{
+              'stage': 'external-presentation-prewarm-failed',
+              'owner': 'detached-image-cache',
+              'errorType': error.runtimeType.toString(),
+              'error': error.toString(),
+            },
+          ),
+        );
+      } finally {
+        if (identical(_externalPresentationPrewarmTokens[id], token)) {
+          _externalPresentationPrewarmTokens.remove(id);
+        }
+      }
+    }());
   }
 
-  void _handleMemoryPressureObserved(bool isPressured) {
-    scheduleMicrotask(() {
-      if (_disposed) return;
-      _binding?.observeMemoryPressure(isPressured: isPressured);
-    });
+  void _recordExternalPresentationFirstFrame(
+    DecodeId id, {
+    required String owner,
+    required bool preparedOnly,
+    int? demandRevision,
+  }) {
+    trace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.readerObservation,
+        identityHash: id.key,
+        revision: demandRevision ?? revision,
+        payload: <String, Object?>{
+          'stage': 'external-presentation-first-frame',
+          'owner': owner,
+          'preparedOnly': preparedOnly,
+        },
+      ),
+    );
   }
 
   void _handleFrameDecoded(DecodeId id, DecodeSnapshot snapshot) {
@@ -2450,6 +2964,44 @@ final class PipelineReaderSession {
         id,
         decodedWidth: decodedWidth,
         decodedHeight: decodedHeight,
+      ),
+    );
+  }
+
+  void _publishPageSourceDimensions({
+    required DownloadId id,
+    required PageAsset asset,
+    required int width,
+    required int height,
+    required String source,
+  }) {
+    if (_disposed || width <= 0 || height <= 0) return;
+    final pageIndex = _pageIndexByPageId[id.content.pageId];
+    if (pageIndex == null) return;
+    final changed = _pageDimensions.publish(
+      PipelinePageDimensions(
+        pageIndex: pageIndex,
+        assetKey: asset.assetKey,
+        width: width,
+        height: height,
+        basis: PipelinePageDimensionBasis.sourceCanvas,
+      ),
+    );
+    if (!changed) return;
+    trace.record(
+      traceEvent(
+        clock: clock,
+        sessionId: sessionId,
+        kind: TraceEventKind.pageDimensionsResolved,
+        identityHash: id.key,
+        revision: revision,
+        payload: <String, Object?>{
+          'pageIndex': pageIndex,
+          'width': width,
+          'height': height,
+          'basis': PipelinePageDimensionBasis.sourceCanvas.name,
+          'source': source,
+        },
       ),
     );
   }
@@ -2708,6 +3260,29 @@ final class PipelineReaderSession {
   }
 
   void _syncPageOutputs({ReaderObs? observation}) {
+    _externalPresentationRequests.removeWhere(
+      (id) => !_coordinator.externalPresentationPendingFor(id),
+    );
+    _externalPresentationReady.removeWhere(
+      (id) => !_coordinator.externalPresentationSatisfiedFor(id),
+    );
+    _externalPresentationPrewarmFailures.removeWhere(
+      (id) => !_coordinator.decodeDemands.containsKey(id),
+    );
+    _externalPresentationVisibleFrames.removeWhere(
+      (id) => !_coordinator.decodeDemands.containsKey(id),
+    );
+    _externalPresentationCacheIdentities.removeWhere(
+      (id, _) => !_coordinator.decodeDemands.containsKey(id),
+    );
+    for (final entry in
+        _externalPresentationPrewarmTokens.entries.toList(growable: false)) {
+      if (!_coordinator.decodeDemands.containsKey(entry.key) ||
+          !_coordinator.externalPresentationPendingFor(entry.key)) {
+        entry.value.cancel();
+        _externalPresentationPrewarmTokens.remove(entry.key);
+      }
+    }
     final emptyOutputs = <String>[];
     for (final entry in _pageOutputs.entries) {
       final output = entry.value;
@@ -2718,6 +3293,32 @@ final class PipelineReaderSession {
             ? _staticPresentationContinuityIdentity(output.download)
             : null,
       );
+      output._setExternalPresentationCacheIdentity(
+        outputIdentity == null
+            ? null
+            : _externalPresentationCacheIdentityFor(outputIdentity),
+      );
+      final externalPending = outputIdentity != null &&
+          _externalPresentationRequests.contains(outputIdentity) &&
+          _coordinator.externalPresentationPendingFor(outputIdentity);
+      final preferDetached = outputIdentity != null &&
+          externalPending &&
+          _preferDetachedExternalPresentation(outputIdentity);
+      if (outputIdentity != null &&
+          externalPending &&
+          !preferDetached &&
+          output._listeners.isNotEmpty) {
+        _externalPresentationPrewarmTokens.remove(outputIdentity)?.cancel();
+      }
+      output._setExternalPresentationRequested(
+        externalPending && output._listeners.isNotEmpty && !preferDetached,
+      );
+      output._setExternalPresentationReady(
+        outputIdentity != null && _externalPresentationReadyForOutput(outputIdentity),
+      );
+      if (outputIdentity != null && preferDetached) {
+        _startExternalPresentationPrewarm(outputIdentity, revision);
+      }
       if (output._isEmptyDetachedStream) {
         emptyOutputs.add(entry.key);
       }
@@ -2851,6 +3452,11 @@ final class PipelineReaderSession {
     _readerSessionId = null;
     binding?.detach(readerSessionId ?? sessionId);
     artifactReadScheduler.refresh();
+    for (final token in _externalPresentationPrewarmTokens.values) {
+      token.cancel();
+    }
+    _externalPresentationPrewarmTokens.clear();
+    _externalPresentationCacheIdentities.clear();
     for (final output in _pageOutputs.values) {
       output._dispose();
     }

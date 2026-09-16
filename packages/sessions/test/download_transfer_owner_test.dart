@@ -17,6 +17,83 @@ final class _Clock implements MonoClock {
 }
 
 void main() {
+  test('retained logical demands reuse acquire-time physical resolution', () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_resolution_reuse_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    var resolutionCalls = 0;
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      resolveTransferId: (id) {
+        resolutionCalls++;
+        return id;
+      },
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+    final transport = _BlockedControlledTransport();
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-resolution-reuse',
+      transportFor: (_) => transport,
+      traceSink: const NoopTraceSink(),
+    );
+    final first = _id('resolution-first');
+    final second = _id('resolution-second');
+    final third = _id('resolution-third');
+    final fourth = _id('resolution-fourth');
+
+    consumer.replaceDemands(
+      'reader-resolution-reuse',
+      1,
+      <DownloadId, TransferDemand>{
+        first: const TransferDemand(priority: 820, reason: 'next'),
+        second: const TransferDemand(priority: 800, reason: 'next2'),
+        third: const TransferDemand(priority: 780, reason: 'previous'),
+      },
+    );
+    expect(resolutionCalls, 3);
+
+    consumer.replaceDemands(
+      'reader-resolution-reuse',
+      2,
+      <DownloadId, TransferDemand>{
+        first: const TransferDemand(priority: 1000, reason: 'current'),
+        second: const TransferDemand(priority: 820, reason: 'next'),
+        third: const TransferDemand(priority: 800, reason: 'next2'),
+      },
+    );
+    expect(
+      resolutionCalls,
+      3,
+      reason: 'role migration must not reacquire unchanged logical identities',
+    );
+
+    consumer.replaceDemands(
+      'reader-resolution-reuse',
+      3,
+      <DownloadId, TransferDemand>{
+        second: const TransferDemand(priority: 1000, reason: 'current'),
+        third: const TransferDemand(priority: 820, reason: 'next'),
+        fourth: const TransferDemand(priority: 800, reason: 'next2'),
+      },
+    );
+    expect(
+      resolutionCalls,
+      4,
+      reason: 'only the newly acquired logical identity should resolve',
+    );
+  });
+
   test('two consumers join one exact physical transfer and writer', () async {
     final temp = await Directory.systemTemp.createTemp('transfer_owner_join_');
     addTearDown(() async => temp.delete(recursive: true));

@@ -67,6 +67,7 @@ final class ReaderPageRuntime {
     required this.playback,
     required this.pageStream,
     required this.pageOutput,
+    required this.reportPresentationFrameReady,
     required this.reportPlaybackCapability,
     required this.reportDimensions,
     required this.mediaFit,
@@ -85,6 +86,7 @@ final class ReaderPageRuntime {
   final ReaderPlaybackController playback;
   final PipelinePageStream pageStream;
   final PipelinePageOutputStream pageOutput;
+  final VoidCallback reportPresentationFrameReady;
   final ValueChanged<bool> reportPlaybackCapability;
   final ReaderPageDimensionsReporter reportDimensions;
   final BoxFit mediaFit;
@@ -1260,6 +1262,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
                 playback: _playback,
                 pageStream: _pipeline.pageStream(asset),
                 pageOutput: _pipeline.pageOutput(asset),
+                reportPresentationFrameReady: () =>
+                    _pipeline.reportPresentationFrameReady(asset),
                 reportPlaybackCapability: (supported) =>
                     _reportPlaybackCapability(asset, supported),
                 reportDimensions: (width, height) =>

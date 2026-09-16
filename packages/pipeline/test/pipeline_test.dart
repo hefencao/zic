@@ -584,7 +584,7 @@ void main() {
     expect(window.roleOf(1), PageRole.transition);
   });
 
-  test('static neighbor outputs fill the byte budget and remain evictable', () {
+  test('static neighbor outputs keep one-frame intents across the encoded window', () {
     final staticChapter = ChapterManifest(
       sourceId: 'local',
       comicId: 'static-comic',
@@ -634,7 +634,6 @@ void main() {
     ).resolve(staticChapter, obs);
     final plan = const HeuristicPolicy(
       decodeWarmPages: true,
-      staticOutputBudgetBytes: 20 * 1024 * 1024,
     ).createPlan(
       revision: 1,
       chapter: staticChapter,
@@ -646,9 +645,15 @@ void main() {
       ),
     );
 
-    // 4 MiB per output, stable decode window admits four static pages (5, 6, 7, 4).
-    expect(plan.uploads, hasLength(4));
-    expect(plan.decodes, hasLength(4));
+    // Static pages keep the full encoded 3/7 demand envelope. Every entry is
+    // only a one-frame intent; StagedDecodeRefillPolicy, not an estimated
+    // output-byte gate, decides which one actually executes next.
+    expect(plan.uploads, hasLength(10));
+    expect(plan.decodes, hasLength(10));
+    expect(
+      plan.decodes.values.every((demand) => demand.targetWatermark == 1),
+      isTrue,
+    );
     expect(
       plan.uploads.values.where(
         (demand) => demand.reason.startsWith('heuristic:static-warm'),
@@ -662,7 +667,7 @@ void main() {
   });
 
   test(
-    'vertical active scroll keeps next2 decode warm but defers its hidden static upload',
+    'vertical active scroll stages hidden external static but defers native static',
     () {
       final staticChapter = ChapterManifest(
         sourceId: 'local',
@@ -728,7 +733,6 @@ void main() {
       );
       final policy = const HeuristicPolicy(
         decodeWarmPages: true,
-        staticOutputBudgetBytes: 32 * 1024 * 1024,
       );
       final target = DecodeTarget(physicalWidth: 1000, physicalHeight: 1000);
       final activePlan = policy.createPlan(
@@ -748,7 +752,7 @@ void main() {
         activePlan.uploads.values.where((demand) => demand.role == PageRole.next2),
         isEmpty,
         reason:
-            'a hidden next2 static texture must not blit while vertical presentation is active',
+            'a hidden static page without external-presentation proof keeps the native upload deferral during active scroll',
       );
       expect(
         activePlan.uploads.values.where((demand) => demand.role == PageRole.next),
@@ -795,11 +799,33 @@ void main() {
         hiddenNextPlan.uploads.values.where((demand) => demand.role == PageRole.next),
         isEmpty,
         reason:
-            'hidden immediate next must not blit a static texture during active vertical scrolling',
+            'hidden static without external-presentation proof must not reintroduce native texture work during active scroll',
+      );
+
+      final externalStaticPlan = policy.createPlan(
+        revision: 3,
+        chapter: staticChapter,
+        observation: hiddenNextObservation,
+        window: resolver.resolve(staticChapter, hiddenNextObservation),
+        decodeTarget: target,
+        runtimeAnimatedPages: const <int, bool>{6: false, 7: false},
+        runtimeExternalStaticPages: const <int>{6, 7},
+      );
+      expect(
+        externalStaticPlan.uploads.values
+            .where((demand) => demand.role == PageRole.next),
+        isNotEmpty,
+        reason:
+            'an exact external-static next page must retain staged first-frame work while the viewport is moving',
+      );
+      expect(
+        externalStaticPlan.uploads.values
+            .where((demand) => demand.role == PageRole.next2),
+        isNotEmpty,
       );
 
       final localStaticPlan = policy.createPlan(
-        revision: 3,
+        revision: 4,
         chapter: staticChapter,
         observation: hiddenNextObservation,
         window: resolver.resolve(staticChapter, hiddenNextObservation),
@@ -823,7 +849,7 @@ void main() {
 
       final idle = verticalObservation(Interaction.idle);
       final idlePlan = policy.createPlan(
-        revision: 4,
+        revision: 5,
         chapter: staticChapter,
         observation: idle,
         window: resolver.resolve(staticChapter, idle),
@@ -887,10 +913,7 @@ void main() {
         physicalHeight: 1000,
       ),
       clock: _TestClock(),
-      policy: const HeuristicPolicy(
-        decodeWarmPages: true,
-        staticOutputBudgetBytes: 24 * 1024 * 1024,
-      ),
+      policy: const HeuristicPolicy(decodeWarmPages: true),
       onUpdate: updates.add,
     );
 
@@ -983,7 +1006,7 @@ void main() {
     );
   });
 
-  test('static evidence does not widen stable decode window into far pages', () {
+  test('static evidence uses one-frame demands across the encoded window', () {
     final longChapter = ChapterManifest(
       sourceId: 'venera:fixture',
       comicId: 'static-comic',
@@ -1040,15 +1063,15 @@ void main() {
     );
 
     expect(plan.downloads, hasLength(11));
-    expect(plan.decodes, hasLength(4));
-    expect(plan.uploads, hasLength(4));
+    expect(plan.decodes, hasLength(11));
+    expect(plan.uploads, hasLength(11));
     expect(
-      plan.decodes.keys.map((id) => id.download.content.pageId),
-      containsAll(<String>['s7', 's8', 's9', 's10']),
+      plan.decodes.values.every((demand) => demand.targetWatermark == 1),
+      isTrue,
     );
     expect(
       plan.decodes.keys.map((id) => id.download.content.pageId),
-      isNot(contains('s11')),
+      containsAll(<String>['s5', 's7', 's8', 's9', 's10', 's15']),
     );
   });
 
@@ -1365,10 +1388,7 @@ void main() {
           timestamp: DateTime.utc(2026, 9, 9),
           monotonicMicros: 1,
         );
-    const policy = HeuristicPolicy(
-      decodeWarmPages: true,
-      staticOutputBudgetBytes: 64 * 1024 * 1024,
-    );
+    const policy = HeuristicPolicy(decodeWarmPages: true);
     final target = DecodeTarget(
       physicalWidth: 1000,
       physicalHeight: 1000,
@@ -1452,10 +1472,7 @@ void main() {
     final overrides = <int, bool>{0: false, 1: false, 2: true};
     final obs = observation();
     final window = const RoleResolver().resolve(chapter, obs);
-    final plan = const HeuristicPolicy(
-      decodeWarmPages: true,
-      staticOutputBudgetBytes: 64 * 1024 * 1024,
-    ).createPlan(
+    final plan = const HeuristicPolicy(decodeWarmPages: true).createPlan(
       revision: 1,
       chapter: chapter,
       observation: obs,
@@ -1471,10 +1488,10 @@ void main() {
     final staticWarm = plan.uploads.entries.where(
       (entry) => entry.value.reason.startsWith('heuristic:static-warm'),
     ).toList(growable: false);
-    expect(staticWarm, hasLength(1));
+    expect(staticWarm, hasLength(2));
     expect(
       staticWarm.map((entry) => entry.key.download.content.pageId),
-      contains('p1'),
+      containsAll(<String>['p0', 'p1']),
     );
     expect(
       staticWarm.map((entry) => entry.key.download.content.pageId),

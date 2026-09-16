@@ -76,12 +76,7 @@ void main() {
       backwardDecodePages: 1,
       nearRadius: 0,
     ).resolve(chapter, observation);
-    final plan = const HeuristicPolicy(
-      decodeWarmPages: true,
-      // Deliberately smaller than the three visible outputs. Visibility must
-      // remain authoritative; the real FrameBudget trims only non-visible work.
-      staticOutputBudgetBytes: 1,
-    ).createPlan(
+    final plan = const HeuristicPolicy(decodeWarmPages: true).createPlan(
       revision: 1,
       chapter: chapter,
       observation: observation,
@@ -100,6 +95,7 @@ void main() {
     expect(visiblePage.value.reason, 'heuristic:static-visible:next');
     expect(visiblePage.value.priority, greaterThanOrEqualTo(880));
     expect(visiblePage.value.retainOutput, isTrue);
+    expect(visiblePage.value.viewportVisible, isTrue);
     expect(plan.decodes[visiblePage.key]!.targetWatermark, 1);
   });
   test('far visible metadata does not create an empty scheduler revision', () {

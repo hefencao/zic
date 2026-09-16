@@ -107,6 +107,47 @@ void main() {
     expect(coordinator.viewport?.dominantPageIndex, 1);
   });
 
+  test('playback-only viewport promotion is observable without a demand revision', () {
+    final coordinator = FakeCoordinator(clock: _Clock());
+    final binding = ReaderBinding(
+      chapter: _chapter(),
+      decodeTarget: DecodeTarget(
+        physicalWidth: 1080,
+        physicalHeight: 1920,
+      ),
+      clock: _Clock(),
+      coordinator: coordinator,
+      playback: coordinator,
+    );
+
+    binding.accept(_obs(
+      interaction: Interaction.dragging,
+      current: 1,
+      currentFraction: 0.4,
+      target: 2,
+      targetFraction: 0.4,
+    ));
+    final demandRevision = binding.revision;
+    final playbackSyncs = coordinator.playbackSyncs;
+
+    final playbackChanged = binding.accept(_obs(
+      interaction: Interaction.dragging,
+      current: 1,
+      currentFraction: 0.6,
+      target: 2,
+      targetFraction: 0.4,
+    ));
+
+    expect(binding.revision, demandRevision,
+        reason: 'the role/demand plan is unchanged across overlap->dominant');
+    expect(playbackChanged, isTrue,
+        reason:
+            'the session must be able to rebuild its playback deadline even when demand did not change');
+    expect(coordinator.playbackSyncs, playbackSyncs + 1);
+    expect(coordinator.viewport?.phase, ViewportPhase.dominant);
+    expect(coordinator.viewport?.dominantPageIndex, 1);
+  });
+
   test('late upload availability can reproject the saved viewport', () {
     final coordinator = FakeCoordinator(clock: _Clock());
     final binding = ReaderBinding(

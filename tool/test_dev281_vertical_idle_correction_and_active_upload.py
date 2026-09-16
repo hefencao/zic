@@ -79,7 +79,24 @@ req('super.adjustPositionForNewDimensions(' in physics,
 
 policy = text('packages/pipeline/lib/src/heuristic_policy.dart')
 interaction_policy = text('packages/pipeline/lib/src/interaction_policy.dart')
-if int(m.group(1)) == 315:
+if int(m.group(1)) >= 327:
+    policy_markers = (
+        'final externalStatic =',
+        'runtimeExternalStaticPages.contains(entry.key)',
+        'final deferHiddenVerticalNativeStaticUpload =',
+        'observation.direction == ReadingDirection.vertical',
+        'staticWarm &&',
+        '!primaryUpload',
+        '!visibleStatic',
+        '!localStaticReady',
+        '!externalStatic',
+        'isPresentationMotionInteraction(observation.interaction)',
+        'observation.targetCoverage?.pageIndex == entry.key',
+        '(role == PageRole.next || role == PageRole.previous)',
+        'if ((primaryUpload || staticWarm || pagedTargetPreupload) &&',
+        '!deferHiddenVerticalNativeStaticUpload',
+    )
+elif int(m.group(1)) == 315:
     policy_markers = (
         'final encodedFlutterPresentation =',
         'runtimeWebpPages.contains(entry.key)',
@@ -131,13 +148,23 @@ require(
     'idle geometry correction must not expose the new extents at the old pixels before anchor correction',
     'an async ratio commit above the viewport must preserve the visible page identity',
 )
-require(
-    'packages/pipeline/test/pipeline_test.dart',
-    'vertical active scroll keeps next2 decode warm but defers its hidden static upload',
-    'active vertical scrolling must keep next2 decode warm',
-    'a hidden next2 static texture must not blit while vertical presentation is active',
-    'next2 texture warming resumes once the vertical viewport is idle',
-)
+if int(m.group(1)) >= 327:
+    require(
+        'packages/pipeline/test/pipeline_test.dart',
+        'vertical active scroll stages hidden external static but defers native static',
+        'active vertical scrolling must keep next2 decode warm',
+        'hidden static without external-presentation proof must not reintroduce native texture work during active scroll',
+        'an exact external-static next page must retain staged first-frame work while the viewport is moving',
+        'next2 texture warming resumes once the vertical viewport is idle',
+    )
+else:
+    require(
+        'packages/pipeline/test/pipeline_test.dart',
+        'vertical active scroll keeps next2 decode warm but defers its hidden static upload',
+        'active vertical scrolling must keep next2 decode warm',
+        'a hidden next2 static texture must not blit while vertical presentation is active',
+        'next2 texture warming resumes once the vertical viewport is idle',
+    )
 
 for path in (
     'docs/adr/0260-vertical-idle-layout-correction-and-active-texture-deferral.md',
@@ -145,7 +172,21 @@ for path in (
 ):
     req((ROOT / path).is_file(), f'missing dev.281 governance file: {path}')
 
-if int(m.group(1)) == 315:
+if int(m.group(1)) >= 327:
+    require(
+        'docs/ARCHITECTURE.md',
+        'layout-time scroll correction',
+        '仍走native texture',
+        'non-visible speculative static upload',
+        'external-static',
+    )
+    require(
+        'docs/SPEC.md',
+        'layout-time correction',
+        'hidden native/provisional static texture',
+        'external static',
+    )
+elif int(m.group(1)) == 315:
     require('docs/ARCHITECTURE.md', 'layout-time scroll correction', 'compressed bytes')
     require('docs/SPEC.md', 'layout-time correction', 'compressed bytes')
 elif int(m.group(1)) >= 295:

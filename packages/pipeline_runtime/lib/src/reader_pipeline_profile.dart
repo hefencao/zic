@@ -18,6 +18,7 @@ final class ReaderPipelineProfile {
     required this.remoteSourceConcurrency,
     required this.decodeConcurrency,
     required this.uploadConcurrency,
+    required this.speculativeExternalPresentationConcurrency,
   });
 
   /// Stable Reader pipeline profile shared by every source kind.
@@ -43,6 +44,7 @@ final class ReaderPipelineProfile {
     remoteSourceConcurrency: 5,
     decodeConcurrency: 3,
     uploadConcurrency: 2,
+    speculativeExternalPresentationConcurrency: 3,
   );
 
   final RoleResolver windowResolver;
@@ -74,6 +76,11 @@ final class ReaderPipelineProfile {
         : remoteSourceConcurrency;
   }
   final int uploadConcurrency;
+
+  /// Maximum number of offscreen external/static first-frame presentations
+  /// allowed to decode/present concurrently. Visible/current/transition work
+  /// can still preempt this speculative pool.
+  final int speculativeExternalPresentationConcurrency;
 }
 
 ReaderPipelineProfile readerPipelineProfileFor(

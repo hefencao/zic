@@ -51,11 +51,15 @@ final class PipelinePageOutputStream {
     required PipelineOutputProjector outputs,
     required PipelineFrameScheduler frameScheduler,
     void Function()? onPlaybackWakeChanged,
+    void Function(DecodeId? identity, bool available)?
+        onExternalPresentationConsumerChanged,
   })  : _uploads = uploads,
         _decodes = decodes,
         _outputs = outputs,
         _frameScheduler = frameScheduler,
         _onPlaybackWakeChanged = onPlaybackWakeChanged,
+        _onExternalPresentationConsumerChanged =
+            onExternalPresentationConsumerChanged,
         _snapshot = PipelinePageOutputSnapshot(
           state: PipelinePageOutputState.idle,
           surface: null,
@@ -72,6 +76,8 @@ final class PipelinePageOutputStream {
   final PipelineOutputProjector _outputs;
   final PipelineFrameScheduler _frameScheduler;
   final void Function()? _onPlaybackWakeChanged;
+  final void Function(DecodeId? identity, bool available)?
+      _onExternalPresentationConsumerChanged;
   final Set<PipelinePageOutputListener> _listeners =
       <PipelinePageOutputListener>{};
   final Set<PresentClaim> _deferredClaims = <PresentClaim>{};
@@ -79,6 +85,9 @@ final class PipelinePageOutputStream {
   bool _presentationAfterFrameScheduled = false;
   bool _detachedPrewarmEnabled = false;
   bool _detachedPrewarmActive = false;
+  bool _externalPresentationRequested = false;
+  bool _externalPresentationReady = false;
+  Object? _externalPresentationCacheIdentity;
 
   PipelinePageOutputSnapshot _snapshot;
   DecodeId? _identity;
@@ -91,6 +100,47 @@ final class PipelinePageOutputStream {
   bool _disposed = false;
 
   PipelinePageOutputSnapshot get snapshot => _snapshot;
+  bool get externalPresentationRequested => _externalPresentationRequested;
+  bool get externalPresentationReady => _externalPresentationReady;
+  Object? get externalPresentationCacheIdentity =>
+      _externalPresentationCacheIdentity;
+
+  /// Read-only presentation permission projected from the staged decode
+  /// waterline for formats rendered outside the native WebP output path.
+  ///
+  /// This does not perform I/O or choose eligibility. It only wakes an
+  /// attached presentation adapter after LiveCoordinator has selected this
+  /// exact DecodeId as the next one-frame refill.
+  void _setExternalPresentationRequested(bool requested) {
+    _requireOpen();
+    if (_externalPresentationRequested == requested) return;
+    _externalPresentationRequested = requested;
+    for (final listener in _listeners.toList(growable: false)) {
+      listener(_snapshot);
+    }
+  }
+
+  /// Read-only proof that the composition's existing external image cache has
+  /// already decoded the first static raster for this exact DecodeId. The
+  /// visible adapter still owns the actual widget/presentation; this flag only
+  /// lets it attach to the prepared cache entry without waiting for a new grant.
+  void _setExternalPresentationReady(bool ready) {
+    _requireOpen();
+    if (_externalPresentationReady == ready) return;
+    _externalPresentationReady = ready;
+    for (final listener in _listeners.toList(growable: false)) {
+      listener(_snapshot);
+    }
+  }
+
+  void _setExternalPresentationCacheIdentity(Object? identity) {
+    _requireOpen();
+    if (identical(_externalPresentationCacheIdentity, identity)) return;
+    _externalPresentationCacheIdentity = identity;
+    for (final listener in _listeners.toList(growable: false)) {
+      listener(_snapshot);
+    }
+  }
 
   // Detached output streams are retained only while they still own a
   // projection or a listener. The Reader may recreate a stream when a page
@@ -112,7 +162,11 @@ final class PipelinePageOutputStream {
     // otherwise a detached gallery prewarm could leave the host on frame zero
     // until the next playback tick.
     _detachedPrewarmActive = false;
+    final hadConsumer = _listeners.isNotEmpty;
     _listeners.add(listener);
+    if (!hadConsumer) {
+      _onExternalPresentationConsumerChanged?.call(_identity, true);
+    }
     if (fireImmediately) {
       listener(_snapshot);
     }
@@ -127,7 +181,10 @@ final class PipelinePageOutputStream {
   }
 
   void removeListener(PipelinePageOutputListener listener) {
-    _listeners.remove(listener);
+    final removed = _listeners.remove(listener);
+    if (removed && _listeners.isEmpty) {
+      _onExternalPresentationConsumerChanged?.call(_identity, false);
+    }
     if (_listeners.isEmpty && _detachedPrewarmEnabled) {
       _detachedPrewarmActive = true;
     }
@@ -165,7 +222,18 @@ final class PipelinePageOutputStream {
       }
       return;
     }
+    final priorIdentity = _identity;
+    final hasConsumer = _listeners.isNotEmpty;
+    if (hasConsumer && priorIdentity != null) {
+      _onExternalPresentationConsumerChanged?.call(priorIdentity, false);
+    }
+    _externalPresentationRequested = false;
+    _externalPresentationReady = false;
+    _externalPresentationCacheIdentity = null;
     _identity = identity;
+    if (hasConsumer && identity != null) {
+      _onExternalPresentationConsumerChanged?.call(identity, true);
+    }
     _generation++;
     _presentationAfterFrameScheduled = false;
     _presentingIdentity = null;
@@ -571,6 +639,9 @@ final class PipelinePageOutputStream {
       return;
     }
     _disposed = true;
+    if (_listeners.isNotEmpty) {
+      _onExternalPresentationConsumerChanged?.call(_identity, false);
+    }
     _generation++;
     _presentingIdentity = null;
     _presentingFrameIndex = null;
@@ -578,6 +649,9 @@ final class PipelinePageOutputStream {
     _presentationAfterFrameScheduled = false;
     _detachedPrewarmActive = false;
     _detachedPrewarmEnabled = false;
+    _externalPresentationRequested = false;
+    _externalPresentationReady = false;
+    _externalPresentationCacheIdentity = null;
     _surfaceIdentity = null;
     _releaseClaim();
     for (final claim in _deferredClaims.toList(growable: false)) {

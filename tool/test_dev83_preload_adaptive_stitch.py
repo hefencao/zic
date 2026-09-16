@@ -77,7 +77,8 @@ def main() -> None:
     require(
         "packages/pipeline_runtime/test/reader_pipeline_profile_test.dart",
         "hasLength(11)",
-        "hasLength(4)",
+        "hasLength(11)",
+        "demand.targetWatermark == 1",
         "hasLength(1)",
         "'mihon-resource'",
         "'venera-resource'",

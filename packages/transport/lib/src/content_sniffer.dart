@@ -87,6 +87,89 @@ EncodedImageKind? sniffEncodedImageKind(List<int> prefix) {
 bool hasSupportedEncodedImageSignature(List<int> prefix) =>
     sniffEncodedImageKind(prefix) != null;
 
+({int width, int height})? parseEncodedImageDimensions(
+  List<int> prefix, {
+  EncodedImageKind? kind,
+}) {
+  final resolvedKind = kind ?? sniffEncodedImageKind(prefix);
+  if (resolvedKind == null) return null;
+
+  int u16be(int offset) => (prefix[offset] << 8) | prefix[offset + 1];
+  int u16le(int offset) => prefix[offset] | (prefix[offset + 1] << 8);
+  int u32be(int offset) =>
+      (prefix[offset] << 24) |
+      (prefix[offset + 1] << 16) |
+      (prefix[offset + 2] << 8) |
+      prefix[offset + 3];
+  int i32le(int offset) {
+    final value = prefix[offset] |
+        (prefix[offset + 1] << 8) |
+        (prefix[offset + 2] << 16) |
+        (prefix[offset + 3] << 24);
+    return value.toSigned(32);
+  }
+
+  ({int width, int height})? valid(int width, int height) =>
+      width > 0 && height > 0 ? (width: width, height: height) : null;
+
+  switch (resolvedKind) {
+    case EncodedImageKind.png:
+      if (prefix.length < 24 || !_ascii(prefix, 12, 'IHDR')) return null;
+      return valid(u32be(16), u32be(20));
+    case EncodedImageKind.gif:
+      if (prefix.length < 10) return null;
+      return valid(u16le(6), u16le(8));
+    case EncodedImageKind.bmp:
+      if (prefix.length < 26) return null;
+      return valid(i32le(18).abs(), i32le(22).abs());
+    case EncodedImageKind.ico:
+      if (prefix.length < 8) return null;
+      return valid(
+        prefix[6] == 0 ? 256 : prefix[6],
+        prefix[7] == 0 ? 256 : prefix[7],
+      );
+    case EncodedImageKind.jpeg:
+      if (prefix.length < 4 || prefix[0] != 0xff || prefix[1] != 0xd8) {
+        return null;
+      }
+      var offset = 2;
+      while (offset + 1 < prefix.length) {
+        if (prefix[offset] != 0xff) {
+          offset++;
+          continue;
+        }
+        while (offset < prefix.length && prefix[offset] == 0xff) {
+          offset++;
+        }
+        if (offset >= prefix.length) return null;
+        final marker = prefix[offset++];
+        if (marker == 0xd8 || marker == 0xd9 || marker == 0x01) {
+          continue;
+        }
+        if (marker == 0xda || offset + 2 > prefix.length) return null;
+        final segmentLength = u16be(offset);
+        if (segmentLength < 2) return null;
+        final isStartOfFrame = marker >= 0xc0 &&
+            marker <= 0xcf &&
+            marker != 0xc4 &&
+            marker != 0xc8 &&
+            marker != 0xcc;
+        if (isStartOfFrame) {
+          if (segmentLength < 7 || offset + 7 > prefix.length) return null;
+          return valid(u16be(offset + 5), u16be(offset + 3));
+        }
+        if (offset + segmentLength > prefix.length) return null;
+        offset += segmentLength;
+      }
+      return null;
+    case EncodedImageKind.webp:
+    case EncodedImageKind.tiff:
+    case EncodedImageKind.avif:
+    case EncodedImageKind.heif:
+      return null;
+  }
+}
+
 String _fourCc(List<int> bytes, int offset) =>
     String.fromCharCodes(bytes.sublist(offset, offset + 4)).toLowerCase();
 

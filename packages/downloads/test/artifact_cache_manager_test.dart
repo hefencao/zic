@@ -27,6 +27,8 @@ void main() {
 
     expect(first?.memoryHit, isFalse);
     expect(second?.memoryHit, isTrue);
+    expect(identical(first?.bytes, second?.bytes), isTrue,
+        reason: 'memory hits must preserve presentation ImageCache identity');
     expect(backend.openCalls, 1);
     expect(await manager.contains(id: id, expectedLength: 3), isTrue);
     expect(await manager.contains(id: id, expectedLength: 4), isFalse);

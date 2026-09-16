@@ -62,7 +62,6 @@ void main() {
       observation: obs,
       window: window,
       active: true,
-      expansionStage: 0,
     );
 
     expect(window.roles, hasLength(11));
@@ -76,52 +75,33 @@ void main() {
     expect(flow.targetFramesFor(19), 1);
   });
 
-  test('waterlines raise far frame credits without changing 3/7 membership', () {
+  test('far flow credit is role-local and independent of nearer decode progress', () {
     final manifest = chapter();
-    final obs = observation(12);
-    final window = resolver.resolve(manifest, obs);
     const policy = AnimatedPrefetchPolicy();
 
-    final stage1 = policy.plan(
+    final farObs = observation(12);
+    final farFlow = policy.plan(
       chapter: manifest,
-      observation: obs,
-      window: window,
+      observation: farObs,
+      window: resolver.resolve(manifest, farObs),
       active: true,
-      expansionStage: 1,
     );
-    expect(stage1.targetFramesFor(15), 2);
-    expect(stage1.targetFramesFor(16), 2);
-    expect(stage1.targetFramesFor(9), 1);
+    expect(farFlow.targetFramesFor(15), 1);
+    expect(farFlow.targetFramesFor(19), 1);
+    expect(farFlow.targetFramesByIndex, hasLength(11));
 
-    final stage2 = policy.plan(
+    // The same page receives deeper transport credit only when its own role
+    // moves closer to the viewport. No decode-waterline callback participates.
+    final promotedObs = observation(14);
+    final promotedFlow = policy.plan(
       chapter: manifest,
-      observation: obs,
-      window: window,
+      observation: promotedObs,
+      window: resolver.resolve(manifest, promotedObs),
       active: true,
-      expansionStage: 2,
     );
-    expect(stage2.targetFramesFor(10), 2);
-    expect(stage2.targetFramesFor(9), 2);
-
-    final stage3 = policy.plan(
-      chapter: manifest,
-      observation: obs,
-      window: window,
-      active: true,
-      expansionStage: 3,
-    );
-    expect(stage3.targetFramesFor(17), 2);
-    expect(stage3.targetFramesFor(18), 2);
-
-    final stage4 = policy.plan(
-      chapter: manifest,
-      observation: obs,
-      window: window,
-      active: true,
-      expansionStage: 4,
-    );
-    expect(stage4.targetFramesFor(19), 2);
-    expect(stage4.targetFramesByIndex, hasLength(11));
+    expect(promotedFlow.targetFramesFor(15), 5);
+    expect(promotedFlow.targetFramesFor(16), 3);
+    expect(promotedFlow.targetFramesFor(17), 1);
   });
 
   test('static classification restores unlimited 3/7 flow', () {
@@ -143,16 +123,6 @@ void main() {
       latest!.plan.downloads.values.where((demand) => demand.flowTargetFrames > 0),
       isNotEmpty,
     );
-    final firstRevision = controller.revision;
-    expect(
-      controller.observeDecodeWaterline(
-        planRevision: firstRevision,
-        stage: DecodeWaterlineStage.currentMid,
-      ),
-      isTrue,
-    );
-    expect(latest!.plan.downloads, hasLength(11));
-
     controller.accept(observation(13));
     expect(latest!.plan.downloads, hasLength(11));
     expect(controller.classifyPage(pageIndex: 13, animated: false), isTrue);
@@ -162,15 +132,8 @@ void main() {
       isTrue,
     );
 
-    expect(
-      controller.observeDecodeWaterline(
-        planRevision: firstRevision,
-        stage: DecodeWaterlineStage.nextDeep,
-      ),
-      isFalse,
-    );
   });
-  test('offscreen runtime evidence does not promote a semantic no-op revision', () {
+  test('offscreen runtime WebP evidence changes the one-frame static plan', () {
     final manifest = ChapterManifest(
       sourceId: 'source',
       comicId: 'comic',
@@ -210,21 +173,22 @@ void main() {
     final revision = controller.revision;
     final updateCount = updates.length;
 
-    // With the unresolved-static escape hatch already authoritative, a WebP
-    // sniff on an offscreen page changes evidence only. The 11/4/2 plan is
-    // identical and must not manufacture a new scheduling revision.
+    // Runtime WebP sniff is page-local transport-cost evidence. Even with the
+    // two-page unresolved-static escape hatch, that exact page must leave the
+    // speculative static decode set until decoder classification resolves it.
     expect(
       controller.observeWebpTransportCost(pageIndex: 18, webp: true),
       isTrue,
     );
-    expect(controller.revision, revision);
-    expect(updates, hasLength(updateCount));
+    expect(controller.revision, revision + 1);
+    expect(updates, hasLength(updateCount + 1));
 
-    // A third static classification is likewise diagnostic-only when it does
-    // not alter roles, priorities, watermarks, flow credits or keep sets.
+    // Authoritative static classification restores that page to the ordinary
+    // one-frame static refill set and therefore produces the inverse semantic
+    // plan change.
     expect(controller.classifyPage(pageIndex: 18, animated: false), isTrue);
-    expect(controller.revision, revision);
-    expect(updates, hasLength(updateCount));
+    expect(controller.revision, revision + 2);
+    expect(updates, hasLength(updateCount + 2));
   });
 
   test('runtime WebP cost activates bounded flow for opaque plugin URIs', () {

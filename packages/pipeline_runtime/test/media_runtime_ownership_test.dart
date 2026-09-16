@@ -52,12 +52,14 @@ void main() {
     await factory.disposeRetainedSessions();
   });
 
-  test('factory clones retain the composition-owned artifact cache manager', () {
+  test('factory clones retain composition-owned cache and presentation executor', () {
     final manager = ArtifactCacheManager(backend: _Backend());
+    Future<void> prewarmer(PipelineExternalPresentationWarmRequest request) async {}
     final factory = PipelineReaderSessionFactory(
       mediaRuntimeFactory: _Factory(_Runtime()),
       pageDownloadLane: NetLane(maxActive: 5),
       artifactCacheManager: manager,
+      externalPresentationPrewarmer: prewarmer,
     );
 
     expect(
@@ -92,6 +94,21 @@ void main() {
       identical(
         factory.decodePrefixHints,
         factory.withBytesLoader(null).decodePrefixHints,
+      ),
+      isTrue,
+    );
+    expect(
+      identical(
+        factory.externalPresentationPrewarmer,
+        factory.withLoaderSources(factory.loaderSources)
+            .externalPresentationPrewarmer,
+      ),
+      isTrue,
+    );
+    expect(
+      identical(
+        factory.externalPresentationPrewarmer,
+        factory.withTransferRuntime(null).externalPresentationPrewarmer,
       ),
       isTrue,
     );
@@ -854,6 +871,356 @@ void main() {
     expect(prewarms.single.payload['created'], isFalse);
 
     await session.dispose();
+  });
+
+  test('exact fallback image prefix becomes runtime static evidence', () async {
+    final trace = MemoryTraceSink();
+    final uri = Uri.parse('asset:///opaque-static-page');
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(_Runtime()),
+      pageDownloadLane: NetLane(maxActive: 5),
+      loaderSources: <Uri, LoaderTransportSource>{
+        uri: LoaderTransportSource(
+          revision: 'opaque-static-r1',
+          loadBytes: () async => Uint8List.fromList(const <int>[
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+            0x00, 0x00, 0x00, 0x0d,
+            0x49, 0x48, 0x44, 0x52,
+            0x00, 0x00, 0x02, 0xd0,
+            0x00, 0x00, 0x02, 0xbc,
+          ]),
+        ),
+      },
+    ).create(
+      chapter: _chapter(
+        uri: uri,
+        contentKindHint: ContentKindHint.unknown,
+      ),
+      sessionId: 'fallback-static-classification-test',
+      traceSink: trace,
+    );
+    addTearDown(session.dispose);
+    final dimensions = <PipelinePageDimensions>[];
+    session.pageDimensions.addListener(dimensions.add);
+    session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+    session.accept(_currentObservation(session.chapter));
+
+    TraceEvent? classified;
+    for (var attempt = 0;
+        attempt < 100 && (classified == null || dimensions.isEmpty);
+        attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      for (final event in trace.events) {
+        if (event.kind == TraceEventKind.mediaClassified &&
+            event.payload['pageIndex'] == 0 &&
+            event.payload['animated'] == false &&
+            event.payload['basis'] == 'encoded-prefix') {
+          classified = event;
+          break;
+        }
+      }
+    }
+
+    expect(
+      classified,
+      isNotNull,
+      reason:
+          'an exact JPEG/PNG/etc prefix classified as fallback must become Pipeline static evidence instead of waiting until transition',
+    );
+    expect(dimensions, isNotEmpty);
+    expect(dimensions.last.width, 720);
+    expect(dimensions.last.height, 700);
+    expect(dimensions.last.basis, PipelinePageDimensionBasis.sourceCanvas);
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.pageDimensionsResolved &&
+            event.payload['source'] == 'physical-ingress-source-canvas',
+      ),
+      isNotEmpty,
+      reason:
+          'generation-local encoded metadata must reach Reader geometry before presentation-file or page-host work',
+    );
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.policyDecision &&
+            event.payload['runtimeStaticPages'] == 1 &&
+            event.payload['runtimeExternalStaticPages'] == 1,
+      ),
+      isNotEmpty,
+    );
+  });
+
+  test('external static prewarmer satisfies first frame without a page host',
+      () async {
+    final trace = MemoryTraceSink();
+    final uri = Uri.parse('asset:///opaque-detached-static-page');
+    final warmed = <PipelineExternalPresentationWarmRequest>[];
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(_Runtime()),
+      pageDownloadLane: NetLane(maxActive: 5),
+      externalPresentationPrewarmer: (request) async {
+        request.token.throwIfCancelled();
+        warmed.add(request);
+      },
+      loaderSources: <Uri, LoaderTransportSource>{
+        uri: LoaderTransportSource(
+          revision: 'opaque-detached-static-r1',
+          loadBytes: () async => Uint8List.fromList(const <int>[
+            0xff, 0xd8, 0xff, 0xe0,
+            0x00, 0x10, 0x4a, 0x46,
+            0x49, 0x46, 0x00, 0x01,
+          ]),
+        ),
+      },
+    ).create(
+      chapter: _chapter(
+        uri: uri,
+        contentKindHint: ContentKindHint.unknown,
+      ),
+      sessionId: 'fallback-detached-prewarm-test',
+      traceSink: trace,
+    );
+    addTearDown(session.dispose);
+    session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+    session.accept(_currentObservation(session.chapter));
+
+    TraceEvent? prepared;
+    for (var attempt = 0; attempt < 200 && prepared == null; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      for (final event in trace.events) {
+        if (event.kind == TraceEventKind.readerObservation &&
+            event.payload['stage'] == 'external-presentation-first-frame' &&
+            event.payload['owner'] == 'detached-image-cache') {
+          prepared = event;
+          break;
+        }
+      }
+    }
+
+    expect(warmed, hasLength(1));
+    expect(prepared, isNotNull);
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.readerObservation &&
+            event.payload['stage'] == 'external-presentation-requested' &&
+            event.payload['consumer'] == 'detached-image-cache',
+      ),
+      isNotEmpty,
+      reason:
+          'the staged coordinator grant must be consumable before any Reader page widget mounts',
+    );
+
+    final output = session.pageOutput(session.chapter.pages.single);
+    expect(output.externalPresentationRequested, isFalse);
+    expect(
+      output.externalPresentationReady,
+      isTrue,
+      reason:
+          'a later page host must observe the already-prepared presentation cache state',
+    );
+  });
+
+  test('offscreen mounted static host still uses detached presentation warm',
+      () async {
+    final firstUri = Uri.parse('asset:///mounted-static-current');
+    final secondUri = Uri.parse('asset:///mounted-static-next');
+    final chapter = ChapterManifest(
+      sourceId: 'source',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'chapter',
+        sequence: 1,
+        pageCount: 2,
+        sourceRevision: 'r1',
+      ),
+      pages: <PageAsset>[
+        PageAsset(
+          pageId: 'page-0',
+          chapterId: 'chapter',
+          index: 0,
+          uri: firstUri,
+          contentKindHint: ContentKindHint.unknown,
+        ),
+        PageAsset(
+          pageId: 'page-1',
+          chapterId: 'chapter',
+          index: 1,
+          uri: secondUri,
+          contentKindHint: ContentKindHint.unknown,
+        ),
+      ],
+      readingDirection: ReadingDirection.ltr,
+    );
+    final warmed = <int>[];
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(_Runtime()),
+      pageDownloadLane: NetLane(maxActive: 5),
+      externalPresentationPrewarmer: (request) async {
+        request.token.throwIfCancelled();
+        warmed.add(request.asset.index);
+      },
+      loaderSources: <Uri, LoaderTransportSource>{
+        for (final uri in <Uri>[firstUri, secondUri])
+          uri: LoaderTransportSource(
+            revision: 'mounted-static-r1',
+            loadBytes: () async => Uint8List.fromList(const <int>[
+              0xff, 0xd8, 0xff, 0xe0,
+              0x00, 0x10, 0x4a, 0x46,
+              0x49, 0x46, 0x00, 0x01,
+            ]),
+          ),
+      },
+    ).create(
+      chapter: chapter,
+      sessionId: 'mounted-offscreen-static-test',
+    );
+    addTearDown(session.dispose);
+    session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+
+    final output = session.pageOutput(chapter.pages[1]);
+    void listener(PipelinePageOutputSnapshot _) {}
+    output.addListener(listener);
+    addTearDown(() => output.removeListener(listener));
+    session.accept(_currentObservation(chapter));
+
+    final deadline = DateTime.now().add(const Duration(seconds: 2));
+    while (!warmed.contains(1)) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('offscreen next static page never reached detached prewarm');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(
+      output.externalPresentationRequested,
+      isFalse,
+      reason:
+          'an offscreen retained page host must not become the speculative presentation executor',
+    );
+    final readyDeadline = DateTime.now().add(const Duration(seconds: 2));
+    while (!output.externalPresentationReady) {
+      if (DateTime.now().isAfter(readyDeadline)) {
+        fail('offscreen mounted host never observed completed detached warm');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(
+      output.externalPresentationReady,
+      isTrue,
+      reason:
+          'completed detached work must be consumable before the page enters the viewport',
+    );
+  });
+
+  test('detached prewarm failure cannot revoke a newly mounted consumer',
+      () async {
+    final uri = Uri.parse('asset:///opaque-prewarm-handoff-page');
+    final releasePrewarm = Completer<void>();
+    final prewarmStarted = Completer<void>();
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(_Runtime()),
+      pageDownloadLane: NetLane(maxActive: 5),
+      externalPresentationPrewarmer: (request) async {
+        if (!prewarmStarted.isCompleted) prewarmStarted.complete();
+        await releasePrewarm.future;
+        throw UnsupportedError('detached warm miss');
+      },
+      loaderSources: <Uri, LoaderTransportSource>{
+        uri: LoaderTransportSource(
+          revision: 'opaque-prewarm-handoff-r1',
+          loadBytes: () async => Uint8List.fromList(const <int>[
+            0xff, 0xd8, 0xff, 0xe0,
+            0x00, 0x10, 0x4a, 0x46,
+            0x49, 0x46, 0x00, 0x01,
+          ]),
+        ),
+      },
+    ).create(
+      chapter: _chapter(
+        uri: uri,
+        contentKindHint: ContentKindHint.unknown,
+      ),
+      sessionId: 'fallback-prewarm-handoff-test',
+    );
+    addTearDown(session.dispose);
+    session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+    session.accept(_currentObservation(session.chapter));
+
+    await prewarmStarted.future.timeout(const Duration(seconds: 2));
+    final page = session.chapter.pages.single;
+    final output = session.pageOutput(page);
+    void listener(PipelinePageOutputSnapshot _) {}
+    output.addListener(listener);
+    addTearDown(() => output.removeListener(listener));
+
+    expect(output.externalPresentationRequested, isTrue);
+    releasePrewarm.complete();
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(
+      output.externalPresentationRequested,
+      isTrue,
+      reason:
+          'a detached optimization miss must hand the existing exact grant to the mounted consumer',
+    );
+
+    session.reportPresentationFrameReady(page);
+    expect(output.externalPresentationRequested, isFalse);
+    expect(output.externalPresentationReady, isTrue);
+  });
+
+  test('non-media fallback prefix never becomes runtime static evidence', () async {
+    final trace = MemoryTraceSink();
+    final uri = Uri.parse('asset:///opaque-non-media-page');
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(_Runtime()),
+      pageDownloadLane: NetLane(maxActive: 5),
+      loaderSources: <Uri, LoaderTransportSource>{
+        uri: LoaderTransportSource(
+          revision: 'opaque-non-media-r1',
+          loadBytes: () async => Uint8List.fromList(
+            'Could not connect to mysql!'.codeUnits,
+          ),
+        ),
+      },
+    ).create(
+      chapter: _chapter(
+        uri: uri,
+        contentKindHint: ContentKindHint.unknown,
+      ),
+      sessionId: 'fallback-non-media-classification-test',
+      traceSink: trace,
+    );
+    addTearDown(session.dispose);
+    session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+    session.accept(_currentObservation(session.chapter));
+
+    TraceEvent? fallbackCommit;
+    for (var attempt = 0; attempt < 100 && fallbackCommit == null; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      for (final event in trace.events) {
+        if (event.kind == TraceEventKind.bytesCommitted &&
+            event.payload['kind'] == 'fallback') {
+          fallbackCommit = event;
+          break;
+        }
+      }
+    }
+    expect(fallbackCommit, isNotNull);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(
+      trace.events.where(
+        (event) =>
+            event.kind == TraceEventKind.mediaClassified &&
+            event.payload['basis'] == 'encoded-prefix',
+      ),
+      isEmpty,
+      reason:
+          'fallback is a transport category, not proof that arbitrary HTML/error bytes are a static image',
+    );
   });
 
   test('known non-WebP pages do not allocate detached native outputs', () async {

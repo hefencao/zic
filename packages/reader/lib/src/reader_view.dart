@@ -239,6 +239,8 @@ final class _ReaderViewState extends State<ReaderView>
   late Map<String, double> _verticalLayoutRatios;
   Map<String, double>? _pendingVerticalLayoutRatios;
   bool _verticalRatioCommitScheduled = false;
+  bool _verticalFutureRatioAdoptionScheduled = false;
+  bool _verticalObservationRefreshScheduled = false;
   double? _pendingVerticalGeometryCorrection;
   bool _verticalGeometryCorrectionClearScheduled = false;
   double? _lastVerticalScrollPixels;
@@ -767,6 +769,7 @@ final class _ReaderViewState extends State<ReaderView>
       _verticalLayoutRatios = latest;
       _pendingVerticalLayoutRatios = null;
       _invalidateVerticalGeometryCache();
+      _scheduleVerticalObservationRefreshAfterLayout();
     }
     if (rebuild && mounted) {
       setState(() {});
@@ -855,6 +858,33 @@ final class _ReaderViewState extends State<ReaderView>
     );
   }
 
+  void _scheduleFutureVerticalRatioAdoption() {
+    if (_verticalFutureRatioAdoptionScheduled ||
+        _pendingVerticalLayoutRatios == null ||
+        _lastVerticalTravelDirection == 0 ||
+        widget.controller.direction != ReadingDirection.vertical) {
+      return;
+    }
+    _verticalFutureRatioAdoptionScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _verticalFutureRatioAdoptionScheduled = false;
+      if (!mounted ||
+          widget.controller.direction != ReadingDirection.vertical ||
+          !_verticalScrollActive) {
+        return;
+      }
+      final pending = _pendingVerticalLayoutRatios;
+      if (pending == null) return;
+      final prior = _verticalLayoutRatios;
+      _adoptFutureVerticalRatios(pending);
+      _pendingVerticalLayoutRatios =
+          _sameVerticalRatios(_verticalLayoutRatios, pending) ? null : pending;
+      if (identical(prior, _verticalLayoutRatios)) return;
+      setState(() {});
+      _scheduleVerticalObservationRefreshAfterLayout();
+    });
+  }
+
   bool _sameVerticalRatios(
     Map<String, double> left,
     Map<String, double> right,
@@ -917,6 +947,28 @@ final class _ReaderViewState extends State<ReaderView>
         _pendingVerticalLayoutRatios = null;
         _invalidateVerticalGeometryCache();
       });
+      _scheduleVerticalObservationRefreshAfterLayout();
+    });
+  }
+
+  void _scheduleVerticalObservationRefreshAfterLayout() {
+    if (_verticalObservationRefreshScheduled ||
+        widget.controller.direction != ReadingDirection.vertical) {
+      return;
+    }
+    _verticalObservationRefreshScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _verticalObservationRefreshScheduled = false;
+      if (!mounted ||
+          widget.controller.direction != ReadingDirection.vertical ||
+          !_verticalController.hasClients ||
+          !_verticalController.position.hasContentDimensions) {
+        return;
+      }
+      _emitFromVerticalMetrics(
+        _verticalController.position,
+        forceLayoutSnapshot: true,
+      );
     });
   }
 
@@ -2446,8 +2498,14 @@ final class _ReaderViewState extends State<ReaderView>
     _lastVerticalLogicalPosition = position.logicalPosition;
     _lastVerticalVelocity = velocity;
     _lastVerticalMetricsMicros = widget.clock.nowMicros();
+    final priorTravelDirection = _lastVerticalTravelDirection;
     if (velocity.abs() > 0.001) {
       _lastVerticalTravelDirection = velocity > 0 ? 1 : -1;
+    }
+    if (_lastVerticalTravelDirection != 0 &&
+        _lastVerticalTravelDirection != priorTravelDirection &&
+        _pendingVerticalLayoutRatios != null) {
+      _scheduleFutureVerticalRatioAdoption();
     }
     final visible = geometry.visibleCoverages(
       pixels: metrics.pixels,

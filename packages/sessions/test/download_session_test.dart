@@ -2170,6 +2170,25 @@ void main() {
     expect(session.readIngressPrefix(prefix.length), prefix);
   });
 
+  test('static image metadata prefix exposes source canvas before decode', () {
+    final prefix = <int>[
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+      0x00, 0x00, 0x00, 0x0d,
+      0x49, 0x48, 0x44, 0x52,
+      0x00, 0x00, 0x02, 0xd0,
+      0x00, 0x00, 0x02, 0xbc,
+    ];
+    session.beginResidentImmutableIngress(
+      validators: const Validators(),
+      totalLength: prefix.length,
+    );
+    session.appendResidentImmutableIngress(0, prefix);
+
+    expect(session.snapshot.contentKind, ContentKind.fallback);
+    expect(session.snapshot.sourceCanvasWidth, 720);
+    expect(session.snapshot.sourceCanvasHeight, 700);
+  });
+
   test('source metadata prefix stays in-memory while receiving body grows',
       () async {
     final bytes = <int>[

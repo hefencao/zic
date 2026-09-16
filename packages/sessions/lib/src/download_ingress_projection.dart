@@ -59,6 +59,7 @@ final class DownloadIngressProjection {
 
   final Set<SourceListener> _listeners = <SourceListener>{};
   bool _synchronizedReplayPending = false;
+  IngressSnap? _synchronizedReplayBaseline;
 
   IngressSnap get snapshot {
     final current = ingress.snapshot;
@@ -81,6 +82,8 @@ final class DownloadIngressProjection {
   /// replayed into it. Decode must not bind to an intermediate source that may
   /// still need a same-epoch catch-up or rebuild before physical attachment.
   void beginSynchronizedReplay() {
+    if (_synchronizedReplayPending) return;
+    _synchronizedReplayBaseline = snapshot;
     _synchronizedReplayPending = true;
   }
 
@@ -90,8 +93,9 @@ final class DownloadIngressProjection {
   /// owner remains responsible for proving a stable boundary before fan-out.
   void publishSynchronizedReplayPrefix() {
     if (!_synchronizedReplayPending) return;
-    final before = snapshot;
+    final before = _synchronizedReplayBaseline ?? snapshot;
     _synchronizedReplayPending = false;
+    _synchronizedReplayBaseline = null;
     _notify(before, snapshot);
   }
 
@@ -166,13 +170,15 @@ final class DownloadIngressProjection {
   }
 
   void fail(Failure failure) {
-    final before = snapshot;
+    final before = _synchronizedReplayBaseline ?? snapshot;
     ingress.fail(failure);
     _synchronizedReplayPending = false;
+    _synchronizedReplayBaseline = null;
     _notify(before, snapshot);
   }
 
   void detach() {
+    _synchronizedReplayBaseline = null;
     _listeners.clear();
   }
 

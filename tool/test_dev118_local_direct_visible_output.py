@@ -46,13 +46,16 @@ require(
 )
 require(
     "packages/pipeline/lib/src/heuristic_policy.dart",
-    "_estimatedStaticOutputBytes",
+    "runtimeLocalStaticPages.contains(entry.key)",
+    "retainOutput: visibleStatic || localStaticReady",
+    "targetWatermark: decodeWatermark",
 )
 
 heuristic = (ROOT / "packages/pipeline/lib/src/heuristic_policy.dart").read_text(
     encoding="utf-8"
 )
-assert "staticOutputBudgetBytes ~/" not in heuristic
+assert "staticOutputBudgetBytes" not in heuristic
+assert "_estimatedStaticOutputBytes" not in heuristic
 print("dev118 local direct ingress contract: OK")
 
 require(

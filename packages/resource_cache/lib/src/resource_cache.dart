@@ -102,6 +102,7 @@ sealed class EncodedResourceSource {
 final class MemoryEncodedResourceSource extends EncodedResourceSource {
   MemoryEncodedResourceSource(
     this.bytes, {
+    this.cacheIdentity,
     EncodedResourceOrigin origin = EncodedResourceOrigin.memory,
   }) : super(
           origin: origin,
@@ -109,6 +110,15 @@ final class MemoryEncodedResourceSource extends EncodedResourceSource {
         );
 
   final Uint8List bytes;
+
+  /// Optional presentation identity independent from the current backing.
+  ///
+  /// A Pipeline static image may first be available from generation-local
+  /// resident bytes and later from a durable file lease without changing the
+  /// immutable encoded generation. Supplying the same opaque identity on both
+  /// sources lets the presentation bridge keep one ImageCache key across that
+  /// backing handoff. The identity grants no byte/storage authority.
+  final Object? cacheIdentity;
 }
 
 final class FileEncodedResourceSource extends EncodedResourceSource {

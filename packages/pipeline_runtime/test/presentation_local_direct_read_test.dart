@@ -34,6 +34,8 @@ void main() {
       );
 
       try {
+        final dimensions = <PipelinePageDimensions>[];
+        reader.pageDimensions.addListener(dimensions.add);
         final lease = await reader.openEncodedPresentationFile(
           chapter.pages.single,
           MediaLoadToken(),
@@ -41,6 +43,11 @@ void main() {
         expect(lease, isNotNull);
         expect(lease!.width, 1200);
         expect(lease.height, 1800);
+        expect(dimensions, hasLength(1));
+        expect(dimensions.single.pageIndex, 0);
+        expect(dimensions.single.width, 1200);
+        expect(dimensions.single.height, 1800);
+        expect(dimensions.single.basis, PipelinePageDimensionBasis.sourceCanvas);
         expect(backend.opens, 1);
         await lease.release();
         expect(backend.releases, 1);
@@ -86,6 +93,55 @@ void main() {
           await reader.dispose().timeout(const Duration(seconds: 5));
           await transferRuntime.dispose().timeout(const Duration(seconds: 5));
         }
+      }
+    },
+  );
+
+  test(
+    'authoritative static classification overrides a stale WebP hint for file presentation',
+    () async {
+      final uri = Uri.parse('https://example.invalid/transformed-static.webp');
+      final chapter = _chapter(
+        uri: uri,
+        contentKindHint: ContentKindHint.webp,
+      );
+      final id = readerPageDownloadId(chapter, chapter.pages.single);
+      final backend = _PresentationFileBackend();
+      final transferRuntime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: ArtifactCacheManager(backend: backend),
+        partialDownloadStore: null,
+        net: NetLane(maxActive: 1),
+      );
+      final session = transferRuntime.registry.get(id);
+      session.bindResidentImmutableAuthority(
+        validators: const Validators(),
+        totalLength: 12,
+        bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+        metadataPrefix: const <int>[
+          0xff, 0xd8, 0xff,
+          0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ],
+      );
+      final reader = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _FreshFactory(),
+        pageDownloadLane: NetLane(maxActive: 5),
+      ).withTransferRuntime(transferRuntime).create(
+        chapter: chapter,
+        sessionId: 'presentation-file-authoritative-static',
+      );
+
+      try {
+        final lease = await reader.openEncodedPresentationFile(
+          chapter.pages.single,
+          MediaLoadToken(),
+        );
+        expect(lease, isNotNull);
+        expect(backend.opens, greaterThanOrEqualTo(1));
+        await lease!.release();
+        expect(backend.releases, 1);
+      } finally {
+        await reader.dispose().timeout(const Duration(seconds: 5));
+        await transferRuntime.dispose().timeout(const Duration(seconds: 5));
       }
     },
   );

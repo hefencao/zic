@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 
 import 'app_runtime.dart' as runtime;
+import 'presentation_memory_policy.dart';
 import 'startup_platform.dart';
 
 @pragma('vm:entry-point')
@@ -12,6 +13,7 @@ Future<void> zicExternalPluginRuntimeServiceMain() async {
 
 Future<void> main([List<String>? arguments]) async {
   WidgetsFlutterBinding.ensureInitialized();
+  configureZicFlutterImageCache();
   _startupLog('binding-ready');
   final entrypointPath = startupApplicationSupportPathFromArguments(
     arguments ?? const <String>[],

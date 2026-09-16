@@ -34,6 +34,7 @@ export 'package:reader_runtime/reader_runtime.dart'
 part 'src/models_and_preview.dart';
 part 'src/catalog_and_codec.dart';
 part 'src/local_image_player.dart';
+part 'src/pipeline_external_static_prewarmer.dart';
 part 'src/local_media_screens.dart';
 part 'src/native_webp_player.dart';
 

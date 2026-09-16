@@ -40,19 +40,23 @@ else:
 # Generic hidden static must remain deferred; the local exception may only
 # remove that deferral after authoritative static/local facts exist.
 for token in (
-    'final deferHiddenVerticalStaticUpload =',
+    'final deferHiddenVerticalNativeStaticUpload =',
     '!primaryUpload',
     '!visibleStatic',
     'isPresentationMotionInteraction(observation.interaction)',
+    '!externalStatic',
 ):
-    require(policy, token, 'dev.295 generic hidden-static deferral')
+    require(policy, token, 'dev.295 native/provisional hidden-static deferral with external-static exception')
 
 for token in (
     'final Set<int> _runtimeLocalStaticPages = <int>{};',
+    'final Set<int> _runtimeExternalStaticPages = <int>{};',
     'bool? localPresentationReady',
+    'externalPresentationRequired = false',
     'runtimeLocalStaticPages: _runtimeLocalStaticPages',
+    'runtimeExternalStaticPages: _runtimeExternalStaticPages',
 ):
-    require(controller, token, 'Pipeline locality fact owner')
+    require(controller, token, 'Pipeline locality/presentation-path fact owner')
 for token in (
     'final localPresentationReady = !animated &&',
     '_isDirectImmutableLocalUri(asset.uri)',
@@ -80,7 +84,7 @@ if 'jumpTo(correction)' in view or 'presentationExtentAt(' in view:
 for token in (
     'runtimeLocalStaticPages: const <int>{6, 7}',
     'localPresentationReady: true',
-    'hidden immediate next must not blit a static texture during active vertical scrolling',
+    'hidden static without external-presentation proof must not reintroduce native texture work during active scroll',
 ):
     require(pipeline_test, token, 'local/static policy regression')
 if 314 <= version < 316:

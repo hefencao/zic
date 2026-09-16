@@ -10,17 +10,11 @@ import 'role_window.dart';
 final class HeuristicPolicy {
   const HeuristicPolicy({
     this.decodeWarmPages = false,
-    this.staticOutputBudgetBytes = 96 * 1024 * 1024,
     this.animatedPrefetchPolicy = const AnimatedPrefetchPolicy(),
   });
 
   final bool decodeWarmPages;
   final AnimatedPrefetchPolicy animatedPrefetchPolicy;
-
-  /// Budget available to speculative static-page outputs. The session-level
-  /// [FrameBudgeter] remains authoritative and may trim lower-priority outputs
-  /// when actual decoded dimensions exceed this estimate.
-  final int staticOutputBudgetBytes;
 
   DemandPlan createPlan({
     required int revision,
@@ -30,6 +24,7 @@ final class HeuristicPolicy {
     required DecodeTarget decodeTarget,
     Map<int, bool> runtimeAnimatedPages = const <int, bool>{},
     Set<int> runtimeLocalStaticPages = const <int>{},
+    Set<int> runtimeExternalStaticPages = const <int>{},
     Set<int> runtimeWebpCostPages = const <int>{},
     bool assumeUnresolvedStatic = false,
     AnimatedPrefetchFlow? downloadFlow,
@@ -46,13 +41,10 @@ final class HeuristicPolicy {
     visibleIndexes.add(observation.currentIndex);
     final staticWarmPages = _staticWarmPages(
       chapter: chapter,
-      observation: observation,
       window: window,
-      decodeTarget: decodeTarget,
       runtimeAnimatedPages: runtimeAnimatedPages,
       runtimeWebpCostPages: runtimeWebpCostPages,
       assumeUnresolvedStatic: assumeUnresolvedStatic,
-      readDirection: readDirection,
     );
 
     for (final entry in window.roles.entries) {
@@ -132,15 +124,19 @@ final class HeuristicPolicy {
       final localStaticReady =
           runtimeLocalStaticPages.contains(entry.key) &&
               runtimeAnimatedPages[entry.key] == false;
-      final deferHiddenVerticalStaticUpload =
+      final externalStatic =
+          runtimeExternalStaticPages.contains(entry.key) &&
+              runtimeAnimatedPages[entry.key] == false;
+      final deferHiddenVerticalNativeStaticUpload =
           observation.direction == ReadingDirection.vertical &&
               staticWarm &&
               !primaryUpload &&
               !visibleStatic &&
               !localStaticReady &&
+              !externalStatic &&
               isPresentationMotionInteraction(observation.interaction);
       if ((primaryUpload || staticWarm || pagedTargetPreupload) &&
-          !deferHiddenVerticalStaticUpload) {
+          !deferHiddenVerticalNativeStaticUpload) {
         uploads[decode] = UploadDemand(
           role: role,
           priority: primaryUpload
@@ -171,10 +167,12 @@ final class HeuristicPolicy {
           expirationRevision: revision + 1,
           // A decoded static page backed by immutable local/durable bytes may
           // prepare its external texture before it reaches the viewport. Keep
-          // that already-prepared output inside the existing bounded static
-          // budget so a fast transition cannot fall back to a black/loading
-          // surface while the platform blit catches up.
+          // that already-prepared output under its real residency owner so a
+          // fast transition cannot fall back to a black/loading surface while
+          // presentation catches up. No estimated static-output admission
+          // budget is created here.
           retainOutput: visibleStatic || localStaticReady,
+          viewportVisible: primaryUpload || visibleStatic,
         );
       }
     }
@@ -213,6 +211,7 @@ final class HeuristicPolicy {
         priority: 850,
         reason: 'heuristic:last-output-retained',
         expirationRevision: revision + 1,
+        viewportVisible: visibleIndexes.contains(retainedIndex),
       );
     }
 
@@ -227,20 +226,11 @@ final class HeuristicPolicy {
 
   Set<int> _staticWarmPages({
     required ChapterManifest chapter,
-    required ReaderObs observation,
     required RoleWindow window,
-    required DecodeTarget decodeTarget,
     required Map<int, bool> runtimeAnimatedPages,
     required Set<int> runtimeWebpCostPages,
     required bool assumeUnresolvedStatic,
-    required int readDirection,
   }) {
-    final visibleIndexes = observation.visibleCoverages
-        .where((coverage) => coverage.fraction > 0)
-        .map((coverage) => coverage.pageIndex)
-        .toSet();
-    visibleIndexes.add(observation.currentIndex);
-
     bool isStaticCandidate(MapEntry<int, PageRole> entry) {
       final runtimeAnimated = runtimeAnimatedPages[entry.key];
       if (runtimeAnimated != null) return !runtimeAnimated;
@@ -254,113 +244,17 @@ final class HeuristicPolicy {
       return hasStaticContentEvidence(page);
     }
 
-    bool isStableDecodeRole(PageRole role) => switch (role) {
-          PageRole.current ||
-          PageRole.transition ||
-          PageRole.next ||
-          PageRole.next2 ||
-          PageRole.previous => true,
-          PageRole.last ||
-          PageRole.near ||
-          PageRole.far ||
-          PageRole.detached => false,
-        };
-
-    // Static single-frame knowledge may lower the cost of a page that is
-    // already inside the stable +2/-1 decode window, but it must not enlarge
-    // that window. The old policy let every likely-static page in the 7/3
-    // encoded window create decode + upload work; device traces showed 6-7
-    // speculative warm decodes/uploads competing with current execution.
-    // Actually visible vertical pages remain authoritative even if they fall
-    // outside the relative decode window (for example several very short
-    // stitched pages in one viewport).
-    final candidates = window.roles.entries
+    // A static page needs one frame, but it does not need another page-count
+    // or estimated-byte admission policy. RoleWindow owns the 3/7 logical
+    // envelope, StagedDecodeRefillPolicy releases one-frame work in priority
+    // order, and SpeculativeEncodedReadBudget owns actual speculative encoded
+    // I/O. Native decoded/output residency remains FrameBudgeter-owned; external
+    // Flutter fallback rasters remain ImageCache-owned by App composition. No
+    // estimated static-output admission budget is duplicated in Pipeline.
+    return window.roles.entries
         .where(isStaticCandidate)
-        .where(
-          (entry) =>
-              visibleIndexes.contains(entry.key) ||
-              isStableDecodeRole(entry.value),
-        )
-        .toList(growable: false);
-
-    final selected = <int>{};
-    // Visibility is not speculative and therefore does not consume the
-    // speculative output budget. FrameBudget remains the authoritative owner
-    // if actual output dimensions later exceed memory limits.
-    for (final entry in candidates) {
-      if (visibleIndexes.contains(entry.key)) selected.add(entry.key);
-    }
-
-    if (staticOutputBudgetBytes <= 0) return selected;
-    final speculative = candidates
-        .where((entry) => !visibleIndexes.contains(entry.key))
-        .toList(growable: false);
-    speculative.sort((a, b) {
-      final aPriority = _staticPriority(
-        a.value,
-        pageIndex: a.key,
-        currentIndex: observation.currentIndex,
-        readDirection: readDirection,
-      );
-      final bPriority = _staticPriority(
-        b.value,
-        pageIndex: b.key,
-        currentIndex: observation.currentIndex,
-        readDirection: readDirection,
-      );
-      final priorityOrder = bPriority.compareTo(aPriority);
-      if (priorityOrder != 0) return priorityOrder;
-      return (a.key - observation.currentIndex)
-          .abs()
-          .compareTo((b.key - observation.currentIndex).abs());
-    });
-    var remaining = staticOutputBudgetBytes;
-    for (final entry in speculative) {
-      final estimate = _estimatedStaticOutputBytes(
-        chapter.pages[entry.key],
-        decodeTarget,
-        vertical: observation.direction == ReadingDirection.vertical,
-      );
-      if (selected.isNotEmpty && estimate > remaining) continue;
-      selected.add(entry.key);
-      remaining = (remaining - estimate)
-          .clamp(0, staticOutputBudgetBytes)
-          .toInt();
-    }
-    return selected;
-  }
-
-  int _estimatedStaticOutputBytes(
-    PageAsset page,
-    DecodeTarget decodeTarget, {
-    required bool vertical,
-  }) {
-    final sourceWidth = page.width;
-    final sourceHeight = page.height;
-    if (sourceWidth == null ||
-        sourceHeight == null ||
-        sourceWidth <= 0 ||
-        sourceHeight <= 0) {
-      return decodeTarget.physicalWidth *
-          decodeTarget.physicalHeight *
-          4;
-    }
-    final widthScale = decodeTarget.physicalWidth / sourceWidth;
-    final heightScale = decodeTarget.physicalHeight / sourceHeight;
-    final scale = vertical
-        ? widthScale.clamp(0.0, 1.0)
-        : widthScale < heightScale
-            ? widthScale.clamp(0.0, 1.0)
-            : heightScale.clamp(0.0, 1.0);
-    final projectedWidth = (sourceWidth * scale)
-        .round()
-        .clamp(1, 1 << 20)
-        .toInt();
-    final projectedHeight = (sourceHeight * scale)
-        .round()
-        .clamp(1, 1 << 20)
-        .toInt();
-    return projectedWidth * projectedHeight * 4;
+        .map((entry) => entry.key)
+        .toSet();
   }
 
   int _staticWarmPriority(

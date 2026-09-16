@@ -58,7 +58,7 @@ final class ReaderBinding {
   ViewportState? get viewport => _viewport;
   int get revision => pipeline.revision;
 
-  void accept(ReaderObs observation) {
+  bool accept(ReaderObs observation) {
     if (_detached) {
       throw StateError('reader binding is detached');
     }
@@ -72,6 +72,7 @@ final class ReaderBinding {
           discretePages && observation.direction != ReadingDirection.vertical,
     );
     _viewport = viewport;
+    var playbackChanged = false;
     try {
       pipeline.accept(observation);
     } finally {
@@ -80,20 +81,23 @@ final class ReaderBinding {
       // must not prevent the visible viewport/playback projection advancing.
       // Do not re-run PlaybackGate for every continuous coverage fraction:
       // only semantic viewport state or upload-plan identity can change it.
-      _syncPlayback(viewport);
+      playbackChanged = _syncPlayback(viewport);
     }
+    return playbackChanged;
   }
 
   bool classifyPage({
     required int pageIndex,
     required bool animated,
     bool? localPresentationReady,
+    bool externalPresentationRequired = false,
   }) {
     if (_detached) return false;
     return pipeline.classifyPage(
       pageIndex: pageIndex,
       animated: animated,
       localPresentationReady: localPresentationReady,
+      externalPresentationRequired: externalPresentationRequired,
     );
   }
 
@@ -106,22 +110,6 @@ final class ReaderBinding {
       pageIndex: pageIndex,
       webp: webp,
     );
-  }
-
-  bool observeDecodeWaterline({
-    required int planRevision,
-    required DecodeWaterlineStage stage,
-  }) {
-    if (_detached) return false;
-    return pipeline.observeDecodeWaterline(
-      planRevision: planRevision,
-      stage: stage,
-    );
-  }
-
-  bool observeMemoryPressure({required bool isPressured}) {
-    if (_detached) return false;
-    return pipeline.observeMemoryPressure(isPressured: isPressured);
   }
 
   void updateDecodeTarget(DecodeTarget target) {
@@ -176,16 +164,17 @@ final class ReaderBinding {
     _syncPlayback(viewport, force: true);
   }
 
-  void _syncPlayback(ViewportState viewport, {bool force = false}) {
+  bool _syncPlayback(ViewportState viewport, {bool force = false}) {
     final revision = pipeline.revision;
     if (!force &&
         _playbackPlanRevision == revision &&
         _sameViewportState(_playbackViewport, viewport)) {
-      return;
+      return false;
     }
     _playback.syncPlayback(viewport, _uploadIds(pipeline.currentPlan));
     _playbackViewport = viewport;
     _playbackPlanRevision = revision;
+    return true;
   }
 
   Map<int, DecodeId> _uploadIds(DemandPlan plan) {

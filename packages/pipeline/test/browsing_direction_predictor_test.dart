@@ -92,7 +92,6 @@ void main() {
       observation: obs,
       window: window,
       active: true,
-      expansionStage: 0,
       readDirection: predictor.direction,
     );
     final plan = const HeuristicPolicy(decodeWarmPages: true).createPlan(

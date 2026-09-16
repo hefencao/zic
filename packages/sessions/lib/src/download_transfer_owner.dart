@@ -683,7 +683,8 @@ final class DownloadTransferOwner {
     int revision,
     Map<DownloadId, TransferDemand> desired,
   ) {
-    final normalized = _normalizeDemands(desired);
+    final normalizedResult = _normalizeDemands(consumer, desired);
+    final normalized = normalizedResult.demands;
     _validateDemandChecksums(consumer, normalized);
     consumer._sessionId = sessionId;
     consumer._revision = revision;
@@ -723,6 +724,9 @@ final class DownloadTransferOwner {
     consumer._demands
       ..clear()
       ..addAll(desired);
+    consumer._resolvedPhysicalIds
+      ..clear()
+      ..addAll(normalizedResult.resolvedPhysicalIds);
     toSchedule.sort((a, b) {
       final pa = normalized[a]?.demand.priority ?? 0;
       final pb = normalized[b]?.demand.priority ?? 0;
@@ -748,12 +752,21 @@ final class DownloadTransferOwner {
     }
   }
 
-  Map<DownloadId, _ConsumerPhysicalDemand> _normalizeDemands(
+  _NormalizedConsumerDemands _normalizeDemands(
+    DownloadTransferConsumer consumer,
     Map<DownloadId, TransferDemand> desired,
   ) {
     final normalized = <DownloadId, _ConsumerPhysicalDemand>{};
+    final resolvedPhysicalIds = <DownloadId, DownloadId>{};
     for (final entry in desired.entries) {
-      final physicalId = resolveTransferId(entry.key);
+      // Physical identity is an acquire-time decision. A role/priority-only
+      // page-boundary migration must keep the physical carrier already owned
+      // by this consumer instead of re-running version/canonical resolution
+      // for every retained member of the 3/7 window. A changed DownloadId is
+      // a new logical acquire and therefore resolves normally.
+      final physicalId = consumer._resolvedPhysicalIds[entry.key] ??
+          resolveTransferId(entry.key);
+      resolvedPhysicalIds[entry.key] = physicalId;
       final rawDemand = entry.value;
       final candidate = _ConsumerPhysicalDemand(
         exactId: entry.key,
@@ -802,7 +815,10 @@ final class DownloadTransferOwner {
         ),
       );
     }
-    return normalized;
+    return _NormalizedConsumerDemands(
+      demands: normalized,
+      resolvedPhysicalIds: resolvedPhysicalIds,
+    );
   }
 
   void _validateDemandChecksums(
@@ -1095,6 +1111,7 @@ final class DownloadTransferOwner {
     final ids = consumer._physicalDemands.keys.toList(growable: false);
     consumer._demands.clear();
     consumer._physicalDemands.clear();
+    consumer._resolvedPhysicalIds.clear();
     for (final id in ids) {
       _removeClaim(
         consumer,
@@ -2607,6 +2624,7 @@ bool _isConfirmedFullBodyPrefixMismatch(Failure failure) =>
             'sourceSemanticSameUrlPlans',
             'sourceSemanticChangedUrlPlans',
             'sourceSemanticRuntimeTransformPlans',
+            'sourceSemanticFreshResolvePlans',
             'sourceSemanticRecoveryUnavailable',
           ])
             if (error.details.containsKey(key)) key: error.details[key],
@@ -2643,6 +2661,8 @@ final class DownloadTransferConsumer {
       <DownloadId, TransferDemand>{};
   final Map<DownloadId, _ConsumerPhysicalDemand> _physicalDemands =
       <DownloadId, _ConsumerPhysicalDemand>{};
+  final Map<DownloadId, DownloadId> _resolvedPhysicalIds =
+      <DownloadId, DownloadId>{};
   String? _sessionId;
   int _revision = 0;
   bool _disposed = false;
@@ -2747,6 +2767,17 @@ final class _ActiveProviderLease {
   final int claimSequence;
   final int admittedPriority;
   final bool transportRetainedBeyondConsumer;
+}
+
+
+final class _NormalizedConsumerDemands {
+  const _NormalizedConsumerDemands({
+    required this.demands,
+    required this.resolvedPhysicalIds,
+  });
+
+  final Map<DownloadId, _ConsumerPhysicalDemand> demands;
+  final Map<DownloadId, DownloadId> resolvedPhysicalIds;
 }
 
 final class _ConsumerPhysicalDemand {

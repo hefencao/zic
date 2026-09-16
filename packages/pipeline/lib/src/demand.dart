@@ -110,6 +110,7 @@ final class UploadDemand {
     required this.reason,
     required this.expirationRevision,
     this.retainOutput = false,
+    this.viewportVisible = false,
     this.decisionId,
   });
 
@@ -123,6 +124,13 @@ final class UploadDemand {
   /// This is deliberately distinct from [role]: continuous vertical reading
   /// can show several pages at once, including pages with a non-primary role.
   final bool retainOutput;
+
+  /// The page intersects the actual viewport in this observation.
+  ///
+  /// Continuous vertical reading can expose several pages at once whose
+  /// scheduling [role] remains next/previous. Presentation staging uses this
+  /// fact to keep truly visible work from waiting behind speculative output.
+  final bool viewportVisible;
   final String? decisionId;
 
   /// Scheduling identity excludes [expirationRevision]; see [DownloadDemand].
@@ -131,6 +139,7 @@ final class UploadDemand {
       priority == other.priority &&
       reason == other.reason &&
       retainOutput == other.retainOutput &&
+      viewportVisible == other.viewportVisible &&
       decisionId == other.decisionId;
 
   @override
@@ -142,6 +151,7 @@ final class UploadDemand {
           reason == other.reason &&
           expirationRevision == other.expirationRevision &&
           retainOutput == other.retainOutput &&
+          viewportVisible == other.viewportVisible &&
           decisionId == other.decisionId;
 
   @override
@@ -152,6 +162,7 @@ final class UploadDemand {
         reason,
         expirationRevision,
         retainOutput,
+        viewportVisible,
         decisionId,
       );
 }

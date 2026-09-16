@@ -20,7 +20,7 @@ for token in ('void enqueueObservation(ReaderObs observation)','_pendingObservat
 region=session[session.index('void _scheduleObservationDrain()'):session.index('void _drainObservation(int generation)')]
 forbid(region, 'scheduleMicrotask(()', 'observation drain microtask call')
 # Keep unrelated callback microtasks untouched so this remains a single-variable experiment.
-for token in ('void _handleSourceKindObserved','void _handleDecodeRefillObserved','void _handleAnimationResolved'):
+for token in ('void _handleSourceKindObserved','void _handleExternalPresentationRequested','void _handleAnimationResolved'):
     start=session.index(token)
     end=min([x for x in (session.find('\n  void ', start+5), session.find('\n  Future<', start+5)) if x != -1] or [len(session)])
     require(session[start:end], 'scheduleMicrotask(()', f'unchanged callback microtask in {token}')

@@ -45,9 +45,13 @@ require('packages/sessions/lib/src/coordinator.dart',
         '..addAll(update.plan.downloads)',
         '..addAll(update.plan.decodes)',
         '..addAll(update.plan.uploads)')
-require('packages/pipeline/test/animated_prefetch_policy_test.dart',
-        'offscreen runtime evidence does not promote a semantic no-op revision',
+require('packages/pipeline/test/vertical_visible_policy_test.dart',
+        'far visible metadata does not create an empty scheduler revision',
         'expect(controller.revision, revision);')
+require('packages/pipeline/test/animated_prefetch_policy_test.dart',
+        'offscreen runtime WebP evidence changes the one-frame static plan',
+        'expect(controller.revision, revision + 1);',
+        'expect(controller.revision, revision + 2);')
 require('packages/pipeline/test/pipeline_test.dart',
         'demand diff separates liveness revision from scheduling identity',
         'DemandDiff.between(first, refreshed).isEmpty')
