@@ -26,6 +26,10 @@ bool _hasLegacyVeneraLocators(ImportedChapterRecord chapter) =>
       (page) => isLegacyVeneraRuntimeLocator(page.sourceId),
     );
 
+bool chapterRequiresSourceLocatorRefresh(ImportedChapterRecord chapter) =>
+    _hasLegacyVeneraLocators(chapter) ||
+    chapterHasHomeProjectionSnapshotPagePlaceholders(chapter);
+
 bool _manifestHasLegacyVeneraLocators(ChapterManifest manifest) =>
     manifest.pages.any(
       (page) => isLegacyVeneraRuntimeLocator(page.uri.toString()),
@@ -87,6 +91,48 @@ Future<ChapterManifest> _loadCompatibleSourceChapter(
 }
 
 extension _DemoHomeSourceResourceActions on _DemoHomeState {
+  Future<ImportedLibraryEntry> _loadRemoteEntrySnapshot(
+    ImportedLibraryEntry entry, {
+    bool forceSourceRefresh = false,
+    TaskControl? control,
+  }) async {
+    control?.throwIfCancelled();
+    if (entry.chapter.sourceId == 'local-folder') {
+      return entry;
+    }
+    await _waitForExternalSource(entry.chapter.sourceId);
+    final source = _sourceForId(entry.chapter.sourceId);
+    if (source == null) {
+      throw StateError('漫画源 ${entry.chapter.sourceId} 当前不可用');
+    }
+    final manifest = await _loadCompatibleSourceChapter(
+      source,
+      entry.chapter.chapterId,
+      forceRefresh: forceSourceRefresh,
+      control: control,
+    );
+    control?.throwIfCancelled();
+    final comic = Comic(
+      comicId: entry.chapter.comicId,
+      sourceId: entry.chapter.sourceId,
+      title: entry.chapter.comicTitle,
+      authors: entry.chapter.comicAuthors,
+      tags: entry.chapter.comicTags,
+      coverUri: entry.chapter.coverSourceId == null
+          ? null
+          : Uri.tryParse(entry.chapter.coverSourceId!),
+      description: entry.chapter.comicDescription,
+      readingDirection: entry.chapter.readingDirection,
+    );
+    final refreshed = ImportedChapterRecord.remote(
+      comic: comic,
+      manifest: manifest,
+      importedAt: entry.chapter.importedAt,
+    );
+    control?.throwIfCancelled();
+    return entry.copyWith(chapter: refreshed);
+  }
+
   Future<void> _openSourceWebView(
     BrowsableComicSource source,
     Uri url, {
@@ -328,7 +374,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     await _serviceHandoff?.ensureCoreServices?.call();
     await _adoptDurableServices();
     final hydrated = await _librarySession.hydrateEntry(entry);
-    var current = _hasLegacyVeneraLocators(hydrated.chapter)
+    var current = chapterRequiresSourceLocatorRefresh(hydrated.chapter)
         ? await _refreshRemoteEntry(
             hydrated,
             forceSourceRefresh: true,
@@ -396,7 +442,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     for (final entry in entries) {
       final hydrated = await _librarySession.hydrateEntry(entry);
       chapters.add(
-        _hasLegacyVeneraLocators(hydrated.chapter)
+        chapterRequiresSourceLocatorRefresh(hydrated.chapter)
             ? await _refreshRemoteEntry(
                 hydrated,
                 forceSourceRefresh: true,

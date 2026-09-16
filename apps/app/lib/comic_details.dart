@@ -48,6 +48,14 @@ const comicDetailsReadingHistoryKey =
     ValueKey<String>('comic-details-reading-history');
 const comicDetailsChapterCountKey =
     ValueKey<String>('comic-details-chapter-count');
+
+bool comicDetailsCanReuseChapterEntry(
+  ImportedLibraryEntry? existing,
+  Chapter chapter,
+) =>
+    existing != null &&
+    existing.chapter.sourceRevision == chapter.sourceRevision &&
+    !chapterHasHomeProjectionSnapshotPagePlaceholders(existing.chapter);
 const comicDetailsChapterListKey =
     ValueKey<String>('comic-details-chapter-list');
 const comicDetailsDownloadAllKey =
@@ -1193,9 +1201,8 @@ final class _LocalComicDetailsScreenState
 
   Future<ImportedLibraryEntry> _ensure(Chapter chapter) async {
     final existing = _entryFor(widget.comic.sourceId, chapter);
-    if (existing != null &&
-        existing.chapter.sourceRevision == chapter.sourceRevision) {
-      return existing;
+    if (comicDetailsCanReuseChapterEntry(existing, chapter)) {
+      return existing!;
     }
     final identity = comicDetailsChapterIdentity(
       widget.comic.sourceId,
@@ -2764,9 +2771,8 @@ final class _RemoteComicDetailsScreenState
 
   Future<ImportedLibraryEntry> _ensure(Chapter chapter) async {
     final existing = _localEntry(chapter);
-    if (existing != null &&
-        existing.chapter.sourceRevision == chapter.sourceRevision) {
-      return existing;
+    if (comicDetailsCanReuseChapterEntry(existing, chapter)) {
+      return existing!;
     }
     final identity = comicDetailsChapterIdentity(
       _source.sourceId,

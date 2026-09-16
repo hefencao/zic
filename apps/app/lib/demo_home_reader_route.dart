@@ -64,6 +64,31 @@ bool readerPageAuthorityChanged(
       previousPage.animatedHint != refreshedPage.animatedHint;
 }
 
+ImportedChapterRecord? readerChapterWithFreshPageAuthority(
+  ImportedChapterRecord previous,
+  ImportedChapterRecord refreshed,
+  int previousIndex,
+) {
+  if (previous.sourceId != refreshed.sourceId ||
+      previous.comicId != refreshed.comicId ||
+      previous.chapterId != refreshed.chapterId ||
+      previous.sourceRevision != refreshed.sourceRevision) {
+    return null;
+  }
+  final refreshedIndex = readerFreshPageIndexForRecovery(
+    previous,
+    refreshed,
+    previousIndex,
+  );
+  if (refreshedIndex == null ||
+      !readerPageAuthorityChanged(previous, refreshed, previousIndex)) {
+    return null;
+  }
+  final pages = previous.pages.toList(growable: false);
+  pages[previousIndex] = refreshed.pages[refreshedIndex];
+  return previous.copyWith(pages: pages);
+}
+
 final class _ReaderComicVersionNoticeGate extends StatefulWidget {
   const _ReaderComicVersionNoticeGate({
     required this.sourceId,
@@ -356,28 +381,38 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
             },
           ),
         );
-        late final _PreparedImportedChapter refreshed;
+        late final ImportedLibraryEntry replacementEntry;
         try {
-          final refreshedEntry = await _refreshRemoteEntry(
+          final refreshedSnapshot = await _loadRemoteEntrySnapshot(
             previous.entry,
             forceSourceRefresh: true,
           );
-          if (_hasLegacyVeneraLocators(refreshedEntry.chapter)) {
+          if (_hasLegacyVeneraLocators(refreshedSnapshot.chapter)) {
             throw StateError(
               'Venera 章节刷新后仍包含已失效的运行时资源定位符',
             );
           }
-          final readerManifest = refreshedEntry.chapter.toManifest();
-          final byteLoaders = <String, LocalImageFileBytesLoader>{};
-          refreshed = (
-            entry: refreshedEntry,
-            byteLoaders: byteLoaders,
-            responseSources: _readerResponseSourcesFor(
-              readerManifest,
-              byteLoaders,
-            ),
-            initialPageIndex: rawPageIndex,
+          final replacementChapter = readerChapterWithFreshPageAuthority(
+            previous.entry.chapter,
+            refreshedSnapshot.chapter,
+            rawPageIndex,
           );
+          if (replacementChapter == null) {
+            widget.debugTrace.record(
+              TraceEvent(
+                monotonicMicros: _traceClock.elapsedMicroseconds,
+                sessionId: 'reader-entry',
+                kind: TraceEventKind.artifactSource,
+                payload: <String, Object?>{
+                  'stage': 'source-page-authority-refresh-no-change',
+                  'pageIndex': rawPageIndex,
+                },
+              ),
+            );
+            return false;
+          }
+          replacementEntry =
+              await _librarySession.upsertChapter(replacementChapter);
         } on Object catch (refreshError) {
           widget.debugTrace.record(
             TraceEvent(
@@ -393,39 +428,20 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
           );
           return false;
         }
-        final refreshedPageIndex = readerFreshPageIndexForRecovery(
-          previous.entry.chapter,
-          refreshed.entry.chapter,
-          rawPageIndex,
-        );
-        final authorityChanged = readerPageAuthorityChanged(
-          previous.entry.chapter,
-          refreshed.entry.chapter,
-          rawPageIndex,
-        );
-        if (!authorityChanged || refreshedPageIndex == null) {
-          widget.debugTrace.record(
-            TraceEvent(
-              monotonicMicros: _traceClock.elapsedMicroseconds,
-              sessionId: 'reader-entry',
-              kind: TraceEventKind.artifactSource,
-              payload: <String, Object?>{
-                'stage': 'source-page-authority-refresh-no-change',
-                'pageIndex': rawPageIndex,
-              },
-            ),
-          );
-          return false;
-        }
+        final readerManifest = replacementEntry.chapter.toManifest();
+        final byteLoaders = <String, LocalImageFileBytesLoader>{};
         final replacement = (
-          entry: refreshed.entry,
-          byteLoaders: refreshed.byteLoaders,
-          responseSources: refreshed.responseSources,
-          initialPageIndex: refreshedPageIndex,
+          entry: replacementEntry,
+          byteLoaders: byteLoaders,
+          responseSources: _readerResponseSourcesFor(
+            readerManifest,
+            byteLoaders,
+          ),
+          initialPageIndex: rawPageIndex,
         );
         if (!routeActive) return false;
         currentPrepared = replacement;
-        currentRawPageIndex = refreshedPageIndex;
+        currentRawPageIndex = rawPageIndex;
         replacementPrepared.value = replacement;
         await WidgetsBinding.instance.endOfFrame;
         final replaced = routeActive;
@@ -439,7 +455,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
                   ? 'source-page-authority-replaced'
                   : 'source-page-authority-replace-unavailable',
               'pageIndex': rawPageIndex,
-              'refreshedPageIndex': refreshedPageIndex,
+              'replacementPageIndex': rawPageIndex,
             },
           ),
         );
@@ -540,17 +556,18 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       awaitCanonicalPhysicalBackfill: false,
     );
     final hydrateMs = totalWatch.elapsedMilliseconds - loadMs;
-    final legacyVenera = _hasLegacyVeneraLocators(entry.chapter);
+    final sourceLocatorRefreshRequired =
+        chapterRequiresSourceLocatorRefresh(entry.chapter);
     final remoteWatch = Stopwatch()..start();
-    final current = legacyVenera
+    final current = sourceLocatorRefreshRequired
         ? await _refreshRemoteEntry(entry, forceSourceRefresh: true)
         : refreshRemote
             ? await _refreshRemoteEntry(entry)
             : entry;
     final remoteMs = remoteWatch.elapsedMilliseconds;
-    if (_hasLegacyVeneraLocators(current.chapter)) {
+    if (chapterRequiresSourceLocatorRefresh(current.chapter)) {
       throw StateError(
-        'Venera 章节仍包含已失效的运行时资源定位符，已阻止进入 Reader',
+        '章节仍包含不可用于 Reader 的启动快照/运行时资源定位符',
       );
     }
     final authorityWatch = Stopwatch()..start();
@@ -610,6 +627,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
           'comicId': current.chapter.comicId,
           'chapterId': current.chapter.chapterId,
           'refreshRemote': refreshRemote,
+          'sourceLocatorRefreshRequired': sourceLocatorRefreshRequired,
           'totalPages': current.chapter.pages.length,
           'localByteLoaders': byteLoaders.length,
           'networkResponseLoaders': responseSources.length,

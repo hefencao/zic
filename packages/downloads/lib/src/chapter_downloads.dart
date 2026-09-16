@@ -1670,7 +1670,7 @@ String _identity(ImportedLibraryEntry entry) => chapterDownloadIdentity(
 bool _isCompactProjectionEntry(ImportedLibraryEntry entry) =>
     entry.chapter.pages.isNotEmpty &&
     entry.chapter.pages.every(
-      (page) => page.sourceId.startsWith('zic-home-snapshot-page:'),
+      (page) => isHomeProjectionSnapshotPageSource(page.sourceId),
     );
 
 List<PageAsset> _effectiveCompactPages(

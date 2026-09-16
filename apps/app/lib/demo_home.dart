@@ -1074,41 +1074,14 @@ final class _DemoHomeState extends State<DemoHome> {
     bool forceSourceRefresh = false,
     TaskControl? control,
   }) async {
-    control?.throwIfCancelled();
-    if (entry.chapter.sourceId == 'local-folder') {
-      return entry;
-    }
-    await _waitForExternalSource(entry.chapter.sourceId);
-    final source = _sourceForId(entry.chapter.sourceId);
-    if (source == null) {
-      throw StateError('漫画源 ${entry.chapter.sourceId} 当前不可用');
-    }
-    final manifest = await _loadCompatibleSourceChapter(
-      source,
-      entry.chapter.chapterId,
-      forceRefresh: forceSourceRefresh,
+    final snapshot = await _loadRemoteEntrySnapshot(
+      entry,
+      forceSourceRefresh: forceSourceRefresh,
       control: control,
     );
     control?.throwIfCancelled();
-    final comic = Comic(
-      comicId: entry.chapter.comicId,
-      sourceId: entry.chapter.sourceId,
-      title: entry.chapter.comicTitle,
-      authors: entry.chapter.comicAuthors,
-      tags: entry.chapter.comicTags,
-      coverUri: entry.chapter.coverSourceId == null
-          ? null
-          : Uri.tryParse(entry.chapter.coverSourceId!),
-      description: entry.chapter.comicDescription,
-      readingDirection: entry.chapter.readingDirection,
-    );
-    final refreshed = ImportedChapterRecord.remote(
-      comic: comic,
-      manifest: manifest,
-      importedAt: entry.chapter.importedAt,
-    );
-    control?.throwIfCancelled();
-    return _librarySession.upsertChapter(refreshed);
+    if (identical(snapshot, entry)) return entry;
+    return _librarySession.upsertChapter(snapshot.chapter);
   }
 
   ComicPreference _preferenceForComic(LibraryComic comic) =>

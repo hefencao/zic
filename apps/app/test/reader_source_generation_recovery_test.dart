@@ -10,7 +10,11 @@ void main() {
         details: details,
       );
 
-  ImportedChapterRecord chapter(String host, {List<String>? pageIds}) {
+  ImportedChapterRecord chapter(
+    String host, {
+    List<String>? pageIds,
+    String sourceRevision = 'r1',
+  }) {
     final ids = pageIds ?? const <String>['page-0', 'page-1'];
     return ImportedChapterRecord(
       directoryId: 'fixture',
@@ -18,7 +22,7 @@ void main() {
       sourceId: 'venera:fixture',
       comicId: 'comic',
       chapterId: 'chapter',
-      sourceRevision: 'r1',
+      sourceRevision: sourceRevision,
       pages: <ImportedPageRecord>[
         for (var index = 0; index < ids.length; index++)
           ImportedPageRecord(
@@ -31,6 +35,28 @@ void main() {
       ],
     );
   }
+
+  test('compact Home snapshot page requires source locator refresh', () {
+    final compact = ImportedChapterRecord(
+      directoryId: 'fixture',
+      displayName: 'chapter',
+      sourceId: 'venera:jm',
+      comicId: 'comic',
+      chapterId: 'chapter',
+      sourceRevision: 'r1',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: 'page-1',
+          sourceId: 'zic-home-snapshot-page:0',
+          contentKindHint: ContentKindHint.unknown,
+        ),
+      ],
+    );
+    final usable = chapter('cdn.example');
+
+    expect(chapterRequiresSourceLocatorRefresh(compact), isTrue);
+    expect(chapterRequiresSourceLocatorRefresh(usable), isFalse);
+  });
 
   test('route refresh only owns terminal unavailable source generations', () {
     final terminal = failure(const <String, Object?>{
@@ -108,6 +134,32 @@ void main() {
 
     expect(readerFreshPageIndexForRecovery(previous, refreshed, 1), 2);
     expect(readerPageAuthorityChanged(previous, refreshed, 1), isTrue);
+  });
+
+  test('fresh recovery splices only the failed page carrier', () {
+    final previous = chapter('old.example');
+    final refreshed = chapter('new.example');
+
+    final replacement = readerChapterWithFreshPageAuthority(
+      previous,
+      refreshed,
+      1,
+    );
+
+    expect(replacement, isNotNull);
+    expect(replacement!.pages[0].sourceId, previous.pages[0].sourceId);
+    expect(replacement.pages[1].sourceId, refreshed.pages[1].sourceId);
+    expect(replacement.pages[0].sourceId, isNot(refreshed.pages[0].sourceId));
+  });
+
+  test('fresh recovery does not turn a revision change into a page splice', () {
+    final previous = chapter('old.example');
+    final refreshed = chapter('new.example', sourceRevision: 'r2');
+
+    expect(
+      readerChapterWithFreshPageAuthority(previous, refreshed, 1),
+      isNull,
+    );
   });
 
 }

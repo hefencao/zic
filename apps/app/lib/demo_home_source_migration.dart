@@ -802,7 +802,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   ) async {
     control.throwIfCancelled();
     var refreshed = focus;
-    final metadataFuture = _refreshRemoteEntry(
+    final metadataFuture = _loadRemoteEntrySnapshot(
       focus,
       control: control,
     );
@@ -812,7 +812,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       focus.chapter.comicId,
       control: control,
     );
-    var metadataUpdated = false;
+    var metadataSnapshotLoaded = false;
     var metadataPreempted = false;
     var metadataRetryAttempted = false;
     var versionChecked = false;
@@ -831,7 +831,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         };
     try {
       refreshed = await metadataFuture;
-      metadataUpdated = true;
+      metadataSnapshotLoaded = true;
     } on Object catch (error) {
       final preempted = isRuntimeRequestPreemption(error);
       metadataPreempted = preempted;
@@ -884,11 +884,11 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       // the same scheduler token keeps the retry behind any queued page plan.
       metadataRetryAttempted = true;
       try {
-        refreshed = await _refreshRemoteEntry(
+        refreshed = await _loadRemoteEntrySnapshot(
           focus,
           control: control,
         );
-        metadataUpdated = true;
+        metadataSnapshotLoaded = true;
       } on Object catch (error) {
         final preemptedAgain = isRuntimeRequestPreemption(error);
         widget.debugTrace.record(
@@ -942,7 +942,9 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         identityHash: refreshed.chapter.chapterId,
         payload: <String, Object?>{
           'stage': 'reader-metadata-version-refresh-complete',
-          'metadataUpdated': metadataUpdated,
+          'metadataSnapshotLoaded': metadataSnapshotLoaded,
+          'chapterPersisted': false,
+          'pageCarrierPersisted': false,
           'metadataPreempted': metadataPreempted,
           'metadataRetryAttempted': metadataRetryAttempted,
           'versionChecked': versionChecked,

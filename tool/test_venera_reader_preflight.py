@@ -65,15 +65,23 @@ def main() -> None:
     )
     require(
         "apps/app/lib/demo_home_reader_route.dart",
-        "final legacyVenera = _hasLegacyVeneraLocators(entry.chapter)",
+        "final sourceLocatorRefreshRequired =",
+        "chapterRequiresSourceLocatorRefresh(entry.chapter)",
         "forceSourceRefresh: true",
-        "Venera 章节仍包含已失效的运行时资源定位符",
+        "chapterRequiresSourceLocatorRefresh(current.chapter)",
+        "章节仍包含不可用于 Reader 的启动快照/运行时资源定位符",
     )
     ordered_after(
         "apps/app/lib/demo_home_reader_route.dart",
         "Future<_PreparedImportedChapter> _prepareImportedChapter(",
-        "if (_hasLegacyVeneraLocators(current.chapter))",
+        "final sourceLocatorRefreshRequired =",
         "final byteLoaders =",
+    )
+    require(
+        "apps/app/lib/demo_home_source_compat.dart",
+        "bool chapterRequiresSourceLocatorRefresh(ImportedChapterRecord chapter)",
+        "_hasLegacyVeneraLocators(chapter)",
+        "chapterHasHomeProjectionSnapshotPagePlaceholders(chapter)",
     )
     require(
         "apps/app/lib/source_resource_gateway.dart",

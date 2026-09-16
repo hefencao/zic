@@ -474,6 +474,15 @@ void main() {
         compact.chapter.pages[1].sourceId,
         startsWith('zic-home-snapshot-page:'),
       );
+      expect(
+        session.versionAuthorityEntry(
+          sourceId: compact.chapter.sourceId,
+          comicId: compact.chapter.comicId,
+          chapterId: compact.chapter.chapterId,
+        ),
+        isNull,
+        reason: 'compact Home placeholders are not page authority',
+      );
       final hydrated = await session.hydrateEntry(compact);
       expect(hydrated.chapter.pages[1].uri, newManifest.pages[1].uri);
 

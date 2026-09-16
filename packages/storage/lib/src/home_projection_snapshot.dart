@@ -10,7 +10,17 @@ const _legacyHomeProjectionSnapshotVersion = 1;
 const _compactHomeProjectionSnapshotVersion = 2;
 const _legacyDownloadProjectionHomeSnapshotVersion = 3;
 const _homeProjectionSnapshotVersion = 4;
-const _compactPageSourcePrefix = 'zic-home-snapshot-page:';
+const homeProjectionSnapshotPageSourcePrefix = 'zic-home-snapshot-page:';
+
+bool isHomeProjectionSnapshotPageSource(String sourceId) =>
+    sourceId.startsWith(homeProjectionSnapshotPageSourcePrefix);
+
+bool chapterHasHomeProjectionSnapshotPagePlaceholders(
+  ImportedChapterRecord chapter,
+) =>
+    chapter.pages.any(
+      (page) => isHomeProjectionSnapshotPageSource(page.sourceId),
+    );
 const _snapshotCompressionThreshold = 512 * 1024;
 
 typedef _EncodedHomeProjectionSnapshot = ({
@@ -590,7 +600,7 @@ ImportedChapterRecord _compactChapterFromJson(Map<String, Object?> json) {
       pageCount,
       (index) => ImportedPageRecord(
         displayName: 'page-${index + 1}',
-        sourceId: '$_compactPageSourcePrefix$index',
+        sourceId: '$homeProjectionSnapshotPageSourcePrefix$index',
         contentKindHint: ContentKindHint.unknown,
       ),
       growable: false,

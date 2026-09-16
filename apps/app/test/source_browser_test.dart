@@ -1605,6 +1605,48 @@ void main() {
     );
   });
 
+  test('compact Home snapshot chapter cannot satisfy details authority', () {
+    const chapter = Chapter(
+      chapterId: 'chapter',
+      comicId: 'comic',
+      title: 'chapter',
+      sequence: 1,
+      pageCount: 1,
+      sourceRevision: 'r1',
+    );
+    final compact = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture',
+        displayName: 'chapter',
+        sourceId: 'venera:jm',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: 'page-1',
+            sourceId: 'zic-home-snapshot-page:0',
+            contentKindHint: ContentKindHint.unknown,
+          ),
+        ],
+      ),
+    );
+    final usable = ImportedLibraryEntry(
+      chapter: compact.chapter.copyWith(
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: 'page-1',
+            sourceId: 'https://cdn.example/page-1.jpg',
+            contentKindHint: ContentKindHint.jpeg,
+          ),
+        ],
+      ),
+    );
+
+    expect(details.comicDetailsCanReuseChapterEntry(compact, chapter), isFalse);
+    expect(details.comicDetailsCanReuseChapterEntry(usable, chapter), isTrue);
+  });
+
   testWidgets('local details retries an unpersisted chapter against the live source resolver', (tester) async {
     final source = _FixtureSource('fixture-live-source', '动态源');
     final manifest = await source.loadComic(source._comicId);
@@ -2097,6 +2139,7 @@ void main() {
       sourceId,
       'Reader后台刷新源',
       supportsComicVersions: true,
+      rotateChapterLocator: true,
       chapterLoadErrors: const <Object>[
         Failure(
           code: ErrorCode.cancelled,
@@ -2159,6 +2202,14 @@ void main() {
     expect(source.chapterLoads, 2);
     expect(source.versionLoadCalls, 1);
     expect(source.controlledChapterPriorities, <int>[100, 100]);
+    final persistedAfterMetadata = await store.get(sourceId, source._chapterId);
+    expect(
+      persistedAfterMetadata?.chapter.pages.single.sourceId,
+      contains('/generation-0/page-1.png'),
+      reason:
+          'post-first-frame metadata/version refresh may observe a fresh carrier '
+          'but must not replace the persisted Reader page transport authority',
+    );
     expect(source.controlledVersionPriorities, <int>[100]);
     expect(
       trace.events.where(
@@ -2181,7 +2232,9 @@ void main() {
       (event) =>
           event.payload['stage'] == 'reader-metadata-version-refresh-complete',
     );
-    expect(completed.payload['metadataUpdated'], isTrue);
+    expect(completed.payload['metadataSnapshotLoaded'], isTrue);
+    expect(completed.payload['chapterPersisted'], isFalse);
+    expect(completed.payload['pageCarrierPersisted'], isFalse);
     expect(completed.payload['metadataPreempted'], isTrue);
     expect(completed.payload['metadataRetryAttempted'], isTrue);
     expect(completed.payload['versionChecked'], isTrue);
@@ -2953,6 +3006,7 @@ final class _FixtureSource
     this.includeSecondChapter = false,
     this.revealSecondChapterOnRefresh = false,
     this.runtimePageUri = false,
+    this.rotateChapterLocator = false,
     this.catalogPageCount = 1,
     this.browseItemCount = 1,
     this.emptyCatalog = false,
@@ -2982,6 +3036,7 @@ final class _FixtureSource
   final bool includeSecondChapter;
   final bool revealSecondChapterOnRefresh;
   final bool runtimePageUri;
+  final bool rotateChapterLocator;
   final int catalogPageCount;
   final int browseItemCount;
   final bool emptyCatalog;
@@ -3315,7 +3370,9 @@ final class _FixtureSource
                 )
               : Uri.https(
                   'example.invalid',
-                  '/$sourceId/$chapterId/page-1.png',
+                  '/$sourceId/$chapterId/'
+                  '${rotateChapterLocator ? 'generation-$_chapterLoads/' : ''}'
+                  'page-1.png',
                 ),
           contentKindHint: ContentKindHint.png,
         ),

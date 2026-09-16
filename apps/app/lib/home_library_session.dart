@@ -880,10 +880,16 @@ final class HomeLibrarySession extends ChangeNotifier {
     final hydrated = _versionAuthorityHydratedEntries[key];
     if (hydrated != null) return hydrated;
     for (final entry in _entries) {
-      if (_versionAuthorityEntryKey(entry) == key) return entry;
+      if (_versionAuthorityEntryKey(entry) == key &&
+          !chapterHasHomeProjectionSnapshotPagePlaceholders(entry.chapter)) {
+        return entry;
+      }
     }
     for (final entry in _orphanedDownloadEntries) {
-      if (_versionAuthorityEntryKey(entry) == key) return entry;
+      if (_versionAuthorityEntryKey(entry) == key &&
+          !chapterHasHomeProjectionSnapshotPagePlaceholders(entry.chapter)) {
+        return entry;
+      }
     }
     return null;
   }
@@ -894,6 +900,9 @@ final class HomeLibrarySession extends ChangeNotifier {
   }) {
     var changed = false;
     for (final entry in entries) {
+      if (chapterHasHomeProjectionSnapshotPagePlaceholders(entry.chapter)) {
+        continue;
+      }
       final key = _versionAuthorityEntryKey(entry);
       final previous = _versionAuthorityHydratedEntries[key];
       if (previous?.chapter.sourceRevision == entry.chapter.sourceRevision &&
@@ -1662,7 +1671,8 @@ final class HomeLibrarySession extends ChangeNotifier {
     ];
     if (cached != null &&
         cached.chapter.sourceRevision == entry.chapter.sourceRevision &&
-        cached.chapter.pages.length == entry.chapter.pages.length) {
+        cached.chapter.pages.length == entry.chapter.pages.length &&
+        !chapterHasHomeProjectionSnapshotPagePlaceholders(cached.chapter)) {
       return cached;
     }
     final hydrated = await _traceStartupOperation<ImportedLibraryEntry?>(
