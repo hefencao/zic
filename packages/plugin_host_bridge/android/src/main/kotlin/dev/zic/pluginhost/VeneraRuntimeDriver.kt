@@ -1654,7 +1654,8 @@ function __zicTrackActivationWork(promise){if(!__zicActivationOpen)return promis
 async function __zicWaitForActivationWork(){while(__zicActivationWork.size)await Promise.allSettled(Array.from(__zicActivationWork))}
 function __zicBridgeFailure(envelope){const error=new Error(envelope?.error||'Venera bridge failed');if(envelope?.errorCode)error.code=String(envelope.errorCode);if(envelope?.retryable===true)error.retryable=true;return error}
 function __zicBridgeResponse(callId,raw){const key=String(callId),waiter=__zicBridgeWaiters.get(key);if(!waiter)return;__zicBridgeWaiters.delete(key);try{const envelope=typeof raw==='string'?JSON.parse(raw):raw;if(!envelope?.ok){waiter.reject(__zicBridgeFailure(envelope));return}waiter.resolve(__zicDecode(envelope.value))}catch(error){waiter.reject(error)}}
-function __zicRequestAsync(message){const callId='zic-async-'+String(++__zicBridgeCallKey);const request={...message,bridgeCallId:callId};return new Promise((resolve,reject)=>{__zicBridgeWaiters.set(callId,{resolve,reject});try{ZicNative.requestAsync(JSON.stringify(__zicEncode(request)))}catch(error){__zicBridgeWaiters.delete(callId);reject(error)}})}
+function __zicCancelBridgeWaiters(requestId){if(!requestId)return;for(const [callId,waiter] of Array.from(__zicBridgeWaiters.entries())){if(waiter.requestId!==requestId)continue;__zicBridgeWaiters.delete(callId);waiter.reject(new Error('Venera request was cancelled'))}}
+function __zicRequestAsync(message){const callId='zic-async-'+String(++__zicBridgeCallKey),requestId=message.requestId??__zicActiveRequestId,request={...message,bridgeCallId:callId};return new Promise((resolve,reject)=>{__zicBridgeWaiters.set(callId,{resolve,reject,requestId});try{ZicNative.requestAsync(JSON.stringify(__zicEncode(request)))}catch(error){__zicBridgeWaiters.delete(callId);reject(error)}})}
 function sendMessage(message) {
   const requestId=message.requestId??__zicActiveRequestId;
   if(requestId&&message.requestId==null){message={...message,requestId}}
@@ -1968,5 +1969,5 @@ async function __zicInvoke(raw){
   __zicBridgeMetrics.delete(request.requestId);__zicCancelled.delete(request.requestId);__zicActiveRequestId=previousRequestId;ZicNative.finished(request.requestId);
  }
 }
-function __zicCancel(requestId){__zicCancelled.add(requestId);__zicCancelDelays(requestId)}
+function __zicCancel(requestId){__zicCancelled.add(requestId);__zicCancelDelays(requestId);__zicCancelBridgeWaiters(requestId)}
 """

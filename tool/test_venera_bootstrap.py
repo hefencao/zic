@@ -588,6 +588,10 @@ async function checkAsyncNetworkBridgeAndActivationGate(){
  const previousRequestAsync=ZicNative.requestAsync;
  ZicNative.requestAsync=raw=>{
    const message=__zicDecode(JSON.parse(raw));seen=message;
+   // A cancelled request deliberately never receives a native bridge response.
+   // __zicCancel must reject its JS waiter so the single invocation context can
+   // unwind without waiting for native I/O completion.
+   if(message.requestId==='async-cancel')return;
    setTimeout(()=>__zicBridgeResponse(message.bridgeCallId,JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{},body:'background'})})),30);
  };
  const background=Network.get('https://api.invalid/background');
@@ -605,8 +609,11 @@ async function checkAsyncNetworkBridgeAndActivationGate(){
  ZicNative.finished=requestId=>{cancelledFinished=requestId};
  const cancelledInvocation=__zicInvoke({requestId:'async-cancel',operation:'loadResource',arguments:{uri:'https://api.invalid/cancel'}});
  setTimeout(()=>__zicCancel('async-cancel'),5);
- await cancelledInvocation;
- if(cancelledComplete!==null||cancelledFinished!=='async-cancel')throw new Error('async bridge cancellation released the invocation early '+JSON.stringify({cancelledComplete,cancelledFinished}));
+ const cancelledOutcome=await Promise.race([
+   cancelledInvocation.then(()=> 'finished'),
+   new Promise(resolve=>setTimeout(()=>resolve('timeout'),250)),
+ ]);
+ if(cancelledOutcome!=='finished'||cancelledComplete!==null||cancelledFinished!=='async-cancel'||Array.from(__zicBridgeWaiters.values()).some(waiter=>waiter.requestId==='async-cancel'))throw new Error('async bridge cancellation did not unwind its request-scoped waiter '+JSON.stringify({cancelledOutcome,cancelledComplete,cancelledFinished,retained:Array.from(__zicBridgeWaiters.values()).filter(waiter=>waiter.requestId==='async-cancel').length}));
  if(previousRequestAsync===undefined)delete ZicNative.requestAsync;else ZicNative.requestAsync=previousRequestAsync;
 }
 

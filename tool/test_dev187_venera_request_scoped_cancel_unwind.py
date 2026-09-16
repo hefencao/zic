@@ -29,7 +29,10 @@ if build_now >= 206:
         venera_path,
         "resolverHttp.cancel(requestId)",
         "function __zicCancelDelays(requestId)",
-        "function __zicCancel(requestId){__zicCancelled.add(requestId);__zicCancelDelays(requestId)}",
+        "function __zicCancelBridgeWaiters(requestId)",
+        "requestId=message.requestId??__zicActiveRequestId",
+        "__zicBridgeWaiters.set(callId,{resolve,reject,requestId})",
+        "function __zicCancel(requestId){__zicCancelled.add(requestId);__zicCancelDelays(requestId);__zicCancelBridgeWaiters(requestId)}",
         "bridge.cancel(requestId)",
         "finishedSink?.invoke(requestId)",
     )
@@ -51,7 +54,10 @@ require(
     "function __zicDelay(time,requestId)",
     "if(message.method==='delay')return __zicDelay(message.time,requestId);",
     "function __zicCancelDelays(requestId)",
-    "function __zicCancel(requestId){__zicCancelled.add(requestId);__zicCancelDelays(requestId)}",
+    "function __zicCancelBridgeWaiters(requestId)",
+    "requestId=message.requestId??__zicActiveRequestId",
+    "__zicBridgeWaiters.set(callId,{resolve,reject,requestId})",
+    "function __zicCancel(requestId){__zicCancelled.add(requestId);__zicCancelDelays(requestId);__zicCancelBridgeWaiters(requestId)}",
     "bridge.cancel(requestId)",
     "finishedSink?.invoke(requestId)",
 )
