@@ -1914,6 +1914,14 @@ void main() {
     expect(firstFrame, greaterThan(routePush));
     expect(sourceReady, greaterThan(firstFrame));
     expect(
+      trace.events[routePush].monotonicMicros,
+      lessThan(trace.events[firstFrame].monotonicMicros),
+    );
+    expect(
+      trace.events[firstFrame].monotonicMicros,
+      lessThan(trace.events[sourceReady].monotonicMicros),
+    );
+    expect(
       trace.events[sourceReady].payload['available'],
       isFalse,
       reason: 'details must remain usable when deferred source activation fails',

@@ -669,6 +669,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     this.onMigrateVersion,
     this.previewMaxItemsPerRow = 4,
     this.traceSink = const NoopTraceSink(),
+    this.traceMonotonicMicros,
     super.key,
   });
 
@@ -701,6 +702,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final ComicDetailsVersionMigrator? onMigrateVersion;
   final int previewMaxItemsPerRow;
   final TraceSink traceSink;
+  final int Function()? traceMonotonicMicros;
 
   @override
   State<LocalComicDetailsScreen> createState() =>
@@ -903,7 +905,8 @@ final class _LocalComicDetailsScreenState
   }) {
     widget.traceSink.record(
       TraceEvent(
-        monotonicMicros: _traceClock.elapsedMicroseconds,
+        monotonicMicros:
+            widget.traceMonotonicMicros?.call() ?? _traceClock.elapsedMicroseconds,
         sessionId: 'comic-details:${widget.comic.sourceId}',
         kind: kind,
         payload: <String, Object?>{

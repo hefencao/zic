@@ -881,6 +881,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               previewMaxItemsPerRow:
                   widget.preferences.detailsPreviewMaxItemsPerRow,
               traceSink: widget.debugTrace,
+              traceMonotonicMicros: () => _traceClock.elapsedMicroseconds,
             );
           },
         ),
