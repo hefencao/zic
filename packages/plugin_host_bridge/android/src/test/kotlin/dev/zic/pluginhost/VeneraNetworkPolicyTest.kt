@@ -281,6 +281,52 @@ class VeneraNetworkPolicyTest {
     }
 
     @Test
+    fun noStoreResolverResponseNeverBecomesRuntimeCacheAuthority() {
+        val cache = VeneraHttpCacheStore()
+        val namespace = VeneraHttpCacheNamespace("plugin", "v1", "source-a")
+        val headers = linkedMapOf("Accept" to "*/*")
+        cache.store(
+            namespace,
+            "https://fixture/chapter",
+            headers,
+            VeneraHttpResponse(
+                200,
+                JSONObject().put("content-type", "application/json"),
+                "{\"images\":[]}".encodeToByteArray(),
+            ),
+            500L,
+        )
+        val response = VeneraHttpResponse(
+            200,
+            JSONObject()
+                .put("content-type", "text/html; charset=UTF-8")
+                .put("cache-control", "no-store, no-cache, must-revalidate"),
+            "Could not connect to mysql!".encodeToByteArray(),
+        )
+
+        cache.store(namespace, "https://fixture/chapter", headers, response, 1_000L)
+
+        assertNull(
+            cache.lookup(
+                namespace,
+                "https://fixture/chapter",
+                headers,
+                null,
+                nowNanos = 2_000L,
+            ),
+        )
+        assertNull(
+            cache.staleForRevalidation(
+                namespace,
+                "https://fixture/chapter",
+                headers,
+                null,
+                nowNanos = 6L * 1_000_000_000L,
+            ),
+        )
+    }
+
+    @Test
     fun defaultResolverCacheExposesOnlyFiveSecondToTwoHourRevalidationWindow() {
         val cache = VeneraHttpCacheStore()
         val namespace = VeneraHttpCacheNamespace("plugin", "v1", "source-a")

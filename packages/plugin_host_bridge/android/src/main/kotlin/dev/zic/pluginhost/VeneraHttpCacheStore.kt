@@ -166,13 +166,19 @@ internal class VeneraHttpCacheStore(
         cacheTime: String? = null,
         nowEpochMillis: Long = System.currentTimeMillis(),
     ) {
+        val key = VeneraHttpCacheKey(namespace, url)
+        if (veneraResponseDisallowsStorage(response.headers)) {
+            veneraCacheDebug(namespace, url, "response-no-store")
+            remove(key)
+            removePersistent(namespace, url)
+            return
+        }
         if (response.status >= 400 ||
             response.body.isEmpty() ||
             response.body.size >= VENERA_NETWORK_MAX_CACHE_ENTRY_BYTES
         ) {
             return
         }
-        val key = VeneraHttpCacheKey(namespace, url)
         remove(key)
         while (entries.isNotEmpty() &&
             size + response.body.size > VENERA_NETWORK_MAX_CACHE_BYTES
@@ -385,6 +391,16 @@ internal fun veneraCacheResponseHeadersMatch(
 
 private fun JSONObject.veneraStringHeaders(): Map<String, String> =
     keys().asSequence().associateWith { key -> optString(key) }
+
+private fun veneraResponseDisallowsStorage(headers: JSONObject): Boolean {
+    val cacheControl = headers.veneraStringHeaders().entries
+        .firstOrNull { it.key.equals("cache-control", ignoreCase = true) }
+        ?.value
+        .orEmpty()
+    return cacheControl.split(',').any { directive ->
+        directive.substringBefore('=').trim().equals("no-store", ignoreCase = true)
+    }
+}
 
 private fun veneraComparableCacheHeaders(
     headers: Map<String, String>,

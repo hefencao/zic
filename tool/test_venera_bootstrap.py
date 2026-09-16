@@ -540,6 +540,35 @@ async function checkResolverNetworkFailureRetryability(){
  if(seen?.requestId!==requestId||completed?.seenRequestId!==requestId||finished!==requestId||result?.ok!==false||result?.code!=='venera-operation-failed'||result?.retryable!==true||!String(result?.message||'').includes("cannot decrypt peer's message"))throw new Error('resolver network failure lost retryability '+JSON.stringify({seen,completed,finished}));
 }
 
+async function checkSourceReadParseFailureRequestsOneFreshReplay(){
+ const previousRequestAsync=ZicNative.requestAsync;
+ const comicId='venera:comic:'+__zicB64({v:2,id:'comic-raw'});
+ const chapterId=__zicChapterMessage(comicId,'ep-1','Chapter 1',0).chapterId;
+ const seen=[];let completed=null,finished=null;
+ globalThis.__zicSource={comic:{loadEp:async()=>{
+   const response=await Network.get('https://api.invalid/chapter');
+   return {images:JSON.parse(response.body).images};
+ }}};
+ ZicNative.requestAsync=raw=>{
+   const message=__zicDecode(JSON.parse(raw));seen.push(message);
+   const body=message.__zicFreshResolver===true?JSON.stringify({images:['https://cdn.invalid/1.webp']}):'Could not connect to mysql!';
+   setTimeout(()=>__zicBridgeResponse(message.bridgeCallId,JSON.stringify({ok:true,value:__zicEncode({status:200,headers:{'cache-control':'no-store','content-type':message.__zicFreshResolver===true?'application/json':'text/html'},body})})),0);
+ };
+ ZicNative.complete=(requestId,envelope)=>{completed={requestId,envelope:JSON.parse(envelope)}};
+ ZicNative.finished=requestId=>{finished=requestId};
+ try{
+   await __zicInvoke({requestId:'source-read-bad',operation:'loadChapter',arguments:{chapterId}});
+   const failed=completed?.envelope;
+   if(failed?.ok!==false||failed?.retryable!==true||failed?.details?.sourceReadReplayEligible!==true||failed?.details?.sourceReadNetworkCalls!==1||seen[0]?.__zicFreshResolver===true)throw new Error('source read parse failure was not qualified for bounded replay '+JSON.stringify({failed,seen}));
+   completed=null;finished=null;
+   await __zicInvoke({requestId:'source-read-fresh',operation:'loadChapter',arguments:{chapterId,freshNetwork:true}});
+   const recovered=completed?.envelope;
+   if(recovered?.ok!==true||finished!=='source-read-fresh'||seen[1]?.__zicFreshResolver!==true||__zicDecode(recovered.value)?.pages?.length!==1)throw new Error('fresh source read replay did not bypass runtime network cache '+JSON.stringify({recovered,finished,seen}));
+ }finally{
+   if(previousRequestAsync===undefined)delete ZicNative.requestAsync;else ZicNative.requestAsync=previousRequestAsync;
+ }
+}
+
 async function checkRequestScopedDelayCancellation(){
  const requestId='delay-cancel';
  __zicActiveRequestId=requestId;
@@ -597,7 +626,7 @@ async function checkInvokeRequestLifecycle(){
  if(seenRequestId!=='invoke-lifecycle'||completed?.requestId!=='invoke-lifecycle'||finished!=='invoke-lifecycle')throw new Error('invoke lifecycle did not retain the request id '+JSON.stringify({seenRequestId,completed,finished}));
 }
 
-(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkFreshResourceGenerationRestartsInitialConfig();await checkFreshResourceGenerationBypassesResolverCache();await checkNonImageBodyUsesSourceRecovery();await checkExternalSemanticRetryContinuesCurrentReplacementChain();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkResolverNetworkFailureRetryability();await checkRequestScopedDelayCancellation();await checkAsyncNetworkBridgeAndActivationGate();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
+(async()=>{await checkCurrentCategory();await checkStableEntityIds();await checkLegacyCategory();await checkExploreObject();await checkLoadNextExplore();await checkSearchOptionDefaults();await checkLegacyGlobalScratchBinding();await checkDirectCoverResource();await checkChapterPageCount();await checkWebpPageHints();await checkSingleVolumeChapter();await checkComicPreviewPagination();await checkPreviewCropIdentity();await checkChapterResourceCanBeReadAgain();await checkLegacyChapterResourceToken();await checkStreamableOnLoadFailedConfig();await checkFreshResourceGenerationRestartsInitialConfig();await checkFreshResourceGenerationBypassesResolverCache();await checkNonImageBodyUsesSourceRecovery();await checkExternalSemanticRetryContinuesCurrentReplacementChain();await checkChapterImageConfigIsDeferred();await checkRequestPlanReuseAndThumbnailPath();await checkSourceSettings();await checkSourceAccount();await checkNetworkExtraAndCryptoSurface();await checkRequestPlanStageDiagnostics();await checkResolverNetworkFailureRetryability();await checkSourceReadParseFailureRequestsOneFreshReplay();await checkRequestScopedDelayCancellation();await checkAsyncNetworkBridgeAndActivationGate();await checkInvokeRequestLifecycle();console.log('Venera bootstrap contract: OK')})().catch(e=>{console.error(e);process.exit(1)});
 '''
 with tempfile.TemporaryDirectory() as td:
     js=Path(td)/'test.js'; js.write_text(bootstrap+'\n'+test)

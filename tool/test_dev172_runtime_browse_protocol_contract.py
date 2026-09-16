@@ -23,7 +23,7 @@ protocol = read('packages/plugin_host/lib/src/runtime_protocol.dart')
 for token in (
     'bool useFilters = false,',
     "'useFilters': useFilters",
-    "optional: const <String>{'useFilters'}",
+    "optional: const <String>{'useFilters', 'freshNetwork'}",
     "arguments['useFilters'] is! bool",
     'Set<String> optional = const <String>{}',
 ):

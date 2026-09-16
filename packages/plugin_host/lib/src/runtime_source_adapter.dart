@@ -511,6 +511,38 @@ final class _RuntimeBrowsableComicSource
         },
       );
 
+  Future<Object> _invokeSourceRead(
+    ExternalPluginRuntimeOperation operation,
+    String externalSourceId,
+    Map<String, Object?> arguments, {
+    TaskControl? control,
+  }) async {
+    try {
+      return await _invoke(
+        operation,
+        externalSourceId,
+        arguments,
+        control: control,
+      );
+    } on Failure catch (error) {
+      final replayEligible =
+          _format == ExternalComicPluginFormat.veneraJavaScript &&
+              error.code == ErrorCode.network &&
+              error.details['sourceReadReplayEligible'] == true;
+      if (!replayEligible) rethrow;
+    }
+    _throwIfTaskCancelled(control);
+    return _invoke(
+      operation,
+      externalSourceId,
+      <String, Object?>{
+        ...arguments,
+        'freshNetwork': true,
+      },
+      control: control,
+    );
+  }
+
   @override
   Future<List<SourceBrowseSection>> loadBrowseSections() async {
     final payload = await _invoke(
@@ -553,7 +585,7 @@ final class _RuntimeBrowsableComicSource
     if (offset < 0 || limit <= 0) {
       throw ArgumentError('browse offset/limit are invalid');
     }
-    final payload = await _invoke(
+    final payload = await _invokeSourceRead(
       ExternalPluginRuntimeOperation.browse,
       _externalId,
       <String, Object?>{
@@ -683,7 +715,7 @@ final class _RuntimeBrowsableComicSource
     if (!supportsComicPreview) {
       return ComicPreviewPage(items: const <ComicPreviewAsset>[]);
     }
-    final payload = await _invoke(
+    final payload = await _invokeSourceRead(
       ExternalPluginRuntimeOperation.loadComicPreview,
       _externalId,
       <String, Object?>{
@@ -717,7 +749,7 @@ final class _RuntimeBrowsableComicSource
         maxPage: page,
       );
     }
-    final payload = await _invoke(
+    final payload = await _invokeSourceRead(
       ExternalPluginRuntimeOperation.loadComicComments,
       _externalId,
       <String, Object?>{
@@ -743,7 +775,7 @@ final class _RuntimeBrowsableComicSource
     if (comicId.trim().isEmpty) {
       throw ArgumentError.value(comicId, 'comicId');
     }
-    final payload = await _invoke(
+    final payload = await _invokeSourceRead(
       ExternalPluginRuntimeOperation.loadComic,
       _externalId,
       <String, Object?>{'comicId': comicId},
@@ -796,7 +828,7 @@ final class _RuntimeBrowsableComicSource
     if (chapterId.trim().isEmpty) {
       throw ArgumentError.value(chapterId, 'chapterId');
     }
-    final payload = await _invoke(
+    final payload = await _invokeSourceRead(
       ExternalPluginRuntimeOperation.loadChapter,
       _externalId,
       <String, Object?>{'chapterId': chapterId},

@@ -462,7 +462,7 @@ void _validateArguments(
       _expectKeys(
         arguments,
         const <String>{'query', 'offset', 'limit', 'sectionId', 'filterState'},
-        optional: const <String>{'useFilters'},
+        optional: const <String>{'useFilters', 'freshNetwork'},
       );
       if (arguments['query'] is! String ||
           arguments['offset'] is! int ||
@@ -472,34 +472,55 @@ void _validateArguments(
           !_isSearchFilterState(arguments['filterState']) ||
           (arguments['useFilters'] != null &&
               arguments['useFilters'] is! bool) ||
+          (arguments['freshNetwork'] != null &&
+              arguments['freshNetwork'] is! bool) ||
           (arguments['offset']! as int) < 0 ||
           (arguments['limit']! as int) <= 0) {
         throw const FormatException('browse arguments are invalid');
       }
       return;
     case ExternalPluginRuntimeOperation.loadComic:
-      _expectSingleNonEmptyString(arguments, 'comicId');
+      _expectKeys(
+        arguments,
+        const <String>{'comicId'},
+        optional: const <String>{'freshNetwork'},
+      );
+      _expectNonEmptyString(arguments, 'comicId');
+      _expectOptionalFreshNetwork(arguments);
       return;
     case ExternalPluginRuntimeOperation.loadComicPreview:
-      _expectKeys(arguments, const <String>{'comicId', 'nextToken'});
+      _expectKeys(
+        arguments,
+        const <String>{'comicId', 'nextToken'},
+        optional: const <String>{'freshNetwork'},
+      );
       _expectNonEmptyString(arguments, 'comicId');
       _expectNullableString(arguments, 'nextToken');
+      _expectOptionalFreshNetwork(arguments);
       return;
     case ExternalPluginRuntimeOperation.loadComicComments:
       _expectKeys(
         arguments,
         const <String>{'comicId', 'subId', 'page', 'replyTo'},
+        optional: const <String>{'freshNetwork'},
       );
       _expectNonEmptyString(arguments, 'comicId');
       _expectNullableString(arguments, 'subId');
       _expectNullableString(arguments, 'replyTo');
+      _expectOptionalFreshNetwork(arguments);
       final page = arguments['page'];
       if (page is! int || page < 1) {
         throw const FormatException('comic comment page is invalid');
       }
       return;
     case ExternalPluginRuntimeOperation.loadChapter:
-      _expectSingleNonEmptyString(arguments, 'chapterId');
+      _expectKeys(
+        arguments,
+        const <String>{'chapterId'},
+        optional: const <String>{'freshNetwork'},
+      );
+      _expectNonEmptyString(arguments, 'chapterId');
+      _expectOptionalFreshNetwork(arguments);
       return;
     case ExternalPluginRuntimeOperation.loadResource:
     case ExternalPluginRuntimeOperation.retryResource:
@@ -609,6 +630,13 @@ void _expectKeys(
     throw const FormatException(
       'runtime request arguments do not match operation',
     );
+  }
+}
+
+void _expectOptionalFreshNetwork(Map<String, Object?> arguments) {
+  final freshNetwork = arguments['freshNetwork'];
+  if (freshNetwork != null && freshNetwork is! bool) {
+    throw const FormatException('fresh network flag is invalid');
   }
 }
 

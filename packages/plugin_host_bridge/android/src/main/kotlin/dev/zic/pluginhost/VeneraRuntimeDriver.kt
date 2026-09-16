@@ -79,10 +79,29 @@ internal class VeneraRuntimeDriver private constructor(
             val result = pending.remove(requestId) ?: return@resultSink
             val ok = envelope.optBoolean("ok", false)
             if (!ok) {
+                val details = (decodeWireValue(envelope.opt("details")) as? Map<*, *>)
+                    ?.entries
+                    ?.mapNotNull { (key, value) ->
+                        (key as? String)?.let { it to value }
+                    }
+                    ?.toMap()
+                    .orEmpty()
+                if (details["sourceReadReplayEligible"] == true &&
+                    Log.isLoggable(VENERA_RUNTIME_LOG_TAG, Log.DEBUG)
+                ) {
+                    Log.d(
+                        VENERA_RUNTIME_LOG_TAG,
+                        "venera-source-read driver=$driverId request=$requestId " +
+                            "stage=replay-eligible calls=${details["sourceReadNetworkCalls"] ?: 0} " +
+                            "cacheHits=${details["sourceReadNetworkCacheHits"] ?: 0} " +
+                            "originCalls=${details["sourceReadNetworkOriginCalls"] ?: 0}",
+                    )
+                }
                 result.error(
                     envelope.optString("code", "venera-operation-failed"),
                     envelope.optString("message", "Venera operation failed").take(300),
                     envelope.optBoolean("retryable", false),
+                    details,
                 )
             } else {
                 val decoded = decodeWireValue(envelope.opt("value"))
@@ -141,6 +160,16 @@ internal class VeneraRuntimeDriver private constructor(
             return
         }
         val requestId = request.requireString("requestId")
+        val requestArguments = request["arguments"] as? Map<*, *>
+        if (requestArguments?.get("freshNetwork") == true &&
+            Log.isLoggable(VENERA_RUNTIME_LOG_TAG, Log.DEBUG)
+        ) {
+            Log.d(
+                VENERA_RUNTIME_LOG_TAG,
+                "venera-source-read driver=$driverId request=$requestId " +
+                    "stage=fresh-replay operation=${request["operation"]}",
+            )
+        }
         if (request.requireString("externalSourceId") != sourceKey) {
             result.error("source-missing", "Venera source is not active")
             return
@@ -1597,6 +1626,7 @@ function __zicEncode(value) {
 }
 let __zicActiveRequestId=null;
 let __zicFreshResolverDepth=0;
+let __zicFreshSourceReadDepth=0;
 const __zicBridgeMetrics=new Map();
 const __zicBridgeWaiters=new Map();
 let __zicBridgeCallKey=0;
@@ -1635,7 +1665,7 @@ function sendMessage(message) {
   }
   if(message.method==='delay')return __zicDelay(message.time,requestId);
   const networkCall=message.method==='http'||message.method==='http_binary'||message.method==='http_image_binary';
-  if(networkCall&&__zicFreshResolverDepth>0&&message.__zicFreshResolver!==true){message={...message,__zicFreshResolver:true}}
+  if(networkCall&&(__zicFreshResolverDepth>0||__zicFreshSourceReadDepth>0)&&message.__zicFreshResolver!==true){message={...message,__zicFreshResolver:true}}
   if(networkCall&&typeof ZicNative.requestAsync==='function'){
     const networkStarted=__zicNowMicros();
     const asyncResult=__zicRequestAsync(message).then(value=>{if(requestId)__zicRecordBridgeNetworkCall(__zicBridgeMetric(requestId),message,networkStarted,value,null);return value},error=>{if(requestId)__zicRecordBridgeNetworkCall(__zicBridgeMetric(requestId),message,networkStarted,null,error);throw error});
@@ -1919,6 +1949,24 @@ async function __zicOperation(request){
  }
  throw new Error('Unsupported Venera operation');
 }
-async function __zicInvoke(raw){const request=typeof raw==='string'?JSON.parse(raw):raw,previousRequestId=__zicActiveRequestId;try{await __zicWaitForActivationWork();if(__zicCancelled.has(request.requestId))throw new Error('Venera request was cancelled');__zicActiveRequestId=request.requestId;const value=await __zicOperation(request);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:true,value:__zicEncode(value)}))}catch(error){const message=__zicErrorMessage(error,request.operation),retryable=error?.retryable===true||/timeout|timed out|connect|network|dns|temporar|HTTP 5\d\d/i.test(message);if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:false,code:'venera-operation-failed',message,retryable}))}finally{__zicBridgeMetrics.delete(request.requestId);__zicCancelled.delete(request.requestId);__zicActiveRequestId=previousRequestId;ZicNative.finished(request.requestId)}}
+const __zicReplayableSourceReads=new Set(['browse','loadComic','loadComicPreview','loadComicComments','loadChapter']);
+function __zicSourceReadReplayEligible(request,error){const metric=__zicBridgeNetworkSnapshot(request.requestId);return __zicReplayableSourceReads.has(String(request.operation))&&metric.networkCalls>0&&(error?.name==='SyntaxError'||error instanceof SyntaxError)}
+async function __zicInvoke(raw){
+ const request=typeof raw==='string'?JSON.parse(raw):raw,previousRequestId=__zicActiveRequestId;
+ const freshSourceRead=request.arguments?.freshNetwork===true;let freshSourceReadEntered=false;
+ try{
+  await __zicWaitForActivationWork();if(__zicCancelled.has(request.requestId))throw new Error('Venera request was cancelled');
+  __zicActiveRequestId=request.requestId;if(freshSourceRead){__zicFreshSourceReadDepth++;freshSourceReadEntered=true}
+  const value=await __zicOperation(request);
+  if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:true,value:__zicEncode(value)}));
+ }catch(error){
+  const message=__zicErrorMessage(error,request.operation),sourceReadReplayEligible=__zicSourceReadReplayEligible(request,error),retryable=sourceReadReplayEligible||error?.retryable===true||/timeout|timed out|connect|network|dns|temporar|HTTP 5\d\d/i.test(message);
+  const metric=__zicBridgeNetworkSnapshot(request.requestId),details=sourceReadReplayEligible?{sourceReadReplayEligible:true,sourceReadNetworkCalls:metric.networkCalls,sourceReadNetworkCacheHits:metric.networkCacheHits,sourceReadNetworkOriginCalls:metric.networkOriginCalls}:{};
+  if(!__zicCancelled.has(request.requestId))ZicNative.complete(request.requestId,JSON.stringify({ok:false,code:'venera-operation-failed',message,retryable,details}));
+ }finally{
+  if(freshSourceReadEntered)__zicFreshSourceReadDepth=Math.max(0,__zicFreshSourceReadDepth-1);
+  __zicBridgeMetrics.delete(request.requestId);__zicCancelled.delete(request.requestId);__zicActiveRequestId=previousRequestId;ZicNative.finished(request.requestId);
+ }
+}
 function __zicCancel(requestId){__zicCancelled.add(requestId);__zicCancelDelays(requestId)}
 """

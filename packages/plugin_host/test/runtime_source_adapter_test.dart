@@ -121,6 +121,51 @@ void main() {
     );
   });
 
+  test('Venera source read replay is bounded and forces fresh runtime network',
+      () async {
+    final connection = _ReplayableSourceReadConnection();
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(
+        maxResponseBytes: 4096,
+        maxConcurrentInvocations: 1,
+      ),
+    );
+    addTearDown(session.close);
+
+    final chapter = await session.sources.single.loadChapter('chapter-1');
+
+    expect(chapter.pages, hasLength(1));
+    expect(connection.requests, hasLength(2));
+    expect(
+      connection.requests.first.arguments.containsKey('freshNetwork'),
+      isFalse,
+    );
+    expect(connection.requests.last.arguments['freshNetwork'], isTrue);
+  });
+
+  test('Venera source read replay stops after the single fresh attempt', () async {
+    final connection = _ReplayableSourceReadConnection(recover: false);
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(
+        maxResponseBytes: 4096,
+        maxConcurrentInvocations: 1,
+      ),
+    );
+    addTearDown(session.close);
+
+    await expectLater(
+      session.sources.single.loadChapter('chapter-1'),
+      throwsA(isA<Failure>()),
+    );
+
+    expect(connection.requests, hasLength(2));
+    expect(connection.requests.last.arguments['freshNetwork'], isTrue);
+  });
+
   test('shared runtime adapter exposes one ordinary browsable source', () async {
     final connection = _FixtureConnection();
     final session = ExternalPluginRuntimeSession(
@@ -1365,6 +1410,72 @@ final class _VerificationFailureConnection
           retryable: true,
         ),
       );
+
+  @override
+  Future<void> close() async {}
+}
+
+final class _ReplayableSourceReadConnection
+    implements ExternalPluginRuntimeConnection {
+  _ReplayableSourceReadConnection({this.recover = true});
+
+  final bool recover;
+  final List<ExternalPluginRuntimeRequest> requests =
+      <ExternalPluginRuntimeRequest>[];
+
+  @override
+  List<ExternalPluginRuntimeSourceDescriptor> get sources =>
+      <ExternalPluginRuntimeSourceDescriptor>[
+        ExternalPluginRuntimeSourceDescriptor(
+          externalId: 'fixture',
+          name: 'Fixture',
+          language: 'en',
+          website: Uri.parse('https://example.invalid'),
+        ),
+      ];
+
+  @override
+  Future<ExternalPluginRuntimeResponse> invoke(
+    ExternalPluginRuntimeRequest request,
+  ) async {
+    requests.add(request);
+    if (requests.length == 1 || !recover) {
+      return ExternalPluginRuntimeResponse.failure(
+        requestId: request.requestId,
+        error: ExternalPluginRuntimeError(
+          code: 'venera-operation-failed',
+          message: 'temporary source metadata parse failure',
+          retryable: true,
+          details: const <String, Object?>{
+            'sourceReadReplayEligible': true,
+          },
+        ),
+      );
+    }
+    return ExternalPluginRuntimeResponse.success(
+      requestId: request.requestId,
+      payload: <String, Object?>{
+        'comicId': 'comic-1',
+        'chapter': <String, Object?>{
+          'chapterId': 'chapter-1',
+          'comicId': 'comic-1',
+          'title': 'Chapter 1',
+          'sequence': 0,
+          'pageCount': 1,
+          'sourceRevision': 'r1',
+        },
+        'readingDirection': 'topToBottom',
+        'pages': <Object?>[
+          <String, Object?>{
+            'pageId': 'page-1',
+            'chapterId': 'chapter-1',
+            'index': 0,
+            'uri': 'https://cdn.invalid/1.webp',
+          },
+        ],
+      },
+    );
+  }
 
   @override
   Future<void> close() async {}
