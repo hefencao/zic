@@ -81,6 +81,48 @@ void main() {
     expect(await index.getArtifactObject(ready.artifactId), isNull);
   });
 
+  test('sqlite exact recency touch is guarded by artifact generation', () async {
+    final index = SqliteIndex.memory();
+    await index.open();
+    addTearDown(index.close);
+    final oldReady = CacheRec(
+      id: id,
+      state: CacheState.ready,
+      path: '/tmp/exact-touch-old.bin',
+      bytes: 11,
+      checksum: 'old',
+      createdUs: 1,
+      touchedUs: 2,
+      artifactId: 'exact-touch-old-object',
+    );
+    await index.put(oldReady);
+    final replacement = oldReady.copyWith(
+      path: '/tmp/exact-touch-new.bin',
+      checksum: 'new',
+      touchedUs: 10,
+      artifactId: 'exact-touch-new-object',
+    );
+    await index.put(replacement);
+
+    await index.touchIfArtifact(
+      key: id.key,
+      expectedArtifactId: oldReady.artifactId,
+      touchedUs: 99,
+    );
+    expect(
+      (await index.get(id.key))?.touchedUs,
+      10,
+      reason: 'a deferred touch from an old READY generation must be stale',
+    );
+
+    await index.touchIfArtifact(
+      key: id.key,
+      expectedArtifactId: replacement.artifactId,
+      touchedUs: 99,
+    );
+    expect((await index.get(id.key))?.touchedUs, 99);
+  });
+
   for (final fixture in <String, CacheIndex Function()>{
     'memory': MemIndex.new,
     'sqlite': SqliteIndex.memory,

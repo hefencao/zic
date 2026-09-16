@@ -3485,6 +3485,58 @@ void main() {
     expect(await service.artifactStore.openArtifactStream(id), isNull);
   });
 
+  test('exact READY open defers recency touch behind foreground read pressure',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-exact-ready-touch-deferred-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final reads = ArtifactCacheReadScheduler();
+    final composition = await PersistentDownloadComposition.open(
+      root.path,
+      transferNet: NetLane(maxActive: 5),
+      localReadScheduler: reads,
+    );
+    addTearDown(composition.close);
+    final store = composition.artifactStore;
+    final id = DownloadId(
+      content: const ContentId(
+        sourceId: 'source',
+        comicId: 'exact-ready-touch',
+        chapterId: 'ch',
+        pageId: 'p',
+      ),
+      sourceRevision: 'r1',
+      canonicalUri: Uri.parse('https://example.test/exact-ready-touch.jpg'),
+    );
+    final bytes = Uint8List.fromList(<int>[0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
+    await store.storePromotedArtifact(id: id, bytes: bytes);
+    final before = await store.index.get(id.key);
+    expect(before, isNotNull);
+
+    final pressure = reads.holdForegroundPressure();
+    var pressureReleased = false;
+    addTearDown(() {
+      if (!pressureReleased) pressure.release();
+    });
+    final entry = await store.openArtifactStream(id);
+    expect(entry, isNotNull);
+    final whilePressured = await store.index.get(id.key);
+    expect(whilePressured?.touchedUs, before!.touchedUs,
+        reason: 'READY presentation/read authority must not await recency writes');
+
+    pressure.release();
+    pressureReleased = true;
+    CacheRec? after;
+    for (var attempt = 0; attempt < 100; attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      after = await store.index.get(id.key);
+      if (after != null && after.touchedUs > before.touchedUs) break;
+    }
+    expect(after?.touchedUs, greaterThan(before.touchedUs),
+        reason: 'deferred exact LRU recency must still be persisted');
+  });
+
   test('physical READY open defers recency touch behind foreground read pressure',
       () async {
     final root = await Directory.systemTemp.createTemp(

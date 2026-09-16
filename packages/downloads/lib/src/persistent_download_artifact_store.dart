@@ -1889,8 +1889,13 @@ final class PersistentDownloadArtifactStore
   final ArtifactBytes _bytes;
   final File _recoveryMarker;
   final StorageWriteScheduler _storageWriteScheduler;
-  final _StoreLifetimeTaskControl _deferredPhysicalArtifactTouchControl =
+  final _StoreLifetimeTaskControl _deferredRecencyTouchControl =
       _StoreLifetimeTaskControl();
+  final Map<DownloadId, ({String artifactId, int touchedUs})>
+      _pendingExactArtifactTouches =
+      <DownloadId, ({String artifactId, int touchedUs})>{};
+  final Map<DownloadId, Future<void>> _exactArtifactTouchDrains =
+      <DownloadId, Future<void>>{};
   Future<void>? _cleanupDebtDrain;
   bool _cleanupDebtDrainRerunRequested = false;
   Future<void>? _redundantPhysicalPartialSweep;
@@ -3065,6 +3070,65 @@ final class PersistentDownloadArtifactStore
     );
   }
 
+  void _scheduleExactArtifactTouch(
+    DownloadId id,
+    String expectedArtifactId,
+  ) {
+    if (_closed) return;
+    final touchedUs = DateTime.now().toUtc().microsecondsSinceEpoch;
+    final pending = _pendingExactArtifactTouches[id];
+    if (pending == null || pending.touchedUs < touchedUs) {
+      _pendingExactArtifactTouches[id] = (
+        artifactId: expectedArtifactId,
+        touchedUs: touchedUs,
+      );
+    }
+    if (_exactArtifactTouchDrains.containsKey(id)) return;
+    _startExactArtifactTouchDrain(id);
+  }
+
+  void _startExactArtifactTouchDrain(DownloadId id) {
+    late final Future<void> drain;
+    drain = _runDeferredExactArtifactTouches(id).whenComplete(() {
+      if (identical(_exactArtifactTouchDrains[id], drain)) {
+        _exactArtifactTouchDrains.remove(id);
+      }
+      if (!_closed && _pendingExactArtifactTouches.containsKey(id)) {
+        _startExactArtifactTouchDrain(id);
+      }
+    });
+    _exactArtifactTouchDrains[id] = drain;
+  }
+
+  Future<void> _runDeferredExactArtifactTouches(DownloadId id) async {
+    while (!_closed && !_deferredRecencyTouchControl.cancelled) {
+      var pending = _pendingExactArtifactTouches.remove(id);
+      if (pending == null) return;
+      StorageWriteLease? lease;
+      try {
+        lease = await _storageWriteScheduler.acquireQuantum(
+          control: _deferredRecencyTouchControl,
+        );
+        if (_closed || _deferredRecencyTouchControl.cancelled) return;
+        final latest = _pendingExactArtifactTouches.remove(id);
+        if (latest != null) pending = latest;
+        await _index.touchIfArtifact(
+          key: id.key,
+          expectedArtifactId: pending.artifactId,
+          touchedUs: pending.touchedUs,
+        );
+      } on Failure catch (error) {
+        if (error.code != ErrorCode.cancelled) {
+          // Recency metadata is best-effort and never part of artifact authority.
+        }
+      } on Object {
+        // Recency metadata is best-effort and never part of artifact authority.
+      } finally {
+        lease?.release();
+      }
+    }
+  }
+
   void _schedulePhysicalArtifactTouch(
     PhysicalMediaId id,
     String expectedArtifactId,
@@ -3124,15 +3188,15 @@ final class PersistentDownloadArtifactStore
   ) async {
     try {
       await _serializePhysicalArtifactMutation(id, () async {
-        if (_closed || _deferredPhysicalArtifactTouchControl.cancelled) return;
+        if (_closed || _deferredRecencyTouchControl.cancelled) return;
         final current = await _index.getPhysicalMediaArtifact(id);
         if (current == null || current.artifactId != expectedArtifactId) return;
         StorageWriteLease? lease;
         try {
           lease = await _storageWriteScheduler.acquireQuantum(
-            control: _deferredPhysicalArtifactTouchControl,
+            control: _deferredRecencyTouchControl,
           );
-          if (_closed || _deferredPhysicalArtifactTouchControl.cancelled) return;
+          if (_closed || _deferredRecencyTouchControl.cancelled) return;
           final latest = await _index.getPhysicalMediaArtifact(id);
           if (latest == null || latest.artifactId != expectedArtifactId) return;
           await _index.touchPhysicalMediaArtifact(id, touchedUs);
@@ -4501,8 +4565,7 @@ final class PersistentDownloadArtifactStore
               candidate.access.accessLocator != selectedAccess.accessLocator,
         ),
       ];
-      final touchedUs = DateTime.now().toUtc().microsecondsSinceEpoch;
-      await _index.touch(id.key, touchedUs);
+      _scheduleExactArtifactTouch(id, record.effectiveArtifactId);
       return ArtifactCacheStreamEntry(
         length: selected.length,
         open: ({required int start, int? endExclusive}) =>
@@ -6933,7 +6996,7 @@ final class PersistentDownloadArtifactStore
         'cannot close persistent artifact store with borrowed durable partials',
       );
     }
-    _deferredPhysicalArtifactTouchControl.cancel();
+    _deferredRecencyTouchControl.cancel();
     _closed = true;
     // Public methods reject new work after _closed, but operations that were
     // already admitted can still enqueue a per-id/path tail while their
@@ -6948,6 +7011,7 @@ final class PersistentDownloadArtifactStore
         ..._artifactMutationTails.values,
         ..._physicalPartialMutationTails.values,
         ..._physicalArtifactMutationTails.values,
+        ..._exactArtifactTouchDrains.values,
         ..._structuredWriteTails.values,
         ..._placementWrites.values,
       };

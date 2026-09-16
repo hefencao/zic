@@ -2088,6 +2088,25 @@ final class SqliteIndex
     }
   }
 
+  Future<void> touchIfArtifact({
+    required String key,
+    required String expectedArtifactId,
+    required int touchedUs,
+  }) async {
+    _requireDb().execute(
+      'UPDATE cache_entry SET touched_us = MAX(touched_us, ?) '
+      'WHERE key = ? AND artifact_id = ?',
+      <Object?>[touchedUs, key, expectedArtifactId],
+    );
+    final cached = _cachedEntries;
+    final current = cached?[key];
+    if (current != null &&
+        current.effectiveArtifactId == expectedArtifactId &&
+        current.touchedUs < touchedUs) {
+      cached![key] = current.copyWith(touchedUs: touchedUs);
+    }
+  }
+
   @override
   Future<int> totalBytes({CacheState? state}) async {
     final cached = _cachedEntries;
