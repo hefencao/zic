@@ -770,7 +770,7 @@ def check_compile_regressions() -> None:
         'final class ImageFolderScreen',
         'pageSubtitleBuilder:',
         'ImagePreviewStateRegion',
-        'MemoryImage(bytes)',
+        'MemoryEncodedResourceSource(',
         'frameBuilder: (context, child, frame, wasSynchronouslyLoaded)',
         'final LocalImageDecodeProbe? decodeProbe',
         'final String sourceId',

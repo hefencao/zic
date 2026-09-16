@@ -28,8 +28,11 @@ require(
     'Chrome/150.0.0.0 Mobile Safari/537.36',
     'String get networkUserAgent => _networkUserAgent;',
     "'networkUserAgent': _networkUserAgent",
-    "'version': 6",
 )
+preferences = read('apps/app/lib/app_preferences.dart')
+version_match = re.search(r"'version':\s*(\d+)", preferences)
+if version_match is None or int(version_match.group(1)) < 6:
+    raise SystemExit('FAIL: app preference schema must preserve dev.161 network UA persistence')
 require(
     'apps/app/lib/app_settings_screen.dart',
     "ValueKey<String>('network-user-agent')",

@@ -50,7 +50,9 @@ else:
 for token in binding_tokens:
     if token not in binding:
         raise SystemExit(f'viewport/demand separation contract is missing: {token}')
-accept = binding[binding.index('  void accept(ReaderObs observation)'):binding.index('\n  bool classifyPage')]
+accept_marker = binding.index(' accept(ReaderObs observation) {')
+accept_start = binding.rfind('\n', 0, accept_marker) + 1
+accept = binding[accept_start:binding.index('\n  bool classifyPage', accept_start)]
 if accept.index('_viewport = viewport;') > accept.index('pipeline.accept(observation);'):
     raise SystemExit('Reader-local viewport fact must be committed before demand reconcile')
 

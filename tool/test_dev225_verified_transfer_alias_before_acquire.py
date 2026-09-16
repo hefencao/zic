@@ -41,8 +41,11 @@ for token in (
 for token in (
     'typedef TransferIdentityResolver = DownloadId Function(DownloadId exactId);',
     'final TransferIdentityResolver resolveTransferId;',
-    'final normalized = _normalizeDemands(desired);',
-    'final physicalId = resolveTransferId(entry.key);',
+    'final normalizedResult = _normalizeDemands(consumer, desired);',
+    'final normalized = normalizedResult.demands;',
+    'final physicalId = consumer._resolvedPhysicalIds[entry.key] ??',
+    'resolveTransferId(entry.key);',
+    '..addAll(normalizedResult.resolvedPhysicalIds);',
     'required this.exactId,',
     'DownloadId exactId;',
     'final sourceId = claim.exactId;',

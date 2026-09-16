@@ -38,7 +38,8 @@ player = read('packages/local_media_ui/lib/src/local_image_player.dart')
 
 # Keep the only device-supported behavior change from dev.317.
 require(session, 'Timer.run(() => _drainObservation(generation));', 'dev.317 event-turn seam')
-require(player, 'detected.isWebp ? null : MemoryImage(bytes)', 'native WebP presentation')
+if re.search(r'final provider\s*=\s*detected\.isWebp\s*\?\s*null\s*:\s*encodedResourceImageProvider\(\s*MemoryEncodedResourceSource\(', player) is None:
+    raise SystemExit('dev.320 missing native WebP presentation through encoded-resource provider')
 
 # The scene probe observes one final post-frame position without requesting frames.
 for token in (

@@ -54,7 +54,10 @@ for token in (
     require(reader_controls_test, token, 'real gesture scrub regression')
 require(app_smoke_test, 'slider.onChangeEnd!(1);', 'smoke test scrub completion')
 
-accept_start = binding.index('  void accept(ReaderObs observation)')
+accept_match = re.search(r'^  \w+ accept\(ReaderObs observation\) \{', binding, re.M)
+if accept_match is None:
+    raise SystemExit('dev.220 ReaderBinding accept method is missing')
+accept_start = accept_match.start()
 accept_end = binding.index('\n  bool classifyPage', accept_start)
 accept = binding[accept_start:accept_end]
 for token in (

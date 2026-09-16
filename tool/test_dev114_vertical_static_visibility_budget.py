@@ -61,12 +61,17 @@ for token in (
     "maxSpeculativeExternalPresentationPending = 1",
 ):
     require(coordinator, token, "external fallback presentation owner")
-require(output, "externalPresentationRequested", "Pipeline external presentation projection")
-require(
-    player,
-    "output.externalPresentationRequested && !_fallbackLoadStarted",
-    "LocalImagePlayer external presentation gate",
-)
+for token in (
+    "externalPresentationRequested",
+    "externalPresentationReady",
+):
+    require(output, token, "Pipeline external presentation projection")
+for token in (
+    "output.externalPresentationRequested ||",
+    "output.externalPresentationReady) &&",
+    "!_fallbackLoadStarted",
+):
+    require(player, token, "LocalImagePlayer external presentation gate")
 for token in (
     "zicFlutterImageCacheMaximumBytes = 100 * 1024 * 1024",
     "zicFlutterImageCacheMaximumEntries = 1000",

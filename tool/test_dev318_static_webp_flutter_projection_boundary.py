@@ -71,8 +71,8 @@ if version_code == 318:
 else:
     for token in projection_tokens:
         forbid(player, token, 'falsified dev.318 static projection rollback')
-    require(player, 'detected.isWebp ? null : MemoryImage(bytes)',
-            'native WebP presentation restoration')
+    if re.search(r'final provider\s*=\s*detected\.isWebp\s*\?\s*null\s*:\s*encodedResourceImageProvider\(\s*MemoryEncodedResourceSource\(', player) is None:
+        raise SystemExit('dev.318 missing native WebP presentation restoration through encoded-resource provider')
 
 # Animation metadata may report playback capability once real multi-frame
 # evidence exists, but it must not route presentation or rebuild the Flutter

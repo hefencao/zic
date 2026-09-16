@@ -40,7 +40,8 @@ for token in ('Duration(milliseconds: 180)', 'GestureBinding.resamplingEnabled',
 # dev.318 valid projection is now device-falsified and production presentation is restored.
 for token in ('_isAuthoritativeStaticWebpOutput', '_buildStaticWebpProjection(', 'pipeline-texture-fallback-to-compressed-flutter-image'):
     forbid(player, token, 'dev.318 static projection')
-require(player, 'detected.isWebp ? null : MemoryImage(bytes)', 'native WebP presentation restoration')
+if re.search(r'final provider\s*=\s*detected\.isWebp\s*\?\s*null\s*:\s*encodedResourceImageProvider\(\s*MemoryEncodedResourceSource\(', player) is None:
+    raise SystemExit('dev.319 missing native WebP presentation restoration through encoded-resource provider')
 require(reader, '_recordVerticalScrollCadenceSummary', 'retained motion cadence observation')
 
 # FrameMetrics is Window-owned observation, isolated from Android main callback execution.
