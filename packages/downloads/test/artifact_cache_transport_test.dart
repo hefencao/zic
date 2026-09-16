@@ -1008,6 +1008,270 @@ void main() {
     expect(cache.reads, 0);
     expect(fallback.opens, 1);
   });
+
+  test('strict carrier policy reopens source instead of trusting old URI',
+      () async {
+    final currentUri = Uri.parse('venera-resource:current-carrier');
+    final historicalUri = Uri.parse('venera-resource:historical-carrier');
+    final current = _downloadId(currentUri, 'page-carrier-policy');
+    final historical = _downloadId(historicalUri, 'page-carrier-policy');
+    final cache = _MemoryArtifactStore(<DownloadId, Uint8List>{
+      historical: Uint8List.fromList(<int>[1, 2, 3, 4]),
+    });
+    final fallback = _RecordingTransport(Uint8List.fromList(<int>[8, 9]));
+    final manager = ArtifactCacheManager(backend: cache);
+    final transport = ArtifactCacheTransport(
+      cache: manager,
+      identities: <MapEntry<Uri, DownloadId>>[
+        MapEntry(currentUri, current),
+      ],
+      fallbackFor: (_) => fallback,
+    );
+
+    final response = await transport.open(currentUri);
+
+    expect(await _collect(response), <int>[8, 9]);
+    expect(fallback.opens, 1);
+    expect(manager.hasPendingHistoricalCarrierRevalidation(current), isFalse);
+  });
+
+  test('trust-cache carrier policy serves old URI without source or alias',
+      () async {
+    final currentUri = Uri.parse('venera-resource:current-trusted-carrier');
+    final historicalUri = Uri.parse('venera-resource:trusted-cache-carrier');
+    final current = _downloadId(currentUri, 'page-trusted-carrier');
+    final historical = _downloadId(historicalUri, 'page-trusted-carrier');
+    final cache = _MemoryArtifactStore(<DownloadId, Uint8List>{
+      historical: Uint8List.fromList(<int>[4, 3, 2, 1]),
+    });
+    final fallback = _RecordingTransport(Uint8List.fromList(<int>[8, 9]));
+    final trace = MemoryTraceSink();
+    final manager = ArtifactCacheManager(
+      backend: cache,
+      carrierMismatchPolicy: CachedCarrierMismatchPolicy.trustCached,
+    );
+    final transport = ArtifactCacheTransport(
+      cache: manager,
+      identities: <MapEntry<Uri, DownloadId>>[
+        MapEntry(currentUri, current),
+      ],
+      fallbackFor: (_) => fallback,
+      clock: _Clock(),
+      traceSink: trace,
+    );
+
+    final response = await transport.open(currentUri);
+
+    expect(await _collect(response), <int>[4, 3, 2, 1]);
+    expect(response.bodyAuthority, ByteResponseBodyAuthority.artifactCache);
+    expect(fallback.opens, 0);
+    expect(cache.values.containsKey(current), isFalse);
+    expect(manager.directEquivalents(current), isEmpty);
+    expect(manager.hasPendingHistoricalCarrierRevalidation(current), isFalse);
+    final source = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.artifactSource,
+    );
+    expect(source.payload['source'], 'historical-artifact-cache-stream');
+    expect(source.payload['historicalCarrierReuse'], isTrue);
+    expect(source.payload['historicalCarrierPolicy'], 'trustCached');
+  });
+
+  test('conflicting complete historical carriers fail closed by default',
+      () async {
+    final currentUri = Uri.parse('venera-resource:current-conflict');
+    final historicalUriA = Uri.parse('venera-resource:historical-conflict-a');
+    final historicalUriB = Uri.parse('venera-resource:historical-conflict-b');
+    final current = _downloadId(currentUri, 'page-conflicting-carrier');
+    final historicalA = _downloadId(
+      historicalUriA,
+      'page-conflicting-carrier',
+    );
+    final historicalB = _downloadId(
+      historicalUriB,
+      'page-conflicting-carrier',
+    );
+    final cache = _MemoryArtifactStore(<DownloadId, Uint8List>{
+      historicalA: Uint8List.fromList(<int>[1, 2, 3]),
+      historicalB: Uint8List.fromList(<int>[4, 5, 6, 7]),
+    });
+    final fallback = _RecordingTransport(Uint8List.fromList(<int>[9]));
+    final manager = ArtifactCacheManager(
+      backend: cache,
+      carrierMismatchPolicy: CachedCarrierMismatchPolicy.trustCached,
+    );
+    final transport = ArtifactCacheTransport(
+      cache: manager,
+      identities: <MapEntry<Uri, DownloadId>>[
+        MapEntry(currentUri, current),
+      ],
+      fallbackFor: (_) => fallback,
+    );
+
+    final response = await transport.open(currentUri);
+
+    expect(await _collect(response), <int>[9]);
+    expect(fallback.opens, 1);
+    expect(cache.values.containsKey(current), isFalse);
+  });
+
+  test('source-scoped conflict trust accepts complete conflicting carrier',
+      () async {
+    final currentUri = Uri.parse('venera-resource:current-conflict-trusted');
+    final historicalUriA =
+        Uri.parse('venera-resource:historical-conflict-trusted-a');
+    final historicalUriB =
+        Uri.parse('venera-resource:historical-conflict-trusted-b');
+    final current = _downloadId(currentUri, 'page-conflicting-trusted');
+    final historicalA = _downloadId(
+      historicalUriA,
+      'page-conflicting-trusted',
+    );
+    final historicalB = _downloadId(
+      historicalUriB,
+      'page-conflicting-trusted',
+    );
+    final cache = _MemoryArtifactStore(<DownloadId, Uint8List>{
+      historicalA: Uint8List.fromList(<int>[1, 2, 3]),
+      historicalB: Uint8List.fromList(<int>[4, 5, 6, 7]),
+    });
+    final fallback = _RecordingTransport(Uint8List.fromList(<int>[9]));
+    final trace = MemoryTraceSink();
+    final manager = ArtifactCacheManager(
+      backend: cache,
+      carrierMismatchPolicy: CachedCarrierMismatchPolicy.trustCached,
+    )..updateHistoricalCarrierSignatureConflictTrust(
+        (sourceId) => sourceId == current.content.sourceId,
+      );
+    final transport = ArtifactCacheTransport(
+      cache: manager,
+      identities: <MapEntry<Uri, DownloadId>>[
+        MapEntry(currentUri, current),
+      ],
+      fallbackFor: (_) => fallback,
+      clock: _Clock(),
+      traceSink: trace,
+    );
+
+    final response = await transport.open(currentUri);
+
+    expect(await _collect(response), <int>[1, 2, 3]);
+    expect(fallback.opens, 0);
+    expect(cache.values.containsKey(current), isFalse);
+    expect(manager.directEquivalents(current), isEmpty);
+    final source = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.artifactSource,
+    );
+    expect(source.payload['historicalCarrierSignatureConflict'], isTrue);
+    expect(
+      source.payload['historicalCarrierSignatureConflictTrusted'],
+      isTrue,
+    );
+  });
+
+  test('persistent backend exposes conflicting READY carriers in touch order',
+      () async {
+    final root = await Directory.systemTemp.createTemp(
+      'zic-historical-carrier-conflict-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final store = await PersistentDownloadArtifactStore.open(root.path);
+    final currentUri = Uri.parse('venera-resource:persistent-current');
+    final historicalUriA = Uri.parse('venera-resource:persistent-old-a');
+    final historicalUriB = Uri.parse('venera-resource:persistent-old-b');
+    final current = _downloadId(currentUri, 'persistent-conflict-page');
+    final historicalA = _downloadId(
+      historicalUriA,
+      'persistent-conflict-page',
+    );
+    final historicalB = _downloadId(
+      historicalUriB,
+      'persistent-conflict-page',
+    );
+    await store.storePromotedArtifact(
+      id: historicalA,
+      bytes: Uint8List.fromList(<int>[1, 2, 3]),
+    );
+    await store.storePromotedArtifact(
+      id: historicalB,
+      bytes: Uint8List.fromList(<int>[4, 5, 6, 7]),
+    );
+    await store.close();
+    final reopened = await PersistentDownloadArtifactStore.open(root.path);
+    addTearDown(reopened.close);
+    expect(await reopened.openArtifactStream(historicalA), isNotNull);
+    expect(await reopened.openArtifactStream(historicalB), isNotNull);
+    final historicalCandidates =
+        await reopened.historicalArtifactCarriers(current);
+    expect(historicalCandidates.readyRecordCount, 2);
+    expect(historicalCandidates.signatureCount, 2);
+    expect(historicalCandidates.ids, containsAll(<DownloadId>[historicalA, historicalB]));
+    for (final candidate in historicalCandidates.ids) {
+      expect(await reopened.openArtifactStream(candidate), isNotNull);
+    }
+    final fallback = _RecordingTransport(Uint8List.fromList(<int>[9]));
+    var conflictTrustCalls = 0;
+    final manager = ArtifactCacheManager(
+      backend: reopened,
+      carrierMismatchPolicy: CachedCarrierMismatchPolicy.trustCached,
+    )..updateHistoricalCarrierSignatureConflictTrust((_) {
+        conflictTrustCalls++;
+        return true;
+      });
+    expect(
+      await manager.lookupAuthoritative(historicalCandidates.ids.first),
+      isNotNull,
+    );
+    final historicalLookup = await manager.lookupHistoricalCarrier(current);
+    expect(conflictTrustCalls, 1);
+    expect(historicalLookup, isNotNull);
+    expect(historicalLookup?.signatureConflictTrusted, isTrue);
+    final transport = ArtifactCacheTransport(
+      cache: manager,
+      identities: <MapEntry<Uri, DownloadId>>[
+        MapEntry(currentUri, current),
+      ],
+      fallbackFor: (_) => fallback,
+    );
+
+    final response = await transport.open(currentUri);
+
+    expect(await _collect(response), <int>[4, 5, 6, 7]);
+    expect(fallback.opens, 0);
+    expect(await manager.lookupAuthoritative(current), isNull);
+  });
+
+  test('reuse-then-refresh serves old URI and arms revalidation only',
+      () async {
+    final currentUri = Uri.parse('venera-resource:current-lazy-carrier');
+    final historicalUri = Uri.parse('venera-resource:lazy-cache-carrier');
+    final current = _downloadId(currentUri, 'page-lazy-carrier');
+    final historical = _downloadId(historicalUri, 'page-lazy-carrier');
+    final cache = _MemoryArtifactStore(<DownloadId, Uint8List>{
+      historical: Uint8List.fromList(<int>[5, 6, 7]),
+    });
+    final fallback = _RecordingTransport(Uint8List.fromList(<int>[9]));
+    final manager = ArtifactCacheManager(
+      backend: cache,
+      carrierMismatchPolicy: CachedCarrierMismatchPolicy.reuseThenRefresh,
+    );
+    final transport = ArtifactCacheTransport(
+      cache: manager,
+      identities: <MapEntry<Uri, DownloadId>>[
+        MapEntry(currentUri, current),
+      ],
+      fallbackFor: (_) => fallback,
+    );
+
+    final response = await transport.open(currentUri);
+
+    expect(await _collect(response), <int>[5, 6, 7]);
+    expect(fallback.opens, 0);
+    expect(cache.values.containsKey(current), isFalse);
+    expect(manager.directEquivalents(current), isEmpty);
+    expect(manager.hasPendingHistoricalCarrierRevalidation(current), isTrue);
+    expect(manager.consumeHistoricalCarrierRevalidation(current), isTrue);
+    expect(manager.hasPendingHistoricalCarrierRevalidation(current), isFalse);
+  });
 }
 
 DownloadId _downloadId(Uri uri, String pageId) => DownloadId(
@@ -1036,11 +1300,35 @@ final class _Clock implements MonoClock {
   int nowMicros() => _value++;
 }
 
-final class _MemoryArtifactStore implements ArtifactCacheBackend {
+final class _MemoryArtifactStore
+    implements ArtifactCacheBackend, HistoricalArtifactCarrierQueryBackend {
   _MemoryArtifactStore(this.values);
 
   final Map<DownloadId, Uint8List> values;
   int reads = 0;
+
+  @override
+  Future<HistoricalArtifactCarrierCandidates> historicalArtifactCarriers(
+    DownloadId id,
+  ) async {
+    final candidates = values.keys
+        .where(
+          (candidate) =>
+              candidate != id &&
+              candidate.content == id.content &&
+              candidate.sourceRevision == id.sourceRevision,
+        )
+        .toList(growable: false);
+    final signatures = <String>{
+      for (final candidate in candidates)
+        '${values[candidate]!.lengthInBytes}:${values[candidate]!.join(',')}',
+    };
+    return HistoricalArtifactCarrierCandidates(
+      ids: candidates,
+      readyRecordCount: candidates.length,
+      signatureCount: signatures.length,
+    );
+  }
 
   @override
   Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async {

@@ -214,6 +214,12 @@ void main() {
         'networkUserAgent': 'fixture-network-agent',
         'debugTraceExportDirectory': 'Diagnostics/Trace',
         'readerPrefetchReadBudgetMiB': 72,
+        'cachedCarrierTrustMode': 'reuseThenRefresh',
+        'pluginTrustConflictingHistoricalCarriers': <String, Object?>{
+          'venera:fixture-plugin': true,
+          'mihon:strict-plugin': false,
+          'bad': 'yes',
+        },
         'animatedWebpPrefetchBudgetMiB': 88, // ignored legacy dev.247/248 key
         'sourceDownloadDirectories': <String, Object?>{
           'venera:alpha': '/data/downloads-alpha',
@@ -272,6 +278,22 @@ void main() {
     expect(controller.cacheLimitMb, defaultCacheLimitMb);
     expect(controller.readerPrefetchReadBudgetMiB, 72);
     expect(
+      controller.cachedCarrierTrustMode,
+      CachedCarrierTrustMode.reuseThenRefresh,
+    );
+    expect(
+      controller.trustConflictingHistoricalCarriersForPlugin(
+        'venera:fixture-plugin',
+      ),
+      isTrue,
+    );
+    expect(
+      controller.trustConflictingHistoricalCarriersForPlugin(
+        'mihon:strict-plugin',
+      ),
+      isFalse,
+    );
+    expect(
       controller.sourceDownloadDirectoryFor('venera:alpha'),
       '/data/downloads-alpha',
     );
@@ -304,6 +326,11 @@ void main() {
     controller.setChapterDownloadDirectoryPendingMoveFrom('/data/old');
     controller.setCacheLimitMb(1024);
     controller.setReaderPrefetchReadBudgetMiB(64);
+    controller.setCachedCarrierTrustMode(CachedCarrierTrustMode.trustCached);
+    controller.setPluginTrustConflictingHistoricalCarriers(
+      'mihon:fixture-plugin',
+      true,
+    );
     controller.setSourceDownloadDirectory('venera:gamma', '/data/gamma');
     controller.setLongPressZoomRestoreOnRelease(true);
     controller.setLongPressZoomMoveMode(ReaderLongPressMoveMode.drag);
@@ -330,7 +357,7 @@ void main() {
     expect(written?['themeMode'], 'dark');
     expect(written?['amoledDarkTheme'], isFalse);
     expect(written?['shelfSortMode'], 'custom');
-    expect(written?['version'], 6);
+    expect(written?['version'], 7);
     expect(written?['detailsPreviewMaxItemsPerRow'], 4);
     expect(written?['networkUserAgent'], 'custom-network-agent');
     expect(written?['debugTraceExportDirectory'], 'Debug/Reader');
@@ -341,6 +368,14 @@ void main() {
     );
     expect(written?['cacheLimitMb'], 1024);
     expect(written?['readerPrefetchReadBudgetMiB'], 64);
+    expect(written?['cachedCarrierTrustMode'], 'trustCached');
+    expect(
+      written?['pluginTrustConflictingHistoricalCarriers'],
+      <String, bool>{
+        'venera:fixture-plugin': true,
+        'mihon:fixture-plugin': true,
+      },
+    );
     expect(
       written?['sourceDownloadDirectories'],
       <String, String>{

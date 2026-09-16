@@ -126,6 +126,7 @@ final class PersistentDownloadArtifactStore
         ArtifactCacheBackend,
         ArtifactCacheRetentionQuery,
         ArtifactCacheBindingBackend,
+        HistoricalArtifactCarrierQueryBackend,
         DownloadCacheMutationOwner,
         PhysicalArtifactCacheBackend,
         PhysicalArtifactBoundReplayBackend,
@@ -2780,6 +2781,36 @@ final class PersistentDownloadArtifactStore
         await _registry.evict(id);
       }
     }
+  }
+
+  @override
+  Future<HistoricalArtifactCarrierCandidates> historicalArtifactCarriers(
+    DownloadId id,
+  ) async {
+    _requireOpen();
+    final records = await _index.listLogicalBindings(
+      content: id.content,
+      sourceRevision: id.sourceRevision,
+      state: CacheState.ready,
+    );
+    final usable = records
+        .where((record) => record.id != id && _isVerifiedReadyRecord(record))
+        .toList(growable: false);
+    final signatures = <(int, String, String)>{
+      for (final record in usable)
+        (
+          record.bytes,
+          record.checksumAlgorithm.trim().toLowerCase(),
+          record.checksum.trim().toLowerCase(),
+        ),
+    };
+    return HistoricalArtifactCarrierCandidates(
+      ids: List<DownloadId>.unmodifiable(
+        usable.map((record) => record.id),
+      ),
+      readyRecordCount: usable.length,
+      signatureCount: signatures.length,
+    );
   }
 
   @override

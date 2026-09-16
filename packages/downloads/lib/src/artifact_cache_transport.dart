@@ -78,6 +78,14 @@ final class ArtifactCacheTransport implements ControlledTransport {
       final readStarted = _clock?.nowMicros();
       try {
         var lookup = await _lookupCache(id, control);
+        HistoricalArtifactCacheLookup? historicalLookup;
+        if (lookup == null) {
+          historicalLookup = await _cache.lookupHistoricalCarrier(
+            id,
+            control: control,
+          );
+          lookup = historicalLookup?.lookup;
+        }
         _throwIfTaskCancelled(control);
         final readMicros = readStarted == null
             ? null
@@ -111,9 +119,18 @@ final class ArtifactCacheTransport implements ControlledTransport {
           if (foregroundMemoryCandidate &&
               requestedPriority >= foregroundPriority) {
             // A stale memory-generation read can fail after the initial lookup.
-            // Refresh only that attempted memory binding. Persistent lookups
-            // were not consumed yet and must not be reopened before streaming.
-            lookup = await _lookupCache(id, control);
+            // Refresh the same authority class that produced the candidate;
+            // historical carrier fallback is not verified equivalence and must
+            // never silently upgrade itself to an exact/related binding here.
+            if (historicalLookup == null) {
+              lookup = await _lookupCache(id, control);
+            } else {
+              historicalLookup = await _cache.lookupHistoricalCarrier(
+                id,
+                control: control,
+              );
+              lookup = historicalLookup?.lookup;
+            }
             _throwIfTaskCancelled(control);
           }
           if (lookup != null) {
@@ -150,15 +167,33 @@ final class ArtifactCacheTransport implements ControlledTransport {
                       acquiredPriority = priority;
                     },
                   );
-            final source = lookup.tier == ArtifactCacheTier.memory
-                ? 'artifact-byte-cache-stream'
-                : 'artifact-cache-stream';
+            final historicalCarrierReuse = historicalLookup != null;
+            final source = historicalCarrierReuse
+                ? lookup.tier == ArtifactCacheTier.memory
+                    ? 'historical-artifact-byte-cache-stream'
+                    : 'historical-artifact-cache-stream'
+                : lookup.tier == ArtifactCacheTier.memory
+                    ? 'artifact-byte-cache-stream'
+                    : 'artifact-cache-stream';
             final details = <String, Object?>{
               'cacheTier': lookup.tier.name,
               'memoryCacheHit': lookup.tier == ArtifactCacheTier.memory,
               'verifiedEquivalentReuse':
-                  lookup.storageId != id,
+                  !historicalCarrierReuse && lookup.storageId != id,
               'verifiedEquivalentCandidates': verifiedEquivalentCandidates,
+              'historicalCarrierReuse': historicalCarrierReuse,
+              if (historicalCarrierReuse)
+                'historicalCarrierPolicy': _cache.carrierMismatchPolicy.name,
+              if (historicalCarrierReuse)
+                'historicalCarrierCandidates': historicalLookup.candidateCount,
+              if (historicalCarrierReuse)
+                'historicalCarrierSignatures': historicalLookup.signatureCount,
+              if (historicalCarrierReuse)
+                'historicalCarrierSignatureConflict':
+                    historicalLookup.signatureCount > 1,
+              if (historicalCarrierReuse)
+                'historicalCarrierSignatureConflictTrusted':
+                    historicalLookup.signatureConflictTrusted,
               'hotCacheEntries': _cache.memoryEntryCount,
               'hotCacheBytes': _cache.memoryBytes,
               'artifactIntegrityBasis': lookup.entry.streamIntegrity.name,
@@ -166,6 +201,9 @@ final class ArtifactCacheTransport implements ControlledTransport {
                   lookup.entry.streamIntegrity ==
                       ArtifactReadIntegrityBasis.crc32Verified,
             };
+            if (historicalCarrierReuse) {
+              _cache.noteHistoricalCarrierServed(id);
+            }
             _recordSource(
               source: source,
               id: id,

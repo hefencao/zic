@@ -115,6 +115,7 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     _downloadComposition = downloadComposition;
     _scheduleLocalReadBackendPrewarm();
     _readerArtifactCache = readerArtifactCache;
+    _syncCachedCarrierTrustMode();
     _wholeComicDownloads = wholeComicDownloads;
     _cacheCoordinator = cacheCoordinator;
     _ownsCacheCoordinator = suppliedCache == null;

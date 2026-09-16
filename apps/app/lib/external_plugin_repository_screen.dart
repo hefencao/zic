@@ -314,6 +314,50 @@ final class _ExternalPluginRepositoryScreenState
     return null;
   }
 
+  bool _pluginTrustsConflictingHistoricalCarriers(
+    InstalledExternalPlugin item,
+  ) =>
+      widget.preferences?.trustConflictingHistoricalCarriersForPlugin(
+        item.plugin.pluginId,
+      ) ??
+      false;
+
+  Future<void> _changePluginHistoricalCarrierConflictTrust(
+    InstalledExternalPlugin item,
+  ) async {
+    final preferences = widget.preferences;
+    if (preferences == null) return;
+    final current = _pluginTrustsConflictingHistoricalCarriers(item);
+    final selected = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('历史缓存冲突 · ${item.plugin.name}'),
+        content: const Text(
+          '当同一 logical page 与同一 sourceRevision 下存在多个完整 READY '
+          '历史缓存，但 length/CRC 不一致时：\n\n'
+          '严格校验会拒绝这些历史缓存并重新请求来源；“完整文件也信任”会优先使用'
+          '最近的完整历史缓存。这个选择不会把不同正文登记成等价，也不会改写 current exact 缓存。',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: Text(current ? '改为严格校验' : '严格校验（当前）'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(current ? '完整文件也信任（当前）' : '完整文件也信任'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || selected == null || selected == current) return;
+    preferences.setPluginTrustConflictingHistoricalCarriers(
+      item.plugin.pluginId,
+      selected,
+    );
+    setState(() {});
+  }
+
   /// Per-plugin download directory: one row per plugin; the choice applies to
   /// every external source the plugin exposes and only steers where NEW
   /// downloads are written. Existing bytes stay at their recorded location.
@@ -567,6 +611,16 @@ final class _ExternalPluginRepositoryScreenState
                   onChangeDownloadDirectory: (installed) => unawaited(
                     _changePluginDownloadDirectory(installed),
                   ),
+                  historicalCarrierConflictTrustOf:
+                      _pluginTrustsConflictingHistoricalCarriers,
+                  onChangeHistoricalCarrierConflictTrust:
+                      widget.preferences == null
+                          ? null
+                          : (installed) => unawaited(
+                                _changePluginHistoricalCarrierConflictTrust(
+                                  installed,
+                                ),
+                              ),
                 ),
               _ExternalPluginPage.repository => _RepositoryPane(
                   format: widget.format,
@@ -616,6 +670,8 @@ final class _InstalledPluginsPane extends StatelessWidget {
     required this.onEditJavaScript,
     required this.downloadDirectoryOf,
     required this.onChangeDownloadDirectory,
+    required this.historicalCarrierConflictTrustOf,
+    required this.onChangeHistoricalCarrierConflictTrust,
   });
 
   final ExternalComicPluginFormat format;
@@ -641,6 +697,9 @@ final class _InstalledPluginsPane extends StatelessWidget {
   final ValueChanged<InstalledExternalPlugin> onEditJavaScript;
   final String? Function(InstalledExternalPlugin) downloadDirectoryOf;
   final ValueChanged<InstalledExternalPlugin> onChangeDownloadDirectory;
+  final bool Function(InstalledExternalPlugin) historicalCarrierConflictTrustOf;
+  final ValueChanged<InstalledExternalPlugin>?
+      onChangeHistoricalCarrierConflictTrust;
 
   @override
   Widget build(BuildContext context) {
@@ -738,6 +797,10 @@ final class _InstalledPluginsPane extends StatelessWidget {
                       : null,
               downloadDirectory: downloadDirectoryOf(item),
               onChangeDownloadDirectory: onChangeDownloadDirectory,
+              trustConflictingHistoricalCarriers:
+                  historicalCarrierConflictTrustOf(item),
+              onChangeHistoricalCarrierConflictTrust:
+                  onChangeHistoricalCarrierConflictTrust,
             ),
             const Divider(height: 1),
           ],
@@ -760,6 +823,8 @@ final class _InstalledPluginTile extends StatelessWidget {
     required this.onEditJavaScript,
     required this.downloadDirectory,
     required this.onChangeDownloadDirectory,
+    required this.trustConflictingHistoricalCarriers,
+    required this.onChangeHistoricalCarrierConflictTrust,
   });
 
   final InstalledExternalPlugin item;
@@ -773,6 +838,9 @@ final class _InstalledPluginTile extends StatelessWidget {
   final ValueChanged<InstalledExternalPlugin>? onEditJavaScript;
   final String? downloadDirectory;
   final ValueChanged<InstalledExternalPlugin> onChangeDownloadDirectory;
+  final bool trustConflictingHistoricalCarriers;
+  final ValueChanged<InstalledExternalPlugin>?
+      onChangeHistoricalCarrierConflictTrust;
 
   @override
   Widget build(BuildContext context) {
@@ -834,6 +902,23 @@ final class _InstalledPluginTile extends StatelessWidget {
                       color: downloadDirectory == null
                           ? null
                           : Theme.of(context).colorScheme.primary,
+                    ),
+                  ),
+                if (failure == null &&
+                    onChangeHistoricalCarrierConflictTrust != null)
+                  IconButton(
+                    tooltip: trustConflictingHistoricalCarriers
+                        ? '历史缓存冲突：完整文件也信任'
+                        : '历史缓存冲突：严格校验',
+                    onPressed: () =>
+                        onChangeHistoricalCarrierConflictTrust!(item),
+                    icon: Icon(
+                      trustConflictingHistoricalCarriers
+                          ? Icons.verified_user_outlined
+                          : Icons.shield_outlined,
+                      color: trustConflictingHistoricalCarriers
+                          ? Theme.of(context).colorScheme.primary
+                          : null,
                     ),
                   ),
                 if (canRetry)

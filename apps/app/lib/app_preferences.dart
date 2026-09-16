@@ -14,6 +14,12 @@ enum ShelfSourceFilter { all, local, remote }
 
 enum ShelfViewPreference { gallery, list }
 
+enum CachedCarrierTrustMode {
+  strictReload,
+  reuseThenRefresh,
+  trustCached,
+}
+
 const defaultNetworkUserAgent =
     'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 '
     '(KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36';
@@ -189,6 +195,10 @@ final class AppPreferencesController extends ChangeNotifier {
   String? _chapterDownloadDirectoryPendingMoveFrom;
   int _cacheLimitMb = defaultCacheLimitMb;
   int _readerPrefetchReadBudgetMiB = defaultReaderPrefetchReadBudgetMiB;
+  CachedCarrierTrustMode _cachedCarrierTrustMode =
+      CachedCarrierTrustMode.strictReload;
+  Map<String, bool> _pluginTrustConflictingHistoricalCarriers =
+      <String, bool>{};
   Map<String, String> _sourceDownloadDirectories = <String, String>{};
   List<String> _sourceSearchHistory = <String>[];
   Set<String> _acknowledgedComicVersionNotices = <String>{};
@@ -251,6 +261,10 @@ final class AppPreferencesController extends ChangeNotifier {
       _chapterDownloadDirectoryPendingMoveFrom;
   int get cacheLimitMb => _cacheLimitMb;
   int get readerPrefetchReadBudgetMiB => _readerPrefetchReadBudgetMiB;
+  CachedCarrierTrustMode get cachedCarrierTrustMode => _cachedCarrierTrustMode;
+
+  bool trustConflictingHistoricalCarriersForPlugin(String pluginId) =>
+      _pluginTrustConflictingHistoricalCarriers[pluginId.trim()] ?? false;
 
   /// Per-source physical download roots chosen by the user, keyed by the
   /// external source identity (`venera:<key>` / `mihon:<id>`).
@@ -425,6 +439,14 @@ final class AppPreferencesController extends ChangeNotifier {
       fallback: _readerPrefetchReadBudgetMiB,
       min: minReaderPrefetchReadBudgetMiB,
       max: maxReaderPrefetchReadBudgetMiB,
+    );
+    _cachedCarrierTrustMode = _enumByName(
+      CachedCarrierTrustMode.values,
+      values['cachedCarrierTrustMode'],
+      _cachedCarrierTrustMode,
+    );
+    _pluginTrustConflictingHistoricalCarriers = _decodeBoolMap(
+      values['pluginTrustConflictingHistoricalCarriers'],
     );
     _sourceDownloadDirectories = _decodeDirectoryMap(
       values['sourceDownloadDirectories'],
@@ -633,6 +655,31 @@ final class AppPreferencesController extends ChangeNotifier {
     _changed();
   }
 
+  void setCachedCarrierTrustMode(CachedCarrierTrustMode value) {
+    if (_disposed || _cachedCarrierTrustMode == value) return;
+    _cachedCarrierTrustMode = value;
+    _changed();
+  }
+
+  void setPluginTrustConflictingHistoricalCarriers(
+    String pluginId,
+    bool value,
+  ) {
+    if (_disposed) return;
+    final key = pluginId.trim();
+    if (key.isEmpty) return;
+    final current = _pluginTrustConflictingHistoricalCarriers[key] ?? false;
+    if (current == value) return;
+    final next = <String, bool>{..._pluginTrustConflictingHistoricalCarriers};
+    if (value) {
+      next[key] = true;
+    } else {
+      next.remove(key);
+    }
+    _pluginTrustConflictingHistoricalCarriers = next;
+    _changed();
+  }
+
   /// Sets or clears (null/empty) the physical download root of one source.
   void setSourceDownloadDirectory(String sourceId, String? directory) {
     if (_disposed) return;
@@ -776,7 +823,7 @@ final class AppPreferencesController extends ChangeNotifier {
     final write = _write;
     if (write == null) return;
     await write(<String, Object?>{
-      'version': 6,
+      'version': 7,
       'themeMode': _themeMode.name,
       'amoledDarkTheme': _amoledDarkTheme,
       'debugTraceEnabled': _debugTraceEnabled,
@@ -804,6 +851,9 @@ final class AppPreferencesController extends ChangeNotifier {
           _chapterDownloadDirectoryPendingMoveFrom,
       'cacheLimitMb': _cacheLimitMb,
       'readerPrefetchReadBudgetMiB': _readerPrefetchReadBudgetMiB,
+      'cachedCarrierTrustMode': _cachedCarrierTrustMode.name,
+      'pluginTrustConflictingHistoricalCarriers':
+          _pluginTrustConflictingHistoricalCarriers,
       'sourceDownloadDirectories': _sourceDownloadDirectories,
       'sourceSearchHistory': _sourceSearchHistory,
       'acknowledgedComicVersionNotices':
@@ -898,6 +948,17 @@ Map<String, String> _decodeDirectoryMap(Object? raw) {
     final value = entry.value;
     if (value is! String || value.trim().isEmpty) continue;
     result[key] = value.trim();
+  }
+  return result;
+}
+
+Map<String, bool> _decodeBoolMap(Object? raw) {
+  if (raw is! Map) return <String, bool>{};
+  final result = <String, bool>{};
+  for (final entry in raw.entries) {
+    final key = entry.key;
+    if (key is! String || key.trim().isEmpty || entry.value is! bool) continue;
+    if (entry.value == true) result[key.trim()] = true;
   }
   return result;
 }

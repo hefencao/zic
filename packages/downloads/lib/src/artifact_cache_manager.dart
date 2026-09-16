@@ -7,6 +7,26 @@ import 'package:domain/domain.dart';
 import 'artifact_cache_store.dart';
 
 typedef ArtifactEquivalentResolver = Iterable<DownloadId> Function(DownloadId id);
+typedef HistoricalCarrierSignatureConflictTrust = bool Function(String sourceId);
+
+/// User-selected policy for an exact URI miss when a READY carrier exists for
+/// the same logical page and source revision under an older provider URI.
+///
+/// Historical carriers are never promoted to verified equivalence. The policy
+/// controls read routing only; exact/current durable authority remains keyed by
+/// the current [DownloadId].
+enum CachedCarrierMismatchPolicy {
+  /// Current exact/verified authority only. A miss reopens the source.
+  strictReload,
+
+  /// Serve the most-recent historical READY carrier immediately, then replace
+  /// it from the current source after presentation has obtained a first frame.
+  reuseThenRefresh,
+
+  /// Serve the most-recent historical READY carrier and do not automatically
+  /// reopen the current source. Explicit retry/download may still demand it.
+  trustCached,
+}
 
 /// Composition-owned multi-level router for immutable Reader page artifacts.
 final class ArtifactCacheManager {
@@ -16,7 +36,10 @@ final class ArtifactCacheManager {
     this.memoryMaxBytes = 256 * 1024 * 1024,
     this.equivalenceMaxEntries = 8192,
     this.equivalenceResolverMaxEntries = 64,
-  })  : assert(memoryMaxEntries > 0),
+    CachedCarrierMismatchPolicy carrierMismatchPolicy =
+        CachedCarrierMismatchPolicy.strictReload,
+  })  : _carrierMismatchPolicy = carrierMismatchPolicy,
+        assert(memoryMaxEntries > 0),
         assert(memoryMaxBytes > 0),
         assert(equivalenceMaxEntries > 0),
         assert(equivalenceResolverMaxEntries > 0);
@@ -26,6 +49,9 @@ final class ArtifactCacheManager {
   final int memoryMaxBytes;
   final int equivalenceMaxEntries;
   final int equivalenceResolverMaxEntries;
+  CachedCarrierMismatchPolicy _carrierMismatchPolicy;
+  HistoricalCarrierSignatureConflictTrust? _signatureConflictTrust;
+  final Set<DownloadId> _pendingHistoricalCarrierRevalidation = <DownloadId>{};
   final LinkedHashMap<_ArtifactByteKey, Uint8List> _memory =
       LinkedHashMap<_ArtifactByteKey, Uint8List>();
   final LinkedHashMap<Object, Uint8List> _residentReplayPrefixes =
@@ -63,6 +89,43 @@ final class ArtifactCacheManager {
   int get equivalenceCount => _equivalenceOrder.length;
   int get equivalenceResolverCount => _equivalenceResolvers.length;
   bool hasEquivalentResolver(String key) => _equivalenceResolvers.containsKey(key);
+  CachedCarrierMismatchPolicy get carrierMismatchPolicy =>
+      _carrierMismatchPolicy;
+
+  void updateCarrierMismatchPolicy(CachedCarrierMismatchPolicy value) {
+    if (_carrierMismatchPolicy == value) return;
+    _carrierMismatchPolicy = value;
+    if (value != CachedCarrierMismatchPolicy.reuseThenRefresh) {
+      _pendingHistoricalCarrierRevalidation.clear();
+    }
+  }
+
+  void updateHistoricalCarrierSignatureConflictTrust(
+    HistoricalCarrierSignatureConflictTrust? resolver,
+  ) {
+    _signatureConflictTrust = resolver;
+  }
+
+  bool hasPendingHistoricalCarrierRevalidation(DownloadId id) =>
+      _pendingHistoricalCarrierRevalidation.contains(id);
+
+  bool consumeHistoricalCarrierRevalidation(DownloadId id) =>
+      _pendingHistoricalCarrierRevalidation.remove(id);
+
+  void restoreHistoricalCarrierRevalidation(DownloadId id) {
+    if (_carrierMismatchPolicy == CachedCarrierMismatchPolicy.reuseThenRefresh &&
+        !requiresFreshSource(id)) {
+      _pendingHistoricalCarrierRevalidation.add(id);
+    }
+  }
+
+  void noteHistoricalCarrierServed(DownloadId id) {
+    if (_carrierMismatchPolicy == CachedCarrierMismatchPolicy.reuseThenRefresh &&
+        !requiresFreshSource(id)) {
+      _pendingHistoricalCarrierRevalidation.add(id);
+    }
+  }
+
   bool requiresFreshSource(DownloadId id) =>
       _freshSourceRecoveryGroups.containsKey(id);
 
@@ -288,6 +351,55 @@ final class ArtifactCacheManager {
     TaskControl? control,
   }) =>
       _lookupCandidatesInOrder(id, _lookupCandidates(id), control: control);
+
+  /// Looks up an older exact URI carrier for the same logical page/revision.
+  ///
+  /// This path is intentionally disjoint from verified equivalence: it is
+  /// enabled only by the user's carrier-mismatch policy and never registers or
+  /// persists an alias from the historical carrier to [id].
+  Future<HistoricalArtifactCacheLookup?> lookupHistoricalCarrier(
+    DownloadId id, {
+    TaskControl? control,
+  }) async {
+    if (_carrierMismatchPolicy == CachedCarrierMismatchPolicy.strictReload ||
+        requiresFreshSource(id)) {
+      return null;
+    }
+    final historicalBackend = backend;
+    if (historicalBackend is! HistoricalArtifactCarrierQueryBackend) {
+      return null;
+    }
+    final candidates = await _awaitCancellable(
+      (historicalBackend as HistoricalArtifactCarrierQueryBackend)
+          .historicalArtifactCarriers(id),
+      control,
+    );
+    control?.throwIfCancelled();
+    final signatureConflict = candidates.signatureCount > 1;
+    final signatureConflictTrusted = signatureConflict &&
+        (_signatureConflictTrust?.call(id.content.sourceId) ?? false);
+    if (signatureConflict && !signatureConflictTrusted) return null;
+    for (final storageId in candidates.ids) {
+      if (storageId == id ||
+          storageId.content != id.content ||
+          storageId.sourceRevision != id.sourceRevision) {
+        continue;
+      }
+      final lookup = await _lookupCandidatesInOrder(
+        id,
+        <DownloadId>[storageId],
+        control: control,
+      );
+      if (lookup == null) continue;
+      return HistoricalArtifactCacheLookup(
+        lookup: lookup,
+        candidateCount: candidates.readyRecordCount,
+        signatureCount: candidates.signatureCount,
+        signatureConflictTrusted: signatureConflictTrusted,
+      );
+    }
+    return null;
+  }
 
   Future<bool> isPinnedBackendExact(DownloadId id) {
     final retention = backend;
@@ -1273,6 +1385,20 @@ final class ArtifactCacheManager {
 }
 
 enum ArtifactCacheTier { memory, persistent }
+
+final class HistoricalArtifactCacheLookup {
+  const HistoricalArtifactCacheLookup({
+    required this.lookup,
+    required this.candidateCount,
+    required this.signatureCount,
+    required this.signatureConflictTrusted,
+  });
+
+  final ArtifactCacheLookup lookup;
+  final int candidateCount;
+  final int signatureCount;
+  final bool signatureConflictTrusted;
+}
 
 final class ArtifactCacheLookup {
   const ArtifactCacheLookup({

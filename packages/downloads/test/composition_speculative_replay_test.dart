@@ -457,6 +457,51 @@ void main() {
         reason: 'one restore may perform sequential probes, but never overlap a duplicate restore');
     expect(runtime.owner.taskKeyFor(id), isNull);
   });
+
+  test('historical carrier revalidation starts only after presentation satisfied',
+      () async {
+    final backend = _RecordingArtifactCacheBackend();
+    final cache = ArtifactCacheManager(
+      backend: backend,
+      carrierMismatchPolicy: CachedCarrierMismatchPolicy.reuseThenRefresh,
+    );
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: cache,
+      partialDownloadStore: null,
+      net: NetLane(maxActive: 2),
+    );
+    addTearDown(runtime.dispose);
+    final id = _id('historical-first-frame-revalidate');
+    final session = runtime.registry.get(id);
+    session.bindResidentImmutableAuthority(
+      validators: const Validators(),
+      totalLength: 4,
+      bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      metadataPrefix: const <int>[1, 2, 3, 4],
+    );
+    cache.noteHistoricalCarrierServed(id);
+
+    expect(cache.hasPendingHistoricalCarrierRevalidation(id), isTrue);
+    expect(cache.requiresFreshSource(id), isFalse);
+    expect(session.residentBodyBacked, isTrue);
+    expect(runtime.owner.taskKeyFor(id), isNull);
+
+    runtime.notifyPresentationSatisfied(id);
+    for (var attempt = 0;
+        attempt < 100 && !cache.requiresFreshSource(id);
+        attempt++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    expect(cache.hasPendingHistoricalCarrierRevalidation(id), isFalse);
+    expect(cache.requiresFreshSource(id), isTrue,
+        reason: 'first-frame handoff should arm the existing fresh-source quarantine');
+    expect(session.residentBodyBacked, isFalse,
+        reason: 'the stale historical presentation generation must retire before refresh');
+    expect(backend.invalidated, contains(id));
+    expect(runtime.owner.taskKeyFor(id), isNull,
+        reason: 'presentation satisfaction alone must not invent network demand');
+  });
 }
 
 DownloadId _id(String page) => DownloadId(
@@ -490,6 +535,25 @@ final class _EmptyArtifactCacheBackend implements ArtifactCacheBackend {
 
   @override
   Future<void> invalidateArtifact(DownloadId id) async {}
+}
+
+final class _RecordingArtifactCacheBackend implements ArtifactCacheBackend {
+  final List<DownloadId> invalidated = <DownloadId>[];
+
+  @override
+  Future<ArtifactCacheStreamEntry?> openArtifactStream(DownloadId id) async =>
+      null;
+
+  @override
+  Future<void> storePromotedArtifact({
+    required DownloadId id,
+    required Uint8List bytes,
+  }) async {}
+
+  @override
+  Future<void> invalidateArtifact(DownloadId id) async {
+    invalidated.add(id);
+  }
 }
 
 final class _BlockingPartialDownloadStore implements PartialDownloadStore {

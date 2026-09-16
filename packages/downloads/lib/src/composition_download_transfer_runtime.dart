@@ -184,6 +184,14 @@ final class CompositionDownloadTransferRuntime {
       <DownloadSession, ({SourceEpoch epoch, Future<void> future})>{};
   final Map<DownloadId, SourceEpoch?> _preservedPinnedReloadEpochs =
       <DownloadId, SourceEpoch?>{};
+  final Map<
+      DownloadId,
+      ({DownloadSession session, DownloadSnapshotListener listener})>
+      _historicalCarrierRevalidationWaiters = <
+          DownloadId,
+          ({DownloadSession session, DownloadSnapshotListener listener})>{};
+  final Map<DownloadId, Future<void>> _historicalCarrierRevalidations =
+      <DownloadId, Future<void>>{};
   final Map<String, Map<String, CanonicalMediaChapterAuthority>>
       _canonicalMediaAuthorityScopes =
       <String, Map<String, CanonicalMediaChapterAuthority>>{};
@@ -421,6 +429,131 @@ final class CompositionDownloadTransferRuntime {
     final ordered = candidates.entries.toList(growable: false)
       ..sort(_compareEquivalentPhysicalCandidates);
     return ordered.first.value;
+  }
+
+  /// Signals that presentation has obtained a usable frame for [logicalId].
+  ///
+  /// The signal is policy-neutral from the caller's perspective. When the
+  /// cache router served a historical URI under stale-while-revalidate policy,
+  /// this is the safe boundary after which the old resident generation may be
+  /// retired and a fresh exact source generation admitted in the background.
+  void notifyPresentationSatisfied(DownloadId logicalId) {
+    if (_disposed) return;
+    final cache = artifactCacheManager;
+    if (cache == null ||
+        !cache.hasPendingHistoricalCarrierRevalidation(logicalId) ||
+        _historicalCarrierRevalidations.containsKey(logicalId) ||
+        _historicalCarrierRevalidationWaiters.containsKey(logicalId)) {
+      return;
+    }
+    final session = findSession(logicalId);
+    if (session == null) return;
+    if (_historicalCarrierSessionReadyForRevalidation(session)) {
+      _startHistoricalCarrierRevalidation(logicalId);
+      return;
+    }
+
+    late final DownloadSnapshotListener listener;
+    listener = (_) {
+      if (_disposed) {
+        _removeHistoricalCarrierRevalidationWaiter(logicalId);
+        return;
+      }
+      if (session.state == DownloadState.disposed ||
+          session.state == DownloadState.failed) {
+        _removeHistoricalCarrierRevalidationWaiter(logicalId);
+        return;
+      }
+      if (!_historicalCarrierSessionReadyForRevalidation(session)) return;
+      _removeHistoricalCarrierRevalidationWaiter(logicalId);
+      _startHistoricalCarrierRevalidation(logicalId);
+    };
+    _historicalCarrierRevalidationWaiters[logicalId] = (
+      session: session,
+      listener: listener,
+    );
+    session.addSnapshotListener(listener);
+    // Close the listener-install race if the cache-backed local transfer
+    // promoted synchronously while the first frame callback was being handled.
+    listener(session.snapshot);
+  }
+
+  bool _historicalCarrierSessionReadyForRevalidation(
+    DownloadSession session,
+  ) =>
+      session.state == DownloadState.promoted &&
+      session.residentBodyBacked &&
+      session.residentBodyAuthority == ByteResponseBodyAuthority.artifactCache &&
+      !session.activeRun &&
+      !session.hasWriter;
+
+  void _removeHistoricalCarrierRevalidationWaiter(DownloadId id) {
+    final waiter = _historicalCarrierRevalidationWaiters.remove(id);
+    if (waiter != null) {
+      waiter.session.removeSnapshotListener(waiter.listener);
+    }
+  }
+
+  void _startHistoricalCarrierRevalidation(DownloadId id) {
+    final cache = artifactCacheManager;
+    if (_disposed ||
+        cache == null ||
+        _historicalCarrierRevalidations.containsKey(id) ||
+        !cache.consumeHistoricalCarrierRevalidation(id)) {
+      return;
+    }
+    final exactGeneration = cache.generationFor(id);
+    late final Future<void> tracked;
+    tracked = recoverPresentationArtifact(
+      id,
+      reason: 'historical-carrier-stale-while-revalidate',
+      rejectedStorageId: id,
+      rejectedGeneration: exactGeneration,
+    ).then<void>((recovered) {
+      if (!recovered && !_disposed) {
+        cache.restoreHistoricalCarrierRevalidation(id);
+      }
+      _recordHistoricalCarrierRevalidation(
+        id,
+        action: recovered ? 'fresh-source-admitted' : 'deferred',
+      );
+    }, onError: (Object error, StackTrace stackTrace) {
+      if (!_disposed) cache.restoreHistoricalCarrierRevalidation(id);
+      _recordHandoffError(
+        'historical-carrier-revalidation',
+        error,
+        stackTrace,
+      );
+    }).whenComplete(() {
+      if (identical(_historicalCarrierRevalidations[id], tracked)) {
+        _historicalCarrierRevalidations.remove(id);
+      }
+    });
+    _historicalCarrierRevalidations[id] = tracked;
+    unawaited(tracked);
+    _recordHistoricalCarrierRevalidation(id, action: 'started');
+  }
+
+  void _recordHistoricalCarrierRevalidation(
+    DownloadId id, {
+    required String action,
+  }) {
+    try {
+      traceHub.record(
+        traceEvent(
+          clock: clock,
+          sessionId: 'composition-transfer-owner',
+          kind: TraceEventKind.artifactSource,
+          identityHash: id.key,
+          payload: <String, Object?>{
+            'stage': 'historical-carrier-revalidation',
+            'action': action,
+          },
+        ),
+      );
+    } on Object {
+      // Diagnostics cannot own stale-while-revalidate scheduling.
+    }
   }
 
   DownloadId _resolveTransferIdForAcquire(DownloadId exactId) {
@@ -1289,6 +1422,16 @@ final class CompositionDownloadTransferRuntime {
     _lastTracedPhysicalMediaOwner.clear();
     _lastTracedCanonicalMediaConflict.clear();
     _preservedPinnedReloadEpochs.clear();
+    for (final waiter in _historicalCarrierRevalidationWaiters.values) {
+      waiter.session.removeSnapshotListener(waiter.listener);
+    }
+    _historicalCarrierRevalidationWaiters.clear();
+    final historicalRevalidations =
+        _historicalCarrierRevalidations.values.toList(growable: false);
+    if (historicalRevalidations.isNotEmpty) {
+      await Future.wait<void>(historicalRevalidations);
+    }
+    _historicalCarrierRevalidations.clear();
     artifactCacheManager?.removeEquivalentResolver(
       _versionPageAuthorityResolverKey,
     );

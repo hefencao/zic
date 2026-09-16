@@ -122,6 +122,35 @@ final class ArtifactCacheStreamEntry {
 ///
 /// Backends do not own tier order, presence policy, in-flight joining, hot-byte
 /// retention or invalidation. Those rules belong to [ArtifactCacheManager].
+/// Indexed historical exact carriers for the same logical page/revision.
+///
+/// These candidates are deliberately not equivalence proof. A source may rotate
+/// an opaque/CDN URI while keeping the same logical page, and some sources have
+/// also been observed to return different immutable bodies for that same
+/// logical identity/revision. Callers may therefore use these candidates only
+/// under an explicit cache-trust policy; they must never register them as
+/// verified equivalents or silently rewrite exact durable bindings.
+final class HistoricalArtifactCarrierCandidates {
+  const HistoricalArtifactCarrierCandidates({
+    required this.ids,
+    required this.readyRecordCount,
+    required this.signatureCount,
+  });
+
+  final List<DownloadId> ids;
+  final int readyRecordCount;
+  final int signatureCount;
+}
+
+/// Optional bounded lookup for historical URI carriers of one exact logical
+/// page/revision. Implementations must query only the supplied content identity
+/// and source revision and return candidates in preferred order.
+abstract interface class HistoricalArtifactCarrierQueryBackend {
+  Future<HistoricalArtifactCarrierCandidates> historicalArtifactCarriers(
+    DownloadId id,
+  );
+}
+
 abstract interface class PhysicalArtifactCacheBackend {
   /// Opens one immutable artifact by its version-independent physical identity.
   /// No exact DownloadId carrier lookup is permitted inside this operation.

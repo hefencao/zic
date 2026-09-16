@@ -1542,6 +1542,9 @@ final class PipelineReaderSession {
     }
     if (identity == null) return;
     final firstVisible = _externalPresentationVisibleFrames.add(identity);
+    if (firstVisible) {
+      _transferRuntime.notifyPresentationSatisfied(download);
+    }
     final pending = _externalPresentationRequests.contains(identity) &&
         _coordinator.externalPresentationPendingFor(identity);
     if (pending) {

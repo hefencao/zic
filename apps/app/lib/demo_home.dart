@@ -444,6 +444,7 @@ final class _DemoHomeState extends State<DemoHome> {
                 backend: _chapterDownloads as ArtifactCacheBackend,
               )
             : null);
+    _syncCachedCarrierTrustMode();
     final suppliedCache = _incomingCacheCoordinator;
     _ownsCacheCoordinator = suppliedCache == null;
     _cacheCoordinator = suppliedCache ??
@@ -597,8 +598,30 @@ final class _DemoHomeState extends State<DemoHome> {
     );
   }
 
+  void _syncCachedCarrierTrustMode() {
+    final cache = _readerArtifactCache;
+    if (cache == null) return;
+    cache.updateCarrierMismatchPolicy(
+      switch (widget.preferences.cachedCarrierTrustMode) {
+        CachedCarrierTrustMode.strictReload =>
+          CachedCarrierMismatchPolicy.strictReload,
+        CachedCarrierTrustMode.reuseThenRefresh =>
+          CachedCarrierMismatchPolicy.reuseThenRefresh,
+        CachedCarrierTrustMode.trustCached =>
+          CachedCarrierMismatchPolicy.trustCached,
+      },
+    );
+    cache.updateHistoricalCarrierSignatureConflictTrust((sourceId) {
+      final pluginId = _activeExternalPlugins?.ownerOfSource(sourceId);
+      return pluginId != null &&
+          widget.preferences
+              .trustConflictingHistoricalCarriersForPlugin(pluginId);
+    });
+  }
+
   void _handleAppPreferencesChanged() {
     _syncReaderPrefetchReadBudget();
+    _syncCachedCarrierTrustMode();
     final sourceFilter = widget.preferences.shelfSourceFilter;
     final sortMode = widget.preferences.shelfSortMode;
     final shelfView = widget.preferences.shelfView;

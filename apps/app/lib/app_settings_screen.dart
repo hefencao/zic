@@ -29,6 +29,8 @@ const dataSettingsScreenKey = ValueKey<String>('data-settings-screen');
 const networkSettingsScreenKey = ValueKey<String>('network-settings-screen');
 const networkReaderPrefetchBudgetKey =
     ValueKey<String>('network-reader-prefetch-budget');
+const networkCachedCarrierTrustKey =
+    ValueKey<String>('network-cached-carrier-trust');
 const bookshelfSettingsScreenKey =
     ValueKey<String>('bookshelf-settings-screen');
 const readingSettingsScreenKey = ValueKey<String>('reading-settings-screen');
@@ -780,6 +782,53 @@ final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
     widget.preferences.setReaderPrefetchReadBudgetMiB(confirmed);
   }
 
+  String _cachedCarrierTrustLabel(CachedCarrierTrustMode mode) => switch (mode) {
+        CachedCarrierTrustMode.strictReload => '直接重新加载',
+        CachedCarrierTrustMode.reuseThenRefresh => '先用缓存，后台刷新',
+        CachedCarrierTrustMode.trustCached => '信任缓存，不自动刷新',
+      };
+
+  String _cachedCarrierTrustDescription(CachedCarrierTrustMode mode) =>
+      switch (mode) {
+        CachedCarrierTrustMode.strictReload =>
+          '当前 URI 没有已验证缓存时直接请求来源。最严格，也可能因来源更换临时 URI 而重复加载。',
+        CachedCarrierTrustMode.reuseThenRefresh =>
+          '先显示同一页面、同一来源版本下最近的历史缓存；首帧出现后再用当前 URI 后台刷新。',
+        CachedCarrierTrustMode.trustCached =>
+          '同一页面、同一来源版本已有历史缓存时直接使用，不自动请求当前 URI。来源错误复用版本号时可能看到旧内容。',
+      };
+
+  Future<void> _editCachedCarrierTrustMode() async {
+    final selected = await showDialog<CachedCarrierTrustMode>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: const Text('缓存地址变化策略'),
+        children: <Widget>[
+          for (final mode in CachedCarrierTrustMode.values)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(dialogContext, mode),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      _cachedCarrierTrustLabel(mode),
+                      style: Theme.of(dialogContext).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(_cachedCarrierTrustDescription(mode)),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (!mounted || selected == null) return;
+    widget.preferences.setCachedCarrierTrustMode(selected);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -820,6 +869,22 @@ final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
                   '${widget.preferences.readerPrefetchReadBudgetMiB} MB',
                 ),
                 onTap: _editReaderPrefetchReadBudget,
+              ),
+              ListTile(
+                key: networkCachedCarrierTrustKey,
+                leading: const Icon(Icons.cached_outlined),
+                title: const Text('缓存地址变化策略'),
+                subtitle: Text(
+                  _cachedCarrierTrustDescription(
+                    widget.preferences.cachedCarrierTrustMode,
+                  ),
+                ),
+                trailing: Text(
+                  _cachedCarrierTrustLabel(
+                    widget.preferences.cachedCarrierTrustMode,
+                  ),
+                ),
+                onTap: _editCachedCarrierTrustMode,
               ),
               const Divider(),
               const _SettingsSectionTitle('请求标识'),
