@@ -77,7 +77,8 @@ compat = read('apps/app/lib/demo_home_source_compat.dart')
 for token in (
     'onMigrateSource: () {',
     'return _openSourceMigrationForSummary(active, comic);',
-    "onMigrateSource: resolvedSource == null ||\n                  comic.sourceId == 'local-folder'",
+    "onMigrateSource: resolvedSource == null ||",
+    "comic.sourceId == 'local-folder'",
     ': () => _openSourceMigration(comic)',
 ):
     require(compat, token, 'detail migration composition')

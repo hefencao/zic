@@ -733,126 +733,220 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
 
   Future<void> _pushComicDetails(LibraryComic comic) async {
     _clearDownloadCompletionBadge(comic.sourceId, comic.comicId);
-    var source = _sourceForId(comic.sourceId);
-    if (source == null && _isDeferredExternalSourceId(comic.sourceId)) {
-      await _waitForExternalSource(comic.sourceId);
-      if (!mounted) return;
-      source = _sourceForId(comic.sourceId);
-    }
-    final resolvedSource = source;
-    await Navigator.of(context).push(
+    final routeStartedAtMicros = _traceClock.elapsedMicroseconds;
+    final initialSource = _sourceForId(comic.sourceId);
+    final shouldActivateSource = initialSource == null &&
+        _isDeferredExternalSourceId(comic.sourceId);
+    final sourceReadyCompleter = shouldActivateSource
+        ? Completer<BrowsableComicSource?>()
+        : null;
+    final sourceReady = sourceReadyCompleter?.future ??
+        Future<BrowsableComicSource?>.value(initialSource);
+    final initialLibrary = _detailsSnapshotForComic(
+      comic.sourceId,
+      comic.comicId,
+    );
+    widget.debugTrace.record(
+      TraceEvent(
+        monotonicMicros: routeStartedAtMicros,
+        sessionId: 'comic-details-entry',
+        kind: TraceEventKind.readerObservation,
+        payload: <String, Object?>{
+          'stage': 'route-push',
+          'sourceId': comic.sourceId,
+          'sourceReady': initialSource != null,
+          'sourceActivationDeferred': shouldActivateSource,
+        },
+      ),
+    );
+    var routeActive = true;
+    final route = Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => details.LocalComicDetailsScreen(
-          comic: comic,
-          initialLibrary: _detailsSnapshotForComic(
-            comic.sourceId,
-            comic.comicId,
-          ),
-          categories: _categories,
-          loadCover: _loadCoverSource,
-          reloadLibrary: ({required bool refreshContent}) =>
-              _reloadDetailsSnapshot(
-            comic.sourceId,
-            comic.comicId,
-            refreshContent: refreshContent,
-          ),
-          source: resolvedSource,
-          resolveSource: _sourceForId,
-          ensureSourceChapter: _ensureSourceChapter,
-          downloadActions: _detailsDownloadActions,
-          onPreferenceChanged: (preference) async {
-            await _savePreference(preference);
-            final retained = preference.inShelf ||
-                preference.liked ||
-                preference.collected ||
-                preference.categoryIds.isNotEmpty ||
-                _libraryEntries.any(
-                  (entry) =>
-                      entry.chapter.sourceId == comic.sourceId &&
-                      entry.chapter.comicId == comic.comicId,
-                );
-            if (!retained) {
-              await _librarySession.removeSavedComic(
+        builder: (_) => FutureBuilder<BrowsableComicSource?>(
+          future: sourceReady,
+          initialData: initialSource,
+          builder: (_, sourceSnapshot) {
+            final resolvedSource = sourceSnapshot.data ??
+                _sourceForId(comic.sourceId);
+            return details.LocalComicDetailsScreen(
+              key: ValueKey<String>(
+                'local-comic-details:${comic.sourceId}:${comic.comicId}',
+              ),
+              comic: comic,
+              initialLibrary: initialLibrary,
+              categories: _categories,
+              loadCover: _loadCoverSource,
+              reloadLibrary: ({required bool refreshContent}) =>
+                  _reloadDetailsSnapshot(
                 comic.sourceId,
                 comic.comicId,
-              );
-            }
-          },
-          onReadChanged: _setChapterRead,
-          onOpenChapter: (
-            loadChapter, {
-            required bool refreshRemote,
-            required String title,
-            int? initialPageIndex,
-          }) =>
-              _openImportedChapterLoader(
-            loadChapter,
-            title: title,
-            refreshRemote: refreshRemote,
-            initialPageIndex: initialPageIndex,
-          ),
-          onDownloadChapter: _downloadChapter,
-          onDeleteChapter: _deleteChapter,
-          inspectChapterDownload: _inspectChapterDownload,
-          inspectChapterDownloads: _inspectChapterDownloads,
-          inspectComicConflicts: _inspectComicConflictsForDetails,
-          downloadChanges: _chapterDownloads.changes,
-          onDownloadComic: (entries) => _downloadComicEntries(
-            comicLibraryIdentity(comic.sourceId, comic.comicId),
-            entries,
-          ),
-          onOpenSourceWebView: resolvedSource == null
-              ? null
-              : ({Uri? verificationUri}) {
-                  final active =
-                      _sourceForId(resolvedSource.sourceId) ?? resolvedSource;
-                  return _openSourceWebView(
-                    active,
-                    verificationUri ?? _sourceComicWebUri(active, comic.comicId),
-                    cloudflareVerification: true,
-                  );
-                },
-          onOpenSourceSettings:
-              resolvedSource != null && sourceSupportsSettings(resolvedSource)
-                  ? () => _openComicSourceSettings(resolvedSource)
-                  : null,
-          onSearchMetadata: resolvedSource == null
-              ? null
-              : (query) => _searchSourceMetadata(resolvedSource, query),
-          onMigrateSource: resolvedSource == null ||
-                  comic.sourceId == 'local-folder'
-              ? null
-              : () => _openSourceMigration(comic),
-          loadVersionState: resolvedSource == null ||
-                  !_sourceSupportsVersionEntry(resolvedSource)
-              ? null
-              : () {
-                  final active =
-                      _sourceForId(resolvedSource.sourceId) ?? resolvedSource;
-                  return _loadSourceVersionState(
-                    active,
-                    comic.title,
+                refreshContent: refreshContent,
+              ),
+              source: resolvedSource,
+              resolveSource: _sourceForId,
+              ensureSourceChapter: _ensureSourceChapter,
+              downloadActions: _detailsDownloadActions,
+              onPreferenceChanged: (preference) async {
+                await _savePreference(preference);
+                final retained = preference.inShelf ||
+                    preference.liked ||
+                    preference.collected ||
+                    preference.categoryIds.isNotEmpty ||
+                    _libraryEntries.any(
+                      (entry) =>
+                          entry.chapter.sourceId == comic.sourceId &&
+                          entry.chapter.comicId == comic.comicId,
+                    );
+                if (!retained) {
+                  await _librarySession.removeSavedComic(
+                    comic.sourceId,
                     comic.comicId,
                   );
-                },
-          onViewVersion: resolvedSource == null ||
-                  !_sourceSupportsVersionEntry(resolvedSource)
-              ? null
-              : (version) {
-                  final active =
-                      _sourceForId(resolvedSource.sourceId) ?? resolvedSource;
-                  return _viewSourceVersion(active, comic.comicId, version);
-                },
-          onMigrateVersion: resolvedSource == null ||
-                  !_sourceSupportsVersionEntry(resolvedSource)
-              ? null
-              : (version) => _migrateSourceVersion(comic, version),
-          previewMaxItemsPerRow:
-              widget.preferences.detailsPreviewMaxItemsPerRow,
-          traceSink: widget.debugTrace,
+                }
+              },
+              onReadChanged: _setChapterRead,
+              onOpenChapter: (
+                loadChapter, {
+                required bool refreshRemote,
+                required String title,
+                int? initialPageIndex,
+              }) =>
+                  _openImportedChapterLoader(
+                loadChapter,
+                title: title,
+                refreshRemote: refreshRemote,
+                initialPageIndex: initialPageIndex,
+              ),
+              onDownloadChapter: _downloadChapter,
+              onDeleteChapter: _deleteChapter,
+              inspectChapterDownload: _inspectChapterDownload,
+              inspectChapterDownloads: _inspectChapterDownloads,
+              inspectComicConflicts: _inspectComicConflictsForDetails,
+              downloadChanges: _chapterDownloads.changes,
+              onDownloadComic: (entries) => _downloadComicEntries(
+                comicLibraryIdentity(comic.sourceId, comic.comicId),
+                entries,
+              ),
+              onOpenSourceWebView: resolvedSource == null
+                  ? null
+                  : ({Uri? verificationUri}) {
+                      final active = _sourceForId(resolvedSource.sourceId) ??
+                          resolvedSource;
+                      return _openSourceWebView(
+                        active,
+                        verificationUri ??
+                            _sourceComicWebUri(active, comic.comicId),
+                        cloudflareVerification: true,
+                      );
+                    },
+              onOpenSourceSettings: resolvedSource != null &&
+                      sourceSupportsSettings(resolvedSource)
+                  ? () => _openComicSourceSettings(resolvedSource)
+                  : null,
+              onSearchMetadata: resolvedSource == null
+                  ? null
+                  : (query) => _searchSourceMetadata(resolvedSource, query),
+              onMigrateSource: resolvedSource == null ||
+                      comic.sourceId == 'local-folder'
+                  ? null
+                  : () => _openSourceMigration(comic),
+              loadVersionState: resolvedSource == null ||
+                      !_sourceSupportsVersionEntry(resolvedSource)
+                  ? null
+                  : () {
+                      final active =
+                          _sourceForId(resolvedSource.sourceId) ?? resolvedSource;
+                      return _loadSourceVersionState(
+                        active,
+                        comic.title,
+                        comic.comicId,
+                      );
+                    },
+              onViewVersion: resolvedSource == null ||
+                      !_sourceSupportsVersionEntry(resolvedSource)
+                  ? null
+                  : (version) {
+                      final active =
+                          _sourceForId(resolvedSource.sourceId) ?? resolvedSource;
+                      return _viewSourceVersion(
+                        active,
+                        comic.comicId,
+                        version,
+                      );
+                    },
+              onMigrateVersion: resolvedSource == null ||
+                      !_sourceSupportsVersionEntry(resolvedSource)
+                  ? null
+                  : (version) => _migrateSourceVersion(comic, version),
+              previewMaxItemsPerRow:
+                  widget.preferences.detailsPreviewMaxItemsPerRow,
+              traceSink: widget.debugTrace,
+            );
+          },
         ),
       ),
     );
+    final sourceCompleter = sourceReadyCompleter;
+    if (sourceCompleter != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || !routeActive || sourceCompleter.isCompleted) {
+          if (!sourceCompleter.isCompleted) sourceCompleter.complete(null);
+          return;
+        }
+        unawaited(
+          Future<void>(() async {
+            try {
+              await _waitForExternalSource(comic.sourceId);
+              if (!mounted || !routeActive) {
+                if (!sourceCompleter.isCompleted) sourceCompleter.complete(null);
+                return;
+              }
+              final source = _sourceForId(comic.sourceId);
+              widget.debugTrace.record(
+                TraceEvent(
+                  monotonicMicros: _traceClock.elapsedMicroseconds,
+                  sessionId: 'comic-details-entry',
+                  kind: TraceEventKind.sourceReady,
+                  payload: <String, Object?>{
+                    'stage': 'deferred-source-ready',
+                    'sourceId': comic.sourceId,
+                    'available': source != null,
+                    'durationMicros':
+                        _traceClock.elapsedMicroseconds - routeStartedAtMicros,
+                  },
+                ),
+              );
+              if (!sourceCompleter.isCompleted) sourceCompleter.complete(source);
+            } on Object catch (error) {
+              if (mounted) {
+                try {
+                  widget.debugTrace.record(
+                    TraceEvent(
+                      monotonicMicros: _traceClock.elapsedMicroseconds,
+                      sessionId: 'comic-details-entry',
+                      kind: TraceEventKind.taskFailed,
+                      payload: <String, Object?>{
+                        'stage': 'deferred-source-failed',
+                        'sourceId': comic.sourceId,
+                        'errorType': error.runtimeType.toString(),
+                      },
+                    ),
+                  );
+                } on Object {
+                  // Diagnostics must never affect source activation.
+                }
+              }
+              if (!sourceCompleter.isCompleted) sourceCompleter.complete(null);
+            }
+          }),
+        );
+      });
+    }
+    await route;
+    routeActive = false;
+    if (sourceCompleter != null && !sourceCompleter.isCompleted) {
+      sourceCompleter.complete(null);
+    }
   }
 
   Future<void> _openDownloadManager() async {

@@ -922,6 +922,18 @@ final class _LocalComicDetailsScreenState
     _downloadSubscription =
         widget.downloadChanges.listen(_acceptDownloadSnapshot);
     _scheduleDownloadStatusRefresh(_library.chapters);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _recordRefreshTrace(
+        TraceEventKind.readerObservation,
+        'details-first-frame',
+        payload: <String, Object?>{
+          'sourceAvailable': widget.source != null,
+          'chapterCount': _library.chapters.length,
+          'sourceChapterCount': _library.sourceChapters.length,
+        },
+      );
+    });
   }
 
   ComicPreviewSource? get _previewSource {

@@ -1838,6 +1838,88 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets(
+      'persisted details paint before deferred external source activation',
+      (tester) async {
+    final store = MemoryImportedLibraryStore();
+    await store.open();
+    addTearDown(store.close);
+    const sourceId = 'venera:deferred-details-fixture';
+    const comicId = 'deferred-details-comic';
+    const chapterId = 'deferred-details-chapter';
+    await store.upsertChapter(
+      ImportedChapterRecord(
+        directoryId: '$sourceId:$comicId',
+        displayName: '第 1 话',
+        sourceId: sourceId,
+        comicId: comicId,
+        comicTitle: '延迟来源详情漫画',
+        chapterId: chapterId,
+        sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.png',
+            sourceId: 'https://example.invalid/deferred-details/page-1.png',
+            pageId: 'deferred-details-page-1',
+            contentKindHint: ContentKindHint.png,
+          ),
+        ],
+      ),
+    );
+    await store.saveComicPreference(
+      ComicPreference.defaults(
+        sourceId: sourceId,
+        comicId: comicId,
+        sourceKind: ComicSourceKind.remote,
+      ),
+    );
+    final trace = DebugTraceLog(maxEvents: 200, maxExportEvents: 400);
+    addTearDown(trace.dispose);
+
+    await tester.pumpWidget(
+      App(
+        libraryStore: store,
+        comicSources: const <BrowsableComicSource>[],
+        externalPluginLoader: () async => null,
+        debugTrace: trace,
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(homeUpdatesSectionKey));
+    await tester.tap(find.byIcon(Icons.collections_bookmark_outlined));
+    await tester.pump();
+    final cover = find.byKey(comicCoverKey(sourceId, comicId));
+    await tester.ensureVisible(cover);
+    await tester.longPress(cover);
+    await tester.pump();
+    await _pumpUntilFound(
+      tester,
+      find.byKey(details.localComicDetailsScreenKey),
+    );
+    for (var frame = 0; frame < 20; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      if (trace.events.any(
+        (event) => event.payload['stage'] == 'deferred-source-ready',
+      )) {
+        break;
+      }
+    }
+
+    int stageIndex(String stage) => trace.events.indexWhere(
+          (event) => event.payload['stage'] == stage,
+        );
+    final routePush = stageIndex('route-push');
+    final firstFrame = stageIndex('details-first-frame');
+    final sourceReady = stageIndex('deferred-source-ready');
+    expect(routePush, greaterThanOrEqualTo(0));
+    expect(firstFrame, greaterThan(routePush));
+    expect(sourceReady, greaterThan(firstFrame));
+    expect(
+      trace.events[sourceReady].payload['available'],
+      isFalse,
+      reason: 'details must remain usable when deferred source activation fails',
+    );
+  });
+
   testWidgets('details separates same-source version view and migration',
       (tester) async {
     final store = MemoryImportedLibraryStore();
