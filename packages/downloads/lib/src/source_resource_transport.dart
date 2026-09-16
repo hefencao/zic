@@ -387,6 +387,7 @@ final class _SourceResourceTransport
     var sameUrlPlans = 0;
     var changedUrlPlans = 0;
     var runtimeTransformPlans = 0;
+    var freshResolvePlans = 0;
     var previousUri = initialRequestUri;
     for (var retryIndex = 0;
         retryIndex < _maxSourceSemanticRetries;
@@ -397,6 +398,30 @@ final class _SourceResourceTransport
         if (!requireRetry && retryIndex == 0) {
           throw const _NoSourceRecoveryAvailable();
         }
+        // Some sources cannot manufacture a retryResource plan even though a
+        // second resolveResource for the same opaque locator can produce a
+        // fresh request plan. Keep this inside the current scheduler-owned
+        // transport attempt: it is one bounded source-plan re-resolution, not
+        // an independent network retry or Reader-owned fallback.
+        if (freshResolvePlans == 0) {
+          final freshResolved = await _resolve(locator, control: control);
+          _throwIfTaskCancelled(control);
+          freshResolvePlans++;
+          try {
+            return await _openRequestPlan(
+              locator,
+              freshResolved.request,
+              range: range,
+              validators: validators,
+              control: control,
+              pathPrefix: 'fresh-resolve-',
+            );
+          } on Failure catch (error) {
+            if (!_isSourceMediaSemanticRejection(error)) rethrow;
+            lastCause = error;
+            _invalidate(locator);
+          }
+        }
         throw _sourceMediaSemanticFailure(
           locator,
           cause: lastCause,
@@ -404,6 +429,7 @@ final class _SourceResourceTransport
           sameUrlPlans: sameUrlPlans,
           changedUrlPlans: changedUrlPlans,
           runtimeTransformPlans: runtimeTransformPlans,
+          freshResolvePlans: freshResolvePlans,
           recoveryUnavailable: true,
         );
       }
@@ -1068,6 +1094,7 @@ Failure _sourceMediaSemanticFailure(
   int? sameUrlPlans,
   int? changedUrlPlans,
   int? runtimeTransformPlans,
+  int? freshResolvePlans,
   bool? recoveryUnavailable,
 }) =>
     Failure(
@@ -1085,6 +1112,8 @@ Failure _sourceMediaSemanticFailure(
           'sourceSemanticChangedUrlPlans': changedUrlPlans,
         if (runtimeTransformPlans != null)
           'sourceSemanticRuntimeTransformPlans': runtimeTransformPlans,
+        if (freshResolvePlans != null)
+          'sourceSemanticFreshResolvePlans': freshResolvePlans,
         if (recoveryUnavailable != null)
           'sourceSemanticRecoveryUnavailable': recoveryUnavailable,
       },

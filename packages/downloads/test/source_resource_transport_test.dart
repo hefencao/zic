@@ -876,6 +876,117 @@ void main() {
     expect(source.loadCalls, 0);
   });
 
+  test(
+      'semantic rejection re-resolves the locator when source retry is unavailable',
+      () async {
+    final locator = Uri.parse('venera-resource:fresh-resolve');
+    final failed = Uri.parse('https://fixture/non-image-generation');
+    final recovered = Uri.parse('https://fixture/re-resolved.webp');
+    final source = _FixtureSource(
+      request: ComicResourceRequest(uri: failed),
+      resolveRequests: <ComicResourceRequest>[
+        ComicResourceRequest(uri: failed),
+        ComicResourceRequest(uri: recovered),
+      ],
+    );
+    final opened = <Uri>[];
+    final control = _MutableTaskControl(priority: 1000);
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (request) async {
+        opened.add(request.uri);
+        if (request.uri == failed) {
+          throw const Failure(
+            code: ErrorCode.network,
+            message: 'source host returned non-image bytes',
+            details: <String, Object?>{
+              'sourceMediaProtocolMismatch': true,
+              'sourceMediaSemanticRejected': true,
+            },
+          );
+        }
+        return ByteResponse(
+          bytes: Stream<List<int>>.value(<int>[
+            0xff,
+            0xd8,
+            0xff,
+            1,
+            2,
+            3,
+            0xff,
+            0xd9,
+          ]),
+          statusCode: HttpStatus.ok,
+          rangeStart: 0,
+          totalLength: 8,
+        );
+      },
+    );
+    addTearDown(pool.close);
+
+    final response = await pool.controlledLoaderFor(source, locator)(
+      control: control,
+    );
+
+    expect(await _collect(response.bytes), hasLength(8));
+    expect(opened, <Uri>[failed, recovered]);
+    expect(source.resolveCalls, 2);
+    expect(source.retryCalls, 1);
+    expect(identical(source.lastResolveControl, control), isTrue);
+    expect(response.diagnostics['sourceOpenPath'], 'fresh-resolve-direct');
+  });
+
+  test('semantic fresh re-resolve is bounded before terminal failure', () async {
+    final locator = Uri.parse('venera-resource:fresh-resolve-terminal');
+    final failed = Uri.parse('https://fixture/still-non-image');
+    final source = _FixtureSource(
+      request: ComicResourceRequest(uri: failed),
+      resolveRequests: <ComicResourceRequest>[
+        ComicResourceRequest(uri: failed),
+        ComicResourceRequest(uri: failed),
+      ],
+    );
+    var hostLoads = 0;
+    final pool = ExternalPluginResourceTransportPool(
+      directOpen: (_) async {
+        hostLoads++;
+        throw const Failure(
+          code: ErrorCode.network,
+          message: 'source host returned non-image bytes',
+          details: <String, Object?>{
+            'sourceMediaProtocolMismatch': true,
+            'sourceMediaSemanticRejected': true,
+          },
+        );
+      },
+    );
+    addTearDown(pool.close);
+
+    await expectLater(
+      pool.loaderFor(source, locator)(),
+      throwsA(
+        isA<Failure>()
+            .having(
+              (error) => error.details['sourceSemanticAcceptedPlans'],
+              'accepted retry plans',
+              0,
+            )
+            .having(
+              (error) => error.details['sourceSemanticFreshResolvePlans'],
+              'fresh resolve plans',
+              1,
+            )
+            .having(
+              (error) => error.details['sourceSemanticRecoveryUnavailable'],
+              'resource recovery unavailable',
+              isTrue,
+            ),
+      ),
+    );
+    expect(source.resolveCalls, 2);
+    expect(source.retryCalls, 1);
+    expect(hostLoads, 2);
+  });
+
   test('replacement non-image follows the current source semantic retry chain',
       () async {
     final failed = Uri.parse('https://fixture/non-image');
@@ -1303,6 +1414,7 @@ class _FixtureSource
         ComicResourceTransportGenerationSource {
   _FixtureSource({
     required this.request,
+    this.resolveRequests,
     this.retryRequest,
     this.retryRequests,
     this.refreshRequest,
@@ -1316,6 +1428,7 @@ class _FixtureSource
         runtimeBytes = runtimeBytes ?? Uint8List(0);
 
   final ComicResourceRequest request;
+  final List<ComicResourceRequest>? resolveRequests;
   final ComicResourceRequest? retryRequest;
   final List<ComicResourceRequest?>? retryRequests;
   final ComicResourceRequest? refreshRequest;
@@ -1360,6 +1473,11 @@ class _FixtureSource
     lastResolveControl = control;
     final gate = resolveGate;
     if (gate != null) return gate.future;
+    final resolves = resolveRequests;
+    if (resolves != null && resolves.isNotEmpty) {
+      final index = (resolveCalls - 1).clamp(0, resolves.length - 1);
+      return resolves[index];
+    }
     return _refreshed ? (refreshRequest ?? request) : request;
   }
 

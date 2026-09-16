@@ -834,6 +834,7 @@ final class PersistentChapterDownloadService
           'sourceSemanticSameUrlPlans',
           'sourceSemanticChangedUrlPlans',
           'sourceSemanticRuntimeTransformPlans',
+          'sourceSemanticFreshResolvePlans',
           'sourceSemanticRecoveryUnavailable',
         ])
           if (error.details.containsKey(key)) key: error.details[key],
