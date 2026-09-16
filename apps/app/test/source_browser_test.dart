@@ -1643,8 +1643,35 @@ void main() {
       ),
     );
 
+    const unknownCountChapter = Chapter(
+      chapterId: 'chapter',
+      comicId: 'comic',
+      title: 'chapter',
+      sequence: 1,
+      pageCount: 0,
+      sourceRevision: 'r1',
+    );
+    const mismatchedCountChapter = Chapter(
+      chapterId: 'chapter',
+      comicId: 'comic',
+      title: 'chapter',
+      sequence: 1,
+      pageCount: 2,
+      sourceRevision: 'r1',
+    );
+
     expect(details.comicDetailsCanReuseChapterEntry(compact, chapter), isFalse);
     expect(details.comicDetailsCanReuseChapterEntry(usable, chapter), isTrue);
+    expect(
+      details.comicDetailsCanReuseChapterEntry(usable, unknownCountChapter),
+      isTrue,
+      reason: 'unknown source page count must not reject hydrated local pages',
+    );
+    expect(
+      details.comicDetailsCanReuseChapterEntry(usable, mismatchedCountChapter),
+      isFalse,
+      reason: 'a changed known page count requires a fresh chapter manifest',
+    );
   });
 
   testWidgets('local details retries an unpersisted chapter against the live source resolver', (tester) async {
@@ -1740,6 +1767,101 @@ void main() {
     availableSource = source;
     final recovered = await capturedLoader!();
     expect(recovered.chapter.chapterId, chapter.chapterId);
+    expect(ensureCalls, 1);
+  });
+
+  testWidgets('local details refreshes a stale revision before Reader open', (tester) async {
+    final source = _FixtureSource('fixture-stale-details', '详情旧章节源');
+    final manifest = await source.loadComic(source._comicId);
+    final chapter = manifest.chapters.first;
+    final freshEntry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord.remote(
+        comic: source._comic,
+        manifest: await source.loadChapter(chapter.chapterId),
+      ),
+    );
+    final staleEntry = ImportedLibraryEntry(
+      chapter: freshEntry.chapter.copyWith(sourceRevision: 'stale-r0'),
+    );
+    final comic = LibraryComic(
+      sourceId: source.sourceId,
+      comicId: source._comicId,
+      title: source._comic.title,
+      authors: source._comic.authors,
+      tags: source._comic.tags,
+      description: source._comic.description,
+      coverSourceId: source._comic.coverUri?.toString(),
+      readingDirection: source._comic.readingDirection,
+      chapters: <ImportedLibraryEntry>[staleEntry],
+      sourceChapters: <Chapter>[chapter],
+      savedAt: DateTime.utc(2026, 9, 9),
+      metadataUpdatedAt: DateTime.utc(2026, 9, 9),
+    );
+    final library = details.ComicDetailsLibrarySnapshot(
+      chapters: <ImportedLibraryEntry>[staleEntry],
+      sourceComic: source._comic,
+      sourceChapters: <Chapter>[chapter],
+      readStates: const <String, ChapterReadState>{},
+      preference: ComicPreference.defaults(
+        sourceId: source.sourceId,
+        comicId: source._comicId,
+      ),
+    );
+    details.ComicDetailsChapterLoader? capturedLoader;
+    var ensureCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: details.LocalComicDetailsScreen(
+          comic: comic,
+          initialLibrary: library,
+          categories: const <LibraryCategory>[],
+          loadCover: ({
+            required String sourceId,
+            required String comicId,
+            required Uri? coverUri,
+            required ImportedLibraryEntry? fallbackChapter,
+            required String resourceRole,
+          }) async => MemoryEncodedResourceSource(_tinyPng()),
+          reloadLibrary: ({required bool refreshContent}) async => library,
+          source: source,
+          resolveSource: (_) => source,
+          ensureSourceChapter: (resolved, resolvedComic, resolvedChapter) async {
+            ensureCalls++;
+            return freshEntry;
+          },
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, __) async {},
+          onOpenChapter: (
+            loader, {
+            required bool refreshRemote,
+            required String title,
+            int? initialPageIndex,
+          }) async {
+            capturedLoader = loader;
+            return null;
+          },
+          onDownloadChapter: (_) async {},
+          inspectChapterDownload: (entry) async =>
+              ChapterDownloadSnapshot.idle(entry),
+          downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+          onDownloadComic: (_) async {},
+        ),
+      ),
+    );
+
+    await _pumpUntilFound(
+      tester,
+      find.byKey(details.comicDetailsChapterKey(source.sourceId, chapter.chapterId)),
+    );
+    await tester.tap(
+      find.byKey(details.comicDetailsChapterKey(source.sourceId, chapter.chapterId)),
+    );
+    await tester.pump();
+    expect(capturedLoader, isNotNull);
+
+    final opened = await capturedLoader!();
+    expect(opened.chapter.sourceRevision, chapter.sourceRevision);
     expect(ensureCalls, 1);
   });
 

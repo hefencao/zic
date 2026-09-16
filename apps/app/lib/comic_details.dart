@@ -49,12 +49,16 @@ const comicDetailsReadingHistoryKey =
 const comicDetailsChapterCountKey =
     ValueKey<String>('comic-details-chapter-count');
 
+// A source pageCount of zero means unknown, not an authoritative empty chapter.
 bool comicDetailsCanReuseChapterEntry(
   ImportedLibraryEntry? existing,
   Chapter chapter,
 ) =>
     existing != null &&
     existing.chapter.sourceRevision == chapter.sourceRevision &&
+    existing.chapter.pages.isNotEmpty &&
+    (chapter.pageCount <= 0 ||
+        existing.chapter.pages.length == chapter.pageCount) &&
     !chapterHasHomeProjectionSnapshotPagePlaceholders(existing.chapter);
 const comicDetailsChapterListKey =
     ValueKey<String>('comic-details-chapter-list');
@@ -1978,10 +1982,13 @@ final class _LocalComicDetailsScreenState
         chapter.chapterId,
       );
       catalogIdentities.add(identity);
-      final entry = entryByChapterId[chapter.chapterId] ??
+      final candidateEntry = entryByChapterId[chapter.chapterId] ??
           (chapter.sourceRevision.trim().isNotEmpty
               ? entriesByRevision[chapter.sourceRevision.trim()]
               : null);
+      final entry = comicDetailsCanReuseChapterEntry(candidateEntry, chapter)
+          ? candidateEntry
+          : null;
       if (_pendingDeletionIdentities.contains(identity) ||
           _deletedChapterIdentities.contains(identity)) {
         continue;
@@ -3539,10 +3546,13 @@ final class _RemoteComicDetailsScreenState
     var pageCountPending = false;
     final chapterViewModels = <_ChapterViewModel>[];
     for (final chapter in ordered) {
-      final entry = entryByChapterId[chapter.chapterId] ??
+      final candidateEntry = entryByChapterId[chapter.chapterId] ??
           (chapter.sourceRevision.trim().isNotEmpty
               ? entriesByRevision[chapter.sourceRevision.trim()]
               : null);
+      final entry = comicDetailsCanReuseChapterEntry(candidateEntry, chapter)
+          ? candidateEntry
+          : null;
       final identity = comicDetailsChapterIdentity(
         _source.sourceId,
         chapter.chapterId,
