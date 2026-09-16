@@ -42,6 +42,7 @@ const dataBackupExportKey = ValueKey<String>('data-backup-export');
 const dataCacheClearKey = ValueKey<String>('data-cache-clear');
 const dataCacheRefreshKey = ValueKey<String>('data-cache-refresh');
 const dataDownloadDirectoryKey = ValueKey<String>('data-download-directory');
+const dataFileAccessSettingsKey = ValueKey<String>('data-file-access-settings');
 const dataCacheLimitKey = ValueKey<String>('data-cache-limit');
 const readingAdaptiveKey = ValueKey<String>('reading-adaptive');
 const readingVerticalStitchKey =
@@ -203,16 +204,57 @@ final class DataSettingsScreen extends StatefulWidget {
   State<DataSettingsScreen> createState() => _DataSettingsScreenState();
 }
 
-final class _DataSettingsScreenState extends State<DataSettingsScreen> {
+final class _DataSettingsScreenState extends State<DataSettingsScreen>
+    with WidgetsBindingObserver {
   ResourceCacheUsage? _usage;
   Object? _failure;
   bool _busy = false;
   bool _changingDownloadDirectory = false;
+  bool? _allFilesAccessGranted;
+  bool _openingFileAccessSettings = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_refreshUsage());
+    unawaited(_refreshFileAccessStatus());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshFileAccessStatus());
+    }
+  }
+
+  Future<void> _refreshFileAccessStatus() async {
+    final granted = await allFilesAccessGranted();
+    if (!mounted || _allFilesAccessGranted == granted) return;
+    setState(() => _allFilesAccessGranted = granted);
+  }
+
+  Future<void> _openFileAccessSettings() async {
+    if (_openingFileAccessSettings) return;
+    setState(() => _openingFileAccessSettings = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final opened = await openAllFilesAccessSettings();
+      if (!mounted) return;
+      if (!opened) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('当前平台没有可用的“所有文件访问”设置页')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _openingFileAccessSettings = false);
+    }
   }
 
   Future<void> _refreshUsage() async {
@@ -627,6 +669,32 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen> {
                         )
                       : const Icon(Icons.edit_outlined),
               onTap: _changeDownloadDirectory,
+            ),
+            ListTile(
+              key: dataFileAccessSettingsKey,
+              enabled: !_openingFileAccessSettings,
+              leading: const Icon(Icons.folder_open_outlined),
+              title: const Text('文件读写设置'),
+              subtitle: Text(
+                _allFilesAccessGranted == null
+                    ? '正在读取系统文件访问状态…'
+                    : _allFilesAccessGranted!
+                        ? '所有文件访问：已授权 · Direct 共享存储/SD 卡可读写；SAF 不依赖此权限'
+                        : '所有文件访问：未授权 · Direct 共享存储/SD 卡需要授权；SAF 可直接使用',
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: _openingFileAccessSettings
+                  ? const SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      _allFilesAccessGranted == true
+                          ? Icons.verified_user_outlined
+                          : Icons.chevron_right,
+                    ),
+              onTap: _openingFileAccessSettings ? null : _openFileAccessSettings,
             ),
             _DirectoryTile(
               title: '响应缓存目录',

@@ -66,6 +66,13 @@ void main() {
     expect(find.byKey(settingsReadingEntryKey), findsOneWidget);
     expect(find.byKey(settingsDownloadEntryKey), findsOneWidget);
     expect(find.byKey(settingsAppearanceEntryKey), findsOneWidget);
+
+    await tester.tap(find.byKey(settingsDataEntryKey));
+    await tester.pump();
+    await _pumpUntilFound(tester, find.byKey(dataSettingsScreenKey));
+    expect(find.byKey(dataFileAccessSettingsKey), findsOneWidget);
+    expect(find.text('文件读写设置'), findsOneWidget);
+    expect(find.textContaining('所有文件访问'), findsOneWidget);
   });
 
   testWidgets('network prefetch budget updates without leaving the settings page', (
