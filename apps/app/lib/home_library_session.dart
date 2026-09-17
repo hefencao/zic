@@ -98,15 +98,6 @@ ChapterDownloadSnapshot? _downloadSnapshot(HomeChapterDownloadSummary summary) {
   );
 }
 
-ChapterDownloadTransferRuntimeProvider? _downloadCompositionFor(
-  ChapterDownloadService chapterDownloads,
-  ChapterDownloadTransferRuntimeProvider? explicit,
-) =>
-    explicit ??
-    (chapterDownloads is ChapterDownloadTransferRuntimeProvider
-        ? chapterDownloads as ChapterDownloadTransferRuntimeProvider
-        : null);
-
 bool _shouldPersistDownloadTransition(
   ChapterDownloadSnapshot? previous,
   ChapterDownloadSnapshot next,
@@ -306,8 +297,10 @@ final class HomeLibrarySession extends ChangeNotifier {
     this.persistMissingPreferences = true,
     this.waitForPrimaryFrame,
     this.startupTelemetry,
-  })  : downloadComposition =
-            _downloadCompositionFor(chapterDownloads, downloadComposition),
+  })  : downloadComposition = resolveDownloadComposition(
+            chapterDownloads,
+            downloadComposition,
+          ),
         _sources = List<BrowsableComicSource>.unmodifiable(sources) {
     _downloadSubscription = chapterDownloads.changes.listen(
       acceptDownloadSnapshot,
@@ -318,6 +311,15 @@ final class HomeLibrarySession extends ChangeNotifier {
     _wholeComicQueueSnapshot = wholeComicDownloads.snapshot;
     _ready = _initialize();
   }
+
+  static ChapterDownloadTransferRuntimeProvider? resolveDownloadComposition(
+    ChapterDownloadService chapterDownloads,
+    ChapterDownloadTransferRuntimeProvider? explicit,
+  ) =>
+      explicit ??
+      (chapterDownloads is ChapterDownloadTransferRuntimeProvider
+          ? chapterDownloads as ChapterDownloadTransferRuntimeProvider
+          : null);
 
   ImportedLibraryStore library;
   ChapterDownloadService chapterDownloads;
@@ -1134,8 +1136,10 @@ final class HomeLibrarySession extends ChangeNotifier {
     required List<BrowsableComicSource> sources,
     required bool persistSnapshot,
   }) async {
-    final resolvedDownloadComposition =
-        _downloadCompositionFor(chapterDownloads, downloadComposition);
+    final resolvedDownloadComposition = resolveDownloadComposition(
+      chapterDownloads,
+      downloadComposition,
+    );
     final previousReady = _ready;
     await previousReady;
     if (_closed) {

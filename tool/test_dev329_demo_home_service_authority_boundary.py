@@ -87,11 +87,30 @@ require(
 
 
 for marker, label in (
-    ("ChapterDownloadTransferRuntimeProvider? _downloadCompositionFor(", "transfer capability normalizer"),
-    ("_downloadCompositionFor(chapterDownloads, downloadComposition)", "constructor/adoption normalization"),
+    ("static ChapterDownloadTransferRuntimeProvider? resolveDownloadComposition(", "transfer capability normalizer"),
+    ("downloadComposition = resolveDownloadComposition(", "constructor normalization"),
+    ("final resolvedDownloadComposition = resolveDownloadComposition(", "adoption normalization"),
     ("ChapterDownloadTransferRuntimeProvider? get _downloadCompositionProvider =>\n      downloadComposition;", "normalized composition authority"),
 ):
     require(session, marker, label)
+
+for body, path in (
+    (home, "apps/app/lib/demo_home.dart"),
+    (handoff, "apps/app/lib/demo_home_service_handoff.dart"),
+):
+    for forbidden in (
+        "chapterDownloads is ChapterDownloadTransferRuntimeProvider",
+        "chapterDownloads as ChapterDownloadTransferRuntimeProvider",
+    ):
+        if forbidden in body:
+            raise SystemExit(
+                f"Home duplicated download-composition normalization in {path}: {forbidden}"
+            )
+    require(
+        body,
+        "HomeLibrarySession.resolveDownloadComposition(",
+        f"shared composition normalization in {path}",
+    )
 
 close_body = session[session.index('Future<void> _closeOwnedResources() async {'):]
 for marker, label in (

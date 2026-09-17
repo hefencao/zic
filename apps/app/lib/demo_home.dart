@@ -329,10 +329,10 @@ final class _DemoHomeState extends State<DemoHome> {
     final ownsWholeComicDownloads = initialWholeComicDownloads == null;
     final chapterDownloads = initialChapterDownloads ??
         MemoryChapterDownloadService(pageLoader: _loadChapterPageBytes);
-    final downloadComposition = _incomingDownloadComposition ??
-        (chapterDownloads is ChapterDownloadTransferRuntimeProvider
-            ? chapterDownloads as ChapterDownloadTransferRuntimeProvider
-            : null);
+    final downloadComposition = HomeLibrarySession.resolveDownloadComposition(
+      chapterDownloads,
+      _incomingDownloadComposition,
+    );
     final suppliedCache = _incomingCacheCoordinator;
     _serviceCache = HomeServiceCacheBinding.create(
       chapterDownloads: chapterDownloads,

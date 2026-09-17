@@ -28,10 +28,10 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
         wholeComicDownloads == null) {
       return false;
     }
-    final downloadComposition = _incomingDownloadComposition ??
-        (chapterDownloads is ChapterDownloadTransferRuntimeProvider
-            ? chapterDownloads as ChapterDownloadTransferRuntimeProvider
-            : null);
+    final downloadComposition = HomeLibrarySession.resolveDownloadComposition(
+      chapterDownloads,
+      _incomingDownloadComposition,
+    );
     final suppliedCache = _incomingCacheCoordinator;
     return !identical(library, _library) ||
         !identical(chapterDownloads, _chapterDownloads) ||
@@ -71,10 +71,10 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     }
     final previousChapterDownloads = _chapterDownloads;
     final previousServiceCache = _serviceCache;
-    final downloadComposition = _incomingDownloadComposition ??
-        (chapterDownloads is ChapterDownloadTransferRuntimeProvider
-            ? chapterDownloads as ChapterDownloadTransferRuntimeProvider
-            : null);
+    final downloadComposition = HomeLibrarySession.resolveDownloadComposition(
+      chapterDownloads,
+      _incomingDownloadComposition,
+    );
     final suppliedCache = _incomingCacheCoordinator;
     final candidateServiceCache = HomeServiceCacheBinding.create(
       chapterDownloads: chapterDownloads,

@@ -11,6 +11,34 @@ import 'package:storage_bridge/storage_bridge.dart';
 import 'package:zic/home_library_session.dart';
 
 void main() {
+  test('download composition normalization has one explicit-first authority', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'home-download-composition-authority-',
+    );
+    final composition = await PersistentDownloadComposition.open(
+      root.path,
+      transferNet: DownloadResourceCoordinator().networkLane,
+    );
+    addTearDown(() async {
+      await composition.close();
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final chapterDownloads = composition.chapterDownloads;
+
+    expect(chapterDownloads, isA<ChapterDownloadTransferRuntimeProvider>());
+    expect(
+      HomeLibrarySession.resolveDownloadComposition(chapterDownloads, null),
+      same(chapterDownloads),
+    );
+    expect(
+      HomeLibrarySession.resolveDownloadComposition(
+        chapterDownloads,
+        composition,
+      ),
+      same(composition),
+    );
+  });
+
   test('home session owns durable projection outside DemoHome state', () async {
     final library = MemoryImportedLibraryStore();
     final downloads = MemoryChapterDownloadService(
