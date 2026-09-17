@@ -64,7 +64,7 @@ class MainActivity : FlutterActivity() {
     private var pendingDownloadPick: MethodChannel.Result? = null
     private var firstFlutterUiDisplayed = false
     private var pendingFirstFlutterUiDisplayedResult: MethodChannel.Result? = null
-    private val processStartUptimeMs = android.os.Process.getStartUptimeMillis()
+    private val processStartElapsedRealtimeMs = android.os.Process.getStartElapsedRealtime()
     private val nativeStartupTimeline = mutableListOf<Map<String, Any>>()
 
     private fun clearPendingDownloadPick() {
@@ -1286,9 +1286,9 @@ class MainActivity : FlutterActivity() {
             }
             result.success(
                 mapOf(
-                    "processStartUptimeMs" to processStartUptimeMs,
-                    "retrievedUptimeMs" to now,
-                    "retrievedSinceProcessStartMs" to (now - processStartUptimeMs),
+                    "processStartElapsedRealtimeMs" to processStartElapsedRealtimeMs,
+                    "retrievedElapsedRealtimeMs" to now,
+                    "retrievedSinceProcessStartMs" to (now - processStartElapsedRealtimeMs),
                     "events" to events,
                 ),
             )
@@ -1682,8 +1682,8 @@ class MainActivity : FlutterActivity() {
                 nativeStartupTimeline.add(
                     mapOf(
                         "event" to event,
-                        "uptimeMs" to now,
-                        "sinceProcessStartMs" to (now - processStartUptimeMs),
+                        "elapsedRealtimeMs" to now,
+                        "sinceProcessStartMs" to (now - processStartElapsedRealtimeMs),
                     ),
                 )
             }

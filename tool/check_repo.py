@@ -2829,6 +2829,23 @@ def check_current_iteration() -> None:
         if required not in main_activity:
             fail(f'Android startup entrypoint path injection is incomplete: {required}')
     for required in (
+        'android.os.Process.getStartElapsedRealtime()',
+        '"processStartElapsedRealtimeMs" to processStartElapsedRealtimeMs',
+        '"retrievedElapsedRealtimeMs" to now',
+        '"elapsedRealtimeMs" to now',
+        '"sinceProcessStartMs" to (now - processStartElapsedRealtimeMs)',
+    ):
+        if required not in main_activity:
+            fail(f'Android startup monotonic timeline is incomplete: {required}')
+    for forbidden in (
+        'getStartUptimeMillis()',
+        '"processStartUptimeMs"',
+        '"retrievedUptimeMs"',
+        '"uptimeMs" to now',
+    ):
+        if forbidden in main_activity:
+            fail(f'Android startup timeline mixes uptime and elapsed realtime: {forbidden}')
+    for required in (
         'provideFlutterEngine(context: Context)',
         'FlutterEngine(context.applicationContext, null, false)',
         'shouldDestroyEngineWithHost(): Boolean = true',
