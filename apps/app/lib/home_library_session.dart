@@ -98,6 +98,15 @@ ChapterDownloadSnapshot? _downloadSnapshot(HomeChapterDownloadSummary summary) {
   );
 }
 
+ChapterDownloadTransferRuntimeProvider? _downloadCompositionFor(
+  ChapterDownloadService chapterDownloads,
+  ChapterDownloadTransferRuntimeProvider? explicit,
+) =>
+    explicit ??
+    (chapterDownloads is ChapterDownloadTransferRuntimeProvider
+        ? chapterDownloads as ChapterDownloadTransferRuntimeProvider
+        : null);
+
 bool _shouldPersistDownloadTransition(
   ChapterDownloadSnapshot? previous,
   ChapterDownloadSnapshot next,
@@ -286,7 +295,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   HomeLibrarySession({
     required this.library,
     required this.chapterDownloads,
-    this.downloadComposition,
+    ChapterDownloadTransferRuntimeProvider? downloadComposition,
     required this.wholeComicDownloads,
     required List<BrowsableComicSource> sources,
     required this.ownsLibrary,
@@ -297,7 +306,9 @@ final class HomeLibrarySession extends ChangeNotifier {
     this.persistMissingPreferences = true,
     this.waitForPrimaryFrame,
     this.startupTelemetry,
-  }) : _sources = List<BrowsableComicSource>.unmodifiable(sources) {
+  })  : downloadComposition =
+            _downloadCompositionFor(chapterDownloads, downloadComposition),
+        _sources = List<BrowsableComicSource>.unmodifiable(sources) {
     _downloadSubscription = chapterDownloads.changes.listen(
       acceptDownloadSnapshot,
     );
@@ -462,10 +473,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   }
 
   ChapterDownloadTransferRuntimeProvider? get _downloadCompositionProvider =>
-      downloadComposition ??
-      (chapterDownloads is ChapterDownloadTransferRuntimeProvider
-          ? chapterDownloads as ChapterDownloadTransferRuntimeProvider
-          : null);
+      downloadComposition;
 
   Future<List<VersionChapterCanonicalProjection>>
       _queryCanonicalMediaProjections() async {
@@ -1126,6 +1134,8 @@ final class HomeLibrarySession extends ChangeNotifier {
     required List<BrowsableComicSource> sources,
     required bool persistSnapshot,
   }) async {
+    final resolvedDownloadComposition =
+        _downloadCompositionFor(chapterDownloads, downloadComposition);
     final previousReady = _ready;
     await previousReady;
     if (_closed) {
@@ -1133,7 +1143,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
     if (identical(this.library, library) &&
         identical(this.chapterDownloads, chapterDownloads) &&
-        identical(this.downloadComposition, downloadComposition) &&
+        identical(this.downloadComposition, resolvedDownloadComposition) &&
         identical(this.wholeComicDownloads, wholeComicDownloads)) {
       this.persistSnapshot = persistSnapshot;
       if (!_sameSourceInstances(_sources, sources)) {
@@ -1153,7 +1163,7 @@ final class HomeLibrarySession extends ChangeNotifier {
 
     this.library = library;
     this.chapterDownloads = chapterDownloads;
-    this.downloadComposition = downloadComposition;
+    this.downloadComposition = resolvedDownloadComposition;
     this.wholeComicDownloads = wholeComicDownloads;
     _canonicalPhysicalBackfillFingerprint = null;
     _downloadCacheProjection = null;
@@ -2546,6 +2556,11 @@ final class HomeLibrarySession extends ChangeNotifier {
     await _versionEvidenceWriteTail;
     await _canonicalMediaWriteTail;
     await _canonicalPhysicalBackfillTail;
+    // Snapshot writes admitted before close may still be reading the current
+    // durable projection revision from [library]. Drain that tail before
+    // closing its SQLite owner; setting [_closed] first would instead make an
+    // admitted snapshot silently self-cancel at its next ownership check.
+    await flushSnapshotWrites();
     _closed = true;
     await _downloadSubscription.cancel();
     await _wholeComicSubscription.cancel();

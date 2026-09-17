@@ -67,9 +67,6 @@ final class HomeVersionReuseLifecycle {
   final TraceSink trace;
   final int Function() monotonicMicros;
 
-  final Map<String, ({String fingerprint, int acceptedMappings})>
-      _authorityStates =
-      <String, ({String fingerprint, int acceptedMappings})>{};
   final Map<String, Future<void>> _warmups = <String, Future<void>>{};
   final Map<String, Future<void>> _readerRefreshes = <String, Future<void>>{};
 
@@ -243,10 +240,7 @@ final class HomeVersionReuseLifecycle {
   Future<bool> _chapterHasReusableSourceState(
     ChapterManifest chapter,
   ) async {
-    final downloads = session.chapterDownloads;
-    final provider = downloads is ChapterDownloadTransferRuntimeProvider
-        ? downloads as ChapterDownloadTransferRuntimeProvider
-        : null;
+    final provider = session.downloadComposition;
     if (provider == null || chapter.pages.isEmpty) return false;
     if (await provider.artifactStore.hasReusableChapterState(
       sourceId: chapter.sourceId,
@@ -718,14 +712,10 @@ final class HomeVersionReuseLifecycle {
 
   Future<int> ensureAuthority(ImportedLibraryEntry current) async {
     await session.ensureCanonicalMediaForEntry(current);
-    final chapterKey =
-        '${current.chapter.sourceId}\u0000${current.chapter.comicId}'
-        '\u0000${current.chapter.chapterId}\u0000${current.chapter.sourceRevision}';
     final relations = _relationsForComic(
       current.chapter.sourceId,
       current.chapter.comicId,
     );
-    final relationFingerprintParts = <String>[];
     final targetManifest = current.chapter.toManifest();
     final materializedRelatedChapters = <String>{};
     var acceptedMappings = 0;
@@ -741,18 +731,6 @@ final class HomeVersionReuseLifecycle {
             ? mapping.successorChapterId
             : mapping.predecessorChapterId;
         if (targetChapterId != current.chapter.chapterId) continue;
-        relationFingerprintParts.add(
-          '${relation.predecessorComicId}\u0000${relation.successorComicId}'
-          '\u0000${mapping.predecessorChapterId}'
-          '\u0000${mapping.successorChapterId}'
-          '\u0000${mapping.predecessorPageCount}'
-          '\u0000${mapping.successorPageCount}'
-          '\u0000${mapping.predecessorSourceRevision ?? ''}'
-          '\u0000${mapping.successorSourceRevision ?? ''}'
-          '\u0000${mapping.effectiveVerifiedIntervals.map((interval) => '${interval.predecessorStart}:${interval.predecessorEndExclusive}:${interval.successorOffset}').join(',')}'
-          '\u0000${mapping.intervalProbeVersion}'
-          '\u0000${mapping.verifiedAt?.microsecondsSinceEpoch ?? 0}',
-        );
         final intervals = mapping.effectiveVerifiedIntervals;
         final predecessorRevision = mapping.predecessorSourceRevision;
         final successorRevision = mapping.successorSourceRevision;
@@ -800,18 +778,6 @@ final class HomeVersionReuseLifecycle {
         acceptedMappings++;
       }
     }
-    relationFingerprintParts.sort();
-    final relationFingerprint = relationFingerprintParts.join('\u0001');
-    final previous = _authorityStates[chapterKey];
-    if (previous?.fingerprint == relationFingerprint &&
-        previous?.acceptedMappings == acceptedMappings) {
-      return previous!.acceptedMappings;
-    }
-
-    _authorityStates[chapterKey] = (
-      fingerprint: relationFingerprint,
-      acceptedMappings: acceptedMappings,
-    );
     trace.record(
       TraceEvent(
         monotonicMicros: monotonicMicros(),

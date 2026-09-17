@@ -68,6 +68,51 @@ final class DownloadManagerServices {
 }
 
 
+final class DownloadManagerCommandActions {
+  const DownloadManagerCommandActions({
+    required this.downloadChapter,
+    required this.retryChapter,
+    required this.stopChapter,
+    required this.deleteChapterFiles,
+    required this.pauseWholeComicJob,
+    required this.resumeWholeComicJob,
+    required this.cancelWholeComicJob,
+    required this.retryWholeComicJob,
+    required this.removeWholeComicJob,
+    required this.updateWholeComicPolicy,
+  });
+
+  final Future<ChapterDownloadSnapshot> Function(ImportedLibraryEntry entry)
+      downloadChapter;
+  final Future<ChapterDownloadSnapshot> Function(ImportedLibraryEntry entry)
+      retryChapter;
+  final Future<ChapterDownloadSnapshot> Function(ImportedLibraryEntry entry)
+      stopChapter;
+  final Future<ChapterDownloadSnapshot> Function(ImportedLibraryEntry entry)
+      deleteChapterFiles;
+  final Future<void> Function(String jobId) pauseWholeComicJob;
+  final Future<void> Function(String jobId) resumeWholeComicJob;
+  final Future<void> Function(String jobId) cancelWholeComicJob;
+  final Future<void> Function(String jobId) retryWholeComicJob;
+  final Future<void> Function(String jobId) removeWholeComicJob;
+  final Future<void> Function(WholeComicQueuePolicy policy) updateWholeComicPolicy;
+}
+
+enum _DownloadManagerChapterCommand {
+  download,
+  retry,
+  stop,
+  deleteFiles,
+}
+
+enum _DownloadManagerQueueCommand {
+  pause,
+  resume,
+  cancel,
+  retry,
+  remove,
+}
+
 final class DownloadManagerProjection {
   const DownloadManagerProjection({
     required this.entries,
@@ -157,6 +202,7 @@ final class DownloadManagerScreen extends StatefulWidget {
     this.hydrateEntry,
     this.loadAllEntries,
     this.resolveServices,
+    this.commandActions,
     this.projectionChanges,
     this.readProjection,
     this.refreshProjection,
@@ -176,6 +222,7 @@ final class DownloadManagerScreen extends StatefulWidget {
   final Future<ImportedLibraryEntry> Function(ImportedLibraryEntry)? hydrateEntry;
   final Future<List<ImportedLibraryEntry>> Function()? loadAllEntries;
   final Future<DownloadManagerServices> Function()? resolveServices;
+  final DownloadManagerCommandActions? commandActions;
   final Listenable? projectionChanges;
   final DownloadManagerProjection Function()? readProjection;
   final Future<void> Function()? refreshProjection;
@@ -909,7 +956,11 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       _showError(StateError('Canonical 缓存没有可用的当前版本章节'));
       return;
     }
-    await _act(target, _downloads.download, actionKey: 'convert');
+    await _act(
+      target,
+      _DownloadManagerChapterCommand.download,
+      actionKey: 'convert',
+    );
     if (mounted) {
       setState(() => _selectedTab = DownloadManagerTab.manual);
     }
@@ -917,7 +968,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
 
   Future<void> _act(
     ChapterDownloadSnapshot snapshot,
-    Future<void> Function(ImportedLibraryEntry entry) action, {
+    _DownloadManagerChapterCommand command, {
     required String actionKey,
   }) async {
     final lockKey = '${snapshot.identity}:$actionKey';
@@ -948,7 +999,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       _busyActionKeys.add(lockKey);
     });
     try {
-      await _performTaskAction(snapshot, action);
+      await _performTaskAction(snapshot, command);
     } finally {
       if (mounted) {
         setState(() {
@@ -962,8 +1013,10 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
 
   Future<void> _performTaskAction(
     ChapterDownloadSnapshot snapshot,
-    Future<void> Function(ImportedLibraryEntry entry) action,
+    _DownloadManagerChapterCommand command,
   ) async {
+    await _resolveServices();
+    if (!mounted) return;
     final initialEntry = _entryFor(snapshot);
     if (initialEntry == null) {
       _showError(StateError('下载任务对应的章节记录已不存在'));
@@ -980,8 +1033,35 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       }
     }
     try {
-      await action(entry);
-      final next = await _downloads.inspect(entry);
+      final actions = widget.commandActions;
+      late final ChapterDownloadSnapshot next;
+      if (actions != null) {
+        next = switch (command) {
+          _DownloadManagerChapterCommand.download =>
+            await actions.downloadChapter(entry),
+          _DownloadManagerChapterCommand.retry =>
+            await actions.retryChapter(entry),
+          _DownloadManagerChapterCommand.stop =>
+            await actions.stopChapter(entry),
+          _DownloadManagerChapterCommand.deleteFiles =>
+            await actions.deleteChapterFiles(entry),
+        };
+      } else {
+        // Standalone/test harnesses may not have a Home command owner. They
+        // still resolve the latest supplied service generation before mutating.
+        final downloads = _downloads;
+        switch (command) {
+          case _DownloadManagerChapterCommand.download:
+            await downloads.download(entry);
+          case _DownloadManagerChapterCommand.retry:
+            await downloads.retry(entry);
+          case _DownloadManagerChapterCommand.stop:
+            await downloads.cancel(entry);
+          case _DownloadManagerChapterCommand.deleteFiles:
+            await downloads.delete(entry);
+        }
+        next = await downloads.inspect(entry);
+      }
       _acceptSnapshot(next);
     } on Object catch (error) {
       if (mounted) {
@@ -991,7 +1071,11 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   }
 
   Future<void> _convertCacheToDownload(ChapterDownloadSnapshot snapshot) async {
-    await _act(snapshot, _downloads.download, actionKey: 'convert');
+    await _act(
+      snapshot,
+      _DownloadManagerChapterCommand.download,
+      actionKey: 'convert',
+    );
     if (mounted) {
       setState(() {
         _selectedTab = DownloadManagerTab.manual;
@@ -1031,7 +1115,10 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
         ),
       );
       if (confirmed == true && mounted) {
-        await _performTaskAction(snapshot, _downloads.delete);
+        await _performTaskAction(
+          snapshot,
+          _DownloadManagerChapterCommand.deleteFiles,
+        );
       }
     } finally {
       if (mounted) {
@@ -1146,6 +1233,8 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   }
 
   Future<void> _editQueuePolicy() async {
+    await _resolveServices();
+    if (!mounted) return;
     var next = _wholeComicSnapshot.policy;
     final selected = await showDialog<WholeComicQueuePolicy>(
       context: context,
@@ -1238,7 +1327,12 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       return;
     }
     try {
-      await _wholeComicDownloads.updatePolicy(selected);
+      final actions = widget.commandActions;
+      if (actions != null) {
+        await actions.updateWholeComicPolicy(selected);
+      } else {
+        await _wholeComicDownloads.updatePolicy(selected);
+      }
     } on Object catch (error) {
       if (mounted) {
         _showError(error);
@@ -1246,9 +1340,42 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     }
   }
 
-  Future<void> _queueAction(Future<void> Function() action) async {
+  Future<void> _queueAction(
+    _DownloadManagerQueueCommand command,
+    String jobId,
+  ) async {
     try {
-      await action();
+      await _resolveServices();
+      if (!mounted) return;
+      final actions = widget.commandActions;
+      if (actions != null) {
+        switch (command) {
+          case _DownloadManagerQueueCommand.pause:
+            await actions.pauseWholeComicJob(jobId);
+          case _DownloadManagerQueueCommand.resume:
+            await actions.resumeWholeComicJob(jobId);
+          case _DownloadManagerQueueCommand.cancel:
+            await actions.cancelWholeComicJob(jobId);
+          case _DownloadManagerQueueCommand.retry:
+            await actions.retryWholeComicJob(jobId);
+          case _DownloadManagerQueueCommand.remove:
+            await actions.removeWholeComicJob(jobId);
+        }
+      } else {
+        final queue = _wholeComicDownloads;
+        switch (command) {
+          case _DownloadManagerQueueCommand.pause:
+            await queue.pause(jobId);
+          case _DownloadManagerQueueCommand.resume:
+            await queue.resume(jobId);
+          case _DownloadManagerQueueCommand.cancel:
+            await queue.cancel(jobId);
+          case _DownloadManagerQueueCommand.retry:
+            await queue.retry(jobId);
+          case _DownloadManagerQueueCommand.remove:
+            await queue.remove(jobId);
+        }
+      }
     } on Object catch (error) {
       if (mounted) {
         _showError(error);
@@ -1353,19 +1480,24 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
               key: wholeComicQueueJobKey(job.jobId),
               job: job,
               onPause: () => _queueAction(
-                () => _wholeComicDownloads.pause(job.jobId),
+                _DownloadManagerQueueCommand.pause,
+                job.jobId,
               ),
               onResume: () => _queueAction(
-                () => _wholeComicDownloads.resume(job.jobId),
+                _DownloadManagerQueueCommand.resume,
+                job.jobId,
               ),
               onCancel: () => _queueAction(
-                () => _wholeComicDownloads.cancel(job.jobId),
+                _DownloadManagerQueueCommand.cancel,
+                job.jobId,
               ),
               onRetry: () => _queueAction(
-                () => _wholeComicDownloads.retry(job.jobId),
+                _DownloadManagerQueueCommand.retry,
+                job.jobId,
               ),
               onRemove: () => _queueAction(
-                () => _wholeComicDownloads.remove(job.jobId),
+                _DownloadManagerQueueCommand.remove,
+                job.jobId,
               ),
             );
           }
@@ -1388,8 +1520,16 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
           isCancellingOrRetrying: _isActionBusy(snapshot.identity, 'stop') ||
               _isActionBusy(snapshot.identity, 'retry'),
           isDeleting: _isActionBusy(snapshot.identity, 'delete'),
-          onCancel: () => _act(snapshot, _downloads.cancel, actionKey: 'stop'),
-          onRetry: () => _act(snapshot, _downloads.retry, actionKey: 'retry'),
+          onCancel: () => _act(
+            snapshot,
+            _DownloadManagerChapterCommand.stop,
+            actionKey: 'stop',
+          ),
+          onRetry: () => _act(
+            snapshot,
+            _DownloadManagerChapterCommand.retry,
+            actionKey: 'retry',
+          ),
           onDelete: () => _delete(snapshot),
         );
       },

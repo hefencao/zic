@@ -662,12 +662,19 @@ final class _DemoHomeState extends State<DemoHome> {
       _handleDownloadProjectionChanged,
     );
     unawaited(_closeHomeComposition());
-    _librarySession.dispose();
     super.dispose();
   }
 
   Future<void> _closeHomeComposition() async {
-    await _librarySession.close();
+    try {
+      await _librarySession.close();
+    } finally {
+      // ChangeNotifier disposal must follow the asynchronous owner close. Doing
+      // it synchronously from State.dispose() marks the session closed while an
+      // admitted Home snapshot is still draining and silently cancels that
+      // snapshot before its SQLite owner has shut down.
+      _librarySession.dispose();
+    }
     _sourceResources.close();
     await _serviceCache.closeIfOwned();
   }

@@ -502,8 +502,12 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     if (busyJobs) {
       return '有正在进行的整本下载任务，请先暂停或等待完成';
     }
-    // Reader transfer consumers hold live artifact streams; tearing the
-    // composition down under them would fail halfway through closing.
+    // Idle Reader re-entry sessions intentionally retain a transfer consumer
+    // for up to two minutes. They are not active UI readers and must not block
+    // an explicit storage-root switch. Drain only that bounded idle pool first;
+    // an actually mounted Reader remains leased and therefore still trips the
+    // consumer check below.
+    await drainDefaultRetainedReaderSessions();
     final composition = services.downloadComposition;
     if (composition != null && composition.transferRuntime.hasConsumers) {
       return '阅读器正在使用下载内容，请稍后再试';

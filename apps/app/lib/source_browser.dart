@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:catalog/catalog.dart';
-import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:network_bridge/network_bridge.dart';
@@ -2953,6 +2952,7 @@ final class SourceManagementScreen extends StatefulWidget {
 final class _SourceManagementScreenState
     extends State<SourceManagementScreen> {
   late List<BrowsableComicSource> _sources;
+  Set<String> _externalSourceIds = <String>{};
   final Set<String> _expandedFamilies = <String>{};
   late Map<String, ComicSourcePreference> _preferences;
 
@@ -2960,6 +2960,11 @@ final class _SourceManagementScreenState
   void initState() {
     super.initState();
     _preferences = Map<String, ComicSourcePreference>.from(widget.preferences);
+    _externalSourceIds = <String>{
+      for (final source in widget.externalPlugins?.activeSources ??
+          const <BrowsableComicSource>[])
+        source.sourceId,
+    };
     _sources = widget.sources.toList(growable: true)
       ..sort((left, right) => _preference(left).sortOrder.compareTo(
             _preference(right).sortOrder,
@@ -3348,18 +3353,25 @@ final class _SourceManagementScreenState
   }
 
   void _refreshExternalSources(ExternalPluginController controller) {
+    final external = controller.activeSources;
+    final nextExternalSourceIds = <String>{
+      for (final source in external) source.sourceId,
+    };
+    final replacedSourceIds = <String>{
+      ..._externalSourceIds,
+      ...nextExternalSourceIds,
+    };
     final builtIn = _sources.where(
-      (source) =>
-          !source.sourceId.startsWith('mihon:') &&
-          !source.sourceId.startsWith('venera:'),
+      (source) => !replacedSourceIds.contains(source.sourceId),
     );
     setState(() {
       _sources = <BrowsableComicSource>[
         ...builtIn,
-        ...controller.activeSources,
+        ...external,
       ]..sort((left, right) => _preference(left).sortOrder.compareTo(
             _preference(right).sortOrder,
           ));
+      _externalSourceIds = nextExternalSourceIds;
     });
   }
 
@@ -3455,117 +3467,6 @@ final class _SourceManagementScreenState
     );
   }
 
-}
-
-final class SourceComicDetailsScreen extends StatelessWidget {
-  const SourceComicDetailsScreen({
-    required this.initialLibrary,
-    required this.source,
-    required this.summary,
-    required this.categories,
-    required this.loadCover,
-    required this.reloadLibrary,
-    required this.ensureSourceChapter,
-    required this.persistComic,
-    required this.onPreferenceChanged,
-    required this.onReadChanged,
-    required this.onOpenChapter,
-    required this.onDownloadChapter,
-    this.onDeleteChapter,
-    required this.inspectChapterDownload,
-    required this.downloadChanges,
-    required this.onDownloadComic,
-    this.inspectChapterDownloads,
-    this.downloadActions = details.ComicDetailsDownloadActions.noop,
-    this.inspectComicConflicts,
-    this.artworkIdentity,
-    this.onOpenSourceWebView,
-    this.onOpenSourceSettings,
-    this.resolveSource,
-    this.onSearchMetadata,
-    this.onMigrateSource,
-    this.loadVersionState,
-    this.onViewVersion,
-    this.onMigrateVersion,
-    this.sameComicIdentity,
-    this.previewMaxItemsPerRow = 4,
-    this.traceSink = const NoopTraceSink(),
-    this.traceMonotonicMicros,
-    super.key,
-  });
-
-  final details.ComicDetailsLibrarySnapshot initialLibrary;
-  final BrowsableComicSource source;
-  final SourceComicSummary summary;
-  final List<LibraryCategory> categories;
-  final details.ComicDetailsArtworkLoader loadCover;
-  final details.ComicDetailsLibraryReloader reloadLibrary;
-  final details.ComicDetailsChapterEnsurer ensureSourceChapter;
-  final details.ComicDetailsComicPersister persistComic;
-  final Future<void> Function(ComicPreference preference) onPreferenceChanged;
-  final Future<void> Function(ImportedLibraryEntry chapter, bool isRead)
-      onReadChanged;
-  final details.ComicDetailsChapterOpener onOpenChapter;
-  final details.ComicDetailsChapterDownloader onDownloadChapter;
-  final details.ComicDetailsChapterDeleter? onDeleteChapter;
-  final details.ComicDetailsChapterDownloadInspector inspectChapterDownload;
-  final details.ComicDetailsChapterDownloadBulkInspector?
-      inspectChapterDownloads;
-  final details.ComicDetailsConflictInspector? inspectComicConflicts;
-  final details.ComicDetailsDownloadActions downloadActions;
-  final Stream<ChapterDownloadSnapshot> downloadChanges;
-  final details.ComicDetailsComicDownloader onDownloadComic;
-  final String? artworkIdentity;
-  final details.ComicDetailsSourceWebViewOpener? onOpenSourceWebView;
-  final details.ComicDetailsSourceSettingsOpener? onOpenSourceSettings;
-  final details.ComicDetailsSourceResolver? resolveSource;
-  final details.ComicDetailsMetadataSearch? onSearchMetadata;
-  final details.ComicDetailsSourceMigrator? onMigrateSource;
-  final details.ComicDetailsVersionStateLoader? loadVersionState;
-  final details.ComicDetailsVersionViewer? onViewVersion;
-  final details.ComicDetailsVersionMigrator? onMigrateVersion;
-  final details.ComicDetailsIdentityMatcher? sameComicIdentity;
-  final int previewMaxItemsPerRow;
-  final TraceSink traceSink;
-  final int Function()? traceMonotonicMicros;
-
-  @override
-  Widget build(BuildContext context) {
-    return details.RemoteComicDetailsScreen(
-      initialLibrary: initialLibrary,
-      source: source,
-      summary: summary,
-      categories: categories,
-      loadCover: loadCover,
-      reloadLibrary: reloadLibrary,
-      ensureSourceChapter: ensureSourceChapter,
-      persistComic: persistComic,
-      onPreferenceChanged: onPreferenceChanged,
-      onReadChanged: onReadChanged,
-      onOpenChapter: onOpenChapter,
-      onDownloadChapter: onDownloadChapter,
-      onDeleteChapter: onDeleteChapter,
-      inspectChapterDownload: inspectChapterDownload,
-      inspectChapterDownloads: inspectChapterDownloads,
-      inspectComicConflicts: inspectComicConflicts,
-      downloadChanges: downloadChanges,
-      onDownloadComic: onDownloadComic,
-      downloadActions: downloadActions,
-      artworkIdentity: artworkIdentity,
-      onOpenSourceWebView: onOpenSourceWebView,
-      onOpenSourceSettings: onOpenSourceSettings,
-      resolveSource: resolveSource,
-      onSearchMetadata: onSearchMetadata,
-      onMigrateSource: onMigrateSource,
-      loadVersionState: loadVersionState,
-      onViewVersion: onViewVersion,
-      onMigrateVersion: onMigrateVersion,
-      previewMaxItemsPerRow: previewMaxItemsPerRow,
-      sameComicIdentity: sameComicIdentity ?? (left, right) => left == right,
-      traceSink: traceSink,
-      traceMonotonicMicros: traceMonotonicMicros,
-    );
-  }
 }
 
 final class _SourceFailure {

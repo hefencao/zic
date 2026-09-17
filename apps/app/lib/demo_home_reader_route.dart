@@ -244,10 +244,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       pipelineFactory: defaultLocalMediaPipelineFactory
           .withArtifactCacheManager(_readerArtifactCache)
           .withPartialDownloadStore(
-            _downloadComposition?.artifactStore ??
-                (_chapterDownloads is PartialDownloadStore
-                    ? _chapterDownloads as PartialDownloadStore
-                    : null),
+            _downloadComposition?.artifactStore,
           )
           .withTransferRuntime(
             _downloadComposition?.transferRuntime,

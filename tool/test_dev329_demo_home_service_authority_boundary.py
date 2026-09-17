@@ -85,4 +85,37 @@ require(
     "same-service source publication",
 )
 
+
+for marker, label in (
+    ("ChapterDownloadTransferRuntimeProvider? _downloadCompositionFor(", "transfer capability normalizer"),
+    ("_downloadCompositionFor(chapterDownloads, downloadComposition)", "constructor/adoption normalization"),
+    ("ChapterDownloadTransferRuntimeProvider? get _downloadCompositionProvider =>\n      downloadComposition;", "normalized composition authority"),
+):
+    require(session, marker, label)
+
+close_body = session[session.index('Future<void> _closeOwnedResources() async {'):]
+for marker, label in (
+    ('await flushSnapshotWrites();', 'snapshot tail drain before owner close'),
+    ('_closed = true;', 'closed publication after drains'),
+):
+    require(close_body, marker, label)
+if close_body.index('await flushSnapshotWrites();') > close_body.index('_closed = true;'):
+    raise SystemExit('Home session must drain admitted snapshots before publishing closed')
+
+dispose_start = home.index('  @override\n  void dispose() {')
+close_composition_start = home.index('  Future<void> _closeHomeComposition() async {', dispose_start)
+dispose_body = home[dispose_start:close_composition_start]
+if '_librarySession.dispose();' in dispose_body:
+    raise SystemExit('DemoHome State.dispose must not synchronously dispose a closing Home session')
+close_composition_body = home[close_composition_start:]
+for marker, label in (
+    ('await _librarySession.close();', 'async session close'),
+    ('_librarySession.dispose();', 'post-close notifier disposal'),
+):
+    require(close_composition_body, marker, label)
+if close_composition_body.index('await _librarySession.close();') > close_composition_body.index(
+    '_librarySession.dispose();'
+):
+    raise SystemExit('Home session notifier disposal must follow async owner close')
+
 print("dev.329 DemoHome service authority boundary: OK")

@@ -27,7 +27,10 @@ for marker, label in (
     ('session.chapterDownloads', 'chapter service delegation'),
     ('session.wholeComicDownloads', 'whole-comic service delegation'),
     ('Future<ChapterDownloadSnapshot> downloadChapter(', 'chapter sequencing'),
-    ('Future<void> deleteChapterFiles(', 'archive file-delete sequencing'),
+    ('Future<ChapterDownloadSnapshot> retryChapter(', 'retry sequencing'),
+    ('Future<void> pauseWholeComicJob(', 'queue pause sequencing'),
+    ('Future<void> updateWholeComicPolicy(', 'queue policy sequencing'),
+    ('Future<ChapterDownloadSnapshot> deleteChapterFiles(', 'archive file-delete sequencing'),
     ('await ensureDurableServices();\n    final hydrated = await session.hydrateEntry(entry);\n    await session.chapterDownloads.delete(hydrated);', 'durable file-delete boundary'),
     ('Future<HomeWholeComicDownloadStart> downloadComicEntries(', 'whole-comic sequencing'),
     ('final refreshed = await refreshStaleChapter(current);', 'stale authority refresh'),
@@ -51,13 +54,18 @@ for marker, label in (
     ('onDeleteChapter: _downloadCommands.deleteChapter,', 'details delete adapter'),
     ('_downloadCommands.deleteChapterFiles(entry);', 'archive file-delete adapter'),
     ('probeExisting: _downloadCommands.probeExisting,', 'details probe adapter'),
-    ('stopChapter: _downloadCommands.stopChapter,', 'details stop adapter'),
+    ('await _downloadCommands.stopChapter(entry);', 'details stop adapter'),
     ('toggleWholeComicPause: _downloadCommands.toggleWholeComicPause,', 'details pause adapter'),
     ('claimComicDirectory: _downloadCommands.claimComicDirectory,', 'details placement adapter'),
     ('getDownloadPlacement: _downloadCommands.getDownloadPlacement,', 'details placement read adapter'),
     ('inspectChapter: _downloadCommands.inspectChapter,', 'details inspect adapter'),
     ('final snapshot = await _downloadCommands.downloadChapter(entry);', 'chapter UI wrapper'),
     ('final started = await _downloadCommands.downloadComicEntries(', 'whole-comic UI wrapper'),
+    ('commandActions: DownloadManagerCommandActions(', 'download-manager command adapter'),
+    ('retryChapter: _downloadCommands.retryChapter,', 'manager retry adapter'),
+    ('deleteChapterFiles: _downloadCommands.deleteChapterFiles,', 'manager delete adapter'),
+    ('pauseWholeComicJob: _downloadCommands.pauseWholeComicJob,', 'manager queue adapter'),
+    ('updateWholeComicPolicy: _downloadCommands.updateWholeComicPolicy,', 'manager policy adapter'),
 ):
     require(ui, marker, label)
 
@@ -91,5 +99,17 @@ for forbidden in (
         raise SystemExit(
             f'DemoHome UI re-acquired download command authority: {forbidden}'
         )
+
+manager = text('apps/app/lib/download_manager.dart')
+for marker, label in (
+    ('final class DownloadManagerCommandActions', 'manager mutation capability bundle'),
+    ('final DownloadManagerCommandActions? commandActions;', 'manager command capability input'),
+    ('final actions = widget.commandActions;', 'manager command dispatch'),
+    ('await actions.downloadChapter(entry)', 'manager download owner dispatch'),
+    ('await actions.retryChapter(entry)', 'manager retry owner dispatch'),
+    ('await actions.stopChapter(entry)', 'manager stop owner dispatch'),
+    ('await actions.deleteChapterFiles(entry)', 'manager delete owner dispatch'),
+):
+    require(manager, marker, label)
 
 print('dev.330 DemoHome download command boundary: OK')

@@ -273,6 +273,44 @@ void main() {
     expect(runtime.closed, isTrue);
   });
 
+  test('retained-session drain releases idle consumers but not active Readers',
+      () async {
+    final cache = ArtifactCacheManager(backend: _Backend());
+    final net = NetLane(maxActive: 2);
+    final transferRuntime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: cache,
+      partialDownloadStore: null,
+      net: net,
+    );
+    final factory = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: const _FreshFactory(),
+      pageDownloadLane: net,
+    ).withTransferRuntime(transferRuntime);
+    final reader = factory.acquire(
+      chapter: _chapter(),
+      sessionId: 'exclusive-storage-reader',
+    );
+
+    expect(transferRuntime.hasConsumers, isTrue);
+    await factory.disposeRetainedSessions();
+    expect(
+      transferRuntime.hasConsumers,
+      isTrue,
+      reason: 'an actively leased Reader must survive idle-retention drain',
+    );
+
+    factory.release(reader);
+    expect(transferRuntime.hasConsumers, isTrue);
+    await factory.disposeRetainedSessions();
+    expect(
+      transferRuntime.hasConsumers,
+      isFalse,
+      reason: 'an idle retained Reader must not block exclusive storage work',
+    );
+
+    await transferRuntime.dispose();
+  });
+
   test('changed page carrier cannot reuse a retained Reader session', () async {
     final base = PipelineReaderSessionFactory(
       mediaRuntimeFactory: const _FreshFactory(),

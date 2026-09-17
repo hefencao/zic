@@ -79,4 +79,30 @@ for forbidden in (
             f"DemoHome re-acquired source projection responsibility: {forbidden}"
         )
 
+source_management = text("apps/app/lib/source_browser.dart")
+require(
+    source_management,
+    "Set<String> _externalSourceIds = <String>{};",
+    "source-management explicit external-source ownership",
+)
+refresh_start = source_management.index(
+    "  void _refreshExternalSources(ExternalPluginController controller) {"
+)
+refresh_end = source_management.index(
+    "  Future<void> _openSourceSettings", refresh_start
+)
+refresh_body = source_management[refresh_start:refresh_end]
+for marker, label in (
+    ("final nextExternalSourceIds = <String>{", "next external identity set"),
+    ("..._externalSourceIds,", "previous external identity set"),
+    ("!replacedSourceIds.contains(source.sourceId)", "identity-based replacement"),
+    ("_externalSourceIds = nextExternalSourceIds;", "external identity generation commit"),
+):
+    require(refresh_body, marker, label)
+for forbidden in ("startsWith('mihon:')", "startsWith('venera:')"):
+    if forbidden in refresh_body:
+        raise SystemExit(
+            f"SourceManagementScreen inferred external ownership from sourceId prefix: {forbidden}"
+        )
+
 print("dev.328 DemoHome source projection boundary: OK")

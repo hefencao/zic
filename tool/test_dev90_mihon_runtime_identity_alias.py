@@ -117,9 +117,14 @@ require(
     'comicId: chapter.comicId',
 )
 require(
-    'apps/app/lib/source_browser.dart',
-    'final details.ComicDetailsIdentityMatcher? sameComicIdentity',
-    'sameComicIdentity: sameComicIdentity ??',
+    'apps/app/lib/comic_details.dart',
+    'this.sameComicIdentity = _exactComicIdentity,',
+    'final ComicDetailsIdentityMatcher sameComicIdentity;',
+)
+require(
+    'apps/app/lib/demo_home_source_compat.dart',
+    'sameComicIdentity: resolveCanonicalAlias',
+    '_canonicalComicKey(source.sourceId, left)',
 )
 require(
     'packages/plugin_host/test/runtime_source_adapter_test.dart',

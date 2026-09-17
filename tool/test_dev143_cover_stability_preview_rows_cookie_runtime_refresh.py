@@ -17,7 +17,6 @@ artwork = read('apps/app/lib/artwork_placeholder.dart')
 home = read('apps/app/lib/home_widgets.dart')
 source = read('apps/app/lib/source_browser.dart')
 details = read('apps/app/lib/comic_details.dart') + read('apps/app/lib/comic_details_interactions.dart')
-source_wrapper = read('apps/app/lib/source_browser.dart')
 home_source = read('apps/app/lib/demo_home_source_compat.dart')
 source_test = read('apps/app/test/source_browser_test.dart')
 refresh = read('apps/app/lib/app_pull_to_refresh.dart')
@@ -99,7 +98,7 @@ for token in (
     "widget.ensureSourceChapter(\n      source,",
 ):
     require(details, token, 'active source resolution')
-require(source_wrapper, 'resolveSource: resolveSource', 'source details forwarding')
+require(details, 'final ComicDetailsSourceResolver? resolveSource;', 'canonical source resolver input')
 require(source_test, 'Index 1 is landscape, so the actual first row contains exactly two', 'preview row owner test')
 for token in (
     'resolveSource: _sourceForId',

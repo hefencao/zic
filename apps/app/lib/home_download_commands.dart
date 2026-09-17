@@ -161,14 +161,60 @@ final class HomeDownloadCommands {
     }
   }
 
-  Future<void> stopChapter(ImportedLibraryEntry entry) async {
-    await session.chapterDownloads.cancel(entry);
-    await session.refreshDownloadSnapshots(session.entries);
+  Future<void> pauseWholeComicJob(String jobId) =>
+      _runWholeComicMutation((queue) => queue.pause(jobId));
+
+  Future<void> resumeWholeComicJob(String jobId) =>
+      _runWholeComicMutation((queue) => queue.resume(jobId));
+
+  Future<void> cancelWholeComicJob(String jobId) =>
+      _runWholeComicMutation((queue) => queue.cancel(jobId));
+
+  Future<void> retryWholeComicJob(String jobId) =>
+      _runWholeComicMutation((queue) => queue.retry(jobId));
+
+  Future<void> removeWholeComicJob(String jobId) =>
+      _runWholeComicMutation((queue) => queue.remove(jobId));
+
+  Future<void> updateWholeComicPolicy(WholeComicQueuePolicy policy) =>
+      _runWholeComicMutation((queue) => queue.updatePolicy(policy));
+
+  Future<void> _runWholeComicMutation(
+    Future<void> Function(WholeComicDownloadQueue queue) mutation,
+  ) async {
+    await ensureDurableServices();
+    final queue = session.wholeComicDownloads;
+    await queue.ready;
+    await mutation(queue);
+    session.refreshWholeComicSnapshot();
+  }
+
+  Future<ChapterDownloadSnapshot> stopChapter(
+    ImportedLibraryEntry entry,
+  ) async {
+    await ensureDurableServices();
+    final hydrated = await session.hydrateEntry(entry);
+    final downloads = session.chapterDownloads;
+    await downloads.cancel(hydrated);
+    final snapshot = await downloads.inspect(hydrated);
+    session.acceptDownloadSnapshot(snapshot);
+    return snapshot;
   }
 
   Future<ChapterDownloadSnapshot> downloadChapter(
     ImportedLibraryEntry entry,
-  ) async {
+  ) =>
+      _runChapterTransfer(entry, retry: false);
+
+  Future<ChapterDownloadSnapshot> retryChapter(
+    ImportedLibraryEntry entry,
+  ) =>
+      _runChapterTransfer(entry, retry: true);
+
+  Future<ChapterDownloadSnapshot> _runChapterTransfer(
+    ImportedLibraryEntry entry, {
+    required bool retry,
+  }) async {
     await ensureDurableServices();
     final hydrated = await session.hydrateEntry(entry);
     var current = requiresSourceLocatorRefresh(hydrated.chapter)
@@ -177,7 +223,7 @@ final class HomeDownloadCommands {
             forceSourceRefresh: true,
           )
         : hydrated;
-    final downloads = session.chapterDownloads;
+    var downloads = session.chapterDownloads;
     try {
       // Conflict confirmation may claim placement asynchronously. Read it back
       // before artifact writes so a failed cross-process CAS is observed here.
@@ -185,7 +231,11 @@ final class HomeDownloadCommands {
         sourceId: current.chapter.sourceId,
         comicId: current.chapter.comicId,
       );
-      await downloads.download(current);
+      if (retry) {
+        await downloads.retry(current);
+      } else {
+        await downloads.download(current);
+      }
     } on Object catch (error) {
       final message = error.toString();
       if (message.contains('must use a runtime token') ||
@@ -193,7 +243,8 @@ final class HomeDownloadCommands {
         final refreshed = await refreshStaleChapter(current);
         if (refreshed == null) rethrow;
         current = refreshed;
-        await session.chapterDownloads.retry(current);
+        downloads = session.chapterDownloads;
+        await downloads.retry(current);
       } else {
         rethrow;
       }
@@ -216,8 +267,13 @@ final class HomeDownloadCommands {
     );
   }
 
-  Future<void> deleteChapterFiles(ImportedLibraryEntry entry) async {
-    await _deleteChapterFiles(entry);
+  Future<ChapterDownloadSnapshot> deleteChapterFiles(
+    ImportedLibraryEntry entry,
+  ) async {
+    final hydrated = await _deleteChapterFiles(entry);
+    final snapshot = await session.chapterDownloads.inspect(hydrated);
+    session.acceptDownloadSnapshot(snapshot);
+    return snapshot;
   }
 
   Future<ImportedLibraryEntry> _deleteChapterFiles(

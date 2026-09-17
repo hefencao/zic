@@ -1605,7 +1605,6 @@ def check_compile_regressions() -> None:
     for required in (
         'final class ComicSourcesPage',
         'final class SourceManagementScreen',
-        'final class SourceComicDetailsScreen',
         'sourceManagementScreenKey',
         'comicSourceSwitcherKey',
         "title: '漫画源 · 长按拖动排序'",
@@ -1621,6 +1620,13 @@ def check_compile_regressions() -> None:
     ):
         if required not in source_ui:
             fail(f'comic source UI is incomplete: {required}')
+    home_source_compat = (
+        ROOT / 'apps/app/lib/demo_home_source_compat.dart'
+    ).read_text(encoding='utf-8')
+    if 'builder: (_) => details.RemoteComicDetailsScreen(' not in home_source_compat:
+        fail('Home source route must construct the canonical remote details screen directly')
+    if 'SourceComicDetailsScreen' in source_ui or 'SourceComicDetailsScreen' in home_source_compat:
+        fail('redundant SourceComicDetailsScreen pass-through wrapper returned')
     configure_platforms = ROOT / 'tool/configure_platforms.py'
     configure_platforms_test = ROOT / 'tool/test_configure_platforms.py'
     run_android = ROOT / 'tool/run_android.sh'

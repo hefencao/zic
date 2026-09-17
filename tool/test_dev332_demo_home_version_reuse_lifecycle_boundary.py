@@ -48,7 +48,6 @@ for marker, label in (
     ("final class HomeVersionState", "composition-neutral version state"),
     ("final HomeLibrarySession session;", "dynamic session authority"),
     ("final HomeVersionMetadataTaskScheduler scheduleMetadataTask;", "injected metadata scheduling capability"),
-    ("final Map<String, ({String fingerprint, int acceptedMappings})>", "authority fingerprint state"),
     ("final Map<String, Future<void>> _warmups", "warmup coalescing state"),
     ("final Map<String, Future<void>> _readerRefreshes", "Reader refresh coalescing state"),
     ("VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(", "bounded version-page proof"),
@@ -57,6 +56,7 @@ for marker, label in (
     ("!requiresSourceLocatorRefresh(existing.chapter)", "shared locator-validity rule"),
     ("Future<int> ensureAuthority(", "Reader version authority"),
     ("Future<HomeVersionState> loadVersionState(", "version-state load"),
+    ("final provider = session.downloadComposition;", "session-normalized transfer capability"),
 ):
     require(owner, marker, label)
 
@@ -75,6 +75,10 @@ for forbidden in (
     "defaultDownloadResourceCoordinator",
     "source_resource_gateway.dart",
     "isLegacyVeneraRuntimeLocator",
+    "downloads is ChapterDownloadTransferRuntimeProvider",
+    "downloads as ChapterDownloadTransferRuntimeProvider",
+    "_authorityStates",
+    "relationFingerprintParts",
 ):
     if forbidden in owner:
         raise SystemExit(

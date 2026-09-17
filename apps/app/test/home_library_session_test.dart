@@ -1892,6 +1892,79 @@ void main() {
     );
   });
 
+  test('close drains admitted Home snapshot writes before library shutdown',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-home-session-close-snapshot-drain-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final snapshotStore = HomeProjectionSnapshotStore.atPath(
+      '${directory.path}/snapshot.json',
+    );
+    final library = _GatedLibraryStore(
+      MemoryImportedLibraryStore(),
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+      libraryRevision: 7,
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      snapshotStore: snapshotStore,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(session.dispose);
+
+    await session.ready;
+    await session.flushSnapshotWrites();
+    final revisionReadsBefore = library.libraryRevisionReads;
+    final revisionGate = Completer<void>();
+    library.libraryRevisionReadGate = revisionGate.future;
+    final preference = ComicPreference.defaults(
+      sourceId: 'close-drain-source',
+      comicId: 'close-drain-comic',
+      sourceKind: ComicSourceKind.remote,
+    ).copyWith(liked: true);
+    session.replacePreference(preference);
+
+    for (var attempt = 0;
+        attempt < 20 && library.libraryRevisionReads == revisionReadsBefore;
+        attempt++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(library.libraryRevisionReads, greaterThan(revisionReadsBefore));
+
+    var closeCompleted = false;
+    final closing = session.close().then((_) => closeCompleted = true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(closeCompleted, isFalse);
+    expect(library.closeCalls, 0);
+
+    revisionGate.complete();
+    await closing;
+    expect(library.closeCalls, 1);
+
+    final persisted = await snapshotStore.read();
+    expect(
+      persisted?.preferences.singleWhere(
+        (candidate) => candidate.identity == preference.identity,
+      ).liked,
+      isTrue,
+    );
+  });
+
   test('explicit checkpoint rewrites snapshot after durable revision advances',
       () async {
     final directory = await Directory.systemTemp.createTemp(
@@ -2789,6 +2862,9 @@ final class _GatedLibraryStore
   final Future<List<LibraryCategory>> categories;
   final Future<void>? openGate;
   int? libraryRevision;
+  Future<void>? libraryRevisionReadGate;
+  var libraryRevisionReads = 0;
+  var closeCalls = 0;
   var comicPreferenceWrites = 0;
   var sourcePreferenceWrites = 0;
   var listCalls = 0;
@@ -2796,7 +2872,11 @@ final class _GatedLibraryStore
   var getManyCalls = 0;
 
   @override
-  Future<int?> get libraryProjectionRevision async => libraryRevision;
+  Future<int?> get libraryProjectionRevision async {
+    libraryRevisionReads++;
+    await libraryRevisionReadGate;
+    return libraryRevision;
+  }
 
   @override
   Future<void> open() async {
@@ -2897,5 +2977,8 @@ final class _GatedLibraryStore
         acknowledgedAt: acknowledgedAt,
       );
   @override
-  Future<void> close() => delegate.close();
+  Future<void> close() {
+    closeCalls++;
+    return delegate.close();
+  }
 }

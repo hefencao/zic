@@ -115,6 +115,12 @@ for token in (
     '_downloads.inspectMany(_entries.values)',
     '_entryIdentityByChapter',
     'ListView.builder(',
+    'this.commandActions,',
+    'final actions = widget.commandActions;',
+    'await actions.downloadChapter(entry)',
+    'await actions.retryChapter(entry)',
+    'await actions.deleteChapterFiles(entry)',
+    '_DownloadManagerQueueCommand',
 ):
     require(manager, token, 'route-first download manager')
 for token in (
@@ -122,6 +128,8 @@ for token in (
     '_entries.values.map(widget.downloads.inspect)',
     '_entries.values.map(_downloads.inspect)',
     '_entries.keys.firstWhere(',
+    '_act(snapshot, _downloads.',
+    '_performTaskAction(snapshot, _downloads.',
 ):
     forbid(manager, token, 'pre-frame per-entry inspection')
 

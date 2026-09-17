@@ -18,6 +18,12 @@ final defaultLocalMediaPipelineFactory = PipelineReaderSessionFactory(
 Future<void> prewarmDefaultLocalMediaPipeline() =>
     _defaultNativeMediaRuntimeFactory.prewarm();
 
+/// Releases only idle Reader re-entry sessions. Active Reader leases remain
+/// attached, so exclusive storage operations can distinguish a real mounted
+/// Reader from the bounded two-minute re-entry pool.
+Future<void> drainDefaultRetainedReaderSessions() =>
+    defaultLocalMediaPipelineFactory.disposeRetainedSessions();
+
 Future<void> shutdownDefaultLocalMediaPipeline() async {
   await defaultLocalMediaPipelineFactory.disposeRetainedSessions();
   await defaultLocalMediaPipelineFactory.disposeTransferRuntimes();

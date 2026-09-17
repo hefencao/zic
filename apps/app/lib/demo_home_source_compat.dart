@@ -250,7 +250,9 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
   details.ComicDetailsDownloadActions get _detailsDownloadActions =>
       details.ComicDetailsDownloadActions(
         downloadChapter: _downloadChapter,
-        stopChapter: _downloadCommands.stopChapter,
+        stopChapter: (entry) async {
+          await _downloadCommands.stopChapter(entry);
+        },
         probeExisting: _downloadCommands.probeExisting,
         wholeComicJob: _downloadCommands.wholeComicJob,
         cachedWholeComicJob: _downloadCommands.cachedWholeComicJob,
@@ -405,7 +407,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     try {
       await Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => SourceComicDetailsScreen(
+          builder: (_) => details.RemoteComicDetailsScreen(
             initialLibrary: _detailsSnapshotForComic(
               source.sourceId,
               comic.comicId,
@@ -815,6 +817,18 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               cacheCoordinator: _cacheCoordinator,
             );
           },
+          commandActions: DownloadManagerCommandActions(
+            downloadChapter: _downloadCommands.downloadChapter,
+            retryChapter: _downloadCommands.retryChapter,
+            stopChapter: _downloadCommands.stopChapter,
+            deleteChapterFiles: _downloadCommands.deleteChapterFiles,
+            pauseWholeComicJob: _downloadCommands.pauseWholeComicJob,
+            resumeWholeComicJob: _downloadCommands.resumeWholeComicJob,
+            cancelWholeComicJob: _downloadCommands.cancelWholeComicJob,
+            retryWholeComicJob: _downloadCommands.retryWholeComicJob,
+            removeWholeComicJob: _downloadCommands.removeWholeComicJob,
+            updateWholeComicPolicy: _downloadCommands.updateWholeComicPolicy,
+          ),
           traceSink: widget.debugTrace,
         ),
       ),

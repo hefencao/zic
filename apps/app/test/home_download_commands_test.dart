@@ -170,6 +170,54 @@ void main() {
     expect((await downloads.inspect(entry)).isComplete, isFalse);
   });
 
+  test('manager retry refreshes stale source locator before service mutation',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (entry, _) async {
+        if (entry.chapter.sourceRevision != 'r2') {
+          throw StateError('stale locator reached download service');
+        }
+        return Uint8List.fromList(<int>[7, 6, 5]);
+      },
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    var sourceRefreshes = 0;
+    final commands = HomeDownloadCommands(
+      session: session,
+      ensureDurableServices: () async {},
+      ensurePlatformEnvironment: () async {},
+      requiresSourceLocatorRefresh: (chapter) => chapter.sourceRevision == 'r1',
+      refreshRemoteEntry: (entry, {required forceSourceRefresh}) async {
+        sourceRefreshes++;
+        expect(forceSourceRefresh, isTrue);
+        return _entry(revision: 'r2');
+      },
+      refreshStaleChapter: (_) async => null,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    await session.ready;
+    final snapshot = await commands.retryChapter(_entry());
+
+    expect(sourceRefreshes, 1);
+    expect(snapshot.sourceRevision, 'r2');
+    expect(snapshot.isComplete, isTrue);
+    expect(snapshot.receivedBytes, 3);
+  });
+
   test('stale-token recovery retries only with refreshed chapter authority',
       () async {
     final library = MemoryImportedLibraryStore();

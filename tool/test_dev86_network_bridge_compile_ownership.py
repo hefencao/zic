@@ -33,8 +33,9 @@ def main() -> int:
         'final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;',
     )
     require(
-        'apps/app/lib/source_browser.dart',
-        'details.ComicDetailsSourceWebViewOpener? onOpenSourceWebView;',
+        'apps/app/lib/demo_home_source_compat.dart',
+        'builder: (_) => details.RemoteComicDetailsScreen(',
+        'onOpenSourceWebView: ({Uri? verificationUri}) {',
     )
     require(
         'packages/network_bridge/lib/src/android_network_bridge.dart',

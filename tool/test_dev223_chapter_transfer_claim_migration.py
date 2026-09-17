@@ -124,8 +124,22 @@ for token in (
     'final defaultDownloadResourceCoordinator = DownloadResourceCoordinator();',
     'pageDownloadLane: defaultDownloadResourceCoordinator.networkLane,',
     'defaultLocalMediaPipelineFactory.disposeRetainedSessions()',
+    'Future<void> drainDefaultRetainedReaderSessions()',
 ):
     require(local_media_composition, token, 'application network resource composition root')
+
+directory_change = main[main.index('Future<String?> changeChapterDownloadDirectory'):]
+require(
+    directory_change,
+    'await drainDefaultRetainedReaderSessions();',
+    'exclusive storage retained-Reader drain',
+)
+if directory_change.index('await drainDefaultRetainedReaderSessions();') > directory_change.index(
+    'composition.transferRuntime.hasConsumers'
+):
+    raise SystemExit(
+        'dev.223 retained Reader drain must precede active-consumer storage guard'
+    )
 require(pipeline, 'required this.pageDownloadLane,', 'Reader factory explicit NetLane ownership')
 forbid(pipeline, 'pageDownloadLane ??', 'Reader factory implicit NetLane fallback')
 require(live, 'required NetLane net,', 'LiveCoordinator explicit NetLane ownership')

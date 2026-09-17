@@ -199,6 +199,131 @@ void main() {
   });
 
   testWidgets(
+      'download manager actions wait for the adopted durable service generation',
+      (tester) async {
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:action-durable-handoff',
+        displayName: '切换中的删除任务',
+        sourceId: 'action-handoff-source',
+        comicId: 'action-handoff-comic',
+        comicTitle: '切换中的漫画',
+        chapterId: 'action-handoff-chapter',
+        sourceRevision: 'action-handoff-r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.bin',
+            sourceId: 'memory://action-handoff-1',
+            pageId: 'action-handoff-page-1',
+            contentKindHint: ContentKindHint.unknown,
+            byteLength: 4,
+          ),
+        ],
+      ),
+    );
+    final bootstrapDelegate = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(4),
+    );
+    await bootstrapDelegate.download(entry);
+    final bootstrap = _BlockingInspectManyDownloadService(
+      bootstrapDelegate,
+      Future<void>.value(),
+    );
+    final bootstrapQueue = WholeComicDownloadQueue(downloads: bootstrap);
+    await bootstrapQueue.ready;
+    final initial = await bootstrap.inspect(entry);
+
+    final durableDelegate = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(4),
+    );
+    await durableDelegate.download(entry);
+    final durable = _BlockingInspectManyDownloadService(
+      durableDelegate,
+      Future<void>.value(),
+    );
+    final durableQueue = WholeComicDownloadQueue(downloads: durable);
+    await durableQueue.ready;
+
+    final projectionChanges = ChangeNotifier();
+    final projection = DownloadManagerProjection(
+      entries: <ImportedLibraryEntry>[entry],
+      snapshots: <ChapterDownloadSnapshot>[initial],
+      wholeComicSnapshot: bootstrapQueue.snapshot,
+    );
+    final releaseServices = Completer<void>();
+    var resolverCalls = 0;
+    var commandDeleteCalls = 0;
+    final commandActions = DownloadManagerCommandActions(
+      downloadChapter: (_) => throw StateError('not used'),
+      retryChapter: (_) => throw StateError('not used'),
+      stopChapter: (_) => throw StateError('not used'),
+      deleteChapterFiles: (entry) async {
+        commandDeleteCalls++;
+        await durableDelegate.delete(entry);
+        return durableDelegate.inspect(entry);
+      },
+      pauseWholeComicJob: (_) async {},
+      resumeWholeComicJob: (_) async {},
+      cancelWholeComicJob: (_) async {},
+      retryWholeComicJob: (_) async {},
+      removeWholeComicJob: (_) async {},
+      updateWholeComicPolicy: (_) async {},
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: projection.entries,
+          downloads: bootstrap,
+          wholeComicDownloads: bootstrapQueue,
+          initialSnapshots: projection.snapshots,
+          initialWholeComicSnapshot: projection.wholeComicSnapshot,
+          projectionChanges: projectionChanges,
+          readProjection: () => projection,
+          refreshProjection: () async {},
+          resolveServices: () async {
+            resolverCalls++;
+            await releaseServices.future;
+            return DownloadManagerServices(
+              downloads: durable,
+              wholeComicDownloads: durableQueue,
+            );
+          },
+          commandActions: commandActions,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(resolverCalls, 1);
+
+    await tester.tap(find.byKey(downloadManagerDeleteKey(initial.identity)));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pump();
+
+    expect(bootstrap.deleteCalls, 0);
+    expect(durable.deleteCalls, 0);
+    expect(commandDeleteCalls, 0);
+
+    releaseServices.complete();
+    for (var frame = 0; frame < 40 && commandDeleteCalls == 0; frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(bootstrap.deleteCalls, 0);
+    expect(durable.deleteCalls, 0);
+    expect(commandDeleteCalls, 1);
+    expect(await durableDelegate.isDownloaded(entry), isFalse);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    projectionChanges.dispose();
+    unawaited(bootstrapQueue.close());
+    unawaited(durableQueue.close());
+    unawaited(bootstrap.close());
+    unawaited(durable.close());
+  });
+
+  testWidgets(
       'download manager adopts durable projection without reopening or route scan',
       (tester) async {
     final entry = ImportedLibraryEntry(
@@ -1577,6 +1702,7 @@ final class _BlockingInspectManyDownloadService
   final ChapterDownloadService _delegate;
   final Future<void> _release;
   bool inspectManyStarted = false;
+  int deleteCalls = 0;
 
   @override
   Stream<ChapterDownloadSnapshot> get changes => _delegate.changes;
@@ -1591,7 +1717,10 @@ final class _BlockingInspectManyDownloadService
   Future<void> cancel(ImportedLibraryEntry entry) => _delegate.cancel(entry);
 
   @override
-  Future<void> delete(ImportedLibraryEntry entry) => _delegate.delete(entry);
+  Future<void> delete(ImportedLibraryEntry entry) {
+    deleteCalls++;
+    return _delegate.delete(entry);
+  }
 
   @override
   Future<ChapterDownloadSnapshot> inspect(ImportedLibraryEntry entry) =>

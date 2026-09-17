@@ -63,9 +63,16 @@ require(
     "_readerChapterComposition.responseSourcesFor(",
     "generation recovery response delegation",
 )
+require(
+    route,
+    ".withPartialDownloadStore(\n            _downloadComposition?.artifactStore,",
+    "session-normalized partial-store capability",
+)
 for forbidden in (
     "Future<_PreparedImportedChapter> _prepareImportedChapter(",
     "Map<String, LocalImageResponseSource> _readerResponseSourcesFor(",
+    "_chapterDownloads is PartialDownloadStore",
+    "_chapterDownloads as PartialDownloadStore",
 ):
     if forbidden in route:
         raise SystemExit(
