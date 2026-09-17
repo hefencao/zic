@@ -900,10 +900,10 @@ final class _LocalComicDetailsScreenState
   final Set<String> _pendingDeletionIdentities = <String>{};
   final Set<String> _deletedChapterIdentities = <String>{};
   var _deletionRevision = 0;
-  final Stopwatch _traceClock = Stopwatch()..start();
+  final MonoClock _traceClock = const SystemClock();
 
   int _traceNowMicros() =>
-      widget.traceMonotonicMicros?.call() ?? _traceClock.elapsedMicroseconds;
+      widget.traceMonotonicMicros?.call() ?? _traceClock.nowMicros();
 
   void _recordRefreshTrace(
     TraceEventKind kind,
@@ -1095,7 +1095,7 @@ final class _LocalComicDetailsScreenState
   }
 
   Future<bool> _performRefresh({required bool announce}) async {
-    final startedMicros = _traceClock.elapsedMicroseconds;
+    final startedMicros = _traceClock.nowMicros();
     final deletionRevision = _deletionRevision;
     _recordRefreshTrace(
       TraceEventKind.retryScheduled,
@@ -1154,7 +1154,7 @@ final class _LocalComicDetailsScreenState
         TraceEventKind.sourceReady,
         'local-refresh-complete',
         payload: <String, Object?>{
-          'durationMicros': _traceClock.elapsedMicroseconds - startedMicros,
+          'durationMicros': _traceClock.nowMicros() - startedMicros,
           'chapterCount': next.sourceChapters.length,
         },
       );
@@ -1169,7 +1169,7 @@ final class _LocalComicDetailsScreenState
         TraceEventKind.taskFailed,
         'local-refresh-failed',
         payload: <String, Object?>{
-          'durationMicros': _traceClock.elapsedMicroseconds - startedMicros,
+          'durationMicros': _traceClock.nowMicros() - startedMicros,
           'errorType': error.runtimeType.toString(),
           if (error is Failure) 'errorCode': error.code.name,
         },
@@ -2294,11 +2294,11 @@ final class _RemoteComicDetailsScreenState
   final Set<String> _pendingDeletionIdentities = <String>{};
   final Set<String> _deletedChapterIdentities = <String>{};
   var _deletionRevision = 0;
-  final Stopwatch _traceClock = Stopwatch()..start();
+  final MonoClock _traceClock = const SystemClock();
   BrowsableComicSource? _activeSource;
 
   int _traceNowMicros() =>
-      widget.traceMonotonicMicros?.call() ?? _traceClock.elapsedMicroseconds;
+      widget.traceMonotonicMicros?.call() ?? _traceClock.nowMicros();
 
   BrowsableComicSource? get _currentSource {
     final resolver = widget.resolveSource;
@@ -2597,7 +2597,7 @@ final class _RemoteComicDetailsScreenState
     required bool announce,
     bool forceRefresh = false,
   }) async {
-    final startedMicros = _traceClock.elapsedMicroseconds;
+    final startedMicros = _traceClock.nowMicros();
     final deletionRevision = _deletionRevision;
     _recordRefreshTrace(
       TraceEventKind.retryScheduled,
@@ -2709,7 +2709,7 @@ final class _RemoteComicDetailsScreenState
         TraceEventKind.sourceReady,
         'remote-refresh-complete',
         payload: <String, Object?>{
-          'durationMicros': _traceClock.elapsedMicroseconds - startedMicros,
+          'durationMicros': _traceClock.nowMicros() - startedMicros,
           'chapterCount': manifest.chapters.length,
         },
       );
@@ -2725,7 +2725,7 @@ final class _RemoteComicDetailsScreenState
         TraceEventKind.taskFailed,
         'remote-refresh-failed',
         payload: <String, Object?>{
-          'durationMicros': _traceClock.elapsedMicroseconds - startedMicros,
+          'durationMicros': _traceClock.nowMicros() - startedMicros,
           'errorType': error.runtimeType.toString(),
           if (error is Failure) 'errorCode': error.code.name,
         },

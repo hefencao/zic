@@ -2,6 +2,7 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:sessions/sessions.dart';
+import 'package:telemetry/telemetry.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -45,6 +46,70 @@ void main() {
     expect(firstPhysical.isExactFallback, isFalse);
     expect(secondPhysical, firstPhysical);
     expect(runtime.sessionFor(secondId), same(runtime.sessionFor(firstId)));
+  });
+
+  test('canonical acquire trace keeps physical-owner identities compact', () async {
+    final trace = MemoryTraceSink();
+    final runtime = CompositionDownloadTransferRuntime(
+      artifactCacheManager: null,
+      partialDownloadStore: null,
+      net: NetLane(maxActive: 1),
+    );
+    final consumer = runtime.attachConsumer(
+      scopeId: 'trace',
+      transportFor: (_) => throw StateError('transport is not used'),
+      consumerTraceSink: const NoopTraceSink(),
+      localPhysicalTraceSink: trace,
+    );
+    addTearDown(() async {
+      await consumer.dispose();
+      await runtime.dispose();
+    });
+    final manifest = _manifest(
+      'comic-with-a-long-provider-identity-for-trace-regression',
+      'revision-with-a-long-provider-identity-for-trace-regression',
+    );
+    final projection = _projection(
+      manifest,
+      family: const VersionFamilyId(
+        'family-with-a-long-canonical-identity-for-trace-regression',
+      ),
+      chapter: const CanonicalChapterId(
+        'chapter-with-a-long-canonical-identity-for-trace-regression',
+      ),
+      segment: const CanonicalMediaSegmentId(
+        'segment-with-a-long-canonical-identity-for-trace-regression',
+      ),
+    );
+    runtime.replaceCanonicalMediaAuthorityScope(
+      'library',
+      <CanonicalMediaChapterAuthority>[_authority(manifest, projection)],
+    );
+    final id = readerPageDownloadId(manifest, manifest.pages.single);
+
+    runtime.sessionFor(id);
+
+    final event = trace.events.singleWhere(
+      (event) => event.payload['stage'] == 'physical-media-owner-resolved',
+    );
+    expect(event.identityHash, matches(RegExp(r'^-?[0-9a-f]{15,16}$')));
+    expect(event.payload['exactToken'], event.identityHash);
+    expect(
+      event.payload['physicalToken'],
+      matches(RegExp(r'^-?[0-9a-f]{15,16}$')),
+    );
+    expect(event.payload['canonicalDirect'], isTrue);
+    expect(event.payload['legacyAlias'], isFalse);
+    for (final rawIdentityField in <String>[
+      'comicId',
+      'chapterId',
+      'pageId',
+      'physicalMediaKey',
+      'physicalMediaValue',
+      'physicalSessionAnchor',
+    ]) {
+      expect(event.payload, isNot(contains(rawIdentityField)));
+    }
   });
 
   test('conflicting canonical scopes fail closed to exact ownership', () async {

@@ -43,10 +43,14 @@ final class DecodeRegistry {
 
   DecodeSession? find(DecodeId id) => _sessions[id];
 
+  String traceIdentityFor(DecodeId id) =>
+      _sessions[id]?.traceIdentityHash ?? traceIdentityToken(id.key);
+
   DecodeSession get(DecodeId id) {
     return _sessions.putIfAbsent(id, () {
       final download = downloads.get(id.download);
       final ingress = ingresses.get(download);
+      final traceIdentity = traceIdentityFor(id);
       return DecodeSession(
         id: id,
         ingress: ingress,
@@ -55,7 +59,8 @@ final class DecodeRegistry {
         prefixHints: prefixHints,
         onAnimationResolved: onAnimationResolved,
         traceSink: traceSink,
-        sessionId: 'decode:${id.key.hashCode}',
+        sessionId: 'decode:${traceIdentity.hashCode}',
+        traceIdentityHash: traceIdentity,
       );
     });
   }

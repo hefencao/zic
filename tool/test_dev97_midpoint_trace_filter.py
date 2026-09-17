@@ -66,8 +66,8 @@ require(
 require(
     'packages/telemetry/lib/src/trace.dart',
     '_sanitizeTraceIdentity',
-    "_traceOpaqueSummary('identity', sanitized)",
-    'sanitized.length <= 160',
+    "_traceOpaqueSummary('identity', value)",
+    'value.length > 160',
 )
 require(
     'apps/app/lib/debug_trace.dart',

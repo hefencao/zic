@@ -173,13 +173,15 @@ final class DownloadRegistry {
   }) {
     final effectivePhysicalId =
         physicalMediaId ?? PhysicalMediaId.exact(physicalAnchor);
+    final traceIdentity = layout.tokenForPhysical(effectivePhysicalId);
     final session = DownloadSession(
       id: physicalAnchor,
       physicalId: effectivePhysicalId,
       artifact: artifact,
       clock: clock,
       traceSink: traceSink,
-      sessionId: 'download:${layout.tokenForPhysical(effectivePhysicalId)}',
+      sessionId: 'download:$traceIdentity',
+      traceIdentityHash: traceIdentity,
       index: index,
       storageRootId: storageRootId,
       initiallyDemanded: false,

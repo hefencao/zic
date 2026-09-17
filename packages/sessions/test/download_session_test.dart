@@ -606,9 +606,11 @@ void main() {
 
   test('canonical physical binding joins exact versions before session creation',
       () async {
+    final trace = MemoryTraceSink();
     final registry = DownloadRegistry(
       layout: CacheLayout('${temp.path}/canonical-registry'),
       clock: FakeMonoClock(),
+      traceSink: trace,
     );
     addTearDown(registry.dispose);
     DownloadId idWithPage(String pageId) => DownloadId(
@@ -631,8 +633,16 @@ void main() {
     registry.bindPhysicalMedia(id: second, physicalId: physical);
     final firstSession = registry.get(first);
     final secondSession = registry.get(second);
+    final demand = firstSession.attachDemand(scopeId: 'reader', priority: 1000);
+    addTearDown(demand.detach);
     await firstSession.restore();
 
+    final demandTrace = trace.events.singleWhere(
+      (event) => event.kind == TraceEventKind.demandApplied,
+    );
+    expect(demandTrace.identityHash, registry.layout.tokenForPhysical(physical));
+    expect(demandTrace.identityHash, isNot(first.key));
+    expect(firstSession.sessionId, 'download:${demandTrace.identityHash}');
     expect(secondSession, same(firstSession));
     expect(firstSession.physicalId, physical);
     expect(firstSession.id, first);

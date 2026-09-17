@@ -609,30 +609,25 @@ final class CompositionDownloadTransferRuntime {
     if (_lastTracedPhysicalMediaOwner[exactId] == physicalId) return;
     _lastTracedPhysicalMediaOwner[exactId] = physicalId;
     try {
+      final direct = registry.hasDirectPhysicalMediaBinding(exactId);
+      final exactToken = workspace.layout.tokenFor(exactId);
       traceHub.record(
         traceEvent(
           clock: clock,
           sessionId: 'composition-transfer-owner',
           kind: TraceEventKind.artifactSource,
-          identityHash: exactId.key,
+          identityHash: exactToken,
           payload: <String, Object?>{
             'stage': 'physical-media-owner-resolved',
             'sourceId': exactId.content.sourceId,
-            'comicId': exactId.content.comicId,
-            'chapterId': exactId.content.chapterId,
-            'pageId': exactId.content.pageId,
             if (exactId.pageIndexHint != null)
               'pageIndex': exactId.pageIndexHint,
             'sourceRevision': exactId.sourceRevision,
+            'exactToken': exactToken,
+            'physicalToken': workspace.layout.tokenForPhysical(physicalId),
             'physicalMediaKind': physicalId.kind.name,
-            'physicalMediaKey': physicalId.key,
-            'physicalMediaValue': physicalId.value,
-            'physicalSessionAnchor': physicalAnchor.key,
-            'canonicalDirect':
-                registry.hasDirectPhysicalMediaBinding(exactId) &&
-                !physicalId.isExactFallback,
-            'legacyAlias': physicalAnchor != exactId &&
-                !registry.hasDirectPhysicalMediaBinding(exactId),
+            'canonicalDirect': direct && !physicalId.isExactFallback,
+            'legacyAlias': physicalAnchor != exactId && !direct,
           },
         ),
       );

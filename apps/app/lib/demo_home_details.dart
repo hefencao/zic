@@ -113,7 +113,7 @@ extension _DemoHomeDetailsActions on _DemoHomeState {
             : await _library.getSavedComic(sourceId, effectiveComicId);
         widget.debugTrace.record(
           TraceEvent(
-            monotonicMicros: _traceClock.elapsedMicroseconds,
+            monotonicMicros: _traceClock.nowMicros(),
             sessionId: 'source-catalog:$sourceId',
             kind: TraceEventKind.sourceReady,
             identityHash: _comicIdentityTraceHash(

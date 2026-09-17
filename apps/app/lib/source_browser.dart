@@ -372,7 +372,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
       <String, Future<EncodedResourceSource>>{};
   bool _recoveringSourceAccess = false;
   final Set<String> _verificationBrowserAttempts = <String>{};
-  final Stopwatch _traceClock = Stopwatch()..start();
+  final MonoClock _traceClock = const SystemClock();
 
   void _recordSourceTrace(
     TraceEventKind kind,
@@ -383,7 +383,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
   }) {
     widget.traceSink.record(
       TraceEvent(
-        monotonicMicros: _traceClock.elapsedMicroseconds,
+        monotonicMicros: _traceClock.nowMicros(),
         sessionId: 'source-browser:${source.sourceId}',
         kind: kind,
         identityHash: identityHash,
@@ -724,7 +724,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
     final cachedChanged = cached != null &&
         (!projectionMatchesSource ||
             !_sameBrowsePage(_items, _pageOffset, _hasMore, cached));
-    final startedMicros = _traceClock.elapsedMicroseconds;
+    final startedMicros = _traceClock.nowMicros();
     _recordSourceTrace(
       TraceEventKind.retryScheduled,
       'browse-start',
@@ -796,7 +796,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         'browse-complete',
         source,
         payload: <String, Object?>{
-          'durationMicros': _traceClock.elapsedMicroseconds - startedMicros,
+          'durationMicros': _traceClock.nowMicros() - startedMicros,
           'itemCount': page.items.length,
           'offset': page.offset,
           'hasMore': page.hasMore,
@@ -813,7 +813,7 @@ final class _ComicSourcesPageState extends State<ComicSourcesPage> {
         'browse-failed',
         source,
         payload: <String, Object?>{
-          'durationMicros': _traceClock.elapsedMicroseconds - startedMicros,
+          'durationMicros': _traceClock.nowMicros() - startedMicros,
           'cacheRetained': hasCached,
           'errorType': error.runtimeType.toString(),
           if (error is Failure) 'errorCode': error.code.name,

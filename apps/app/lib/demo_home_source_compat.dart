@@ -145,7 +145,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
         : widget.preferences.networkUserAgent;
     widget.debugTrace.record(
       TraceEvent(
-        monotonicMicros: _traceClock.elapsedMicroseconds,
+        monotonicMicros: _traceClock.nowMicros(),
         sessionId: 'source-browser:${source.sourceId}',
         kind: TraceEventKind.retryScheduled,
         payload: <String, Object?>{
@@ -165,7 +165,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     final snapshot = await widget.networkBridge.readBrowserSnapshot(request.url);
     widget.debugTrace.record(
       TraceEvent(
-        monotonicMicros: _traceClock.elapsedMicroseconds,
+        monotonicMicros: _traceClock.nowMicros(),
         sessionId: 'source-browser:${source.sourceId}',
         kind: snapshot == null
             ? TraceEventKind.taskFailed
@@ -336,7 +336,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     try {
       widget.debugTrace.record(
         TraceEvent(
-          monotonicMicros: _traceClock.elapsedMicroseconds,
+          monotonicMicros: _traceClock.nowMicros(),
           sessionId: 'source-catalog:${source.sourceId}',
           kind: TraceEventKind.sourceReady,
           identityHash: comic.comicId,
@@ -358,7 +358,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
       if (local.comicId != comic.comicId) {
         widget.debugTrace.record(
           TraceEvent(
-            monotonicMicros: _traceClock.elapsedMicroseconds,
+            monotonicMicros: _traceClock.nowMicros(),
             sessionId: 'source-catalog:${source.sourceId}',
             kind: TraceEventKind.sourceReady,
             identityHash: _comicIdentityTraceHash(
@@ -517,7 +517,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             previewMaxItemsPerRow:
                 widget.preferences.detailsPreviewMaxItemsPerRow,
             traceSink: widget.debugTrace,
-            traceMonotonicMicros: () => _traceClock.elapsedMicroseconds,
+            traceMonotonicMicros: () => _traceClock.nowMicros(),
           ),
         ),
       );
@@ -529,7 +529,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
 
   Future<void> _pushComicDetails(LibraryComic comic) async {
     _clearDownloadCompletionBadge(comic.sourceId, comic.comicId);
-    final routeStartedAtMicros = _traceClock.elapsedMicroseconds;
+    final routeStartedAtMicros = _traceClock.nowMicros();
     final initialSource = _sourceForId(comic.sourceId);
     final shouldActivateSource = initialSource == null &&
         _isDeferredExternalSourceId(comic.sourceId);
@@ -677,7 +677,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               previewMaxItemsPerRow:
                   widget.preferences.detailsPreviewMaxItemsPerRow,
               traceSink: widget.debugTrace,
-              traceMonotonicMicros: () => _traceClock.elapsedMicroseconds,
+              traceMonotonicMicros: () => _traceClock.nowMicros(),
             );
           },
         ),
@@ -701,7 +701,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               final source = _sourceForId(comic.sourceId);
               widget.debugTrace.record(
                 TraceEvent(
-                  monotonicMicros: _traceClock.elapsedMicroseconds,
+                  monotonicMicros: _traceClock.nowMicros(),
                   sessionId: 'comic-details-entry',
                   kind: TraceEventKind.sourceReady,
                   payload: <String, Object?>{
@@ -709,7 +709,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
                     'sourceId': comic.sourceId,
                     'available': source != null,
                     'durationMicros':
-                        _traceClock.elapsedMicroseconds - routeStartedAtMicros,
+                        _traceClock.nowMicros() - routeStartedAtMicros,
                   },
                 ),
               );
@@ -719,7 +719,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
                 try {
                   widget.debugTrace.record(
                     TraceEvent(
-                      monotonicMicros: _traceClock.elapsedMicroseconds,
+                      monotonicMicros: _traceClock.nowMicros(),
                       sessionId: 'comic-details-entry',
                       kind: TraceEventKind.taskFailed,
                       payload: <String, Object?>{
@@ -754,7 +754,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     try {
       widget.debugTrace.record(
         TraceEvent(
-          monotonicMicros: _traceClock.elapsedMicroseconds,
+          monotonicMicros: _traceClock.nowMicros(),
           sessionId: 'download-manager',
           kind: TraceEventKind.downloadState,
           payload: const <String, Object?>{
@@ -778,7 +778,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     try {
       widget.debugTrace.record(
         TraceEvent(
-          monotonicMicros: _traceClock.elapsedMicroseconds,
+          monotonicMicros: _traceClock.nowMicros(),
           sessionId: 'download-manager',
           kind: TraceEventKind.downloadState,
           payload: <String, Object?>{
@@ -839,7 +839,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
         try {
           widget.debugTrace.record(
             TraceEvent(
-              monotonicMicros: _traceClock.elapsedMicroseconds,
+              monotonicMicros: _traceClock.nowMicros(),
               sessionId: 'download-manager',
               kind: TraceEventKind.downloadState,
               payload: const <String, Object?>{
@@ -864,7 +864,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             : null);
     widget.debugTrace.record(
       TraceEvent(
-        monotonicMicros: _traceClock.elapsedMicroseconds,
+        monotonicMicros: _traceClock.nowMicros(),
         sessionId: 'reader-entry',
         kind: TraceEventKind.readerObservation,
         payload: <String, Object?>{

@@ -186,7 +186,7 @@ final class DemoHome extends StatefulWidget {
 enum _DownloadCompletionKind { chapter, wholeComic }
 
 final class _DemoHomeState extends State<DemoHome> {
-  final Stopwatch _traceClock = Stopwatch()..start();
+  final MonoClock _traceClock = const SystemClock();
   late final ComicSourceResourceGateway _sourceResources;
   late final HomeReaderChapterComposition _readerChapterComposition;
   late final HomeSourceProjection _sourceProjection;
@@ -432,7 +432,7 @@ final class _DemoHomeState extends State<DemoHome> {
         task: task,
       ),
       trace: widget.debugTrace,
-      monotonicMicros: () => _traceClock.elapsedMicroseconds,
+      monotonicMicros: () => _traceClock.nowMicros(),
     );
     _downloadCommands = HomeDownloadCommands(
       session: _librarySession,
@@ -466,7 +466,7 @@ final class _DemoHomeState extends State<DemoHome> {
       prepareVersionAuthority: _prepareReaderVersionAuthority,
       markChapterRead: _markChapterReadForNavigation,
       trace: widget.debugTrace,
-      monotonicMicros: () => _traceClock.elapsedMicroseconds,
+      monotonicMicros: () => _traceClock.nowMicros(),
     );
     _sourceResources.setVerifiedPageReuseObserver(
       _librarySession.observeVerifiedPageReuseIdentity,

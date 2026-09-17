@@ -103,9 +103,49 @@ void main() {
     expect(encoded, isNot(contains(manga)));
     expect(encoded, isNot(contains(chapter)));
     expect(encoded, isNot(contains(resource)));
-    expect(encoded, contains('mihon:manga:<'));
-    expect(encoded, contains('mihon:chapter:<'));
+    expect(encoded, contains('identity:<'));
+    expect(encoded, isNot(contains('mihon:manga:<')));
+    expect(encoded, isNot(contains('mihon:chapter:<')));
     expect(encoded, contains('mihon:resource:<'));
+  });
+
+  test('trace identity token matches event identity sanitization', () {
+    final identity = List<String>.filled(5, 'venera-resource:opaque-provider-key').join('|');
+    final token = traceIdentityToken(identity);
+    final event = traceEvent(
+      clock: _Clock(),
+      sessionId: 'reader',
+      kind: TraceEventKind.decodeDemand,
+      identityHash: identity,
+    );
+
+    expect(token, event.identityHash);
+    expect(
+      traceEvent(
+        clock: _Clock(),
+        sessionId: 'reader',
+        kind: TraceEventKind.decodeDemand,
+        identityHash: token,
+      ).identityHash,
+      token,
+    );
+  });
+
+  test('long provider identities skip nested sanitizer expansion', () {
+    const resource =
+        'venera-resource:eyJ2IjoxLCJpbWFnZSI6IjE2MSIsImNvbWljSWQiOiJsb25nLWNvbWljLWlkIn0';
+    final identity = List<String>.filled(4, resource).join('|');
+
+    final event = traceEvent(
+      clock: _Clock(),
+      sessionId: 'reader',
+      kind: TraceEventKind.demandApplied,
+      identityHash: identity,
+    );
+
+    expect(event.identityHash, startsWith('identity:<'));
+    expect(event.identityHash, isNot(contains('venera-resource:<')));
+    expect(event.toJsonLine(), isNot(contains(resource)));
   });
 
   test('trace bounds long local identities without losing stable correlation', () {

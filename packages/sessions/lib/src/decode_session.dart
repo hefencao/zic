@@ -159,7 +159,9 @@ final class DecodeSession {
     this.onAnimationResolved,
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'decode',
-  }) : prefixHints = prefixHints ?? WebpDecodePrefixHints();
+    String? traceIdentityHash,
+  })  : prefixHints = prefixHints ?? WebpDecodePrefixHints(),
+        _traceIdentityHash = traceIdentityHash ?? traceIdentityToken(id.key);
 
   static const int _partialLoopMinDurationMicros =
       Duration.microsecondsPerSecond;
@@ -178,6 +180,9 @@ final class DecodeSession {
       onAnimationResolved;
   final TraceSink traceSink;
   final String sessionId;
+  final String _traceIdentityHash;
+
+  String get traceIdentityHash => _traceIdentityHash;
 
   DecodeState _state = DecodeState.idle;
   SourceEpoch _epoch = const SourceEpoch(0);
@@ -913,7 +918,7 @@ final class DecodeSession {
         clock: clock,
         sessionId: sessionId,
         kind: kind,
-        identityHash: id.key,
+        identityHash: _traceIdentityHash,
         revision: _revision,
         epoch: _epoch.value,
         payload: payload,

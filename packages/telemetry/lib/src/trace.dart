@@ -201,12 +201,22 @@ TraceEvent traceEvent({
   );
 }
 
+/// Returns the stable privacy-preserving identity representation used by
+/// [TraceEvent]. Hot owners may cache this token once per logical identity and
+/// reuse it across events instead of repeatedly scanning/hashing the same long
+/// provider key. Passing the token back to [TraceEvent] is idempotent.
+String traceIdentityToken(String value) => _sanitizeTraceIdentity(value);
+
 String _sanitizeTraceIdentity(String value) {
-  final sanitized = _sanitizeTraceString(value);
-  if (sanitized.length <= 160) {
-    return sanitized;
+  // Long identities are always exported as opaque summaries. Hash the raw
+  // identity once before provider-specific string sanitization so hot Reader
+  // lifecycle traces do not repeatedly scan/hash embedded Venera/Mihon
+  // locators only to hash the whole result again. This preserves privacy and
+  // stable correlation while keeping identity sanitization O(n) with one pass.
+  if (value.length > 160) {
+    return _traceOpaqueSummary('identity', value);
   }
-  return _traceOpaqueSummary('identity', sanitized);
+  return _sanitizeTraceString(value);
 }
 
 Map<String, Object?> _sanitizeTraceMap(Map<String, Object?> value) =>

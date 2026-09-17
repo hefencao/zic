@@ -100,7 +100,8 @@ final class UploadSession {
     required this.clock,
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'upload',
-  });
+    String? traceIdentityHash,
+  }) : _traceIdentityHash = traceIdentityHash ?? traceIdentityToken(id.key);
 
   final DecodeId id;
   final DecodeSession decode;
@@ -108,6 +109,7 @@ final class UploadSession {
   final MonoClock clock;
   final TraceSink traceSink;
   final String sessionId;
+  final String _traceIdentityHash;
 
   UploadState _state = UploadState.idle;
   SourceEpoch _epoch = const SourceEpoch(0);
@@ -1233,7 +1235,7 @@ final class UploadSession {
         clock: clock,
         sessionId: sessionId,
         kind: kind,
-        identityHash: id.key,
+        identityHash: _traceIdentityHash,
         revision: _revision,
         epoch: _epoch.value,
         payload: payload,

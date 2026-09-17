@@ -154,20 +154,20 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     _localReadBackendPrewarmTarget = target;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !identical(_downloadComposition, target)) return;
-      final startedAtMicros = _traceClock.elapsedMicroseconds;
+      final startedAtMicros = _traceClock.nowMicros();
       unawaited(
         target.prewarmLocalReadBackend().then<void>((warmed) {
           if (!mounted) return;
           widget.debugTrace.record(
             TraceEvent(
-              monotonicMicros: _traceClock.elapsedMicroseconds,
+              monotonicMicros: _traceClock.nowMicros(),
               sessionId: 'home-storage-prewarm',
               kind: TraceEventKind.artifactSource,
               payload: <String, Object?>{
                 'stage': 'local-read-backend-prewarm',
                 'warmed': warmed,
                 'durationMicros':
-                    _traceClock.elapsedMicroseconds - startedAtMicros,
+                    _traceClock.nowMicros() - startedAtMicros,
               },
             ),
           );

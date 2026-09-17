@@ -300,7 +300,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
     }
     widget.debugTrace.record(
       TraceEvent(
-        monotonicMicros: _traceClock.elapsedMicroseconds,
+        monotonicMicros: _traceClock.nowMicros(),
         sessionId: 'reader-entry',
         kind: TraceEventKind.readerObservation,
         payload: <String, Object?>{
@@ -359,7 +359,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       recovery = () async {
         widget.debugTrace.record(
           TraceEvent(
-            monotonicMicros: _traceClock.elapsedMicroseconds,
+            monotonicMicros: _traceClock.nowMicros(),
             sessionId: 'reader-entry',
             kind: TraceEventKind.readerObservation,
             payload: <String, Object?>{
@@ -392,7 +392,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
           if (replacementChapter == null) {
             widget.debugTrace.record(
               TraceEvent(
-                monotonicMicros: _traceClock.elapsedMicroseconds,
+                monotonicMicros: _traceClock.nowMicros(),
                 sessionId: 'reader-entry',
                 kind: TraceEventKind.artifactSource,
                 payload: <String, Object?>{
@@ -408,7 +408,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
         } on Object catch (refreshError) {
           widget.debugTrace.record(
             TraceEvent(
-              monotonicMicros: _traceClock.elapsedMicroseconds,
+              monotonicMicros: _traceClock.nowMicros(),
               sessionId: 'reader-entry',
               kind: TraceEventKind.taskFailed,
               payload: <String, Object?>{
@@ -439,7 +439,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
         final replaced = routeActive;
         widget.debugTrace.record(
           TraceEvent(
-            monotonicMicros: _traceClock.elapsedMicroseconds,
+            monotonicMicros: _traceClock.nowMicros(),
             sessionId: 'reader-entry',
             kind: TraceEventKind.artifactSource,
             payload: <String, Object?>{

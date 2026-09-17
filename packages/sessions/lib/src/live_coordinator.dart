@@ -762,6 +762,9 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }
   }
 
+  String _decodeTraceIdentity(DecodeId id) =>
+      decodes?.traceIdentityFor(id) ?? traceIdentityToken(id.key);
+
   void _reconcileDecodes(
     String sessionId,
     MapDiff<DecodeId, DecodeDemand> diff,
@@ -795,7 +798,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         _resourceTrace(
           sessionId,
           TraceEventKind.decodeDemand,
-          entry.key.key,
+          _decodeTraceIdentity(entry.key),
           entry.value.priority,
           revision: demandRevision,
         );
@@ -872,7 +875,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         clock: clock,
         sessionId: sessionId,
         kind: TraceEventKind.decodePriorityPromoted,
-        identityHash: id.key,
+        identityHash: _decodeTraceIdentity(id),
         revision: revision,
         payload: <String, Object?>{
           'promotion': promotion.name,
@@ -1015,7 +1018,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
             clock: clock,
             sessionId: sessionId,
             kind: TraceEventKind.decodeRefill,
-            identityHash: id.key,
+            identityHash: _decodeTraceIdentity(id),
             revision: demandRevision,
             payload: <String, Object?>{
               'role': refill.role.name,
@@ -1163,7 +1166,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                 clock: clock,
                 sessionId: sessionId,
                 kind: TraceEventKind.retryScheduled,
-                identityHash: id.key,
+                identityHash: _decodeTraceIdentity(id),
                 revision: demandRevision,
                 payload: <String, Object?>{
                   'stage': 'decode-source-growth',
@@ -1209,7 +1212,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         clock: clock,
         sessionId: sessionId,
         kind: TraceEventKind.retryScheduled,
-        identityHash: id.key,
+        identityHash: _decodeTraceIdentity(id),
         revision: demandRevision,
         payload: <String, Object?>{
           'stage': 'decode-recovery',
@@ -1518,7 +1521,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
         _resourceTrace(
           sessionId,
           TraceEventKind.uploadDemand,
-          entry.key.key,
+          _decodeTraceIdentity(entry.key),
           entry.value.priority,
           revision: demandRevision,
         );
@@ -1548,7 +1551,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
                 clock: clock,
                 sessionId: sessionId,
                 kind: TraceEventKind.lastFrameKept,
-                identityHash: entry.key.key,
+                identityHash: _decodeTraceIdentity(entry.key),
                 revision: demandRevision,
                 payload: <String, Object?>{
                   'frame': existing.snapshot.frameIndex,

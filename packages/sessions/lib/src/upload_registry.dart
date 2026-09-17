@@ -143,13 +143,15 @@ final class UploadRegistry {
       existing.dispose();
     }
 
+    final traceIdentity = decodes.traceIdentityFor(id);
     final session = UploadSession(
       id: id,
       decode: decode,
       uploader: uploader,
       clock: clock,
       traceSink: traceSink,
-      sessionId: 'upload:${id.key.hashCode}',
+      sessionId: 'upload:${traceIdentity.hashCode}',
+      traceIdentityHash: traceIdentity,
     )..setPlayback(
         paused: _playbackPaused,
         speed: _playbackSpeed,

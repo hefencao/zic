@@ -22,6 +22,18 @@ require(
     "static final Stopwatch _watch",
     "const SystemClock()",
 )
+
+for relative in (
+    "apps/app/lib/demo_home.dart",
+    "apps/app/lib/source_browser.dart",
+    "apps/app/lib/comic_details.dart",
+):
+    require(relative, "const SystemClock()")
+    if "Stopwatch _traceClock" in read(relative):
+        raise SystemExit(
+            f"FAIL: {relative} owns a route-local trace Stopwatch instead of the shared process clock"
+        )
+
 require(
     "packages/telemetry/lib/src/trace.dart",
     "readerSessionCreated",

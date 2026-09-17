@@ -312,6 +312,7 @@ final class DownloadSession {
     required this.clock,
     this.traceSink = const NoopTraceSink(),
     this.sessionId = 'download',
+    String? traceIdentityHash,
     CacheIndex? index,
     DownloadCacheMutationOwner? cacheMutationOwner,
     String storageRootId = 'default',
@@ -324,6 +325,7 @@ final class DownloadSession {
             ? index as PhysicalPartialIndex
             : null,
         _storageRootId = storageRootId,
+        _traceIdentityHash = traceIdentityHash ?? id.key,
         _legacyDemanded = initiallyDemanded;
 
   /// Compatibility/exact provider anchor for this physical generation.
@@ -335,6 +337,7 @@ final class DownloadSession {
   final MonoClock clock;
   final TraceSink traceSink;
   final String sessionId;
+  final String _traceIdentityHash;
   CacheIndex? _index;
   PhysicalPartialIndex? _physicalPartialIndex;
   DownloadCacheMutationOwner? _cacheMutationOwner;
@@ -3608,7 +3611,7 @@ final class DownloadSession {
         clock: clock,
         sessionId: sessionId,
         kind: kind,
-        identityHash: id.key,
+        identityHash: _traceIdentityHash,
         epoch: _epoch.value,
         payload: payload,
       ),

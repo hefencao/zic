@@ -160,7 +160,7 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
     );
     widget.debugTrace.record(
       TraceEvent(
-        monotonicMicros: _traceClock.elapsedMicroseconds,
+        monotonicMicros: _traceClock.nowMicros(),
         sessionId: 'source-catalog:${incoming.comic.sourceId}',
         kind: TraceEventKind.taskFailed,
         identityHash: _comicIdentityTraceHash(
