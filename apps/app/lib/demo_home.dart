@@ -38,6 +38,7 @@ import 'home_reader_composition.dart';
 import 'home_service_cache_binding.dart';
 import 'home_source_migration_transaction.dart';
 import 'home_source_projection.dart';
+import 'home_version_reuse_lifecycle.dart';
 import 'home_widgets.dart';
 export 'home_widgets.dart' show ComicCoverCard, ComicDownloadProgress, ComicDownloadProgressKind;
 part 'demo_home_views.dart';
@@ -194,6 +195,7 @@ final class _DemoHomeState extends State<DemoHome> {
   late final HomeExternalSourceLifecycle _externalSources;
   late final HomeDownloadCommands _downloadCommands;
   late final HomeSourceMigrationTransaction _sourceMigrationTransaction;
+  late final HomeVersionReuseLifecycle _versionReuseLifecycle;
   Future<void>? _durableAdoption;
   ChapterDownloadTransferRuntimeProvider? _localReadBackendPrewarmTarget;
   bool _suppressLibrarySessionRebuild = false;
@@ -207,12 +209,6 @@ final class _DemoHomeState extends State<DemoHome> {
   bool _batchManagement = false;
   final Set<String> _managedComicIdentities = <String>{};
   final Set<String> _openingComicIdentities = <String>{};
-  final Map<String, ({String fingerprint, int acceptedMappings})>
-      _versionReuseAuthorityStates =
-      <String, ({String fingerprint, int acceptedMappings})>{};
-  final Map<String, Future<void>> _versionReuseWarmups = <String, Future<void>>{};
-  final Map<String, Future<void>> _readerVersionRefreshes =
-      <String, Future<void>>{};
   final Map<String, ({String originComicId, Future<void> future})>
       _versionViewReusePreparations =
       <String, ({String originComicId, Future<void> future})>{};
@@ -250,8 +246,6 @@ final class _DemoHomeState extends State<DemoHome> {
       _librarySession.readStates;
   Map<String, ComicSourcePreference> get _sourcePreferences =>
       _librarySession.sourcePreferences;
-  List<ComicVersionRelation> get _versionRelations =>
-      _librarySession.versionRelations;
   Map<String, ChapterDownloadSnapshot> get _downloadSnapshots =>
       _librarySession.downloadSnapshots;
   WholeComicQueueSnapshot get _wholeComicQueueSnapshot =>
@@ -411,6 +405,23 @@ final class _DemoHomeState extends State<DemoHome> {
       savePreference: _savePreference,
       canonicalComicIdForPersistence: _canonicalComicIdForPersistence,
       reportError: (stage, error) => debugPrint('$stage: $error'),
+    );
+    _versionReuseLifecycle = HomeVersionReuseLifecycle(
+      session: _librarySession,
+      loadRemoteEntrySnapshot: (entry, {control}) =>
+          _loadRemoteEntrySnapshot(entry, control: control),
+      verifiedPageReuseIdentity: ({
+        required sourceId,
+        required locator,
+        control,
+      }) =>
+          _sourceResources.verifiedPageReuseIdentity(
+        sourceId: sourceId,
+        locator: locator,
+        control: control,
+      ),
+      trace: widget.debugTrace,
+      monotonicMicros: () => _traceClock.elapsedMicroseconds,
     );
     _downloadCommands = HomeDownloadCommands(
       session: _librarySession,
