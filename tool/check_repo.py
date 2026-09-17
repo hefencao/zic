@@ -2444,7 +2444,8 @@ def check_compile_regressions() -> None:
         'settingsDownloadEntryKey',
         'settingsAppearanceEntryKey',
         'cacheCoordinator.clear()',
-        'downloads.updatePolicy(',
+        'WholeComicPolicySettingsBinding',
+        'policyBinding.updatePolicy(',
     ):
         if required not in settings_page:
             fail(f'dev.64 settings hierarchy is incomplete: {required}')

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
+import 'package:downloads/downloads.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -101,6 +102,46 @@ void main() {
 
     expect(find.byKey(networkSettingsScreenKey), findsOneWidget);
     expect(find.text('25 MB'), findsOneWidget);
+  });
+
+  testWidgets('download policy settings follow current generation binding', (
+    tester,
+  ) async {
+    final changes = ChangeNotifier();
+    addTearDown(changes.dispose);
+    var snapshot = const WholeComicQueueSnapshot(
+      policy: WholeComicQueuePolicy(),
+      environment: WholeComicQueueEnvironment.assumedAvailable(),
+      jobs: <WholeComicQueueJobSnapshot>[],
+    );
+    WholeComicQueuePolicy? written;
+    final binding = WholeComicPolicySettingsBinding(
+      changes: changes,
+      readSnapshot: () => snapshot,
+      updatePolicy: (policy) async {
+        written = policy;
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(home: DownloadSettingsScreen(policyBinding: binding)),
+    );
+    var slider = tester.widget<Slider>(find.byType(Slider));
+    expect(slider.value, 1);
+
+    snapshot = const WholeComicQueueSnapshot(
+      policy: WholeComicQueuePolicy(concurrency: 3),
+      environment: WholeComicQueueEnvironment.assumedAvailable(),
+      jobs: <WholeComicQueueJobSnapshot>[],
+    );
+    changes.notifyListeners();
+    await tester.pump();
+    slider = tester.widget<Slider>(find.byType(Slider));
+    expect(slider.value, 3);
+
+    slider.onChanged!(4);
+    await tester.pump();
+    expect(written?.concurrency, 4);
   });
 
   testWidgets('appearance settings exposes AMOLED dark mode', (tester) async {

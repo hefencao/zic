@@ -68,10 +68,22 @@ const readingZoomDecodeBoostKey =
 const readingPreviewMaxItemsPerRowKey =
     ValueKey<String>('reading-preview-max-items-per-row');
 
+final class WholeComicPolicySettingsBinding {
+  const WholeComicPolicySettingsBinding({
+    required this.changes,
+    required this.readSnapshot,
+    required this.updatePolicy,
+  });
+
+  final Listenable changes;
+  final WholeComicQueueSnapshot Function() readSnapshot;
+  final Future<void> Function(WholeComicQueuePolicy policy) updatePolicy;
+}
+
 final class SettingsScreen extends StatelessWidget {
   const SettingsScreen({
     required this.preferences,
-    required this.downloads,
+    required this.downloadPolicy,
     required this.cacheCoordinator,
     required this.exportBackup,
     this.storageRoot,
@@ -80,7 +92,7 @@ final class SettingsScreen extends StatelessWidget {
   });
 
   final AppPreferencesController preferences;
-  final WholeComicDownloadQueue downloads;
+  final WholeComicPolicySettingsBinding downloadPolicy;
   final ResourceCacheCoordinator cacheCoordinator;
   final Future<String?> Function() exportBackup;
   final String? storageRoot;
@@ -122,7 +134,7 @@ final class SettingsScreen extends StatelessWidget {
             onTap: () => _push(
               context,
               NetworkSettingsScreen(
-                downloads: downloads,
+                policyBinding: downloadPolicy,
                 preferences: preferences,
               ),
             ),
@@ -154,7 +166,7 @@ final class SettingsScreen extends StatelessWidget {
             subtitle: '并发、网络与供电策略',
             onTap: () => _push(
               context,
-              DownloadSettingsScreen(downloads: downloads),
+              DownloadSettingsScreen(policyBinding: downloadPolicy),
             ),
           ),
           _SettingsEntry(
@@ -774,12 +786,12 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
 
 final class NetworkSettingsScreen extends StatefulWidget {
   const NetworkSettingsScreen({
-    required this.downloads,
+    required this.policyBinding,
     required this.preferences,
     super.key,
   });
 
-  final WholeComicDownloadQueue downloads;
+  final WholeComicPolicySettingsBinding policyBinding;
   final AppPreferencesController preferences;
 
   @override
@@ -904,20 +916,19 @@ final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
       appBar: AppBar(title: const Text('网络')),
       body: AnimatedBuilder(
         animation: widget.preferences,
-        builder: (context, _) => StreamBuilder<WholeComicQueueSnapshot>(
-          stream: widget.downloads.changes,
-          initialData: widget.downloads.snapshot,
-          builder: (context, snapshot) {
-            final policy = snapshot.requireData.policy;
+        builder: (context, _) => AnimatedBuilder(
+          animation: widget.policyBinding.changes,
+          builder: (context, _) {
+            final policy = widget.policyBinding.readSnapshot().policy;
             return ListView(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            children: <Widget>[
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              children: <Widget>[
               SwitchListTile(
                 title: const Text('整本下载仅使用非计费网络'),
                 subtitle: const Text('移动网络或计费网络下将进入等待策略状态。'),
                 value: policy.network == WholeComicNetworkPolicy.unmetered,
                 onChanged: (value) => unawaited(
-                  widget.downloads.updatePolicy(
+                  widget.policyBinding.updatePolicy(
                     policy.copyWith(
                       network: value
                           ? WholeComicNetworkPolicy.unmetered
@@ -1338,20 +1349,19 @@ final class ReadingSettingsScreen extends StatelessWidget {
 }
 
 final class DownloadSettingsScreen extends StatelessWidget {
-  const DownloadSettingsScreen({required this.downloads, super.key});
+  const DownloadSettingsScreen({required this.policyBinding, super.key});
 
-  final WholeComicDownloadQueue downloads;
+  final WholeComicPolicySettingsBinding policyBinding;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       key: downloadSettingsScreenKey,
       appBar: AppBar(title: const Text('下载')),
-      body: StreamBuilder<WholeComicQueueSnapshot>(
-        stream: downloads.changes,
-        initialData: downloads.snapshot,
-        builder: (context, snapshot) {
-          final policy = snapshot.requireData.policy;
+      body: AnimatedBuilder(
+        animation: policyBinding.changes,
+        builder: (context, _) {
+          final policy = policyBinding.readSnapshot().policy;
           return ListView(
             children: <Widget>[
               ListTile(
@@ -1363,7 +1373,7 @@ final class DownloadSettingsScreen extends StatelessWidget {
                   label: '${policy.concurrency}',
                   value: policy.concurrency.toDouble(),
                   onChanged: (value) => unawaited(
-                    downloads.updatePolicy(
+                    policyBinding.updatePolicy(
                       policy.copyWith(concurrency: value.round()),
                     ),
                   ),
@@ -1374,7 +1384,7 @@ final class DownloadSettingsScreen extends StatelessWidget {
                 title: const Text('仅充电时下载'),
                 value: policy.power == WholeComicPowerPolicy.charging,
                 onChanged: (value) => unawaited(
-                  downloads.updatePolicy(
+                  policyBinding.updatePolicy(
                     policy.copyWith(
                       power: value
                           ? WholeComicPowerPolicy.charging

@@ -100,6 +100,34 @@ for forbidden in (
             f'DemoHome UI re-acquired download command authority: {forbidden}'
         )
 
+settings = text('apps/app/lib/app_settings_screen.dart')
+for marker, label in (
+    ('final class WholeComicPolicySettingsBinding', 'settings policy capability bundle'),
+    ('final Listenable changes;', 'settings projection invalidation'),
+    ('final WholeComicQueueSnapshot Function() readSnapshot;', 'settings projection reader'),
+    ('final Future<void> Function(WholeComicQueuePolicy policy) updatePolicy;', 'settings policy command'),
+    ('NetworkSettingsScreen(\n                policyBinding: downloadPolicy,', 'network settings binding'),
+    ('DownloadSettingsScreen(policyBinding: downloadPolicy)', 'download settings binding'),
+):
+    require(settings, marker, label)
+for forbidden in (
+    'final WholeComicDownloadQueue downloads;',
+    'widget.downloads.updatePolicy(',
+    'downloads.updatePolicy(',
+):
+    if forbidden in settings:
+        raise SystemExit(
+            f'Settings re-acquired concrete whole-comic queue authority: {forbidden}'
+        )
+
+for marker, label in (
+    ('downloadPolicy: WholeComicPolicySettingsBinding(', 'settings generation binding'),
+    ('changes: _librarySession.downloadProjectionChanges,', 'settings projection changes'),
+    ('readSnapshot: () => _librarySession.wholeComicQueueSnapshot,', 'settings current snapshot'),
+    ('updatePolicy: _downloadCommands.updateWholeComicPolicy,', 'settings policy command owner'),
+):
+    require(home, marker, label)
+
 manager = text('apps/app/lib/download_manager.dart')
 for marker, label in (
     ('final class DownloadManagerCommandActions', 'manager mutation capability bundle'),

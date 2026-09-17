@@ -116,6 +116,64 @@ void main() {
     expect(session.sources.single, same(replacementSource));
   });
 
+  test('service adoption publishes the current whole-comic policy generation',
+      () async {
+    final bootstrapLibrary = MemoryImportedLibraryStore();
+    final bootstrapDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final bootstrapQueue = WholeComicDownloadQueue(downloads: bootstrapDownloads);
+    final durableLibrary = MemoryImportedLibraryStore();
+    final durableDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final durableQueue = WholeComicDownloadQueue(downloads: durableDownloads);
+    await durableQueue.ready;
+    await durableQueue.updatePolicy(
+      const WholeComicQueuePolicy(concurrency: 3),
+    );
+    final session = HomeLibrarySession(
+      library: bootstrapLibrary,
+      chapterDownloads: bootstrapDownloads,
+      wholeComicDownloads: bootstrapQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await durableQueue.close();
+      await durableDownloads.close();
+      await durableLibrary.close();
+    });
+
+    await session.ready;
+    final observedPolicies = <int>[];
+    session.downloadProjectionChanges.addListener(() {
+      observedPolicies.add(
+        session.wholeComicQueueSnapshot.policy.concurrency,
+      );
+    });
+
+    await session.adoptServices(
+      library: durableLibrary,
+      chapterDownloads: durableDownloads,
+      wholeComicDownloads: durableQueue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    );
+    for (var attempt = 0;
+        attempt < 20 && !observedPolicies.contains(3);
+        attempt++) {
+      await Future<void>.delayed(Duration.zero);
+    }
+
+    expect(session.wholeComicQueueSnapshot.policy.concurrency, 3);
+    expect(observedPolicies, contains(3));
+  });
+
   test('dispose does not suppress later owned-resource close', () async {
     final library = MemoryImportedLibraryStore();
     final downloads = MemoryChapterDownloadService(

@@ -739,7 +739,11 @@ final class _DemoHomeState extends State<DemoHome> {
         MaterialPageRoute<void>(
           builder: (_) => SettingsScreen(
             preferences: widget.preferences,
-            downloads: _wholeComicDownloads,
+            downloadPolicy: WholeComicPolicySettingsBinding(
+              changes: _librarySession.downloadProjectionChanges,
+              readSnapshot: () => _librarySession.wholeComicQueueSnapshot,
+              updatePolicy: _downloadCommands.updateWholeComicPolicy,
+            ),
             cacheCoordinator: _cacheCoordinator,
             storageRoot: _storageRoot,
             exportBackup: () => exportImportedLibraryBackup(_library),
