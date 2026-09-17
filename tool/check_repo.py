@@ -2443,7 +2443,9 @@ def check_compile_regressions() -> None:
         'settingsReadingEntryKey',
         'settingsDownloadEntryKey',
         'settingsAppearanceEntryKey',
-        'cacheCoordinator.clear()',
+        'DataSettingsRuntimeBinding',
+        'runtime.clearCache()',
+        'runtime.updateCachePolicyAndTrim(',
         'WholeComicPolicySettingsBinding',
         'policyBinding.updatePolicy(',
     ):

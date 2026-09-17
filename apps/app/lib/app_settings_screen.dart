@@ -80,26 +80,54 @@ final class WholeComicPolicySettingsBinding {
   final Future<void> Function(WholeComicQueuePolicy policy) updatePolicy;
 }
 
+final class DataSettingsCacheMutationResult {
+  const DataSettingsCacheMutationResult({
+    required this.report,
+    required this.usage,
+  });
+
+  final ResourceCacheMaintenanceReport report;
+  final ResourceCacheUsage usage;
+}
+
+final class DataSettingsRuntimeBinding {
+  const DataSettingsRuntimeBinding({
+    required this.changes,
+    required this.readStorageRoot,
+    required this.canChangeChapterDownloadDirectory,
+    required this.changeChapterDownloadDirectory,
+    required this.inspectCache,
+    required this.clearCache,
+    required this.updateCachePolicyAndTrim,
+  });
+
+  final Listenable changes;
+  final String? Function() readStorageRoot;
+  final bool Function() canChangeChapterDownloadDirectory;
+  final Future<String?> Function({
+    String? directory,
+    required bool migrateFiles,
+  }) changeChapterDownloadDirectory;
+  final Future<ResourceCacheUsage> Function() inspectCache;
+  final Future<DataSettingsCacheMutationResult> Function() clearCache;
+  final Future<DataSettingsCacheMutationResult> Function(
+    ResourceCacheMaintenancePolicy policy,
+  ) updateCachePolicyAndTrim;
+}
+
 final class SettingsScreen extends StatelessWidget {
   const SettingsScreen({
     required this.preferences,
     required this.downloadPolicy,
-    required this.cacheCoordinator,
+    required this.dataRuntime,
     required this.exportBackup,
-    this.storageRoot,
-    this.onChangeChapterDownloadDirectory,
     super.key,
   });
 
   final AppPreferencesController preferences;
   final WholeComicPolicySettingsBinding downloadPolicy;
-  final ResourceCacheCoordinator cacheCoordinator;
+  final DataSettingsRuntimeBinding dataRuntime;
   final Future<String?> Function() exportBackup;
-  final String? storageRoot;
-  final Future<String?> Function({
-    String? directory,
-    required bool migrateFiles,
-  })? onChangeChapterDownloadDirectory;
 
   @override
   Widget build(BuildContext context) {
@@ -118,11 +146,8 @@ final class SettingsScreen extends StatelessWidget {
               context,
               DataSettingsScreen(
                 preferences: preferences,
-                storageRoot: storageRoot,
-                cacheCoordinator: cacheCoordinator,
+                runtime: dataRuntime,
                 exportBackup: exportBackup,
-                onChangeChapterDownloadDirectory:
-                    onChangeChapterDownloadDirectory,
               ),
             ),
           ),
@@ -196,21 +221,14 @@ final class SettingsScreen extends StatelessWidget {
 final class DataSettingsScreen extends StatefulWidget {
   const DataSettingsScreen({
     required this.preferences,
-    required this.cacheCoordinator,
+    required this.runtime,
     required this.exportBackup,
-    this.storageRoot,
-    this.onChangeChapterDownloadDirectory,
     super.key,
   });
 
   final AppPreferencesController preferences;
-  final String? storageRoot;
-  final ResourceCacheCoordinator cacheCoordinator;
+  final DataSettingsRuntimeBinding runtime;
   final Future<String?> Function() exportBackup;
-  final Future<String?> Function({
-    String? directory,
-    required bool migrateFiles,
-  })? onChangeChapterDownloadDirectory;
 
   @override
   State<DataSettingsScreen> createState() => _DataSettingsScreenState();
@@ -224,19 +242,48 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
   bool _changingDownloadDirectory = false;
   bool? _allFilesAccessGranted;
   bool _openingFileAccessSettings = false;
+  bool _runtimeRefreshPending = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.runtime.changes.addListener(_handleRuntimeChanged);
     unawaited(_refreshUsage());
     unawaited(_refreshFileAccessStatus());
   }
 
   @override
+  void didUpdateWidget(DataSettingsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.runtime, widget.runtime)) {
+      oldWidget.runtime.changes.removeListener(_handleRuntimeChanged);
+      widget.runtime.changes.addListener(_handleRuntimeChanged);
+      _handleRuntimeChanged();
+    }
+  }
+
+  @override
   void dispose() {
+    widget.runtime.changes.removeListener(_handleRuntimeChanged);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  void _handleRuntimeChanged() {
+    if (!mounted) return;
+    setState(() => _runtimeRefreshPending = true);
+    if (!_busy) {
+      unawaited(_refreshUsage());
+    }
+  }
+
+  void _finishBusy() {
+    if (!mounted) return;
+    setState(() => _busy = false);
+    if (_runtimeRefreshPending) {
+      unawaited(_refreshUsage());
+    }
   }
 
   @override
@@ -270,18 +317,22 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
   }
 
   Future<void> _refreshUsage() async {
-    if (_busy) return;
+    if (_busy) {
+      _runtimeRefreshPending = true;
+      return;
+    }
+    _runtimeRefreshPending = false;
     setState(() {
       _busy = true;
       _failure = null;
     });
     try {
-      final usage = await widget.cacheCoordinator.inspect();
+      final usage = await widget.runtime.inspectCache();
       if (mounted) setState(() => _usage = usage);
     } on Object catch (error) {
       if (mounted) setState(() => _failure = error);
     } finally {
-      if (mounted) setState(() => _busy = false);
+      _finishBusy();
     }
   }
 
@@ -312,21 +363,20 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
       _failure = null;
     });
     try {
-      final report = await widget.cacheCoordinator.clear();
-      final usage = await widget.cacheCoordinator.inspect();
+      final result = await widget.runtime.clearCache();
       if (!mounted) return;
-      setState(() => _usage = usage);
+      setState(() => _usage = result.usage);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            '已释放 ${_formatBytes(report.totalReleasedBytes)}',
+            '已释放 ${_formatBytes(result.report.totalReleasedBytes)}',
           ),
         ),
       );
     } on Object catch (error) {
       if (mounted) setState(() => _failure = error);
     } finally {
-      if (mounted && _busy) setState(() => _busy = false);
+      _finishBusy();
     }
   }
 
@@ -344,12 +394,12 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
     } on Object catch (error) {
       if (mounted) setState(() => _failure = error);
     } finally {
-      if (mounted) setState(() => _busy = false);
+      _finishBusy();
     }
   }
 
   String? get _effectiveDownloadDirectory {
-    final root = widget.storageRoot;
+    final root = widget.runtime.readStorageRoot();
     if (root == null) return null;
     final override = widget.preferences.chapterDownloadDirectoryOverride;
     return override ?? defaultChapterDownloadDirectory(root);
@@ -359,7 +409,7 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
   /// path and opens the picker; unlike Venera there is no second display row.
   Future<void> _changeDownloadDirectory() async {
     if (_changingDownloadDirectory) return;
-    if (widget.onChangeChapterDownloadDirectory == null) {
+    if (!widget.runtime.canChangeChapterDownloadDirectory()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('下载服务尚未就绪，请稍后重试')),
       );
@@ -416,8 +466,8 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
   /// reusing the same confirmation + move flow as an explicit change.
   Future<void> _resetDownloadDirectory() async {
     if (_changingDownloadDirectory) return;
-    final root = widget.storageRoot;
-    if (widget.onChangeChapterDownloadDirectory == null) {
+    final root = widget.runtime.readStorageRoot();
+    if (!widget.runtime.canChangeChapterDownloadDirectory()) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('下载服务尚未就绪，请稍后重试')),
       );
@@ -446,7 +496,7 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
     setState(() => _changingDownloadDirectory = true);
     String? failure;
     try {
-      failure = await widget.onChangeChapterDownloadDirectory!(
+      failure = await widget.runtime.changeChapterDownloadDirectory(
         directory: directory,
         migrateFiles: migrateFiles,
       );
@@ -456,7 +506,7 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
       if (failure != null && failure.contains('所选目录不可写')) {
         final granted = await _offerAllFilesAccess();
         if (granted) {
-          failure = await widget.onChangeChapterDownloadDirectory!(
+          failure = await widget.runtime.changeChapterDownloadDirectory(
             directory: directory,
             migrateFiles: migrateFiles,
           );
@@ -557,15 +607,13 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
   }
 
   Future<void> _editCacheLimit() async {
-    final controller = TextEditingController(
-      text: '${widget.preferences.cacheLimitMb}',
-    );
+    var draft = '${widget.preferences.cacheLimitMb}';
     final confirmed = await showDialog<int>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('设置缓存上限'),
-        content: TextField(
-          controller: controller,
+        content: TextFormField(
+          initialValue: draft,
           autofocus: true,
           keyboardType: TextInputType.number,
           inputFormatters: <TextInputFormatter>[
@@ -577,6 +625,7 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
                 '范围 $minCacheLimitMb–$maxCacheLimitMb MB；超过后自动清理最久未用的页面缓存。',
             border: OutlineInputBorder(),
           ),
+          onChanged: (value) => draft = value,
         ),
         actions: <Widget>[
           AppDialogActions(
@@ -584,7 +633,7 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
             actions: <Widget>[
               FilledButton(
                 onPressed: () {
-                  final value = int.tryParse(controller.text);
+                  final value = int.tryParse(draft);
                   Navigator.pop(
                     dialogContext,
                     value?.clamp(0, 1 << 30).toInt(),
@@ -597,27 +646,23 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
         ],
       ),
     );
-    controller.dispose();
     if (!mounted || confirmed == null) return;
     setState(() => _busy = true);
     try {
       widget.preferences.setCacheLimitMb(confirmed);
-      widget.cacheCoordinator.updateMaintenancePolicy(
+      final result = await widget.runtime.updateCachePolicyAndTrim(
         ResourceCacheMaintenancePolicy.forArtifactLimitBytes(
           widget.preferences.cacheLimitMb * 1024 * 1024,
         ),
       );
-      // Enforce the new limit immediately instead of waiting for the next
-      // scheduled maintenance pass.
-      final report = await widget.cacheCoordinator.trim();
-      await _refreshUsageQuietly();
       if (!mounted) return;
+      setState(() => _usage = result.usage);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            report.totalReleasedBytes > 0
+            result.report.totalReleasedBytes > 0
                 ? '缓存上限已设为 ${widget.preferences.cacheLimitMb} MB，'
-                    '已释放 ${_formatBytes(report.totalReleasedBytes)}'
+                    '已释放 ${_formatBytes(result.report.totalReleasedBytes)}'
                 : '缓存上限已设为 ${widget.preferences.cacheLimitMb} MB',
           ),
         ),
@@ -625,22 +670,13 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
     } on Object catch (error) {
       if (mounted) setState(() => _failure = error);
     } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _refreshUsageQuietly() async {
-    try {
-      final usage = await widget.cacheCoordinator.inspect();
-      if (mounted) setState(() => _usage = usage);
-    } on Object catch (error) {
-      if (mounted) setState(() => _failure = error);
+      _finishBusy();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final root = widget.storageRoot;
+    final root = widget.runtime.readStorageRoot();
     final downloadDirectory = _effectiveDownloadDirectory;
     return Scaffold(
       key: dataSettingsScreenKey,
@@ -663,7 +699,7 @@ final class _DataSettingsScreenState extends State<DataSettingsScreen>
               subtitle: Text(
                 downloadDirectory == null
                     ? '当前使用内存服务'
-                    : widget.onChangeChapterDownloadDirectory == null
+                    : !widget.runtime.canChangeChapterDownloadDirectory()
                         ? '$downloadDirectory\n下载服务未运行，下载不会写入磁盘'
                         : downloadDirectory,
                 maxLines: 3,

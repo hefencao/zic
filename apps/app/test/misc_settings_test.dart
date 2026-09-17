@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reader/reader.dart';
 import 'package:reader_runtime/reader_runtime.dart';
+import 'package:resource_cache/resource_cache.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:zic/app_preferences.dart';
 import 'package:zic/app_settings_screen.dart';
@@ -142,6 +143,89 @@ void main() {
     slider.onChanged!(4);
     await tester.pump();
     expect(written?.concurrency, 4);
+  });
+
+  testWidgets('data settings follow current runtime generation binding', (
+    tester,
+  ) async {
+    final changes = ChangeNotifier();
+    final preferences = AppPreferencesController();
+    addTearDown(changes.dispose);
+    addTearDown(preferences.dispose);
+    ResourceCacheStats emptyStats() => ResourceCacheStats(
+      entries: 0,
+      inFlight: 0,
+      weight: 0,
+      hits: 0,
+      misses: 0,
+      evictions: 0,
+      expirations: 0,
+      persistentHits: 0,
+      persistentMisses: 0,
+      byKind: <ResourceCacheKind, ResourceCacheKindStats>{},
+    );
+    ResourceCacheUsage emptyUsage() => ResourceCacheUsage(
+      responses: emptyStats(),
+    );
+    ResourceCacheMaintenanceReport emptyReport() =>
+        ResourceCacheMaintenanceReport(
+          responseReleasedBytes: 0,
+          persistentResponseReleasedBytes: 0,
+          responses: emptyStats(),
+        );
+
+    var generation = 1;
+    var storageRoot = '/root-a';
+    var clearGeneration = 0;
+    var trimGeneration = 0;
+    final binding = DataSettingsRuntimeBinding(
+      changes: changes,
+      readStorageRoot: () => storageRoot,
+      canChangeChapterDownloadDirectory: () => true,
+      changeChapterDownloadDirectory: ({directory, required migrateFiles}) async => null,
+      inspectCache: () async => emptyUsage(),
+      clearCache: () async {
+        clearGeneration = generation;
+        return DataSettingsCacheMutationResult(
+          report: emptyReport(),
+          usage: emptyUsage(),
+        );
+      },
+      updateCachePolicyAndTrim: (policy) async {
+        trimGeneration = generation;
+        return DataSettingsCacheMutationResult(
+          report: emptyReport(),
+          usage: emptyUsage(),
+        );
+      },
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DataSettingsScreen(
+          preferences: preferences,
+          runtime: binding,
+          exportBackup: () async => null,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 32));
+    expect(find.text('/root-a'), findsOneWidget);
+
+    generation = 2;
+    storageRoot = '/root-b';
+    changes.notifyListeners();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 32));
+    expect(find.text('/root-b'), findsOneWidget);
+
+    await binding.clearCache();
+    expect(clearGeneration, 2);
+    await binding.updateCachePolicyAndTrim(
+      ResourceCacheMaintenancePolicy.forArtifactLimitBytes(256 * 1024 * 1024),
+    );
+    expect(trimGeneration, 2);
   });
 
   testWidgets('appearance settings exposes AMOLED dark mode', (tester) async {

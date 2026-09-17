@@ -733,6 +733,47 @@ final class _DemoHomeState extends State<DemoHome> {
     );
   }
 
+  Future<ResourceCacheUsage> _inspectSettingsCache() async {
+    await _adoptDurableServices();
+    return _cacheCoordinator.inspect();
+  }
+
+  Future<DataSettingsCacheMutationResult> _clearSettingsCache() async {
+    await _serviceHandoff?.ensureCoreServices?.call();
+    await _adoptDurableServices();
+    final coordinator = _cacheCoordinator;
+    final report = await coordinator.clear();
+    return DataSettingsCacheMutationResult(
+      report: report,
+      usage: await coordinator.inspect(),
+    );
+  }
+
+  Future<DataSettingsCacheMutationResult> _updateSettingsCachePolicyAndTrim(
+    ResourceCacheMaintenancePolicy policy,
+  ) async {
+    await _serviceHandoff?.ensureCoreServices?.call();
+    await _adoptDurableServices();
+    final coordinator = _cacheCoordinator;
+    coordinator.updateMaintenancePolicy(policy);
+    final report = await coordinator.trim();
+    return DataSettingsCacheMutationResult(
+      report: report,
+      usage: await coordinator.inspect(),
+    );
+  }
+
+  Future<String?> _changeSettingsChapterDownloadDirectory({
+    String? directory,
+    required bool migrateFiles,
+  }) async {
+    final relay = _serviceHandoff?.chapterDownloadRelay;
+    if (relay == null) {
+      return '下载服务尚未就绪，请稍后重试';
+    }
+    return relay(directory: directory, migrateFiles: migrateFiles);
+  }
+
   void _openSettings() {
     unawaited(
       Navigator.of(context).push(
@@ -744,11 +785,19 @@ final class _DemoHomeState extends State<DemoHome> {
               readSnapshot: () => _librarySession.wholeComicQueueSnapshot,
               updatePolicy: _downloadCommands.updateWholeComicPolicy,
             ),
-            cacheCoordinator: _cacheCoordinator,
-            storageRoot: _storageRoot,
+            dataRuntime: DataSettingsRuntimeBinding(
+              changes:
+                  _serviceHandoff ?? _librarySession.downloadProjectionChanges,
+              readStorageRoot: () => _storageRoot,
+              canChangeChapterDownloadDirectory: () =>
+                  _serviceHandoff?.chapterDownloadRelay != null,
+              changeChapterDownloadDirectory:
+                  _changeSettingsChapterDownloadDirectory,
+              inspectCache: _inspectSettingsCache,
+              clearCache: _clearSettingsCache,
+              updateCachePolicyAndTrim: _updateSettingsCachePolicyAndTrim,
+            ),
             exportBackup: () => exportImportedLibraryBackup(_library),
-            onChangeChapterDownloadDirectory:
-                _serviceHandoff?.chapterDownloadRelay,
           ),
         ),
       ),

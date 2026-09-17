@@ -11,6 +11,22 @@ import 'package:storage_bridge/storage_bridge.dart';
 import 'package:zic/home_library_session.dart';
 
 void main() {
+  test('chapter-download relay publishes capability changes', () {
+    final handoff = HomeServiceHandoff();
+    addTearDown(handoff.dispose);
+    var notifications = 0;
+    handoff.addListener(() => notifications++);
+    Future<String?> relay({String? directory, required bool migrateFiles}) async =>
+        null;
+
+    handoff.setChapterDownloadRelay(relay);
+    expect(notifications, 1);
+    handoff.setChapterDownloadRelay(relay);
+    expect(notifications, 1);
+    handoff.setChapterDownloadRelay(null);
+    expect(notifications, 2);
+  });
+
   test('download composition normalization has one explicit-first authority', () async {
     final root = await Directory.systemTemp.createTemp(
       'home-download-composition-authority-',

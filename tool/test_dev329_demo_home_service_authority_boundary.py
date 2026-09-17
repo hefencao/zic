@@ -19,6 +19,7 @@ home = text("apps/app/lib/demo_home.dart")
 handoff = text("apps/app/lib/demo_home_service_handoff.dart")
 session = text("apps/app/lib/home_library_session.dart")
 service_cache = text("apps/app/lib/home_service_cache_binding.dart")
+settings = text("apps/app/lib/app_settings_screen.dart")
 
 for marker, label in (
     ("ImportedLibraryStore get _library => _librarySession.library;", "library delegation"),
@@ -87,6 +88,12 @@ require(
 
 
 for marker, label in (
+    ("void setChapterDownloadRelay(", "dynamic directory capability publisher"),
+    ("chapterDownloadRelay = relay;\n    notifyListeners();", "directory capability invalidation"),
+):
+    require(session, marker, label)
+
+for marker, label in (
     ("static ChapterDownloadTransferRuntimeProvider? resolveDownloadComposition(", "transfer capability normalizer"),
     ("downloadComposition = resolveDownloadComposition(", "constructor normalization"),
     ("final resolvedDownloadComposition = resolveDownloadComposition(", "adoption normalization"),
@@ -111,6 +118,60 @@ for body, path in (
         "HomeLibrarySession.resolveDownloadComposition(",
         f"shared composition normalization in {path}",
     )
+
+
+for marker, label in (
+    ("final class DataSettingsRuntimeBinding", "settings runtime capability binding"),
+    ("final DataSettingsRuntimeBinding dataRuntime;", "settings runtime binding input"),
+    ("final DataSettingsRuntimeBinding runtime;", "data settings runtime binding"),
+    ("widget.runtime.clearCache()", "dynamic cache clear dispatch"),
+    ("widget.runtime.updateCachePolicyAndTrim(", "dynamic cache maintenance dispatch"),
+    ("widget.runtime.readStorageRoot()", "dynamic storage-root projection"),
+):
+    require(settings, marker, label)
+
+for forbidden in (
+    "final ResourceCacheCoordinator cacheCoordinator;",
+    "required this.cacheCoordinator",
+    "widget.cacheCoordinator",
+    "final String? storageRoot;",
+    "required this.storageRoot",
+    "onChangeChapterDownloadDirectory",
+):
+    if forbidden in settings:
+        raise SystemExit(
+            f"Settings re-acquired generation-bound service state: {forbidden}"
+        )
+
+for marker, label in (
+    ("Future<ResourceCacheUsage> _inspectSettingsCache() async", "dynamic settings cache inspect adapter"),
+    ("await _serviceHandoff?.ensureCoreServices?.call();", "explicit cache mutation durable handoff"),
+    ("final coordinator = _cacheCoordinator;", "single-operation cache generation capture"),
+    ("dataRuntime: DataSettingsRuntimeBinding(", "settings runtime composition wiring"),
+    ("readStorageRoot: () => _storageRoot,", "dynamic storage-root wiring"),
+    ("clearCache: _clearSettingsCache,", "dynamic clear wiring"),
+    ("updateCachePolicyAndTrim: _updateSettingsCachePolicyAndTrim,", "dynamic trim wiring"),
+):
+    require(home, marker, label)
+
+inspect_start = home.index("Future<ResourceCacheUsage> _inspectSettingsCache() async")
+clear_start = home.index("Future<DataSettingsCacheMutationResult> _clearSettingsCache() async")
+trim_start = home.index("Future<DataSettingsCacheMutationResult> _updateSettingsCachePolicyAndTrim(")
+directory_start = home.index("Future<String?> _changeSettingsChapterDownloadDirectory(")
+inspect_body = home[inspect_start:clear_start]
+clear_body = home[clear_start:trim_start]
+trim_body = home[trim_start:directory_start]
+if "ensureCoreServices" in inspect_body:
+    raise SystemExit(
+        "Settings cache inspect must not force empty-install durable core services"
+    )
+for body, label in (
+    (clear_body, "settings cache clear"),
+    (trim_body, "settings cache trim"),
+):
+    require(body, "await _serviceHandoff?.ensureCoreServices?.call();", f"{label} durable handoff")
+    require(body, "await _adoptDurableServices();", f"{label} current-generation adoption")
+    require(body, "final coordinator = _cacheCoordinator;", f"{label} one-generation capture")
 
 close_body = session[session.index('Future<void> _closeOwnedResources() async {'):]
 for marker, label in (

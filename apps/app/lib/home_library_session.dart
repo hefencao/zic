@@ -185,7 +185,11 @@ final class HomeServiceHandoff extends ChangeNotifier {
     Future<String?> Function({String? directory, required bool migrateFiles})?
     relay,
   ) {
+    if (chapterDownloadRelay == relay) {
+      return;
+    }
     chapterDownloadRelay = relay;
+    notifyListeners();
   }
 
   void setEnsureCoreServices(Future<void> Function()? callback) {
