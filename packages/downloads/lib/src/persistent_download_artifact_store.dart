@@ -1943,6 +1943,7 @@ final class PersistentDownloadArtifactStore
   bool _closed = false;
 
   static const String _recoveryMarkerName = '.zic-cache-recovery-required';
+  static final RegExp _crc32ChecksumPattern = RegExp(r'^[0-9a-fA-F]{8}$');
   static final String _processRecoveryOwner =
       '${pid}-${DateTime.now().toUtc().microsecondsSinceEpoch}';
 
@@ -2291,7 +2292,7 @@ final class PersistentDownloadArtifactStore
   bool _isVerifiedReadyRecord(CacheRec record) =>
       record.state == CacheState.ready &&
       record.bytes > 0 &&
-      RegExp(r'^[0-9a-fA-F]{8}$').hasMatch(record.checksum.trim()) &&
+      _crc32ChecksumPattern.hasMatch(record.checksum.trim()) &&
       record.checksumAlgorithm.trim().toLowerCase() == 'crc32';
 
   String _storageRootIdForPath(String path, {DownloadId? id}) {

@@ -1468,22 +1468,28 @@ final class PersistentChapterDownloadService
     final physicalState = await _loadManagementPhysicalState();
     final physicalUs = _traceClock.nowMicros() - physicalStartedUs;
     final projectStartedUs = _traceClock.nowMicros();
+    final orphanStartedUs = _traceClock.nowMicros();
     final orphaned = _discoverOrphanedEntriesFromRecords(
       known,
       indexed,
       compactEntriesAreKnown: true,
     );
+    final orphanUs = _traceClock.nowMicros() - orphanStartedUs;
     final visibleEntries = <ImportedLibraryEntry>[...known, ...orphaned];
+    final snapshotStartedUs = _traceClock.nowMicros();
     final snapshots = await _inspectManyFromRecords(
       visibleEntries,
       indexed,
       physicalState: physicalState,
     );
+    final snapshotUs = _traceClock.nowMicros() - snapshotStartedUs;
+    final cacheStartedUs = _traceClock.nowMicros();
     final cache = _buildCacheManagementProjection(
       visibleEntries,
       indexed,
       physicalState,
     );
+    final cacheProjectionUs = _traceClock.nowMicros() - cacheStartedUs;
     final projectUs = _traceClock.nowMicros() - projectStartedUs;
     _recordCommandTrace(
       'download-management',
@@ -1497,8 +1503,15 @@ final class PersistentChapterDownloadService
         'canonicalProjections': physicalState.projections.length,
         'canonicalRows': cache.canonical.length,
         'exactRows': cache.exact.length,
+        'visiblePages': visibleEntries.fold<int>(
+          0,
+          (total, entry) => total + entry.chapter.pages.length,
+        ),
         'indexedUs': indexedUs,
         'physicalUs': physicalUs,
+        'orphanUs': orphanUs,
+        'snapshotUs': snapshotUs,
+        'cacheProjectionUs': cacheProjectionUs,
         'projectUs': projectUs,
         'totalUs': _traceClock.nowMicros() - startedUs,
       },
@@ -1576,6 +1589,22 @@ final class PersistentChapterDownloadService
   ) {
     final canonicalBuilders = physicalState.canonicalInventoryBuilders();
     final exactBuilders = <String, _ExactChapterCacheSnapshotBuilder>{};
+    final exactRecordsByChapter = <String, List<CacheRec>>{};
+    for (final record in indexed.values) {
+      final ready = artifactStore._isVerifiedReadyRecord(record);
+      final partial = record.state == CacheState.partial && record.bytes > 0;
+      if (!ready && !partial) continue;
+      final content = record.id.content;
+      final chapterKey =
+          '${content.sourceId}\u0000${content.comicId}\u0000${content.chapterId}\u0000${record.id.sourceRevision}';
+      exactRecordsByChapter
+          .putIfAbsent(chapterKey, () => <CacheRec>[])
+          .add(record);
+    }
+    final canonicalArtifactIds = <String>{
+      for (final record in physicalState.artifacts.values)
+        if (record.id.kind == PhysicalMediaIdKind.canonical) record.artifactId,
+    };
 
     for (final entry in entries) {
       final manifest = entry.chapter.toManifest();
@@ -1591,6 +1620,29 @@ final class PersistentChapterDownloadService
       canonicalBuilder?.addMember(_identity(entry));
 
       _ExactChapterCacheSnapshotBuilder? exactBuilder;
+      if (_isCompactProjectionEntry(entry)) {
+        final chapterKey =
+            '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}\u0000${entry.chapter.chapterId}\u0000${entry.chapter.sourceRevision}';
+        for (final record in exactRecordsByChapter[chapterKey] ??
+            const <CacheRec>[]) {
+          final ready = artifactStore._isVerifiedReadyRecord(record);
+          final manualReferenced = ready &&
+              (record.pinned ||
+                  !artifactStore._isAutomaticCacheFinalRecord(record));
+          if (manualReferenced) continue;
+          if (ready &&
+              record.artifactId.isNotEmpty &&
+              canonicalArtifactIds.contains(record.artifactId)) {
+            continue;
+          }
+          exactBuilder ??= _ExactChapterCacheSnapshotBuilder(entry);
+          exactBuilder.addPage(ready: ready, bytes: record.bytes);
+        }
+        if (exactBuilder != null && exactBuilder.cachedPages > 0) {
+          exactBuilders[exactBuilder.identity] = exactBuilder;
+        }
+        continue;
+      }
       for (var index = 0; index < manifest.pages.length; index++) {
         final page = manifest.pages[index];
         final id = _downloadId(manifest, page);

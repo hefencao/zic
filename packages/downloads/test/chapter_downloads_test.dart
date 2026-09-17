@@ -322,6 +322,76 @@ void main() {
   );
 
   test(
+    'compact home entries expose durable auto-cache in management projection',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'zic-compact-cache-management-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final service = await PersistentChapterDownloadService.open(
+        directory.path,
+      );
+      addTearDown(service.close);
+      final id = DownloadId(
+        content: const ContentId(
+          sourceId: 'compact-source',
+          comicId: 'compact-comic',
+          chapterId: 'compact-chapter',
+          pageId: 'page-1',
+        ),
+        sourceRevision: 'compact-r1',
+        canonicalUri: Uri.parse('https://example.test/page-1.webp'),
+      );
+      final bytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
+      await service.storePromotedArtifact(id: id, bytes: bytes);
+      final compact = ImportedLibraryEntry(
+        chapter: ImportedChapterRecord(
+          directoryId: 'compact-directory',
+          displayName: '紧凑章节',
+          sourceId: 'compact-source',
+          comicId: 'compact-comic',
+          comicTitle: '紧凑漫画',
+          chapterId: 'compact-chapter',
+          sourceRevision: 'compact-r1',
+          pages: const <ImportedPageRecord>[
+            ImportedPageRecord(
+              displayName: 'page-1',
+              sourceId: 'zic-home-snapshot-page:0',
+              contentKindHint: ContentKindHint.unknown,
+            ),
+            ImportedPageRecord(
+              displayName: 'page-2',
+              sourceId: 'zic-home-snapshot-page:1',
+              contentKindHint: ContentKindHint.unknown,
+            ),
+          ],
+        ),
+      );
+
+      final projection = await service.inspectDownloadManagement(
+        <ImportedLibraryEntry>[compact],
+      );
+
+      expect(projection.orphanedEntries, isEmpty);
+      expect(projection.cache, isNotNull);
+      expect(projection.cache!.canonical, isEmpty);
+      expect(projection.cache!.exact, hasLength(1));
+      expect(
+        projection.cache!.exact.single.identity,
+        chapterDownloadIdentity(
+          compact.chapter.sourceId,
+          compact.chapter.comicId,
+          compact.chapter.chapterId,
+          compact.chapter.sourceRevision,
+        ),
+      );
+      expect(projection.cache!.exact.single.readyPages, 1);
+      expect(projection.cache!.exact.single.partialPages, 0);
+      expect(projection.cache!.exact.single.receivedBytes, bytes.length);
+    },
+  );
+
+  test(
     'persistent partial artifact survives Reader service reopen without promotion',
     () async {
       final directory = await Directory.systemTemp.createTemp(
