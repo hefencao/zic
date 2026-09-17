@@ -35,6 +35,30 @@ Future<void> _pumpUntilFound(
   throw TestFailure('Timed out waiting for $finder');
 }
 
+final class _SnapshotOnlyImportedLibraryStore
+    implements ImportedLibraryStore, ImportedLibraryBackupSnapshotStore {
+  int snapshotReads = 0;
+
+  @override
+  Future<ImportedLibraryBackupSnapshot> readLibraryBackupSnapshot() async {
+    snapshotReads++;
+    return const ImportedLibraryBackupSnapshot(
+      entries: <ImportedLibraryEntry>[],
+      savedComics: <SavedComicRecord>[],
+      categories: <LibraryCategory>[],
+      comicPreferences: <ComicPreference>[],
+      chapterReadStates: <ChapterReadState>[],
+      sourcePreferences: <ComicSourcePreference>[],
+      migrationIssues: <LibraryMigrationIssue>[],
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) {
+    throw StateError('backup used a legacy per-section library read');
+  }
+}
+
 void main() {
   test('debug trace export directory stays under Downloads', () {
     expect(normalizeDebugTraceExportDirectory(' Debug/Reader '), 'Debug/Reader');
@@ -596,6 +620,16 @@ void main() {
     expect(backup['chapterReadStates'], isEmpty);
     expect(backup['sourcePreferences'], isEmpty);
     expect(backup['migrationIssues'], isEmpty);
+  });
+
+  test('library backup prefers one store-owned semantic snapshot', () async {
+    final store = _SnapshotOnlyImportedLibraryStore();
+
+    final backup = await buildImportedLibraryBackup(store);
+
+    expect(store.snapshotReads, 1);
+    expect(backup['format'], 'zic-library-backup-v1');
+    expect(backup['chapters'], isEmpty);
   });
 
   test('startup preference read cannot overwrite a newer user choice', () async {

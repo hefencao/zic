@@ -50,6 +50,51 @@ void main() {
     );
   });
 
+  test('backup snapshot materializes the authoritative lazy library', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-lazy-library-backup-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    var rootCalls = 0;
+    final durable = SqliteImportedLibraryStore(
+      '${directory.path}/imported_library.sqlite3',
+    );
+    await durable.open();
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/existing',
+      displayName: 'Existing durable chapter',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.png',
+          sourceId: 'file:///existing/001.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await durable.upsertChapter(chapter);
+    await durable.close();
+    final store = LazyImportedLibraryStore(
+      rootProvider: () async {
+        rootCalls++;
+        return directory.path;
+      },
+    );
+    await store.open();
+    addTearDown(store.close);
+
+    final snapshot = await store.readLibraryBackupSnapshot();
+
+    expect(snapshot.entries, hasLength(1));
+    expect(snapshot.entries.single.chapter.chapterId, chapter.chapterId);
+    expect(snapshot.savedComics, isEmpty);
+    expect(rootCalls, 1);
+    expect(store.isDurable, isTrue);
+  });
+
   test('explicit get hydrates an existing durable chapter during bootstrap',
       () async {
     final directory = await Directory.systemTemp.createTemp(

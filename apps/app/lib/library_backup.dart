@@ -7,34 +7,54 @@ import 'package:file_selector/file_selector.dart';
 Future<Map<String, Object?>> buildImportedLibraryBackup(
   ImportedLibraryStore store,
 ) async {
-  final entries = await store.list();
-  final savedComics = await store.listSavedComics();
-  final categories = await store.listCategories();
-  final preferences = await store.listComicPreferences();
-  final readStates = await store.listAllChapterReadStates();
-  final sourcePreferences = await store.listSourcePreferences();
-  final migrationIssues = await store.listMigrationIssues(
-    includeAcknowledged: true,
-  );
+  final snapshotStore = store is ImportedLibraryBackupSnapshotStore
+      ? store as ImportedLibraryBackupSnapshotStore
+      : null;
+  final snapshot = snapshotStore != null
+      ? await snapshotStore.readLibraryBackupSnapshot()
+      : await _readLegacyBackupSnapshot(store);
   final now = DateTime.now().toUtc();
   return <String, Object?>{
     'format': 'zic-library-backup-v1',
     'createdAt': now.toIso8601String(),
     'chapters': <Map<String, Object?>>[
-      for (final entry in entries)
+      for (final entry in snapshot.entries)
         <String, Object?>{
           'chapter': entry.chapter.toJson(),
           if (entry.progress != null) 'progress': entry.progress!.toJson(),
         },
     ],
-    'savedComics': savedComics.map((value) => value.toJson()).toList(),
-    'categories': categories.map((value) => value.toJson()).toList(),
-    'comicPreferences': preferences.map((value) => value.toJson()).toList(),
-    'chapterReadStates': readStates.map((value) => value.toJson()).toList(),
+    'savedComics': snapshot.savedComics.map((value) => value.toJson()).toList(),
+    'categories': snapshot.categories.map((value) => value.toJson()).toList(),
+    'comicPreferences':
+        snapshot.comicPreferences.map((value) => value.toJson()).toList(),
+    'chapterReadStates':
+        snapshot.chapterReadStates.map((value) => value.toJson()).toList(),
     'sourcePreferences':
-        sourcePreferences.map((value) => value.toJson()).toList(),
-    'migrationIssues': migrationIssues.map((value) => value.toJson()).toList(),
+        snapshot.sourcePreferences.map((value) => value.toJson()).toList(),
+    'migrationIssues':
+        snapshot.migrationIssues.map((value) => value.toJson()).toList(),
   };
+}
+
+Future<ImportedLibraryBackupSnapshot> _readLegacyBackupSnapshot(
+  ImportedLibraryStore store,
+) async {
+  final checkpointStore = store is ReaderProgressCheckpointStore
+      ? store as ReaderProgressCheckpointStore
+      : null;
+  if (checkpointStore != null) {
+    await checkpointStore.flushProgressCheckpoints();
+  }
+  return ImportedLibraryBackupSnapshot(
+    entries: await store.list(),
+    savedComics: await store.listSavedComics(),
+    categories: await store.listCategories(),
+    comicPreferences: await store.listComicPreferences(),
+    chapterReadStates: await store.listAllChapterReadStates(),
+    sourcePreferences: await store.listSourcePreferences(),
+    migrationIssues: await store.listMigrationIssues(includeAcknowledged: true),
+  );
 }
 
 Future<String?> exportImportedLibraryBackup(ImportedLibraryStore store) async {

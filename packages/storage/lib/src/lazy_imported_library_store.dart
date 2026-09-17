@@ -14,6 +14,7 @@ final class LazyImportedLibraryStore
     implements
         ImportedLibraryStore,
         ImportedLibraryBatchLookup,
+        ImportedLibraryBackupSnapshotStore,
         ComicVersionRelationStore,
         ImportedLibraryRevisionStore,
         SourceMigrationJournalStore {
@@ -46,6 +47,17 @@ final class LazyImportedLibraryStore
     // reconcile instead of trusting a snapshot against an unopened database.
     final durable = _durable;
     return durable == null ? null : await durable.libraryProjectionRevision;
+  }
+
+  @override
+  Future<ImportedLibraryBackupSnapshot> readLibraryBackupSnapshot() async {
+    // A backup is an explicit durability action, unlike passive Home/settings
+    // inspection. Materialize the single durable library owner first so an
+    // existing on-disk library cannot be hidden behind the bootstrap memory
+    // projection while the normal post-first-frame handoff is still opening.
+    final durable = await _ensureDurable();
+    return (durable as ImportedLibraryBackupSnapshotStore)
+        .readLibraryBackupSnapshot();
   }
 
   @override

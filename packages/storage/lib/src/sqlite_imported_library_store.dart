@@ -14,6 +14,7 @@ final class SqliteImportedLibraryStore
     implements
         ImportedLibraryStore,
         ImportedLibraryBatchLookup,
+        ImportedLibraryBackupSnapshotStore,
         ComicVersionRelationStore,
         ReaderProgressCheckpointStore,
         ImportedLibraryRevisionStore,
@@ -184,6 +185,110 @@ final class SqliteImportedLibraryStore
       LIMIT 1
     ''');
     return rows.isEmpty ? null : rows.first['revision']! as int;
+  }
+
+  @override
+  Future<ImportedLibraryBackupSnapshot> readLibraryBackupSnapshot() async {
+    // A user-requested backup is an explicit durability boundary. Commit the
+    // latest Reader checkpoints before opening the read snapshot so queued
+    // progress cannot lag behind the other exported metadata sections.
+    await flushProgressCheckpoints();
+    final db = _requireDb();
+    db.execute('BEGIN');
+    try {
+      // Keep every SELECT/decode on this synchronous stack. Awaiting between
+      // sections would let unrelated UI-isolate mutations use this same SQLite
+      // connection while the transaction is open and join the backup read.
+      final entries = db
+          .select('''
+            SELECT c.chapter_json, p.progress_json
+            FROM imported_chapter AS c
+            LEFT JOIN reading_progress AS p
+              ON p.source_id = c.source_id AND p.chapter_id = c.chapter_id
+            ORDER BY c.imported_us DESC, c.source_id, c.chapter_id
+          ''')
+          .map(_readEntry)
+          .toList(growable: false);
+      final savedComics = db
+          .select('''
+            SELECT comic_json
+            FROM saved_comic
+            ORDER BY updated_us DESC, source_id, comic_id
+          ''')
+          .map((row) => _decodeSavedComic(row['comic_json']! as String))
+          .toList(growable: false);
+      final categories = db
+          .select('''
+            SELECT category_json
+            FROM library_category
+            ORDER BY sort_order, name, category_id
+          ''')
+          .map((row) => _decodeCategory(row['category_json']! as String))
+          .toList(growable: false);
+      final comicPreferences = db
+          .select('''
+            SELECT source_id, preference_json
+            FROM comic_preference
+          ''')
+          .map(
+            (row) => _decodePreference(
+              row['preference_json']! as String,
+              fallbackSourceId: row['source_id']! as String,
+            ),
+          )
+          .toList(growable: false);
+      final chapterReadStates = db
+          .select('''
+            SELECT source_id, read_json
+            FROM chapter_read_state
+            ORDER BY source_id, chapter_id
+          ''')
+          .map(
+            (row) => _decodeReadState(
+              row['read_json']! as String,
+              fallbackSourceId: row['source_id']! as String,
+            ),
+          )
+          .toList(growable: false);
+      final sourcePreferences = db
+          .select('''
+            SELECT preference_json
+            FROM comic_source_preference
+            ORDER BY sort_order, source_id
+          ''')
+          .map(
+            (row) => _decodeSourcePreference(
+              row['preference_json']! as String,
+            ),
+          )
+          .toList(growable: false);
+      final migrationIssues = db
+          .select('''
+            SELECT issue_id, schema_from, entity_kind, legacy_key,
+                   resolved_source_id, detail_json, created_us, acknowledged_us
+            FROM library_migration_issue
+            ORDER BY issue_id
+          ''')
+          .map(_readMigrationIssue)
+          .toList(growable: false);
+      final snapshot = ImportedLibraryBackupSnapshot(
+        entries: List<ImportedLibraryEntry>.unmodifiable(entries),
+        savedComics: List<SavedComicRecord>.unmodifiable(savedComics),
+        categories: List<LibraryCategory>.unmodifiable(categories),
+        comicPreferences: List<ComicPreference>.unmodifiable(comicPreferences),
+        chapterReadStates:
+            List<ChapterReadState>.unmodifiable(chapterReadStates),
+        sourcePreferences:
+            List<ComicSourcePreference>.unmodifiable(sourcePreferences),
+        migrationIssues:
+            List<LibraryMigrationIssue>.unmodifiable(migrationIssues),
+      );
+      db.execute('COMMIT');
+      return snapshot;
+    } on Object {
+      db.execute('ROLLBACK');
+      rethrow;
+    }
   }
 
   @override
@@ -766,30 +871,7 @@ final class SqliteImportedLibraryStore
       ${includeAcknowledged ? '' : 'WHERE acknowledged_us IS NULL'}
       ORDER BY issue_id
     ''');
-    return rows.map((row) {
-      final rawDetails = jsonDecode(row['detail_json']! as String);
-      if (rawDetails is! Map) {
-        throw const FormatException('migration issue details must be an object');
-      }
-      return LibraryMigrationIssue(
-        issueId: row['issue_id']! as int,
-        schemaFrom: row['schema_from']! as int,
-        entityKind: row['entity_kind']! as String,
-        legacyKey: row['legacy_key']! as String,
-        resolvedSourceId: row['resolved_source_id'] as String?,
-        details: Map<String, Object?>.from(rawDetails),
-        createdAt: DateTime.fromMicrosecondsSinceEpoch(
-          row['created_us']! as int,
-          isUtc: true,
-        ),
-        acknowledgedAt: row['acknowledged_us'] == null
-            ? null
-            : DateTime.fromMicrosecondsSinceEpoch(
-                row['acknowledged_us']! as int,
-                isUtc: true,
-              ),
-      );
-    }).toList(growable: false);
+    return rows.map(_readMigrationIssue).toList(growable: false);
   }
 
   @override
@@ -1324,6 +1406,31 @@ final class SqliteImportedLibraryStore
     return ChapterReadState.fromJson(
       Map<String, Object?>.from(value),
       fallbackSourceId: fallbackSourceId,
+    );
+  }
+
+  LibraryMigrationIssue _readMigrationIssue(sql.Row row) {
+    final rawDetails = jsonDecode(row['detail_json']! as String);
+    if (rawDetails is! Map) {
+      throw const FormatException('migration issue details must be an object');
+    }
+    return LibraryMigrationIssue(
+      issueId: row['issue_id']! as int,
+      schemaFrom: row['schema_from']! as int,
+      entityKind: row['entity_kind']! as String,
+      legacyKey: row['legacy_key']! as String,
+      resolvedSourceId: row['resolved_source_id'] as String?,
+      details: Map<String, Object?>.from(rawDetails),
+      createdAt: DateTime.fromMicrosecondsSinceEpoch(
+        row['created_us']! as int,
+        isUtc: true,
+      ),
+      acknowledgedAt: row['acknowledged_us'] == null
+          ? null
+          : DateTime.fromMicrosecondsSinceEpoch(
+              row['acknowledged_us']! as int,
+              isUtc: true,
+            ),
     );
   }
 

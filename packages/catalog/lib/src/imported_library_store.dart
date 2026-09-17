@@ -111,6 +111,43 @@ abstract interface class ImportedLibraryRevisionStore {
   Future<int?> get libraryProjectionRevision;
 }
 
+/// One coherent semantic view used by user-requested library backup/export.
+///
+/// The snapshot belongs to the library store because only the store can define
+/// a consistency boundary across chapters, progress, preferences and migration
+/// metadata. It deliberately contains semantic records rather than SQLite rows
+/// or storage paths so callers do not gain storage authority.
+final class ImportedLibraryBackupSnapshot {
+  const ImportedLibraryBackupSnapshot({
+    required this.entries,
+    required this.savedComics,
+    required this.categories,
+    required this.comicPreferences,
+    required this.chapterReadStates,
+    required this.sourcePreferences,
+    required this.migrationIssues,
+  });
+
+  final List<ImportedLibraryEntry> entries;
+  final List<SavedComicRecord> savedComics;
+  final List<LibraryCategory> categories;
+  final List<ComicPreference> comicPreferences;
+  final List<ChapterReadState> chapterReadStates;
+  final List<ComicSourcePreference> sourcePreferences;
+  final List<LibraryMigrationIssue> migrationIssues;
+}
+
+/// Optional store-owned consistent read for backup/export.
+///
+/// Implementations with independent durable writers should include all writes
+/// that were durably acknowledged before this operation starts, then keep the
+/// returned sections on one storage snapshot. Stores that do not implement
+/// this capability remain compatible with callers that can tolerate ordinary
+/// per-section reads.
+abstract interface class ImportedLibraryBackupSnapshotStore {
+  Future<ImportedLibraryBackupSnapshot> readLibraryBackupSnapshot();
+}
+
 final class ImportedLibraryChapterKey {
   const ImportedLibraryChapterKey({
     required this.sourceId,
@@ -197,6 +234,7 @@ final class MemoryImportedLibraryStore
     implements
         ImportedLibraryStore,
         ImportedLibraryBatchLookup,
+        ImportedLibraryBackupSnapshotStore,
         ComicVersionRelationStore,
         SourceMigrationJournalStore {
   MemoryImportedLibraryStore({
@@ -508,6 +546,73 @@ final class MemoryImportedLibraryStore
         return order != 0 ? order : left.sourceId.compareTo(right.sourceId);
       });
     return values;
+  }
+
+  @override
+  Future<ImportedLibraryBackupSnapshot> readLibraryBackupSnapshot() async {
+    _requireOpen();
+    final chapters = _chapters.values.toList(growable: false)
+      ..sort((left, right) {
+        final imported = right.importedAt.compareTo(left.importedAt);
+        if (imported != 0) {
+          return imported;
+        }
+        final source = left.sourceId.compareTo(right.sourceId);
+        return source != 0
+            ? source
+            : left.chapterId.compareTo(right.chapterId);
+      });
+    final savedComics = _savedComics.values.toList(growable: false)
+      ..sort((left, right) {
+        final updated = right.updatedAt.compareTo(left.updatedAt);
+        return updated != 0
+            ? updated
+            : left.identity.compareTo(right.identity);
+      });
+    final categories = _categories.values.toList(growable: false)
+      ..sort((left, right) {
+        final order = left.sortOrder.compareTo(right.sortOrder);
+        return order != 0 ? order : left.name.compareTo(right.name);
+      });
+    final readStates = _readStates.values.toList(growable: false)
+      ..sort((left, right) {
+        final sourceOrder = left.sourceId.compareTo(right.sourceId);
+        if (sourceOrder != 0) {
+          return sourceOrder;
+        }
+        return left.chapterId.compareTo(right.chapterId);
+      });
+    final sourcePreferences =
+        _sourcePreferences.values.toList(growable: false)
+          ..sort((left, right) {
+            final order = left.sortOrder.compareTo(right.sortOrder);
+            return order != 0
+                ? order
+                : left.sourceId.compareTo(right.sourceId);
+          });
+    final migrationIssues = _migrationIssues.values.toList(growable: false)
+      ..sort((left, right) => left.issueId.compareTo(right.issueId));
+    return ImportedLibraryBackupSnapshot(
+      entries: List<ImportedLibraryEntry>.unmodifiable(
+        chapters.map(
+          (chapter) => ImportedLibraryEntry(
+            chapter: chapter,
+            progress: _progress[
+              chapterLibraryIdentity(chapter.sourceId, chapter.chapterId)
+            ],
+          ),
+        ),
+      ),
+      savedComics: List<SavedComicRecord>.unmodifiable(savedComics),
+      categories: List<LibraryCategory>.unmodifiable(categories),
+      comicPreferences:
+          List<ComicPreference>.unmodifiable(_preferences.values),
+      chapterReadStates: List<ChapterReadState>.unmodifiable(readStates),
+      sourcePreferences:
+          List<ComicSourcePreference>.unmodifiable(sourcePreferences),
+      migrationIssues:
+          List<LibraryMigrationIssue>.unmodifiable(migrationIssues),
+    );
   }
 
   @override

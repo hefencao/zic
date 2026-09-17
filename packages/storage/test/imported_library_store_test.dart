@@ -351,6 +351,65 @@ void main() {
     expect(persisted['pageIndex'], 1);
   });
 
+  test('backup snapshot flushes the latest queued Reader checkpoint', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-library-backup-progress-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final path = '${directory.path}/library.sqlite3';
+    final store = SqliteImportedLibraryStore(path);
+    await store.open();
+    addTearDown(store.close);
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/chapter',
+      displayName: 'Backup progress',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.png',
+          sourceId: 'file:///backup-progress/001.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: '002.png',
+          sourceId: 'file:///backup-progress/002.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await store.upsertChapter(chapter);
+    final progress = ReadingProgress(
+      sourceId: chapter.sourceId,
+      comicId: chapter.comicId,
+      chapterId: chapter.chapterId,
+      pageIndex: 1,
+      subPageOffset: 0.5,
+      readerMode: ReaderMode.paged,
+      updatedAt: DateTime.utc(2026, 9, 17, 22),
+    );
+    store.enqueueProgress(progress);
+
+    final snapshot = await store.readLibraryBackupSnapshot();
+
+    expect(snapshot.entries, hasLength(1));
+    expect(snapshot.entries.single.progress?.toJson(), progress.toJson());
+    final observer = sql.sqlite3.open(path);
+    addTearDown(observer.dispose);
+    final persisted = observer.select(
+      'SELECT progress_json FROM reading_progress '
+      'WHERE source_id = ? AND chapter_id = ?',
+      <Object?>[chapter.sourceId, chapter.chapterId],
+    );
+    expect(persisted, hasLength(1));
+    expect(
+      jsonDecode(persisted.single['progress_json']! as String),
+      progress.toJson(),
+    );
+  });
+
   test('reader progress failed flush preserves the latest checkpoint for retry', () async {
     final directory = await Directory.systemTemp.createTemp('zic-progress-retry-');
     addTearDown(() async {
