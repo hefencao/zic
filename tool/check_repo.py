@@ -2406,7 +2406,7 @@ def check_compile_regressions() -> None:
         'MiscPage(',
         'ComicSourceResourceGateway(',
         'sourceForId: _sourceForId,',
-        '_sourceResources.bindTo(_chapterDownloads)',
+        '_sourceResources.bindTo(chapterDownloads)',
         'downloads is ConfigurableChapterResourceAccess',
         'configurable.setChapterResourceAccess(chapterResourceAccess)',
     ):

@@ -34,6 +34,7 @@ import 'webp_demo.dart';
 import 'home_library_session.dart';
 import 'home_external_source_lifecycle.dart';
 import 'home_reader_composition.dart';
+import 'home_service_cache_binding.dart';
 import 'home_source_projection.dart';
 import 'home_widgets.dart';
 export 'home_widgets.dart' show ComicCoverCard, ComicDownloadProgress, ComicDownloadProgressKind;
@@ -183,17 +184,11 @@ enum _DownloadCompletionKind { chapter, wholeComic }
 
 final class _DemoHomeState extends State<DemoHome> {
   final Stopwatch _traceClock = Stopwatch()..start();
-  late ImportedLibraryStore _library;
-  late ChapterDownloadService _chapterDownloads;
-  late ChapterDownloadTransferRuntimeProvider? _downloadComposition;
-  late ArtifactCacheManager? _readerArtifactCache;
   late final ComicSourceResourceGateway _sourceResources;
   late final HomeReaderChapterComposition _readerChapterComposition;
-  late WholeComicDownloadQueue _wholeComicDownloads;
   late final HomeSourceProjection _sourceProjection;
   late final HomeLibrarySession _librarySession;
-  late ResourceCacheCoordinator _cacheCoordinator;
-  late bool _ownsCacheCoordinator;
+  late HomeServiceCacheBinding _serviceCache;
   late final HomeExternalSourceLifecycle _externalSources;
   Future<void>? _durableAdoption;
   Future<void>? _sourceMigrationRecovery;
@@ -230,6 +225,18 @@ final class _DemoHomeState extends State<DemoHome> {
   String? _selectedCategoryId;
   late LibrarySortMode _sortMode;
   late ShelfViewPreference _shelfViewMode;
+
+  ImportedLibraryStore get _library => _librarySession.library;
+  ChapterDownloadService get _chapterDownloads =>
+      _librarySession.chapterDownloads;
+  ChapterDownloadTransferRuntimeProvider? get _downloadComposition =>
+      _librarySession.downloadComposition;
+  WholeComicDownloadQueue get _wholeComicDownloads =>
+      _librarySession.wholeComicDownloads;
+  ArtifactCacheManager? get _readerArtifactCache =>
+      _serviceCache.readerArtifactCache;
+  ResourceCacheCoordinator get _cacheCoordinator =>
+      _serviceCache.coordinator;
 
   List<ImportedLibraryEntry> get _libraryEntries => _librarySession.entries;
   List<SavedComicRecord> get _savedComics => _librarySession.savedComics;
@@ -310,9 +317,9 @@ final class _DemoHomeState extends State<DemoHome> {
     _shelfViewMode = widget.preferences.shelfView;
     _syncReaderPrefetchReadBudget();
     widget.preferences.addListener(_handleAppPreferencesChanged);
-    final initialLibrary = _incomingLibraryStore;
-    final ownsLibrary = initialLibrary == null;
-    _library = initialLibrary ?? MemoryImportedLibraryStore();
+    final incomingLibrary = _incomingLibraryStore;
+    final ownsLibrary = incomingLibrary == null;
+    final initialLibrary = incomingLibrary ?? MemoryImportedLibraryStore();
     // Ownership rule: the whole-comic job table must never wrap a chapter
     // service it does not co-own. A RAM queue around a durable service
     // writes artifacts to disk while losing the task list on restart; a
@@ -323,27 +330,18 @@ final class _DemoHomeState extends State<DemoHome> {
     final initialWholeComicDownloads = _incomingWholeComicDownloads;
     final ownsChapterDownloads = initialChapterDownloads == null;
     final ownsWholeComicDownloads = initialWholeComicDownloads == null;
-    _chapterDownloads = initialChapterDownloads ??
+    final chapterDownloads = initialChapterDownloads ??
         MemoryChapterDownloadService(pageLoader: _loadChapterPageBytes);
-    _downloadComposition = _incomingDownloadComposition ??
-        (_chapterDownloads is ChapterDownloadTransferRuntimeProvider
-            ? _chapterDownloads as ChapterDownloadTransferRuntimeProvider
-            : null);
-    _readerArtifactCache = _downloadComposition?.artifactCacheManager ??
-        (_chapterDownloads is ArtifactCacheBackend
-            ? ArtifactCacheManager(
-                backend: _chapterDownloads as ArtifactCacheBackend,
-              )
+    final downloadComposition = _incomingDownloadComposition ??
+        (chapterDownloads is ChapterDownloadTransferRuntimeProvider
+            ? chapterDownloads as ChapterDownloadTransferRuntimeProvider
             : null);
     final suppliedCache = _incomingCacheCoordinator;
-    _ownsCacheCoordinator = suppliedCache == null;
-    _cacheCoordinator = suppliedCache ??
-        ResourceCacheCoordinator(
-          artifacts: _downloadComposition?.artifactStore ??
-              (_chapterDownloads is ArtifactCacheMaintenance
-                  ? _chapterDownloads as ArtifactCacheMaintenance
-                  : null),
-        );
+    _serviceCache = HomeServiceCacheBinding.create(
+      chapterDownloads: chapterDownloads,
+      downloadComposition: downloadComposition,
+      suppliedCoordinator: suppliedCache,
+    );
     _sourceProjection = HomeSourceProjection(
       suppliedSources: widget.comicSources,
       defaultSources: () => <BrowsableComicSource>[
@@ -379,16 +377,17 @@ final class _DemoHomeState extends State<DemoHome> {
       ),
       defaultUserAgentProvider: () => widget.preferences.networkUserAgent,
     );
-    _sourceResources.bindTo(_chapterDownloads);
-    _wholeComicDownloads = (initialWholeComicDownloads != null
+    _sourceResources.bindTo(chapterDownloads);
+    final wholeComicDownloads = (initialWholeComicDownloads != null
         ? initialWholeComicDownloads
-        : WholeComicDownloadQueue(downloads: _chapterDownloads))
+        : WholeComicDownloadQueue(downloads: chapterDownloads))
       ..refreshStaleChapter = _refreshStaleQueueChapter;
     _librarySession = HomeLibrarySession(
-      library: _library,
+      library: initialLibrary,
       snapshotStore: widget.homeProjectionSnapshotStore,
-      chapterDownloads: _chapterDownloads,
-      wholeComicDownloads: _wholeComicDownloads,
+      chapterDownloads: chapterDownloads,
+      downloadComposition: downloadComposition,
+      wholeComicDownloads: wholeComicDownloads,
       sources: _sourceProjection.sources,
       ownsLibrary: ownsLibrary,
       ownsChapterDownloads: ownsChapterDownloads,
@@ -626,9 +625,7 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<void> _closeHomeComposition() async {
     await _librarySession.close();
     _sourceResources.close();
-    if (_ownsCacheCoordinator) {
-      await _cacheCoordinator.close();
-    }
+    await _serviceCache.closeIfOwned();
   }
 
   BrowsableComicSource? _sourceForId(String sourceId) =>

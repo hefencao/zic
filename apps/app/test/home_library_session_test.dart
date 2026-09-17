@@ -53,6 +53,41 @@ void main() {
     expect(notifications, 1);
   });
 
+  test('same-service adoption refreshes source projection identity', () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final firstSource = MangaDexSource(translatedLanguage: 'en');
+    final replacementSource = MangaDexSource(translatedLanguage: 'ja');
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: <BrowsableComicSource>[firstSource],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    await session.ready;
+    await session.adoptServices(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: <BrowsableComicSource>[replacementSource],
+      persistSnapshot: false,
+    );
+
+    expect(session.sources, hasLength(1));
+    expect(session.sources.single, same(replacementSource));
+  });
+
   test('dispose does not suppress later owned-resource close', () async {
     final library = MemoryImportedLibraryStore();
     final downloads = MemoryChapterDownloadService(
@@ -193,6 +228,7 @@ void main() {
       sources: const <BrowsableComicSource>[],
       persistSnapshot: false,
     );
+    expect(session.downloadComposition, same(composition));
     final current = session.entries.singleWhere(
       (entry) => entry.chapter.comicId == oldManifest.comicId,
     );

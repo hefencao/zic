@@ -24,6 +24,17 @@ String _versionAuthorityEntryKey(ImportedLibraryEntry entry) =>
     '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}'
     '\u0000${entry.chapter.chapterId}';
 
+bool _sameSourceInstances(
+  List<BrowsableComicSource> left,
+  List<BrowsableComicSource> right,
+) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (!identical(left[index], right[index])) return false;
+  }
+  return true;
+}
+
 final class _VersionReusePageObservation {
   const _VersionReusePageObservation({
     required this.id,
@@ -1125,6 +1136,9 @@ final class HomeLibrarySession extends ChangeNotifier {
         identical(this.downloadComposition, downloadComposition) &&
         identical(this.wholeComicDownloads, wholeComicDownloads)) {
       this.persistSnapshot = persistSnapshot;
+      if (!_sameSourceInstances(_sources, sources)) {
+        await replaceSources(sources, reloadLibrary: false);
+      }
       return;
     }
 

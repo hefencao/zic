@@ -5,15 +5,7 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     if (!mounted) {
       return;
     }
-    final library = _incomingLibraryStore;
-    final chapterDownloads = _incomingChapterDownloads;
-    final wholeComicDownloads = _incomingWholeComicDownloads;
-    if (library != null &&
-        chapterDownloads != null &&
-        wholeComicDownloads != null &&
-        (!identical(library, _library) ||
-            !identical(chapterDownloads, _chapterDownloads) ||
-            !identical(wholeComicDownloads, _wholeComicDownloads))) {
+    if (_needsDurableServiceAdoption()) {
       unawaited(_adoptDurableServices());
     }
     final plugins = _incomingExternalPlugins;
@@ -27,6 +19,28 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     }
   }
 
+  bool _needsDurableServiceAdoption() {
+    final library = _incomingLibraryStore;
+    final chapterDownloads = _incomingChapterDownloads;
+    final wholeComicDownloads = _incomingWholeComicDownloads;
+    if (library == null ||
+        chapterDownloads == null ||
+        wholeComicDownloads == null) {
+      return false;
+    }
+    final downloadComposition = _incomingDownloadComposition ??
+        (chapterDownloads is ChapterDownloadTransferRuntimeProvider
+            ? chapterDownloads as ChapterDownloadTransferRuntimeProvider
+            : null);
+    final suppliedCache = _incomingCacheCoordinator;
+    return !identical(library, _library) ||
+        !identical(chapterDownloads, _chapterDownloads) ||
+        !identical(downloadComposition, _downloadComposition) ||
+        !identical(wholeComicDownloads, _wholeComicDownloads) ||
+        (suppliedCache != null &&
+            !identical(suppliedCache, _cacheCoordinator));
+  }
+
   Future<void> _adoptDurableServices() {
     final existing = _durableAdoption;
     if (existing != null) return existing;
@@ -34,6 +48,9 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     adoption = _adoptDurableServicesOnce().whenComplete(() {
       if (identical(_durableAdoption, adoption)) {
         _durableAdoption = null;
+        if (mounted && _needsDurableServiceAdoption()) {
+          unawaited(_adoptDurableServices());
+        }
       }
     });
     _durableAdoption = adoption;
@@ -49,35 +66,22 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
         wholeComicDownloads == null) {
       return;
     }
-    // A download-only rebuild (directory switch) keeps the library store
-    // instance, so the gate must accept an unchanged library as long as any
-    // owned service instance changed.
-    final libraryChanged = !identical(library, _library);
-    final downloadsChanged =
-        !identical(chapterDownloads, _chapterDownloads) ||
-            !identical(wholeComicDownloads, _wholeComicDownloads);
-    if (!libraryChanged && !downloadsChanged) {
+    if (!_needsDurableServiceAdoption()) {
       return;
     }
     final previousChapterDownloads = _chapterDownloads;
-    final previousCacheCoordinator = _cacheCoordinator;
-    final previousOwnsCacheCoordinator = _ownsCacheCoordinator;
+    final previousServiceCache = _serviceCache;
     final downloadComposition = _incomingDownloadComposition ??
         (chapterDownloads is ChapterDownloadTransferRuntimeProvider
             ? chapterDownloads as ChapterDownloadTransferRuntimeProvider
             : null);
-    final readerArtifactCache = downloadComposition?.artifactCacheManager ??
-        (chapterDownloads is ArtifactCacheBackend
-            ? ArtifactCacheManager(backend: chapterDownloads as ArtifactCacheBackend)
-            : null);
     final suppliedCache = _incomingCacheCoordinator;
-    final cacheCoordinator = suppliedCache ??
-        ResourceCacheCoordinator(
-          artifacts: downloadComposition?.artifactStore ??
-              (chapterDownloads is ArtifactCacheMaintenance
-                  ? chapterDownloads as ArtifactCacheMaintenance
-                  : null),
-        );
+    final candidateServiceCache = HomeServiceCacheBinding.create(
+      chapterDownloads: chapterDownloads,
+      downloadComposition: downloadComposition,
+      suppliedCoordinator: suppliedCache,
+    );
+    final cacheCoordinator = candidateServiceCache.coordinator;
     final externalPlugins =
         _incomingExternalPlugins ?? _externalSources.activeController;
     final sources = _sourceProjection.composeForServices(
@@ -86,46 +90,52 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
           externalPlugins?.activeSources ?? const <BrowsableComicSource>[],
     );
 
+    wholeComicDownloads.refreshStaleChapter = _refreshStaleQueueChapter;
+    Object? adoptionError;
     try {
       await _librarySession.adoptServices(
         library: library,
         chapterDownloads: chapterDownloads,
+        downloadComposition: downloadComposition,
         wholeComicDownloads: wholeComicDownloads,
         sources: sources,
         persistSnapshot: _persistHomeProjectionSnapshot,
       );
     } on Object catch (error) {
-      debugPrint('durable Home service handoff failed: $error');
-      // Session adoption is all-or-nothing: on failure every binding still
-      // points at the previous composition, so there is nothing to roll back.
+      adoptionError = error;
+    }
+    final sessionAdopted =
+        identical(_librarySession.library, library) &&
+        identical(_librarySession.chapterDownloads, chapterDownloads) &&
+        identical(_librarySession.downloadComposition, downloadComposition) &&
+        identical(_librarySession.wholeComicDownloads, wholeComicDownloads);
+    if (!sessionAdopted) {
+      await candidateServiceCache.closeIfOwned();
+      if (adoptionError != null) {
+        debugPrint('durable Home service handoff failed: $adoptionError');
+      }
       return;
     }
-    // Swap Home's bindings only after the session adopted, so Home and the
-    // session can never disagree about which composition is authoritative.
+    if (adoptionError != null) {
+      // HomeLibrarySession swaps service authority before reconciliation. If a
+      // later step throws, keep Home aligned with that already-adopted owner
+      // instead of returning to stale parallel bindings.
+      debugPrint(
+        'durable Home service handoff reconciled after adoption error: '
+        '$adoptionError',
+      );
+    }
     _sourceResources.unbindFrom(previousChapterDownloads);
-    _sourceResources.bindTo(chapterDownloads);
-    _library = library;
-    _chapterDownloads = chapterDownloads;
-    _downloadComposition = downloadComposition;
+    _sourceResources.bindTo(_chapterDownloads);
+    _serviceCache = candidateServiceCache;
     _scheduleLocalReadBackendPrewarm();
-    _readerArtifactCache = readerArtifactCache;
     _syncCachedCarrierTrustMode();
-    _wholeComicDownloads = wholeComicDownloads;
-    _cacheCoordinator = cacheCoordinator;
-    _ownsCacheCoordinator = suppliedCache == null;
     _sourceProjection.adoptServiceProjection(
       sources,
       cache: cacheCoordinator,
     );
     unawaited(_recoverCommittedSourceMigrations());
-    if (previousOwnsCacheCoordinator &&
-        !identical(previousCacheCoordinator, _cacheCoordinator) &&
-        !identical(
-          previousCacheCoordinator.responses,
-          _cacheCoordinator.responses,
-        )) {
-      await previousCacheCoordinator.close();
-    }
+    await previousServiceCache.closeIfSupersededBy(candidateServiceCache);
     // Snapshot cover requests may already be waiting for the deferred plugin
     // loader. Release that handoff gate only; each request retains its exact
     // source identity and owns the decision to activate that one runtime.

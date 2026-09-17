@@ -66,7 +66,7 @@ def main() -> None:
         "_sourceResources = ComicSourceResourceGateway(",
         "sourceForId: _sourceForId",
         "defaultUserAgentProvider: () => widget.preferences.networkUserAgent",
-        "_sourceResources.bindTo(_chapterDownloads)",
+        "_sourceResources.bindTo(chapterDownloads)",
         "_sourceResources.close()",
     )
     require(
