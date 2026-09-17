@@ -64,6 +64,112 @@ void main() {
     );
   });
 
+  test('metadata-only delete does not open durable download services', () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List.fromList(<int>[1]),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    var durableAdoptions = 0;
+    final commands = HomeDownloadCommands(
+      session: session,
+      ensureDurableServices: () async {
+        durableAdoptions++;
+      },
+      ensurePlatformEnvironment: () async {},
+      requiresSourceLocatorRefresh: (_) => false,
+      refreshRemoteEntry: (entry, {required forceSourceRefresh}) async => entry,
+      refreshStaleChapter: (_) async => null,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    await session.ready;
+    final entry = await session.upsertChapter(_entry().chapter);
+    await commands.deleteChapter(entry);
+
+    expect(durableAdoptions, 0);
+    expect(
+      await library.get(entry.chapter.sourceId, entry.chapter.chapterId),
+      isNull,
+    );
+  });
+
+  test('file deletion is durable and archive-only deletion keeps metadata',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List.fromList(<int>[1, 2]),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    var durableAdoptions = 0;
+    final commands = HomeDownloadCommands(
+      session: session,
+      ensureDurableServices: () async {
+        durableAdoptions++;
+      },
+      ensurePlatformEnvironment: () async {},
+      requiresSourceLocatorRefresh: (_) => false,
+      refreshRemoteEntry: (entry, {required forceSourceRefresh}) async => entry,
+      refreshStaleChapter: (_) async => null,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    await session.ready;
+    final entry = await session.upsertChapter(_entry().chapter);
+    downloads.seedPages(
+      entry,
+      <Uint8List?>[Uint8List.fromList(<int>[1, 2])],
+      phase: ChapterDownloadPhase.complete,
+    );
+
+    await commands.deleteChapterFiles(entry);
+
+    expect(durableAdoptions, 1);
+    expect(
+      await library.get(entry.chapter.sourceId, entry.chapter.chapterId),
+      isNotNull,
+    );
+    expect((await downloads.inspect(entry)).isComplete, isFalse);
+
+    downloads.seedPages(
+      entry,
+      <Uint8List?>[Uint8List.fromList(<int>[3, 4])],
+      phase: ChapterDownloadPhase.complete,
+    );
+    await commands.deleteChapter(entry, deleteFiles: true);
+
+    expect(durableAdoptions, 2);
+    expect(
+      await library.get(entry.chapter.sourceId, entry.chapter.chapterId),
+      isNull,
+    );
+    expect((await downloads.inspect(entry)).isComplete, isFalse);
+  });
+
   test('stale-token recovery retries only with refreshed chapter authority',
       () async {
     final library = MemoryImportedLibraryStore();

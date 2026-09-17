@@ -15,6 +15,10 @@ def require(body: str, marker: str, label: str) -> None:
 
 home = text('apps/app/lib/demo_home.dart')
 compat = text('apps/app/lib/demo_home_source_compat.dart')
+ui = '\n'.join(
+    path.read_text(encoding='utf-8')
+    for path in sorted((ROOT / 'apps/app/lib').glob('demo_home*.dart'))
+)
 commands = text('apps/app/lib/home_download_commands.dart')
 
 for marker, label in (
@@ -23,6 +27,8 @@ for marker, label in (
     ('session.chapterDownloads', 'chapter service delegation'),
     ('session.wholeComicDownloads', 'whole-comic service delegation'),
     ('Future<ChapterDownloadSnapshot> downloadChapter(', 'chapter sequencing'),
+    ('Future<void> deleteChapterFiles(', 'archive file-delete sequencing'),
+    ('await ensureDurableServices();\n    final hydrated = await session.hydrateEntry(entry);\n    await session.chapterDownloads.delete(hydrated);', 'durable file-delete boundary'),
     ('Future<HomeWholeComicDownloadStart> downloadComicEntries(', 'whole-comic sequencing'),
     ('final refreshed = await refreshStaleChapter(current);', 'stale authority refresh'),
 ):
@@ -42,6 +48,8 @@ for marker, label in (
     require(home, marker, label)
 
 for marker, label in (
+    ('_downloadCommands.deleteChapter(entry, deleteFiles: deleteFiles);', 'shelf removal adapter'),
+    ('_downloadCommands.deleteChapterFiles(entry);', 'archive file-delete adapter'),
     ('probeExisting: _downloadCommands.probeExisting,', 'details probe adapter'),
     ('claimComicDirectory: _downloadCommands.claimComicDirectory,', 'details placement adapter'),
     ('getDownloadPlacement: _downloadCommands.getDownloadPlacement,', 'details placement read adapter'),
@@ -49,7 +57,7 @@ for marker, label in (
     ('final snapshot = await _downloadCommands.downloadChapter(entry);', 'chapter UI wrapper'),
     ('final started = await _downloadCommands.downloadComicEntries(', 'whole-comic UI wrapper'),
 ):
-    require(compat, marker, label)
+    require(ui, marker, label)
 
 for forbidden in (
     '_chapterDownloads.download(',
@@ -64,9 +72,9 @@ for forbidden in (
     '_wholeComicDownloads.pause(',
     '_wholeComicDownloads.resume(',
 ):
-    if forbidden in compat:
+    if forbidden in ui:
         raise SystemExit(
-            f'DemoHome source compatibility re-acquired download command authority: {forbidden}'
+            f'DemoHome UI re-acquired download command authority: {forbidden}'
         )
 
 print('dev.330 DemoHome download command boundary: OK')

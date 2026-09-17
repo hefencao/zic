@@ -1312,14 +1312,7 @@ final class _DemoHomeState extends State<DemoHome> {
   }) async {
     await _ensureLibraryReady();
     for (final entry in comic.chapters) {
-      if (deleteFiles) {
-        final hydrated = await _librarySession.hydrateEntry(entry);
-        await _chapterDownloads.delete(hydrated);
-      }
-      await _librarySession.removeChapter(
-        entry.chapter.sourceId,
-        entry.chapter.chapterId,
-      );
+      await _downloadCommands.deleteChapter(entry, deleteFiles: deleteFiles);
     }
     await _librarySession.removeSavedComic(comic.sourceId, comic.comicId);
     final source = _sourceForId(comic.sourceId);
@@ -1339,8 +1332,7 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<void> _archiveComic(LibraryComic comic) async {
     await _ensureLibraryReady();
     for (final entry in comic.chapters) {
-      final hydrated = await _librarySession.hydrateEntry(entry);
-      await _chapterDownloads.delete(hydrated);
+      await _downloadCommands.deleteChapterFiles(entry);
     }
     invalidateAllComicResources(
       _cacheCoordinator.responses,

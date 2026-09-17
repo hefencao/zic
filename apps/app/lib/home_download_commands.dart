@@ -207,14 +207,26 @@ final class HomeDownloadCommands {
     ImportedLibraryEntry entry, {
     bool deleteFiles = false,
   }) async {
-    final hydrated = await session.hydrateEntry(entry);
-    if (deleteFiles) {
-      await session.chapterDownloads.delete(hydrated);
-    }
+    final hydrated = deleteFiles
+        ? await _deleteChapterFiles(entry)
+        : await session.hydrateEntry(entry);
     await session.removeChapter(
       hydrated.chapter.sourceId,
       hydrated.chapter.chapterId,
     );
+  }
+
+  Future<void> deleteChapterFiles(ImportedLibraryEntry entry) async {
+    await _deleteChapterFiles(entry);
+  }
+
+  Future<ImportedLibraryEntry> _deleteChapterFiles(
+    ImportedLibraryEntry entry,
+  ) async {
+    await ensureDurableServices();
+    final hydrated = await session.hydrateEntry(entry);
+    await session.chapterDownloads.delete(hydrated);
+    return hydrated;
   }
 
   Future<HomeWholeComicDownloadStart> downloadComicEntries(
