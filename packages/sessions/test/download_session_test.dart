@@ -1694,7 +1694,15 @@ void main() {
     for (var i = 0; i < 8 && !starts.contains(current.id); i++) {
       await Future<void>.delayed(Duration.zero);
     }
-    expect(starts, <DownloadId>[next.id, current.id]);
+    // The READY replay may complete immediately and legitimately release its
+    // slot to next2 before this assertion runs. The ownership contract is the
+    // admission order: the reserved slot must let current start before next2,
+    // not keep current artificially active after its replay has completed.
+    expect(starts.take(2), <DownloadId>[next.id, current.id]);
+    final next2Start = starts.indexOf(next2.id);
+    if (next2Start >= 0) {
+      expect(next2Start, greaterThan(starts.indexOf(current.id)));
+    }
 
     lowReleases[next.id]!.complete();
     lowReleases[next2.id]!.complete();
