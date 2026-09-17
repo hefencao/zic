@@ -33,6 +33,7 @@ import 'startup_platform.dart';
 import 'webp_demo.dart';
 import 'home_library_session.dart';
 import 'home_external_source_lifecycle.dart';
+import 'home_download_commands.dart';
 import 'home_reader_composition.dart';
 import 'home_service_cache_binding.dart';
 import 'home_source_projection.dart';
@@ -190,6 +191,7 @@ final class _DemoHomeState extends State<DemoHome> {
   late final HomeLibrarySession _librarySession;
   late HomeServiceCacheBinding _serviceCache;
   late final HomeExternalSourceLifecycle _externalSources;
+  late final HomeDownloadCommands _downloadCommands;
   Future<void>? _durableAdoption;
   Future<void>? _sourceMigrationRecovery;
   ChapterDownloadTransferRuntimeProvider? _localReadBackendPrewarmTarget;
@@ -397,6 +399,21 @@ final class _DemoHomeState extends State<DemoHome> {
       waitForPrimaryFrame: () => WidgetsBinding.instance.endOfFrame,
       startupTelemetry: widget.startupTelemetry,
     )..addListener(_handleLibrarySessionChanged);
+    _downloadCommands = HomeDownloadCommands(
+      session: _librarySession,
+      ensureDurableServices: () async {
+        await _serviceHandoff?.ensureCoreServices?.call();
+        await _adoptDurableServices();
+      },
+      ensurePlatformEnvironment: _ensurePlatformEnvironment,
+      requiresSourceLocatorRefresh: chapterRequiresSourceLocatorRefresh,
+      refreshRemoteEntry: (entry, {required forceSourceRefresh}) =>
+          _refreshRemoteEntry(
+        entry,
+        forceSourceRefresh: forceSourceRefresh,
+      ),
+      refreshStaleChapter: _refreshStaleQueueChapter,
+    );
     _readerChapterComposition = HomeReaderChapterComposition(
       hydrateEntry: (entry, {required awaitCanonicalPhysicalBackfill}) =>
           _librarySession.hydrateEntry(
@@ -598,14 +615,6 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<void> _ensureLibraryReady() => _librarySession.ensureReady();
 
   Future<void> _retryLibrary() => _librarySession.retry();
-
-  void _acceptDownloadSnapshot(ChapterDownloadSnapshot snapshot) =>
-      _librarySession.acceptDownloadSnapshot(snapshot);
-
-  Future<void> _refreshDownloadSnapshots(
-    Iterable<ImportedLibraryEntry> entries,
-  ) =>
-      _librarySession.refreshDownloadSnapshots(entries);
 
   @override
   void dispose() {

@@ -249,14 +249,13 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
 
   Future<ChapterDownloadSnapshot> _inspectChapterDownload(
     ImportedLibraryEntry entry,
-  ) async {
-    return _chapterDownloads.inspect(await _librarySession.hydrateEntry(entry));
-  }
+  ) =>
+      _downloadCommands.inspectChapter(entry);
 
   Future<Iterable<ChapterDownloadSnapshot>> _inspectChapterDownloads(
     Iterable<ImportedLibraryEntry> entries,
   ) =>
-      _chapterDownloads.inspectMany(entries);
+      _downloadCommands.inspectChapters(entries);
 
   Future<ComicConflictReport> _inspectComicConflictsForDetails({
     required String sourceId,
@@ -265,226 +264,62 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     required String comicTitle,
     Set<String>? knownPredecessorComicIds,
     Set<String>? knownSuccessorComicIds,
-  }) async {
-    // The comparison consumes the unified queries: a live run for this comic
-    // short-circuits the dialog (the guard blocks the download anyway), and
-    // the report is computed only when no active task covers it.
-    final probe = await _chapterDownloads.probeExistingDownloads(
-      DownloadExistenceQuery(sourceId: sourceId, comicId: comicId),
-    );
-    if (probe.liveRun) {
-      return const ComicConflictReport(
-        candidates: <ComicFolderCandidate>[],
-        hasDirectExactMatch: false,
-        hasTitleConflicts: false,
-        recommendedDirectoryName: '',
+  }) =>
+      _downloadCommands.inspectComicConflicts(
+        sourceId: sourceId,
+        sourceDisplayName: sourceDisplayName,
+        comicId: comicId,
+        comicTitle: comicTitle,
+        knownPredecessorComicIds: knownPredecessorComicIds,
+        knownSuccessorComicIds: knownSuccessorComicIds,
       );
-    }
-    return _chapterDownloads.inspectComicConflicts(
-      sourceId: sourceId,
-      sourceDisplayName: sourceDisplayName,
-      comicId: comicId,
-      comicTitle: comicTitle,
-      knownPredecessorComicIds: knownPredecessorComicIds,
-      knownSuccessorComicIds: knownSuccessorComicIds,
-    );
-  }
 
   details.ComicDetailsDownloadActions get _detailsDownloadActions =>
       details.ComicDetailsDownloadActions(
         downloadChapter: _downloadChapter,
         stopChapter: _stopChapterDownload,
-        probeExisting: ({required sourceId, required comicId, chapterId}) =>
-            _chapterDownloads.probeExistingDownloads(
-          DownloadExistenceQuery(
-            sourceId: sourceId,
-            comicId: comicId,
-            chapterId: chapterId,
-          ),
-        ),
-        wholeComicJob: (sourceId, comicId) async {
-          await _wholeComicDownloads.ready;
-          return _wholeComicQueueSnapshot.jobs
-              .where(
-                (job) =>
-                    job.sourceId == sourceId && job.comicId == comicId,
-              )
-              .firstOrNull;
-        },
-        cachedWholeComicJob: (sourceId, comicId) =>
-            _wholeComicQueueSnapshot.jobs
-                .where(
-                  (job) =>
-                      job.sourceId == sourceId && job.comicId == comicId,
-                )
-                .firstOrNull,
+        probeExisting: _downloadCommands.probeExisting,
+        wholeComicJob: _downloadCommands.wholeComicJob,
+        cachedWholeComicJob: _downloadCommands.cachedWholeComicJob,
         toggleWholeComicPause: _toggleWholeComicPause,
         inspectComicConflicts: _inspectComicConflictsForDetails,
-        claimComicDirectory: ({
-          required sourceId,
-          required comicId,
-          required directoryName,
-          comicTitle,
-          mode = DownloadPlacementMode.createNew,
-          observedOwnerKey,
-        }) =>
-            _chapterDownloads.claimComicDirectory(
-              sourceId: sourceId,
-              comicId: comicId,
-              directoryName: directoryName,
-              comicTitle: comicTitle,
-              mode: mode,
-              observedOwnerKey: observedOwnerKey,
-            ),
-        getDownloadPlacement: ({required sourceId, required comicId}) =>
-            _chapterDownloads.getDownloadPlacement(
-              sourceId: sourceId,
-              comicId: comicId,
-            ),
-        inspectChapter: (entry) => _chapterDownloads.inspect(entry),
-        ensureDurableServices: () async {
-          await _serviceHandoff?.ensureCoreServices?.call();
-          await _adoptDurableServices();
-        },
+        claimComicDirectory: _downloadCommands.claimComicDirectory,
+        getDownloadPlacement: _downloadCommands.getDownloadPlacement,
+        inspectChapter: _downloadCommands.inspectChapter,
+        ensureDurableServices: _downloadCommands.ensureDurableServices,
       );
 
-  Future<void> _stopChapterDownload(ImportedLibraryEntry entry) async {
-    await _chapterDownloads.cancel(entry);
-    await _refreshDownloadSnapshots(_libraryEntries);
-  }
+  Future<void> _stopChapterDownload(ImportedLibraryEntry entry) =>
+      _downloadCommands.stopChapter(entry);
 
   Future<void> _toggleWholeComicPause(
     String sourceId,
     String comicId,
-  ) async {
-    for (final job in _wholeComicQueueSnapshot.jobs) {
-      if (job.sourceId != sourceId || job.comicId != comicId) continue;
-      if (job.phase == WholeComicQueuePhase.running) {
-        await _wholeComicDownloads.pause(job.jobId);
-        return;
-      }
-      if (job.phase == WholeComicQueuePhase.paused) {
-        await _wholeComicDownloads.resume(job.jobId);
-        return;
-      }
-    }
-  }
+  ) =>
+      _downloadCommands.toggleWholeComicPause(sourceId, comicId);
 
   Future<void> _downloadChapter(ImportedLibraryEntry entry) async {
-    await _serviceHandoff?.ensureCoreServices?.call();
-    await _adoptDurableServices();
-    final hydrated = await _librarySession.hydrateEntry(entry);
-    var current = chapterRequiresSourceLocatorRefresh(hydrated.chapter)
-        ? await _refreshRemoteEntry(
-            hydrated,
-            forceSourceRefresh: true,
-          )
-        : hydrated;
-    try {
-      // A conflict dialog claims placement synchronously for legacy UI
-      // callbacks, but its SQLite commit is asynchronous. Awaiting the
-      // readback here closes the claim-to-download race (including a failed
-      // cross-process CAS) before any artifact is written.
-      await _chapterDownloads.getDownloadPlacement(
-        sourceId: current.chapter.sourceId,
-        comicId: current.chapter.comicId,
-      );
-      await _chapterDownloads.download(current);
-    } on Object catch (error) {
-      // Stale persisted page URIs fail inside the plugin runtime; only
-      // message matching crosses that boundary. A bare 'token' substring
-      // used to match unrelated failures and silently refresh-redownload.
-      final message = error.toString();
-      if (message.contains('must use a runtime token') ||
-          message.contains('token expired')) {
-        final refreshed = await _refreshStaleQueueChapter(current);
-        if (refreshed != null) {
-          current = refreshed;
-          await _chapterDownloads.retry(current);
-        } else {
-          rethrow;
-        }
-      } else {
-        rethrow;
-      }
-    }
-    final snapshot = await _chapterDownloads.inspect(current);
-    _acceptDownloadSnapshot(snapshot);
+    final snapshot = await _downloadCommands.downloadChapter(entry);
     if (snapshot.isComplete) {
-      _recordChapterDownloadCompletion(
-        current.chapter.sourceId,
-        current.chapter.comicId,
-      );
+      _recordChapterDownloadCompletion(snapshot.sourceId, snapshot.comicId);
     }
   }
 
   Future<void> _deleteChapter(
     ImportedLibraryEntry entry, {
     bool deleteFiles = false,
-  }) async {
-    final hydrated = await _librarySession.hydrateEntry(entry);
-    if (deleteFiles) {
-      await _chapterDownloads.delete(hydrated);
-    }
-    await _librarySession.removeChapter(
-      hydrated.chapter.sourceId,
-      hydrated.chapter.chapterId,
-    );
-  }
+  }) =>
+      _downloadCommands.deleteChapter(entry, deleteFiles: deleteFiles);
 
   Future<void> _downloadComicEntries(
     String comicIdentity,
     Iterable<ImportedLibraryEntry> entries,
   ) async {
-    await _serviceHandoff?.ensureCoreServices?.call();
-    await _adoptDurableServices();
-    final chapters = <ImportedLibraryEntry>[];
-    for (final entry in entries) {
-      final hydrated = await _librarySession.hydrateEntry(entry);
-      chapters.add(
-        chapterRequiresSourceLocatorRefresh(hydrated.chapter)
-            ? await _refreshRemoteEntry(
-                hydrated,
-                forceSourceRefresh: true,
-              )
-            : hydrated,
-      );
-    }
-    if (chapters.isEmpty) {
-      throw StateError('没有可下载的章节');
-    }
-    final first = chapters.first.chapter;
-    final existingJob = _wholeComicQueueSnapshot.jobs.where(
-      (job) =>
-          job.sourceId == first.sourceId && job.comicId == first.comicId,
-    ).firstOrNull;
-    if (existingJob != null &&
-        (existingJob.phase == WholeComicQueuePhase.running ||
-            existingJob.phase == WholeComicQueuePhase.queued ||
-            existingJob.phase == WholeComicQueuePhase.paused ||
-            existingJob.phase == WholeComicQueuePhase.waitingForPolicy)) {
-      throw StateError('该漫画的整本下载任务已在队列中');
-    }
-    if (comicIdentity != comicLibraryIdentity(first.sourceId, first.comicId)) {
-      throw StateError('整本下载身份与章节所有者不一致');
-    }
-    await _ensurePlatformEnvironment();
-    final placement = await _chapterDownloads.getDownloadPlacement(
-      sourceId: first.sourceId,
-      comicId: first.comicId,
+    final started = await _downloadCommands.downloadComicEntries(
+      comicIdentity,
+      entries,
     );
-    await _wholeComicDownloads.enqueue(
-      sourceId: first.sourceId,
-      comicId: first.comicId,
-      comicTitle: first.comicTitle,
-      chapters: chapters,
-      placementDirectory: placement?.relativeDirectory,
-      placementMode: placement?.mode,
-      observedOwnerKey: placement?.observedOwnerKey,
-      pageOrder: placement?.pageOrder ?? ComicPageOrder.auto,
-    );
-    _trackWholeComicDownloadCompletion(first.sourceId, first.comicId);
-    _librarySession.refreshWholeComicSnapshot();
+    _trackWholeComicDownloadCompletion(started.sourceId, started.comicId);
   }
 
   Future<void> _openComicSourceSettings(
