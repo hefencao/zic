@@ -6,6 +6,7 @@ import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:resource_cache/resource_cache.dart';
 import 'package:zic/download_manager.dart';
 
 ImportedLibraryEntry _versionedDownloadEntry({
@@ -321,6 +322,271 @@ void main() {
     unawaited(durableQueue.close());
     unawaited(bootstrap.close());
     unawaited(durable.close());
+  });
+
+  testWidgets(
+      'download manager re-resolves services after a later generation change',
+      (tester) async {
+    final firstDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final firstQueue = WholeComicDownloadQueue(downloads: firstDownloads);
+    await firstQueue.ready;
+
+    final secondDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final secondQueue = WholeComicDownloadQueue(downloads: secondDownloads);
+    await secondQueue.ready;
+    await secondQueue.updatePolicy(
+      const WholeComicQueuePolicy(concurrency: 4),
+    );
+
+    var currentServices = DownloadManagerServices(
+      downloads: firstDownloads,
+      wholeComicDownloads: firstQueue,
+    );
+    final serviceChanges = ChangeNotifier();
+    var resolverCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: const <ImportedLibraryEntry>[],
+          downloads: firstDownloads,
+          wholeComicDownloads: firstQueue,
+          serviceChanges: serviceChanges,
+          resolveServices: () async {
+            resolverCalls++;
+            return currentServices;
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(resolverCalls, 1);
+
+    currentServices = DownloadManagerServices(
+      downloads: secondDownloads,
+      wholeComicDownloads: secondQueue,
+    );
+    serviceChanges.notifyListeners();
+    await tester.tap(find.byKey(downloadQueuePolicyKey));
+    await tester.pumpAndSettle();
+
+    expect(resolverCalls, 2);
+    final concurrency = tester.widget<SegmentedButton<int>>(
+      find.byType(SegmentedButton<int>),
+    );
+    expect(concurrency.selected, <int>{4});
+
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    serviceChanges.dispose();
+    unawaited(firstQueue.close());
+    unawaited(secondQueue.close());
+    unawaited(firstDownloads.close());
+    unawaited(secondDownloads.close());
+  });
+
+  testWidgets(
+      'download manager catches a generation change during service resolution',
+      (tester) async {
+    final firstDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final firstQueue = WholeComicDownloadQueue(downloads: firstDownloads);
+    await firstQueue.ready;
+
+    final secondDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final secondQueue = WholeComicDownloadQueue(downloads: secondDownloads);
+    await secondQueue.ready;
+    await secondQueue.updatePolicy(
+      const WholeComicQueuePolicy(concurrency: 4),
+    );
+
+    var currentServices = DownloadManagerServices(
+      downloads: firstDownloads,
+      wholeComicDownloads: firstQueue,
+    );
+    final serviceChanges = ChangeNotifier();
+    final releaseFirstResolution = Completer<void>();
+    var resolverCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: const <ImportedLibraryEntry>[],
+          downloads: firstDownloads,
+          wholeComicDownloads: firstQueue,
+          serviceChanges: serviceChanges,
+          resolveServices: () async {
+            resolverCalls++;
+            final resolvedAtStart = currentServices;
+            if (resolverCalls == 1) {
+              await releaseFirstResolution.future;
+            }
+            return resolvedAtStart;
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(resolverCalls, 1);
+
+    currentServices = DownloadManagerServices(
+      downloads: secondDownloads,
+      wholeComicDownloads: secondQueue,
+    );
+    serviceChanges.notifyListeners();
+    releaseFirstResolution.complete();
+    for (var frame = 0; frame < 40 && resolverCalls < 2; frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(resolverCalls, 2);
+    await tester.tap(find.byKey(downloadQueuePolicyKey));
+    await tester.pumpAndSettle();
+    final concurrency = tester.widget<SegmentedButton<int>>(
+      find.byType(SegmentedButton<int>),
+    );
+    expect(concurrency.selected, <int>{4});
+
+    await tester.tap(find.byTooltip('关闭'));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox.shrink());
+    serviceChanges.dispose();
+    unawaited(firstQueue.close());
+    unawaited(secondQueue.close());
+    unawaited(firstDownloads.close());
+    unawaited(secondDownloads.close());
+  });
+
+  testWidgets(
+      'download manager stops resolving when disposed during service handoff',
+      (tester) async {
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    await queue.ready;
+    final releaseResolution = Completer<void>();
+    var resolverCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: const <ImportedLibraryEntry>[],
+          downloads: downloads,
+          wholeComicDownloads: queue,
+          resolveServices: () async {
+            resolverCalls++;
+            await releaseResolution.future;
+            return DownloadManagerServices(
+              downloads: downloads,
+              wholeComicDownloads: queue,
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(resolverCalls, 1);
+
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    releaseResolution.complete();
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(resolverCalls, 1);
+    unawaited(queue.close());
+    unawaited(downloads.close());
+  });
+
+  testWidgets(
+      'download manager cache maintenance follows the latest service generation',
+      (tester) async {
+    final firstDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final firstQueue = WholeComicDownloadQueue(downloads: firstDownloads);
+    await firstQueue.ready;
+    final firstArtifacts = _CountingArtifactCacheMaintenance();
+    final firstCache = ResourceCacheCoordinator(artifacts: firstArtifacts);
+
+    final secondDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final secondQueue = WholeComicDownloadQueue(downloads: secondDownloads);
+    await secondQueue.ready;
+    final secondArtifacts = _CountingArtifactCacheMaintenance();
+    final secondCache = ResourceCacheCoordinator(artifacts: secondArtifacts);
+
+    var currentServices = DownloadManagerServices(
+      downloads: firstDownloads,
+      wholeComicDownloads: firstQueue,
+      cacheCoordinator: firstCache,
+    );
+    final serviceChanges = ChangeNotifier();
+    var resolverCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: const <ImportedLibraryEntry>[],
+          downloads: firstDownloads,
+          wholeComicDownloads: firstQueue,
+          cacheCoordinator: firstCache,
+          serviceChanges: serviceChanges,
+          resolveServices: () async {
+            resolverCalls++;
+            return currentServices;
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(resolverCalls, 1);
+
+    currentServices = DownloadManagerServices(
+      downloads: secondDownloads,
+      wholeComicDownloads: secondQueue,
+      cacheCoordinator: secondCache,
+    );
+    serviceChanges.notifyListeners();
+    await tester.tap(find.byKey(downloadManagerTabCacheKey));
+    await tester.pumpAndSettle();
+
+    expect(resolverCalls, 2);
+    expect(firstArtifacts.inspectCalls, 0);
+    expect(secondArtifacts.inspectCalls, greaterThan(0));
+
+    await tester.tap(find.byKey(downloadCacheTrimKey));
+    await tester.pumpAndSettle();
+    expect(firstArtifacts.trimCalls, 0);
+    expect(secondArtifacts.trimCalls, 1);
+
+    await tester.tap(find.byTooltip('清除可回收缓存'));
+    await tester.pump();
+    await tester.tap(find.byKey(downloadCacheClearKey));
+    await tester.pumpAndSettle();
+
+    expect(firstArtifacts.clearCalls, 0);
+    expect(secondArtifacts.clearCalls, 1);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    serviceChanges.dispose();
+    unawaited(firstCache.close());
+    unawaited(secondCache.close());
+    unawaited(firstQueue.close());
+    unawaited(secondQueue.close());
+    unawaited(firstDownloads.close());
+    unawaited(secondDownloads.close());
   });
 
   testWidgets(
@@ -1643,6 +1909,46 @@ ComicVersionBaselineProjection _downloadVersionBaselines(
             ),
       ],
     );
+
+final class _CountingArtifactCacheMaintenance
+    implements ArtifactCacheMaintenance {
+  int inspectCalls = 0;
+  int trimCalls = 0;
+  int clearCalls = 0;
+
+  @override
+  Future<ArtifactCacheUsage> inspectArtifacts() async {
+    inspectCalls++;
+    return const ArtifactCacheUsage(bytes: 0, entries: 0);
+  }
+
+  @override
+  Future<ArtifactCacheReport> trimArtifacts({
+    required int maxBytes,
+    required int targetBytes,
+  }) async {
+    trimCalls++;
+    return const ArtifactCacheReport(
+      beforeBytes: 0,
+      releasedBytes: 0,
+      remainingBytes: 0,
+      evictedEntries: 0,
+      skippedBusy: 0,
+    );
+  }
+
+  @override
+  Future<ArtifactCacheReport> clearArtifacts() async {
+    clearCalls++;
+    return const ArtifactCacheReport(
+      beforeBytes: 0,
+      releasedBytes: 0,
+      remainingBytes: 0,
+      evictedEntries: 0,
+      skippedBusy: 0,
+    );
+  }
+}
 
 final class _BlockingInspectManyDownloadService
     implements ChapterDownloadService {

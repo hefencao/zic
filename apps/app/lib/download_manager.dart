@@ -203,6 +203,7 @@ final class DownloadManagerScreen extends StatefulWidget {
     this.loadAllEntries,
     this.resolveServices,
     this.commandActions,
+    this.serviceChanges,
     this.projectionChanges,
     this.readProjection,
     this.refreshProjection,
@@ -223,6 +224,7 @@ final class DownloadManagerScreen extends StatefulWidget {
   final Future<List<ImportedLibraryEntry>> Function()? loadAllEntries;
   final Future<DownloadManagerServices> Function()? resolveServices;
   final DownloadManagerCommandActions? commandActions;
+  final Listenable? serviceChanges;
   final Listenable? projectionChanges;
   final DownloadManagerProjection Function()? readProjection;
   final Future<void> Function()? refreshProjection;
@@ -251,7 +253,8 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   Future<void>? _servicesResolution;
   Future<void>? _cacheUsageRefresh;
   ResourceCacheCoordinator? _cacheUsageRefreshCoordinator;
-  bool _servicesResolved = false;
+  int _serviceGeneration = 0;
+  int _resolvedServiceGeneration = -1;
   bool _loading = false;
   bool _cacheBusy = false;
   ResourceCacheUsage? _cacheUsage;
@@ -348,6 +351,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     _wholeComicSubscription = _listenToWholeComicDownloads(
       _wholeComicDownloads,
     );
+    widget.serviceChanges?.addListener(_handleServiceChanged);
     widget.projectionChanges?.addListener(_handleProjectionChanged);
     // Route-first ownership: the download screen must paint from the already
     // projected Home/queue snapshot before any durable/cache inspection starts.
@@ -363,7 +367,35 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   }
 
   @override
+  void didUpdateWidget(DownloadManagerScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.serviceChanges, widget.serviceChanges)) {
+      oldWidget.serviceChanges?.removeListener(_handleServiceChanged);
+      widget.serviceChanges?.addListener(_handleServiceChanged);
+      _invalidateServices();
+    } else if (oldWidget.resolveServices != widget.resolveServices) {
+      _invalidateServices();
+    }
+    if (!identical(oldWidget.projectionChanges, widget.projectionChanges)) {
+      oldWidget.projectionChanges?.removeListener(_handleProjectionChanged);
+      widget.projectionChanges?.addListener(_handleProjectionChanged);
+    }
+  }
+
+  void _invalidateServices() {
+    _serviceGeneration++;
+  }
+
+  void _handleServiceChanged() {
+    _invalidateServices();
+    if (mounted && _selectedTab == DownloadManagerTab.autoCache) {
+      unawaited(_refreshCacheUsage());
+    }
+  }
+
+  @override
   void dispose() {
+    widget.serviceChanges?.removeListener(_handleServiceChanged);
     widget.projectionChanges?.removeListener(_handleProjectionChanged);
     _managementProjectionRefreshTimer?.cancel();
     unawaited(_subscription?.cancel());
@@ -372,25 +404,30 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     super.dispose();
   }
 
-  Future<void> _resolveServices() {
-    if (_servicesResolved || widget.resolveServices == null) {
-      return Future<void>.value();
+  Future<void> _resolveServices() async {
+    if (widget.resolveServices == null) {
+      return;
     }
-    final existing = _servicesResolution;
-    if (existing != null) {
-      return existing;
-    }
-    late final Future<void> resolution;
-    resolution = _resolveServicesOnce().whenComplete(() {
-      if (identical(_servicesResolution, resolution)) {
-        _servicesResolution = null;
+    while (mounted && _resolvedServiceGeneration != _serviceGeneration) {
+      final existing = _servicesResolution;
+      if (existing != null) {
+        await existing;
+        if (!mounted) return;
+        continue;
       }
-    });
-    _servicesResolution = resolution;
-    return resolution;
+      final generation = _serviceGeneration;
+      late final Future<void> resolution;
+      resolution = _resolveServicesOnce(generation).whenComplete(() {
+        if (identical(_servicesResolution, resolution)) {
+          _servicesResolution = null;
+        }
+      });
+      _servicesResolution = resolution;
+      await resolution;
+    }
   }
 
-  Future<void> _resolveServicesOnce() async {
+  Future<void> _resolveServicesOnce(int generation) async {
     final resolver = widget.resolveServices;
     if (resolver == null) {
       return;
@@ -408,7 +445,9 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       return;
     }
     _adoptServices(services);
-    _servicesResolved = true;
+    if (generation == _serviceGeneration) {
+      _resolvedServiceGeneration = generation;
+    }
   }
 
   void _adoptServices(DownloadManagerServices services) {
@@ -749,7 +788,13 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     }
   }
 
-  Future<void> _refreshCacheUsage() {
+  Future<void> _refreshCacheUsage() async {
+    await _resolveServices();
+    if (!mounted) return;
+    await _refreshCacheUsageForCurrentCoordinator();
+  }
+
+  Future<void> _refreshCacheUsageForCurrentCoordinator() {
     final coordinator = _cacheCoordinator;
     if (coordinator == null) {
       return Future<void>.value();
@@ -1147,12 +1192,15 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   }
 
   Future<void> _trimCache() async {
-    final maintenance = _cacheCoordinator;
-    if (maintenance == null || _cacheBusy) {
+    if (_cacheBusy) {
       return;
     }
-    setState(() => _cacheBusy = true);
     try {
+      await _resolveServices();
+      if (!mounted) return;
+      final maintenance = _cacheCoordinator;
+      if (maintenance == null) return;
+      setState(() => _cacheBusy = true);
       final report = await maintenance.trim();
       if (!mounted) {
         return;
@@ -1178,8 +1226,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   }
 
   Future<void> _clearCache() async {
-    final maintenance = _cacheCoordinator;
-    if (maintenance == null || _cacheBusy) {
+    if (_cacheBusy || _cacheCoordinator == null) {
       return;
     }
     final confirmed = await showDialog<bool>(
@@ -1206,8 +1253,12 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     if (confirmed != true || !mounted) {
       return;
     }
-    setState(() => _cacheBusy = true);
     try {
+      await _resolveServices();
+      if (!mounted) return;
+      final maintenance = _cacheCoordinator;
+      if (maintenance == null) return;
+      setState(() => _cacheBusy = true);
       final report = await maintenance.clear();
       if (!mounted) {
         return;
@@ -1423,9 +1474,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
           final selected = DownloadManagerTab.values[index];
           setState(() => _selectedTab = selected);
           if (selected == DownloadManagerTab.autoCache) {
-            if (_cacheUsage == null) {
-              unawaited(_refreshCacheUsage());
-            }
+            unawaited(_refreshCacheUsage());
             if (_cacheProjection == null) {
               unawaited(_ensureAutoCacheProjection());
             }

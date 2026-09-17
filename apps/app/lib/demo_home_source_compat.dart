@@ -804,6 +804,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           versionBaselines: initialProjection.versionBaselines,
           cacheCoordinator: _cacheCoordinator,
           hydrateEntry: _librarySession.hydrateEntry,
+          serviceChanges: _serviceHandoff,
           projectionChanges: _librarySession.downloadProjectionChanges,
           readProjection: readProjection,
           refreshProjection: () =>
