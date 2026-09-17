@@ -106,7 +106,7 @@ for token in (
     'typedef ComicDetailsChapterLoader',
     'required String title',
     'DeferredReaderRoute<_PreparedImportedChapter>',
-    '_prepareImportedChapter(',
+    '_readerChapterComposition.prepare(',
 ):
     assert token in details + home + reader_composition
 for token in ('deferredReaderRouteKey', 'deferredReaderLoadingKey', 'widget.load()'):

@@ -67,7 +67,7 @@ for token in (
     'downloadingComic: _downloadingComic',
     "label: const Text('继续')",
     "阅读历史 · $progressLabel",
-    '_knownPageCount(chapter, entry)',
+    'int _knownPageCount(Chapter chapter, ImportedLibraryEntry? entry)',
     '_chapterEntryFor(',
     'entry.chapter.sourceRevision != revision',
     'existing.chapter.sourceRevision == chapter.sourceRevision',

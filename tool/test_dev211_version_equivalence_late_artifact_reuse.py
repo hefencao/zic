@@ -45,16 +45,21 @@ else:
     require(reuse, 'Future<int> applyDurablePartials(PartialDownloadStore store) async {', 'legacy verified partial copy')
 
 migration = read('apps/app/lib/demo_home_source_migration.dart')
-for token in (
+version_lifecycle = read('apps/app/lib/home_version_reuse_lifecycle.dart')
+require(
+    migration,
     'Future<int> _ensureSourceVersionReuseAuthority(',
-    'await _librarySession.ensureCanonicalMediaForEntry(current);',
+    'Reader canonical media UI adapter',
+)
+for token in (
+    'await session.ensureCanonicalMediaForEntry(current);',
     "'stage': 'version-reuse-authority-ready'",
     "'materializedEquivalenceEdges': 0",
     "'restoreMode': 'canonical-media-direct'",
 ):
-    require(migration, token, 'Reader canonical media preparation')
+    require(version_lifecycle, token, 'Reader canonical media preparation')
 forbid(
-    migration,
+    migration + version_lifecycle,
     '_librarySession.hydrateChapterBatch(sourceChapterKeys.values)',
     'Reader synchronous historical version hydration',
 )
@@ -63,7 +68,7 @@ for token in (
     "'registeredEquivalentPages':",
     "'restoreMode': 'vibevenera-existing-cache-alias'",
 ):
-    forbid(migration, token, 'superseded materialized version aliases')
+    forbid(migration + version_lifecycle, token, 'superseded materialized version aliases')
 
 runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
 for token in (

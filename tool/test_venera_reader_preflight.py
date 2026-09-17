@@ -64,16 +64,20 @@ def main() -> None:
         "manifest.sourceId.startsWith('venera:')",
     )
     require(
-        "apps/app/lib/demo_home_reader_route.dart",
+        "apps/app/lib/demo_home.dart",
+        "requiresSourceLocatorRefresh: chapterRequiresSourceLocatorRefresh,",
+    )
+    require(
+        "apps/app/lib/home_reader_composition.dart",
         "final sourceLocatorRefreshRequired =",
-        "chapterRequiresSourceLocatorRefresh(entry.chapter)",
+        "_requiresSourceLocatorRefresh(entry.chapter)",
         "forceSourceRefresh: true",
-        "chapterRequiresSourceLocatorRefresh(current.chapter)",
+        "_requiresSourceLocatorRefresh(current.chapter)",
         "章节仍包含不可用于 Reader 的启动快照/运行时资源定位符",
     )
     ordered_after(
-        "apps/app/lib/demo_home_reader_route.dart",
-        "Future<_PreparedImportedChapter> _prepareImportedChapter(",
+        "apps/app/lib/home_reader_composition.dart",
+        "Future<HomeReaderPreparedChapter> prepare(",
         "final sourceLocatorRefreshRequired =",
         "final byteLoaders =",
     )

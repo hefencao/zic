@@ -46,6 +46,7 @@ for marker, label in (
     ("_sourceMigrationTransaction.resumeCommitted(migrationId)", "committed cleanup delegation"),
     ("_sourceMigrationTransaction.executeConfirmed(", "confirmed transaction delegation"),
     ("showSourceMigrationComparison(", "UI confirmation remains outside transaction"),
+    ("_sourceMigrationResultSummaryMessages(", "UI result presentation"),
 ):
     require(ui, marker, label)
 
@@ -73,6 +74,8 @@ for forbidden in (
     "setState(",
     "_DemoHomeState",
     "ComicSourceResourceGateway",
+    "summaryMessages(",
+    "漫画偏好已合并",
 ):
     if forbidden in owner:
         raise SystemExit(

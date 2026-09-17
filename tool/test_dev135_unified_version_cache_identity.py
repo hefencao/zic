@@ -165,19 +165,24 @@ for token in (
 ):
     require(reuse_test, token, 'cache-reuse negative identity coverage')
 
-# Production app has one active response-cache composition root and one active
-# Reader artifact-cache root. DemoHome constructs the bootstrap root and the
-# durable service handoff constructs its replacement; UI widgets must not
-# create any additional private managers.
-app_sources = '\n'.join(
-    path.read_text(encoding='utf-8')
-    for path in (ROOT / 'apps/app/lib').glob('*.dart')
-)
+# Production app has one response-cache composition authority and one
+# generation-bound Reader artifact-cache construction owner. Bootstrap and
+# durable handoff both use HomeServiceCacheBinding.create(); UI widgets and
+# handoff adapters must not duplicate private manager construction.
+app_lib = ROOT / 'apps/app/lib'
+app_files = tuple(app_lib.glob('*.dart'))
+app_sources = '\n'.join(path.read_text(encoding='utf-8') for path in app_files)
 if 'ResourceCacheManager(' in app_sources:
     raise SystemExit('App UI must not create a private ResourceCacheManager')
-if len(re.findall(r'(?<!with)ArtifactCacheManager\(', app_sources)) != 2:
+artifact_cache_constructors = [
+    path.relative_to(ROOT).as_posix()
+    for path in app_files
+    if re.search(r'(?<!with)ArtifactCacheManager\(', path.read_text(encoding='utf-8'))
+]
+if artifact_cache_constructors != ['apps/app/lib/home_service_cache_binding.dart']:
     raise SystemExit(
-        'App must retain only bootstrap and durable-handoff artifact caches'
+        'ArtifactCacheManager construction must be owned only by '
+        'HomeServiceCacheBinding: ' + repr(artifact_cache_constructors)
     )
 
 print('dev.135 unified version/cache identity contract: OK')

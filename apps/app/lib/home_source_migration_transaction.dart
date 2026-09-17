@@ -42,20 +42,6 @@ final class HomeSourceMigrationResult {
   final int migratedReadStates;
   final int preservedTargetStates;
   final int registeredPageEquivalences;
-
-  List<String> summaryMessages() => <String>[
-        '漫画偏好已合并',
-        if (migratedChapters > 0) '迁移 $migratedChapters 个已验证章节',
-        if (migratedProgress > 0) '$migratedProgress 个阅读位置',
-        if (migratedReadStates > 0) '$migratedReadStates 个已读状态',
-        if (preservedTargetStates > 0)
-          '保留 $preservedTargetStates 项目标源已有状态',
-        if (registeredPageEquivalences > 0)
-          '登记 $registeredPageEquivalences 页已验证媒体等价关系',
-        if (materializedPageArtifacts > 0)
-          '复用 $materializedPageArtifacts 页旧版离线文件到新 key',
-        if (replacingSource) '旧版本记录已替换，未匹配的旧版离线文件仍保留' else '原来源与离线文件保留',
-      ];
 }
 
 final class HomeSourceMigrationTransaction {

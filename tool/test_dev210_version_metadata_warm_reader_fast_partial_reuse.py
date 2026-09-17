@@ -37,12 +37,17 @@ for token in (
     require(storage, token, 'SQLite mapping persistence/migration')
 
 migration = read('apps/app/lib/demo_home_source_migration.dart')
-for token in (
-    'void _scheduleVersionReuseWarmup(',
-    'Future<void> _warmVersionRelationPageMappings(',
-    'VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(',
-    '_sourceResources.verifiedPageReuseIdentity(',
+version_lifecycle = read('apps/app/lib/home_version_reuse_lifecycle.dart')
+require(
+    migration,
     'Future<int> _ensureSourceVersionReuseAuthority(',
+    'version authority UI adapter',
+)
+for token in (
+    'Future<void> prepareWarmup(',
+    'Future<void> _warmRelationPageMappings(',
+    'VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(',
+    'verifiedPageReuseIdentity(',
     'hasReusableChapterState(',
     'hasReusablePhysicalStateForChapter(',
     "'restoreMode': 'canonical-media-direct'",
@@ -53,20 +58,25 @@ for token in (
     "'verifiedCoveragePages': mapping.verifiedIntervals.fold<int>(",
     'mapping.effectiveVerifiedIntervals',
 ):
-    require(migration, token, 'version metadata warm / compact authority owner')
+    require(version_lifecycle, token, 'version metadata warm / compact authority owner')
 for token in (
     'artifactCache.linkEquivalent(',
     "'restoreMode': 'vibevenera-existing-cache-alias'",
     "'stage': 'version-artifact-equivalence-restored'",
 ):
-    forbid(migration, token, 'superseded Reader materialized alias restore')
+    forbid(migration + version_lifecycle, token, 'superseded Reader materialized alias restore')
 forbid(
-    migration,
+    migration + version_lifecycle,
     'aliases.contains(relation.successorComicId)',
     'confirmed successor hidden by canonical alias collapse',
 )
 
-home = read('apps/app/lib/demo_home.dart') + read('apps/app/lib/demo_home_reader_route.dart')
+home = (
+    read('apps/app/lib/demo_home.dart')
+    + read('apps/app/lib/demo_home_source_migration.dart')
+    + read('apps/app/lib/demo_home_reader_route.dart')
+)
+reader_composition = read('apps/app/lib/home_reader_composition.dart')
 for token in (
     '_versionViewReusePreparationFor(current)',
     'await viewReusePreparation.future;',
@@ -75,11 +85,9 @@ for token in (
     '_scheduleReaderMetadataVersionRefresh(',
 ):
     require(home, token, 'Reader fast local restore + post-presentation async refresh')
-prepare_start = home.index('  Future<_PreparedImportedChapter> _prepareImportedChapter(')
-prepare_end = home.index('\n}\n', prepare_start)
 forbid(
-    home[prepare_start:prepare_end],
-    '_scheduleReaderMetadataVersionRefresh(',
+    reader_composition,
+    'scheduleReaderMetadataVersionRefresh(',
     'metadata/version discovery competing with first-page source plan',
 )
 forbid(

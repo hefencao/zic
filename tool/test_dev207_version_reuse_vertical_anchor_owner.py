@@ -16,13 +16,19 @@ def forbid(text: str, token: str, label: str) -> None:
         raise SystemExit(f'superseded {label}: {token}')
 
 migration = read('apps/app/lib/demo_home_source_migration.dart')
+version_lifecycle = read('apps/app/lib/home_version_reuse_lifecycle.dart')
 for token in (
-    'VerifiedArtifactReusePlan.matchResolvedRelated(',
-    '_sourceResources.verifiedPageReuseIdentity(',
+    'VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(',
+    'verifiedPageReuseIdentity(',
     "'stage': 'version-page-mapping-warmed'",
 ):
-    require(migration, token, 'background confirmed-version reuse proof')
-demo_home = read('apps/app/lib/demo_home.dart') + read('apps/app/lib/demo_home_reader_route.dart')
+    require(version_lifecycle, token, 'background confirmed-version reuse proof')
+demo_home = (
+    read('apps/app/lib/demo_home.dart')
+    + read('apps/app/lib/demo_home_source_migration.dart')
+    + read('apps/app/lib/demo_home_reader_route.dart')
+)
+reader_composition = read('apps/app/lib/home_reader_composition.dart')
 for token in (
     'final viewReusePreparation = _versionViewReusePreparationFor(current);',
     'await viewReusePreparation.future;',
@@ -31,11 +37,9 @@ for token in (
     '_scheduleReaderMetadataVersionRefresh(',
 ):
     require(demo_home, token, 'Reader persisted-map reuse composition')
-prepare_start = demo_home.index('  Future<_PreparedImportedChapter> _prepareImportedChapter(')
-prepare_end = demo_home.index('\n}\n', prepare_start)
 forbid(
-    demo_home[prepare_start:prepare_end],
-    '_scheduleReaderMetadataVersionRefresh(',
+    reader_composition,
+    'scheduleReaderMetadataVersionRefresh(',
     'metadata/version discovery before Reader first presentation',
 )
 forbid(

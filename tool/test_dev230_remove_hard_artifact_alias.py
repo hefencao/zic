@@ -17,7 +17,7 @@ def forbid(text: str, token: str, label: str) -> None:
 
 manager = read('packages/downloads/lib/src/artifact_cache_manager.dart')
 reuse = read('packages/downloads/lib/src/artifact_cache_reuse.dart')
-migration = read('apps/app/lib/demo_home_source_migration.dart')
+migration_transaction = read('apps/app/lib/home_source_migration_transaction.dart')
 handoff = read('packages/downloads/lib/src/promoted_artifact_cache_handoff.dart')
 transport = read('packages/downloads/lib/src/artifact_cache_transport.dart')
 
@@ -49,11 +49,15 @@ for token in ('Future<int> applyExisting', 'Future<int> rekeyExisting', 'int app
     forbid(reuse, token, 'directed artifact mutation plan')
 
 for token in (
-    'registeredPageEquivalences += item.artifactReuse',
-    '.registerEquivalences(artifactCache);',
+    'registeredPageEquivalences +=',
+    'item.artifactReuse.registerEquivalences(cache);',
 ):
-    require(migration, token, 'explicit migration proof registration')
-forbid(migration, '.applyExisting(artifactCache)', 'explicit migration hard alias snapshot')
+    require(migration_transaction, token, 'explicit migration proof registration')
+forbid(
+    migration_transaction,
+    '.applyExisting(artifactCache)',
+    'explicit migration hard alias snapshot',
+)
 require(transport, 'lookup.storageId != id', 'equivalent cache trace attribution')
 forbid(transport, 'resolveAlias(', 'artifact transport hard alias dependency')
 for token in (

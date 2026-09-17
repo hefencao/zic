@@ -43,6 +43,29 @@ final class _SourceMigrationSelection {
   final bool viewOnly;
 }
 
+List<String> _sourceMigrationResultSummaryMessages(
+  HomeSourceMigrationResult result,
+) =>
+    <String>[
+      '漫画偏好已合并',
+      if (result.migratedChapters > 0)
+        '迁移 ${result.migratedChapters} 个已验证章节',
+      if (result.migratedProgress > 0)
+        '${result.migratedProgress} 个阅读位置',
+      if (result.migratedReadStates > 0)
+        '${result.migratedReadStates} 个已读状态',
+      if (result.preservedTargetStates > 0)
+        '保留 ${result.preservedTargetStates} 项目标源已有状态',
+      if (result.registeredPageEquivalences > 0)
+        '登记 ${result.registeredPageEquivalences} 页已验证媒体等价关系',
+      if (result.materializedPageArtifacts > 0)
+        '复用 ${result.materializedPageArtifacts} 页旧版离线文件到新 key',
+      if (result.replacingSource)
+        '旧版本记录已替换，未匹配的旧版离线文件仍保留'
+      else
+        '原来源与离线文件保留',
+    ];
+
 extension _DemoHomeSourceMigration on _DemoHomeState {
   Future<void> _recoverCommittedSourceMigrations() async {
     final changed = await _sourceMigrationTransaction.recoverCommitted();
@@ -128,17 +151,29 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
   ) =>
       _versionReuseLifecycle.ensureAuthority(current);
 
+  details.ComicDetailsVersionState _detailsVersionState(
+    HomeVersionState state,
+  ) =>
+      details.ComicDetailsVersionState(
+        successors: state.successors,
+        predecessors: state.predecessors,
+        backgroundRefresh:
+            state.backgroundRefresh?.then(_detailsVersionState),
+      );
+
   Future<details.ComicDetailsVersionState> _loadSourceVersionState(
     BrowsableComicSource source,
     String title,
     String currentComicId, {
     TaskControl? control,
-  }) =>
-      _versionReuseLifecycle.loadVersionState(
-        source,
-        title,
-        currentComicId,
-        control: control,
+  }) async =>
+      _detailsVersionState(
+        await _versionReuseLifecycle.loadVersionState(
+          source,
+          title,
+          currentComicId,
+          control: control,
+        ),
       );
 
   bool _sourceComicHasUpdate(
@@ -783,7 +818,11 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       await _reloadLibrary();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result.summaryMessages().join(' · '))),
+          SnackBar(
+            content: Text(
+              _sourceMigrationResultSummaryMessages(result).join(' · '),
+            ),
+          ),
         );
       }
     } on Object catch (error) {

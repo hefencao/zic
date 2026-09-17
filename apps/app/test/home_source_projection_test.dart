@@ -13,8 +13,8 @@ void main() {
     addTearDown(cache.close);
     addTearDown(replacementCache.close);
     final builtIn = _Source(sourceId: 'fixture:builtin');
-    final initialExternal = _Source(sourceId: 'mihon:initial');
-    final replacementExternal = _Source(sourceId: 'mihon:replacement');
+    final initialExternal = _Source(sourceId: 'plugin:initial');
+    final replacementExternal = _Source(sourceId: 'plugin:replacement');
     final projection = HomeSourceProjection(
       suppliedSources: null,
       defaultSources: () => <BrowsableComicSource>[builtIn],
@@ -33,7 +33,7 @@ void main() {
       everyElement(isA<CachedBrowsableComicSource>()),
     );
     expect(projection.sourceForId('fixture:builtin'), isNotNull);
-    expect(projection.sourceForId('mihon:initial'), isNotNull);
+    expect(projection.sourceForId('plugin:initial'), isNotNull);
 
     final candidate = projection.composeForServices(
       replacementCache,
@@ -41,15 +41,19 @@ void main() {
     );
     expect(
       candidate.map((source) => source.sourceId),
-      <String>['fixture:builtin', 'mihon:replacement'],
+      <String>['fixture:builtin', 'plugin:replacement'],
     );
-    expect(projection.sourceForId('mihon:initial'), isNotNull);
-    expect(projection.sourceForId('mihon:replacement'), isNull);
+    expect(projection.sourceForId('plugin:initial'), isNotNull);
+    expect(projection.sourceForId('plugin:replacement'), isNull);
 
-    projection.adoptServiceProjection(candidate, cache: replacementCache);
+    projection.adoptServiceProjection(
+      candidate,
+      cache: replacementCache,
+      externalSources: <BrowsableComicSource>[replacementExternal],
+    );
 
-    expect(projection.sourceForId('mihon:initial'), isNull);
-    expect(projection.sourceForId('mihon:replacement'), isNotNull);
+    expect(projection.sourceForId('plugin:initial'), isNull);
+    expect(projection.sourceForId('plugin:replacement'), isNotNull);
   });
 
   test('external projection persists canonical ids before conditional reload',
@@ -58,12 +62,12 @@ void main() {
     addTearDown(cache.close);
     final builtIn = _Source(sourceId: 'fixture:builtin');
     final external = _Source(
-      sourceId: 'mihon:test',
+      sourceId: 'plugin:test',
       canonicalPrefix: 'canonical:',
     );
     var saved = <SavedComicRecord>[
       SavedComicRecord(
-        sourceId: 'mihon:test',
+        sourceId: 'plugin:test',
         comicId: 'raw-comic',
         title: 'Fixture comic',
         chapters: const <SavedChapterRecord>[],
@@ -102,14 +106,14 @@ void main() {
     await projection.refreshExternalSources(<BrowsableComicSource>[external]);
 
     expect(published, <List<String>>[
-      <String>['fixture:builtin', 'mihon:test'],
+      <String>['fixture:builtin', 'plugin:test'],
     ]);
     expect(readyCalls, 1);
     expect(upsertCalls, 1);
     expect(reloadCalls, 1);
     expect(presentationRefreshes, 1);
     expect(saved.single.canonicalComicId, 'canonical:raw-comic');
-    expect(projection.sourceForId('mihon:test'), isNotNull);
+    expect(projection.sourceForId('plugin:test'), isNotNull);
 
     await projection.refreshExternalSources(<BrowsableComicSource>[external]);
 
@@ -117,6 +121,12 @@ void main() {
     expect(upsertCalls, 1);
     expect(reloadCalls, 1);
     expect(presentationRefreshes, 2);
+    expect(
+      projection.sources
+          .where((source) => source.sourceId == 'plugin:test')
+          .length,
+      1,
+    );
   });
 }
 

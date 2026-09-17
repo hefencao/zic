@@ -33,6 +33,7 @@ for marker, label in (
     ("List<BrowsableComicSource> composeForServices(", "service candidate projection"),
     ("void adoptServiceProjection(", "service adoption commit"),
     ("Future<void> refreshExternalSources(", "external source projection"),
+    ("Set<String> _externalSourceIds", "explicit external-source ownership"),
     ("Future<bool> _persistKnownCanonicalComicIds()", "canonical identity persistence"),
     ("CachedBrowsableComicSource(", "shared response-cache decoration"),
 ):
@@ -47,6 +48,8 @@ for forbidden in (
     "State<",
     "StatefulWidget",
     "ExternalPluginController",
+    "startsWith('mihon:')",
+    "startsWith('venera:')",
 ):
     if forbidden in projection:
         raise SystemExit(
@@ -57,6 +60,7 @@ require(home, "late final HomeSourceProjection _sourceProjection;", "Home projec
 require(home, "sources: _sourceProjection.sources", "initial session source projection")
 require(home, "_sourceProjection.composeForServices(", "durable handoff candidate projection")
 require(home, "_sourceProjection.adoptServiceProjection(", "durable handoff projection commit")
+require(home, "externalSources: activeExternalSources,", "durable external identity handoff")
 require(home, "_sourceProjection.sourceForId(sourceId)", "source lookup delegation")
 require(
     home,

@@ -420,6 +420,17 @@ final class _DemoHomeState extends State<DemoHome> {
         locator: locator,
         control: control,
       ),
+      requiresSourceLocatorRefresh: chapterRequiresSourceLocatorRefresh,
+      scheduleMetadataTask: ({
+        required key,
+        required priority,
+        required task,
+      }) =>
+          defaultDownloadResourceCoordinator.networkLane.submit(
+        key: key,
+        priority: priority,
+        task: task,
+      ),
       trace: widget.debugTrace,
       monotonicMicros: () => _traceClock.elapsedMicroseconds,
     );

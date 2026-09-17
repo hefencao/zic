@@ -2,26 +2,27 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-migration = (ROOT / 'apps/app/lib/demo_home_source_migration.dart').read_text()
+version_lifecycle = (ROOT / 'apps/app/lib/home_version_reuse_lifecycle.dart').read_text()
 session = (ROOT / 'apps/app/lib/home_library_session.dart').read_text()
 
-authority = migration[
-    migration.index('  Future<int> _ensureSourceVersionReuseAuthority('):
-    migration.index('  Future<details.ComicDetailsVersionState> _loadSourceVersionState(')
+authority = version_lifecycle[
+    version_lifecycle.index('  Future<int> ensureAuthority('):
+    version_lifecycle.index('  Future<HomeVersionState> loadVersionState(')
 ]
 # Reader authority catch-up consumes already-materialized canonical endpoints.
 # It must not revive the old whole-history chapter hydration/enumeration path.
 for required in (
-    'await _librarySession.ensureCanonicalMediaForEntry(current);',
-    '_librarySession.versionRelations',
-    '_librarySession.versionAuthorityEntry(',
+    'await session.ensureCanonicalMediaForEntry(current);',
+    '_relationsForComic(',
+    'session.versionAuthorityEntry(',
     "'restoreMode': 'canonical-media-direct'",
     'mapping.effectiveVerifiedIntervals',
 ):
     assert required in authority, required
+assert 'session.versionRelations' in version_lifecycle
 for forbidden in (
     'hydrateChapterBatch(',
-    '_librarySession.hydrateEntry(',
+    'session.hydrateEntry(',
     'await _library.get(',
     '_sourceVersionRelationsForComic(',
     'sourceChapterKeys',

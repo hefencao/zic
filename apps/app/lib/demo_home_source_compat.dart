@@ -247,56 +247,20 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
     throw StateError('漫画源 ${entry.chapter.sourceId} 当前不可用，无法加载页面 $pageIndex');
   }
 
-  Future<ChapterDownloadSnapshot> _inspectChapterDownload(
-    ImportedLibraryEntry entry,
-  ) =>
-      _downloadCommands.inspectChapter(entry);
-
-  Future<Iterable<ChapterDownloadSnapshot>> _inspectChapterDownloads(
-    Iterable<ImportedLibraryEntry> entries,
-  ) =>
-      _downloadCommands.inspectChapters(entries);
-
-  Future<ComicConflictReport> _inspectComicConflictsForDetails({
-    required String sourceId,
-    String? sourceDisplayName,
-    required String comicId,
-    required String comicTitle,
-    Set<String>? knownPredecessorComicIds,
-    Set<String>? knownSuccessorComicIds,
-  }) =>
-      _downloadCommands.inspectComicConflicts(
-        sourceId: sourceId,
-        sourceDisplayName: sourceDisplayName,
-        comicId: comicId,
-        comicTitle: comicTitle,
-        knownPredecessorComicIds: knownPredecessorComicIds,
-        knownSuccessorComicIds: knownSuccessorComicIds,
-      );
-
   details.ComicDetailsDownloadActions get _detailsDownloadActions =>
       details.ComicDetailsDownloadActions(
         downloadChapter: _downloadChapter,
-        stopChapter: _stopChapterDownload,
+        stopChapter: _downloadCommands.stopChapter,
         probeExisting: _downloadCommands.probeExisting,
         wholeComicJob: _downloadCommands.wholeComicJob,
         cachedWholeComicJob: _downloadCommands.cachedWholeComicJob,
-        toggleWholeComicPause: _toggleWholeComicPause,
-        inspectComicConflicts: _inspectComicConflictsForDetails,
+        toggleWholeComicPause: _downloadCommands.toggleWholeComicPause,
+        inspectComicConflicts: _downloadCommands.inspectComicConflicts,
         claimComicDirectory: _downloadCommands.claimComicDirectory,
         getDownloadPlacement: _downloadCommands.getDownloadPlacement,
         inspectChapter: _downloadCommands.inspectChapter,
         ensureDurableServices: _downloadCommands.ensureDurableServices,
       );
-
-  Future<void> _stopChapterDownload(ImportedLibraryEntry entry) =>
-      _downloadCommands.stopChapter(entry);
-
-  Future<void> _toggleWholeComicPause(
-    String sourceId,
-    String comicId,
-  ) =>
-      _downloadCommands.toggleWholeComicPause(sourceId, comicId);
 
   Future<void> _downloadChapter(ImportedLibraryEntry entry) async {
     final snapshot = await _downloadCommands.downloadChapter(entry);
@@ -304,12 +268,6 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
       _recordChapterDownloadCompletion(snapshot.sourceId, snapshot.comicId);
     }
   }
-
-  Future<void> _deleteChapter(
-    ImportedLibraryEntry entry, {
-    bool deleteFiles = false,
-  }) =>
-      _downloadCommands.deleteChapter(entry, deleteFiles: deleteFiles);
 
   Future<void> _downloadComicEntries(
     String comicIdentity,
@@ -485,10 +443,10 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               initialPageIndex: initialPageIndex,
             ),
             onDownloadChapter: _downloadChapter,
-            onDeleteChapter: _deleteChapter,
-            inspectChapterDownload: _inspectChapterDownload,
-            inspectChapterDownloads: _inspectChapterDownloads,
-            inspectComicConflicts: _inspectComicConflictsForDetails,
+            onDeleteChapter: _downloadCommands.deleteChapter,
+            inspectChapterDownload: _downloadCommands.inspectChapter,
+            inspectChapterDownloads: _downloadCommands.inspectChapters,
+            inspectComicConflicts: _downloadCommands.inspectComicConflicts,
             downloadChanges: _chapterDownloads.changes,
             onDownloadComic: (entries) =>
                 _downloadComicEntries(identity, entries),
@@ -654,10 +612,10 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
                 initialPageIndex: initialPageIndex,
               ),
               onDownloadChapter: _downloadChapter,
-              onDeleteChapter: _deleteChapter,
-              inspectChapterDownload: _inspectChapterDownload,
-              inspectChapterDownloads: _inspectChapterDownloads,
-              inspectComicConflicts: _inspectComicConflictsForDetails,
+              onDeleteChapter: _downloadCommands.deleteChapter,
+              inspectChapterDownload: _downloadCommands.inspectChapter,
+              inspectChapterDownloads: _downloadCommands.inspectChapters,
+              inspectComicConflicts: _downloadCommands.inspectComicConflicts,
               downloadChanges: _chapterDownloads.changes,
               onDownloadComic: (entries) => _downloadComicEntries(
                 comicLibraryIdentity(comic.sourceId, comic.comicId),

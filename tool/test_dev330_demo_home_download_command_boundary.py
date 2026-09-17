@@ -48,9 +48,11 @@ for marker, label in (
     require(home, marker, label)
 
 for marker, label in (
-    ('_downloadCommands.deleteChapter(entry, deleteFiles: deleteFiles);', 'shelf removal adapter'),
+    ('onDeleteChapter: _downloadCommands.deleteChapter,', 'details delete adapter'),
     ('_downloadCommands.deleteChapterFiles(entry);', 'archive file-delete adapter'),
     ('probeExisting: _downloadCommands.probeExisting,', 'details probe adapter'),
+    ('stopChapter: _downloadCommands.stopChapter,', 'details stop adapter'),
+    ('toggleWholeComicPause: _downloadCommands.toggleWholeComicPause,', 'details pause adapter'),
     ('claimComicDirectory: _downloadCommands.claimComicDirectory,', 'details placement adapter'),
     ('getDownloadPlacement: _downloadCommands.getDownloadPlacement,', 'details placement read adapter'),
     ('inspectChapter: _downloadCommands.inspectChapter,', 'details inspect adapter'),
@@ -58,6 +60,19 @@ for marker, label in (
     ('final started = await _downloadCommands.downloadComicEntries(', 'whole-comic UI wrapper'),
 ):
     require(ui, marker, label)
+
+for redundant in (
+    '_inspectChapterDownload(',
+    '_inspectChapterDownloads(',
+    '_inspectComicConflictsForDetails(',
+    '_stopChapterDownload(',
+    '_toggleWholeComicPause(',
+    '_deleteChapter(',
+):
+    if redundant in compat:
+        raise SystemExit(
+            f'DemoHome retained redundant download command pass-through: {redundant}'
+        )
 
 for forbidden in (
     '_chapterDownloads.download(',

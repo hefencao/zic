@@ -38,6 +38,7 @@ for token in (
     require(views, token, 'Home-owned update projection wiring')
 
 migration = read('apps/app/lib/demo_home_source_migration.dart')
+transaction = read('apps/app/lib/home_source_migration_transaction.dart')
 for token in (
     '_sourceComicHasUpdate(',
     'saved.sourceUpdateAt != null',
@@ -57,13 +58,20 @@ for token in (
     'final page = await choice.source.browse(query: comic.title, limit: 12);',
     'showSourceMigrationComparison(',
     'ComicSourceMigrationPlan.build(',
-    'await _savePreference(mergedPreference);',
-    'final neutral = ComicPreference(',
-    'await _library.saveComicPreference(neutral);',
-    '_librarySession.replacePreference(neutral);',
 ):
     require(migration, token, 'unified migration/version/update ownership')
-forbid(migration, 'await _library.saveComicPreference(mergedPreference);', 'migration preference bypass')
+for token in (
+    'final class HomeSourceMigrationTransaction',
+    'await savePreference(mergedPreference);',
+    'final neutral = ComicPreference(',
+    'await _library.saveComicPreference(neutral);',
+):
+    require(transaction, token, 'confirmed migration transaction ownership')
+forbid(
+    migration + transaction,
+    'await _library.saveComicPreference(mergedPreference);',
+    'migration preference bypass',
+)
 
 # Same-source confirmed relations must not be inferred from title search. The
 # title browse remains only the cross-source branch after the explicit

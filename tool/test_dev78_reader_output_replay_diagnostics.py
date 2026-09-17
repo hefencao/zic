@@ -28,6 +28,7 @@ webp_ffi = read('native/media_core/src/lib.rs')
 comic_details = read('apps/app/lib/comic_details.dart')
 demo_home = read('apps/app/lib/demo_home.dart')
 reader_route = read('apps/app/lib/demo_home_reader_route.dart')
+reader_composition = read('apps/app/lib/home_reader_composition.dart')
 trace_log = read('apps/app/lib/debug_trace.dart')
 trace_screen = read('apps/app/lib/debug_trace_screen.dart')
 trace_export = read('apps/app/lib/debug_trace_export.dart')
@@ -89,11 +90,14 @@ for token in ('_pageCountPreflight', '_startPageCountPreflight', 'pageCountLoadi
     forbid(comic_details, token, 'chapter body page-count preflight')
 require(source_tests, 'pending page counts do not preflight chapter bodies', 'chapter preflight regression')
 require(source_tests, 'expect(source.chapterLoads, 0);', 'chapter preflight request count')
-require(reader_route, 'unawaited(_markChapterReadForNavigation(current));', 'non-blocking read persistence')
+require(reader_composition, 'unawaited(_markChapterRead(current));', 'non-blocking read persistence')
 ensure_owner = demo_home.split('Future<ImportedLibraryEntry> _ensureSourceChapter(', 1)[1].split('Future<ImportedLibraryEntry> _refreshRemoteEntry(', 1)[0]
 forbid(ensure_owner, 'await _reloadLibrary();', 'chapter manifest navigation reload')
-for token in ('await _markChapterReadForNavigation(current)',):
-    forbid(demo_home, token, 'read persistence navigation block')
+for source, token in (
+    (demo_home, 'await _markChapterReadForNavigation(current)'),
+    (reader_composition, 'await _markChapterRead(current)'),
+):
+    forbid(source, token, 'read persistence navigation block')
 
 for token in (
     'this.maxExportEvents = 10000',

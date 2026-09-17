@@ -34,29 +34,32 @@ for token in (
     require(session, token, "Home relation projection owner")
 
 migration = read("apps/app/lib/demo_home_source_migration.dart")
+version_lifecycle = read("apps/app/lib/home_version_reuse_lifecycle.dart")
 for token in (
-    "await _librarySession.upsertVersionRelation(",
     "DateTime? _projectedConfirmedSourceUpdateAt(",
-    "_versionRelations",
     "Future<int> _ensureSourceVersionReuseAuthority(",
-    "_sourceVersionRelationsForComic(",
-    "await _librarySession.ensureCanonicalMediaForEntry(current);",
-    "VerifiedArtifactReusePlan.matchResolvedRelated(",
+):
+    require(migration, token, "version projection UI adapter")
+for token in (
+    "await session.upsertVersionRelation(",
+    "_relationsForComic(",
+    "await session.ensureCanonicalMediaForEntry(current);",
+    "VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(",
     "'stage': 'version-reuse-authority-ready'",
     "'restoreMode': 'canonical-media-direct'",
 ):
-    require(migration, token, "version projection / canonical media authority")
+    require(version_lifecycle, token, "version projection / canonical media authority")
 for token in (
     "_librarySession.hydrateChapterBatch(sourceChapterKeys.values)",
     "'restoreMode': 'compact-version-authority'",
 ):
-    forbid(migration, token, "superseded Reader history hydration authority")
+    forbid(migration + version_lifecycle, token, "superseded Reader history hydration authority")
 for token in (
     "artifactCache.linkEquivalent(",
     "candidatePages",
     "registeredEquivalentPages",
 ):
-    forbid(migration, token, "Reader materialized version aliases")
+    forbid(migration + version_lifecycle, token, "Reader materialized version aliases")
 
 home_session = read("apps/app/lib/home_library_session.dart")
 for token in (
@@ -76,7 +79,7 @@ for token in (
 ):
     require(runtime, token, "direct canonical physical media authority")
 forbid(
-    migration,
+    migration + version_lifecycle,
     "if (relations.isEmpty) return 0;",
     "predecessor-only reuse early return",
 )

@@ -25,6 +25,8 @@ for marker, label in (
     ("session: _librarySession,", "session generation authority"),
     ("loadRemoteEntrySnapshot:", "fresh metadata capability"),
     ("verifiedPageReuseIdentity:", "verified page identity capability"),
+    ("requiresSourceLocatorRefresh: chapterRequiresSourceLocatorRefresh,", "shared locator-validity capability"),
+    ("scheduleMetadataTask: ({", "composition-owned metadata scheduler injection"),
 ):
     require(home, marker, label)
 
@@ -43,15 +45,18 @@ for forbidden in (
 
 for marker, label in (
     ("final class HomeVersionReuseLifecycle", "lifecycle owner"),
+    ("final class HomeVersionState", "composition-neutral version state"),
     ("final HomeLibrarySession session;", "dynamic session authority"),
+    ("final HomeVersionMetadataTaskScheduler scheduleMetadataTask;", "injected metadata scheduling capability"),
     ("final Map<String, ({String fingerprint, int acceptedMappings})>", "authority fingerprint state"),
     ("final Map<String, Future<void>> _warmups", "warmup coalescing state"),
     ("final Map<String, Future<void>> _readerRefreshes", "Reader refresh coalescing state"),
     ("VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(", "bounded version-page proof"),
     ("session.upsertVersionRelationDerivedState(updatedRelation)", "derived relation persistence"),
-    ("defaultDownloadResourceCoordinator.networkLane.submit(", "shared NetLane scheduling"),
+    ("scheduleMetadataTask(", "shared NetLane scheduling capability"),
+    ("!requiresSourceLocatorRefresh(existing.chapter)", "shared locator-validity rule"),
     ("Future<int> ensureAuthority(", "Reader version authority"),
-    ("Future<details.ComicDetailsVersionState> loadVersionState(", "version-state load"),
+    ("Future<HomeVersionState> loadVersionState(", "version-state load"),
 ):
     require(owner, marker, label)
 
@@ -64,6 +69,12 @@ for forbidden in (
     "setState(",
     "_DemoHomeState",
     "ComicSourceResourceGateway",
+    "comic_details.dart",
+    "details.ComicDetailsVersionState",
+    "local_media_composition.dart",
+    "defaultDownloadResourceCoordinator",
+    "source_resource_gateway.dart",
+    "isLegacyVeneraRuntimeLocator",
 ):
     if forbidden in owner:
         raise SystemExit(
@@ -75,6 +86,7 @@ for marker, label in (
     ("_versionReuseLifecycle.scheduleReaderMetadataVersionRefresh(", "Reader refresh delegation"),
     ("_versionReuseLifecycle.ensureAuthority(current)", "Reader authority delegation"),
     ("_versionReuseLifecycle.loadVersionState(", "version-state delegation"),
+    ("details.ComicDetailsVersionState _detailsVersionState(", "UI version-state adapter"),
     ("_versionViewReusePreparations", "route-local view preparation stays in UI"),
 ):
     require(ui if marker != "_versionViewReusePreparations" else home, marker, label)

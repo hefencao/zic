@@ -5,10 +5,7 @@ import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:telemetry/telemetry.dart';
 
-import 'comic_details.dart' as details;
 import 'home_library_session.dart';
-import 'local_media_composition.dart';
-import 'source_resource_gateway.dart';
 
 typedef HomeVersionRemoteEntryLoader = Future<ImportedLibraryEntry> Function(
   ImportedLibraryEntry entry, {
@@ -20,6 +17,26 @@ typedef HomeVersionVerifiedPageIdentityResolver = Future<String?> Function({
   required Uri locator,
   TaskControl? control,
 });
+
+typedef HomeVersionMetadataTaskScheduler = bool Function({
+  required String key,
+  required int priority,
+  required Future<void> Function(TaskControl control) task,
+});
+
+final class HomeVersionState {
+  const HomeVersionState({
+    this.successors = const <SourceComicVersion>[],
+    this.predecessors = const <SourceComicVersion>[],
+    this.backgroundRefresh,
+  });
+
+  final List<SourceComicVersion> successors;
+  final List<SourceComicVersion> predecessors;
+  final Future<HomeVersionState>? backgroundRefresh;
+
+  bool get isEmpty => successors.isEmpty && predecessors.isEmpty;
+}
 
 /// Owns source-version relation discovery, page-reuse warmup and Reader
 /// background version refresh without acquiring Widget/navigation authority.
@@ -33,6 +50,8 @@ final class HomeVersionReuseLifecycle {
     required this.session,
     required this.loadRemoteEntrySnapshot,
     required this.verifiedPageReuseIdentity,
+    required this.requiresSourceLocatorRefresh,
+    required this.scheduleMetadataTask,
     required this.trace,
     required this.monotonicMicros,
   });
@@ -42,6 +61,9 @@ final class HomeVersionReuseLifecycle {
   final HomeLibrarySession session;
   final HomeVersionRemoteEntryLoader loadRemoteEntrySnapshot;
   final HomeVersionVerifiedPageIdentityResolver verifiedPageReuseIdentity;
+  final bool Function(ImportedChapterRecord chapter)
+      requiresSourceLocatorRefresh;
+  final HomeVersionMetadataTaskScheduler scheduleMetadataTask;
   final TraceSink trace;
   final int Function() monotonicMicros;
 
@@ -103,7 +125,7 @@ final class HomeVersionReuseLifecycle {
             sourceId: sourceId,
             comicId: relations[index].predecessorComicId,
             title: relations[index].predecessorTitle.trim().isEmpty
-                ? '旧版：$fallbackTitle'
+                ? fallbackTitle
                 : relations[index].predecessorTitle.trim(),
             generation: index + 1,
             date: _relationDate(relations[index].discoveredAt),
@@ -192,9 +214,7 @@ final class HomeVersionReuseLifecycle {
     final existing = _exactChapterEntry(source.sourceId, chapter.chapterId);
     if (existing != null &&
         existing.chapter.pages.isNotEmpty &&
-        !existing.chapter.pages.any(
-          (page) => isLegacyVeneraRuntimeLocator(page.sourceId),
-        )) {
+        !requiresSourceLocatorRefresh(existing.chapter)) {
       return session.hydrateEntry(existing);
     }
     final controlled = source is ControlledComicSource
@@ -526,7 +546,7 @@ final class HomeVersionReuseLifecycle {
     _readerRefreshes[key] = future;
     final laneKey = 'reader-metadata-version-refresh:'
         '${identityHashCode(completer)}:$key';
-    final submitted = defaultDownloadResourceCoordinator.networkLane.submit(
+    final submitted = scheduleMetadataTask(
       key: laneKey,
       priority: readerMetadataVersionRefreshPriority,
       task: (control) async {
@@ -812,7 +832,7 @@ final class HomeVersionReuseLifecycle {
     return acceptedMappings;
   }
 
-  Future<details.ComicDetailsVersionState> loadVersionState(
+  Future<HomeVersionState> loadVersionState(
     BrowsableComicSource source,
     String title,
     String currentComicId, {
@@ -823,7 +843,7 @@ final class HomeVersionReuseLifecycle {
         ? source as ComicVersionSource
         : null;
     if (versionSource == null || !versionSource.supportsComicVersions) {
-      return const details.ComicDetailsVersionState();
+      return const HomeVersionState();
     }
     final storedSuccessors = await _storedSuccessors(
       sourceId: source.sourceId,
@@ -881,11 +901,11 @@ final class HomeVersionReuseLifecycle {
       return List<SourceComicVersion>.unmodifiable(result);
     }
 
-    details.ComicDetailsVersionState stateFor(
+    HomeVersionState stateFor(
       Iterable<SourceComicVersion> discovered, {
-      Future<details.ComicDetailsVersionState>? backgroundRefresh,
+      Future<HomeVersionState>? backgroundRefresh,
     }) =>
-        details.ComicDetailsVersionState(
+        HomeVersionState(
           successors: merge(
             <SourceComicVersion>[...discovered, ...storedSuccessors],
             predecessor: false,

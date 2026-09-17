@@ -31,7 +31,10 @@ persistent_store = read('packages/downloads/lib/src/persistent_download_artifact
 whole = read('packages/downloads/lib/src/whole_comic_downloads.dart')
 main = read('apps/app/lib/main.dart') + read('apps/app/lib/app_runtime.dart')
 local_media_composition = read('apps/app/lib/local_media_composition.dart')
-home = read('apps/app/lib/demo_home.dart')
+home = (
+    read('apps/app/lib/demo_home.dart')
+    + read('apps/app/lib/home_service_cache_binding.dart')
+)
 reader_route = read('apps/app/lib/demo_home_reader_route.dart')
 owner_test = read('packages/sessions/test/download_transfer_owner_test.dart')
 chapter_test = read('packages/downloads/test/chapter_downloads_test.dart')

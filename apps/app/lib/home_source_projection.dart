@@ -31,6 +31,7 @@ final class HomeSourceProjection {
     required Future<void> Function() reloadLibrary,
     required void Function() requestPresentationRefresh,
   }) {
+    final initialExternalSources = externalSources.toList(growable: false);
     final projection = HomeSourceProjection._(
       suppliedSources,
       defaultSources,
@@ -44,8 +45,11 @@ final class HomeSourceProjection {
     );
     projection._sources = projection._compose(
       cache,
-      externalSources: externalSources,
+      externalSources: initialExternalSources,
     );
+    projection._externalSourceIds = initialExternalSources
+        .map((source) => source.sourceId)
+        .toSet();
     return projection;
   }
 
@@ -71,6 +75,7 @@ final class HomeSourceProjection {
   final Future<void> Function() _reloadLibrary;
   final void Function() _requestPresentationRefresh;
   late List<BrowsableComicSource> _sources;
+  Set<String> _externalSourceIds = <String>{};
 
   List<BrowsableComicSource> get sources => _sources;
 
@@ -91,23 +96,34 @@ final class HomeSourceProjection {
   void adoptServiceProjection(
     List<BrowsableComicSource> sources, {
     required ResourceCacheCoordinator cache,
+    required Iterable<BrowsableComicSource> externalSources,
   }) {
     _cache = cache;
     _sources = List<BrowsableComicSource>.unmodifiable(sources);
+    _externalSourceIds = externalSources
+        .map((source) => source.sourceId)
+        .toSet();
   }
 
   Future<void> refreshExternalSources(
     Iterable<BrowsableComicSource> externalSources,
   ) async {
+    final external = externalSources.toList(growable: false);
+    final nextExternalSourceIds = external
+        .map((source) => source.sourceId)
+        .toSet();
+    final replacedSourceIds = <String>{
+      ..._externalSourceIds,
+      ...nextExternalSourceIds,
+    };
     final builtIn = _sources
-        .where((source) =>
-            !source.sourceId.startsWith('mihon:') &&
-            !source.sourceId.startsWith('venera:'))
+        .where((source) => !replacedSourceIds.contains(source.sourceId))
         .toList(growable: true);
     _sources = _wrapSources(
-      <BrowsableComicSource>[...builtIn, ...externalSources],
+      <BrowsableComicSource>[...builtIn, ...external],
       _cache,
     );
+    _externalSourceIds = nextExternalSourceIds;
     await _publishSources(_sources);
     final canonicalIdsPersisted = await _persistKnownCanonicalComicIds();
     if (canonicalIdsPersisted) {

@@ -27,7 +27,8 @@ persistent_store = read('packages/downloads/lib/src/persistent_download_artifact
 pipe = read('packages/pipeline_runtime/lib/src/pipeline_reader_session.dart')
 composition_runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
 decode = read('packages/sessions/lib/src/decode_session.dart')
-app = read('apps/app/lib/demo_home_reader_route.dart')
+reader_route = read('apps/app/lib/demo_home_reader_route.dart')
+reader_composition = read('apps/app/lib/home_reader_composition.dart')
 source_transport = read('packages/downloads/lib/src/source_resource_transport.dart')
 rhttp_transport = read('packages/downloads_bridge/lib/src/rhttp_source_resource_transport.dart')
 venera_runtime = read('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt')
@@ -83,7 +84,7 @@ for marker in (
     'LocalImageResponseSource(',
     'selfBoundedOpen: _sourceResources.pageOpenSelfBoundedFor(',
 ):
-    if marker not in app:
+    if marker not in reader_composition:
         raise SystemExit(f'Reader source-open bound proof lost at App composition: {marker}')
 for marker in (
     'final class LocalImageResponseSource',
@@ -134,7 +135,7 @@ else:
         raise SystemExit('true session disposal does not cold-drain unfinished partials')
     if 'prepareDownload: _partialDownloadHandoff?.restoreInto' not in pipe:
         raise SystemExit('cold partial is not restored before network prepare')
-if '.withPartialDownloadStore(' not in app:
+if '.withPartialDownloadStore(' not in reader_route:
     raise SystemExit('composition does not wire Download-owned partial store')
 
 restart = decode.index('if (_restartCursorWhenHolderEmpty && (_holder?.depth ?? 0) == 0)')

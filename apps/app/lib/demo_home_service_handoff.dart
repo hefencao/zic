@@ -84,10 +84,11 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     final cacheCoordinator = candidateServiceCache.coordinator;
     final externalPlugins =
         _incomingExternalPlugins ?? _externalSources.activeController;
+    final activeExternalSources =
+        externalPlugins?.activeSources ?? const <BrowsableComicSource>[];
     final sources = _sourceProjection.composeForServices(
       cacheCoordinator,
-      externalSources:
-          externalPlugins?.activeSources ?? const <BrowsableComicSource>[],
+      externalSources: activeExternalSources,
     );
 
     wholeComicDownloads.refreshStaleChapter = _refreshStaleQueueChapter;
@@ -133,6 +134,7 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     _sourceProjection.adoptServiceProjection(
       sources,
       cache: cacheCoordinator,
+      externalSources: activeExternalSources,
     );
     unawaited(_recoverCommittedSourceMigrations());
     await previousServiceCache.closeIfSupersededBy(candidateServiceCache);

@@ -28,7 +28,7 @@ for token in (
     require(catalog, token, 'typed mapping verifiedAt decode')
 forbid(catalog, 'DateTime.parse(verifiedAt)', 'Object-typed verifiedAt parse')
 
-migration = read('apps/app/lib/demo_home_source_migration.dart')
+version_lifecycle = read('apps/app/lib/home_version_reuse_lifecycle.dart')
 for token in (
     'final proofAlreadyUsable = upgradeLegacyIntervalProof',
     'focusedRevision == focus.chapter.sourceRevision',
@@ -38,22 +38,22 @@ for token in (
     'currentMapping.successorSourceRevision ==',
     'intervalProbeVersion: VerifiedArtifactReusePlan.intervalProbeVersion',
 ):
-    require(migration, token, 'version mapping freshness ownership')
+    require(version_lifecycle, token, 'version mapping freshness ownership')
 for stale in (
     '_versionPageMappingRevalidationInterval',
     '_versionPageMappingsAreFresh',
 ):
-    forbid(migration, stale, 'TTL-based version mapping freshness')
+    forbid(version_lifecycle, stale, 'TTL-based version mapping freshness')
 
 version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 if version is None or int(version.group(1)) < 212:
     raise SystemExit('App build must be at least 212')
 if int(version.group(1)) >= 229:
-    forbid(migration, '_reuseSourceVersionDurablePartials', 'eager cold partial copy during mapping warmup')
+    forbid(version_lifecycle, '_reuseSourceVersionDurablePartials', 'eager cold partial copy during mapping warmup')
     handoff = read('packages/downloads/lib/src/partial_download_handoff.dart')
     require(handoff, 'equivalentCandidates', 'cold partial reuse at physical prepare boundary')
 else:
-    require(migration, 'await _reuseSourceVersionDurablePartials(entry);', 'legacy mapping partial warmup')
+    require(version_lifecycle, 'await _reuseSourceVersionDurablePartials(entry);', 'legacy mapping partial warmup')
 
 catalog_test = read('packages/catalog/test/imported_library_store_test.dart')
 for token in (

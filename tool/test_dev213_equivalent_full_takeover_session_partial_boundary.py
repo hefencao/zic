@@ -149,24 +149,24 @@ else:
             'Reader takeover delegation',
         )
 
-migration = read('apps/app/lib/demo_home_source_migration.dart')
+version_lifecycle = read('apps/app/lib/home_version_reuse_lifecycle.dart')
 for token in (
     'currentMapping.predecessorSourceRevision ==',
-    'predecessorChapter.sourceRevision',
+    'predecessorManifest.chapter.sourceRevision',
     'currentMapping.successorSourceRevision ==',
-    'successorChapter.sourceRevision',
+    'successorManifest.chapter.sourceRevision',
     'final intervalProof =\n        await VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(',
     'verifiedIntervals: intervalProof.verifiedIntervals,',
     'verifiedAt: DateTime.now().toUtc(),',
 ):
-    require(migration, token, 'revision-bound verified interval mapping')
+    require(version_lifecycle, token, 'revision-bound verified interval mapping')
 for token in (
     'bool _versionPageMappingIsFresh(',
     'final revalidationNow = DateTime.now().toUtc();',
 ):
-    forbid(migration, token, 'retired time-based mapping freshness gate')
+    forbid(version_lifecycle, token, 'retired time-based mapping freshness gate')
 forbid(
-    migration,
+    version_lifecycle,
     "existing.any(\n        (mapping) =>\n            mapping.predecessorPageCount == predecessorChapter.pageCount",
     'page-count-only stale mapping acceptance',
 )

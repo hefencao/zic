@@ -21,6 +21,7 @@ sqlite = read('packages/storage/lib/src/sqlite_imported_library_store.dart')
 details = read('apps/app/lib/comic_details.dart') + read('apps/app/lib/comic_details_interactions.dart')
 composition = read('apps/app/lib/demo_home_source_compat.dart')
 migration = read('apps/app/lib/demo_home_source_migration.dart')
+version_lifecycle = read('apps/app/lib/home_version_reuse_lifecycle.dart')
 reader = read('apps/app/lib/demo_home_reader_route.dart')
 prefs = read('apps/app/lib/app_preferences.dart')
 identity = read('apps/app/lib/demo_home_catalog_identity.dart')
@@ -62,15 +63,19 @@ for token in (
     "child: const Text('迁移')",
 ):
     require(details, token, 'detail version view/migration actions')
+require(migration, '_loadSourceVersionState(', 'same-source version UI adapter')
 for token in (
-    '_loadSourceVersionState(',
-    '_storedSourceSuccessors(',
-    '_storedSourcePredecessors(',
+    '_storedSuccessors(',
+    '_storedPredecessors(',
+    'Future<HomeVersionState> loadVersionState(',
+):
+    require(version_lifecycle, token, 'same-source version state owner')
+for token in (
     '_viewSourceVersion(',
     '_migrateSourceVersion(',
     'sourceVersionViewIdentity(',
 ):
-    require(migration, token, 'same-source version state and routing')
+    require(migration, token, 'same-source version routing')
 for stale in (
     "tooltip: '查看同源版本'",
     "groupLabel('旧版')",

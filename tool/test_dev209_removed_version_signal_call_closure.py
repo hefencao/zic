@@ -10,21 +10,22 @@ def read(path: str) -> str:
 
 
 migration = read("apps/app/lib/demo_home_source_migration.dart")
+version_lifecycle = read("apps/app/lib/home_version_reuse_lifecycle.dart")
 if "_reconcileConfirmedSourceUpdateSignal" in migration:
     raise SystemExit(
         "removed version-to-sourceUpdateAt reconcile symbol still referenced in migration path"
     )
 
-required = (
-    "final storedSuccessors = await _storedSourceSuccessors(",
-    "final storedPredecessors = await _storedSourcePredecessors(",
-    "await _rememberSourceSuccessors(",
-    "await _librarySession.upsertVersionRelation(",
-    "DateTime? _projectedConfirmedSourceUpdateAt(",
-)
-for token in required:
-    if token not in migration:
+for token in (
+    "final storedSuccessors = await _storedSuccessors(",
+    "final storedPredecessors = await _storedPredecessors(",
+    "await _rememberSuccessors(",
+    "await session.upsertVersionRelation(",
+):
+    if token not in version_lifecycle:
         raise SystemExit(f"missing current version relation owner contract: {token}")
+if "DateTime? _projectedConfirmedSourceUpdateAt(" not in migration:
+    raise SystemExit("missing current source-update projection contract")
 
 # Do not reintroduce the dev.207 mirror from confirmed version relation into the
 # chapter/directory update signal. Chapter sourceUpdateAt writes elsewhere are

@@ -22,6 +22,7 @@ reader_test = read('apps/app/test/reader_controls_test.dart')
 source_wrapper = read('apps/app/lib/source_browser.dart')
 composition = read('apps/app/lib/demo_home_source_compat.dart')
 migration = read('apps/app/lib/demo_home_source_migration.dart')
+version_lifecycle = read('apps/app/lib/home_version_reuse_lifecycle.dart')
 identity = read('apps/app/lib/demo_home_catalog_identity.dart')
 runtime_adapter = read('packages/plugin_host/lib/src/runtime_source_adapter.dart')
 mihon = read('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt')
@@ -132,8 +133,11 @@ for token in (
 ):
     require(details, token, 'Vibe-style version detail UI')
 for token in (
-    '_storedSourceSuccessors(',
-    '_storedSourcePredecessors(',
+    '_storedSuccessors(',
+    '_storedPredecessors(',
+):
+    require(version_lifecycle, token, 'stored version relation owner')
+for token in (
     '_viewSourceVersion(',
     '_migrateSourceVersion(',
     'resolveCanonicalAlias: false',

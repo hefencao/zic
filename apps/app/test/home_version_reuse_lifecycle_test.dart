@@ -33,6 +33,13 @@ void main() {
         control,
       }) async =>
           null,
+      requiresSourceLocatorRefresh: (_) => false,
+      scheduleMetadataTask: ({
+        required key,
+        required priority,
+        required task,
+      }) =>
+          false,
       trace: const NoopTraceSink(),
       monotonicMicros: () => 0,
     );
