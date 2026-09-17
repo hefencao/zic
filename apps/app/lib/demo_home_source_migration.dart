@@ -2,79 +2,6 @@ part of 'demo_home.dart';
 
 const int _readerMetadataVersionRefreshPriority = 100;
 
-String _sourceMigrationPreparedFingerprint(
-  ComicManifest manifest,
-  Iterable<_PreparedChapterMigration> prepared,
-) {
-  var hash = 0xcbf29ce484222325;
-  void add(String value) {
-    final framed = '${value.length}:$value;';
-    for (final unit in framed.codeUnits) {
-      hash ^= unit;
-      hash = (hash * 0x100000001b3) & 0xffffffffffffffff;
-    }
-  }
-
-  final comic = manifest.comic;
-  add(comic.sourceId);
-  add(comic.comicId);
-  add(comic.title);
-  add(comic.readingDirection.name);
-  add(comic.coverUri?.toString() ?? '');
-  add(comic.description ?? '');
-  for (final author in comic.authors) {
-    add('author:$author');
-  }
-  for (final tag in comic.tags) {
-    add('tag:$tag');
-  }
-  for (final chapter in manifest.chapters) {
-    add('chapter:${chapter.chapterId}');
-    add(chapter.title);
-    add('${chapter.sequence}');
-    add('${chapter.pageCount}');
-    add(chapter.sourceRevision);
-  }
-  final items = prepared.toList(growable: false)
-    ..sort(
-      (left, right) =>
-          left.targetRecord.chapterId.compareTo(right.targetRecord.chapterId),
-    );
-  for (final item in items) {
-    final record = item.targetRecord;
-    add('prepared:${record.sourceId}:${record.comicId}:${record.chapterId}');
-    add(record.sourceRevision);
-    for (final page in record.pages) {
-      add(page.stablePageId);
-      add(page.sourceId);
-      add('${page.byteLength ?? -1}');
-    }
-    final reuse = item.artifactReuse.mappings.entries.toList(growable: false)
-      ..sort((left, right) => left.key.key.compareTo(right.key.key));
-    for (final mapping in reuse) {
-      add('reuse:${mapping.key.key}<=${mapping.value.key}');
-    }
-  }
-  return hash.toRadixString(16).padLeft(16, '0');
-}
-
-final class _PreparedChapterMigration {
-  const _PreparedChapterMigration({
-    required this.targetRecord,
-    required this.sourceProgress,
-    required this.sourceReadState,
-    required this.targetProgress,
-    required this.targetReadState,
-    required this.artifactReuse,
-  });
-  final ImportedChapterRecord targetRecord;
-  final ReadingProgress? sourceProgress;
-  final ChapterReadState? sourceReadState;
-  final ReadingProgress? targetProgress;
-  final ChapterReadState? targetReadState;
-  final VerifiedArtifactReusePlan artifactReuse;
-}
-
 ComicVersionSource? _sourceVersionCapability(BrowsableComicSource source) {
   final Object candidate = source;
   if (candidate is! ComicVersionSource) return null;
@@ -126,90 +53,8 @@ final class _SourceMigrationSelection {
 }
 
 extension _DemoHomeSourceMigration on _DemoHomeState {
-  SourceMigrationJournalStore? _sourceMigrationJournalStore() {
-    final candidate = _library;
-    if (candidate is! SourceMigrationJournalStore) return null;
-    return candidate as SourceMigrationJournalStore;
-  }
-
-  Future<void> _commitSourceMigrationCleanup(
-    SourceMigrationJournalRecord journal,
-  ) async {
-    if (!journal.replacingSource) return;
-    final sourcePreference = await _library.getComicPreference(
-      journal.sourceSourceId,
-      journal.sourceComicId,
-    );
-    if (sourcePreference != null) {
-      final neutral = ComicPreference(
-        sourceId: sourcePreference.sourceId,
-        comicId: sourcePreference.comicId,
-        sourceKind: sourcePreference.sourceKind,
-        inShelf: false,
-        liked: false,
-        collected: false,
-        categoryIds: const <String>{},
-        customOrder: sourcePreference.customOrder,
-        updatedAt: DateTime.now().toUtc(),
-      );
-      await _library.saveComicPreference(neutral);
-      _librarySession.replacePreference(neutral);
-    }
-    final entries = await _library.list();
-    for (final entry in entries) {
-      if (entry.chapter.sourceId != journal.sourceSourceId ||
-          entry.chapter.comicId != journal.sourceComicId) {
-        continue;
-      }
-      await _librarySession.removeChapter(
-        entry.chapter.sourceId,
-        entry.chapter.chapterId,
-      );
-    }
-    await _librarySession.removeSavedComic(
-      journal.sourceSourceId,
-      journal.sourceComicId,
-    );
-  }
-
-  Future<void> _recoverCommittedSourceMigrations() {
-    final existing = _sourceMigrationRecovery;
-    if (existing != null) return existing;
-    late final Future<void> recovery;
-    recovery = _recoverCommittedSourceMigrationsOnce().whenComplete(() {
-      if (identical(_sourceMigrationRecovery, recovery)) {
-        _sourceMigrationRecovery = null;
-      }
-    });
-    _sourceMigrationRecovery = recovery;
-    return recovery;
-  }
-
-  Future<void> _recoverCommittedSourceMigrationsOnce() async {
-    final store = _sourceMigrationJournalStore();
-    if (store == null) return;
-    var changed = false;
-    for (final journal in await store.listPendingSourceMigrations()) {
-      if (!journal.targetMetadataCommitted) continue;
-      try {
-        final done = await runSourceMigrationJournal(
-          store: store,
-          record: journal,
-          materializeArtifacts: () async {},
-          commitMetadata: () async {},
-          commitCleanup: () => _commitSourceMigrationCleanup(journal),
-        );
-        if (done.phase == SourceMigrationPhase.done) {
-          await store.removeSourceMigrationJournal(journal.migrationId);
-          changed = true;
-        }
-      } on Object catch (error) {
-        debugPrint(
-          'source migration cleanup recovery failed '
-          '${journal.migrationId}: $error',
-        );
-      }
-    }
+  Future<void> _recoverCommittedSourceMigrations() async {
+    final changed = await _sourceMigrationTransaction.recoverCommitted();
     if (changed && mounted) {
       await _reloadLibrary();
     }
@@ -1817,7 +1662,6 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
     LibraryComic comic,
     ({BrowsableComicSource source, String id}) request,
   ) async {
-    await _sourceMigrationRecovery;
     try {
       final replacingSource =
           request.source.sourceId == comic.sourceId &&
@@ -1828,26 +1672,12 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         targetSourceId: request.source.sourceId,
         targetComicId: request.id,
       );
-      final journalStore = _sourceMigrationJournalStore();
-      final committedJournal = await journalStore?.getSourceMigrationJournal(
-        migrationId,
-      );
-      if (committedJournal?.targetMetadataCommitted == true) {
-        final done = await runSourceMigrationJournal(
-          store: journalStore!,
-          record: committedJournal!,
-          materializeArtifacts: () async {},
-          commitMetadata: () async {},
-          commitCleanup: () => _commitSourceMigrationCleanup(committedJournal),
-        );
-        if (done.phase == SourceMigrationPhase.done) {
-          await journalStore.removeSourceMigrationJournal(migrationId);
-        }
+      if (await _sourceMigrationTransaction.resumeCommitted(migrationId)) {
         await _reloadLibrary();
         if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('已完成上次中断的漫画源迁移清理')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('已完成上次中断的漫画源迁移清理')),
+          );
         }
         return;
       }
@@ -1862,6 +1692,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         source: comic,
         target: manifest,
       );
+      if (!mounted) return;
       final sourceDescriptor = _sourceForId(comic.sourceId)?.descriptor;
       final confirmed = await showSourceMigrationComparison(
         context: context,
@@ -1886,268 +1717,22 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
                 uri: manifest.comic.coverUri!,
               ),
       );
-      if (!confirmed) {
-        return;
-      }
+      if (!confirmed) return;
 
-      // Resolve and validate every target chapter before the first durable
-      // write. A late source identity error must not leave a half-created
-      // target comic or preference behind.
-      final targetReadStates = <String, ChapterReadState>{
-        for (final state in await _library.listChapterReadStates(
-          manifest.comic.sourceId,
-          manifest.comic.comicId,
-        ))
-          state.identity: state,
-      };
-      final prepared = <_PreparedChapterMigration>[];
-      for (final match in plan.chapterMatches) {
-        if (match.confidence != ChapterMigrationConfidence.exact) {
-          continue;
-        }
-        final targetManifest = await request.source.loadChapter(
-          match.target.chapterId,
-        );
-        if (targetManifest.sourceId != manifest.comic.sourceId ||
-            targetManifest.comicId != manifest.comic.comicId ||
-            targetManifest.chapter.chapterId != match.target.chapterId) {
-          throw StateError('目标漫画源返回了不匹配的章节详情身份');
-        }
-        final targetRecord = ImportedChapterRecord.remote(
-          comic: manifest.comic,
-          manifest: targetManifest,
-        );
-        final targetEntry = await _library.get(
-          targetRecord.sourceId,
-          targetRecord.chapterId,
-        );
-        final sourceEntry = await _librarySession.hydrateEntry(match.source);
-        final sourceChapter = sourceEntry.chapter.toManifest();
-        var artifactReuse = VerifiedArtifactReusePlan.match(
-          oldChapter: sourceChapter,
-          newChapter: targetManifest,
-        );
-        if (replacingSource && artifactReuse.mappings.isEmpty) {
-          try {
-            artifactReuse =
-                await VerifiedArtifactReusePlan.matchResolvedRelated(
-                  sourceChapter: sourceChapter,
-                  targetChapter: targetManifest,
-                  resolveIdentity: (page) =>
-                      _sourceResources.verifiedPageReuseIdentity(
-                        sourceId: request.source.sourceId,
-                        locator: page.uri,
-                      ),
-                );
-          } on Object {
-            // Migration remains valid when optional media reuse proof fails.
-          }
-        }
-        prepared.add(
-          _PreparedChapterMigration(
-            targetRecord: targetRecord,
-            sourceProgress: sourceEntry.progress,
-            sourceReadState:
-                _chapterReadStates[chapterLibraryIdentity(
-                  sourceEntry.chapter.sourceId,
-                  sourceEntry.chapter.chapterId,
-                )],
-            targetProgress: targetEntry?.progress,
-            targetReadState:
-                targetReadStates[chapterLibraryIdentity(
-                  targetRecord.sourceId,
-                  targetRecord.chapterId,
-                )],
-            artifactReuse: artifactReuse,
-          ),
-        );
-      }
-
-      final preparedFingerprint = _sourceMigrationPreparedFingerprint(
-        manifest,
-        prepared,
-      );
-      final journalNow = DateTime.now().toUtc();
-      var journal = SourceMigrationJournalRecord(
-        migrationId: migrationId,
-        sourceSourceId: comic.sourceId,
-        sourceComicId: comic.comicId,
-        targetSourceId: manifest.comic.sourceId,
-        targetComicId: manifest.comic.comicId,
+      final result = await _sourceMigrationTransaction.executeConfirmed(
+        sourceComic: comic,
+        targetSource: request.source,
+        targetManifest: manifest,
+        plan: plan,
         replacingSource: replacingSource,
-        preparedFingerprint: preparedFingerprint,
-        phase: SourceMigrationPhase.prepared,
-        createdAt: journalNow,
-        updatedAt: journalNow,
+        sourcePreference: _preferenceForComic(comic),
+        targetCustomOrder: _nextCustomOrder,
       );
-      if (journalStore != null) {
-        // A pre-commit journal owns no source cleanup authority. After the
-        // user confirms the current plan, an abandoned pre-commit attempt may
-        // therefore be replaced. A committed journal is never discarded here.
-        for (final pending
-            in await journalStore.listPendingSourceMigrations()) {
-          if (pending.sourceSourceId != comic.sourceId ||
-              pending.sourceComicId != comic.comicId) {
-            continue;
-          }
-          if (pending.targetMetadataCommitted) {
-            throw StateError('旧漫画源仍有已提交迁移等待清理');
-          }
-          if (pending.migrationId != migrationId ||
-              pending.preparedFingerprint != preparedFingerprint) {
-            await journalStore.removeSourceMigrationJournal(
-              pending.migrationId,
-            );
-          } else {
-            journal = SourceMigrationJournalRecord(
-              migrationId: pending.migrationId,
-              sourceSourceId: pending.sourceSourceId,
-              sourceComicId: pending.sourceComicId,
-              targetSourceId: pending.targetSourceId,
-              targetComicId: pending.targetComicId,
-              replacingSource: pending.replacingSource,
-              preparedFingerprint: pending.preparedFingerprint,
-              phase: pending.phase,
-              createdAt: pending.createdAt,
-              updatedAt: pending.updatedAt,
-            );
-          }
-        }
-      }
-
-      var materializedPageArtifacts = 0;
-      var migratedChapters = 0;
-      var migratedProgress = 0;
-      var migratedReadStates = 0;
-      var preservedTargetStates = 0;
-      var registeredPageEquivalences = 0;
-      final artifactCache = _readerArtifactCache;
-
-      Future<void> materializeArtifacts() async {
-        if (artifactCache == null) return;
-        for (final item in prepared) {
-          materializedPageArtifacts += await item.artifactReuse
-              .materializeTargetArtifacts(artifactCache);
-        }
-      }
-
-      Future<void> commitMetadata() async {
-        final migrationTime = DateTime.now().toUtc();
-        final existingSaved = await _library.getSavedComic(
-          manifest.comic.sourceId,
-          manifest.comic.comicId,
-        );
-        final existingPreference = await _library.getComicPreference(
-          manifest.comic.sourceId,
-          manifest.comic.comicId,
-        );
-        final mergedPreference = plan.mergePreference(
-          _preferenceForComic(comic),
-          existingTarget: existingPreference,
-          targetCustomOrder: _nextCustomOrder,
-          updatedAt: migrationTime,
-        );
-
-        await _librarySession.upsertSavedComic(
-          SavedComicRecord.fromManifest(
-            manifest,
-            canonicalComicId: _canonicalComicIdForPersistence(
-              manifest.comic.sourceId,
-              manifest.comic.comicId,
-              fallback: existingSaved?.canonicalComicId,
-            ),
-            savedAt: existingSaved?.savedAt,
-            updatedAt: migrationTime,
-          ),
-        );
-        await _savePreference(mergedPreference);
-
-        for (final item in prepared) {
-          final targetRecord = item.targetRecord;
-          await _librarySession.upsertChapter(targetRecord);
-          migratedChapters++;
-          if (artifactCache != null) {
-            registeredPageEquivalences += item.artifactReuse
-                .registerEquivalences(artifactCache);
-          }
-
-          final sourceProgress = item.sourceProgress;
-          if (item.targetProgress != null) {
-            preservedTargetStates++;
-          } else if (sourceProgress != null) {
-            final pageIndex = sourceProgress.pageIndex
-                .clamp(0, targetRecord.pages.length - 1)
-                .toInt();
-            await _librarySession.persistProgress(
-              ReadingProgress(
-                sourceId: targetRecord.sourceId,
-                comicId: targetRecord.comicId,
-                chapterId: targetRecord.chapterId,
-                pageIndex: pageIndex,
-                subPageOffset: pageIndex == sourceProgress.pageIndex
-                    ? sourceProgress.subPageOffset
-                    : 0,
-                readerMode: sourceProgress.readerMode,
-                updatedAt: migrationTime,
-              ),
-            );
-            migratedProgress++;
-          }
-
-          final sourceRead = item.sourceReadState;
-          if (item.targetReadState != null) {
-            preservedTargetStates++;
-          } else if (sourceRead != null) {
-            await _library.saveChapterReadState(
-              ChapterReadState(
-                sourceId: targetRecord.sourceId,
-                comicId: targetRecord.comicId,
-                chapterId: targetRecord.chapterId,
-                isRead: sourceRead.isRead,
-                updatedAt: migrationTime,
-              ),
-            );
-            migratedReadStates++;
-          }
-        }
-      }
-
-      Future<void> commitCleanup() => _commitSourceMigrationCleanup(journal);
-
-      if (journalStore != null) {
-        final done = await runSourceMigrationJournal(
-          store: journalStore,
-          record: journal,
-          materializeArtifacts: materializeArtifacts,
-          commitMetadata: commitMetadata,
-          commitCleanup: commitCleanup,
-        );
-        if (done.phase == SourceMigrationPhase.done) {
-          await journalStore.removeSourceMigrationJournal(migrationId);
-        }
-      } else {
-        await materializeArtifacts();
-        await commitMetadata();
-        await commitCleanup();
-      }
-
       await _reloadLibrary();
       if (mounted) {
-        final messages = <String>[
-          '漫画偏好已合并',
-          if (migratedChapters > 0) '迁移 $migratedChapters 个已验证章节',
-          if (migratedProgress > 0) '$migratedProgress 个阅读位置',
-          if (migratedReadStates > 0) '$migratedReadStates 个已读状态',
-          if (preservedTargetStates > 0) '保留 $preservedTargetStates 项目标源已有状态',
-          if (registeredPageEquivalences > 0)
-            '登记 $registeredPageEquivalences 页已验证媒体等价关系',
-          if (materializedPageArtifacts > 0)
-            '复用 $materializedPageArtifacts 页旧版离线文件到新 key',
-          if (replacingSource) '旧版本记录已替换，未匹配的旧版离线文件仍保留' else '原来源与离线文件保留',
-        ];
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(messages.join(' · '))));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result.summaryMessages().join(' · '))),
+        );
       }
     } on Object catch (error) {
       if (mounted) {

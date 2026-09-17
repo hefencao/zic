@@ -1553,6 +1553,7 @@ def check_compile_regressions() -> None:
         for path in (
             ROOT / 'apps/app/lib/demo_home.dart',
             ROOT / 'apps/app/lib/demo_home_source_migration.dart',
+            ROOT / 'apps/app/lib/home_source_migration_transaction.dart',
         )
     )
     for required in (
@@ -1910,6 +1911,7 @@ def check_compile_regressions() -> None:
             ROOT / 'apps/app/lib/home_widgets.dart',
             ROOT / 'apps/app/lib/home_library_session.dart',
             ROOT / 'apps/app/lib/home_source_projection.dart',
+            ROOT / 'apps/app/lib/home_source_migration_transaction.dart',
         )
     )
     if len(home_path.read_text(encoding='utf-8').splitlines()) > 1800:

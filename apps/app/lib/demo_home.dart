@@ -36,6 +36,7 @@ import 'home_external_source_lifecycle.dart';
 import 'home_download_commands.dart';
 import 'home_reader_composition.dart';
 import 'home_service_cache_binding.dart';
+import 'home_source_migration_transaction.dart';
 import 'home_source_projection.dart';
 import 'home_widgets.dart';
 export 'home_widgets.dart' show ComicCoverCard, ComicDownloadProgress, ComicDownloadProgressKind;
@@ -192,8 +193,8 @@ final class _DemoHomeState extends State<DemoHome> {
   late HomeServiceCacheBinding _serviceCache;
   late final HomeExternalSourceLifecycle _externalSources;
   late final HomeDownloadCommands _downloadCommands;
+  late final HomeSourceMigrationTransaction _sourceMigrationTransaction;
   Future<void>? _durableAdoption;
-  Future<void>? _sourceMigrationRecovery;
   ChapterDownloadTransferRuntimeProvider? _localReadBackendPrewarmTarget;
   bool _suppressLibrarySessionRebuild = false;
   bool _readerRouteOpen = false;
@@ -399,6 +400,18 @@ final class _DemoHomeState extends State<DemoHome> {
       waitForPrimaryFrame: () => WidgetsBinding.instance.endOfFrame,
       startupTelemetry: widget.startupTelemetry,
     )..addListener(_handleLibrarySessionChanged);
+    _sourceMigrationTransaction = HomeSourceMigrationTransaction(
+      session: _librarySession,
+      artifactCache: () => _readerArtifactCache,
+      verifiedPageReuseIdentity: ({required sourceId, required locator}) =>
+          _sourceResources.verifiedPageReuseIdentity(
+        sourceId: sourceId,
+        locator: locator,
+      ),
+      savePreference: _savePreference,
+      canonicalComicIdForPersistence: _canonicalComicIdForPersistence,
+      reportError: (stage, error) => debugPrint('$stage: $error'),
+    );
     _downloadCommands = HomeDownloadCommands(
       session: _librarySession,
       ensureDurableServices: () async {
