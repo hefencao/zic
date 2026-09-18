@@ -409,13 +409,16 @@ final class ExternalPluginController {
             : 4 * 1024 * 1024,
       );
       await partial.rename(payload.path);
+      _requireOpen();
     } on Object {
       await _deleteBestEffort(partial);
+      await _deleteBestEffort(payload);
       rethrow;
     }
     _pendingPayloads[plugin.pluginId] = payload.path;
     try {
       final inspection = await _inspector(plugin.format).inspect(plugin);
+      _requireOpen();
       return ExternalPluginInstallPreview(
         plugin: plugin,
         inspection: inspection,
@@ -449,8 +452,10 @@ final class ExternalPluginController {
         destinationPath: partial.path,
       );
       await partial.rename(payload.path);
+      _requireOpen();
     } on Object {
       await _deleteBestEffort(partial);
+      await _deleteBestEffort(payload);
       rethrow;
     }
     _pendingPayloads[pluginId] = payload.path;
@@ -471,6 +476,7 @@ final class ExternalPluginController {
     );
     try {
       final inspection = await _mihonInspector.inspect(plugin);
+      _requireOpen();
       return ExternalPluginInstallPreview(
         plugin: plugin,
         inspection: inspection,
@@ -724,8 +730,10 @@ final class ExternalPluginController {
       await partial.parent.create(recursive: true);
       await partial.writeAsString(source, flush: true);
       await partial.rename(payload.path);
+      _requireOpen();
     } on Object {
       await _deleteBestEffort(partial);
+      await _deleteBestEffort(payload);
       rethrow;
     }
     _pendingPayloads[pluginId] = payload.path;
@@ -766,7 +774,20 @@ final class ExternalPluginController {
       // barrier first would let one stuck plugin delay teardown of all others.
       await _registry.close();
     } finally {
-      await _sourceChanges.close();
+      try {
+        await _discardPendingPayloads();
+      } finally {
+        await _sourceChanges.close();
+      }
+    }
+  }
+
+  Future<void> _discardPendingPayloads() async {
+    final pending =
+        _pendingPayloads.values.toSet().toList(growable: false);
+    _pendingPayloads.clear();
+    for (final path in pending) {
+      await _deleteBestEffort(File(path));
     }
   }
 

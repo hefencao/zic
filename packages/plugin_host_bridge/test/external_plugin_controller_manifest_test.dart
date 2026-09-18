@@ -7,6 +7,78 @@ import 'package:plugin_host/plugin_host.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 
 void main() {
+  test('controller close deletes an unconsumed install preview payload',
+      () async {
+    final storage = await Directory.systemTemp.createTemp(
+      'zic-external-plugin-preview-close-',
+    );
+    addTearDown(() => storage.delete(recursive: true));
+    final controller = await ExternalPluginController.openDeferred(
+      storage.path,
+      discoverDeviceMihonExtensions: false,
+      deferRuntimeActivation: true,
+    );
+    final client = _StaticHttpClient(
+      utf8.encode('''
+class PreviewSource extends ComicSource {
+  key = "preview-close";
+}
+'''),
+    );
+    late ExternalPluginInstallPreview preview;
+
+    await HttpOverrides.runZoned(() async {
+      preview = await controller.inspect(
+        plugin: ExternalComicPluginCatalogEntry(
+          format: ExternalComicPluginFormat.veneraJavaScript,
+          pluginId: 'venera:test-preview-close',
+          name: 'Preview close',
+          version: '1.0.0',
+          entrypoint: Uri.https('example.com', '/preview-close.js'),
+          sources: const <ExternalComicPluginSource>[],
+          requiresRuntimeDiscovery: true,
+        ),
+        repository: Uri.https('example.com', '/index.json'),
+      );
+    }, createHttpClient: (_) => client);
+
+    final payload = File(preview.inspection.payloadPath!);
+    expect(await payload.exists(), isTrue);
+
+    await controller.close();
+
+    expect(await payload.exists(), isFalse);
+  });
+
+  test('controller close keeps manifest-owned installed payload', () async {
+    final storage = await Directory.systemTemp.createTemp(
+      'zic-external-plugin-installed-close-',
+    );
+    addTearDown(() => storage.delete(recursive: true));
+    final pluginRoot = Directory('${storage.path}/external_plugins');
+    await pluginRoot.create(recursive: true);
+    final payload = await File('${pluginRoot.path}/installed.js').writeAsString(
+      'class InstalledSource extends ComicSource { key = "installed"; }',
+    );
+    await File('${pluginRoot.path}/installed.json').writeAsString(
+      jsonEncode(<String, Object?>{
+        'version': 1,
+        'plugins': <Object?>[
+          _record('installed', payload.path, sourceKey: 'installed'),
+        ],
+      }),
+    );
+    final controller = await ExternalPluginController.openDeferred(
+      storage.path,
+      discoverDeviceMihonExtensions: false,
+      deferRuntimeActivation: true,
+    );
+
+    await controller.close();
+
+    expect(await payload.exists(), isTrue);
+  });
+
   test('controller close cancels an active repository request', () async {
     final storage = await Directory.systemTemp.createTemp(
       'zic-external-plugin-network-close-',
@@ -408,6 +480,99 @@ Map<String, Object?> _record(
       if (sourceKey != null) 'sourceKey': sourceKey,
       if (sourceIds.isNotEmpty) 'sourceIds': sourceIds,
     };
+
+final class _StaticHttpClient implements HttpClient {
+  _StaticHttpClient(this.bytes);
+
+  final List<int> bytes;
+
+  Duration? _connectionTimeout;
+  Duration _idleTimeout = const Duration(seconds: 15);
+
+  @override
+  Duration? get connectionTimeout => _connectionTimeout;
+
+  @override
+  set connectionTimeout(Duration? value) => _connectionTimeout = value;
+
+  @override
+  Duration get idleTimeout => _idleTimeout;
+
+  @override
+  set idleTimeout(Duration value) => _idleTimeout = value;
+
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) async =>
+      _StaticHttpClientRequest(bytes);
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _StaticHttpClientRequest implements HttpClientRequest {
+  _StaticHttpClientRequest(this.bytes);
+
+  final List<int> bytes;
+  final HttpHeaders _headers = _NoopHttpHeaders();
+
+  @override
+  HttpHeaders get headers => _headers;
+
+  @override
+  bool followRedirects = true;
+
+  @override
+  int maxRedirects = 5;
+
+  @override
+  void add(List<int> data) {}
+
+  @override
+  Future<HttpClientResponse> close() async => _StaticHttpClientResponse(bytes);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _StaticHttpClientResponse extends Stream<List<int>>
+    implements HttpClientResponse {
+  _StaticHttpClientResponse(this.bytes);
+
+  final List<int> bytes;
+  final HttpHeaders _headers = _NoopHttpHeaders();
+
+  @override
+  int get statusCode => HttpStatus.ok;
+
+  @override
+  int get contentLength => bytes.length;
+
+  @override
+  bool get isRedirect => false;
+
+  @override
+  HttpHeaders get headers => _headers;
+
+  @override
+  StreamSubscription<List<int>> listen(
+    void Function(List<int> event)? onData, {
+    Function? onError,
+    void Function()? onDone,
+    bool? cancelOnError,
+  }) =>
+      Stream<List<int>>.value(bytes).listen(
+        onData,
+        onError: onError,
+        onDone: onDone,
+        cancelOnError: cancelOnError,
+      );
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 final class _BlockingHttpClient implements HttpClient {
   Duration? _connectionTimeout;
