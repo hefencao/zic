@@ -119,6 +119,7 @@ final class ExternalPluginController {
     ),
   ]);
   Future<void>? _ready;
+  Future<void>? _closeFuture;
   Future<void> _manifestWriteTail = Future<void>.value();
   final ExternalPluginMutationGate _durableMutations =
       ExternalPluginMutationGate();
@@ -773,8 +774,9 @@ final class ExternalPluginController {
     return record;
   }
 
-  Future<void> close() async {
-    if (_closed) return;
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
     _closed = true;
     final mutationsDrained = _durableMutations.beginClose();
     for (final client in _activeRepositoryClients.toList(growable: false)) {

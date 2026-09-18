@@ -21,6 +21,12 @@ require(GATE, 'final class ExternalPluginMutationGate', 'mutation gate owner')
 require(GATE, 'Future<T> run<T>', 'mutation admission')
 require(GATE, 'Future<void> beginClose()', 'mutation drain boundary')
 require(CONTROLLER, 'final ExternalPluginMutationGate _durableMutations =', 'controller gate field')
+require(CONTROLLER, 'Future<void>? _closeFuture;', 'joinable close future')
+require(
+    CONTROLLER,
+    'Future<void> close() => _closeFuture ??= _close();',
+    'joinable public close boundary',
+)
 
 for signature, marker in (
     ('approveAndActivate(', '_runDurableMutation(() => _approveAndActivate(preview))'),
@@ -32,7 +38,7 @@ for signature, marker in (
     window = CONTROLLER[start:start + 450]
     require(window, marker, signature)
 
-close_start = CONTROLLER.index('Future<void> close() async {')
+close_start = CONTROLLER.index('Future<void> _close() async {')
 close_end = CONTROLLER.index('\n  Future<void> _discardPendingPayloads()', close_start)
 close_body = CONTROLLER[close_start:close_end]
 order = [

@@ -7,6 +7,31 @@ import 'package:plugin_host/plugin_host.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 
 void main() {
+  test('controller close is joinable across concurrent callers', () async {
+    final storage = await Directory.systemTemp.createTemp(
+      'zic-external-plugin-joinable-close-',
+    );
+    addTearDown(() => storage.delete(recursive: true));
+    final controller = await ExternalPluginController.openDeferred(
+      storage.path,
+      discoverDeviceMihonExtensions: false,
+      deferRuntimeActivation: true,
+    );
+
+    final first = controller.close();
+    final second = controller.close();
+
+    expect(identical(first, second), isTrue);
+    await expectLater(
+      controller.loadRepository(
+        format: ExternalComicPluginFormat.veneraJavaScript,
+        index: Uri.https('example.com', '/closed.json'),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await Future.wait<void>(<Future<void>>[first, second]);
+  });
+
   test('controller close deletes an unconsumed install preview payload',
       () async {
     final storage = await Directory.systemTemp.createTemp(
