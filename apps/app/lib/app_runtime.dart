@@ -679,6 +679,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       );
       final services = _AppServices(
         libraryStore: previous.libraryStore,
+        ownsLibraryStore: previous.ownsLibraryStore,
         chapterDownloads: composition.chapterDownloads,
         downloadComposition: composition,
         wholeComicDownloads: wholeComicDownloads,
@@ -720,6 +721,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
     final previous = _services;
     final degraded = _AppServices(
       libraryStore: previous?.libraryStore,
+      ownsLibraryStore: previous?.ownsLibraryStore ?? false,
       storageRoot: storageRoot,
     );
     previous?.transferExternalPluginOwnershipTo(degraded);
@@ -778,6 +780,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
 final class _AppServices {
   _AppServices({
     this.libraryStore,
+    this.ownsLibraryStore = false,
     this.chapterDownloads,
     this.downloadComposition,
     this.wholeComicDownloads,
@@ -788,6 +791,7 @@ final class _AppServices {
   });
 
   final ImportedLibraryStore? libraryStore;
+  final bool ownsLibraryStore;
   final ManagedChapterDownloadService? chapterDownloads;
   final PersistentDownloadComposition? downloadComposition;
   final WholeComicDownloadQueue? wholeComicDownloads;
@@ -1043,11 +1047,13 @@ final class _AppServices {
         firstStackTrace ??= stackTrace;
       }
     }
-    try {
-      await libraryStore?.close();
-    } on Object catch (error, stackTrace) {
-      firstError ??= error;
-      firstStackTrace ??= stackTrace;
+    if (ownsLibraryStore) {
+      try {
+        await libraryStore?.close();
+      } on Object catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
     }
     if (firstError != null) {
       Error.throwWithStackTrace(firstError, firstStackTrace!);
@@ -1448,6 +1454,7 @@ Future<_AppServices> _openServices(
     telemetry.serviceReady('whole-comic-queue', startedAtMicros: stageStarted);
     final services = _AppServices(
       libraryStore: libraryStore,
+      ownsLibraryStore: ownsLibraryStore,
       chapterDownloads: chapterDownloads,
       downloadComposition: downloadComposition,
       wholeComicDownloads: wholeComicDownloads,
