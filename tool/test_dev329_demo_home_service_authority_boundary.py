@@ -20,6 +20,7 @@ handoff = text("apps/app/lib/demo_home_service_handoff.dart")
 session = text("apps/app/lib/home_library_session.dart")
 service_cache = text("apps/app/lib/home_service_cache_binding.dart")
 settings = text("apps/app/lib/app_settings_screen.dart")
+lazy_store = text("packages/storage/lib/src/lazy_imported_library_store.dart")
 
 for marker, label in (
     ("ImportedLibraryStore get _library => _librarySession.library;", "library delegation"),
@@ -162,6 +163,17 @@ for marker, label in (
     ("unawaited(library.saveProgress(progress));", "Reader compatibility non-blocking progress write"),
 ):
     require(home, marker, label)
+for marker, label in (
+    ("ReaderProgressCheckpointStore,", "Lazy bootstrap Reader checkpoint capability"),
+    ("final Map<String, ReadingProgress> _pendingReaderProgress", "Lazy pending checkpoint owner"),
+    ("Future<void> flushProgressCheckpoints() async", "Lazy checkpoint flush barrier"),
+):
+    require(lazy_store, marker, label)
+for forbidden in ("_pendingReaderProgress", "_readerProgressForwarding"):
+    if forbidden in home:
+        raise SystemExit(
+            f"DemoHome acquired Lazy Reader checkpoint forwarding state: {forbidden}"
+        )
 
 reader_progress_start = home.index("Future<void> _enqueueReaderProgress(ReadingProgress progress)")
 reader_progress_end = home.index("Future<void> _flushReaderProgressCheckpoints()", reader_progress_start)

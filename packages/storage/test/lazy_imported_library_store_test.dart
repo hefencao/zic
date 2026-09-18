@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:catalog/catalog.dart';
@@ -134,6 +135,193 @@ void main() {
     final hydrated = await store.get(chapter.sourceId, chapter.chapterId);
 
     expect(hydrated?.chapter.toJson(), chapter.toJson());
+  });
+
+  test('Reader checkpoint enqueue stays non-blocking and flush waits durable promotion',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-lazy-library-reader-progress-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/chapter',
+      displayName: 'reader progress',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.png',
+          sourceId: 'file:///reader-progress/001.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: '002.png',
+          sourceId: 'file:///reader-progress/002.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    final durable = SqliteImportedLibraryStore(
+      '${directory.path}/imported_library.sqlite3',
+    );
+    await durable.open();
+    await durable.upsertChapter(chapter);
+    await durable.close();
+
+    final rootGate = Completer<void>();
+    final store = LazyImportedLibraryStore(
+      rootProvider: () async {
+        await rootGate.future;
+        return directory.path;
+      },
+    );
+    await store.open();
+    addTearDown(store.close);
+
+    final checkpoints = store as ReaderProgressCheckpointStore;
+    checkpoints.enqueueProgress(
+      ReadingProgress(
+        sourceId: chapter.sourceId,
+        comicId: chapter.comicId,
+        chapterId: chapter.chapterId,
+        pageIndex: 0,
+        subPageOffset: 0,
+        readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 9, 18, 1),
+      ),
+    );
+    checkpoints.enqueueProgress(
+      ReadingProgress(
+        sourceId: chapter.sourceId,
+        comicId: chapter.comicId,
+        chapterId: chapter.chapterId,
+        pageIndex: 1,
+        subPageOffset: 0.25,
+        readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 9, 18, 1, 1),
+      ),
+    );
+
+    expect(store.isDurable, isFalse);
+    var flushed = false;
+    final flush = checkpoints.flushProgressCheckpoints().then((_) {
+      flushed = true;
+    });
+    await Future<void>.delayed(Duration.zero);
+    expect(flushed, isFalse);
+
+    rootGate.complete();
+    await flush;
+
+    expect(store.isDurable, isTrue);
+    final persisted = await store.get(chapter.sourceId, chapter.chapterId);
+    expect(persisted?.progress?.pageIndex, 1);
+    expect(persisted?.progress?.subPageOffset, 0.25);
+  });
+
+  test('Lazy close flushes a pending Reader checkpoint', () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-lazy-library-reader-close-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/chapter',
+      displayName: 'reader close progress',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.png',
+          sourceId: 'file:///reader-close/001.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: '002.png',
+          sourceId: 'file:///reader-close/002.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    final durable = SqliteImportedLibraryStore(
+      '${directory.path}/imported_library.sqlite3',
+    );
+    await durable.open();
+    await durable.upsertChapter(chapter);
+    await durable.close();
+
+    final store = LazyImportedLibraryStore(
+      rootProvider: () async => directory.path,
+    );
+    await store.open();
+    final checkpoints = store as ReaderProgressCheckpointStore;
+    checkpoints.enqueueProgress(
+      ReadingProgress(
+        sourceId: chapter.sourceId,
+        comicId: chapter.comicId,
+        chapterId: chapter.chapterId,
+        pageIndex: 1,
+        subPageOffset: 0.5,
+        readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 9, 18, 1, 2),
+      ),
+    );
+
+    await store.close();
+
+    final reopened = SqliteImportedLibraryStore(
+      '${directory.path}/imported_library.sqlite3',
+    );
+    await reopened.open();
+    addTearDown(reopened.close);
+    final persisted = await reopened.get(chapter.sourceId, chapter.chapterId);
+    expect(persisted?.progress?.pageIndex, 1);
+    expect(persisted?.progress?.subPageOffset, 0.5);
+  });
+
+  test('Reader checkpoint flush retries failed durable promotion', () async {
+    var rootCalls = 0;
+    final store = LazyImportedLibraryStore(
+      rootProvider: () async {
+        rootCalls++;
+        throw StateError('fixture root failure $rootCalls');
+      },
+    );
+    await store.open();
+    addTearDown(() async {
+      try {
+        await store.close();
+      } on Object {
+        // The fixture intentionally keeps durable promotion unavailable.
+      }
+    });
+
+    final checkpoints = store as ReaderProgressCheckpointStore;
+    checkpoints.enqueueProgress(
+      ReadingProgress(
+        sourceId: 'fixture-source',
+        comicId: 'fixture-comic',
+        chapterId: 'fixture-chapter',
+        pageIndex: 1,
+        subPageOffset: 0,
+        readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 9, 18, 1),
+      ),
+    );
+
+    await expectLater(
+      checkpoints.flushProgressCheckpoints(),
+      throwsA(isA<StateError>()),
+    );
+    expect(rootCalls, 1);
+    await expectLater(
+      checkpoints.flushProgressCheckpoints(),
+      throwsA(isA<StateError>()),
+    );
+    expect(rootCalls, 2);
   });
 
   test('batch get opens durable store once when bootstrap memory is incomplete',

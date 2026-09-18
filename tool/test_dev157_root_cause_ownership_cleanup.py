@@ -17,6 +17,7 @@ def forbid(text: str, token: str, owner: str) -> None:
 
 catalog_store = read('packages/catalog/lib/src/imported_library_store.dart')
 storage_store = read('packages/storage/lib/src/sqlite_imported_library_store.dart')
+lazy_store = read('packages/storage/lib/src/lazy_imported_library_store.dart')
 writer = read('packages/storage/lib/src/sqlite_progress_writer.dart')
 home = read('apps/app/lib/demo_home.dart') + read('apps/app/lib/demo_home_reader_route.dart')
 session = read('apps/app/lib/home_library_session.dart')
@@ -47,6 +48,14 @@ for token in (
     'await writer.flush();',
 ):
     require(storage_store, token, 'SQLite checkpoint implementation')
+for token in (
+    'ReaderProgressCheckpointStore',
+    'final Map<String, ReadingProgress> _pendingReaderProgress',
+    'void enqueueProgress(ReadingProgress progress)',
+    'Future<void> flushProgressCheckpoints() async',
+    'await flushProgressCheckpoints();',
+):
+    require(lazy_store, token, 'Lazy bootstrap checkpoint implementation')
 for token in (
     'Duration(seconds: 8)',
     'Duration(seconds: 30)',

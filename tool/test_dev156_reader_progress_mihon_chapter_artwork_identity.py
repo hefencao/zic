@@ -18,6 +18,7 @@ def forbid(text: str, token: str, label: str) -> None:
 
 catalog_store = read("packages/catalog/lib/src/imported_library_store.dart")
 sqlite_store = read("packages/storage/lib/src/sqlite_imported_library_store.dart")
+lazy_store = read("packages/storage/lib/src/lazy_imported_library_store.dart")
 progress_writer = read("packages/storage/lib/src/sqlite_progress_writer.dart")
 home = read("apps/app/lib/demo_home.dart") + read("apps/app/lib/demo_home_reader_route.dart")
 home_session = read("apps/app/lib/home_library_session.dart")
@@ -36,6 +37,14 @@ for token in (
 forbid(catalog_store, "Future<void> flushProgress();", "Reader route durability barrier")
 for token in ("ReaderProgressCheckpointStore", "writer.enqueue(progress);"):
     require(sqlite_store, token, "sqlite progress queue")
+for token in (
+    "ReaderProgressCheckpointStore",
+    "final Map<String, ReadingProgress> _pendingReaderProgress",
+    "void enqueueProgress(ReadingProgress progress)",
+    "Future<void> flushProgressCheckpoints() async",
+    "await flushProgressCheckpoints();",
+):
+    require(lazy_store, token, "lazy Reader checkpoint handoff")
 for token in (
     "Isolate.spawn<List<Object?>>",
     "debugName: 'zic-library-progress'",

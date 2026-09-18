@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 
@@ -15,6 +17,7 @@ final class LazyImportedLibraryStore
         ImportedLibraryStore,
         ImportedLibraryBatchLookup,
         ImportedLibraryBackupSnapshotStore,
+        ReaderProgressCheckpointStore,
         ComicVersionRelationStore,
         ImportedLibraryRevisionStore,
         SourceMigrationJournalStore {
@@ -25,6 +28,9 @@ final class LazyImportedLibraryStore
   final MemoryImportedLibraryStore _memory = MemoryImportedLibraryStore();
   SqliteImportedLibraryStore? _durable;
   Future<SqliteImportedLibraryStore>? _opening;
+  final Map<String, ReadingProgress> _pendingReaderProgress =
+      <String, ReadingProgress>{};
+  Future<void>? _readerProgressForwarding;
   bool _closed = false;
 
   ImportedLibraryStore get _active => _durable ?? _memory;
@@ -191,6 +197,84 @@ final class LazyImportedLibraryStore
   Future<void> saveProgress(ReadingProgress progress) async {
     final store = await _ensureDurable();
     await store.saveProgress(progress);
+  }
+
+  @override
+  void enqueueProgress(ReadingProgress progress) {
+    if (_closed) {
+      throw StateError('lazy imported library store is closed');
+    }
+    final durable = _durable;
+    if (durable != null) {
+      durable.enqueueProgress(progress);
+      return;
+    }
+    final current = _pendingReaderProgress[progress.identity];
+    if (current == null || !progress.updatedAt.isBefore(current.updatedAt)) {
+      _pendingReaderProgress[progress.identity] = progress;
+    }
+    _startReaderProgressForwarding();
+  }
+
+  void _startReaderProgressForwarding() {
+    if (_closed ||
+        _pendingReaderProgress.isEmpty ||
+        _readerProgressForwarding != null) {
+      return;
+    }
+    final forwarding = _forwardPendingReaderProgress();
+    _readerProgressForwarding = forwarding;
+    // Page turns cannot await durable promotion. Observe the flight here so a
+    // failed open is retained for the explicit flush barrier instead of
+    // becoming an unhandled async error.
+    unawaited(
+      forwarding.catchError((Object _, StackTrace _) {}),
+    );
+  }
+
+  Future<void> _forwardPendingReaderProgress() async {
+    final durable = await _ensureDurable();
+    final checkpointStore = durable as ReaderProgressCheckpointStore;
+    final pending = _pendingReaderProgress.values.toList(growable: false);
+    for (final progress in pending) {
+      checkpointStore.enqueueProgress(progress);
+      if (identical(_pendingReaderProgress[progress.identity], progress)) {
+        _pendingReaderProgress.remove(progress.identity);
+      }
+    }
+  }
+
+  @override
+  Future<void> flushProgressCheckpoints() async {
+    if (_closed) {
+      throw StateError('lazy imported library store is closed');
+    }
+    while (true) {
+      if (_pendingReaderProgress.isNotEmpty &&
+          _durable == null &&
+          _readerProgressForwarding == null) {
+        _startReaderProgressForwarding();
+      }
+      final forwarding = _readerProgressForwarding;
+      if (forwarding != null) {
+        try {
+          await forwarding;
+        } finally {
+          if (identical(_readerProgressForwarding, forwarding)) {
+            _readerProgressForwarding = null;
+          }
+        }
+        continue;
+      }
+      if (_pendingReaderProgress.isNotEmpty) {
+        _startReaderProgressForwarding();
+        continue;
+      }
+      final durable = _durable;
+      if (durable == null) return;
+      await durable.flushProgressCheckpoints();
+      return;
+    }
   }
 
   @override
@@ -396,12 +480,26 @@ final class LazyImportedLibraryStore
   @override
   Future<void> close() async {
     if (_closed) return;
+    Object? checkpointError;
+    StackTrace? checkpointStackTrace;
+    if (_pendingReaderProgress.isNotEmpty ||
+        _readerProgressForwarding != null) {
+      try {
+        await flushProgressCheckpoints();
+      } on Object catch (error, stackTrace) {
+        checkpointError = error;
+        checkpointStackTrace = stackTrace;
+      }
+    }
     _closed = true;
     try {
       await _opening;
     } finally {
       await _durable?.close();
       await _memory.close();
+    }
+    if (checkpointError != null) {
+      Error.throwWithStackTrace(checkpointError, checkpointStackTrace!);
     }
   }
 }
