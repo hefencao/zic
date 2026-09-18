@@ -14,6 +14,7 @@ def require(body: str, marker: str, label: str) -> None:
 
 
 lifecycle = text("apps/app/lib/home_external_source_lifecycle.dart")
+source_browser = text("apps/app/lib/source_browser.dart")
 home_files = [
     "apps/app/lib/demo_home.dart",
     "apps/app/lib/demo_home_service_handoff.dart",
@@ -27,6 +28,7 @@ for marker, label in (
     ("Future<ExternalPluginController?> ensureController()", "controller single-flight"),
     ("Future<void> waitForSource(String sourceId)", "exact-source wait"),
     ("Future<void> refreshCurrentProjection()", "projection refresh single-flight"),
+    ("Stream<void> get sourceProjectionChanges", "projection generation signal"),
     ("controller.sourceChanges.listen", "source-change observation"),
     ("Future<void> retryActivation(String pluginId)", "retry ownership"),
 ):
@@ -51,6 +53,44 @@ require(home, "_externalSources.adoptController(plugins);", "service handoff ado
 require(home, "_externalSources.signalLoaderAvailable();", "loader handoff wake")
 require(home, "_externalSources.waitForSource(", "source wait delegation")
 require(home, "externalPlugins: _externalSources.activeController", "source page projection")
+require(
+    home,
+    "externalSourceChanges: _externalSources.sourceProjectionChanges",
+    "source-management projection generation binding",
+)
+require(
+    home,
+    "readExternalPlugins: () => _externalSources.activeController",
+    "source-management current controller resolver",
+)
+require(
+    home,
+    "final initialExternalSourceIds = _sourceProjection.externalSourceIds;",
+    "source-management projection-owned route seed identity",
+)
+require(
+    home,
+    "initialExternalSourceIds: initialExternalSourceIds",
+    "source-management route seed binding",
+)
+for marker, label in (
+    ("final Stream<void>? externalSourceChanges;", "management change signal"),
+    ("final Set<String>? initialExternalSourceIds;", "management route seed identity"),
+    ("final ExternalPluginController? Function()? readExternalPlugins;", "management controller resolver"),
+    ("final List<BrowsableComicSource> Function()? readExternalSources;", "management source resolver"),
+    ("_replaceExternalSources(_readExternalSources(), notify: false);", "management pre-listen reconcile"),
+    ("_refreshExternalSources(_readExternalSources())", "management current-source refresh"),
+):
+    require(source_browser, marker, label)
+
+for forbidden in (
+    "HomeServiceHandoff",
+    "HomeExternalSourceLifecycle",
+):
+    if forbidden in source_browser:
+        raise SystemExit(
+            f"SourceManagement leaked Home service/source-lifecycle ownership: {forbidden}"
+        )
 
 for forbidden in (
     "ExternalPluginController? _activeExternalPlugins",

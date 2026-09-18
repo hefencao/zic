@@ -41,6 +41,8 @@ final class HomeExternalSourceLifecycle {
   ExternalPluginController? _activeController;
   ExternalPluginController? _watchedController;
   StreamSubscription<void>? _sourceChanges;
+  final StreamController<void> _projectionChanges =
+      StreamController<void>.broadcast();
   final Completer<void> _handoffAvailable = Completer<void>();
   Future<ExternalPluginController?>? _loading;
   Future<void>? _publishing;
@@ -49,6 +51,10 @@ final class HomeExternalSourceLifecycle {
   bool _closed = false;
 
   ExternalPluginController? get activeController => _activeController;
+
+  /// Emits when the current external-source projection may have changed,
+  /// including controller identity adoption and source activation changes.
+  Stream<void> get sourceProjectionChanges => _projectionChanges.stream;
 
   String? ownerOfSource(String sourceId) =>
       _activeController?.ownerOfSource(sourceId);
@@ -68,9 +74,13 @@ final class HomeExternalSourceLifecycle {
     bool refreshActiveSources = true,
   }) {
     if (_closed) return;
+    final changed = !identical(_activeController, controller);
     _activeController = controller;
     _watch(controller);
     _completeHandoffAvailable();
+    if (changed) {
+      _notifyProjectionChange();
+    }
     if (refreshActiveSources && controller.activeSources.isNotEmpty) {
       unawaited(refreshCurrentProjection());
     }
@@ -193,6 +203,9 @@ final class HomeExternalSourceLifecycle {
           identical(_activeController, controller)) {
         _refreshPending = false;
         await _refreshProjection(controller);
+        if (!_closed && identical(_activeController, controller)) {
+          _notifyProjectionChange();
+        }
       }
     } on Object catch (error) {
       _reportError?.call('external-source-refresh', error);
@@ -214,6 +227,12 @@ final class HomeExternalSourceLifecycle {
     });
   }
 
+  void _notifyProjectionChange() {
+    if (!_closed && !_projectionChanges.isClosed) {
+      _projectionChanges.add(null);
+    }
+  }
+
   void _completeHandoffAvailable() {
     if (!_handoffAvailable.isCompleted) {
       _handoffAvailable.complete();
@@ -230,5 +249,6 @@ final class HomeExternalSourceLifecycle {
     if (changes != null) {
       await changes.cancel();
     }
+    await _projectionChanges.close();
   }
 }

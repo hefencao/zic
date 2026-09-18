@@ -718,13 +718,25 @@ final class _DemoHomeState extends State<DemoHome> {
     if (!mounted) return;
     await _externalSources.refreshCurrentProjection();
     if (!mounted) return;
+    final initialSources = List<BrowsableComicSource>.unmodifiable(
+      _sourceProjection.sources,
+    );
+    final initialExternalPlugins =
+        _externalSources.activeController ?? externalPlugins;
+    final initialExternalSourceIds = _sourceProjection.externalSourceIds;
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => SourceManagementScreen(
-          sources: _sourceProjection.sources,
+          sources: initialSources,
           preferences: _sourcePreferences,
           onPreferenceChanged: _saveSourcePreference,
-          externalPlugins: externalPlugins,
+          externalPlugins: initialExternalPlugins,
+          initialExternalSourceIds: initialExternalSourceIds,
+          readExternalPlugins: () => _externalSources.activeController,
+          readExternalSources: () =>
+              _externalSources.activeController?.activeSources ??
+              const <BrowsableComicSource>[],
+          externalSourceChanges: _externalSources.sourceProjectionChanges,
           networkBridge: widget.networkBridge,
           onExternalSourcesChanged: _externalSources.refreshCurrentProjection,
           appPreferences: widget.preferences,

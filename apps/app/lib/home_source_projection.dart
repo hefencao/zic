@@ -79,6 +79,9 @@ final class HomeSourceProjection {
 
   List<BrowsableComicSource> get sources => _sources;
 
+  Set<String> get externalSourceIds =>
+      Set<String>.unmodifiable(_externalSourceIds);
+
   BrowsableComicSource? sourceForId(String sourceId) {
     for (final source in _sources) {
       if (source.sourceId == sourceId) return source;

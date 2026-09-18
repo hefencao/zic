@@ -2926,6 +2926,10 @@ final class SourceManagementScreen extends StatefulWidget {
     required this.preferences,
     required this.onPreferenceChanged,
     this.externalPlugins,
+    this.initialExternalSourceIds,
+    this.readExternalPlugins,
+    this.readExternalSources,
+    this.externalSourceChanges,
     this.networkBridge = const AndroidNetworkBridge(),
     this.onExternalSourcesChanged,
     this.appPreferences,
@@ -2937,6 +2941,10 @@ final class SourceManagementScreen extends StatefulWidget {
   final Future<void> Function(ComicSourcePreference preference)
       onPreferenceChanged;
   final ExternalPluginController? externalPlugins;
+  final Set<String>? initialExternalSourceIds;
+  final ExternalPluginController? Function()? readExternalPlugins;
+  final List<BrowsableComicSource> Function()? readExternalSources;
+  final Stream<void>? externalSourceChanges;
   final AndroidNetworkBridge networkBridge;
   final Future<void> Function()? onExternalSourcesChanged;
 
@@ -2955,20 +2963,70 @@ final class _SourceManagementScreenState
   Set<String> _externalSourceIds = <String>{};
   final Set<String> _expandedFamilies = <String>{};
   late Map<String, ComicSourcePreference> _preferences;
+  StreamSubscription<void>? _externalSourceChanges;
+
+  ExternalPluginController? get _externalPlugins =>
+      widget.readExternalPlugins?.call() ?? widget.externalPlugins;
+
+  List<BrowsableComicSource> _readExternalSources() =>
+      widget.readExternalSources?.call() ??
+      _externalPlugins?.activeSources ??
+      const <BrowsableComicSource>[];
 
   @override
   void initState() {
     super.initState();
     _preferences = Map<String, ComicSourcePreference>.from(widget.preferences);
-    _externalSourceIds = <String>{
-      for (final source in widget.externalPlugins?.activeSources ??
-          const <BrowsableComicSource>[])
-        source.sourceId,
-    };
+    _externalSourceIds = widget.initialExternalSourceIds == null
+        ? <String>{
+            for (final source in widget.externalPlugins?.activeSources ??
+                const <BrowsableComicSource>[])
+              source.sourceId,
+          }
+        : Set<String>.of(widget.initialExternalSourceIds!);
     _sources = widget.sources.toList(growable: true)
       ..sort((left, right) => _preference(left).sortOrder.compareTo(
             _preference(right).sortOrder,
           ));
+    _replaceExternalSources(_readExternalSources(), notify: false);
+    _listenToExternalSourceChanges(widget.externalSourceChanges);
+  }
+
+  @override
+  void didUpdateWidget(covariant SourceManagementScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.externalSourceChanges != widget.externalSourceChanges) {
+      _listenToExternalSourceChanges(widget.externalSourceChanges);
+    }
+    if (oldWidget.readExternalPlugins != widget.readExternalPlugins ||
+        oldWidget.readExternalSources != widget.readExternalSources ||
+        !identical(oldWidget.externalPlugins, widget.externalPlugins)) {
+      _refreshExternalSources(_readExternalSources());
+    }
+  }
+
+  @override
+  void dispose() {
+    final changes = _externalSourceChanges;
+    _externalSourceChanges = null;
+    if (changes != null) {
+      unawaited(changes.cancel());
+    }
+    super.dispose();
+  }
+
+  void _listenToExternalSourceChanges(Stream<void>? changes) {
+    final previous = _externalSourceChanges;
+    _externalSourceChanges = null;
+    if (previous != null) {
+      unawaited(previous.cancel());
+    }
+    if (changes == null) return;
+    _externalSourceChanges = changes.listen((_) {
+      if (mounted) {
+        _refreshExternalSources(_readExternalSources());
+      }
+    });
   }
 
   ComicSourcePreference _preference(BrowsableComicSource source) =>
@@ -3151,7 +3209,7 @@ final class _SourceManagementScreenState
     final preferredLanguage = Localizations.localeOf(context).languageCode;
     final ownerBySourceId = <String, String?>{
       for (final source in _sources)
-        source.sourceId: widget.externalPlugins?.ownerOfSource(source.sourceId),
+        source.sourceId: _externalPlugins?.ownerOfSource(source.sourceId),
     };
     String? ownerOf(BrowsableComicSource source) =>
         ownerBySourceId[source.sourceId];
@@ -3334,7 +3392,7 @@ final class _SourceManagementScreenState
   Future<void> _openExternalRepository(
     ExternalComicPluginFormat format,
   ) async {
-    final controller = widget.externalPlugins;
+    final controller = _externalPlugins;
     final changed = widget.onExternalSourcesChanged;
     if (controller == null || changed == null) return;
     await Navigator.of(context).push(
@@ -3348,12 +3406,18 @@ final class _SourceManagementScreenState
       ),
     );
     if (mounted) {
-      _refreshExternalSources(controller);
+      _refreshExternalSources(_readExternalSources());
     }
   }
 
-  void _refreshExternalSources(ExternalPluginController controller) {
-    final external = controller.activeSources;
+  void _refreshExternalSources(List<BrowsableComicSource> external) {
+    _replaceExternalSources(external, notify: true);
+  }
+
+  void _replaceExternalSources(
+    List<BrowsableComicSource> external, {
+    required bool notify,
+  }) {
     final nextExternalSourceIds = <String>{
       for (final source in external) source.sourceId,
     };
@@ -3364,15 +3428,22 @@ final class _SourceManagementScreenState
     final builtIn = _sources.where(
       (source) => !replacedSourceIds.contains(source.sourceId),
     );
-    setState(() {
-      _sources = <BrowsableComicSource>[
-        ...builtIn,
-        ...external,
-      ]..sort((left, right) => _preference(left).sortOrder.compareTo(
-            _preference(right).sortOrder,
-          ));
+    final next = <BrowsableComicSource>[
+      ...builtIn,
+      ...external,
+    ]..sort((left, right) => _preference(left).sortOrder.compareTo(
+          _preference(right).sortOrder,
+        ));
+    void apply() {
+      _sources = next;
       _externalSourceIds = nextExternalSourceIds;
-    });
+    }
+
+    if (notify) {
+      setState(apply);
+    } else {
+      apply();
+    }
   }
 
   Future<void> _openSourceSettings(BrowsableComicSource source) async {
@@ -3382,9 +3453,8 @@ final class _SourceManagementScreenState
       networkBridge: widget.networkBridge,
       onExternalSourcesChanged: widget.onExternalSourcesChanged,
     );
-    final controller = widget.externalPlugins;
-    if (mounted && controller != null) {
-      _refreshExternalSources(controller);
+    if (mounted) {
+      _refreshExternalSources(_readExternalSources());
     }
   }
 
@@ -3414,7 +3484,7 @@ final class _SourceManagementScreenState
       appBar: AppBar(title: const Text('漫画源管理')),
       body: Column(
         children: <Widget>[
-          if (widget.externalPlugins != null)
+          if (_externalPlugins != null)
             Card(
               margin: const EdgeInsets.fromLTRB(12, 10, 12, 4),
               child: Column(

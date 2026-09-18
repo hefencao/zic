@@ -34,6 +34,7 @@ void main() {
     );
     expect(projection.sourceForId('fixture:builtin'), isNotNull);
     expect(projection.sourceForId('plugin:initial'), isNotNull);
+    expect(projection.externalSourceIds, <String>{'plugin:initial'});
 
     final candidate = projection.composeForServices(
       replacementCache,
@@ -54,6 +55,7 @@ void main() {
 
     expect(projection.sourceForId('plugin:initial'), isNull);
     expect(projection.sourceForId('plugin:replacement'), isNotNull);
+    expect(projection.externalSourceIds, <String>{'plugin:replacement'});
   });
 
   test('external projection persists canonical ids before conditional reload',

@@ -33,6 +33,7 @@ for marker, label in (
     ("List<BrowsableComicSource> composeForServices(", "service candidate projection"),
     ("void adoptServiceProjection(", "service adoption commit"),
     ("Future<void> refreshExternalSources(", "external source projection"),
+    ("Set<String> get externalSourceIds", "read-only external-source identity projection"),
     ("Set<String> _externalSourceIds", "explicit external-source ownership"),
     ("Future<bool> _persistKnownCanonicalComicIds()", "canonical identity persistence"),
     ("CachedBrowsableComicSource(", "shared response-cache decoration"),
@@ -67,6 +68,11 @@ require(
     "_sourceProjection.refreshExternalSources(controller.activeSources)",
     "external lifecycle to projection handoff",
 )
+require(
+    home,
+    "final initialExternalSourceIds = _sourceProjection.externalSourceIds;",
+    "source-management projection-owned external identity seed",
+)
 
 for forbidden in (
     "late List<BrowsableComicSource> _sources",
@@ -86,7 +92,7 @@ require(
     "source-management explicit external-source ownership",
 )
 refresh_start = source_management.index(
-    "  void _refreshExternalSources(ExternalPluginController controller) {"
+    "  void _replaceExternalSources("
 )
 refresh_end = source_management.index(
     "  Future<void> _openSourceSettings", refresh_start

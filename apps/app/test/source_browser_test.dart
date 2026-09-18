@@ -178,6 +178,62 @@ void main() {
     expect(find.byKey(comicSourceChoiceKey('fixture-a')), findsOneWidget);
   });
 
+  testWidgets('source management follows external source generation while open',
+      (tester) async {
+    final builtIn = _FixtureSource('fixture-built-in', '内置源');
+    final firstExternal = _FixtureSource('venera:first-live', '外部源一');
+    final secondExternal = _FixtureSource('venera:second-live', '外部源二');
+    final thirdExternal = _FixtureSource('venera:third-live', '外部源三');
+    // The route seed still contains the first generation, while the resolver
+    // has already advanced before State subscribes to the live change signal.
+    var externalSources = <BrowsableComicSource>[secondExternal];
+    final changes = StreamController<void>.broadcast();
+    addTearDown(changes.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SourceManagementScreen(
+          sources: <BrowsableComicSource>[builtIn, firstExternal],
+          preferences: const <String, ComicSourcePreference>{},
+          onPreferenceChanged: (_) async {},
+          initialExternalSourceIds: <String>{firstExternal.sourceId},
+          readExternalSources: () => externalSources,
+          externalSourceChanges: changes.stream,
+        ),
+      ),
+    );
+
+    expect(
+      find.byKey(ValueKey<String>('source-manager:${builtIn.sourceId}')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(ValueKey<String>('source-manager:${firstExternal.sourceId}')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(ValueKey<String>('source-manager:${secondExternal.sourceId}')),
+      findsOneWidget,
+    );
+
+    externalSources = <BrowsableComicSource>[thirdExternal];
+    changes.add(null);
+    await tester.pump();
+
+    expect(
+      find.byKey(ValueKey<String>('source-manager:${builtIn.sourceId}')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(ValueKey<String>('source-manager:${secondExternal.sourceId}')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(ValueKey<String>('source-manager:${thirdExternal.sourceId}')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('source cards project shelf membership without owning it',
       (tester) async {
     final source = _FixtureSource('fixture-shelf', '书架标记源');

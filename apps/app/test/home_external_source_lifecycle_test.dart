@@ -39,6 +39,57 @@ void main() {
     expect(lifecycle.activeController, same(controller));
   });
 
+  test('source projection signal follows refresh and controller adoption',
+      () async {
+    final firstRoot =
+        await Directory.systemTemp.createTemp('zic-external-signal-a-');
+    final secondRoot =
+        await Directory.systemTemp.createTemp('zic-external-signal-b-');
+    addTearDown(() => firstRoot.delete(recursive: true));
+    addTearDown(() => secondRoot.delete(recursive: true));
+    final first = await ExternalPluginController.openDeferred(
+      firstRoot.path,
+      discoverDeviceMihonExtensions: false,
+      deferRuntimeActivation: true,
+    );
+    final second = await ExternalPluginController.openDeferred(
+      secondRoot.path,
+      discoverDeviceMihonExtensions: false,
+      deferRuntimeActivation: true,
+    );
+    addTearDown(first.close);
+    addTearDown(second.close);
+    final lifecycle = HomeExternalSourceLifecycle(
+      loaderProvider: () => null,
+      sourceAvailable: (_) => false,
+      isDeferredSource: (_) => true,
+      refreshProjection: (_) async {},
+    );
+    addTearDown(lifecycle.close);
+    var changes = 0;
+    final subscription = lifecycle.sourceProjectionChanges.listen((_) {
+      changes++;
+    });
+    addTearDown(subscription.cancel);
+
+    lifecycle.initialize(first);
+    await Future<void>.delayed(Duration.zero);
+    expect(changes, 1);
+
+    await lifecycle.refreshCurrentProjection();
+    await Future<void>.delayed(Duration.zero);
+    expect(changes, 2);
+
+    lifecycle.adoptController(first);
+    await Future<void>.delayed(Duration.zero);
+    expect(changes, 2);
+
+    lifecycle.adoptController(second);
+    await Future<void>.delayed(Duration.zero);
+    expect(changes, 3);
+    expect(lifecycle.activeController, same(second));
+  });
+
   test('exact source wait stays pending until loader handoff exists', () async {
     final root = await Directory.systemTemp.createTemp('zic-external-wait-');
     addTearDown(() => root.delete(recursive: true));
