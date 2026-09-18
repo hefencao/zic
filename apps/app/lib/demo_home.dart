@@ -1431,24 +1431,24 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Future<void> _createCategory() async {
-    final controller = TextEditingController();
+    var draft = '';
     final name = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('新建分类'),
-        content: TextField(
-          controller: controller,
+        content: TextFormField(
+          onChanged: (value) => draft = value,
           autofocus: true,
           decoration: const InputDecoration(hintText: '分类名称'),
-          onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
+          onFieldSubmitted: (value) =>
+              Navigator.of(context).pop(value.trim()),
         ),
         actions: <Widget>[
           AppDialogActions(
             onClose: () => Navigator.of(context).pop(),
             actions: <Widget>[
               FilledButton(
-                onPressed: () =>
-                    Navigator.of(context).pop(controller.text.trim()),
+                onPressed: () => Navigator.of(context).pop(draft.trim()),
                 child: const Text('创建'),
               ),
             ],
@@ -1456,7 +1456,6 @@ final class _DemoHomeState extends State<DemoHome> {
         ],
       ),
     );
-    controller.dispose();
     if (name == null || name.isEmpty) {
       return;
     }

@@ -936,6 +936,34 @@ void main() {
     );
   });
 
+  testWidgets('debug trace export directory dialog keeps input alive through close',
+      (tester) async {
+    final log = DebugTraceLog(maxEvents: 1);
+    addTearDown(log.dispose);
+    String? changed;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DebugTraceScreen(
+          log: log,
+          exportDirectory: 'Debug',
+          onExportDirectoryChanged: (value) => changed = value,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(debugTraceExportDirectoryKey));
+    await tester.pumpAndSettle();
+    expect(find.text('Trace 导出目录'), findsOneWidget);
+
+    await tester.enterText(find.byType(TextFormField), 'Debug/Reader');
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pumpAndSettle();
+
+    expect(changed, 'Debug/Reader');
+    expect(find.text('导出目录 Download/Debug/Reader'), findsOneWidget);
+  });
+
   testWidgets('debug trace export gives immediate busy feedback and is single-flight',
       (tester) async {
     final log = DebugTraceLog(maxEvents: 1, maxExportEvents: 10);

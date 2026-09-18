@@ -355,7 +355,7 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
       orElse: () => targets.first,
     );
     final currentSource = _sourceForId(comic.sourceId);
-    final controller = TextEditingController();
+    var targetComicId = '';
     final choice = await showDialog<
         ({BrowsableComicSource source, String? id, bool search, bool versions})>(
       context: context,
@@ -396,8 +396,10 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
                     },
                   ),
                   const SizedBox(height: 12),
-                  TextField(
-                    controller: controller,
+                  TextFormField(
+                    onChanged: (value) {
+                      setDialogState(() => targetComicId = value);
+                    },
                     decoration: InputDecoration(
                       labelText:
                           sameSource ? '目标版本 ID（可选）' : '目标漫画 ID（可选）',
@@ -405,7 +407,6 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
                           ? '同源版本优先使用来源确认关系；也可明确填写插件原生 ID'
                           : '通常搜索同名作品；仅在搜索不到时手动填写原生 ID',
                     ),
-                    onChanged: (_) => setDialogState(() {}),
                   ),
                   const SizedBox(height: 12),
                   Text(
@@ -440,13 +441,13 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
                   label: const Text('搜索同名作品'),
                 ),
               FilledButton(
-                onPressed: controller.text.trim().isEmpty
+                onPressed: targetComicId.trim().isEmpty
                     ? null
                     : () => Navigator.pop(
                           context,
                           (
                             source: target,
-                            id: controller.text.trim(),
+                            id: targetComicId.trim(),
                             search: false,
                             versions: false,
                           ),
@@ -458,7 +459,6 @@ extension _DemoHomeSourceMigration on _DemoHomeState {
         },
       ),
     );
-    controller.dispose();
     if (choice == null || !mounted) return null;
 
     if (choice.versions) {

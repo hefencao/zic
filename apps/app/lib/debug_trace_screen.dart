@@ -153,42 +153,40 @@ final class _DebugTraceScreenState extends State<DebugTraceScreen> {
   Future<void> _editExportDirectory() async {
     final onChanged = widget.onExportDirectoryChanged;
     if (onChanged == null) return;
-    final controller = TextEditingController(text: _exportDirectory);
-    try {
-      final value = await showDialog<String>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Trace 导出目录'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            decoration: const InputDecoration(
-              prefixText: 'Download/',
-              hintText: 'Debug',
-              helperText: '可使用多级相对子目录，例如 Debug/Reader',
-            ),
-            onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+    var draft = _exportDirectory;
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Trace 导出目录'),
+        content: TextFormField(
+          initialValue: draft,
+          onChanged: (value) => draft = value,
+          autofocus: true,
+          decoration: const InputDecoration(
+            prefixText: 'Download/',
+            hintText: 'Debug',
+            helperText: '可使用多级相对子目录，例如 Debug/Reader',
           ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-              child: const Text('保存'),
-            ),
-          ],
+          onFieldSubmitted: (value) =>
+              Navigator.of(dialogContext).pop(value),
         ),
-      );
-      if (value == null) return;
-      final normalized = normalizeDebugTraceExportDirectory(value);
-      if (!mounted) return;
-      setState(() => _exportDirectory = normalized);
-      onChanged(normalized);
-    } finally {
-      controller.dispose();
-    }
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(draft),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    if (value == null) return;
+    final normalized = normalizeDebugTraceExportDirectory(value);
+    if (!mounted) return;
+    setState(() => _exportDirectory = normalized);
+    onChanged(normalized);
   }
 
   @override
