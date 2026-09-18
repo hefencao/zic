@@ -47,6 +47,25 @@ deactivate_end = REGISTRY.index('\n  Future<void> _deactivate(', deactivate_star
 deactivate_body = REGISTRY[deactivate_start:deactivate_end]
 require(deactivate_body, '_deactivations[pluginId]', 'same-plugin deactivation coalescing')
 require(deactivate_body, '_deactivations[pluginId] = deactivation;', 'deactivation publication')
+require(
+    REGISTRY,
+    'void _requirePluginNotDeactivating(String pluginId)',
+    'per-plugin destructive admission fence',
+)
+
+for signature in (
+    'Future<List<BrowsableComicSource>> activate(',
+    'Future<List<BrowsableComicSource>> replace(',
+):
+    start = REGISTRY.index(signature)
+    next_method = REGISTRY.index('\n  Future<', start + len(signature))
+    body = REGISTRY[start:next_method]
+    guard = body.index('_requirePluginNotDeactivating(plugin.pluginId);')
+    first_session_read = body.index('_sessions[plugin.pluginId]')
+    if guard > first_session_read:
+        raise SystemExit(
+            f'deactivation fence must precede existing-session lookup: {signature}'
+        )
 
 registry_close_start = REGISTRY.index('Future<void> _close() async {')
 registry_close_end = REGISTRY.index('\n  void _requireOpen()', registry_close_start)

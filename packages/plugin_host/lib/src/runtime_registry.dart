@@ -47,6 +47,7 @@ final class ExternalPluginRuntimeRegistry {
     ExternalComicPluginCatalogEntry plugin,
   ) async {
     _requireOpen();
+    _requirePluginNotDeactivating(plugin.pluginId);
     final existing = _sessions[plugin.pluginId];
     if (existing != null) {
       return List<BrowsableComicSource>.unmodifiable(existing.sources);
@@ -70,6 +71,7 @@ final class ExternalPluginRuntimeRegistry {
     ExternalComicPluginCatalogEntry plugin,
   ) async {
     _requireOpen();
+    _requirePluginNotDeactivating(plugin.pluginId);
     final existing = _sessions[plugin.pluginId];
     if (existing == null) return activate(plugin);
     final pending = _activations[plugin.pluginId];
@@ -341,6 +343,14 @@ final class ExternalPluginRuntimeRegistry {
     }
     if (firstError != null) {
       Error.throwWithStackTrace(firstError, firstStackTrace!);
+    }
+  }
+
+  void _requirePluginNotDeactivating(String pluginId) {
+    if (_deactivations.containsKey(pluginId)) {
+      throw StateError(
+        'external plugin runtime is deactivating: $pluginId',
+      );
     }
   }
 

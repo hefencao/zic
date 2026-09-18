@@ -527,6 +527,158 @@ void main() {
     await Future.wait<void>(<Future<void>>[first, second]);
   });
 
+  test('activation is fenced while the same plugin is deactivating',
+      () async {
+    final plugin = _veneraPlugin();
+    final session = _BlockingCloseSession(
+      plugin,
+      <BrowsableComicSource>[_Source('venera:fixture')],
+    );
+    final registry = ExternalPluginRuntimeRegistry(
+      <ExternalComicPluginHost>[
+        _QueueHost(<ExternalComicPluginSession>[session]),
+      ],
+    );
+    addTearDown(() async {
+      if (!session.releaseClose.isCompleted) {
+        session.releaseClose.complete();
+      }
+      await registry.close();
+    });
+
+    await registry.activate(plugin);
+    final deactivation = registry.deactivate(plugin.pluginId);
+    await session.closeStarted.future;
+
+    await expectLater(
+      registry.activate(plugin),
+      throwsA(isA<StateError>()),
+    );
+
+    session.releaseClose.complete();
+    await deactivation;
+  });
+
+  test('replacement is fenced before candidate activation during deactivation',
+      () async {
+    final plugin = _veneraPlugin();
+    final current = _BlockingCloseSession(
+      plugin,
+      <BrowsableComicSource>[_Source('venera:fixture')],
+    );
+    final replacement = _Session(
+      plugin,
+      <BrowsableComicSource>[_Source('venera:fixture')],
+    );
+    final host = _QueueHost(
+      <ExternalComicPluginSession>[current, replacement],
+    );
+    final registry = ExternalPluginRuntimeRegistry(
+      <ExternalComicPluginHost>[host],
+    );
+    addTearDown(() async {
+      if (!current.releaseClose.isCompleted) {
+        current.releaseClose.complete();
+      }
+      await registry.close();
+    });
+
+    await registry.activate(plugin);
+    expect(host._index, 1);
+    final deactivation = registry.deactivate(plugin.pluginId);
+    await current.closeStarted.future;
+
+    Object? replaceError;
+    final replacing = registry.replace(plugin).then<void>(
+      (_) {},
+      onError: (Object error, StackTrace _) {
+        replaceError = error;
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+    final activationCalls = host._index;
+    current.releaseClose.complete();
+
+    await replacing;
+    await deactivation;
+
+    expect(activationCalls, 1);
+    expect(replaceError, isA<StateError>());
+    expect(replacement.closed, isFalse);
+  });
+
+  test('deactivation admitted after activation waits and closes committed session',
+      () async {
+    final plugin = _veneraPlugin();
+    final activationGate = Completer<void>();
+    final session = _BlockingCloseSession(
+      plugin,
+      <BrowsableComicSource>[_Source('venera:fixture')],
+    );
+    final host = _BlockingHost(session: session, gate: activationGate);
+    final registry = ExternalPluginRuntimeRegistry(
+      <ExternalComicPluginHost>[host],
+    );
+    addTearDown(() async {
+      if (!activationGate.isCompleted) activationGate.complete();
+      if (!session.releaseClose.isCompleted) {
+        session.releaseClose.complete();
+      }
+      await registry.close();
+    });
+
+    final activation = registry.activate(plugin);
+    expect(host.calls, 1);
+    final deactivation = registry.deactivate(plugin.pluginId);
+    await Future<void>.delayed(Duration.zero);
+    expect(session.closeCalls, 0);
+
+    activationGate.complete();
+    await activation;
+    await session.closeStarted.future;
+    expect(session.closeCalls, 1);
+
+    session.releaseClose.complete();
+    await deactivation;
+    expect(registry.isActive(plugin.pluginId), isFalse);
+  });
+
+  test('deactivation fence is per plugin and preserves sibling activation',
+      () async {
+    final firstPlugin = _veneraPluginNamed('first-fence', 'first-fence');
+    final secondPlugin = _veneraPluginNamed('second-fence', 'second-fence');
+    final first = _BlockingCloseSession(
+      firstPlugin,
+      <BrowsableComicSource>[_Source('venera:first-fence')],
+    );
+    final second = _Session(
+      secondPlugin,
+      <BrowsableComicSource>[_Source('venera:second-fence')],
+    );
+    final registry = ExternalPluginRuntimeRegistry(
+      <ExternalComicPluginHost>[
+        _QueueHost(<ExternalComicPluginSession>[first, second]),
+      ],
+    );
+    addTearDown(() async {
+      if (!first.releaseClose.isCompleted) first.releaseClose.complete();
+      await registry.close();
+    });
+
+    await registry.activate(firstPlugin);
+    final deactivation = registry.deactivate(firstPlugin.pluginId);
+    await first.closeStarted.future;
+
+    final sources = await registry
+        .activate(secondPlugin)
+        .timeout(const Duration(seconds: 1));
+    expect(sources.single.sourceId, 'venera:second-fence');
+    expect(registry.isActive(secondPlugin.pluginId), isTrue);
+
+    first.releaseClose.complete();
+    await deactivation;
+  });
+
   test('runtime registry owns session deactivation', () async {
     final session = _Session(
       _veneraPlugin(),
