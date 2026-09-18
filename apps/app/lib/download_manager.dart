@@ -1092,8 +1092,11 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
             await actions.deleteChapterFiles(entry),
         };
       } else {
-        // Standalone/test harnesses may not have a Home command owner. They
-        // still resolve the latest supplied service generation before mutating.
+        // Hydration may outlive the service generation resolved at action
+        // start. Standalone fallback owns the concrete service, so re-resolve
+        // after hydration before capturing the mutation target.
+        await _resolveServices();
+        if (!mounted) return;
         final downloads = _downloads;
         switch (command) {
           case _DownloadManagerChapterCommand.download:

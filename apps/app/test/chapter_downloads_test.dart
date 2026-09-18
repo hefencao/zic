@@ -325,6 +325,114 @@ void main() {
   });
 
   testWidgets(
+      'download manager chapter fallback re-resolves after hydrate generation change',
+      (tester) async {
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:hydrate-generation',
+        displayName: 'Hydrate generation chapter',
+        sourceId: 'hydrate-generation-source',
+        comicId: 'hydrate-generation-comic',
+        comicTitle: 'Hydrate generation comic',
+        chapterId: 'hydrate-generation-chapter',
+        sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.bin',
+            sourceId: 'memory://hydrate-generation/1',
+            pageId: 'hydrate-generation-page-1',
+            contentKindHint: ContentKindHint.unknown,
+            byteLength: 4,
+          ),
+        ],
+      ),
+    );
+    final firstDelegate = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(4),
+    );
+    await firstDelegate.download(entry);
+    final firstDownloads = _BlockingInspectManyDownloadService(
+      firstDelegate,
+      Future<void>.value(),
+    );
+    final firstQueue = WholeComicDownloadQueue(downloads: firstDownloads);
+    await firstQueue.ready;
+    final initial = await firstDownloads.inspect(entry);
+
+    final secondDelegate = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(4),
+    );
+    await secondDelegate.download(entry);
+    final secondDownloads = _BlockingInspectManyDownloadService(
+      secondDelegate,
+      Future<void>.value(),
+    );
+    final secondQueue = WholeComicDownloadQueue(downloads: secondDownloads);
+    await secondQueue.ready;
+
+    var currentServices = DownloadManagerServices(
+      downloads: firstDownloads,
+      wholeComicDownloads: firstQueue,
+    );
+    final serviceChanges = ChangeNotifier();
+    final hydrateStarted = Completer<void>();
+    final releaseHydrate = Completer<void>();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: <ImportedLibraryEntry>[entry],
+          downloads: firstDownloads,
+          wholeComicDownloads: firstQueue,
+          initialSnapshots: <ChapterDownloadSnapshot>[initial],
+          serviceChanges: serviceChanges,
+          resolveServices: () async => currentServices,
+          hydrateEntry: (value) async {
+            if (!hydrateStarted.isCompleted) hydrateStarted.complete();
+            await releaseHydrate.future;
+            return value;
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    await tester.tap(find.byKey(downloadManagerDeleteKey(initial.identity)));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '删除'));
+    await tester.pump();
+    await hydrateStarted.future;
+
+    currentServices = DownloadManagerServices(
+      downloads: secondDownloads,
+      wholeComicDownloads: secondQueue,
+    );
+    serviceChanges.notifyListeners();
+    releaseHydrate.complete();
+
+    for (var frame = 0;
+        frame < 40 &&
+            firstDownloads.deleteCalls == 0 &&
+            secondDownloads.deleteCalls == 0;
+        frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+
+    expect(firstDownloads.deleteCalls, 0);
+    expect(secondDownloads.deleteCalls, 1);
+    expect(await firstDelegate.isDownloaded(entry), isTrue);
+    expect(await secondDelegate.isDownloaded(entry), isFalse);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    serviceChanges.dispose();
+    unawaited(firstQueue.close());
+    unawaited(secondQueue.close());
+    unawaited(firstDownloads.close());
+    unawaited(secondDownloads.close());
+  });
+
+  testWidgets(
       'download manager re-resolves services after a later generation change',
       (tester) async {
     final firstDownloads = MemoryChapterDownloadService(

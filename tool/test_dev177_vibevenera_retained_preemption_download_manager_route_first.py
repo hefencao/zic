@@ -129,6 +129,29 @@ for token in (
     '_DownloadManagerQueueCommand',
 ):
     require(manager, token, 'route-first download manager')
+task_action_start = manager.index('Future<void> _performTaskAction(')
+task_action_end = manager.index(
+    'Future<void> _convertCacheToDownload(',
+    task_action_start,
+)
+task_action = manager[task_action_start:task_action_end]
+hydrate_wait = task_action.index('final hydrated = await widget.hydrateEntry!')
+actions_branch = task_action.index('if (actions != null) {')
+fallback_branch = task_action.index('} else {', actions_branch)
+fallback_resolve = task_action.index(
+    'await _resolveServices();',
+    fallback_branch,
+)
+downloads_capture = task_action.index('final downloads = _downloads;', fallback_branch)
+if not hydrate_wait < fallback_resolve < downloads_capture:
+    raise SystemExit(
+        'standalone chapter fallback must re-resolve after hydrate before service capture'
+    )
+if 'await _resolveServices();' in task_action[actions_branch:fallback_branch]:
+    raise SystemExit(
+        'Home chapter commandActions branch must not add a post-hydrate concrete resolve'
+    )
+
 policy_start = manager.index('Future<void> _editQueuePolicy() async {')
 policy_end = manager.index(
     'Future<void> _queueAction(',
@@ -227,6 +250,7 @@ for token in (
     'expect(taskList.childrenDelegate, isA<SliverChildBuilderDelegate>());',
     'download manager keeps persisted Home projection visible during handoff',
     'expect(releaseServices.isCompleted, isFalse);',
+    'download manager chapter fallback re-resolves after hydrate generation change',
     'download manager re-resolves services after a later generation change',
     'download manager policy fallback re-resolves after an open dialog',
     'download manager catches a generation change during service resolution',
