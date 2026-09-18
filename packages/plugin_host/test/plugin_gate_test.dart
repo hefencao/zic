@@ -204,6 +204,20 @@ void main() {
     expect(executor.calls, 1);
   });
 
+  test('runtime registry close is joinable across concurrent callers',
+      () async {
+    final registry = ExternalPluginRuntimeRegistry(
+      const <ExternalComicPluginHost>[],
+    );
+
+    final first = registry.close();
+    final second = registry.close();
+
+    expect(identical(first, second), isTrue);
+    await expectLater(registry.activate(_veneraPlugin()), throwsStateError);
+    await Future.wait<void>(<Future<void>>[first, second]);
+  });
+
   test('runtime registry closes colliding plugin sources', () async {
     final firstPlugin = ExternalComicPluginCatalogEntry(
       format: ExternalComicPluginFormat.veneraJavaScript,

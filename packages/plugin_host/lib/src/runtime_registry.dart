@@ -26,6 +26,7 @@ final class ExternalPluginRuntimeRegistry {
   final Map<String, Future<List<BrowsableComicSource>>> _activations =
       <String, Future<List<BrowsableComicSource>>>{};
   Future<void> _commitTail = Future<void>.value();
+  Future<void>? _closeFuture;
   final Map<String, String> _sourceOwners = <String, String>{};
   bool _closed = false;
 
@@ -280,10 +281,9 @@ final class ExternalPluginRuntimeRegistry {
     }
   }
 
-  Future<void> close() async {
-    if (_closed) {
-      return;
-    }
+  Future<void> close() => _closeFuture ??= _close();
+
+  Future<void> _close() async {
     _closed = true;
     final pending = _activations.values.toList(growable: false);
     if (pending.isNotEmpty) {

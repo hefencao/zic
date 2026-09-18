@@ -10,6 +10,9 @@ CONTROLLER = (
 GATE = (
     ROOT / 'packages/plugin_host_bridge/lib/src/external_plugin_mutation_gate.dart'
 ).read_text(encoding='utf-8')
+REGISTRY = (
+    ROOT / 'packages/plugin_host/lib/src/runtime_registry.dart'
+).read_text(encoding='utf-8')
 
 
 def require(body: str, marker: str, label: str) -> None:
@@ -26,6 +29,12 @@ require(
     CONTROLLER,
     'Future<void> close() => _closeFuture ??= _close();',
     'joinable public close boundary',
+)
+require(REGISTRY, 'Future<void>? _closeFuture;', 'joinable registry close future')
+require(
+    REGISTRY,
+    'Future<void> close() => _closeFuture ??= _close();',
+    'joinable registry close boundary',
 )
 
 for signature, marker in (
