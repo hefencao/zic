@@ -4,6 +4,8 @@ import 'package:domain/domain.dart';
 
 import 'home_library_session.dart';
 
+typedef HomeMigrationDurableLibraryBoundary = Future<void> Function();
+
 typedef HomeMigrationPreferenceSaver = Future<void> Function(
   ComicPreference preference,
 );
@@ -47,6 +49,7 @@ final class HomeSourceMigrationResult {
 final class HomeSourceMigrationTransaction {
   HomeSourceMigrationTransaction({
     required this.session,
+    required this.ensureDurableLibrary,
     required this.artifactCache,
     required this.verifiedPageReuseIdentity,
     required this.savePreference,
@@ -55,6 +58,7 @@ final class HomeSourceMigrationTransaction {
   });
 
   final HomeLibrarySession session;
+  final HomeMigrationDurableLibraryBoundary ensureDurableLibrary;
   final ArtifactCacheManager? Function() artifactCache;
   final HomeMigrationVerifiedPageReuseIdentity verifiedPageReuseIdentity;
   final HomeMigrationPreferenceSaver savePreference;
@@ -123,6 +127,7 @@ final class HomeSourceMigrationTransaction {
   }
 
   Future<bool> _recoverCommittedOnce() async {
+    await ensureDurableLibrary();
     final store = _journalStore();
     if (store == null) return false;
     var changed = false;
@@ -153,6 +158,7 @@ final class HomeSourceMigrationTransaction {
   }
 
   Future<bool> resumeCommitted(String migrationId) async {
+    await ensureDurableLibrary();
     final store = _journalStore();
     if (store == null) return false;
     final journal = await store.getSourceMigrationJournal(migrationId);

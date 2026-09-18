@@ -62,6 +62,7 @@ void main() {
     );
     final transaction = HomeSourceMigrationTransaction(
       session: session,
+      ensureDurableLibrary: () async {},
       artifactCache: () => null,
       verifiedPageReuseIdentity: ({required sourceId, required locator}) async =>
           null,
@@ -109,6 +110,126 @@ void main() {
       await (library as SourceMigrationJournalStore)
           .listPendingSourceMigrations(),
       isEmpty,
+    );
+  });
+
+  test('confirmed migration crosses durable boundary before journal lookup',
+      () async {
+    final bootstrapLibrary = MemoryImportedLibraryStore();
+    final bootstrapDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final bootstrapQueue =
+        WholeComicDownloadQueue(downloads: bootstrapDownloads);
+    final source = MangaDexSource();
+    final session = HomeLibrarySession(
+      library: bootstrapLibrary,
+      chapterDownloads: bootstrapDownloads,
+      wholeComicDownloads: bootstrapQueue,
+      sources: <BrowsableComicSource>[source],
+      ownsLibrary: false,
+      ownsChapterDownloads: false,
+      ownsWholeComicDownloads: false,
+    );
+    await session.ready;
+
+    final durableLibrary = MemoryImportedLibraryStore();
+    final durableDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final durableQueue = WholeComicDownloadQueue(downloads: durableDownloads);
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await bootstrapQueue.close();
+      await bootstrapDownloads.close();
+      await bootstrapLibrary.close();
+      await durableQueue.close();
+      await durableDownloads.close();
+      await durableLibrary.close();
+    });
+
+    var durableBoundaryCalls = 0;
+    var adopted = false;
+    Future<void> ensureDurableLibrary() async {
+      durableBoundaryCalls++;
+      if (adopted) return;
+      adopted = true;
+      await session.adoptServices(
+        library: durableLibrary,
+        chapterDownloads: durableDownloads,
+        wholeComicDownloads: durableQueue,
+        sources: <BrowsableComicSource>[source],
+        persistSnapshot: false,
+      );
+    }
+
+    final sourceComic = _comic(source.sourceId, 'old-comic', 'Old comic');
+    final targetComic = _comic(source.sourceId, 'new-comic', 'New comic');
+    final targetManifest = ComicManifest(
+      comic: targetComic,
+      chapters: const <Chapter>[],
+    );
+    final sourceProjection = _libraryComic(sourceComic);
+    final sourcePreference = ComicPreference(
+      sourceId: source.sourceId,
+      comicId: sourceComic.comicId,
+      sourceKind: ComicSourceKind.remote,
+      inShelf: true,
+      liked: false,
+      collected: false,
+      categoryIds: const <String>{},
+      customOrder: 1,
+      updatedAt: DateTime.utc(2026, 1, 1),
+    );
+    final transaction = HomeSourceMigrationTransaction(
+      session: session,
+      ensureDurableLibrary: ensureDurableLibrary,
+      artifactCache: () => null,
+      verifiedPageReuseIdentity: ({required sourceId, required locator}) async =>
+          null,
+      savePreference: (_) async {
+        throw StateError('stop after target metadata write');
+      },
+      canonicalComicIdForPersistence: (_, _, {fallback}) => fallback,
+      reportError: (_, _) {},
+    );
+
+    await expectLater(
+      transaction.executeConfirmed(
+        sourceComic: sourceProjection,
+        targetSource: source,
+        targetManifest: targetManifest,
+        plan: ComicSourceMigrationPlan.build(
+          source: sourceProjection,
+          target: targetManifest,
+        ),
+        replacingSource: false,
+        sourcePreference: sourcePreference,
+        targetCustomOrder: 1,
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(durableBoundaryCalls, 1);
+    expect(session.library, same(durableLibrary));
+    expect(
+      await bootstrapLibrary.getSavedComic(source.sourceId, targetComic.comicId),
+      isNull,
+    );
+    expect(
+      await (bootstrapLibrary as SourceMigrationJournalStore)
+          .listPendingSourceMigrations(),
+      isEmpty,
+    );
+    expect(
+      await durableLibrary.getSavedComic(source.sourceId, targetComic.comicId),
+      isNotNull,
+    );
+    expect(
+      await (durableLibrary as SourceMigrationJournalStore)
+          .listPendingSourceMigrations(),
+      hasLength(1),
     );
   });
 
@@ -206,6 +327,7 @@ void main() {
     final errors = <Object>[];
     final transaction = HomeSourceMigrationTransaction(
       session: session,
+      ensureDurableLibrary: () async {},
       artifactCache: () => null,
       verifiedPageReuseIdentity: ({required sourceId, required locator}) async =>
           null,

@@ -396,6 +396,10 @@ final class _DemoHomeState extends State<DemoHome> {
     )..addListener(_handleLibrarySessionChanged);
     _sourceMigrationTransaction = HomeSourceMigrationTransaction(
       session: _librarySession,
+      ensureDurableLibrary: () async {
+        await _serviceHandoff?.ensureCoreServices?.call();
+        await _adoptDurableServices();
+      },
       artifactCache: () => _readerArtifactCache,
       verifiedPageReuseIdentity: ({required sourceId, required locator}) =>
           _sourceResources.verifiedPageReuseIdentity(

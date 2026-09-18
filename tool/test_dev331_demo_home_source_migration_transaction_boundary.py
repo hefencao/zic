@@ -23,6 +23,9 @@ for marker, label in (
     ("late final HomeSourceMigrationTransaction _sourceMigrationTransaction;", "single transaction owner"),
     ("_sourceMigrationTransaction = HomeSourceMigrationTransaction(", "owner composition"),
     ("session: _librarySession,", "session authority"),
+    ("ensureDurableLibrary: () async {", "durable library boundary"),
+    ("await _serviceHandoff?.ensureCoreServices?.call();", "durable service open"),
+    ("await _adoptDurableServices();", "durable service adoption"),
     ("artifactCache: () => _readerArtifactCache,", "generation cache capability"),
     ("verifiedPageReuseIdentity:", "narrow reuse capability"),
 ):
@@ -52,8 +55,10 @@ for marker, label in (
 
 for marker, label in (
     ("final class HomeSourceMigrationTransaction", "transaction owner"),
+    ("HomeMigrationDurableLibraryBoundary ensureDurableLibrary", "narrow durable boundary"),
     ("SourceMigrationJournalStore? _journalStore()", "journal capability"),
     ("Future<bool> recoverCommitted()", "recovery single-flight"),
+    ("await ensureDurableLibrary();\n    final store = _journalStore();", "recovery/resume durable-before-journal order"),
     ("Future<bool> resumeCommitted(String migrationId)", "specific committed resume"),
     ("Future<HomeSourceMigrationResult> executeConfirmed({", "confirmed transaction"),
     ("VerifiedArtifactReusePlan.match(", "verified artifact reuse"),
@@ -74,6 +79,7 @@ for forbidden in (
     "setState(",
     "_DemoHomeState",
     "ComicSourceResourceGateway",
+    "HomeServiceHandoff",
     "summaryMessages(",
     "漫画偏好已合并",
 ):
