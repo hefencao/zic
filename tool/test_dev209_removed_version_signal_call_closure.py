@@ -11,6 +11,7 @@ def read(path: str) -> str:
 
 migration = read("apps/app/lib/demo_home_source_migration.dart")
 version_lifecycle = read("apps/app/lib/home_version_reuse_lifecycle.dart")
+home_session = read("apps/app/lib/home_library_session.dart")
 if "_reconcileConfirmedSourceUpdateSignal" in migration:
     raise SystemExit(
         "removed version-to-sourceUpdateAt reconcile symbol still referenced in migration path"
@@ -25,6 +26,19 @@ for token in (
 ):
     if token not in version_lifecycle:
         raise SystemExit(f"missing current version relation owner contract: {token}")
+for token in (
+    "Future<ImportedLibraryStore> _persistVersionRelation(",
+    "final persistedLibrary = await _persistVersionRelation(relation);",
+    "if (!identical(library, persistedLibrary))",
+    "final libraryStore = library;",
+    "await store.saveComicVersionRelation(relation);",
+    "await _serviceAdoption;",
+    "if (identical(library, libraryStore))",
+):
+    if token not in home_session:
+        raise SystemExit(f"missing stable version relation persistence contract: {token}")
+if "saveComicVersionRelation(" in version_lifecycle:
+    raise SystemExit("version lifecycle bypasses HomeLibrarySession relation persistence")
 if "DateTime? _projectedConfirmedSourceUpdateAt(" not in migration:
     raise SystemExit("missing current source-update projection contract")
 

@@ -1744,6 +1744,215 @@ void main() {
     expect(session.readStates, isEmpty);
   });
 
+  test(
+      'version relation write retries current library after in-flight adoption',
+      () async {
+    final firstDelegate = MemoryImportedLibraryStore();
+    final firstLibrary = _GatedLibraryStore(
+      firstDelegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final writeStarted = Completer<void>();
+    final releaseWrite = Completer<void>();
+    firstLibrary.versionRelationWriteStarted = writeStarted;
+    firstLibrary.versionRelationWriteReturnGate = releaseWrite.future;
+    final firstDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final firstQueue = WholeComicDownloadQueue(downloads: firstDownloads);
+    final session = HomeLibrarySession(
+      library: firstLibrary,
+      chapterDownloads: firstDownloads,
+      wholeComicDownloads: firstQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    await session.ready;
+
+    final secondLibrary = MemoryImportedLibraryStore();
+    final secondDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final secondQueue = WholeComicDownloadQueue(downloads: secondDownloads);
+    addTearDown(() async {
+      if (!releaseWrite.isCompleted) {
+        releaseWrite.complete();
+      }
+      await session.close();
+      session.dispose();
+      await secondQueue.close();
+      await secondDownloads.close();
+      await secondLibrary.close();
+    });
+
+    final relation = ComicVersionRelation(
+      sourceId: 'fixture-source',
+      predecessorComicId: 'old-comic',
+      successorComicId: 'new-comic',
+      predecessorTitle: 'Old comic',
+      discoveredAt: DateTime.utc(2026, 9, 18),
+    );
+    final writeFuture = session.upsertVersionRelation(relation);
+    await writeStarted.future;
+
+    await session.adoptServices(
+      library: secondLibrary,
+      chapterDownloads: secondDownloads,
+      wholeComicDownloads: secondQueue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    );
+    releaseWrite.complete();
+    await writeFuture;
+
+    expect(session.library, same(secondLibrary));
+    expect(session.versionRelations, hasLength(1));
+    expect(session.versionRelations.single.successorComicId, 'new-comic');
+    expect(
+      await secondLibrary.listAllComicVersionRelations(),
+      hasLength(1),
+    );
+    expect(
+      (await secondLibrary.listAllComicVersionRelations())
+          .single
+          .successorComicId,
+      'new-comic',
+    );
+  });
+
+  test(
+      'derived version relation write retries current library after adoption',
+      () async {
+    final firstDelegate = MemoryImportedLibraryStore();
+    final firstLibrary = _GatedLibraryStore(
+      firstDelegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final firstDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final firstQueue = WholeComicDownloadQueue(downloads: firstDownloads);
+    final session = HomeLibrarySession(
+      library: firstLibrary,
+      chapterDownloads: firstDownloads,
+      wholeComicDownloads: firstQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    await session.ready;
+
+    final base = ComicVersionRelation(
+      sourceId: 'fixture-source',
+      predecessorComicId: 'old-comic',
+      successorComicId: 'new-comic',
+      predecessorTitle: 'Old comic',
+      discoveredAt: DateTime.utc(2026, 9, 18),
+    );
+    await session.upsertVersionRelation(base);
+
+    final secondLibrary = MemoryImportedLibraryStore();
+    await secondLibrary.open();
+    await secondLibrary.saveComicVersionRelation(base);
+    final secondDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final secondQueue = WholeComicDownloadQueue(downloads: secondDownloads);
+    final writeStarted = Completer<void>();
+    final releaseWrite = Completer<void>();
+    firstLibrary.versionRelationWriteStarted = writeStarted;
+    firstLibrary.versionRelationWriteReturnGate = releaseWrite.future;
+    addTearDown(() async {
+      if (!releaseWrite.isCompleted) {
+        releaseWrite.complete();
+      }
+      await session.close();
+      session.dispose();
+      await secondQueue.close();
+      await secondDownloads.close();
+      await secondLibrary.close();
+    });
+
+    final derived = ComicVersionRelation(
+      sourceId: base.sourceId,
+      predecessorComicId: base.predecessorComicId,
+      successorComicId: base.successorComicId,
+      predecessorTitle: base.predecessorTitle,
+      discoveredAt: base.discoveredAt,
+      pageMappings: const <ComicVersionPageMapping>[
+        ComicVersionPageMapping(
+          predecessorChapterId: 'old-chapter',
+          successorChapterId: 'new-chapter',
+          predecessorPageCount: 1,
+          successorPageCount: 1,
+          successorOffset: 0,
+        ),
+      ],
+    );
+    final writeFuture = session.upsertVersionRelationDerivedState(derived);
+    await writeStarted.future;
+
+    await session.adoptServices(
+      library: secondLibrary,
+      chapterDownloads: secondDownloads,
+      wholeComicDownloads: secondQueue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    );
+    releaseWrite.complete();
+    await writeFuture;
+
+    expect(session.versionRelations.single.pageMappings, hasLength(1));
+    final persisted = await secondLibrary.listAllComicVersionRelations();
+    expect(persisted, hasLength(1));
+    expect(persisted.single.pageMappings, hasLength(1));
+  });
+
+  test('current version relation store failure still propagates', () async {
+    final delegate = MemoryImportedLibraryStore();
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+    library.versionRelationWriteError = StateError('fixture relation write');
+
+    await expectLater(
+      session.upsertVersionRelation(
+        ComicVersionRelation(
+          sourceId: 'fixture-source',
+          predecessorComicId: 'old-comic',
+          successorComicId: 'new-comic',
+          discoveredAt: DateTime.utc(2026, 9, 18),
+        ),
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(session.versionRelations, isEmpty);
+    expect(await delegate.listAllComicVersionRelations(), isEmpty);
+  });
+
   test('confirmed version relations are a write-through Home projection',
       () async {
     final library = MemoryImportedLibraryStore();
@@ -3007,7 +3216,8 @@ final class _GatedLibraryStore
     implements
         ImportedLibraryStore,
         ImportedLibraryBatchLookup,
-        ImportedLibraryRevisionStore {
+        ImportedLibraryRevisionStore,
+        ComicVersionRelationStore {
   _GatedLibraryStore(
     this.delegate,
     this.categories, {
@@ -3027,6 +3237,12 @@ final class _GatedLibraryStore
   var listCalls = 0;
   var getCalls = 0;
   var getManyCalls = 0;
+  Completer<void>? versionRelationWriteStarted;
+  Future<void>? versionRelationWriteReturnGate;
+  Object? versionRelationWriteError;
+
+  ComicVersionRelationStore get _versionRelations =>
+      delegate as ComicVersionRelationStore;
 
   @override
   Future<int?> get libraryProjectionRevision async {
@@ -3119,6 +3335,44 @@ final class _GatedLibraryStore
         sourcePreferenceWrites++;
         return delegate.saveSourcePreference(preference);
       });
+  @override
+  Future<List<ComicVersionRelation>> listAllComicVersionRelations() =>
+      _versionRelations.listAllComicVersionRelations();
+
+  @override
+  Future<List<ComicVersionRelation>> listComicVersionPredecessors(
+    String sourceId,
+    String successorComicId,
+  ) =>
+      _versionRelations.listComicVersionPredecessors(
+        sourceId,
+        successorComicId,
+      );
+
+  @override
+  Future<List<ComicVersionRelation>> listComicVersionSuccessors(
+    String sourceId,
+    String predecessorComicId,
+  ) =>
+      _versionRelations.listComicVersionSuccessors(
+        sourceId,
+        predecessorComicId,
+      );
+
+  @override
+  Future<void> saveComicVersionRelation(ComicVersionRelation relation) async {
+    final error = versionRelationWriteError;
+    if (error != null) {
+      throw error;
+    }
+    await _versionRelations.saveComicVersionRelation(relation);
+    final started = versionRelationWriteStarted;
+    if (started != null && !started.isCompleted) {
+      started.complete();
+    }
+    await versionRelationWriteReturnGate;
+  }
+
   @override
   Future<List<LibraryMigrationIssue>> listMigrationIssues({
     bool includeAcknowledged = false,

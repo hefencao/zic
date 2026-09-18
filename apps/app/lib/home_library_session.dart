@@ -2000,8 +2000,14 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<void> flushVersionReuseEvidence() => _versionEvidenceWriteTail;
 
   Future<void> upsertVersionRelation(ComicVersionRelation relation) async {
-    await _persistVersionRelation(relation);
-    replaceVersionRelation(relation);
+    while (true) {
+      final persistedLibrary = await _persistVersionRelation(relation);
+      if (!identical(library, persistedLibrary)) {
+        continue;
+      }
+      replaceVersionRelation(relation);
+      break;
+    }
     await _canonicalPhysicalBackfillTail;
   }
 
@@ -2014,26 +2020,67 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<void> upsertVersionRelationDerivedState(
     ComicVersionRelation relation,
   ) async {
-    await _persistVersionRelation(relation);
-    _replaceVersionRelation(relation, publishHome: false, writeSnapshot: false);
+    while (true) {
+      final persistedLibrary = await _persistVersionRelation(relation);
+      if (!identical(library, persistedLibrary)) {
+        continue;
+      }
+      _replaceVersionRelation(
+        relation,
+        publishHome: false,
+        writeSnapshot: false,
+      );
+      break;
+    }
     await _canonicalPhysicalBackfillTail;
   }
 
-  Future<void> _persistVersionRelation(ComicVersionRelation relation) async {
-    final store = library is ComicVersionRelationStore
-        ? library as ComicVersionRelationStore
-        : null;
-    if (store == null) {
-      throw StateError('library does not persist comic version relations');
-    }
-    await store.saveComicVersionRelation(relation);
-    try {
-      await _assimilateCanonicalMediaRelation(relation);
-    } on Object catch (error) {
-      _homeLog(
-        'canonical-media-assimilation-failed '
-        'sourceId=${relation.sourceId} errorType=${error.runtimeType}',
-      );
+  Future<ImportedLibraryStore> _persistVersionRelation(
+    ComicVersionRelation relation,
+  ) async {
+    while (true) {
+      final libraryStore = library;
+      final ComicVersionRelationStore? store =
+          libraryStore is ComicVersionRelationStore
+              ? libraryStore as ComicVersionRelationStore
+              : null;
+      if (store == null) {
+        if (!identical(library, libraryStore)) {
+          await _serviceAdoption;
+          continue;
+        }
+        throw StateError('library does not persist comic version relations');
+      }
+      try {
+        await store.saveComicVersionRelation(relation);
+      } on Object {
+        if (!identical(library, libraryStore)) {
+          await _serviceAdoption;
+          continue;
+        }
+        rethrow;
+      }
+      if (!identical(library, libraryStore)) {
+        await _serviceAdoption;
+        continue;
+      }
+      try {
+        await _assimilateCanonicalMediaRelation(relation);
+      } on Object catch (error) {
+        if (!identical(library, libraryStore)) {
+          await _serviceAdoption;
+          continue;
+        }
+        _homeLog(
+          'canonical-media-assimilation-failed '
+          'sourceId=${relation.sourceId} errorType=${error.runtimeType}',
+        );
+        return libraryStore;
+      }
+      if (identical(library, libraryStore)) {
+        return libraryStore;
+      }
+      await _serviceAdoption;
     }
   }
 
