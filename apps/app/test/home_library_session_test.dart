@@ -1899,6 +1899,147 @@ void main() {
     );
   });
 
+  test('reload cannot overwrite a concurrent category projection',
+      () async {
+    final delegate = MemoryImportedLibraryStore();
+    await delegate.open();
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+      readCategoriesFromDelegate: true,
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final listStarted = Completer<void>();
+    final releaseList = Completer<void>();
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      if (!releaseList.isCompleted) {
+        releaseList.complete();
+      }
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+
+    library.categoryListCalls = 0;
+    library.categoryListStarted = listStarted;
+    library.categoryListReturnGate = releaseList.future;
+
+    final reload = session.reload();
+    await listStarted.future;
+
+    final category = LibraryCategory(
+      categoryId: 'concurrent-category',
+      name: 'Concurrent',
+      sortOrder: 0,
+      createdAt: DateTime.utc(2026, 9, 18),
+    );
+    await session.upsertCategory(category);
+    expect(
+      session.categories.map((value) => value.categoryId),
+      contains(category.categoryId),
+    );
+
+    releaseList.complete();
+    await reload;
+
+    expect(
+      session.categories.map((value) => value.categoryId),
+      contains(category.categoryId),
+    );
+    expect(
+      (await delegate.listCategories()).map((value) => value.categoryId),
+      contains(category.categoryId),
+    );
+  });
+
+  test(
+      'reload preserves concurrent source preference and active source',
+      () async {
+    const sourceA = _FixtureBrowsableSource('source-a');
+    const sourceB = _FixtureBrowsableSource('source-b');
+    final preferenceA = ComicSourcePreference.defaults(
+      sourceId: sourceA.sourceId,
+      sortOrder: 0,
+    ).copyWith(updatedAt: DateTime.utc(2026, 9, 18));
+    final preferenceB = ComicSourcePreference.defaults(
+      sourceId: sourceB.sourceId,
+      sortOrder: 1,
+    ).copyWith(updatedAt: DateTime.utc(2026, 9, 18));
+
+    final delegate = MemoryImportedLibraryStore();
+    await delegate.open();
+    await delegate.saveSourcePreference(preferenceA);
+    await delegate.saveSourcePreference(preferenceB);
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final listStarted = Completer<void>();
+    final releaseList = Completer<void>();
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[sourceA, sourceB],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      if (!releaseList.isCompleted) {
+        releaseList.complete();
+      }
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+    expect(session.activeSourceId, sourceA.sourceId);
+
+    library.sourcePreferenceListCalls = 0;
+    library.sourcePreferenceListStarted = listStarted;
+    library.sourcePreferenceListReturnGate = releaseList.future;
+
+    final reload = session.reload();
+    await listStarted.future;
+
+    await session.persistSourcePreference(
+      preferenceA.copyWith(
+        enabled: false,
+        updatedAt: DateTime.utc(2026, 9, 18, 1),
+      ),
+    );
+    expect(session.sourcePreferences[sourceA.sourceId]?.enabled, isFalse);
+    expect(session.activeSourceId, sourceB.sourceId);
+
+    releaseList.complete();
+    await reload;
+
+    expect(session.sourcePreferences[sourceA.sourceId]?.enabled, isFalse);
+    expect(session.activeSourceId, sourceB.sourceId);
+    expect(
+      (await delegate.listSourcePreferences())
+          .singleWhere((value) => value.sourceId == sourceA.sourceId)
+          .enabled,
+      isFalse,
+    );
+  });
+
   test(
       'chapter write and readback retry current library after adoption',
       () async {
@@ -3808,6 +3949,44 @@ ChapterManifest _versionManifest({
   );
 }
 
+final class _FixtureBrowsableSource implements BrowsableComicSource {
+  const _FixtureBrowsableSource(this.sourceId);
+
+  @override
+  final String sourceId;
+
+  @override
+  ComicSourceDescriptor get descriptor => ComicSourceDescriptor(
+        sourceId: sourceId,
+        name: sourceId,
+        language: 'en',
+        website: Uri.https('example.test', '/$sourceId'),
+      );
+
+  @override
+  Future<SourceBrowsePage> browse({
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  }) async =>
+      SourceBrowsePage(
+        items: const <SourceComicSummary>[],
+        offset: offset,
+        hasMore: false,
+      );
+
+  @override
+  Future<Uint8List> loadResource(Uri uri) async => Uint8List(0);
+
+  @override
+  Future<ComicManifest> loadComic(String comicId) =>
+      throw UnsupportedError('fixture source does not load comics');
+
+  @override
+  Future<ChapterManifest> loadChapter(String chapterId) =>
+      throw UnsupportedError('fixture source does not load chapters');
+}
+
 final class _GatedLibraryStore
     implements
         ImportedLibraryStore,
@@ -3839,6 +4018,12 @@ final class _GatedLibraryStore
   Future<void>? listReturnGate;
   var getCalls = 0;
   var getManyCalls = 0;
+  var categoryListCalls = 0;
+  Completer<void>? categoryListStarted;
+  Future<void>? categoryListReturnGate;
+  var sourcePreferenceListCalls = 0;
+  Completer<void>? sourcePreferenceListStarted;
+  Future<void>? sourcePreferenceListReturnGate;
   Completer<void>? categoryRemoveStarted;
   Future<void>? categoryRemoveReturnGate;
   Completer<void>? chapterWriteStarted;
@@ -3915,8 +4100,21 @@ final class _GatedLibraryStore
   Future<void> removeSavedComic(String sourceId, String comicId) =>
       delegate.removeSavedComic(sourceId, comicId);
   @override
-  Future<List<LibraryCategory>> listCategories() =>
-      readCategoriesFromDelegate ? delegate.listCategories() : categories;
+  Future<List<LibraryCategory>> listCategories() async {
+    if (!readCategoriesFromDelegate) {
+      return categories;
+    }
+    final result = await delegate.listCategories();
+    categoryListCalls++;
+    final started = categoryListStarted;
+    if (categoryListCalls == 1 &&
+        started != null &&
+        !started.isCompleted) {
+      started.complete();
+      await categoryListReturnGate;
+    }
+    return result;
+  }
   @override
   Future<void> upsertCategory(LibraryCategory category) =>
       delegate.upsertCategory(category);
@@ -3958,8 +4156,18 @@ final class _GatedLibraryStore
   Future<void> saveChapterReadState(ChapterReadState state) =>
       delegate.saveChapterReadState(state);
   @override
-  Future<List<ComicSourcePreference>> listSourcePreferences() =>
-      delegate.listSourcePreferences();
+  Future<List<ComicSourcePreference>> listSourcePreferences() async {
+    final result = await delegate.listSourcePreferences();
+    sourcePreferenceListCalls++;
+    final started = sourcePreferenceListStarted;
+    if (sourcePreferenceListCalls == 1 &&
+        started != null &&
+        !started.isCompleted) {
+      started.complete();
+      await sourcePreferenceListReturnGate;
+    }
+    return result;
+  }
   @override
   Future<void> saveSourcePreference(ComicSourcePreference preference) =>
       Future<void>(() {

@@ -1587,11 +1587,6 @@ final class HomeLibrarySession extends ChangeNotifier {
       'durationMs=${sourceDefaultsClock.elapsedMilliseconds}',
     );
 
-    final nextActiveSourceId = _activeSourceIdFor(
-      sourcePreferences,
-      current: _activeSourceId,
-    );
-
     var nextOrder = preferences.values.fold<int>(
       0,
       (value, preference) =>
@@ -1660,12 +1655,9 @@ final class HomeLibrarySession extends ChangeNotifier {
     final readStates = <String, ChapterReadState>{
       for (final state in await readStatesFuture) state.identity: state,
     };
-    final seedReadStates = projectionChanged ? _readStates : readStates;
-    final seedSourcePreferences = projectionChanged
-        ? _sourcePreferences
-        : sourcePreferences;
-
-    if (_libraryProjectionRevision == projectionRevisionAtStart) {
+    final projectionChangedAtPublish =
+        _libraryProjectionRevision != projectionRevisionAtStart;
+    if (!projectionChangedAtPublish) {
       _replaceAuthoritativeLibraryEntries(entries);
       _savedComics = List<SavedComicRecord>.unmodifiable(savedComics);
       _versionRelations = List<ComicVersionRelation>.unmodifiable(
@@ -1676,15 +1668,31 @@ final class HomeLibrarySession extends ChangeNotifier {
         refreshAuthority: false,
       );
     }
-    _categories = List<LibraryCategory>.unmodifiable(categories);
-    _preferences = Map<String, ComicPreference>.unmodifiable(seedPreferences);
-    _readStates = Map<String, ChapterReadState>.unmodifiable(seedReadStates);
+    _categories = projectionChangedAtPublish
+        ? _categories
+        : List<LibraryCategory>.unmodifiable(categories);
+    _preferences = Map<String, ComicPreference>.unmodifiable(
+      projectionChangedAtPublish
+          ? <String, ComicPreference>{...seedPreferences, ..._preferences}
+          : seedPreferences,
+    );
+    _readStates = projectionChangedAtPublish
+        ? _readStates
+        : Map<String, ChapterReadState>.unmodifiable(readStates);
     _sourcePreferences = Map<String, ComicSourcePreference>.unmodifiable(
-      seedSourcePreferences,
+      projectionChangedAtPublish
+          ? <String, ComicSourcePreference>{
+              ...sourcePreferences,
+              ..._sourcePreferences,
+            }
+          : sourcePreferences,
     );
     _recomputeVersionBaselines(refreshAuthority: false);
     _refreshVersionPageAuthority();
-    _activeSourceId = nextActiveSourceId;
+    _activeSourceId = _activeSourceIdFor(
+      _sourcePreferences,
+      current: _activeSourceId,
+    );
     _error = null;
     _loading = false;
     _publish();
