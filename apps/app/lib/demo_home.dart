@@ -693,8 +693,7 @@ final class _DemoHomeState extends State<DemoHome> {
     ComicSourcePreference preference,
   ) async {
     final updated = preference.copyWith(updatedAt: DateTime.now().toUtc());
-    await _library.saveSourcePreference(updated);
-    _librarySession.replaceSourcePreference(updated);
+    await _librarySession.persistSourcePreference(updated);
   }
 
   Future<void> _publishSourceProjection(
@@ -1042,8 +1041,7 @@ final class _DemoHomeState extends State<DemoHome> {
         );
       }
     }
-    await _library.saveComicPreference(updated);
-    _librarySession.replacePreference(updated);
+    final updatedPreferences = <ComicPreference>[updated];
     for (final alias in _canonicalComicAliases(
       preference.sourceId,
       preference.comicId,
@@ -1069,9 +1067,9 @@ final class _DemoHomeState extends State<DemoHome> {
         customOrder: prior.customOrder,
         updatedAt: now,
       );
-      await _library.saveComicPreference(neutral);
-      _librarySession.replacePreference(neutral);
+      updatedPreferences.add(neutral);
     }
+    await _librarySession.persistPreferences(updatedPreferences);
   }
 
   Future<void> _setChapterRead(
@@ -1095,8 +1093,7 @@ final class _DemoHomeState extends State<DemoHome> {
       isRead: isRead,
       updatedAt: DateTime.now().toUtc(),
     );
-    await _library.saveChapterReadState(state);
-    _librarySession.replaceReadState(state);
+    await _librarySession.persistReadState(state);
   }
 
   Future<void> _enqueueReaderProgress(ReadingProgress progress) {
@@ -1193,8 +1190,7 @@ final class _DemoHomeState extends State<DemoHome> {
           comicId: record.comicId,
           customOrder: _preferences.length,
         ).copyWith(updatedAt: DateTime.now().toUtc());
-        await _library.saveComicPreference(preference);
-        _librarySession.replacePreference(preference);
+        await _librarySession.persistPreference(preference);
       }
       if (!mounted) {
         return;
@@ -1530,15 +1526,17 @@ final class _DemoHomeState extends State<DemoHome> {
       }
     }
     final now = DateTime.now().toUtc();
+    final reorderedPreferences = <ComicPreference>[];
     for (var index = 0; index < merged.length; index++) {
       final comic = merged[index];
-      final preference = _preferenceForComic(comic).copyWith(
-        customOrder: index,
-        updatedAt: now.add(Duration(microseconds: index)),
+      reorderedPreferences.add(
+        _preferenceForComic(comic).copyWith(
+          customOrder: index,
+          updatedAt: now.add(Duration(microseconds: index)),
+        ),
       );
-      await _library.saveComicPreference(preference);
     }
-    await _reloadLibrary();
+    await _librarySession.persistPreferences(reorderedPreferences);
   }
 
   void _clearManagedSelection() {

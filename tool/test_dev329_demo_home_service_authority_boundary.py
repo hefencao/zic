@@ -86,6 +86,35 @@ require(
     "same-service source publication",
 )
 
+for marker, label in (
+    ("Future<ImportedLibraryStore> _persistStableLibraryMutation(", "stable library mutation owner"),
+    ("Future<void> persistPreferences(", "comic preference mutation owner"),
+    ("Future<void> persistSourcePreference(", "source preference mutation owner"),
+    ("Future<void> persistReadState(", "read-state mutation owner"),
+):
+    require(session, marker, label)
+
+for marker, label in (
+    ("_librarySession.persistPreferences(updatedPreferences);", "comic preference delegation"),
+    ("_librarySession.persistSourcePreference(updated);", "source preference delegation"),
+    ("_librarySession.persistReadState(state);", "read-state delegation"),
+    ("_librarySession.persistPreferences(reorderedPreferences);", "batch reorder delegation"),
+):
+    require(home, marker, label)
+
+for forbidden in (
+    "_library.saveComicPreference(",
+    "_library.saveSourcePreference(",
+    "_library.saveChapterReadState(",
+    "_librarySession.replacePreference(",
+    "_librarySession.replaceSourcePreference(",
+    "_librarySession.replaceReadState(",
+):
+    if forbidden in home:
+        raise SystemExit(
+            f"DemoHome bypasses HomeLibrarySession library mutation owner: {forbidden}"
+        )
+
 
 for marker, label in (
     ("void setChapterDownloadRelay(", "dynamic directory capability publisher"),

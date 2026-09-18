@@ -2131,17 +2131,76 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
   }
 
-  void replacePreference(ComicPreference preference) {
-    _preferences = Map<String, ComicPreference>.unmodifiable(
-      <String, ComicPreference>{
-        ..._preferences,
-        preference.identity: preference,
-      },
-    );
+  Future<ImportedLibraryStore> _persistStableLibraryMutation(
+    Future<void> Function(ImportedLibraryStore store) mutate,
+  ) async {
+    while (true) {
+      final libraryStore = library;
+      try {
+        await mutate(libraryStore);
+      } on Object {
+        if (!identical(library, libraryStore)) {
+          await _serviceAdoption;
+          continue;
+        }
+        rethrow;
+      }
+      if (identical(library, libraryStore)) {
+        return libraryStore;
+      }
+      await _serviceAdoption;
+    }
+  }
+
+  Future<void> persistPreference(ComicPreference preference) =>
+      persistPreferences(<ComicPreference>[preference]);
+
+  Future<void> persistPreferences(Iterable<ComicPreference> preferences) async {
+    final values = List<ComicPreference>.unmodifiable(preferences);
+    if (values.isEmpty) return;
+    while (true) {
+      final persistedLibrary = await _persistStableLibraryMutation(
+        (store) async {
+          for (final preference in values) {
+            await store.saveComicPreference(preference);
+          }
+        },
+      );
+      if (!identical(library, persistedLibrary)) {
+        continue;
+      }
+      _replacePreferences(values);
+      return;
+    }
+  }
+
+  void _replacePreferences(Iterable<ComicPreference> preferences) {
+    final next = <String, ComicPreference>{..._preferences};
+    for (final preference in preferences) {
+      next[preference.identity] = preference;
+    }
+    _preferences = Map<String, ComicPreference>.unmodifiable(next);
     _recomputeVersionBaselines();
     _libraryProjectionRevision++;
     _publish();
     _scheduleSnapshotWrite();
+  }
+
+  void replacePreference(ComicPreference preference) {
+    _replacePreferences(<ComicPreference>[preference]);
+  }
+
+  Future<void> persistReadState(ChapterReadState state) async {
+    while (true) {
+      final persistedLibrary = await _persistStableLibraryMutation(
+        (store) => store.saveChapterReadState(state),
+      );
+      if (!identical(library, persistedLibrary)) {
+        continue;
+      }
+      replaceReadState(state);
+      return;
+    }
   }
 
   void replaceReadState(ChapterReadState state) {
@@ -2309,6 +2368,21 @@ final class HomeLibrarySession extends ChangeNotifier {
       return;
     }
     await reload();
+  }
+
+  Future<void> persistSourcePreference(
+    ComicSourcePreference preference,
+  ) async {
+    while (true) {
+      final persistedLibrary = await _persistStableLibraryMutation(
+        (store) => store.saveSourcePreference(preference),
+      );
+      if (!identical(library, persistedLibrary)) {
+        continue;
+      }
+      replaceSourcePreference(preference);
+      return;
+    }
   }
 
   void replaceSourcePreference(ComicSourcePreference preference) {

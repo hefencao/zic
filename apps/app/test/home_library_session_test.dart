@@ -1745,6 +1745,134 @@ void main() {
   });
 
   test(
+      'comic preference write retries current library after in-flight adoption',
+      () async {
+    final firstDelegate = MemoryImportedLibraryStore();
+    final firstLibrary = _GatedLibraryStore(
+      firstDelegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final writeStarted = Completer<void>();
+    final releaseWrite = Completer<void>();
+    firstLibrary.comicPreferenceWriteStarted = writeStarted;
+    firstLibrary.comicPreferenceWriteReturnGate = releaseWrite.future;
+    final firstDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final firstQueue = WholeComicDownloadQueue(downloads: firstDownloads);
+    final session = HomeLibrarySession(
+      library: firstLibrary,
+      chapterDownloads: firstDownloads,
+      wholeComicDownloads: firstQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    await session.ready;
+
+    final secondLibrary = MemoryImportedLibraryStore();
+    final secondDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final secondQueue = WholeComicDownloadQueue(downloads: secondDownloads);
+    addTearDown(() async {
+      if (!releaseWrite.isCompleted) {
+        releaseWrite.complete();
+      }
+      await session.close();
+      session.dispose();
+      await secondQueue.close();
+      await secondDownloads.close();
+      await secondLibrary.close();
+    });
+
+    final preference = ComicPreference.defaults(
+      sourceId: 'fixture-source',
+      comicId: 'fixture-comic',
+      sourceKind: ComicSourceKind.remote,
+    ).copyWith(
+      liked: true,
+      updatedAt: DateTime.utc(2026, 9, 18),
+    );
+    final writeFuture = session.persistPreference(preference);
+    await writeStarted.future;
+
+    await session.adoptServices(
+      library: secondLibrary,
+      chapterDownloads: secondDownloads,
+      wholeComicDownloads: secondQueue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    );
+    releaseWrite.complete();
+    await writeFuture;
+
+    expect(session.preferences[preference.identity]?.liked, isTrue);
+    expect(
+      (await secondLibrary.getComicPreference(
+        preference.sourceId,
+        preference.comicId,
+      ))
+          ?.liked,
+      isTrue,
+    );
+  });
+
+  test('comic preference batch publishes once after durable writes', () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+    await queue.ready;
+    await Future<void>.delayed(Duration.zero);
+
+    var notifications = 0;
+    session.addListener(() => notifications++);
+    final first = ComicPreference.defaults(
+      sourceId: 'fixture-source',
+      comicId: 'comic-a',
+      sourceKind: ComicSourceKind.remote,
+    ).copyWith(
+      inShelf: true,
+      updatedAt: DateTime.utc(2026, 9, 18),
+    );
+    final second = ComicPreference.defaults(
+      sourceId: 'fixture-source',
+      comicId: 'comic-b',
+      sourceKind: ComicSourceKind.remote,
+    ).copyWith(
+      inShelf: true,
+      updatedAt: DateTime.utc(2026, 9, 18, 0, 0, 1),
+    );
+
+    await session.persistPreferences(<ComicPreference>[first, second]);
+
+    expect(notifications, 1);
+    expect(session.preferences.keys, containsAll(<String>[first.identity, second.identity]));
+    expect(await library.getComicPreference(first.sourceId, first.comicId), isNotNull);
+    expect(
+      await library.getComicPreference(second.sourceId, second.comicId),
+      isNotNull,
+    );
+  });
+
+  test(
       'version relation write retries current library after in-flight adoption',
       () async {
     final firstDelegate = MemoryImportedLibraryStore();
@@ -3237,6 +3365,8 @@ final class _GatedLibraryStore
   var listCalls = 0;
   var getCalls = 0;
   var getManyCalls = 0;
+  Completer<void>? comicPreferenceWriteStarted;
+  Future<void>? comicPreferenceWriteReturnGate;
   Completer<void>? versionRelationWriteStarted;
   Future<void>? versionRelationWriteReturnGate;
   Object? versionRelationWriteError;
@@ -3309,11 +3439,15 @@ final class _GatedLibraryStore
   Future<ComicPreference?> getComicPreference(String sourceId, String comicId) =>
       delegate.getComicPreference(sourceId, comicId);
   @override
-  Future<void> saveComicPreference(ComicPreference preference) =>
-      Future<void>(() {
-        comicPreferenceWrites++;
-        return delegate.saveComicPreference(preference);
-      });
+  Future<void> saveComicPreference(ComicPreference preference) async {
+    comicPreferenceWrites++;
+    await delegate.saveComicPreference(preference);
+    final started = comicPreferenceWriteStarted;
+    if (started != null && !started.isCompleted) {
+      started.complete();
+    }
+    await comicPreferenceWriteReturnGate;
+  }
   @override
   Future<List<ChapterReadState>> listChapterReadStates(
     String sourceId,
