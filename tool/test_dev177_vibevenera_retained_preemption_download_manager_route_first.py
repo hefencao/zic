@@ -129,6 +129,31 @@ for token in (
     '_DownloadManagerQueueCommand',
 ):
     require(manager, token, 'route-first download manager')
+policy_start = manager.index('Future<void> _editQueuePolicy() async {')
+policy_end = manager.index(
+    'Future<void> _queueAction(',
+    policy_start,
+)
+policy_flow = manager[policy_start:policy_end]
+actions_branch = policy_flow.index('if (actions != null) {')
+fallback_branch = policy_flow.index('} else {', actions_branch)
+fallback_update = policy_flow.index(
+    'await _wholeComicDownloads.updatePolicy(selected);',
+    fallback_branch,
+)
+fallback_resolve = policy_flow.index(
+    'await _resolveServices();',
+    fallback_branch,
+)
+if fallback_resolve > fallback_update:
+    raise SystemExit(
+        'standalone policy fallback must re-resolve current services after dialog'
+    )
+if 'await _resolveServices();' in policy_flow[actions_branch:fallback_branch]:
+    raise SystemExit(
+        'Home commandActions policy path must not resolve concrete route services'
+    )
+
 for token in (
     'scheduleMicrotask(_reload)',
     '_entries.values.map(widget.downloads.inspect)',
@@ -203,6 +228,7 @@ for token in (
     'download manager keeps persisted Home projection visible during handoff',
     'expect(releaseServices.isCompleted, isFalse);',
     'download manager re-resolves services after a later generation change',
+    'download manager policy fallback re-resolves after an open dialog',
     'download manager catches a generation change during service resolution',
     'download manager stops resolving when disposed during service handoff',
     'download manager cache maintenance follows the latest service generation',

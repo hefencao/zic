@@ -392,6 +392,85 @@ void main() {
   });
 
   testWidgets(
+      'download manager policy fallback re-resolves after an open dialog',
+      (tester) async {
+    final firstDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final firstQueue = WholeComicDownloadQueue(downloads: firstDownloads);
+    await firstQueue.ready;
+    await firstQueue.updatePolicy(
+      const WholeComicQueuePolicy(concurrency: 1),
+    );
+
+    final secondDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final secondQueue = WholeComicDownloadQueue(downloads: secondDownloads);
+    await secondQueue.ready;
+    await secondQueue.updatePolicy(
+      const WholeComicQueuePolicy(concurrency: 4),
+    );
+
+    var currentServices = DownloadManagerServices(
+      downloads: firstDownloads,
+      wholeComicDownloads: firstQueue,
+    );
+    final serviceChanges = ChangeNotifier();
+    var resolverCalls = 0;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: const <ImportedLibraryEntry>[],
+          downloads: firstDownloads,
+          wholeComicDownloads: firstQueue,
+          serviceChanges: serviceChanges,
+          resolveServices: () async {
+            resolverCalls++;
+            return currentServices;
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+    expect(resolverCalls, 1);
+
+    await tester.tap(find.byKey(downloadQueuePolicyKey));
+    await tester.pumpAndSettle();
+    expect(find.text('整本下载队列策略'), findsOneWidget);
+    expect(
+      tester
+          .widget<SegmentedButton<int>>(find.byType(SegmentedButton<int>))
+          .selected,
+      <int>{1},
+    );
+
+    currentServices = DownloadManagerServices(
+      downloads: secondDownloads,
+      wholeComicDownloads: secondQueue,
+    );
+    serviceChanges.notifyListeners();
+
+    await tester.tap(find.text('3'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pumpAndSettle();
+
+    expect(firstQueue.snapshot.policy.concurrency, 1);
+    expect(secondQueue.snapshot.policy.concurrency, 3);
+    expect(resolverCalls, 2);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    serviceChanges.dispose();
+    unawaited(firstQueue.close());
+    unawaited(secondQueue.close());
+    unawaited(firstDownloads.close());
+    unawaited(secondDownloads.close());
+  });
+
+  testWidgets(
       'download manager catches a generation change during service resolution',
       (tester) async {
     final firstDownloads = MemoryChapterDownloadService(

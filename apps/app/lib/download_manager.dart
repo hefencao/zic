@@ -1382,6 +1382,11 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       if (actions != null) {
         await actions.updateWholeComicPolicy(selected);
       } else {
+        // The policy dialog can stay open across a service-generation change.
+        // Standalone fallback owns the concrete queue, so re-resolve after the
+        // dialog returns instead of writing the route-open generation.
+        await _resolveServices();
+        if (!mounted) return;
         await _wholeComicDownloads.updatePolicy(selected);
       }
     } on Object catch (error) {
