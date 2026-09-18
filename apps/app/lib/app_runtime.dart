@@ -357,6 +357,7 @@ final class _BootstrapAppState extends State<_BootstrapApp>
 
   Future<void> _openDurableServicesOnce({bool forceDurable = false}) async {
     if (_disposed || _services?.hasCoreServices == true) return;
+    final previous = _services;
     _startupLog('services-open-start');
     _startupTelemetry.servicesOpenStarted();
     final services = await _openServices(
@@ -375,6 +376,9 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       }
       return;
     }
+    previous?.transferExternalPluginOwnershipTo(services);
+    _services = services;
+    _publishExternalPluginsWhenReady(services);
     if (!services.hasCoreServices) {
       // Empty installs deliberately remain memory-backed. In particular, do
       // not create SQLite/WAL files merely because Home was opened. The first
@@ -382,7 +386,6 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       // Plugin management is an independent optional capability: publish its
       // loader and durable root without replacing the bootstrap services.
       _startupLog('services-open-skipped-empty-state');
-      _services = services;
       _serviceHandoff.updateDeferredCapabilities(
         externalPlugins: services.externalPlugins,
         externalPluginLoader: () => _ensureExternalPlugins(services),
@@ -401,7 +404,6 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       return;
     }
     _startupLog('home-mount-start mode=durable');
-    _services = services;
     _serviceHandoff.updateServices(
       libraryStore: services.libraryStore,
       chapterDownloads: services.chapterDownloads,
@@ -415,6 +417,16 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       storageRoot: services.storageRoot,
       persistHomeProjectionSnapshot: true,
     );
+  }
+
+  void _publishExternalPluginsWhenReady(_AppServices services) {
+    final ready = services.externalPluginsReady;
+    unawaited(ready.then<void>((_) {
+      if (_disposed || !identical(_services, services)) {
+        return;
+      }
+      _serviceHandoff.updateExternalPlugins(services.externalPlugins);
+    }));
   }
 
   Future<ExternalPluginController?> _ensureExternalPlugins(
@@ -678,16 +690,9 @@ final class _BootstrapAppState extends State<_BootstrapApp>
           : _probeStorageRootAccessAlias(safOverride),
       );
       _persistStorageRootAccessAliasProof(services);
-      // An optional plugin host open may still be in flight on the replaced
-      // instance. Settle it so its controller is not stranded unpublished.
-      try {
-        await previous.externalPluginsReady
-            .timeout(const Duration(seconds: 30));
-      } on Object catch (_) {
-        // Keep going without the optional controller.
-      }
-      services.externalPlugins = previous.externalPlugins;
+      previous.transferExternalPluginOwnershipTo(services);
       _services = services;
+      _publishExternalPluginsWhenReady(services);
       _serviceHandoff.updateServices(
         libraryStore: services.libraryStore,
         chapterDownloads: services.chapterDownloads,
@@ -712,12 +717,14 @@ final class _BootstrapAppState extends State<_BootstrapApp>
   }
 
   void _publishDegradedServices({required String storageRoot}) {
+    final previous = _services;
     final degraded = _AppServices(
-      libraryStore: _services?.libraryStore,
+      libraryStore: previous?.libraryStore,
       storageRoot: storageRoot,
     );
-    degraded.externalPlugins = _services?.externalPlugins;
+    previous?.transferExternalPluginOwnershipTo(degraded);
     _services = degraded;
+    _publishExternalPluginsWhenReady(degraded);
     _startupLog('download-services-degraded-memory');
     _serviceHandoff.updateDeferredCapabilities(
       externalPlugins: degraded.externalPlugins,
@@ -805,6 +812,7 @@ final class _AppServices {
       _externalPluginOpening =
       ResettableSingleFlight<ExternalPluginController?>();
   Future<void>? _platformEnvironmentOpening;
+  _AppServices? _externalPluginSuccessor;
   bool _closed = false;
   Future<void>? _closing;
   Future<void>? _partialCheckpoint;
@@ -834,10 +842,21 @@ final class _AppServices {
     await opening;
   }
 
+  ExternalPluginController? get _currentExternalPluginController =>
+      _externalPluginSuccessor?._currentExternalPluginController ??
+      externalPlugins;
+
   Future<ExternalPluginController?> ensureExternalPlugins({
     required HomeStartupTelemetry telemetry,
     required AppPreferencesController preferences,
   }) {
+    final successor = _externalPluginSuccessor;
+    if (successor != null) {
+      return successor.ensureExternalPlugins(
+        telemetry: telemetry,
+        preferences: preferences,
+      );
+    }
     final current = externalPlugins;
     if (current != null) {
       return Future<ExternalPluginController?>.value(current);
@@ -859,6 +878,11 @@ final class _AppServices {
     );
     final forcedOpening = _externalPluginOpening.run(
       () => background.then<ExternalPluginController?>((_) async {
+        // Once this predecessor flight exists, keep it as the physical opener.
+        // A successor joins this ready tail during ownership transfer; asking
+        // the successor to ensure from inside this flight would make each side
+        // wait on the other. The opened controller is forwarded by
+        // _acceptExternalPluginController instead.
         if (_closed || externalPlugins != null) {
           return externalPlugins;
         }
@@ -870,7 +894,7 @@ final class _AppServices {
           telemetry.nowMicros(),
           force: true,
         );
-        return externalPlugins;
+        return _currentExternalPluginController;
       }),
     );
     externalPluginsReady = forcedOpening.then<void>(
@@ -878,6 +902,51 @@ final class _AppServices {
       onError: (Object _, StackTrace _) {},
     );
     return forcedOpening;
+  }
+
+  void transferExternalPluginOwnershipTo(_AppServices target) {
+    if (identical(this, target)) {
+      return;
+    }
+    final successor = _externalPluginSuccessor;
+    if (successor != null) {
+      successor.transferExternalPluginOwnershipTo(target);
+      return;
+    }
+    _externalPluginSuccessor = target;
+    target._joinExternalPluginReady(externalPluginsReady);
+    final controller = externalPlugins;
+    externalPlugins = null;
+    if (controller != null) {
+      unawaited(target._acceptExternalPluginController(controller));
+    }
+  }
+
+  void _joinExternalPluginReady(Future<void> inherited) {
+    final current = externalPluginsReady;
+    if (identical(current, inherited)) {
+      return;
+    }
+    externalPluginsReady = Future.wait<void>(
+      <Future<void>>[current, inherited],
+    ).then<void>((_) {});
+  }
+
+  Future<bool> _acceptExternalPluginController(
+    ExternalPluginController controller,
+  ) {
+    final successor = _externalPluginSuccessor;
+    if (successor != null) {
+      return successor._acceptExternalPluginController(controller);
+    }
+    if (!_closed && externalPlugins == null) {
+      externalPlugins = controller;
+      return Future<bool>.value(true);
+    }
+    if (identical(externalPlugins, controller)) {
+      return Future<bool>.value(true);
+    }
+    return controller.close().then<bool>((_) => false);
   }
 
   Future<void> checkpointTransferPartials() {
@@ -1457,17 +1526,15 @@ Future<void> _attachExternalPlugins(
       // source-management page still requests the complete projection.
       deferRuntimeActivation: true,
     );
-    if (!services._closed && services.externalPlugins == null) {
-      services.externalPlugins = controller;
+    final accepted =
+        await services._acceptExternalPluginController(controller);
+    if (accepted) {
       telemetry.serviceReady(
         'external-plugin-host',
         startedAtMicros: stageStartedMicros,
       );
       _startupLog('external-plugin-host-open-complete');
-      return;
     }
-    // The app tore down while the host was opening; release it immediately.
-    await controller.close();
   } on Object catch (error) {
     debugPrint('external plugin runtime unavailable: $error');
   }
