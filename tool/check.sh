@@ -308,6 +308,7 @@ python3 "$ROOT/tool/test_cloudflare_classifier_kotlin_compile.py"
 python3 "$ROOT/tool/test_external_source_settings_contract.py"
 python3 "$ROOT/tool/test_dialog_input_lifetime_contract.py"
 python3 "$ROOT/tool/test_async_context_lifetime_contract.py"
+python3 "$ROOT/tool/test_external_plugin_mutation_close_contract.py"
 if command -v node >/dev/null 2>&1; then
   python3 "$ROOT/tool/test_venera_bootstrap.py"
 elif [[ "$REQUIRE_TOOLCHAINS" -eq 1 ]]; then

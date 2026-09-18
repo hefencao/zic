@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:plugin_host/plugin_host.dart';
 import 'android_mihon_metadata_reader.dart';
+import 'external_plugin_mutation_gate.dart';
 import 'method_channel_runtime_backends.dart';
 
 final class ExternalPluginInstallPreview {
@@ -119,6 +120,8 @@ final class ExternalPluginController {
   ]);
   Future<void>? _ready;
   Future<void> _manifestWriteTail = Future<void>.value();
+  final ExternalPluginMutationGate _durableMutations =
+      ExternalPluginMutationGate();
   bool _closed = false;
 
   static Future<ExternalPluginController> open(
@@ -501,8 +504,12 @@ final class ExternalPluginController {
 
   Future<List<BrowsableComicSource>> approveAndActivate(
     ExternalPluginInstallPreview preview,
+  ) =>
+      _runDurableMutation(() => _approveAndActivate(preview));
+
+  Future<List<BrowsableComicSource>> _approveAndActivate(
+    ExternalPluginInstallPreview preview,
   ) async {
-    _requireOpen();
     final path = _pendingPayloads.remove(preview.plugin.pluginId) ??
         preview.inspection.payloadPath;
     if (path == null || path.trim().isEmpty) {
@@ -596,8 +603,10 @@ final class ExternalPluginController {
   /// runtime refresh or manifest write; an inactive record is activated from
   /// its already-owned payload. The trusted record is never removed by this
   /// operation.
-  Future<List<BrowsableComicSource>> retryActivation(String pluginId) async {
-    _requireOpen();
+  Future<List<BrowsableComicSource>> retryActivation(String pluginId) =>
+      _runDurableMutation(() => _retryActivation(pluginId));
+
+  Future<List<BrowsableComicSource>> _retryActivation(String pluginId) async {
     var record = _installed[pluginId];
     if (record == null) {
       throw StateError('external plugin is not installed: $pluginId');
@@ -628,8 +637,10 @@ final class ExternalPluginController {
     }
   }
 
-  Future<void> remove(String pluginId) async {
-    _requireOpen();
+  Future<void> remove(String pluginId) =>
+      _runDurableMutation(() => _remove(pluginId));
+
+  Future<void> _remove(String pluginId) async {
     await _registry.deactivate(pluginId);
     final removed = _installed.remove(pluginId);
     _activationFailures.remove(pluginId);
@@ -765,16 +776,21 @@ final class ExternalPluginController {
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
+    final mutationsDrained = _durableMutations.beginClose();
     for (final client in _activeRepositoryClients.toList(growable: false)) {
       client.close(force: true);
     }
     _activeRepositoryClients.clear();
     try {
-      // Enter registry shutdown immediately. Waiting for the aggregate ready
-      // barrier first would let one stuck plugin delay teardown of all others.
+      // Enter registry shutdown immediately. Waiting for durable controller
+      // mutations first could deadlock work that is currently inside the
+      // registry. Once shutdown is in flight, every mutation admitted before
+      // this close boundary may finish its rollback/manifest commit path.
       await _registry.close();
     } finally {
       try {
+        await mutationsDrained;
+        await _manifestWriteTail;
         await _discardPendingPayloads();
       } finally {
         await _sourceChanges.close();
@@ -863,6 +879,7 @@ final class ExternalPluginController {
     var next = 0;
     Future<void> activateNext() async {
       while (true) {
+        if (_closed) return;
         final index = next++;
         if (index >= records.length) return;
         await _activateRecord(records[index]);
@@ -874,30 +891,31 @@ final class ExternalPluginController {
     );
   }
 
-  Future<void> _activateRecord(InstalledExternalPlugin record) async {
-    try {
-      final sources = await _registry.activate(record.plugin);
-      final activatedIds = <String>[
-        for (final source in sources) source.sourceId,
-      ];
-      if (!_listEquals(record.sourceIds, activatedIds)) {
-        _installed[record.plugin.pluginId] =
-            _withDiscoveredSourceIds(record, activatedIds);
+  Future<void> _activateRecord(InstalledExternalPlugin record) =>
+      _runDurableMutation(() async {
         try {
-          await _writeManifest();
-        } on Object {
-          // The runtime session is already active; persisting the newly
-          // discovered identities must not fail the activation itself.
-          // The next successful user-facing manifest write records them.
+          final sources = await _registry.activate(record.plugin);
+          final activatedIds = <String>[
+            for (final source in sources) source.sourceId,
+          ];
+          if (!_listEquals(record.sourceIds, activatedIds)) {
+            _installed[record.plugin.pluginId] =
+                _withDiscoveredSourceIds(record, activatedIds);
+            try {
+              await _writeManifest();
+            } on Object {
+              // The runtime session is already active; persisting the newly
+              // discovered identities must not fail the activation itself.
+              // The next successful user-facing manifest write records them.
+            }
+          }
+          _activationFailures.remove(record.plugin.pluginId);
+          _notifySourceChange();
+        } on Object catch (error) {
+          _activationFailures[record.plugin.pluginId] = error;
+          _notifySourceChange();
         }
-      }
-      _activationFailures.remove(record.plugin.pluginId);
-      _notifySourceChange();
-    } on Object catch (error) {
-      _activationFailures[record.plugin.pluginId] = error;
-      _notifySourceChange();
-    }
-  }
+      });
 
   void _notifySourceChange() {
     if (!_closed && !_sourceChanges.isClosed) {
@@ -1120,6 +1138,11 @@ final class ExternalPluginController {
       _activeRepositoryClients.remove(client);
       client.close(force: true);
     }
+  }
+
+  Future<T> _runDurableMutation<T>(Future<T> Function() action) {
+    _requireOpen();
+    return _durableMutations.run(action);
   }
 
   void _requireOpen() {
