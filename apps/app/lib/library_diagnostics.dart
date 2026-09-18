@@ -24,11 +24,13 @@ Key libraryDiagnosticsAcknowledgeKey(int issueId) =>
 
 final class LibraryDiagnosticsScreen extends StatefulWidget {
   const LibraryDiagnosticsScreen({
-    required this.store,
+    required this.readStore,
+    this.storeChanges,
     super.key,
   });
 
-  final ImportedLibraryStore store;
+  final ImportedLibraryStore Function() readStore;
+  final Listenable? storeChanges;
 
   @override
   State<LibraryDiagnosticsScreen> createState() =>
@@ -41,14 +43,71 @@ final class _LibraryDiagnosticsScreenState
   bool _includeAcknowledged = false;
   bool _loading = true;
   Object? _error;
+  int _storeGeneration = 0;
+  int _reloadRequest = 0;
 
   @override
   void initState() {
     super.initState();
+    widget.storeChanges?.addListener(_handleStoreChanged);
     scheduleMicrotask(() => unawaited(_reload()));
   }
 
+  @override
+  void didUpdateWidget(LibraryDiagnosticsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.storeChanges, widget.storeChanges)) {
+      oldWidget.storeChanges?.removeListener(_handleStoreChanged);
+      widget.storeChanges?.addListener(_handleStoreChanged);
+      _invalidateStore();
+      unawaited(_reload());
+    } else if (oldWidget.readStore != widget.readStore) {
+      _invalidateStore();
+      unawaited(_reload());
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.storeChanges?.removeListener(_handleStoreChanged);
+    super.dispose();
+  }
+
+  void _invalidateStore() {
+    _storeGeneration++;
+  }
+
+  void _handleStoreChanged() {
+    _invalidateStore();
+    if (mounted) {
+      unawaited(_reload());
+    }
+  }
+
+  Future<T> _withCurrentStore<T>(
+    Future<T> Function(ImportedLibraryStore store) operation,
+  ) async {
+    while (true) {
+      final generation = _storeGeneration;
+      final store = widget.readStore();
+      try {
+        final result = await operation(store);
+        if (generation == _storeGeneration &&
+            identical(store, widget.readStore())) {
+          return result;
+        }
+      } on Object {
+        if (generation == _storeGeneration &&
+            identical(store, widget.readStore())) {
+          rethrow;
+        }
+      }
+    }
+  }
+
   Future<void> _reload() async {
+    final request = ++_reloadRequest;
+    final includeAcknowledged = _includeAcknowledged;
     if (mounted) {
       setState(() {
         _loading = true;
@@ -56,20 +115,70 @@ final class _LibraryDiagnosticsScreenState
       });
     }
     try {
-      final issues = await widget.store.listMigrationIssues(
-        includeAcknowledged: _includeAcknowledged,
+      final issues = await _withCurrentStore(
+        (store) => store.listMigrationIssues(
+          includeAcknowledged: includeAcknowledged,
+        ),
       );
-      if (mounted) {
+      if (mounted &&
+          request == _reloadRequest &&
+          includeAcknowledged == _includeAcknowledged) {
         setState(() => _issues = issues);
       }
     } on Object catch (error) {
-      if (mounted) {
+      if (mounted && request == _reloadRequest) {
         setState(() => _error = error);
       }
     } finally {
-      if (mounted) {
+      if (mounted && request == _reloadRequest) {
         setState(() => _loading = false);
       }
+    }
+  }
+
+  String _issueSemanticKey(LibraryMigrationIssue issue) => jsonEncode(
+        <String, Object?>{
+          'schemaFrom': issue.schemaFrom,
+          'entityKind': issue.entityKind,
+          'legacyKey': issue.legacyKey,
+          'resolvedSourceId': issue.resolvedSourceId,
+          'details': issue.details,
+          'createdAt': issue.createdAt.toUtc().microsecondsSinceEpoch,
+        },
+      );
+
+  Future<int> _acknowledgeCurrentIssues(
+    Set<String> targetKeys, {
+    required DateTime acknowledgedAt,
+  }) async {
+    while (true) {
+      final generation = _storeGeneration;
+      final store = widget.readStore();
+      final retained = await store.listMigrationIssues(
+        includeAcknowledged: true,
+      );
+      if (generation != _storeGeneration ||
+          !identical(store, widget.readStore())) {
+        continue;
+      }
+      final matches = retained
+          .where((issue) => targetKeys.contains(_issueSemanticKey(issue)))
+          .toList(growable: false);
+      final pendingIds = matches
+          .where((issue) => !issue.acknowledged)
+          .map((issue) => issue.issueId)
+          .toSet();
+      if (pendingIds.isNotEmpty) {
+        await store.acknowledgeMigrationIssues(
+          pendingIds,
+          acknowledgedAt: acknowledgedAt,
+        );
+        if (generation != _storeGeneration ||
+            !identical(store, widget.readStore())) {
+          continue;
+        }
+      }
+      return matches.length;
     }
   }
 
@@ -78,15 +187,26 @@ final class _LibraryDiagnosticsScreenState
     if (ids.isEmpty) {
       return;
     }
+    final targets = _issues
+        .where((issue) => ids.contains(issue.issueId))
+        .toList(growable: false);
+    if (targets.isEmpty) {
+      return;
+    }
+    final targetKeys = targets.map(_issueSemanticKey).toSet();
+    final acknowledgedAt = DateTime.now().toUtc();
     try {
-      await widget.store.acknowledgeMigrationIssues(
-        ids,
-        acknowledgedAt: DateTime.now().toUtc(),
+      final matched = await _acknowledgeCurrentIssues(
+        targetKeys,
+        acknowledgedAt: acknowledgedAt,
       );
       await _reload();
       if (mounted) {
+        final message = matched == 0
+            ? '诊断库已更新；当前库中没有对应记录'
+            : '已确认 $matched 条迁移诊断；记录仍被保留';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已确认 ${ids.length} 条迁移诊断；记录仍被保留')),
+          SnackBar(content: Text(message)),
         );
       }
     } on Object catch (error) {
@@ -98,22 +218,25 @@ final class _LibraryDiagnosticsScreenState
 
   Future<void> _copyJson() async {
     try {
-      final retained = await widget.store.listMigrationIssues(
-        includeAcknowledged: true,
-      );
-      final encoded = const JsonEncoder.withIndent('  ').convert(
-        <String, Object?>{
-          'schema': 'zic-library-migration-diagnostics-v1',
-          'exportedAt': DateTime.now().toUtc().toIso8601String(),
-          'issues': retained
-              .map((issue) => issue.toJson())
-              .toList(growable: false),
-        },
-      );
-      await Clipboard.setData(ClipboardData(text: encoded));
+      final export = await _withCurrentStore((store) async {
+        final retained = await store.listMigrationIssues(
+          includeAcknowledged: true,
+        );
+        final encoded = const JsonEncoder.withIndent('  ').convert(
+          <String, Object?>{
+            'schema': 'zic-library-migration-diagnostics-v1',
+            'exportedAt': DateTime.now().toUtc().toIso8601String(),
+            'issues': retained
+                .map((issue) => issue.toJson())
+                .toList(growable: false),
+          },
+        );
+        return (encoded: encoded, count: retained.length);
+      });
+      await Clipboard.setData(ClipboardData(text: export.encoded));
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('已复制 ${retained.length} 条迁移诊断 JSON')),
+          SnackBar(content: Text('已复制 ${export.count} 条迁移诊断 JSON')),
         );
       }
     } on Object catch (error) {

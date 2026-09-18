@@ -132,6 +132,61 @@ void main() {
     expect(session.sources.single, same(replacementSource));
   });
 
+  test('library generation signal publishes only library authority changes',
+      () async {
+    final bootstrapLibrary = MemoryImportedLibraryStore();
+    final bootstrapDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final bootstrapQueue =
+        WholeComicDownloadQueue(downloads: bootstrapDownloads);
+    final durableLibrary = MemoryImportedLibraryStore();
+    final durableDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final durableQueue = WholeComicDownloadQueue(downloads: durableDownloads);
+    final session = HomeLibrarySession(
+      library: bootstrapLibrary,
+      chapterDownloads: bootstrapDownloads,
+      wholeComicDownloads: bootstrapQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await durableQueue.close();
+      await durableDownloads.close();
+      await durableLibrary.close();
+    });
+
+    await session.ready;
+    var notifications = 0;
+    session.libraryGenerationChanges.addListener(() => notifications++);
+
+    await session.adoptServices(
+      library: bootstrapLibrary,
+      chapterDownloads: bootstrapDownloads,
+      wholeComicDownloads: bootstrapQueue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    );
+    expect(notifications, 0);
+
+    await session.adoptServices(
+      library: durableLibrary,
+      chapterDownloads: durableDownloads,
+      wholeComicDownloads: durableQueue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    );
+
+    expect(session.library, same(durableLibrary));
+    expect(notifications, 1);
+  });
+
   test('service adoption publishes the current whole-comic policy generation',
       () async {
     final bootstrapLibrary = MemoryImportedLibraryStore();

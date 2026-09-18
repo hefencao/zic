@@ -808,7 +808,10 @@ final class _DemoHomeState extends State<DemoHome> {
     unawaited(
       Navigator.of(context).push(
         MaterialPageRoute<void>(
-          builder: (_) => LibraryDiagnosticsScreen(store: _library),
+          builder: (_) => LibraryDiagnosticsScreen(
+            readStore: () => _library,
+            storeChanges: _librarySession.libraryGenerationChanges,
+          ),
         ),
       ),
     );

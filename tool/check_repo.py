@@ -1530,11 +1530,39 @@ def check_compile_regressions() -> None:
         'libraryDiagnosticsEntryKey',
         'libraryDiagnosticsCopyKey',
         'libraryDiagnosticsAcknowledgeAllKey',
-        'includeAcknowledged: _includeAcknowledged',
+        'required this.readStore,',
+        'this.storeChanges,',
+        'Future<T> _withCurrentStore<T>(',
+        'String _issueSemanticKey(LibraryMigrationIssue issue)',
+        'Future<int> _acknowledgeCurrentIssues(',
+        'int _storeGeneration = 0;',
+        'int _reloadRequest = 0;',
+        'includeAcknowledged: includeAcknowledged',
+        'targetKeys.contains(_issueSemanticKey(issue))',
         'acknowledgeMigrationIssues',
     ):
         if required not in diagnostics:
             fail(f'library migration diagnostics are incomplete: {required}')
+    demo_home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(
+        encoding='utf-8'
+    )
+    home_session = (
+        ROOT / 'apps/app/lib/home_library_session.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'readStore: () => _library,',
+        'storeChanges: _librarySession.libraryGenerationChanges,',
+    ):
+        if required not in demo_home:
+            fail(f'library diagnostics generation route is incomplete: {required}')
+    if 'LibraryDiagnosticsScreen(store: _library)' in demo_home:
+        fail('library diagnostics must not freeze the route-open library store')
+    for required in (
+        'Listenable get libraryGenerationChanges => _libraryGenerationChanges;',
+        '_libraryGenerationChanges.notifyListeners();',
+    ):
+        if required not in home_session:
+            fail(f'library diagnostics generation signal is incomplete: {required}')
 
     for required in (
         'WHERE source_id = ? AND comic_id = ?',

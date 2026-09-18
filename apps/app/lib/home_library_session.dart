@@ -380,6 +380,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   ChapterCacheManagementProjection? _downloadCacheProjection;
   late WholeComicQueueSnapshot _wholeComicQueueSnapshot;
   final ChangeNotifier _downloadProjectionChanges = ChangeNotifier();
+  final ChangeNotifier _libraryGenerationChanges = ChangeNotifier();
   Object? _error;
   bool _loading = true;
   String? _activeSourceId;
@@ -422,6 +423,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   WholeComicQueueSnapshot get wholeComicQueueSnapshot =>
       _wholeComicQueueSnapshot;
   Listenable get downloadProjectionChanges => _downloadProjectionChanges;
+  Listenable get libraryGenerationChanges => _libraryGenerationChanges;
   Object? get error => _error;
   bool get loading => _loading;
   String? get activeSourceId => _activeSourceId;
@@ -1161,6 +1163,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
 
     final previousLibrary = this.library;
+    final libraryChanged = !identical(previousLibrary, library);
     final previousChapterDownloads = this.chapterDownloads;
     final previousWholeComicDownloads = this.wholeComicDownloads;
     final previousOwnsLibrary = ownsLibrary;
@@ -1228,6 +1231,9 @@ final class HomeLibrarySession extends ChangeNotifier {
       },
     );
     await _ready;
+    if (!_closed && libraryChanged) {
+      _libraryGenerationChanges.notifyListeners();
+    }
   }
 
   Future<void> _reconcileAdoptedServices() async {
@@ -2589,6 +2595,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _downloadSubscription.cancel();
     _wholeComicSubscription.cancel();
     _downloadProjectionChanges.dispose();
+    _libraryGenerationChanges.dispose();
     super.dispose();
   }
 

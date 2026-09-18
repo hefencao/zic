@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:storage/storage.dart';
@@ -21,6 +21,82 @@ Uint8List _tinyPng() => base64Decode(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
       'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     );
+
+LibraryMigrationIssue _migrationIssue(int issueId, String legacyKey) =>
+    LibraryMigrationIssue(
+      issueId: issueId,
+      schemaFrom: 4,
+      entityKind: 'comic_preference',
+      legacyKey: legacyKey,
+      resolvedSourceId: 'source-a',
+      details: const <String, Object?>{
+        'reason': 'multiple candidate sources',
+        'action': 'most recent source retained',
+      },
+      createdAt: DateTime.utc(2026, 7, 29),
+    );
+
+final class _BlockingMigrationIssueStore implements ImportedLibraryStore {
+  _BlockingMigrationIssueStore({
+    required this.delegate,
+    required this.releaseList,
+  });
+
+  final ImportedLibraryStore delegate;
+  final Completer<void> releaseList;
+
+  @override
+  Future<List<LibraryMigrationIssue>> listMigrationIssues({
+    bool includeAcknowledged = false,
+  }) async {
+    await releaseList.future;
+    return delegate.listMigrationIssues(
+      includeAcknowledged: includeAcknowledged,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _BlockingAcknowledgeMigrationIssueStore
+    implements ImportedLibraryStore {
+  _BlockingAcknowledgeMigrationIssueStore({
+    required this.delegate,
+    required this.releaseAcknowledge,
+    required this.acknowledgeStarted,
+  });
+
+  final ImportedLibraryStore delegate;
+  final Completer<void> releaseAcknowledge;
+  final Completer<void> acknowledgeStarted;
+
+  @override
+  Future<List<LibraryMigrationIssue>> listMigrationIssues({
+    bool includeAcknowledged = false,
+  }) =>
+      delegate.listMigrationIssues(
+        includeAcknowledged: includeAcknowledged,
+      );
+
+  @override
+  Future<void> acknowledgeMigrationIssues(
+    Iterable<int> issueIds, {
+    required DateTime acknowledgedAt,
+  }) async {
+    if (!acknowledgeStarted.isCompleted) {
+      acknowledgeStarted.complete();
+    }
+    await releaseAcknowledge.future;
+    await delegate.acknowledgeMigrationIssues(
+      issueIds,
+      acknowledgedAt: acknowledgedAt,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 Widget _localDetailsScreen({
   required LibraryComic comic,
@@ -734,6 +810,190 @@ void main() {
     final retained = await store.listMigrationIssues(includeAcknowledged: true);
     expect(retained, hasLength(1));
     expect(retained.single.acknowledged, isTrue);
+  });
+
+  testWidgets(
+      'library diagnostics follows the current library generation for read and acknowledge',
+      (tester) async {
+    final firstIssue = _migrationIssue(11, 'first-generation');
+    final secondIssue = _migrationIssue(12, 'second-generation');
+    final firstStore = MemoryImportedLibraryStore(
+      migrationIssues: <LibraryMigrationIssue>[firstIssue],
+    );
+    final secondStore = MemoryImportedLibraryStore(
+      migrationIssues: <LibraryMigrationIssue>[secondIssue],
+    );
+    await firstStore.open();
+    await secondStore.open();
+    addTearDown(firstStore.close);
+    addTearDown(secondStore.close);
+    final changes = ChangeNotifier();
+    addTearDown(changes.dispose);
+    ImportedLibraryStore currentStore = firstStore;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LibraryDiagnosticsScreen(
+          readStore: () => currentStore,
+          storeChanges: changes,
+        ),
+      ),
+    );
+    await _pumpUntilFound(tester, find.byKey(libraryDiagnosticsIssueKey(11)));
+
+    currentStore = secondStore;
+    changes.notifyListeners();
+    await _pumpUntilFound(tester, find.byKey(libraryDiagnosticsIssueKey(12)));
+    expect(find.byKey(libraryDiagnosticsIssueKey(11)), findsNothing);
+
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText = (call.arguments as Map<Object?, Object?>)['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await _tapVisible(tester, find.byKey(libraryDiagnosticsCopyKey));
+    await tester.pump();
+    expect(copiedText, contains('second-generation'));
+    expect(copiedText, isNot(contains('first-generation')));
+
+    await _tapVisible(
+      tester,
+      find.byKey(libraryDiagnosticsAcknowledgeKey(12)),
+    );
+    for (var frame = 0; frame < 40; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      if (find.byKey(libraryDiagnosticsIssueKey(12)).evaluate().isEmpty) {
+        break;
+      }
+    }
+
+    expect(await firstStore.listMigrationIssues(), hasLength(1));
+    expect(await secondStore.listMigrationIssues(), isEmpty);
+    final retainedSecond =
+        await secondStore.listMigrationIssues(includeAcknowledged: true);
+    expect(retainedSecond.single.acknowledged, isTrue);
+  });
+
+  testWidgets(
+      'library diagnostics discards an in-flight stale generation read',
+      (tester) async {
+    final firstStore = MemoryImportedLibraryStore(
+      migrationIssues: <LibraryMigrationIssue>[
+        _migrationIssue(21, 'blocked-generation'),
+      ],
+    );
+    final secondStore = MemoryImportedLibraryStore(
+      migrationIssues: <LibraryMigrationIssue>[
+        _migrationIssue(22, 'current-generation'),
+      ],
+    );
+    await firstStore.open();
+    await secondStore.open();
+    addTearDown(firstStore.close);
+    addTearDown(secondStore.close);
+    final releaseList = Completer<void>();
+    final blockedStore = _BlockingMigrationIssueStore(
+      delegate: firstStore,
+      releaseList: releaseList,
+    );
+    final changes = ChangeNotifier();
+    addTearDown(changes.dispose);
+    ImportedLibraryStore currentStore = blockedStore;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LibraryDiagnosticsScreen(
+          readStore: () => currentStore,
+          storeChanges: changes,
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.byKey(libraryDiagnosticsIssueKey(21)), findsNothing);
+
+    currentStore = secondStore;
+    changes.notifyListeners();
+    releaseList.complete();
+    await _pumpUntilFound(tester, find.byKey(libraryDiagnosticsIssueKey(22)));
+
+    expect(find.byKey(libraryDiagnosticsIssueKey(21)), findsNothing);
+    expect(find.byKey(libraryDiagnosticsIssueKey(22)), findsOneWidget);
+  });
+
+  testWidgets(
+      'library diagnostics never replays stale issue ids into a new generation',
+      (tester) async {
+    final firstStore = MemoryImportedLibraryStore(
+      migrationIssues: <LibraryMigrationIssue>[
+        _migrationIssue(31, 'stale-ack-target'),
+      ],
+    );
+    final secondStore = MemoryImportedLibraryStore(
+      migrationIssues: <LibraryMigrationIssue>[
+        _migrationIssue(31, 'unrelated-current-collision'),
+      ],
+    );
+    await firstStore.open();
+    await secondStore.open();
+    addTearDown(firstStore.close);
+    addTearDown(secondStore.close);
+    final releaseAcknowledge = Completer<void>();
+    final acknowledgeStarted = Completer<void>();
+    final blockedStore = _BlockingAcknowledgeMigrationIssueStore(
+      delegate: firstStore,
+      releaseAcknowledge: releaseAcknowledge,
+      acknowledgeStarted: acknowledgeStarted,
+    );
+    final changes = ChangeNotifier();
+    addTearDown(changes.dispose);
+    ImportedLibraryStore currentStore = blockedStore;
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LibraryDiagnosticsScreen(
+          readStore: () => currentStore,
+          storeChanges: changes,
+        ),
+      ),
+    );
+    await _pumpUntilFound(tester, find.textContaining('stale-ack-target'));
+
+    await _tapVisible(
+      tester,
+      find.byKey(libraryDiagnosticsAcknowledgeKey(31)),
+    );
+    await tester.pump();
+    expect(acknowledgeStarted.isCompleted, isTrue);
+
+    currentStore = secondStore;
+    changes.notifyListeners();
+    await _pumpUntilFound(
+      tester,
+      find.textContaining('unrelated-current-collision'),
+    );
+    releaseAcknowledge.complete();
+    for (var frame = 0; frame < 20; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    final firstRetained =
+        await firstStore.listMigrationIssues(includeAcknowledged: true);
+    expect(firstRetained.single.acknowledged, isTrue);
+    final secondPending = await secondStore.listMigrationIssues();
+    expect(secondPending, hasLength(1));
+    expect(secondPending.single.legacyKey, 'unrelated-current-collision');
+    expect(secondPending.single.acknowledged, isFalse);
   });
 
   testWidgets('cover download overlay reports waterline and page progress',
