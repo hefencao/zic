@@ -660,7 +660,6 @@ final class _DemoHomeState extends State<DemoHome> {
     widget.preferences.removeListener(_handleAppPreferencesChanged);
     _serviceHandoff?.setHomeProjectionCheckpoint(null);
     _serviceHandoff?.removeListener(_handleServiceHandoffChanged);
-    unawaited(_externalSources.close());
     _librarySession.removeListener(_handleLibrarySessionChanged);
     _librarySession.downloadProjectionChanges.removeListener(
       _handleDownloadProjectionChanged,
@@ -670,6 +669,7 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Future<void> _closeHomeComposition() async {
+    await _externalSources.close();
     try {
       await _librarySession.close();
     } finally {

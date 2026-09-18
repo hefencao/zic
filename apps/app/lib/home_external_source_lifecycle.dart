@@ -47,6 +47,7 @@ final class HomeExternalSourceLifecycle {
   Future<ExternalPluginController?>? _loading;
   Future<void>? _publishing;
   Future<void>? _refresh;
+  Future<void>? _closing;
   bool _refreshPending = false;
   bool _closed = false;
 
@@ -239,15 +240,28 @@ final class HomeExternalSourceLifecycle {
     }
   }
 
-  Future<void> close() async {
-    if (_closed) return;
+  Future<void> close() {
+    final existing = _closing;
+    if (existing != null) return existing;
+    if (_closed) return Future<void>.value();
     _closed = true;
+    late final Future<void> closing;
+    closing = _close();
+    _closing = closing;
+    return closing;
+  }
+
+  Future<void> _close() async {
     _completeHandoffAvailable();
     final changes = _sourceChanges;
     _sourceChanges = null;
     _watchedController = null;
     if (changes != null) {
       await changes.cancel();
+    }
+    final refresh = _refresh;
+    if (refresh != null) {
+      await refresh;
     }
     await _projectionChanges.close();
   }

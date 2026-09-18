@@ -31,6 +31,9 @@ for marker, label in (
     ("Stream<void> get sourceProjectionChanges", "projection generation signal"),
     ("controller.sourceChanges.listen", "source-change observation"),
     ("Future<void> retryActivation(String pluginId)", "retry ownership"),
+    ("Future<void>? _closing;", "joinable lifecycle close"),
+    ("final refresh = _refresh;", "entered refresh drain"),
+    ("await refresh;", "entered refresh completion"),
 ):
     require(lifecycle, marker, label)
 
@@ -52,6 +55,15 @@ require(home, "late final HomeExternalSourceLifecycle _externalSources;", "Home 
 require(home, "_externalSources.adoptController(plugins);", "service handoff adoption")
 require(home, "_externalSources.signalLoaderAvailable();", "loader handoff wake")
 require(home, "_externalSources.waitForSource(", "source wait delegation")
+require(
+    home,
+    "await _externalSources.close();\n    try {\n      await _librarySession.close();",
+    "external refresh drain before Home session close",
+)
+if "unawaited(_externalSources.close());" in home:
+    raise SystemExit(
+        "DemoHome external-source lifecycle close must not race Home session close"
+    )
 require(home, "externalPlugins: _externalSources.activeController", "source page projection")
 require(
     home,

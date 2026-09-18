@@ -130,6 +130,89 @@ void main() {
     expect(completed, isTrue);
   });
 
+  test('close drains an entered projection refresh before returning', () async {
+    final root =
+        await Directory.systemTemp.createTemp('zic-external-close-refresh-');
+    addTearDown(() => root.delete(recursive: true));
+    final controller = await ExternalPluginController.openDeferred(
+      root.path,
+      discoverDeviceMihonExtensions: false,
+      deferRuntimeActivation: true,
+    );
+    addTearDown(controller.close);
+    final refreshStarted = Completer<void>();
+    final releaseRefresh = Completer<void>();
+    var refreshCalls = 0;
+    final lifecycle = HomeExternalSourceLifecycle(
+      loaderProvider: () => null,
+      sourceAvailable: (_) => false,
+      isDeferredSource: (_) => true,
+      refreshProjection: (_) async {
+        refreshCalls++;
+        if (!refreshStarted.isCompleted) {
+          refreshStarted.complete();
+        }
+        await releaseRefresh.future;
+      },
+    );
+    lifecycle.initialize(controller);
+
+    final refresh = lifecycle.refreshCurrentProjection();
+    await refreshStarted.future;
+
+    var closeCompleted = false;
+    final closing = lifecycle.close().then((_) => closeCompleted = true);
+    final joinedClose = lifecycle.close();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(closeCompleted, isFalse);
+    expect(refreshCalls, 1);
+    await lifecycle.refreshCurrentProjection();
+    expect(refreshCalls, 1);
+
+    releaseRefresh.complete();
+    await refresh;
+    await closing;
+    await joinedClose;
+
+    expect(closeCompleted, isTrue);
+    expect(refreshCalls, 1);
+  });
+
+  test('close does not wait an optional controller loader', () async {
+    final root =
+        await Directory.systemTemp.createTemp('zic-external-close-loader-');
+    addTearDown(() => root.delete(recursive: true));
+    final controller = await ExternalPluginController.openDeferred(
+      root.path,
+      discoverDeviceMihonExtensions: false,
+      deferRuntimeActivation: true,
+    );
+    addTearDown(controller.close);
+    final loaderStarted = Completer<void>();
+    final releaseLoader = Completer<void>();
+    final lifecycle = HomeExternalSourceLifecycle(
+      loaderProvider: () => () async {
+        loaderStarted.complete();
+        await releaseLoader.future;
+        return controller;
+      },
+      sourceAvailable: (_) => false,
+      isDeferredSource: (_) => true,
+      refreshProjection: (_) async {},
+    );
+
+    final loading = lifecycle.ensureController();
+    await loaderStarted.future;
+
+    await lifecycle.close().timeout(const Duration(seconds: 1));
+    expect(lifecycle.activeController, isNull);
+
+    releaseLoader.complete();
+    expect(await loading, same(controller));
+    expect(lifecycle.activeController, isNull);
+  });
+
   test('projection refresh is single-flight and drains one pending tail', () async {
     final root = await Directory.systemTemp.createTemp('zic-external-refresh-');
     addTearDown(() => root.delete(recursive: true));
