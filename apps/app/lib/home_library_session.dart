@@ -1775,6 +1775,18 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<ImportedLibraryEntry> hydrateEntry(
     ImportedLibraryEntry entry, {
     bool awaitCanonicalPhysicalBackfill = true,
+  }) =>
+      _runAdmittedOperation(
+        () => _hydrateEntry(
+          entry,
+          awaitCanonicalPhysicalBackfill:
+              awaitCanonicalPhysicalBackfill,
+        ),
+      );
+
+  Future<ImportedLibraryEntry> _hydrateEntry(
+    ImportedLibraryEntry entry, {
+    required bool awaitCanonicalPhysicalBackfill,
   }) async {
     final cached = _versionAuthorityHydratedEntries[
       _versionAuthorityEntryKey(entry)
@@ -1804,12 +1816,22 @@ final class HomeLibrarySession extends ChangeNotifier {
 
   Future<void> ensureCanonicalMediaForEntry(
     ImportedLibraryEntry entry,
+  ) =>
+      _runAdmittedOperation(() => _ensureCanonicalMediaForEntry(entry));
+
+  Future<void> _ensureCanonicalMediaForEntry(
+    ImportedLibraryEntry entry,
   ) async {
     _rememberVersionAuthorityEntries(<ImportedLibraryEntry>[entry]);
     await _assimilateCanonicalMediaForEntries(<ImportedLibraryEntry>[entry]);
   }
 
   Future<Map<String, ImportedLibraryEntry>> hydrateChapterBatch(
+    Iterable<ImportedLibraryChapterKey> chapters,
+  ) =>
+      _runAdmittedOperation(() => _hydrateChapterBatch(chapters));
+
+  Future<Map<String, ImportedLibraryEntry>> _hydrateChapterBatch(
     Iterable<ImportedLibraryChapterKey> chapters,
   ) async {
     final keys = <String, ImportedLibraryChapterKey>{};

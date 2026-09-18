@@ -118,6 +118,12 @@ for marker, label in (
     ("return store.getSavedComic(comic.sourceId, comic.comicId);", "saved-comic same-store readback"),
     ("Future<void> persistProgress(ReadingProgress progress) =>", "non-Reader progress mutation owner"),
     ("(store) => store.saveProgress(progress),", "non-Reader progress stable write"),
+    ("Future<ImportedLibraryEntry> hydrateEntry(", "hydration admission entry"),
+    ("() => _hydrateEntry(", "hydration private continuation"),
+    ("Future<Map<String, ImportedLibraryEntry>> hydrateChapterBatch(", "batch hydration admission entry"),
+    ("() => _hydrateChapterBatch(chapters)", "batch hydration private continuation"),
+    ("Future<void> ensureCanonicalMediaForEntry(", "canonical hydration admission entry"),
+    ("_runAdmittedOperation(() => _ensureCanonicalMediaForEntry(entry))", "canonical private continuation"),
 ):
     require(session, marker, label)
 

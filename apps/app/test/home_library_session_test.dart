@@ -3055,6 +3055,164 @@ void main() {
     expect(session.preferences[preference.identity]?.liked, isTrue);
   });
 
+  test('close waits for an admitted hydrate before library teardown',
+      () async {
+    final delegate = MemoryImportedLibraryStore();
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    final releaseGet = Completer<void>();
+    addTearDown(() async {
+      if (!releaseGet.isCompleted) {
+        releaseGet.complete();
+      }
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+
+    final manifest = _versionManifest(
+      comicId: 'close-hydrate-comic',
+      chapterId: 'close-hydrate-chapter',
+      revision: 'close-hydrate-r1',
+      pageCount: 1,
+    );
+    final record = ImportedChapterRecord.remote(
+      comic: _versionComic(manifest.comicId),
+      manifest: manifest,
+    );
+    await delegate.upsertChapter(record);
+    final getStarted = Completer<void>();
+    library.getStarted = getStarted;
+    library.getReturnGate = releaseGet.future;
+
+    final hydration = session.hydrateEntry(
+      ImportedLibraryEntry(chapter: record),
+    );
+    await getStarted.future;
+
+    var closeCompleted = false;
+    final closing = session.close().then((_) => closeCompleted = true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(closeCompleted, isFalse);
+    expect(library.closeCalls, 0);
+
+    await expectLater(
+      session.hydrateEntry(ImportedLibraryEntry(chapter: record)),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      session.hydrateChapterBatch(
+        <ImportedLibraryChapterKey>[
+          ImportedLibraryChapterKey(
+            sourceId: record.sourceId,
+            chapterId: record.chapterId,
+          ),
+        ],
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      session.ensureCanonicalMediaForEntry(
+        ImportedLibraryEntry(chapter: record),
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    releaseGet.complete();
+    await hydration;
+    await closing;
+
+    expect(closeCompleted, isTrue);
+    expect(library.closeCalls, 1);
+  });
+
+  test('hydrate admissions remain concurrent before close', () async {
+    final delegate = MemoryImportedLibraryStore();
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    final releaseGets = Completer<void>();
+    addTearDown(() async {
+      if (!releaseGets.isCompleted) {
+        releaseGets.complete();
+      }
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+
+    ImportedLibraryEntry entry(String suffix) {
+      final manifest = _versionManifest(
+        comicId: 'concurrent-hydrate-comic',
+        chapterId: 'concurrent-hydrate-$suffix',
+        revision: 'concurrent-hydrate-$suffix-r1',
+        pageCount: 1,
+      );
+      return ImportedLibraryEntry(
+        chapter: ImportedChapterRecord.remote(
+          comic: _versionComic(manifest.comicId),
+          manifest: manifest,
+        ),
+      );
+    }
+
+    final first = entry('a');
+    final second = entry('b');
+    await delegate.upsertChapter(first.chapter);
+    await delegate.upsertChapter(second.chapter);
+    final twoStarted = Completer<void>();
+    library.twoGetsStarted = twoStarted;
+    library.getReturnGate = releaseGets.future;
+
+    final firstHydration = session.hydrateEntry(first);
+    final secondHydration = session.hydrateEntry(second);
+
+    await twoStarted.future.timeout(const Duration(seconds: 1));
+    expect(library.getCalls, 2);
+
+    releaseGets.complete();
+    final hydrated = await Future.wait<ImportedLibraryEntry>(
+      <Future<ImportedLibraryEntry>>[firstHydration, secondHydration],
+    );
+    expect(
+      hydrated.map((entry) => entry.chapter.chapterId),
+      containsAll(<String>[
+        first.chapter.chapterId,
+        second.chapter.chapterId,
+      ]),
+    );
+  });
+
   test('close waits for constructor initialization admitted before teardown',
       () async {
     final openGate = Completer<void>();
@@ -4276,6 +4434,9 @@ final class _GatedLibraryStore
   Completer<void>? listStarted;
   Future<void>? listReturnGate;
   var getCalls = 0;
+  Completer<void>? getStarted;
+  Completer<void>? twoGetsStarted;
+  Future<void>? getReturnGate;
   var getManyCalls = 0;
   var categoryListCalls = 0;
   Completer<void>? categoryListStarted;
@@ -4320,8 +4481,19 @@ final class _GatedLibraryStore
     return delegate.list();
   }
   @override
-  Future<ImportedLibraryEntry?> get(String sourceId, String chapterId) {
+  Future<ImportedLibraryEntry?> get(String sourceId, String chapterId) async {
     getCalls++;
+    if (getCalls >= 2) {
+      final twoStarted = twoGetsStarted;
+      if (twoStarted != null && !twoStarted.isCompleted) {
+        twoStarted.complete();
+      }
+    }
+    final started = getStarted;
+    if (started != null && !started.isCompleted) {
+      started.complete();
+    }
+    await getReturnGate;
     return delegate.get(sourceId, chapterId);
   }
   @override
