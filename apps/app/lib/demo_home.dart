@@ -1466,8 +1466,7 @@ final class _DemoHomeState extends State<DemoHome> {
       sortOrder: _categories.length,
       createdAt: now,
     );
-    await _library.upsertCategory(category);
-    await _reloadLibrary();
+    await _librarySession.upsertCategory(category);
   }
 
   Future<void> _deleteCategory(LibraryCategory category) async {
@@ -1492,11 +1491,14 @@ final class _DemoHomeState extends State<DemoHome> {
     if (confirmed != true) {
       return;
     }
-    await _library.removeCategory(category.categoryId);
+    await _librarySession.removeCategory(category.categoryId);
     if (_selectedCategoryId == category.categoryId) {
-      _selectedCategoryId = null;
+      if (mounted) {
+        setState(() => _selectedCategoryId = null);
+      } else {
+        _selectedCategoryId = null;
+      }
     }
-    await _reloadLibrary();
   }
 
   Future<void> _reorderCustom(int oldIndex, int newIndex) async {

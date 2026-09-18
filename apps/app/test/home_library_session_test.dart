@@ -1745,6 +1745,161 @@ void main() {
   });
 
   test(
+      'category removal retries current cascade after in-flight adoption',
+      () async {
+    final category = LibraryCategory(
+      categoryId: 'fixture-category',
+      name: 'Fixture',
+      sortOrder: 0,
+      createdAt: DateTime.utc(2026, 9, 18),
+    );
+    final preference = ComicPreference.defaults(
+      sourceId: 'fixture-source',
+      comicId: 'fixture-comic',
+      sourceKind: ComicSourceKind.remote,
+    ).copyWith(
+      inShelf: true,
+      categoryIds: const <String>{'fixture-category'},
+      updatedAt: DateTime.utc(2026, 9, 18),
+    );
+
+    final firstDelegate = MemoryImportedLibraryStore();
+    await firstDelegate.open();
+    await firstDelegate.upsertCategory(category);
+    await firstDelegate.saveComicPreference(preference);
+    final firstLibrary = _GatedLibraryStore(
+      firstDelegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+      readCategoriesFromDelegate: true,
+    );
+    final removeStarted = Completer<void>();
+    final releaseRemove = Completer<void>();
+    firstLibrary.categoryRemoveStarted = removeStarted;
+    firstLibrary.categoryRemoveReturnGate = releaseRemove.future;
+    final firstDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final firstQueue = WholeComicDownloadQueue(downloads: firstDownloads);
+    final session = HomeLibrarySession(
+      library: firstLibrary,
+      chapterDownloads: firstDownloads,
+      wholeComicDownloads: firstQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    await session.ready;
+    expect(session.categories.single.categoryId, category.categoryId);
+    expect(
+      session.preferences[preference.identity]?.categoryIds,
+      contains(category.categoryId),
+    );
+
+    final secondLibrary = MemoryImportedLibraryStore();
+    await secondLibrary.open();
+    await secondLibrary.upsertCategory(category);
+    await secondLibrary.saveComicPreference(preference);
+    final secondDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final secondQueue = WholeComicDownloadQueue(downloads: secondDownloads);
+    addTearDown(() async {
+      if (!releaseRemove.isCompleted) {
+        releaseRemove.complete();
+      }
+      await session.close();
+      session.dispose();
+      await secondQueue.close();
+      await secondDownloads.close();
+      await secondLibrary.close();
+    });
+
+    final removeFuture = session.removeCategory(category.categoryId);
+    await removeStarted.future;
+
+    await session.adoptServices(
+      library: secondLibrary,
+      chapterDownloads: secondDownloads,
+      wholeComicDownloads: secondQueue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    );
+    releaseRemove.complete();
+    await removeFuture;
+
+    expect(session.categories, isEmpty);
+    expect(
+      session.preferences[preference.identity]?.categoryIds,
+      isEmpty,
+    );
+    expect(await secondLibrary.listCategories(), isEmpty);
+    expect(
+      (await secondLibrary.getComicPreference(
+        preference.sourceId,
+        preference.comicId,
+      ))
+          ?.categoryIds,
+      isEmpty,
+    );
+  });
+
+  test('category removal publishes category and preference cascade once',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    await library.open();
+    final category = LibraryCategory(
+      categoryId: 'fixture-category',
+      name: 'Fixture',
+      sortOrder: 0,
+      createdAt: DateTime.utc(2026, 9, 18),
+    );
+    final preference = ComicPreference.defaults(
+      sourceId: 'fixture-source',
+      comicId: 'fixture-comic',
+      sourceKind: ComicSourceKind.remote,
+    ).copyWith(
+      inShelf: true,
+      categoryIds: const <String>{'fixture-category'},
+      updatedAt: DateTime.utc(2026, 9, 18),
+    );
+    await library.upsertCategory(category);
+    await library.saveComicPreference(preference);
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+    await queue.ready;
+    await Future<void>.delayed(Duration.zero);
+
+    var notifications = 0;
+    session.addListener(() => notifications++);
+
+    await session.removeCategory(category.categoryId);
+
+    expect(notifications, 1);
+    expect(session.categories, isEmpty);
+    expect(
+      session.preferences[preference.identity]?.categoryIds,
+      isEmpty,
+    );
+  });
+
+  test(
       'chapter write and readback retry current library after adoption',
       () async {
     final firstDelegate = MemoryImportedLibraryStore();
@@ -3435,11 +3590,13 @@ final class _GatedLibraryStore
     this.categories, {
     this.openGate,
     this.libraryRevision,
+    this.readCategoriesFromDelegate = false,
   });
 
   final ImportedLibraryStore delegate;
   final Future<List<LibraryCategory>> categories;
   final Future<void>? openGate;
+  final bool readCategoriesFromDelegate;
   int? libraryRevision;
   Future<void>? libraryRevisionReadGate;
   var libraryRevisionReads = 0;
@@ -3449,6 +3606,8 @@ final class _GatedLibraryStore
   var listCalls = 0;
   var getCalls = 0;
   var getManyCalls = 0;
+  Completer<void>? categoryRemoveStarted;
+  Future<void>? categoryRemoveReturnGate;
   Completer<void>? chapterWriteStarted;
   Future<void>? chapterWriteReturnGate;
   Completer<void>? comicPreferenceWriteStarted;
@@ -3517,13 +3676,20 @@ final class _GatedLibraryStore
   Future<void> removeSavedComic(String sourceId, String comicId) =>
       delegate.removeSavedComic(sourceId, comicId);
   @override
-  Future<List<LibraryCategory>> listCategories() => categories;
+  Future<List<LibraryCategory>> listCategories() =>
+      readCategoriesFromDelegate ? delegate.listCategories() : categories;
   @override
   Future<void> upsertCategory(LibraryCategory category) =>
       delegate.upsertCategory(category);
   @override
-  Future<void> removeCategory(String categoryId) =>
-      delegate.removeCategory(categoryId);
+  Future<void> removeCategory(String categoryId) async {
+    await delegate.removeCategory(categoryId);
+    final started = categoryRemoveStarted;
+    if (started != null && !started.isCompleted) {
+      started.complete();
+    }
+    await categoryRemoveReturnGate;
+  }
   @override
   Future<List<ComicPreference>> listComicPreferences() =>
       delegate.listComicPreferences();

@@ -2163,6 +2163,113 @@ final class HomeLibrarySession extends ChangeNotifier {
     return result.store;
   }
 
+  Future<void> upsertCategory(LibraryCategory category) async {
+    while (true) {
+      final result =
+          await _persistStableLibraryMutationResult<LibraryCategory?>(
+        (store) async {
+          await store.upsertCategory(category);
+          final categories = await store.listCategories();
+          for (final stored in categories) {
+            if (stored.categoryId == category.categoryId) {
+              return stored;
+            }
+          }
+          return null;
+        },
+      );
+      if (!identical(library, result.store)) {
+        continue;
+      }
+      final stored = result.value;
+      if (stored == null) {
+        throw StateError(
+          'category write completed without a readable record',
+        );
+      }
+      final next = _categories.toList(growable: true);
+      final index = next.indexWhere(
+        (current) => current.categoryId == stored.categoryId,
+      );
+      if (index < 0) {
+        next.add(stored);
+      } else {
+        next[index] = stored;
+      }
+      next.sort((left, right) {
+        final order = left.sortOrder.compareTo(right.sortOrder);
+        return order != 0 ? order : left.name.compareTo(right.name);
+      });
+      _categories = List<LibraryCategory>.unmodifiable(next);
+      _libraryProjectionRevision++;
+      _publish();
+      _scheduleSnapshotWrite();
+      return;
+    }
+  }
+
+  Future<void> removeCategory(String categoryId) async {
+    while (true) {
+      final result = await _persistStableLibraryMutationResult<
+          ({
+            List<LibraryCategory> categories,
+            List<ComicPreference> preferences,
+          })>(
+        (store) async {
+          await store.removeCategory(categoryId);
+          return (
+            categories: await store.listCategories(),
+            preferences: await store.listComicPreferences(),
+          );
+        },
+      );
+      if (!identical(library, result.store)) {
+        continue;
+      }
+      if (result.value.categories.any(
+        (category) => category.categoryId == categoryId,
+      )) {
+        throw StateError('category removal completed but category remains');
+      }
+      final persistedPreferences = <String, ComicPreference>{
+        for (final preference in result.value.preferences)
+          preference.identity: preference,
+      };
+      final nextPreferences = <String, ComicPreference>{..._preferences};
+      for (final entry in _preferences.entries) {
+        final current = entry.value;
+        if (!current.categoryIds.contains(categoryId)) {
+          continue;
+        }
+        final persisted = persistedPreferences[entry.key];
+        if (persisted == null ||
+            persisted.categoryIds.contains(categoryId)) {
+          throw StateError(
+            'category removal completed without preference cascade',
+          );
+        }
+        nextPreferences[entry.key] = current.copyWith(
+          categoryIds: current.categoryIds.where((id) => id != categoryId),
+          updatedAt: persisted.updatedAt.isAfter(current.updatedAt)
+              ? persisted.updatedAt
+              : current.updatedAt,
+        );
+      }
+      _categories = List<LibraryCategory>.unmodifiable(
+        _categories
+            .where((category) => category.categoryId != categoryId)
+            .toList(growable: false),
+      );
+      _preferences = Map<String, ComicPreference>.unmodifiable(
+        nextPreferences,
+      );
+      _libraryProjectionRevision++;
+      _publish();
+      _scheduleSnapshotWrite();
+      return;
+    }
+  }
+
   Future<void> persistPreference(ComicPreference preference) =>
       persistPreferences(<ComicPreference>[preference]);
 

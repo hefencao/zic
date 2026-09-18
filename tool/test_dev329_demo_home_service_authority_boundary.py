@@ -92,6 +92,13 @@ for marker, label in (
     ("Future<void> persistPreferences(", "comic preference mutation owner"),
     ("Future<void> persistSourcePreference(", "source preference mutation owner"),
     ("Future<void> persistReadState(", "read-state mutation owner"),
+    ("Future<void> upsertCategory(", "category upsert owner"),
+    ("await store.upsertCategory(category);", "category same-store write"),
+    ("final categories = await store.listCategories();", "category same-store readback"),
+    ("Future<void> removeCategory(String categoryId) async", "category removal owner"),
+    ("await store.removeCategory(categoryId);", "category removal same-store write"),
+    ("categories: await store.listCategories(),", "category removal category readback"),
+    ("preferences: await store.listComicPreferences(),", "category removal cascade readback"),
     ("Future<ImportedLibraryEntry> upsertChapter(", "chapter write-through owner"),
     ("await store.upsertChapter(chapter);", "chapter same-store write"),
     ("return store.get(chapter.sourceId, chapter.chapterId);", "chapter same-store readback"),
@@ -129,6 +136,8 @@ if "_librarySession.persistProgress(" in reader_progress_body:
     )
 
 for marker, label in (
+    ("_librarySession.upsertCategory(category);", "category upsert delegation"),
+    ("_librarySession.removeCategory(category.categoryId);", "category removal delegation"),
     ("_librarySession.persistPreferences(updatedPreferences);", "comic preference delegation"),
     ("_librarySession.persistSourcePreference(updated);", "source preference delegation"),
     ("_librarySession.persistReadState(state);", "read-state delegation"),
@@ -140,6 +149,8 @@ for forbidden in (
     "_library.saveComicPreference(",
     "_library.saveSourcePreference(",
     "_library.saveChapterReadState(",
+    "_library.upsertCategory(",
+    "_library.removeCategory(",
     "_librarySession.replacePreference(",
     "_librarySession.replaceSourcePreference(",
     "_librarySession.replaceReadState(",
