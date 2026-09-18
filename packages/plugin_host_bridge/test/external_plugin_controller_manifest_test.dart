@@ -75,6 +75,126 @@ class PreviewSource extends ComicSource {
     expect(await payload.exists(), isFalse);
   });
 
+  test('stale preview cannot claim a newer pending payload', () async {
+    final storage = await Directory.systemTemp.createTemp(
+      'zic-external-plugin-stale-preview-',
+    );
+    addTearDown(() => storage.delete(recursive: true));
+    final controller = await ExternalPluginController.openDeferred(
+      storage.path,
+      discoverDeviceMihonExtensions: false,
+      deferRuntimeActivation: true,
+    );
+    addTearDown(controller.close);
+    final plugin = ExternalComicPluginCatalogEntry(
+      format: ExternalComicPluginFormat.veneraJavaScript,
+      pluginId: 'venera:test-stale-preview',
+      name: 'Stale preview',
+      version: '1.0.0',
+      entrypoint: Uri.https('example.com', '/stale-preview.js'),
+      sources: const <ExternalComicPluginSource>[],
+      requiresRuntimeDiscovery: true,
+    );
+    Future<ExternalPluginInstallPreview> inspect(String marker) =>
+        HttpOverrides.runZoned(
+          () => controller.inspect(
+            plugin: plugin,
+            repository: Uri.https('example.com', '/index.json'),
+          ),
+          createHttpClient: (_) => _StaticHttpClient(
+            utf8.encode('''
+class PreviewSource extends ComicSource {
+  key = "stale-preview";
+  marker = "$marker";
+}
+'''),
+          ),
+        );
+
+    final first = await inspect('first');
+    final firstPayload = File(first.inspection.payloadPath!);
+    expect(await firstPayload.exists(), isTrue);
+
+    final second = await inspect('second');
+    final secondPayload = File(second.inspection.payloadPath!);
+    expect(await firstPayload.exists(), isFalse);
+    expect(await secondPayload.exists(), isTrue);
+
+    await expectLater(
+      controller.approveAndActivate(first),
+      throwsA(isA<StateError>()),
+    );
+    expect(await secondPayload.exists(), isTrue);
+
+    await controller.discardPreview(second);
+    expect(await secondPayload.exists(), isFalse);
+  });
+
+  test('later same-plugin inspect supersedes an earlier slow download',
+      () async {
+    final storage = await Directory.systemTemp.createTemp(
+      'zic-external-plugin-overlap-preview-',
+    );
+    addTearDown(() => storage.delete(recursive: true));
+    final controller = await ExternalPluginController.openDeferred(
+      storage.path,
+      discoverDeviceMihonExtensions: false,
+      deferRuntimeActivation: true,
+    );
+    addTearDown(controller.close);
+    final plugin = ExternalComicPluginCatalogEntry(
+      format: ExternalComicPluginFormat.veneraJavaScript,
+      pluginId: 'venera:test-overlap-preview',
+      name: 'Overlap preview',
+      version: '1.0.0',
+      entrypoint: Uri.https('example.com', '/overlap-preview.js'),
+      sources: const <ExternalComicPluginSource>[],
+      requiresRuntimeDiscovery: true,
+    );
+    final firstRelease = Completer<void>();
+    final firstClient = _GatedStaticHttpClient(
+      utf8.encode('''
+class PreviewSource extends ComicSource {
+  key = "overlap-preview";
+  marker = "first";
+}
+'''),
+      firstRelease.future,
+    );
+    final first = HttpOverrides.runZoned(
+      () => controller.inspect(
+        plugin: plugin,
+        repository: Uri.https('example.com', '/index.json'),
+      ),
+      createHttpClient: (_) => firstClient,
+    );
+    await firstClient.requestStarted.future;
+
+    final second = await HttpOverrides.runZoned(
+      () => controller.inspect(
+        plugin: plugin,
+        repository: Uri.https('example.com', '/index.json'),
+      ),
+      createHttpClient: (_) => _StaticHttpClient(
+        utf8.encode('''
+class PreviewSource extends ComicSource {
+  key = "overlap-preview";
+  marker = "second";
+}
+'''),
+      ),
+    );
+    final secondPayload = File(second.inspection.payloadPath!);
+    expect(await secondPayload.exists(), isTrue);
+
+    firstRelease.complete();
+    await expectLater(first, throwsA(isA<StateError>()));
+    expect(await secondPayload.exists(), isTrue);
+
+    await controller.discardPreview(second);
+    expect(await secondPayload.exists(), isFalse);
+  });
+
   test('controller close keeps manifest-owned installed payload', () async {
     final storage = await Directory.systemTemp.createTemp(
       'zic-external-plugin-installed-close-',
@@ -275,50 +395,129 @@ class RetryableSource extends ComicSource {
     expect(await payload.exists(), isTrue);
   });
 
-  test('non-recoverable activation failure rolls back a new record',
-      () async {
+  test('unclaimed preview cannot install an arbitrary payload', () async {
     final storage = await Directory.systemTemp.createTemp(
-      'zic-external-plugin-terminal-',
+      'zic-external-plugin-unclaimed-preview-',
     );
     addTearDown(() => storage.delete(recursive: true));
-    final payload = await File('${storage.path}/terminal.js').writeAsString(
-      'class TerminalSource extends ComicSource {}',
+    final payload = await File('${storage.path}/unclaimed.js').writeAsString(
+      'class UnclaimedSource extends ComicSource { key = "unclaimed"; }',
     );
     final controller = await ExternalPluginController.openDeferred(
       storage.path,
       discoverDeviceMihonExtensions: false,
+      deferRuntimeActivation: true,
     );
     addTearDown(controller.close);
     final plugin = ExternalComicPluginCatalogEntry(
       format: ExternalComicPluginFormat.veneraJavaScript,
-      pluginId: 'venera:test-terminal',
-      name: 'Test terminal',
+      pluginId: 'venera:test-unclaimed',
+      name: 'Test unclaimed',
       version: '1.0.0',
-      entrypoint: Uri.http('example.com', '/terminal.js'),
+      entrypoint: Uri.https('example.com', '/unclaimed.js'),
       sources: const <ExternalComicPluginSource>[],
       requiresRuntimeDiscovery: true,
     );
-    final inspection = ExternalPluginInspection(
-      format: ExternalComicPluginFormat.veneraJavaScript,
-      payloadSha256: List<String>.filled(64, '0').join(),
-      payloadPath: payload.path,
-      payloadByteLength: await payload.length(),
-      sourceKey: 'terminal',
+    final preview = ExternalPluginInstallPreview(
+      plugin: plugin,
+      inspection: ExternalPluginInspection(
+        format: ExternalComicPluginFormat.veneraJavaScript,
+        payloadSha256: List<String>.filled(64, '0').join(),
+        payloadPath: payload.path,
+        payloadByteLength: await payload.length(),
+        sourceKey: 'unclaimed',
+      ),
+      repository: Uri.https('example.com', '/index.json'),
     );
 
     await expectLater(
-      controller.approveAndActivate(
-        ExternalPluginInstallPreview(
-          plugin: plugin,
-          inspection: inspection,
-          repository: Uri.https('example.com', '/'),
-        ),
-      ),
-      throwsA(isA<ExternalPluginActivationException>()),
+      controller.approveAndActivate(preview),
+      throwsA(isA<StateError>()),
     );
     expect(controller.installed, isEmpty);
-    expect(controller.canRetryActivation(plugin.pluginId), isFalse);
-    expect(await payload.exists(), isFalse);
+    expect(await payload.exists(), isTrue);
+  });
+
+  test('pending preview cannot replace the installed payload used by retry',
+      () async {
+    final storage = await Directory.systemTemp.createTemp(
+      'zic-external-plugin-retry-exact-payload-',
+    );
+    addTearDown(() => storage.delete(recursive: true));
+    final pluginRoot = Directory('${storage.path}/external_plugins');
+    await pluginRoot.create(recursive: true);
+    final installedPayload = await File('${pluginRoot.path}/installed.js')
+        .writeAsString('''
+class InstalledSource extends ComicSource {
+  key = "exact-retry";
+  marker = "installed";
+}
+''');
+    final plugin = ExternalComicPluginCatalogEntry(
+      format: ExternalComicPluginFormat.veneraJavaScript,
+      pluginId: 'venera:test-exact-retry',
+      name: 'Test exact retry',
+      version: '1.0.0',
+      entrypoint: Uri.https('example.com', '/exact-retry.js'),
+      sources: const <ExternalComicPluginSource>[],
+      requiresRuntimeDiscovery: true,
+    );
+    final installedInspection = await VeneraJavaScriptInspector(
+      payloads: CallbackExternalPluginPayloadLoader(
+        (_) async => ExternalPluginPayloadFile(
+          path: installedPayload.path,
+          byteLength: await installedPayload.length(),
+        ),
+      ),
+    ).inspect(plugin);
+    await File('${pluginRoot.path}/installed.json').writeAsString(
+      jsonEncode(<String, Object?>{
+        'version': 1,
+        'plugins': <Object?>[
+          _record(
+            'exact-retry',
+            installedPayload.path,
+            payloadSha256: installedInspection.payloadSha256,
+            sourceKey: 'exact-retry',
+          ),
+        ],
+      }),
+    );
+
+    final controller = await ExternalPluginController.openDeferred(
+      storage.path,
+      discoverDeviceMihonExtensions: false,
+      deferRuntimeActivation: true,
+    );
+    addTearDown(controller.close);
+    final pending = await HttpOverrides.runZoned(
+      () => controller.inspect(
+        plugin: plugin,
+        repository: Uri.https('example.com', '/index.json'),
+      ),
+      createHttpClient: (_) => _StaticHttpClient(
+        utf8.encode('''
+class PendingSource extends ComicSource {
+  key = "exact-retry";
+  marker = "pending";
+}
+'''),
+      ),
+    );
+
+    Object? retryError;
+    try {
+      await controller.retryActivation(plugin.pluginId);
+    } on Object catch (error) {
+      retryError = error;
+    }
+
+    expect(retryError, isA<ExternalPluginActivationException>());
+    expect(
+      (retryError! as ExternalPluginActivationException).denials,
+      isNot(contains(ExternalPluginDenial.payloadNotTrusted)),
+    );
+    await controller.discardPreview(pending);
   });
 
   test('manifest restore keeps valid plugins when one record is malformed',
@@ -484,6 +683,7 @@ class RetryableSource extends ComicSource {
 Map<String, Object?> _record(
   String suffix,
   String payloadPath, {
+  String? payloadSha256,
   String? sourceKey,
   List<String> sourceIds = const <String>[],
 }) =>
@@ -499,7 +699,7 @@ Map<String, Object?> _record(
         'sources': const <Object?>[],
       },
       'payloadPath': payloadPath,
-      'payloadSha256': List<String>.filled(64, '0').join(),
+      'payloadSha256': payloadSha256 ?? List<String>.filled(64, '0').join(),
       'repositoryOrigin': 'https://example.com',
       'entryClasses': const <Object?>[],
       if (sourceKey != null) 'sourceKey': sourceKey,
@@ -532,6 +732,70 @@ final class _StaticHttpClient implements HttpClient {
 
   @override
   void close({bool force = false}) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _GatedStaticHttpClient implements HttpClient {
+  _GatedStaticHttpClient(this.bytes, this.gate);
+
+  final List<int> bytes;
+  final Future<void> gate;
+  final Completer<void> requestStarted = Completer<void>();
+
+  Duration? _connectionTimeout;
+  Duration _idleTimeout = const Duration(seconds: 15);
+
+  @override
+  Duration? get connectionTimeout => _connectionTimeout;
+
+  @override
+  set connectionTimeout(Duration? value) => _connectionTimeout = value;
+
+  @override
+  Duration get idleTimeout => _idleTimeout;
+
+  @override
+  set idleTimeout(Duration value) => _idleTimeout = value;
+
+  @override
+  Future<HttpClientRequest> getUrl(Uri url) async {
+    if (!requestStarted.isCompleted) requestStarted.complete();
+    return _GatedStaticHttpClientRequest(bytes, gate);
+  }
+
+  @override
+  void close({bool force = false}) {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _GatedStaticHttpClientRequest implements HttpClientRequest {
+  _GatedStaticHttpClientRequest(this.bytes, this.gate);
+
+  final List<int> bytes;
+  final Future<void> gate;
+  final HttpHeaders _headers = _NoopHttpHeaders();
+
+  @override
+  HttpHeaders get headers => _headers;
+
+  @override
+  bool followRedirects = true;
+
+  @override
+  int maxRedirects = 5;
+
+  @override
+  void add(List<int> data) {}
+
+  @override
+  Future<HttpClientResponse> close() async {
+    await gate;
+    return _StaticHttpClientResponse(bytes);
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

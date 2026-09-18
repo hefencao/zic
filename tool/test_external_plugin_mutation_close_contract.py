@@ -22,8 +22,70 @@ def require(body: str, marker: str, label: str) -> None:
 
 require(GATE, 'final class ExternalPluginMutationGate', 'mutation gate owner')
 require(GATE, 'Future<T> run<T>', 'mutation admission')
+require(GATE, 'String pluginId,', 'per-plugin mutation key')
+require(GATE, 'final Map<String, Future<void>> _tails', 'per-plugin mutation tails')
 require(GATE, 'Future<void> beginClose()', 'mutation drain boundary')
 require(CONTROLLER, 'final ExternalPluginMutationGate _durableMutations =', 'controller gate field')
+require(CONTROLLER, 'final class _PendingPluginPayload', 'pending preview generation owner')
+require(CONTROLLER, 'final Object? _claim;', 'opaque preview claim')
+require(
+    CONTROLLER,
+    'final Map<String, Object> _previewGenerations',
+    'preview request generation owner',
+)
+require(
+    CONTROLLER,
+    '!identical(pending.claim, preview._claim)',
+    'exact preview generation claim check',
+)
+
+inspect_start = CONTROLLER.index('Future<ExternalPluginInstallPreview> inspect({')
+inspect_end = CONTROLLER.index(
+    '\n  Future<ExternalPluginInstallPreview> inspectInstalledMihon(',
+    inspect_start,
+)
+inspect_body = CONTROLLER[inspect_start:inspect_end]
+preview_begin = inspect_body.index('_beginPreviewGeneration(plugin.pluginId)')
+download_start = inspect_body.index('_downloadToFile(')
+if preview_begin > download_start:
+    raise SystemExit('preview generation must be established before same-plugin download starts')
+if inspect_body.count('_requireCurrentPreviewGeneration(') < 2:
+    raise SystemExit('inspect must recheck preview generation after download and inspection')
+require(
+    inspect_body,
+    '_PendingPluginPayload(\n      payload.path,\n      previewGeneration,',
+    'inspect pending generation publication',
+)
+require(
+    CONTROLLER,
+    '_previewGenerations.clear();',
+    'preview generation close cleanup',
+)
+require(
+    CONTROLLER,
+    'Future<ExternalPluginPayloadFile> _acquireInstalledPayload(',
+    'installed record payload reader',
+)
+require(
+    CONTROLLER,
+    'final cached = await _cachedPinnedInspection(record);',
+    'record-scoped cached inspection',
+)
+require(
+    CONTROLLER,
+    'final payload = await _acquireInstalledPayload(record);',
+    'cached inspection exact record payload',
+)
+require(
+    CONTROLLER,
+    'inspectRecord: _inspectInstalledRecord,',
+    'runtime host record-scoped inspection',
+)
+require(
+    CONTROLLER,
+    'record.payloadPath == inspection.payloadPath &&',
+    'runtime inspection exact path pin',
+)
 require(CONTROLLER, 'Future<void>? _closeFuture;', 'joinable close future')
 require(
     CONTROLLER,
@@ -81,15 +143,36 @@ registry_positions = [registry_close.index(marker) for marker in registry_order]
 if registry_positions != sorted(registry_positions):
     raise SystemExit('registry close must drain admitted deactivation before remaining sessions')
 
-for signature, marker in (
-    ('approveAndActivate(', '_runDurableMutation(() => _approveAndActivate(preview))'),
-    ('retryActivation(String pluginId)', '_runDurableMutation(() => _retryActivation(pluginId))'),
-    ('remove(String pluginId)', '_runDurableMutation(() => _remove(pluginId))'),
-    ('_activateRecord(InstalledExternalPlugin record)', '_runDurableMutation(() async {'),
+for signature, markers in (
+    (
+        'approveAndActivate(',
+        ('_runDurableMutation(', 'preview.plugin.pluginId', '_approveAndActivate(preview)'),
+    ),
+    (
+        'retryActivation(String pluginId)',
+        ('_runDurableMutation(pluginId', '_retryActivation(pluginId)'),
+    ),
+    (
+        'remove(String pluginId)',
+        ('_runDurableMutation(pluginId', '_remove(pluginId)'),
+    ),
+    (
+        'saveVeneraJavaScript(',
+        ('_runDurableMutation(', 'pluginId', '_saveVeneraJavaScript(pluginId, source)'),
+    ),
+    (
+        'restartMihonSourceForBrowserHandoff(String sourceId)',
+        ('_runDurableMutation(', 'pluginId', '_restartMihonSourceForBrowserHandoff('),
+    ),
+    (
+        '_activateRecord(InstalledExternalPlugin record)',
+        ('_runDurableMutation(record.plugin.pluginId',),
+    ),
 ):
     start = CONTROLLER.index(signature)
-    window = CONTROLLER[start:start + 450]
-    require(window, marker, signature)
+    window = CONTROLLER[start:start + 700]
+    for marker in markers:
+        require(window, marker, f'{signature} keyed mutation marker')
 
 close_start = CONTROLLER.index('Future<void> _close() async {')
 close_end = CONTROLLER.index('\n  Future<void> _discardPendingPayloads()', close_start)

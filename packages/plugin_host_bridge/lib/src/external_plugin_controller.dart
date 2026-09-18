@@ -12,11 +12,26 @@ final class ExternalPluginInstallPreview {
     required this.plugin,
     required this.inspection,
     required this.repository,
+  }) : _claim = null;
+
+  ExternalPluginInstallPreview._claimed(
+    this._claim, {
+    required this.plugin,
+    required this.inspection,
+    required this.repository,
   });
 
   final ExternalComicPluginCatalogEntry plugin;
   final ExternalPluginInspection inspection;
   final Uri repository;
+  final Object? _claim;
+}
+
+final class _PendingPluginPayload {
+  const _PendingPluginPayload(this.path, this.claim);
+
+  final String path;
+  final Object claim;
 }
 
 final class InstalledExternalPlugin {
@@ -73,7 +88,9 @@ final class ExternalPluginController {
   late final File _manifest = File('${_root.path}/installed.json');
   final Map<String, InstalledExternalPlugin> _installed =
       <String, InstalledExternalPlugin>{};
-  final Map<String, String> _pendingPayloads = <String, String>{};
+  final Map<String, _PendingPluginPayload> _pendingPayloads =
+      <String, _PendingPluginPayload>{};
+  final Map<String, Object> _previewGenerations = <String, Object>{};
   final Map<String, Object> _activationFailures = <String, Object>{};
   final Map<String, Object> _manifestRestoreFailures = <String, Object>{};
   final StreamController<void> _sourceChanges =
@@ -101,8 +118,7 @@ final class ExternalPluginController {
       ExternalPluginRuntimeRegistry(<ExternalComicPluginHost>[
     _PinnedExternalPluginHost(
       format: ExternalComicPluginFormat.mihonExtension,
-      inspector: _mihonInspector,
-      pinnedInspection: _cachedPinnedInspection,
+      inspectRecord: _inspectInstalledRecord,
       executor: MihonIsolatedExecutor(
         backend: AndroidMihonIsolatedRuntimeBackend(),
       ),
@@ -110,8 +126,7 @@ final class ExternalPluginController {
     ),
     _PinnedExternalPluginHost(
       format: ExternalComicPluginFormat.veneraJavaScript,
-      inspector: _veneraInspector,
-      pinnedInspection: _cachedPinnedInspection,
+      inspectRecord: _inspectInstalledRecord,
       executor: VeneraSandboxExecutor(
         backend: AndroidVeneraSandboxRuntimeBackend(),
       ),
@@ -286,6 +301,22 @@ final class ExternalPluginController {
     if (pluginId == null) {
       throw StateError('external source is not active: $sourceId');
     }
+    await _runDurableMutation(
+      pluginId,
+      () => _restartMihonSourceForBrowserHandoff(
+        pluginId: pluginId,
+        sourceId: sourceId,
+      ),
+    );
+  }
+
+  Future<void> _restartMihonSourceForBrowserHandoff({
+    required String pluginId,
+    required String sourceId,
+  }) async {
+    if (_registry.ownerOfSource(sourceId) != pluginId) {
+      throw StateError('external source is no longer active: $sourceId');
+    }
     final record = _installed[pluginId];
     if (record == null) {
       throw StateError('external source owner is not installed: $pluginId');
@@ -390,9 +421,10 @@ final class ExternalPluginController {
   }) async {
     _requireOpen();
     _requireHttps(repository);
+    final previewGeneration = _beginPreviewGeneration(plugin.pluginId);
     final previousPending = _pendingPayloads.remove(plugin.pluginId);
     if (previousPending != null) {
-      await _deleteBestEffort(File(previousPending));
+      await _deleteBestEffort(File(previousPending.path));
     }
     final suffix = plugin.format == ExternalComicPluginFormat.mihonExtension
         ? '.apk'
@@ -414,22 +446,44 @@ final class ExternalPluginController {
       );
       await partial.rename(payload.path);
       _requireOpen();
+      _requireCurrentPreviewGeneration(
+        plugin.pluginId,
+        previewGeneration,
+      );
     } on Object {
+      _releasePreviewGeneration(plugin.pluginId, previewGeneration);
       await _deleteBestEffort(partial);
       await _deleteBestEffort(payload);
       rethrow;
     }
-    _pendingPayloads[plugin.pluginId] = payload.path;
+    final pending = _PendingPluginPayload(
+      payload.path,
+      previewGeneration,
+    );
+    _pendingPayloads[plugin.pluginId] = pending;
     try {
       final inspection = await _inspector(plugin.format).inspect(plugin);
       _requireOpen();
-      return ExternalPluginInstallPreview(
+      _requireCurrentPreviewGeneration(
+        plugin.pluginId,
+        previewGeneration,
+      );
+      if (!identical(_pendingPayloads[plugin.pluginId], pending)) {
+        throw StateError(
+          'external plugin preview was superseded: ${plugin.pluginId}',
+        );
+      }
+      return ExternalPluginInstallPreview._claimed(
+        pending.claim,
         plugin: plugin,
         inspection: inspection,
         repository: repository,
       );
     } on Object {
-      _pendingPayloads.remove(plugin.pluginId);
+      if (identical(_pendingPayloads[plugin.pluginId], pending)) {
+        _pendingPayloads.remove(plugin.pluginId);
+      }
+      _releasePreviewGeneration(plugin.pluginId, previewGeneration);
       await _deleteBestEffort(payload);
       rethrow;
     }
@@ -440,9 +494,10 @@ final class ExternalPluginController {
   ) async {
     _requireOpen();
     final pluginId = 'mihon:${extension.packageName}';
+    final previewGeneration = _beginPreviewGeneration(pluginId);
     final previousPending = _pendingPayloads.remove(pluginId);
     if (previousPending != null) {
-      await _deleteBestEffort(File(previousPending));
+      await _deleteBestEffort(File(previousPending.path));
     }
     final safeId = base64Url
         .encode(utf8.encode(pluginId))
@@ -457,12 +512,18 @@ final class ExternalPluginController {
       );
       await partial.rename(payload.path);
       _requireOpen();
+      _requireCurrentPreviewGeneration(pluginId, previewGeneration);
     } on Object {
+      _releasePreviewGeneration(pluginId, previewGeneration);
       await _deleteBestEffort(partial);
       await _deleteBestEffort(payload);
       rethrow;
     }
-    _pendingPayloads[pluginId] = payload.path;
+    final pending = _PendingPluginPayload(
+      payload.path,
+      previewGeneration,
+    );
+    _pendingPayloads[pluginId] = pending;
     final entrypoint = Uri.https(
       'installed.mihon.invalid',
       '/${Uri.encodeComponent(extension.packageName)}.apk',
@@ -481,13 +542,21 @@ final class ExternalPluginController {
     try {
       final inspection = await _mihonInspector.inspect(plugin);
       _requireOpen();
-      return ExternalPluginInstallPreview(
+      _requireCurrentPreviewGeneration(pluginId, previewGeneration);
+      if (!identical(_pendingPayloads[pluginId], pending)) {
+        throw StateError('external plugin preview was superseded: $pluginId');
+      }
+      return ExternalPluginInstallPreview._claimed(
+        pending.claim,
         plugin: plugin,
         inspection: inspection,
         repository: Uri.https('installed.mihon.invalid', '/'),
       );
     } on Object {
-      _pendingPayloads.remove(pluginId);
+      if (identical(_pendingPayloads[pluginId], pending)) {
+        _pendingPayloads.remove(pluginId);
+      }
+      _releasePreviewGeneration(pluginId, previewGeneration);
       await _deleteBestEffort(payload);
       rethrow;
     }
@@ -496,26 +565,38 @@ final class ExternalPluginController {
   Future<void> discardPreview(ExternalPluginInstallPreview preview) async {
     _requireOpen();
     final pending = _pendingPayloads[preview.plugin.pluginId];
-    if (pending == null || pending != preview.inspection.payloadPath) {
+    if (pending == null ||
+        !identical(pending.claim, preview._claim) ||
+        pending.path != preview.inspection.payloadPath) {
       return;
     }
     _pendingPayloads.remove(preview.plugin.pluginId);
-    await _deleteBestEffort(File(pending));
+    _releasePreviewGeneration(preview.plugin.pluginId, preview._claim);
+    await _deleteBestEffort(File(pending.path));
   }
 
   Future<List<BrowsableComicSource>> approveAndActivate(
     ExternalPluginInstallPreview preview,
   ) =>
-      _runDurableMutation(() => _approveAndActivate(preview));
+      _runDurableMutation(
+        preview.plugin.pluginId,
+        () => _approveAndActivate(preview),
+      );
 
   Future<List<BrowsableComicSource>> _approveAndActivate(
     ExternalPluginInstallPreview preview,
   ) async {
-    final path = _pendingPayloads.remove(preview.plugin.pluginId) ??
-        preview.inspection.payloadPath;
-    if (path == null || path.trim().isEmpty) {
-      throw StateError('external plugin preview payload is unavailable');
+    final pending = _pendingPayloads[preview.plugin.pluginId];
+    if (pending == null ||
+        !identical(pending.claim, preview._claim) ||
+        pending.path != preview.inspection.payloadPath) {
+      throw StateError(
+        'external plugin preview was superseded: ${preview.plugin.pluginId}',
+      );
     }
+    _pendingPayloads.remove(preview.plugin.pluginId);
+    _releasePreviewGeneration(preview.plugin.pluginId, preview._claim);
+    final path = pending.path;
     var record = InstalledExternalPlugin(
       plugin: preview.plugin,
       payloadPath: path,
@@ -530,7 +611,8 @@ final class ExternalPluginController {
     );
     final pluginId = record.plugin.pluginId;
     final previous = _installed[pluginId];
-    final replacingActive = _registry.isActive(pluginId);    // Payload resolution for the candidate reads the installed record. Publish
+    final replacingActive = _registry.isActive(pluginId);
+    // Payload resolution for the candidate reads the installed record. Publish
     // the candidate record in memory, but keep the previous runtime session
     // authoritative until registry.replace validates the new payload/source set.
     _installed[pluginId] = record;
@@ -605,7 +687,7 @@ final class ExternalPluginController {
   /// its already-owned payload. The trusted record is never removed by this
   /// operation.
   Future<List<BrowsableComicSource>> retryActivation(String pluginId) =>
-      _runDurableMutation(() => _retryActivation(pluginId));
+      _runDurableMutation(pluginId, () => _retryActivation(pluginId));
 
   Future<List<BrowsableComicSource>> _retryActivation(String pluginId) async {
     var record = _installed[pluginId];
@@ -639,7 +721,7 @@ final class ExternalPluginController {
   }
 
   Future<void> remove(String pluginId) =>
-      _runDurableMutation(() => _remove(pluginId));
+      _runDurableMutation(pluginId, () => _remove(pluginId));
 
   Future<void> _remove(String pluginId) async {
     await _registry.deactivate(pluginId);
@@ -724,14 +806,24 @@ final class ExternalPluginController {
   Future<List<BrowsableComicSource>> saveVeneraJavaScript(
     String pluginId,
     String source,
+  ) =>
+      _runDurableMutation(
+        pluginId,
+        () => _saveVeneraJavaScript(pluginId, source),
+      );
+
+  Future<List<BrowsableComicSource>> _saveVeneraJavaScript(
+    String pluginId,
+    String source,
   ) async {
     final record = _requireVeneraRecord(pluginId);
     if (source.trim().isEmpty) {
       throw ArgumentError.value(source, 'source', 'must not be empty');
     }
+    final previewGeneration = _beginPreviewGeneration(pluginId);
     final previousPending = _pendingPayloads.remove(pluginId);
     if (previousPending != null) {
-      await _deleteBestEffort(File(previousPending));
+      await _deleteBestEffort(File(previousPending.path));
     }
     final safeId =
         base64Url.encode(utf8.encode(pluginId)).replaceAll('=', '');
@@ -743,25 +835,41 @@ final class ExternalPluginController {
       await partial.writeAsString(source, flush: true);
       await partial.rename(payload.path);
       _requireOpen();
+      _requireCurrentPreviewGeneration(pluginId, previewGeneration);
     } on Object {
+      _releasePreviewGeneration(pluginId, previewGeneration);
       await _deleteBestEffort(partial);
       await _deleteBestEffort(payload);
       rethrow;
     }
-    _pendingPayloads[pluginId] = payload.path;
+    final pending = _PendingPluginPayload(
+      payload.path,
+      previewGeneration,
+    );
+    _pendingPayloads[pluginId] = pending;
     final ExternalPluginInstallPreview preview;
     try {
-      preview = ExternalPluginInstallPreview(
+      final inspection = await _veneraInspector.inspect(record.plugin);
+      _requireOpen();
+      _requireCurrentPreviewGeneration(pluginId, previewGeneration);
+      if (!identical(_pendingPayloads[pluginId], pending)) {
+        throw StateError('external plugin preview was superseded: $pluginId');
+      }
+      preview = ExternalPluginInstallPreview._claimed(
+        pending.claim,
         plugin: record.plugin,
-        inspection: await _veneraInspector.inspect(record.plugin),
+        inspection: inspection,
         repository: Uri.parse(record.repositoryOrigin),
       );
     } on Object catch (error) {
-      _pendingPayloads.remove(pluginId);
+      if (identical(_pendingPayloads[pluginId], pending)) {
+        _pendingPayloads.remove(pluginId);
+      }
+      _releasePreviewGeneration(pluginId, previewGeneration);
       await _deleteBestEffort(payload);
       throw StateError('编辑后的脚本无效：$error');
     }
-    return approveAndActivate(preview);
+    return _approveAndActivate(preview);
   }
 
   InstalledExternalPlugin _requireVeneraRecord(String pluginId) {
@@ -801,9 +909,12 @@ final class ExternalPluginController {
   }
 
   Future<void> _discardPendingPayloads() async {
-    final pending =
-        _pendingPayloads.values.toSet().toList(growable: false);
+    final pending = _pendingPayloads.values
+        .map((payload) => payload.path)
+        .toSet()
+        .toList(growable: false);
     _pendingPayloads.clear();
+    _previewGenerations.clear();
     for (final path in pending) {
       await _deleteBestEffort(File(path));
     }
@@ -821,7 +932,7 @@ final class ExternalPluginController {
   Future<ExternalPluginPayloadFile> _acquirePinnedPayload(
     ExternalComicPluginCatalogEntry plugin,
   ) async {
-    final path = _pendingPayloads[plugin.pluginId] ??
+    final path = _pendingPayloads[plugin.pluginId]?.path ??
         _installed[plugin.pluginId]?.payloadPath;
     if (path == null) {
       throw StateError('plugin payload is not pinned: ${plugin.pluginId}');
@@ -831,8 +942,39 @@ final class ExternalPluginController {
     return ExternalPluginPayloadFile(path: path, byteLength: length);
   }
 
-  Future<ExternalPluginInspection?> _cachedPinnedInspection(
+  Future<ExternalPluginPayloadFile> _acquireInstalledPayload(
+    InstalledExternalPlugin record,
+  ) async {
+    final file = File(record.payloadPath);
+    final length = await file.length();
+    return ExternalPluginPayloadFile(
+      path: record.payloadPath,
+      byteLength: length,
+    );
+  }
+
+  Future<ExternalPluginInspection> _inspectInstalledRecord(
     ExternalComicPluginCatalogEntry plugin,
+    InstalledExternalPlugin record,
+  ) async {
+    final cached = await _cachedPinnedInspection(record);
+    if (cached != null) return cached;
+
+    final payloads = CallbackExternalPluginPayloadLoader(
+      (_) => _acquireInstalledPayload(record),
+    );
+    return switch (record.plugin.format) {
+      ExternalComicPluginFormat.mihonExtension => MihonApkInspector(
+          payloads: payloads,
+          metadata: const AndroidMihonApkMetadataReader(),
+        ).inspect(plugin),
+      ExternalComicPluginFormat.veneraJavaScript => VeneraJavaScriptInspector(
+          payloads: payloads,
+        ).inspect(plugin),
+    };
+  }
+
+  Future<ExternalPluginInspection?> _cachedPinnedInspection(
     InstalledExternalPlugin record,
   ) async {
     // The manifest already contains the approved immutable payload identity
@@ -854,7 +996,7 @@ final class ExternalPluginController {
           return null;
         }
     }
-    final payload = await _acquirePinnedPayload(plugin);
+    final payload = await _acquireInstalledPayload(record);
     return ExternalPluginInspection(
       format: record.plugin.format,
       payloadSha256: record.payloadSha256,
@@ -894,7 +1036,7 @@ final class ExternalPluginController {
   }
 
   Future<void> _activateRecord(InstalledExternalPlugin record) =>
-      _runDurableMutation(() async {
+      _runDurableMutation(record.plugin.pluginId, () async {
         try {
           final sources = await _registry.activate(record.plugin);
           final activatedIds = <String>[
@@ -1142,9 +1284,37 @@ final class ExternalPluginController {
     }
   }
 
-  Future<T> _runDurableMutation<T>(Future<T> Function() action) {
+  Object _beginPreviewGeneration(String pluginId) {
+    final generation = Object();
+    _previewGenerations[pluginId] = generation;
+    return generation;
+  }
+
+  void _requireCurrentPreviewGeneration(
+    String pluginId,
+    Object generation,
+  ) {
+    if (!identical(_previewGenerations[pluginId], generation)) {
+      throw StateError('external plugin preview was superseded: $pluginId');
+    }
+  }
+
+  void _releasePreviewGeneration(
+    String pluginId,
+    Object? generation,
+  ) {
+    if (generation != null &&
+        identical(_previewGenerations[pluginId], generation)) {
+      _previewGenerations.remove(pluginId);
+    }
+  }
+
+  Future<T> _runDurableMutation<T>(
+    String pluginId,
+    Future<T> Function() action,
+  ) {
     _requireOpen();
-    return _durableMutations.run(action);
+    return _durableMutations.run(pluginId, action);
   }
 
   void _requireOpen() {
@@ -1155,19 +1325,17 @@ final class ExternalPluginController {
 final class _PinnedExternalPluginHost implements ExternalComicPluginHost {
   const _PinnedExternalPluginHost({
     required this.format,
-    required this.inspector,
-    this.pinnedInspection,
+    required this.inspectRecord,
     required this.executor,
     required this.recordFor,
   });
 
   @override
   final ExternalComicPluginFormat format;
-  final ExternalPluginInspector inspector;
-  final Future<ExternalPluginInspection?> Function(
+  final Future<ExternalPluginInspection> Function(
     ExternalComicPluginCatalogEntry plugin,
     InstalledExternalPlugin record,
-  )? pinnedInspection;
+  ) inspectRecord;
   final ExternalPluginExecutor executor;
   final InstalledExternalPlugin? Function(String pluginId) recordFor;
 
@@ -1184,14 +1352,7 @@ final class _PinnedExternalPluginHost implements ExternalComicPluginHost {
         },
       );
     }
-    final effectiveInspector = pinnedInspection == null
-        ? inspector
-        : _RecordAwarePinnedInspector(
-            fallback: inspector,
-            pinned: pinnedInspection!,
-            record: record,
-          );
-    final inspection = await effectiveInspector.inspect(plugin);
+    final inspection = await inspectRecord(plugin, record);
     if (!_matchesPin(record, inspection)) {
       throw ExternalPluginActivationException(
         pluginId: plugin.pluginId,
@@ -1220,36 +1381,12 @@ final class _PinnedExternalPluginHost implements ExternalComicPluginHost {
       allowAdult: plugin.adult,
     );
     return PermissionedExternalComicPluginHost(
-      inspector: _PinnedInspection(inspector.format, inspection),
+      inspector: _PinnedInspection(format, inspection),
       executor: executor,
       policy: policy,
       quarantineActivationFailures: false,
     ).activate(plugin);
   }
-}
-
-final class _RecordAwarePinnedInspector implements ExternalPluginInspector {
-  const _RecordAwarePinnedInspector({
-    required this.fallback,
-    required this.pinned,
-    required this.record,
-  });
-
-  final ExternalPluginInspector fallback;
-  final Future<ExternalPluginInspection?> Function(
-    ExternalComicPluginCatalogEntry plugin,
-    InstalledExternalPlugin record,
-  ) pinned;
-  final InstalledExternalPlugin record;
-
-  @override
-  ExternalComicPluginFormat get format => fallback.format;
-
-  @override
-  Future<ExternalPluginInspection> inspect(
-    ExternalComicPluginCatalogEntry plugin,
-  ) async =>
-      await pinned(plugin, record) ?? fallback.inspect(plugin);
 }
 
 final class _PinnedInspection implements ExternalPluginInspector {
@@ -1269,6 +1406,7 @@ bool _matchesPin(
   InstalledExternalPlugin record,
   ExternalPluginInspection inspection,
 ) =>
+    record.payloadPath == inspection.payloadPath &&
     record.payloadSha256 == inspection.payloadSha256 &&
     record.packageName == inspection.packageName &&
     record.signerSha256 == inspection.signerSha256 &&
