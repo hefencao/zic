@@ -31,6 +31,8 @@ final class LazyImportedLibraryStore
   final Map<String, ReadingProgress> _pendingReaderProgress =
       <String, ReadingProgress>{};
   Future<void>? _readerProgressForwarding;
+  Future<void>? _closeFuture;
+  bool _closing = false;
   bool _closed = false;
 
   ImportedLibraryStore get _active => _durable ?? _memory;
@@ -74,9 +76,11 @@ final class LazyImportedLibraryStore
     await _memory.open();
   }
 
-  Future<ImportedLibraryStore> _ensureDurable() async {
-    if (_closed) {
-      throw StateError('lazy imported library store is closed');
+  Future<ImportedLibraryStore> _ensureDurable({
+    bool allowClosing = false,
+  }) async {
+    if (_closed || (_closing && !allowClosing)) {
+      throw StateError('lazy imported library store is closing');
     }
     final durable = _durable;
     if (durable != null) return durable;
@@ -201,8 +205,8 @@ final class LazyImportedLibraryStore
 
   @override
   void enqueueProgress(ReadingProgress progress) {
-    if (_closed) {
-      throw StateError('lazy imported library store is closed');
+    if (_closed || _closing) {
+      throw StateError('lazy imported library store is closing');
     }
     final durable = _durable;
     if (durable != null) {
@@ -216,13 +220,16 @@ final class LazyImportedLibraryStore
     _startReaderProgressForwarding();
   }
 
-  void _startReaderProgressForwarding() {
+  void _startReaderProgressForwarding({bool allowClosing = false}) {
     if (_closed ||
+        (_closing && !allowClosing) ||
         _pendingReaderProgress.isEmpty ||
         _readerProgressForwarding != null) {
       return;
     }
-    final forwarding = _forwardPendingReaderProgress();
+    final forwarding = _forwardPendingReaderProgress(
+      allowClosing: allowClosing,
+    );
     _readerProgressForwarding = forwarding;
     // Page turns cannot await durable promotion. Observe the flight here so a
     // failed open is retained for the explicit flush barrier instead of
@@ -232,8 +239,10 @@ final class LazyImportedLibraryStore
     );
   }
 
-  Future<void> _forwardPendingReaderProgress() async {
-    final durable = await _ensureDurable();
+  Future<void> _forwardPendingReaderProgress({
+    required bool allowClosing,
+  }) async {
+    final durable = await _ensureDurable(allowClosing: allowClosing);
     final checkpointStore = durable as ReaderProgressCheckpointStore;
     final pending = _pendingReaderProgress.values.toList(growable: false);
     for (final progress in pending) {
@@ -245,15 +254,29 @@ final class LazyImportedLibraryStore
   }
 
   @override
-  Future<void> flushProgressCheckpoints() async {
+  Future<void> flushProgressCheckpoints() {
     if (_closed) {
-      throw StateError('lazy imported library store is closed');
+      return Future<void>.error(
+        StateError('lazy imported library store is closed'),
+      );
     }
+    if (_closing) {
+      return _closeFuture ??
+          Future<void>.error(
+            StateError('lazy imported library store is closing'),
+          );
+    }
+    return _flushProgressCheckpoints();
+  }
+
+  Future<void> _flushProgressCheckpoints({
+    bool allowClosing = false,
+  }) async {
     while (true) {
       if (_pendingReaderProgress.isNotEmpty &&
           _durable == null &&
           _readerProgressForwarding == null) {
-        _startReaderProgressForwarding();
+        _startReaderProgressForwarding(allowClosing: allowClosing);
       }
       final forwarding = _readerProgressForwarding;
       if (forwarding != null) {
@@ -267,7 +290,7 @@ final class LazyImportedLibraryStore
         continue;
       }
       if (_pendingReaderProgress.isNotEmpty) {
-        _startReaderProgressForwarding();
+        _startReaderProgressForwarding(allowClosing: allowClosing);
         continue;
       }
       final durable = _durable;
@@ -478,14 +501,23 @@ final class LazyImportedLibraryStore
   }
 
   @override
-  Future<void> close() async {
-    if (_closed) return;
+  Future<void> close() {
+    final existing = _closeFuture;
+    if (existing != null) return existing;
+    _closing = true;
+    late final Future<void> closeFuture;
+    closeFuture = _close();
+    _closeFuture = closeFuture;
+    return closeFuture;
+  }
+
+  Future<void> _close() async {
     Object? checkpointError;
     StackTrace? checkpointStackTrace;
     if (_pendingReaderProgress.isNotEmpty ||
         _readerProgressForwarding != null) {
       try {
-        await flushProgressCheckpoints();
+        await _flushProgressCheckpoints(allowClosing: true);
       } on Object catch (error, stackTrace) {
         checkpointError = error;
         checkpointStackTrace = stackTrace;

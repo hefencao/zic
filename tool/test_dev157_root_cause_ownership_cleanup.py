@@ -52,8 +52,10 @@ for token in (
     'ReaderProgressCheckpointStore',
     'final Map<String, ReadingProgress> _pendingReaderProgress',
     'void enqueueProgress(ReadingProgress progress)',
-    'Future<void> flushProgressCheckpoints() async',
-    'await flushProgressCheckpoints();',
+    'Future<void> flushProgressCheckpoints()',
+    'Future<void>? _closeFuture;',
+    'bool _closing = false;',
+    '_flushProgressCheckpoints(allowClosing: true)',
 ):
     require(lazy_store, token, 'Lazy bootstrap checkpoint implementation')
 for token in (

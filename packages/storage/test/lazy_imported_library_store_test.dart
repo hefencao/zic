@@ -282,6 +282,61 @@ void main() {
     expect(persisted?.progress?.subPageOffset, 0.5);
   });
 
+  test('Lazy close is joinable and fences new work during pending promotion',
+      () async {
+    final rootStarted = Completer<void>();
+    final releaseRoot = Completer<void>();
+    var rootCalls = 0;
+    final store = LazyImportedLibraryStore(
+      rootProvider: () async {
+        rootCalls++;
+        if (!rootStarted.isCompleted) rootStarted.complete();
+        await releaseRoot.future;
+        throw StateError('fixture close promotion failure');
+      },
+    );
+    await store.open();
+
+    final checkpoints = store as ReaderProgressCheckpointStore;
+    checkpoints.enqueueProgress(
+      ReadingProgress(
+        sourceId: 'fixture-source',
+        comicId: 'fixture-comic',
+        chapterId: 'fixture-chapter',
+        pageIndex: 1,
+        subPageOffset: 0,
+        readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 9, 18, 1),
+      ),
+    );
+    await rootStarted.future;
+
+    final firstClose = store.close();
+    final secondClose = store.close();
+    expect(identical(firstClose, secondClose), isTrue);
+    expect(
+      () => checkpoints.enqueueProgress(
+        ReadingProgress(
+          sourceId: 'fixture-source',
+          comicId: 'fixture-comic',
+          chapterId: 'fixture-chapter',
+          pageIndex: 2,
+          subPageOffset: 0,
+          readerMode: ReaderMode.paged,
+          updatedAt: DateTime.utc(2026, 9, 18, 1, 1),
+        ),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(store.ensureDurable(), throwsA(isA<StateError>()));
+    expect(rootCalls, 1);
+
+    releaseRoot.complete();
+    await expectLater(firstClose, throwsA(isA<StateError>()));
+    await expectLater(secondClose, throwsA(isA<StateError>()));
+    expect(rootCalls, 1);
+  });
+
   test('Reader checkpoint flush retries failed durable promotion', () async {
     var rootCalls = 0;
     final store = LazyImportedLibraryStore(

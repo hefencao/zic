@@ -166,7 +166,9 @@ for marker, label in (
 for marker, label in (
     ("ReaderProgressCheckpointStore,", "Lazy bootstrap Reader checkpoint capability"),
     ("final Map<String, ReadingProgress> _pendingReaderProgress", "Lazy pending checkpoint owner"),
-    ("Future<void> flushProgressCheckpoints() async", "Lazy checkpoint flush barrier"),
+    ("Future<void> flushProgressCheckpoints()", "Lazy checkpoint flush barrier"),
+    ("Future<void>? _closeFuture;", "Lazy joinable close owner"),
+    ("bool _closing = false;", "Lazy close admission fence"),
 ):
     require(lazy_store, marker, label)
 for forbidden in ("_pendingReaderProgress", "_readerProgressForwarding"):
