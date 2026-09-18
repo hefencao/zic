@@ -155,6 +155,7 @@ Future<void> openComicSourceSettings(
     return;
   }
   await attachAndroidPlugin('network_bridge');
+  if (!context.mounted) return;
   await Navigator.of(context).push(
     MaterialPageRoute<void>(
       builder: (_) => ExternalSourceSettingsScreen(

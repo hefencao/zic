@@ -72,6 +72,12 @@ Future<ComicConflictResolutionResult> promptComicConflictResolutionResult({
     recommendedDirectoryName: report.recommendedDirectoryName,
   );
 
+  if (!context.mounted) {
+    return const ComicConflictResolutionResult(
+      decision: ComicConflictDecision.cancel,
+    );
+  }
+
   if (selected == null) {
     return const ComicConflictResolutionResult(
       decision: ComicConflictDecision.cancel,

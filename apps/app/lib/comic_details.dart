@@ -750,7 +750,6 @@ Map<String, ChapterReadState> _projectChapterReadStateByIdentity(
 
 Future<bool> _confirmComicDownloadConflict({
   required BuildContext context,
-  required bool mounted,
   required ComicDetailsDownloadActions downloadActions,
   required ComicDetailsConflictInspector? inspector,
   required String sourceId,
@@ -782,7 +781,7 @@ Future<bool> _confirmComicDownloadConflict({
     comicTitle: comicTitle,
     sourceDisplayName: sourceDisplayName,
   );
-  if (!mounted) return false;
+  if (!context.mounted) return false;
   final conflictingCandidates = report.candidates
       .where((c) => c.hasExistingContent && !c.isExactMatch)
       .toList();
@@ -1633,7 +1632,6 @@ final class _LocalComicDetailsScreenState
   }) =>
       _confirmComicDownloadConflict(
         context: context,
-        mounted: mounted,
         downloadActions: widget.downloadActions,
         inspector: widget.inspectComicConflicts,
         sourceId: sourceId,
@@ -3239,7 +3237,6 @@ final class _RemoteComicDetailsScreenState
   }) =>
       _confirmComicDownloadConflict(
         context: context,
-        mounted: mounted,
         downloadActions: widget.downloadActions,
         inspector: widget.inspectComicConflicts,
         sourceId: sourceId,
