@@ -19,10 +19,20 @@ required_screen = (
     "_openWebLogin()",
     "_accountSource.logout",
     "snapshot?.localStorage",
+    "initialValue: draft",
+    "onChanged: (value) => draft = value",
+    "onChanged: (value) => account = value",
+    "onChanged: (value) => password = value",
+    "onChanged: (value) => draft[field] = value",
 )
 missing = [token for token in required_screen if token not in screen]
 if missing:
     raise SystemExit(f"external source settings contract missing: {missing}")
+if "TextEditingController" in screen:
+    raise SystemExit(
+        "external source settings dialog must not own a TextEditingController "
+        "that can be disposed while reverse animation still builds"
+    )
 
 # Account loading must not be inside the same try that owns settings loading;
 # a broken settings callback must not hide every login option.

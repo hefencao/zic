@@ -123,13 +123,14 @@ final class _ExternalSourceSettingsScreenState
   }
 
   Future<void> _editText(ComicSourceSetting setting) async {
-    final controller = TextEditingController(text: setting.value as String);
+    var draft = setting.value as String;
     final value = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(setting.title),
-        content: TextField(
-          controller: controller,
+        content: TextFormField(
+          initialValue: draft,
+          onChanged: (value) => draft = value,
           autofocus: true,
           obscureText: setting.sensitive,
           keyboardType: TextInputType.url,
@@ -143,7 +144,7 @@ final class _ExternalSourceSettingsScreenState
             onClose: () => Navigator.pop(context),
             actions: <Widget>[
               FilledButton(
-                onPressed: () => Navigator.pop(context, controller.text.trim()),
+                onPressed: () => Navigator.pop(context, draft.trim()),
                 child: const Text('保存'),
               ),
             ],
@@ -151,7 +152,6 @@ final class _ExternalSourceSettingsScreenState
         ],
       ),
     );
-    controller.dispose();
     if (value != null && value != setting.value) {
       await _update(setting, value);
     }
@@ -276,8 +276,8 @@ final class _ExternalSourceSettingsScreenState
   }
 
   Future<void> _loginCredentials() async {
-    final accountController = TextEditingController();
-    final passwordController = TextEditingController();
+    var account = '';
+    var password = '';
     final values = await showDialog<(String, String)>(
       context: context,
       builder: (context) => AlertDialog(
@@ -286,8 +286,8 @@ final class _ExternalSourceSettingsScreenState
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              TextField(
-                controller: accountController,
+              TextFormField(
+                onChanged: (value) => account = value,
                 autofocus: true,
                 autofillHints: const <String>[AutofillHints.username],
                 decoration: const InputDecoration(
@@ -296,8 +296,8 @@ final class _ExternalSourceSettingsScreenState
                 ),
               ),
               const SizedBox(height: 12),
-              TextField(
-                controller: passwordController,
+              TextFormField(
+                onChanged: (value) => password = value,
                 obscureText: true,
                 autofillHints: const <String>[AutofillHints.password],
                 decoration: const InputDecoration(
@@ -314,10 +314,9 @@ final class _ExternalSourceSettingsScreenState
             actions: <Widget>[
               FilledButton(
                 onPressed: () {
-                  final account = accountController.text.trim();
-                  final password = passwordController.text;
-                  if (account.isNotEmpty && password.isNotEmpty) {
-                    Navigator.pop(context, (account, password));
+                  final normalizedAccount = account.trim();
+                  if (normalizedAccount.isNotEmpty && password.isNotEmpty) {
+                    Navigator.pop(context, (normalizedAccount, password));
                   }
                 },
                 child: const Text('登录'),
@@ -327,8 +326,6 @@ final class _ExternalSourceSettingsScreenState
         ],
       ),
     );
-    accountController.dispose();
-    passwordController.dispose();
     if (values == null) return;
     await _withAccountWork(
       () => _accountSource.loginWithCredentials(values.$1, values.$2),
@@ -336,8 +333,8 @@ final class _ExternalSourceSettingsScreenState
   }
 
   Future<void> _loginCookies(List<String> fields) async {
-    final controllers = <String, TextEditingController>{
-      for (final field in fields) field: TextEditingController(),
+    final draft = <String, String>{
+      for (final field in fields) field: '',
     };
     final values = await showDialog<Map<String, String>>(
       context: context,
@@ -347,12 +344,12 @@ final class _ExternalSourceSettingsScreenState
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              for (final entry in controllers.entries) ...<Widget>[
-                TextField(
-                  controller: entry.value,
+              for (final field in fields) ...<Widget>[
+                TextFormField(
+                  onChanged: (value) => draft[field] = value,
                   obscureText: true,
                   decoration: InputDecoration(
-                    labelText: entry.key,
+                    labelText: field,
                     border: const OutlineInputBorder(),
                   ),
                 ),
@@ -368,8 +365,8 @@ final class _ExternalSourceSettingsScreenState
               FilledButton(
                 onPressed: () {
                   final result = <String, String>{
-                    for (final entry in controllers.entries)
-                      entry.key: entry.value.text.trim(),
+                    for (final entry in draft.entries)
+                      entry.key: entry.value.trim(),
                   };
                   if (result.values.every((value) => value.isNotEmpty)) {
                     Navigator.pop(context, result);
@@ -382,9 +379,6 @@ final class _ExternalSourceSettingsScreenState
         ],
       ),
     );
-    for (final controller in controllers.values) {
-      controller.dispose();
-    }
     if (values == null) return;
     await _withAccountWork(() => _accountSource.loginWithCookies(values));
   }
