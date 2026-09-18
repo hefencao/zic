@@ -17,8 +17,9 @@ if "_reconcileConfirmedSourceUpdateSignal" in migration:
     )
 
 for token in (
-    "final storedSuccessors = await _storedSuccessors(",
-    "final storedPredecessors = await _storedPredecessors(",
+    "final stored = await _storedVersionRelationsStable(",
+    "final storedSuccessors = stored.successors;",
+    "final storedPredecessors = stored.predecessors;",
     "await _rememberSuccessors(",
     "await session.upsertVersionRelation(",
 ):

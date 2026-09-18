@@ -77,12 +77,11 @@ final class HomeVersionReuseLifecycle {
   }
 
   Future<List<SourceComicVersion>> _storedSuccessors({
+    required ComicVersionRelationStore store,
     required String sourceId,
     required String predecessorComicId,
     required String fallbackTitle,
   }) async {
-    final store = _relationStore();
-    if (store == null) return const <SourceComicVersion>[];
     final relations = await store.listComicVersionSuccessors(
       sourceId,
       predecessorComicId,
@@ -104,12 +103,11 @@ final class HomeVersionReuseLifecycle {
   }
 
   Future<List<SourceComicVersion>> _storedPredecessors({
+    required ComicVersionRelationStore store,
     required String sourceId,
     required String successorComicId,
     required String fallbackTitle,
   }) async {
-    final store = _relationStore();
-    if (store == null) return const <SourceComicVersion>[];
     final relations = await store.listComicVersionPredecessors(
       sourceId,
       successorComicId,
@@ -798,6 +796,60 @@ final class HomeVersionReuseLifecycle {
     return acceptedMappings;
   }
 
+  Future<({
+    List<SourceComicVersion> predecessors,
+    List<SourceComicVersion> successors,
+  })> _storedVersionRelationsStable({
+    required String sourceId,
+    required String comicId,
+    required String fallbackTitle,
+  }) async {
+    while (true) {
+      final libraryStore = session.library;
+      final ComicVersionRelationStore? store =
+          libraryStore is ComicVersionRelationStore
+              ? libraryStore as ComicVersionRelationStore
+              : null;
+      if (store == null) {
+        if (identical(session.library, libraryStore)) {
+          return (
+            successors: const <SourceComicVersion>[],
+            predecessors: const <SourceComicVersion>[],
+          );
+        }
+        continue;
+      }
+      try {
+        final successors = await _storedSuccessors(
+          store: store,
+          sourceId: sourceId,
+          predecessorComicId: comicId,
+          fallbackTitle: fallbackTitle,
+        );
+        if (!identical(session.library, libraryStore)) {
+          continue;
+        }
+        final predecessors = await _storedPredecessors(
+          store: store,
+          sourceId: sourceId,
+          successorComicId: comicId,
+          fallbackTitle: fallbackTitle,
+        );
+        if (identical(session.library, libraryStore)) {
+          return (
+            successors: successors,
+            predecessors: predecessors,
+          );
+        }
+      } on Object {
+        if (!identical(session.library, libraryStore)) {
+          continue;
+        }
+        rethrow;
+      }
+    }
+  }
+
   Future<HomeVersionState> loadVersionState(
     BrowsableComicSource source,
     String title,
@@ -811,16 +863,13 @@ final class HomeVersionReuseLifecycle {
     if (versionSource == null || !versionSource.supportsComicVersions) {
       return const HomeVersionState();
     }
-    final storedSuccessors = await _storedSuccessors(
+    final stored = await _storedVersionRelationsStable(
       sourceId: source.sourceId,
-      predecessorComicId: currentComicId,
+      comicId: currentComicId,
       fallbackTitle: title,
     );
-    final storedPredecessors = await _storedPredecessors(
-      sourceId: source.sourceId,
-      successorComicId: currentComicId,
-      fallbackTitle: title,
-    );
+    final storedSuccessors = stored.successors;
+    final storedPredecessors = stored.predecessors;
 
     List<SourceComicVersion> merge(
       Iterable<SourceComicVersion> values, {

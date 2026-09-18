@@ -56,6 +56,8 @@ for marker, label in (
     ("!requiresSourceLocatorRefresh(existing.chapter)", "shared locator-validity rule"),
     ("Future<int> ensureAuthority(", "Reader version authority"),
     ("Future<HomeVersionState> loadVersionState(", "version-state load"),
+    ("_storedVersionRelationsStable({", "stable relation-generation read"),
+    ("if (!identical(session.library, libraryStore))", "in-flight library identity revalidation"),
     ("final provider = session.downloadComposition;", "session-normalized transfer capability"),
 ):
     require(owner, marker, label)
@@ -69,6 +71,8 @@ for forbidden in (
     "setState(",
     "_DemoHomeState",
     "ComicSourceResourceGateway",
+    "HomeServiceHandoff",
+    "libraryGenerationChanges",
     "comic_details.dart",
     "details.ComicDetailsVersionState",
     "local_media_composition.dart",
