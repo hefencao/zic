@@ -2041,6 +2041,118 @@ void main() {
   });
 
   test(
+      'reload default cannot overwrite a concurrent source preference',
+      () async {
+    const source = _FixtureBrowsableSource('default-race-source');
+    final delegate = MemoryImportedLibraryStore();
+    await delegate.open();
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final listStarted = Completer<void>();
+    final releaseList = Completer<void>();
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      if (!releaseList.isCompleted) {
+        releaseList.complete();
+      }
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+    await session.replaceSources(
+      const <BrowsableComicSource>[source],
+      reloadLibrary: false,
+    );
+
+    library.sourcePreferenceListCalls = 0;
+    library.sourcePreferenceListStarted = listStarted;
+    library.sourcePreferenceListReturnGate = releaseList.future;
+
+    final reload = session.reload();
+    await listStarted.future;
+
+    final userPreference = ComicSourcePreference.defaults(
+      sourceId: source.sourceId,
+    ).copyWith(
+      enabled: false,
+      updatedAt: DateTime.now().toUtc().subtract(const Duration(seconds: 1)),
+    );
+    await session.persistSourcePreference(userPreference);
+    expect(session.sourcePreferences[source.sourceId]?.enabled, isFalse);
+
+    releaseList.complete();
+    await reload;
+
+    expect(session.sourcePreferences[source.sourceId]?.enabled, isFalse);
+    expect(
+      (await delegate.listSourcePreferences())
+          .singleWhere((value) => value.sourceId == source.sourceId)
+          .enabled,
+      isFalse,
+    );
+  });
+
+  test('synthesized preferences keep baseline timestamps', () async {
+    const source = _FixtureBrowsableSource('baseline-source');
+    final library = MemoryImportedLibraryStore();
+    await library.open();
+    final saved = SavedComicRecord(
+      sourceId: source.sourceId,
+      comicId: 'baseline-comic',
+      title: 'Baseline comic',
+    );
+    await library.upsertSavedComic(saved);
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[source],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    await session.ready;
+
+    final baseline = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+    expect(session.sourcePreferences[source.sourceId]?.updatedAt, baseline);
+    expect(session.preferences[saved.identity]?.updatedAt, baseline);
+    expect(
+      (await library.listSourcePreferences())
+          .singleWhere((value) => value.sourceId == source.sourceId)
+          .updatedAt,
+      baseline,
+    );
+    expect(
+      (await library.getComicPreference(saved.sourceId, saved.comicId))
+          ?.updatedAt,
+      baseline,
+    );
+  });
+
+  test(
       'chapter write and readback retry current library after adoption',
       () async {
     final firstDelegate = MemoryImportedLibraryStore();

@@ -1572,7 +1572,6 @@ final class HomeLibrarySession extends ChangeNotifier {
               source,
               defaultLanguages: defaultLanguages,
             ),
-            updatedAt: DateTime.now().toUtc(),
           );
       sourcePreferences[source.sourceId] = preference;
       sourceDefaultsCreated++;
@@ -1637,7 +1636,6 @@ final class HomeLibrarySession extends ChangeNotifier {
             customOrder: nextOrder++,
           ).copyWith(
             inShelf: seed.sourceKind == ComicSourceKind.local,
-            updatedAt: DateTime.now().toUtc(),
           );
       seedPreferences[preference.identity] = preference;
       comicDefaultsCreated++;

@@ -120,6 +120,31 @@ for marker, label in (
 ):
     require(session, marker, label)
 
+source_default_start = session.index("final sourceDefaultsClock = Stopwatch()..start();")
+source_default_end = session.index(
+    "'source-preferences-defaults-complete '",
+    source_default_start,
+)
+comic_default_start = session.index("final comicDefaultsClock = Stopwatch()..start();")
+comic_default_end = session.index(
+    "'comic-preferences-defaults-complete '",
+    comic_default_start,
+)
+for body, label in (
+    (
+        session[source_default_start:source_default_end],
+        "source preference synthesized default",
+    ),
+    (
+        session[comic_default_start:comic_default_end],
+        "comic preference synthesized default",
+    ),
+):
+    if "updatedAt:" in body:
+        raise SystemExit(
+            f"{label} must keep its factory baseline timestamp, not claim user-update recency"
+        )
+
 for forbidden in (
     "await library.upsertChapter(",
     "await library.removeChapter(",
