@@ -352,6 +352,54 @@ class PreviewSource extends ComicSource {
     );
   });
 
+  test('queued startup activation drops a record removed before its turn',
+      () async {
+    final storage = await Directory.systemTemp.createTemp(
+      'zic-external-plugin-stale-startup-remove-',
+    );
+    addTearDown(() => storage.delete(recursive: true));
+    final pluginRoot = Directory('${storage.path}/external_plugins');
+    await pluginRoot.create(recursive: true);
+    final payload = await File('${pluginRoot.path}/stale.js').writeAsString(
+      'class StaleSource extends ComicSource { key = "stale"; }',
+    );
+    const pluginId = 'venera:test-stale-startup';
+    await File('${pluginRoot.path}/installed.json').writeAsString(
+      jsonEncode(<String, Object?>{
+        'version': 1,
+        'plugins': <Object?>[
+          _record(
+            'stale-startup',
+            payload.path,
+            sourceKey: 'stale',
+            sourceIds: const <String>['venera:stale'],
+          ),
+        ],
+      }),
+    );
+
+    final controller = await ExternalPluginController.openDeferred(
+      storage.path,
+      discoverDeviceMihonExtensions: false,
+      deferRuntimeActivation: true,
+    );
+    addTearDown(controller.close);
+    var sourceChanges = 0;
+    final subscription = controller.sourceChanges.listen((_) {
+      sourceChanges++;
+    });
+    addTearDown(subscription.cancel);
+
+    final removing = controller.remove(pluginId);
+    final ready = controller.ready;
+    await Future.wait<void>(<Future<void>>[removing, ready]);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.installed, isEmpty);
+    expect(controller.activationFailures, isNot(contains(pluginId)));
+    expect(sourceChanges, 1);
+  });
+
   test('recoverable activation failure keeps the enabled record for retry',
       () async {
     final storage = await Directory.systemTemp.createTemp(

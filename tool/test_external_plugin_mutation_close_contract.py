@@ -174,6 +174,23 @@ for signature, markers in (
     for marker in markers:
         require(window, marker, f'{signature} keyed mutation marker')
 
+activate_record_start = CONTROLLER.index(
+    'Future<void> _activateRecord(InstalledExternalPlugin record)'
+)
+activate_record_window = CONTROLLER[
+    activate_record_start:activate_record_start + 1200
+]
+record_recheck = activate_record_window.index(
+    'if (!identical(_installed[record.plugin.pluginId], record))'
+)
+registry_activate = activate_record_window.index(
+    'final sources = await _registry.activate(record.plugin);'
+)
+if record_recheck > registry_activate:
+    raise SystemExit(
+        'background activation must recheck current record after acquiring plugin key'
+    )
+
 close_start = CONTROLLER.index('Future<void> _close() async {')
 close_end = CONTROLLER.index('\n  Future<void> _discardPendingPayloads()', close_start)
 close_body = CONTROLLER[close_start:close_end]

@@ -1037,6 +1037,9 @@ final class ExternalPluginController {
 
   Future<void> _activateRecord(InstalledExternalPlugin record) =>
       _runDurableMutation(record.plugin.pluginId, () async {
+        if (!identical(_installed[record.plugin.pluginId], record)) {
+          return;
+        }
         try {
           final sources = await _registry.activate(record.plugin);
           final activatedIds = <String>[
