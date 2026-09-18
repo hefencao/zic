@@ -23,6 +23,25 @@ Uint8List _tinyPng() => base64Decode(
       'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
     );
 
+ChapterDownloadSnapshot _downloadSnapshot(
+  ImportedLibraryEntry entry,
+  ChapterDownloadPhase phase,
+) =>
+    ChapterDownloadSnapshot(
+      sourceId: entry.chapter.sourceId,
+      comicId: entry.chapter.comicId,
+      comicTitle: entry.chapter.comicTitle,
+      chapterId: entry.chapter.chapterId,
+      sourceRevision: entry.chapter.sourceRevision,
+      title: entry.chapter.displayName,
+      completedPages:
+          phase == ChapterDownloadPhase.complete ? entry.chapter.pages.length : 0,
+      totalPages: entry.chapter.pages.length,
+      receivedBytes: phase == ChapterDownloadPhase.complete ? 1 : 0,
+      phase: phase,
+      started: phase != ChapterDownloadPhase.idle,
+    );
+
 Future<Uint8List> _generatePng({int width = 500, int height = 500}) async {
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder);
@@ -2087,6 +2106,241 @@ void main() {
     releaseInspection.complete();
     await tester.pump();
     await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+      'local details follows current download projection across generation changes',
+      (tester) async {
+    final source = _FixtureSource(
+      'fixture-local-download-generation',
+      '本地详情下载代际源',
+    );
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord.remote(
+        comic: source._comic,
+        manifest: await source.loadChapter(source._chapterId),
+      ),
+    );
+    final sourceManifest = await source.loadComic(source._comicId);
+    final comic = LibraryComic(
+      sourceId: source.sourceId,
+      comicId: source._comicId,
+      title: source._comic.title,
+      authors: source._comic.authors,
+      tags: source._comic.tags,
+      description: source._comic.description,
+      coverSourceId: source._comic.coverUri?.toString(),
+      readingDirection: source._comic.readingDirection,
+      chapters: <ImportedLibraryEntry>[entry],
+      sourceChapters: sourceManifest.chapters,
+      savedAt: DateTime.utc(2026, 9, 18),
+      metadataUpdatedAt: DateTime.utc(2026, 9, 18),
+    );
+    final library = details.ComicDetailsLibrarySnapshot(
+      chapters: <ImportedLibraryEntry>[entry],
+      sourceComic: source._comic,
+      sourceChapters: sourceManifest.chapters,
+      readStates: const <String, ChapterReadState>{},
+      preference: ComicPreference.defaults(
+        sourceId: source.sourceId,
+        comicId: source._comicId,
+      ),
+    );
+    final projectionChanges = ChangeNotifier();
+    addTearDown(projectionChanges.dispose);
+    final staleStream = StreamController<ChapterDownloadSnapshot>.broadcast();
+    addTearDown(staleStream.close);
+    var current =
+        _downloadSnapshot(entry, ChapterDownloadPhase.idle);
+    var inspectCalls = 0;
+    var blockNextInspection = false;
+    var staleInspection = Completer<List<ChapterDownloadSnapshot>>();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: details.LocalComicDetailsScreen(
+          comic: comic,
+          initialLibrary: library,
+          categories: const <LibraryCategory>[],
+          loadCover: ({
+            required String sourceId,
+            required String comicId,
+            required Uri? coverUri,
+            required ImportedLibraryEntry? fallbackChapter,
+            required String resourceRole,
+          }) async =>
+              MemoryEncodedResourceSource(_tinyPng()),
+          reloadLibrary: ({required bool refreshContent}) async => library,
+          source: source,
+          ensureSourceChapter: (_, _, _) async => entry,
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, _) async {},
+          onOpenChapter: (
+            _, {
+            required bool refreshRemote,
+            required String title,
+            int? initialPageIndex,
+          }) async =>
+              null,
+          onDownloadChapter: (_) async {},
+          inspectChapterDownload: (_) async => current,
+          inspectChapterDownloads: (_) async {
+            inspectCalls++;
+            if (blockNextInspection) {
+              blockNextInspection = false;
+              return staleInspection.future;
+            }
+            return <ChapterDownloadSnapshot>[current];
+          },
+          downloadChanges: staleStream.stream,
+          downloadProjectionChanges: projectionChanges,
+          onDownloadComic: (_) async {},
+        ),
+      ),
+    );
+
+    final stopKey =
+        details.comicDetailsStopDownloadKey(source.sourceId, source._chapterId);
+    final downloadKey =
+        details.comicDetailsDownloadKey(source.sourceId, source._chapterId);
+    await _pumpUntilFound(tester, find.byKey(downloadKey));
+    for (var frame = 0; frame < 30 && inspectCalls < 1; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(inspectCalls, greaterThanOrEqualTo(1));
+
+    current = _downloadSnapshot(entry, ChapterDownloadPhase.downloading);
+    projectionChanges.notifyListeners();
+    for (var frame = 0; frame < 30 && inspectCalls < 2; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(inspectCalls, greaterThanOrEqualTo(2));
+    await _pumpUntilFound(tester, find.byKey(stopKey));
+
+    staleStream.add(_downloadSnapshot(entry, ChapterDownloadPhase.complete));
+    await tester.pump();
+    expect(find.byKey(stopKey), findsOneWidget);
+
+    blockNextInspection = true;
+    staleInspection = Completer<List<ChapterDownloadSnapshot>>();
+    projectionChanges.notifyListeners();
+    for (var frame = 0; frame < 30 && inspectCalls < 3; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(inspectCalls, greaterThanOrEqualTo(3));
+
+    current = _downloadSnapshot(entry, ChapterDownloadPhase.idle);
+    projectionChanges.notifyListeners();
+    staleInspection.complete(<ChapterDownloadSnapshot>[
+      _downloadSnapshot(entry, ChapterDownloadPhase.downloading),
+    ]);
+    for (var frame = 0; frame < 40 && inspectCalls < 4; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(inspectCalls, greaterThanOrEqualTo(4));
+    expect(find.byKey(stopKey), findsNothing);
+    expect(find.byKey(downloadKey), findsOneWidget);
+  });
+
+  testWidgets(
+      'remote details follows current download projection instead of the route-open stream',
+      (tester) async {
+    final source = _FixtureSource(
+      'fixture-remote-download-generation',
+      '远程详情下载代际源',
+    );
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord.remote(
+        comic: source._comic,
+        manifest: await source.loadChapter(source._chapterId),
+      ),
+    );
+    final sourceManifest = await source.loadComic(source._comicId);
+    final library = details.ComicDetailsLibrarySnapshot(
+      chapters: <ImportedLibraryEntry>[entry],
+      sourceComic: source._comic,
+      sourceChapters: sourceManifest.chapters,
+      readStates: const <String, ChapterReadState>{},
+      preference: ComicPreference.defaults(
+        sourceId: source.sourceId,
+        comicId: source._comicId,
+      ),
+    );
+    final projectionChanges = ChangeNotifier();
+    addTearDown(projectionChanges.dispose);
+    final staleStream = StreamController<ChapterDownloadSnapshot>.broadcast();
+    addTearDown(staleStream.close);
+    var current = _downloadSnapshot(entry, ChapterDownloadPhase.idle);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: details.RemoteComicDetailsScreen(
+          source: source,
+          summary: SourceComicSummary(
+            sourceId: source.sourceId,
+            comicId: source._comicId,
+            title: source._comic.title,
+            authors: source._comic.authors,
+            tags: source._comic.tags,
+            coverUri: source._comic.coverUri,
+          ),
+          initialLibrary: library,
+          categories: const <LibraryCategory>[],
+          loadCover: ({
+            required String sourceId,
+            required String comicId,
+            required Uri? coverUri,
+            required ImportedLibraryEntry? fallbackChapter,
+            required String resourceRole,
+          }) async =>
+              MemoryEncodedResourceSource(_tinyPng()),
+          reloadLibrary: ({required bool refreshContent}) async => library,
+          ensureSourceChapter: (_, _, _) async => entry,
+          persistComic: (_, _) async {},
+          onPreferenceChanged: (_) async {},
+          onReadChanged: (_, _) async {},
+          onOpenChapter: (
+            _, {
+            required bool refreshRemote,
+            required String title,
+            int? initialPageIndex,
+          }) async =>
+              null,
+          onDownloadChapter: (_) async {},
+          inspectChapterDownload: (_) async => current,
+          inspectChapterDownloads: (_) async =>
+              <ChapterDownloadSnapshot>[current],
+          downloadChanges: staleStream.stream,
+          downloadProjectionChanges: projectionChanges,
+          onDownloadComic: (_) async {},
+        ),
+      ),
+    );
+
+    final stopKey =
+        details.comicDetailsStopDownloadKey(source.sourceId, source._chapterId);
+    final downloadKey =
+        details.comicDetailsDownloadKey(source.sourceId, source._chapterId);
+    await _pumpUntilFound(tester, find.byKey(downloadKey));
+
+    current = _downloadSnapshot(entry, ChapterDownloadPhase.downloading);
+    projectionChanges.notifyListeners();
+    await _pumpUntilFound(tester, find.byKey(stopKey));
+
+    staleStream.add(_downloadSnapshot(entry, ChapterDownloadPhase.complete));
+    await tester.pump();
+    expect(find.byKey(stopKey), findsOneWidget);
+
+    current = _downloadSnapshot(entry, ChapterDownloadPhase.idle);
+    projectionChanges.notifyListeners();
+    for (var frame = 0; frame < 40; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      if (find.byKey(stopKey).evaluate().isEmpty) {
+        break;
+      }
+    }
+    expect(find.byKey(stopKey), findsNothing);
+    expect(find.byKey(downloadKey), findsOneWidget);
   });
 
   testWidgets(

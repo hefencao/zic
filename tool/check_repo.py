@@ -1653,6 +1653,27 @@ def check_compile_regressions() -> None:
     ).read_text(encoding='utf-8')
     if 'builder: (_) => details.RemoteComicDetailsScreen(' not in home_source_compat:
         fail('Home source route must construct the canonical remote details screen directly')
+    if '_chapterDownloads.changes' in home_source_compat:
+        fail(
+            'Home comic-details routes must not freeze a route-open '
+            'ChapterDownloadService changes stream'
+        )
+    if home_source_compat.count('downloadProjectionChanges:') < 2:
+        fail(
+            'Home local/remote comic-details routes must follow the '
+            'generation-neutral download projection signal'
+        )
+    comic_details = (ROOT / 'apps/app/lib/comic_details.dart').read_text(
+        encoding='utf-8'
+    )
+    for required in (
+        'final Listenable? downloadProjectionChanges;',
+        'int _downloadProjectionRevision = 0;',
+        'projectionRevision != _downloadProjectionRevision',
+        'widget.downloadProjectionChanges == null',
+    ):
+        if comic_details.count(required) < 2:
+            fail(f'comic-details download generation boundary is incomplete: {required}')
     if 'SourceComicDetailsScreen' in source_ui or 'SourceComicDetailsScreen' in home_source_compat:
         fail('redundant SourceComicDetailsScreen pass-through wrapper returned')
     configure_platforms = ROOT / 'tool/configure_platforms.py'

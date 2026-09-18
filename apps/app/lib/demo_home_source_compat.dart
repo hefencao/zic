@@ -449,7 +449,9 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             inspectChapterDownload: _downloadCommands.inspectChapter,
             inspectChapterDownloads: _downloadCommands.inspectChapters,
             inspectComicConflicts: _downloadCommands.inspectComicConflicts,
-            downloadChanges: _chapterDownloads.changes,
+            downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+            downloadProjectionChanges:
+                _librarySession.downloadProjectionChanges,
             onDownloadComic: (entries) =>
                 _downloadComicEntries(identity, entries),
             artworkIdentity: _canonicalComicKey(
@@ -618,7 +620,9 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               inspectChapterDownload: _downloadCommands.inspectChapter,
               inspectChapterDownloads: _downloadCommands.inspectChapters,
               inspectComicConflicts: _downloadCommands.inspectComicConflicts,
-              downloadChanges: _chapterDownloads.changes,
+              downloadChanges: const Stream<ChapterDownloadSnapshot>.empty(),
+              downloadProjectionChanges:
+                  _librarySession.downloadProjectionChanges,
               onDownloadComic: (entries) => _downloadComicEntries(
                 comicLibraryIdentity(comic.sourceId, comic.comicId),
                 entries,

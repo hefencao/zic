@@ -657,6 +657,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     this.onDeleteChapter,
     required this.inspectChapterDownload,
     required this.downloadChanges,
+    this.downloadProjectionChanges,
     required this.onDownloadComic,
     this.inspectChapterDownloads,
     this.inspectComicConflicts,
@@ -691,6 +692,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final ComicDetailsChapterDownloadInspector inspectChapterDownload;
   final ComicDetailsChapterDownloadBulkInspector? inspectChapterDownloads;
   final Stream<ChapterDownloadSnapshot> downloadChanges;
+  final Listenable? downloadProjectionChanges;
   final ComicDetailsComicDownloader onDownloadComic;
   final ComicDetailsConflictInspector? inspectComicConflicts;
   final ComicDetailsDownloadActions downloadActions;
@@ -890,6 +892,7 @@ final class _LocalComicDetailsScreenState
       <String, ImportedLibraryEntry>{};
   StreamSubscription<ChapterDownloadSnapshot>? _downloadSubscription;
   Future<void>? _downloadStatusRefreshInFlight;
+  int _downloadProjectionRevision = 0;
   bool _downloadingComic = false;
   bool _conflictConfirmed = false;
   _DetailFailure? _failure;
@@ -928,8 +931,7 @@ final class _LocalComicDetailsScreenState
   void initState() {
     super.initState();
     _library = widget.initialLibrary;
-    _downloadSubscription =
-        widget.downloadChanges.listen(_acceptDownloadSnapshot);
+    _bindDownloadProjection();
     _scheduleDownloadStatusRefresh(_library.chapters);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -960,7 +962,42 @@ final class _LocalComicDetailsScreenState
   }
 
   @override
+  void didUpdateWidget(covariant LocalComicDetailsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(
+          oldWidget.downloadProjectionChanges,
+          widget.downloadProjectionChanges,
+        ) ||
+        oldWidget.downloadChanges != widget.downloadChanges) {
+      oldWidget.downloadProjectionChanges
+          ?.removeListener(_handleDownloadProjectionChanged);
+      unawaited(_downloadSubscription?.cancel());
+      _downloadSubscription = null;
+      _bindDownloadProjection();
+      _handleDownloadProjectionChanged();
+    }
+  }
+
+  void _bindDownloadProjection() {
+    final projectionChanges = widget.downloadProjectionChanges;
+    if (projectionChanges != null) {
+      projectionChanges.addListener(_handleDownloadProjectionChanged);
+      return;
+    }
+    _downloadSubscription =
+        widget.downloadChanges.listen(_acceptDownloadSnapshot);
+  }
+
+  void _handleDownloadProjectionChanged() {
+    _downloadProjectionRevision++;
+    if (!mounted) return;
+    unawaited(_loadDownloadStatuses(_library.chapters));
+  }
+
+  @override
   void dispose() {
+    widget.downloadProjectionChanges
+        ?.removeListener(_handleDownloadProjectionChanged);
     unawaited(_downloadSubscription?.cancel());
     super.dispose();
   }
@@ -1011,6 +1048,7 @@ final class _LocalComicDetailsScreenState
   Future<void> _inspectDownloadStatuses(
     List<ImportedLibraryEntry> list,
   ) async {
+    final projectionRevision = _downloadProjectionRevision;
     try {
       final bulk = widget.inspectChapterDownloads;
       late final Iterable<ChapterDownloadSnapshot?> results;
@@ -1028,6 +1066,10 @@ final class _LocalComicDetailsScreenState
         results = await bulk(list);
       }
       if (!mounted) return;
+      if (widget.downloadProjectionChanges != null &&
+          projectionRevision != _downloadProjectionRevision) {
+        return;
+      }
       final snapshots = <String, ChapterDownloadSnapshot>{};
       final currentIdentities = <String>{
         for (final entry in _library.chapters)
@@ -1046,7 +1088,8 @@ final class _LocalComicDetailsScreenState
         // resurrect the deleted chapter's download projection.
         if (!currentIdentities.contains(identity)) continue;
         final existing = _downloadSnapshots[identity];
-        if (existing != null &&
+        if (widget.downloadProjectionChanges == null &&
+            existing != null &&
             existing.isActive &&
             snapshot.phase == ChapterDownloadPhase.idle) {
           continue;
@@ -2210,6 +2253,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     this.onDeleteChapter,
     required this.inspectChapterDownload,
     required this.downloadChanges,
+    this.downloadProjectionChanges,
     required this.onDownloadComic,
     this.inspectChapterDownloads,
     this.inspectComicConflicts,
@@ -2247,6 +2291,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsChapterDownloadInspector inspectChapterDownload;
   final ComicDetailsChapterDownloadBulkInspector? inspectChapterDownloads;
   final Stream<ChapterDownloadSnapshot> downloadChanges;
+  final Listenable? downloadProjectionChanges;
   final ComicDetailsComicDownloader onDownloadComic;
   final ComicDetailsConflictInspector? inspectComicConflicts;
   final ComicDetailsDownloadActions downloadActions;
@@ -2285,6 +2330,7 @@ final class _RemoteComicDetailsScreenState
       <String, ImportedLibraryEntry>{};
   StreamSubscription<ChapterDownloadSnapshot>? _downloadSubscription;
   Future<void>? _downloadStatusRefreshInFlight;
+  int _downloadProjectionRevision = 0;
   bool _downloadingComic = false;
   bool _conflictConfirmed = false;
   final Map<String, Future<ImportedLibraryEntry>> _ensureInFlight =
@@ -2366,14 +2412,48 @@ final class _RemoteComicDetailsScreenState
     }
     _activeSource = widget.resolveSource?.call(widget.source.sourceId) ??
         (widget.resolveSource == null ? widget.source : null);
-    _downloadSubscription =
-        widget.downloadChanges.listen(_acceptDownloadSnapshot);
+    _bindDownloadProjection();
     _scheduleDownloadStatusRefresh(_library.chapters);
     unawaited(_refresh(announce: false));
   }
 
   @override
+  void didUpdateWidget(covariant RemoteComicDetailsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(
+          oldWidget.downloadProjectionChanges,
+          widget.downloadProjectionChanges,
+        ) ||
+        oldWidget.downloadChanges != widget.downloadChanges) {
+      oldWidget.downloadProjectionChanges
+          ?.removeListener(_handleDownloadProjectionChanged);
+      unawaited(_downloadSubscription?.cancel());
+      _downloadSubscription = null;
+      _bindDownloadProjection();
+      _handleDownloadProjectionChanged();
+    }
+  }
+
+  void _bindDownloadProjection() {
+    final projectionChanges = widget.downloadProjectionChanges;
+    if (projectionChanges != null) {
+      projectionChanges.addListener(_handleDownloadProjectionChanged);
+      return;
+    }
+    _downloadSubscription =
+        widget.downloadChanges.listen(_acceptDownloadSnapshot);
+  }
+
+  void _handleDownloadProjectionChanged() {
+    _downloadProjectionRevision++;
+    if (!mounted) return;
+    unawaited(_loadDownloadStatuses(_library.chapters));
+  }
+
+  @override
   void dispose() {
+    widget.downloadProjectionChanges
+        ?.removeListener(_handleDownloadProjectionChanged);
     unawaited(_downloadSubscription?.cancel());
     super.dispose();
   }
@@ -2501,6 +2581,7 @@ final class _RemoteComicDetailsScreenState
   Future<void> _inspectDownloadStatuses(
     List<ImportedLibraryEntry> list,
   ) async {
+    final projectionRevision = _downloadProjectionRevision;
     try {
       final bulk = widget.inspectChapterDownloads;
       late final Iterable<ChapterDownloadSnapshot?> results;
@@ -2518,6 +2599,10 @@ final class _RemoteComicDetailsScreenState
         results = await bulk(list);
       }
       if (!mounted) return;
+      if (widget.downloadProjectionChanges != null &&
+          projectionRevision != _downloadProjectionRevision) {
+        return;
+      }
       final snapshots = <String, ChapterDownloadSnapshot>{};
       final currentIdentities = <String>{
         for (final entry in _library.chapters)
@@ -2536,7 +2621,8 @@ final class _RemoteComicDetailsScreenState
         // resurrect the deleted chapter's download projection.
         if (!currentIdentities.contains(identity)) continue;
         final existing = _downloadSnapshots[identity];
-        if (existing != null &&
+        if (widget.downloadProjectionChanges == null &&
+            existing != null &&
             existing.isActive &&
             snapshot.phase == ChapterDownloadPhase.idle) {
           continue;
