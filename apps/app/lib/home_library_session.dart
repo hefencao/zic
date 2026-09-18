@@ -350,6 +350,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   late Future<void> _ready;
   Future<void> get ready => _ready;
   Future<void>? _serviceAdoption;
+  Future<void>? _libraryReload;
   Future<void>? _downloadProjectionRefresh;
   ChapterDownloadService? _downloadProjectionRefreshService;
 
@@ -1091,11 +1092,41 @@ final class HomeLibrarySession extends ChangeNotifier {
     );
   }
 
-  Future<void> reload({bool waitForOpen = true}) async {
-    if (waitForOpen) {
-      await ready;
-    }
-    await _reload(publishPrimary: false);
+  Future<void> reload({bool waitForOpen = true}) =>
+      _runLibraryReload(
+        waitForReady: waitForOpen,
+        openLibrary: false,
+      );
+
+  Future<void> _runLibraryReload({
+    required bool waitForReady,
+    required bool openLibrary,
+  }) {
+    final readyAtAdmission = _ready;
+    final reloadAtAdmission = _libraryReload;
+    final adoptionAtAdmission = _serviceAdoption;
+    late final Future<void> operation;
+    operation = (() async {
+      if (waitForReady) {
+        await readyAtAdmission;
+      }
+      if (reloadAtAdmission != null) {
+        await reloadAtAdmission;
+      }
+      if (adoptionAtAdmission != null) {
+        await adoptionAtAdmission;
+      }
+      if (openLibrary) {
+        await library.open();
+      }
+      await _reload(publishPrimary: false);
+    })().whenComplete(() {
+      if (identical(_libraryReload, operation)) {
+        _libraryReload = null;
+      }
+    });
+    _libraryReload = operation;
+    return operation;
   }
 
   /// Replaces the bootstrap-only services without replacing the Home widget.
@@ -1147,7 +1178,11 @@ final class HomeLibrarySession extends ChangeNotifier {
       downloadComposition,
     );
     final previousReady = _ready;
+    final reloadAtAdmission = _libraryReload;
     await previousReady;
+    if (reloadAtAdmission != null) {
+      await reloadAtAdmission;
+    }
     if (_closed) {
       return;
     }
@@ -1679,16 +1714,20 @@ final class HomeLibrarySession extends ChangeNotifier {
     if (_error == null) {
       return;
     }
-    await library.open();
-    await reload(waitForOpen: false);
+    await _runLibraryReload(
+      waitForReady: false,
+      openLibrary: true,
+    );
   }
 
   Future<void> retry() async {
     _loading = true;
     _publish();
     try {
-      await library.open();
-      await reload(waitForOpen: false);
+      await _runLibraryReload(
+        waitForReady: false,
+        openLibrary: true,
+      );
     } on Object catch (error) {
       _error = error;
       _loading = false;

@@ -3011,6 +3011,235 @@ void main() {
     expect(library.listCalls, 0);
   });
 
+  test('public reload waits for an already admitted service adoption',
+      () async {
+    final bootstrapDelegate = MemoryImportedLibraryStore();
+    final bootstrapLibrary = _GatedLibraryStore(
+      bootstrapDelegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final bootstrapDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final bootstrapQueue = WholeComicDownloadQueue(
+      downloads: bootstrapDownloads,
+    );
+    final session = HomeLibrarySession(
+      library: bootstrapLibrary,
+      chapterDownloads: bootstrapDownloads,
+      wholeComicDownloads: bootstrapQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    await session.ready;
+
+    final closeGate = Completer<void>();
+    bootstrapLibrary.closeReturnGate = closeGate.future;
+    final durableDelegate = MemoryImportedLibraryStore();
+    await durableDelegate.open();
+    final durableLibrary = _GatedLibraryStore(
+      durableDelegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final durableDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final durableQueue = WholeComicDownloadQueue(downloads: durableDownloads);
+    addTearDown(() async {
+      if (!closeGate.isCompleted) {
+        closeGate.complete();
+      }
+      await session.close();
+      session.dispose();
+      await durableQueue.close();
+      await durableDownloads.close();
+    });
+
+    var adoptionDone = false;
+    final adoption = session.adoptServices(
+      library: durableLibrary,
+      chapterDownloads: durableDownloads,
+      wholeComicDownloads: durableQueue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    )..then((_) => adoptionDone = true);
+
+    for (var attempt = 0;
+        attempt < 100 && !identical(session.library, durableLibrary);
+        attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(session.library, same(durableLibrary));
+    for (var attempt = 0;
+        attempt < 100 && bootstrapLibrary.closeCalls == 0;
+        attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(bootstrapLibrary.closeCalls, 1);
+    expect(adoptionDone, isFalse);
+
+    var reloadDone = false;
+    final reload = session.reload()..then((_) => reloadDone = true);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(reloadDone, isFalse);
+    expect(durableLibrary.listCalls, 0);
+
+    closeGate.complete();
+    await adoption;
+    await reload;
+    expect(adoptionDone, isTrue);
+    expect(durableLibrary.listCalls, greaterThanOrEqualTo(2));
+  });
+
+  test('service adoption waits for an already admitted public reload',
+      () async {
+    final bootstrapDelegate = MemoryImportedLibraryStore();
+    final bootstrapLibrary = _GatedLibraryStore(
+      bootstrapDelegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final bootstrapDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final bootstrapQueue = WholeComicDownloadQueue(
+      downloads: bootstrapDownloads,
+    );
+    final session = HomeLibrarySession(
+      library: bootstrapLibrary,
+      chapterDownloads: bootstrapDownloads,
+      wholeComicDownloads: bootstrapQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    await session.ready;
+
+    final reloadStarted = Completer<void>();
+    final reloadGate = Completer<void>();
+    bootstrapLibrary.listStarted = reloadStarted;
+    bootstrapLibrary.listReturnGate = reloadGate.future;
+    final reload = session.reload();
+    await reloadStarted.future;
+
+    final durableLibrary = MemoryImportedLibraryStore();
+    final durableDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final durableQueue = WholeComicDownloadQueue(downloads: durableDownloads);
+    addTearDown(() async {
+      if (!reloadGate.isCompleted) {
+        reloadGate.complete();
+      }
+      await session.close();
+      session.dispose();
+      await durableQueue.close();
+      await durableDownloads.close();
+    });
+
+    var adoptionDone = false;
+    final adoption = session.adoptServices(
+      library: durableLibrary,
+      chapterDownloads: durableDownloads,
+      wholeComicDownloads: durableQueue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    )..then((_) => adoptionDone = true);
+
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(adoptionDone, isFalse);
+    expect(session.library, same(bootstrapLibrary));
+
+    reloadGate.complete();
+    await reload;
+    await adoption;
+    expect(adoptionDone, isTrue);
+    expect(session.library, same(durableLibrary));
+  });
+
+  test('retry joins an already admitted service adoption before open',
+      () async {
+    final bootstrapDelegate = MemoryImportedLibraryStore();
+    final bootstrapLibrary = _GatedLibraryStore(
+      bootstrapDelegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final bootstrapDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final bootstrapQueue = WholeComicDownloadQueue(
+      downloads: bootstrapDownloads,
+    );
+    final session = HomeLibrarySession(
+      library: bootstrapLibrary,
+      chapterDownloads: bootstrapDownloads,
+      wholeComicDownloads: bootstrapQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    await session.ready;
+
+    final closeGate = Completer<void>();
+    bootstrapLibrary.closeReturnGate = closeGate.future;
+    final durableLibrary = _GatedLibraryStore(
+      MemoryImportedLibraryStore(),
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final durableDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final durableQueue = WholeComicDownloadQueue(downloads: durableDownloads);
+    addTearDown(() async {
+      if (!closeGate.isCompleted) {
+        closeGate.complete();
+      }
+      await session.close();
+      session.dispose();
+      await durableQueue.close();
+      await durableDownloads.close();
+      await durableLibrary.close();
+    });
+
+    final adoption = session.adoptServices(
+      library: durableLibrary,
+      chapterDownloads: durableDownloads,
+      wholeComicDownloads: durableQueue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    );
+    for (var attempt = 0;
+        attempt < 100 && !identical(session.library, durableLibrary);
+        attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(session.library, same(durableLibrary));
+    for (var attempt = 0;
+        attempt < 100 && bootstrapLibrary.closeCalls == 0;
+        attempt++) {
+      await Future<void>.delayed(const Duration(milliseconds: 1));
+    }
+    expect(bootstrapLibrary.closeCalls, 1);
+    expect(durableLibrary.openCalls, 0);
+
+    var retryDone = false;
+    final retry = session.retry()..then((_) => retryDone = true);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(retryDone, isFalse);
+    expect(durableLibrary.openCalls, 0);
+
+    closeGate.complete();
+    await adoption;
+    await retry;
+    expect(retryDone, isTrue);
+    expect(durableLibrary.openCalls, 2);
+  });
+
   test('durable service handoff keeps the matching snapshot projection',
       () async {
     final directory = await Directory.systemTemp.createTemp(
@@ -3599,11 +3828,15 @@ final class _GatedLibraryStore
   final bool readCategoriesFromDelegate;
   int? libraryRevision;
   Future<void>? libraryRevisionReadGate;
+  Future<void>? closeReturnGate;
   var libraryRevisionReads = 0;
+  var openCalls = 0;
   var closeCalls = 0;
   var comicPreferenceWrites = 0;
   var sourcePreferenceWrites = 0;
   var listCalls = 0;
+  Completer<void>? listStarted;
+  Future<void>? listReturnGate;
   var getCalls = 0;
   var getManyCalls = 0;
   Completer<void>? categoryRemoveStarted;
@@ -3628,12 +3861,18 @@ final class _GatedLibraryStore
 
   @override
   Future<void> open() async {
+    openCalls++;
     await openGate;
     await delegate.open();
   }
   @override
-  Future<List<ImportedLibraryEntry>> list() {
+  Future<List<ImportedLibraryEntry>> list() async {
     listCalls++;
+    final started = listStarted;
+    if (started != null && !started.isCompleted) {
+      started.complete();
+    }
+    await listReturnGate;
     return delegate.list();
   }
   @override
@@ -3780,8 +4019,9 @@ final class _GatedLibraryStore
         acknowledgedAt: acknowledgedAt,
       );
   @override
-  Future<void> close() {
+  Future<void> close() async {
     closeCalls++;
-    return delegate.close();
+    await delegate.close();
+    await closeReturnGate;
   }
 }

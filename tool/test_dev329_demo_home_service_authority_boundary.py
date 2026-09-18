@@ -87,6 +87,11 @@ require(
 )
 
 for marker, label in (
+    ("Future<void>? _libraryReload;", "reload/adoption admission tail"),
+    ("Future<void> _runLibraryReload({", "reload admission owner"),
+    ("final adoptionAtAdmission = _serviceAdoption;", "adoption-before-reload ordering"),
+    ("final reloadAtAdmission = _libraryReload;", "reload-before-adoption ordering"),
+    ("openLibrary: true,", "retry/ensureReady open inside reload admission"),
     ("_persistStableLibraryMutationResult<T>(", "stable library mutation result owner"),
     ("Future<ImportedLibraryStore> _persistStableLibraryMutation(", "stable library mutation owner"),
     ("Future<void> persistPreferences(", "comic preference mutation owner"),
