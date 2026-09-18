@@ -66,12 +66,17 @@ for marker, label in (
     ("await session.upsertSavedComic(", "target metadata commit"),
     ("await session.upsertChapter(targetRecord);", "chapter metadata commit"),
     ("await session.persistProgress(", "progress migration"),
-    ("await _library.saveChapterReadState(", "read-state migration"),
+    ("await session.persistReadState(", "read-state migration"),
+    ("await session.persistPreference(neutral);", "source preference cleanup"),
     ("await session.removeSavedComic(", "source cleanup"),
 ):
     require(owner, marker, label)
 
 for forbidden in (
+    "_library.saveComicPreference(",
+    "_library.saveChapterReadState(",
+    "session.replacePreference(",
+    "session.replaceReadState(",
     "BuildContext",
     "Navigator",
     "ScaffoldMessenger",

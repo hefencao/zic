@@ -93,8 +93,7 @@ final class HomeSourceMigrationTransaction {
         customOrder: sourcePreference.customOrder,
         updatedAt: DateTime.now().toUtc(),
       );
-      await _library.saveComicPreference(neutral);
-      session.replacePreference(neutral);
+      await session.persistPreference(neutral);
     }
     final entries = await _library.list();
     for (final entry in entries) {
@@ -389,7 +388,7 @@ final class HomeSourceMigrationTransaction {
         if (item.targetReadState != null) {
           preservedTargetStates++;
         } else if (sourceRead != null) {
-          await _library.saveChapterReadState(
+          await session.persistReadState(
             ChapterReadState(
               sourceId: targetRecord.sourceId,
               comicId: targetRecord.comicId,

@@ -64,7 +64,8 @@ for token in (
     'final class HomeSourceMigrationTransaction',
     'await savePreference(mergedPreference);',
     'final neutral = ComicPreference(',
-    'await _library.saveComicPreference(neutral);',
+    'await session.persistPreference(neutral);',
+    'await session.persistReadState(',
 ):
     require(transaction, token, 'confirmed migration transaction ownership')
 forbid(

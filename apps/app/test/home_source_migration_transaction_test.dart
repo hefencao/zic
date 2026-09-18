@@ -113,6 +113,137 @@ void main() {
     );
   });
 
+  test('migrated read-state publishes through HomeLibrarySession owner',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final source = _MigrationSource('fixture-source');
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: <BrowsableComicSource>[source],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+
+    final sourceComic = _comic(source.sourceId, 'old-comic', 'Old comic');
+    final targetComic = _comic(source.sourceId, 'new-comic', 'New comic');
+    final sourceChapter = _chapterManifest(
+      sourceId: source.sourceId,
+      comicId: sourceComic.comicId,
+      chapterId: 'old-chapter',
+      title: 'Chapter 1',
+      sequence: 1,
+      revision: 'old-r1',
+    );
+    final targetChapter = _chapterManifest(
+      sourceId: source.sourceId,
+      comicId: targetComic.comicId,
+      chapterId: 'new-chapter',
+      title: 'Chapter 1',
+      sequence: 1,
+      revision: 'new-r1',
+    );
+    source.chapter = targetChapter;
+
+    final sourceEntry = await session.upsertChapter(
+      ImportedChapterRecord.remote(
+        comic: sourceComic,
+        manifest: sourceChapter,
+      ),
+    );
+    final sourceRead = ChapterReadState(
+      sourceId: source.sourceId,
+      comicId: sourceComic.comicId,
+      chapterId: sourceChapter.chapter.chapterId,
+      isRead: true,
+      updatedAt: DateTime.utc(2026, 1, 1),
+    );
+    await session.persistReadState(sourceRead);
+
+    final sourceProjection = LibraryComic(
+      sourceId: sourceComic.sourceId,
+      comicId: sourceComic.comicId,
+      title: sourceComic.title,
+      authors: sourceComic.authors,
+      tags: sourceComic.tags,
+      description: sourceComic.description,
+      coverSourceId: sourceComic.coverUri?.toString(),
+      readingDirection: sourceComic.readingDirection,
+      chapters: <ImportedLibraryEntry>[sourceEntry],
+      sourceChapters: <Chapter>[sourceChapter.chapter],
+      savedAt: DateTime.utc(2026, 1, 1),
+      metadataUpdatedAt: DateTime.utc(2026, 1, 1),
+    );
+    final targetManifest = ComicManifest(
+      comic: targetComic,
+      chapters: <Chapter>[targetChapter.chapter],
+    );
+    final sourcePreference = ComicPreference(
+      sourceId: source.sourceId,
+      comicId: sourceComic.comicId,
+      sourceKind: ComicSourceKind.remote,
+      inShelf: true,
+      liked: false,
+      collected: false,
+      categoryIds: const <String>{},
+      customOrder: 1,
+      updatedAt: DateTime.utc(2026, 1, 1),
+    );
+    await session.persistPreference(sourcePreference);
+
+    final transaction = HomeSourceMigrationTransaction(
+      session: session,
+      ensureDurableLibrary: () async {},
+      artifactCache: () => null,
+      verifiedPageReuseIdentity: ({required sourceId, required locator}) async =>
+          null,
+      savePreference: session.persistPreference,
+      canonicalComicIdForPersistence: (_, _, {fallback}) => fallback,
+      reportError: (_, _) {},
+    );
+
+    final result = await transaction.executeConfirmed(
+      sourceComic: sourceProjection,
+      targetSource: source,
+      targetManifest: targetManifest,
+      plan: ComicSourceMigrationPlan.build(
+        source: sourceProjection,
+        target: targetManifest,
+      ),
+      replacingSource: false,
+      sourcePreference: sourcePreference,
+      targetCustomOrder: 2,
+    );
+
+    expect(result.migratedChapters, 1);
+    expect(result.migratedReadStates, 1);
+    final targetIdentity = chapterLibraryIdentity(
+      source.sourceId,
+      targetChapter.chapter.chapterId,
+    );
+    expect(session.readStates[targetIdentity]?.isRead, isTrue);
+    expect(
+      (await library.listChapterReadStates(
+        source.sourceId,
+        targetComic.comicId,
+      ))
+          .single
+          .isRead,
+      isTrue,
+    );
+  });
+
   test('confirmed migration crosses durable boundary before journal lookup',
       () async {
     final bootstrapLibrary = MemoryImportedLibraryStore();
@@ -354,6 +485,80 @@ void main() {
       isNull,
     );
   });
+}
+
+ChapterManifest _chapterManifest({
+  required String sourceId,
+  required String comicId,
+  required String chapterId,
+  required String title,
+  required int sequence,
+  required String revision,
+}) {
+  final chapter = Chapter(
+    chapterId: chapterId,
+    comicId: comicId,
+    title: title,
+    sequence: sequence,
+    pageCount: 1,
+    sourceRevision: revision,
+  );
+  return ChapterManifest(
+    sourceId: sourceId,
+    comicId: comicId,
+    chapter: chapter,
+    pages: <PageAsset>[
+      PageAsset(
+        pageId: '$chapterId-page-1',
+        chapterId: chapterId,
+        index: 0,
+        uri: Uri.https('example.test', '/$chapterId/1.jpg'),
+        contentKindHint: ContentKindHint.jpeg,
+      ),
+    ],
+    readingDirection: ReadingDirection.ltr,
+  );
+}
+
+final class _MigrationSource implements BrowsableComicSource {
+  _MigrationSource(this.sourceId)
+      : descriptor = ComicSourceDescriptor(
+          sourceId: sourceId,
+          name: 'Fixture migration source',
+          language: 'en',
+          website: Uri.https('example.test'),
+        );
+
+  @override
+  final String sourceId;
+
+  @override
+  final ComicSourceDescriptor descriptor;
+
+  ChapterManifest? chapter;
+
+  @override
+  Future<SourceBrowsePage> browse({
+    String query = '',
+    int offset = 0,
+    int limit = 24,
+  }) =>
+      throw UnimplementedError();
+
+  @override
+  Future<ComicManifest> loadComic(String comicId) => throw UnimplementedError();
+
+  @override
+  Future<ChapterManifest> loadChapter(String chapterId) async {
+    final value = chapter;
+    if (value == null || value.chapter.chapterId != chapterId) {
+      throw StateError('unexpected fixture chapter: $chapterId');
+    }
+    return value;
+  }
+
+  @override
+  Future<Uint8List> loadResource(Uri uri) => throw UnimplementedError();
 }
 
 Comic _comic(String sourceId, String comicId, String title) => Comic(
