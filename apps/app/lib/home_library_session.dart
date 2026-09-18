@@ -2131,25 +2131,36 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
   }
 
-  Future<ImportedLibraryStore> _persistStableLibraryMutation(
-    Future<void> Function(ImportedLibraryStore store) mutate,
+  Future<({ImportedLibraryStore store, T value})>
+      _persistStableLibraryMutationResult<T>(
+    Future<T> Function(ImportedLibraryStore store) mutate,
   ) async {
     while (true) {
       final libraryStore = library;
       try {
-        await mutate(libraryStore);
-      } on Object {
-        if (!identical(library, libraryStore)) {
-          await _serviceAdoption;
-          continue;
+        final value = await mutate(libraryStore);
+        if (identical(library, libraryStore)) {
+          return (store: libraryStore, value: value);
         }
-        rethrow;
-      }
-      if (identical(library, libraryStore)) {
-        return libraryStore;
+      } on Object {
+        if (identical(library, libraryStore)) {
+          rethrow;
+        }
       }
       await _serviceAdoption;
     }
+  }
+
+  Future<ImportedLibraryStore> _persistStableLibraryMutation(
+    Future<void> Function(ImportedLibraryStore store) mutate,
+  ) async {
+    final result = await _persistStableLibraryMutationResult<bool>(
+      (store) async {
+        await mutate(store);
+        return true;
+      },
+    );
+    return result.store;
   }
 
   Future<void> persistPreference(ComicPreference preference) =>
@@ -2221,19 +2232,38 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<ImportedLibraryEntry> upsertChapter(
     ImportedChapterRecord chapter,
   ) async {
-    await library.upsertChapter(chapter);
-    final entry = await library.get(chapter.sourceId, chapter.chapterId);
-    if (entry == null) {
-      throw StateError('chapter write completed without a readable entry');
+    while (true) {
+      final result =
+          await _persistStableLibraryMutationResult<ImportedLibraryEntry?>(
+        (store) async {
+          await store.upsertChapter(chapter);
+          return store.get(chapter.sourceId, chapter.chapterId);
+        },
+      );
+      if (!identical(library, result.store)) {
+        continue;
+      }
+      final entry = result.value;
+      if (entry == null) {
+        throw StateError('chapter write completed without a readable entry');
+      }
+      _replaceEntry(entry, replaceVersionAuthorityChapterPayload: true);
+      await _assimilateCanonicalMediaForEntries(<ImportedLibraryEntry>[entry]);
+      _refreshVersionPageAuthority();
+      return entry;
     }
-    _replaceEntry(entry, replaceVersionAuthorityChapterPayload: true);
-    await _assimilateCanonicalMediaForEntries(<ImportedLibraryEntry>[entry]);
-    _refreshVersionPageAuthority();
-    return entry;
   }
 
   Future<void> removeChapter(String sourceId, String chapterId) async {
-    await library.removeChapter(sourceId, chapterId);
+    while (true) {
+      final persistedLibrary = await _persistStableLibraryMutation(
+        (store) => store.removeChapter(sourceId, chapterId),
+      );
+      if (!identical(library, persistedLibrary)) {
+        continue;
+      }
+      break;
+    }
     final identity = chapterLibraryIdentity(sourceId, chapterId);
     final next = _entries
         .where((entry) => entry.identity != identity)
@@ -2256,28 +2286,50 @@ final class HomeLibrarySession extends ChangeNotifier {
   }
 
   Future<void> upsertSavedComic(SavedComicRecord comic) async {
-    await library.upsertSavedComic(comic);
-    final stored = await library.getSavedComic(comic.sourceId, comic.comicId);
-    if (stored == null) {
-      throw StateError('saved comic write completed without a readable record');
+    while (true) {
+      final result =
+          await _persistStableLibraryMutationResult<SavedComicRecord?>(
+        (store) async {
+          await store.upsertSavedComic(comic);
+          return store.getSavedComic(comic.sourceId, comic.comicId);
+        },
+      );
+      if (!identical(library, result.store)) {
+        continue;
+      }
+      final stored = result.value;
+      if (stored == null) {
+        throw StateError(
+          'saved comic write completed without a readable record',
+        );
+      }
+      final next = _savedComics.toList(growable: true);
+      final index = next.indexWhere(
+        (current) => current.identity == stored.identity,
+      );
+      if (index < 0) {
+        next.add(stored);
+      } else {
+        next[index] = stored;
+      }
+      _savedComics = List<SavedComicRecord>.unmodifiable(next);
+      _libraryProjectionRevision++;
+      _publish();
+      _scheduleSnapshotWrite();
+      return;
     }
-    final next = _savedComics.toList(growable: true);
-    final index = next.indexWhere(
-      (current) => current.identity == stored.identity,
-    );
-    if (index < 0) {
-      next.add(stored);
-    } else {
-      next[index] = stored;
-    }
-    _savedComics = List<SavedComicRecord>.unmodifiable(next);
-    _libraryProjectionRevision++;
-    _publish();
-    _scheduleSnapshotWrite();
   }
 
   Future<void> removeSavedComic(String sourceId, String comicId) async {
-    await library.removeSavedComic(sourceId, comicId);
+    while (true) {
+      final persistedLibrary = await _persistStableLibraryMutation(
+        (store) => store.removeSavedComic(sourceId, comicId),
+      );
+      if (!identical(library, persistedLibrary)) {
+        continue;
+      }
+      break;
+    }
     final identity = comicLibraryIdentity(sourceId, comicId);
     final next = _savedComics
         .where((comic) => comic.identity != identity)
@@ -2294,8 +2346,16 @@ final class HomeLibrarySession extends ChangeNotifier {
   /// Reader callbacks must continue using the checkpoint writer and call
   /// [replaceProgress] only once when the route returns.
   Future<void> persistProgress(ReadingProgress progress) async {
-    await library.saveProgress(progress);
-    replaceProgress(progress);
+    while (true) {
+      final persistedLibrary = await _persistStableLibraryMutation(
+        (store) => store.saveProgress(progress),
+      );
+      if (!identical(library, persistedLibrary)) {
+        continue;
+      }
+      replaceProgress(progress);
+      return;
+    }
   }
 
   /// Updates the visible Home projection after a Reader route has returned.

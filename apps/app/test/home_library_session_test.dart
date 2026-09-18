@@ -1745,6 +1745,90 @@ void main() {
   });
 
   test(
+      'chapter write and readback retry current library after adoption',
+      () async {
+    final firstDelegate = MemoryImportedLibraryStore();
+    final firstLibrary = _GatedLibraryStore(
+      firstDelegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final writeStarted = Completer<void>();
+    final releaseWrite = Completer<void>();
+    firstLibrary.chapterWriteStarted = writeStarted;
+    firstLibrary.chapterWriteReturnGate = releaseWrite.future;
+    final firstDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final firstQueue = WholeComicDownloadQueue(downloads: firstDownloads);
+    final session = HomeLibrarySession(
+      library: firstLibrary,
+      chapterDownloads: firstDownloads,
+      wholeComicDownloads: firstQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    await session.ready;
+
+    final secondLibrary = MemoryImportedLibraryStore();
+    final secondDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final secondQueue = WholeComicDownloadQueue(downloads: secondDownloads);
+    addTearDown(() async {
+      if (!releaseWrite.isCompleted) {
+        releaseWrite.complete();
+      }
+      await session.close();
+      session.dispose();
+      await secondQueue.close();
+      await secondDownloads.close();
+      await secondLibrary.close();
+    });
+
+    final chapter = ImportedChapterRecord(
+      directoryId: 'remote:fixture',
+      displayName: 'Chapter',
+      sourceId: 'fixture-source',
+      comicId: 'fixture-comic',
+      comicTitle: 'Fixture',
+      chapterId: 'chapter-1',
+      sourceRevision: 'r1',
+      importedAt: DateTime.utc(2026, 9, 18),
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '1.jpg',
+          sourceId: 'https://example.test/1.jpg',
+          contentKindHint: ContentKindHint.jpeg,
+          mediaFormat: 'jpeg',
+          byteLength: 100,
+        ),
+      ],
+    );
+    final writeFuture = session.upsertChapter(chapter);
+    await writeStarted.future;
+
+    await session.adoptServices(
+      library: secondLibrary,
+      chapterDownloads: secondDownloads,
+      wholeComicDownloads: secondQueue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    );
+    releaseWrite.complete();
+    final entry = await writeFuture;
+
+    expect(entry.chapter.chapterId, chapter.chapterId);
+    expect(session.entries, hasLength(1));
+    expect(session.entries.single.chapter.chapterId, chapter.chapterId);
+    expect(
+      await secondLibrary.get(chapter.sourceId, chapter.chapterId),
+      isNotNull,
+    );
+  });
+
+  test(
       'comic preference write retries current library after in-flight adoption',
       () async {
     final firstDelegate = MemoryImportedLibraryStore();
@@ -3365,6 +3449,8 @@ final class _GatedLibraryStore
   var listCalls = 0;
   var getCalls = 0;
   var getManyCalls = 0;
+  Completer<void>? chapterWriteStarted;
+  Future<void>? chapterWriteReturnGate;
   Completer<void>? comicPreferenceWriteStarted;
   Future<void>? comicPreferenceWriteReturnGate;
   Completer<void>? versionRelationWriteStarted;
@@ -3404,8 +3490,14 @@ final class _GatedLibraryStore
     return (delegate as ImportedLibraryBatchLookup).getMany(chapters);
   }
   @override
-  Future<void> upsertChapter(ImportedChapterRecord chapter) =>
-      delegate.upsertChapter(chapter);
+  Future<void> upsertChapter(ImportedChapterRecord chapter) async {
+    await delegate.upsertChapter(chapter);
+    final started = chapterWriteStarted;
+    if (started != null && !started.isCompleted) {
+      started.complete();
+    }
+    await chapterWriteReturnGate;
+  }
   @override
   Future<void> saveProgress(ReadingProgress progress) =>
       delegate.saveProgress(progress);

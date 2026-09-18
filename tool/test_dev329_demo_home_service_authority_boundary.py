@@ -87,12 +87,46 @@ require(
 )
 
 for marker, label in (
+    ("_persistStableLibraryMutationResult<T>(", "stable library mutation result owner"),
     ("Future<ImportedLibraryStore> _persistStableLibraryMutation(", "stable library mutation owner"),
     ("Future<void> persistPreferences(", "comic preference mutation owner"),
     ("Future<void> persistSourcePreference(", "source preference mutation owner"),
     ("Future<void> persistReadState(", "read-state mutation owner"),
+    ("Future<ImportedLibraryEntry> upsertChapter(", "chapter write-through owner"),
+    ("await store.upsertChapter(chapter);", "chapter same-store write"),
+    ("return store.get(chapter.sourceId, chapter.chapterId);", "chapter same-store readback"),
+    ("Future<void> upsertSavedComic(", "saved-comic write-through owner"),
+    ("return store.getSavedComic(comic.sourceId, comic.comicId);", "saved-comic same-store readback"),
+    ("Future<void> persistProgress(ReadingProgress progress) async", "non-Reader progress mutation owner"),
+    ("(store) => store.saveProgress(progress),", "non-Reader progress stable write"),
 ):
     require(session, marker, label)
+
+for forbidden in (
+    "await library.upsertChapter(",
+    "await library.removeChapter(",
+    "await library.upsertSavedComic(",
+    "await library.removeSavedComic(",
+    "await library.saveProgress(",
+):
+    if forbidden in session:
+        raise SystemExit(
+            f"HomeLibrarySession bypasses stable library mutation owner: {forbidden}"
+        )
+
+for marker, label in (
+    ("(library as ReaderProgressCheckpointStore).enqueueProgress(progress);", "Reader checkpoint enqueue"),
+    ("unawaited(library.saveProgress(progress));", "Reader compatibility non-blocking progress write"),
+):
+    require(home, marker, label)
+
+reader_progress_start = home.index("Future<void> _enqueueReaderProgress(ReadingProgress progress)")
+reader_progress_end = home.index("Future<void> _flushReaderProgressCheckpoints()", reader_progress_start)
+reader_progress_body = home[reader_progress_start:reader_progress_end]
+if "_librarySession.persistProgress(" in reader_progress_body:
+    raise SystemExit(
+        "Reader progress callback must not await ordinary HomeLibrarySession durable mutation"
+    )
 
 for marker, label in (
     ("_librarySession.persistPreferences(updatedPreferences);", "comic preference delegation"),
