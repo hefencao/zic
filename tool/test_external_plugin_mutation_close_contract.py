@@ -36,6 +36,31 @@ require(
     'Future<void> close() => _closeFuture ??= _close();',
     'joinable registry close boundary',
 )
+require(
+    REGISTRY,
+    'final Map<String, Future<void>> _deactivations = <String, Future<void>>{};',
+    'registry deactivation single-flight owner',
+)
+
+deactivate_start = REGISTRY.index('Future<void> deactivate(String pluginId) {')
+deactivate_end = REGISTRY.index('\n  Future<void> _deactivate(', deactivate_start)
+deactivate_body = REGISTRY[deactivate_start:deactivate_end]
+require(deactivate_body, '_deactivations[pluginId]', 'same-plugin deactivation coalescing')
+require(deactivate_body, '_deactivations[pluginId] = deactivation;', 'deactivation publication')
+
+registry_close_start = REGISTRY.index('Future<void> _close() async {')
+registry_close_end = REGISTRY.index('\n  void _requireOpen()', registry_close_start)
+registry_close = REGISTRY[registry_close_start:registry_close_end]
+registry_order = [
+    '_activations.clear();',
+    '_deactivations.values.toList(growable: false)',
+    'await deactivation;',
+    '_deactivations.clear();',
+    '_sessions.values.toList(growable: false)',
+]
+registry_positions = [registry_close.index(marker) for marker in registry_order]
+if registry_positions != sorted(registry_positions):
+    raise SystemExit('registry close must drain admitted deactivation before remaining sessions')
 
 for signature, marker in (
     ('approveAndActivate(', '_runDurableMutation(() => _approveAndActivate(preview))'),

@@ -471,6 +471,62 @@ void main() {
     expect(registry.ownerOfSource('venera:shared'), firstPlugin.pluginId);
   });
 
+  test('registry close drains admitted deactivation without double close',
+      () async {
+    final plugin = _veneraPlugin();
+    final session = _BlockingCloseSession(
+      plugin,
+      <BrowsableComicSource>[_Source('venera:fixture')],
+    );
+    final registry = ExternalPluginRuntimeRegistry(
+      <ExternalComicPluginHost>[
+        _QueueHost(<ExternalComicPluginSession>[session]),
+      ],
+    );
+
+    await registry.activate(plugin);
+    final deactivation = registry.deactivate(plugin.pluginId);
+    await session.closeStarted.future;
+
+    final closing = registry.close();
+    await Future<void>.delayed(Duration.zero);
+    expect(session.closeCalls, 1);
+
+    session.releaseClose.complete();
+    await Future.wait<void>(<Future<void>>[deactivation, closing]);
+    expect(session.closeCalls, 1);
+  });
+
+  test('concurrent registry deactivation shares one in-flight owner', () async {
+    final plugin = _veneraPlugin();
+    final session = _BlockingCloseSession(
+      plugin,
+      <BrowsableComicSource>[_Source('venera:fixture')],
+    );
+    final registry = ExternalPluginRuntimeRegistry(
+      <ExternalComicPluginHost>[
+        _QueueHost(<ExternalComicPluginSession>[session]),
+      ],
+    );
+    addTearDown(() async {
+      if (!session.releaseClose.isCompleted) {
+        session.releaseClose.complete();
+      }
+      await registry.close();
+    });
+
+    await registry.activate(plugin);
+    final first = registry.deactivate(plugin.pluginId);
+    final second = registry.deactivate(plugin.pluginId);
+    await session.closeStarted.future;
+
+    expect(identical(first, second), isTrue);
+    expect(session.closeCalls, 1);
+
+    session.releaseClose.complete();
+    await Future.wait<void>(<Future<void>>[first, second]);
+  });
+
   test('runtime registry owns session deactivation', () async {
     final session = _Session(
       _veneraPlugin(),
@@ -713,6 +769,29 @@ final class _Executor implements ExternalPluginExecutor {
     return lastSession = _Session(plugin, <BrowsableComicSource>[
       _Source(sourceId),
     ]);
+  }
+}
+
+final class _BlockingCloseSession implements ExternalComicPluginSession {
+  _BlockingCloseSession(this.plugin, this.sources);
+
+  @override
+  final ExternalComicPluginCatalogEntry plugin;
+
+  @override
+  final List<BrowsableComicSource> sources;
+
+  final Completer<void> closeStarted = Completer<void>();
+  final Completer<void> releaseClose = Completer<void>();
+  int closeCalls = 0;
+
+  @override
+  Future<void> close() async {
+    closeCalls++;
+    if (!closeStarted.isCompleted) {
+      closeStarted.complete();
+    }
+    await releaseClose.future;
   }
 }
 

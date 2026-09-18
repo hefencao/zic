@@ -25,6 +25,7 @@ final class ExternalPluginRuntimeRegistry {
       <String, ExternalComicPluginSession>{};
   final Map<String, Future<List<BrowsableComicSource>>> _activations =
       <String, Future<List<BrowsableComicSource>>>{};
+  final Map<String, Future<void>> _deactivations = <String, Future<void>>{};
   Future<void> _commitTail = Future<void>.value();
   Future<void>? _closeFuture;
   final Map<String, String> _sourceOwners = <String, String>{};
@@ -257,8 +258,25 @@ final class ExternalPluginRuntimeRegistry {
     }
   }
 
-  Future<void> deactivate(String pluginId) async {
-    _requireOpen();
+  Future<void> deactivate(String pluginId) {
+    if (_closed) {
+      return Future<void>.error(
+        StateError('external plugin runtime registry is closed'),
+      );
+    }
+    final existing = _deactivations[pluginId];
+    if (existing != null) return existing;
+    late final Future<void> deactivation;
+    deactivation = _deactivate(pluginId).whenComplete(() {
+      if (identical(_deactivations[pluginId], deactivation)) {
+        _deactivations.remove(pluginId);
+      }
+    });
+    _deactivations[pluginId] = deactivation;
+    return deactivation;
+  }
+
+  Future<void> _deactivate(String pluginId) async {
     final pending = _activations[pluginId];
     if (pending != null) {
       try {
@@ -298,11 +316,21 @@ final class ExternalPluginRuntimeRegistry {
       );
     }
     _activations.clear();
+    Object? firstError;
+    StackTrace? firstStackTrace;
+    final deactivations = _deactivations.values.toList(growable: false);
+    for (final deactivation in deactivations) {
+      try {
+        await deactivation;
+      } on Object catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+    _deactivations.clear();
     final sessions = _sessions.values.toList(growable: false);
     _sessions.clear();
     _sourceOwners.clear();
-    Object? firstError;
-    StackTrace? firstStackTrace;
     for (final session in sessions) {
       try {
         await session.close();
