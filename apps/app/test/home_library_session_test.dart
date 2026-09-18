@@ -2938,6 +2938,48 @@ void main() {
     expect(closeCompleted, isFalse);
     expect(library.closeCalls, 0);
 
+    final latePreference = ComicPreference.defaults(
+      sourceId: 'close-drain-source',
+      comicId: 'late-comic',
+      sourceKind: ComicSourceKind.remote,
+    ).copyWith(liked: true);
+    await expectLater(
+      session.persistPreference(latePreference),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      session.reload(),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      session.adoptServices(
+        library: library,
+        chapterDownloads: downloads,
+        wholeComicDownloads: queue,
+        sources: const <BrowsableComicSource>[],
+        persistSnapshot: true,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      session.replaceSources(
+        const <BrowsableComicSource>[],
+        reloadLibrary: false,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      session.upsertVersionRelation(
+        ComicVersionRelation(
+          sourceId: 'close-drain-source',
+          predecessorComicId: 'old-comic',
+          successorComicId: 'new-comic',
+          discoveredAt: DateTime.utc(2026, 9, 18),
+        ),
+      ),
+      throwsA(isA<StateError>()),
+    );
+
     revisionGate.complete();
     await closing;
     expect(library.closeCalls, 1);
@@ -2949,6 +2991,111 @@ void main() {
       ).liked,
       isTrue,
     );
+  });
+
+  test('close waits for an admitted stable library mutation', () async {
+    final delegate = MemoryImportedLibraryStore();
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+    );
+    final writeStarted = Completer<void>();
+    final releaseWrite = Completer<void>();
+    library.comicPreferenceWriteStarted = writeStarted;
+    library.comicPreferenceWriteReturnGate = releaseWrite.future;
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      if (!releaseWrite.isCompleted) {
+        releaseWrite.complete();
+      }
+      await session.close();
+      session.dispose();
+    });
+    await session.ready;
+
+    final preference = ComicPreference.defaults(
+      sourceId: 'close-admitted-source',
+      comicId: 'close-admitted-comic',
+      sourceKind: ComicSourceKind.remote,
+    ).copyWith(liked: true);
+    final write = session.persistPreference(preference);
+    await writeStarted.future;
+    expect(
+      (await delegate.getComicPreference(
+        preference.sourceId,
+        preference.comicId,
+      ))
+          ?.liked,
+      isTrue,
+    );
+
+    var closeCompleted = false;
+    final closing = session.close().then((_) => closeCompleted = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(closeCompleted, isFalse);
+    expect(library.closeCalls, 0);
+
+    releaseWrite.complete();
+    await write;
+    await closing;
+
+    expect(library.closeCalls, 1);
+    expect(session.preferences[preference.identity]?.liked, isTrue);
+  });
+
+  test('close waits for constructor initialization admitted before teardown',
+      () async {
+    final openGate = Completer<void>();
+    final delegate = MemoryImportedLibraryStore();
+    final library = _GatedLibraryStore(
+      delegate,
+      Future<List<LibraryCategory>>.value(const <LibraryCategory>[]),
+      openGate: openGate.future,
+    );
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      if (!openGate.isCompleted) {
+        openGate.complete();
+      }
+      await session.close();
+      session.dispose();
+    });
+
+    var closeCompleted = false;
+    final closing = session.close().then((_) => closeCompleted = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(closeCompleted, isFalse);
+    expect(library.closeCalls, 0);
+
+    openGate.complete();
+    await closing;
+
+    expect(library.openCalls, 1);
+    expect(library.closeCalls, 1);
   });
 
   test('explicit checkpoint rewrites snapshot after durable revision advances',

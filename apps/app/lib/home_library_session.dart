@@ -387,6 +387,8 @@ final class HomeLibrarySession extends ChangeNotifier {
   String? _activeSourceId;
   bool _closed = false;
   Future<void>? _closing;
+  int _activeAdmissions = 0;
+  Completer<void>? _admissionsDrained;
   int _libraryProjectionRevision = 0;
   int? _snapshotLibraryRevision;
   bool _snapshotRewriteNeeded = false;
@@ -1093,9 +1095,11 @@ final class HomeLibrarySession extends ChangeNotifier {
   }
 
   Future<void> reload({bool waitForOpen = true}) =>
-      _runLibraryReload(
-        waitForReady: waitForOpen,
-        openLibrary: false,
+      _runAdmittedOperation(
+        () => _runLibraryReload(
+          waitForReady: waitForOpen,
+          openLibrary: false,
+        ),
       );
 
   Future<void> _runLibraryReload({
@@ -1139,6 +1143,25 @@ final class HomeLibrarySession extends ChangeNotifier {
     required ImportedLibraryStore library,
     required ChapterDownloadService chapterDownloads,
     ChapterDownloadTransferRuntimeProvider? downloadComposition,
+    required WholeComicDownloadQueue wholeComicDownloads,
+    required List<BrowsableComicSource> sources,
+    required bool persistSnapshot,
+  }) =>
+      _runAdmittedOperation(
+        () => _admitServices(
+          library: library,
+          chapterDownloads: chapterDownloads,
+          downloadComposition: downloadComposition,
+          wholeComicDownloads: wholeComicDownloads,
+          sources: sources,
+          persistSnapshot: persistSnapshot,
+        ),
+      );
+
+  Future<void> _admitServices({
+    required ImportedLibraryStore library,
+    required ChapterDownloadService chapterDownloads,
+    required ChapterDownloadTransferRuntimeProvider? downloadComposition,
     required WholeComicDownloadQueue wholeComicDownloads,
     required List<BrowsableComicSource> sources,
     required bool persistSnapshot,
@@ -1192,7 +1215,7 @@ final class HomeLibrarySession extends ChangeNotifier {
         identical(this.wholeComicDownloads, wholeComicDownloads)) {
       this.persistSnapshot = persistSnapshot;
       if (!_sameSourceInstances(_sources, sources)) {
-        await replaceSources(sources, reloadLibrary: false);
+        await _replaceSources(sources, reloadLibrary: false);
       }
       return;
     }
@@ -1715,7 +1738,9 @@ final class HomeLibrarySession extends ChangeNotifier {
     _scheduleSnapshotWrite();
   }
 
-  Future<void> ensureReady() async {
+  Future<void> ensureReady() => _runAdmittedOperation(_ensureReady);
+
+  Future<void> _ensureReady() async {
     await ready;
     if (_error == null) {
       return;
@@ -1726,7 +1751,9 @@ final class HomeLibrarySession extends ChangeNotifier {
     );
   }
 
-  Future<void> retry() async {
+  Future<void> retry() => _runAdmittedOperation(_retry);
+
+  Future<void> _retry() async {
     _loading = true;
     _publish();
     try {
@@ -1974,7 +2001,7 @@ final class HomeLibrarySession extends ChangeNotifier {
         final pageMappings = relation.pageMappings.toList(growable: false);
         final mutableMappings = pageMappings.toList(growable: true);
         mutableMappings[mappingIndex] = updated;
-        await upsertVersionRelationDerivedState(
+        await _upsertVersionRelationDerivedState(
           ComicVersionRelation(
             sourceId: relation.sourceId,
             predecessorComicId: relation.predecessorComicId,
@@ -2044,7 +2071,10 @@ final class HomeLibrarySession extends ChangeNotifier {
 
   Future<void> flushVersionReuseEvidence() => _versionEvidenceWriteTail;
 
-  Future<void> upsertVersionRelation(ComicVersionRelation relation) async {
+  Future<void> upsertVersionRelation(ComicVersionRelation relation) =>
+      _runAdmittedOperation(() => _upsertVersionRelation(relation));
+
+  Future<void> _upsertVersionRelation(ComicVersionRelation relation) async {
     while (true) {
       final persistedLibrary = await _persistVersionRelation(relation);
       if (!identical(library, persistedLibrary)) {
@@ -2063,6 +2093,13 @@ final class HomeLibrarySession extends ChangeNotifier {
   /// Home ChangeNotifier caused every background mapping write to rebuild the
   /// covered Home route and enqueue another full projection snapshot write.
   Future<void> upsertVersionRelationDerivedState(
+    ComicVersionRelation relation,
+  ) =>
+      _runAdmittedOperation(
+        () => _upsertVersionRelationDerivedState(relation),
+      );
+
+  Future<void> _upsertVersionRelationDerivedState(
     ComicVersionRelation relation,
   ) async {
     while (true) {
@@ -2176,6 +2213,52 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
   }
 
+  StateError? _admissionError() {
+    if (_closing != null || _closed) {
+      return StateError('Home library session is closing');
+    }
+    return null;
+  }
+
+  void _requireAdmissionOpen() {
+    final error = _admissionError();
+    if (error != null) {
+      throw error;
+    }
+  }
+
+  Future<T> _runAdmittedOperation<T>(
+    Future<T> Function() operation,
+  ) async {
+    _requireAdmissionOpen();
+    _activeAdmissions++;
+    try {
+      return await operation();
+    } finally {
+      _activeAdmissions--;
+      if (_activeAdmissions == 0) {
+        final drained = _admissionsDrained;
+        if (drained != null && !drained.isCompleted) {
+          drained.complete();
+        }
+        _admissionsDrained = null;
+      }
+    }
+  }
+
+  Future<void> _drainAdmittedOperations() {
+    if (_activeAdmissions == 0) {
+      return Future<void>.value();
+    }
+    final existing = _admissionsDrained;
+    if (existing != null) {
+      return existing.future;
+    }
+    final drained = Completer<void>();
+    _admissionsDrained = drained;
+    return drained.future;
+  }
+
   Future<({ImportedLibraryStore store, T value})>
       _persistStableLibraryMutationResult<T>(
     Future<T> Function(ImportedLibraryStore store) mutate,
@@ -2208,7 +2291,10 @@ final class HomeLibrarySession extends ChangeNotifier {
     return result.store;
   }
 
-  Future<void> upsertCategory(LibraryCategory category) async {
+  Future<void> upsertCategory(LibraryCategory category) =>
+      _runAdmittedOperation(() => _upsertCategory(category));
+
+  Future<void> _upsertCategory(LibraryCategory category) async {
     while (true) {
       final result =
           await _persistStableLibraryMutationResult<LibraryCategory?>(
@@ -2253,7 +2339,10 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
   }
 
-  Future<void> removeCategory(String categoryId) async {
+  Future<void> removeCategory(String categoryId) =>
+      _runAdmittedOperation(() => _removeCategory(categoryId));
+
+  Future<void> _removeCategory(String categoryId) async {
     while (true) {
       final result = await _persistStableLibraryMutationResult<
           ({
@@ -2318,7 +2407,12 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<void> persistPreference(ComicPreference preference) =>
       persistPreferences(<ComicPreference>[preference]);
 
-  Future<void> persistPreferences(Iterable<ComicPreference> preferences) async {
+  Future<void> persistPreferences(Iterable<ComicPreference> preferences) =>
+      _runAdmittedOperation(() => _persistPreferences(preferences));
+
+  Future<void> _persistPreferences(
+    Iterable<ComicPreference> preferences,
+  ) async {
     final values = List<ComicPreference>.unmodifiable(preferences);
     if (values.isEmpty) return;
     while (true) {
@@ -2353,7 +2447,10 @@ final class HomeLibrarySession extends ChangeNotifier {
     _replacePreferences(<ComicPreference>[preference]);
   }
 
-  Future<void> persistReadState(ChapterReadState state) async {
+  Future<void> persistReadState(ChapterReadState state) =>
+      _runAdmittedOperation(() => _persistReadState(state));
+
+  Future<void> _persistReadState(ChapterReadState state) async {
     while (true) {
       final persistedLibrary = await _persistStableLibraryMutation(
         (store) => store.saveChapterReadState(state),
@@ -2383,6 +2480,11 @@ final class HomeLibrarySession extends ChangeNotifier {
   /// returns and publishes progress.
   Future<ImportedLibraryEntry> upsertChapter(
     ImportedChapterRecord chapter,
+  ) =>
+      _runAdmittedOperation(() => _upsertChapter(chapter));
+
+  Future<ImportedLibraryEntry> _upsertChapter(
+    ImportedChapterRecord chapter,
   ) async {
     while (true) {
       final result =
@@ -2406,7 +2508,10 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
   }
 
-  Future<void> removeChapter(String sourceId, String chapterId) async {
+  Future<void> removeChapter(String sourceId, String chapterId) =>
+      _runAdmittedOperation(() => _removeChapter(sourceId, chapterId));
+
+  Future<void> _removeChapter(String sourceId, String chapterId) async {
     while (true) {
       final persistedLibrary = await _persistStableLibraryMutation(
         (store) => store.removeChapter(sourceId, chapterId),
@@ -2437,7 +2542,10 @@ final class HomeLibrarySession extends ChangeNotifier {
     _scheduleSnapshotWrite();
   }
 
-  Future<void> upsertSavedComic(SavedComicRecord comic) async {
+  Future<void> upsertSavedComic(SavedComicRecord comic) =>
+      _runAdmittedOperation(() => _upsertSavedComic(comic));
+
+  Future<void> _upsertSavedComic(SavedComicRecord comic) async {
     while (true) {
       final result =
           await _persistStableLibraryMutationResult<SavedComicRecord?>(
@@ -2472,7 +2580,10 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
   }
 
-  Future<void> removeSavedComic(String sourceId, String comicId) async {
+  Future<void> removeSavedComic(String sourceId, String comicId) =>
+      _runAdmittedOperation(() => _removeSavedComic(sourceId, comicId));
+
+  Future<void> _removeSavedComic(String sourceId, String comicId) async {
     while (true) {
       final persistedLibrary = await _persistStableLibraryMutation(
         (store) => store.removeSavedComic(sourceId, comicId),
@@ -2497,7 +2608,10 @@ final class HomeLibrarySession extends ChangeNotifier {
   ///
   /// Reader callbacks must continue using the checkpoint writer and call
   /// [replaceProgress] only once when the route returns.
-  Future<void> persistProgress(ReadingProgress progress) async {
+  Future<void> persistProgress(ReadingProgress progress) =>
+      _runAdmittedOperation(() => _persistProgress(progress));
+
+  Future<void> _persistProgress(ReadingProgress progress) async {
     while (true) {
       final persistedLibrary = await _persistStableLibraryMutation(
         (store) => store.saveProgress(progress),
@@ -2569,6 +2683,14 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<void> replaceSources(
     List<BrowsableComicSource> sources, {
     bool reloadLibrary = true,
+  }) =>
+      _runAdmittedOperation(
+        () => _replaceSources(sources, reloadLibrary: reloadLibrary),
+      );
+
+  Future<void> _replaceSources(
+    List<BrowsableComicSource> sources, {
+    required bool reloadLibrary,
   }) async {
     _sources = List<BrowsableComicSource>.unmodifiable(sources);
     if (!reloadLibrary) {
@@ -2579,10 +2701,18 @@ final class HomeLibrarySession extends ChangeNotifier {
       _publish();
       return;
     }
-    await reload();
+    await _runLibraryReload(
+      waitForReady: true,
+      openLibrary: false,
+    );
   }
 
   Future<void> persistSourcePreference(
+    ComicSourcePreference preference,
+  ) =>
+      _runAdmittedOperation(() => _persistSourcePreference(preference));
+
+  Future<void> _persistSourcePreference(
     ComicSourcePreference preference,
   ) async {
     while (true) {
@@ -2900,6 +3030,11 @@ final class HomeLibrarySession extends ChangeNotifier {
   }
 
   Future<void> _closeOwnedResources() async {
+    // Constructor initialization is implicit pre-admitted work. Public
+    // operations admitted before close are counted separately and may include
+    // service adoption/reload or a durable write-through mutation.
+    await _ready;
+    await _drainAdmittedOperations();
     await _versionEvidenceWriteTail;
     await _canonicalMediaWriteTail;
     await _canonicalPhysicalBackfillTail;

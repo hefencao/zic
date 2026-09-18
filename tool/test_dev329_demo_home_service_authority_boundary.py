@@ -83,8 +83,8 @@ require(
 )
 require(
     session,
-    "await replaceSources(sources, reloadLibrary: false);",
-    "same-service source publication",
+    "await _replaceSources(sources, reloadLibrary: false);",
+    "same-service source publication through pre-admitted continuation",
 )
 
 for marker, label in (
@@ -107,7 +107,7 @@ for marker, label in (
     ("Future<void> upsertCategory(", "category upsert owner"),
     ("await store.upsertCategory(category);", "category same-store write"),
     ("final categories = await store.listCategories();", "category same-store readback"),
-    ("Future<void> removeCategory(String categoryId) async", "category removal owner"),
+    ("Future<void> removeCategory(String categoryId) =>", "category removal owner"),
     ("await store.removeCategory(categoryId);", "category removal same-store write"),
     ("categories: await store.listCategories(),", "category removal category readback"),
     ("preferences: await store.listComicPreferences(),", "category removal cascade readback"),
@@ -116,7 +116,7 @@ for marker, label in (
     ("return store.get(chapter.sourceId, chapter.chapterId);", "chapter same-store readback"),
     ("Future<void> upsertSavedComic(", "saved-comic write-through owner"),
     ("return store.getSavedComic(comic.sourceId, comic.comicId);", "saved-comic same-store readback"),
-    ("Future<void> persistProgress(ReadingProgress progress) async", "non-Reader progress mutation owner"),
+    ("Future<void> persistProgress(ReadingProgress progress) =>", "non-Reader progress mutation owner"),
     ("(store) => store.saveProgress(progress),", "non-Reader progress stable write"),
 ):
     require(session, marker, label)
@@ -297,14 +297,63 @@ for body, label in (
     require(body, "await _adoptDurableServices();", f"{label} current-generation adoption")
     require(body, "final coordinator = _cacheCoordinator;", f"{label} one-generation capture")
 
+for marker, label in (
+    ('StateError? _admissionError()', 'session close admission fence helper'),
+    ('if (_closing != null || _closed)', 'closing-or-closed admission condition'),
+    ('Future<T> _runAdmittedOperation<T>(', 'public operation admission owner'),
+    ('Future<void> _drainAdmittedOperations()', 'admitted operation drain'),
+    ('_activeAdmissions++;', 'admitted operation count'),
+    ('_activeAdmissions--;', 'admitted operation release'),
+):
+    require(session, marker, label)
+
+for signature, label in (
+    ('Future<void> reload({bool waitForOpen = true}) =>', 'reload admission'),
+    ('Future<void> adoptServices({', 'service adoption admission'),
+    ('Future<void> ensureReady() =>', 'ensureReady admission'),
+    ('Future<void> retry() =>', 'retry admission'),
+    ('Future<void> upsertVersionRelation(ComicVersionRelation relation) =>', 'version relation admission'),
+    ('Future<void> replaceSources(', 'source projection admission'),
+    ('Future<void> persistPreferences(', 'preference mutation admission'),
+    ('Future<ImportedLibraryEntry> upsertChapter(', 'chapter mutation admission'),
+):
+    start = session.index(signature)
+    body = session[start:start + 700]
+    require(body, '_runAdmittedOperation', label)
+
+stable_mutation_start = session.index(
+    'Future<({ImportedLibraryStore store, T value})>'
+)
+stable_mutation_end = session.index(
+    'Future<ImportedLibraryStore> _persistStableLibraryMutation(',
+    stable_mutation_start,
+)
+if '_requireAdmissionOpen();' in session[stable_mutation_start:stable_mutation_end]:
+    raise SystemExit(
+        'pre-admitted stable library mutation must not re-check close admission'
+    )
+
+require(
+    session,
+    'await _replaceSources(sources, reloadLibrary: false);',
+    'pre-admitted adoption private source continuation',
+)
+
 close_body = session[session.index('Future<void> _closeOwnedResources() async {'):]
 for marker, label in (
+    ('await _ready;', 'constructor initialization drain'),
+    ('await _drainAdmittedOperations();', 'public operation drain'),
     ('await flushSnapshotWrites();', 'snapshot tail drain before owner close'),
     ('_closed = true;', 'closed publication after drains'),
 ):
     require(close_body, marker, label)
-if close_body.index('await flushSnapshotWrites();') > close_body.index('_closed = true;'):
-    raise SystemExit('Home session must drain admitted snapshots before publishing closed')
+for earlier, later, label in (
+    ('await _ready;', 'await _drainAdmittedOperations();', 'initialize before public drain'),
+    ('await _drainAdmittedOperations();', 'await flushSnapshotWrites();', 'public operations before snapshot drain'),
+    ('await flushSnapshotWrites();', '_closed = true;', 'snapshot drain before closed publication'),
+):
+    if close_body.index(earlier) > close_body.index(later):
+        raise SystemExit(f'Home session close ordering regressed: {label}')
 
 dispose_start = home.index('  @override\n  void dispose() {')
 close_composition_start = home.index('  Future<void> _closeHomeComposition() async {', dispose_start)

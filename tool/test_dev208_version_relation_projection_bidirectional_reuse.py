@@ -28,7 +28,9 @@ for token in (
     "List<ComicVersionRelation> _versionRelations",
     "List<ComicVersionRelation> get versionRelations => _versionRelations;",
     "versionRelationStore.listAllComicVersionRelations,",
-    "Future<void> upsertVersionRelation(ComicVersionRelation relation) async {",
+    "Future<void> upsertVersionRelation(ComicVersionRelation relation) =>",
+    "_runAdmittedOperation(() => _upsertVersionRelation(relation));",
+    "Future<void> _upsertVersionRelation(ComicVersionRelation relation) async {",
     "replaceVersionRelation(relation);",
 ):
     require(session, token, "Home relation projection owner")

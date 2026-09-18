@@ -197,7 +197,7 @@ for token in (
     'mapping.recordVerifiedPageMatch(',
     'mapping.recordVerifiedPageMismatch(',
     'if (identical(updated, mapping)) continue;',
-    'await upsertVersionRelationDerivedState(',
+    'await _upsertVersionRelationDerivedState(',
     'Future<void> flushVersionReuseEvidence()',
 ):
     require(home_session, token, 'bounded incremental version interval evidence')
