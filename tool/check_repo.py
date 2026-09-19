@@ -1882,8 +1882,12 @@ def check_compile_regressions() -> None:
     ):
         if required not in details_ui:
             fail(f'local/remote comic details UI is incomplete: {required}')
-    if details_ui.count('await _setRead(entry, true)') < 2:
-        fail('local and remote chapter navigation must persist the read transition before opening')
+    if 'await _setRead(entry, true)' in details_ui:
+        fail('opening a chapter must not mark it read before Reader progress')
+    if details_ui.count('_progressCompletesChapter(') < 3:
+        fail('local and remote chapter completion must derive from Reader progress')
+    if details_ui.count('state?.manualOverride != true') < 2:
+        fail('local and remote automatic read projection must preserve manual overrides')
     saved_comic = (
         ROOT / 'packages/catalog/lib/src/saved_comic.dart'
     ).read_text(encoding='utf-8')

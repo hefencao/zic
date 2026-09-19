@@ -119,9 +119,11 @@ require(
     'final result = Completer<bool>();',
     '_refreshInFlight = tracked;',
     'Future<bool>.sync(',
-    'await _setRead(entry, true)',
+    '_progressCompletesChapter(',
+    'manualOverride: true',
     'comicDetailsRetryBodyKey',
 )
+forbid('apps/app/lib/comic_details.dart', 'await _setRead(entry, true)')
 forbid('apps/app/lib/comic_details.dart', 'comicDetailsRetryKey')
 require(
     'packages/pipeline/lib/src/raster_plan.dart',

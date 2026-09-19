@@ -1350,7 +1350,7 @@ void main() {
     await tester
         .tap(find.byKey(chapterReadKey(chapter.sourceId, chapter.chapterId)));
     await tester.pump();
-    expect(read, isTrue);
+    expect(read, isNull);
     expect(opened, isTrue);
 
     await tester.drag(
@@ -1358,14 +1358,14 @@ void main() {
       const Offset(320, 0),
     );
     await tester.pump(const Duration(milliseconds: 320));
-    expect(read, isFalse);
+    expect(read, isTrue);
 
     await tester.drag(
       find.byKey(chapterReadKey(chapter.sourceId, chapter.chapterId)),
       const Offset(320, 0),
     );
     await tester.pump(const Duration(milliseconds: 320));
-    expect(read, isTrue);
+    expect(read, isFalse);
   });
 
   testWidgets('long pressing a cached chapter confirms and deletes it',

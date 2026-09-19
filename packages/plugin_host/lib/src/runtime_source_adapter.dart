@@ -875,6 +875,7 @@ final class _RuntimeBrowsableComicSource
             pageCount: pages.length,
             sourceRevision: reportedChapter.sourceRevision,
             publishedAt: reportedChapter.publishedAt,
+            updatedAt: reportedChapter.updatedAt,
           );
     return ChapterManifest(
       sourceId: sourceId,
@@ -1764,6 +1765,7 @@ Chapter _chapter(Map<String, Object?> value, String comicId) {
     pageCount: _nonNegativeInt(value, 'pageCount'),
     sourceRevision: _string(value, 'sourceRevision'),
     publishedAt: _optionalDateTime(value['publishedAt'], 'publishedAt'),
+    updatedAt: _optionalDateTime(value['updatedAt'], 'updatedAt'),
   );
 }
 

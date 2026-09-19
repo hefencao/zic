@@ -300,6 +300,9 @@ Key comicDetailsChapterKey(String sourceId, String chapterId) =>
 Key comicDetailsReadKey(String sourceId, String chapterId) =>
     ValueKey<String>('chapter-read:$sourceId\u0000$chapterId');
 
+Key comicDetailsNewChapterKey(String sourceId, String chapterId) =>
+    ValueKey<String>('chapter-new:$sourceId\u0000$chapterId');
+
 Key comicDetailsStopDownloadKey(String sourceId, String chapterId) =>
     ValueKey<String>('comic-details-stop-download:$sourceId\u0000$chapterId');
 
@@ -322,9 +325,12 @@ final class ComicDetailsLibrarySnapshot {
     required this.preference,
     this.sourceComic,
     this.sourceManifest,
+    this.sourceSyncedAt,
     Iterable<Chapter> sourceChapters = const <Chapter>[],
+    Iterable<String> unseenChapterIds = const <String>[],
   })  : chapters = List<ImportedLibraryEntry>.unmodifiable(chapters),
         sourceChapters = List<Chapter>.unmodifiable(sourceChapters),
+        unseenChapterIds = Set<String>.unmodifiable(unseenChapterIds),
         readStates = Map<String, ChapterReadState>.unmodifiable(readStates);
 
   ComicDetailsLibrarySnapshot copyWith({
@@ -334,6 +340,8 @@ final class ComicDetailsLibrarySnapshot {
     ComicPreference? preference,
     Comic? sourceComic,
     ComicManifest? sourceManifest,
+    DateTime? sourceSyncedAt,
+    Iterable<String>? unseenChapterIds,
   }) =>
       ComicDetailsLibrarySnapshot(
         chapters: chapters ?? this.chapters,
@@ -342,6 +350,8 @@ final class ComicDetailsLibrarySnapshot {
         preference: preference ?? this.preference,
         sourceComic: sourceComic ?? this.sourceComic,
         sourceManifest: sourceManifest ?? this.sourceManifest,
+        sourceSyncedAt: sourceSyncedAt ?? this.sourceSyncedAt,
+        unseenChapterIds: unseenChapterIds ?? this.unseenChapterIds,
       );
 
   final List<ImportedLibraryEntry> chapters;
@@ -350,6 +360,8 @@ final class ComicDetailsLibrarySnapshot {
   final ComicPreference preference;
   final Comic? sourceComic;
   final ComicManifest? sourceManifest;
+  final DateTime? sourceSyncedAt;
+  final Set<String> unseenChapterIds;
 }
 
 typedef ComicDetailsArtworkLoader = Future<EncodedResourceSource> Function({
@@ -388,6 +400,12 @@ typedef ComicDetailsChapterOpener = Future<ReadingProgress?> Function(
   required String title,
   int? initialPageIndex,
 });
+
+typedef ComicDetailsChapterViewed = Future<void> Function(
+  String sourceId,
+  String comicId,
+  String chapterId,
+);
 
 typedef ComicDetailsChapterDownloader = Future<void> Function(
   ImportedLibraryEntry chapter,
@@ -478,6 +496,7 @@ bool _sameChapterMetadata(Chapter left, Chapter right) =>
     left.sequence == right.sequence &&
     left.pageCount == right.pageCount &&
     left.publishedAt == right.publishedAt &&
+    left.updatedAt == right.updatedAt &&
     left.sourceRevision == right.sourceRevision;
 
 bool _samePreviewMetadata(ComicPreviewPage? left, ComicPreviewPage? right) {
@@ -652,6 +671,8 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     required this.reloadLibrary,
     required this.onPreferenceChanged,
     required this.onReadChanged,
+    this.onManualReadChanged,
+    this.onChapterViewed,
     required this.onOpenChapter,
     required this.onDownloadChapter,
     this.onDeleteChapter,
@@ -686,6 +707,9 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
   final Future<void> Function(ImportedLibraryEntry chapter, bool isRead)
       onReadChanged;
+  final Future<void> Function(ImportedLibraryEntry chapter, bool isRead)?
+      onManualReadChanged;
+  final ComicDetailsChapterViewed? onChapterViewed;
   final ComicDetailsChapterOpener onOpenChapter;
   final ComicDetailsChapterDownloader onDownloadChapter;
   final ComicDetailsChapterDeleter? onDeleteChapter;
@@ -718,14 +742,16 @@ final class LocalComicDetailsScreen extends StatefulWidget {
 Map<String, ChapterReadState> _projectChapterReadState(
   Map<String, ChapterReadState> previous,
   ImportedLibraryEntry entry,
-  bool isRead,
-) =>
+  bool isRead, {
+  bool manualOverride = false,
+}) =>
     _projectChapterReadStateByIdentity(
       previous,
       sourceId: entry.chapter.sourceId,
       comicId: entry.chapter.comicId,
       chapterId: entry.chapter.chapterId,
       isRead: isRead,
+      manualOverride: manualOverride,
     );
 
 Map<String, ChapterReadState> _projectChapterReadStateByIdentity(
@@ -734,6 +760,7 @@ Map<String, ChapterReadState> _projectChapterReadStateByIdentity(
   required String comicId,
   required String chapterId,
   required bool isRead,
+  bool manualOverride = false,
 }) {
   final identity = comicDetailsChapterIdentity(sourceId, chapterId);
   return <String, ChapterReadState>{
@@ -744,6 +771,7 @@ Map<String, ChapterReadState> _projectChapterReadStateByIdentity(
       chapterId: chapterId,
       isRead: isRead,
       updatedAt: DateTime.now().toUtc(),
+      manualOverride: manualOverride,
     ),
   };
 }
@@ -1315,18 +1343,30 @@ final class _LocalComicDetailsScreenState
     return entry;
   }
 
-  Future<void> _setRead(ImportedLibraryEntry entry, bool isRead) {
+  Future<void> _setRead(
+    ImportedLibraryEntry entry,
+    bool isRead, {
+    bool manualOverride = false,
+  }) {
     final identity = comicDetailsChapterIdentity(
       entry.chapter.sourceId,
       entry.chapter.chapterId,
     );
     final previous = _library.readStates;
-    final next = _projectChapterReadState(previous, entry, isRead);
+    final next = _projectChapterReadState(
+      previous,
+      entry,
+      isRead,
+      manualOverride: manualOverride,
+    );
     setState(() => _library = _library.copyWith(readStates: next));
+    final writeRead = manualOverride
+        ? widget.onManualReadChanged ?? widget.onReadChanged
+        : widget.onReadChanged;
     _queueReadWrite(
       identity,
       previous,
-      () => widget.onReadChanged(entry, isRead),
+      () => writeRead(entry, isRead),
     );
     return Future<void>.value();
   }
@@ -1372,7 +1412,7 @@ final class _LocalComicDetailsScreenState
   ) {
     final entry = chapter.entry;
     if (entry != null) {
-      return _setRead(entry, isRead);
+      return _setRead(entry, isRead, manualOverride: true);
     }
     final sourceChapter = chapter.sourceChapter;
     if (sourceChapter == null) {
@@ -1389,11 +1429,13 @@ final class _LocalComicDetailsScreenState
       comicId: sourceChapter.comicId,
       chapterId: chapter.chapterId,
       isRead: isRead,
+      manualOverride: true,
     );
     setState(() => _library = _library.copyWith(readStates: next));
     _queueReadWrite(identity, previous, () async {
       final ensured = await _ensure(sourceChapter);
-      await widget.onReadChanged(ensured, isRead);
+      final writeRead = widget.onManualReadChanged ?? widget.onReadChanged;
+      await writeRead(ensured, isRead);
     });
     return Future<void>.value();
   }
@@ -1521,19 +1563,38 @@ final class _LocalComicDetailsScreenState
     if (!_opening.add(identity)) {
       return;
     }
+    final comicId =
+        existing?.chapter.comicId ?? sourceChapter?.comicId ?? widget.comic.comicId;
+    if (_library.unseenChapterIds.contains(chapterId)) {
+      setState(
+        () => _library = _library.copyWith(
+          unseenChapterIds:
+              _library.unseenChapterIds.where((id) => id != chapterId),
+        ),
+      );
+      final viewed = widget.onChapterViewed;
+      if (viewed != null) {
+        unawaited(
+          viewed(sourceId, comicId, chapterId).catchError(
+            (Object error, StackTrace _) {
+              debugPrint('chapter viewed marker persist failed: $error');
+            },
+          ),
+        );
+      }
+    }
     if (mounted) {
       setState(() {});
     }
+    ImportedLibraryEntry? openedEntry = existing;
     try {
       final progress = await widget.onOpenChapter(
         () async {
-          final entry = existing ??
+          final entry = openedEntry ??
               (sourceChapter == null
                   ? throw StateError('该章节没有可用的本地记录')
                   : await _ensure(sourceChapter));
-          if (!_isRead(_library.readStates, entry) && mounted) {
-            await _setRead(entry, true);
-          }
+          openedEntry = entry;
           return entry;
         },
         refreshRemote: false,
@@ -1546,6 +1607,23 @@ final class _LocalComicDetailsScreenState
             chapters: _replaceChapterProgress(_library.chapters, progress),
           ),
         );
+        final entry = openedEntry;
+        if (entry != null) {
+          final state = _readStateById(
+            _library.readStates,
+            entry.chapter.sourceId,
+            entry.chapter.chapterId,
+          );
+          if (state?.manualOverride != true) {
+            await _setRead(
+              entry,
+              _progressCompletesChapter(
+                progress,
+                entry.chapter.pages.length,
+              ),
+            );
+          }
+        }
       }
     } on Object catch (error, stackTrace) {
       if (mounted) {
@@ -1587,6 +1665,7 @@ final class _LocalComicDetailsScreenState
                   pageCount: e.chapter.pages.length,
                   sourceRevision: e.chapter.sourceRevision,
                   publishedAt: e.chapter.importedAt,
+                  updatedAt: e.chapter.sourceUpdatedAt,
                 ),
               ));
     final List<Chapter> chapters = sourceChapters.toList(growable: false)
@@ -2036,21 +2115,33 @@ final class _LocalComicDetailsScreenState
           _deletedChapterIdentities.contains(identity)) {
         continue;
       }
+      final pageCount = _knownPageCount(chapter, candidateEntry);
+      final progress = candidateEntry?.progress;
+      final readState = _readStateById(
+        _library.readStates,
+        widget.comic.sourceId,
+        chapter.chapterId,
+      );
       models.add(
         _ChapterViewModel(
           sourceId: widget.comic.sourceId,
           title: chapter.title,
           chapterId: chapter.chapterId,
           sequence: chapter.sequence,
-          pageCount: _knownPageCount(chapter, candidateEntry),
-          publishedAt: chapter.publishedAt,
+          pageCount: pageCount,
+          progress: progress,
+          sourceUpdatedAt:
+              chapter.updatedAt ?? candidateEntry?.chapter.sourceUpdatedAt,
+          syncedAt:
+              candidateEntry?.chapter.importedAt ?? _library.sourceSyncedAt,
           entry: entry,
           sourceChapter: chapter,
-          isRead: _isReadById(
-            _library.readStates,
-            widget.comic.sourceId,
-            chapter.chapterId,
+          isRead: _chapterIsRead(
+            state: readState,
+            progress: progress,
+            pageCount: pageCount,
           ),
+          isNew: _library.unseenChapterIds.contains(chapter.chapterId),
           canDownload: widget.comic.sourceId != 'local-folder',
           opening: _opening.contains(identity),
           downloading: _workingDownloads.contains(identity) ||
@@ -2071,16 +2162,30 @@ final class _LocalComicDetailsScreenState
           _deletedChapterIdentities.contains(identity)) {
         continue;
       }
+      final readState = _readStateById(
+        _library.readStates,
+        entry.chapter.sourceId,
+        entry.chapter.chapterId,
+      );
+      final pageCount = entry.chapter.pages.length;
       models.add(
         _ChapterViewModel(
           sourceId: entry.chapter.sourceId,
           title: entry.chapter.displayName,
           chapterId: entry.chapter.chapterId,
           sequence: entry.chapter.sequence,
-          pageCount: entry.chapter.pages.length,
-          publishedAt: entry.chapter.importedAt,
+          pageCount: pageCount,
+          progress: entry.progress,
+          sourceUpdatedAt: entry.chapter.sourceUpdatedAt,
+          syncedAt: entry.chapter.importedAt,
           entry: entry,
-          isRead: _isRead(_library.readStates, entry),
+          isRead: _chapterIsRead(
+            state: readState,
+            progress: entry.progress,
+            pageCount: pageCount,
+          ),
+          isNew:
+              _library.unseenChapterIds.contains(entry.chapter.chapterId),
           canDownload: entry.chapter.sourceId != 'local-folder',
           opening: _opening.contains(identity),
           downloading: _workingDownloads.contains(identity) ||
@@ -2246,6 +2351,8 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     required this.persistComic,
     required this.onPreferenceChanged,
     required this.onReadChanged,
+    this.onManualReadChanged,
+    this.onChapterViewed,
     required this.onOpenChapter,
     required this.onDownloadChapter,
     this.onDeleteChapter,
@@ -2283,6 +2390,9 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
   final Future<void> Function(ImportedLibraryEntry chapter, bool isRead)
       onReadChanged;
+  final Future<void> Function(ImportedLibraryEntry chapter, bool isRead)?
+      onManualReadChanged;
+  final ComicDetailsChapterViewed? onChapterViewed;
   final ComicDetailsChapterOpener onOpenChapter;
   final ComicDetailsChapterDownloader onDownloadChapter;
   final ComicDetailsChapterDeleter? onDeleteChapter;
@@ -2926,20 +3036,32 @@ final class _RemoteComicDetailsScreenState
     return entry;
   }
 
-  Future<void> _setRead(ImportedLibraryEntry entry, bool isRead) {
+  Future<void> _setRead(
+    ImportedLibraryEntry entry,
+    bool isRead, {
+    bool manualOverride = false,
+  }) {
     final identity = comicDetailsChapterIdentity(
       entry.chapter.sourceId,
       entry.chapter.chapterId,
     );
     final previous = _library.readStates;
-    final next = _projectChapterReadState(previous, entry, isRead);
+    final next = _projectChapterReadState(
+      previous,
+      entry,
+      isRead,
+      manualOverride: manualOverride,
+    );
     if (mounted) {
       setState(() => _library = _library.copyWith(readStates: next));
     }
+    final writeRead = manualOverride
+        ? widget.onManualReadChanged ?? widget.onReadChanged
+        : widget.onReadChanged;
     _queueReadWrite(
       identity,
       previous,
-      () => widget.onReadChanged(entry, isRead),
+      () => writeRead(entry, isRead),
     );
     return Future<void>.value();
   }
@@ -2985,7 +3107,7 @@ final class _RemoteComicDetailsScreenState
   ) {
     final entry = chapter.entry;
     if (entry != null) {
-      return _setRead(entry, isRead);
+      return _setRead(entry, isRead, manualOverride: true);
     }
     final sourceChapter = chapter.sourceChapter;
     if (sourceChapter == null) {
@@ -3002,13 +3124,15 @@ final class _RemoteComicDetailsScreenState
       comicId: sourceChapter.comicId,
       chapterId: chapter.chapterId,
       isRead: isRead,
+      manualOverride: true,
     );
     if (mounted) {
       setState(() => _library = _library.copyWith(readStates: next));
     }
     _queueReadWrite(identity, previous, () async {
       final ensured = await _ensure(sourceChapter);
-      await widget.onReadChanged(ensured, isRead);
+      final writeRead = widget.onManualReadChanged ?? widget.onReadChanged;
+      await writeRead(ensured, isRead);
     });
     return Future<void>.value();
   }
@@ -3127,16 +3251,38 @@ final class _RemoteComicDetailsScreenState
     if (!_opening.add(identity)) {
       return;
     }
+    if (_library.unseenChapterIds.contains(chapter.chapterId)) {
+      setState(
+        () => _library = _library.copyWith(
+          unseenChapterIds: _library.unseenChapterIds.where(
+            (id) => id != chapter.chapterId,
+          ),
+        ),
+      );
+      final viewed = widget.onChapterViewed;
+      if (viewed != null) {
+        unawaited(
+          viewed(
+            _source.sourceId,
+            chapter.comicId,
+            chapter.chapterId,
+          ).catchError(
+            (Object error, StackTrace _) {
+              debugPrint('chapter viewed marker persist failed: $error');
+            },
+          ),
+        );
+      }
+    }
     if (mounted) {
       setState(() {});
     }
+    ImportedLibraryEntry? openedEntry = existing;
     try {
       final progress = await widget.onOpenChapter(
         () async {
-          final entry = existing ?? await _ensure(chapter);
-          if (!_isRead(_library.readStates, entry) && mounted) {
-            await _setRead(entry, true);
-          }
+          final entry = openedEntry ?? await _ensure(chapter);
+          openedEntry = entry;
           return entry;
         },
         refreshRemote: false,
@@ -3149,6 +3295,23 @@ final class _RemoteComicDetailsScreenState
             chapters: _replaceChapterProgress(_library.chapters, progress),
           ),
         );
+        final entry = openedEntry;
+        if (entry != null) {
+          final state = _readStateById(
+            _library.readStates,
+            entry.chapter.sourceId,
+            entry.chapter.chapterId,
+          );
+          if (state?.manualOverride != true) {
+            await _setRead(
+              entry,
+              _progressCompletesChapter(
+                progress,
+                entry.chapter.pages.length,
+              ),
+            );
+          }
+        }
       }
     } on Object catch (error, stackTrace) {
       if (mounted) {
@@ -3182,6 +3345,7 @@ final class _RemoteComicDetailsScreenState
             pageCount: entry.chapter.pages.length,
             sourceRevision: entry.chapter.sourceRevision,
             publishedAt: entry.chapter.importedAt,
+            updatedAt: entry.chapter.sourceUpdatedAt,
           ),
       existing: entry,
     );
@@ -3201,6 +3365,7 @@ final class _RemoteComicDetailsScreenState
                   pageCount: e.chapter.pages.length,
                   sourceRevision: e.chapter.sourceRevision,
                   publishedAt: e.chapter.importedAt,
+                  updatedAt: e.chapter.sourceUpdatedAt,
                 ),
               ));
     final List<Chapter> chapters = sourceChapters.toList(growable: false)
@@ -3659,6 +3824,12 @@ final class _RemoteComicDetailsScreenState
       final downloadSnapshot = _downloadSnapshots[identity];
       final isDownloading = _workingDownloads.contains(identity) ||
           downloadSnapshot?.isActive == true;
+      final progress = candidateEntry?.progress;
+      final readState = _readStateById(
+        _library.readStates,
+        _source.sourceId,
+        chapter.chapterId,
+      );
       chapterViewModels.add(
         _ChapterViewModel(
           sourceId: _source.sourceId,
@@ -3666,13 +3837,18 @@ final class _RemoteComicDetailsScreenState
           chapterId: chapter.chapterId,
           sequence: chapter.sequence,
           pageCount: count,
-          publishedAt: chapter.publishedAt,
+          progress: progress,
+          sourceUpdatedAt:
+              chapter.updatedAt ?? candidateEntry?.chapter.sourceUpdatedAt,
+          syncedAt:
+              candidateEntry?.chapter.importedAt ?? _library.sourceSyncedAt,
           entry: entry,
-          isRead: _isReadById(
-            _library.readStates,
-            _source.sourceId,
-            chapter.chapterId,
+          isRead: _chapterIsRead(
+            state: readState,
+            progress: progress,
+            pageCount: count,
           ),
+          isNew: _library.unseenChapterIds.contains(chapter.chapterId),
           canDownload: true,
           opening: _opening.contains(identity),
           downloading: isDownloading,
@@ -3968,7 +4144,6 @@ final class _ComicDetailsHeader extends StatelessWidget {
         if (sourceMetadata.tags.isNotEmpty) ...<Widget>[
           const SizedBox(height: 12),
           _ExpandableTagRow(
-            label: '标签',
             tags: sourceMetadata.tags,
             onSearch: onSearchMetadata,
           ),
@@ -4042,13 +4217,19 @@ final class _ComicChapterList extends StatelessWidget {
       itemCount: chapters.length,
       itemBuilder: (context, index) {
         final chapter = chapters[index];
-        final pageLabel = chapter.pageCount > 0
-            ? '${chapter.pageCount} 页'
-            : '页数待加载';
+        final progressLabel = chapter.isRead
+            ? null
+            : _chapterProgressLabel(chapter.progress, chapter.pageCount);
+        final pageLabel =
+            chapter.pageCount > 0 ? '共 ${chapter.pageCount} 页' : '页数待加载';
+        final timestampLabel = _chapterTimestampLabel(
+          chapter.sourceUpdatedAt,
+          chapter.syncedAt,
+        );
         final subtitle = <String>[
+          if (progressLabel != null) progressLabel,
           pageLabel,
-          if (chapter.publishedAt != null)
-            chapter.publishedAt!.toLocal().toString().split(' ').first,
+          if (timestampLabel.isNotEmpty) timestampLabel,
         ].join(' · ');
         final colorScheme = Theme.of(context).colorScheme;
         final readSwipeColor = chapter.isRead
@@ -4164,12 +4345,34 @@ final class _ComicChapterList extends StatelessWidget {
                 chapter.sourceId,
                 chapter.chapterId,
               ),
-              leading: Icon(
-                chapter.isRead
-                    ? Icons.check_circle_outline
-                    : Icons.radio_button_unchecked,
+              title: Row(
+                children: <Widget>[
+                  if (chapter.isNew) ...<Widget>[
+                    Semantics(
+                      label: '新章节',
+                      child: DecoratedBox(
+                        key: comicDetailsNewChapterKey(
+                          chapter.sourceId,
+                          chapter.chapterId,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colorScheme.primary,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const SizedBox.square(dimension: 8),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Expanded(
+                    child: Text(
+                      chapter.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
               ),
-              title: Text(chapter.title),
               subtitle: Text(subtitle),
               onTap: chapter.opening
                   ? null
@@ -4298,9 +4501,12 @@ final class _ChapterViewModel {
     required this.chapterId,
     required this.sequence,
     required this.pageCount,
-    required this.publishedAt,
+    required this.progress,
+    required this.sourceUpdatedAt,
+    required this.syncedAt,
     required this.entry,
     required this.isRead,
+    required this.isNew,
     required this.canDownload,
     required this.opening,
     required this.downloading,
@@ -4314,9 +4520,12 @@ final class _ChapterViewModel {
   final String chapterId;
   final int sequence;
   final int pageCount;
-  final DateTime? publishedAt;
+  final ReadingProgress? progress;
+  final DateTime? sourceUpdatedAt;
+  final DateTime? syncedAt;
   final ImportedLibraryEntry? entry;
   final bool isRead;
+  final bool isNew;
   final bool canDownload;
   final bool opening;
   final bool downloading;
@@ -4772,25 +4981,67 @@ bool _retainsWholeComic(ComicPreference preference) =>
     preference.collected ||
     preference.categoryIds.isNotEmpty;
 
-bool _isRead(
-  Map<String, ChapterReadState> states,
-  ImportedLibraryEntry entry,
-) =>
-    _isReadById(
-      states,
-      entry.chapter.sourceId,
-      entry.chapter.chapterId,
-    );
-
-bool _isReadById(
+ChapterReadState? _readStateById(
   Map<String, ChapterReadState> states,
   String sourceId,
   String chapterId,
 ) =>
-    (states[comicDetailsChapterIdentity(sourceId, chapterId)] ??
-            states[chapterId])
-        ?.isRead ??
-    false;
+    states[comicDetailsChapterIdentity(sourceId, chapterId)] ??
+    states[chapterId];
+
+bool _progressCompletesChapter(
+  ReadingProgress? progress,
+  int pageCount,
+) {
+  if (progress == null || pageCount <= 0) return false;
+  final completeThreshold = math.max(0, pageCount - 2);
+  return progress.pageIndex >= completeThreshold;
+}
+
+bool _chapterIsRead({
+  required ChapterReadState? state,
+  required ReadingProgress? progress,
+  required int pageCount,
+}) {
+  if (state?.manualOverride == true) {
+    return state!.isRead;
+  }
+  if (progress != null) {
+    return _progressCompletesChapter(progress, pageCount);
+  }
+  return false;
+}
+
+String? _chapterProgressLabel(
+  ReadingProgress? progress,
+  int pageCount,
+) {
+  if (progress == null || _progressCompletesChapter(progress, pageCount)) {
+    return null;
+  }
+  final page = pageCount > 0
+      ? (progress.pageIndex + 1).clamp(1, pageCount)
+      : math.max(1, progress.pageIndex + 1);
+  return '读到第 $page 页';
+}
+
+String _chapterTimestampLabel(
+  DateTime? sourceUpdatedAt,
+  DateTime? syncedAt,
+) {
+  final source = sourceUpdatedAt?.toLocal();
+  if (source != null) {
+    return '更新 ${_formatChapterTimestamp(source)}';
+  }
+  final synced = syncedAt?.toLocal();
+  return synced == null ? '' : '同步 ${_formatChapterTimestamp(synced)}';
+}
+
+String _formatChapterTimestamp(DateTime value) {
+  String two(int n) => n.toString().padLeft(2, '0');
+  return '${value.year}-${two(value.month)}-${two(value.day)} '
+      '${two(value.hour)}:${two(value.minute)}';
+}
 
 int _compareChapterModels(
   _ChapterViewModel left,

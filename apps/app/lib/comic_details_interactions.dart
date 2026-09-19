@@ -756,12 +756,12 @@ _SourceMetadataGroups _groupSourceMetadata(List<String> rawTags) {
 
 final class _ExpandableTagRow extends StatefulWidget {
   const _ExpandableTagRow({
-    required this.label,
+    this.label,
     required this.tags,
     this.onSearch,
   });
 
-  final String label;
+  final String? label;
   final List<String> tags;
   final ComicDetailsMetadataSearch? onSearch;
 
@@ -828,6 +828,13 @@ final class _ExpandableTagRowState extends State<_ExpandableTagRow> {
           ),
         ),
     ];
+    if (widget.label == null && !selectionMode) {
+      return Wrap(spacing: 6, runSpacing: 6, children: chips);
+    }
+    final showAll = widget.label == null || _expanded;
+    final selectionLabel = widget.label == null
+        ? '已选 ${_selected.length}'
+        : '${widget.label} · 已选 ${_selected.length}';
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -835,8 +842,8 @@ final class _ExpandableTagRowState extends State<_ExpandableTagRow> {
           children: <Widget>[
             Text(
               selectionMode
-                  ? '${widget.label} · 已选 ${_selected.length}'
-                  : widget.label,
+                  ? selectionLabel
+                  : widget.label!,
               style: Theme.of(context).textTheme.titleSmall,
             ),
             const Spacer(),
@@ -852,21 +859,22 @@ final class _ExpandableTagRowState extends State<_ExpandableTagRow> {
                 icon: const Icon(Icons.close, size: 20),
               ),
             ],
-            IconButton(
-              tooltip: _expanded ? '收起' : '展开',
-              onPressed: () => setState(() => _expanded = !_expanded),
-              icon: Icon(
-                _expanded ? Icons.expand_less : Icons.expand_more,
-                size: 20,
+            if (widget.label != null)
+              IconButton(
+                tooltip: _expanded ? '收起' : '展开',
+                onPressed: () => setState(() => _expanded = !_expanded),
+                icon: Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 20,
+                ),
               ),
-            ),
           ],
         ),
         const SizedBox(height: 4),
         AnimatedSize(
           duration: const Duration(milliseconds: 160),
           alignment: Alignment.topLeft,
-          child: _expanded
+          child: showAll
               ? Wrap(spacing: 6, runSpacing: 6, children: chips)
               : SizedBox(
                   height: 36,

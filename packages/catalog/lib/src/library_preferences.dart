@@ -228,6 +228,7 @@ final class ChapterReadState {
     required this.chapterId,
     required this.isRead,
     required this.updatedAt,
+    this.manualOverride = false,
   });
 
   final String sourceId;
@@ -235,6 +236,7 @@ final class ChapterReadState {
   final String chapterId;
   final bool isRead;
   final DateTime updatedAt;
+  final bool manualOverride;
 
   String get identity => '$sourceId\u0000$chapterId';
 
@@ -244,6 +246,7 @@ final class ChapterReadState {
         'chapterId': chapterId,
         'isRead': isRead,
         'updatedAt': updatedAt.toUtc().toIso8601String(),
+        if (manualOverride) 'manualOverride': true,
       };
 
   factory ChapterReadState.fromJson(
@@ -260,6 +263,7 @@ final class ChapterReadState {
       chapterId: _requiredString(json, 'chapterId'),
       isRead: _requiredBool(json, 'isRead'),
       updatedAt: DateTime.parse(_requiredString(json, 'updatedAt')),
+      manualOverride: (json['manualOverride'] as bool?) ?? false,
     );
   }
 }

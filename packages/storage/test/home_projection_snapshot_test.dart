@@ -28,7 +28,7 @@ void main() {
           contentKindHint: ContentKindHint.jpeg,
         ),
       ],
-    );
+    ).copyWith(sourceUpdatedAt: DateTime.utc(2026, 8, 23, 18));
     final progress = ReadingProgress(
       sourceId: chapter.sourceId,
       comicId: chapter.comicId,
@@ -64,6 +64,7 @@ void main() {
           comicId: 'fixture-comic',
           title: 'Fixture',
           sourceUpdateAt: DateTime.utc(2026, 8, 24, 3),
+          unseenChapterIds: const <String>['fixture-new-chapter'],
         ),
       ],
       categories: <LibraryCategory>[
@@ -88,6 +89,7 @@ void main() {
           chapterId: chapter.chapterId,
           isRead: true,
           updatedAt: DateTime.utc(2026, 8, 24, 4),
+          manualOverride: true,
         ),
       ],
       sourcePreferences: <ComicSourcePreference>[
@@ -135,13 +137,22 @@ void main() {
     expect(restored!.entriesAreCompact, isTrue);
     expect(restored.entries.single.chapter.directoryId, chapter.directoryId);
     expect(restored.entries.single.chapter.comicTitle, chapter.comicTitle);
+    expect(
+      restored.entries.single.chapter.sourceUpdatedAt,
+      chapter.sourceUpdatedAt,
+    );
     expect(restored.entries.single.chapter.pages, hasLength(chapter.pages.length));
     expect(restored.entries.single.chapter.pages.first.sourceId,
         isNot(chapter.pages.first.sourceId));
     expect(restored.entries.single.progress?.toJson(), progress.toJson());
     expect(restored.savedComics.single.toJson(), snapshot.savedComics.single.toJson());
+    expect(
+      restored.savedComics.single.unseenChapterIds,
+      const <String>{'fixture-new-chapter'},
+    );
     expect(restored.preferences.single.liked, isTrue);
     expect(restored.readStates.single.isRead, isTrue);
+    expect(restored.readStates.single.manualOverride, isTrue);
     expect(restored.sourcePreferences.single.enabled, isFalse);
     expect(restored.versionRelations.single.pageMappings, hasLength(1));
     expect(restored.orphanedDownloadEntries, hasLength(1));

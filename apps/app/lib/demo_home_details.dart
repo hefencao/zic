@@ -15,9 +15,10 @@ extension _DemoHomeDetailsActions on _DemoHomeState {
       (item) =>
           item.sourceId == sourceId && item.comicId == effectiveComicId,
     );
-    final sourceChapters = saved.isEmpty
+    final savedComic = saved.isEmpty ? null : saved.first;
+    final sourceChapters = savedComic == null
         ? const <Chapter>[]
-        : saved.first.chapters
+        : savedComic.chapters
             .map((chapter) => chapter.toChapter(effectiveComicId))
             .toList(growable: false);
     final source = _sourceForId(sourceId);
@@ -36,8 +37,10 @@ extension _DemoHomeDetailsActions on _DemoHomeState {
       chapters: chapters,
       sourceChapters: cachedManifest?.chapters ?? sourceChapters,
       sourceComic: cachedManifest?.comic ??
-          (saved.isEmpty ? null : saved.first.toComic()),
+          savedComic?.toComic(),
       sourceManifest: cachedManifest,
+      sourceSyncedAt: savedComic?.updatedAt,
+      unseenChapterIds: savedComic?.unseenChapterIds ?? const <String>{},
       readStates: <String, ChapterReadState>{
         for (final chapter in chapters)
           if (_chapterReadStates.containsKey(chapter.identity))
@@ -53,6 +56,24 @@ extension _DemoHomeDetailsActions on _DemoHomeState {
         fallbackSourceKind: preference?.sourceKind,
         fallbackInShelf:
             preference?.inShelf ?? sourceId == 'local-folder',
+      ),
+    );
+  }
+
+  Future<void> _markDetailsChapterViewed(
+    String sourceId,
+    String comicId,
+    String chapterId,
+  ) async {
+    final saved = _preferredSavedComicAlias(sourceId, comicId) ??
+        await _library.getSavedComic(sourceId, comicId);
+    if (saved == null || !saved.unseenChapterIds.contains(chapterId)) {
+      return;
+    }
+    await _librarySession.upsertSavedComic(
+      saved.copyWith(
+        unseenChapterIds:
+            saved.unseenChapterIds.where((id) => id != chapterId),
       ),
     );
   }
@@ -152,6 +173,8 @@ extension _DemoHomeDetailsActions on _DemoHomeState {
             updatedAt: changed ? now : existing?.updatedAt,
             sourceUpdateAt:
                 chapterCatalogChanged ? now : existing?.sourceUpdateAt,
+            unseenChapterIds:
+                _unseenChapterIdsForManifest(existing, manifest),
           ),
         );
       }

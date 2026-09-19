@@ -1106,8 +1106,9 @@ final class _DemoHomeState extends State<DemoHome> {
 
   Future<void> _setChapterRead(
     ImportedLibraryEntry entry,
-    bool isRead,
-  ) async {
+    bool isRead, {
+    bool manualOverride = false,
+  }) async {
     final identity = chapterLibraryIdentity(
       entry.chapter.sourceId,
       entry.chapter.chapterId,
@@ -1115,7 +1116,8 @@ final class _DemoHomeState extends State<DemoHome> {
     final existing = _chapterReadStates[identity];
     if (existing != null &&
         existing.comicId == entry.chapter.comicId &&
-        existing.isRead == isRead) {
+        existing.isRead == isRead &&
+        existing.manualOverride == manualOverride) {
       return;
     }
     final state = ChapterReadState(
@@ -1124,6 +1126,7 @@ final class _DemoHomeState extends State<DemoHome> {
       chapterId: entry.chapter.chapterId,
       isRead: isRead,
       updatedAt: DateTime.now().toUtc(),
+      manualOverride: manualOverride,
     );
     await _librarySession.persistReadState(state);
   }

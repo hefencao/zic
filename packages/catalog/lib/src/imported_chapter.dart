@@ -90,6 +90,7 @@ final class ImportedChapterRecord {
     this.coverAnimatedHint = false,
     this.sequence = 0,
     this.readingDirection = ReadingDirection.ltr,
+    this.sourceUpdatedAt,
     DateTime? importedAt,
   })  : comicTitle = (comicTitle ?? displayName).trim(),
         comicAuthors = List<String>.unmodifiable(
@@ -179,6 +180,7 @@ final class ImportedChapterRecord {
       sourceRevision: manifest.chapter.sourceRevision,
       sequence: manifest.chapter.sequence,
       readingDirection: manifest.readingDirection,
+      sourceUpdatedAt: manifest.chapter.updatedAt,
       importedAt: importedAt,
       pages: manifest.pages
           .map(
@@ -280,6 +282,7 @@ final class ImportedChapterRecord {
   final int sequence;
   final List<ImportedPageRecord> pages;
   final ReadingDirection readingDirection;
+  final DateTime? sourceUpdatedAt;
   final DateTime importedAt;
 
   ImportedChapterRecord copyWith({
@@ -302,6 +305,8 @@ final class ImportedChapterRecord {
     int? sequence,
     List<ImportedPageRecord>? pages,
     ReadingDirection? readingDirection,
+    DateTime? sourceUpdatedAt,
+    bool clearSourceUpdatedAt = false,
     DateTime? importedAt,
   }) {
     return ImportedChapterRecord(
@@ -326,6 +331,9 @@ final class ImportedChapterRecord {
       sequence: sequence ?? this.sequence,
       pages: pages ?? this.pages,
       readingDirection: readingDirection ?? this.readingDirection,
+      sourceUpdatedAt: clearSourceUpdatedAt
+          ? null
+          : (sourceUpdatedAt ?? this.sourceUpdatedAt),
       importedAt: importedAt ?? this.importedAt,
     );
   }
@@ -356,6 +364,7 @@ final class ImportedChapterRecord {
         sequence: sequence,
         pageCount: assets.length,
         sourceRevision: sourceRevision,
+        updatedAt: sourceUpdatedAt,
       ),
       pages: assets,
       readingDirection: readingDirection,
@@ -378,6 +387,8 @@ final class ImportedChapterRecord {
         'coverAnimatedHint': coverAnimatedHint,
         'sequence': sequence,
         'readingDirection': readingDirection.name,
+        if (sourceUpdatedAt != null)
+          'sourceUpdatedAt': sourceUpdatedAt!.toUtc().toIso8601String(),
         'importedAt': importedAt.toIso8601String(),
         'pages': pages.map((page) => page.toJson()).toList(growable: false),
       };
@@ -472,6 +483,9 @@ final class ImportedChapterRecord {
       readingDirection: ReadingDirection.values.byName(
         (json['readingDirection'] as String?) ?? ReadingDirection.ltr.name,
       ),
+      sourceUpdatedAt: json['sourceUpdatedAt'] == null
+          ? null
+          : DateTime.parse(json['sourceUpdatedAt']! as String),
       importedAt: DateTime.parse(_requiredString(json, 'importedAt')),
     );
   }

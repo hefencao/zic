@@ -432,6 +432,12 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             persistComic: _persistRemoteComic,
             onPreferenceChanged: _savePreference,
             onReadChanged: _setChapterRead,
+            onManualReadChanged: (entry, isRead) => _setChapterRead(
+              entry,
+              isRead,
+              manualOverride: true,
+            ),
+            onChapterViewed: _markDetailsChapterViewed,
             onOpenChapter: (
               loadChapter, {
               required bool refreshRemote,
@@ -603,6 +609,12 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
                 }
               },
               onReadChanged: _setChapterRead,
+              onManualReadChanged: (entry, isRead) => _setChapterRead(
+                entry,
+                isRead,
+                manualOverride: true,
+              ),
+              onChapterViewed: _markDetailsChapterViewed,
               onOpenChapter: (
                 loadChapter, {
                 required bool refreshRemote,

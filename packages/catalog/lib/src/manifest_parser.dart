@@ -24,6 +24,7 @@ ChapterManifest parseChapterManifest(String source) {
     pageCount: _requiredInt(chapterJson, 'pageCount'),
     sourceRevision: _requiredString(chapterJson, 'sourceRevision'),
     publishedAt: _optionalDate(chapterJson['publishedAt']),
+    updatedAt: _optionalDate(chapterJson['updatedAt']),
   );
 
   final pages = <PageAsset>[];

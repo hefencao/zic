@@ -988,6 +988,7 @@ void main() {
     final source = _FixtureSource(
       'mihon:metadata',
       '元数据源',
+      chapterUpdatedAt: DateTime(2026, 9, 17, 8, 30),
       comicTags: const <String>[
         'category:Webtoon',
         'genre:Romance',
@@ -1003,7 +1004,9 @@ void main() {
     );
     final library = details.ComicDetailsLibrarySnapshot(
       chapters: const <ImportedLibraryEntry>[],
-      sourceChapters: const <Chapter>[],
+      sourceChapters: <Chapter>[source._chapter],
+      sourceComic: source._comic,
+      sourceSyncedAt: DateTime(2026, 9, 18, 9),
       readStates: const <String, ChapterReadState>{},
       preference: ComicPreference.defaults(
         sourceId: source.sourceId,
@@ -1068,13 +1071,35 @@ void main() {
 
     await _pumpUntilFound(tester, find.text('来源分类'));
     expect(find.text('Webtoon'), findsOneWidget);
-    expect(find.text('标签'), findsOneWidget);
+    expect(find.text('标签'), findsNothing);
     expect(find.text('Romance'), findsOneWidget);
     expect(find.text('language：Korean'), findsOneWidget);
     expect(find.text('书架分类'), findsOneWidget);
     expect(find.text('收藏分类'), findsOneWidget);
     expect(find.textContaining('重复作者'), findsNothing);
     expect(find.byKey(details.comicDetailsRetryBodyKey), findsNothing);
+
+    final chapterRow = find.byKey(
+      details.comicDetailsChapterKey(source.sourceId, source._chapterId),
+    );
+    await tester.scrollUntilVisible(
+      chapterRow,
+      360,
+      scrollable: find
+          .descendant(
+            of: find.byKey(details.remoteComicDetailsScreenKey),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: chapterRow,
+        matching: find.textContaining('更新 2026-09-17 08:30'),
+      ),
+      findsOneWidget,
+    );
 
     await _tapVisible(tester, find.byKey(details.comicDetailsOpenWebViewKey));
     expect(webViewOpens, 1);
@@ -1847,11 +1872,11 @@ void main() {
     );
     await _pumpUntilFound(tester, chapterTile);
     expect(
-      find.descendant(of: chapterTile, matching: find.text('页数待加载')),
+      find.descendant(of: chapterTile, matching: find.textContaining('页数待加载')),
       findsOneWidget,
     );
     expect(
-      find.descendant(of: chapterTile, matching: find.text('1 页')),
+      find.descendant(of: chapterTile, matching: find.textContaining('共 1 页')),
       findsNothing,
       reason: 'Home snapshot placeholders are not a historical page-count proof',
     );
@@ -2056,7 +2081,7 @@ void main() {
       details.comicDetailsChapterKey(source.sourceId, chapter.chapterId),
     );
     expect(
-      find.descendant(of: chapterTile, matching: find.text('1 页')),
+      find.descendant(of: chapterTile, matching: find.textContaining('共 1 页')),
       findsOneWidget,
       reason: 'historical page list may project count without becoming Reader authority',
     );
@@ -3180,7 +3205,56 @@ void main() {
     );
     expect(savedComic, isNotNull);
     expect(savedComic?.chapters, hasLength(2));
+    expect(
+      savedComic?.unseenChapterIds,
+      const <String>{'fixture-refresh-chapter-2'},
+    );
+    expect(
+      find.byKey(
+        details.comicDetailsNewChapterKey(
+          'fixture-refresh',
+          'fixture-refresh-chapter-2',
+        ),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(
+        details.comicDetailsNewChapterKey(
+          'fixture-refresh',
+          'fixture-refresh-chapter',
+        ),
+      ),
+      findsNothing,
+      reason: 'the first catalog load establishes the baseline',
+    );
     expect(source.loadedResources, isEmpty);
+
+    await _tapVisible(
+      tester,
+      find.byKey(
+        sourceChapterKey(
+          'fixture-refresh',
+          'fixture-refresh-chapter-2',
+        ),
+      ),
+    );
+    SavedComicRecord? viewedSavedComic;
+    for (var frame = 0; frame < 80; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      viewedSavedComic = await store.getSavedComic(
+        'fixture-refresh',
+        'fixture-refresh-comic',
+      );
+      if (viewedSavedComic?.unseenChapterIds.isEmpty == true) break;
+    }
+    expect(viewedSavedComic?.unseenChapterIds, isEmpty);
+
+    // Opening the chapter proves the persisted unseen marker is consumed by
+    // the real details -> Reader path. Retained Reader sessions intentionally
+    // own a two-minute expiry timer, so drain that contract before teardown.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(minutes: 2));
   });
 
   testWidgets('active chapter download survives details route re-entry',
@@ -3405,7 +3479,7 @@ void main() {
     );
     await _pumpUntilFound(
       tester,
-      find.descendant(of: chapterTile, matching: find.text('页数待加载')),
+      find.descendant(of: chapterTile, matching: find.textContaining('页数待加载')),
     );
 
     expect(source.chapterLoads, 0);
@@ -3659,6 +3733,7 @@ final class _FixtureSource
     this.runtimePageUri = false,
     this.rotateChapterLocator = false,
     this.catalogPageCount = 1,
+    this.chapterUpdatedAt,
     this.browseItemCount = 1,
     this.emptyCatalog = false,
     this.comicTags = const <String>[],
@@ -3689,6 +3764,7 @@ final class _FixtureSource
   final bool runtimePageUri;
   final bool rotateChapterLocator;
   final int catalogPageCount;
+  final DateTime? chapterUpdatedAt;
   final int browseItemCount;
   final bool emptyCatalog;
   final List<String> comicTags;
@@ -3769,6 +3845,7 @@ final class _FixtureSource
         sequence: sequence,
         pageCount: catalogPageCount,
         sourceRevision: 'fixture-r$sequence',
+        updatedAt: chapterUpdatedAt,
       );
 
   Chapter _resolvedChapterAt(int sequence) => Chapter(
@@ -3778,6 +3855,7 @@ final class _FixtureSource
         sequence: sequence,
         pageCount: 1,
         sourceRevision: 'fixture-r$sequence',
+        updatedAt: chapterUpdatedAt,
       );
 
   @override

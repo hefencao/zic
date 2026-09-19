@@ -206,7 +206,8 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
           saved.sequence != current.sequence ||
           saved.pageCount != current.pageCount ||
           saved.sourceRevision != current.sourceRevision ||
-          saved.publishedAt != current.publishedAt) {
+          saved.publishedAt != current.publishedAt ||
+          saved.updatedAt != current.updatedAt) {
         return true;
       }
     }
@@ -239,6 +240,23 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
       return true;
     }
     return _manifestChapterCatalogDiffers(existing, incoming);
+  }
+
+  Set<String> _unseenChapterIdsForManifest(
+    SavedComicRecord? existing,
+    ComicManifest incoming,
+  ) {
+    if (existing == null || existing.chapters.isEmpty) {
+      return const <String>{};
+    }
+    final incomingIds =
+        incoming.chapters.map((chapter) => chapter.chapterId).toSet();
+    final previousIds =
+        existing.chapters.map((chapter) => chapter.chapterId).toSet();
+    return <String>{
+      ...existing.unseenChapterIds.where(incomingIds.contains),
+      ...incomingIds.where((chapterId) => !previousIds.contains(chapterId)),
+    };
   }
 
   bool _sameStrings(Iterable<String> left, Iterable<String> right) {
@@ -296,6 +314,7 @@ extension _DemoHomeCatalogIdentity on _DemoHomeState {
         updatedAt: changed ? now : existing?.updatedAt,
         sourceUpdateAt:
             chapterCatalogChanged ? now : existing?.sourceUpdateAt,
+        unseenChapterIds: _unseenChapterIdsForManifest(existing, manifest),
       ),
     );
   }

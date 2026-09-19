@@ -118,6 +118,7 @@ final class MangaDexSource implements BrowsableComicSource {
             sequence: _chapterSequence(chapterNumber, chapters.length),
             pageCount: pageCount,
             publishedAt: _optionalDateTime(attributes['publishAt']),
+            updatedAt: _optionalDateTime(attributes['updatedAt']),
             sourceRevision: _optionalString(attributes['updatedAt']) ??
                 _optionalString(attributes['createdAt']) ??
                 chapterId,
@@ -185,6 +186,7 @@ final class MangaDexSource implements BrowsableComicSource {
       sequence: _chapterSequence(chapterNumber, 0),
       pageCount: assets.length,
       publishedAt: _optionalDateTime(attributes['publishAt']),
+      updatedAt: _optionalDateTime(attributes['updatedAt']),
       sourceRevision: hash,
     );
     return ChapterManifest(

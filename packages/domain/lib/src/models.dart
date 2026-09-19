@@ -110,6 +110,7 @@ final class Chapter {
     required this.pageCount,
     required this.sourceRevision,
     this.publishedAt,
+    this.updatedAt,
   });
 
   final String chapterId;
@@ -118,6 +119,7 @@ final class Chapter {
   final int sequence;
   final int pageCount;
   final DateTime? publishedAt;
+  final DateTime? updatedAt;
   final String sourceRevision;
 }
 

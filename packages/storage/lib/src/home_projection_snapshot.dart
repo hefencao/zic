@@ -543,6 +543,8 @@ Map<String, Object?> _compactChapterToJson(ImportedChapterRecord chapter) =>
       'coverAnimatedHint': chapter.coverAnimatedHint,
       'sequence': chapter.sequence,
       'readingDirection': chapter.readingDirection.name,
+      if (chapter.sourceUpdatedAt != null)
+        'sourceUpdatedAt': chapter.sourceUpdatedAt!.toIso8601String(),
       'importedAt': chapter.importedAt.toIso8601String(),
       'pageCount': chapter.pages.length,
     };
@@ -608,6 +610,9 @@ ImportedChapterRecord _compactChapterFromJson(Map<String, Object?> json) {
     readingDirection: ReadingDirection.values.byName(
       (json['readingDirection'] as String?) ?? ReadingDirection.ltr.name,
     ),
+    sourceUpdatedAt: json['sourceUpdatedAt'] == null
+        ? null
+        : DateTime.parse(_requiredString(json, 'sourceUpdatedAt')),
     importedAt: DateTime.parse(_requiredString(json, 'importedAt')),
   );
 }
