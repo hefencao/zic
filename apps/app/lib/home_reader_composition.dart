@@ -85,6 +85,47 @@ final class HomeReaderChapterComposition {
   final HomeReaderChapterReadMarker _markChapterRead;
   final TraceSink _trace;
   final int Function() _monotonicMicros;
+  final Set<Future<dynamic>> _activePreparations = <Future<dynamic>>{};
+  bool _closed = false;
+  Future<void>? _closing;
+
+  Future<T> _trackPreparation<T>(Future<T> preparation) {
+    _activePreparations.add(preparation);
+    unawaited(
+      preparation.then<void>(
+        (_) => _activePreparations.remove(preparation),
+        onError: (Object _, StackTrace _) {
+          _activePreparations.remove(preparation);
+        },
+      ),
+    );
+    return preparation;
+  }
+
+  Future<void> close() {
+    final existing = _closing;
+    if (existing != null) return existing;
+    if (_closed) return Future<void>.value();
+    _closed = true;
+    late final Future<void> closing;
+    closing = _close();
+    _closing = closing;
+    return closing;
+  }
+
+  Future<void> _close() async {
+    while (_activePreparations.isNotEmpty) {
+      final pending = _activePreparations.toList(growable: false);
+      for (final preparation in pending) {
+        try {
+          await preparation;
+        } on Object {
+          // The DeferredReaderRoute owns presentation of preparation errors.
+          // Teardown only joins admitted work before its dependencies close.
+        }
+      }
+    }
+  }
 
   Map<String, LocalImageResponseSource> responseSourcesFor(
     ChapterManifest readerManifest,
@@ -109,6 +150,25 @@ final class HomeReaderChapterComposition {
             };
 
   Future<HomeReaderPreparedChapter> prepare(
+    Future<ImportedLibraryEntry> Function() loadChapter, {
+    required bool refreshRemote,
+    int? initialPageIndex,
+  }) {
+    if (_closed) {
+      return Future<HomeReaderPreparedChapter>.error(
+        StateError('Home Reader chapter composition is closed'),
+      );
+    }
+    return _trackPreparation(
+      _prepare(
+        loadChapter,
+        refreshRemote: refreshRemote,
+        initialPageIndex: initialPageIndex,
+      ),
+    );
+  }
+
+  Future<HomeReaderPreparedChapter> _prepare(
     Future<ImportedLibraryEntry> Function() loadChapter, {
     required bool refreshRemote,
     int? initialPageIndex,

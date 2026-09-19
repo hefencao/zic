@@ -30,6 +30,13 @@ require(
     "dynamic transfer-runtime capability provider",
 )
 require(composition, "Future<HomeReaderPreparedChapter> prepare(", "prepare API")
+require(composition, "final Set<Future<dynamic>> _activePreparations", "admitted preparation drain")
+require(composition, "Future<void> close()", "joinable lifecycle close")
+require(
+    composition,
+    "StateError('Home Reader chapter composition is closed')",
+    "closed admission fence",
+)
 require(
     composition,
     "Map<String, LocalImageResponseSource> responseSourcesFor(",
@@ -53,6 +60,7 @@ for forbidden in (
 require(home, "late final HomeReaderChapterComposition _readerChapterComposition;", "Home-owned collaborator")
 require(home, "hydrateEntry:", "explicit Home session hydrate handoff")
 require(home, "prepareVersionAuthority: _prepareReaderVersionAuthority", "version authority callback")
+require(home, "await _readerChapterComposition.close();", "Reader composition teardown barrier")
 require(
     route,
     "_readerChapterComposition.prepare(",
@@ -78,5 +86,14 @@ for forbidden in (
         raise SystemExit(
             f"DemoHome route re-acquired chapter preparation responsibility: {forbidden}"
         )
+
+close_body = home[home.index("Future<void> _closeHomeComposition() async {"):]
+for earlier, later, label in (
+    ("_sourceMigrationRecovery,", "await _readerChapterComposition.close();", "migration recovery before Reader composition close"),
+    ("await _readerChapterComposition.close();", "await _versionReuseLifecycle.close();", "Reader composition before version lifecycle close"),
+    ("await _versionReuseLifecycle.close();", "await _externalSources.close();", "version lifecycle before external source close"),
+):
+    if close_body.index(earlier) > close_body.index(later):
+        raise SystemExit(f"Home Reader composition teardown ordering regressed: {label}")
 
 print("dev.326 DemoHome reader chapter composition boundary: OK")

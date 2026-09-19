@@ -73,7 +73,8 @@ for marker, label in (
 
 close_body = home[home.index("Future<void> _closeHomeComposition() async {"):]
 for earlier, later, label in (
-    ("_sourceMigrationRecovery,", "await _versionReuseLifecycle.close();", "migration recovery before version lifecycle close"),
+    ("_sourceMigrationRecovery,", "await _readerChapterComposition.close();", "migration recovery before Reader composition close"),
+    ("await _readerChapterComposition.close();", "await _versionReuseLifecycle.close();", "Reader composition before version lifecycle close"),
     ("await _versionReuseLifecycle.close();", "await _externalSources.close();", "version lifecycle before external source close"),
     ("await _externalSources.close();", "await _librarySession.close();", "external source close before session close"),
 ):

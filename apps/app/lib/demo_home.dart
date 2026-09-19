@@ -682,6 +682,7 @@ final class _DemoHomeState extends State<DemoHome> {
       _sourceMigrationRecovery,
       'source migration recovery',
     );
+    await _readerChapterComposition.close();
     await _versionReuseLifecycle.close();
     await _externalSources.close();
     try {

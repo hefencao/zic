@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -41,6 +43,7 @@ void main() {
       trace: trace,
       monotonicMicros: () => 1234,
     );
+    addTearDown(composition.close);
 
     final prepared = await composition.prepare(
       () async => entry,
@@ -90,6 +93,7 @@ void main() {
       trace: const NoopTraceSink(),
       monotonicMicros: () => 1,
     );
+    addTearDown(composition.close);
 
     final prepared = await composition.prepare(
       () async => stale,
@@ -102,6 +106,63 @@ void main() {
     expect(prepared.responseSources.keys, <String>[
       'https://example.invalid/page-1.jpg',
     ]);
+  });
+
+  test('reader composition close drains admitted preparation and fences new work',
+      () async {
+    final entry = _entry(
+      sourceId: 'local-folder',
+      pageSource: '/library/page-1.jpg',
+    );
+    final loadStarted = Completer<void>();
+    final releaseLoad = Completer<void>();
+    final gateway = ComicSourceResourceGateway(sourceForId: (_) => null);
+    final composition = HomeReaderChapterComposition(
+      hydrateEntry: (candidate, {required awaitCanonicalPhysicalBackfill}) async =>
+          candidate,
+      sourceResources: gateway,
+      downloadComposition: () => null,
+      requiresSourceLocatorRefresh: (_) => false,
+      refreshRemoteEntry: (candidate, {required forceSourceRefresh}) async =>
+          candidate,
+      prepareVersionAuthority: (_) async => 0,
+      markChapterRead: (_) async {},
+      trace: const NoopTraceSink(),
+      monotonicMicros: () => 1,
+    );
+    addTearDown(() async {
+      if (!releaseLoad.isCompleted) releaseLoad.complete();
+      await composition.close();
+      gateway.close();
+    });
+
+    final preparation = composition.prepare(
+      () async {
+        loadStarted.complete();
+        await releaseLoad.future;
+        return entry;
+      },
+      refreshRemote: false,
+    );
+    await loadStarted.future;
+
+    var closeCompleted = false;
+    final closing = composition.close().then((_) => closeCompleted = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(closeCompleted, isFalse);
+
+    releaseLoad.complete();
+    await preparation;
+    await closing;
+    expect(closeCompleted, isTrue);
+
+    await expectLater(
+      composition.prepare(
+        () async => entry,
+        refreshRemote: false,
+      ),
+      throwsA(isA<StateError>()),
+    );
   });
 }
 
