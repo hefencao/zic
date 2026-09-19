@@ -71,6 +71,8 @@ const bookshelfBatchMoveKey = ValueKey<String>('bookshelf-batch-move');
 const bookshelfBatchDeleteKey = ValueKey<String>('bookshelf-batch-delete');
 const bookshelfBatchClearKey = ValueKey<String>('bookshelf-batch-clear');
 const downloadManagerEntryKey = ValueKey<String>('download-manager-entry');
+const homeFolderImportActionKey =
+    ValueKey<String>('home-folder-import-action');
 const comicDetailsScreenKey = ValueKey<String>('comic-details-screen');
 const comicDetailsReverseKey = ValueKey<String>('comic-details-reverse');
 const staticDemoEntryKey = ValueKey<String>('demo-entry-static');
@@ -78,8 +80,6 @@ const mediaPipelineReaderEntryKey =
     ValueKey<String>('demo-entry-media-pipeline-reader');
 const bundledWebpEntryKey = ValueKey<String>('demo-entry-bundled-webp');
 const localWebpImportKey = ValueKey<String>('demo-entry-local-webp');
-const localImageFolderImportKey =
-    ValueKey<String>('demo-entry-local-image-folder');
 const localWebpPickerProgressKey =
     ValueKey<String>('local-webp-picker-progress');
 const localImageFolderPickerProgressKey =
@@ -225,6 +225,7 @@ final class _DemoHomeState extends State<DemoHome> {
   String? _selectedCategoryId;
   late LibrarySortMode _sortMode;
   late ShelfViewPreference _shelfViewMode;
+  late bool _debugModeEnabled;
 
   ImportedLibraryStore get _library => _librarySession.library;
   ChapterDownloadService get _chapterDownloads =>
@@ -313,6 +314,7 @@ final class _DemoHomeState extends State<DemoHome> {
     _sourceFilter = widget.preferences.shelfSourceFilter;
     _sortMode = widget.preferences.shelfSortMode;
     _shelfViewMode = widget.preferences.shelfView;
+    _debugModeEnabled = widget.preferences.debugModeEnabled;
     _syncReaderPrefetchReadBudget();
     widget.preferences.addListener(_handleAppPreferencesChanged);
     final incomingLibrary = _incomingLibraryStore;
@@ -542,9 +544,11 @@ final class _DemoHomeState extends State<DemoHome> {
     final sourceFilter = widget.preferences.shelfSourceFilter;
     final sortMode = widget.preferences.shelfSortMode;
     final shelfView = widget.preferences.shelfView;
+    final debugModeEnabled = widget.preferences.debugModeEnabled;
     if (_sourceFilter == sourceFilter &&
         _sortMode == sortMode &&
-        _shelfViewMode == shelfView) {
+        _shelfViewMode == shelfView &&
+        _debugModeEnabled == debugModeEnabled) {
       return;
     }
     if (mounted) {
@@ -552,6 +556,7 @@ final class _DemoHomeState extends State<DemoHome> {
         _sourceFilter = sourceFilter;
         _sortMode = sortMode;
         _shelfViewMode = shelfView;
+        _debugModeEnabled = debugModeEnabled;
         _clearManagedSelection();
       });
     }
@@ -1624,15 +1629,23 @@ final class _DemoHomeState extends State<DemoHome> {
             ),
           if (_navigationIndex < 2)
             IconButton(
+              key: homeFolderImportActionKey,
               tooltip: '导入漫画文件夹',
               onPressed: _picking || _pickingFolder ? null : _importImageFolder,
-              icon: const Icon(Icons.create_new_folder_outlined),
+              icon: _pickingFolder
+                  ? const SizedBox.square(
+                      key: localImageFolderPickerProgressKey,
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.create_new_folder_outlined),
             ),
         ],
       ),
       body: _buildLibraryState(),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _navigationIndex,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
         destinations: const <NavigationDestination>[
           NavigationDestination(
             icon: Icon(Icons.home_outlined),

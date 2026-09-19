@@ -18,6 +18,7 @@ import 'package:zic/app_settings_screen.dart';
 import 'package:zic/debug_trace.dart';
 import 'package:zic/debug_trace_export.dart';
 import 'package:zic/debug_trace_screen.dart';
+import 'package:zic/demo_home.dart';
 import 'package:zic/library_backup.dart';
 import 'package:zic/app.dart';
 import 'package:zic/misc_page.dart';
@@ -92,6 +93,7 @@ void main() {
     expect(find.byKey(settingsReadingEntryKey), findsOneWidget);
     expect(find.byKey(settingsDownloadEntryKey), findsOneWidget);
     expect(find.byKey(settingsAppearanceEntryKey), findsOneWidget);
+    expect(find.byKey(settingsDebugModeKey), findsOneWidget);
 
     await tester.tap(find.byKey(settingsDataEntryKey));
     await tester.pump();
@@ -99,6 +101,46 @@ void main() {
     expect(find.byKey(dataFileAccessSettingsKey), findsOneWidget);
     expect(find.text('文件读写设置'), findsOneWidget);
     expect(find.textContaining('所有文件访问'), findsOneWidget);
+  });
+
+  testWidgets('Debug mode hides diagnostic entry surfaces and stops trace recording', (
+    tester,
+  ) async {
+    final preferences = AppPreferencesController();
+    final trace = DebugTraceLog();
+    addTearDown(preferences.dispose);
+    addTearDown(trace.dispose);
+    preferences.setDebugModeEnabled(false);
+
+    await tester.pumpWidget(
+      App(
+        preferences: preferences,
+        debugTrace: trace,
+        persistMissingPreferences: false,
+      ),
+    );
+    await _pumpUntilFound(tester, find.byIcon(Icons.more_horiz));
+    expect(trace.enabled, isFalse);
+    expect(find.byKey(homeDiagnosticsKey), findsNothing);
+    expect(find.byKey(homeTraceQuickExportKey), findsNothing);
+
+    await tester.tap(find.byIcon(Icons.more_horiz));
+    await tester.pump();
+    expect(find.byKey(miscDebugTraceEntryKey), findsNothing);
+    expect(find.text('记录 Debug trace'), findsNothing);
+
+    await tester.tap(find.byKey(miscSettingsEntryKey));
+    await tester.pump();
+    await _pumpUntilFound(tester, find.byKey(settingsDebugModeKey));
+    await tester.tap(find.byKey(settingsDebugModeKey));
+    await tester.pump();
+    expect(preferences.debugModeEnabled, isTrue);
+    expect(trace.enabled, isTrue);
+
+    await tester.pageBack();
+    await tester.pump();
+    expect(find.byKey(miscDebugTraceEntryKey), findsOneWidget);
+    expect(find.text('记录 Debug trace'), findsOneWidget);
   });
 
   testWidgets('network prefetch budget updates without leaving the settings page', (
@@ -349,6 +391,7 @@ void main() {
       read: () async => <String, Object?>{
         'themeMode': 'light',
         'amoledDarkTheme': true,
+        'debugModeEnabled': false,
         'debugTraceEnabled': false,
         'shelfSourceFilter': 'remote',
         'shelfSortMode': 'title',
@@ -406,6 +449,7 @@ void main() {
 
     expect(controller.themeMode, ThemeMode.light);
     expect(controller.amoledDarkTheme, isTrue);
+    expect(controller.debugModeEnabled, isFalse);
     expect(controller.debugTraceEnabled, isFalse);
     expect(controller.shelfSourceFilter, ShelfSourceFilter.remote);
     expect(controller.shelfSortMode, LibrarySortMode.title);
@@ -474,6 +518,7 @@ void main() {
 
     controller.setThemeMode(ThemeMode.dark);
     controller.setAmoledDarkTheme(false);
+    controller.setDebugModeEnabled(true);
     controller.setShelfSortMode(LibrarySortMode.custom);
     controller.setDetailsPreviewMaxItemsPerRow(4);
     controller.setNetworkUserAgent('custom-network-agent');
@@ -512,6 +557,7 @@ void main() {
 
     expect(written?['themeMode'], 'dark');
     expect(written?['amoledDarkTheme'], isFalse);
+    expect(written?['debugModeEnabled'], isTrue);
     expect(written?['shelfSortMode'], 'custom');
     expect(written?['version'], 7);
     expect(written?['detailsPreviewMaxItemsPerRow'], 4);

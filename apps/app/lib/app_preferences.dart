@@ -169,6 +169,7 @@ final class AppPreferencesController extends ChangeNotifier {
   final ChangeNotifier _themeChanges = ChangeNotifier();
   ThemeMode _themeMode = ThemeMode.dark;
   bool _amoledDarkTheme = false;
+  bool _debugModeEnabled = true;
   bool _debugTraceEnabled = true;
   ShelfSourceFilter _shelfSourceFilter = ShelfSourceFilter.all;
   LibrarySortMode _shelfSortMode = LibrarySortMode.recent;
@@ -224,6 +225,7 @@ final class AppPreferencesController extends ChangeNotifier {
   ThemeMode get themeMode => _themeMode;
   bool get amoledDarkTheme => _amoledDarkTheme;
   bool get isAttached => _attached;
+  bool get debugModeEnabled => _debugModeEnabled;
   bool get debugTraceEnabled => _debugTraceEnabled;
   ShelfSourceFilter get shelfSourceFilter => _shelfSourceFilter;
   LibrarySortMode get shelfSortMode => _shelfSortMode;
@@ -339,6 +341,8 @@ final class AppPreferencesController extends ChangeNotifier {
       values['amoledDarkTheme'],
       _amoledDarkTheme,
     );
+    _debugModeEnabled =
+        _boolValue(values['debugModeEnabled'], _debugModeEnabled);
     _debugTraceEnabled =
         _boolValue(values['debugTraceEnabled'], _debugTraceEnabled);
     _shelfSourceFilter = _enumByName(
@@ -482,6 +486,12 @@ final class AppPreferencesController extends ChangeNotifier {
     if (_disposed || _amoledDarkTheme == value) return;
     _amoledDarkTheme = value;
     _themeChanges.notifyListeners();
+    _changed();
+  }
+
+  void setDebugModeEnabled(bool value) {
+    if (_disposed || _debugModeEnabled == value) return;
+    _debugModeEnabled = value;
     _changed();
   }
 
@@ -826,6 +836,7 @@ final class AppPreferencesController extends ChangeNotifier {
       'version': 7,
       'themeMode': _themeMode.name,
       'amoledDarkTheme': _amoledDarkTheme,
+      'debugModeEnabled': _debugModeEnabled,
       'debugTraceEnabled': _debugTraceEnabled,
       'shelfSourceFilter': _shelfSourceFilter.name,
       'shelfSortMode': _shelfSortMode.name,

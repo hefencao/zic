@@ -742,7 +742,8 @@ final class _BootstrapAppState extends State<_BootstrapApp>
       isSameOrNestedDirectoryPath(a, b);
 
   void _syncDebugTrace() {
-    _debugTrace.enabled = _preferences.debugTraceEnabled;
+    _debugTrace.enabled =
+        _preferences.debugModeEnabled && _preferences.debugTraceEnabled;
   }
 
   @override
@@ -1620,7 +1621,8 @@ final class _AppState extends State<App> {
   }
 
   void _syncTrace() {
-    _debugTrace.enabled = _preferences.debugTraceEnabled;
+    _debugTrace.enabled =
+        _preferences.debugModeEnabled && _preferences.debugTraceEnabled;
   }
 
   @override
@@ -1638,20 +1640,12 @@ final class _AppState extends State<App> {
       builder: (context, _) => MaterialApp(
         title: 'zic',
         debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo),
-          useMaterial3: true,
+        theme: _zicTheme(
+          ColorScheme.fromSeed(seedColor: Colors.indigo),
         ),
-        darkTheme: ThemeData(
-          colorScheme: _darkColorScheme(
-            amoled: _preferences.amoledDarkTheme,
-          ),
-          scaffoldBackgroundColor: _preferences.amoledDarkTheme
-              ? Colors.black
-              : null,
-          canvasColor:
-              _preferences.amoledDarkTheme ? Colors.black : null,
-          useMaterial3: true,
+        darkTheme: _zicTheme(
+          _darkColorScheme(amoled: _preferences.amoledDarkTheme),
+          amoled: _preferences.amoledDarkTheme,
         ),
         themeMode: _preferences.themeMode,
         home: _RootBackExitGuard(
@@ -1750,6 +1744,23 @@ final class _RootBackExitGuardState extends State<_RootBackExitGuard> {
     );
   }
 }
+
+ThemeData _zicTheme(ColorScheme colorScheme, {bool amoled = false}) => ThemeData(
+      colorScheme: colorScheme,
+      scaffoldBackgroundColor: amoled ? Colors.black : null,
+      canvasColor: amoled ? Colors.black : null,
+      useMaterial3: true,
+      chipTheme: const ChipThemeData(shape: StadiumBorder()),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(shape: const StadiumBorder()),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(shape: const StadiumBorder()),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(shape: const StadiumBorder()),
+      ),
+    );
 
 ColorScheme _darkColorScheme({required bool amoled}) {
   final scheme = ColorScheme.fromSeed(

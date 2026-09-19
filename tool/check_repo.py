@@ -625,7 +625,7 @@ def check_compile_regressions() -> None:
         'cancelled picker stays on home',
         'Reader entry pushes the media pipeline route',
         'Reader screen hosts the real WebP media component',
-        'localImageFolderImportKey',
+        'homeFolderImportActionKey',
         'folder reader switches mixed image files by explicit identity',
         'bundled catalog exposes entries by stable identity',
     ):

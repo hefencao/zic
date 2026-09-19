@@ -178,14 +178,27 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const App());
-    await _pumpUntilFound(tester, find.byKey(localImageFolderImportKey));
+    await _pumpUntilFound(tester, find.byKey(homeFolderImportActionKey));
+    expect(find.byKey(homeFolderImportActionKey), findsOneWidget);
+    expect(
+      find.widgetWithText(FilledButton, '导入漫画文件夹'),
+      findsNothing,
+    );
+    expect(
+      tester.widget<NavigationBar>(find.byType(NavigationBar)).labelBehavior,
+      NavigationDestinationLabelBehavior.alwaysHide,
+    );
+    expect(
+      tester.widget<MaterialApp>(find.byType(MaterialApp)).theme!.chipTheme.shape,
+      isA<StadiumBorder>(),
+    );
     await _expandDiagnostics(tester);
 
     expect(find.byKey(staticDemoEntryKey), findsOneWidget);
     expect(find.byKey(mediaPipelineReaderEntryKey), findsOneWidget);
     expect(find.byKey(bundledWebpEntryKey), findsOneWidget);
     expect(find.byKey(localWebpImportKey), findsOneWidget);
-    expect(find.byKey(localImageFolderImportKey), findsOneWidget);
+    expect(find.byKey(homeFolderImportActionKey), findsOneWidget);
   });
 
   testWidgets('static entry pushes its keyed route', (tester) async {
@@ -399,7 +412,7 @@ void main() {
     await tester.pumpWidget(App(libraryStore: store));
     await _pumpUntilFound(
       tester,
-      find.byKey(localImageFolderImportKey),
+      find.byKey(homeFolderImportActionKey),
     );
 
     expect(find.text('本地目录维护'), findsNothing);
@@ -412,7 +425,7 @@ void main() {
     final folder = _folderFixture();
     await tester.pumpWidget(App(folderPicker: () => result.future));
 
-    final folderEntry = find.byKey(localImageFolderImportKey);
+    final folderEntry = find.byKey(homeFolderImportActionKey);
     await _pumpUntilFound(tester, folderEntry);
     await tester.ensureVisible(folderEntry);
     await tester.pumpAndSettle();
@@ -528,7 +541,7 @@ void main() {
     final result = Completer<PickedImageFolder?>();
     await tester.pumpWidget(App(folderPicker: () => result.future));
 
-    final folderEntry = find.byKey(localImageFolderImportKey);
+    final folderEntry = find.byKey(homeFolderImportActionKey);
     await _pumpUntilFound(tester, folderEntry);
     await tester.ensureVisible(folderEntry);
     await tester.pumpAndSettle();
@@ -540,7 +553,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(imageFolderScreenKey), findsNothing);
-    expect(find.byKey(localImageFolderImportKey), findsOneWidget);
+    expect(find.byKey(homeFolderImportActionKey), findsOneWidget);
     expect(find.byKey(localImageFolderPickerProgressKey), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());

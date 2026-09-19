@@ -1478,6 +1478,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       bottomNavigationBar: NavigationBar(
         key: downloadManagerBottomNavKey,
         selectedIndex: _selectedTab.index,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
         onDestinationSelected: (index) {
           final selected = DownloadManagerTab.values[index];
           setState(() => _selectedTab = selected);

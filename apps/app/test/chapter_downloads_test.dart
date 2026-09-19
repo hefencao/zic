@@ -85,6 +85,12 @@ void main() {
     // The first frame is already the download route even though the
     // post-frame durable refresh is intentionally blocked.
     expect(find.byKey(downloadManagerScreenKey), findsOneWidget);
+    expect(
+      tester
+          .widget<NavigationBar>(find.byKey(downloadManagerBottomNavKey))
+          .labelBehavior,
+      NavigationDestinationLabelBehavior.alwaysHide,
+    );
     expect(find.text('首帧章节'), findsOneWidget);
     final taskList = tester.widget<ListView>(find.byType(ListView));
     expect(taskList.childrenDelegate, isA<SliverChildBuilderDelegate>());

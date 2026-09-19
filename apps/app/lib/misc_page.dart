@@ -80,13 +80,15 @@ final class MiscPage extends StatelessWidget {
                   value: preferences.readerStartsImmersive,
                   onChanged: preferences.setReaderStartsImmersive,
                 ),
-                SwitchListTile(
-                  secondary: const Icon(Icons.bug_report_outlined),
-                  title: const Text('记录 Debug trace'),
-                  subtitle: const Text('最多保留最近 500 条诊断事件，高频生命周期会合并显示'),
-                  value: preferences.debugTraceEnabled,
-                  onChanged: preferences.setDebugTraceEnabled,
-                ),
+                if (preferences.debugModeEnabled)
+                  SwitchListTile(
+                    secondary: const Icon(Icons.bug_report_outlined),
+                    title: const Text('记录 Debug trace'),
+                    subtitle:
+                        const Text('最多保留最近 500 条诊断事件，高频生命周期会合并显示'),
+                    value: preferences.debugTraceEnabled,
+                    onChanged: preferences.setDebugTraceEnabled,
+                  ),
               ],
             ),
           ),
@@ -118,10 +120,12 @@ final class MiscPage extends StatelessWidget {
         const SizedBox(height: 18),
         Text('更多', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 6),
-        Card(
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: <Widget>[
+        AnimatedBuilder(
+          animation: preferences,
+          builder: (context, _) => Card(
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: <Widget>[
               ListTile(
                 key: miscSettingsEntryKey,
                 leading: const Icon(Icons.settings_outlined),
@@ -145,34 +149,38 @@ final class MiscPage extends StatelessWidget {
                   ),
                 ),
               ),
-              const Divider(height: 1),
-              ListTile(
-                key: miscDebugTraceEntryKey,
-                leading: const Icon(Icons.bug_report_outlined),
-                title: const Text('Debug trace'),
-                subtitle: AnimatedBuilder(
-                  animation: debugTrace,
-                  builder: (context, _) => Text(
-                    debugTrace.enabled
-                        ? '${debugTrace.events.length} 条显示 · ${debugTrace.exportEventCount} 条诊断导出 · 已合并 ${debugTrace.exportCoalescedCount} 条'
-                        : '记录已关闭',
-                  ),
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                onTap: () => unawaited(
-                  Navigator.of(context).push(
-                    MaterialPageRoute<void>(
-                      builder: (_) => DebugTraceScreen(
-                        log: debugTrace,
-                        exportDirectory: preferences.debugTraceExportDirectory,
-                        onExportDirectoryChanged:
-                            preferences.setDebugTraceExportDirectory,
+                if (preferences.debugModeEnabled) ...<Widget>[
+                  const Divider(height: 1),
+                  ListTile(
+                    key: miscDebugTraceEntryKey,
+                    leading: const Icon(Icons.bug_report_outlined),
+                    title: const Text('Debug trace'),
+                    subtitle: AnimatedBuilder(
+                      animation: debugTrace,
+                      builder: (context, _) => Text(
+                        debugTrace.enabled
+                            ? '${debugTrace.events.length} 条显示 · ${debugTrace.exportEventCount} 条诊断导出 · 已合并 ${debugTrace.exportCoalescedCount} 条'
+                            : '记录已关闭',
+                      ),
+                    ),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => unawaited(
+                      Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => DebugTraceScreen(
+                            log: debugTrace,
+                            exportDirectory:
+                                preferences.debugTraceExportDirectory,
+                            onExportDirectoryChanged:
+                                preferences.setDebugTraceExportDirectory,
+                          ),
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ),
-            ],
+                ],
+              ],
+            ),
           ),
         ),
       ],

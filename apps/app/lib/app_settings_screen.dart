@@ -25,6 +25,7 @@ const settingsReadingEntryKey = ValueKey<String>('settings-reading-entry');
 const settingsDownloadEntryKey = ValueKey<String>('settings-download-entry');
 const settingsAppearanceEntryKey =
     ValueKey<String>('settings-appearance-entry');
+const settingsDebugModeKey = ValueKey<String>('settings-debug-mode');
 const dataSettingsScreenKey = ValueKey<String>('data-settings-screen');
 const networkSettingsScreenKey = ValueKey<String>('network-settings-screen');
 const networkReaderPrefetchBudgetKey =
@@ -202,6 +203,18 @@ final class SettingsScreen extends StatelessWidget {
             onTap: () => _push(
               context,
               AppearanceSettingsScreen(preferences: preferences),
+            ),
+          ),
+          const Divider(height: 24),
+          AnimatedBuilder(
+            animation: preferences,
+            builder: (context, _) => SwitchListTile(
+              key: settingsDebugModeKey,
+              secondary: const Icon(Icons.developer_mode_outlined),
+              title: const Text('Debug 模式'),
+              subtitle: const Text('显示 Trace、媒体诊断与测试入口'),
+              value: preferences.debugModeEnabled,
+              onChanged: preferences.setDebugModeEnabled,
             ),
           ),
         ],

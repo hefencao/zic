@@ -236,46 +236,35 @@ extension _DemoHomeViews on _DemoHomeState {
             history: true,
             telemetryOwners: telemetryOwners,
           ),
-          const SizedBox(height: 24),
-          FilledButton.icon(
-            key: localImageFolderImportKey,
-            onPressed: _picking || _pickingFolder ? null : _importImageFolder,
-            icon: _pickingFolder
-                ? const SizedBox.square(
-                    key: localImageFolderPickerProgressKey,
-                    dimension: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.create_new_folder_outlined),
-            label: const Text('导入漫画文件夹'),
-          ),
-          const SizedBox(height: 12),
-          OutlinedButton.icon(
-            key: homeTraceQuickExportKey,
-            onPressed: _exportingHomeTrace
-                ? null
-                : () => unawaited(_exportHomeDebugTrace()),
-            icon: _exportingHomeTrace
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.download_outlined),
-            label: Text(
-              _exportingHomeTrace
-                  ? '正在导出 Trace…'
-                  : '一键导出 Trace 到 '
-                      '${debugTraceExportDisplayPath(widget.preferences.debugTraceExportDirectory)}',
+          if (_debugModeEnabled) ...<Widget>[
+            const SizedBox(height: 24),
+            OutlinedButton.icon(
+              key: homeTraceQuickExportKey,
+              onPressed: _exportingHomeTrace
+                  ? null
+                  : () => unawaited(_exportHomeDebugTrace()),
+              icon: _exportingHomeTrace
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.download_outlined),
+              label: Text(
+                _exportingHomeTrace
+                    ? '正在导出 Trace…'
+                    : '一键导出 Trace 到 '
+                        '${debugTraceExportDisplayPath(widget.preferences.debugTraceExportDirectory)}',
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
-          ExpansionTile(
-            key: homeDiagnosticsKey,
-            tilePadding: EdgeInsets.zero,
-            title: const Text('开发与媒体诊断'),
-            subtitle: const Text('普通阅读无需使用'),
-            children: <Widget>[_buildImportAndDemoCards()],
-          ),
+            const SizedBox(height: 12),
+            ExpansionTile(
+              key: homeDiagnosticsKey,
+              tilePadding: EdgeInsets.zero,
+              title: const Text('开发与媒体诊断'),
+              subtitle: const Text('普通阅读无需使用'),
+              children: <Widget>[_buildImportAndDemoCards()],
+            ),
+          ],
         ],
       ),
     );
