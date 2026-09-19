@@ -67,11 +67,19 @@ for token in (
 ):
     require(output, token, "Pipeline external presentation projection")
 for token in (
-    "output.externalPresentationRequested ||",
-    "output.externalPresentationReady) &&",
-    "!_fallbackLoadStarted",
+    "_maybeStartExternalPresentationLoad(output)",
+    "output.externalPresentationRequested",
+    "output.externalPresentationReady",
+    "output.externalPresentationCacheIdentity",
+    "_externalPresentationLoadIdentity",
+    "identical(",
 ):
-    require(player, token, "LocalImagePlayer external presentation gate")
+    require(player, token, "LocalImagePlayer generation-scoped external presentation gate")
+require(
+    read("packages/local_media_ui/test/external_presentation_generation_test.dart"),
+    "mounted external static reloads when Pipeline presentation generation changes",
+    "generation-scoped external presentation regression",
+)
 for token in (
     "zicFlutterImageCacheMaximumBytes = 100 * 1024 * 1024",
     "zicFlutterImageCacheMaximumEntries = 1000",

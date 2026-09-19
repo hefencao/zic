@@ -79,7 +79,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   int _streamingPrefixRequestedLength = 0;
   int _streamingPrefixRequestedRevision = 0;
   int _streamingPrefixReadRevision = 0;
-  bool _fallbackLoadStarted = false;
+  Object? _externalPresentationLoadIdentity;
   bool _recoveryInFlight = false;
   Size? _reportedDimensions;
   bool _reportedDimensionsAuthoritative = false;
@@ -153,7 +153,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       _detectedFormat = widget.image.format;
       _state = ImagePreviewState.loading(widget.image.format);
       _notifyObserver(_state);
-      _fallbackLoadStarted = false;
+      _externalPresentationLoadIdentity = null;
       final oldStreaming = oldWidget.pageStream;
       final oldListener = _pageStreamingListener;
       if (oldStreaming != null && oldListener != null) {
@@ -320,12 +320,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           prior.replacing != snapshot.replacing ||
           !identical(prior.failure, snapshot.failure);
       _pageOutputSnapshot = snapshot;
-      if ((output.externalPresentationRequested ||
-              output.externalPresentationReady) &&
-          !_fallbackLoadStarted) {
-        _fallbackLoadStarted = true;
-        unawaited(_load());
-      }
+      _maybeStartExternalPresentationLoad(output);
       // Animation metadata can become more precise while a WebP prefix is
       // being classified, but it does not change the native texture view.
       // Keep reporting dimensions/capability and first-frame state below;
@@ -368,6 +363,30 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     }
     _pageOutputListener = listener;
     output.addListener(listener);
+  }
+
+  void _maybeStartExternalPresentationLoad(PipelinePageOutputStream output) {
+    if (_recoveryInFlight ||
+        (!output.externalPresentationRequested &&
+            !output.externalPresentationReady)) {
+      return;
+    }
+    final presentationIdentity = output.externalPresentationCacheIdentity;
+    if (presentationIdentity == null ||
+        identical(
+          _externalPresentationLoadIdentity,
+          presentationIdentity,
+        )) {
+      return;
+    }
+    // The Pipeline grant is generation-scoped. A PageOutput can stay attached
+    // to the same LocalImagePlayer while its DecodeId/source generation is
+    // rebound; widget lifetime is therefore not a valid "already loaded"
+    // proof. Consume each exact presentation-cache identity at most once and
+    // let a newer identity supersede any older in-flight result through the
+    // existing [_generation] guard in [_load].
+    _externalPresentationLoadIdentity = presentationIdentity;
+    unawaited(_load());
   }
 
   Future<void> _load() async {
@@ -601,7 +620,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
     _reportedPlaybackCapability = null;
     _reportedPlaybackCapabilityCallback = null;
     _detectedFormat = widget.image.format;
-    _fallbackLoadStarted = true;
+    _externalPresentationLoadIdentity =
+        widget.pageOutput?.externalPresentationCacheIdentity;
     _publish(ImagePreviewState.loading(_detectedFormat));
     unawaited(_load());
   }
