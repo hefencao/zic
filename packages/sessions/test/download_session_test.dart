@@ -585,6 +585,39 @@ void main() {
     await session.dispose();
   });
 
+  test('attachIngressProjection preserves an existing same-epoch prefix',
+      () async {
+    final session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/prefilled-attach/partial/page.webp',
+        finalPath: '${temp.path}/prefilled-attach/cache/page.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    final ingress = Ingress(factory: _TestSourceFactory(), maxBytes: 1024);
+    const prefix = 'RIFF....WEBPpayload';
+    ingress.append(
+      epoch: session.epoch,
+      offset: 0,
+      bytes: prefix.codeUnits,
+    );
+    final projection = DownloadIngressProjection(
+      scopeId: 'reader-prefilled-projection',
+      ingress: ingress,
+    );
+
+    session.attachIngressProjection(projection);
+
+    expect(projection.snapshot.epoch, session.epoch);
+    expect(projection.snapshot.length, prefix.length);
+    expect(projection.source, isNotNull);
+
+    projection.detach();
+    ingress.dispose();
+    await session.dispose();
+  });
+
   test('stale projection seal retires writer without failing physical body',
       () async {
     final session = DownloadSession(

@@ -2726,14 +2726,29 @@ final class DownloadSession {
         message: 'late ingress projection requires synchronized attachment',
       );
     }
-    // A physical reset may advance this session beyond epoch zero while its
-    // artifact is still empty. Fresh Reader projections are constructed at
-    // epoch zero, so inserting one directly into live fan-out would make the
-    // very first append of the current generation fail as stale work.
-    //
-    // There are no authoritative bytes to replay at this boundary; align the
-    // empty projection to the current physical generation before publication.
-    projection.reset(_epoch);
+    final projectionSnapshot = projection.snapshot;
+    if (projectionSnapshot.epoch != _epoch) {
+      // A physical reset may advance this session beyond epoch zero while its
+      // artifact is still empty. Fresh Reader projections are constructed at
+      // epoch zero, so an actually empty projection may be aligned to the
+      // current physical generation before publication.
+      //
+      // committedLength == 0 does NOT prove the Reader projection is empty:
+      // callers may already have a decoder-usable local prefix. Never erase
+      // that consumer-owned source to make epochs line up. A non-empty/stated
+      // projection must instead use the synchronized attachment path.
+      final projectionIsEmpty = projectionSnapshot.length == 0 &&
+          projection.source == null &&
+          projectionSnapshot.failure == null;
+      if (!projectionIsEmpty) {
+        throw const Failure(
+          code: ErrorCode.invalidState,
+          message:
+              'non-empty ingress projection requires synchronized attachment',
+        );
+      }
+      projection.reset(_epoch);
+    }
     _ingressProjections[projection.scopeId] = projection;
     projection.expectLength(_totalLength);
     _notifySnapshot();
