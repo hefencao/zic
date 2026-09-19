@@ -97,7 +97,8 @@ for token in (
     'contentResolver.openOutputStream',
 ):
     assert token in android
-assert 'exportDirectory: preferences.debugTraceExportDirectory' in misc
+compact_misc = ''.join(misc.split())
+assert 'exportDirectory:preferences.debugTraceExportDirectory' in compact_misc
 assert 'onExportDirectoryChanged:' in misc
 
 for rejected in (

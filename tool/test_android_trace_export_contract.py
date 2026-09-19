@@ -43,7 +43,8 @@ for token in (
     'relativeDirectory',
 ):
     assert token in activity
-assert 'exportDirectory: preferences.debugTraceExportDirectory' in misc
+compact_misc = ''.join(misc.split())
+assert 'exportDirectory:preferences.debugTraceExportDirectory' in compact_misc
 assert 'onExportDirectoryChanged:' in misc
 assert 'exportDebugTraceEvents(' in home
 assert 'widget.preferences.debugTraceExportDirectory' in home
