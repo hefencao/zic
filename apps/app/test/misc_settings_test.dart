@@ -158,6 +158,10 @@ void main() {
     await tester.pump();
     await _pumpUntilFound(tester, find.byKey(networkSettingsScreenKey));
 
+    final conflictTrust = tester.widget<SwitchListTile>(
+      find.byKey(networkCachedCarrierConflictTrustKey),
+    );
+    expect(conflictTrust.value, isTrue);
     expect(find.text('50 MB'), findsOneWidget);
     await tester.tap(find.byKey(networkReaderPrefetchBudgetKey));
     await tester.pumpAndSettle();
@@ -169,6 +173,16 @@ void main() {
 
     expect(find.byKey(networkSettingsScreenKey), findsOneWidget);
     expect(find.text('25 MB'), findsOneWidget);
+    await tester.tap(find.byKey(networkCachedCarrierConflictTrustKey));
+    await tester.pump();
+    expect(
+      tester
+          .widget<SwitchListTile>(
+            find.byKey(networkCachedCarrierConflictTrustKey),
+          )
+          .value,
+      isFalse,
+    );
   });
 
   testWidgets('download policy settings follow current generation binding', (
@@ -481,6 +495,7 @@ void main() {
       controller.cachedCarrierTrustMode,
       CachedCarrierTrustMode.reuseThenRefresh,
     );
+    expect(controller.trustConflictingHistoricalCarriersByDefault, isTrue);
     expect(
       controller.trustConflictingHistoricalCarriersForPlugin(
         'venera:fixture-plugin',
@@ -528,6 +543,7 @@ void main() {
     controller.setCacheLimitMb(1024);
     controller.setReaderPrefetchReadBudgetMiB(64);
     controller.setCachedCarrierTrustMode(CachedCarrierTrustMode.trustCached);
+    controller.setTrustConflictingHistoricalCarriersByDefault(false);
     controller.setPluginTrustConflictingHistoricalCarriers(
       'mihon:fixture-plugin',
       true,
@@ -559,7 +575,7 @@ void main() {
     expect(written?['amoledDarkTheme'], isFalse);
     expect(written?['debugModeEnabled'], isTrue);
     expect(written?['shelfSortMode'], 'custom');
-    expect(written?['version'], 7);
+    expect(written?['version'], 8);
     expect(written?['detailsPreviewMaxItemsPerRow'], 4);
     expect(written?['networkUserAgent'], 'custom-network-agent');
     expect(written?['debugTraceExportDirectory'], 'Debug/Reader');
@@ -572,9 +588,14 @@ void main() {
     expect(written?['readerPrefetchReadBudgetMiB'], 64);
     expect(written?['cachedCarrierTrustMode'], 'trustCached');
     expect(
+      written?['trustConflictingHistoricalCarriersByDefault'],
+      isFalse,
+    );
+    expect(
       written?['pluginTrustConflictingHistoricalCarriers'],
       <String, bool>{
         'venera:fixture-plugin': true,
+        'mihon:strict-plugin': false,
         'mihon:fixture-plugin': true,
       },
     );
@@ -622,6 +643,59 @@ void main() {
     );
     expect(controller.longPressZoomPanRatio, 1.0);
     expect(controller.longPressZoomLimitToViewport, isTrue);
+  });
+
+  test('historical cache conflict trust inherits global unless overridden',
+      () async {
+    final controller = AppPreferencesController();
+    addTearDown(controller.dispose);
+    await controller.attach(
+      read: () async => null,
+      write: (_) async {},
+    );
+
+    expect(controller.trustConflictingHistoricalCarriersByDefault, isTrue);
+    expect(
+      controller.trustConflictingHistoricalCarriersForPlugin('plugin-a'),
+      isTrue,
+    );
+    expect(
+      controller.conflictingHistoricalCarrierTrustOverrideForPlugin(
+        'plugin-a',
+      ),
+      isNull,
+    );
+
+    controller.setPluginTrustConflictingHistoricalCarriers('plugin-a', false);
+    expect(
+      controller.trustConflictingHistoricalCarriersForPlugin('plugin-a'),
+      isFalse,
+    );
+    expect(
+      controller.conflictingHistoricalCarrierTrustOverrideForPlugin(
+        'plugin-a',
+      ),
+      isFalse,
+    );
+
+    controller.clearPluginTrustConflictingHistoricalCarriersOverride(
+      'plugin-a',
+    );
+    expect(
+      controller.trustConflictingHistoricalCarriersForPlugin('plugin-a'),
+      isTrue,
+    );
+
+    controller.setTrustConflictingHistoricalCarriersByDefault(false);
+    expect(
+      controller.trustConflictingHistoricalCarriersForPlugin('plugin-a'),
+      isFalse,
+    );
+    controller.setPluginTrustConflictingHistoricalCarriers('plugin-a', true);
+    expect(
+      controller.trustConflictingHistoricalCarriersForPlugin('plugin-a'),
+      isTrue,
+    );
   });
 
   test('legacy per-comic stitch false inherits the global setting', () async {

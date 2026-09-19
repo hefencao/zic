@@ -32,6 +32,8 @@ const networkReaderPrefetchBudgetKey =
     ValueKey<String>('network-reader-prefetch-budget');
 const networkCachedCarrierTrustKey =
     ValueKey<String>('network-cached-carrier-trust');
+const networkCachedCarrierConflictTrustKey =
+    ValueKey<String>('network-cached-carrier-conflict-trust');
 const bookshelfSettingsScreenKey =
     ValueKey<String>('bookshelf-settings-screen');
 const readingSettingsScreenKey = ValueKey<String>('reading-settings-screen');
@@ -1013,6 +1015,18 @@ final class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
                   ),
                 ),
                 onTap: _editCachedCarrierTrustMode,
+              ),
+              SwitchListTile(
+                key: networkCachedCarrierConflictTrustKey,
+                secondary: const Icon(Icons.verified_user_outlined),
+                title: const Text('默认信任完整缓存冲突'),
+                subtitle: const Text(
+                  '同一页面和来源版本存在多个完整 READY 历史缓存、但长度或 CRC 不一致时，默认允许使用最近的一份。插件可单独覆盖为严格校验或信任；不会把不同正文登记为等价。',
+                ),
+                value: widget.preferences
+                    .trustConflictingHistoricalCarriersByDefault,
+                onChanged: widget.preferences
+                    .setTrustConflictingHistoricalCarriersByDefault,
               ),
               const Divider(),
               const _SettingsSectionTitle('请求标识'),
