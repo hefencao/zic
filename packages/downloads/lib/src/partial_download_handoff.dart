@@ -351,7 +351,11 @@ final class PartialDownloadHandoff {
             control: control,
             historicalCarrier: true,
           )) {
-        cache!.noteHistoricalCarrierServed(session.id);
+        cache!.noteHistoricalCarrierServed(
+          session.id,
+          storageId: historical.lookup.storageId,
+          generation: historical.lookup.generation,
+        );
         return;
       }
       return;

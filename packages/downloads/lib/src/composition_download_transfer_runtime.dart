@@ -849,6 +849,9 @@ final class CompositionDownloadTransferRuntime {
     return owner.recoverPresentationArtifact(
       id,
       invalidateArtifact: () async {
+        if (reason != 'historical-carrier-stale-while-revalidate') {
+          cache?.clearRetainedHistoricalPresentation(id);
+        }
         var invalidated = true;
         if (cache != null && !preservePinnedExact) {
           final expectedGeneration = generation;

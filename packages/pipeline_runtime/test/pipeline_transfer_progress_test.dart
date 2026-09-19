@@ -314,6 +314,21 @@ void main() {
     expect(publisher.feed.value.phase, PipelineTransferPhase.replayingPrefix);
     expect(publisher.feed.value.totalBytes, 128 * 1024);
 
+    publisher.setPresentationSatisfied(true);
+    expect(
+      publisher.feed.value,
+      const PipelineTransferProgress(),
+      reason:
+          'a satisfied current static presentation hides background transfer activity from the Reader loading projection',
+    );
+    session.advanceNetworkAttemptProgress(1024 + 32 * 1024, force: true);
+    await Future<void>.delayed(Duration.zero);
+    expect(publisher.feed.value, const PipelineTransferProgress());
+
+    publisher.setPresentationSatisfied(false);
+    expect(publisher.feed.value.active, isTrue);
+    expect(publisher.feed.value.transportBytes, 1024 + 32 * 1024);
+
     session.advanceNetworkAttemptProgress(1024 + 64 * 1024, force: true);
     await session.append(
       writer,

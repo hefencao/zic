@@ -2186,6 +2186,20 @@ void main() {
       expect(cache.directEquivalents(current), isEmpty,
           reason: 'historical trust is not verified equivalence');
       expect(cache.hasPendingHistoricalCarrierRevalidation(current), isTrue);
+      final recovery =
+          cache.beginFreshSourceRecovery(<DownloadId>{current});
+      cache.armFreshSourceRecovery(recovery);
+      expect(await cache.readForeground(current), isNull,
+          reason: 'fresh-source quarantine must still reject normal cache routing');
+      final retained =
+          await cache.readRetainedHistoricalPresentation(current);
+      expect(retained, isNotNull,
+          reason:
+              'historical bind must preserve its exact selected storage generation for presentation continuity');
+      expect(retained!.storageId, historical);
+      expect(retained.bytes, orderedEquals(bytes));
+      cache.cancelFreshSourceRecovery(recovery);
+
       expect(
         trace.events.any(
           (event) =>

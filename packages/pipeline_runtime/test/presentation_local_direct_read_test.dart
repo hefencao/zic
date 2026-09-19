@@ -115,6 +115,159 @@ void main() {
   );
 
   test(
+    'retained historical presentation remains readable through fresh-source quarantine',
+    () async {
+      final uri = Uri.parse('https://example.invalid/current-static.jpg');
+      final chapter = _chapter(uri: uri);
+      final asset = chapter.pages.single;
+      final current = readerPageDownloadId(chapter, asset);
+      final historical = DownloadId(
+        content: current.content,
+        sourceRevision: current.sourceRevision,
+        canonicalUri: Uri.parse('https://example.invalid/historical-static.jpg'),
+      );
+      final backend = _PresentationFileBackend();
+      final cache = ArtifactCacheManager(
+        backend: backend,
+        carrierMismatchPolicy: CachedCarrierMismatchPolicy.reuseThenRefresh,
+      );
+      cache.noteHistoricalCarrierServed(
+        current,
+        storageId: historical,
+        generation: cache.generationFor(historical),
+      );
+      final recovery = cache.beginFreshSourceRecovery(<DownloadId>{current});
+      cache.armFreshSourceRecovery(recovery);
+      final trace = MemoryTraceSink();
+      final transferRuntime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: cache,
+        partialDownloadStore: null,
+        net: NetLane(maxActive: 1),
+      );
+      final reader = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _FreshFactory(),
+        pageDownloadLane: NetLane(maxActive: 5),
+      ).withTransferRuntime(transferRuntime).create(
+        chapter: chapter,
+        sessionId: 'retained-historical-presentation',
+        traceSink: trace,
+      );
+
+      try {
+        expect(await cache.readForeground(current), isNull);
+        expect(
+          await reader.loadBytes(asset, MediaLoadToken()),
+          <int>[1, 2, 3],
+          reason:
+              'presentation may redraw the exact admitted stale generation while ordinary cache routing remains quarantined',
+        );
+        final lease =
+            await reader.openEncodedPresentationFile(asset, MediaLoadToken());
+        expect(lease, isNotNull);
+        expect(lease!.path, '/proc/self/fd/41');
+        expect(
+          trace.events.any(
+            (event) =>
+                event.kind == TraceEventKind.sourceRead &&
+                event.payload['artifactReadMode'] ==
+                    'presentation-file-lease' &&
+                event.payload['retainedHistoricalPresentation'] == true,
+          ),
+          isTrue,
+          reason:
+              'device traces must distinguish retained stale continuity from an ordinary current artifact lease',
+        );
+        await lease.release();
+      } finally {
+        cache.cancelFreshSourceRecovery(recovery);
+        await reader.dispose().timeout(const Duration(seconds: 5));
+        await transferRuntime.dispose().timeout(const Duration(seconds: 5));
+      }
+    },
+  );
+
+  test(
+    'retained historical presentation keeps progress suppressed across source epoch rebind',
+    () async {
+      final uri = Uri.parse('https://example.invalid/revalidation-current.jpg');
+      final chapter = _chapter(uri: uri);
+      final current = readerPageDownloadId(chapter, chapter.pages.single);
+      final historical = DownloadId(
+        content: current.content,
+        sourceRevision: current.sourceRevision,
+        canonicalUri: Uri.parse('https://example.invalid/revalidation-old.jpg'),
+      );
+      final cache = ArtifactCacheManager(
+        backend: _PresentationFileBackend(),
+        carrierMismatchPolicy: CachedCarrierMismatchPolicy.reuseThenRefresh,
+      );
+      cache.noteHistoricalCarrierServed(
+        current,
+        storageId: historical,
+        generation: cache.generationFor(historical),
+      );
+      final recovery = cache.beginFreshSourceRecovery(<DownloadId>{current});
+      cache.armFreshSourceRecovery(recovery);
+      final transferRuntime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: cache,
+        partialDownloadStore: null,
+        net: NetLane(maxActive: 1),
+      );
+      final trace = MemoryTraceSink();
+      final reader = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _FreshFactory(),
+        pageDownloadLane: NetLane(maxActive: 5),
+      ).withTransferRuntime(transferRuntime).create(
+        chapter: chapter,
+        sessionId: 'retained-progress-source-rebind',
+        traceSink: trace,
+      );
+
+      try {
+        reader.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+        reader.accept(_observation(reader.sessionId, chapter));
+        await _waitForCondition(
+          () => transferRuntime.registry.find(current) != null,
+        );
+        final physical = transferRuntime.registry.find(current)!;
+
+        reader.transferProgress.setPresentationSatisfied(true);
+        expect(reader.transferProgress.feed.value,
+            const PipelineTransferProgress());
+
+        await physical.reset();
+        physical.queue();
+        await _waitForCondition(
+          () => trace.events.any(
+            (event) =>
+                event.kind == TraceEventKind.artifactSource &&
+                event.payload['stage'] == 'reader-source-watch-rebind' &&
+                event.payload['action'] == 'source-epoch-changed',
+          ),
+        );
+
+        expect(cache.hasRetainedHistoricalPresentation(current), isTrue);
+        expect(
+          pipelineTransferProgressFor(physical.snapshot).active,
+          isTrue,
+          reason:
+              'the physical transfer is genuinely active even though its background convergence must stay hidden',
+        );
+        expect(
+          reader.transferProgress.feed.value,
+          const PipelineTransferProgress(),
+          reason:
+              'source-epoch rotation from stale revalidation must not revoke an already-valid retained presentation',
+        );
+      } finally {
+        cache.cancelFreshSourceRecovery(recovery);
+        await reader.dispose().timeout(const Duration(seconds: 5));
+        await transferRuntime.dispose().timeout(const Duration(seconds: 5));
+      }
+    },
+  );
+
+  test(
     'WebP and GIF never enter encoded presentation file fallback',
     () async {
       for (final hint in <ContentKindHint>[

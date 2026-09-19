@@ -117,6 +117,99 @@ void main() {
     expect(releases, 1);
   });
 
+  test('retained historical presentation survives fresh-source quarantine only for presentation',
+      () async {
+    final current = _id('retained-historical-current');
+    final historical = DownloadId(
+      content: current.content,
+      sourceRevision: current.sourceRevision,
+      canonicalUri: Uri.parse('memory://retained-historical-old'),
+    );
+    var releases = 0;
+    final backend = _Backend(
+      <DownloadId, Uint8List>{
+        historical: Uint8List.fromList(<int>[7, 8, 9]),
+      },
+      presentationOpen: (openedId, bytes) async {
+        expect(openedId, historical);
+        return ArtifactCachePresentationFileLease(
+          path: '/proc/self/fd/77',
+          length: bytes.lengthInBytes,
+          width: 720,
+          height: 1080,
+          release: () async => releases++,
+        );
+      },
+    );
+    final manager = ArtifactCacheManager(
+      backend: backend,
+      carrierMismatchPolicy: CachedCarrierMismatchPolicy.reuseThenRefresh,
+    );
+    manager.noteHistoricalCarrierServed(
+      current,
+      storageId: historical,
+      generation: manager.generationFor(historical),
+    );
+    final recovery = manager.beginFreshSourceRecovery(<DownloadId>{current});
+    manager.armFreshSourceRecovery(recovery);
+
+    expect(manager.requiresFreshSource(current), isTrue);
+    expect(manager.hasRetainedHistoricalPresentation(current), isTrue);
+    expect(await manager.readForeground(current), isNull,
+        reason: 'fresh-source quarantine must still block ordinary cache routing');
+
+    final retained = await manager.readRetainedHistoricalPresentation(current);
+    expect(retained?.bytes, <int>[7, 8, 9]);
+    expect(retained?.storageId, historical);
+
+    final lease =
+        await manager.openRetainedHistoricalPresentationFile(current);
+    expect(lease, isNotNull);
+    expect(lease!.storageId, historical);
+    expect(lease.path, '/proc/self/fd/77');
+    await lease.release();
+    expect(releases, 1);
+
+    await manager.storePromotedArtifact(
+      id: current,
+      bytes: Uint8List.fromList(<int>[1, 2, 3]),
+    );
+    expect(manager.requiresFreshSource(current), isFalse);
+    expect(manager.hasRetainedHistoricalPresentation(current), isFalse);
+    expect(await manager.readRetainedHistoricalPresentation(current), isNull,
+        reason: 'fresh exact publication must retire stale presentation continuity');
+  });
+
+  test('retained historical presentation rejects a mutated storage generation',
+      () async {
+    final current = _id('retained-historical-mutation-current');
+    final historical = DownloadId(
+      content: current.content,
+      sourceRevision: current.sourceRevision,
+      canonicalUri: Uri.parse('memory://retained-historical-mutation-old'),
+    );
+    final backend = _Backend(
+      <DownloadId, Uint8List>{
+        historical: Uint8List.fromList(<int>[4, 5, 6]),
+      },
+    );
+    final manager = ArtifactCacheManager(
+      backend: backend,
+      carrierMismatchPolicy: CachedCarrierMismatchPolicy.reuseThenRefresh,
+    );
+    manager.noteHistoricalCarrierServed(
+      current,
+      storageId: historical,
+      generation: manager.generationFor(historical),
+    );
+    final recovery = manager.beginFreshSourceRecovery(<DownloadId>{current});
+    manager.armFreshSourceRecovery(recovery);
+
+    await manager.invalidate(historical);
+
+    expect(await manager.readRetainedHistoricalPresentation(current), isNull);
+  });
+
   test('memory cache protects its byte buffers with unmodifiable views', () async {
     final id = _id('memory-ownership');
     final manager = ArtifactCacheManager(

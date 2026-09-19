@@ -202,7 +202,11 @@ final class ArtifactCacheTransport implements ControlledTransport {
                       ArtifactReadIntegrityBasis.crc32Verified,
             };
             if (historicalCarrierReuse) {
-              _cache.noteHistoricalCarrierServed(id);
+              _cache.noteHistoricalCarrierServed(
+                id,
+                storageId: lookup.storageId,
+                generation: lookup.generation,
+              );
             }
             _recordSource(
               source: source,

@@ -210,6 +210,7 @@ final class PipelineTransferProgressPublisher {
   DownloadSession? _selectedSession;
   DownloadSnapshotListener? _selectedListener;
   bool _scheduled = false;
+  bool _presentationSatisfied = false;
   bool _disposed = false;
   int? _sampleAttemptSequence;
   int _sampleBytes = 0;
@@ -235,7 +236,21 @@ final class PipelineTransferProgressPublisher {
     _requestPublish(preferImmediate: true);
   }
 
-  void clear() => select(null);
+  void clear() {
+    select(null);
+    setPresentationSatisfied(false);
+  }
+
+  /// Hides physical transfer activity from the Reader loading projection after
+  /// the current external-static presentation identity has produced a real
+  /// visible frame. This is presentation-only: DownloadSession/network state
+  /// continues unchanged and becomes visible again when the identity changes
+  /// or the presentation is explicitly reloaded/recovered.
+  void setPresentationSatisfied(bool value) {
+    if (_disposed || _presentationSatisfied == value) return;
+    _presentationSatisfied = value;
+    _requestPublish(preferImmediate: true);
+  }
 
   void _requestPublish({bool preferImmediate = false}) {
     if (_disposed) return;
@@ -271,6 +286,10 @@ final class PipelineTransferProgressPublisher {
   }
 
   void _publishNow() {
+    if (_presentationSatisfied) {
+      _set(const PipelineTransferProgress());
+      return;
+    }
     final session = _selectedSession;
     if (session == null) {
       _set(const PipelineTransferProgress());

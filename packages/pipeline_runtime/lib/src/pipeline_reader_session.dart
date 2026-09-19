@@ -1160,6 +1160,7 @@ final class PipelineReaderSession {
     // current/next/transition output cannot wait for the PageView host to
     // mount.
     _syncPageOutputs(observation: observation);
+    _syncTransferProgressPresentationSatisfaction(currentDownload);
     _ensurePlaybackTicker();
   }
 
@@ -1543,6 +1544,7 @@ final class PipelineReaderSession {
     if (identity == null) return;
     final firstVisible = _externalPresentationVisibleFrames.add(identity);
     if (firstVisible) {
+      _syncTransferProgressPresentationSatisfaction(download);
       _transferRuntime.notifyPresentationSatisfied(download);
     }
     final pending = _externalPresentationRequests.contains(identity) &&
@@ -1823,11 +1825,18 @@ final class PipelineReaderSession {
     }
     final started = clock.nowMicros();
     ArtifactCachePresentationFileRead? read;
+    final retainedHistoricalPresentation = cache.requiresFreshSource(id);
     try {
-      read = await cache.openPresentationFile(
-        id,
-        control: _MediaLoadTaskControl(token),
-      );
+      final control = _MediaLoadTaskControl(token);
+      read = retainedHistoricalPresentation
+          ? await cache.openRetainedHistoricalPresentationFile(
+              id,
+              control: control,
+            )
+          : await cache.openPresentationFile(
+              id,
+              control: control,
+            );
       if (token.isCancelled) {
         await read?.release();
         token.throwIfCancelled();
@@ -1865,6 +1874,7 @@ final class PipelineReaderSession {
         generation: read.generation,
         width: width,
         height: height,
+        retainedHistoricalPresentation: retainedHistoricalPresentation,
       );
       return PipelineEncodedPresentationFileLease(
         path: read.path,
@@ -1911,6 +1921,33 @@ final class PipelineReaderSession {
     }
     token.throwIfCancelled();
     final cache = _artifactCacheManager;
+    if (cache != null && cache.requiresFreshSource(id)) {
+      final readStarted = clock.nowMicros();
+      final retained = await cache.readRetainedHistoricalPresentation(
+        id,
+        control: _MediaLoadTaskControl(token),
+      );
+      token.throwIfCancelled();
+      if (retained != null) {
+        _artifactCachePresentationAuthorities[id] =
+            _PresentationArtifactAuthority(
+          storageId: retained.storageId,
+          generation: retained.generation,
+        );
+        _recordPresentationCacheRead(
+          asset: asset,
+          id: id,
+          bytes: retained.bytes,
+          source: 'retained-historical-presentation',
+          readMode: retained.memoryHit ? 'memory-hit' : 'read-all',
+          readMicros: clock.nowMicros() - readStarted,
+          memoryHit: retained.memoryHit,
+          joined: retained.joined,
+          integrityBasis: retained.integrityBasis.name,
+        );
+        return retained.bytes;
+      }
+    }
     final hotRead = cache?.lookupMemoryWithAuthority(id);
     if (hotRead != null) {
       final hotBytes = hotRead.bytes;
@@ -2377,6 +2414,7 @@ final class PipelineReaderSession {
     required int generation,
     required int width,
     required int height,
+    required bool retainedHistoricalPresentation,
   }) {
     final safeMicros = readMicros < 0 ? 0 : readMicros;
     trace.record(
@@ -2393,6 +2431,7 @@ final class PipelineReaderSession {
           'bytes': length,
           'readMicros': safeMicros,
           'artifactReadMode': 'presentation-file-lease',
+          'retainedHistoricalPresentation': retainedHistoricalPresentation,
           'artifactIntegrityBasis':
               ArtifactReadIntegrityBasis.sealedMetadataLength.name,
           'artifactWholeChecksumVerifiedThisRead': false,
@@ -2744,6 +2783,9 @@ final class PipelineReaderSession {
         _externalPresentationCacheIdentityFor(outputIdentity),
       );
       output._setExternalPresentationReady(false);
+    }
+    if (_lastControlCurrentDownload == download) {
+      _syncTransferProgressPresentationSatisfaction(download);
     }
   }
 
@@ -3282,6 +3324,26 @@ final class PipelineReaderSession {
       }
     }
     return null;
+  }
+
+  void _syncTransferProgressPresentationSatisfaction(
+    DownloadId currentDownload,
+  ) {
+    if (_lastControlCurrentDownload != currentDownload) {
+      transferProgress.setPresentationSatisfied(false);
+      return;
+    }
+    final identity = _activeDecodeIdentity(currentDownload);
+    final visibleExactIdentity =
+        identity != null && _externalPresentationVisibleFrames.contains(identity);
+    final retainedStalePresentation =
+        _artifactCacheManager?.hasRetainedHistoricalPresentation(
+              currentDownload,
+            ) ??
+            false;
+    transferProgress.setPresentationSatisfied(
+      visibleExactIdentity || retainedStalePresentation,
+    );
   }
 
   DecodeId? _activePagedOutputIdentity(DownloadId download) {

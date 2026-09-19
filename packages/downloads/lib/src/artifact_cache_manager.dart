@@ -52,6 +52,9 @@ final class ArtifactCacheManager {
   CachedCarrierMismatchPolicy _carrierMismatchPolicy;
   HistoricalCarrierSignatureConflictTrust? _signatureConflictTrust;
   final Set<DownloadId> _pendingHistoricalCarrierRevalidation = <DownloadId>{};
+  final Map<DownloadId, ({DownloadId storageId, int generation})>
+      _retainedHistoricalPresentationAuthorities =
+      <DownloadId, ({DownloadId storageId, int generation})>{};
   final LinkedHashMap<_ArtifactByteKey, Uint8List> _memory =
       LinkedHashMap<_ArtifactByteKey, Uint8List>();
   final LinkedHashMap<Object, Uint8List> _residentReplayPrefixes =
@@ -97,6 +100,7 @@ final class ArtifactCacheManager {
     _carrierMismatchPolicy = value;
     if (value != CachedCarrierMismatchPolicy.reuseThenRefresh) {
       _pendingHistoricalCarrierRevalidation.clear();
+      _retainedHistoricalPresentationAuthorities.clear();
     }
   }
 
@@ -119,15 +123,47 @@ final class ArtifactCacheManager {
     }
   }
 
-  void noteHistoricalCarrierServed(DownloadId id) {
-    if (_carrierMismatchPolicy == CachedCarrierMismatchPolicy.reuseThenRefresh &&
-        !requiresFreshSource(id)) {
-      _pendingHistoricalCarrierRevalidation.add(id);
+  void noteHistoricalCarrierServed(
+    DownloadId id, {
+    DownloadId? storageId,
+    int? generation,
+  }) {
+    if (_carrierMismatchPolicy != CachedCarrierMismatchPolicy.reuseThenRefresh ||
+        requiresFreshSource(id)) {
+      return;
     }
+    _pendingHistoricalCarrierRevalidation.add(id);
+    if (storageId != null && generation != null) {
+      _retainedHistoricalPresentationAuthorities[id] = (
+        storageId: storageId,
+        generation: generation,
+      );
+    }
+  }
+
+  /// Drops only presentation continuity for an already-admitted historical
+  /// carrier. This never changes cache routing, equivalence, durability, or
+  /// DownloadSession ownership.
+  void clearRetainedHistoricalPresentation(DownloadId id) {
+    _retainedHistoricalPresentationAuthorities.remove(id);
   }
 
   bool requiresFreshSource(DownloadId id) =>
       _freshSourceRecoveryGroups.containsKey(id);
+
+  /// Whether presentation may still redraw the exact historical generation
+  /// admitted before this fresh-source quarantine. This is never cache/source
+  /// selection authority.
+  bool hasRetainedHistoricalPresentation(DownloadId id) {
+    if (!requiresFreshSource(id)) return false;
+    final authority = _retainedHistoricalPresentationAuthorities[id];
+    if (authority == null) return false;
+    if (generationFor(authority.storageId) != authority.generation) {
+      _retainedHistoricalPresentationAuthorities.remove(id);
+      return false;
+    }
+    return true;
+  }
 
   /// Suppresses all cache-backed source selection for the supplied recovery
   /// identities until one member publishes a fresh exact durable artifact.
@@ -175,6 +211,7 @@ final class ArtifactCacheManager {
       if (_freshSourceRecoveryGroups[member] == group) {
         _freshSourceRecoveryGroups.remove(member);
       }
+      _retainedHistoricalPresentationAuthorities.remove(member);
     }
   }
 
@@ -509,6 +546,113 @@ final class ArtifactCacheManager {
     }
     return (physicalBackend as PhysicalArtifactCacheBackend)
         .invalidatePhysicalArtifact(id);
+  }
+
+  Future<ArtifactCacheLookup?> _retainedHistoricalPresentationLookup(
+    DownloadId id, {
+    TaskControl? control,
+  }) async {
+    if (!requiresFreshSource(id)) return null;
+    final authority = _retainedHistoricalPresentationAuthorities[id];
+    if (authority == null) return null;
+    final storageId = authority.storageId;
+    control?.throwIfCancelled();
+    await _awaitMutationBarrier(storageId, control);
+    if (generationFor(storageId) != authority.generation) {
+      if (_retainedHistoricalPresentationAuthorities[id] == authority) {
+        _retainedHistoricalPresentationAuthorities.remove(id);
+      }
+      return null;
+    }
+    final entry = await _awaitCancellable(
+      backend.openArtifactStream(storageId),
+      control,
+    );
+    control?.throwIfCancelled();
+    if (generationFor(storageId) != authority.generation ||
+        entry == null ||
+        entry.length <= 0) {
+      if (_retainedHistoricalPresentationAuthorities[id] == authority) {
+        _retainedHistoricalPresentationAuthorities.remove(id);
+      }
+      return null;
+    }
+    return ArtifactCacheLookup(
+      id: id,
+      storageId: storageId,
+      entry: entry,
+      tier: ArtifactCacheTier.persistent,
+      durable: true,
+      generation: authority.generation,
+    );
+  }
+
+  /// Reads only the exact historical storage generation that was already
+  /// admitted for stale presentation. This deliberately bypasses fresh-source
+  /// quarantine for presentation continuity only; it never performs candidate
+  /// search, equivalence resolution, or current-exact routing.
+  Future<ArtifactCacheRead?> readRetainedHistoricalPresentation(
+    DownloadId id, {
+    TaskControl? control,
+  }) async {
+    final lookup =
+        await _retainedHistoricalPresentationLookup(id, control: control);
+    if (lookup == null) return null;
+    try {
+      return await readForegroundLookup(lookup, control: control);
+    } on _StaleArtifactCacheLookup {
+      if (_retainedHistoricalPresentationAuthorities[id]?.storageId ==
+          lookup.storageId) {
+        _retainedHistoricalPresentationAuthorities.remove(id);
+      }
+      return null;
+    }
+  }
+
+  /// Opens a file/descriptor lease for only the retained historical
+  /// presentation generation. Source/cache routing remains quarantined.
+  Future<ArtifactCachePresentationFileRead?>
+      openRetainedHistoricalPresentationFile(
+    DownloadId id, {
+    TaskControl? control,
+  }) async {
+    final lookup =
+        await _retainedHistoricalPresentationLookup(id, control: control);
+    if (lookup == null) return null;
+    final opener = lookup.entry.openPresentationFile;
+    if (opener == null) return null;
+    final lease = await opener();
+    if (lease == null) return null;
+    var keep = false;
+    try {
+      control?.throwIfCancelled();
+      final authority = _retainedHistoricalPresentationAuthorities[id];
+      if (authority == null ||
+          authority.storageId != lookup.storageId ||
+          authority.generation != lookup.generation ||
+          generationFor(lookup.storageId) != lookup.generation ||
+          lease.length != lookup.entry.length ||
+          lease.path.isEmpty) {
+        return null;
+      }
+      keep = true;
+      return ArtifactCachePresentationFileRead(
+        path: lease.path,
+        length: lease.length,
+        width: lease.width,
+        height: lease.height,
+        cacheIdentity: (
+          _presentationFileCacheEpoch,
+          lookup.storageId.key,
+          lookup.generation,
+        ),
+        storageId: lookup.storageId,
+        generation: lookup.generation,
+        release: lease.release,
+      );
+    } finally {
+      if (!keep) await lease.release();
+    }
   }
 
   /// Opens a durable engine-readable file/descriptor lease without
@@ -846,6 +990,7 @@ final class ArtifactCacheManager {
       if (_freshSourceRecoveryGroups[member] == group) {
         _freshSourceRecoveryGroups.remove(member);
       }
+      _retainedHistoricalPresentationAuthorities.remove(member);
     }
   }
 
