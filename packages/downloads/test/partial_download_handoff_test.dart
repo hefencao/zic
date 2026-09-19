@@ -2107,6 +2107,106 @@ void main() {
     },
   );
 
+  test(
+    'trusted historical READY binds resident authority without session copy',
+    () async {
+      final durableRoot = await Directory.systemTemp.createTemp(
+        'historical-ready-resident-',
+      );
+      final hotRoot = await Directory.systemTemp.createTemp(
+        'historical-ready-hot-',
+      );
+      addTearDown(() async {
+        await durableRoot.delete(recursive: true);
+        await hotRoot.delete(recursive: true);
+      });
+      const content = ContentId(
+        sourceId: 'source',
+        comicId: 'comic',
+        chapterId: 'chapter',
+        pageId: 'page',
+      );
+      final historical = DownloadId(
+        content: content,
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('venera-resource:historical-ready'),
+      );
+      final current = DownloadId(
+        content: content,
+        sourceRevision: 'r1',
+        canonicalUri: Uri.parse('venera-resource:current-ready'),
+      );
+      final bytes = Uint8List.fromList(<int>[
+        ...'RIFF'.codeUnits,
+        0x80, 0x00, 0x00, 0x00,
+        ...'WEBP'.codeUnits,
+        ...'VP8X'.codeUnits,
+        10, 0, 0, 0,
+        0x02, 0, 0, 0,
+        0x7f, 0x02, 0,
+        0xaf, 0x04, 0,
+        ...List<int>.generate(1024, (index) => index & 0xff),
+      ]);
+      final store = await PersistentDownloadArtifactStore.open(durableRoot.path);
+      final cache = ArtifactCacheManager(
+        backend: store,
+        carrierMismatchPolicy: CachedCarrierMismatchPolicy.reuseThenRefresh,
+      );
+      await cache.storePromotedArtifact(id: historical, bytes: bytes);
+      final trace = MemoryTraceSink();
+      final handoff = PartialDownloadHandoff(
+        store: store,
+        physicalArtifactCache: cache,
+        readScheduler: ArtifactCacheReadScheduler(),
+        clock: SystemClock(),
+        traceSink: trace,
+      );
+      final hot = DownloadRegistry(
+        layout: CacheLayout(hotRoot.path),
+        clock: SystemClock(),
+      );
+      addTearDown(() async {
+        await handoff.close();
+        await hot.dispose();
+        await store.close();
+      });
+      final session = hot.get(current);
+
+      await handoff.restoreInto(session);
+
+      expect(session.state, DownloadState.promoted);
+      expect(session.residentBodyBacked, isTrue);
+      expect(session.residentIngressDeferred, isTrue);
+      expect(session.artifact.committedLength, 0,
+          reason: 'historical READY bytes must never be copied into hot Artifact');
+      expect(session.committedLength, bytes.lengthInBytes);
+      expect(session.sourceMetadataPrefixLength, 64);
+      expect(await cache.lookupAuthoritative(current), isNull,
+          reason: 'historical trust must not create an exact current binding');
+      expect(cache.directEquivalents(current), isEmpty,
+          reason: 'historical trust is not verified equivalence');
+      expect(cache.hasPendingHistoricalCarrierRevalidation(current), isTrue);
+      expect(
+        trace.events.any(
+          (event) =>
+              event.kind == TraceEventKind.artifactSource &&
+              event.payload['action'] == 'bound-historical-ready-authority' &&
+              event.payload['verifiedEquivalentReuse'] != true,
+        ),
+        isTrue,
+      );
+
+      final replay = session.residentReplayRangeChunks;
+      expect(replay, isNotNull);
+      final chunks = await replay!(64, 128);
+      final replayed = <int>[];
+      await for (final chunk in chunks) {
+        replayed.addAll(chunk);
+      }
+      expect(replayed, orderedEquals(bytes.sublist(64, 128)));
+    },
+  );
+
   test('sealed READY reader is re-leased without reopening the provider',
       () async {
     final root = await Directory.systemTemp.createTemp('ready-reader-pool-');

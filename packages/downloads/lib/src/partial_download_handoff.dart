@@ -185,7 +185,7 @@ final class PartialDownloadHandoff {
       control?.throwIfCancelled();
       if (physical != null) {
         final readyBindStartedAtMicros = clock?.nowMicros();
-        final boundReady = await _tryBindEquivalentReadyAuthority(
+        final boundReady = await _tryBindResidentReadyAuthority(
             session,
             _physicalArtifactEntry(physical),
             candidatesChecked: 0,
@@ -222,7 +222,7 @@ final class PartialDownloadHandoff {
             },
           );
           if (physical != null &&
-              await _tryBindEquivalentReadyAuthority(
+              await _tryBindResidentReadyAuthority(
                 session,
                 _physicalArtifactEntry(physical),
                 candidatesChecked: 0,
@@ -322,12 +322,46 @@ final class PartialDownloadHandoff {
           session.id,
           control: control,
         );
-    if (candidate == null || candidate.entry.length <= 0) return;
+    if (candidate == null) {
+      // Historical URI reuse is intentionally weaker than verified
+      // equivalence, but once the cache-trust policy admits one sealed READY
+      // carrier it is still an immutable local authority. Bind that authority
+      // directly instead of falling through to ArtifactCacheTransport, where
+      // DownloadJob would consume the whole body merely to promote a
+      // body-empty resident session and presentation would then reopen the
+      // same immutable bytes a second time.
+      //
+      // Keep this after exact/partial/verified-equivalent restore so an older
+      // URI can never displace stronger current-generation evidence. The
+      // transport path remains the correctness fallback when a resident range
+      // authority cannot be established here.
+      final historical = cache == null
+          ? null
+          : await cache.lookupHistoricalCarrier(
+              session.id,
+              control: control,
+            );
+      control?.throwIfCancelled();
+      if (historical != null &&
+          historical.lookup.durable &&
+          await _tryBindResidentReadyAuthority(
+            session,
+            _physicalArtifactEntry(historical.lookup.entry),
+            candidatesChecked: 0,
+            control: control,
+            historicalCarrier: true,
+          )) {
+        cache!.noteHistoricalCarrierServed(session.id);
+        return;
+      }
+      return;
+    }
+    if (candidate.entry.length <= 0) return;
     final entry = candidate.entry;
 
     if (candidate.equivalent &&
         entry.exactDurableFinal &&
-        await _tryBindEquivalentReadyAuthority(
+        await _tryBindResidentReadyAuthority(
           session,
           entry,
           candidatesChecked: candidate.candidatesChecked,
@@ -649,12 +683,13 @@ final class PartialDownloadHandoff {
     );
   }
 
-  Future<bool> _tryBindEquivalentReadyAuthority(
+  Future<bool> _tryBindResidentReadyAuthority(
     DownloadSession session,
     PartialDownloadEntry entry, {
     required int candidatesChecked,
     TaskControl? control,
     bool requireBoundReader = false,
+    bool historicalCarrier = false,
   }) async {
     final startedAtMicros = clock?.nowMicros();
     final totalLength = entry.totalLength ?? entry.length;
@@ -793,10 +828,12 @@ final class PartialDownloadHandoff {
     }
     _record(
       session,
-      action: 'bound-ready-authority',
+      action: historicalCarrier
+          ? 'bound-historical-ready-authority'
+          : 'bound-ready-authority',
       bytes: entry.length,
       startedAtMicros: startedAtMicros,
-      equivalent: true,
+      equivalent: !historicalCarrier,
       equivalentCandidatesChecked: candidatesChecked,
     );
     return true;
