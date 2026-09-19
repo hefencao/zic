@@ -33,6 +33,8 @@ if 'notifyListeners();' in report:
 
 for token in (
     'late final ValueNotifier<int> _verticalKeepAliveCenter;',
+    'static const int _verticalKeepAliveRecenterStepPages = 3;',
+    'void _scheduleVerticalKeepAliveRecenter()',
     'keepAliveCenter: _verticalKeepAliveCenter',
     '(widget.index - widget.keepAliveCenter.value).abs() <= 7',
     '_handleCurrentIndexChanged()',
@@ -43,6 +45,11 @@ for token in (
     require(view, token, 'Reader current/keepAlive/cadence boundary')
 if '(widget.index - controller.currentIndex).abs() <= 7' in view:
     raise SystemExit('dev.307 keepAlive still follows every current crossing')
+if '''if (_interaction == Interaction.idle &&
+          _verticalKeepAliveCenter.value != widget.controller.currentIndex) {
+        _verticalKeepAliveCenter.value = widget.controller.currentIndex;
+      }''' in view:
+    raise SystemExit('dev.307 idle keepAlive recenter regressed to one-frame jump')
 
 for token in (
     'created.currentIndexListenable.addListener(_handleReaderProgress)',

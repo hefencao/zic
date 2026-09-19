@@ -640,6 +640,102 @@ void main() {
   );
 
   testWidgets(
+    'vertical idle keepAlive recenter does not release the whole old window in one frame',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'bounded-keepalive-comic',
+        chapter: const Chapter(
+          chapterId: 'bounded-keepalive-chapter',
+          comicId: 'bounded-keepalive-comic',
+          title: 'bounded keepalive',
+          sequence: 0,
+          pageCount: 48,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          48,
+          (index) => PageAsset(
+            pageId: 'bounded-$index',
+            chapterId: 'bounded-keepalive-chapter',
+            index: index,
+            uri: Uri.parse('asset:///bounded-$index.png'),
+            width: 1000,
+            height: 1000,
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final clock = FakeClock();
+      final controller = ReaderController(
+        sessionId: 'reader-bounded-keepalive-test',
+        chapter: chapter,
+        initialPage: 20,
+        onObservation: (_) {},
+        clock: clock,
+      );
+      addTearDown(controller.dispose);
+      final trace = MemoryTraceSink();
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ReaderView(
+            controller: controller,
+            clock: clock,
+            traceSink: trace,
+            pageBuilder: (context, asset, reportFirstFrame) =>
+                const ColoredBox(color: Colors.black),
+          ),
+        ),
+      );
+      await tester.pump();
+      final list = find.byKey(
+        const ValueKey<String>('reader-vertical-list'),
+      );
+      final scrollable = find.descendant(
+        of: list,
+        matching: find.byType(Scrollable),
+      );
+      final state = tester.state<ScrollableState>(scrollable);
+      final mountedBeforeWarmupCollapse = trace.events
+          .where((event) => event.kind == TraceEventKind.pageHostMounted)
+          .length;
+      expect(mountedBeforeWarmupCollapse, greaterThanOrEqualTo(8));
+
+      state.position.jumpTo(state.position.pixels + 1);
+      await tester.pumpAndSettle();
+      final disposedBeforeJump = trace.events
+          .where((event) => event.kind == TraceEventKind.pageHostDisposed)
+          .length;
+
+      state.position.jumpTo(state.position.maxScrollExtent * 0.85);
+      var previousDisposed = disposedBeforeJump;
+      final disposedPerFrame = <int>[];
+      for (var frame = 0; frame < 12; frame++) {
+        await tester.pump();
+        final disposed = trace.events
+            .where((event) => event.kind == TraceEventKind.pageHostDisposed)
+            .length;
+        disposedPerFrame.add(disposed - previousDisposed);
+        previousDisposed = disposed;
+      }
+
+      expect(controller.currentIndex, greaterThan(30));
+      expect(
+        disposedPerFrame.fold<int>(0, (max, value) => value > max ? value : max),
+        lessThanOrEqualTo(3),
+        reason:
+            'idle keepAlive recenter must retire the old window over bounded frames',
+      );
+      expect(
+        previousDisposed - disposedBeforeJump,
+        greaterThanOrEqualTo(8),
+        reason: 'the regression must exercise a real old-window retirement',
+      );
+    },
+  );
+
+  testWidgets(
     'vertical current changes rebuild only page shells whose state changed',
     (tester) async {
       final chapter = ChapterManifest(

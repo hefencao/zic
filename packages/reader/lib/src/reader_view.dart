@@ -289,6 +289,8 @@ final class _ReaderViewState extends State<ReaderView>
   double? _verticalSceneMotionLastPixels;
   double? _verticalSceneMotionLastResidualPx;
   late final ValueNotifier<int> _verticalKeepAliveCenter;
+  bool _verticalKeepAliveRecenterScheduled = false;
+  static const int _verticalKeepAliveRecenterStepPages = 3;
   int? _lastVerticalLayoutPageIndex;
   double? _lastVerticalLayoutGlobalTop;
   double? _lastVerticalLayoutGlobalBottom;
@@ -989,6 +991,41 @@ final class _ReaderViewState extends State<ReaderView>
     _verticalCacheScreens = 2;
     _verticalInitialCompositionWarmupScheduled = false;
     _verticalInitialCompositionPrimed = false;
+  }
+
+  void _scheduleVerticalKeepAliveRecenter() {
+    if (_verticalKeepAliveRecenterScheduled ||
+        _interaction != Interaction.idle ||
+        widget.controller.direction != ReadingDirection.vertical) {
+      return;
+    }
+    final center = _verticalKeepAliveCenter.value;
+    final target = widget.controller.currentIndex;
+    if (center == target) {
+      return;
+    }
+    _verticalKeepAliveRecenterScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _verticalKeepAliveRecenterScheduled = false;
+      if (!mounted ||
+          _interaction != Interaction.idle ||
+          widget.controller.direction != ReadingDirection.vertical) {
+        return;
+      }
+      final currentCenter = _verticalKeepAliveCenter.value;
+      final currentTarget = widget.controller.currentIndex;
+      final delta = currentTarget - currentCenter;
+      if (delta == 0) {
+        return;
+      }
+      final boundedDelta = delta.clamp(
+        -_verticalKeepAliveRecenterStepPages,
+        _verticalKeepAliveRecenterStepPages,
+      );
+      _verticalKeepAliveCenter.value = currentCenter + boundedDelta;
+      _scheduleVerticalKeepAliveRecenter();
+    });
+    WidgetsBinding.instance.scheduleFrame();
   }
 
   void _scheduleVerticalInitialCompositionWarmup() {
@@ -2076,7 +2113,7 @@ final class _ReaderViewState extends State<ReaderView>
       _emitFromVerticalMetrics(notification.metrics, forceLayoutSnapshot: true);
       if (_interaction == Interaction.idle &&
           _verticalKeepAliveCenter.value != widget.controller.currentIndex) {
-        _verticalKeepAliveCenter.value = widget.controller.currentIndex;
+        _scheduleVerticalKeepAliveRecenter();
       }
       if (_verticalInitialCompositionPrimed && _verticalCacheScreens != 2) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
