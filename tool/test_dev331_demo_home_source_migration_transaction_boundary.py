@@ -32,7 +32,6 @@ for marker, label in (
     require(home, marker, label)
 
 for forbidden in (
-    "Future<void>? _sourceMigrationRecovery;",
     "SourceMigrationJournalStore",
     "runSourceMigrationJournal(",
     "VerifiedArtifactReusePlan.match(",
@@ -46,6 +45,16 @@ for forbidden in (
         )
 
 for marker, label in (
+    ("Future<void>? _sourceMigrationRecovery;", "composition-only recovery Future tail"),
+):
+    require(home, marker, label)
+
+for marker, label in (
+    ("Future<void> _recoverCommittedSourceMigrations() {", "recovery Future join adapter"),
+    ("final existing = _sourceMigrationRecovery;", "recovery current-tail lookup"),
+    ("if (existing != null) return existing;", "recovery single-flight join"),
+    ("_sourceMigrationTransaction.recoverCommitted()", "recovery transaction delegation"),
+    ("Future<void> _recoverCommittedSourceMigrationsOnce() async {", "private recovery continuation"),
     ("_sourceMigrationTransaction.resumeCommitted(migrationId)", "committed cleanup delegation"),
     ("_sourceMigrationTransaction.executeConfirmed(", "confirmed transaction delegation"),
     ("showSourceMigrationComparison(", "UI confirmation remains outside transaction"),

@@ -67,7 +67,20 @@ List<String> _sourceMigrationResultSummaryMessages(
     ];
 
 extension _DemoHomeSourceMigration on _DemoHomeState {
-  Future<void> _recoverCommittedSourceMigrations() async {
+  Future<void> _recoverCommittedSourceMigrations() {
+    final existing = _sourceMigrationRecovery;
+    if (existing != null) return existing;
+    late final Future<void> recovery;
+    recovery = _recoverCommittedSourceMigrationsOnce().whenComplete(() {
+      if (identical(_sourceMigrationRecovery, recovery)) {
+        _sourceMigrationRecovery = null;
+      }
+    });
+    _sourceMigrationRecovery = recovery;
+    return recovery;
+  }
+
+  Future<void> _recoverCommittedSourceMigrationsOnce() async {
     final changed = await _sourceMigrationTransaction.recoverCommitted();
     if (changed && mounted) {
       await _reloadLibrary();

@@ -197,6 +197,7 @@ final class _DemoHomeState extends State<DemoHome> {
   late final HomeSourceMigrationTransaction _sourceMigrationTransaction;
   late final HomeVersionReuseLifecycle _versionReuseLifecycle;
   Future<void>? _durableAdoption;
+  Future<void>? _sourceMigrationRecovery;
   ChapterDownloadTransferRuntimeProvider? _localReadBackendPrewarmTarget;
   bool _suppressLibrarySessionRebuild = false;
   bool _readerRouteOpen = false;
@@ -669,6 +670,14 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Future<void> _closeHomeComposition() async {
+    await _drainHomeCompositionTail(
+      _durableAdoption,
+      'durable service adoption',
+    );
+    await _drainHomeCompositionTail(
+      _sourceMigrationRecovery,
+      'source migration recovery',
+    );
     await _externalSources.close();
     try {
       await _librarySession.close();
@@ -681,6 +690,18 @@ final class _DemoHomeState extends State<DemoHome> {
     }
     _sourceResources.close();
     await _serviceCache.closeIfOwned();
+  }
+
+  Future<void> _drainHomeCompositionTail(
+    Future<void>? tail,
+    String label,
+  ) async {
+    if (tail == null) return;
+    try {
+      await tail;
+    } on Object catch (error) {
+      debugPrint('$label failed during Home teardown: $error');
+    }
   }
 
   BrowsableComicSource? _sourceForId(String sourceId) =>

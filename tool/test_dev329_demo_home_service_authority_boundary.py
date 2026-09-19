@@ -17,6 +17,7 @@ def require(body: str, marker: str, label: str) -> None:
 
 home = text("apps/app/lib/demo_home.dart")
 handoff = text("apps/app/lib/demo_home_service_handoff.dart")
+source_migration = text("apps/app/lib/demo_home_source_migration.dart")
 session = text("apps/app/lib/home_library_session.dart")
 service_cache = text("apps/app/lib/home_service_cache_binding.dart")
 settings = text("apps/app/lib/app_settings_screen.dart")
@@ -368,6 +369,14 @@ if '_librarySession.dispose();' in dispose_body:
     raise SystemExit('DemoHome State.dispose must not synchronously dispose a closing Home session')
 close_composition_body = home[close_composition_start:]
 for marker, label in (
+    ('Future<void>? _durableAdoption;', 'durable adoption composition tail'),
+    ('Future<void>? _sourceMigrationRecovery;', 'source migration recovery tail'),
+):
+    require(home, marker, label)
+for marker, label in (
+    ('await _drainHomeCompositionTail(\n      _durableAdoption,', 'durable adoption teardown drain'),
+    ('await _drainHomeCompositionTail(\n      _sourceMigrationRecovery,', 'source migration teardown drain'),
+    ('await _externalSources.close();', 'external lifecycle close after composition tails'),
     ('await _librarySession.close();', 'async session close'),
     ('_librarySession.dispose();', 'post-close notifier disposal'),
 ):
@@ -376,5 +385,24 @@ if close_composition_body.index('await _librarySession.close();') > close_compos
     '_librarySession.dispose();'
 ):
     raise SystemExit('Home session notifier disposal must follow async owner close')
+for earlier, later, label in (
+    ('_durableAdoption,', '_sourceMigrationRecovery,', 'durable adoption before migration recovery'),
+    ('_sourceMigrationRecovery,', 'await _externalSources.close();', 'composition recovery before external close'),
+    ('await _externalSources.close();', 'await _librarySession.close();', 'external lifecycle before session close'),
+    ('await _librarySession.close();', '_sourceResources.close();', 'session close before source-resource close'),
+    ('_sourceResources.close();', 'await _serviceCache.closeIfOwned();', 'source-resource close before cache close'),
+):
+    if close_composition_body.index(earlier) > close_composition_body.index(later):
+        raise SystemExit(f'Home composition teardown ordering regressed: {label}')
+
+for marker, label in (
+    ('Future<void> _recoverCommittedSourceMigrations() {', 'source migration recovery single-flight entry'),
+    ('final existing = _sourceMigrationRecovery;', 'source migration current tail lookup'),
+    ('if (existing != null) return existing;', 'source migration recovery join'),
+    ('_sourceMigrationRecovery = recovery;', 'source migration tail publication'),
+    ('if (identical(_sourceMigrationRecovery, recovery))', 'source migration exact tail cleanup'),
+    ('Future<void> _recoverCommittedSourceMigrationsOnce() async {', 'source migration private recovery continuation'),
+):
+    require(source_migration, marker, label)
 
 print("dev.329 DemoHome service authority boundary: OK")
