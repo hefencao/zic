@@ -364,6 +364,8 @@ class MainActivity : FlutterActivity() {
                         .fold({ true to it }, { false to safBridgeFailure(it) })
                     "presentationClose" -> runCatching { safClose(call) }
                         .fold({ true to null }, { false to safBridgeFailure(it) })
+                    "presentationCloseMany" -> runCatching { presentationCloseMany(call) }
+                        .fold({ true to null }, { false to safBridgeFailure(it) })
                     "safDelete" -> runCatching { withSafNamespaceWrite { safDelete(call) } }
                         .fold({ true to it }, { false to safBridgeFailure(it) })
                     "safRename" -> runCatching { withSafNamespaceWrite { safRename(call) } }
@@ -959,6 +961,20 @@ class MainActivity : FlutterActivity() {
     private fun safClose(call: MethodCall) {
         val handle = call.argument<Number>("handle")?.toInt() ?: return
         safDescriptors.remove(handle)?.close()
+    }
+
+    private fun presentationCloseMany(call: MethodCall) {
+        val handles = call.argument<List<Number>>("handles") ?: return
+        var firstFailure: Throwable? = null
+        for (value in handles) {
+            val descriptor = safDescriptors.remove(value.toInt()) ?: continue
+            try {
+                descriptor.close()
+            } catch (error: Throwable) {
+                if (firstFailure == null) firstFailure = error
+            }
+        }
+        firstFailure?.let { throw it }
     }
 
     private fun safDelete(call: MethodCall): Boolean {

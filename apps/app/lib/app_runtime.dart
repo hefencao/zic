@@ -1178,7 +1178,7 @@ final class _AndroidArtifactPresentationFileLeaseFactory
   const _AndroidArtifactPresentationFileLeaseFactory();
 
   static const int _metadataProbeBytes = 64 * 1024;
-  static const AndroidArtifactPresentationFileBridge _bridge =
+  static final AndroidArtifactPresentationFileBridge _bridge =
       AndroidArtifactPresentationFileBridge();
 
   @override

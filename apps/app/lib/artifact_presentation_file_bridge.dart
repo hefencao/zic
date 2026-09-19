@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
@@ -20,10 +22,14 @@ final class AndroidArtifactPresentationFileHandle {
 /// Flutter's engine codec may open/reopen it. Body bytes never cross the
 /// MethodChannel.
 final class AndroidArtifactPresentationFileBridge {
-  const AndroidArtifactPresentationFileBridge({MethodChannel? channel})
+  AndroidArtifactPresentationFileBridge({MethodChannel? channel})
       : _channel = channel ?? const MethodChannel(artifactPresentationFileChannelName);
 
   final MethodChannel _channel;
+  final Set<int> _pendingCloseHandles = <int>{};
+  final Map<int, List<Completer<void>>> _pendingCloseWaiters =
+      <int, List<Completer<void>>>{};
+  bool _closeFlushScheduled = false;
 
   static bool get isSupported =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
@@ -71,17 +77,51 @@ final class AndroidArtifactPresentationFileBridge {
     }
   }
 
-  Future<void> close(int handle) async {
-    if (!isSupported) return;
+  Future<void> close(int handle) {
+    if (!isSupported) return Future<void>.value();
+    final waiter = Completer<void>();
+    _pendingCloseHandles.add(handle);
+    (_pendingCloseWaiters[handle] ??= <Completer<void>>[]).add(waiter);
+    if (!_closeFlushScheduled) {
+      _closeFlushScheduled = true;
+      scheduleMicrotask(() => _flushCloses(_channel));
+    }
+    return waiter.future;
+  }
+
+  Future<void> _flushCloses(MethodChannel channel) async {
+    _closeFlushScheduled = false;
+    if (_pendingCloseHandles.isEmpty) return;
+    final handles = _pendingCloseHandles.toList(growable: false);
+    _pendingCloseHandles.removeAll(handles);
+    Object? failure;
     try {
-      await _channel.invokeMethod<void>(
-        'presentationClose',
-        <String, Object?>{'handle': handle},
+      await channel.invokeMethod<void>(
+        'presentationCloseMany',
+        <String, Object?>{'handles': handles},
       );
     } on MissingPluginException {
       // The process/plugin is already gone; the OS owns descriptor cleanup.
     } on PlatformException catch (error) {
-      if (error.code != 'saf-io-failure') rethrow;
+      if (error.code != 'saf-io-failure') failure = error;
+    } on Object catch (error) {
+      failure = error;
+    } finally {
+      for (final handle in handles) {
+        final waiters = _pendingCloseWaiters.remove(handle);
+        if (waiters == null) continue;
+        for (final waiter in waiters) {
+          if (failure == null) {
+            waiter.complete();
+          } else {
+            waiter.completeError(failure);
+          }
+        }
+      }
+      if (_pendingCloseHandles.isNotEmpty && !_closeFlushScheduled) {
+        _closeFlushScheduled = true;
+        scheduleMicrotask(() => _flushCloses(channel));
+      }
     }
   }
 }
