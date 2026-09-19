@@ -353,6 +353,9 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<void>? _libraryReload;
   Future<void>? _downloadProjectionRefresh;
   ChapterDownloadService? _downloadProjectionRefreshService;
+  Future<void>? _downloadCacheProjectionRefresh;
+  ChapterDownloadService? _downloadCacheProjectionRefreshService;
+  var _downloadManagementProjectionEpoch = 0;
 
   List<ImportedLibraryEntry> _entries = const <ImportedLibraryEntry>[];
   final Map<String, ImportedLibraryEntry> _versionAuthorityHydratedEntries =
@@ -2835,6 +2838,48 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
   }
 
+  Future<void> refreshDownloadCacheProjection(
+    Iterable<ImportedLibraryEntry> entries,
+  ) {
+    final service = chapterDownloads;
+    final fullRefresh = _downloadProjectionRefresh;
+    if (fullRefresh != null &&
+        identical(service, _downloadProjectionRefreshService)) {
+      return fullRefresh;
+    }
+    final reader = service is ChapterCacheManagementProjectionReader
+        ? service as ChapterCacheManagementProjectionReader
+        : null;
+    if (reader == null) {
+      return refreshDownloadSnapshots(entries);
+    }
+    final existing = _downloadCacheProjectionRefresh;
+    if (existing != null &&
+        identical(service, _downloadCacheProjectionRefreshService)) {
+      return existing;
+    }
+    final requested = entries.toList(growable: false);
+    final projectionEpoch = _downloadManagementProjectionEpoch;
+    late final Future<void> refresh;
+    refresh = reader.inspectCacheManagement(requested).then<void>((projection) {
+      if (_closed ||
+          !identical(service, chapterDownloads) ||
+          projectionEpoch != _downloadManagementProjectionEpoch) {
+        return;
+      }
+      _downloadCacheProjection = projection;
+      _downloadProjectionChanges.notifyListeners();
+    }).whenComplete(() {
+      if (identical(_downloadCacheProjectionRefresh, refresh)) {
+        _downloadCacheProjectionRefresh = null;
+        _downloadCacheProjectionRefreshService = null;
+      }
+    });
+    _downloadCacheProjectionRefreshService = service;
+    _downloadCacheProjectionRefresh = refresh;
+    return refresh;
+  }
+
   Future<void> refreshDownloadSnapshots(
     Iterable<ImportedLibraryEntry> entries,
   ) {
@@ -2845,6 +2890,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       return existing;
     }
     final requested = entries.toList(growable: false);
+    _downloadManagementProjectionEpoch++;
     late final Future<void> refresh;
     refresh = _refreshDownloadSnapshotsOnce(service, requested).whenComplete(
       () {

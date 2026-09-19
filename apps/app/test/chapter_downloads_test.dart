@@ -952,7 +952,8 @@ void main() {
         snapshots: snapshots,
         wholeComicSnapshot: queue.snapshot,
       );
-      var refreshCalls = 0;
+      var fullRefreshCalls = 0;
+      var cacheRefreshCalls = 0;
       final releaseRefresh = Completer<void>();
 
       await tester.pumpWidget(
@@ -965,7 +966,10 @@ void main() {
             projectionChanges: projectionChanges,
             readProjection: () => projection,
             refreshProjection: () async {
-              refreshCalls++;
+              fullRefreshCalls++;
+            },
+            refreshCacheProjection: () async {
+              cacheRefreshCalls++;
               await releaseRefresh.future;
               projection = DownloadManagerProjection(
                 entries: projection.entries,
@@ -983,7 +987,8 @@ void main() {
       );
       await tester.pump();
 
-      expect(refreshCalls, 0);
+      expect(fullRefreshCalls, 0);
+      expect(cacheRefreshCalls, 0);
       await tester.tap(find.byKey(downloadManagerTabCacheKey));
       await tester.pump();
       expect(find.text('正在读取 Canonical 缓存…'), findsOneWidget);
@@ -994,7 +999,8 @@ void main() {
         );
       }
 
-      expect(refreshCalls, 1);
+      expect(fullRefreshCalls, 0);
+      expect(cacheRefreshCalls, 1);
       releaseRefresh.complete();
       await tester.pump();
       await tester.pump();

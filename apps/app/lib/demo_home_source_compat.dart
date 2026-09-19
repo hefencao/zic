@@ -834,6 +834,8 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
           readProjection: readProjection,
           refreshProjection: () =>
               _librarySession.refreshDownloadSnapshots(_libraryEntries),
+          refreshCacheProjection: () =>
+              _librarySession.refreshDownloadCacheProjection(_libraryEntries),
           resolveServices: () async {
             await _serviceHandoff?.ensureCoreServices?.call();
             await _adoptDurableServices();

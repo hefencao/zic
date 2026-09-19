@@ -314,6 +314,17 @@ abstract interface class ChapterDownloadManagementProjectionReader {
   );
 }
 
+/// Narrow read capability for the cache-management surface.
+///
+/// This intentionally excludes per-chapter [ChapterDownloadSnapshot] rebuilds.
+/// A caller that only needs physical Canonical/Exact cache inventory must not
+/// pay the all-page download-progress projection cost.
+abstract interface class ChapterCacheManagementProjectionReader {
+  Future<ChapterCacheManagementProjection> inspectCacheManagement(
+    Iterable<ImportedLibraryEntry> knownEntries,
+  );
+}
+
 /// Lightweight invalidation for durable download-management state.
 ///
 /// This is intentionally not a progress stream. Reader auto-cache and other

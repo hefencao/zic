@@ -4,6 +4,7 @@ final class PersistentChapterDownloadService
     implements
         ManagedChapterDownloadService,
         ChapterDownloadManagementProjectionReader,
+        ChapterCacheManagementProjectionReader,
         ChapterDownloadManagementChangeSource,
         ArtifactCacheMaintenance,
         ArtifactCacheBackend,
@@ -1452,6 +1453,60 @@ final class PersistentChapterDownloadService
       indexed,
       physicalState: physicalState,
     );
+  }
+
+  @override
+  Future<ChapterCacheManagementProjection> inspectCacheManagement(
+    Iterable<ImportedLibraryEntry> knownEntries,
+  ) async {
+    _requireOpen();
+    final startedUs = _traceClock.nowMicros();
+    final known = knownEntries.toList(growable: false);
+    final indexedStartedUs = _traceClock.nowMicros();
+    final indexed = await artifactStore.indexedRecords();
+    final indexedUs = _traceClock.nowMicros() - indexedStartedUs;
+    final physicalStartedUs = _traceClock.nowMicros();
+    final physicalState = await _loadManagementPhysicalState();
+    final physicalUs = _traceClock.nowMicros() - physicalStartedUs;
+    final orphanStartedUs = _traceClock.nowMicros();
+    final orphaned = _discoverOrphanedEntriesFromRecords(
+      known,
+      indexed,
+      compactEntriesAreKnown: true,
+    );
+    final orphanUs = _traceClock.nowMicros() - orphanStartedUs;
+    final visibleEntries = <ImportedLibraryEntry>[...known, ...orphaned];
+    final cacheStartedUs = _traceClock.nowMicros();
+    final cache = _buildCacheManagementProjection(
+      visibleEntries,
+      indexed,
+      physicalState,
+    );
+    final cacheProjectionUs = _traceClock.nowMicros() - cacheStartedUs;
+    _recordCommandTrace(
+      'download-management',
+      'cache-management-projection-built',
+      <String, Object?>{
+        'knownEntries': known.length,
+        'orphanedEntries': orphaned.length,
+        'indexedRecords': indexed.length,
+        'physicalArtifacts': physicalState.artifacts.length,
+        'physicalPartials': physicalState.partials.length,
+        'canonicalProjections': physicalState.projections.length,
+        'canonicalRows': cache.canonical.length,
+        'exactRows': cache.exact.length,
+        'visiblePages': visibleEntries.fold<int>(
+          0,
+          (total, entry) => total + entry.chapter.pages.length,
+        ),
+        'indexedUs': indexedUs,
+        'physicalUs': physicalUs,
+        'orphanUs': orphanUs,
+        'cacheProjectionUs': cacheProjectionUs,
+        'totalUs': _traceClock.nowMicros() - startedUs,
+      },
+    );
+    return cache;
   }
 
   @override

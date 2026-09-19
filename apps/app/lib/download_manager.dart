@@ -207,6 +207,7 @@ final class DownloadManagerScreen extends StatefulWidget {
     this.projectionChanges,
     this.readProjection,
     this.refreshProjection,
+    this.refreshCacheProjection,
     this.traceSink = const NoopTraceSink(),
     this.versionBaselines = ComicVersionBaselineProjection.empty,
     super.key,
@@ -228,6 +229,7 @@ final class DownloadManagerScreen extends StatefulWidget {
   final Listenable? projectionChanges;
   final DownloadManagerProjection Function()? readProjection;
   final Future<void> Function()? refreshProjection;
+  final Future<void> Function()? refreshCacheProjection;
   final ComicVersionBaselineProjection versionBaselines;
 
   @override
@@ -591,7 +593,10 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     }
   }
 
-  bool get _expectsPhysicalCacheProjection => widget.refreshProjection != null;
+  bool get _expectsPhysicalCacheProjection =>
+      widget.refreshCacheProjection != null ||
+      widget.refreshProjection != null ||
+      _downloads is ChapterCacheManagementProjectionReader;
 
   Future<void> _ensureAutoCacheProjection() async {
     if (_cacheProjection != null || !_expectsPhysicalCacheProjection) return;
@@ -603,6 +608,44 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
           !_expectsPhysicalCacheProjection) {
         return;
       }
+
+      final refreshCacheProjection = widget.refreshCacheProjection;
+      if (refreshCacheProjection != null) {
+        final startedAt = _traceClock.nowMicros();
+        await refreshCacheProjection();
+        if (!mounted) return;
+        _handleProjectionChanged();
+        await _refreshCacheUsageForCurrentCoordinator();
+        _recordTrace(
+          'canonical-cache-projection-hydrated',
+          payload: <String, Object?>{
+            'durationUs': _traceClock.nowMicros() - startedAt,
+          },
+        );
+        return;
+      }
+
+      final cacheReader = _downloads is ChapterCacheManagementProjectionReader
+          ? _downloads as ChapterCacheManagementProjectionReader
+          : null;
+      if (cacheReader != null) {
+        final startedAt = _traceClock.nowMicros();
+        final projection =
+            await cacheReader.inspectCacheManagement(_entries.values);
+        if (!mounted) return;
+        setState(() => _cacheProjection = projection);
+        await _refreshCacheUsageForCurrentCoordinator();
+        _recordTrace(
+          'canonical-cache-projection-hydrated',
+          payload: <String, Object?>{
+            'durationUs': _traceClock.nowMicros() - startedAt,
+          },
+        );
+        return;
+      }
+
+      // Compatibility for management readers without the narrow cache-only
+      // capability. The full refresh also owns the cache-usage refresh.
       await _refreshManagementProjection();
     } on Object catch (error) {
       _recordTrace(
@@ -1483,9 +1526,10 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
           final selected = DownloadManagerTab.values[index];
           setState(() => _selectedTab = selected);
           if (selected == DownloadManagerTab.autoCache) {
-            unawaited(_refreshCacheUsage());
-            if (_cacheProjection == null) {
+            if (_cacheProjection == null && _expectsPhysicalCacheProjection) {
               unawaited(_ensureAutoCacheProjection());
+            } else {
+              unawaited(_refreshCacheUsage());
             }
           }
         },

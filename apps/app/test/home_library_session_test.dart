@@ -4359,6 +4359,136 @@ void main() {
     expect(library.getManyCalls, 1);
     expect(library.getCalls, 0);
   });
+
+  test(
+    'full download management refresh fences an older cache-only publication',
+    () async {
+      final downloads = _ProjectionRaceChapterDownloads();
+      final queue = WholeComicDownloadQueue(downloads: downloads);
+      final session = HomeLibrarySession(
+        library: MemoryImportedLibraryStore(),
+        chapterDownloads: downloads,
+        wholeComicDownloads: queue,
+        sources: const <BrowsableComicSource>[],
+        ownsLibrary: true,
+        ownsChapterDownloads: true,
+        ownsWholeComicDownloads: true,
+      );
+      addTearDown(() async {
+        if (!downloads.cacheRelease.isCompleted) {
+          downloads.cacheRelease.complete();
+        }
+        await session.close();
+        session.dispose();
+      });
+      await session.ready;
+
+      final staleRefresh = session.refreshDownloadCacheProjection(
+        const <ImportedLibraryEntry>[],
+      );
+      await downloads.cacheStarted.future;
+
+      await session.refreshDownloadSnapshots(
+        const <ImportedLibraryEntry>[],
+      );
+      expect(
+        session.downloadCacheProjection?.exact.single.title,
+        'authoritative-full',
+      );
+
+      downloads.cacheRelease.complete();
+      await staleRefresh;
+
+      expect(
+        session.downloadCacheProjection?.exact.single.title,
+        'authoritative-full',
+      );
+    },
+  );
+}
+
+
+final class _ProjectionRaceChapterDownloads
+    implements
+        ChapterDownloadService,
+        ChapterDownloadManagementProjectionReader,
+        ChapterCacheManagementProjectionReader {
+  final StreamController<ChapterDownloadSnapshot> _changes =
+      StreamController<ChapterDownloadSnapshot>.broadcast();
+  final Completer<void> cacheStarted = Completer<void>();
+  final Completer<void> cacheRelease = Completer<void>();
+
+  ChapterCacheManagementProjection get _staleCache =>
+      ChapterCacheManagementProjection(
+        canonical: const <CanonicalChapterCacheSnapshot>[],
+        exact: const <ExactChapterCacheSnapshot>[
+          ExactChapterCacheSnapshot(
+            sourceId: 'source',
+            comicId: 'comic',
+            comicTitle: 'comic',
+            chapterId: 'chapter',
+            sourceRevision: 'r1',
+            title: 'stale-cache-only',
+            readyPages: 1,
+            partialPages: 0,
+            receivedBytes: 1,
+          ),
+        ],
+      );
+
+  ChapterCacheManagementProjection get _authoritativeCache =>
+      ChapterCacheManagementProjection(
+        canonical: const <CanonicalChapterCacheSnapshot>[],
+        exact: const <ExactChapterCacheSnapshot>[
+          ExactChapterCacheSnapshot(
+            sourceId: 'source',
+            comicId: 'comic',
+            comicTitle: 'comic',
+            chapterId: 'chapter',
+            sourceRevision: 'r1',
+            title: 'authoritative-full',
+            readyPages: 1,
+            partialPages: 0,
+            receivedBytes: 1,
+          ),
+        ],
+      );
+
+  @override
+  Stream<ChapterDownloadSnapshot> get changes => _changes.stream;
+
+  @override
+  Future<ChapterCacheManagementProjection> inspectCacheManagement(
+    Iterable<ImportedLibraryEntry> knownEntries,
+  ) async {
+    if (!cacheStarted.isCompleted) {
+      cacheStarted.complete();
+    }
+    await cacheRelease.future;
+    return _staleCache;
+  }
+
+  @override
+  Future<ChapterDownloadManagementProjection> inspectDownloadManagement(
+    Iterable<ImportedLibraryEntry> knownEntries,
+  ) async =>
+      ChapterDownloadManagementProjection(
+        orphanedEntries: const <ImportedLibraryEntry>[],
+        snapshots: const <ChapterDownloadSnapshot>[],
+        cache: _authoritativeCache,
+      );
+
+  @override
+  void updateVersionBaselines(List<ComicVersionRelation> relations) {}
+
+  @override
+  void updateCacheVersionRelations(List<ComicVersionRelation> relations) {}
+
+  @override
+  Future<void> close() => _changes.close();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 

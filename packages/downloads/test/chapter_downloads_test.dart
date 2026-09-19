@@ -6345,6 +6345,35 @@ void main() {
     expect(exact.partialPages, 0);
     expect(exact.receivedBytes, gapBytes.length);
 
+    final cacheOnly = await service.inspectCacheManagement(
+      <ImportedLibraryEntry>[old, current],
+    );
+    expect(cacheOnly.canonical, hasLength(1));
+    expect(cacheOnly.exact, hasLength(1));
+    expect(cacheOnly.canonical.single.familyId, canonical.familyId);
+    expect(
+      cacheOnly.canonical.single.canonicalChapterId,
+      canonical.canonicalChapterId,
+    );
+    expect(cacheOnly.canonical.single.readyPages, canonical.readyPages);
+    expect(cacheOnly.canonical.single.partialPages, canonical.partialPages);
+    expect(
+      cacheOnly.canonical.single.receivedBytes,
+      canonical.receivedBytes,
+    );
+    expect(
+      cacheOnly.canonical.single.manualReferencedPages,
+      canonical.manualReferencedPages,
+    );
+    expect(
+      cacheOnly.canonical.single.memberChapterIdentities,
+      canonical.memberChapterIdentities,
+    );
+    expect(cacheOnly.exact.single.identity, exact.identity);
+    expect(cacheOnly.exact.single.readyPages, exact.readyPages);
+    expect(cacheOnly.exact.single.partialPages, exact.partialPages);
+    expect(cacheOnly.exact.single.receivedBytes, exact.receivedBytes);
+
     final currentProjection =
         (await service.artifactStore.loadCanonicalMediaProjections()).firstWhere(
       (projection) => projection.comicId == currentManifest.comicId,
