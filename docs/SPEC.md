@@ -73,9 +73,9 @@ zic MUST 支持 Android 上的本地/远程漫画、LTR/RTL/纵向阅读、静�
 - “更新漫画” MUST 只显示当前已在书架且存在 source-confirmed update 的漫画。章节/目录变化 MUST 由 `SavedComicRecord.sourceUpdateAt` 表示；confirmed同源 successor/version MUST 由 `ComicVersionRelationStore` 的持久 relation及其首次 `discoveredAt` 表示，并由 `HomeLibrarySession` 投影供 Home/source browser 同步消费。版本 relation MUST NOT 通过写 `sourceUpdateAt` 来伪装成章节更新。presentation MUST 合并两个事实源排序；阅读进度、普通 metadata刷新、仅浏览/阅读记录 MUST NOT 推进它们。漫画源卡片 MAY 将 confirmed successor 投影为右上更新感叹号，点击时 MUST 可直接查看该 raw version；该提示不得把 successor伪装成已入书架。远程漫画缺少偏好记录时 MUST NOT 默认视为已加入书架；阅读历史 MUST 单独按 `ReadingProgress.updatedAt` 排序。
 
 ### 1.2 详情页与来源迁移
-
 - 详情页顶部控制栏 MUST 不重复显示漫画标题；漫画标题只在详情内容区显示。
 - 存在阅读进度时，详情页 MUST 提供可操作的“继续”药丸按钮；继续/阅读历史行 MUST 位于章节总数行上方，阅读历史 MUST 与按钮位于同一行并放在按钮之后，历史文字之前显示时钟图标。继续 MUST 通过既有`onOpenChapter` facade 打开保存的章节，不得等待无关的来源刷新。
+- 远程与本地详情页 MUST 共享同一章节状态语义。章节标题前 MUST NOT 再以带圈勾/空圈表示已读；source-confirmed 目录更新中新增加且尚未点击进入的 chapterId MUST 以标题前圆点表示，第一次点击进入即消费该 durable unseen 标记，首次建立目录 baseline MUST NOT 把全部章节标成新章节。真实 `ReadingProgress` 未到最后一页或倒数第二页时 MUST 保持正常亮度并显示“读到第 N 页”；到达最后/倒数第二页才自动进入已读弱化态并停止显示该进度文案。进入章节本身 MUST NOT 自动标记已读。显式右划“标记已读/恢复未读” MAY 覆盖自动完成态，但该 provenance MUST 与历史自动 read state 可区分。章节来源提供原始 `updatedAt` 时 MUST 优先显示来源更新时间；缺失时 MUST 显示当前持久投影可证明的本地导入/同步时间，不得用发布时间冒充更新时间。无标题的普通标签组 SHOULD 直接显示 chips，不得为了“标签”二字额外建立标题/展开父层。
 - 来源漫画第一次打开后即使已持久化为 SavedComic，后续再次打开 MUST 复用当前已持有的 comic route identity lock，不得在同一调用链嵌套申请相同 `sourceId + comicId` 锁而静默吞掉导航。
 - 详情页 SHOULD 同时提供通用“迁移漫画源”入口与同源版本快捷入口；来源提供 `ComicVersionSource` 时，同源候选 MUST 使用来源自己的版本关系（Venera/E-Hentai 使用详情页 `#gnd`），不得改为标题 browse 或要求浏览器页面权限；没有该能力时 MAY 回退到来源 browse 结果。入口展示不同原生 `comicId`，不得把当前版本再次列为迁移目标。来源确认的新版关系 MUST 可持久化，使后续打开新版时也能显示旧版；旧版和新版都可作为同源迁移目标。
 - 迁移面板 MUST 显示当前插件和当前来源，目标源 MAY 是当前来源或其他已启用来源。相同 `sourceId` 的确认版本 MUST 在同一面板提供直接“查看”和“迁移”；跨源标题搜索只负责发现候选，MUST NOT 建立同源关系。相同`sourceId` 下不同 `comicId` 是合法的同源版本迁移，适用于 URL/gallery locator 变化；目标漫画及章节身份 MUST 在任何持久写入前校验。

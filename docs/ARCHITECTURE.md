@@ -126,6 +126,7 @@ Home 的“更新漫画”投影只取已在书架且具有 source-confirmed upd
 `onOpenChapter` facade，按钮和阅读历史是两个独立的 UI 投影，并位于章节总数行上方；详情页不创建第二个阅读器或
 正文缓存。来源浏览、manifest/chapter 身份校验、状态迁移和 artifact 复用由
 `_DemoHomeSourceMigration` 组合 owner 完成。
+远程与本地详情共用同一章节 presentation：章节完成态优先由真实 `ReadingProgress` 与已知 pageCount 推导，到达最后一页或倒数第二页即视为已读并整体弱化，未完成进度保持正常亮度并显示“读到第 N 页”，进入章节本身不再写已读；用户右划的显式“标记已读/恢复未读”通过 `ChapterReadState.manualOverride` 保留为独立 durable override，因此旧版本“进入即已读”的普通 state 不得覆盖现存未完成 progress；来源目录新增加的 chapterId 由 `SavedComicRecord.unseenChapterIds` 持久投影为标题前圆点，第一次点击进入即消费，初次建立目录 baseline 不产生新章节圆点；来源若提供 chapter `updatedAt`，该时间随 `Chapter -> SavedChapterRecord/ImportedChapterRecord` 保留，详情优先显示 source timestamp，否则回退本地 imported/catalog sync 时间，compact Home snapshot 必须保留这些字段；无命名来源标签组直接渲染 chip Wrap，不建立仅用于显示“标签”标题的父层。
 
 同源版本关系只来自来源 `ComicVersionSource` 或已持久化的 `ComicVersionRelationStore`；Venera/E-Hentai按来源关系生成版本，
 不得用标题 `browse` 推断同源。通用“迁移漫画源”入口允许选择当前来源或其他已启用来源：跨源标题搜索只用于候选发现，
