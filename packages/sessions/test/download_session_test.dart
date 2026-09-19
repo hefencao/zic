@@ -555,6 +555,81 @@ void main() {
     await session.dispose();
   });
 
+  test('empty projection attached after reset inherits current physical epoch',
+      () async {
+    final session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/post-reset-attach/partial/page.webp',
+        finalPath: '${temp.path}/post-reset-attach/cache/page.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    await session.reset();
+    expect(session.epoch, isNot(const SourceEpoch(0)));
+
+    final projection = DownloadIngressProjection(
+      scopeId: 'reader-post-reset-projection',
+      ingress: Ingress(factory: _TestSourceFactory(), maxBytes: 1024),
+    );
+    session.attachIngressProjection(projection);
+    expect(projection.snapshot.epoch, session.epoch);
+
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1, 2, 3]);
+    expect(projection.snapshot.failure, isNull);
+    expect(projection.snapshot.length, 3);
+    await session.pause(writer);
+
+    projection.detach();
+    await session.dispose();
+  });
+
+  test('stale projection seal retires writer without failing physical body',
+      () async {
+    final session = DownloadSession(
+      id: _id(),
+      artifact: Artifact(
+        partialPath: '${temp.path}/stale-seal/partial/page.webp',
+        finalPath: '${temp.path}/stale-seal/cache/page.webp',
+      ),
+      clock: FakeMonoClock(),
+    );
+    await session.restore();
+    final projection = DownloadIngressProjection(
+      scopeId: 'reader-stale-seal',
+      ingress: Ingress(factory: _TestSourceFactory(), maxBytes: 1024),
+    );
+    session.attachIngressProjection(projection);
+    final writer = session.acquireWriter();
+    await session.append(writer, 0, <int>[1, 2, 3, 4]);
+
+    projection.reset(const SourceEpoch(1));
+    await expectLater(
+      session.seal(writer, expectedLength: 4),
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.staleEpoch,
+      )),
+    );
+
+    expect(session.state, DownloadState.idle);
+    expect(session.snapshot.failure, isNull);
+    expect(session.hasWriter, isFalse);
+    expect(session.artifact.state, ArtifactState.sealed);
+
+    await session.restore();
+    expect(session.state, DownloadState.idle);
+    expect(session.artifact.state, ArtifactState.partial);
+    expect(session.committedLength, 4);
+    expect(projection.snapshot.failure, isNull);
+    expect(projection.snapshot.epoch, session.epoch);
+
+    projection.detach();
+    await session.dispose();
+  });
+
   test('beginRun succeeds while attachSynchronizedIngressProjection is active', () async {
     final writer = session.acquireWriter();
     await session.append(writer, 0, <int>[1, 2, 3]);

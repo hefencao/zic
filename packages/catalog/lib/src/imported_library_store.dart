@@ -168,6 +168,15 @@ abstract interface class ImportedLibraryBatchLookup {
   );
 }
 
+/// Targeted mutable progress lookup independent from chapter/page authority.
+///
+/// A fully hydrated chapter may be cached for source/version authority, but
+/// that cache must not become the authority for the mutable Reader resume
+/// position. Implementations should include already-admitted checkpoints.
+abstract interface class ImportedLibraryProgressLookup {
+  Future<ReadingProgress?> getProgress(String sourceId, String chapterId);
+}
+
 abstract interface class ImportedLibraryStore {
   Future<void> open();
 
@@ -234,6 +243,7 @@ final class MemoryImportedLibraryStore
     implements
         ImportedLibraryStore,
         ImportedLibraryBatchLookup,
+        ImportedLibraryProgressLookup,
         ImportedLibraryBackupSnapshotStore,
         ComicVersionRelationStore,
         SourceMigrationJournalStore {
@@ -310,6 +320,15 @@ final class MemoryImportedLibraryStore
       chapter: chapter,
       progress: _progress[identity],
     );
+  }
+
+  @override
+  Future<ReadingProgress?> getProgress(
+    String sourceId,
+    String chapterId,
+  ) async {
+    _requireOpen();
+    return _progress[chapterLibraryIdentity(sourceId, chapterId)];
   }
 
   @override

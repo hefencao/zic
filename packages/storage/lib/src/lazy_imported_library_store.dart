@@ -16,6 +16,7 @@ final class LazyImportedLibraryStore
     implements
         ImportedLibraryStore,
         ImportedLibraryBatchLookup,
+        ImportedLibraryProgressLookup,
         ImportedLibraryBackupSnapshotStore,
         ReaderProgressCheckpointStore,
         ComicVersionRelationStore,
@@ -171,6 +172,23 @@ final class LazyImportedLibraryStore
     // semantics and may create an empty durable store on explicit access.
     final durable = await _ensureDurable();
     return durable.get(sourceId, chapterId);
+  }
+
+  @override
+  Future<ReadingProgress?> getProgress(
+    String sourceId,
+    String chapterId,
+  ) async {
+    await flushProgressCheckpoints();
+    final active = _active;
+    final ImportedLibraryProgressLookup? progressLookup =
+        active is ImportedLibraryProgressLookup
+            ? active as ImportedLibraryProgressLookup
+            : null;
+    if (progressLookup != null) {
+      return progressLookup.getProgress(sourceId, chapterId);
+    }
+    return (await get(sourceId, chapterId))?.progress;
   }
 
   @override

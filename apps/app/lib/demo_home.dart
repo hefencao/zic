@@ -475,7 +475,6 @@ final class _DemoHomeState extends State<DemoHome> {
         forceSourceRefresh: forceSourceRefresh,
       ),
       prepareVersionAuthority: _prepareReaderVersionAuthority,
-      markChapterRead: _markChapterReadForNavigation,
       trace: widget.debugTrace,
       monotonicMicros: () => _traceClock.nowMicros(),
     );
@@ -532,9 +531,11 @@ final class _DemoHomeState extends State<DemoHome> {
     );
     cache.updateHistoricalCarrierSignatureConflictTrust((sourceId) {
       final pluginId = _externalSources.ownerOfSource(sourceId);
-      return pluginId != null &&
-          widget.preferences
-              .trustConflictingHistoricalCarriersForPlugin(pluginId);
+      if (pluginId == null) {
+        return widget.preferences.trustConflictingHistoricalCarriersByDefault;
+      }
+      return widget.preferences
+          .trustConflictingHistoricalCarriersForPlugin(pluginId);
     });
   }
 
@@ -1063,13 +1064,32 @@ final class _DemoHomeState extends State<DemoHome> {
     final now = DateTime.now().toUtc();
     final updated = preference.copyWith(updatedAt: now);
     if (!previous.inShelf && updated.inShelf) {
+      final aliases = _canonicalComicAliases(
+        preference.sourceId,
+        preference.comicId,
+      );
+      final viewedChapterIds = <String>{
+        for (final entry in _libraryEntries)
+          if (entry.chapter.sourceId == preference.sourceId &&
+              aliases.contains(entry.chapter.comicId) &&
+              entry.progress != null)
+            entry.chapter.chapterId,
+      };
       for (final saved in _savedComicAliasesFor(
         preference.sourceId,
         preference.comicId,
       )) {
-        if (saved.sourceUpdateAt == null) continue;
+        final unseen = <String>{
+          ...saved.unseenChapterIds,
+          for (final chapter in saved.chapters)
+            if (!viewedChapterIds.contains(chapter.chapterId))
+              chapter.chapterId,
+        };
         await _librarySession.upsertSavedComic(
-          saved.copyWith(clearSourceUpdateAt: true),
+          saved.copyWith(
+            clearSourceUpdateAt: true,
+            unseenChapterIds: unseen,
+          ),
         );
       }
     }
@@ -1148,22 +1168,6 @@ final class _DemoHomeState extends State<DemoHome> {
     if (library is ReaderProgressCheckpointStore) {
       await (library as ReaderProgressCheckpointStore)
           .flushProgressCheckpoints();
-    }
-  }
-
-
-  Future<void> _markChapterReadForNavigation(
-    ImportedLibraryEntry entry,
-  ) async {
-    try {
-      await _setChapterRead(entry, true);
-    } on Object catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        copyableDiagnosticSnackBar('已进入 Reader，但已读状态保存失败：$error'),
-      );
     }
   }
 

@@ -184,21 +184,49 @@ void main() {
       expect(
         find.descendant(
           of: newTile,
-          matching: find.textContaining('读到第 2 页'),
+          matching: find.text('第2页'),
         ),
         findsOneWidget,
       );
       expect(
         find.descendant(
           of: newTile,
-          matching: find.textContaining('更新 2026-09-17 08:30'),
+          matching: find.text('09-17 08:30'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: newTile,
+          matching: find.byIcon(Icons.public_outlined),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: newTile,
+          matching: find.byIcon(Icons.history),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: newTile,
+          matching: find.text('5页'),
         ),
         findsOneWidget,
       );
       expect(
         find.descendant(
           of: syncTile,
-          matching: find.textContaining('同步 2026-09-18 10:30'),
+          matching: find.text('09-18 10:30'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: syncTile,
+          matching: find.byIcon(Icons.sync),
         ),
         findsOneWidget,
       );
@@ -257,7 +285,7 @@ void main() {
       expect(
         find.descendant(
           of: newTile,
-          matching: find.textContaining('读到第'),
+          matching: find.byIcon(Icons.history),
         ),
         findsNothing,
       );

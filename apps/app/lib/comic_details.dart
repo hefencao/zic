@@ -4217,20 +4217,9 @@ final class _ComicChapterList extends StatelessWidget {
       itemCount: chapters.length,
       itemBuilder: (context, index) {
         final chapter = chapters[index];
-        final progressLabel = chapter.isRead
+        final progressPage = chapter.isRead
             ? null
-            : _chapterProgressLabel(chapter.progress, chapter.pageCount);
-        final pageLabel =
-            chapter.pageCount > 0 ? '共 ${chapter.pageCount} 页' : '页数待加载';
-        final timestampLabel = _chapterTimestampLabel(
-          chapter.sourceUpdatedAt,
-          chapter.syncedAt,
-        );
-        final subtitle = <String>[
-          if (progressLabel != null) progressLabel,
-          pageLabel,
-          if (timestampLabel.isNotEmpty) timestampLabel,
-        ].join(' · ');
+            : _chapterProgressPage(chapter.progress, chapter.pageCount);
         final colorScheme = Theme.of(context).colorScheme;
         final readSwipeColor = chapter.isRead
             ? colorScheme.primaryContainer
@@ -4373,7 +4362,12 @@ final class _ComicChapterList extends StatelessWidget {
                   ),
                 ],
               ),
-              subtitle: Text(subtitle),
+              subtitle: _ChapterStatusLine(
+                sourceUpdatedAt: chapter.sourceUpdatedAt,
+                syncedAt: chapter.syncedAt,
+                pageCount: chapter.pageCount,
+                progressPage: progressPage,
+              ),
               onTap: chapter.opening
                   ? null
                   : () => unawaited(onOpen(chapter)),
@@ -5012,35 +5006,98 @@ bool _chapterIsRead({
   return false;
 }
 
-String? _chapterProgressLabel(
+int? _chapterProgressPage(
   ReadingProgress? progress,
   int pageCount,
 ) {
   if (progress == null || _progressCompletesChapter(progress, pageCount)) {
     return null;
   }
-  final page = pageCount > 0
+  return pageCount > 0
       ? (progress.pageIndex + 1).clamp(1, pageCount)
       : math.max(1, progress.pageIndex + 1);
-  return '读到第 $page 页';
 }
 
-String _chapterTimestampLabel(
-  DateTime? sourceUpdatedAt,
-  DateTime? syncedAt,
-) {
-  final source = sourceUpdatedAt?.toLocal();
-  if (source != null) {
-    return '更新 ${_formatChapterTimestamp(source)}';
-  }
-  final synced = syncedAt?.toLocal();
-  return synced == null ? '' : '同步 ${_formatChapterTimestamp(synced)}';
-}
-
-String _formatChapterTimestamp(DateTime value) {
+String _formatChapterCompactTimestamp(DateTime value) {
   String two(int n) => n.toString().padLeft(2, '0');
-  return '${value.year}-${two(value.month)}-${two(value.day)} '
+  return '${two(value.month)}-${two(value.day)} '
       '${two(value.hour)}:${two(value.minute)}';
+}
+
+final class _ChapterStatusLine extends StatelessWidget {
+  const _ChapterStatusLine({
+    required this.sourceUpdatedAt,
+    required this.syncedAt,
+    required this.pageCount,
+    required this.progressPage,
+  });
+
+  final DateTime? sourceUpdatedAt;
+  final DateTime? syncedAt;
+  final int pageCount;
+  final int? progressPage;
+
+  @override
+  Widget build(BuildContext context) {
+    final sourceTime = sourceUpdatedAt?.toLocal();
+    final syncTime = sourceTime == null ? syncedAt?.toLocal() : null;
+    final time = sourceTime ?? syncTime;
+    final pageLabel = pageCount > 0 ? '$pageCount页' : '待加载';
+    final progressLabel =
+        progressPage == null ? null : '第$progressPage页';
+    final semantics = <String>[
+      if (time != null)
+        '${sourceTime != null ? '来源' : '同步'} '
+            '${_formatChapterCompactTimestamp(time)}',
+      pageCount > 0 ? '总页数 $pageCount' : '页数待加载',
+      if (progressLabel != null) '阅读历史 $progressLabel',
+    ].join(' · ');
+    final style = Theme.of(context).textTheme.bodyMedium;
+    final iconColor = style?.color?.withValues(alpha: 0.72);
+
+    Widget separator() => const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 5),
+          child: Text('·'),
+        );
+
+    return Semantics(
+      label: semantics,
+      excludeSemantics: true,
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              if (time != null) ...<Widget>[
+                Icon(
+                  sourceTime != null ? Icons.public_outlined : Icons.sync,
+                  size: 14,
+                  color: iconColor,
+                ),
+                const SizedBox(width: 3),
+                Text(
+                  _formatChapterCompactTimestamp(time),
+                  maxLines: 1,
+                  softWrap: false,
+                ),
+                separator(),
+              ],
+              Text(pageLabel, maxLines: 1, softWrap: false),
+              if (progressLabel != null) ...<Widget>[
+                separator(),
+                Icon(Icons.history, size: 14, color: iconColor),
+                const SizedBox(width: 3),
+                Text(progressLabel, maxLines: 1, softWrap: false),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 int _compareChapterModels(

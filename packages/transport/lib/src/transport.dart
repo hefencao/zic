@@ -107,6 +107,16 @@ abstract interface class ByteResponseReadDiagnostics {
   Map<String, Object?> snapshot();
 }
 
+/// Generation-local range reopen capability for one immutable response body.
+///
+/// This is not an identity/equivalence claim. It lets a downstream resident
+/// body owner reopen the exact body generation that produced the response
+/// after the one-shot [ByteResponse.bytes] stream has been consumed.
+typedef ByteResponseImmutableRangeReplay = Future<Stream<List<int>>> Function(
+  int start,
+  int endExclusive,
+);
+
 final class ByteResponse {
   ByteResponse({
     required this.bytes,
@@ -118,6 +128,8 @@ final class ByteResponse {
     this.disposition = ByteResponseDisposition.staged,
     this.bodyAuthority = ByteResponseBodyAuthority.source,
     this.flowControl = ByteResponseFlowControl.none,
+    this.immutableRangeReplay,
+    this.immutableReplayAccessMode = 'unknown',
     Map<String, Object?> diagnostics = const <String, Object?>{},
     this.readDiagnostics,
     Future<void> Function()? onDiscard,
@@ -127,7 +139,11 @@ final class ByteResponse {
         _onDiscardControlled = onDiscardControlled,
         assert(statusCode >= 100),
         assert(rangeStart >= 0),
-        assert(totalLength == null || totalLength >= 0);
+        assert(totalLength == null || totalLength >= 0),
+        assert(
+          immutableRangeReplay == null ||
+              disposition == ByteResponseDisposition.durableImmutable,
+        );
 
   final Stream<List<int>> bytes;
   final int statusCode;
@@ -144,6 +160,15 @@ final class ByteResponse {
   /// [streamBackpressure] additionally preserves real upstream network
   /// backpressure.
   final ByteResponseFlowControl flowControl;
+
+  /// Optional replay of this exact immutable body generation after [bytes]
+  /// has been consumed. Callers must not reinterpret this as a persistent
+  /// alias between request identities.
+  final ByteResponseImmutableRangeReplay? immutableRangeReplay;
+
+  /// Non-sensitive storage/source access class used only for replay
+  /// scheduling diagnostics.
+  final String immutableReplayAccessMode;
 
   /// Transport-stage timing/route diagnostics for trace consumers.
   ///

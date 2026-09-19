@@ -293,7 +293,9 @@ final class ExternalPluginRuntimeSession
     if (runtimeError != null) {
       final verificationRequired =
           runtimeError.code == 'source-verification-required';
-      final runtimeCancelled = runtimeError.code == 'runtime-request-cancelled';
+      final runtimeCancelled =
+          runtimeError.code == 'runtime-request-cancelled' ||
+          runtimeError.code == 'cancelled';
       throw Failure(
         code: verificationRequired
             ? ErrorCode.sourceVerificationRequired

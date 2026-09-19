@@ -122,6 +122,41 @@ void main() {
     expect(await index.get(session.id.key), durableBinding);
   });
 
+  test('stale projection lifecycle never publishes a terminal media failure',
+      () async {
+    final session = createSession();
+    final projection = DownloadIngressProjection(
+      scopeId: 'stale-projection',
+      ingress: Ingress(factory: _CountingSourceFactory(), maxBytes: 1024),
+    );
+    session.attachIngressProjection(projection);
+    final transport = _GatedStagedTransport(<int>[1, 2, 3, 4]);
+    final run = DownloadJob(
+      transport: transport,
+      session: session,
+      publishAttemptFailures: false,
+    ).run();
+    await transport.opened.future;
+    // The response now belongs to the physical attempt. Move only the
+    // consumer projection generation before the body reaches live fan-out.
+    projection.reset(const SourceEpoch(1));
+    transport.release.complete();
+
+    await expectLater(
+      run,
+      throwsA(isA<Failure>().having(
+        (error) => error.code,
+        'code',
+        ErrorCode.staleEpoch,
+      )),
+    );
+
+    expect(session.state, DownloadState.idle);
+    expect(session.snapshot.failure, isNull);
+    expect(session.hasWriter, isFalse);
+    expect(session.committedLength, greaterThan(0));
+  });
+
   test('resumes a durable partial with matching validators', () async {
     final bytes = <int>[
       ...'RIFF'.codeUnits,
@@ -1498,6 +1533,15 @@ void main() {
     transport.releaseBody.complete();
     final result = await firstRun.timeout(const Duration(seconds: 2));
     expect(result.state, DownloadState.promoted);
+    expect(session.residentBodyBacked, isTrue);
+    expect(session.artifact.committedLength, 0);
+    final replay = session.residentReplayRangeChunks;
+    expect(replay, isNotNull);
+    final replayed = <int>[];
+    await for (final chunk in await replay!(1, 5)) {
+      replayed.addAll(chunk);
+    }
+    expect(replayed, bytes.sublist(1, 5));
     await lane.idle();
   });
 
@@ -1855,6 +1899,9 @@ final class _BlockingDurableArtifactTransport implements Transport {
       rangeSupported: true,
       disposition: ByteResponseDisposition.durableImmutable,
       bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+      immutableRangeReplay: (start, endExclusive) async =>
+          Stream<List<int>>.value(bytes.sublist(start, endExclusive)),
+      immutableReplayAccessMode: 'test-cache',
       validators: const Validators(etag: 'artifact-cache-v1'),
     );
   }
@@ -2088,6 +2135,36 @@ final class _SelfBoundedStalledBodyTransport
       rangeStart: 0,
       totalLength: 1,
       onDiscard: controller.close,
+    );
+  }
+}
+
+final class _GatedStagedTransport implements Transport {
+  _GatedStagedTransport(this.bytes);
+
+  final List<int> bytes;
+  final Completer<void> opened = Completer<void>();
+  final Completer<void> release = Completer<void>();
+
+  @override
+  Future<ByteResponse> open(
+    Uri uri, {
+    ByteRange? range,
+    Validators? validators,
+  }) async {
+    if (!opened.isCompleted) opened.complete();
+    Stream<List<int>> body() async* {
+      await release.future;
+      yield bytes;
+    }
+
+    return ByteResponse(
+      bytes: body(),
+      statusCode: HttpStatus.ok,
+      rangeStart: 0,
+      totalLength: bytes.length,
+      rangeSupported: true,
+      validators: const Validators(etag: 'stale-projection-v1'),
     );
   }
 }

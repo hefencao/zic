@@ -2015,6 +2015,19 @@ final class PipelineReaderSession {
       _artifactCachePresentationAuthorities.remove(id);
       return _readDirectImmutableSource(asset, id, session, token);
     }
+    if (session.residentBodyBacked) {
+      // A promoted resident-body session intentionally owns no duplicate
+      // writable Artifact body. This is the durable/historical-cache fast
+      // path used after provider URI churn: the immutable bytes stay behind
+      // the composition-owned resident replay capability while
+      // session.artifact remains empty by design.
+      //
+      // Presentation must therefore replay that resident authority directly.
+      // Falling through to readSessionArtifact(session.artifact) turns a
+      // healthy promoted cache hit into "artifact cache entry is empty" and
+      // incorrectly requires a user retry/source reload.
+      return _readResidentPresentationBody(asset, id, session, token);
+    }
     final artifactReadStarted = clock.nowMicros();
     final cacheRead = cache == null
         ? null
@@ -2050,6 +2063,70 @@ final class PipelineReaderSession {
       joined: cacheRead?.joined ?? false,
       integrityBasis: cacheRead?.integrityBasis.name ??
           ArtifactReadIntegrityBasis.sessionArtifact.name,
+    );
+    return bytes;
+  }
+
+  Future<Uint8List> _readResidentPresentationBody(
+    PageAsset asset,
+    DownloadId id,
+    DownloadSession session,
+    MediaLoadToken token,
+  ) async {
+    final expectedLength = session.committedLength;
+    if (expectedLength <= 0) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'resident presentation authority has no committed body',
+      );
+    }
+    final started = clock.nowMicros();
+    final control = _MediaLoadTaskControl(token);
+    final chunks = await _residentReplaySourceWithControl(
+      session,
+      expectedLength,
+      control: control,
+    );
+    final builder = BytesBuilder(copy: false);
+    var received = 0;
+    await for (final chunk in chunks) {
+      token.throwIfCancelled();
+      if (chunk.isEmpty) continue;
+      received += chunk.length;
+      if (received > expectedLength) {
+        throw Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'resident presentation replay exceeded '
+              '$expectedLength for ${id.key}',
+        );
+      }
+      builder.add(chunk);
+    }
+    token.throwIfCancelled();
+    final bytes = builder.takeBytes();
+    if (bytes.lengthInBytes != expectedLength) {
+      throw Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'resident presentation replay was short: '
+            '${bytes.lengthInBytes}/$expectedLength for ${id.key}',
+      );
+    }
+    _artifactCachePresentationAuthorities.remove(id);
+    _recordPresentationCacheRead(
+      asset: asset,
+      id: id,
+      bytes: bytes,
+      source: 'resident-body',
+      readMode: 'resident-replay',
+      readMicros: clock.nowMicros() - started,
+      memoryHit: false,
+      joined: false,
+      // The resident replay capability may be backed by a durable cache
+      // stream or an immutable source. Its owner currently exposes bytes and
+      // lifetime, not a unified integrity-proof enum, so do not mislabel it
+      // as a writable session Artifact read.
+      integrityBasis: ArtifactReadIntegrityBasis.unspecified.name,
+      sessionState: session.state.name,
     );
     return bytes;
   }

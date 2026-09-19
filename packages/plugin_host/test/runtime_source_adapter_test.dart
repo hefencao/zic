@@ -121,6 +121,31 @@ void main() {
     );
   });
 
+  test('maps worker cancellation to typed cancellation failure', () async {
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(),
+      connection: _CancelledFailureConnection(),
+      limits: const ExternalPluginRuntimeLimits(
+        maxResponseBytes: 4096,
+        maxConcurrentInvocations: 1,
+      ),
+    );
+    addTearDown(session.close);
+
+    await expectLater(
+      session.sources.single.browse(),
+      throwsA(
+        isA<Failure>()
+            .having((failure) => failure.code, 'code', ErrorCode.cancelled)
+            .having(
+              (failure) => failure.details['runtimeErrorCode'],
+              'runtime error code',
+              'cancelled',
+            ),
+      ),
+    );
+  });
+
   test('Venera source read replay is bounded and forces fresh runtime network',
       () async {
     final connection = _ReplayableSourceReadConnection();
@@ -1378,6 +1403,35 @@ final class _RetryableFailureConnection
           code: 'mihon-operation-failed',
           message: 'temporary network failure',
           retryable: true,
+        ),
+      );
+
+  @override
+  Future<void> close() async {}
+}
+
+final class _CancelledFailureConnection
+    implements ExternalPluginRuntimeConnection {
+  @override
+  List<ExternalPluginRuntimeSourceDescriptor> get sources =>
+      <ExternalPluginRuntimeSourceDescriptor>[
+        ExternalPluginRuntimeSourceDescriptor(
+          externalId: 'fixture',
+          name: 'Fixture',
+          language: 'en',
+          website: Uri.parse('https://example.invalid'),
+        ),
+      ];
+
+  @override
+  Future<ExternalPluginRuntimeResponse> invoke(
+    ExternalPluginRuntimeRequest request,
+  ) async =>
+      ExternalPluginRuntimeResponse.failure(
+        requestId: request.requestId,
+        error: ExternalPluginRuntimeError(
+          code: 'cancelled',
+          message: 'runtime request was cancelled',
         ),
       );
 

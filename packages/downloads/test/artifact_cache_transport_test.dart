@@ -1064,6 +1064,13 @@ void main() {
 
     expect(await _collect(response), <int>[4, 3, 2, 1]);
     expect(response.bodyAuthority, ByteResponseBodyAuthority.artifactCache);
+    final replay = response.immutableRangeReplay;
+    expect(replay, isNotNull);
+    expect(
+      await _collectStream(await replay!(1, 3)),
+      <int>[3, 2],
+      reason: 'resident replay must reopen the exact selected historical body',
+    );
     expect(fallback.opens, 0);
     expect(cache.values.containsKey(current), isFalse);
     expect(manager.directEquivalents(current), isEmpty);
@@ -1288,6 +1295,14 @@ DownloadId _downloadId(Uri uri, String pageId) => DownloadId(
 Future<List<int>> _collect(ByteResponse response) async {
   final bytes = <int>[];
   await for (final chunk in response.bytes) {
+    bytes.addAll(chunk);
+  }
+  return bytes;
+}
+
+Future<List<int>> _collectStream(Stream<List<int>> stream) async {
+  final bytes = <int>[];
+  await for (final chunk in stream) {
     bytes.addAll(chunk);
   }
   return bytes;

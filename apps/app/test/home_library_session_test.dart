@@ -4219,6 +4219,76 @@ void main() {
     );
   });
 
+  test('hydrated chapter cache never outranks newer store Reader progress',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    await library.open();
+    final manifest = _versionManifest(
+      comicId: 'progress-owner-comic',
+      chapterId: 'progress-owner-chapter',
+      revision: 'progress-owner-r1',
+      pageCount: 4,
+    );
+    final record = ImportedChapterRecord.remote(
+      comic: _versionComic(manifest.comicId),
+      manifest: manifest,
+    );
+    await library.upsertChapter(record);
+    final oldProgress = ReadingProgress(
+      sourceId: manifest.sourceId,
+      comicId: manifest.comicId,
+      chapterId: manifest.chapter.chapterId,
+      pageIndex: 1,
+      subPageOffset: 0,
+      readerMode: ReaderMode.paged,
+      updatedAt: DateTime.utc(2026, 9, 19, 1),
+    );
+    await library.saveProgress(oldProgress);
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: false,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await library.close();
+    });
+    await session.ready;
+
+    final first = await session.hydrateEntry(session.entries.single);
+    expect(first.progress?.pageIndex, 1);
+
+    final advanced = oldProgress.copyWith(
+      pageIndex: 3,
+      updatedAt: DateTime.utc(2026, 9, 19, 1, 1),
+    );
+    // Simulate the Reader checkpoint writer advancing durable progress before
+    // the route-local Home projection has been replaced.
+    await library.saveProgress(advanced);
+    expect(session.entries.single.progress?.pageIndex, 1);
+
+    final reopened = await session.hydrateEntry(session.entries.single);
+    expect(reopened.progress?.pageIndex, 3);
+    expect(reopened.chapter.pages, hasLength(4));
+    expect(
+      session.versionAuthorityEntry(
+        sourceId: manifest.sourceId,
+        comicId: manifest.comicId,
+        chapterId: manifest.chapter.chapterId,
+      )?.progress?.pageIndex,
+      3,
+    );
+  });
+
   test('chapter batch hydration uses one targeted store lookup', () async {
     final delegate = MemoryImportedLibraryStore();
     final library = _GatedLibraryStore(

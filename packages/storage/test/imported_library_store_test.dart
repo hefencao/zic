@@ -351,6 +351,62 @@ void main() {
     expect(persisted['pageIndex'], 1);
   });
 
+  test('targeted progress lookup flushes the latest Reader checkpoint',
+      () async {
+    final directory = await Directory.systemTemp.createTemp(
+      'zic-reader-progress-lookup-',
+    );
+    addTearDown(() async {
+      if (await directory.exists()) {
+        await directory.delete(recursive: true);
+      }
+    });
+    final store =
+        SqliteImportedLibraryStore('${directory.path}/library.sqlite3');
+    await store.open();
+    addTearDown(store.close);
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '${directory.path}/chapter',
+      displayName: 'Progress lookup',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: '001.png',
+          sourceId: 'file:///progress-lookup/001.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+        ImportedPageRecord(
+          displayName: '002.png',
+          sourceId: 'file:///progress-lookup/002.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await store.upsertChapter(chapter);
+    store.enqueueProgress(
+      ReadingProgress(
+        sourceId: chapter.sourceId,
+        comicId: chapter.comicId,
+        chapterId: chapter.chapterId,
+        pageIndex: 1,
+        subPageOffset: 0,
+        readerMode: ReaderMode.paged,
+        updatedAt: DateTime.utc(2026, 9, 19, 8),
+      ),
+    );
+
+    final lookup = store as ImportedLibraryProgressLookup;
+    final progress = await lookup.getProgress(
+      chapter.sourceId,
+      chapter.chapterId,
+    );
+    expect(progress?.pageIndex, 1);
+    expect(
+      (await store.get(chapter.sourceId, chapter.chapterId))?.progress?.pageIndex,
+      1,
+      reason: 'the targeted lookup is itself a Reader re-entry durability barrier',
+    );
+  });
+
   test('backup snapshot flushes the latest queued Reader checkpoint', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-library-backup-progress-',

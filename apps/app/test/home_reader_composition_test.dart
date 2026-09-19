@@ -16,7 +16,6 @@ void main() {
     var hydrateCalls = 0;
     var refreshCalls = 0;
     var authorityCalls = 0;
-    var readMarkerCalls = 0;
     final trace = _CollectingTraceSink();
     final gateway = ComicSourceResourceGateway(sourceForId: (_) => null);
     addTearDown(gateway.close);
@@ -37,9 +36,6 @@ void main() {
         authorityCalls++;
         return 0;
       },
-      markChapterRead: (candidate) async {
-        readMarkerCalls++;
-      },
       trace: trace,
       monotonicMicros: () => 1234,
     );
@@ -59,7 +55,6 @@ void main() {
     expect(hydrateCalls, 1);
     expect(refreshCalls, 0);
     expect(authorityCalls, 1);
-    expect(readMarkerCalls, 1);
     expect(trace.events, hasLength(1));
     expect(trace.events.single.payload['stage'], 'reader-prepare-complete');
     expect(trace.events.single.monotonicMicros, 1234);
@@ -89,7 +84,6 @@ void main() {
         return refreshed;
       },
       prepareVersionAuthority: (_) async => 2,
-      markChapterRead: (_) async {},
       trace: const NoopTraceSink(),
       monotonicMicros: () => 1,
     );
@@ -126,7 +120,6 @@ void main() {
       refreshRemoteEntry: (candidate, {required forceSourceRefresh}) async =>
           candidate,
       prepareVersionAuthority: (_) async => 0,
-      markChapterRead: (_) async {},
       trace: const NoopTraceSink(),
       monotonicMicros: () => 1,
     );

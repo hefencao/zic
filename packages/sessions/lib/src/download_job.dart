@@ -579,6 +579,8 @@ final class DownloadJob {
           totalLength: response.totalLength!,
           validatorRequestUri: _requestUri,
           bodyAuthority: response.bodyAuthority,
+          residentReplayRangeChunks: response.immutableRangeReplay,
+          residentReplayAccessMode: response.immutableReplayAccessMode,
         );
         while (true) {
           final available = await _moveNext(
@@ -908,7 +910,8 @@ final class DownloadJob {
     try {
       if (cancelled ||
           !publishAttemptFailures ||
-          (error is Failure && error.code == ErrorCode.cancelled)) {
+          (error is Failure && error.code == ErrorCode.cancelled) ||
+          _isStaleAttemptLifecycleFailure(error)) {
         // Scheduler/lifecycle cancellation and owner-managed attempt failure
         // end only this transport attempt. Preserve the authoritative partial
         // as resumable; the physical owner alone decides whether retries are
@@ -1630,6 +1633,12 @@ final class _OpenAttemptTaskControl
     if (!_aborted.isCompleted) _aborted.complete();
   }
 }
+
+bool _isStaleAttemptLifecycleFailure(Object error) =>
+    error is Failure &&
+    (error.code == ErrorCode.staleEpoch ||
+        error.code == ErrorCode.staleWriter ||
+        error.code == ErrorCode.staleRun);
 
 final class _ResponseReadGate {
   _ResponseReadGate({

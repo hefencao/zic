@@ -501,7 +501,27 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       } on Object catch (error) {
         debugPrint('reader post-pop progress flush failed: $error');
       }
-      final progress = latestProgress;
+      var progress = latestProgress;
+      final prepared = currentPrepared;
+      if (prepared != null) {
+        try {
+          final refreshed = await _librarySession.hydrateEntry(
+            prepared.entry,
+            awaitCanonicalPhysicalBackfill: false,
+          );
+          final persisted = refreshed.progress;
+          if (persisted != null &&
+              (progress == null ||
+                  persisted.updatedAt.isAfter(progress.updatedAt))) {
+            progress = persisted;
+          }
+        } on Object catch (error) {
+          // Route-local progress is still a valid fallback. This narrow
+          // post-pop refresh exists only to ensure the mutable durable
+          // progress owner immediately outranks a cached hydrated manifest.
+          debugPrint('reader post-pop progress refresh failed: $error');
+        }
+      }
       if (progress != null) {
         _librarySession.replaceProgress(progress);
       }

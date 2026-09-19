@@ -15,6 +15,62 @@ import 'package:transport/transport.dart';
 
 void main() {
   test(
+    'promoted resident cache body serves presentation without session artifact',
+    () async {
+      final uri = Uri.parse(
+        'https://example.invalid/provider-uri-churn-current.jpg',
+      );
+      final chapter = _chapter(uri: uri);
+      final asset = chapter.pages.single;
+      final id = readerPageDownloadId(chapter, asset);
+      final payload = Uint8List.fromList(<int>[
+        0xff,
+        0xd8,
+        0xff,
+        ...List<int>.generate(160, (index) => index & 0xff),
+        0xff,
+        0xd9,
+      ]);
+      final transferRuntime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: ArtifactCacheManager(backend: const _Backend()),
+        partialDownloadStore: null,
+        net: NetLane(maxActive: 1),
+      );
+      final session = transferRuntime.registry.get(id);
+      session.bindResidentImmutableAuthority(
+        validators: const Validators(etag: '"historical-ready"'),
+        totalLength: payload.lengthInBytes,
+        bodyAuthority: ByteResponseBodyAuthority.artifactCache,
+        metadataPrefix: payload.sublist(0, 64),
+        residentReplayRangeChunks: (start, endExclusive) async =>
+            Stream<List<int>>.value(payload.sublist(start, endExclusive)),
+        residentReplayAccessMode: 'direct',
+      );
+      expect(session.state, DownloadState.promoted);
+      expect(session.residentBodyBacked, isTrue);
+      expect(session.artifact.committedLength, 0);
+
+      final reader = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _FreshFactory(),
+        pageDownloadLane: NetLane(maxActive: 5),
+      ).withTransferRuntime(transferRuntime).create(
+        chapter: chapter,
+        sessionId: 'resident-presentation-body',
+      );
+      try {
+        expect(
+          await reader.loadBytes(asset, MediaLoadToken()),
+          payload,
+        );
+        expect(session.artifact.committedLength, 0);
+      } finally {
+        await reader.dispose().timeout(const Duration(seconds: 5));
+        await transferRuntime.dispose().timeout(const Duration(seconds: 5));
+      }
+    },
+  );
+
+  test(
     'encoded presentation file is a non-WebP durable capability',
     () async {
       final uri = Uri.parse('https://example.invalid/presentation-file.jpg');

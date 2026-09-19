@@ -1096,7 +1096,7 @@ void main() {
     expect(
       find.descendant(
         of: chapterRow,
-        matching: find.textContaining('更新 2026-09-17 08:30'),
+        matching: find.text('09-17 08:30'),
       ),
       findsOneWidget,
     );
@@ -1872,11 +1872,11 @@ void main() {
     );
     await _pumpUntilFound(tester, chapterTile);
     expect(
-      find.descendant(of: chapterTile, matching: find.textContaining('页数待加载')),
+      find.descendant(of: chapterTile, matching: find.text('待加载')),
       findsOneWidget,
     );
     expect(
-      find.descendant(of: chapterTile, matching: find.textContaining('共 1 页')),
+      find.descendant(of: chapterTile, matching: find.text('1页')),
       findsNothing,
       reason: 'Home snapshot placeholders are not a historical page-count proof',
     );
@@ -2081,7 +2081,7 @@ void main() {
       details.comicDetailsChapterKey(source.sourceId, chapter.chapterId),
     );
     expect(
-      find.descendant(of: chapterTile, matching: find.textContaining('共 1 页')),
+      find.descendant(of: chapterTile, matching: find.text('1页')),
       findsOneWidget,
       reason: 'historical page list may project count without becoming Reader authority',
     );
@@ -2652,11 +2652,19 @@ void main() {
     final shelf = find.byKey(details.comicDetailsShelfKey);
     await _tapVisible(tester, shelf);
 
-    expect(await store.getSavedComic('fixture', 'fixture-comic'), isNotNull);
+    final shelved = await store.getSavedComic('fixture', 'fixture-comic');
+    expect(shelved, isNotNull);
+    expect(shelved!.unseenChapterIds, const <String>{'fixture-chapter'});
     expect(await store.get('fixture', 'fixture-chapter'), isNull);
     expect(
       (await store.getComicPreference('fixture', 'fixture-comic'))?.inShelf,
       isTrue,
+    );
+    expect(
+      find.byKey(
+        details.comicDetailsNewChapterKey('fixture', 'fixture-chapter'),
+      ),
+      findsOneWidget,
     );
 
     final download =
@@ -3479,7 +3487,7 @@ void main() {
     );
     await _pumpUntilFound(
       tester,
-      find.descendant(of: chapterTile, matching: find.textContaining('页数待加载')),
+      find.descendant(of: chapterTile, matching: find.text('待加载')),
     );
 
     expect(source.chapterLoads, 0);

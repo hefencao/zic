@@ -83,7 +83,8 @@ for stale in (
 require(home, "fallbackInShelf: comic.sourceId == 'local-folder'", 'remote unknown shelf fallback')
 require(home, 'bool fallbackInShelf = false,', 'neutral preference fallback')
 require(home, 'if (!previous.inShelf && updated.inShelf)', 'shelf transition update reset')
-require(home, 'saved.copyWith(clearSourceUpdateAt: true)', 'stale pre-shelf update reset')
+require(home, 'saved.copyWith(', 'stale pre-shelf update owner')
+require(home, 'clearSourceUpdateAt: true', 'stale pre-shelf update reset')
 
 version = re.search(r'^version:\s*0\.31\.0\+(\d+)\s*$', read('apps/app/pubspec.yaml'), re.M)
 if version is None or int(version.group(1)) < 165:

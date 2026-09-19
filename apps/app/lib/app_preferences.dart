@@ -198,6 +198,7 @@ final class AppPreferencesController extends ChangeNotifier {
   int _readerPrefetchReadBudgetMiB = defaultReaderPrefetchReadBudgetMiB;
   CachedCarrierTrustMode _cachedCarrierTrustMode =
       CachedCarrierTrustMode.strictReload;
+  bool _trustConflictingHistoricalCarriersByDefault = true;
   Map<String, bool> _pluginTrustConflictingHistoricalCarriers =
       <String, bool>{};
   Map<String, String> _sourceDownloadDirectories = <String, String>{};
@@ -264,9 +265,15 @@ final class AppPreferencesController extends ChangeNotifier {
   int get cacheLimitMb => _cacheLimitMb;
   int get readerPrefetchReadBudgetMiB => _readerPrefetchReadBudgetMiB;
   CachedCarrierTrustMode get cachedCarrierTrustMode => _cachedCarrierTrustMode;
+  bool get trustConflictingHistoricalCarriersByDefault =>
+      _trustConflictingHistoricalCarriersByDefault;
 
   bool trustConflictingHistoricalCarriersForPlugin(String pluginId) =>
-      _pluginTrustConflictingHistoricalCarriers[pluginId.trim()] ?? false;
+      _pluginTrustConflictingHistoricalCarriers[pluginId.trim()] ??
+      _trustConflictingHistoricalCarriersByDefault;
+
+  bool? conflictingHistoricalCarrierTrustOverrideForPlugin(String pluginId) =>
+      _pluginTrustConflictingHistoricalCarriers[pluginId.trim()];
 
   /// Per-source physical download roots chosen by the user, keyed by the
   /// external source identity (`venera:<key>` / `mihon:<id>`).
@@ -448,6 +455,10 @@ final class AppPreferencesController extends ChangeNotifier {
       CachedCarrierTrustMode.values,
       values['cachedCarrierTrustMode'],
       _cachedCarrierTrustMode,
+    );
+    _trustConflictingHistoricalCarriersByDefault = _boolValue(
+      values['trustConflictingHistoricalCarriersByDefault'],
+      _trustConflictingHistoricalCarriersByDefault,
     );
     _pluginTrustConflictingHistoricalCarriers = _decodeBoolMap(
       values['pluginTrustConflictingHistoricalCarriers'],
@@ -671,6 +682,14 @@ final class AppPreferencesController extends ChangeNotifier {
     _changed();
   }
 
+  void setTrustConflictingHistoricalCarriersByDefault(bool value) {
+    if (_disposed || _trustConflictingHistoricalCarriersByDefault == value) {
+      return;
+    }
+    _trustConflictingHistoricalCarriersByDefault = value;
+    _changed();
+  }
+
   void setPluginTrustConflictingHistoricalCarriers(
     String pluginId,
     bool value,
@@ -678,14 +697,25 @@ final class AppPreferencesController extends ChangeNotifier {
     if (_disposed) return;
     final key = pluginId.trim();
     if (key.isEmpty) return;
-    final current = _pluginTrustConflictingHistoricalCarriers[key] ?? false;
+    final current = _pluginTrustConflictingHistoricalCarriers[key];
     if (current == value) return;
     final next = <String, bool>{..._pluginTrustConflictingHistoricalCarriers};
-    if (value) {
-      next[key] = true;
-    } else {
-      next.remove(key);
+    next[key] = value;
+    _pluginTrustConflictingHistoricalCarriers = next;
+    _changed();
+  }
+
+  void clearPluginTrustConflictingHistoricalCarriersOverride(
+    String pluginId,
+  ) {
+    if (_disposed) return;
+    final key = pluginId.trim();
+    if (key.isEmpty ||
+        !_pluginTrustConflictingHistoricalCarriers.containsKey(key)) {
+      return;
     }
+    final next = <String, bool>{..._pluginTrustConflictingHistoricalCarriers}
+      ..remove(key);
     _pluginTrustConflictingHistoricalCarriers = next;
     _changed();
   }
@@ -833,7 +863,7 @@ final class AppPreferencesController extends ChangeNotifier {
     final write = _write;
     if (write == null) return;
     await write(<String, Object?>{
-      'version': 7,
+      'version': 8,
       'themeMode': _themeMode.name,
       'amoledDarkTheme': _amoledDarkTheme,
       'debugModeEnabled': _debugModeEnabled,
@@ -863,6 +893,8 @@ final class AppPreferencesController extends ChangeNotifier {
       'cacheLimitMb': _cacheLimitMb,
       'readerPrefetchReadBudgetMiB': _readerPrefetchReadBudgetMiB,
       'cachedCarrierTrustMode': _cachedCarrierTrustMode.name,
+      'trustConflictingHistoricalCarriersByDefault':
+          _trustConflictingHistoricalCarriersByDefault,
       'pluginTrustConflictingHistoricalCarriers':
           _pluginTrustConflictingHistoricalCarriers,
       'sourceDownloadDirectories': _sourceDownloadDirectories,
@@ -969,7 +1001,7 @@ Map<String, bool> _decodeBoolMap(Object? raw) {
   for (final entry in raw.entries) {
     final key = entry.key;
     if (key is! String || key.trim().isEmpty || entry.value is! bool) continue;
-    if (entry.value == true) result[key.trim()] = true;
+    result[key.trim()] = entry.value! as bool;
   }
   return result;
 }

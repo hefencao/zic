@@ -1798,7 +1798,51 @@ final class HomeLibrarySession extends ChangeNotifier {
         !chapterHasHomeProjectionSnapshotPagePlaceholders(cached.chapter) &&
         (requestHasSnapshotPlaceholders ||
             cached.chapter.pages.length == entry.chapter.pages.length)) {
-      return cached;
+      // Version/page authority can stay cached, but mutable Reader progress
+      // cannot. A Reader checkpoint may have advanced in the store without
+      // rebuilding this hydrated manifest entry yet. Read the narrow progress
+      // authority and merge only that field so a stale manifest cache can
+      // never roll resume position backward on the next Reader entry.
+      ReadingProgress? latestProgress = cached.progress;
+      final requestedProgress = entry.progress;
+      if (requestedProgress != null &&
+          (latestProgress == null ||
+              requestedProgress.updatedAt.isAfter(latestProgress.updatedAt))) {
+        latestProgress = requestedProgress;
+      }
+      final store = library;
+      final ImportedLibraryProgressLookup? progressLookup =
+          store is ImportedLibraryProgressLookup
+              ? store as ImportedLibraryProgressLookup
+              : null;
+      if (progressLookup != null) {
+        final persisted = await progressLookup.getProgress(
+          entry.chapter.sourceId,
+          entry.chapter.chapterId,
+        );
+        if (persisted != null &&
+            (latestProgress == null ||
+                persisted.updatedAt.isAfter(latestProgress.updatedAt))) {
+          latestProgress = persisted;
+        }
+      }
+      if (latestProgress == null || identical(latestProgress, cached.progress)) {
+        return cached;
+      }
+      final normalized = latestProgress.comicId == cached.chapter.comicId
+          ? latestProgress
+          : ReadingProgress(
+              sourceId: cached.chapter.sourceId,
+              comicId: cached.chapter.comicId,
+              chapterId: cached.chapter.chapterId,
+              pageIndex: latestProgress.pageIndex,
+              subPageOffset: latestProgress.subPageOffset,
+              readerMode: latestProgress.readerMode,
+              updatedAt: latestProgress.updatedAt,
+            );
+      final refreshed = cached.copyWith(progress: normalized);
+      _rememberVersionAuthorityEntries(<ImportedLibraryEntry>[refreshed]);
+      return refreshed;
     }
     final hydrated = await _traceStartupOperation<ImportedLibraryEntry?>(
       'chapter-hydrate',

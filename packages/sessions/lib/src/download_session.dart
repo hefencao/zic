@@ -15,6 +15,12 @@ import 'webp_decode_prefix_hints.dart';
 
 enum DownloadState { idle, queued, receiving, sealed, promoted, failed, disposed }
 
+bool _isStaleSessionLifecycleFailure(Object error) =>
+    error is Failure &&
+    (error.code == ErrorCode.staleEpoch ||
+        error.code == ErrorCode.staleWriter ||
+        error.code == ErrorCode.staleRun);
+
 const int _sourceMetadataPrefixLength = 64;
 
 typedef DownloadSnapshotListener = void Function(DownloadSnapshot snapshot);
@@ -1375,6 +1381,8 @@ final class DownloadSession {
     required int totalLength,
     Uri? validatorRequestUri,
     ByteResponseBodyAuthority bodyAuthority = ByteResponseBodyAuthority.source,
+    DownloadResidentReplayRangeChunks? residentReplayRangeChunks,
+    String residentReplayAccessMode = 'unknown',
   }) {
     _requireNotDisposed();
     _requireState(<DownloadState>{
@@ -1394,6 +1402,12 @@ final class DownloadSession {
     _residentIngressDeferred = false;
     _residentBodyAuthority = bodyAuthority;
     _dropResidentReplayRangeCapability();
+    _residentReplayRangeChunks = residentReplayRangeChunks;
+    _residentReplayGenerationToken =
+        residentReplayRangeChunks == null ? null : Object();
+    _residentReplayAccessMode = residentReplayRangeChunks == null
+        ? 'unknown'
+        : residentReplayAccessMode;
     _residentLength = 0;
     _validators = validators;
     _validatorRequestUri = validators.isEmpty
@@ -1581,10 +1595,17 @@ final class DownloadSession {
       // session writer-busy forever even though the artifact has no open sink.
       if (identical(_writer, lease) && _epoch == epoch) {
         try {
-          await fail(lease, error);
+          if (_isStaleSessionLifecycleFailure(error)) {
+            // The physical append is already committed at this point. A
+            // Reader-local projection from an older lifecycle is not evidence
+            // that those bytes are corrupt; retire only this attempt and keep
+            // the partial resumable for the current physical owner.
+            await pause(lease);
+          } else {
+            await fail(lease, error);
+          }
         } on Object {
-          // Preserve the append failure. fail() clears the writer in its
-          // finally block even when the best-effort artifact pause fails.
+          // Preserve the append failure. Writer retirement is best-effort;
         }
       }
       Error.throwWithStackTrace(error, stackTrace);
@@ -1632,17 +1653,28 @@ final class DownloadSession {
           _epoch == epoch &&
           artifact.state == ArtifactState.sealed) {
         _writer = null;
-        _state = DownloadState.failed;
-        _failure = error is Failure
-            ? error
-            : Failure(code: ErrorCode.source, message: '$error', cause: error);
+        final staleLifecycle = _isStaleSessionLifecycleFailure(error);
+        _state = staleLifecycle ? DownloadState.idle : DownloadState.failed;
+        _failure = staleLifecycle
+            ? null
+            : error is Failure
+                ? error
+                : Failure(
+                    code: ErrorCode.source,
+                    message: '$error',
+                    cause: error,
+                  );
         _flushCommittedTrace();
         _recordTrace(
           TraceEventKind.downloadState,
           <String, Object?>{
             'state': _state.name,
             'operation': 'seal-projection',
-            'error': '$_failure',
+            if (staleLifecycle) ...<String, Object?>{
+              'deferred': true,
+              'reason': 'stale-consumer-projection',
+            } else
+              'error': '$_failure',
           },
         );
         _notifySnapshot();
@@ -2694,6 +2726,14 @@ final class DownloadSession {
         message: 'late ingress projection requires synchronized attachment',
       );
     }
+    // A physical reset may advance this session beyond epoch zero while its
+    // artifact is still empty. Fresh Reader projections are constructed at
+    // epoch zero, so inserting one directly into live fan-out would make the
+    // very first append of the current generation fail as stale work.
+    //
+    // There are no authoritative bytes to replay at this boundary; align the
+    // empty projection to the current physical generation before publication.
+    projection.reset(_epoch);
     _ingressProjections[projection.scopeId] = projection;
     projection.expectLength(_totalLength);
     _notifySnapshot();

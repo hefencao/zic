@@ -402,6 +402,8 @@ final class ArtifactCacheTransport implements ControlledTransport {
       disposition: response.disposition,
       bodyAuthority: response.bodyAuthority,
       flowControl: response.flowControl,
+      immutableRangeReplay: response.immutableRangeReplay,
+      immutableReplayAccessMode: response.immutableReplayAccessMode,
       diagnostics: response.diagnostics,
       readDiagnostics: response.readDiagnostics,
       onDiscardControlled: ({TaskControl? control}) async {
@@ -594,6 +596,8 @@ final class ArtifactCacheTransport implements ControlledTransport {
       disposition: response.disposition,
       bodyAuthority: response.bodyAuthority,
       flowControl: response.flowControl,
+      immutableRangeReplay: response.immutableRangeReplay,
+      immutableReplayAccessMode: response.immutableReplayAccessMode,
       diagnostics: response.diagnostics,
       readDiagnostics: response.readDiagnostics,
       onDiscardControlled: response.discard,
@@ -832,6 +836,8 @@ final class ArtifactCacheTransport implements ControlledTransport {
       disposition: response.disposition,
       bodyAuthority: response.bodyAuthority,
       flowControl: response.flowControl,
+      immutableRangeReplay: response.immutableRangeReplay,
+      immutableReplayAccessMode: response.immutableReplayAccessMode,
       diagnostics: response.diagnostics,
       readDiagnostics: response.readDiagnostics,
       onDiscardControlled: response.discard,
@@ -1093,8 +1099,10 @@ ByteResponse _leaseBoundResponse(
     validators: response.validators,
     rangeSupported: response.rangeSupported,
     disposition: response.disposition,
-      bodyAuthority: response.bodyAuthority,
-      flowControl: response.flowControl,
+    bodyAuthority: response.bodyAuthority,
+    flowControl: response.flowControl,
+    immutableRangeReplay: response.immutableRangeReplay,
+    immutableReplayAccessMode: response.immutableReplayAccessMode,
     diagnostics: response.diagnostics,
     readDiagnostics: response.readDiagnostics,
     onDiscardControlled: ({TaskControl? control}) async {
@@ -1186,8 +1194,10 @@ ByteResponse _scheduledArtifactResponse(
     validators: response.validators,
     rangeSupported: response.rangeSupported,
     disposition: response.disposition,
-      bodyAuthority: response.bodyAuthority,
-      flowControl: response.flowControl,
+    bodyAuthority: response.bodyAuthority,
+    flowControl: response.flowControl,
+    immutableRangeReplay: response.immutableRangeReplay,
+    immutableReplayAccessMode: response.immutableReplayAccessMode,
     diagnostics: response.diagnostics,
     readDiagnostics: response.readDiagnostics,
     onDiscardControlled: ({TaskControl? control}) async {
@@ -1233,6 +1243,23 @@ ByteResponse? _streamedCachedResponse({
     bodyAuthority: durable
         ? ByteResponseBodyAuthority.artifactCache
         : ByteResponseBodyAuthority.source,
+    immutableRangeReplay: durable
+        ? (replayStart, replayEndExclusive) async {
+            if (replayStart < 0 ||
+                replayEndExclusive <= replayStart ||
+                replayEndExclusive > entry.length) {
+              throw RangeError(
+                'invalid immutable replay range '
+                '$replayStart..$replayEndExclusive/${entry.length}',
+              );
+            }
+            return entry.open(
+              start: replayStart,
+              endExclusive: replayEndExclusive,
+            );
+          }
+        : null,
+    immutableReplayAccessMode: durable ? entry.accessMode : 'unknown',
   );
 }
 
@@ -1283,6 +1310,27 @@ ByteResponse? _cachedResponse({
     bodyAuthority: durable
         ? ByteResponseBodyAuthority.artifactCache
         : ByteResponseBodyAuthority.source,
+    immutableRangeReplay: durable
+        ? (replayStart, replayEndExclusive) async {
+            if (replayStart < 0 ||
+                replayEndExclusive <= replayStart ||
+                replayEndExclusive > bytes.lengthInBytes) {
+              throw RangeError(
+                'invalid immutable replay range '
+                '$replayStart..$replayEndExclusive/'
+                '${bytes.lengthInBytes}',
+              );
+            }
+            return Stream<List<int>>.value(
+              Uint8List.sublistView(
+                bytes,
+                replayStart,
+                replayEndExclusive,
+              ),
+            );
+          }
+        : null,
+    immutableReplayAccessMode: durable ? 'memory' : 'unknown',
   );
 }
 

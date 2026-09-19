@@ -90,14 +90,10 @@ for token in ('_pageCountPreflight', '_startPageCountPreflight', 'pageCountLoadi
     forbid(comic_details, token, 'chapter body page-count preflight')
 require(source_tests, 'pending page counts do not preflight chapter bodies', 'chapter preflight regression')
 require(source_tests, 'expect(source.chapterLoads, 0);', 'chapter preflight request count')
-require(reader_composition, 'unawaited(_markChapterRead(current));', 'non-blocking read persistence')
+forbid(reader_composition, '_markChapterRead', 'Reader preparation must not own read-state mutation')
 ensure_owner = demo_home.split('Future<ImportedLibraryEntry> _ensureSourceChapter(', 1)[1].split('Future<ImportedLibraryEntry> _refreshRemoteEntry(', 1)[0]
 forbid(ensure_owner, 'await _reloadLibrary();', 'chapter manifest navigation reload')
-for source, token in (
-    (demo_home, 'await _markChapterReadForNavigation(current)'),
-    (reader_composition, 'await _markChapterRead(current)'),
-):
-    forbid(source, token, 'read persistence navigation block')
+forbid(demo_home, '_markChapterReadForNavigation', 'Reader navigation read-state mutation')
 
 for token in (
     'this.maxExportEvents = 10000',

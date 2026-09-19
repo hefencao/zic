@@ -14,6 +14,7 @@ final class SqliteImportedLibraryStore
     implements
         ImportedLibraryStore,
         ImportedLibraryBatchLookup,
+        ImportedLibraryProgressLookup,
         ImportedLibraryBackupSnapshotStore,
         ComicVersionRelationStore,
         ReaderProgressCheckpointStore,
@@ -317,6 +318,29 @@ final class SqliteImportedLibraryStore
       LIMIT 1
     ''', <Object?>[sourceId, chapterId]);
     return rows.isEmpty ? null : _readEntry(rows.first);
+  }
+
+  @override
+  Future<ReadingProgress?> getProgress(
+    String sourceId,
+    String chapterId,
+  ) async {
+    // Reader re-entry is a durability boundary, not a page-turn hot path.
+    // Include checkpoints already admitted to the optional writer before
+    // exposing the resume position.
+    await flushProgressCheckpoints();
+    final rows = _requireDb().select('''
+      SELECT progress_json
+      FROM reading_progress
+      WHERE source_id = ? AND chapter_id = ?
+      LIMIT 1
+    ''', <Object?>[sourceId, chapterId]);
+    return rows.isEmpty
+        ? null
+        : _decodeProgress(
+            rows.first['progress_json']! as String,
+            fallbackSourceId: sourceId,
+          );
   }
 
   @override

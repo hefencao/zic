@@ -22,10 +22,6 @@ typedef HomeReaderVersionAuthorityPreparer = Future<int> Function(
   ImportedLibraryEntry entry,
 );
 
-typedef HomeReaderChapterReadMarker = Future<void> Function(
-  ImportedLibraryEntry entry,
-);
-
 /// Prepared, immutable input handed from App composition to the Reader route.
 ///
 /// This contains no navigation or widget state. Transport/session ownership
@@ -61,7 +57,6 @@ final class HomeReaderChapterComposition {
         requiresSourceLocatorRefresh,
     required HomeReaderRemoteEntryRefresher refreshRemoteEntry,
     required HomeReaderVersionAuthorityPreparer prepareVersionAuthority,
-    required HomeReaderChapterReadMarker markChapterRead,
     required TraceSink trace,
     required int Function() monotonicMicros,
   })  : _hydrateEntry = hydrateEntry,
@@ -70,7 +65,6 @@ final class HomeReaderChapterComposition {
         _requiresSourceLocatorRefresh = requiresSourceLocatorRefresh,
         _refreshRemoteEntry = refreshRemoteEntry,
         _prepareVersionAuthority = prepareVersionAuthority,
-        _markChapterRead = markChapterRead,
         _trace = trace,
         _monotonicMicros = monotonicMicros;
 
@@ -82,7 +76,6 @@ final class HomeReaderChapterComposition {
       _requiresSourceLocatorRefresh;
   final HomeReaderRemoteEntryRefresher _refreshRemoteEntry;
   final HomeReaderVersionAuthorityPreparer _prepareVersionAuthority;
-  final HomeReaderChapterReadMarker _markChapterRead;
   final TraceSink _trace;
   final int Function() _monotonicMicros;
   final Set<Future<dynamic>> _activePreparations = <Future<dynamic>>{};
@@ -223,7 +216,6 @@ final class HomeReaderChapterComposition {
       );
     }
     final responseSources = responseSourcesFor(readerManifest, byteLoaders);
-    unawaited(_markChapterRead(current));
     final totalMs = totalWatch.elapsedMilliseconds;
     _trace.record(
       TraceEvent(
