@@ -376,6 +376,7 @@ for marker, label in (
 for marker, label in (
     ('await _drainHomeCompositionTail(\n      _durableAdoption,', 'durable adoption teardown drain'),
     ('await _drainHomeCompositionTail(\n      _sourceMigrationRecovery,', 'source migration teardown drain'),
+    ('await _versionReuseLifecycle.close();', 'version reuse lifecycle teardown drain'),
     ('await _externalSources.close();', 'external lifecycle close after composition tails'),
     ('await _librarySession.close();', 'async session close'),
     ('_librarySession.dispose();', 'post-close notifier disposal'),
@@ -387,7 +388,8 @@ if close_composition_body.index('await _librarySession.close();') > close_compos
     raise SystemExit('Home session notifier disposal must follow async owner close')
 for earlier, later, label in (
     ('_durableAdoption,', '_sourceMigrationRecovery,', 'durable adoption before migration recovery'),
-    ('_sourceMigrationRecovery,', 'await _externalSources.close();', 'composition recovery before external close'),
+    ('_sourceMigrationRecovery,', 'await _versionReuseLifecycle.close();', 'composition recovery before version lifecycle close'),
+    ('await _versionReuseLifecycle.close();', 'await _externalSources.close();', 'version lifecycle before external close'),
     ('await _externalSources.close();', 'await _librarySession.close();', 'external lifecycle before session close'),
     ('await _librarySession.close();', '_sourceResources.close();', 'session close before source-resource close'),
     ('_sourceResources.close();', 'await _serviceCache.closeIfOwned();', 'source-resource close before cache close'),

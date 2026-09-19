@@ -57,6 +57,7 @@ void main() {
       if (!firstLibrary.releaseSuccessorRead.isCompleted) {
         firstLibrary.releaseSuccessorRead.complete();
       }
+      await lifecycle.close();
       await session.close();
       session.dispose();
       await secondQueue.close();
@@ -123,6 +124,8 @@ void main() {
         required task,
       }) =>
           false,
+      cancelQueuedMetadataTask: (_) => false,
+      cancelMetadataTask: (_) => false,
       trace: const NoopTraceSink(),
       monotonicMicros: () => 0,
     );
@@ -134,6 +137,7 @@ void main() {
     );
     final secondQueue = WholeComicDownloadQueue(downloads: secondDownloads);
     addTearDown(() async {
+      await lifecycle.close();
       await session.close();
       session.dispose();
       await secondQueue.close();
@@ -167,6 +171,123 @@ void main() {
     expect(state.predecessors, isEmpty);
     await state.backgroundRefresh;
   });
+
+  test('close cancels queued Reader metadata refresh before it can start',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    String? scheduledKey;
+    String? cancelledKey;
+    final lifecycle = HomeVersionReuseLifecycle(
+      session: session,
+      loadRemoteEntrySnapshot: (entry, {control}) async => entry,
+      verifiedPageReuseIdentity: ({
+        required sourceId,
+        required locator,
+        control,
+      }) async =>
+          null,
+      requiresSourceLocatorRefresh: (_) => false,
+      scheduleMetadataTask: ({
+        required key,
+        required priority,
+        required task,
+      }) {
+        scheduledKey = key;
+        return true;
+      },
+      cancelQueuedMetadataTask: (key) {
+        cancelledKey = key;
+        return true;
+      },
+      cancelMetadataTask: (_) => false,
+      trace: const NoopTraceSink(),
+      monotonicMicros: () => 0,
+    );
+    await session.ready;
+    addTearDown(() async {
+      await lifecycle.close();
+      await session.close();
+      session.dispose();
+    });
+
+    lifecycle.scheduleReaderMetadataVersionRefresh(
+      _VersionSource(),
+      _entry(),
+    );
+    expect(scheduledKey, isNotNull);
+
+    await lifecycle.close();
+
+    expect(cancelledKey, scheduledKey);
+  });
+
+  test('close waits for version-state background refresh already admitted',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    final lifecycle = _lifecycle(session);
+    await session.ready;
+    await session.upsertVersionRelation(
+      ComicVersionRelation(
+        sourceId: 'fixture',
+        predecessorComicId: 'old-comic',
+        successorComicId: 'stored-successor',
+        predecessorTitle: 'Old comic',
+        discoveredAt: DateTime.utc(2026, 1, 1),
+      ),
+    );
+    final source = _BlockingVersionSource();
+    addTearDown(() async {
+      if (!source.releaseFind.isCompleted) {
+        source.releaseFind.complete();
+      }
+      await lifecycle.close();
+      await session.close();
+      session.dispose();
+    });
+
+    final state = await lifecycle.loadVersionState(
+      source,
+      'Old comic',
+      'old-comic',
+    );
+    expect(state.backgroundRefresh, isNotNull);
+    await source.findStarted.future;
+
+    var closeCompleted = false;
+    final closing = lifecycle.close().then((_) => closeCompleted = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(closeCompleted, isFalse);
+
+    source.releaseFind.complete();
+    await closing;
+    expect(closeCompleted, isTrue);
+  });
 }
 
 HomeVersionReuseLifecycle _lifecycle(HomeLibrarySession session) =>
@@ -186,9 +307,52 @@ HomeVersionReuseLifecycle _lifecycle(HomeLibrarySession session) =>
         required task,
       }) =>
           false,
+      cancelQueuedMetadataTask: (_) => false,
+      cancelMetadataTask: (_) => false,
       trace: const NoopTraceSink(),
       monotonicMicros: () => 0,
     );
+
+ImportedLibraryEntry _entry() {
+  const sourceId = 'fixture';
+  const comicId = 'old-comic';
+  const chapterId = 'fixture-chapter';
+  final comic = Comic(
+    comicId: comicId,
+    sourceId: sourceId,
+    title: 'Old comic',
+    authors: const <String>[],
+    readingDirection: ReadingDirection.ltr,
+  );
+  final chapter = Chapter(
+    chapterId: chapterId,
+    comicId: comicId,
+    title: 'Fixture chapter',
+    sequence: 1,
+    pageCount: 1,
+    sourceRevision: 'r1',
+  );
+  return ImportedLibraryEntry(
+    chapter: ImportedChapterRecord.remote(
+      comic: comic,
+      manifest: ChapterManifest(
+        sourceId: sourceId,
+        comicId: comicId,
+        chapter: chapter,
+        readingDirection: ReadingDirection.ltr,
+        pages: <PageAsset>[
+          PageAsset(
+            pageId: 'fixture-page',
+            chapterId: chapterId,
+            index: 0,
+            uri: Uri.parse('https://example.invalid/page.webp'),
+            contentKindHint: ContentKindHint.webp,
+          ),
+        ],
+      ),
+    ),
+  );
+}
 
 final class _BlockingVersionRelationStore
     implements ImportedLibraryStore, ComicVersionRelationStore {
@@ -258,7 +422,7 @@ final class _BlockingVersionRelationStore
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-final class _VersionSource implements BrowsableComicSource, ComicVersionSource {
+class _VersionSource implements BrowsableComicSource, ComicVersionSource {
   @override
   String get sourceId => 'fixture';
 
@@ -300,4 +464,16 @@ final class _VersionSource implements BrowsableComicSource, ComicVersionSource {
   @override
   Future<Uint8List> loadResource(Uri uri) =>
       throw StateError('not used by this fixture');
+}
+
+final class _BlockingVersionSource extends _VersionSource {
+  final Completer<void> findStarted = Completer<void>();
+  final Completer<void> releaseFind = Completer<void>();
+
+  @override
+  Future<List<SourceComicVersion>> findComicVersions(String comicId) async {
+    if (!findStarted.isCompleted) findStarted.complete();
+    await releaseFind.future;
+    return const <SourceComicVersion>[];
+  }
 }

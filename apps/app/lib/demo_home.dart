@@ -436,6 +436,10 @@ final class _DemoHomeState extends State<DemoHome> {
         priority: priority,
         task: task,
       ),
+      cancelQueuedMetadataTask: (key) =>
+          defaultDownloadResourceCoordinator.networkLane.cancelQueued(key),
+      cancelMetadataTask: (key) =>
+          defaultDownloadResourceCoordinator.networkLane.cancel(key),
       trace: widget.debugTrace,
       monotonicMicros: () => _traceClock.nowMicros(),
     );
@@ -678,6 +682,7 @@ final class _DemoHomeState extends State<DemoHome> {
       _sourceMigrationRecovery,
       'source migration recovery',
     );
+    await _versionReuseLifecycle.close();
     await _externalSources.close();
     try {
       await _librarySession.close();

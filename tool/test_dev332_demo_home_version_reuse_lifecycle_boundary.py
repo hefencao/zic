@@ -27,6 +27,9 @@ for marker, label in (
     ("verifiedPageReuseIdentity:", "verified page identity capability"),
     ("requiresSourceLocatorRefresh: chapterRequiresSourceLocatorRefresh,", "shared locator-validity capability"),
     ("scheduleMetadataTask: ({", "composition-owned metadata scheduler injection"),
+    ("cancelQueuedMetadataTask: (key) =>", "queued metadata task cancellation injection"),
+    ("cancelMetadataTask: (key) =>", "active metadata task cancellation injection"),
+    ("await _versionReuseLifecycle.close();", "lifecycle teardown barrier"),
 ):
     require(home, marker, label)
 
@@ -48,8 +51,14 @@ for marker, label in (
     ("final class HomeVersionState", "composition-neutral version state"),
     ("final HomeLibrarySession session;", "dynamic session authority"),
     ("final HomeVersionMetadataTaskScheduler scheduleMetadataTask;", "injected metadata scheduling capability"),
+    ("final HomeVersionQueuedMetadataTaskCanceller cancelQueuedMetadataTask;", "queued task cancellation capability"),
+    ("final HomeVersionMetadataTaskCanceller cancelMetadataTask;", "active task cancellation capability"),
     ("final Map<String, Future<void>> _warmups", "warmup coalescing state"),
     ("final Map<String, Future<void>> _readerRefreshes", "Reader refresh coalescing state"),
+    ("final Set<Future<dynamic>> _activeOperations", "admitted operation drain"),
+    ("Future<void> close()", "joinable lifecycle close"),
+    ("cancelQueuedMetadataTask(entry.value)", "queued refresh teardown cancellation"),
+    ("cancelMetadataTask(entry.value)", "active refresh teardown cancellation"),
     ("VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(", "bounded version-page proof"),
     ("session.upsertVersionRelationDerivedState(updatedRelation)", "derived relation persistence"),
     ("scheduleMetadataTask(", "shared NetLane scheduling capability"),
@@ -61,6 +70,15 @@ for marker, label in (
     ("final provider = session.downloadComposition;", "session-normalized transfer capability"),
 ):
     require(owner, marker, label)
+
+close_body = home[home.index("Future<void> _closeHomeComposition() async {"):]
+for earlier, later, label in (
+    ("_sourceMigrationRecovery,", "await _versionReuseLifecycle.close();", "migration recovery before version lifecycle close"),
+    ("await _versionReuseLifecycle.close();", "await _externalSources.close();", "version lifecycle before external source close"),
+    ("await _externalSources.close();", "await _librarySession.close();", "external source close before session close"),
+):
+    if close_body.index(earlier) > close_body.index(later):
+        raise SystemExit(f"Home version lifecycle teardown ordering regressed: {label}")
 
 for forbidden in (
     "package:flutter/",

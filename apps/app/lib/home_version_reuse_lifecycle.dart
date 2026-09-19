@@ -24,6 +24,10 @@ typedef HomeVersionMetadataTaskScheduler = bool Function({
   required Future<void> Function(TaskControl control) task,
 });
 
+typedef HomeVersionQueuedMetadataTaskCanceller = bool Function(String key);
+
+typedef HomeVersionMetadataTaskCanceller = bool Function(String key);
+
 final class HomeVersionState {
   const HomeVersionState({
     this.successors = const <SourceComicVersion>[],
@@ -52,6 +56,8 @@ final class HomeVersionReuseLifecycle {
     required this.verifiedPageReuseIdentity,
     required this.requiresSourceLocatorRefresh,
     required this.scheduleMetadataTask,
+    required this.cancelQueuedMetadataTask,
+    required this.cancelMetadataTask,
     required this.trace,
     required this.monotonicMicros,
   });
@@ -64,11 +70,68 @@ final class HomeVersionReuseLifecycle {
   final bool Function(ImportedChapterRecord chapter)
       requiresSourceLocatorRefresh;
   final HomeVersionMetadataTaskScheduler scheduleMetadataTask;
+  final HomeVersionQueuedMetadataTaskCanceller cancelQueuedMetadataTask;
+  final HomeVersionMetadataTaskCanceller cancelMetadataTask;
   final TraceSink trace;
   final int Function() monotonicMicros;
 
   final Map<String, Future<void>> _warmups = <String, Future<void>>{};
   final Map<String, Future<void>> _readerRefreshes = <String, Future<void>>{};
+  final Map<String, String> _readerRefreshLaneKeys = <String, String>{};
+  final Map<String, Completer<void>> _readerRefreshCompleters =
+      <String, Completer<void>>{};
+  final Set<Future<dynamic>> _activeOperations = <Future<dynamic>>{};
+  bool _closed = false;
+  Future<void>? _closing;
+
+  Future<T> _trackOperation<T>(Future<T> operation) {
+    _activeOperations.add(operation);
+    unawaited(
+      operation.then<void>(
+        (_) => _activeOperations.remove(operation),
+        onError: (Object _, StackTrace _) {
+          _activeOperations.remove(operation);
+        },
+      ),
+    );
+    return operation;
+  }
+
+  Future<void> close() {
+    final existing = _closing;
+    if (existing != null) return existing;
+    if (_closed) return Future<void>.value();
+    _closed = true;
+    late final Future<void> closing;
+    closing = _close();
+    _closing = closing;
+    return closing;
+  }
+
+  Future<void> _close() async {
+    final refreshTasks = _readerRefreshLaneKeys.entries.toList(growable: false);
+    for (final entry in refreshTasks) {
+      if (cancelQueuedMetadataTask(entry.value)) {
+        final completer = _readerRefreshCompleters[entry.key];
+        if (completer != null && !completer.isCompleted) {
+          completer.complete();
+        }
+      } else {
+        cancelMetadataTask(entry.value);
+      }
+    }
+    while (_activeOperations.isNotEmpty) {
+      final pending = _activeOperations.toList(growable: false);
+      for (final operation in pending) {
+        try {
+          await operation;
+        } on Object {
+          // The original caller/trace path owns the error. Teardown only
+          // drains already-admitted work before dependent owners close.
+        }
+      }
+    }
+  }
 
   ComicVersionRelationStore? _relationStore() {
     final candidate = session.library;
@@ -452,20 +515,25 @@ final class HomeVersionReuseLifecycle {
     String? targetComicId,
     TaskControl? control,
   }) {
+    if (_closed) return Future<void>.value();
     control?.throwIfCancelled();
     if (control != null) {
-      return _runWarmup(
-        source,
-        focus,
-        targetComicId: targetComicId,
-        control: control,
+      return _trackOperation(
+        _runWarmup(
+          source,
+          focus,
+          targetComicId: targetComicId,
+          control: control,
+        ),
       );
     }
     final key = _warmupKey(source, focus, targetComicId: targetComicId);
     final existing = _warmups[key];
     if (existing != null) return existing;
     late Future<void> future;
-    future = _runWarmup(source, focus, targetComicId: targetComicId);
+    future = _trackOperation(
+      _runWarmup(source, focus, targetComicId: targetComicId),
+    );
     _warmups[key] = future;
     unawaited(
       future.whenComplete(() {
@@ -524,13 +592,14 @@ final class HomeVersionReuseLifecycle {
       }
     }
     control?.throwIfCancelled();
-    await ensureAuthority(focus);
+    await _ensureAuthority(focus);
   }
 
   void scheduleReaderMetadataVersionRefresh(
     BrowsableComicSource source,
     ImportedLibraryEntry focus,
   ) {
+    if (_closed) return;
     final key = _warmupKey(source, focus);
     if (_readerRefreshes.containsKey(key)) return;
     final completer = Completer<void>();
@@ -538,12 +607,17 @@ final class HomeVersionReuseLifecycle {
     _readerRefreshes[key] = future;
     final laneKey = 'reader-metadata-version-refresh:'
         '${identityHashCode(completer)}:$key';
+    _readerRefreshLaneKeys[key] = laneKey;
+    _readerRefreshCompleters[key] = completer;
+    unawaited(_trackOperation(future));
     final submitted = scheduleMetadataTask(
       key: laneKey,
       priority: readerMetadataVersionRefreshPriority,
       task: (control) async {
         try {
-          await _runReaderMetadataVersionRefresh(source, focus, control);
+          if (!_closed) {
+            await _runReaderMetadataVersionRefresh(source, focus, control);
+          }
         } finally {
           if (!completer.isCompleted) completer.complete();
         }
@@ -556,6 +630,8 @@ final class HomeVersionReuseLifecycle {
       future.whenComplete(() {
         if (identical(_readerRefreshes[key], future)) {
           _readerRefreshes.remove(key);
+          _readerRefreshLaneKeys.remove(key);
+          _readerRefreshCompleters.remove(key);
         }
       }),
     );
@@ -569,7 +645,7 @@ final class HomeVersionReuseLifecycle {
     control.throwIfCancelled();
     var refreshed = focus;
     final metadataFuture = loadRemoteEntrySnapshot(focus, control: control);
-    final versionFuture = loadVersionState(
+    final versionFuture = _loadVersionState(
       source,
       focus.chapter.comicTitle,
       focus.chapter.comicId,
@@ -670,7 +746,7 @@ final class HomeVersionReuseLifecycle {
     }
     if (control.cancelled) return;
     try {
-      await prepareWarmup(source, refreshed, control: control);
+      await _runWarmup(source, refreshed, control: control);
     } on Object catch (error) {
       if (control.cancelled) return;
       trace.record(
@@ -708,7 +784,12 @@ final class HomeVersionReuseLifecycle {
     );
   }
 
-  Future<int> ensureAuthority(ImportedLibraryEntry current) async {
+  Future<int> ensureAuthority(ImportedLibraryEntry current) {
+    if (_closed) return Future<int>.value(0);
+    return _trackOperation(_ensureAuthority(current));
+  }
+
+  Future<int> _ensureAuthority(ImportedLibraryEntry current) async {
     await session.ensureCanonicalMediaForEntry(current);
     final relations = _relationsForComic(
       current.chapter.sourceId,
@@ -855,6 +936,23 @@ final class HomeVersionReuseLifecycle {
     String title,
     String currentComicId, {
     TaskControl? control,
+  }) {
+    if (_closed) return Future<HomeVersionState>.value(const HomeVersionState());
+    return _trackOperation(
+      _loadVersionState(
+        source,
+        title,
+        currentComicId,
+        control: control,
+      ),
+    );
+  }
+
+  Future<HomeVersionState> _loadVersionState(
+    BrowsableComicSource source,
+    String title,
+    String currentComicId, {
+    TaskControl? control,
   }) async {
     control?.throwIfCancelled();
     final versionSource = source is ComicVersionSource
@@ -961,14 +1059,16 @@ final class HomeVersionReuseLifecycle {
     }
 
     if (storedSuccessors.isNotEmpty || storedPredecessors.isNotEmpty) {
-      final backgroundRefresh = Future<void>(() {}).then((_) async {
-        try {
-          return stateFor(await refreshVersions());
-        } on Object {
-          if (control?.cancelled == true) rethrow;
-          return stateFor(const <SourceComicVersion>[]);
-        }
-      });
+      final backgroundRefresh = _trackOperation(
+        Future<void>(() {}).then((_) async {
+          try {
+            return stateFor(await refreshVersions());
+          } on Object {
+            if (control?.cancelled == true) rethrow;
+            return stateFor(const <SourceComicVersion>[]);
+          }
+        }),
+      );
       return stateFor(
         const <SourceComicVersion>[],
         backgroundRefresh: backgroundRefresh,
