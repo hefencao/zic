@@ -431,6 +431,11 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
             downloadActions: _detailsDownloadActions,
             persistComic: _persistRemoteComic,
             onPreferenceChanged: _savePreference,
+            readUnseenChapterIds: () => _detailsSnapshotForComic(
+              source.sourceId,
+              comic.comicId,
+              resolveCanonicalAlias: resolveCanonicalAlias,
+            ).unseenChapterIds,
             onReadChanged: _setChapterRead,
             onManualReadChanged: (entry, isRead) => _setChapterRead(
               entry,
@@ -608,6 +613,10 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
                   );
                 }
               },
+              readUnseenChapterIds: () => _detailsSnapshotForComic(
+                comic.sourceId,
+                comic.comicId,
+              ).unseenChapterIds,
               onReadChanged: _setChapterRead,
               onManualReadChanged: (entry, isRead) => _setChapterRead(
                 entry,

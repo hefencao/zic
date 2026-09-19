@@ -670,6 +670,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
     required this.loadCover,
     required this.reloadLibrary,
     required this.onPreferenceChanged,
+    this.readUnseenChapterIds,
     required this.onReadChanged,
     this.onManualReadChanged,
     this.onChapterViewed,
@@ -705,6 +706,7 @@ final class LocalComicDetailsScreen extends StatefulWidget {
   final ComicDetailsArtworkLoader loadCover;
   final ComicDetailsLibraryReloader reloadLibrary;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
+  final Set<String> Function()? readUnseenChapterIds;
   final Future<void> Function(ImportedLibraryEntry chapter, bool isRead)
       onReadChanged;
   final Future<void> Function(ImportedLibraryEntry chapter, bool isRead)?
@@ -1273,6 +1275,14 @@ final class _LocalComicDetailsScreenState
     setState(() => _library = _library.copyWith(preference: preference));
     try {
       await widget.onPreferenceChanged(preference);
+      final unseenChapterIds = widget.readUnseenChapterIds?.call();
+      if (mounted && unseenChapterIds != null) {
+        setState(
+          () => _library = _library.copyWith(
+            unseenChapterIds: unseenChapterIds,
+          ),
+        );
+      }
     } on Object catch (error, stackTrace) {
       if (!mounted) {
         return;
@@ -2350,6 +2360,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
     required this.ensureSourceChapter,
     required this.persistComic,
     required this.onPreferenceChanged,
+    this.readUnseenChapterIds,
     required this.onReadChanged,
     this.onManualReadChanged,
     this.onChapterViewed,
@@ -2388,6 +2399,7 @@ final class RemoteComicDetailsScreen extends StatefulWidget {
   final ComicDetailsChapterEnsurer ensureSourceChapter;
   final ComicDetailsComicPersister persistComic;
   final Future<void> Function(ComicPreference preference) onPreferenceChanged;
+  final Set<String> Function()? readUnseenChapterIds;
   final Future<void> Function(ImportedLibraryEntry chapter, bool isRead)
       onReadChanged;
   final Future<void> Function(ImportedLibraryEntry chapter, bool isRead)?
@@ -2962,6 +2974,14 @@ final class _RemoteComicDetailsScreenState
       }
       await widget.persistComic(manifest, _retainsWholeComic(preference));
       await widget.onPreferenceChanged(preference);
+      final unseenChapterIds = widget.readUnseenChapterIds?.call();
+      if (mounted && unseenChapterIds != null) {
+        setState(
+          () => _library = _library.copyWith(
+            unseenChapterIds: unseenChapterIds,
+          ),
+        );
+      }
     } on Object catch (error, stackTrace) {
       final manifest = _manifest;
       if (manifest != null) {
