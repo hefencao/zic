@@ -534,6 +534,17 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     }
   }
 
+  void _forgetSourceKindWatch(DownloadId id) {
+    // Releasing one Reader-local source watch is a consumer-lifetime event,
+    // not negative encoded-content evidence. In particular, publishing
+    // ContentKind.unknown here makes Pipeline remove an already-observed WebP
+    // transport-cost fact; the resulting plan can reacquire this same source,
+    // sniff WebP again, release it again, and oscillate forever. Physical
+    // session/generation replacement still uses _clearSourceKind so genuinely
+    // stale evidence is withdrawn before the replacement source is observed.
+    _sourceKinds.remove(id);
+  }
+
   void _clearExternalPresentationForDownload(DownloadId id) {
     _externalPresentationPending.removeWhere(
       (decodeId) => decodeId.download == id,
@@ -553,7 +564,7 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
     _sourceRevisions.remove(id);
     _sourceWakeLengths.remove(id);
     _sourceRebindWakes.remove(id);
-    _clearSourceKind(id);
+    _forgetSourceKindWatch(id);
     _clearExternalPresentationForDownload(id);
     if (binding == null) return;
     binding.projection.removeSourceListener(binding.listener);

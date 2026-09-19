@@ -117,6 +117,7 @@ void main() {
       sources: sources,
       scopePrefix: 'source-lifetime',
     );
+    final sourceKinds = <ContentKind>[];
     final coordinator = LiveCoordinator(
       registry: registry,
       ingresses: ingresses,
@@ -124,6 +125,7 @@ void main() {
           FakeTransport(bytes: <int>[...'RIFF....WEBPsource'.codeUnits]),
       clock: clock,
       onDecode: (_, _, _) async {},
+      onSourceKindObserved: (_, kind) => sourceKinds.add(kind),
       net: NetLane(maxActive: 1),
       decode: DecodeLane(maxActive: 1),
     );
@@ -171,6 +173,9 @@ void main() {
     expect(ingresses.find(id), isNotNull);
     expect(sources.find(id), isNotNull);
     expect(registry.find(id), isNotNull);
+    expect(sourceKinds, contains(ContentKind.webp));
+    final unknownBeforeConsumerRelease =
+        sourceKinds.where((kind) => kind == ContentKind.unknown).length;
 
     final downloadOnly = DemandPlan(
       revision: 2,
@@ -193,6 +198,54 @@ void main() {
         reason: 'encoded transfer retention is independent from Reader media');
     expect(ingresses.find(id), isNull);
     expect(sources.find(id), isNull);
+    expect(
+      sourceKinds.where((kind) => kind == ContentKind.unknown).length,
+      unknownBeforeConsumerRelease,
+      reason: 'consumer source release is not negative content-kind evidence',
+    );
+
+    final withMediaAgain = DemandPlan(
+      revision: 3,
+      downloads: <DownloadId, DownloadDemand>{
+        id: const DownloadDemand(
+          role: PageRole.current,
+          priority: 1000,
+          reason: 'source-lifetime',
+          expirationRevision: 4,
+        ),
+      },
+      decodes: <DecodeId, DecodeDemand>{
+        decodeId: const DecodeDemand(
+          role: PageRole.current,
+          priority: 1000,
+          targetWatermark: 1,
+          reason: 'source-lifetime',
+          expirationRevision: 4,
+        ),
+      },
+      uploads: const <DecodeId, UploadDemand>{},
+      keep: <ResourceId>{
+        ResourceId.download(id),
+        ResourceId.decode(decodeId),
+      },
+    );
+    coordinator.reconcile(
+      'reader',
+      PipelineDelta(
+        plan: withMediaAgain,
+        diff: DemandDiff.between(downloadOnly, withMediaAgain),
+        window: RoleWindow(const <int, PageRole>{0: PageRole.current}),
+      ),
+    );
+    await coordinator.idle();
+
+    expect(ingresses.find(id), isNotNull);
+    expect(sources.find(id), isNotNull);
+    expect(
+      sourceKinds.where((kind) => kind == ContentKind.unknown).length,
+      unknownBeforeConsumerRelease,
+      reason: 'reacquiring the same source must not oscillate WebP cost evidence',
+    );
   });
 
   test('durable resident needMoreData expands Reader prefix and wakes decode',
