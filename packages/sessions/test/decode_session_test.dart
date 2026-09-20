@@ -354,12 +354,14 @@ void main() {
     download.attachIngressProjection(projection);
     final factory = _PrefixCursorFactory();
     final hints = WebpDecodePrefixHints();
+    final trace = MemoryTraceSink();
     final session = DecodeSession(
       id: _decodeId(download.id),
       ingress: projection,
       cursors: factory,
       clock: _Clock(),
       prefixHints: hints,
+      traceSink: trace,
     );
     const demand = DecodeDemand(
       role: PageRole.current,
@@ -405,6 +407,17 @@ void main() {
     expect(ready.depth, 1);
     expect(factory.cursor.calls, 2);
     expect(hints.minimumBytes(download.id, 0), 524288);
+    final decodingStates = trace.events
+        .where((event) =>
+            event.kind == TraceEventKind.decodeState &&
+            event.payload['state'] == DecodeState.decoding.name)
+        .toList(growable: false);
+    expect(decodingStates, hasLength(2));
+    expect(decodingStates.first.payload['cursorReused'], isFalse);
+    expect(decodingStates.first.payload['sourceLength'], 300000);
+    expect(decodingStates.last.payload['cursorReused'], isTrue);
+    expect(decodingStates.last.payload['cursorCreateMicros'], 0);
+    expect(decodingStates.last.payload['sourceLength'], 524288);
 
     session.dispose();
     await download.dispose();

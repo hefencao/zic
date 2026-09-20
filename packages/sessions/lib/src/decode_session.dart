@@ -433,6 +433,9 @@ final class DecodeSession {
       // recoverable. The next demand owns the retry; stale failure state must
       // not survive a successful frame from the same source epoch.
       _failure = null;
+      final cursorReused = _cursor != null &&
+          _epoch == epoch &&
+          identical(_boundSource, source);
       _cursorCreateMicros = _bind(source, epoch);
       var holder = _holder!;
       final targetDepth = demand.targetWatermark > preparedDepth
@@ -444,7 +447,14 @@ final class DecodeSession {
         return snapshot;
       }
 
-      _setState(DecodeState.decoding);
+      _setState(
+        DecodeState.decoding,
+        details: <String, Object?>{
+          'cursorCreateMicros': _cursorCreateMicros,
+          'cursorReused': cursorReused,
+          'sourceLength': source.length,
+        },
+      );
       var remainingLaneQueueMicros =
           laneQueueMicros < 0 ? 0 : laneQueueMicros;
       while (holder.depth < targetDepth) {
@@ -896,14 +906,21 @@ final class DecodeSession {
     _partialPrefixAnimated = false;
   }
 
-  void _setState(DecodeState state) {
+  void _setState(
+    DecodeState state, {
+    Map<String, Object?> details = const <String, Object?>{},
+  }) {
     if (_state == state) {
       return;
     }
     _state = state;
     _emit(
       TraceEventKind.decodeState,
-      <String, Object?>{'state': state.name, 'depth': _holder?.depth ?? 0},
+      <String, Object?>{
+        'state': state.name,
+        'depth': _holder?.depth ?? 0,
+        ...details,
+      },
     );
   }
 
