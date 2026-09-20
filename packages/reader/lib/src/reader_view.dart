@@ -217,6 +217,7 @@ final class _ReaderViewState extends State<ReaderView>
   int _lastVerticalTravelDirection = 0;
   int? _lastVerticalVisibleMinIndex;
   int? _lastVerticalVisibleMaxIndex;
+  late final ValueNotifier<({int min, int max})> _verticalVisibleTickerRange;
   late List<GlobalKey> _verticalPageLayoutKeys;
   int _lastVerticalLayoutSnapshotMicros = -1000000;
   int _lastTransitionTraceMicros = -1000000;
@@ -356,6 +357,10 @@ final class _ReaderViewState extends State<ReaderView>
     _lastRotationQuarterTurns = widget.controller.rotationQuarterTurns;
     _lastVerticalVisibleMinIndex = widget.controller.currentIndex;
     _lastVerticalVisibleMaxIndex = widget.controller.currentIndex;
+    _verticalVisibleTickerRange = ValueNotifier<({int min, int max})>((
+      min: widget.controller.currentIndex,
+      max: widget.controller.currentIndex,
+    ));
     _verticalKeepAliveCenter = ValueNotifier<int>(widget.controller.currentIndex);
     _verticalPageLayoutKeys = _createVerticalPageLayoutKeys();
     _runtimePageAspectRatios =
@@ -424,6 +429,10 @@ final class _ReaderViewState extends State<ReaderView>
       _lastReportedVerticalPage = null;
       _lastVerticalVisibleMinIndex = widget.controller.currentIndex;
       _lastVerticalVisibleMaxIndex = widget.controller.currentIndex;
+      _verticalVisibleTickerRange.value = (
+        min: widget.controller.currentIndex,
+        max: widget.controller.currentIndex,
+      );
       _verticalKeepAliveCenter.value = widget.controller.currentIndex;
       _verticalPageLayoutKeys = _createVerticalPageLayoutKeys();
       _lastVerticalLayoutSnapshotMicros = -1000000;
@@ -488,6 +497,7 @@ final class _ReaderViewState extends State<ReaderView>
     _stripTransform.dispose();
     _pageController.dispose();
     _verticalController.dispose();
+    _verticalVisibleTickerRange.dispose();
     _verticalKeepAliveCenter.dispose();
     super.dispose();
   }
@@ -584,18 +594,29 @@ final class _ReaderViewState extends State<ReaderView>
                 }
                 final pageIndex = stitched ? itemIndex : itemIndex ~/ 2;
                 final page = _buildPage(pageIndex);
+                final presentedPage =
+                    (stitched || !_stripZoomed) && _zoomedPage == null
+                        ? page
+                        : ClipRect(child: page);
                 return SizedBox(
                   key: ValueKey<String>('reader-vertical-page:$pageIndex'),
                   height: geometry.extentAt(pageIndex),
                   child: SizedBox.expand(
                     key: _verticalPageLayoutKeys[pageIndex],
-                    // Exact stitched extents already constrain the page. Avoid
-                    // independent hard-clip edges during ordinary scrolling;
-                    // strip zoom clips at the viewport, per-page zoom clips to
-                    // its page so it cannot cover siblings.
-                    child: (stitched || !_stripZoomed) && _zoomedPage == null
-                        ? page
-                        : ClipRect(child: page),
+                    // cacheExtent/keepAlive own composition residency only.
+                    // A composed page outside the actual viewport may keep
+                    // loading/preparing, but its progress/animation widgets
+                    // must not keep the whole Reader on a perpetual frame
+                    // ticker. Only geometry-proven visible pages may tick.
+                    child: ValueListenableBuilder<({int min, int max})>(
+                      valueListenable: _verticalVisibleTickerRange,
+                      child: presentedPage,
+                      builder: (context, visibleRange, child) => TickerMode(
+                        enabled: pageIndex >= visibleRange.min &&
+                            pageIndex <= visibleRange.max,
+                        child: child!,
+                      ),
+                    ),
                   ),
                 );
               },
@@ -2548,18 +2569,24 @@ final class _ReaderViewState extends State<ReaderView>
       pixels: metrics.pixels,
       viewportDimension: metrics.viewportDimension,
     );
-    _lastVerticalVisibleMinIndex = visible.isEmpty
+    final visibleMinIndex = visible.isEmpty
         ? position.index
         : visible.fold<int>(
             position.index,
             (minimum, entry) => entry.index < minimum ? entry.index : minimum,
           );
-    _lastVerticalVisibleMaxIndex = visible.isEmpty
+    final visibleMaxIndex = visible.isEmpty
         ? position.index
         : visible.fold<int>(
             position.index,
             (maximum, entry) => entry.index > maximum ? entry.index : maximum,
           );
+    _lastVerticalVisibleMinIndex = visibleMinIndex;
+    _lastVerticalVisibleMaxIndex = visibleMaxIndex;
+    final nextTickerRange = (min: visibleMinIndex, max: visibleMaxIndex);
+    if (_verticalVisibleTickerRange.value != nextTickerRange) {
+      _verticalVisibleTickerRange.value = nextTickerRange;
+    }
     double? currentVisible;
     for (final entry in visible) {
       if (entry.index == position.index) {

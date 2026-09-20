@@ -640,6 +640,94 @@ void main() {
   );
 
   testWidgets(
+    'vertical composition gates loading tickers to geometry-visible pages',
+    (tester) async {
+      final chapter = ChapterManifest(
+        sourceId: 'source',
+        comicId: 'ticker-gate-comic',
+        chapter: const Chapter(
+          chapterId: 'ticker-gate-chapter',
+          comicId: 'ticker-gate-comic',
+          title: 'ticker gate',
+          sequence: 0,
+          pageCount: 48,
+          sourceRevision: 'r1',
+        ),
+        pages: List<PageAsset>.generate(
+          48,
+          (index) => PageAsset(
+            pageId: 'ticker-$index',
+            chapterId: 'ticker-gate-chapter',
+            index: index,
+            uri: Uri.parse('asset:///ticker-$index.png'),
+            width: 1000,
+            height: 100,
+          ),
+        ),
+        readingDirection: ReadingDirection.vertical,
+      );
+      final clock = FakeClock();
+      final controller = ReaderController(
+        sessionId: 'reader-ticker-gate-test',
+        chapter: chapter,
+        initialPage: 20,
+        onObservation: (_) {},
+        clock: clock,
+      );
+      addTearDown(controller.dispose);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ReaderView(
+            controller: controller,
+            clock: clock,
+            pageBuilder: (context, asset, reportFirstFrame) => const Center(
+              child: CircularProgressIndicator(),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 16));
+
+      final pageFinders = <({int index, Finder finder})>[];
+      for (var index = 0; index < chapter.pages.length; index++) {
+        final finder = find.byKey(
+          ValueKey<String>('reader-vertical-page:$index'),
+        );
+        if (finder.evaluate().isNotEmpty) {
+          pageFinders.add((index: index, finder: finder));
+        }
+      }
+      expect(pageFinders.length, greaterThan(1));
+
+      final tickerModes = <int, bool>{};
+      for (final entry in pageFinders) {
+        final tickerMode = find.descendant(
+          of: entry.finder,
+          matching: find.byType(TickerMode),
+        );
+        expect(
+          tickerMode,
+          findsOneWidget,
+          reason: 'every composed vertical page must have a ticker gate',
+        );
+        tickerModes[entry.index] =
+            tester.widget<TickerMode>(tickerMode).enabled;
+      }
+
+      expect(tickerModes.values, contains(true));
+      expect(
+        tickerModes.values,
+        contains(false),
+        reason:
+            'cacheExtent/keepAlive pages outside the viewport must stay mounted but ticker-muted',
+      );
+      expect(tickerModes[controller.currentIndex], isTrue);
+    },
+  );
+
+  testWidgets(
     'vertical idle keepAlive recenter does not release the whole old window in one frame',
     (tester) async {
       final chapter = ChapterManifest(
