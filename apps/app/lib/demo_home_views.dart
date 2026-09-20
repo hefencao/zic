@@ -333,8 +333,6 @@ extension _DemoHomeViews on _DemoHomeState {
                 coverIdentity: coverIdentity,
                 telemetryIdentity: presentationIdentity,
                 coverSource: _coverSourceLoaderForComic(comic),
-                coverPlaceholderSource:
-                    _coverPlaceholderSourceLoaderForComic(comic),
                 sourceAvailable: _coverSourceAvailableForComic(comic),
                 startupTelemetry: telemetryOwners == null ||
                         telemetryOwners.add(presentationIdentity)
@@ -881,7 +879,6 @@ extension _DemoHomeViews on _DemoHomeState {
         preference: _preferenceForComic(comic),
         coverIdentity: coverIdentity,
         coverSource: _coverSourceLoaderForComic(comic),
-        coverPlaceholderSource: _coverPlaceholderSourceLoaderForComic(comic),
         sourceAvailable: _coverSourceAvailableForComic(comic),
         startupTelemetry: widget.startupTelemetry,
         downloadProgress: _downloadProgressForComic(comic),
@@ -1021,8 +1018,6 @@ extension _DemoHomeViews on _DemoHomeState {
           comic: comic,
           preference: _preferenceForComic(comic),
           coverSource: _coverSourceLoaderForComic(comic),
-          coverPlaceholderSource:
-              _coverPlaceholderSourceLoaderForComic(comic),
           coverIdentity: coverIdentity,
           sourceAvailable: _coverSourceAvailableForComic(comic),
           startupTelemetry: widget.startupTelemetry,

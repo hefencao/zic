@@ -152,9 +152,9 @@ extension _DemoHomeLocalCover on _DemoHomeState {
     );
   }
 
-  Future<EncodedResourceSource?> Function()? _coverPlaceholderSourceLoaderForComic(
+  Future<EncodedResourceSource?> _loadLocalFolderCardCoverSource(
     LibraryComic comic,
-  ) {
+  ) async {
     if (comic.sourceId != 'local-folder') return null;
     final chapter = comic.coverChapter?.chapter;
     final fallbackPage = chapter == null || chapter.pages.isEmpty
@@ -167,13 +167,18 @@ extension _DemoHomeLocalCover on _DemoHomeState {
         !_localFolderCoverNeedsOriginal(chapter, sourceValue)) {
       return null;
     }
-    return () => _loadLocalFolderCoverPlaceholderArtifact(
-          comicId: comic.comicId,
-          sourceValue: sourceValue,
-          chapter: chapter,
-          awaitPersistenceOnMiss: false,
-          materializeOnMiss: false,
-        );
+    // Comic cards are a thumbnail presentation surface. Keep the original
+    // animated file as the durable artwork/content authority for details and
+    // explicit media viewing, but use the retained static derivative as the
+    // card presentation source. This avoids permanently decoding a large
+    // looping animation merely because a card is mounted.
+    return _loadLocalFolderCoverPlaceholderArtifact(
+      comicId: comic.comicId,
+      sourceValue: sourceValue,
+      chapter: chapter,
+      awaitPersistenceOnMiss: false,
+      materializeOnMiss: true,
+    );
   }
 
   Future<void> _materializeLocalFolderCover(

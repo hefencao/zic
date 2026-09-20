@@ -1398,15 +1398,19 @@ final class _DemoHomeState extends State<DemoHome> {
   Future<EncodedResourceSource> Function() _coverSourceLoaderForComic(
     LibraryComic comic,
   ) =>
-      () => _loadCoverSource(
-            sourceId: comic.sourceId,
-            comicId: comic.comicId,
-            coverUri: comic.coverSourceId == null
-                ? null
-                : Uri.tryParse(comic.coverSourceId!),
-            fallbackChapter: comic.coverChapter,
-            resourceRole: 'cover',
-          );
+      () async {
+        final cardSource = await _loadLocalFolderCardCoverSource(comic);
+        if (cardSource != null) return cardSource;
+        return _loadCoverSource(
+          sourceId: comic.sourceId,
+          comicId: comic.comicId,
+          coverUri: comic.coverSourceId == null
+              ? null
+              : Uri.tryParse(comic.coverSourceId!),
+          fallbackChapter: comic.coverChapter,
+          resourceRole: 'cover',
+        );
+      };
 
   bool _coverSourceAvailableForComic(LibraryComic comic) =>
       comic.sourceId == 'local-folder' || _sourceForId(comic.sourceId) != null;
