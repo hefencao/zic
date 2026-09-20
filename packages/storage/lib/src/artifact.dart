@@ -75,9 +75,11 @@ final class Artifact {
 
   Future<ArtifactSnapshot> restore({
     bool verifyPromotedChecksum = true,
+    TaskControl? control,
   }) => _enqueueMutation(
         () => _restore(
           verifyPromotedChecksum: verifyPromotedChecksum,
+          control: control,
         ),
       );
 
@@ -203,11 +205,15 @@ final class Artifact {
 
   Future<ArtifactSnapshot> _restore({
     required bool verifyPromotedChecksum,
+    TaskControl? control,
   }) async {
     _requireNotDisposed();
+    control?.throwIfCancelled();
     try {
       await _closeWriter();
+      control?.throwIfCancelled();
       await _rejectArtifactLinks();
+      control?.throwIfCancelled();
 
       final finalFile = File(finalPath);
     if (await finalFile.exists()) {
@@ -215,11 +221,13 @@ final class Artifact {
       // still has the claimed bytes. Even callers that request the historical
       // fast path must verify a same-length file before treating it as ready;
       // otherwise a silent in-place overwrite is promoted as a new artifact.
-      final restoredFromMeta = await _restorePromotedFromMeta(finalFile,
+      final restoredFromMeta = await _restorePromotedFromMeta(
+        finalFile,
         verifyChecksum: verifyPromotedChecksum,
+        control: control,
       );
       if (!restoredFromMeta) {
-        await _rehash(finalFile);
+        await _rehash(finalFile, control: control);
         if (_committed <= 0) {
           throw const Failure(
             code: ErrorCode.artifactCorruption,
@@ -255,12 +263,15 @@ final class Artifact {
 
     final partial = File(partialPath);
     if (await partial.exists()) {
-      await _rehash(partial);
+      control?.throwIfCancelled();
+      await _rehash(partial, control: control);
       _state = ArtifactState.partial;
       return snapshot;
     }
 
+    control?.throwIfCancelled();
     await partial.parent.create(recursive: true);
+    control?.throwIfCancelled();
     _crc = Crc32();
     _checksumDirty = false;
     _committed = 0;
@@ -720,6 +731,7 @@ final class Artifact {
   Future<bool> _restorePromotedFromMeta(
     File file, {
     bool verifyChecksum = true,
+    TaskControl? control,
   }) async {
     final Map<String, Object?>? metadata;
     try {
@@ -740,7 +752,8 @@ final class Artifact {
     }
     if (await file.length() != bytes) return false;
     if (verifyChecksum) {
-      await _rehash(file);
+      control?.throwIfCancelled();
+      await _rehash(file, control: control);
       if (checksum.toLowerCase() != this.checksum) {
         throw const Failure(
           code: ErrorCode.artifactCorruption,
@@ -792,30 +805,89 @@ final class Artifact {
     }
   }
 
-  Future<void> _rehash(File file) async {
+  Future<void> _rehash(
+    File file, {
+    TaskControl? control,
+  }) async {
     final path = file.path;
-    final result = await Isolate.run<(int, String)>(() {
-      final crc = Crc32();
-      var length = 0;
-      final reader = File(path).openSync();
-      final buffer = Uint8List(256 * 1024);
-      try {
-        while (true) {
-          final count = reader.readIntoSync(buffer);
-          if (count <= 0) break;
-          crc.add(count == buffer.length
-              ? buffer
-              : Uint8List.sublistView(buffer, 0, count));
-          length += count;
+    if (control == null) {
+      final result = await Isolate.run<(int, String)>(() {
+        final crc = Crc32();
+        var length = 0;
+        final reader = File(path).openSync();
+        final buffer = Uint8List(256 * 1024);
+        try {
+          while (true) {
+            final count = reader.readIntoSync(buffer);
+            if (count <= 0) break;
+            crc.add(count == buffer.length
+                ? buffer
+                : Uint8List.sublistView(buffer, 0, count));
+            length += count;
+          }
+        } finally {
+          reader.closeSync();
         }
-      } finally {
-        reader.closeSync();
+        return (length, crc.hex);
+      });
+      _applyRehashResult(result.$1, result.$2);
+      return;
+    }
+
+    control.throwIfCancelled();
+    final results = ReceivePort();
+    final errors = ReceivePort();
+    final isolate = await Isolate.spawn<List<Object?>>(
+      _artifactRehashWorker,
+      <Object?>[path, results.sendPort],
+      onError: errors.sendPort,
+      errorsAreFatal: true,
+      debugName: 'zic-artifact-restore-rehash',
+    );
+    try {
+      control.throwIfCancelled();
+      final outcome = await Future.any<Object?>(<Future<Object?>>[
+        results.first,
+        errors.first.then<Object?>((message) => _ArtifactRehashError(message)),
+        control.whenCancelled
+            .then<Object?>((_) => const _ArtifactRehashCancelled()),
+      ]);
+      if (outcome is _ArtifactRehashCancelled) {
+        isolate.kill(priority: Isolate.immediate);
+        control.throwIfCancelled();
       }
-      return (length, crc.hex);
-    });
-    _crc = Crc32.fromHex(result.$2);
+      if (outcome is _ArtifactRehashError) {
+        final message = outcome.message;
+        if (message is List<Object?> && message.length >= 2) {
+          Error.throwWithStackTrace(
+            StateError('artifact restore rehash failed: ${message[0]}'),
+            StackTrace.fromString('${message[1]}'),
+          );
+        }
+        throw StateError('artifact restore rehash failed: $message');
+      }
+      if (outcome is! List<Object?> ||
+          outcome.length != 2 ||
+          outcome[0] is! int ||
+          outcome[1] is! String) {
+        throw StateError('artifact restore rehash returned invalid result');
+      }
+      control.throwIfCancelled();
+      _applyRehashResult(outcome[0]! as int, outcome[1]! as String);
+    } finally {
+      // A completed worker has already published its final result. Any
+      // cancelled/error worker must not outlive the scheduler-owned restore
+      // attempt and keep doing file I/O after the local-preparation slot retires.
+      isolate.kill(priority: Isolate.immediate);
+      results.close();
+      errors.close();
+    }
+  }
+
+  void _applyRehashResult(int length, String checksum) {
+    _crc = Crc32.fromHex(checksum);
     _checksumDirty = false;
-    _committed = result.$1;
+    _committed = length;
   }
 
   Future<IOSink> _writer() async {
@@ -936,4 +1008,37 @@ final class Artifact {
       );
     }
   }
+}
+
+final class _ArtifactRehashCancelled {
+  const _ArtifactRehashCancelled();
+}
+
+final class _ArtifactRehashError {
+  const _ArtifactRehashError(this.message);
+
+  final Object? message;
+}
+
+@pragma('vm:entry-point')
+void _artifactRehashWorker(List<Object?> arguments) {
+  final path = arguments[0]! as String;
+  final response = arguments[1]! as SendPort;
+  final crc = Crc32();
+  var length = 0;
+  final reader = File(path).openSync();
+  final buffer = Uint8List(256 * 1024);
+  try {
+    while (true) {
+      final count = reader.readIntoSync(buffer);
+      if (count <= 0) break;
+      crc.add(count == buffer.length
+          ? buffer
+          : Uint8List.sublistView(buffer, 0, count));
+      length += count;
+    }
+  } finally {
+    reader.closeSync();
+  }
+  response.send(<Object?>[length, crc.hex]);
 }

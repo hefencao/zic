@@ -259,11 +259,32 @@ final class PartialDownloadHandoff {
 
     final physicalEntry = physicalPartial;
     if (physicalEntry != null && physicalEntry.length > 0) {
+      _record(
+        session,
+        action: 'physical-partial-opened',
+        bytes: physicalEntry.length,
+        startedAtMicros: clock?.nowMicros(),
+        reason: 'local-restore',
+        extra: <String, Object?>{
+          'accessMode': physicalEntry.accessMode,
+          'adoptable': physicalEntry.adoptInto != null,
+        },
+      );
       final adoptInto = physicalEntry.adoptInto;
       if (adoptInto != null) {
         final startedAtMicros = clock?.nowMicros();
         final adopted = await adoptInto(session, control: control);
         control?.throwIfCancelled();
+        _record(
+          session,
+          action: 'physical-partial-adoption',
+          bytes: physicalEntry.length,
+          startedAtMicros: startedAtMicros,
+          reason: adopted ? 'adopted' : 'rejected',
+          extra: <String, Object?>{
+            'accessMode': physicalEntry.accessMode,
+          },
+        );
         if (adopted) {
           _record(
             session,
@@ -1453,6 +1474,7 @@ final class PartialDownloadHandoff {
     bool equivalent = false,
     int equivalentCandidatesChecked = 0,
     String? reason,
+    Map<String, Object?> extra = const <String, Object?>{},
   }) {
     final sourceClock = clock;
     if (sourceClock == null) return;
@@ -1470,6 +1492,7 @@ final class PartialDownloadHandoff {
         if (equivalent) 'verifiedEquivalentReuse': true,
         if (equivalent)
           'equivalentCandidatesChecked': equivalentCandidatesChecked,
+        ...extra,
         if (startedAtMicros != null)
           'handoffMicros': (sourceClock.nowMicros() - startedAtMicros).clamp(0, 1 << 62).toInt(),
       },

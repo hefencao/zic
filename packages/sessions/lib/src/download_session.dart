@@ -928,10 +928,45 @@ final class DownloadSession {
         );
       }
     }
-    final restored = ownedCheckpoint?.snapshot ??
-        await artifact.restore(
-          verifyPromotedChecksum: verifyPromotedChecksum,
+    late final ArtifactSnapshot restored;
+    if (ownedCheckpoint != null) {
+      restored = ownedCheckpoint.snapshot;
+    } else {
+      final genericRestoreStartedAtMicros = clock.nowMicros();
+      if (ownedCheckpointProbeOnly) {
+        _recordTrace(
+          TraceEventKind.artifactSource,
+          <String, Object?>{
+            'stage': 'generic-artifact-restore',
+            'action': 'started',
+            'controlCancelled': control?.cancelled ?? false,
+          },
         );
+      }
+      try {
+        restored = await artifact.restore(
+          verifyPromotedChecksum: verifyPromotedChecksum,
+          control: control,
+        );
+      } finally {
+        if (ownedCheckpointProbeOnly) {
+          _recordTrace(
+            TraceEventKind.artifactSource,
+            <String, Object?>{
+              'stage': 'generic-artifact-restore',
+              'action': 'retired',
+              'restoreMicros':
+                  (clock.nowMicros() - genericRestoreStartedAtMicros)
+                      .clamp(0, 1 << 62)
+                      .toInt(),
+              'controlCancelled': control?.cancelled ?? false,
+              'artifactState': artifact.state.name,
+              'committedLength': artifact.committedLength,
+            },
+          );
+        }
+      }
+    }
     _requireEpoch(epoch);
     control?.throwIfCancelled();
     final restoredPrefix = await artifact.readPrefix(_sourceMetadataPrefixLength);

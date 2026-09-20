@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:domain/domain.dart';
@@ -449,6 +450,43 @@ void main() {
     expect(second.hasOpenWriter, isFalse);
   });
 
+  test('controlled restore cancels an in-flight background rehash', () async {
+    final artifact = createArtifact();
+    final partial = File(artifact.partialPath);
+    await partial.parent.create(recursive: true);
+    final handle = await partial.open(mode: FileMode.write);
+    await handle.truncate(256 * 1024 * 1024);
+    await handle.close();
+
+    final control = _TestTaskControl(priority: 800);
+    final restoring = artifact.restore(control: control);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    final cancelledAt = Stopwatch()..start();
+    control.cancel();
+
+    await expectLater(
+      restoring,
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    ).timeout(const Duration(seconds: 1));
+    cancelledAt.stop();
+
+    expect(cancelledAt.elapsed, lessThan(const Duration(seconds: 1)));
+    expect(artifact.state, ArtifactState.empty);
+    expect(artifact.committedLength, 0);
+    expect(artifact.hasOpenWriter, isFalse);
+
+    await partial.delete();
+    final retried = await artifact.restore();
+    expect(retried.state, ArtifactState.partial);
+    expect(retried.committedLength, 0);
+  });
+
   test('fast promoted restore falls back when metadata length is stale', () async {
     final first = createArtifact();
     await first.restore();
@@ -466,4 +504,22 @@ void main() {
     expect(await second.readBytes(), <int>[1, 2, 3, 4]);
   });
 
+}
+final class _TestTaskControl implements TaskControl {
+  _TestTaskControl({required this.priority});
+
+  final Completer<void> _cancelled = Completer<void>();
+
+  @override
+  final int priority;
+
+  @override
+  bool get cancelled => _cancelled.isCompleted;
+
+  @override
+  Future<void> get whenCancelled => _cancelled.future;
+
+  void cancel() {
+    if (!_cancelled.isCompleted) _cancelled.complete();
+  }
 }

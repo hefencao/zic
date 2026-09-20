@@ -865,6 +865,89 @@ void main() {
     expect(owner.registry.get(id).state, DownloadState.idle);
   });
 
+  test('withdrawn local preparations release both operation slots for a new window',
+      () async {
+    final temp = await Directory.systemTemp.createTemp(
+      'transfer_owner_local_prepare_window_release_',
+    );
+    addTearDown(() async => temp.delete(recursive: true));
+    final clock = _Clock();
+    final registry = DownloadRegistry(
+      layout: CacheLayout('${temp.path}/cache'),
+      clock: clock,
+    );
+    final stale1 = _id('local-prepare-stale-1');
+    final stale2 = _id('local-prepare-stale-2');
+    final incoming = _id('local-prepare-incoming');
+    final stale1Entered = Completer<void>();
+    final stale2Entered = Completer<void>();
+    final stale1Cancelled = Completer<void>();
+    final stale2Cancelled = Completer<void>();
+    final incomingEntered = Completer<void>();
+    final owner = DownloadTransferOwner(
+      registry: registry,
+      clock: clock,
+      net: NetLane(maxActive: 1),
+      prepareDownloadWithControl: (session, {required control}) async {
+        if (session.id == stale1 || session.id == stale2) {
+          final entered = session.id == stale1 ? stale1Entered : stale2Entered;
+          final cancelled =
+              session.id == stale1 ? stale1Cancelled : stale2Cancelled;
+          if (!entered.isCompleted) entered.complete();
+          await control.whenCancelled;
+          if (!cancelled.isCompleted) cancelled.complete();
+          control.throwIfCancelled();
+        }
+        if (session.id == incoming && !incomingEntered.isCompleted) {
+          incomingEntered.complete();
+        }
+      },
+    );
+    addTearDown(() async {
+      await owner.dispose();
+      await registry.dispose();
+    });
+    final consumer = owner.attachConsumer(
+      scopeId: 'reader-local-prepare-window-release',
+      transportFor: (_) =>
+          _CountingBytesTransport('RIFF....WEBPwindow'.codeUnits),
+      traceSink: const NoopTraceSink(),
+    );
+
+    consumer.replaceDemands(
+      'reader-local-prepare-window-release',
+      1,
+      <DownloadId, TransferDemand>{
+        stale1: const TransferDemand(priority: 800, reason: 'old-next2'),
+        stale2: const TransferDemand(priority: 780, reason: 'old-near'),
+      },
+    );
+    await Future.wait<void>(<Future<void>>[
+      stale1Entered.future,
+      stale2Entered.future,
+    ]);
+
+    consumer.replaceDemands(
+      'reader-local-prepare-window-release',
+      2,
+      <DownloadId, TransferDemand>{
+        incoming: const TransferDemand(priority: 800, reason: 'new-next2'),
+      },
+    );
+
+    await Future.wait<void>(<Future<void>>[
+      stale1Cancelled.future,
+      stale2Cancelled.future,
+      incomingEntered.future,
+    ]).timeout(const Duration(seconds: 1));
+
+    consumer.replaceDemands(
+      'reader-local-prepare-window-release',
+      3,
+      const <DownloadId, TransferDemand>{},
+    );
+  });
+
   test('post-local network admission preserves higher demand priority', () async {
     final temp = await Directory.systemTemp.createTemp(
       'transfer_owner_local_prepare_priority_barrier_',

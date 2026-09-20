@@ -1058,6 +1058,56 @@ void main() {
     expect(restored.committedLength, committedBefore);
   });
 
+  test('in-flight scheduler cancellation interrupts generic artifact rehash',
+      () async {
+    await session.dispose();
+    final partialPath = '${temp.path}/cancel-rehash/partial/page.webp';
+    final finalPath = '${temp.path}/cancel-rehash/final/page.webp';
+    final partial = File(partialPath);
+    await partial.parent.create(recursive: true);
+    final handle = await partial.open(mode: FileMode.write);
+    await handle.truncate(256 * 1024 * 1024);
+    await handle.close();
+
+    session = DownloadSession(
+      id: _idWithSource('controlled-rehash-cancel'),
+      artifact: Artifact(partialPath: partialPath, finalPath: finalPath),
+      clock: FakeMonoClock(),
+      initiallyDemanded: false,
+    );
+    final control = CancelToken(priority: 800);
+    final restoring = session.restore(
+      verifyPromotedChecksum: false,
+      preferOwnedPartialCheckpoint: true,
+      ownedCheckpointProbeOnly: true,
+      control: control,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    control.cancel();
+
+    await expectLater(
+      restoring,
+      throwsA(
+        isA<Failure>().having(
+          (error) => error.code,
+          'code',
+          ErrorCode.cancelled,
+        ),
+      ),
+    ).timeout(const Duration(seconds: 1));
+
+    expect(session.state, DownloadState.idle);
+    expect(session.snapshot.failure, isNull);
+    expect(session.artifact.state, ArtifactState.empty);
+    expect(session.committedLength, 0);
+    expect(session.hasWriter, isFalse);
+
+    await partial.delete();
+    final retried = await session.restore();
+    expect(retried.state, DownloadState.idle);
+    expect(retried.committedLength, 0);
+  });
+
   test('restore failure cannot leave the session advertising old promotion',
       () async {
     final writer = session.acquireWriter();

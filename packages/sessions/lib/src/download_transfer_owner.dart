@@ -1477,6 +1477,22 @@ final class DownloadTransferOwner {
 
       _pendingLocalPreparations.remove(target.id);
       _activeLocalPreparations.add(target.id);
+      final admittedAtMicros = clock.nowMicros();
+      _record(
+        _preferredClaim(target.id) ?? target.initialClaim,
+        kind: TraceEventKind.policyDecision,
+        id: target.id,
+        payload: <String, Object?>{
+          'stage': 'local-preparation-lifecycle',
+          'action': 'admitted',
+          'effectivePriority': target.session.effectivePriority,
+          'queueWaitMicros': (admittedAtMicros - target.startedAtMicros)
+              .clamp(0, 1 << 62)
+              .toInt(),
+          'activePreparations': _activeLocalPreparations.length,
+          'pendingPreparations': _pendingLocalPreparations.length,
+        },
+      );
 
       late final Future<void> tracked;
       tracked = _runLocalPreparation(
@@ -1499,6 +1515,25 @@ final class DownloadTransferOwner {
         if (identical(_localPreparationControls[id], control)) {
           _localPreparationControls.remove(id);
         }
+        _record(
+          _preferredClaim(id) ?? target.initialClaim,
+          kind: TraceEventKind.policyDecision,
+          id: id,
+          payload: <String, Object?>{
+            'stage': 'local-preparation-lifecycle',
+            'action': 'retired',
+            'cancelled': control.cancelled,
+            'effectivePriority': session.effectivePriority,
+            'activeMicros': (clock.nowMicros() - admittedAtMicros)
+                .clamp(0, 1 << 62)
+                .toInt(),
+            'totalMicros': (clock.nowMicros() - target.startedAtMicros)
+                .clamp(0, 1 << 62)
+                .toInt(),
+            'activePreparations': _activeLocalPreparations.length,
+            'pendingPreparations': _pendingLocalPreparations.length,
+          },
+        );
         final stillDemanded = !_disposed &&
             identical(registry.findExact(id), session) &&
             session.demanded;
