@@ -2,11 +2,11 @@
 
 ## Scope
 
-This audit follows the final page before Reader exit in `zic-debug-trace-2026-09-20T03-00-33.jsonl` and separates it from the stale local-restore cancellation fixed by `8c7ac8b5`. It does not change Reader windows, decode/upload concurrency, NetLane, local-prepare capacity, or Venera runtime concurrency.
+This is a **post-fix synthetic cold-source diagnostic**, not the original user-reported “slow page before leaving Reader” regression. The original report belongs to `zic-debug-trace-2026-09-20T01-58-11.jsonl`, `pipeline-reader-8`, zero-based page 68, and is covered by the stale local-restore cancellation audit and fix `8c7ac8b5`. The later `03-00-33` page383 sample was deliberately created while stress-testing a different cold WebP boundary after that fix. It must not be used to reattribute the original regression to Venera/HTTP. This audit does not change Reader windows, decode/upload concurrency, NetLane, local-prepare capacity, or Venera runtime concurrency.
 
-## The actual slow page
+## Synthetic cold page383 sample
 
-The final exited page is zero-based page 383 in `pipeline-reader-2` (displayed page 384/424). It mounts at 498.638s, becomes current at 499.001s and publishes first frame at 501.260s: mount-to-first-frame is about 2.622s and current-to-first-frame about 2.258s.
+In the later stress trace, zero-based page 383 in `pipeline-reader-2` (displayed page 384/424) mounts at 498.638s, becomes current at 499.001s and publishes first frame at 501.260s: mount-to-first-frame is about 2.622s and current-to-first-frame about 2.258s.
 
 Its physical local preparation is already fast (~21.6ms). The source task was admitted earlier as next2 and migrated 800→820→900→1000. Total request-plan gate wait is ~2.626s, but most of that occurred while the page was still speculative behind the physically single Venera JavaScript invocation. Once the viewport commits page 383 current, the gate hands over in roughly 30ms. This is therefore not a stale-current or priority-migration defect.
 

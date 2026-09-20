@@ -2,7 +2,7 @@
 
 ## Trigger
 
-A page seen shortly before leaving Reader showed one slow first load. The original `01-58-11` trace also contained a repeatable local-preparation long tail after large seek/scrub movement. These are related only at the scheduling boundary and must not be conflated with the later page-383 cold source-open cost described below.
+The original user report was that the page seen shortly before leaving Reader had one unusually slow first load. Re-reading `01-58-11` by Reader-session order identifies that report with the **last Reader session, `pipeline-reader-8`, zero-based page68**, not with later synthetic page383 experiments. Page68 is therefore the acceptance sample for this regression.
 
 ## Proven local-preparation failure
 
@@ -22,6 +22,18 @@ Focused tests cover cancellation of an in-flight background rehash, DownloadSess
 
 Fresh Profile on Raiden preserved the same cache and scrubbed the same 424-page animated WebP Reader from page 384 to 82 and then to 280 via the Reader seek control. In `.log/post-rehash-scrub.jsonl`, two scrub-obsolete active preparations retire with `cancelled=true` in about 53.0ms and 52.8ms. The reopened window retains rank continuity; the maximum observed queue wait is about 116.8ms rather than the previous ~0.9s stale-slot hold. A 323ms READY restore is not cancellation leakage: about 103ms is queue wait and about 220ms is real active recovery of a 7.7MiB durable prefix.
 
-## Separate final-page cold path
+## Same-page post-fix acceptance
 
-The later `03-00-33` trace identifies the actual last page before exit as zero-based page 383 in `pipeline-reader-2`. Its local preparation is already fast (`prepareMicros≈21.6ms`) but mount-to-first-frame is about 2.622s. The page's request-plan task starts while it is next2 and dynamically migrates 800→820→900→1000. Its 2.626s total runtime-gate wait is mostly pre-current time behind the physically single Venera JavaScript context; after the viewport commits page 383 current, the gate hands over within roughly 30ms. The remaining visible cold cost consists of the first source plan/runtime invocation (~573ms), direct host open (~584ms), arrival of a decoder-usable WebP prefix, and first-frame presentation. Request-plan cache behavior is correct for this first successful resolve, and no duplicate plan/cache owner was found. Do not claim the local-restore cancellation fix removes this distinct cold-source cost, and do not compensate by increasing Venera runtime concurrency, lowering 3/7, changing 2/1, or weakening current ownership without new evidence.
+The original bad page68 physical download identity is `identity:<7a820ea786f07ec3,783>`. In `01-58-11`, while still next=820, its `physical-local-prepare` consumed **884.669ms** before `downloadStarted`; it was a local hydration miss with `networkAdmissionRequired=true`. Network/source work therefore started late, and when page68 mounted its first frame still took **621.968ms**. A remount seconds later was only 22.327ms, proving the one-off stall was preparation/startup timing rather than a permanently slow decoder.
+
+After `8c7ac8b5`, current-main Profile `.log/current-main-page68-regression-check.jsonl` deliberately stresses the same 371-page Reader with SeekBar 242→33→68 before a normal y=900 page turn. The **same physical identity** is still not a trivial complete-cache case: it restores a 12,566,220-byte durable prefix from a 19,624,776-byte body and still reports `networkAdmissionRequired=true`. Its local-preparation lifecycle now waits **26.102ms** in the queue, runs **113.294ms** active and retires in **139.397ms** total (`prepareMicros=139.305ms`), then starts network at next=820. When zero-based page68 is later mounted, `firstFrameReady` arrives in **32.234ms**, before the page is promoted to current. Across 48 local preparations in the stress run, median `prepareMicros` is about **39.36ms** and maximum **226.87ms**; the former ~0.9s stale-slot hold does not recur.
+
+This closes the original regression on the exact page/physical identity rather than on a substitute cold page. The later `03-00-33` page383 sample is a separate synthetic cold-source diagnostic and must not be described as the original “last page before exit” bug.
+
+## Contract history
+
+The underlying mismatch predates the immediate symptom. `99243721` introduced the bounded max-two local-preparation queue. `1db735de` later added priority preemption by cancelling `_LocalPreparationControl`, with comments explicitly treating a preempted restore as an operation that must unwind before its physical slot is free. The storage `Artifact.restore()` path, however, still performed whole-file CRC recovery without observing that TaskControl, so logical cancellation could not promptly retire the physical operation. `8c7ac8b5` completes that existing contract by carrying cancellation into controlled restore/rehash; it does not add a Reader special case or widen concurrency.
+
+## Separate synthetic cold-source diagnostic
+
+The later `03-00-33` page383 sample has fast local preparation (`prepareMicros≈21.6ms`) but a first-time Venera/source-open cold tail. It was produced during post-fix stress testing and is intentionally kept separate in `cold-webp-first-frame-venera-plan-2026-09-20.md`. Do not compensate for it by increasing Venera runtime concurrency, lowering 3/7, changing 2/1, or weakening current ownership without a new user-visible reproduction.
