@@ -243,11 +243,11 @@ class MainActivity : FlutterActivity() {
             Thread(runnable, "zic-saf-path").apply { isDaemon = true }
         }
 
-    private val safReadOpenThreadCounter = java.util.concurrent.atomic.AtomicInteger(0)
-    private val safReadOpenExecutor: ExecutorService =
+    private val localReadOpenThreadCounter = java.util.concurrent.atomic.AtomicInteger(0)
+    private val localReadOpenExecutor: ExecutorService =
         Executors.newFixedThreadPool(4) { runnable ->
-            val index = safReadOpenThreadCounter.getAndIncrement()
-            Thread(runnable, "zic-saf-read-open-$index").apply { isDaemon = true }
+            val index = localReadOpenThreadCounter.getAndIncrement()
+            Thread(runnable, "zic-local-read-open-$index").apply { isDaemon = true }
         }
 
     private val safNamespaceLock = java.util.concurrent.locks.ReentrantReadWriteLock()
@@ -324,12 +324,13 @@ class MainActivity : FlutterActivity() {
     private fun handleSaf(call: MethodCall, result: MethodChannel.Result) {
         val executor = when (call.method) {
             "safOpen" -> if ((call.argument<String>("mode") ?: "read") == "read") {
-                safReadOpenExecutor
+                localReadOpenExecutor
             } else {
                 safExecutor
             }
-            "safPrewarmRecentRead" -> safReadOpenExecutor
-            "presentationOpenSaf" -> safReadOpenExecutor
+            "safPrewarmRecentRead",
+            "presentationOpenDirect",
+            "presentationOpenSaf" -> localReadOpenExecutor
             "safRead",
             "safReadAt",
             "safWrite",
@@ -1731,7 +1732,7 @@ class MainActivity : FlutterActivity() {
         startupChannel = null
         configuredEngine = null
         safExecutor.shutdownNow()
-        safReadOpenExecutor.shutdownNow()
+        localReadOpenExecutor.shutdownNow()
         safDescriptorExecutors.forEach { it.shutdownNow() }
         safDescriptors.values.forEach { descriptor ->
             try {

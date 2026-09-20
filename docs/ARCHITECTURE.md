@@ -158,7 +158,7 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
 - `network_bridge`：浏览器、Cookie/localStorage 快照、challenge 恢复和共享网络能力。
 - `bridge`：Dart FFI、native source/cursor/frame ABI 和两个进程常驻 decode isolate。
 - `texture_bridge`：Android texture lease、SurfaceProducer、单 lane RGBA blit、schedule 和 release；精确尺寸的 idle prewarm 在同一 blit lane 先 materialize surface，并用 acceleration-only native prepare 预配置目标 RGBA geometry。prepare 只减少首个真实 blit 的平台配置成本，不能取得 surface correctness authority：每次真实 blit 仍独立读取/校验 ANativeWindow geometry，并在失配或 lock recovery 时自行配置。满池时只淘汰最旧 idle lease，不能把 surface 初始化或无界资源持有转移到 Flutter UI。
-- `apps/app`：composition、导航和产品页面；不得定义资源算法。
+- `apps/app`：composition、导航和产品页面；不得定义资源算法。 Android storage platform bridge 将 **path/tree/namespace** 与 **read-only descriptor open** 分成两个执行域：单线程 `zic-saf-path` 只串行 SAF path resolution/namespace mutation；App-private Direct 与 SAF 的 `presentationOpen*`、read-only `safOpen`/prewarm 统一进入 bounded `zic-local-read-open-*` pool，已打开 descriptor 再按 handle stripe 保序。Direct cache presentation 不得因为桥入口历史名为 `handleSaf` 而落入 SAF path FIFO；Flutter/Dart 的 `ArtifactCacheReadScheduler` 仍是本地正文读取 admission/priority owner，平台线程池只负责避免无关 path work 阻塞 descriptor open。
 ## 4. Reader 数据流
 
 ```text

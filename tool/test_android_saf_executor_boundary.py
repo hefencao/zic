@@ -8,11 +8,12 @@ text = MAIN.read_text(encoding="utf-8")
 required = (
     'Thread(runnable, "zic-saf-path")',
     'Executors.newFixedThreadPool(4)',
-    'Thread(runnable, "zic-saf-read-open-$index")',
-    '"safPrewarmRecentRead" -> safReadOpenExecutor',
+    'Thread(runnable, "zic-local-read-open-$index")',
+    '"safPrewarmRecentRead",',
     'private fun safPrewarmRecentRead(call: MethodCall): Boolean',
     'java.util.concurrent.locks.ReentrantReadWriteLock()',
-    '"presentationOpenSaf" -> safReadOpenExecutor',
+    '"presentationOpenDirect",',
+    '"presentationOpenSaf" -> localReadOpenExecutor',
     'List(4) { index ->',
     'Thread(runnable, "zic-saf-descriptor-$index")',
     'safDescriptorExecutors[Math.floorMod(handle, safDescriptorExecutors.size)]',
@@ -27,7 +28,7 @@ required = (
     '"presentationClose" -> safDescriptorExecutorFor(call)',
     'else -> safExecutor',
     'safExecutor.shutdownNow()',
-    'safReadOpenExecutor.shutdownNow()',
+    'localReadOpenExecutor.shutdownNow()',
     'safDescriptorExecutors.forEach { it.shutdownNow() }',
     'safDescriptors.clear()',
     'val statSize = pfd.statSize',
@@ -52,7 +53,13 @@ for method in (
     if f'"{method}"' not in routing:
         raise SystemExit(f"descriptor operation escaped descriptor executor: {method}")
 for method in (
+    "safPrewarmRecentRead",
     "presentationOpenDirect",
+    "presentationOpenSaf",
+):
+    if f'"{method}"' not in routing:
+        raise SystemExit(f"read-only open escaped read-open executor: {method}")
+for method in (
     "safDelete",
     "safRename",
     "safReplace",
