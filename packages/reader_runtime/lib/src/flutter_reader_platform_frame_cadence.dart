@@ -10,13 +10,12 @@ const _frameCadenceChannel = MethodChannel(
   'dev.zic/reader_runtime_frame_cadence',
 );
 
-/// Android-system frame cadence observer for a mounted vertical Reader.
+/// Opt-in Android-system frame cadence diagnostic for a vertical Reader.
 ///
-/// This adapter is observation-only. It never requests a Flutter frame,
-/// changes ScrollPhysics, or interpolates a Reader position. Android samples
-/// Choreographer on the platform thread into a bounded ring; Dart drains that
-/// ring at low frequency and maps native monotonic timestamps onto the shared
-/// Reader trace clock.
+/// It never changes Reader behavior or requests a Flutter frame, but Android
+/// sampling DOES request recurring Choreographer callbacks even on a static
+/// page. Keep this active diagnostic disabled in ordinary builds; passive
+/// Flutter frame timings and resource traces do not need this probe.
 final class FlutterReaderPlatformFrameCadenceProbe {
   FlutterReaderPlatformFrameCadenceProbe({
     required this.clock,
@@ -25,6 +24,9 @@ final class FlutterReaderPlatformFrameCadenceProbe {
     required this.revision,
     MethodChannel channel = _frameCadenceChannel,
     this.drainInterval = const Duration(seconds: 2),
+    this.enabled = const bool.fromEnvironment(
+      'ZIC_READER_FRAME_CADENCE_DIAGNOSTICS',
+    ),
   }) : _channel = channel;
 
   final MonoClock clock;
@@ -32,6 +34,7 @@ final class FlutterReaderPlatformFrameCadenceProbe {
   final String sessionId;
   final int Function() revision;
   final Duration drainInterval;
+  final bool enabled;
   final MethodChannel _channel;
 
   Timer? _drainTimer;
@@ -42,7 +45,7 @@ final class FlutterReaderPlatformFrameCadenceProbe {
   bool _disposed = false;
 
   Future<void> start() async {
-    if (_disposed || _started || !_supportedPlatform) return;
+    if (!enabled || _disposed || _started || !_supportedPlatform) return;
     final dartSendMicros = clock.nowMicros();
     try {
       await ensureReaderRuntimePluginAttached();

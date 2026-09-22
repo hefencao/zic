@@ -24,6 +24,34 @@ void main() {
         .setMockMethodCallHandler(channel, null);
   });
 
+  test('normal Reader does not start an active platform cadence probe',
+      () async {
+    final calls = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      calls.add(call.method);
+      if (call.method == 'startFrameCadenceProbe') {
+        return <String, Object?>{'nativeAnchorNanos': 1000000};
+      }
+      return null;
+    });
+    final probe = FlutterReaderPlatformFrameCadenceProbe(
+      clock: _Clock(),
+      traceSink: MemoryTraceSink(),
+      sessionId: 'static-reader',
+      revision: () => 1,
+      channel: channel,
+    );
+    try {
+      await probe.start();
+      await probe.drain();
+    } finally {
+      await probe.stop();
+    }
+    expect(calls, isEmpty,
+        reason: 'diagnostics must not create idle vsync or drain wakeups');
+  });
+
   test('native frame cadence outlier maps onto shared Reader trace clock',
       () async {
     final calls = <String>[];
@@ -129,6 +157,7 @@ void main() {
       revision: () => 7,
       channel: channel,
       drainInterval: const Duration(hours: 1),
+      enabled: true,
     );
 
     await probe.start();

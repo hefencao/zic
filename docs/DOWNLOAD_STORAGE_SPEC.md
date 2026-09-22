@@ -2,40 +2,120 @@
 
 Status: Accepted normative contract for the storage/transfer boundary refactor.
 
-This document is normative for the detailed download/storage behavior. `docs/SPEC.md` remains the project-wide specification and references this contract.
+This document is normative for the detailed download/storage behavior.
+`docs/SPEC.md` remains the project-wide specification and references this contract.
 
 ## 1. Logical identity and version cost
 
-1. Reader page order MUST be the logical manifest order plus explicit Reader presentation settings. Reader MUST NOT inspect `DownloadPlacement.pageOrder` to decide logical order.
+1. Reader page order MUST be the logical manifest order plus explicit Reader presentation settings.
+   Reader MUST NOT inspect `DownloadPlacement.pageOrder` to decide logical order.
 2. `DownloadPlacement.pageOrder` MUST describe only user-visible export layout.
 3. Durable page placement MUST NOT be recomputed from a global `N-index` rule when a newer comic version changes page count.
 4. Unopened or unmaterialized comic versions MUST NOT create per-page artifact/export bindings solely because a version relation was discovered.
-5. Historical `ComicVersionRelation` edges MAY remain compact provenance, but Reader, DownloadManager, ExportLayout and download execution MUST NOT traverse them at runtime. A version-state owner MUST project explicit `latestKnownHead`, `shelfHead` and `downloadHead`; discovering a newer version MUST change only `latestKnownHead` until shelf/manual-download state explicitly adopts that version.
-6. `ComicPageOrder.auto` MUST freeze before first structured page materialization. It MAY resolve to `chronological` only for a single-chapter comic with verified pure-front-prepend evidence; otherwise it MUST resolve to `origin`. Source/plugin names are not ordering evidence.
-7. Materialized export pages MUST have sparse durable positive ordinals. An existing logical page's ordinal MUST NOT change during ordinary incremental/version reuse; a front-prepended page MAY only consume a new ordinal above the existing maximum. A change that would move an existing slot MUST fail as a policy conflict until an explicit export relayout is requested.
-8. A unique verified historical path MAY be composed once into a direct predecessor→current-head mapping. Downstream consumers MUST receive that direct mapping, not the path. Ambiguous branches/paths MUST skip automatic folding/reuse. Only an already-materialized compatible predecessor anchor may contribute ordinals, and unmaterialized intermediates MUST remain row-free.
-9. `shelfHead` MUST be derived from adopted shelf/library state; `downloadHead` MUST be derived only from explicit manual-download state. Auto-cache-only or merely discovered successors MUST NOT become either head. `downloadHead` MUST NOT gate immutable artifact-cache reuse: cache/artifact ownership MUST consume source-verified version relations/page equivalence independently, while manual/export consumers receive only the direct download-head baseline. Structured image materialization MUST derive its final image extension from bounded byte signatures rather than filename/source hints; JPEG/PNG/WebP/GIF/BMP/TIFF/ICO/AVIF/HEIF are supported signature families, ISO-BMFF requires an explicit AVIF/HEIF brand, and unsupported/non-image bodies MUST fail as artifact corruption.
+5. Historical `ComicVersionRelation` edges MAY remain compact provenance,
+   but Reader, DownloadManager, ExportLayout and download execution MUST NOT traverse them at runtime.
+   A version-state owner MUST project explicit `latestKnownHead`, `shelfHead` and `downloadHead`;
+   discovering a newer version MUST change only `latestKnownHead` until shelf/manual-download state explicitly adopts that version.
+6. `ComicPageOrder.auto` MUST freeze before first structured page materialization.
+   It MAY resolve to `chronological` only for a single-chapter comic with verified pure-front-prepend evidence;
+   otherwise it MUST resolve to `origin`.Source/plugin names are not ordering evidence.
+7. Materialized export pages MUST have sparse durable positive ordinals.
+   An existing logical page's ordinal MUST NOT change during ordinary incremental/version reuse;
+   a front-prepended page MAY only consume a new ordinal above the existing maximum.
+   A change that would move an existing slot MUST fail as a policy conflict until an explicit export relayout is requested.
+8. A unique verified historical path MAY be composed once into a direct predecessor→current-head mapping.
+   Downstream consumers MUST receive that direct mapping, not the path.
+   Ambiguous branches/paths MUST skip automatic folding/reuse.
+   Only an already-materialized compatible predecessor anchor may contribute ordinals,
+   and unmaterialized intermediates MUST remain row-free.
+9. `shelfHead` MUST be derived from adopted shelf/library state;
+   `downloadHead` MUST be derived only from explicit manual-download state.
+   Auto-cache-only or merely discovered successors MUST NOT become either head.
+   `downloadHead` MUST NOT gate immutable artifact-cache reuse:
+   cache/artifact ownership MUST consume source-verified version relations/page equivalence independently,
+   while manual/export consumers receive only the direct download-head baseline.
+   Structured image materialization MUST derive its final image extension from bounded byte signatures rather than filename/source hints;
+   JPEG/PNG/WebP/GIF/BMP/TIFF/ICO/AVIF/HEIF are supported signature families,
+   ISO-BMFF requires an explicit AVIF/HEIF brand, and unsupported/non-image bodies MUST fail as artifact corruption.
 
 ## 2. Metadata, artifacts and replicas
 
 1. Long-term durable metadata authority MUST live in App-private storage and MUST NOT require moving the metadata database when the user's default export root changes.
-2. Logical `DownloadId` binding and physical replica location MUST be separate authorities. During migration, when an existing `artifact_object` row has the same `artifact_id`, byte length, checksum and checksum namespace as its logical binding, its physical locator/root MUST be preferred over the compatibility `cache_entry.path`; a proof mismatch MUST fall back conservatively rather than redirect bytes. Structural invalidation MUST act on the resolved physical locator, while access-only failure MUST preserve the logical binding/artifact identity.
+2. Logical `DownloadId` binding and physical replica location MUST be separate authorities.
+   During migration, when an existing `artifact_object` row has the same `artifact_id`,
+   byte length, checksum and checksum namespace as its logical binding,
+   its physical locator/root MUST be preferred over the compatibility `cache_entry.path`;
+   a proof mismatch MUST fall back conservatively rather than redirect bytes.
+   Structural invalidation MUST act on the resolved physical locator,
+   while access-only failure MUST preserve the logical binding/artifact identity.
 3. A logical artifact MAY have multiple replicas on private, direct POSIX or SAF roots.
 4. Access failure on one locator MUST NOT invalidate another locator or the logical artifact.
-5. A sealed artifact is immutable. Automatic-cache/manual-export distinction MUST be expressed by retention/export binding rather than requiring duplicate bytes.
-6. Sealed READY authority MUST be committed in `artifact_object` + `artifact_replica`; a logical `cache_entry` and canonical `physical_media_artifact` MAY route to that artifact but MUST NOT turn their compatibility locator fields into a second physical-copy authority. Final sidecars, session owner fields and deterministic filenames MUST NOT create or invalidate a sealed artifact.
-7. Dirty-start recovery MUST treat any locator currently named by `artifact_replica`, mutable-partial/migration metadata, or a live owner as protected. It MUST NOT rebuild, repair or delete READY from final sidecar contents, and MUST NOT instantiate historical READY `DownloadSession`s merely to re-prove immutable bytes. Missing/changed replica bodies remain typed read failures handled by ordinary replica selection/retirement, so one bad replica MUST NOT invalidate another good replica or the logical artifact.
-8. A persisted chapter-download SAF directory MUST wrap the exact platform tree URI as `saf://<content://...>` and runtime MUST remove the complete `saf://` wrapper, yielding `content://...` with no leading slash. The legacy `/content://...` form MUST be treated only as a known metadata-migration signature: repair MAY canonicalize App-private root/access/artifact/replica/promotion/migration/cache/partial/cleanup locators without moving body bytes, but MUST NOT infer a Direct alias or mark the repaired SAF access healthy without an independent proof. Provider exact-document-id caches are acceleration hints only and MAY normalize the same legacy key; failure MUST fall back to normal tree resolution.
-9. Mutable partial sidecars MAY carry validators, resume scope and collision diagnostics, but they MUST remain auxiliary to the physical partial owner and MUST NOT promote a final body to READY. Schema 17 `artifact_promotion` MUST be the only crash-progress record for sealed partial→READY promotion: it is created only after the indexed partial has exact sealed length/checksum proof and before filesystem promotion, names both source and destination locators, and MUST NOT itself be exposed as artifact/replica authority. Recovery MUST verify the journaled body proof at destination, or at source before a source→destination rename; a conflicting destination MUST NOT be overwritten and MUST roll back to the still-valid partial authority. The final SQLite transaction MUST create/update `artifact_object` + `artifact_replica` + exact READY and any canonical physical binding, remove the corresponding physical partial and delete the journal atomically. Recovery MUST NOT consult final sidecars or infer ownership from deterministic filenames. A readable canonical `physical_media_artifact` and a same-`PhysicalMediaId` `physical_partial` MUST NOT remain simultaneously advertised as durable inventory. READY bind/open MUST schedule persistent-owner retirement of the redundant partial. A partial read/recovery API that observes same-key READY MUST return no partial and delegate cleanup to that same retirement owner; it MUST NOT synchronously delete the body or row. Store open MUST asynchronously compare only indexed READY/partial keys to recover historical overlap, without enumerating storage trees or delaying open. Retirement MUST revalidate the expected READY generation, MUST NOT delete a currently borrowed partial, and MUST delete/verify the old body and sidecar before removing its row; any I/O failure MUST preserve that row for retry. Storage-write scheduling and per-physical serialization MUST use a consistent artifact→partial→storage order; Reader/App lifecycle MUST NOT own convergence. Before physical retirement completes, all read-only management and cache-usage projections MUST already treat READY as dominant: the same-key partial MUST contribute neither visible partial state nor logical bytes/entries nor trim capacity pressure. Trim MUST recheck this dominance under physical-artifact→physical-partial serialization before deleting a partial candidate. Explicit clear MAY garbage-collect a redundant partial, but MUST NOT count it as an independent cache eviction.
+5. A sealed artifact is immutable.
+   Automatic-cache/manual-export distinction MUST be expressed by retention/export binding rather than requiring duplicate bytes.
+6. Sealed READY authority MUST be committed in `artifact_object` + `artifact_replica`;
+   a logical `cache_entry` and canonical `physical_media_artifact` MAY route to that artifact but MUST NOT turn their compatibility locator fields into a second physical-copy authority.
+   Final sidecars, session owner fields and deterministic filenames MUST NOT create or invalidate a sealed artifact.
+7. Dirty-start recovery MUST treat any locator currently named by `artifact_replica`,
+   mutable-partial/migration metadata, or a live owner as protected.
+   It MUST NOT rebuild, repair or delete READY from final sidecar contents,
+   and MUST NOT instantiate historical READY `DownloadSession`s merely to re-prove immutable bytes.
+   Missing/changed replica bodies remain typed read failures handled by ordinary replica selection/retirement,
+   so one bad replica MUST NOT invalidate another good replica or the logical artifact.
+8. A persisted chapter-download SAF directory MUST wrap the exact platform tree URI as `saf://<content://...>` and runtime MUST remove the complete `saf://` wrapper,
+   yielding `content://...` with no leading slash.
+   The legacy `/content://...` form MUST be treated only as a known metadata-migration signature:
+   repair MAY canonicalize App-private root/access/artifact/replica/promotion/migration/cache/partial/cleanup locators without moving body bytes,
+   but MUST NOT infer a Direct alias or mark the repaired SAF access healthy without an independent proof.
+   Provider exact-document-id caches are acceleration hints only and MAY normalize the same legacy key;
+   failure MUST fall back to normal tree resolution.
+9. Mutable partial sidecars MAY carry validators, resume scope and collision diagnostics,
+   but they MUST remain auxiliary to the physical partial owner and MUST NOT promote a final body to READY.
+   Schema 17 `artifact_promotion` MUST be the only crash-progress record for sealed partial→READY promotion:
+   it is created only after the indexed partial has exact sealed length/checksum proof and before filesystem promotion,
+   names both source and destination locators, and MUST NOT itself be exposed as artifact/replica authority.
+   Recovery MUST verify the journaled body proof at destination, or at source before a source→destination rename;
+   a conflicting destination MUST NOT be overwritten and MUST roll back to the still-valid partial authority.
+   The final SQLite transaction MUST create/update `artifact_object` + `artifact_replica` + exact READY and any canonical physical binding,
+   remove the corresponding physical partial and delete the journal atomically.
+   Recovery MUST NOT consult final sidecars or infer ownership from deterministic filenames.
+   A readable canonical `physical_media_artifact` and a same-`PhysicalMediaId` `physical_partial` MUST NOT remain simultaneously advertised as durable inventory.
+   READY bind/open MUST schedule persistent-owner retirement of the redundant partial.
+   A partial read/recovery API that observes same-key READY MUST return no partial and delegate cleanup to that same retirement owner;
+   it MUST NOT synchronously delete the body or row.
+   Store open MUST asynchronously compare only indexed READY/partial keys to recover historical overlap,
+   without enumerating storage trees or delaying open.
+   Retirement MUST revalidate the expected READY generation,
+   MUST NOT delete a currently borrowed partial, and MUST delete/verify the old body and sidecar before removing its row;
+   any I/O failure MUST preserve that row for retry.
+   Storage-write scheduling and per-physical serialization MUST use a consistent artifact→partial→storage order;
+   Reader/App lifecycle MUST NOT own convergence.
+   Before physical retirement completes, all read-only management and cache-usage projections MUST already treat READY as dominant:
+   the same-key partial MUST contribute neither visible partial state nor logical bytes/entries nor trim capacity pressure.
+   Trim MUST recheck this dominance under physical-artifact→physical-partial serialization before deleting a partial candidate.
+   Explicit clear MAY garbage-collect a redundant partial,
+   but MUST NOT count it as an independent cache eviction.
 
 ## 3. Storage roots and Android access
 
-1. SAF and direct filesystem paths MAY coexist as access locators for the same physical root only after an implementation-owned bidirectional proof confirms they address the same directory; URI/path resemblance or provider naming MUST NOT be sufficient.
-2. On Android 11+, a Direct candidate used for alias proof MUST require the current `Environment.isExternalStorageManager()` grant. A permission-settings launch is not itself evidence that the grant exists.
-3. A proof canary MUST be created exclusively through Direct access, MUST be read with the exact expected token through SAF before SAF is allowed to mutate it, MUST then be rewritten through SAF and read back through Direct, and MUST be cleaned up. The probe MUST NOT overwrite a pre-existing user file.
-4. Generic/unproven `content://` providers MUST remain SAF-only. For the system ExternalStorageProvider, `primary:` MAY derive a Direct candidate from Android's primary external-storage root. A non-primary document volume id MAY derive a Direct candidate only when exactly one current `StorageVolume.uuid` matches it case-insensitively and that volume exposes a non-null `directory`; unknown, ambiguous or unmounted UUIDs MUST remain SAF-only. ZIC MUST NOT guess `/storage/<uuid>`. Any derived candidate MUST still pass the bidirectional exclusive-canary proof before it becomes a persisted access alias.
-5. A successful alias proof MUST be persisted into App-private root/access metadata when a durable artifact store is active; proof registration MUST NOT migrate bytes or change replica identity. The two proven locators MUST retain one root identity, and locator health MUST remain separate from artifact validity.
-6. When direct and SAF locators are both healthy for one root, direct access SHOULD be the preferred data-plane path and SAF SHOULD remain an available fallback.
+1. SAF and direct filesystem paths MAY coexist as access locators for the same physical root only after an implementation-owned bidirectional proof confirms they address the same directory;
+   URI/path resemblance or provider naming MUST NOT be sufficient.
+2. On Android 11+, a Direct candidate used for alias proof MUST require the current `Environment.isExternalStorageManager()` grant.
+   A permission-settings launch is not itself evidence that the grant exists.
+3. A proof canary MUST be created exclusively through Direct access,
+   MUST be read with the exact expected token through SAF before SAF is allowed to mutate it,
+   MUST then be rewritten through SAF and read back through Direct,and MUST be cleaned up.
+   The probe MUST NOT overwrite a pre-existing user file.
+4. Generic/unproven `content://` providers MUST remain SAF-only.
+   For the system ExternalStorageProvider, `primary:` MAY derive a Direct candidate from Android's primary external-storage root.
+   A non-primary document volume id MAY derive a Direct candidate only when exactly one current `StorageVolume.uuid` matches it case-insensitively and that volume exposes a non-null `directory`;
+   unknown, ambiguous or unmounted UUIDs MUST remain SAF-only.ZIC MUST NOT guess `/storage/<uuid>`.
+   Any derived candidate MUST still pass the bidirectional exclusive-canary proof before it becomes a persisted access alias.
+5. A successful alias proof MUST be persisted into App-private root/access metadata when a durable artifact store is active;
+   proof registration MUST NOT migrate bytes or change replica identity.
+   The two proven locators MUST retain one root identity,
+   and locator health MUST remain separate from artifact validity.
+6. When direct and SAF locators are both healthy for one root,
+   direct access SHOULD be the preferred data-plane path and SAF SHOULD remain an available fallback.
 7. Switching preferred access for the same physical root MUST NOT copy bytes.
 8. `accessDenied` MUST degrade the affected access locator, not delete replica/artifact metadata.
 
@@ -44,75 +124,194 @@ This document is normative for the detailed download/storage behavior. `docs/SPE
 1. On a reliable direct POSIX root, automatic-cache objects MAY be colocated under a hidden ZIC-owned area so cache-to-export promotion on the same filesystem can use rename/reflink semantics.
 2. Hard-link promotion MUST NOT be the default because user edits to exported files would mutate the hidden cache authority.
 3. On pure SAF roots, automatic cache and mutable partials SHOULD remain in App-private storage unless a provider-specific cheap-move capability is proven.
-4. Private/direct-to-SAF materialization MUST be a single bounded streaming copy; the copy pass MUST establish the destination seal proof without a mandatory second whole-file readback on the Reader hot path.
+4. Private/direct-to-SAF materialization MUST be a single bounded streaming copy;
+   the copy pass MUST establish the destination seal proof without a mandatory second whole-file readback on the Reader hot path.
 5. Automatic cache MUST NOT be eagerly migrated merely because the default export root changes.
-6. `DownloadPlacement` MUST describe export location/conflict/order only and MUST NOT by itself create retention. The compatibility `pinned` state may protect only an exact logical binding completed by explicit manual/offline materialization; chapter-level pinning MUST NOT include other source revisions or pages outside the current exact manifest. Equivalent logical bindings may share physical artifact bytes without inheriting each other's retention intent.
+6. `DownloadPlacement` MUST describe export location/conflict/order only and MUST NOT by itself create retention.
+   The compatibility `pinned` state may protect only an exact logical binding completed by explicit manual/offline materialization;
+   chapter-level pinning MUST NOT include other source revisions or pages outside the current exact manifest.
+   Equivalent logical bindings may share physical artifact bytes without inheriting each other's retention intent.
 
 ## 5. Export layout and migration
 
 1. Only materialized user-visible export slots MUST be persisted.
 2. Existing materialized slots SHOULD remain stable across verified predecessor/successor updates whenever the verified mapping permits that.
-3. Changing the default export root without migration MUST leave old readable manual downloads available; the new root becomes the destination for future materialization.
+3. Changing the default export root without migration MUST leave old readable manual downloads available;
+   the new root becomes the destination for future materialization.
 4. Explicit root migration MUST operate per replica and MUST commit a destination replica before source deletion.
 5. Active partial spools MUST NOT move during the same physical transfer generation.
 6. Automatic cache MAY remain on the old root/private tier and converge lazily.
-7. A per-replica relocation MUST preserve `replica_id`. The destination locator MUST belong to the declared `StorageRoot`, and a proven access alias already owned by another replica MUST NOT be used to collapse two replica identities onto one physical copy.
-8. Before relocation authority moves, the destination MUST match the sealed artifact's exact length and immutable checksum proof. A complete destination left by an earlier interrupted attempt MAY be adopted only after repeating that proof; a partial destination MUST NOT become authority.
-9. Source bytes and sidecar MUST be removed only after the destination locator/root transaction commits. Failure to clean the former location MUST NOT roll back the already-committed destination authority; such cleanup debt MAY be repaired later.
+7. A per-replica relocation MUST preserve `replica_id`.
+   The destination locator MUST belong to the declared `StorageRoot`,
+   and a proven access alias already owned by another replica MUST NOT be used to collapse two replica identities onto one physical copy.
+8. Before relocation authority moves, the destination MUST match the sealed artifact's exact length and immutable checksum proof.
+   A complete destination left by an earlier interrupted attempt MAY be adopted only after repeating that proof;
+   a partial destination MUST NOT become authority.
+9. Source bytes and sidecar MUST be removed only after the destination locator/root transaction commits.
+   Failure to clean the former location MUST NOT roll back the already-committed destination authority;
+   such cleanup debt MAY be repaired later.
 10. Physical replica relocation MUST NOT manufacture logical cache recency or otherwise change logical-binding usage semantics.
-11. Migration source reads, destination writes/commit, verification reads and cleanup I/O MUST consume the App-level storage-write capacity in bounded quanta and yield to foreground local reads. This requirement MUST NOT consume or cancel unrelated network capacity.
-12. Durable replica migration progress MUST remain separate from artifact/replica authority. While a migration is `copying`, the source replica MUST remain authoritative and its deterministic temporary MUST remain non-authoritative. The transaction that moves replica authority MUST atomically mark the migration `cleanupPending`; a cleanup failure MUST preserve that row and MUST NOT move authority back.
-13. A non-empty migration temporary MAY be resumed after restart only from its actual physical length and only after the entire temporary prefix is proven equal to the corresponding sealed-source prefix in the artifact checksum namespace. A missing/unprovable length, out-of-range length, or prefix mismatch MUST restart the temporary from zero. Final destination length + immutable checksum proof remains mandatory before authority commit even when a prefix was resumed.
-14. A backend MAY use append/seek resume only when that capability is actually available for the temporary. Current Direct storage and the current Android SAF bridge support this; inability to prove the old SAF temporary length MUST fall back to truncate/restart rather than approximate an offset.
-15. Cleanup debt MUST survive process restart. A later retry MAY remove the former source and migration-owned temporary, but MUST NOT make them authority again. Final logical invalidation MUST remove migration-owned non-authoritative temporary bytes when the artifact itself is removed.
+11. Migration source reads, destination writes/commit,
+    verification reads and cleanup I/O MUST consume the App-level storage-write capacity in bounded quanta and yield to foreground local reads.
+    This requirement MUST NOT consume or cancel unrelated network capacity.
+12. Durable replica migration progress MUST remain separate from artifact/replica authority.
+    While a migration is `copying`, the source replica MUST remain authoritative and its deterministic temporary MUST remain non-authoritative.
+    The transaction that moves replica authority MUST atomically mark the migration `cleanupPending`;
+    a cleanup failure MUST preserve that row and MUST NOT move authority back.
+13. A non-empty migration temporary MAY be resumed after restart only from its actual physical length and only after the entire temporary prefix is proven equal to the corresponding sealed-source prefix in the artifact checksum namespace.
+    A missing/unprovable length, out-of-range length, or prefix mismatch MUST restart the temporary from zero.
+    Final destination length + immutable checksum proof remains mandatory before authority commit even when a prefix was resumed.
+14. A backend MAY use append/seek resume only when that capability is actually available for the temporary.
+    Current Direct storage and the current Android SAF bridge support this;
+    inability to prove the old SAF temporary length MUST fall back to truncate/restart rather than approximate an offset.
+15. Cleanup debt MUST survive process restart.
+    A later retry MAY remove the former source and migration-owned temporary,
+    but MUST NOT make them authority again.
+    Final logical invalidation MUST remove migration-owned non-authoritative temporary bytes when the artifact itself is removed.
 16. StorageRoot alias canonicalization and legacy whole-root byte relocation MUST keep durable migration source/destination roots and Direct locators coherent with the corresponding replica/root rewrite.
-17. Concurrent relocation MUST serialize mutations of the same artifact and the same destination path. Commit-time metadata MUST reject an exact destination locator already owned by another replica; same-root Direct/SAF aliases MUST also be treated as one physical destination across artifact identities.
-18. Automatic lazy-migration/retention policy and retained multi-root convergence are not current authority. Separate root-relative replica persistence is HOLD because proven `StorageRoot` aliases already recover remounted access for reads and destructive lifecycle operations. Durable recovery state and removable-volume access discovery MUST NOT silently choose migration policy.
-19. Download-cache schema 16 `storage_cleanup_debt` MUST be a durable cleanup-only record and MUST confer no artifact/replica/partial authority. Its `temporary` kind covers generic Direct/SAF atomic-write temporaries and generated migration temps only after schema-9 progress authority is being retired. Before creating a non-authoritative random `.zic-tmp-*` / `.tmp-*` temporary, the writer MUST durably record it; a resumable schema-9 `copying` migration temporary MUST remain owned only by schema 9 until final invalidation or structural retirement is about to remove that progress owner.
-20. Generic temporary cleanup MUST delete only a recognized generated-temp relative locator on the same proven `StorageRoot`. After a removable-volume remount it MAY re-resolve that relative locator through current proven Direct/SAF aliases; it MUST NOT infer equivalence from path text alone, enumerate an SAF tree by suffix/pattern, or delete a non-generated name. The cleanup row MUST be removed only after absence is confirmed and retained on access/I/O failure. `PersistentDownloadArtifactStore.open()` MUST schedule this work asynchronously in bounded `StorageWriteScheduler` quanta, and a newly proven root alias MUST make previously unreachable debt eligible for another targeted drain.
-21. Schema-16 `obsoleteSealedSource` cleanup MAY be created only for a sealed immutable source whose exact length/checksum proof is already known, and MUST be durably recorded before an authority mutation can stop naming that old locator. After commit, cleanup MUST first prove that the resolved locator is no longer durable replica/partial/migration authority. After remount it MAY derive the same relative locator through a proven `StorageRoot` alias, but MUST revalidate length+checksum and authority again before deletion; changed/reused path content MUST be preserved and stale cleanup intent discarded.
-22. Mutable partial/spool cleanup MUST NOT use `obsoleteSealedSource` or enter `artifact_replica`. A cross-locator partial replacement or cold exact-partial retirement MAY instead create `obsoletePartialSource`, but only after reading the exact old prefix and freezing its actual length + CRC32 immediately before the old locator can lose authority. This proof is cleanup-only and MUST NOT become partial validity, resume, scheduling, or checkpoint metadata; ordinary network append/pause MUST NOT compute it. A delayed retry MUST re-check that the locator is no longer durable partial/replica/migration authority and that current bytes still match the frozen prefix before deletion; changed/reused content MUST be preserved. Ordinary `PhysicalPartialRecord` invalidation/trim MUST keep its row until body and sidecar deletion are confirmed rather than manufacturing cleanup debt. A shorter failed cross-locator staging prefix MUST NOT replace a longer old authoritative prefix, an unavailable old exact root MUST fail closed before replacement, and a hot session that takes over the old path MUST cancel provisional cleanup intent. Automatic multi-root convergence/retention MUST remain separate policy and MUST NOT be inferred from cleanup debt.
-23. `artifact_replica_migration` remains the sole relocation-progress ledger while relocation is live. A `copying` destination/temporary MAY be rebound only when a re-proven `StorageRoot` proves the same canonical root and the same relative path; the source replica authority MUST remain unchanged. `cleanupPending` source cleanup MAY resolve a current proven alias only after rechecking immutable proof. Schema16 MUST NOT duplicate a resumable `copying` owner; it may take cleanup-only ownership of a generated migration temp only when final invalidation or structural retirement is removing schema-9 progress authority.
+17. Concurrent relocation MUST serialize mutations of the same artifact and the same destination path.
+    Commit-time metadata MUST reject an exact destination locator already owned by another replica;
+    same-root Direct/SAF aliases MUST also be treated as one physical destination across artifact identities.
+18. Automatic lazy-migration/retention policy and retained multi-root convergence are not current authority.
+    Separate root-relative replica persistence is HOLD because proven `StorageRoot` aliases already recover remounted access for reads and destructive lifecycle operations.
+    Durable recovery state and removable-volume access discovery MUST NOT silently choose migration policy.
+19. Download-cache schema 16 `storage_cleanup_debt` MUST be a durable cleanup-only record and MUST confer no artifact/replica/partial authority.
+    Its `temporary` kind covers generic Direct/SAF atomic-write temporaries and generated migration temps only after schema-9 progress authority is being retired.
+    Before creating a non-authoritative random `.zic-tmp-*` / `.tmp-*` temporary,
+    the writer MUST durably record it;
+    a resumable schema-9 `copying` migration temporary MUST remain owned only by schema 9 until final invalidation or structural retirement is about to remove that progress owner.
+20. Generic temporary cleanup MUST delete only a recognized generated-temp relative locator on the same proven `StorageRoot`.
+    After a removable-volume remount it MAY re-resolve that relative locator through current proven Direct/SAF aliases;
+    it MUST NOT infer equivalence from path text alone,
+    enumerate an SAF tree by suffix/pattern, or delete a non-generated name.
+    The cleanup row MUST be removed only after absence is confirmed and retained on access/I/O failure.
+    `PersistentDownloadArtifactStore.open()` MUST schedule this work asynchronously in bounded `StorageWriteScheduler` quanta,
+    and a newly proven root alias MUST make previously unreachable debt eligible for another targeted drain.
+21. Schema-16 `obsoleteSealedSource` cleanup MAY be created only for a sealed immutable source whose exact length/checksum proof is already known,
+    and MUST be durably recorded before an authority mutation can stop naming that old locator.
+    After commit, cleanup MUST first prove that the resolved locator is no longer durable replica/partial/migration authority.
+    After remount it MAY derive the same relative locator through a proven `StorageRoot` alias,
+    but MUST revalidate length+checksum and authority again before deletion;
+    changed/reused path content MUST be preserved and stale cleanup intent discarded.
+22. Mutable partial/spool cleanup MUST NOT use `obsoleteSealedSource` or enter `artifact_replica`.
+    A cross-locator partial replacement or cold exact-partial retirement MAY instead create `obsoletePartialSource`,
+    but only after reading the exact old prefix and freezing its actual length + CRC32 immediately before the old locator can lose authority.
+    This proof is cleanup-only and MUST NOT become partial validity, resume, scheduling, or checkpoint metadata;
+    ordinary network append/pause MUST NOT compute it.
+    A delayed retry MUST re-check that the locator is no longer durable partial/replica/migration authority and that current bytes still match the frozen prefix before deletion;
+    changed/reused content MUST be preserved.
+    Ordinary `PhysicalPartialRecord` invalidation/trim MUST keep its row until body and sidecar deletion are confirmed rather than manufacturing cleanup debt.
+    A shorter failed cross-locator staging prefix MUST NOT replace a longer old authoritative prefix,
+    an unavailable old exact root MUST fail closed before replacement,
+    and a hot session that takes over the old path MUST cancel provisional cleanup intent.
+    Automatic multi-root convergence/retention MUST remain separate policy and MUST NOT be inferred from cleanup debt.
+23. `artifact_replica_migration` remains the sole relocation-progress ledger while relocation is live.
+    A `copying` destination/temporary MAY be rebound only when a re-proven `StorageRoot` proves the same canonical root and the same relative path;
+    the source replica authority MUST remain unchanged.
+    `cleanupPending` source cleanup MAY resolve a current proven alias only after rechecking immutable proof.
+    Schema16 MUST NOT duplicate a resumable `copying` owner;
+    it may take cleanup-only ownership of a generated migration temp only when final invalidation or structural retirement is removing schema-9 progress authority.
 
 ## 6. Partial and network continuity
 
 1. A partial is a mutable contiguous transfer spool and MUST NOT be treated as a sealed immutable artifact.
-2. Restoring a durable partial SHOULD adopt/reopen the existing spool rather than copy the whole prefix into a second ephemeral artifact when the backend permits it. Exact POSIX adoption MUST preserve the existing physical `DownloadSession` identity/epoch/demand/Reader-ingress ownership, MUST use the durable artifact's own index/root, MUST prove a non-link exact indexed length before switching backing, and MUST hold an exclusive busy lease that blocks trim/clear/invalidate/second adoption until that session releases the backing. Adoption MAY defer whole-file checksum work until seal; SAF, verified-equivalent, and non-capable backends MUST retain the bounded streaming-copy fallback.
+2. Restoring a durable partial SHOULD adopt/reopen the existing spool rather than copy the whole prefix into a second ephemeral artifact when the backend permits it.
+   Exact POSIX adoption MUST preserve the existing physical `DownloadSession` identity/epoch/demand/Reader-ingress ownership,
+   MUST use the durable artifact's own index/root, MUST prove a non-link exact indexed length before switching backing,
+   and MUST hold an exclusive busy lease that blocks trim/clear/invalidate/second adoption until that session releases the backing.
+   Adoption MAY defer whole-file checksum work until seal;
+   SAF, verified-equivalent, and non-capable backends MUST retain the bounded streaming-copy fallback.
 3. Local prefix replay and network suffix acquisition MAY run concurrently under the same physical DownloadSession.
 4. Network append MUST only extend the authoritative contiguous committed boundary.
 5. Reader ingress publication MUST remain ordered from byte zero even if network append advances farther than Reader-local replay.
-6. A complete immutable durable READY body MUST NOT imply that every Reader-local ingress has already copied the complete body. Physical completeness/residency and Reader encoded-prefix hydration are separate boundaries. A newly demanded Reader projection MAY begin empty, MUST first publish only a contiguous prefix from byte zero, and MUST extend only to media/decoder-owned requested lengths until the entire body is actually needed.
-7. Durable local replay MUST support exact byte ranges so incremental Reader hydration does not repeatedly replay from byte zero. A backend MAY expose a generation-bound range reader after selecting and validating one physical access path. When it does, exact-length READY preflight and later range reads SHOULD share that already-open descriptor; reset/rebind/dispose MUST retire it. Failure of this reuse optimization MUST fall back to the existing exact-range authority without weakening typed failure, replica or length validation semantics.
-8. Shared local-read scheduling MAY enforce stricter foreground protection for a physically single-threaded SAF provider, including preventing background SAF quanta from entering that provider while current startup pressure is held. Such protection is a physical executor constraint only: it MUST NOT create a Reader role gate, change Download/Decode/Upload waterlines, or globally disable Direct/POSIX background reads.
+6. A complete immutable durable READY body MUST NOT imply that every Reader-local ingress has already copied the complete body.
+   Physical completeness/residency and Reader encoded-prefix hydration are separate boundaries.
+   A newly demanded Reader projection MAY begin empty,
+   MUST first publish only a contiguous prefix from byte zero,
+   and MUST extend only to media/decoder-owned requested lengths until the entire body is actually needed.
+7. Durable local replay MUST support exact byte ranges so incremental Reader hydration does not repeatedly replay from byte zero.
+   A backend MAY expose a generation-bound range reader after selecting and validating one physical access path.
+   When it does, exact-length READY preflight and later range reads SHOULD share that already-open descriptor;
+   reset/rebind/dispose MUST retire it.
+   Failure of this reuse optimization MUST fall back to the existing exact-range authority without weakening typed failure,
+   replica or length validation semantics.
+8. Shared local-read scheduling MAY enforce stricter foreground protection for a physically single-threaded SAF provider,
+   including preventing background SAF quanta from entering that provider while current startup pressure is held.
+   Such protection is a physical executor constraint only:
+   it MUST NOT create a Reader role gate, change Download/Decode/Upload waterlines,
+   or globally disable Direct/POSIX background reads.
 9. A local loader/transport MUST NOT concatenate an unrelated remote stream after it has already emitted bytes.
-10. Strong-validator range resume and validatorless overlap proof remain the only normal continuity authorities. URI/provider scope MUST be respected.
-11. A page-promotion stall window MUST measure continuous lack of physical progress, not total page duration. Real-time transport cursor or committed-length growth MUST refresh the window even when the growth is below the normal snapshot/trace publication quantum; this check MUST NOT require higher-frequency snapshot publication. For composition-owned transfers, one `DownloadJob` attempt failure MUST preserve an idle/resumable partial while `DownloadTransferOwner` still owns retry; only retry exhaustion may become consumer-visible terminal failure. While the lower physical run is in bounded transport-open or active body-read phase, the page watchdog MUST yield to that lower stall authority instead of racing it with `session.reset()`; owner-level reclaim remains for no-lower-phase/no-progress stalls. A source open MAY exceed the generic 6-second open window only when the exact transport proves a finite lower-layer open deadline; runtime request-plan/load and host response-header deadlines remain separate authorities, while body reads retain the 6-second inactivity watchdog. A cache/read-through wrapper MUST NOT inherit this proof across an unbounded local lookup stage. It MAY keep the generic watchdog through its local phases and, only immediately before entering a proven self-bounded fallback, report a one-shot phase handoff through the same scheduler-owned TaskControl; that report MUST NOT carry timeout values or create retry/scheduling authority. When the generic open watchdog itself expires, it MUST abort only the current controlled-open attempt through an attempt-local control that transparently preserves scheduler priority/priority changes/cancellation; it MUST NOT cancel the scheduler demand. The caller-visible outcome remains a network attempt failure so the physical owner may retry. A local/cache open that completes after this timeout MUST observe the attempt abort before crossing into an origin fallback.
+10. Strong-validator range resume and validatorless overlap proof remain the only normal continuity authorities.
+    URI/provider scope MUST be respected.
+11. A page-promotion stall window MUST measure continuous lack of physical progress, not total page duration.
+    Real-time transport cursor or committed-length growth MUST refresh the window even when the growth is below the normal snapshot/trace publication quantum;
+    this check MUST NOT require higher-frequency snapshot publication.
+    For composition-owned transfers, one `DownloadJob` attempt failure MUST preserve an idle/resumable partial while `DownloadTransferOwner` still owns retry;
+    only retry exhaustion may become consumer-visible terminal failure.
+    While the lower physical run is in bounded transport-open or active body-read phase,
+    the page watchdog MUST yield to that lower stall authority instead of racing it with `session.reset()`;
+    owner-level reclaim remains for no-lower-phase/no-progress stalls.
+    A source open MAY exceed the generic 6-second open window only when the exact transport proves a finite lower-layer open deadline;
+    runtime request-plan/load and host response-header deadlines remain separate authorities,
+    while body reads retain the 6-second inactivity watchdog.
+    A cache/read-through wrapper MUST NOT inherit this proof across an unbounded local lookup stage.
+    It MAY keep the generic watchdog through its local phases and,
+    only immediately before entering a proven self-bounded fallback,
+    report a one-shot phase handoff through the same scheduler-owned TaskControl;
+    that report MUST NOT carry timeout values or create retry/scheduling authority.
+    When the generic open watchdog itself expires, it MUST abort only the current controlled-open attempt through an attempt-local control that transparently preserves scheduler priority/priority changes/cancellation;
+    it MUST NOT cancel the scheduler demand.
+    The caller-visible outcome remains a network attempt failure so the physical owner may retry.
+    A local/cache open that completes after this timeout MUST observe the attempt abort before crossing into an origin fallback.
 
 ## 7. Read failure feedback
 
-1. Storage read failure MUST be reported with typed cause, access/replica identity, failed offset, and emitted-byte count.
-2. Before bytes are emitted, another proven access locator or replica MAY be tried immediately. A cache/repository failure that occurs before any body is exposed MAY fall back to origin in the same transport open.
-3. After bytes are emitted, only a proven access path/replica for the same immutable artifact MAY continue from the exact offset without returning to TransferCoordinator. ArtifactCacheTransport MUST NOT splice an origin body behind that committed local prefix.
-4. Origin/network fallback after emitted local bytes MUST re-enter DownloadSession/DownloadJob on a later Transfer attempt. The failing persistent read MAY be quarantined for the current transport lifetime so that retry selects origin rather than reopening the same replica.
-5. `missing`, `staleLocator`, `shortRead`, and `lengthChanged` MUST invalidate the affected durable binding. `accessDenied` and generic `ioFailure` MUST NOT by themselves delete the binding or physical artifact.
+1. Storage read failure MUST be reported with typed cause,
+   access/replica identity, failed offset, and emitted-byte count.
+2. Before bytes are emitted, another proven access locator or replica MAY be tried immediately.
+   A cache/repository failure that occurs before any body is exposed MAY fall back to origin in the same transport open.
+3. After bytes are emitted, only a proven access path/replica for the same immutable artifact MAY continue from the exact offset without returning to TransferCoordinator.
+   ArtifactCacheTransport MUST NOT splice an origin body behind that committed local prefix.
+4. Origin/network fallback after emitted local bytes MUST re-enter DownloadSession/DownloadJob on a later Transfer attempt.
+   The failing persistent read MAY be quarantined for the current transport lifetime so that retry selects origin rather than reopening the same replica.
+5. `missing`, `staleLocator`, `shortRead`, and `lengthChanged` MUST invalidate the affected durable binding.
+   `accessDenied` and generic `ioFailure` MUST NOT by themselves delete the binding or physical artifact.
 6. Resetting an ephemeral resident artifact-cache projection after body failure MUST NOT delete the external durable cache binding.
-7. Normal sealed reads MUST NOT compute whole-file CRC32 on every Reader access. Length/access metadata is the normal hot-path check; explicit repair/audit and materialization/seal boundaries own full checksum work. The byte source MUST expose the integrity basis actually used by stream/full reads; `sourceRead` diagnostics MUST distinguish prior seal proof + current length/access preflight from a CRC recomputed during this read, and a joined read MUST inherit the basis of the operation that supplied its bytes.
+7. Normal sealed reads MUST NOT compute whole-file CRC32 on every Reader access.
+   Length/access metadata is the normal hot-path check;
+   explicit repair/audit and materialization/seal boundaries own full checksum work.
+   The byte source MUST expose the integrity basis actually used by stream/full reads;
+   `sourceRead` diagnostics MUST distinguish prior seal proof + current length/access preflight from a CRC recomputed during this read,
+   and a joined read MUST inherit the basis of the operation that supplied its bytes.
 
 ## 8. Cross-consumer resource scheduling
 
 1. Pipeline MUST remain Reader-specific and MUST NOT become the scheduler for manual downloads or storage migration.
 2. Reader and manual download MUST share physical transfer ownership below Pipeline for identical/resolved physical content.
-3. Cross-consumer scheduling MUST be owned by an App-level resource coordinator with separate network, local-read and storage-write capacity domains.
-4. Reader foreground demand MAY raise the priority of a transfer also required by manual download; removing Reader demand MUST NOT cancel the manual completion requirement.
+3. Cross-consumer scheduling MUST be owned by an App-level resource coordinator with separate network,
+   local-read and storage-write capacity domains.
+4. Reader foreground demand MAY raise the priority of a transfer also required by manual download;
+   removing Reader demand MUST NOT cancel the manual completion requirement.
 5. Storage migration/materialization MUST yield to foreground local reads at bounded chunk boundaries but MUST NOT unnecessarily stop unrelated network transfers.
-6. Manual download MUST distinguish `CONTENT_READY` from export materialization completion. Export failure MUST NOT force already-ready content to be re-downloaded.
+6. Manual download MUST distinguish `CONTENT_READY` from export materialization completion.
+   Export failure MUST NOT force already-ready content to be re-downloaded.
 
 ## 9. Compatibility migration
 
-1. Existing `CacheRec.path` and download-root SQLite representations MAY be read during migration but MUST NOT remain the final logical identity authority. Production chapter metadata MUST open from App-private `chapter_downloads.sqlite`; a legacy root `cache.sqlite` MAY be imported only when the private DB does not yet exist, and the imported snapshot MUST pass SQLite integrity validation before it becomes authority.
+1. Existing `CacheRec.path` and download-root SQLite representations MAY be read during migration but MUST NOT remain the final logical identity authority.
+   Production chapter metadata MUST open from App-private `chapter_downloads.sqlite`;
+   a legacy root `cache.sqlite` MAY be imported only when the private DB does not yet exist,
+   and the imported snapshot MUST pass SQLite integrity validation before it becomes authority.
 2. Existing SAF-only and direct-only placements MUST remain readable throughout staged migration.
-3. No refactor phase may silently orphan existing pinned/manual downloads, valid partials, or still-readable old roots.
-4. Schema 8 MUST backfill each ready pre-existing immutable `artifact_object` as exactly one `artifact_replica` while preserving the historical first-replica identity (`replica_id == artifact_id`). Mutable partials MUST NOT be backfilled as replicas.
-5. A new independent replica MUST NOT be inferred from a logical binding/path update. It MAY become authoritative only after its exact length and immutable checksum proof are verified; a proven Direct/SAF alternate access locator for the same physical root MUST reuse the existing replica identity.
-6. Compatibility locator/root rewrites, including an existing whole-root byte migration, MUST preserve `replica_id`. They MAY update the replica locator/root in place but MUST NOT manufacture a second-copy fact.
-7. Once all replica rows for an artifact have been structurally retired, compatibility `artifact_object.path` MUST NOT silently resurrect a hidden physical copy.
+3. No refactor phase may silently orphan existing pinned/manual downloads,
+   valid partials, or still-readable old roots.
+4. Schema 8 MUST backfill each ready pre-existing immutable `artifact_object` as exactly one `artifact_replica` while preserving the historical first-replica identity (`replica_id == artifact_id`).
+   Mutable partials MUST NOT be backfilled as replicas.
+5. A new independent replica MUST NOT be inferred from a logical binding/path update.
+   It MAY become authoritative only after its exact length and immutable checksum proof are verified;
+   a proven Direct/SAF alternate access locator for the same physical root MUST reuse the existing replica identity.
+6. Compatibility locator/root rewrites, including an existing whole-root byte migration,
+   MUST preserve `replica_id`.
+   They MAY update the replica locator/root in place but MUST NOT manufacture a second-copy fact.
+7. Once all replica rows for an artifact have been structurally retired,
+   compatibility `artifact_object.path` MUST NOT silently resurrect a hidden physical copy.

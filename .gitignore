@@ -18,6 +18,7 @@ Cargo.lock
 # IDE
 .idea/
 .vscode/
+.pi/
 *.iml
 
 # Runtime

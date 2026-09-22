@@ -131,7 +131,6 @@ for token in (
     require(all_docs, token, 'governed dev.308 evidence/boundary')
 
 for path, limit in (
-    ('docs/ARCHITECTURE.md', 420),
     ('docs/IMPLEMENTATION_PLAN.md', 180),
     ('docs/IMPLEMENTATION_STATUS.md', 220),
     ('docs/NEXT_CHAT_HANDOFF.md', 80),

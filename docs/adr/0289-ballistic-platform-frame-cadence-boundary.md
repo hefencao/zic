@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted as an observation boundary in dev.310; not yet a jitter fix.
+Accepted
+
+Accepted as an observation boundary in dev.310; not a jitter fix. The active probe is now opt-in, not a default mounted-Reader service.
 
 ## Evidence
 
@@ -10,7 +12,7 @@ The 08:20 dev.309 device Trace contains 22 `scrollCadenceOutlier` events. 20 are
 
 ## Decision
 
-Remove the dev.309 touch-resampling production lease and retain only `dragDriven` attribution. `reader_runtime` owns an Android-only Choreographer cadence probe while a vertical Reader is mounted. The native callback records only frame-time/callback gaps >=20ms or callback lag >=8ms into a bounded 256-sample ring. Dart drains at a 2s cadence and maps native monotonic timestamps into the shared Trace as `platformFrameCadenceOutlier`.
+Remove the dev.309 touch-resampling production lease and retain only `dragDriven` attribution. `reader_runtime` owns an Android-only Choreographer cadence probe while a vertical Reader is mounted **and** the build explicitly enables `ZIC_READER_FRAME_CADENCE_DIAGNOSTICS=true`. Ordinary builds leave it disabled: a callback that reposts itself at every vsync and a periodic drain are active work even when no Flutter frame is requested. Passive Flutter frame timings and resource traces remain available without this probe. The native callback records only frame-time/callback gaps >=20ms or callback lag >=8ms into a bounded 256-sample ring. Dart drains at a 2s cadence and maps native monotonic timestamps into the shared Trace as `platformFrameCadenceOutlier`.
 
 The probe is diagnostic-only: it MUST NOT mutate ScrollPosition, ScrollPhysics, Reader/Pipeline state, texture policy, resource windows, or call Flutter `scheduleFrame`. It MUST NOT synthesize pointer/position samples.
 

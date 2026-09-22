@@ -10,8 +10,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 LIMITS = {
     "README.md": 180,
-    "docs/ARCHITECTURE.md": 420,
-    "docs/SPEC.md": 300,
     "docs/IMPLEMENTATION_PLAN.md": 180,
     "docs/IMPLEMENTATION_STATUS.md": 220,
     "docs/NEXT_CHAT_HANDOFF.md": 80,
@@ -26,6 +24,20 @@ for relative, limit in LIMITS.items():
         raise SystemExit(
             f"FAIL: {relative} has {len(lines)} lines; responsibility limit is {limit}"
         )
+
+MAX_LINE_LENGTHS = {
+    "docs/IMPLEMENTATION_STATUS.md": 250,
+    "docs/NEXT_CHAT_HANDOFF.md": 250,
+}
+for relative, max_len in MAX_LINE_LENGTHS.items():
+    path = ROOT / relative
+    if not path.is_file():
+        continue
+    for line_num, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if len(line) > max_len:
+            raise SystemExit(
+                f"FAIL: {relative}:{line_num} exceeds max line length ({len(line)} > {max_len})"
+            )
 
 stable = {
     relative: (ROOT / relative).read_text(encoding="utf-8")

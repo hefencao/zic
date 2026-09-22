@@ -95,6 +95,12 @@ Use `framePipelineTiming.nativeDecodeMicros` for native decode cost. Do not use 
 
 Do not reopen refresh-rate investigation unless fresh trace evidence makes display/vsync the dominant unexplained stage. Existing low-build cadence gaps and media decode are separate lines of evidence.
 
+## Active platform diagnostics and static-power measurements
+
+Ordinary builds keep the Android Choreographer/Window FrameMetrics probe off. It posts a callback every vsync and drains every 2s even on a still page; observation-only does not mean power-neutral. Passive Flutter frame timings and task/loading Trace remain enabled independently. For a bounded cadence investigation only, explicitly build with `ZIC_READER_FRAME_CADENCE_DIAGNOSTICS=1 ./tool/build_android.sh profile` (maps to Dart define `ZIC_READER_FRAME_CADENCE_DIAGNOSTICS=true`), and record that opt-in in the result. Never compare its CPU/power sample against an ordinary build without disclosing the observer difference. Restore an ordinary freshly built APK afterward; absence of platform cadence events in an ordinary build is expected, not proof that no frames occurred.
+
+For static-power work confirm an actual static image chapter and vertical Reader entry from app evidence. Keep separate settled idle, controlled scrolling and post-scroll idle windows; record thread CPU time/wakeups and device conditions. CPU is a power proxy, not watts. Do not substitute Home or animated content if the target cannot be proved.
+
 ## Cold-start validation
 
 Use `am force-stop`, never data clearing. Measure at least three independent starts:

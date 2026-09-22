@@ -6,6 +6,7 @@ APP="$ROOT/apps/app"
 MODE="${1:-release}"
 NATIVE="${ZIC_ANDROID_NATIVE:-1}"
 RHTTP_RECEIVE_DIAGNOSTICS="${ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS:-0}"
+READER_CADENCE_DIAGNOSTICS="${ZIC_READER_FRAME_CADENCE_DIAGNOSTICS:-0}"
 
 case "$MODE" in
   debug|profile|release) ;;
@@ -18,6 +19,11 @@ esac
 case "$RHTTP_RECEIVE_DIAGNOSTICS" in
   0|1) ;;
   *) echo "ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS must be 0 or 1" >&2; exit 64 ;;
+esac
+
+case "$READER_CADENCE_DIAGNOSTICS" in
+  0|1) ;;
+  *) echo "ZIC_READER_FRAME_CADENCE_DIAGNOSTICS must be 0 or 1" >&2; exit 64 ;;
 esac
 
 if [[ ! -d "$APP/android" ]]; then
@@ -38,5 +44,8 @@ cd "$APP"
 FLUTTER_ARGS=("--$MODE" --split-per-abi)
 if [[ "$RHTTP_RECEIVE_DIAGNOSTICS" == 1 ]]; then
   FLUTTER_ARGS+=(--dart-define=ZIC_RHTTP_RECEIVE_PROGRESS_DIAGNOSTICS=true)
+fi
+if [[ "$READER_CADENCE_DIAGNOSTICS" == 1 ]]; then
+  FLUTTER_ARGS+=(--dart-define=ZIC_READER_FRAME_CADENCE_DIAGNOSTICS=true)
 fi
 flutter build apk "${FLUTTER_ARGS[@]}"
