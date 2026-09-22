@@ -27,6 +27,7 @@ final class StartupRecovery {
 
   Future<RecoveryReport> run() async {
     await index.open();
+    final scanStartedUs = clock.nowMicros();
     final scan = await CacheScanner(
       layout: layout,
       index: index,
@@ -37,6 +38,8 @@ final class StartupRecovery {
         sessionId: 'startup',
         kind: TraceEventKind.cacheScan,
         payload: <String, Object?>{
+          'scanMicros': clock.nowMicros() - scanStartedUs,
+          'phaseMicros': scan.phaseMicros,
           'recovered': scan.recovered,
           'removedRecords': scan.removedRecords,
           'deletedOrphans': scan.deletedOrphans,

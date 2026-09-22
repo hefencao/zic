@@ -151,6 +151,9 @@ void main() {
 
   test('missing indexed partial body removes only the partial binding', () async {
     final path = '${layout.partialDir}${Platform.pathSeparator}missing.part';
+    final sidecar = File('$path.meta');
+    await sidecar.parent.create(recursive: true);
+    await sidecar.writeAsString('{}');
     await index.put(
       CacheRec(
         id: id,
@@ -168,6 +171,11 @@ void main() {
 
     expect(report.removedRecords, 1);
     expect(await index.get(id.key), isNull);
+    expect(await sidecar.exists(), isTrue);
+    // A scan-local preservation hint cannot make the sidecar an owner.
+    final next = await CacheScanner(layout: layout, index: index).scan();
+    expect(next.deletedOrphans, 1);
+    expect(await sidecar.exists(), isFalse);
   });
 
   test('uncommitted final body is orphan cleanup, not crash authority', () async {

@@ -26,7 +26,10 @@ final class SqliteIndex
 
   SqliteIndex.memory() : path = null;
 
-  static const int _schemaVersion = 19;
+  static const int _schemaVersion = 20;
+  static const _replicaLocatorIndexSql =
+      'CREATE INDEX IF NOT EXISTS artifact_replica_access_locator '
+      'ON artifact_replica(access_locator)';
 
   final String? path;
   sql.Database? _db;
@@ -64,18 +67,23 @@ final class SqliteIndex
     if (version >= 11) {
       db.execute('BEGIN IMMEDIATE');
       try {
-        db.execute(
-          'CREATE INDEX IF NOT EXISTS cache_entry_path '
-          'ON cache_entry(path)',
-        );
-        _createPhysicalMediaTables(db);
-        _ensureCacheLogicalIdentityColumns(db);
-        _createStorageCleanupDebtTable(db);
-        _createArtifactPromotionTable(db);
-        _migrateLegacyLeadingSlashSafIdentity(db);
-        if (version == 18) {
-          _removeDeprecatedVolatilePagePhysicalBindings(db);
+        if (version < 19) {
+          db.execute(
+            'CREATE INDEX IF NOT EXISTS cache_entry_path '
+            'ON cache_entry(path)',
+          );
+          _createPhysicalMediaTables(db);
+          _ensureCacheLogicalIdentityColumns(db);
+          _createStorageCleanupDebtTable(db);
+          _createArtifactPromotionTable(db);
+          _migrateLegacyLeadingSlashSafIdentity(db);
+          if (version == 18) {
+            _removeDeprecatedVolatilePagePhysicalBindings(db);
+          }
         }
+        // v19 -> v20 adds only an access path. Do not replay historical
+        // identity backfills or rewrite body/replica authority on cold open.
+        db.execute(_replicaLocatorIndexSql);
         db.execute('PRAGMA user_version = $_schemaVersion');
         db.execute('COMMIT');
       } on Object {
@@ -223,6 +231,7 @@ final class SqliteIndex
         'CREATE INDEX IF NOT EXISTS artifact_replica_artifact '
         'ON artifact_replica(artifact_id, touched_us)',
       );
+      db.execute(_replicaLocatorIndexSql);
       db.execute('''
         CREATE TABLE IF NOT EXISTS artifact_replica_migration (
           replica_id TEXT NOT NULL PRIMARY KEY,

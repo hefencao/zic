@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
@@ -9,6 +10,29 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 import 'sqlite_progress_writer.dart';
 
 const _schemaVersion = 11;
+const _libraryEntriesQuery = '''
+  SELECT c.chapter_json, p.progress_json
+  FROM imported_chapter AS c
+  LEFT JOIN reading_progress AS p
+    ON p.source_id = c.source_id AND p.chapter_id = c.chapter_id
+  ORDER BY c.imported_us DESC, c.source_id, c.chapter_id
+''';
+
+// Capture only a path, never the UI-owned store/connection. The short-lived
+// worker owns its read-only connection and transfers completed models back.
+Future<List<ImportedLibraryEntry>> _readLibraryEntriesOffIsolate(String path) =>
+    Isolate.run(() {
+      final db = sql.sqlite3.open(path, mode: sql.OpenMode.readOnly);
+      try {
+        // A concurrent writer/open or final WAL checkpoint can briefly hold
+        // the schema lock. Wait off-isolate, never on the foreground connection.
+        db.execute('PRAGMA busy_timeout = 5000');
+        return db.select(_libraryEntriesQuery)
+            .map(SqliteImportedLibraryStore._readEntry).toList(growable: false);
+      } finally {
+        db.dispose();
+      }
+    });
 
 final class SqliteImportedLibraryStore
     implements
@@ -28,6 +52,7 @@ final class SqliteImportedLibraryStore
   sql.Database? _db;
   SqliteProgressWriter? _progressWriter;
   Future<void>? _progressWriterOpening;
+  final Set<Future<void>> _bulkReadDrains = <Future<void>>{};
   DateTime? _progressWriterRetryAfter;
   final Map<String, ReadingProgress> _pendingReaderProgress =
       <String, ReadingProgress>{};
@@ -293,15 +318,42 @@ final class SqliteImportedLibraryStore
   }
 
   @override
-  Future<List<ImportedLibraryEntry>> list() async {
-    final rows = _requireDb().select('''
-      SELECT c.chapter_json, p.progress_json
-      FROM imported_chapter AS c
-      LEFT JOIN reading_progress AS p
-        ON p.source_id = c.source_id AND p.chapter_id = c.chapter_id
-      ORDER BY c.imported_us DESC, c.source_id, c.chapter_id
-    ''');
-    return rows.map(_readEntry).toList(growable: false);
+  Future<List<ImportedLibraryEntry>> list() {
+    final read = _list();
+    // Track admitted list computations, not the caller's later continuations.
+    // Its error belongs to the caller; close only joins resource retirement.
+    late final Future<void> drain;
+    drain = read.then<void>((_) {}, onError: (Object _, StackTrace __) {})
+        .whenComplete(() => _bulkReadDrains.remove(drain));
+    _bulkReadDrains.add(drain);
+    return read;
+  }
+
+  Future<List<ImportedLibraryEntry>> _list() async {
+    final db = _requireDb();
+    final dbPath = path;
+    if (dbPath != null) {
+      return _readLibraryEntriesOffIsolate(dbPath);
+    }
+    final rows = db.select(_libraryEntriesQuery);
+    // SELECT has already materialized detached rows; no SQLite transaction or
+    // statement is held across these yields. Bulk Home decoding must not block
+    // platform callbacks or targeted chapter reads on the same isolate. Keep
+    // backup's explicit transaction synchronous and leave exact get() narrow.
+    final entries = <ImportedLibraryEntry>[];
+    final budget = Stopwatch()..start();
+    var rowsSinceYield = 0;
+    for (final row in rows) {
+      entries.add(_readEntry(row));
+      rowsSinceYield++;
+      if (entries.length < rows.length &&
+          (rowsSinceYield >= 16 || budget.elapsedMicroseconds >= 4000)) {
+        await Future<void>.delayed(Duration.zero);
+        rowsSinceYield = 0;
+        budget.reset();
+      }
+    }
+    return List<ImportedLibraryEntry>.of(entries, growable: false);
   }
 
   @override
@@ -1225,6 +1277,7 @@ final class SqliteImportedLibraryStore
     // connection for the first time.
     final db = _db;
     final progressWriter = _progressWriter;
+    final bulkReads = _bulkReadDrains.toList(growable: false);
     if (progressWriter != null) {
       _drainPendingReaderProgress(progressWriter);
     } else if (db != null) {
@@ -1240,6 +1293,7 @@ final class SqliteImportedLibraryStore
     db?.dispose();
     await progressWriter?.close();
     await progressWriterOpening;
+    await Future.wait<void>(bulkReads);
   }
 
   void _startProgressWriter(sql.Database db) {
@@ -1343,7 +1397,7 @@ final class SqliteImportedLibraryStore
     ]);
   }
 
-  ImportedLibraryEntry _readEntry(sql.Row row) {
+  static ImportedLibraryEntry _readEntry(sql.Row row) {
     final chapter = _decodeChapter(row['chapter_json']! as String);
     final progressJson = row['progress_json'] as String?;
     return ImportedLibraryEntry(
@@ -1357,7 +1411,7 @@ final class SqliteImportedLibraryStore
     );
   }
 
-  ImportedChapterRecord _decodeChapter(String source) {
+  static ImportedChapterRecord _decodeChapter(String source) {
     final value = jsonDecode(source);
     if (value is! Map) {
       throw const FormatException('stored chapter must be an object');
@@ -1365,7 +1419,7 @@ final class SqliteImportedLibraryStore
     return ImportedChapterRecord.fromJson(Map<String, Object?>.from(value));
   }
 
-  ReadingProgress _decodeProgress(
+  static ReadingProgress _decodeProgress(
     String source, {
     required String fallbackSourceId,
   }) {

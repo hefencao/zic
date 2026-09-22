@@ -12,6 +12,7 @@ final class ScanReport {
     required this.deletedOrphans,
     required this.protected,
     required this.invalidMeta,
+    this.phaseMicros = const <String, int>{},
   });
 
   final int recovered;
@@ -19,6 +20,7 @@ final class ScanReport {
   final int deletedOrphans;
   final int protected;
   final int invalidMeta;
+  final Map<String, int> phaseMicros;
 }
 
 final class CacheScanner {
@@ -33,6 +35,14 @@ final class CacheScanner {
   final Set<String> activePaths;
 
   Future<ScanReport> scan() async {
+    final clock = Stopwatch()..start();
+    final phaseMicros = <String, int>{};
+    var phaseStarted = 0;
+    void finishPhase(String name) {
+      final now = clock.elapsedMicroseconds;
+      phaseMicros[name] = now - phaseStarted;
+      phaseStarted = now;
+    }
     _rejectPathLinks(layout.partialDir);
     _rejectPathLinks(layout.finalDir);
     for (final path in <String>[layout.partialDir, layout.finalDir]) {
@@ -52,6 +62,7 @@ final class CacheScanner {
     final managedData = <String>{};
     final managedMetadata = <String>{};
 
+    finishPhase('prepare');
     // Sidecars are transfer/resume metadata only. They may be completed for a
     // path that already has durable authority, but they never create that
     // authority and never decide whether authoritative bytes survive.
@@ -86,6 +97,7 @@ final class CacheScanner {
       }
     }
 
+    finishPhase('temporaryMetadata');
     // A durable DB row/replica owns the body. Missing, malformed or historical
     // sidecars cannot retire that body. Conversely, an unindexed sidecar is not
     // allowed to reconstruct a durable partial/READY fact after a crash.
@@ -103,7 +115,11 @@ final class CacheScanner {
             await _isDurableAuthority(dataPath);
         if (owned) {
           managedMetadata.add(absoluteMeta);
-          if (await _isRegularFile(dataPath)) managedData.add(absoluteData);
+          // This is a conservative preservation hint, not existence/type
+          // proof. The DB already owns this path; probing each sealed body
+          // adds a serial filesystem round-trip without affecting cleanup.
+          // Missing mutable partials are still validated independently below.
+          managedData.add(absoluteData);
           protected++;
           continue;
         }
@@ -112,6 +128,7 @@ final class CacheScanner {
       }
     }
 
+    finishPhase('metadata');
     // Byte cleanup is authority-driven. An indexed partial, artifact replica,
     // or live migration path is preserved without consulting a sidecar. A file
     // with no durable/live owner is uncommitted crash garbage and may be
@@ -142,6 +159,7 @@ final class CacheScanner {
       }
     }
 
+    finishPhase('bodies');
     // READY cache_entry.path is only a compatibility mirror; schema-8
     // artifact_replica is the sealed locator authority and its structural
     // failures are retired by the normal replica read path. Mutable exact
@@ -158,7 +176,9 @@ final class CacheScanner {
       removedRecords++;
     }
 
+    finishPhase('partialValidation');
     return ScanReport(
+      phaseMicros: Map<String, int>.unmodifiable(phaseMicros),
       recovered: 0,
       removedRecords: removedRecords,
       deletedOrphans: deletedOrphans,

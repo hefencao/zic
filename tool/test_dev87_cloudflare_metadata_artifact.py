@@ -2,6 +2,7 @@
 """Ownership gate for dev.87 verification routing, metadata and artifact restore."""
 
 from pathlib import Path
+import re
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -110,10 +111,14 @@ def main() -> None:
     require(
         "packages/storage/lib/src/artifact.dart",
         "bool verifyPromotedChecksum = true",
-        "_restorePromotedFromMeta(finalFile",
+        "_restorePromotedFromMeta(",
         "_repairFinalMetaAfterVerification()",
         "Future<Uint8List> readBytes()",
     )
+    assert re.search(
+        r"_restorePromotedFromMeta\(\s*finalFile\s*[,)]",
+        read("packages/storage/lib/src/artifact.dart"),
+    ), "promoted metadata restore must use the final artifact file"
     download_sources = (
         "packages/downloads/lib/src/chapter_downloads.dart",
         "packages/downloads/lib/src/persistent_chapter_download_service.dart",

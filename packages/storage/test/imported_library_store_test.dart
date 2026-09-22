@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -8,6 +9,111 @@ import 'package:sqlite3/sqlite3.dart' as sql;
 import 'package:test/test.dart';
 
 void main() {
+  test('persistent bulk list leaves one large row off the caller isolate while closing',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('bulk-library-reader-');
+    addTearDown(() => dir.delete(recursive: true));
+    final store = SqliteImportedLibraryStore('${dir.path}/library.sqlite');
+    await store.open();
+    final chapter = ImportedChapterRecord.folder(
+      directoryId: '/large',
+      displayName: 'large',
+      pages: List<ImportedPageRecord>.generate(3000, (i) => ImportedPageRecord(
+        displayName: '$i.png', sourceId: '/large/$i.png',
+        contentKindHint: ContentKindHint.png,
+      )),
+    );
+    await store.upsertChapter(chapter);
+    var completed = false;
+    final event = Completer<void>();
+    Timer.run(() {
+      try {
+        expect(completed, isFalse,
+            reason: 'even a single large SQLite row must not block the caller');
+        event.complete();
+      } on Object catch (error, stack) {
+        event.completeError(error, stack);
+      }
+    });
+    final read = store.list().then((entries) {
+      expect(entries.single.chapter.pages, hasLength(3000));
+      completed = true;
+    });
+    final closing = store.close();
+    await Future.wait<void>([read, event.future, closing]);
+    expect(completed, isTrue);
+  });
+
+  test('persistent bulk decode failure reaches caller without blocking close',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('bulk-library-error-');
+    addTearDown(() => dir.delete(recursive: true));
+    final path = '${dir.path}/library.sqlite';
+    final store = SqliteImportedLibraryStore(path);
+    await store.open();
+    addTearDown(store.close);
+    await store.upsertChapter(ImportedChapterRecord.folder(
+      directoryId: '/invalid', displayName: 'invalid',
+      pages: <ImportedPageRecord>[
+        ImportedPageRecord(displayName: 'a.png', sourceId: '/invalid/a.png',
+            contentKindHint: ContentKindHint.png),
+      ],
+    ));
+    final db = sql.sqlite3.open(path);
+    try {
+      db.execute('PRAGMA busy_timeout = 5000');
+      db.execute("UPDATE imported_chapter SET chapter_json = '{broken'");
+    } finally {
+      db.dispose();
+    }
+    final read = expectLater(store.list(), throwsFormatException);
+    await store.close();
+    await read;
+    await expectLater(store.list(), throwsStateError);
+  });
+
+  test('full library decode yields event turns without extending SQL snapshot',
+      () async {
+    final store = SqliteImportedLibraryStore.memory();
+    await store.open();
+    addTearDown(store.close);
+    ImportedChapterRecord chapter(String id) => ImportedChapterRecord.folder(
+      directoryId: '/yield/$id',
+      displayName: id,
+      pages: <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: 'page.png',
+          sourceId: '/yield/$id/page.png',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    for (var i = 0; i < 96; i++) {
+      await store.upsertChapter(chapter('$i'));
+    }
+    var listed = false;
+    final event = Completer<void>();
+    Timer.run(() async {
+      try {
+        expect(listed, isFalse,
+            reason: 'bulk JSON/model decode must allow platform event turns');
+        final selected = chapter('0');
+        expect(await store.get(selected.sourceId, selected.chapterId), isNotNull);
+        await store.upsertChapter(chapter('concurrent'));
+        event.complete();
+      } on Object catch (error, stack) {
+        event.completeError(error, stack);
+      }
+    });
+    final result = store.list().then((entries) {
+      listed = true;
+      expect(entries, hasLength(96));
+      expect(entries.any((e) => e.chapter.displayName == 'concurrent'), isFalse);
+    });
+    await Future.wait<void>([result, event.future]);
+    expect(await store.list(), hasLength(97));
+  });
+
   test('sqlite batch lookup returns exact requested chapters with progress', () async {
     final store = SqliteImportedLibraryStore.memory();
     await store.open();

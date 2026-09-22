@@ -20,6 +20,59 @@ void main() {
     canonicalUri: Uri.parse('https://example.test/page.webp'),
   );
 
+  for (final previousVersion in <int?>[null, 19]) {
+    test('replica locator lookup uses an index after open from $previousVersion',
+        () async {
+      final dir = await Directory.systemTemp.createTemp('locator-index-');
+      addTearDown(() => dir.delete(recursive: true));
+      final path = '${dir.path}/cache.sqlite';
+      final initial = SqliteIndex(path);
+      await initial.open();
+      final record = CacheRec(
+        id: id,
+        state: CacheState.ready,
+        path: '${dir.path}/retained.bin',
+        bytes: 11,
+        checksum: 'abcd',
+        createdUs: 1,
+        touchedUs: 2,
+      );
+      await initial.put(record);
+      await initial.close();
+      if (previousVersion != null) {
+        final legacy = sql.sqlite3.open(path);
+        legacy.execute('DROP INDEX IF EXISTS artifact_replica_access_locator');
+        legacy.execute('PRAGMA user_version = $previousVersion');
+        legacy.dispose();
+      }
+      final reopened = SqliteIndex(path);
+      await reopened.open();
+      try {
+        expect(await reopened.isStorageAccessLocatorAuthoritative(record.path),
+            isTrue);
+        expect(await reopened.isStorageAccessLocatorAuthoritative('/missing'),
+            isFalse);
+        expect((await reopened.get(id.key))?.checksum, record.checksum);
+        final db = sql.sqlite3.open(path);
+        try {
+          final plan = db.select(
+            'EXPLAIN QUERY PLAN SELECT 1 FROM artifact_replica '
+            'WHERE access_locator = ? LIMIT 1', <Object?>[record.path],
+          ).map((row) => row['detail']).join(' ');
+          expect(plan, contains('SEARCH'));
+          expect(plan, contains('artifact_replica_access_locator'));
+          expect(plan, isNot(contains('SCAN')));
+          expect(db.select('SELECT count(*) AS n FROM artifact_replica')
+              .single['n'], 1);
+        } finally {
+          db.dispose();
+        }
+      } finally {
+        await reopened.close();
+      }
+    });
+  }
+
   test('sqlite maintenance removal is atomic against exact READY and touches',
       () async {
     final index = SqliteIndex.memory();
@@ -1192,7 +1245,7 @@ void runCacheSchemaV2Tests() {
     await migrated.close();
 
     final schema = sql.sqlite3.open(dbPath);
-      expect(schema.select('PRAGMA user_version').single.values.single, 19);
+      expect(schema.select('PRAGMA user_version').single.values.single, 20);
     expect(
       schema
           .select(
@@ -1297,7 +1350,7 @@ void runCacheSchemaV2Tests() {
             'migration must not invent manual intent for ambiguous old rows',
       );
     final raw = sql.sqlite3.open(dbPath);
-      expect(raw.select('PRAGMA user_version').single.values.single, 19);
+      expect(raw.select('PRAGMA user_version').single.values.single, 20);
     raw.dispose();
     },
   );
@@ -1355,7 +1408,7 @@ void runCacheSchemaV2Tests() {
 
     final checked = sql.sqlite3.open(dbPath);
     addTearDown(checked.dispose);
-      expect(checked.select('PRAGMA user_version').single.values.single, 19);
+      expect(checked.select('PRAGMA user_version').single.values.single, 20);
     expect(
       checked.select(
         "SELECT name FROM sqlite_master WHERE type = 'index' "
@@ -1443,7 +1496,7 @@ void runCacheSchemaV2Tests() {
 
       final checked = sql.sqlite3.open(dbPath);
       addTearDown(checked.dispose);
-      expect(checked.select('PRAGMA user_version').single.values.single, 19);
+      expect(checked.select('PRAGMA user_version').single.values.single, 20);
       expect(
         checked.select(
           "SELECT name FROM sqlite_master WHERE type = 'table' "
@@ -1477,7 +1530,7 @@ void runCacheSchemaV2Tests() {
       canonicalUri: Uri.parse('https://example.test/current-reopen.webp'),
     );
     final raw = sql.sqlite3.open(dbPath);
-      expect(raw.select('PRAGMA user_version').single.values.single, 19);
+      expect(raw.select('PRAGMA user_version').single.values.single, 20);
     raw.execute(
       'INSERT INTO cache_entry '
       '(key, download_json, state, path, bytes, checksum, created_us, touched_us, '
@@ -2108,7 +2161,13 @@ void runCacheSchemaV2Tests() {
         sourceRevision: 'single',
         canonicalUri: Uri.parse('venera-resource:expired-provider-uri'),
       );
+      // Keep the other durable tables present in a real v14 database; only
+      // the logical-binding table below is the subject of this migration.
+      final seed = SqliteIndex(path);
+      await seed.open();
+      await seed.close();
       final legacy = sql.sqlite3.open(path);
+      legacy.execute('DROP TABLE cache_entry');
       legacy.execute('''
       CREATE TABLE cache_entry (
         key TEXT NOT NULL PRIMARY KEY,
@@ -2160,7 +2219,7 @@ void runCacheSchemaV2Tests() {
 
       final checked = sql.sqlite3.open(path);
       addTearDown(checked.dispose);
-      expect(checked.select('PRAGMA user_version').single.values.single, 19);
+      expect(checked.select('PRAGMA user_version').single.values.single, 20);
       final columns = checked
           .select('PRAGMA table_info(cache_entry)')
           .map((row) => row['name'])
@@ -2208,7 +2267,7 @@ void runCacheSchemaV2Tests() {
 
       final checked = sql.sqlite3.open(path);
       addTearDown(checked.dispose);
-      expect(checked.select('PRAGMA user_version').single.values.single, 19);
+      expect(checked.select('PRAGMA user_version').single.values.single, 20);
       expect(
         checked.select(
           "SELECT name FROM sqlite_master WHERE type='table' "
@@ -2305,7 +2364,7 @@ void runCacheSchemaV2Tests() {
 
     final checked = sql.sqlite3.open(path);
     addTearDown(checked.dispose);
-    expect(checked.select('PRAGMA user_version').single.values.single, 19);
+    expect(checked.select('PRAGMA user_version').single.values.single, 20);
     expect(
       checked.select(
         "SELECT name FROM sqlite_master WHERE type='table' "
@@ -2366,7 +2425,7 @@ void runCacheSchemaV2Tests() {
 
     final checked = sql.sqlite3.open(path);
     addTearDown(checked.dispose);
-    expect(checked.select('PRAGMA user_version').single.values.single, 19);
+    expect(checked.select('PRAGMA user_version').single.values.single, 20);
     expect(
       checked.select('SELECT root_id FROM storage_root').map((row) => row['root_id']),
       contains(tree),
@@ -2446,7 +2505,7 @@ void runCacheSchemaV2Tests() {
 
     final checked = sql.sqlite3.open(path);
     addTearDown(checked.dispose);
-    expect(checked.select('PRAGMA user_version').single.values.single, 19);
+    expect(checked.select('PRAGMA user_version').single.values.single, 20);
     expect(
       checked.select(
         'SELECT artifact_id FROM artifact_object WHERE artifact_id = ?',
