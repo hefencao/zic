@@ -97,6 +97,198 @@ void main() {
     expect(notifications, 1);
   });
 
+  test('service adoption does not wait for unrelated Home list reconciliation',
+      () async {
+    final bootstrap = MemoryImportedLibraryStore();
+    final oldDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final oldQueue = WholeComicDownloadQueue(downloads: oldDownloads);
+    final listGate = Completer<void>();
+    final durable = _GatedLibraryStore(
+      MemoryImportedLibraryStore(),
+      Future.value(const <LibraryCategory>[]),
+    )
+      ..listReturnGate = listGate.future
+      ..listStarted = Completer<void>();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: bootstrap,
+      chapterDownloads: oldDownloads,
+      wholeComicDownloads: oldQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      if (!listGate.isCompleted) listGate.complete();
+      await session.close();
+      session.dispose();
+      await queue.close();
+      await downloads.close();
+      await durable.close();
+    });
+    await session.ready;
+    await durable.open();
+    final chapter = ImportedChapterRecord(
+      directoryId: 'selected',
+      displayName: 'Selected',
+      sourceId: 'fixture',
+      comicId: 'comic',
+      chapterId: 'chapter',
+      sourceRevision: 'r1',
+      pages: const <ImportedPageRecord>[
+        ImportedPageRecord(
+          displayName: 'page',
+          sourceId: 'file:///selected.png',
+          pageId: 'page',
+          contentKindHint: ContentKindHint.png,
+        ),
+      ],
+    );
+    await durable.upsertChapter(chapter);
+    var adopted = false;
+    final adoption = session.adoptServices(
+      library: durable,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    ).then((_) => adopted = true);
+    await durable.listStarted!.future;
+    await Future<void>.delayed(Duration.zero);
+    expect(adopted, isTrue,
+        reason: 'runtime capability binding must not join the Home list scan');
+    expect(session.library, same(durable));
+    expect(session.chapterDownloads, same(downloads));
+    var reconciled = false;
+    unawaited(session.ready.then((_) => reconciled = true));
+    final selected = await session.hydrateEntry(
+      ImportedLibraryEntry(chapter: chapter),
+      awaitCanonicalPhysicalBackfill: false,
+    );
+    expect(selected.chapter.pages.single.sourceId, 'file:///selected.png');
+    expect(durable.getCalls, 1);
+    expect(reconciled, isFalse);
+    listGate.complete();
+    await adoption;
+    await session.ready;
+    expect(reconciled, isTrue);
+  });
+
+  test('failed authority read leaves old bindings intact and adoption retries',
+      () async {
+    final bootstrap = MemoryImportedLibraryStore();
+    final oldDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final oldQueue = WholeComicDownloadQueue(downloads: oldDownloads);
+    final durable = _GatedLibraryStore(
+      MemoryImportedLibraryStore(),
+      Future.value(const <LibraryCategory>[]),
+    )..versionRelationReadError = StateError('authority unavailable');
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: bootstrap,
+      chapterDownloads: oldDownloads,
+      wholeComicDownloads: oldQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+      await queue.close();
+      await downloads.close();
+      await durable.close();
+    });
+    await session.ready;
+    Future<void> adopt() => session.adoptServices(
+      library: durable,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    );
+    await expectLater(adopt(), throwsStateError);
+    expect(session.library, same(bootstrap));
+    expect(session.chapterDownloads, same(oldDownloads));
+    expect(await bootstrap.list(), isEmpty);
+    expect(durable.listCalls, 0);
+    durable.versionRelationReadError = null;
+    await adopt();
+    expect(session.library, same(durable));
+    await session.ready;
+  });
+
+  test('close drains reconciliation installed by an admitted adoption', () async {
+    final oldDownloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final oldQueue = WholeComicDownloadQueue(downloads: oldDownloads);
+    final session = HomeLibrarySession(
+      library: MemoryImportedLibraryStore(),
+      chapterDownloads: oldDownloads,
+      wholeComicDownloads: oldQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    final authorityGate = Completer<void>();
+    final listGate = Completer<void>();
+    final durable = _GatedLibraryStore(
+      MemoryImportedLibraryStore(),
+      Future.value(const <LibraryCategory>[]),
+    )
+      ..versionRelationReadGate = authorityGate.future
+      ..versionRelationReadStarted = Completer<void>()
+      ..listReturnGate = listGate.future
+      ..listStarted = Completer<void>();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    addTearDown(() async {
+      if (!authorityGate.isCompleted) authorityGate.complete();
+      if (!listGate.isCompleted) listGate.complete();
+      await session.close();
+      session.dispose();
+      await queue.close();
+      await downloads.close();
+      await durable.close();
+    });
+    await session.ready;
+    final adoption = session.adoptServices(
+      library: durable,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    );
+    await durable.versionRelationReadStarted!.future;
+    var closed = false;
+    final closing = session.close().then((_) => closed = true);
+    authorityGate.complete();
+    await adoption;
+    await durable.listStarted!.future;
+    await Future<void>.delayed(Duration.zero);
+    expect(closed, isFalse,
+        reason: 'adoption completion is not projection-tail completion');
+    listGate.complete();
+    await closing;
+    expect(closed, isTrue);
+  });
+
   test('same-service adoption refreshes source projection identity', () async {
     final library = MemoryImportedLibraryStore();
     final downloads = MemoryChapterDownloadService(
@@ -386,6 +578,7 @@ void main() {
       persistSnapshot: false,
     );
     expect(session.downloadComposition, same(composition));
+    await session.ready; // This assertion consumes the Home list projection.
     final current = session.entries.singleWhere(
       (entry) => entry.chapter.comicId == oldManifest.comicId,
     );
@@ -3782,14 +3975,16 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 1));
     }
     expect(bootstrapLibrary.closeCalls, 1);
-    expect(durableLibrary.openCalls, 0);
+    // Adoption opens authority before retiring bootstrap. Retry must not open
+    // it again until that retirement and the projection tail have drained.
+    expect(durableLibrary.openCalls, 1);
 
     var retryDone = false;
     final retry = session.retry()..then((_) => retryDone = true);
     await Future<void>.delayed(const Duration(milliseconds: 10));
 
     expect(retryDone, isFalse);
-    expect(durableLibrary.openCalls, 0);
+    expect(durableLibrary.openCalls, 1);
 
     closeGate.complete();
     await adoption;
@@ -4360,6 +4555,161 @@ void main() {
     expect(library.getCalls, 0);
   });
 
+  test('service adoption drains old projection reads before owned retirement',
+      () async {
+    final old = _ProjectionRaceChapterDownloads();
+    final oldQueue = WholeComicDownloadQueue(downloads: old);
+    final next = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final nextQueue = WholeComicDownloadQueue(downloads: next);
+    final nextLibrary = MemoryImportedLibraryStore();
+    final session = HomeLibrarySession(
+      library: MemoryImportedLibraryStore(),
+      chapterDownloads: old,
+      wholeComicDownloads: oldQueue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    addTearDown(() async {
+      if (!old.cacheRelease.isCompleted) old.cacheRelease.complete();
+      await session.close();
+      session.dispose();
+      await nextQueue.close();
+      await next.close();
+      await nextLibrary.close();
+    });
+    await session.ready;
+    final read = session.refreshDownloadCacheProjection(
+      const <ImportedLibraryEntry>[],
+    );
+    await old.cacheStarted.future;
+    var adopted = false;
+    final adoption = session.adoptServices(
+      library: nextLibrary,
+      chapterDownloads: next,
+      wholeComicDownloads: nextQueue,
+      sources: const <BrowsableComicSource>[],
+      persistSnapshot: false,
+    ).then((_) => adopted = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(session.chapterDownloads, same(next));
+    expect(adopted, isFalse);
+    expect(old.closed, isFalse);
+    old.cacheRelease.complete();
+    await read;
+    await adoption;
+    expect(old.closed, isTrue);
+    expect(session.downloadCacheProjection, isNull,
+        reason: 'retired service must not publish its late cache projection');
+  });
+
+  for (final cacheOnly in <bool>[false, true]) {
+    test('close drains admitted download projection I/O (cacheOnly=$cacheOnly)',
+        () async {
+      final downloads = _ProjectionRaceChapterDownloads();
+      final queue = WholeComicDownloadQueue(downloads: downloads);
+      final session = HomeLibrarySession(
+        library: MemoryImportedLibraryStore(),
+        chapterDownloads: downloads,
+        wholeComicDownloads: queue,
+        sources: const <BrowsableComicSource>[],
+        ownsLibrary: true,
+        ownsChapterDownloads: true,
+        ownsWholeComicDownloads: true,
+      );
+      await session.ready;
+      await Future<void>.delayed(Duration.zero);
+      downloads.managementStarted = Completer<void>();
+      downloads.managementRelease = Completer<void>();
+      final read = cacheOnly
+          ? session.refreshDownloadCacheProjection(const <ImportedLibraryEntry>[])
+          : session.refreshDownloadSnapshots(const <ImportedLibraryEntry>[]);
+      await (cacheOnly
+          ? downloads.cacheStarted.future
+          : downloads.managementStarted!.future);
+      var closed = false;
+      final closing = session.close().then((_) => closed = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(closed, isFalse);
+      expect(downloads.closed, isFalse);
+      final callsAtClose = downloads.managementCalls;
+      await session.refreshDownloadSnapshots(const <ImportedLibraryEntry>[]);
+      expect(downloads.managementCalls, callsAtClose);
+      (cacheOnly ? downloads.cacheRelease : downloads.managementRelease!)
+          .complete();
+      await read;
+      await closing;
+      expect(downloads.closed, isTrue);
+      session.dispose();
+    });
+  }
+
+  for (final scenario in <(ChapterDownloadPhase, String)>[
+    (ChapterDownloadPhase.downloading, 'r1'),
+    (ChapterDownloadPhase.complete, 'r1'),
+    (ChapterDownloadPhase.idle, 'r1'),
+    (ChapterDownloadPhase.downloading, 'r2'),
+    (ChapterDownloadPhase.complete, 'r2'),
+    (ChapterDownloadPhase.idle, 'r2'),
+  ]) {
+    final (phase, revision) = scenario;
+    test('management scan preserves concurrent $phase revision=$revision',
+        () async {
+      final downloads = _ProjectionRaceChapterDownloads();
+      final queue = WholeComicDownloadQueue(downloads: downloads);
+      final session = HomeLibrarySession(
+        library: MemoryImportedLibraryStore(),
+        chapterDownloads: downloads,
+        wholeComicDownloads: queue,
+        sources: const <BrowsableComicSource>[],
+        ownsLibrary: true,
+        ownsChapterDownloads: true,
+        ownsWholeComicDownloads: true,
+      );
+      addTearDown(() async {
+        downloads.managementRelease?.complete();
+        await session.close();
+        session.dispose();
+      });
+      await session.ready;
+      await Future<void>.delayed(Duration.zero);
+      const stale = ChapterDownloadSnapshot(
+        sourceId: 'source', comicId: 'comic', comicTitle: 'Comic',
+        chapterId: 'chapter', sourceRevision: 'r1', title: 'Chapter',
+        completedPages: 1, totalPages: 2, receivedBytes: 50,
+        phase: ChapterDownloadPhase.downloading,
+      );
+      session.acceptDownloadSnapshot(stale);
+      downloads.managementSnapshots = <ChapterDownloadSnapshot>[stale];
+      downloads.managementStarted = Completer<void>();
+      downloads.managementRelease = Completer<void>();
+      final refresh = session.refreshDownloadSnapshots(
+        const <ImportedLibraryEntry>[],
+      );
+      await downloads.managementStarted!.future;
+      final live = ChapterDownloadSnapshot(
+        sourceId: 'source', comicId: 'comic', comicTitle: 'Comic',
+        chapterId: 'chapter', sourceRevision: revision, title: 'Chapter',
+        completedPages: phase == ChapterDownloadPhase.complete ? 2 : 0,
+        totalPages: 2,
+        receivedBytes: phase == ChapterDownloadPhase.idle ? 0 : 100,
+        phase: phase,
+      );
+      downloads.publish(live);
+      await Future<void>.delayed(Duration.zero);
+      downloads.managementRelease!.complete();
+      downloads.managementRelease = null;
+      await refresh;
+      expect(session.downloadSnapshots.values, <ChapterDownloadSnapshot>[live]);
+      if (revision != stale.sourceRevision) {
+        expect(session.downloadSnapshots.containsKey(stale.identity), isFalse);
+      }
+    });
+  }
+
   test(
     'full download management refresh fences an older cache-only publication',
     () async {
@@ -4417,6 +4767,15 @@ final class _ProjectionRaceChapterDownloads
       StreamController<ChapterDownloadSnapshot>.broadcast();
   final Completer<void> cacheStarted = Completer<void>();
   final Completer<void> cacheRelease = Completer<void>();
+  Completer<void>? managementStarted;
+  Completer<void>? managementRelease;
+  List<ChapterDownloadSnapshot> managementSnapshots =
+      const <ChapterDownloadSnapshot>[];
+
+  bool closed = false;
+  int managementCalls = 0;
+
+  void publish(ChapterDownloadSnapshot snapshot) => _changes.add(snapshot);
 
   ChapterCacheManagementProjection get _staleCache =>
       ChapterCacheManagementProjection(
@@ -4471,12 +4830,17 @@ final class _ProjectionRaceChapterDownloads
   @override
   Future<ChapterDownloadManagementProjection> inspectDownloadManagement(
     Iterable<ImportedLibraryEntry> knownEntries,
-  ) async =>
-      ChapterDownloadManagementProjection(
-        orphanedEntries: const <ImportedLibraryEntry>[],
-        snapshots: const <ChapterDownloadSnapshot>[],
-        cache: _authoritativeCache,
-      );
+  ) async {
+    managementCalls++;
+    final snapshots = managementSnapshots;
+    managementStarted?.complete();
+    await managementRelease?.future;
+    return ChapterDownloadManagementProjection(
+      orphanedEntries: const <ImportedLibraryEntry>[],
+      snapshots: snapshots,
+      cache: _authoritativeCache,
+    );
+  }
 
   @override
   void updateVersionBaselines(List<ComicVersionRelation> relations) {}
@@ -4485,7 +4849,10 @@ final class _ProjectionRaceChapterDownloads
   void updateCacheVersionRelations(List<ComicVersionRelation> relations) {}
 
   @override
-  Future<void> close() => _changes.close();
+  Future<void> close() {
+    closed = true;
+    return _changes.close();
+  }
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -4653,6 +5020,9 @@ final class _GatedLibraryStore
   Completer<void>? versionRelationWriteStarted;
   Future<void>? versionRelationWriteReturnGate;
   Object? versionRelationWriteError;
+  Object? versionRelationReadError;
+  Future<void>? versionRelationReadGate;
+  Completer<void>? versionRelationReadStarted;
 
   ComicVersionRelationStore get _versionRelations =>
       delegate as ComicVersionRelationStore;
@@ -4806,8 +5176,14 @@ final class _GatedLibraryStore
         return delegate.saveSourcePreference(preference);
       });
   @override
-  Future<List<ComicVersionRelation>> listAllComicVersionRelations() =>
-      _versionRelations.listAllComicVersionRelations();
+  Future<List<ComicVersionRelation>> listAllComicVersionRelations() async {
+    final started = versionRelationReadStarted;
+    if (started != null && !started.isCompleted) started.complete();
+    await versionRelationReadGate;
+    final error = versionRelationReadError;
+    if (error != null) throw error;
+    return _versionRelations.listAllComicVersionRelations();
+  }
 
   @override
   Future<List<ComicVersionRelation>> listComicVersionPredecessors(

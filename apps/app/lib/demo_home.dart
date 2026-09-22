@@ -461,6 +461,13 @@ final class _DemoHomeState extends State<DemoHome> {
       refreshStaleChapter: _refreshStaleQueueChapter,
     );
     _readerChapterComposition = HomeReaderChapterComposition(
+      ensureDurableServices: () async {
+        await _serviceHandoff?.ensureCoreServices?.call();
+        await _adoptDurableServices();
+        if (_needsDurableServiceAdoption()) {
+          throw StateError('Reader durable service adoption did not complete');
+        }
+      },
       hydrateEntry: (entry, {required awaitCanonicalPhysicalBackfill}) =>
           _librarySession.hydrateEntry(
         entry,

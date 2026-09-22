@@ -356,6 +356,8 @@ final class HomeLibrarySession extends ChangeNotifier {
   Future<void>? _downloadCacheProjectionRefresh;
   ChapterDownloadService? _downloadCacheProjectionRefreshService;
   var _downloadManagementProjectionEpoch = 0;
+  final Map<Future<void>, ChapterDownloadService> _downloadProjectionReads =
+      <Future<void>, ChapterDownloadService>{};
 
   List<ImportedLibraryEntry> _entries = const <ImportedLibraryEntry>[];
   final Map<String, ImportedLibraryEntry> _versionAuthorityHydratedEntries =
@@ -1122,6 +1124,9 @@ final class HomeLibrarySession extends ChangeNotifier {
       }
       if (adoptionAtAdmission != null) {
         await adoptionAtAdmission;
+        // Adoption now releases bindings before Home reconciliation. Join the
+        // newly installed projection tail, not just the pre-adoption ready.
+        await _ready;
       }
       if (openLibrary) {
         await library.open();
@@ -1138,10 +1143,10 @@ final class HomeLibrarySession extends ChangeNotifier {
 
   /// Replaces the bootstrap-only services without replacing the Home widget.
   ///
-  /// The snapshot projection remains mounted while the durable services are
-  /// adopted. If its revision still matches SQLite, no second library
-  /// projection notification is needed; otherwise one authoritative reload
-  /// replaces it in place.
+  /// Completes when runtime bindings and durable version authority are usable,
+  /// and previously owned services have retired. Home projection reconciliation
+  /// continues through [ready]; capability consumers must not join an unrelated
+  /// full-library reload merely to access the adopted services.
   Future<void> adoptServices({
     required ImportedLibraryStore library,
     required ChapterDownloadService chapterDownloads,
@@ -1203,6 +1208,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       chapterDownloads,
       downloadComposition,
     );
+    final bindingStartedAt = startupTelemetry?.nowMicros();
     final previousReady = _ready;
     final reloadAtAdmission = _libraryReload;
     await previousReady;
@@ -1223,6 +1229,20 @@ final class HomeLibrarySession extends ChangeNotifier {
       return;
     }
 
+    // Resolve safety-critical authority before changing any owner. This is not
+    // Home's presentation projection: stale snapshot relations must not become
+    // Reader reuse proof while the full Home reload runs independently.
+    await library.open();
+    final canonicalMediaProjections =
+        await resolvedDownloadComposition?.artifactStore
+            .loadCanonicalMediaProjections() ??
+        const <VersionChapterCanonicalProjection>[];
+    final relationStore = library is ComicVersionRelationStore
+        ? library as ComicVersionRelationStore
+        : null;
+    final versionRelations = await relationStore?.listAllComicVersionRelations() ??
+        const <ComicVersionRelation>[];
+
     final previousLibrary = this.library;
     final libraryChanged = !identical(previousLibrary, library);
     final previousChapterDownloads = this.chapterDownloads;
@@ -1239,7 +1259,13 @@ final class HomeLibrarySession extends ChangeNotifier {
     this.wholeComicDownloads = wholeComicDownloads;
     _canonicalPhysicalBackfillFingerprint = null;
     _downloadCacheProjection = null;
-    _recomputeVersionBaselines();
+    _versionRelations = List<ComicVersionRelation>.unmodifiable(versionRelations);
+    _replaceCanonicalMediaProjections(
+      canonicalMediaProjections,
+      refreshAuthority: false,
+    );
+    _recomputeVersionBaselines(refreshAuthority: false);
+    _refreshVersionPageAuthority();
     // Preserve the snapshot-projected orphan entries until the adopted
     // service publishes its first authoritative download projection.
     ownsLibrary = false;
@@ -1265,6 +1291,7 @@ final class HomeLibrarySession extends ChangeNotifier {
       }
     }
     if (previousOwnsChapterDownloads) {
+      await _drainDownloadProjectionReads(previousChapterDownloads);
       try {
         await previousChapterDownloads.close();
       } on Object {
@@ -1279,7 +1306,10 @@ final class HomeLibrarySession extends ChangeNotifier {
       }
     }
 
-    _ready = _reconcileAdoptedServices().then<void>(
+    // Keep reconciliation owned and drained here, but release the runtime
+    // binding handoff before scheduling unrelated Home presentation work.
+    _ready = Future<void>.delayed(Duration.zero)
+        .then((_) => _reconcileAdoptedServices()).then<void>(
       (_) {},
       onError: (Object error, StackTrace stackTrace) {
         // The composition swap is authoritative and irreversible: a failed
@@ -1291,21 +1321,19 @@ final class HomeLibrarySession extends ChangeNotifier {
         _publish();
       },
     );
-    await _ready;
+    if (bindingStartedAt != null) {
+      startupTelemetry?.serviceReady(
+        'home-runtime-bindings',
+        startedAtMicros: bindingStartedAt,
+      );
+    }
+    _homeLog('services-bindings-ready projection=pending');
     if (!_closed && libraryChanged) {
       _libraryGenerationChanges.notifyListeners();
     }
   }
 
   Future<void> _reconcileAdoptedServices() async {
-    final canonicalMediaProjectionsFuture = _traceStartupOperation<
-        List<VersionChapterCanonicalProjection>>(
-      'handoff-query-canonical-media-projections',
-      _queryCanonicalMediaProjections,
-      summary: (projections) => 'count=${projections.length}',
-    );
-    await library.open();
-    _replaceCanonicalMediaProjections(await canonicalMediaProjectionsFuture);
     final snapshotRevision = _snapshotLibraryRevision;
     final currentRevision = snapshotRevision == null
         ? null
@@ -1761,7 +1789,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     _publish();
     try {
       await _runLibraryReload(
-        waitForReady: false,
+        waitForReady: true,
         openLibrary: true,
       );
     } on Object catch (error) {
@@ -2838,9 +2866,43 @@ final class HomeLibrarySession extends ChangeNotifier {
     }
   }
 
+  Future<void> _trackDownloadProjectionRead(
+    ChapterDownloadService service,
+    Future<void> read,
+  ) {
+    _downloadProjectionReads[read] = service;
+    unawaited(read.then<void>(
+      (_) => _downloadProjectionReads.remove(read),
+      onError: (Object _, StackTrace __) {
+        _downloadProjectionReads.remove(read);
+      },
+    ));
+    return read;
+  }
+
+  Future<void> _drainDownloadProjectionReads([
+    ChapterDownloadService? service,
+  ]) async {
+    while (true) {
+      final pending = <Future<void>>[
+        for (final entry in _downloadProjectionReads.entries)
+          if (service == null || identical(entry.value, service)) entry.key,
+      ];
+      if (pending.isEmpty) return;
+      for (final read in pending) {
+        try {
+          await read;
+        } on Object {
+          // The requesting route handles errors; retirement joins all I/O.
+        }
+      }
+    }
+  }
+
   Future<void> refreshDownloadCacheProjection(
     Iterable<ImportedLibraryEntry> entries,
   ) {
+    if (_closed || _closing != null) return Future<void>.value();
     final service = chapterDownloads;
     final fullRefresh = _downloadProjectionRefresh;
     if (fullRefresh != null &&
@@ -2877,12 +2939,13 @@ final class HomeLibrarySession extends ChangeNotifier {
     });
     _downloadCacheProjectionRefreshService = service;
     _downloadCacheProjectionRefresh = refresh;
-    return refresh;
+    return _trackDownloadProjectionRead(service, refresh);
   }
 
   Future<void> refreshDownloadSnapshots(
     Iterable<ImportedLibraryEntry> entries,
   ) {
+    if (_closed || _closing != null) return Future<void>.value();
     final service = chapterDownloads;
     final existing = _downloadProjectionRefresh;
     if (existing != null &&
@@ -2902,7 +2965,24 @@ final class HomeLibrarySession extends ChangeNotifier {
     );
     _downloadProjectionRefreshService = service;
     _downloadProjectionRefresh = refresh;
-    return refresh;
+    return _trackDownloadProjectionRead(service, refresh);
+  }
+
+  // A scan is a baseline, not a newer download event. Preserve events received
+  // while I/O was pending, including lower progress after stop/delete and a new
+  // revision of the same chapter. Never merge by max(bytes/pages).
+  void _mergeConcurrentDownloadSnapshots(
+    Map<String, ChapterDownloadSnapshot> before,
+    Map<String, ChapterDownloadSnapshot> scanned,
+  ) {
+    for (final snapshot in _downloadSnapshots.values) {
+      if (identical(before[snapshot.identity], snapshot)) continue;
+      scanned.removeWhere((_, candidate) =>
+          candidate.sourceId == snapshot.sourceId &&
+          candidate.comicId == snapshot.comicId &&
+          candidate.chapterId == snapshot.chapterId);
+      scanned[snapshot.identity] = snapshot;
+    }
   }
 
   Future<void> _refreshDownloadSnapshotsOnce(
@@ -2968,12 +3048,13 @@ final class HomeLibrarySession extends ChangeNotifier {
     if (_closed || !identical(service, chapterDownloads)) {
       return;
     }
+    _mergeConcurrentDownloadSnapshots(previousSnapshots, snapshots);
     final nextOrphaned = List<ImportedLibraryEntry>.unmodifiable(orphaned);
     final nextSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
       snapshots,
     );
     final persistedChanged =
-        !_samePersistedDownloadProjection(previousSnapshots, nextSnapshots) ||
+        !_samePersistedDownloadProjection(_downloadSnapshots, nextSnapshots) ||
         !_sameOrphanedDownloadProjection(previousOrphaned, nextOrphaned);
     _orphanedDownloadEntries = nextOrphaned;
     _downloadSnapshots = nextSnapshots;
@@ -3014,6 +3095,7 @@ final class HomeLibrarySession extends ChangeNotifier {
     List<ImportedLibraryEntry> requested,
   ) async {
     final service = chapterDownloads;
+    final managementEpoch = _downloadManagementProjectionEpoch;
     final previous = _downloadSnapshots;
     final next = <String, ChapterDownloadSnapshot>{...previous};
     final startedAt = _homeStartupClock.elapsedMilliseconds;
@@ -3036,12 +3118,14 @@ final class HomeLibrarySession extends ChangeNotifier {
         }
       }
     }
-    if (_closed || !identical(service, chapterDownloads)) return;
+    if (_closed || !identical(service, chapterDownloads) ||
+        managementEpoch != _downloadManagementProjectionEpoch) return;
+    _mergeConcurrentDownloadSnapshots(previous, next);
     final nextSnapshots = Map<String, ChapterDownloadSnapshot>.unmodifiable(
       next,
     );
     final persistedChanged = !_samePersistedDownloadProjection(
-      previous,
+      _downloadSnapshots,
       nextSnapshots,
     );
     _homeLog(
@@ -3049,14 +3133,14 @@ final class HomeLibrarySession extends ChangeNotifier {
       'entries=${requested.length} changed=$persistedChanged '
       'durationMs=${_homeStartupClock.elapsedMilliseconds - startedAt}',
     );
-    if (!persistedChanged) {
-      _homeLog('download-snapshot-persist-skip reason=unchanged');
-      return;
-    }
     _downloadSnapshots = nextSnapshots;
     _recomputeVersionBaselines();
     _downloadProjectionChanges.notifyListeners();
-    _scheduleSnapshotWrite();
+    if (persistedChanged) {
+      _scheduleSnapshotWrite();
+    } else {
+      _homeLog('download-snapshot-persist-skip reason=unchanged');
+    }
   }
 
   Future<void> _refreshDownloadSnapshotsAfterFrame(
@@ -3084,9 +3168,12 @@ final class HomeLibrarySession extends ChangeNotifier {
       if (_closed) return;
       await waitForFrame();
     }
-    if (_closed) return;
+    if (_closed || _closing != null) return;
     if (hasTrustedSnapshot) {
-      await _refreshKnownDownloadSnapshots(requested);
+      await _trackDownloadProjectionRead(
+        chapterDownloads,
+        _refreshKnownDownloadSnapshots(requested),
+      );
     } else {
       await refreshDownloadSnapshots(requested);
     }
@@ -3147,6 +3234,10 @@ final class HomeLibrarySession extends ChangeNotifier {
     // service adoption/reload or a durable write-through mutation.
     await _ready;
     await _drainAdmittedOperations();
+    // An admitted adoption can install its projection tail while close waits
+    // for admissions. Drain that new tail before releasing any store owners.
+    await _ready;
+    await _drainDownloadProjectionReads();
     await _versionEvidenceWriteTail;
     await _canonicalMediaWriteTail;
     await _canonicalPhysicalBackfillTail;

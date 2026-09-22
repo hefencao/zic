@@ -8,6 +8,92 @@ import 'package:zic/home_reader_composition.dart';
 import 'package:zic/source_resource_gateway.dart';
 
 void main() {
+  test('cold Reader preparation waits for durable service adoption before binding',
+      () async {
+    final entry = _entry(sourceId: 'local-folder', pageSource: '/page.jpg');
+    final services = Completer<void>();
+    final order = <String>[];
+    var adopted = false;
+    final gateway = ComicSourceResourceGateway(sourceForId: (_) => null);
+    final composition = HomeReaderChapterComposition(
+      ensureDurableServices: () async {
+        order.add('services');
+        await services.future;
+        adopted = true;
+      },
+      hydrateEntry: (candidate, {required awaitCanonicalPhysicalBackfill}) async {
+        order.add('hydrate:$adopted');
+        return candidate;
+      },
+      sourceResources: gateway,
+      downloadComposition: () {
+        order.add('binding:$adopted');
+        return null;
+      },
+      requiresSourceLocatorRefresh: (_) => false,
+      refreshRemoteEntry: (candidate, {required forceSourceRefresh}) async =>
+          candidate,
+      prepareVersionAuthority: (_) async {
+        order.add('authority:$adopted');
+        return 0;
+      },
+      trace: const NoopTraceSink(),
+      monotonicMicros: () => 1,
+    );
+    addTearDown(() async {
+      if (!services.isCompleted) services.complete();
+      await composition.close();
+      gateway.close();
+    });
+    final preparation = composition.prepare(() async {
+      order.add('load:$adopted');
+      return entry;
+    }, refreshRemote: false);
+    await Future<void>.delayed(Duration.zero);
+    expect(order, <String>['services'],
+        reason: 'bootstrap owners must not escape into Reader capabilities');
+    var closed = false;
+    final closing = composition.close().then((_) => closed = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(closed, isFalse);
+    services.complete();
+    final prepared = await preparation;
+    await closing;
+    expect(prepared.entry, same(entry));
+    expect(order, <String>[
+      'services', 'load:true', 'hydrate:true', 'authority:true', 'binding:true',
+    ]);
+  });
+
+  test('failed Reader service handoff does not fall back to bootstrap owners',
+      () async {
+    final gateway = ComicSourceResourceGateway(sourceForId: (_) => null);
+    final failure = StateError('durable services unavailable');
+    final composition = HomeReaderChapterComposition(
+      ensureDurableServices: () => Future<void>.error(failure),
+      hydrateEntry: (candidate, {required awaitCanonicalPhysicalBackfill}) async =>
+          candidate,
+      sourceResources: gateway,
+      downloadComposition: () => null,
+      requiresSourceLocatorRefresh: (_) => false,
+      refreshRemoteEntry: (candidate, {required forceSourceRefresh}) async =>
+          candidate,
+      prepareVersionAuthority: (_) async => 0,
+      trace: const NoopTraceSink(),
+      monotonicMicros: () => 1,
+    );
+    addTearDown(() async {
+      await composition.close();
+      gateway.close();
+    });
+    var loaded = false;
+    await expectLater(composition.prepare(() async {
+      loaded = true;
+      return _entry(sourceId: 'local-folder', pageSource: '/page.jpg');
+    }, refreshRemote: false), throwsA(same(failure)));
+    expect(loaded, isFalse);
+  });
+
   test('reader composition prepares local chapter without transport authority', () async {
     final entry = _entry(
       sourceId: 'local-folder',
@@ -20,6 +106,7 @@ void main() {
     final gateway = ComicSourceResourceGateway(sourceForId: (_) => null);
     addTearDown(gateway.close);
     final composition = HomeReaderChapterComposition(
+      ensureDurableServices: () async {},
       hydrateEntry: (candidate, {required awaitCanonicalPhysicalBackfill}) async {
         hydrateCalls++;
         expect(awaitCanonicalPhysicalBackfill, isFalse);
@@ -73,6 +160,7 @@ void main() {
     final gateway = ComicSourceResourceGateway(sourceForId: (_) => null);
     addTearDown(gateway.close);
     final composition = HomeReaderChapterComposition(
+      ensureDurableServices: () async {},
       hydrateEntry: (candidate, {required awaitCanonicalPhysicalBackfill}) async =>
           candidate,
       sourceResources: gateway,
@@ -112,6 +200,7 @@ void main() {
     final releaseLoad = Completer<void>();
     final gateway = ComicSourceResourceGateway(sourceForId: (_) => null);
     final composition = HomeReaderChapterComposition(
+      ensureDurableServices: () async {},
       hydrateEntry: (candidate, {required awaitCanonicalPhysicalBackfill}) async =>
           candidate,
       sourceResources: gateway,

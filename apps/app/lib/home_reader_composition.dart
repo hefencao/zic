@@ -44,11 +44,13 @@ final class HomeReaderPreparedChapter {
 /// App-composition owner for the Reader chapter preparation chain.
 ///
 /// The Home widget owns navigation and presentation only. This collaborator
-/// owns the hydrate -> source-authority refresh -> version-authority wait ->
+/// owns the durable-service handoff -> hydrate -> source-authority refresh ->
+/// version-authority wait ->
 /// response-capability projection sequence so those concerns cannot reach
 /// arbitrary Home widget fields through a `part` extension.
 final class HomeReaderChapterComposition {
   HomeReaderChapterComposition({
+    required Future<void> Function() ensureDurableServices,
     required HomeReaderEntryHydrator hydrateEntry,
     required ComicSourceResourceGateway sourceResources,
     required ChapterDownloadTransferRuntimeProvider? Function()
@@ -59,7 +61,8 @@ final class HomeReaderChapterComposition {
     required HomeReaderVersionAuthorityPreparer prepareVersionAuthority,
     required TraceSink trace,
     required int Function() monotonicMicros,
-  })  : _hydrateEntry = hydrateEntry,
+  })  : _ensureDurableServices = ensureDurableServices,
+        _hydrateEntry = hydrateEntry,
         _sourceResources = sourceResources,
         _downloadComposition = downloadComposition,
         _requiresSourceLocatorRefresh = requiresSourceLocatorRefresh,
@@ -68,6 +71,7 @@ final class HomeReaderChapterComposition {
         _trace = trace,
         _monotonicMicros = monotonicMicros;
 
+  final Future<void> Function() _ensureDurableServices;
   final HomeReaderEntryHydrator _hydrateEntry;
   final ComicSourceResourceGateway _sourceResources;
   final ChapterDownloadTransferRuntimeProvider? Function()
@@ -167,13 +171,19 @@ final class HomeReaderChapterComposition {
     int? initialPageIndex,
   }) async {
     final totalWatch = Stopwatch()..start();
+    // The route may paint immediately, but its capabilities must not capture
+    // bootstrap owners which Home retires as soon as durable services arrive.
+    // This joins composition readiness, not NetLane admission or plugin startup.
+    await _ensureDurableServices();
+    final serviceHandoffMs = totalWatch.elapsedMilliseconds;
     final rawEntry = await loadChapter();
-    final loadMs = totalWatch.elapsedMilliseconds;
+    final loadMs = totalWatch.elapsedMilliseconds - serviceHandoffMs;
     final entry = await _hydrateEntry(
       rawEntry,
       awaitCanonicalPhysicalBackfill: false,
     );
-    final hydrateMs = totalWatch.elapsedMilliseconds - loadMs;
+    final hydrateMs =
+        totalWatch.elapsedMilliseconds - serviceHandoffMs - loadMs;
     final sourceLocatorRefreshRequired =
         _requiresSourceLocatorRefresh(entry.chapter);
     final remoteWatch = Stopwatch()..start();
@@ -232,6 +242,7 @@ final class HomeReaderChapterComposition {
           'totalPages': current.chapter.pages.length,
           'localByteLoaders': byteLoaders.length,
           'networkResponseLoaders': responseSources.length,
+          'serviceHandoffMs': serviceHandoffMs,
           'loadChapterMs': loadMs,
           'hydrateMs': hydrateMs,
           'remoteRefreshMs': remoteMs,

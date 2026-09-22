@@ -659,6 +659,113 @@ void main() {
     unawaited(secondDownloads.close());
   });
 
+  testWidgets('live chapter revision event removes stale progress aliases',
+      (tester) async {
+    final entry = _versionedDownloadEntry(
+      comicId: 'comic', chapterId: 'chapter', title: 'Revision row',
+    );
+    final delegate = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(4),
+    );
+    final service = _EventDownloadService(delegate);
+    final queue = WholeComicDownloadQueue(downloads: service);
+    await queue.ready;
+    ChapterDownloadSnapshot snapshot(String revision, {bool complete = true}) =>
+        ChapterDownloadSnapshot(
+          sourceId: entry.chapter.sourceId, comicId: 'comic',
+          comicTitle: 'Comic', chapterId: 'chapter',
+          sourceRevision: revision, title: 'Revision row',
+          completedPages: complete ? 1 : 0, totalPages: 1,
+          receivedBytes: complete ? 4 : 0,
+          phase: complete ? ChapterDownloadPhase.complete : ChapterDownloadPhase.idle,
+          started: true,
+        );
+    final projection = DownloadManagerProjection(
+      entries: <ImportedLibraryEntry>[entry],
+      snapshots: <ChapterDownloadSnapshot>[snapshot('r0'), snapshot('r1')],
+      wholeComicSnapshot: queue.snapshot,
+    );
+    await tester.pumpWidget(MaterialApp(
+      home: DownloadManagerScreen(
+        entries: projection.entries, downloads: service,
+        wholeComicDownloads: queue, readProjection: () => projection,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.text('Revision row'), findsOneWidget);
+    service.events.add(snapshot('r2', complete: false));
+    await tester.pumpAndSettle();
+    expect(find.text('Revision row'), findsNothing,
+        reason: 'old completed revisions must not resurrect a cleared row');
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(service.events.close());
+    unawaited(service.close());
+  });
+
+  testWidgets('manual tab rebinds live downloads without another user action',
+      (tester) async {
+    final entry = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'fixture:live-handoff', displayName: '实时接管章节',
+        sourceId: 'source', comicId: 'comic', comicTitle: 'Comic',
+        chapterId: 'chapter', sourceRevision: 'r1',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '1.bin', sourceId: 'memory://live-handoff',
+            pageId: 'page', contentKindHint: ContentKindHint.unknown,
+          ),
+        ],
+      ),
+    );
+    final first = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final second = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(4),
+    );
+    final firstQueue = WholeComicDownloadQueue(downloads: first);
+    final secondQueue = WholeComicDownloadQueue(downloads: second);
+    await Future.wait(<Future<void>>[firstQueue.ready, secondQueue.ready]);
+    final changes = ChangeNotifier();
+    var services = DownloadManagerServices(
+      downloads: first, wholeComicDownloads: firstQueue,
+    );
+    var resolutions = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: DownloadManagerScreen(
+        entries: <ImportedLibraryEntry>[entry],
+        downloads: first, wholeComicDownloads: firstQueue,
+        serviceChanges: changes,
+        resolveServices: () async {
+          resolutions++;
+          return services;
+        },
+      ),
+    ));
+    await tester.pumpAndSettle();
+    expect(resolutions, 1);
+    services = DownloadManagerServices(
+      downloads: second, wholeComicDownloads: secondQueue,
+    );
+    changes.notifyListeners();
+    await tester.pumpAndSettle();
+    expect(resolutions, 2);
+    await second.download(entry);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('1/1 页 · 4 B'), findsOneWidget);
+    await first.download(entry);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('1/1 页 · 4 B'), findsOneWidget);
+    expect(find.textContaining('1/1 页 · 1 B'), findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    changes.dispose();
+    unawaited(firstQueue.close());
+    unawaited(secondQueue.close());
+    unawaited(first.close());
+    unawaited(second.close());
+  });
+
   testWidgets(
       'download manager stops resolving when disposed during service handoff',
       (tester) async {
@@ -783,7 +890,7 @@ void main() {
   });
 
   testWidgets(
-      'download manager adopts durable projection without reopening or route scan',
+      'download manager adopts durable projection and revalidates through owner',
       (tester) async {
     final entry = ImportedLibraryEntry(
       chapter: ImportedChapterRecord(
@@ -885,12 +992,13 @@ void main() {
     expect(find.text('首次进入即可显示'), findsOneWidget);
     expect(task, findsOneWidget);
     expect(durableView.inspectManyStarted, isFalse);
+    expect(refreshCalls, 1);
 
     await tester.tap(find.byKey(downloadManagerRefreshKey));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 20));
     expect(resolverCalls, 1);
-    expect(refreshCalls, 1);
+    expect(refreshCalls, 2);
     expect(durableView.inspectManyStarted, isFalse);
 
     if (!releaseUnexpectedScan.isCompleted) {
@@ -987,7 +1095,7 @@ void main() {
       );
       await tester.pump();
 
-      expect(fullRefreshCalls, 0);
+      expect(fullRefreshCalls, 1);
       expect(cacheRefreshCalls, 0);
       await tester.tap(find.byKey(downloadManagerTabCacheKey));
       await tester.pump();
@@ -999,7 +1107,7 @@ void main() {
         );
       }
 
-      expect(fullRefreshCalls, 0);
+      expect(fullRefreshCalls, 1);
       expect(cacheRefreshCalls, 1);
       releaseRefresh.complete();
       await tester.pump();
@@ -1023,6 +1131,55 @@ void main() {
       unawaited(service.close());
     },
   );
+
+  testWidgets('opening manager reconciles changes missed while route was absent',
+      (tester) async {
+    final entry = _versionedDownloadEntry(
+      comicId: 'missed-comic', chapterId: 'missed-chapter', title: '离页期间完成',
+    );
+    final service = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(4),
+    );
+    await service.download(entry);
+    final completed = await service.inspect(entry);
+    final queue = WholeComicDownloadQueue(downloads: service);
+    await queue.ready;
+    var projection = DownloadManagerProjection(
+      entries: <ImportedLibraryEntry>[entry],
+      snapshots: <ChapterDownloadSnapshot>[ChapterDownloadSnapshot.idle(entry)],
+      wholeComicSnapshot: queue.snapshot,
+    );
+    final releaseRefresh = Completer<void>();
+    var refreshCalls = 0;
+    await tester.pumpWidget(MaterialApp(
+      home: DownloadManagerScreen(
+        entries: projection.entries, downloads: service,
+        wholeComicDownloads: queue, initialSnapshots: projection.snapshots,
+        readProjection: () => projection,
+        refreshProjection: () async {
+          refreshCalls++;
+          await releaseRefresh.future;
+          projection = DownloadManagerProjection(
+            entries: <ImportedLibraryEntry>[entry],
+            snapshots: <ChapterDownloadSnapshot>[completed],
+            wholeComicSnapshot: queue.snapshot,
+          );
+        },
+      ),
+    ));
+    await tester.pump();
+    expect(find.byKey(downloadManagerScreenKey), findsOneWidget);
+    expect(find.text('离页期间完成'), findsNothing);
+    final callsBeforeRelease = refreshCalls;
+    releaseRefresh.complete();
+    await tester.pumpAndSettle();
+    expect(callsBeforeRelease, 1,
+        reason: 'route must reconcile after painting without requiring a tap');
+    expect(find.text('离页期间完成'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(service.close());
+  });
 
   testWidgets(
     'download manager auto-refreshes durable auto-cache projection changes',
@@ -1097,9 +1254,11 @@ void main() {
         orphanedEntries: const <ImportedLibraryEntry>[],
         snapshots: <ChapterDownloadSnapshot>[cached],
       );
-      service.notifyManagementChanged();
-
-      await tester.pump(const Duration(milliseconds: 121));
+      // A continuous event stream must not postpone refresh indefinitely.
+      for (var i = 0; i < 4; i++) {
+        service.notifyManagementChanged();
+        await tester.pump(const Duration(milliseconds: 60));
+      }
       await tester.pump();
 
       expect(
@@ -2147,6 +2306,17 @@ final class _CountingArtifactCacheMaintenance
       skippedBusy: 0,
     );
   }
+}
+
+final class _EventDownloadService extends _BlockingInspectManyDownloadService {
+  _EventDownloadService(ChapterDownloadService delegate)
+      : super(delegate, Future<void>.value());
+
+  final StreamController<ChapterDownloadSnapshot> events =
+      StreamController<ChapterDownloadSnapshot>.broadcast(sync: true);
+
+  @override
+  Stream<ChapterDownloadSnapshot> get changes => events.stream;
 }
 
 final class _BlockingInspectManyDownloadService

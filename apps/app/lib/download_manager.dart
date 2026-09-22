@@ -374,9 +374,9 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     if (!identical(oldWidget.serviceChanges, widget.serviceChanges)) {
       oldWidget.serviceChanges?.removeListener(_handleServiceChanged);
       widget.serviceChanges?.addListener(_handleServiceChanged);
-      _invalidateServices();
+      _handleServiceChanged();
     } else if (oldWidget.resolveServices != widget.resolveServices) {
-      _invalidateServices();
+      _handleServiceChanged();
     }
     if (!identical(oldWidget.projectionChanges, widget.projectionChanges)) {
       oldWidget.projectionChanges?.removeListener(_handleProjectionChanged);
@@ -390,8 +390,21 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
 
   void _handleServiceChanged() {
     _invalidateServices();
-    if (mounted && _selectedTab == DownloadManagerTab.autoCache) {
-      unawaited(_refreshCacheUsage());
+    unawaited(_refreshServicesAfterChange());
+  }
+
+  Future<void> _refreshServicesAfterChange() async {
+    try {
+      await _resolveServices();
+      if (!mounted) return;
+      _handleProjectionChanged();
+      _refreshWholeComicSnapshotWhenReady();
+      await _refreshManagementProjection();
+      if (_selectedTab == DownloadManagerTab.autoCache) {
+        await _refreshCacheUsageForCurrentCoordinator();
+      }
+    } on Object catch (error) {
+      if (mounted) _showError(error);
     }
   }
 
@@ -410,7 +423,8 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     if (widget.resolveServices == null) {
       return;
     }
-    while (mounted && _resolvedServiceGeneration != _serviceGeneration) {
+    while (mounted && widget.resolveServices != null &&
+        _resolvedServiceGeneration != _serviceGeneration) {
       final existing = _servicesResolution;
       if (existing != null) {
         await existing;
@@ -443,13 +457,11 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
         'durationUs': _traceClock.nowMicros() - startedAt,
       },
     );
-    if (!mounted) {
+    if (!mounted || generation != _serviceGeneration) {
       return;
     }
     _adoptServices(services);
-    if (generation == _serviceGeneration) {
-      _resolvedServiceGeneration = generation;
-    }
+    _resolvedServiceGeneration = generation;
   }
 
   void _adoptServices(DownloadManagerServices services) {
@@ -518,10 +530,20 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   }
 
   void _scheduleManagementProjectionRefresh() {
-    _managementProjectionRefreshTimer?.cancel();
+    if (!mounted) return;
+    if (_managementProjectionRefresh != null) {
+      _managementProjectionRefreshPending = true;
+      return;
+    }
+    // Coalesce from the first event, not the last: continuous page writes
+    // must not starve the management view until all downloads have stopped.
+    if (_managementProjectionRefreshTimer != null) return;
     _managementProjectionRefreshTimer = Timer(
       const Duration(milliseconds: 120),
-      () => unawaited(_refreshManagementProjection()),
+      () {
+        _managementProjectionRefreshTimer = null;
+        unawaited(_refreshManagementProjection());
+      },
     );
   }
 
@@ -531,6 +553,8 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       _managementProjectionRefreshPending = true;
       return active;
     }
+    _managementProjectionRefreshTimer?.cancel();
+    _managementProjectionRefreshTimer = null;
     late final Future<void> run;
     run = _refreshManagementProjectionOnce().whenComplete(() {
       if (identical(_managementProjectionRefresh, run)) {
@@ -548,11 +572,17 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   Future<void> _refreshManagementProjectionOnce() async {
     if (!mounted) return;
     final startedAt = _traceClock.nowMicros();
+    final generation = _serviceGeneration;
+    final downloads = _downloads;
     try {
       final refreshProjection = widget.refreshProjection;
       if (refreshProjection != null) {
         await refreshProjection();
         if (!mounted) return;
+        if (generation != _serviceGeneration) {
+          _managementProjectionRefreshPending = true;
+          return;
+        }
         _handleProjectionChanged();
       } else {
         final reader = _downloads is ChapterDownloadManagementProjectionReader
@@ -562,6 +592,11 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
         final projection =
             await reader.inspectDownloadManagement(_entries.values);
         if (!mounted) return;
+        if (generation != _serviceGeneration ||
+            !identical(downloads, _downloads)) {
+          _managementProjectionRefreshPending = true;
+          return;
+        }
         setState(() {
           for (final entry in projection.orphanedEntries) {
             _rememberEntry(entry);
@@ -670,6 +705,13 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     }
     final matchingKey = _matchingEntryIdentity(snapshot);
     setState(() {
+      // A chapter event supersedes its older revision/entry aliases. Keeping
+      // those copies lets row dedup prefer stale completed progress after a
+      // newer revision is stopped or cleared.
+      _snapshots.removeWhere((_, previous) =>
+          previous.sourceId == snapshot.sourceId &&
+          previous.comicId == snapshot.comicId &&
+          previous.chapterId == snapshot.chapterId);
       _snapshots[matchingKey] = snapshot;
       if (matchingKey != snapshot.identity) {
         _snapshots[snapshot.identity] = snapshot;
@@ -726,6 +768,9 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       }
       _handleProjectionChanged();
       _refreshWholeComicSnapshotWhenReady();
+      // The Home baseline cannot include cache invalidations emitted while
+      // this route had no subscription. Reconcile only after first paint.
+      await _refreshManagementProjection();
       _recordTrace('post-frame-refresh-complete');
     } on Object catch (error) {
       if (mounted) {

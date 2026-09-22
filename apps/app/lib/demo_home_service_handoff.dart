@@ -6,7 +6,7 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
       return;
     }
     if (_needsDurableServiceAdoption()) {
-      unawaited(_adoptDurableServices());
+      _startDurableServiceAdoption();
     }
     final plugins = _incomingExternalPlugins;
     if (plugins != null &&
@@ -41,15 +41,37 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
             !identical(suppliedCache, _cacheCoordinator));
   }
 
+  void _startDurableServiceAdoption() {
+    unawaited(_adoptDurableServices().catchError((Object error) {
+      debugPrint('durable Home service handoff failed: $error');
+    }));
+  }
+
   Future<void> _adoptDurableServices() {
     final existing = _durableAdoption;
     if (existing != null) return existing;
+    final library = _incomingLibraryStore;
+    final downloads = _incomingChapterDownloads;
+    final composition = _incomingDownloadComposition;
+    final queue = _incomingWholeComicDownloads;
+    final cache = _incomingCacheCoordinator;
+    var succeeded = false;
     late final Future<void> adoption;
-    adoption = _adoptDurableServicesOnce().whenComplete(() {
+    adoption = _adoptDurableServicesOnce().then((_) {
+      succeeded = true;
+    }).whenComplete(() {
       if (identical(_durableAdoption, adoption)) {
         _durableAdoption = null;
-        if (mounted && _needsDurableServiceAdoption()) {
-          unawaited(_adoptDurableServices());
+        final superseded = !identical(library, _incomingLibraryStore) ||
+            !identical(downloads, _incomingChapterDownloads) ||
+            !identical(composition, _incomingDownloadComposition) ||
+            !identical(queue, _incomingWholeComicDownloads) ||
+            !identical(cache, _incomingCacheCoordinator);
+        // Retry a newer handoff, not the same failed owner in a busy loop.
+        // An explicit caller can retry the current generation after failure.
+        if (mounted && (succeeded || superseded) &&
+            _needsDurableServiceAdoption()) {
+          _startDurableServiceAdoption();
         }
       }
     });
@@ -93,6 +115,7 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
 
     wholeComicDownloads.refreshStaleChapter = _refreshStaleQueueChapter;
     Object? adoptionError;
+    StackTrace? adoptionStack;
     try {
       await _librarySession.adoptServices(
         library: library,
@@ -102,8 +125,9 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
         sources: sources,
         persistSnapshot: _persistHomeProjectionSnapshot,
       );
-    } on Object catch (error) {
+    } on Object catch (error, stack) {
       adoptionError = error;
+      adoptionStack = stack;
     }
     final sessionAdopted =
         identical(_librarySession.library, library) &&
@@ -113,9 +137,9 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     if (!sessionAdopted) {
       await candidateServiceCache.closeIfOwned();
       if (adoptionError != null) {
-        debugPrint('durable Home service handoff failed: $adoptionError');
+        Error.throwWithStackTrace(adoptionError, adoptionStack!);
       }
-      return;
+      throw StateError('Home service authority was not adopted');
     }
     if (adoptionError != null) {
       // HomeLibrarySession swaps service authority before reconciliation. If a
@@ -144,6 +168,9 @@ extension _DemoHomeServiceHandoff on _DemoHomeState {
     if (_externalSources.activeController != null ||
         _externalPluginLoader != null) {
       _externalSources.signalLoaderAvailable();
+    }
+    if (adoptionError != null) {
+      Error.throwWithStackTrace(adoptionError, adoptionStack!);
     }
   }
   void _scheduleLocalReadBackendPrewarm() {
