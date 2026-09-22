@@ -114,7 +114,6 @@ final class PersistentChapterDownloadService
   final StreamController<void> _managementProjectionChanges =
       StreamController<void>.broadcast(sync: true);
   StreamSubscription<void>? _artifactManagementProjectionSubscription;
-  bool _managementProjectionDirtyWhileRun = false;
 
   @override
   Stream<void> get managementProjectionChanges =>
@@ -122,20 +121,8 @@ final class PersistentChapterDownloadService
 
   void _handleArtifactManagementProjectionChanged() {
     if (_closed) return;
-    if (_runs.isNotEmpty) {
-      _managementProjectionDirtyWhileRun = true;
-      return;
-    }
-    if (!_managementProjectionChanges.isClosed) {
-      _managementProjectionChanges.add(null);
-    }
-  }
-
-  void _flushDeferredManagementProjectionChange() {
-    if (!_managementProjectionDirtyWhileRun || _runs.isNotEmpty || _closed) {
-      return;
-    }
-    _managementProjectionDirtyWhileRun = false;
+    // Invalidation is cheap; projection consumers coalesce their reads. A
+    // long-running manual task must not hide independent Reader/cache writes.
     if (!_managementProjectionChanges.isClosed) {
       _managementProjectionChanges.add(null);
     }
@@ -337,7 +324,6 @@ final class PersistentChapterDownloadService
       _tokens.remove(identity);
       _startedRuns.remove(identity);
       _deletedIdentities.remove(identity);
-      _flushDeferredManagementProjectionChange();
     });
   }
 
@@ -1446,13 +1432,31 @@ final class PersistentChapterDownloadService
     if (requested.isEmpty) {
       return const <ChapterDownloadSnapshot>[];
     }
+    final startedUs = _traceClock.nowMicros();
     final indexed = await artifactStore.indexedRecords();
+    final indexedUs = _traceClock.nowMicros() - startedUs;
+    final physicalStartedUs = _traceClock.nowMicros();
     final physicalState = await _loadManagementPhysicalState();
-    return _inspectManyFromRecords(
+    final physicalUs = _traceClock.nowMicros() - physicalStartedUs;
+    final snapshotStartedUs = _traceClock.nowMicros();
+    final snapshots = await _inspectManyFromRecords(
       requested,
       indexed,
       physicalState: physicalState,
     );
+    _recordCommandTrace(
+      'download-management',
+      'targeted-projection-built',
+      <String, Object?>{
+        'knownEntries': requested.length,
+        'indexedRecords': indexed.length,
+        'indexedUs': indexedUs,
+        'physicalUs': physicalUs,
+        'snapshotUs': _traceClock.nowMicros() - snapshotStartedUs,
+        'totalUs': _traceClock.nowMicros() - startedUs,
+      },
+    );
+    return snapshots;
   }
 
   @override
@@ -1790,6 +1794,7 @@ final class PersistentChapterDownloadService
       recordsByChapter.putIfAbsent(chapterKey, () => <CacheRec>[]).add(record);
     }
     final snapshots = <ChapterDownloadSnapshot>[];
+    final workBudget = _DownloadProjectionWorkBudget();
     for (final entry in entries) {
       final chapterKey =
           '${entry.chapter.sourceId}\u0000${entry.chapter.comicId}\u0000${entry.chapter.chapterId}\u0000${entry.chapter.sourceRevision}';
@@ -1798,6 +1803,7 @@ final class PersistentChapterDownloadService
           entry,
           indexedRecords: indexed,
           chapterRecords: recordsByChapter[chapterKey],
+          workBudget: workBudget,
           readyIndex: readyIndex,
           physicalState: physicalState,
         ),
@@ -1814,7 +1820,9 @@ final class PersistentChapterDownloadService
     Iterable<CacheRec>? chapterRecords,
     _DurableReadyRecordIndex? readyIndex,
     _DownloadManagementPhysicalState? physicalState,
+    _DownloadProjectionWorkBudget? workBudget,
   }) async {
+    final budget = workBudget ?? _DownloadProjectionWorkBudget();
     final manifest = entry.chapter.toManifest();
     final records =
         indexedRecords ??
@@ -1860,6 +1868,7 @@ final class PersistentChapterDownloadService
           )
         : manifest.pages;
     for (var index = 0; index < effectivePages.length; index++) {
+      if (budget.exhausted) await budget.yieldTurn();
       final page = effectivePages[index];
       final id = _downloadId(manifest, page);
       final resolvedSessionSnapshot = transferRuntime.registry
@@ -2259,6 +2268,22 @@ final class PersistentChapterDownloadService
     if (_closed) {
       throw StateError('chapter download service is closed');
     }
+  }
+}
+
+// Immediate cache/SQLite Futures only yield microtasks. A large management
+// projection must also let platform reads, UI frames and other event work run.
+// This bounds computation, not transport admission or Reader eligibility.
+final class _DownloadProjectionWorkBudget {
+  final Stopwatch _watch = Stopwatch()..start();
+  int _units = 0;
+
+  bool get exhausted => ++_units >= 64 || _watch.elapsedMicroseconds >= 4000;
+
+  Future<void> yieldTurn() async {
+    await Future<void>.delayed(Duration.zero);
+    _units = 0;
+    _watch.reset();
   }
 }
 

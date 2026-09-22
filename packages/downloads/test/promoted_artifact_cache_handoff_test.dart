@@ -11,6 +11,56 @@ import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  for (final priority in <int>[740, 1000]) {
+    test('local hot replay stays source-backed at priority $priority', () async {
+      final directory = await Directory.systemTemp.createTemp('zic-local-hot-');
+      addTearDown(() => directory.delete(recursive: true));
+      final uri = Uri.parse('content://local-folder/page.webp');
+      final id = DownloadId(
+        content: const ContentId(
+          sourceId: 'local-folder', comicId: 'comic',
+          chapterId: 'chapter', pageId: 'page',
+        ),
+        sourceRevision: 'r1', canonicalUri: uri,
+      );
+      final backend = _RecordingArtifactStore();
+      final cache = ArtifactCacheManager(backend: backend);
+      final bytes = Uint8List.fromList(<int>[3, 1, 4, 1, 5]);
+      // A completed local read is hot, but not an app-owned durable artifact.
+      cache.remember(id: id, bytes: bytes);
+      final handoff = PromotedArtifactCacheHandoff(cache: cache);
+      final registry = DownloadRegistry(
+        layout: CacheLayout(directory.path), clock: SystemClock(),
+        onSessionCreated: handoff.observe,
+      );
+      addTearDown(() async {
+        handoff.detach();
+        await registry.dispose();
+      });
+      final transport = ArtifactCacheTransport(
+        cache: cache,
+        identities: <MapEntry<Uri, DownloadId>>[MapEntry(uri, id)],
+        fallbackFor: (_) => LoaderTransport(<Uri, LoaderTransportSource>{}),
+        readScheduler: ArtifactCacheReadScheduler(),
+        demandPriority: (_) => priority,
+      );
+      final session = registry.get(id);
+      await DownloadJob(transport: transport, session: session).run();
+      await handoff.drain(registry.sessions);
+      expect(session.state, DownloadState.promoted);
+      expect(backend.values, isEmpty,
+          reason: 'ordinary local rereads must not create a durable copy');
+      expect(session.residentBodyBacked, isTrue);
+      expect(session.residentBodyAuthority, ByteResponseBodyAuthority.source);
+      expect((await cache.lookup(id))!.durable, isFalse);
+      expect(await session.readSourcePrefix(bytes.length), bytes);
+
+      // Explicit offline persistence still owns the right to materialize.
+      await handoff.persist(session);
+      expect(backend.values[id], bytes);
+    });
+  }
+
   test('commits bytes only after the session promotes its artifact', () async {
     final directory = await Directory.systemTemp.createTemp(
       'zic-promoted-cache-handoff-',

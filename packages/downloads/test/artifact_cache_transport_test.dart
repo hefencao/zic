@@ -919,7 +919,10 @@ void main() {
       traceSink: trace,
     );
     final restored = await second.open(uri);
-    expect(restored.disposition, ByteResponseDisposition.staged);
+    expect(restored.disposition, ByteResponseDisposition.durableImmutable);
+    expect(restored.bodyAuthority, ByteResponseBodyAuthority.source);
+    expect(restored.immutableRangeReplay, isNotNull);
+    expect((await manager.lookup(id))!.durable, isFalse);
     expect(
       await restored.bytes.map((chunk) => chunk.length).toList(),
       <int>[4096],
@@ -930,6 +933,7 @@ void main() {
     );
     expect(source.payload['source'], 'artifact-byte-cache');
     expect(source.payload['deliveryMode'], 'memory-direct');
+    expect(source.payload['artifactDurable'], isFalse);
   });
 
   test('cache miss preserves scheduler control into controlled origin fallback',

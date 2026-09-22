@@ -1427,23 +1427,34 @@ final class PartialDownloadHandoff {
           ),
         );
       } else {
-        await store.storePartialDownload(
-          id: targetId,
-          entry: PartialDownloadEntry(
-            length: length,
-            validators: session.resumeValidatorsFor(targetId.canonicalUri),
-            totalLength: session.totalLength,
-            open: ({required int start}) => session.artifact.readChunks(
-              start: start,
-              endExclusive: length,
-            ),
+        final entry = PartialDownloadEntry(
+          length: length,
+          validators: session.resumeValidatorsFor(targetId.canonicalUri),
+          totalLength: session.totalLength,
+          open: ({required int start}) => session.artifact.readChunks(
+            start: start,
+            endExclusive: length,
           ),
         );
+        final stagingStore = store;
+        if (stagingStore is TransferStagingPartialDownloadStore) {
+          await (stagingStore as TransferStagingPartialDownloadStore)
+              .storeTransferPartialDownload(
+            id: targetId,
+            entry: entry,
+          );
+        } else {
+          await store.storePartialDownload(id: targetId, entry: entry);
+        }
       }
       _durablePartialLengths[session] = length;
       _record(
         session,
-        action: storedPhysically ? 'stored-physical' : 'stored',
+        action: storedPhysically
+            ? 'stored-physical'
+            : store is TransferStagingPartialDownloadStore
+                ? 'stored-transfer-staging'
+                : 'stored',
         bytes: length,
         startedAtMicros: startedAtMicros,
         reason: reason,

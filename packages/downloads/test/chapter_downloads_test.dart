@@ -14,6 +14,45 @@ import 'package:test/test.dart';
 import 'package:transport/transport.dart';
 
 void main() {
+  for (final chapterCount in <int>[1, 128]) {
+  test('large management projection yields event turns across $chapterCount chapters',
+      () async {
+    final directory = await Directory.systemTemp.createTemp('zic-projection-yield-');
+    addTearDown(() => directory.delete(recursive: true));
+    final service = await PersistentChapterDownloadService.open(directory.path);
+    addTearDown(service.close);
+    final entries = List<ImportedLibraryEntry>.generate(chapterCount,
+        (chapterIndex) => ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'projection-yield-$chapterIndex',
+        displayName: 'Projection',
+        sourceId: 'fixture',
+        comicId: 'comic',
+        comicTitle: 'Comic',
+        chapterId: 'chapter-$chapterIndex',
+        sourceRevision: 'r1',
+        pages: List<ImportedPageRecord>.generate(512 ~/ chapterCount, (index) =>
+            ImportedPageRecord(
+              displayName: '$index',
+              sourceId: 'https://example.test/$index.jpg',
+              pageId: '$index',
+              contentKindHint: ContentKindHint.unknown,
+            )),
+      ),
+    ));
+    // Warm storage first: immediate Futures are not event-loop yield points.
+    await service.inspectMany(entries);
+    var eventTurnRan = false;
+    Timer.run(() => eventTurnRan = true);
+    final snapshots = await service.inspectMany(entries);
+    expect(eventTurnRan, isTrue,
+        reason: 'local replay/platform callbacks must not wait for a whole scan');
+    expect(snapshots, hasLength(chapterCount));
+    expect(snapshots.fold<int>(0, (sum, item) => sum + item.totalPages), 512);
+    expect(snapshots.every((item) => item.completedPages == 0), isTrue);
+  });
+  }
+
   test('chapter resource access rejects an empty binding', () {
     expect(ChapterResourceAccess.new, throwsArgumentError);
   });
@@ -760,6 +799,460 @@ void main() {
       expect(await File(staged.path).readAsBytes(), orderedEquals(bytes));
       expect(storage.containsKey(parsed.relativePath), isFalse);
       expect(storage.containsKey('${parsed.relativePath}.meta'), isFalse);
+    },
+  );
+
+  test(
+    'exact-fallback transfer checkpoint prefers direct staging over SAF',
+    () async {
+      final durableRoot = await Directory.systemTemp.createTemp(
+        'zic-exact-transfer-staging-durable-',
+      );
+      final hotRoot = await Directory.systemTemp.createTemp(
+        'zic-exact-transfer-staging-hot-',
+      );
+      final sourceRoot = await Directory.systemTemp.createTemp(
+        'zic-exact-transfer-staging-source-',
+      );
+      addTearDown(() async {
+        if (await durableRoot.exists()) {
+          await durableRoot.delete(recursive: true);
+        }
+        if (await hotRoot.exists()) await hotRoot.delete(recursive: true);
+        if (await sourceRoot.exists()) {
+          await sourceRoot.delete(recursive: true);
+        }
+      });
+      const treeUri = 'content://tree/exact-transfer-staging';
+      final storage = <String, Uint8List>{};
+      final saf = _MemorySafIo(storage);
+      final service = await PersistentChapterDownloadService.open(
+        durableRoot.path,
+        layoutResolver: (_) => CacheLayout(sourceRoot.path),
+        safTreeIo: saf,
+        safTreeUri: treeUri,
+      );
+      addTearDown(service.close);
+      final id = _readerArtifactId('exact-transfer-staging');
+      final bytes = Uint8List.fromList(
+        List<int>.generate(192 * 1024, (index) => (index * 11) & 0xff),
+      );
+      final hot = DownloadRegistry(
+        layout: CacheLayout(hotRoot.path),
+        clock: SystemClock(),
+      );
+      addTearDown(hot.dispose);
+      final session = hot.get(id);
+      await session.restore();
+      await session.bindResponse(
+        validators: const Validators(etag: 'exact-transfer-v1'),
+        totalLength: bytes.lengthInBytes * 2,
+      );
+      final writer = session.acquireWriter();
+      await session.append(writer, 0, bytes);
+      await session.pause(writer);
+
+      final handoff = PartialDownloadHandoff(store: service.artifactStore);
+      expect(await handoff.persist(session, reason: 'test-checkpoint'), isTrue);
+
+      final record = await service.artifactStore.index.get(id.key);
+      expect(record, isNotNull);
+      expect(record!.state, CacheState.partial);
+      expect(parseSafRecordPath(record.path), isNull);
+      expect(record.storageRootId, service.artifactStore.layout.root);
+      expect(await File(record.path).readAsBytes(), orderedEquals(bytes));
+      final reopened = await service.openPartialDownload(id);
+      expect(reopened, isNotNull);
+      expect(
+        await reopened!.open(start: 0).expand((chunk) => chunk).toList(),
+        orderedEquals(bytes),
+      );
+      expect(
+        storage.keys.where((path) => path.startsWith('partial/')),
+        isEmpty,
+        reason:
+            'automatic transfer checkpoints must not use the user SAF '
+            'download tree as mutable staging',
+      );
+      expect(
+        saf.writeCalls,
+        0,
+        reason: 'automatic exact staging must not enqueue SAF body writes',
+      );
+    },
+  );
+
+  test(
+    'exact transfer staging retires an idle generic store session before update',
+    () async {
+      final durableRoot = await Directory.systemTemp.createTemp(
+        'zic-exact-transfer-idle-store-session-',
+      );
+      final hotRoot = await Directory.systemTemp.createTemp(
+        'zic-exact-transfer-idle-hot-',
+      );
+      final sourceRoot = await Directory.systemTemp.createTemp(
+        'zic-exact-transfer-idle-source-',
+      );
+      addTearDown(() async {
+        if (await durableRoot.exists()) {
+          await durableRoot.delete(recursive: true);
+        }
+        if (await hotRoot.exists()) await hotRoot.delete(recursive: true);
+        if (await sourceRoot.exists()) {
+          await sourceRoot.delete(recursive: true);
+        }
+      });
+      final service = await PersistentChapterDownloadService.open(
+        durableRoot.path,
+        layoutResolver: (_) => CacheLayout(sourceRoot.path),
+      );
+      addTearDown(service.close);
+      final id = _readerArtifactId('exact-transfer-idle-store-session');
+      final first = Uint8List.fromList(
+        List<int>.generate(64 * 1024, (index) => index & 0xff),
+      );
+      final grown = Uint8List.fromList(
+        <int>[
+          ...first,
+          ...List<int>.generate(64 * 1024, (index) => (index * 5) & 0xff),
+        ],
+      );
+      await service.storePartialDownload(
+        id: id,
+        entry: PartialDownloadEntry(
+          length: first.lengthInBytes,
+          validators: const Validators(etag: 'idle-store-v1'),
+          totalLength: grown.lengthInBytes * 2,
+          open: ({required int start}) =>
+              Stream<List<int>>.value(Uint8List.sublistView(first, start)),
+        ),
+      );
+      expect(service.materializedSessionCount, 1);
+      final oldRecord = (await service.artifactStore.index.get(id.key))!;
+      expect(oldRecord.storageRootId, sourceRoot.path);
+      expect(await File(oldRecord.path).readAsBytes(), orderedEquals(first));
+
+      final hot = DownloadRegistry(
+        layout: CacheLayout(hotRoot.path),
+        clock: SystemClock(),
+      );
+      addTearDown(hot.dispose);
+      final session = hot.get(id);
+      await session.restore();
+      await session.bindResponse(
+        validators: const Validators(etag: 'idle-store-v2'),
+        totalLength: grown.lengthInBytes * 2,
+      );
+      final writer = session.acquireWriter();
+      await session.append(writer, 0, grown);
+      await session.pause(writer);
+
+      final handoff = PartialDownloadHandoff(store: service.artifactStore);
+      expect(await handoff.persist(session, reason: 'test-checkpoint'), isTrue);
+      expect(service.materializedSessionCount, 0);
+      final record = await service.artifactStore.index.get(id.key);
+      expect(record, isNotNull);
+      expect(record!.state, CacheState.partial);
+      expect(record.bytes, grown.lengthInBytes);
+      expect(record.storageRootId, service.artifactStore.layout.root);
+      expect(await File(record.path).readAsBytes(), orderedEquals(grown));
+      expect(await File(oldRecord.path).exists(), isFalse);
+    },
+  );
+
+  test(
+    'exact transfer staging preserves legacy default-root direct partial',
+    () async {
+      final durableRoot = await Directory.systemTemp.createTemp(
+        'zic-exact-transfer-legacy-root-',
+      );
+      addTearDown(() async {
+        if (await durableRoot.exists()) {
+          await durableRoot.delete(recursive: true);
+        }
+      });
+      final id = _readerArtifactId('exact-transfer-legacy-root');
+      final initial = Uint8List.fromList(
+        List<int>.generate(64 * 1024, (index) => index & 0xff),
+      );
+      final grown = Uint8List.fromList(<int>[
+        ...initial,
+        ...List<int>.generate(64 * 1024, (index) => (index * 7) & 0xff),
+      ]);
+
+      final seed = await PersistentDownloadArtifactStore.open(durableRoot.path);
+      await seed.storePartialDownload(
+        id: id,
+        entry: PartialDownloadEntry(
+          length: initial.lengthInBytes,
+          validators: const Validators(etag: 'legacy-root-v1'),
+          totalLength: grown.lengthInBytes * 2,
+          open: ({required int start}) =>
+              Stream<List<int>>.value(Uint8List.sublistView(initial, start)),
+        ),
+      );
+      final seeded = (await seed.index.get(id.key))!;
+      await seed.close();
+
+      final index = SqliteIndex(
+        CacheLayout(defaultChapterDownloadDirectory(durableRoot.path)).dbPath,
+      );
+      await index.open();
+      await index.put(seeded.copyWith(storageRootId: 'default'));
+      await index.close();
+
+      final store = await PersistentDownloadArtifactStore.open(
+        durableRoot.path,
+        safMirror: _MemorySafIo(<String, Uint8List>{}),
+        safTreeUri: 'content://tree/exact-transfer-legacy-root',
+      );
+      addTearDown(store.close);
+      final starts = <int>[];
+      await store.storeTransferPartialDownload(
+        id: id,
+        entry: PartialDownloadEntry(
+          length: grown.lengthInBytes,
+          validators: const Validators(etag: 'legacy-root-v2'),
+          totalLength: grown.lengthInBytes * 2,
+          open: ({required int start}) async* {
+            starts.add(start);
+            yield Uint8List.sublistView(grown, start);
+          },
+        ),
+      );
+
+      final current = (await store.index.get(id.key))!;
+      expect(current.path, seeded.path);
+      expect(current.storageRootId, store.layout.root);
+      expect(starts, <int>[initial.lengthInBytes]);
+      expect(await File(current.path).readAsBytes(), orderedEquals(grown));
+    },
+  );
+
+  test(
+    'progress retention exact checkpoint also bypasses SAF staging',
+    () async {
+      final durableRoot = await Directory.systemTemp.createTemp(
+        'zic-exact-progress-staging-durable-',
+      );
+      addTearDown(() async {
+        if (await durableRoot.exists()) {
+          await durableRoot.delete(recursive: true);
+        }
+      });
+      const treeUri = 'content://tree/exact-progress-staging';
+      final storage = <String, Uint8List>{};
+      final saf = _MemorySafIo(storage);
+      final store = await PersistentDownloadArtifactStore.open(
+        durableRoot.path,
+        safMirror: saf,
+        safTreeUri: treeUri,
+      );
+      addTearDown(store.close);
+      final runtime = CompositionDownloadTransferRuntime(
+        artifactCacheManager: ArtifactCacheManager(backend: store),
+        partialDownloadStore: store,
+        transferWorkspace:
+            EphemeralCacheWorkspace.readerSession('exact-progress-staging'),
+        net: NetLane(maxActive: 1),
+      );
+      addTearDown(runtime.dispose);
+      final id = _readerArtifactId('exact-progress-staging');
+      final bytes = Uint8List.fromList(
+        List<int>.generate(1024 * 1024, (index) => (index * 7) & 0xff),
+      );
+      final session = runtime.registry.get(id);
+      await session.restore();
+      await session.bindResponse(
+        validators: const Validators(etag: 'exact-progress-v1'),
+        totalLength: bytes.lengthInBytes * 2,
+      );
+      final writer = session.acquireWriter();
+      await session.append(writer, 0, bytes);
+
+      await runtime.settlePhysicalRetention();
+
+      final record = await store.index.get(id.key);
+      expect(record, isNotNull);
+      expect(record!.state, CacheState.partial);
+      expect(record.bytes, bytes.lengthInBytes);
+      expect(parseSafRecordPath(record.path), isNull);
+      expect(record.storageRootId, store.layout.root);
+      expect(await File(record.path).readAsBytes(), orderedEquals(bytes));
+      expect(
+        storage.keys.where((path) => path.startsWith('partial/')),
+        isEmpty,
+        reason:
+            'the runtime checkpoint must preserve SAF for explicit placement',
+      );
+      expect(saf.writeCalls, 0);
+      expect(session.state, DownloadState.receiving);
+      expect(session.hasWriter, isTrue);
+      await session.pause(writer);
+    },
+  );
+
+  test(
+    'exact-fallback transfer checkpoint migrates an equal SAF partial to direct staging',
+    () async {
+      final durableRoot = await Directory.systemTemp.createTemp(
+        'zic-exact-transfer-saf-migrate-durable-',
+      );
+      final hotRoot = await Directory.systemTemp.createTemp(
+        'zic-exact-transfer-saf-migrate-hot-',
+      );
+      addTearDown(() async {
+        if (await durableRoot.exists()) {
+          await durableRoot.delete(recursive: true);
+        }
+        if (await hotRoot.exists()) await hotRoot.delete(recursive: true);
+      });
+      const treeUri = 'content://tree/exact-transfer-saf-migrate';
+      final storage = <String, Uint8List>{};
+      final service = await PersistentChapterDownloadService.open(
+        durableRoot.path,
+        safTreeIo: _MemorySafIo(storage),
+        safTreeUri: treeUri,
+      );
+      addTearDown(service.close);
+      final id = _readerArtifactId('exact-transfer-saf-migrate');
+      final bytes = Uint8List.fromList(
+        List<int>.generate(128 * 1024, (index) => (index * 13) & 0xff),
+      );
+      final entry = PartialDownloadEntry(
+        length: bytes.lengthInBytes,
+        validators: const Validators(etag: 'exact-transfer-migrate-v1'),
+        totalLength: bytes.lengthInBytes * 2,
+        open: ({required int start}) =>
+            Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+      );
+
+      await service.storePartialDownload(id: id, entry: entry);
+      final safRecord = await service.artifactStore.index.get(id.key);
+      expect(safRecord, isNotNull);
+      final parsed = parseSafRecordPath(safRecord!.path);
+      expect(parsed, isNotNull);
+      expect(storage[parsed!.relativePath], orderedEquals(bytes));
+
+      final hot = DownloadRegistry(
+        layout: CacheLayout(hotRoot.path),
+        clock: SystemClock(),
+      );
+      addTearDown(hot.dispose);
+      final session = hot.get(id);
+      await session.restore();
+      await session.bindResponse(
+        validators: entry.validators,
+        totalLength: entry.totalLength,
+      );
+      final writer = session.acquireWriter();
+      await session.append(writer, 0, bytes);
+      await session.pause(writer);
+
+      final handoff = PartialDownloadHandoff(store: service.artifactStore);
+      expect(await handoff.persist(session, reason: 'test-checkpoint'), isTrue);
+
+      final staged = await service.artifactStore.index.get(id.key);
+      expect(staged, isNotNull);
+      expect(parseSafRecordPath(staged!.path), isNull);
+      expect(staged.storageRootId, service.artifactStore.layout.root);
+      expect(await File(staged.path).readAsBytes(), orderedEquals(bytes));
+      expect(storage.containsKey(parsed.relativePath), isFalse);
+      expect(storage.containsKey('${parsed.relativePath}.meta'), isFalse);
+    },
+  );
+
+  test(
+    'exact SAF to direct staging keeps cleanup debt after old delete failure',
+    () async {
+      final durableRoot = await Directory.systemTemp.createTemp(
+        'zic-exact-saf-direct-cleanup-debt-',
+      );
+      final hotRoot = await Directory.systemTemp.createTemp(
+        'zic-exact-saf-direct-cleanup-hot-',
+      );
+      addTearDown(() async {
+        if (await durableRoot.exists()) {
+          await durableRoot.delete(recursive: true);
+        }
+        if (await hotRoot.exists()) await hotRoot.delete(recursive: true);
+      });
+      const treeUri = 'content://tree/exact-saf-direct-cleanup-debt';
+      final storage = <String, Uint8List>{};
+      final saf = _MemorySafIo(storage);
+      final service = await PersistentChapterDownloadService.open(
+        durableRoot.path,
+        safTreeIo: saf,
+        safTreeUri: treeUri,
+      );
+      final id = _readerArtifactId('exact-saf-direct-cleanup-debt');
+      final bytes = Uint8List.fromList(
+        List<int>.generate(96 * 1024, (index) => (index * 19) & 0xff),
+      );
+      final entry = PartialDownloadEntry(
+        length: bytes.lengthInBytes,
+        validators: const Validators(etag: 'exact-cleanup-v1'),
+        totalLength: bytes.lengthInBytes * 2,
+        open: ({required int start}) =>
+            Stream<List<int>>.value(Uint8List.sublistView(bytes, start)),
+      );
+
+      await service.storePartialDownload(id: id, entry: entry);
+      final old = (await service.artifactStore.index.get(id.key))!;
+      final parsed = parseSafRecordPath(old.path)!;
+      saf.failDeletePaths.add(parsed.relativePath);
+
+      final hot = DownloadRegistry(
+        layout: CacheLayout(hotRoot.path),
+        clock: SystemClock(),
+      );
+      final session = hot.get(id);
+      await session.restore();
+      await session.bindResponse(
+        validators: entry.validators,
+        totalLength: entry.totalLength,
+      );
+      final writer = session.acquireWriter();
+      await session.append(writer, 0, bytes);
+      await session.pause(writer);
+      final handoff = PartialDownloadHandoff(store: service.artifactStore);
+
+      expect(await handoff.persist(session, reason: 'test-checkpoint'), isTrue);
+      final current = (await service.artifactStore.index.get(id.key))!;
+      expect(parseSafRecordPath(current.path), isNull);
+      expect(current.storageRootId, service.artifactStore.layout.root);
+      expect(await File(current.path).readAsBytes(), orderedEquals(bytes));
+      expect(storage[parsed.relativePath], orderedEquals(bytes));
+      final debtIndex = SqliteIndex(service.artifactStore.layout.dbPath);
+      await debtIndex.open();
+      final debt = (await debtIndex.listStorageCleanupDebts()).single;
+      expect(debt.kind, StorageCleanupDebtKind.obsoletePartialSource);
+      expect(debt.accessLocator, old.path);
+      expect(debt.expectedBytes, old.bytes);
+      await debtIndex.close();
+
+      await hot.dispose();
+      await service.close();
+      saf.failDeletePaths.clear();
+      final reopened = await PersistentChapterDownloadService.open(
+        durableRoot.path,
+        safTreeIo: saf,
+        safTreeUri: treeUri,
+      );
+      final reopenedRecord = await reopened.artifactStore.index.get(id.key);
+      expect(reopenedRecord, isNotNull);
+      expect(parseSafRecordPath(reopenedRecord!.path), isNull);
+      expect(await File(reopenedRecord.path).readAsBytes(), orderedEquals(bytes));
+      await reopened.close();
+      expect(storage.containsKey(parsed.relativePath), isFalse);
+      expect(storage.containsKey('${parsed.relativePath}.meta'), isFalse);
+      final checked = SqliteIndex(
+        CacheLayout(defaultChapterDownloadDirectory(durableRoot.path)).dbPath,
+      );
+      await checked.open();
+      expect(await checked.listStorageCleanupDebts(), isEmpty);
+      await checked.close();
     },
   );
 
@@ -2283,8 +2776,20 @@ void main() {
     expect(live.totalBytes, 16);
     expect(live.fraction, closeTo(0.5, 0.001));
 
+    var managementChanges = 0;
+    final managementSubscription = service.managementProjectionChanges.listen(
+      (_) => managementChanges++,
+    );
+    addTearDown(managementSubscription.cancel);
+    // Reader/cache mutations must remain visible while a manual run is open.
+    await service.storePromotedArtifact(
+      id: _readerArtifactId('concurrent-reader-cache'),
+      bytes: Uint8List.fromList(<int>[1, 2, 3]),
+    );
+    final changesWhileDownloading = managementChanges;
     release.complete();
     await run;
+    expect(changesWhileDownloading, greaterThan(0));
     expect(events.last.phase, ChapterDownloadPhase.complete);
     expect(events.last.receivedBytes, 16);
     expect(events.last.fraction, 1);
@@ -7180,6 +7685,7 @@ final class _MemorySafIo implements SafTreeIo {
   int _nextHandle = 1;
   int listCalls = 0;
   int existsCalls = 0;
+  int writeCalls = 0;
   final List<String> readPaths = <String>[];
   bool failNextClose = false;
   final Set<String> failDeletePaths = <String>{};
@@ -7215,6 +7721,7 @@ final class _MemorySafIo implements SafTreeIo {
 
   @override
   Future<void> write(int handle, Uint8List bytes) async {
+    writeCalls++;
     final state = _handles[handle];
     if (state == null) throw StateError('invalid handle');
     final existing = storage[state.path] ?? Uint8List(0);

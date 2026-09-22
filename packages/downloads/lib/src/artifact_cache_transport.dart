@@ -177,6 +177,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
                     : 'artifact-cache-stream';
             final details = <String, Object?>{
               'cacheTier': lookup.tier.name,
+              'artifactDurable': lookup.durable,
               'memoryCacheHit': lookup.tier == ArtifactCacheTier.memory,
               'verifiedEquivalentReuse':
                   !historicalCarrierReuse && lookup.storageId != id,
@@ -514,6 +515,7 @@ final class ArtifactCacheTransport implements ControlledTransport {
         ? 'artifact-byte-cache'
         : 'artifact-read-all';
     final details = <String, Object?>{
+      'artifactDurable': read.durable,
       'cacheTier': read.memoryHit
           ? ArtifactCacheTier.memory.name
           : lookup.tier.name,
@@ -848,6 +850,10 @@ final class ArtifactCacheTransport implements ControlledTransport {
     );
   }
 }
+
+bool _isImmutableLocalUri(Uri uri) =>
+    const <String>{'', 'file', 'content', 'asset'}
+        .contains(uri.scheme.toLowerCase());
 
 bool _isImmutableLocalSourceClass(String sourceClass) =>
     sourceClass == 'local-document' ||
@@ -1218,6 +1224,9 @@ ByteResponse? _streamedCachedResponse({
   required Validators? validators,
   required bool durable,
 }) {
+  // Hot local bytes remain reopenable source bytes, not transfer staging.
+  // Otherwise an ordinary reread creates a second persistent artifact.
+  final replayable = durable || _isImmutableLocalUri(id.canonicalUri);
   final currentValidators = Validators(
     etag: '"zic-artifact-${entry.length}-${_fnv64String(id.key)}"',
   );
@@ -1241,13 +1250,13 @@ ByteResponse? _streamedCachedResponse({
     totalLength: entry.length,
     validators: currentValidators,
     rangeSupported: true,
-    disposition: durable
+    disposition: replayable
         ? ByteResponseDisposition.durableImmutable
         : ByteResponseDisposition.staged,
     bodyAuthority: durable
         ? ByteResponseBodyAuthority.artifactCache
         : ByteResponseBodyAuthority.source,
-    immutableRangeReplay: durable
+    immutableRangeReplay: replayable
         ? (replayStart, replayEndExclusive) async {
             if (replayStart < 0 ||
                 replayEndExclusive <= replayStart ||
@@ -1263,7 +1272,7 @@ ByteResponse? _streamedCachedResponse({
             );
           }
         : null,
-    immutableReplayAccessMode: durable ? entry.accessMode : 'unknown',
+    immutableReplayAccessMode: replayable ? entry.accessMode : 'unknown',
   );
 }
 
@@ -1276,6 +1285,7 @@ ByteResponse? _cachedResponse({
   bool directMemoryBody = false,
   bool durable = true,
 }) {
+  final replayable = durable || _isImmutableLocalUri(id.canonicalUri);
   final currentValidators = Validators(
     etag: '"zic-artifact-${bytes.lengthInBytes}-'
         '${_fnv64String(id.key)}"',
@@ -1308,13 +1318,13 @@ ByteResponse? _cachedResponse({
     totalLength: bytes.lengthInBytes,
     validators: currentValidators,
     rangeSupported: true,
-    disposition: durable
+    disposition: replayable
         ? ByteResponseDisposition.durableImmutable
         : ByteResponseDisposition.staged,
     bodyAuthority: durable
         ? ByteResponseBodyAuthority.artifactCache
         : ByteResponseBodyAuthority.source,
-    immutableRangeReplay: durable
+    immutableRangeReplay: replayable
         ? (replayStart, replayEndExclusive) async {
             if (replayStart < 0 ||
                 replayEndExclusive <= replayStart ||
@@ -1334,7 +1344,7 @@ ByteResponse? _cachedResponse({
             );
           }
         : null,
-    immutableReplayAccessMode: durable ? 'memory' : 'unknown',
+    immutableReplayAccessMode: replayable ? 'memory' : 'unknown',
   );
 }
 

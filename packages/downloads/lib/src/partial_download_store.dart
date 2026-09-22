@@ -113,3 +113,17 @@ abstract interface class PartialDownloadStore {
 
   Future<void> invalidatePartialDownload(DownloadId id);
 }
+
+/// Optional persistence capability for automatic hot-transfer checkpoints.
+///
+/// Ordinary [PartialDownloadStore] implementations may intentionally place an
+/// exact partial on user-selected storage. A transfer checkpoint is different:
+/// it is mutable recovery state owned by the automatic cache/transfer runtime,
+/// so capable backends should keep it on low-latency direct staging and leave
+/// explicit download placement to the later promoted-artifact step.
+abstract interface class TransferStagingPartialDownloadStore {
+  Future<void> storeTransferPartialDownload({
+    required DownloadId id,
+    required PartialDownloadEntry entry,
+  });
+}

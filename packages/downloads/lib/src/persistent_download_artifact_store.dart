@@ -134,6 +134,7 @@ final class PersistentDownloadArtifactStore
         PhysicalArtifactExactBindingBackend,
         PhysicalPartialDownloadStore,
         PartialDownloadStore,
+        TransferStagingPartialDownloadStore,
         PartialDownloadMetadataStore,
         ArtifactCacheMaintenance {
   PersistentDownloadArtifactStore._({
@@ -4721,11 +4722,25 @@ final class PersistentDownloadArtifactStore
     }
   }
 
-  bool _recordBelongsToCurrentRoot(DownloadId id, CacheRec record) =>
-      _artifactAccessBelongsToCurrentRoot(
-        id,
-        _ArtifactAccessRecord.fromBinding(record),
-      );
+  bool _recordBelongsToCurrentRoot(DownloadId id, CacheRec record) {
+    if (record.state == CacheState.partial &&
+        parseSafRecordPath(record.path) == null &&
+        record.storageRootId == layout.root) {
+      final staging = layout.artifactForPhysical(PhysicalMediaId.exact(id));
+      if (File(record.path).absolute.path ==
+          File(staging.partialPath).absolute.path) {
+        // Automatic exact-fallback checkpoints deliberately use the
+        // App-private base layout even when this source has a separate final
+        // placement root. The indexed deterministic path is the staging proof;
+        // explicit download placement remains a later promoted-artifact step.
+        return true;
+      }
+    }
+    return _artifactAccessBelongsToCurrentRoot(
+      id,
+      _ArtifactAccessRecord.fromBinding(record),
+    );
+  }
 
   bool _artifactAccessBelongsToCurrentRoot(
     DownloadId id,
@@ -6143,13 +6158,33 @@ final class PersistentDownloadArtifactStore
   }) => _notifyManagementAfter(
     _serializeArtifactMutation(
       id,
-      () => _storePartialDownload(id: id, entry: entry),
+      () => _storePartialDownload(
+        id: id,
+        entry: entry,
+        preferDirectStaging: false,
+      ),
+    ),
+  );
+
+  @override
+  Future<void> storeTransferPartialDownload({
+    required DownloadId id,
+    required PartialDownloadEntry entry,
+  }) => _notifyManagementAfter(
+    _serializeArtifactMutation(
+      id,
+      () => _storePartialDownload(
+        id: id,
+        entry: entry,
+        preferDirectStaging: true,
+      ),
     ),
   );
 
   Future<void> _storePartialDownload({
     required DownloadId id,
     required PartialDownloadEntry entry,
+    required bool preferDirectStaging,
   }) async {
     _requireOpen();
     if (_borrowedPartialIds.contains(id)) {
@@ -6159,6 +6194,10 @@ final class PersistentDownloadArtifactStore
       );
     }
     if (entry.length <= 0) return;
+    if (preferDirectStaging) {
+      await _storeExactPartialDirectStaging(id: id, entry: entry);
+      return;
+    }
     if (safTreeIo != null && safTreeUri != null) {
       await _storePartialDownloadInSaf(id, entry);
       return;
@@ -6198,6 +6237,217 @@ final class PersistentDownloadArtifactStore
       rethrow;
     }
     await session.pause(writer);
+  }
+
+  Future<void> _storeExactPartialDirectStaging({
+    required DownloadId id,
+    required PartialDownloadEntry entry,
+  }) async {
+    final previous = await _index.get(id.key);
+    if (previous != null && previous.id != id) {
+      throw const Failure(
+        code: ErrorCode.artifactCorruption,
+        message: 'exact partial index belongs to another download',
+      );
+    }
+    if (previous != null && _isVerifiedReadyRecord(previous)) return;
+    if (previous != null &&
+        previous.state == CacheState.partial &&
+        previous.bytes > entry.length) {
+      return;
+    }
+
+    final active = _registry.find(id);
+    if (active != null && active.state != DownloadState.disposed) {
+      if (!active.canEvict ||
+          active.demanded ||
+          active.activeRun ||
+          active.hasWriter) {
+        throw const Failure(
+          code: ErrorCode.sessionBusy,
+          message: 'exact transfer staging destination has a live store session',
+        );
+      }
+      // Generic Direct exact-partial persistence historically materializes a
+      // store-owned DownloadSession. Automatic staging must remain compatible
+      // with that same-process state: settle its index tail, recheck the idle
+      // boundary, then mechanically retire only the session handle. Durable
+      // bytes/index authority remain untouched for the staging migration below.
+      await active.settleCacheMutations();
+      final current = _registry.find(id);
+      if (!identical(current, active) ||
+          !active.canEvict ||
+          active.demanded ||
+          active.activeRun ||
+          active.hasWriter) {
+        throw const Failure(
+          code: ErrorCode.sessionBusy,
+          message: 'exact transfer staging destination became busy',
+        );
+      }
+      final retired = _registry.takeIdlePhysical(id);
+      if (!identical(retired, active)) {
+        throw const Failure(
+          code: ErrorCode.sessionBusy,
+          message: 'exact transfer staging could not retire idle store session',
+        );
+      }
+      await active.dispose();
+    }
+
+    final targetLayout = layout;
+    final artifact = targetLayout.artifactForPhysical(PhysicalMediaId.exact(id));
+    final targetPath = File(artifact.partialPath).absolute.path;
+    final previousRoot = previous?.storageRootId.trim() ?? '';
+    final previousIsTarget = previous != null &&
+        previous.state == CacheState.partial &&
+        parseSafRecordPath(previous.path) == null &&
+        File(previous.path).absolute.path == targetPath &&
+        (previousRoot.isEmpty ||
+            previousRoot == 'default' ||
+            previousRoot == targetLayout.root);
+    if (previousIsTarget && previous.bytes == entry.length) return;
+
+    CacheRec? obsoleteSource;
+    String? obsoleteSourceChecksum;
+    if (previous != null &&
+        previous.state == CacheState.partial &&
+        !previousIsTarget) {
+      if (!await _cleanupLocatorIsAvailable(
+        previous.path,
+        previous.storageRootId,
+      )) {
+        throw const Failure(
+          code: ErrorCode.policy,
+          message: 'previous exact partial root is unavailable for staging',
+        );
+      }
+      obsoleteSourceChecksum = await _migrationRangeChecksum(
+        _bytes.readChunks(
+          previous.path,
+          start: 0,
+          endExclusive: previous.bytes,
+        ),
+        expectedBytes: previous.bytes,
+      );
+      obsoleteSource = previous;
+    }
+
+    if (!previousIsTarget && await artifact.hasRestorableBody()) {
+      if (obsoleteSource == null) {
+        throw const Failure(
+          code: ErrorCode.artifactCorruption,
+          message: 'unindexed body already occupies exact staging path',
+        );
+      }
+      // A failed earlier external -> App-private migration can leave a
+      // non-authoritative deterministic target behind. The indexed old
+      // locator remains authority, so clear only that failed target first.
+      await artifact.reset(deleteFinal: true);
+    }
+
+    Future<void> commitCurrentPartialAuthority() async {
+      if (artifact.committedLength <= 0) return;
+      await artifact.writeMeta(<String, Object?>{
+        'version': 3,
+        'physicalMedia': PhysicalMediaId.exact(id).toJson(),
+        'downloadKey': id.key,
+        'download': id.toJson(),
+        'uri': id.canonicalUri.toString(),
+        'sourceRevision': id.sourceRevision,
+        'validators': entry.validators.toJson(),
+        if (!entry.validators.isEmpty)
+          'validatorRequestUri': id.canonicalUri.toString(),
+        if (entry.totalLength != null) 'totalLength': entry.totalLength,
+      });
+
+      StorageCleanupDebtRecord? cleanupDebt;
+      if (obsoleteSource != null) {
+        cleanupDebt = await _registerObsoletePartialSourceCleanupDebt(
+          accessLocator: obsoleteSource.path,
+          storageRootId: obsoleteSource.storageRootId,
+          expectedBytes: obsoleteSource.bytes,
+          checksum: obsoleteSourceChecksum!,
+        );
+      }
+      final now = DateTime.now().toUtc().microsecondsSinceEpoch;
+      final record = CacheRec(
+        id: id,
+        state: CacheState.partial,
+        path: artifact.partialPath,
+        bytes: artifact.committedLength,
+        checksum: artifact.checksum,
+        createdUs: previous?.createdUs ?? now,
+        touchedUs: now,
+        pinned: previous?.pinned ?? false,
+        checksumAlgorithm: previous?.checksumAlgorithm ?? 'crc32',
+        artifactId: previous?.path == artifact.partialPath
+            ? previous?.artifactId ?? ''
+            : '',
+        storageRootId: targetLayout.root,
+      );
+      try {
+        await _index.put(record);
+      } on Object {
+        if (cleanupDebt != null) {
+          await _forgetStorageCleanupDebt(cleanupDebt.accessLocator);
+        }
+        rethrow;
+      }
+      if (cleanupDebt != null) {
+        await _cleanupObsoleteSourceNow(cleanupDebt);
+      }
+    }
+
+    try {
+      if (previousIsTarget) {
+        final file = File(previous.path);
+        if (!await file.exists() || await file.length() != previous.bytes) {
+          throw const Failure(
+            code: ErrorCode.artifactCorruption,
+            message: 'exact staging partial changed before durable update',
+          );
+        }
+        await artifact.adoptExistingPartial(expectedLength: previous.bytes);
+      } else {
+        await artifact.restore();
+      }
+      var offset = artifact.committedLength;
+      try {
+        await for (final chunk in entry.open(start: offset)) {
+          if (chunk.isEmpty) continue;
+          await artifact.append(offset, chunk);
+          offset += chunk.length;
+          if (offset >= entry.length) break;
+        }
+        if (offset != entry.length) {
+          throw StateError(
+            'exact partial source changed while storing ${id.key}: '
+            '$offset/${entry.length}',
+          );
+        }
+      } catch (error, stackTrace) {
+        if (artifact.committedLength > 0) {
+          try {
+            if (obsoleteSource == null ||
+                artifact.committedLength >= obsoleteSource.bytes) {
+              await artifact.pause();
+              await commitCurrentPartialAuthority();
+            } else {
+              await artifact.reset(deleteFinal: true);
+            }
+          } on Object {
+            // Preserve the source/store error. Unless the replacement reached
+            // a safe prefix boundary the old indexed locator stays authority.
+          }
+        }
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      await artifact.pause();
+      await commitCurrentPartialAuthority();
+    } finally {
+      await artifact.dispose();
+    }
   }
 
   @override

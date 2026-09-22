@@ -596,12 +596,14 @@ void main() {
         ),
       );
       final partialCompletionGate = Completer<void>();
+      final promotedStoreGate = Completer<void>();
       final store = _RejectedCachedImageStore(
         id: id,
         bytes: cachedImage,
         equivalentId: siblingId,
         completePartial: true,
         partialCompletionGate: partialCompletionGate,
+        promotedStoreGate: promotedStoreGate,
       );
       final cache = ArtifactCacheManager(backend: store);
       cache.linkEquivalent(first: id, second: siblingId);
@@ -662,6 +664,10 @@ void main() {
           isTrue,
         );
         await _waitForCondition(() => sourceOpens == 1);
+        await store.promotedStoreStarted.future.timeout(const Duration(seconds: 5));
+        expect(cache.requiresFreshSource(id), isTrue,
+            reason: 'fresh-source fence remains until durable store completes');
+        promotedStoreGate.complete();
         final recovered = await reader
             .loadBytes(asset, MediaLoadToken())
             .timeout(const Duration(seconds: 5));
@@ -673,7 +679,6 @@ void main() {
         );
         final freshSession = transferRuntime.registry.find(id)!;
         expect(freshSession.committedLength, fresh.length);
-        expect(cache.requiresFreshSource(id), isTrue);
         expect(
           await transferRuntime.artifactCacheHandoff!.settleAutomatic(freshSession),
           isTrue,
@@ -681,6 +686,7 @@ void main() {
         expect(cache.requiresFreshSource(id), isFalse);
         expect((await cache.readForeground(siblingId))?.bytes, cachedImage);
       } finally {
+        if (!promotedStoreGate.isCompleted) promotedStoreGate.complete();
         await reader.dispose().timeout(const Duration(seconds: 5));
         await transferRuntime.dispose().timeout(const Duration(seconds: 5));
       }
@@ -1034,6 +1040,7 @@ final class _RejectedCachedImageStore
     this.equivalentId,
     this.completePartial = false,
     this.partialCompletionGate,
+    this.promotedStoreGate,
     this.pinnedExact = false,
     this.physicalId,
   });
@@ -1043,6 +1050,8 @@ final class _RejectedCachedImageStore
   final DownloadId? equivalentId;
   final bool completePartial;
   final Completer<void>? partialCompletionGate;
+  final Completer<void>? promotedStoreGate;
+  final Completer<void> promotedStoreStarted = Completer<void>();
   final bool pinnedExact;
   final PhysicalMediaId? physicalId;
   final Completer<void> partialOpened = Completer<void>();
@@ -1203,6 +1212,8 @@ final class _RejectedCachedImageStore
     required DownloadId id,
     required Uint8List bytes,
   }) async {
+    if (!promotedStoreStarted.isCompleted) promotedStoreStarted.complete();
+    await promotedStoreGate?.future;
     stores++;
   }
 }
