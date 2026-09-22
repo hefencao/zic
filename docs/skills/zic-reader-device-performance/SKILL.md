@@ -1,6 +1,6 @@
 ---
 name: zic-reader-device-performance
-version: 1.2.0
+version: 1.2.1
 description: Repeatable real-device ZIC Reader startup, playback, and bidirectional preupload validation without confusing debug-build cost or stale Home accessibility semantics with product regressions.
 ---
 
@@ -24,25 +24,29 @@ Record the exact build command in every device-performance result. Do not infer 
 
 ## Reader-entry preflight is event-gated, not sleep-gated
 
-Never tap a Home/history item merely because Home is already visible. Bootstrap Home can render from the snapshot before the durable library/download composition has been adopted. This window is build-mode dependent: Debug Dart can take seconds longer than Profile/Release, so a fixed `sleep 1` or `sleep 3` is not a correctness boundary.
+For a steady-state Reader performance baseline, do not tap a Home/history item merely because Home is already visible. Bootstrap Home can render from the snapshot before the durable library/download composition has been adopted. This window is build-mode dependent: Debug Dart can take seconds longer than Profile/Release, so a fixed `sleep 1` or `sleep 3` is not a correctness boundary.
 
-Before the first Reader tap, require both startup events from the **current process**:
+For the steady-state Reader performance baseline, before the first Reader tap require both startup events from the **current process**:
 
 - `[zic-startup] ... durable-services-ready`
 - `[zic-home] ... services-handoff-complete mode=authoritative-reload`
 
 Use `python3 tool/prepare_reader_device_test.py --mode profile` (or `release` / `debug`) to install the exact selected APK with `adb install -r`, cold-start it, and wait for those events. The helper has a longer timeout for debug, but timeout length is only an upper bound; readiness is the event predicate itself. If the gate times out, stop and diagnose startup instead of tapping through a half-adopted Home.
 
-The helper also validates that the Home accessibility tree contains the reading-history section after authoritative handoff. Do not use the bootstrap history cards seen before this point as a Reader-entry target.
+The helper also validates that the Home accessibility tree contains the reading-history section after authoritative handoff. Do not use bootstrap history cards as a steady-state performance target.
 
-ADB input must also target the real app display explicitly. scrcpy or other tooling may create a virtual display; an unqualified `adb shell input tap/swipe` can therefore inject into the wrong display while screenshots still show display 0. For this device workflow, use `adb shell input -d 0 ...` unless `dumpsys activity` proves the ZIC task is on a different display. Never use an unqualified tap/swipe in a Reader performance run.
+Cold-handoff correctness is a distinct regression scenario, not an invalid user action: real users MAY tap a bootstrap history card before these readiness events. App composition must paint the deferred route, await core-service readiness and Home adoption, then create Reader capabilities without capturing retired bootstrap owners. Test this deterministically with a blocked service-handoff future; any separately labeled early-entry device reproduction must prove the selected card/input and record whether the tap preceded core readiness. Do not use the performance helper's readiness wait as proof this race is fixed, and do not attribute its former `chapter download service is closed` failures to invalid user timing.
+
+ADB input must also target the real app display explicitly. scrcpy or other tooling may create a virtual display; an unqualified `adb shell input tap/swipe` can therefore inject into the wrong display while screenshots still show display 0. On the current MIUI device, the source-first form is the verified working syntax: use `adb shell input touchscreen -d 0 tap ...` / `swipe ...` for touch and `adb shell input keyboard -d 0 keyevent ...` for Back or other keys, unless `dumpsys activity` proves the ZIC task is on a different display. Do not use the superficially similar `adb shell input -d 0 tap ...` form as test evidence unless a harmless control round-trip has first proved that it is actually delivered on that device. Never use an unqualified tap/swipe in a Reader performance run.
+
+Before the first destructive or Reader-targeted input in a new device session, prove injection with a harmless Home navigation round-trip: resolve the current Home/Bookshelf tab bounds, tap Bookshelf with the source-first command and require `selected=true`, then tap Home and require `selected=true`. A coordinate command that does not change this control state is invalid input; discard any subsequent trace/performance conclusions from that attempt instead of treating the missing navigation as a product bug.
 
 ## Device hygiene
 
 Preserve user data with `adb install -r`. Screenshots go directly to the host:
 
 ```bash
-adb exec-out screencap -p > /tmp/zic-reader.png
+adb exec-out screencap -p > .log/zic-reader.png
 ```
 
 Do not write temporary screenshots or UI XML into `/sdcard` root. If accessibility inspection is needed while Home is known to be topmost, stream it without a device file:

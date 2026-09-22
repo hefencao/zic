@@ -204,8 +204,12 @@ def main(argv: list[str]) -> int:
         f"authoritativeHomeSeconds={ready_seconds:.3f}"
     )
     print(
-        "subsequent-input-prefix="
-        f"adb shell input -d {actual_display} <tap|swipe|keyevent> ..."
+        "subsequent-touch-prefix="
+        f"adb shell input touchscreen -d {actual_display} <tap|swipe> ..."
+    )
+    print(
+        "subsequent-key-prefix="
+        f"adb shell input keyboard -d {actual_display} keyevent ..."
     )
     return 0
 
