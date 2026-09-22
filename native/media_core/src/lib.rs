@@ -11,8 +11,8 @@ mod webp;
 use std::os::raw::{c_int, c_void};
 use std::ptr;
 use std::slice;
-use std::time::Instant;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 pub const ABI_VERSION: u32 = 6;
 pub const LIB_VERSION: u32 = 0x0012_1500;
@@ -748,7 +748,9 @@ pub unsafe extern "C" fn zic_frame_format(frame: *const FrameHandle) -> u32 {
 
 #[no_mangle]
 pub unsafe extern "C" fn zic_frame_native_prepare_us(frame: *const FrameHandle) -> u64 {
-    frame.as_ref().map_or(0, |frame| frame.data.native_prepare_us)
+    frame
+        .as_ref()
+        .map_or(0, |frame| frame.data.native_prepare_us)
 }
 
 #[no_mangle]
@@ -781,12 +783,16 @@ pub unsafe extern "C" fn zic_frame_native_frame_copy_us(frame: *const FrameHandl
 
 #[no_mangle]
 pub unsafe extern "C" fn zic_frame_native_thread_id(frame: *const FrameHandle) -> u64 {
-    frame.as_ref().map_or(0, |frame| frame.data.native_thread_id)
+    frame
+        .as_ref()
+        .map_or(0, |frame| frame.data.native_thread_id)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn zic_frame_native_cpu_start(frame: *const FrameHandle) -> i32 {
-    frame.as_ref().map_or(-1, |frame| frame.data.native_cpu_start)
+    frame
+        .as_ref()
+        .map_or(-1, |frame| frame.data.native_cpu_start)
 }
 
 #[no_mangle]
