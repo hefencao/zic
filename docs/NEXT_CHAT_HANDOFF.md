@@ -42,6 +42,7 @@
   非网络 source-owned `loadResource` failure 才可触发，SSL/EOF 继续归 DownloadJob。
   payload-bound revision 会让旧 exact automatic-cache generation 合法留存；Download Manager 必须把它视为 historical cache identity，
   仅从当前同逻辑 chapter 复用 display metadata，禁止解析/展示 opaque Mihon id，也禁止把旧 revision 直接转成当前手动下载。
+  自动缓存 projection 现为 durable-inventory-only：Reader/transfer runtime 的 hot session 不可单独建立 cache row；`local-folder` 的 `content://` source-resident promoted body 普通重读保持 source-owned，不物化 app-owned duplicate，Reader 关闭后 retention 也不会让它重新出现在自动缓存。
   v1/v2 或 payload SHA 不匹配的 v3 locator 必须在 Reader/下载入口强制 source refresh，不得恢复旧 opaque plan；replacement unavailable/replay source failure 只交给既有
   terminal source-generation refresh handoff，Reader 当前页、章节下载命令与 whole-comic queue 各自在原 owner 内至多整章刷新一次；
   不在 Reader/Pipeline 新建 Mihon retry owner。显式 `refreshResource` 用 `freshGeneration=true` 重取 page list，并由 runtime

@@ -1378,6 +1378,7 @@ external presentation 的“已启动”状态 MUST以非空 `externalPresentati
   projection MUST仅复用当前 chapter 的人类可读 comic/chapter metadata 作为 display alias，并标记旧 revision 为 historical。
   Presentation MUST NOT把 opaque plugin comic/chapter identity、raw source id、`Exact`/`Canonical` 内部术语显示成普通用户字段；
   historical exact cache MAY按其原 identity 清理，但 MUST NOT转为当前 revision 的手动下载任务。
+  cache-management projection MUST仅消费 durable exact index 与 durable physical artifact/partial inventory；hot `DownloadSession`（包括 promoted source-resident local `file/content/asset` body）MUST NOT单独建立自动缓存行。Reader 对可重开本地来源的正常读取 MUST NOT为了 cache-management 可见性物化 app-owned duplicate body。
   Home 路径的 mutating chapter/whole-comic actions MUST 通过注入的 command capability 进入 `HomeDownloadCommands`，
   并在动作执行时读取已采用的 durable service generation；
   Presentation MAY 持有当前 service 订阅/读取 projection，但 MUST NOT 直接以该 service 实例作为 Home mutation authority。

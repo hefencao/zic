@@ -396,6 +396,7 @@ Download Manager 首次打开 Canonical/自动缓存页若缺 physical cache pro
 cache identity 仍按 exact source/comic/chapter/revision 保留；若旧 source revision 与当前 library chapter 仅 generation 不同，
 downloads projection 只复用当前同逻辑章节的人类可读标题作为 presentation metadata，并显式标记 historical revision。
 Download Manager 不把 opaque plugin id、raw source id、Exact/Canonical 等存储术语直接当用户字段；historical exact cache 可清理，但不得被提升为当前手动下载目标。
+cache-management 行只允许由 durable exact index 或 durable physical artifact/partial inventory 建立；transfer runtime 的 hot session 不属于该 projection。尤其 `file/content/asset` 的 source-resident promoted session 仍由原始可重开来源拥有正文，普通 Reader 重读不得因为 session 被 retention 保留而重新出现在自动缓存，也不得为此物化第二份正文。
 后续 durable management invalidation 仍使用完整 management projection 收敛 chapter lifecycle；
 完整 refresh 一旦开始会 fence 更早的 cache-only publication，不能把 cache-only fast path 扩成第二状态 owner。
 无可信snapshot时才允许一次full recovery reconcile。

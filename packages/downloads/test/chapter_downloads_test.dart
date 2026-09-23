@@ -508,6 +508,73 @@ void main() {
   );
 
   test(
+    'source-resident local Reader session is not cache-management inventory',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'zic-local-source-resident-management-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final service = await PersistentChapterDownloadService.open(
+        directory.path,
+      );
+      addTearDown(service.close);
+      final sourceUri = Uri.parse('content://local-folder/page.webp');
+      final entry = ImportedLibraryEntry(
+        chapter: ImportedChapterRecord(
+          directoryId: 'local-folder:fixture',
+          displayName: '本地图册',
+          sourceId: 'local-folder',
+          comicId: 'local-comic',
+          comicTitle: '本地图册',
+          chapterId: 'local-chapter',
+          sourceRevision: 'local-r1',
+          pages: <ImportedPageRecord>[
+            ImportedPageRecord(
+              displayName: '001.webp',
+              sourceId: sourceUri.toString(),
+              pageId: 'page-1',
+              contentKindHint: ContentKindHint.webp,
+            ),
+          ],
+        ),
+      );
+      final manifest = entry.chapter.toManifest();
+      final id = readerPageDownloadId(manifest, manifest.pages.single);
+      final bytes = Uint8List.fromList(<int>[
+        0x52, 0x49, 0x46, 0x46, 0x14, 0, 0, 0,
+        0x57, 0x45, 0x42, 0x50, 1, 2, 3, 4,
+      ]);
+      final session = service.transferRuntime.registry.get(id);
+      session.beginResidentImmutableIngress(
+        validators: const Validators(),
+        totalLength: bytes.length,
+        bodyAuthority: ByteResponseBodyAuthority.source,
+      );
+      session.appendResidentImmutableIngress(0, bytes);
+      session.sealResidentImmutableIngress(
+        deferFutureReaderIngress: true,
+      );
+
+      expect(session.state, DownloadState.promoted);
+      expect(session.residentBodyAuthority, ByteResponseBodyAuthority.source);
+      expect(session.artifact.committedLength, 0);
+      expect(await service.artifactStore.index.get(id.key), isNull);
+
+      final projection = await service.inspectCacheManagement(
+        <ImportedLibraryEntry>[entry],
+      );
+
+      expect(projection.canonical, isEmpty);
+      expect(
+        projection.exact,
+        isEmpty,
+        reason:
+            'reopenable local source bytes are Reader authority, not app-owned automatic cache',
+      );
+    },
+  );
+
+  test(
     'persistent partial artifact survives Reader service reopen without promotion',
     () async {
       final directory = await Directory.systemTemp.createTemp(

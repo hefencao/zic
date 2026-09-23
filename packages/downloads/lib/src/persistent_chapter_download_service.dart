@@ -1746,12 +1746,13 @@ final class PersistentChapterDownloadService
           page: page,
           pageIndex: index,
         );
-        final session = transferRuntime.registry.find(id)?.snapshot;
-        final ready = session?.state == DownloadState.promoted ||
-            exactReady ||
-            physical?.artifact != null;
-        final bytes = session?.committedLength ??
-            exactIndexed?.bytes ??
+        // Cache management is a durable-inventory projection. A hot transfer
+        // session may be promoted while its body is still owned by a reopenable
+        // source (notably a local SAF document), or may only have an in-memory
+        // prefix. Neither is an app-owned cache artifact. Only the durable exact
+        // index and durable physical artifact/partial inventory may create rows.
+        final ready = exactReady || physical?.artifact != null;
+        final bytes = exactIndexed?.bytes ??
             physical?.artifact?.bytes ??
             physical?.partial?.bytes ??
             0;
@@ -1771,10 +1772,7 @@ final class PersistentChapterDownloadService
             entry: entry,
             pageIndex: index,
           );
-          final hasCanonicalHotSession = active && session != null;
-          if (hasCanonicalPhysical ||
-              (active && exactReady) ||
-              hasCanonicalHotSession) {
+          if (hasCanonicalPhysical || (active && exactReady)) {
             canonicalBuilder.addPage(
               physicalId: physicalId,
               ready: ready,
