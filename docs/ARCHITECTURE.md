@@ -581,7 +581,7 @@ Reader、DownloadSession、NetLane正文与调度ownership不因该后台准备�
 `@x/y` 裁剪标识用于预览项/widget/painter 的单项身份，但 `onThumbnailLoad` 请求回调接收
 去掉裁剪标识的原图地址；该 base URI 也是编码字节缓存身份，App 解码后只绘制对应裁剪区域。
 预览栏折叠与展开共用同一套顺序布局。实际行含横图时最多 2 张，纯竖图行最多 3 张；只允许在相邻三个候选内做最小局部重排。完整行直接用全部媒体宽度反算等面积 tile，不再把剩余宽度变成外边距或巨大项间距；
-标题保留普通内容边距，但图片区不叠加 Card 或水平 border/padding。只有稀疏末行允许相对完整行放大，面积上限为参考完整行的 2.4 倍。阅读设置提供每行最大数量 1–8，默认 4。
+标题保留普通内容边距，但图片区不叠加 Card 或水平 border/padding。只有稀疏末行允许相对完整行放大，面积上限为参考完整行的 2.4 倍。外观设置提供详情预览每行最大数量 1–8，默认 4；它不属于 Reader 操作设置。
 折叠态只显示同一布局第一行，高度取第一行实际高度；展开态继续消费来源分页，并由 `PageView` 左右分页呈现后续行。展开图片区域按屏幕高度 90% 封顶，开关位于中间且只显示上下箭头。
 行规划优先使用 `ComicPreviewAsset.width/height`，缺失时以解码后的可见裁剪尺寸回填；缩略图使用 `BoxFit.contain`，不拉伸或强制裁切。
 预览失败只显示按资源 identity 生成的柔和单色占位，不显示破损图片图标。
@@ -875,19 +875,23 @@ adaptive profile 是共享的 Reader 行为输入，不是“布局模式”本�
 没有漫画级显式方向时，高置信 profile 可以选择分页/纵向方向；漫画级显式方向只覆盖方向这一项，
 不得阻止 profile 继续更新或供其它消费者使用。长按放大的优先级为漫画级显式覆盖 >
 高置信 adaptive profile 建议 > 模式默认；条漫/纵向 profile 默认关闭，页漫/动图 profile 默认开启。
+分页方向的全局 fallback 由 App preferences 单独持久化为 `LTR / RTL / source`，默认 LTR；它只在漫画显式方向与高置信 adaptive 方向都没有给出答案时生效。
 全局 `adaptiveReaderEnabled` 与漫画级 `comicAdaptiveEnabled` 共同决定 profile 是否生效，
-与“启用本漫画设置”的手动 override master 相互独立。后续翻译等能力可消费同一 profile，
+与“启用本漫画覆盖”的手动 override master 相互独立；自适应入口在 master 开启后仍可见，清除手动覆盖也不清 adaptive policy/profile。后续翻译等能力可消费同一 profile，
 但不得因此让 Reader 接管翻译或 Pipeline 调度 ownership。非中性来源置信进入 adaptive profile fingerprint，
 中性 0.5 保持原 metadata fingerprint。
 Android texture lease prewarm 必须按 source canvas 等比 fit 后的实际 decoded raster 尺寸建立；
 DownloadSession 在 WebP 固定前缀解析出 source canvas 后立即触发 current/next/transition 的精确预热；
 同一 raster 尺寸的 deferred requests 按 current > transition > next 优先级每个 idle task 最多启动一个 platform create，
 idle+pending 总量仍受全局有界池限制；decoded frame 到达后的尺寸只作兜底，预热失败可重试且不得改变 demand/playback 语义。adaptive profile 不得借此改写 NetLane、download/decode window 或 prefetch owner。手势缩放是纯 presentation 行为：
-`ReaderView` 拥有 paged 单页 `InteractiveViewer`（双击分级默认 1.5/2.0 + 长按放大）与 continuous 整条 strip 的统一 `Transform`（双击分级 + 捏合 + 长按放大，
+`ReaderView` 拥有 paged 单页 `InteractiveViewer`（双击分级默认 1.5/2.0 + 独立长按倍率默认 2.0）与 continuous 整条 strip 的统一 `Transform`（双击分级 + 捏合 + 长按放大，
 所有页面一起缩放）。长按放大的 global 值是无 adaptive 建议时的分页基线；高置信 adaptive profile 可按漫画类型给出手势默认，
 漫画级显式长按覆盖仍最高优先。长按放大支持松手复原/保持释放（仅分页；
 连续模式始终保持）、拖动/聚焦两种移动方式、可调拖动比率、双击位置模式（居中/吸附/聚焦）与"最大可视"边界约束——该约束按 contain 后的真实图片矩形计算而非页面控件矩形，
 留边轴保持图片居中（契约见 SPEC 2.3）；这些是 UI 设置，不改变 demand/prefetch/texture 所有权或 NetLane 调度。strip 缩放是视口空间视觉层：
+Reader 的系统栏 presentation 由 `reader_runtime` 单独拥有，不与 Pipeline/媒体生命周期耦合。`ReaderSessionSettings.showSystemStatusBar` 只读投影全局偏好；
+Reader 控制栏显隐只决定系统 navigation bar 是否跟随显示。Android targetSdk 36 使用 reader_runtime plugin 的 `WindowInsetsController` 作为真实 show/hide owner，
+因为 Flutter 旧 `SystemUiMode.manual/immersiveSticky` 在 Android 16 已被系统忽略。route transition gate 只延迟首次 apply，之后控制栏切换/App resume 可重复 apply；Reader dispose 恢复 status/navigation bars。
 滚动在放大状态下保持可用且跳页不复位缩放，未锁定时普通单指水平滑动可平移整条 strip；
 双击第二下按住仅固定当前倍率与水平偏移，按住期间独占指针并禁用垂直翻页，锁定时水平滑动不改偏移，双指捏合松开保持结果不弹回，已放大时长按仅水平拖动不改倍率；锁定态再次普通双击仅退出锁定，解锁后的普通双击才继续阶段循环；
 双击配对用屏幕坐标、阶段用离散索引单调推进（不受动画中间值影响），换级偏移按当前倍率换算锚点保持、动画向目标帧逐帧钳制插值不回跳不越界，

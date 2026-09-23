@@ -1,13 +1,17 @@
 package dev.zic.readerruntime
 
 import android.app.Activity
+import android.graphics.Color
 import android.os.Build
 import android.os.Debug
 import android.os.Handler
 import android.os.HandlerThread
 import android.view.Choreographer
 import android.view.FrameMetrics
+import android.view.View
 import android.view.Window
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
@@ -22,6 +26,7 @@ class ReaderRuntimePlugin :
     ActivityAware {
     private lateinit var cadenceChannel: MethodChannel
     private lateinit var frameRatePolicyChannel: MethodChannel
+    private lateinit var systemUiChannel: MethodChannel
     private val samples = ArrayDeque<Map<String, Long>>()
     private var monitoring = false
     private var anchorNanos = 0L
@@ -58,6 +63,14 @@ class ReaderRuntimePlugin :
     private var verticalReaderFrameRatePolicyRequested = false
     private var policyActivity: Activity? = null
     private var previousFrameRatePowerSavingsBalanced: Boolean? = null
+    private var readerStatusBarVisible: Boolean? = null
+    private var readerNavigationBarVisible: Boolean? = null
+    private var readerSystemBarsActivity: Activity? = null
+    private var previousReaderSystemBarsBehavior: Int? = null
+    private var previousReaderSystemBarsAppearance: Int? = null
+    private var previousReaderSystemUiVisibility: Int? = null
+    private var previousReaderStatusBarColor: Int? = null
+    private var previousReaderNavigationBarColor: Int? = null
 
     private val frameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
@@ -111,13 +124,17 @@ class ReaderRuntimePlugin :
         frameRatePolicyChannel =
             MethodChannel(binding.binaryMessenger, FRAME_RATE_POLICY_CHANNEL_NAME)
         frameRatePolicyChannel.setMethodCallHandler(this)
+        systemUiChannel = MethodChannel(binding.binaryMessenger, SYSTEM_UI_CHANNEL_NAME)
+        systemUiChannel.setMethodCallHandler(this)
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         stopMonitoring()
         restoreFrameRatePolicy()
+        restoreReaderSystemBars(clearRequested = true)
         cadenceChannel.setMethodCallHandler(null)
         frameRatePolicyChannel.setMethodCallHandler(null)
+        systemUiChannel.setMethodCallHandler(null)
     }
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
@@ -128,11 +145,13 @@ class ReaderRuntimePlugin :
         if (verticalReaderFrameRatePolicyRequested) {
             applyFrameRatePolicy()
         }
+        applyRequestedReaderSystemBars()
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
         detachWindowFrameMetrics()
         restoreFrameRatePolicy(keepRequested = true)
+        restoreReaderSystemBars(clearRequested = false)
         activity = null
     }
 
@@ -144,11 +163,13 @@ class ReaderRuntimePlugin :
         if (verticalReaderFrameRatePolicyRequested) {
             applyFrameRatePolicy()
         }
+        applyRequestedReaderSystemBars()
     }
 
     override fun onDetachedFromActivity() {
         detachWindowFrameMetrics()
         restoreFrameRatePolicy(keepRequested = true)
+        restoreReaderSystemBars(clearRequested = true)
         activity = null
     }
 
@@ -195,8 +216,152 @@ class ReaderRuntimePlugin :
                     },
                 )
             }
+            "setReaderSystemBars" -> {
+                val statusBarVisible =
+                    call.argument<Boolean>("statusBarVisible") ?: true
+                val navigationBarVisible =
+                    call.argument<Boolean>("navigationBarVisible") ?: true
+                readerStatusBarVisible = statusBarVisible
+                readerNavigationBarVisible = navigationBarVisible
+                result.success(
+                    applyReaderSystemBars(
+                        statusBarVisible = statusBarVisible,
+                        navigationBarVisible = navigationBarVisible,
+                    ),
+                )
+            }
+            "restoreReaderSystemBars" -> {
+                result.success(restoreReaderSystemBars(clearRequested = true))
+            }
             else -> result.notImplemented()
         }
+    }
+
+    private fun applyRequestedReaderSystemBars(): Boolean {
+        val statusBarVisible = readerStatusBarVisible ?: return false
+        val navigationBarVisible = readerNavigationBarVisible ?: true
+        return applyReaderSystemBars(
+            statusBarVisible = statusBarVisible,
+            navigationBarVisible = navigationBarVisible,
+        )
+    }
+
+    @Suppress("DEPRECATION")
+    private fun applyReaderSystemBars(
+        statusBarVisible: Boolean,
+        navigationBarVisible: Boolean,
+    ): Boolean {
+        val targetActivity = activity ?: return false
+        val window = targetActivity.window
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val controller = window.insetsController ?: return false
+            captureReaderSystemBarsState(targetActivity, window, controller)
+            window.statusBarColor = Color.TRANSPARENT
+            window.navigationBarColor = Color.BLACK
+            controller.systemBarsBehavior =
+                WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.setSystemBarsAppearance(
+                0,
+                WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                    WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+            )
+            if (statusBarVisible) {
+                controller.show(WindowInsets.Type.statusBars())
+            } else {
+                controller.hide(WindowInsets.Type.statusBars())
+            }
+            if (navigationBarVisible) {
+                controller.show(WindowInsets.Type.navigationBars())
+            } else {
+                controller.hide(WindowInsets.Type.navigationBars())
+            }
+            return true
+        }
+
+        captureReaderSystemBarsState(targetActivity, window, null)
+        var flags =
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+                View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+                View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        if (!statusBarVisible) {
+            flags = flags or View.SYSTEM_UI_FLAG_FULLSCREEN
+        }
+        if (!navigationBarVisible) {
+            flags =
+                flags or
+                    View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        }
+        window.decorView.systemUiVisibility = flags
+        return true
+    }
+
+    @Suppress("DEPRECATION")
+    private fun restoreReaderSystemBars(clearRequested: Boolean): Boolean {
+        if (clearRequested) {
+            readerStatusBarVisible = null
+            readerNavigationBarVisible = null
+        }
+        val targetActivity = activity ?: return false
+        val window = targetActivity.window
+        val ownsSnapshot = readerSystemBarsActivity === targetActivity
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val controller = window.insetsController ?: return false
+            controller.show(WindowInsets.Type.statusBars())
+            controller.show(WindowInsets.Type.navigationBars())
+            if (ownsSnapshot) {
+                previousReaderSystemBarsBehavior?.let {
+                    controller.systemBarsBehavior = it
+                }
+                previousReaderSystemBarsAppearance?.let { appearance ->
+                    controller.setSystemBarsAppearance(appearance, SYSTEM_BAR_APPEARANCE_MASK)
+                }
+                previousReaderStatusBarColor?.let { window.statusBarColor = it }
+                previousReaderNavigationBarColor?.let { window.navigationBarColor = it }
+            }
+            clearReaderSystemBarsSnapshot()
+            return true
+        }
+        window.decorView.systemUiVisibility =
+            if (ownsSnapshot) {
+                previousReaderSystemUiVisibility ?: View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            } else {
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+            }
+        if (ownsSnapshot) {
+            previousReaderStatusBarColor?.let { window.statusBarColor = it }
+            previousReaderNavigationBarColor?.let { window.navigationBarColor = it }
+        }
+        clearReaderSystemBarsSnapshot()
+        return true
+    }
+
+    @Suppress("DEPRECATION")
+    private fun captureReaderSystemBarsState(
+        targetActivity: Activity,
+        window: Window,
+        controller: WindowInsetsController?,
+    ) {
+        if (readerSystemBarsActivity === targetActivity) return
+        clearReaderSystemBarsSnapshot()
+        readerSystemBarsActivity = targetActivity
+        previousReaderStatusBarColor = window.statusBarColor
+        previousReaderNavigationBarColor = window.navigationBarColor
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && controller != null) {
+            previousReaderSystemBarsBehavior = controller.systemBarsBehavior
+            previousReaderSystemBarsAppearance = controller.systemBarsAppearance
+        } else {
+            previousReaderSystemUiVisibility = window.decorView.systemUiVisibility
+        }
+    }
+
+    private fun clearReaderSystemBarsSnapshot() {
+        readerSystemBarsActivity = null
+        previousReaderSystemBarsBehavior = null
+        previousReaderSystemBarsAppearance = null
+        previousReaderSystemUiVisibility = null
+        previousReaderStatusBarColor = null
+        previousReaderNavigationBarColor = null
     }
 
     private fun stopMonitoring() {
@@ -605,6 +770,10 @@ class ReaderRuntimePlugin :
         private const val CADENCE_CHANNEL_NAME = "dev.zic/reader_runtime_frame_cadence"
         private const val FRAME_RATE_POLICY_CHANNEL_NAME =
             "dev.zic/reader_runtime_frame_rate_policy"
+        private const val SYSTEM_UI_CHANNEL_NAME = "dev.zic/reader_runtime_system_ui"
+        private const val SYSTEM_BAR_APPEARANCE_MASK =
+            WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or
+                WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
         private const val FRAME_GAP_OUTLIER_MICROS = 20_000L
         private const val CALLBACK_LAG_OUTLIER_MICROS = 8_000L
         private const val MAX_SAMPLES = 256

@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 
-/// Defers one route-owned side effect until the route's entering transition
-/// has completed. A user interaction can explicitly commit it earlier.
+/// Defers the first route-owned side effect until the route's entering
+/// transition has completed. After that initial commit, explicit interactions
+/// may reapply the side effect immediately.
 final class ReaderRouteTransitionGate {
   ReaderRouteTransitionGate(this._apply);
 
@@ -17,7 +18,9 @@ final class ReaderRouteTransitionGate {
     _probeScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _probeScheduled = false;
-      if (_disposed || _applied || _listener != null || !context.mounted) return;
+      if (_disposed || _applied || _listener != null || !context.mounted) {
+        return;
+      }
       final animation = ModalRoute.of(context)?.animation;
       if (animation == null || animation.status == AnimationStatus.completed) {
         _commit();
@@ -43,7 +46,11 @@ final class ReaderRouteTransitionGate {
   }
 
   void applyNow() {
-    if (_disposed || _applied) return;
+    if (_disposed) return;
+    if (_applied) {
+      _apply();
+      return;
+    }
     _cancelListener();
     _commit();
   }

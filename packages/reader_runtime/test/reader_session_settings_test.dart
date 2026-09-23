@@ -13,6 +13,45 @@ void main() {
     expect(changed, isNot(baseline));
   });
 
+  test('paged direction defaults LTR and can explicitly follow source', () {
+    const defaults = ReaderSessionSettings();
+    expect(
+      defaults.resolvePagedDirection(ReadingDirection.rtl),
+      ReadingDirection.ltr,
+    );
+
+    final source = defaults.copyWith(
+      pagedDirectionPreference: ReaderPagedDirectionPreference.source,
+    );
+    expect(
+      source.resolvePagedDirection(ReadingDirection.rtl),
+      ReadingDirection.rtl,
+    );
+
+    final rtl = defaults.copyWith(
+      pagedDirectionPreference: ReaderPagedDirectionPreference.rtl,
+    );
+    expect(
+      rtl.resolvePagedDirection(ReadingDirection.ltr),
+      ReadingDirection.rtl,
+    );
+  });
+
+  test('long-press scale and status-bar policy participate in settings identity',
+      () {
+    const defaults = ReaderSessionSettings();
+    expect(defaults.effectiveLongPressZoomScale, 2.0);
+    expect(defaults.showSystemStatusBar, isTrue);
+
+    final changed = defaults.copyWith(
+      longPressZoomScale: 2.75,
+      showSystemStatusBar: false,
+    );
+    expect(changed.effectiveLongPressZoomScale, 2.75);
+    expect(changed.showSystemStatusBar, isFalse);
+    expect(changed, isNot(defaults));
+  });
+
   test('page inversion is only effective for enabled per-comic settings', () {
     const disabled = ReaderSessionSettings(
       invertPageOrderOverride: true,

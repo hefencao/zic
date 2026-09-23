@@ -171,7 +171,9 @@
   MUST NOT 阻止 adaptive profile 更新或阻止手势、未来翻译等其它消费者读取 profile。
   当前长按放大 MUST 按“漫画显式覆盖 > 高置信 adaptive profile > 模式默认”解析：
   vertical/webtoon profile 默认关闭，paged/animated profile 默认开启；无 profile 时纵向默认关闭、分页使用 global baseline。
-  漫画手动 override master MUST 只 gate 方向、纵向拼接、长按放大、阅读顺序等手动覆盖，不得 gate `comicAdaptiveEnabled`。
+  漫画手动 override master MUST 只 gate 方向、纵向拼接、长按放大、阅读顺序等手动覆盖，不得 gate `comicAdaptiveEnabled`；
+  “使用自适应设置”入口在手动 override 开启后仍 MUST 可见。清除手动覆盖 MUST NOT 重置漫画级 adaptive 开关或已持久化 adaptive profile。
+  全局分页方向 MUST 独立提供 `LTR / RTL / 跟随来源` 三态且默认 LTR；方向解析优先级为漫画显式方向 > 高置信 adaptive 方向 > 全局分页方向。
   纵向拼接、长按放大以及其它少量离散枚举型 Reader 设置 SHOULD 用直接互斥胶囊/segment 展示，
   不应为三个以内的简单选择保留下拉框；数值范围仍可使用 slider。
   adaptive profile MAY 继续增加翻译源语言、自动翻译等 typed 建议，但不得把翻译执行 ownership 或
@@ -1077,7 +1079,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   图片失败时 MUST 使用按资源identity 稳定生成的柔和纯色占位，不得显示破损图片图标。预览栏折叠与展开 MUST 使用同一套排版结果：折叠态只显示第一行，高度由该行实际高度决定；
   展开态继续自动消费来源分页并以 `PageView` 左右分页呈现后续行。预览项 MUST 尽量保持来源原始顺序，并在可读尺寸下放置尽可能多的图片。
   完整行 MUST 直接使用全部媒体宽度反算等面积 tile，不得以外层 Card、重复水平 padding 或扩大 item gap 消耗剩余宽度；只有稀疏末行 MAY 放大到参考完整行面积的 2.4 倍。
-  实际行含横图时最多 2 项，纯竖图行最多 3 项，并受用户设置的更小上限约束。阅读设置 MUST 提供每行最大数量 1–8，默认 4。
+  实际行含横图时最多 2 项，纯竖图行最多 3 项，并受用户设置的更小上限约束。外观设置 MUST 提供详情预览每行最大数量 1–8，默认 4；该项不得混入 Reader 阅读操作设置。
   图片区域 MUST 不超过屏幕高度的 90%，展开/收起按钮 MUST 居中且只显示箭头，不得显示“展开/收起”文字。不得拉伸、强制裁切或建立详情页专用图片缓存。
 - 来源详情若提供评论能力，详情页 SHOULD 显示评论栏，并 MUST 支持分页评论次级页；评论存在回复数量和不透明 ID 时，次级页 MUST 能按原 source `subId`/回复 ID 加载回复。
   这些能力是可选的，来源未声明时不得发起插件请求。评论正文的受限 HTML MUST 将 HTTP(S) `img` 交由统一 artwork loader 作为行内图片并支持 `br`/HTML entity；
@@ -1141,13 +1143,15 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   详情页等待 Reader route返回后 MUST 使用 route-local final progress更新当前投影，不得为此重读整库。
   异常进程终止只能依靠持续 checkpoint降低损失窗口，不得宣称绝对 crash-safe。
 - UI 控件存在性 MUST 来自 capability，不得用静态/动画猜测下载或播放能力。
-- 双击缩放分级与长按放大 MUST 可设置：双击循环 1x → 一级（默认 1.5x）→ 二级（默认 2.0x）→ 1x；长按放大分页模式默认开启，连续模式默认关闭且仅可按漫画单独开启。
+- 双击缩放分级与长按放大 MUST 分开设置：双击循环 1x → 一级（默认 1.5x）→ 二级（默认 2.0x）→ 1x；长按放大倍率是独立值（默认 2.0x），MUST NOT 偷用双击一级/二级倍率。长按放大分页模式默认开启，连续模式默认关闭且可由 adaptive/漫画显式覆盖。
 - 分页模式长按放大释放行为 MUST 可设置，默认松手复原（松手后动画回到 1x 并恢复翻页滚动）；关闭后放大保持到双击退出或页面切换。连续模式长按放大 MUST 始终保持放大，不得松手自动复位。
 - 长按放大移动方式 MUST 可设置为拖动或聚焦。拖动模式内容位移 = 手指累计位移 × 拖动比率（默认 1.0，即按放大后分辨率 1:1 跟随；
   比率可设 0.25–4），聚焦模式保持手指下的内容点始终位于手指处（位移 = p·(1−s)）。拖动实现 MUST 以长按起点平移为基准应用一次累计位移，MUST NOT 逐帧重复累加导致失控。
 - "最大可视"边界约束（默认开启、可设置关闭）MUST 按实际显示图片矩形计算，而非页面控件矩形：contain 留边时以图片边缘为准——缩放后图片能覆盖视口的轴，一侧越界则对侧不得越界；不能覆盖的轴保持图片居中。
   关闭后允许自由拖出视口。
 - 双击放大的结果位置 MUST 可设置：居中（以视口中心为原点）、吸附（按点击半侧把图片对应边缘贴齐视口边缘，覆盖不了的轴居中）、聚焦（保持点击位置不动）。默认居中。
+- 阅读设置 UI MUST 至少按“布局 / 界面 / 操作·双击放大 / 操作·长按放大”分区，双击倍率/锚点不得与长按倍率/释放/移动方式交错排列。
+- Reader 的“进入时隐藏阅读控制”只控制 Reader 上下控制与系统导航栏；系统状态栏可见性 MUST 是独立全局偏好，默认显示。Android 16 / targetSdk 36 及以后不得依赖被系统忽略的旧 Flutter 非 edge-to-edge `SystemUiMode` 隐藏状态栏，Android 实现 MUST 由 Reader platform owner 使用 `WindowInsetsController` show/hide status/navigation bars。Reader exit MUST 恢复系统栏；App resume 和控制栏显隐变化 MUST 重新投影当前 policy。
 - 连续模式的缩放（双击分级、捏合与长按放大）MUST 作用于整条页面序列的统一变换：所有可见页一起缩放，接缝不得分裂。放大是视口空间的视觉层：
   列表滚动 MUST 保持可用（可在放大状态下继续滚动切页），跳页/滑动不得自动复位缩放；仅方向切换/换章节等结构性变更复位。
 - 连续模式放大后双指捏合松开 MUST 保持结果倍率与偏移，不得因倍率低于阈值自动弹回 1x。已在放大态时长按 MUST NOT 跳变倍率，仅按移动方式调整水平偏移并在松手后锁定。

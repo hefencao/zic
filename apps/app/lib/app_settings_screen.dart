@@ -6,6 +6,7 @@ import 'package:downloads/downloads.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:reader/reader.dart';
+import 'package:reader_runtime/reader_runtime.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'startup_platform.dart';
 import 'package:storage_bridge/storage_bridge.dart';
@@ -48,6 +49,10 @@ const dataDownloadDirectoryKey = ValueKey<String>('data-download-directory');
 const dataFileAccessSettingsKey = ValueKey<String>('data-file-access-settings');
 const dataCacheLimitKey = ValueKey<String>('data-cache-limit');
 const readingAdaptiveKey = ValueKey<String>('reading-adaptive');
+const readingPagedDirectionKey =
+    ValueKey<String>('reading-paged-direction');
+const readingShowStatusBarKey =
+    ValueKey<String>('reading-show-status-bar');
 const readingVerticalStitchKey =
     ValueKey<String>('reading-vertical-stitch');
 const readingZoomStageFirstKey =
@@ -56,6 +61,8 @@ const readingZoomStageSecondKey =
     ValueKey<String>('reading-zoom-stage-second');
 const readingLongPressZoomKey =
     ValueKey<String>('reading-long-press-zoom');
+const readingLongPressZoomScaleKey =
+    ValueKey<String>('reading-long-press-zoom-scale');
 const readingLongPressZoomRestoreKey =
     ValueKey<String>('reading-long-press-zoom-restore');
 const readingLongPressZoomMoveModeKey =
@@ -181,7 +188,7 @@ final class SettingsScreen extends StatelessWidget {
             key: settingsReadingEntryKey,
             icon: Icons.menu_book_outlined,
             title: '阅读',
-            subtitle: '默认阅读模式与沉浸行为',
+            subtitle: '布局、界面与阅读操作',
             onTap: () => _push(
               context,
               ReadingSettingsScreen(preferences: preferences),
@@ -1175,33 +1182,68 @@ final class ReadingSettingsScreen extends StatelessWidget {
         animation: preferences,
         builder: (context, _) => ListView(
           children: <Widget>[
-            const _SettingsSectionTitle('新章节默认行为'),
+            const _SettingsSectionTitle('布局'),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: SegmentedButton<ReaderMode>(
-                showSelectedIcon: false,
-                segments: const <ButtonSegment<ReaderMode>>[
-                  ButtonSegment(
-                    value: ReaderMode.paged,
-                    icon: Icon(Icons.menu_book_outlined),
-                    label: Text('分页'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const Text('默认阅读模式'),
+                  const SizedBox(height: 6),
+                  SegmentedButton<ReaderMode>(
+                    showSelectedIcon: false,
+                    segments: const <ButtonSegment<ReaderMode>>[
+                      ButtonSegment(
+                        value: ReaderMode.paged,
+                        icon: Icon(Icons.menu_book_outlined),
+                        label: Text('分页'),
+                      ),
+                      ButtonSegment(
+                        value: ReaderMode.continuous,
+                        icon: Icon(Icons.view_day_outlined),
+                        label: Text('连续'),
+                      ),
+                    ],
+                    selected: <ReaderMode>{preferences.defaultReaderMode},
+                    onSelectionChanged: (values) =>
+                        preferences.setDefaultReaderMode(values.single),
                   ),
-                  ButtonSegment(
-                    value: ReaderMode.continuous,
-                    icon: Icon(Icons.view_day_outlined),
-                    label: Text('连续'),
+                  const SizedBox(height: 12),
+                  const Text('分页方向'),
+                  const SizedBox(height: 6),
+                  SegmentedButton<ReaderPagedDirectionPreference>(
+                    key: readingPagedDirectionKey,
+                    showSelectedIcon: false,
+                    segments:
+                        const <ButtonSegment<ReaderPagedDirectionPreference>>[
+                      ButtonSegment(
+                        value: ReaderPagedDirectionPreference.ltr,
+                        label: Text('LTR'),
+                      ),
+                      ButtonSegment(
+                        value: ReaderPagedDirectionPreference.rtl,
+                        label: Text('RTL'),
+                      ),
+                      ButtonSegment(
+                        value: ReaderPagedDirectionPreference.source,
+                        label: Text('跟随来源'),
+                      ),
+                    ],
+                    selected: <ReaderPagedDirectionPreference>{
+                      preferences.readerPagedDirectionPreference,
+                    },
+                    onSelectionChanged: (values) =>
+                        preferences.setReaderPagedDirectionPreference(
+                      values.single,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '默认 LTR；本漫画方向和高置信自适应结果仍可覆盖。',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
-                selected: <ReaderMode>{preferences.defaultReaderMode},
-                onSelectionChanged: (values) =>
-                    preferences.setDefaultReaderMode(values.single),
               ),
-            ),
-            SwitchListTile(
-              title: const Text('默认沉浸阅读'),
-              subtitle: const Text('打开 Reader 时隐藏系统栏和控制栏；点击页面仍可呼出控制。'),
-              value: preferences.readerStartsImmersive,
-              onChanged: preferences.setReaderStartsImmersive,
             ),
             SwitchListTile(
               key: readingAdaptiveKey,
@@ -1239,85 +1281,36 @@ final class ReadingSettingsScreen extends StatelessWidget {
                 ],
               ),
             ),
-            const _SettingsSectionTitle('缩放'),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: DropdownButtonFormField<double>(
-                      key: readingZoomStageFirstKey,
-                      initialValue: preferences.defaultZoomStageFirst,
-                      decoration: const InputDecoration(
-                        labelText: '双击放大 · 一级',
-                      ),
-                      items: const <double>[1.5, 2.0, 2.5, 3.0]
-                          .map<DropdownMenuItem<double>>(
-                            (value) => DropdownMenuItem(
-                              value: value,
-                              child: Text('${value}x'),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        if (value != null) {
-                          preferences.setDefaultZoomStageFirst(value);
-                        }
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: DropdownButtonFormField<double>(
-                      key: readingZoomStageSecondKey,
-                      initialValue: preferences.defaultZoomStageSecond,
-                      decoration: const InputDecoration(
-                        labelText: '双击放大 · 二级',
-                      ),
-                      items: const <double>[2.0, 2.5, 3.0, 4.0, 5.0, 6.0]
-                          .map<DropdownMenuItem<double>>(
-                            (value) => DropdownMenuItem(
-                              value: value,
-                              child: Text('${value}x'),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        if (value != null) {
-                          preferences.setDefaultZoomStageSecond(value);
-                        }
-                      },
-                    ),
-                  ),
-                ],
-              ),
+            const _SettingsSectionTitle('界面'),
+            SwitchListTile(
+              title: const Text('进入时隐藏阅读控制'),
+              subtitle: const Text('打开 Reader 时先隐藏上下控制栏与系统导航栏；点击页面仍可呼出。'),
+              value: preferences.readerStartsImmersive,
+              onChanged: preferences.setReaderStartsImmersive,
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  const Text('长按放大'),
-                  const SizedBox(height: 6),
-                  SegmentedButton<bool>(
-                    key: readingLongPressZoomKey,
-                    showSelectedIcon: false,
-                    segments: const <ButtonSegment<bool>>[
-                      ButtonSegment(value: true, label: Text('启用')),
-                      ButtonSegment(value: false, label: Text('停用')),
-                    ],
-                    selected: <bool>{preferences.longPressZoomEnabled},
-                    onSelectionChanged: (values) =>
-                        preferences.setLongPressZoomEnabled(values.single),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '作为默认值；开启自适应后，条漫默认关闭，页漫/动图默认开启，'
-                    '本漫画仍可显式覆盖。',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
+            SwitchListTile(
+              key: readingShowStatusBarKey,
+              title: const Text('显示系统状态栏'),
+              subtitle: const Text(
+                '与阅读控制栏独立；关闭后 Reader 隐藏顶部系统状态栏。',
               ),
+              value: preferences.showSystemStatusBar,
+              onChanged: preferences.setShowSystemStatusBar,
+            ),
+            const _SettingsSectionTitle('操作 · 双击放大'),
+            _readerScaleChoiceChips(
+              key: readingZoomStageFirstKey,
+              title: '一级倍率',
+              value: preferences.defaultZoomStageFirst,
+              values: const <double>[1.5, 2.0, 2.5, 3.0],
+              onChanged: preferences.setDefaultZoomStageFirst,
+            ),
+            _readerScaleChoiceChips(
+              key: readingZoomStageSecondKey,
+              title: '二级倍率',
+              value: preferences.defaultZoomStageSecond,
+              values: const <double>[2.0, 2.5, 3.0, 4.0, 5.0, 6.0],
+              onChanged: preferences.setDefaultZoomStageSecond,
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -1356,6 +1349,49 @@ final class ReadingSettingsScreen extends StatelessWidget {
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
+              ),
+            ),
+            const _SettingsSectionTitle('操作 · 长按放大'),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  SegmentedButton<bool>(
+                    key: readingLongPressZoomKey,
+                    showSelectedIcon: false,
+                    segments: const <ButtonSegment<bool>>[
+                      ButtonSegment(value: true, label: Text('启用')),
+                      ButtonSegment(value: false, label: Text('停用')),
+                    ],
+                    selected: <bool>{preferences.longPressZoomEnabled},
+                    onSelectionChanged: (values) =>
+                        preferences.setLongPressZoomEnabled(values.single),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '作为默认值；开启自适应后，条漫默认关闭，页漫/动图默认开启，'
+                    '本漫画仍可显式覆盖。',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+            ListTile(
+              key: readingLongPressZoomScaleKey,
+              title: const Text('长按放大倍率'),
+              subtitle: Slider(
+                min: 1.25,
+                max: 4,
+                divisions: 11,
+                label:
+                    '${preferences.longPressZoomScale.toStringAsFixed(2)}x',
+                value:
+                    preferences.longPressZoomScale.clamp(1.25, 4).toDouble(),
+                onChanged: preferences.setLongPressZoomScale,
+              ),
+              trailing: Text(
+                '${preferences.longPressZoomScale.toStringAsFixed(2)}x',
               ),
             ),
             SwitchListTile(
@@ -1428,6 +1464,7 @@ final class ReadingSettingsScreen extends StatelessWidget {
               value: preferences.longPressZoomLimitToViewport,
               onChanged: preferences.setLongPressZoomLimitToViewport,
             ),
+            const _SettingsSectionTitle('缩放质量'),
             SwitchListTile(
               key: readingZoomDecodeBoostKey,
               title: const Text('放大时提升解码分辨率'),
@@ -1438,32 +1475,43 @@ final class ReadingSettingsScreen extends StatelessWidget {
               value: preferences.zoomDecodeBoostEnabled,
               onChanged: preferences.setZoomDecodeBoostEnabled,
             ),
-            ListTile(
-              key: readingPreviewMaxItemsPerRowKey,
-              leading: const Icon(Icons.photo_library_outlined),
-              title: const Text('详情页预览每行最多数量'),
-              subtitle: Slider(
-                min: 1,
-                max: 8,
-                divisions: 7,
-                label: '${preferences.detailsPreviewMaxItemsPerRow}',
-                value: preferences.detailsPreviewMaxItemsPerRow.toDouble(),
-                onChanged: (value) =>
-                    preferences.setDetailsPreviewMaxItemsPerRow(value.round()),
-              ),
-              trailing: Text('${preferences.detailsPreviewMaxItemsPerRow}'),
-            ),
-            const ListTile(
-              leading: Icon(Icons.swap_horiz),
-              title: Text('分页方向'),
-              subtitle: Text('分页模式继续尊重漫画源或本地元数据中的 LTR / RTL 方向。'),
-            ),
           ],
         ),
       ),
     );
   }
 }
+
+Widget _readerScaleChoiceChips({
+  required Key key,
+  required String title,
+  required double value,
+  required List<double> values,
+  required ValueChanged<double> onChanged,
+}) =>
+    Padding(
+      key: key,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Text(title),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: <Widget>[
+              for (final candidate in values)
+                ChoiceChip(
+                  label: Text('${candidate.toStringAsFixed(1)}x'),
+                  selected: value == candidate,
+                  onSelected: (_) => onChanged(candidate),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
 
 final class DownloadSettingsScreen extends StatelessWidget {
   const DownloadSettingsScreen({required this.policyBinding, super.key});
@@ -1567,6 +1615,24 @@ final class AppearanceSettingsScreen extends StatelessWidget {
             const Text(
               '主题切换立即作用于整个应用，并持久化到应用数据目录。'
               'AMOLED 仅在深色模式生效。',
+            ),
+            const SizedBox(height: 16),
+            const _SettingsSectionTitle('详情页'),
+            ListTile(
+              key: readingPreviewMaxItemsPerRowKey,
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('预览每行最多数量'),
+              subtitle: Slider(
+                min: 1,
+                max: 8,
+                divisions: 7,
+                label: '${preferences.detailsPreviewMaxItemsPerRow}',
+                value: preferences.detailsPreviewMaxItemsPerRow.toDouble(),
+                onChanged: (value) =>
+                    preferences.setDetailsPreviewMaxItemsPerRow(value.round()),
+              ),
+              trailing: Text('${preferences.detailsPreviewMaxItemsPerRow}'),
             ),
           ],
         ),

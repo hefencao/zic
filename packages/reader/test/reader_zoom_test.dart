@@ -234,6 +234,7 @@ void main() {
                 zoomStageFirst: 2.5,
                 zoomStageSecond: 2.5,
                 longPressZoomEnabled: enabled,
+                longPressZoomScale: 2.5,
                 pageBuilder: (context, asset, reportFirstFrame) =>
                     ColoredBox(color: Colors.black),
               ),
@@ -281,6 +282,7 @@ void main() {
     ReaderLongPressMoveMode moveMode = ReaderLongPressMoveMode.drag,
     double panRatio = 1.0,
     bool limitToViewport = true,
+    double longPressScale = 4.0,
   }) async {
     final controller = ReaderController(
       sessionId: 'paged-lens',
@@ -301,6 +303,7 @@ void main() {
               zoomStageFirst: 2.0,
               zoomStageSecond: 4.0,
               longPressZoomEnabled: true,
+              longPressZoomScale: longPressScale,
               longPressZoomRestoreOnRelease: restoreOnRelease,
               longPressZoomMoveMode: moveMode,
               longPressZoomPanRatio: panRatio,
@@ -315,6 +318,19 @@ void main() {
     await tester.pump();
     return controller;
   }
+
+  testWidgets('long-press scale is independent from double-tap stages', (
+    tester,
+  ) async {
+    final controller = await pumpPaged(tester, longPressScale: 2.75);
+    addTearDown(controller.dispose);
+
+    final gesture = await tester.startGesture(const Offset(200, 200));
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(_pagedTransform(tester).getMaxScaleOnAxis(), closeTo(2.75, 0.001));
+    await gesture.up();
+    await tester.pumpAndSettle();
+  });
 
   testWidgets('paged long-press drag follows the zoomed resolution once', (
     tester,
@@ -444,6 +460,7 @@ void main() {
                 zoomStageFirst: 2.5,
                 zoomStageSecond: 4.0,
                 longPressZoomEnabled: true,
+                longPressZoomScale: 2.5,
                 longPressZoomMoveMode: moveMode,
                 longPressZoomPanRatio: panRatio,
                 pageBuilder: (context, asset, reportFirstFrame) =>
@@ -665,6 +682,7 @@ void main() {
               zoomStageFirst: 2.0,
               zoomStageSecond: 4.0,
               longPressZoomEnabled: true,
+              longPressZoomScale: 4.0,
               pageBuilder: (context, asset, reportFirstFrame) =>
                   ColoredBox(color: Colors.black),
             ),

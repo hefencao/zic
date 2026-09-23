@@ -122,6 +122,7 @@ final class ReaderView extends StatefulWidget {
     this.zoomStageFirst = 1.5,
     this.zoomStageSecond = 2.0,
     this.longPressZoomEnabled = false,
+    this.longPressZoomScale = 2.0,
     this.longPressZoomRestoreOnRelease = true,
     this.longPressZoomMoveMode = ReaderLongPressMoveMode.drag,
     this.longPressZoomPanRatio = 1.0,
@@ -173,6 +174,9 @@ final class ReaderView extends StatefulWidget {
 
   /// Enables the long-press magnifier lens that follows the finger.
   final bool longPressZoomEnabled;
+
+  /// Magnification entered by a long-press lens from 1x.
+  final double longPressZoomScale;
 
   /// True (default) animates back to 1x when the long press ends. False keeps
   /// the zoom after release; double-tap or page change then returns to 1x.
@@ -718,6 +722,7 @@ final class _ReaderViewState extends State<ReaderView>
       zoomStageFirst: widget.zoomStageFirst,
       zoomStageSecond: widget.zoomStageSecond,
       longPressZoomEnabled: widget.longPressZoomEnabled,
+      longPressZoomScale: widget.longPressZoomScale,
       longPressZoomRestoreOnRelease: widget.longPressZoomRestoreOnRelease,
       longPressZoomMoveMode: widget.longPressZoomMoveMode,
       longPressZoomPanRatio: widget.longPressZoomPanRatio,
@@ -1465,6 +1470,11 @@ final class _ReaderViewState extends State<ReaderView>
           ? widget.longPressZoomPanRatio.clamp(0.25, 4.0).toDouble()
           : 1.0;
 
+  double get _effectiveLongPressZoomScale =>
+      widget.longPressZoomScale.isFinite
+          ? widget.longPressZoomScale.clamp(1.1, 8.0).toDouble()
+          : 2.0;
+
   /// Horizontal image edges (in viewport coordinates) of the current page,
   /// or null when the page is assumed to fill the width. Pages are laid out
   /// full-width; a contain-fit image narrower than the box leaves side bars
@@ -1559,10 +1569,7 @@ final class _ReaderViewState extends State<ReaderView>
     // the long press then acts as a horizontal drag whose offset locks on
     // release. Only an unzoomed strip enters at the magnifier scale.
     if (!_stripZoomed) {
-      _setStripZoom(
-        math.max(widget.zoomStageFirst, 2.0),
-        pivot,
-      );
+      _setStripZoom(_effectiveLongPressZoomScale, pivot);
     }
     // Keep the discrete double-tap stages in sync with the magnifier scale
     // so a later double-tap advances/exits relative to what is on screen.
@@ -1588,7 +1595,7 @@ final class _ReaderViewState extends State<ReaderView>
       // A hold from 1x still provides the natural first magnification. Once
       // already zoomed, however, the hold is only a lock gesture and must not
       // advance to the next discrete stage.
-      final target = math.max(widget.zoomStageFirst, 2.0);
+      final target = _effectiveLongPressZoomScale;
       _applyStripStageTarget(target);
       _setStripZoom(target, _stripPivotForOrigin(local));
     } else {

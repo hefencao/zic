@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:domain/domain.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reader/reader.dart';
 import 'package:telemetry/telemetry.dart';
@@ -316,87 +315,6 @@ void main() {
       await _disposePipelineReader(tester);
     },
   );
-
-  testWidgets('initial system UI waits for the Reader route transition',
-      (tester) async {
-    final systemUiCalls = <MethodCall>[];
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-      SystemChannels.platform,
-      (call) async {
-        if (call.method == 'SystemChrome.setEnabledSystemUIMode') {
-          systemUiCalls.add(call);
-        }
-        return null;
-      },
-    );
-    addTearDown(() {
-      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-        SystemChannels.platform,
-        null,
-      );
-    });
-
-    final chapter = _chapter();
-    const launchKey = ValueKey<String>('reader-system-ui-launch');
-    const routeKey = ValueKey<String>('reader-system-ui-route');
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Builder(
-          builder: (context) => Scaffold(
-            body: FilledButton(
-              key: launchKey,
-              onPressed: () => unawaited(
-                Navigator.of(context).push(
-                  PageRouteBuilder<void>(
-                    transitionDuration: const Duration(seconds: 2),
-                    pageBuilder: (context, animation, secondaryAnimation) => _pipelineReader(
-                      chapter: chapter,
-                      build: (pipeline) => ReaderRuntimeScreen(
-                        chapter: chapter,
-                        pipeline: pipeline,
-                        screenKey: routeKey,
-                        artifactPageBuilder: (
-                          context,
-                          asset,
-                          reportFirstFrame,
-                          runtime,
-                        ) =>
-                            const ColoredBox(color: Colors.black),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-              child: const Text('Launch Reader'),
-            ),
-          ),
-        ),
-      ),
-    );
-    systemUiCalls.clear();
-
-    await tester.tap(find.byKey(launchKey));
-    await tester.pump();
-    for (var frame = 0;
-        frame < 20 && find.byKey(routeKey).evaluate().isEmpty;
-        frame++) {
-      await tester.pump(_frameStep);
-    }
-    expect(find.byKey(routeKey), findsOneWidget);
-    expect(
-      systemUiCalls,
-      isEmpty,
-      reason: 'route animation must own the transition before immersive UI',
-    );
-
-    await tester.pumpAndSettle();
-    expect(systemUiCalls, hasLength(1));
-    expect(systemUiCalls.single.method, 'SystemChrome.setEnabledSystemUIMode');
-
-    Navigator.of(tester.element(find.byKey(routeKey))).pop();
-    await tester.pumpAndSettle();
-    await _disposePipelineReader(tester);
-  });
 
   testWidgets('first presentation observer fires once after a real page frame',
       (tester) async {
@@ -714,6 +632,7 @@ void main() {
 
     await tester.tap(find.byKey(readerComicSettingsEnabledKey));
     await tester.pump();
+    expect(find.byKey(readerAdaptiveSettingsKey), findsOneWidget);
     expect(
       find.byKey(const ValueKey<String>('reader-comic-direction-follow')),
       findsOneWidget,
@@ -745,6 +664,66 @@ void main() {
     expect(saved!.verticalStitchOverride, isFalse);
     expect(saved!.longPressZoomOverride, isFalse);
     expect(saved!.effectiveAdaptiveEnabled, isTrue);
+    await _disposePipelineReader(tester);
+  });
+
+  testWidgets('clearing manual comic overrides preserves adaptive policy',
+      (tester) async {
+    ReaderSessionSettings? saved;
+    final chapter = _chapter();
+    const profile = AdaptiveReaderProfile(
+      direction: ReadingDirection.vertical,
+      confidence: 0.9,
+      basis: 'test',
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _pipelineReader(
+          chapter: chapter,
+          build: (pipeline) => ReaderRuntimeScreen(
+            chapter: chapter,
+            pipeline: pipeline,
+            initiallyImmersive: false,
+            initialSettings: const ReaderSessionSettings(
+              comicSpecificEnabled: true,
+              directionOverride: ReadingDirection.rtl,
+              verticalStitchOverride: true,
+              globalAdaptiveEnabled: true,
+              comicAdaptiveEnabled: false,
+              adaptiveProfile: profile,
+              longPressZoomOverride: true,
+            ),
+            onSettingsChanged: (settings) => saved = settings,
+            artifactPageBuilder: (
+              context,
+              asset,
+              reportFirstFrame,
+              runtime,
+            ) =>
+                ColoredBox(
+              key: ValueKey<String>('reader-clear-page:${asset.index}'),
+              color: Colors.black,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(readerComicSettingsKey));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('清除本漫画覆盖'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('清除本漫画覆盖'));
+    await tester.pumpAndSettle();
+
+    expect(saved, isNotNull);
+    expect(saved!.comicSpecificEnabled, isFalse);
+    expect(saved!.directionOverride, isNull);
+    expect(saved!.verticalStitchOverride, isNull);
+    expect(saved!.longPressZoomOverride, isNull);
+    expect(saved!.comicAdaptiveEnabled, isFalse);
+    expect(saved!.adaptiveProfile, profile);
     await _disposePipelineReader(tester);
   });
 
@@ -843,6 +822,43 @@ void main() {
     expect(
       find.byKey(const ValueKey<String>('reader-rtl-page:2')),
       findsOneWidget,
+    );
+    await _disposePipelineReader(tester);
+  });
+
+  testWidgets('default paged direction is LTR even for RTL source metadata',
+      (tester) async {
+    final chapter = _chapter(direction: ReadingDirection.rtl);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _pipelineReader(
+          chapter: chapter,
+          build: (pipeline) => ReaderRuntimeScreen(
+            chapter: chapter,
+            pipeline: pipeline,
+            initiallyImmersive: false,
+            initialSettings: const ReaderSessionSettings(),
+            artifactPageBuilder: (
+              context,
+              asset,
+              reportFirstFrame,
+              runtime,
+            ) =>
+                ColoredBox(
+              key: ValueKey<String>('reader-default-ltr-page:${asset.index}'),
+              color: Colors.black,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final sliderFinder = find.byKey(readerPageSliderKey);
+    expect(sliderFinder, findsOneWidget);
+    expect(
+      Directionality.of(tester.element(sliderFinder)),
+      TextDirection.ltr,
     );
     await _disposePipelineReader(tester);
   });

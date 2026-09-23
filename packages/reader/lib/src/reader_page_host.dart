@@ -14,6 +14,7 @@ final class _ReaderPageShell extends StatefulWidget {
     required this.zoomStageFirst,
     required this.zoomStageSecond,
     required this.longPressZoomEnabled,
+    required this.longPressZoomScale,
     required this.longPressZoomRestoreOnRelease,
     required this.longPressZoomMoveMode,
     required this.longPressZoomPanRatio,
@@ -42,6 +43,7 @@ final class _ReaderPageShell extends StatefulWidget {
   final double zoomStageFirst;
   final double zoomStageSecond;
   final bool longPressZoomEnabled;
+  final double longPressZoomScale;
   final bool longPressZoomRestoreOnRelease;
   final ReaderLongPressMoveMode longPressZoomMoveMode;
   final double longPressZoomPanRatio;
@@ -172,6 +174,7 @@ final class _ReaderPageShellState extends State<_ReaderPageShell> {
       zoomStageFirst: widget.zoomStageFirst,
       zoomStageSecond: widget.zoomStageSecond,
       longPressZoomEnabled: widget.longPressZoomEnabled,
+      longPressZoomScale: widget.longPressZoomScale,
       longPressZoomRestoreOnRelease: widget.longPressZoomRestoreOnRelease,
       longPressZoomMoveMode: widget.longPressZoomMoveMode,
       longPressZoomPanRatio: widget.longPressZoomPanRatio,
@@ -216,6 +219,7 @@ final class _ZoomableReaderPage extends StatefulWidget {
     this.zoomStageFirst = 1.5,
     this.zoomStageSecond = 2.0,
     this.longPressZoomEnabled = false,
+    this.longPressZoomScale = 2.0,
     this.longPressZoomRestoreOnRelease = true,
     this.longPressZoomMoveMode = ReaderLongPressMoveMode.drag,
     this.longPressZoomPanRatio = 1.0,
@@ -243,6 +247,7 @@ final class _ZoomableReaderPage extends StatefulWidget {
   final double zoomStageFirst;
   final double zoomStageSecond;
   final bool longPressZoomEnabled;
+  final double longPressZoomScale;
 
   /// True (default) restores 1x when the long press ends; false keeps the
   /// zoom until a double-tap, page change or reset.
@@ -553,7 +558,9 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage>
       return;
     }
     _cancelPendingTap();
-    final scale = math.max(widget.zoomStageSecond, widget.zoomStageFirst);
+    final scale = widget.longPressZoomScale.isFinite
+        ? widget.longPressZoomScale.clamp(1.1, 8.0).toDouble()
+        : 2.0;
     _lensActive = true;
     final entry = Offset(
       details.localPosition.dx * (1 - scale),
@@ -871,8 +878,10 @@ final class _ZoomableReaderPageState extends State<_ZoomableReaderPage>
                 transformationController: _transformation,
                 minScale: 1,
                 maxScale: math.max(
-                  widget.zoomStageSecond,
-                  widget.zoomStageFirst,
+                  math.max(widget.zoomStageSecond, widget.zoomStageFirst),
+                  widget.longPressZoomScale.isFinite
+                      ? widget.longPressZoomScale.clamp(1.1, 8.0).toDouble()
+                      : 2.0,
                 ),
                 panEnabled: true,
                 scaleEnabled: true,

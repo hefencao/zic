@@ -12,6 +12,7 @@ import 'package:telemetry/telemetry.dart';
 
 import 'flutter_reader_frame_timing_source.dart';
 import 'flutter_reader_platform_frame_cadence.dart';
+import 'flutter_reader_system_ui.dart';
 import 'reader_comic_settings_sheet.dart';
 import 'reader_playback_controls.dart';
 import 'reader_route_transition_gate.dart';
@@ -172,6 +173,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   AdaptiveReaderProfile? _adaptiveProfile;
   FlutterReaderPlatformFrameCadenceProbe? _platformFrameCadenceProbe;
   DecodeTarget? _appliedZoomDecodeTarget;
+  late final FlutterReaderSystemUi _readerSystemUi;
   late final ReaderRouteTransitionGate _systemUiTransitionGate;
 
   @override
@@ -202,15 +204,17 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     }
     _favorite = widget.initialFavorite;
     _controlsVisible = !widget.initiallyImmersive;
+    _readerSystemUi = FlutterReaderSystemUi();
     _systemUiTransitionGate = ReaderRouteTransitionGate(
-      _applySystemUiModeForControls,
+      _applyReaderSystemUi,
     );
   }
 
-  void _applySystemUiModeForControls() {
+  void _applyReaderSystemUi() {
     unawaited(
-      SystemChrome.setEnabledSystemUIMode(
-        _controlsVisible ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
+      _readerSystemUi.apply(
+        showStatusBar: _settings.showSystemStatusBar,
+        showNavigationBar: _controlsVisible,
       ),
     );
   }
@@ -222,6 +226,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       _favorite = widget.initialFavorite;
     }
     if (oldWidget.initialSettings != widget.initialSettings) {
+      final statusBarVisibilityChanged =
+          oldWidget.initialSettings.showSystemStatusBar !=
+              widget.initialSettings.showSystemStatusBar;
       final sourceConfidenceChanged =
           oldWidget.initialSettings.sourceWebtoonConfidence !=
               widget.initialSettings.sourceWebtoonConfidence;
@@ -234,6 +241,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
         );
       }
       _adaptiveProfile = _initialAdaptiveProfile(_settings);
+      if (statusBarVisibilityChanged) {
+        _systemUiTransitionGate.applyNow();
+      }
     }
     if (oldWidget.adaptiveMetadata?.fingerprint !=
         widget.adaptiveMetadata?.fingerprint) {
@@ -306,7 +316,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   ReadingDirection _resolveInitialDirection(ReadingProgress? progress) {
     final base = progress?.readerMode == ReaderMode.continuous
         ? ReadingDirection.vertical
-        : widget.chapter.readingDirection;
+        : _settings.resolvePagedDirection(widget.chapter.readingDirection);
     if (_settings.comicSpecificEnabled &&
         _settings.directionOverride != null) {
       return _settings.directionOverride!;
@@ -489,6 +499,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       _applyLifecyclePlayback(state);
+      _systemUiTransitionGate.applyNow();
       return;
     }
     if (state == AppLifecycleState.inactive ||
@@ -742,7 +753,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     }
     _playback.removeListener(_syncPipelinePlayback);
     _playback.dispose();
-    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+    unawaited(_readerSystemUi.restore());
     super.dispose();
   }
 
@@ -863,7 +874,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     setState(() {
       _settings = saved;
       _adaptiveProfile = _initialAdaptiveProfile(_settings);
-      if (_adaptiveProfile != _settings.adaptiveProfile) {
+      if (_settings.effectiveAdaptiveEnabled &&
+          _adaptiveProfile != _settings.adaptiveProfile) {
         _settings = _settings.copyWith(adaptiveProfile: _adaptiveProfile);
       }
     });
@@ -1157,6 +1169,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
               zoomStageFirst: _settings.zoomStageFirst,
               zoomStageSecond: _settings.zoomStageSecond,
               longPressZoomEnabled: _effectiveLongPressZoom(reader),
+              longPressZoomScale: _settings.effectiveLongPressZoomScale,
               longPressZoomRestoreOnRelease:
                   _settings.longPressZoomRestoreOnRelease,
               longPressZoomMoveMode: _settings.longPressZoomMoveMode,

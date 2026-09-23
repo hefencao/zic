@@ -60,7 +60,10 @@ App build：0.31.0+328
   为后续翻译等消费者保留同一结果，同时不改变 Pipeline/NetLane owner。
   来源级应用策略已统一收口到齿轮“源设置”：条漫置信、source-scoped 数据信任、来源独立下载目录；
   configurable source 自身设置/登录改为“来源属性与登录”。每漫画“使用自适应设置”独立于手动设置 master，
-  阅读方向只保留跟随/LTR/RTL/纵向；纵向拼接、长按放大等离散项使用互斥胶囊。
+  阅读方向只保留跟随/LTR/RTL/纵向；“启用本漫画覆盖”只控制手动覆盖，清除覆盖不再清 adaptive policy/profile。
+  全局分页方向为 LTR/RTL/跟随来源，默认 LTR；纵向拼接、长按放大等离散项使用互斥胶囊。
+  阅读设置已按布局、界面、双击操作、长按操作、缩放质量拆分；长按倍率独立于双击倍率，默认 2.0x。
+  系统状态栏可见性独立于 Reader 控制栏。Android 16 / targetSdk 36 使用 reader_runtime 原生 WindowInsetsController owner；Reader 退出恢复系统栏。
 - 页面几何：ValueListenable 提供 pageDimensions 驱动的 ratio live feed 投影。
 - 纵向模式：vertical模式只有extent真实变化 才能触发 anchor/geometry rebuild；vertical模式 保持布局稳定。
 - 视口与上传：vertical hidden-upload规则不变；明确区分 source-canvas 与 decoded raster 职责。
@@ -77,6 +80,7 @@ App build：0.31.0+328
 | repository / documentation / Dart 静态门禁 | Verified-static | 门禁与目录结构核对通过 |
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
 | 自适应阅读来源先验 | Verified-toolchain | model v6 比例回归、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；具体线上来源尚未标记真机验证 |
+| Reader 设置与系统栏 | Verified-device | Android 16 / targetSdk 36 真机验证 status bar 显示/隐藏、控制栏独立导航栏行为、Reader exit 恢复；漫画级 adaptive 与手动覆盖入口也做了真机 UI 验证 |
 | 跨平台桥接与平台编译 | Verified-toolchain | Kotlin 与 Android 依赖通过 |
 | 设备性能与真机回归 | Verified-device | 基础链路真机采样验证通过 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |

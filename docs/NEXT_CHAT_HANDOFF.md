@@ -36,7 +36,9 @@
 - 来源管理中的齿轮只表示 ZIC “源设置”：条漫置信、source-scoped 历史缓存冲突信任、来源独立下载目录。
   configurable source 自身属性/登录使用属性列表图标“来源属性与登录”；插件管理只负责插件生命周期，不再承载 source policy。
   每漫画“使用自适应设置”是独立开关；手动阅读方向只有跟随/LTR/RTL/纵向，
-  “启用本漫画设置”只 gate 手动方向/纵向拼接/长按放大/阅读顺序等 override。纵向拼接与长按放大使用互斥胶囊。
+  “启用本漫画覆盖”只 gate 手动方向/纵向拼接/长按放大/阅读顺序等 override，开启后 adaptive 入口仍保留；清除手动覆盖不得清 adaptive policy/profile。
+  全局分页方向为 LTR/RTL/跟随来源且默认 LTR；阅读设置按布局、界面、双击操作、长按操作拆开，长按倍率独立于双击倍率并默认 2.0x。
+  系统状态栏可见性独立于 Reader 控制栏；Android 16/targetSdk 36 由 reader_runtime 的 WindowInsetsController owner 实际 show/hide，控制栏只联动 navigation bar，Reader exit 恢复系统栏。
 - 页面网络调度由共享 `NetLane` 唯一拥有，保持 normal 5 + current 高优先级保留槽 1（5个transport lease 与 current handoff）。
 - 逻辑与解码窗口固定为前 7 / 后 3（7/3）及解码前 2 / 后 1（2/1）。
 - Reader 仅消费不可变输出，不拥有 transport、session、cursor 或 texture。

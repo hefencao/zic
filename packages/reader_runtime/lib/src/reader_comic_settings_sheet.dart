@@ -39,18 +39,12 @@ Future<ReaderSessionSettings?> showReaderComicSettingsSheet(
                   '本漫画阅读设置',
                   style: Theme.of(context).textTheme.titleLarge,
                 ),
-                SwitchListTile(
-                  key: readerComicSettingsEnabledKey,
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('启用本漫画设置'),
-                  subtitle: const Text(
-                    '启用后可单独覆盖阅读方向、拼接、长按放大与阅读顺序。',
-                  ),
-                  value: draft.comicSpecificEnabled,
-                  onChanged: (value) => setSheetState(
-                    () => draft = draft.copyWith(comicSpecificEnabled: value),
-                  ),
+                const SizedBox(height: 8),
+                Text(
+                  '自适应',
+                  style: Theme.of(context).textTheme.labelLarge,
                 ),
+                const SizedBox(height: 4),
                 SwitchListTile(
                   key: readerAdaptiveSettingsKey,
                   contentPadding: EdgeInsets.zero,
@@ -69,6 +63,23 @@ Future<ReaderSessionSettings?> showReaderComicSettingsSheet(
                             ),
                           )
                       : null,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '手动覆盖',
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+                SwitchListTile(
+                  key: readerComicSettingsEnabledKey,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('启用本漫画覆盖'),
+                  subtitle: const Text(
+                    '只覆盖下面明确设置的项目；未覆盖行为继续使用全局或自适应结果。',
+                  ),
+                  value: draft.comicSpecificEnabled,
+                  onChanged: (value) => setSheetState(
+                    () => draft = draft.copyWith(comicSpecificEnabled: value),
+                  ),
                 ),
                 if (draft.comicSpecificEnabled) ...<Widget>[
                   const SizedBox(height: 8),
@@ -145,7 +156,7 @@ Future<ReaderSessionSettings?> showReaderComicSettingsSheet(
                         context,
                         _clearComicOverrides(initialSettings),
                       ),
-                      child: const Text('清除本漫画设置'),
+                      child: const Text('清除本漫画覆盖'),
                     ),
                     const Spacer(),
                     FilledButton(
@@ -168,8 +179,6 @@ ReaderSessionSettings _clearComicOverrides(ReaderSessionSettings settings) =>
       comicSpecificEnabled: false,
       directionOverride: null,
       verticalStitchOverride: null,
-      comicAdaptiveEnabled: true,
-      adaptiveProfile: null,
       longPressZoomOverride: null,
       invertPageOrderOverride: null,
     );
@@ -222,10 +231,18 @@ String _directionChoiceDescription(
       return '未固定方向；当前自适应可按识别结果选择'
           '${_adaptiveTypeLabel(adaptiveProfile)}阅读方向。';
     }
-    return '未固定方向；跟随来源方向或既有阅读进度。';
+    return '未固定方向；使用全局分页方向'
+        '（${_pagedDirectionLabel(settings.pagedDirectionPreference)}）。';
   }
   return '本漫画固定阅读方向；自适应仍可调整未被手动覆盖的其他行为。';
 }
+
+String _pagedDirectionLabel(ReaderPagedDirectionPreference preference) =>
+    switch (preference) {
+      ReaderPagedDirectionPreference.ltr => 'LTR',
+      ReaderPagedDirectionPreference.rtl => 'RTL',
+      ReaderPagedDirectionPreference.source => '跟随来源',
+    };
 
 String _adaptivePolicyDescription(
   ReaderSessionSettings settings, {

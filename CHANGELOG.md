@@ -1,3 +1,13 @@
+## Unreleased — Reader settings model and Android system bars
+
+- Rework the Reader settings taxonomy around ownership instead of gesture-type mixing: layout now owns default mode, paged direction, adaptive policy and vertical stitching; interface owns initial control visibility and status-bar visibility; double-tap and long-press zoom have separate sections; detail-preview density moves out of Reader settings into Appearance.
+- Add a global paged-direction preference with `LTR / RTL / 跟随来源`, defaulting to LTR. Per-comic explicit direction remains highest priority and high-confidence adaptive direction remains above the global fallback.
+- Make long-press magnification an independent global value (default 2.0x) instead of silently borrowing the double-tap zoom stages. The configured scale is consumed by both paged and continuous Reader presentation without changing Pipeline demand ownership.
+- Keep per-comic adaptive policy and manual overrides as independent axes. “使用自适应设置” remains visible after “启用本漫画覆盖”; clearing manual overrides no longer resets the adaptive switch/profile.
+- Fix Reader system-bar ownership. The old one-shot route-transition gate prevented later control toggles/resume from reapplying system UI. The gate now defers only the first apply and permits subsequent reapply.
+- Add a reader_runtime Android `WindowInsetsController` owner for status/navigation bars. This is required for Android 16 / targetSdk 36 where Flutter legacy non-edge-to-edge `SystemUiMode` calls are ignored. Status-bar visibility is independent from Reader controls; the navigation bar follows control visibility. Exiting Reader restores both system bars.
+- Device verification on Android 16 / targetSdk 36 confirmed status bars visible=true with the setting enabled, visible=false with it disabled, status remaining hidden when Reader controls are shown while navigationBars becomes visible, and both bars restoring on Reader exit.
+
 ## Unreleased — adaptive Reader behavior profile
 
 - Correct the prior layout-only interpretation of adaptive reading after re-auditing VibeVenera: the per-comic “使用自适应设置” switch is independent from manual comic overrides, while the direction axis is only `跟随 / LTR / RTL / 纵向`.

@@ -1100,7 +1100,9 @@ def check_compile_regressions() -> None:
         '_pipeline.enqueueObservation',
         '_pipeline.loadBytes(asset, token)',
         '_pipeline.pageStream(asset)',
-        'SystemUiMode.immersiveSticky',
+        '_readerSystemUi.apply(',
+        'showStatusBar: _settings.showSystemStatusBar',
+        'showNavigationBar: _controlsVisible',
         'readerBottomControlsKey',
         'readerChapterTitleKey',
         'readerPageSubtitleKey',
@@ -1117,6 +1119,29 @@ def check_compile_regressions() -> None:
     ):
         if required not in reader_runtime:
             fail(f'Reader runtime identity/transport path is incomplete: {required}')
+    reader_system_ui = (
+        ROOT / 'packages/reader_runtime/lib/src/flutter_reader_system_ui.dart'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'dev.zic/reader_runtime_system_ui',
+        'setReaderSystemBars',
+        'restoreReaderSystemBars',
+        'SystemUiMode.edgeToEdge',
+    ):
+        if required not in reader_system_ui:
+            fail(f'Reader system UI projection is incomplete: {required}')
+    reader_runtime_android = (
+        ROOT
+        / 'packages/reader_runtime/android/src/main/kotlin/dev/zic/readerruntime/ReaderRuntimePlugin.kt'
+    ).read_text(encoding='utf-8')
+    for required in (
+        'dev.zic/reader_runtime_system_ui',
+        'WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE',
+        'WindowInsets.Type.statusBars()',
+        'WindowInsets.Type.navigationBars()',
+    ):
+        if required not in reader_runtime_android:
+            fail(f'Reader Android system UI owner is incomplete: {required}')
     pipeline_host = (
         ROOT / 'packages/pipeline_runtime/lib/src/pipeline_reader_host.dart'
     ).read_text(encoding='utf-8')

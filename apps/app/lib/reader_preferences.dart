@@ -13,6 +13,7 @@ extension ReaderPreferenceProjection on AppPreferencesController {
       directionOverride: comic.directionOverride,
       verticalStitchOverride: comic.verticalStitchOverride,
       fallbackVerticalStitch: defaultVerticalStitch,
+      pagedDirectionPreference: readerPagedDirectionPreference,
       globalAdaptiveEnabled: adaptiveReaderEnabled,
       comicAdaptiveEnabled: comic.adaptiveEnabled,
       sourceWebtoonConfidence: sourceAdaptiveWebtoonConfidenceFor(sourceId),
@@ -20,12 +21,14 @@ extension ReaderPreferenceProjection on AppPreferencesController {
       zoomStages: <double>[defaultZoomStageFirst, defaultZoomStageSecond],
       defaultLongPressZoom: longPressZoomEnabled,
       longPressZoomOverride: comic.longPressZoomOverride,
+      longPressZoomScale: longPressZoomScale,
       longPressZoomRestoreOnRelease: longPressZoomRestoreOnRelease,
       longPressZoomMoveMode: longPressZoomMoveMode,
       longPressZoomPanRatio: longPressZoomPanRatio,
       longPressZoomLimitToViewport: longPressZoomLimitToViewport,
       doubleTapZoomOrigin: doubleTapZoomOrigin,
       zoomDecodeBoost: zoomDecodeBoostEnabled,
+      showSystemStatusBar: showSystemStatusBar,
       invertPageOrderOverride: comic.invertPageOrder,
     );
   }

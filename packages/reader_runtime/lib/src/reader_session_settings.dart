@@ -4,6 +4,12 @@ import 'package:domain/domain.dart';
 import 'package:flutter/foundation.dart';
 import 'package:reader/reader.dart';
 
+enum ReaderPagedDirectionPreference {
+  ltr,
+  rtl,
+  source,
+}
+
 @immutable
 final class ReaderSessionSettings {
   const ReaderSessionSettings({
@@ -11,6 +17,7 @@ final class ReaderSessionSettings {
     this.directionOverride,
     this.verticalStitchOverride,
     this.fallbackVerticalStitch = false,
+    this.pagedDirectionPreference = ReaderPagedDirectionPreference.ltr,
     this.globalAdaptiveEnabled = false,
     this.comicAdaptiveEnabled = true,
     this.sourceWebtoonConfidence = 0.5,
@@ -18,12 +25,14 @@ final class ReaderSessionSettings {
     this.zoomStages = defaultZoomStages,
     this.defaultLongPressZoom = true,
     this.longPressZoomOverride,
+    this.longPressZoomScale = 2.0,
     this.longPressZoomRestoreOnRelease = true,
     this.longPressZoomMoveMode = ReaderLongPressMoveMode.drag,
     this.longPressZoomPanRatio = 1.0,
     this.longPressZoomLimitToViewport = true,
     this.doubleTapZoomOrigin = ReaderDoubleTapZoomOrigin.center,
     this.zoomDecodeBoost = true,
+    this.showSystemStatusBar = true,
     this.invertPageOrderOverride,
   });
 
@@ -34,6 +43,7 @@ final class ReaderSessionSettings {
   final ReadingDirection? directionOverride;
   final bool? verticalStitchOverride;
   final bool fallbackVerticalStitch;
+  final ReaderPagedDirectionPreference pagedDirectionPreference;
   final bool globalAdaptiveEnabled;
   final bool comicAdaptiveEnabled;
 
@@ -51,9 +61,9 @@ final class ReaderSessionSettings {
   /// returns to 1x. Values are clamped to (1, 8].
   final List<double> zoomStages;
 
-  /// Long-press magnifier baseline for paged reading. Continuous mode keeps
-  /// its own opt-in below so vertical strip reading never enables it by
-  /// accident while dragging.
+  /// Long-press magnifier baseline when adaptive/manual policy does not supply
+  /// a stronger answer. Vertical reading still defaults off to avoid
+  /// competing with strip scrolling.
   final bool defaultLongPressZoom;
 
   /// Per-comic tri-state for long-press zoom. Null leaves the behavior to the
@@ -63,6 +73,10 @@ final class ReaderSessionSettings {
   /// shared Reader behavior input, so a comic can explicitly override the
   /// gesture without also overriding its reading direction.
   final bool? longPressZoomOverride;
+
+  /// Magnification entered by a long-press lens from 1x. This is independent
+  /// from the double-tap stage cycle.
+  final double longPressZoomScale;
 
   /// True (default) restores 1x when a long-press zoom gesture ends. False
   /// keeps the magnification until double-tap or page change.
@@ -90,6 +104,10 @@ final class ReaderSessionSettings {
   /// pages so the visible region gains real pixels instead of upscaled ones.
   final bool zoomDecodeBoost;
 
+  /// Whether the Android/iOS system status bar remains visible in Reader.
+  /// Reader controls and system-bar visibility are intentionally independent.
+  final bool showSystemStatusBar;
+
   bool get effectiveVerticalStitch => comicSpecificEnabled
       ? verticalStitchOverride ?? fallbackVerticalStitch
       : fallbackVerticalStitch;
@@ -101,6 +119,16 @@ final class ReaderSessionSettings {
   double get zoomStageSecond => zoomStages.length > 1
       ? _clampStage(zoomStages[1], zoomStageFirst)
       : math.max(2.0, zoomStageFirst * 2);
+  double get effectiveLongPressZoomScale => longPressZoomScale.isFinite
+      ? longPressZoomScale.clamp(1.1, 8).toDouble()
+      : 2.0;
+
+  ReadingDirection resolvePagedDirection(ReadingDirection sourceDirection) =>
+      switch (pagedDirectionPreference) {
+        ReaderPagedDirectionPreference.ltr => ReadingDirection.ltr,
+        ReaderPagedDirectionPreference.rtl => ReadingDirection.rtl,
+        ReaderPagedDirectionPreference.source => sourceDirection,
+      };
 
   bool effectiveLongPressZoomFor(ReadingDirection direction) {
     if (comicSpecificEnabled && longPressZoomOverride != null) {
@@ -130,6 +158,7 @@ final class ReaderSessionSettings {
     Object? directionOverride = _unset,
     Object? verticalStitchOverride = _unset,
     bool? fallbackVerticalStitch,
+    ReaderPagedDirectionPreference? pagedDirectionPreference,
     bool? globalAdaptiveEnabled,
     bool? comicAdaptiveEnabled,
     double? sourceWebtoonConfidence,
@@ -137,12 +166,14 @@ final class ReaderSessionSettings {
     List<double>? zoomStages,
     bool? defaultLongPressZoom,
     Object? longPressZoomOverride = _unset,
+    double? longPressZoomScale,
     bool? longPressZoomRestoreOnRelease,
     ReaderLongPressMoveMode? longPressZoomMoveMode,
     double? longPressZoomPanRatio,
     bool? longPressZoomLimitToViewport,
     ReaderDoubleTapZoomOrigin? doubleTapZoomOrigin,
     bool? zoomDecodeBoost,
+    bool? showSystemStatusBar,
     Object? invertPageOrderOverride = _unset,
   }) =>
       ReaderSessionSettings(
@@ -156,6 +187,8 @@ final class ReaderSessionSettings {
             : verticalStitchOverride as bool?,
         fallbackVerticalStitch:
             fallbackVerticalStitch ?? this.fallbackVerticalStitch,
+        pagedDirectionPreference:
+            pagedDirectionPreference ?? this.pagedDirectionPreference,
         globalAdaptiveEnabled:
             globalAdaptiveEnabled ?? this.globalAdaptiveEnabled,
         comicAdaptiveEnabled:
@@ -170,6 +203,7 @@ final class ReaderSessionSettings {
         longPressZoomOverride: identical(longPressZoomOverride, _unset)
             ? this.longPressZoomOverride
             : longPressZoomOverride as bool?,
+        longPressZoomScale: longPressZoomScale ?? this.longPressZoomScale,
         longPressZoomRestoreOnRelease:
             longPressZoomRestoreOnRelease ?? this.longPressZoomRestoreOnRelease,
         longPressZoomMoveMode:
@@ -180,6 +214,7 @@ final class ReaderSessionSettings {
             longPressZoomLimitToViewport ?? this.longPressZoomLimitToViewport,
         doubleTapZoomOrigin: doubleTapZoomOrigin ?? this.doubleTapZoomOrigin,
         zoomDecodeBoost: zoomDecodeBoost ?? this.zoomDecodeBoost,
+        showSystemStatusBar: showSystemStatusBar ?? this.showSystemStatusBar,
         invertPageOrderOverride: identical(invertPageOrderOverride, _unset)
             ? this.invertPageOrderOverride
             : invertPageOrderOverride as bool?,
@@ -193,6 +228,7 @@ final class ReaderSessionSettings {
           directionOverride == other.directionOverride &&
           verticalStitchOverride == other.verticalStitchOverride &&
           fallbackVerticalStitch == other.fallbackVerticalStitch &&
+          pagedDirectionPreference == other.pagedDirectionPreference &&
           globalAdaptiveEnabled == other.globalAdaptiveEnabled &&
           comicAdaptiveEnabled == other.comicAdaptiveEnabled &&
           sourceWebtoonConfidence == other.sourceWebtoonConfidence &&
@@ -200,20 +236,23 @@ final class ReaderSessionSettings {
           _sameStages(zoomStages, other.zoomStages) &&
           defaultLongPressZoom == other.defaultLongPressZoom &&
           longPressZoomOverride == other.longPressZoomOverride &&
+          longPressZoomScale == other.longPressZoomScale &&
           longPressZoomRestoreOnRelease == other.longPressZoomRestoreOnRelease &&
           longPressZoomMoveMode == other.longPressZoomMoveMode &&
           longPressZoomPanRatio == other.longPressZoomPanRatio &&
           longPressZoomLimitToViewport == other.longPressZoomLimitToViewport &&
           doubleTapZoomOrigin == other.doubleTapZoomOrigin &&
           zoomDecodeBoost == other.zoomDecodeBoost &&
+          showSystemStatusBar == other.showSystemStatusBar &&
           invertPageOrderOverride == other.invertPageOrderOverride;
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll(<Object?>[
         comicSpecificEnabled,
         directionOverride,
         verticalStitchOverride,
         fallbackVerticalStitch,
+        pagedDirectionPreference,
         globalAdaptiveEnabled,
         comicAdaptiveEnabled,
         sourceWebtoonConfidence,
@@ -221,14 +260,16 @@ final class ReaderSessionSettings {
         Object.hashAll(zoomStages),
         defaultLongPressZoom,
         longPressZoomOverride,
+        longPressZoomScale,
         longPressZoomRestoreOnRelease,
         longPressZoomMoveMode,
         longPressZoomPanRatio,
         longPressZoomLimitToViewport,
         doubleTapZoomOrigin,
         zoomDecodeBoost,
+        showSystemStatusBar,
         invertPageOrderOverride,
-      );
+      ]);
 
   static bool _sameStages(List<double> a, List<double> b) {
     if (a.length != b.length) return false;

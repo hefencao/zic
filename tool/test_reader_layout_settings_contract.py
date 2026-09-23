@@ -40,6 +40,8 @@ def main() -> None:
         "viewport: oldViewport",
         "isScrollingNotifier.value",
         "reader-vertical-gap:",
+        "longPressZoomScale",
+        "_effectiveLongPressZoomScale",
     )
     require(
         "packages/reader/lib/src/vertical_reader_geometry.dart",
@@ -142,6 +144,9 @@ def main() -> None:
         "defaultVerticalStitch",
         "verticalStitchOverride",
         "adaptiveReaderEnabled",
+        "readerPagedDirectionPreference",
+        "showSystemStatusBar",
+        "longPressZoomScale",
         "sourceAdaptiveWebtoonConfidences",
         "sourceAdaptiveWebtoonWeights",
         "setSourceAdaptiveWebtoonConfidence",
@@ -151,6 +156,9 @@ def main() -> None:
     require(
         "apps/app/lib/reader_preferences.dart",
         "sourceWebtoonConfidence: sourceAdaptiveWebtoonConfidenceFor(sourceId)",
+        "pagedDirectionPreference: readerPagedDirectionPreference",
+        "longPressZoomScale: longPressZoomScale",
+        "showSystemStatusBar: showSystemStatusBar",
     )
     require(
         "apps/app/lib/source_browser.dart",
@@ -179,6 +187,8 @@ def main() -> None:
         "enum _ComicDirectionChoice",
         "ChoiceChip(",
         "title: const Text('使用自适应设置')",
+        "title: const Text('启用本漫画覆盖')",
+        "child: const Text('清除本漫画覆盖')",
         "_ComicDirectionChoice.follow",
         "reader-comic-direction-",
         "readerLongPressZoomOverrideField",
@@ -198,7 +208,11 @@ def main() -> None:
         "packages/reader_runtime/lib/src/reader_session_settings.dart",
         "bool get effectiveAdaptiveEnabled",
         "globalAdaptiveEnabled && comicAdaptiveEnabled",
+        "ReaderPagedDirectionPreference.ltr",
+        "resolvePagedDirection",
         "effectiveLongPressZoomFor",
+        "effectiveLongPressZoomScale",
+        "showSystemStatusBar",
         "adaptive.direction != ReadingDirection.vertical",
     )
     require(
@@ -206,11 +220,49 @@ def main() -> None:
         "final adaptsDirection =",
         "_settings = _settings.copyWith(adaptiveProfile: candidate)",
         "if (adaptsDirection)",
+        "_settings.resolvePagedDirection(widget.chapter.readingDirection)",
         "_settings.effectiveLongPressZoomFor(reader.direction)",
+        "longPressZoomScale: _settings.effectiveLongPressZoomScale",
+        "_readerSystemUi.apply(",
+        "showStatusBar: _settings.showSystemStatusBar",
+        "showNavigationBar: _controlsVisible",
+        "_systemUiTransitionGate.applyNow();",
+    )
+    require(
+        "packages/reader_runtime/lib/src/flutter_reader_system_ui.dart",
+        "dev.zic/reader_runtime_system_ui",
+        "setReaderSystemBars",
+        "restoreReaderSystemBars",
+        "statusBarIconBrightness: Brightness.light",
+        "SystemUiMode.edgeToEdge",
+    )
+    require(
+        "packages/reader_runtime/android/src/main/kotlin/dev/zic/readerruntime/ReaderRuntimePlugin.kt",
+        "dev.zic/reader_runtime_system_ui",
+        "WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE",
+        "WindowInsets.Type.statusBars()",
+        "WindowInsets.Type.navigationBars()",
+        "setReaderSystemBars",
+        "restoreReaderSystemBars",
+    )
+    require(
+        "packages/reader_runtime/lib/src/reader_route_transition_gate.dart",
+        "if (_applied) {",
+        "_apply();",
     )
     require(
         "apps/app/lib/app_settings_screen.dart",
+        "_SettingsSectionTitle('布局')",
+        "_SettingsSectionTitle('界面')",
+        "_SettingsSectionTitle('操作 · 双击放大')",
+        "_SettingsSectionTitle('操作 · 长按放大')",
         "title: const Text('自适应阅读')",
+        "key: readingPagedDirectionKey",
+        "ReaderPagedDirectionPreference.ltr",
+        "key: readingShowStatusBarKey",
+        "key: readingLongPressZoomScaleKey",
+        "_readerScaleChoiceChips",
+        "ChoiceChip(",
         "SegmentedButton<bool>",
         "key: readingVerticalStitchKey",
         "key: readingLongPressZoomKey",

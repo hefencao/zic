@@ -412,11 +412,14 @@ void main() {
         'shelfView': 'list',
         'defaultReaderMode': 'continuous',
         'readerStartsImmersive': false,
+        'readerPagedDirectionPreference': 'rtl',
+        'showSystemStatusBar': false,
         'adaptiveReaderEnabled': true,
         'defaultVerticalStitch': true,
         'defaultZoomStage1': 3.0,
         'defaultZoomStage2': 5.0,
         'longPressZoomEnabled': false,
+        'longPressZoomScale': 2.75,
         'longPressZoomRestoreOnRelease': false,
         'longPressZoomMoveMode': 'focus',
         'longPressZoomPanRatio': 1.5,
@@ -485,11 +488,17 @@ void main() {
     expect(controller.shelfView, ShelfViewPreference.list);
     expect(controller.defaultReaderMode, ReaderMode.continuous);
     expect(controller.readerStartsImmersive, isFalse);
+    expect(
+      controller.readerPagedDirectionPreference,
+      ReaderPagedDirectionPreference.rtl,
+    );
+    expect(controller.showSystemStatusBar, isFalse);
     expect(controller.adaptiveReaderEnabled, isTrue);
     expect(controller.defaultVerticalStitch, isTrue);
     expect(controller.defaultZoomStageFirst, 3.0);
     expect(controller.defaultZoomStageSecond, 5.0);
     expect(controller.longPressZoomEnabled, isFalse);
+    expect(controller.longPressZoomScale, 2.75);
     expect(controller.longPressZoomRestoreOnRelease, isFalse);
     expect(
       controller.longPressZoomMoveMode,
@@ -545,6 +554,24 @@ void main() {
           .sourceWebtoonConfidence,
       0.2,
     );
+    expect(
+      controller
+          .readerSessionSettingsFor('venera:alpha', 'comic')
+          .pagedDirectionPreference,
+      ReaderPagedDirectionPreference.rtl,
+    );
+    expect(
+      controller
+          .readerSessionSettingsFor('venera:alpha', 'comic')
+          .showSystemStatusBar,
+      isFalse,
+    );
+    expect(
+      controller
+          .readerSessionSettingsFor('venera:alpha', 'comic')
+          .effectiveLongPressZoomScale,
+      2.75,
+    );
     expect(controller.sourceSearchHistory, <String>['Alpha', 'beta']);
     expect(
       controller.comicReaderSettingsFor('source-a', 'comic-a'),
@@ -581,6 +608,11 @@ void main() {
     );
     controller.setSourceDownloadDirectory('venera:gamma', '/data/gamma');
     controller.setSourceAdaptiveWebtoonConfidence('venera:gamma', 0.1);
+    controller.setReaderPagedDirectionPreference(
+      ReaderPagedDirectionPreference.source,
+    );
+    controller.setShowSystemStatusBar(true);
+    controller.setLongPressZoomScale(3.25);
     controller.setLongPressZoomRestoreOnRelease(true);
     controller.setLongPressZoomMoveMode(ReaderLongPressMoveMode.drag);
     controller.setLongPressZoomPanRatio(2.0);
@@ -608,6 +640,9 @@ void main() {
     expect(written?['debugModeEnabled'], isTrue);
     expect(written?['shelfSortMode'], 'custom');
     expect(written?['version'], 8);
+    expect(written?['readerPagedDirectionPreference'], 'source');
+    expect(written?['showSystemStatusBar'], isTrue);
+    expect(written?['longPressZoomScale'], 3.25);
     expect(written?['detailsPreviewMaxItemsPerRow'], 4);
     expect(written?['networkUserAgent'], 'custom-network-agent');
     expect(written?['debugTraceExportDirectory'], 'Debug/Reader');
@@ -671,11 +706,17 @@ void main() {
     );
   });
 
-  test('reading zoom defaults match the product baseline', () {
+  test('reading defaults match the product baseline', () {
     final controller = AppPreferencesController();
     addTearDown(controller.dispose);
+    expect(
+      controller.readerPagedDirectionPreference,
+      ReaderPagedDirectionPreference.ltr,
+    );
+    expect(controller.showSystemStatusBar, isTrue);
     expect(controller.defaultZoomStageFirst, 1.5);
     expect(controller.defaultZoomStageSecond, 2.0);
+    expect(controller.longPressZoomScale, 2.0);
     expect(
       controller.doubleTapZoomOrigin,
       ReaderDoubleTapZoomOrigin.center,

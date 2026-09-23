@@ -179,11 +179,15 @@ final class AppPreferencesController extends ChangeNotifier {
   ShelfViewPreference _shelfView = ShelfViewPreference.gallery;
   ReaderMode _defaultReaderMode = ReaderMode.paged;
   bool _readerStartsImmersive = true;
+  ReaderPagedDirectionPreference _readerPagedDirectionPreference =
+      ReaderPagedDirectionPreference.ltr;
+  bool _showSystemStatusBar = true;
   bool _adaptiveReaderEnabled = false;
   bool _defaultVerticalStitch = false;
   double _defaultZoomStageFirst = 1.5;
   double _defaultZoomStageSecond = 2.0;
   bool _longPressZoomEnabled = true;
+  double _longPressZoomScale = 2.0;
   bool _longPressZoomRestoreOnRelease = true;
   ReaderLongPressMoveMode _longPressZoomMoveMode =
       ReaderLongPressMoveMode.drag;
@@ -240,12 +244,16 @@ final class AppPreferencesController extends ChangeNotifier {
   ShelfViewPreference get shelfView => _shelfView;
   ReaderMode get defaultReaderMode => _defaultReaderMode;
   bool get readerStartsImmersive => _readerStartsImmersive;
+  ReaderPagedDirectionPreference get readerPagedDirectionPreference =>
+      _readerPagedDirectionPreference;
+  bool get showSystemStatusBar => _showSystemStatusBar;
   bool get adaptiveReaderEnabled => _adaptiveReaderEnabled;
   bool get defaultVerticalStitch => _defaultVerticalStitch;
   double get defaultZoomStageFirst => _defaultZoomStageFirst;
   double get defaultZoomStageSecond => _defaultZoomStageSecond;
   ReaderDoubleTapZoomOrigin get doubleTapZoomOrigin => _doubleTapZoomOrigin;
   bool get longPressZoomEnabled => _longPressZoomEnabled;
+  double get longPressZoomScale => _longPressZoomScale;
   bool get longPressZoomRestoreOnRelease => _longPressZoomRestoreOnRelease;
   ReaderLongPressMoveMode get longPressZoomMoveMode => _longPressZoomMoveMode;
   double get longPressZoomPanRatio => _longPressZoomPanRatio;
@@ -404,6 +412,13 @@ final class AppPreferencesController extends ChangeNotifier {
     );
     _readerStartsImmersive =
         _boolValue(values['readerStartsImmersive'], _readerStartsImmersive);
+    _readerPagedDirectionPreference = _enumByName(
+      ReaderPagedDirectionPreference.values,
+      values['readerPagedDirectionPreference'],
+      _readerPagedDirectionPreference,
+    );
+    _showSystemStatusBar =
+        _boolValue(values['showSystemStatusBar'], _showSystemStatusBar);
     _adaptiveReaderEnabled =
         _boolValue(values['adaptiveReaderEnabled'], _adaptiveReaderEnabled);
     _defaultVerticalStitch = _boolValue(
@@ -421,6 +436,12 @@ final class AppPreferencesController extends ChangeNotifier {
     }
     _longPressZoomEnabled =
         _boolValue(values['longPressZoomEnabled'], _longPressZoomEnabled);
+    _longPressZoomScale = _doubleValue(
+      values['longPressZoomScale'],
+      _longPressZoomScale,
+      min: 1.1,
+      max: 8,
+    );
     _longPressZoomRestoreOnRelease = _boolValue(
       values['longPressZoomRestoreOnRelease'],
       _longPressZoomRestoreOnRelease,
@@ -587,6 +608,20 @@ final class AppPreferencesController extends ChangeNotifier {
     _changed();
   }
 
+  void setReaderPagedDirectionPreference(
+    ReaderPagedDirectionPreference value,
+  ) {
+    if (_disposed || _readerPagedDirectionPreference == value) return;
+    _readerPagedDirectionPreference = value;
+    _changed();
+  }
+
+  void setShowSystemStatusBar(bool value) {
+    if (_disposed || _showSystemStatusBar == value) return;
+    _showSystemStatusBar = value;
+    _changed();
+  }
+
   void setAdaptiveReaderEnabled(bool value) {
     if (_disposed || _adaptiveReaderEnabled == value) return;
     _adaptiveReaderEnabled = value;
@@ -619,6 +654,13 @@ final class AppPreferencesController extends ChangeNotifier {
   void setLongPressZoomEnabled(bool value) {
     if (_disposed || _longPressZoomEnabled == value) return;
     _longPressZoomEnabled = value;
+    _changed();
+  }
+
+  void setLongPressZoomScale(double value) {
+    final clamped = value.clamp(1.1, 8.0).toDouble();
+    if (_disposed || _longPressZoomScale == clamped) return;
+    _longPressZoomScale = clamped;
     _changed();
   }
 
@@ -996,12 +1038,15 @@ final class AppPreferencesController extends ChangeNotifier {
       'shelfView': _shelfView.name,
       'defaultReaderMode': _defaultReaderMode.name,
       'readerStartsImmersive': _readerStartsImmersive,
+      'readerPagedDirectionPreference': _readerPagedDirectionPreference.name,
+      'showSystemStatusBar': _showSystemStatusBar,
       'adaptiveReaderEnabled': _adaptiveReaderEnabled,
       'defaultVerticalStitch': _defaultVerticalStitch,
       'defaultZoomStage1': _defaultZoomStageFirst,
       'defaultZoomStage2': _defaultZoomStageSecond,
       'doubleTapZoomOrigin': _doubleTapZoomOrigin.name,
       'longPressZoomEnabled': _longPressZoomEnabled,
+      'longPressZoomScale': _longPressZoomScale,
       'longPressZoomRestoreOnRelease': _longPressZoomRestoreOnRelease,
       'longPressZoomMoveMode': _longPressZoomMoveMode.name,
       'longPressZoomPanRatio': _longPressZoomPanRatio,

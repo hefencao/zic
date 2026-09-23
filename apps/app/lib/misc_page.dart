@@ -76,7 +76,7 @@ final class MiscPage extends StatelessWidget {
                 ),
                 SwitchListTile(
                   secondary: const Icon(Icons.fullscreen_outlined),
-                  title: const Text('默认沉浸阅读'),
+                  title: const Text('进入 Reader 时隐藏控制栏'),
                   value: preferences.readerStartsImmersive,
                   onChanged: preferences.setReaderStartsImmersive,
                 ),
