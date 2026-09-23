@@ -1677,6 +1677,7 @@ internal val requiredMihonCommonRuntimeClasses: List<String> = listOf(
     "kotlinx.coroutines.CoroutineScope",
     "org.jsoup.Jsoup",
     "com.google.gson.Gson",
+    "kotlinx.serialization.json.Json",
     "dev.zic.network.AndroidCloudflareInterceptor",
     "dev.zic.network.SourceVerificationRequiredException",
     "dev.zic.network.NetworkBrowserSnapshotStore",
@@ -1717,11 +1718,18 @@ private fun initializeMihonInjekt(
     val application = MihonPayloadApplication(context)
     val networkType = classLoader.loadClass("eu.kanade.tachiyomi.network.NetworkHelper")
     val network = networkType.getConstructor(Context::class.java).newInstance(application)
+    val (jsonType, json) = createMihonJson(classLoader)
     val scope = classLoader.loadClass("uy.kohesive.injekt.InjektKt")
         .getMethod("getInjekt")
         .invoke(null)
     val typeReferenceType = classLoader.loadClass("uy.kohesive.injekt.api.TypeReference")
-    mihonInjektSingletons(application, networkType, network).forEach { (type, value) ->
+    mihonInjektSingletons(
+        application,
+        networkType,
+        network,
+        jsonType,
+        json,
+    ).forEach { (type, value) ->
         val typeReference = Proxy.newProxyInstance(
             classLoader,
             arrayOf(typeReferenceType),
@@ -1750,10 +1758,50 @@ internal fun mihonInjektSingletons(
     application: Application,
     networkType: Class<*>,
     network: Any,
+    jsonType: Class<*>,
+    json: Any,
 ): List<Pair<Class<*>, Any>> = listOf(
     Application::class.java to application,
     networkType to network,
+    jsonType to json,
 )
+
+internal fun createMihonJson(classLoader: ClassLoader): Pair<Class<*>, Any> {
+    val jsonType = classLoader.loadClass("kotlinx.serialization.json.Json")
+    val jsonBuilderType = classLoader.loadClass("kotlinx.serialization.json.JsonBuilder")
+    val function1Type = classLoader.loadClass("kotlin.jvm.functions.Function1")
+    val unitType = classLoader.loadClass("kotlin.Unit")
+    val defaultJson = jsonType.getField("Default").get(null)
+    val unit = unitType.getField("INSTANCE").get(null)
+    val configure = Proxy.newProxyInstance(
+        classLoader,
+        arrayOf(function1Type),
+    ) { proxy, method, arguments ->
+        when (method.name) {
+            "invoke" -> {
+                val builder = arguments?.firstOrNull()
+                    ?: error("Mihon Json builder callback missing argument")
+                jsonBuilderType
+                    .getMethod("setIgnoreUnknownKeys", Boolean::class.javaPrimitiveType)
+                    .invoke(builder, true)
+                jsonBuilderType
+                    .getMethod("setExplicitNulls", Boolean::class.javaPrimitiveType)
+                    .invoke(builder, false)
+                unit
+            }
+            "toString" -> "ZicMihonJsonConfiguration"
+            "hashCode" -> System.identityHashCode(proxy)
+            "equals" -> arguments?.firstOrNull() === proxy
+            else -> error("Unsupported Mihon Json configuration method: ${method.name}")
+        }
+    }
+    val json = classLoader
+        .loadClass("kotlinx.serialization.json.JsonKt")
+        .getMethod("Json", jsonType, function1Type)
+        .invoke(null, defaultJson, configure)
+        ?: error("Mihon Json factory returned null")
+    return jsonType to json
+}
 
 internal fun isMihonParentFirstClass(name: String): Boolean {
     if (name.startsWith("eu.kanade.tachiyomi.extension.")) return false

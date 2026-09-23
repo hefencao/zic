@@ -4,6 +4,9 @@ import android.content.Context
 import dev.zic.network.AndroidCloudflareInterceptor
 import dev.zic.network.AndroidCookieJar
 import dev.zic.network.FallbackDns
+import eu.kanade.tachiyomi.network.interceptor.CloudflareInterceptor
+import eu.kanade.tachiyomi.network.interceptor.UncaughtExceptionInterceptor
+import eu.kanade.tachiyomi.network.interceptor.UserAgentInterceptor
 import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 
@@ -20,6 +23,8 @@ class NetworkHelper(context: Context) {
 
     private val sharedClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            .addInterceptor(UncaughtExceptionInterceptor())
+            .addInterceptor(UserAgentInterceptor(::defaultUserAgentProvider))
             .cookieJar(cookieJar)
             .dns(FallbackDns())
             .connectTimeout(5, TimeUnit.SECONDS)
@@ -38,11 +43,13 @@ class NetworkHelper(context: Context) {
                 chain.proceed(next)
             }
             .addInterceptor(
-                AndroidCloudflareInterceptor(context, ::defaultUserAgentProvider) { url ->
-                    cookieJar.get(url).any { cookie ->
-                        cookie.name == "cf_clearance" && cookie.value.isNotBlank()
-                    }
-                },
+                CloudflareInterceptor(
+                    AndroidCloudflareInterceptor(context, ::defaultUserAgentProvider) { url ->
+                        cookieJar.get(url).any { cookie ->
+                            cookie.name == "cf_clearance" && cookie.value.isNotBlank()
+                        }
+                    },
+                ),
             )
             .build()
     }

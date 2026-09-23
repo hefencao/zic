@@ -41,16 +41,46 @@ class MihonHostAbiTest {
         assertTrue(
             requiredMihonCommonRuntimeClasses.contains("kotlin.jvm.internal.Intrinsics"),
         )
+        assertTrue(
+            requiredMihonCommonRuntimeClasses.contains("kotlinx.serialization.json.Json"),
+        )
     }
 
     @Test
-    fun injectsApplicationBeforeNetworkHelperLikeMihonAppModule() {
+    fun injectsApplicationNetworkAndJsonLikeMihonAppModule() {
         val application = Application()
         val network = Any()
+        val json = Any()
 
         assertEquals(
-            listOf(Application::class.java, String::class.java),
-            mihonInjektSingletons(application, String::class.java, network).map { it.first },
+            listOf(Application::class.java, String::class.java, Int::class.java),
+            mihonInjektSingletons(
+                application,
+                String::class.java,
+                network,
+                Int::class.java,
+                json,
+            ).map { it.first },
+        )
+    }
+
+    @Test
+    fun createsInjectedJsonWithMihonUnknownKeyPolicy() {
+        val (jsonType, json) = createMihonJson(javaClass.classLoader!!)
+        val configuration = jsonType.getMethod("getConfiguration").invoke(json)
+
+        assertEquals("kotlinx.serialization.json.Json", jsonType.name)
+        assertEquals(
+            true,
+            configuration.javaClass
+                .getMethod("getIgnoreUnknownKeys")
+                .invoke(configuration),
+        )
+        assertEquals(
+            false,
+            configuration.javaClass
+                .getMethod("getExplicitNulls")
+                .invoke(configuration),
         )
     }
 

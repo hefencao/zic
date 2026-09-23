@@ -581,7 +581,13 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   APK 候选按扩展 feature 或标准 package prefix识别；
   entry/ABI meta-data随后从 manifest原值或字符串资源解析，多个 entry class可用逗号、分号或换行分隔。
   隔离 runtime 的公共网络 ABI只要求 `AndroidCookieJar` 等稳定适配器，`AndroidBrowserCookieSession` 属于 network bridge内部实现，
-  不得被 plugin host直接 import或列入 common runtime必需类。动态 ABI按原始类名加载 `dev.zic.network.*` common 类型；
+  不得被 plugin host直接 import或列入 common runtime必需类。Mihon 1.4/1.6 的兼容 `NetworkHelper.client` 必须保留上游可观察的默认 interceptor ABI：
+  canonical `UncaughtExceptionInterceptor` 置于 application interceptor 链首位，随后安装 canonical `UserAgentInterceptor`；
+  Cloudflare 位置必须暴露 canonical `CloudflareInterceptor` 类型，但其挑战识别/verification handoff 仍委托 `network_bridge` 的唯一 owner。
+  已有 `IOException`（包括 typed verification failure）原样传播，只有后续链抛出的非 IO `Exception` 才转成 `IOException`；不得额外注入 Brotli default interceptor。
+  Mihon Injekt host service 由 runtime driver 统一注册；当前至少包含 `Application`、`NetworkHelper` 与与 Mihon `AppBindings` 一致的
+  `Json { ignoreUnknownKeys = true; explicitNulls = false }`，扩展不得在 Reader/Pipeline 侧补造 host singleton。
+  动态 ABI按原始类名加载 `dev.zic.network.*` common 类型；
   所有列入完整性预检的网络类型必须由 `network_bridge` consumer R8规则显式保留类名和成员，不能依赖普通源码引用阻止 Release混淆。
   durable handoff 后已安装插件恢复最多使用 4 个并发激活 worker；
   `plugin_host` 只把最终 session 安装作为短同步提交段，并在提交边界重新检查 source identity collision，慢候选不得占住提交队列。

@@ -23,6 +23,13 @@ App build：0.31.0+328
 - 资源会话：支持 media-empty 状态恢复，提供 residentBodyBacked 权威正文与 range hydrate256KiB 预热。
 - 元数据权威：由 physical source metadata 提供 generation-local metadataPrefix 保证。
 
+### 外部插件运行时 (Mihon & Venera)
+- Mihon 1.4/1.6 versioned ABI asset 已共享 canonical `UncaughtExceptionInterceptor`、`UserAgentInterceptor`、`CloudflareInterceptor`；
+  两套 `NetworkHelper.client` 保留 default-client 类型合同，同时 Cloudflare 行为继续委托 `network_bridge` 唯一 owner。
+- 真实肉漫屋扩展 APK 的 default-client guard 已核对：要求上述三类存在且 Brotli 不存在；对应 contract test 已进入 `tool/check.sh`。
+- 同一扩展 bytecode 的 Injekt 请求已核对为 `Application` + `Json`；host 现按 Mihon `AppBindings` 注入
+  `Json { ignoreUnknownKeys=true; explicitNulls=false }`，并把 `Json` 纳入 common-runtime 完整性预检。
+
 ### 渲染与几何 (Pipeline & Reader View)
 - 页面几何：ValueListenable 提供 pageDimensions 驱动的 ratio live feed 投影。
 - 纵向模式：vertical模式只有extent真实变化 才能触发 anchor/geometry rebuild；vertical模式 保持布局稳定。

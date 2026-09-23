@@ -30,4 +30,8 @@
 - 物理准备限制在 max2 并设立 post-local network-admission rank barrier，在任何 NetLane task 启动前执行 physical-local-prepare，0-byte victim 自动重排 local prepare。
 - 存储与缓存：支持 cold partial 与 verified-equivalent READY 复用；保持 SourceEpoch、generation 与 frameUploaded / framePresented 的代际单调性。
 - rhttp transport不得再次增加64/256 KiB聚合；DownloadJob 为单一数据聚合 owner。
+- Mihon 1.4/1.6 `NetworkHelper.client` 必须保留 canonical default-client 三件套：首位 `UncaughtExceptionInterceptor`、
+  `UserAgentInterceptor`、以及委托 `network_bridge` 的 `CloudflareInterceptor`；默认 client 不加 Brotli。这是 plugin-host ABI 兼容边界，
+  不得把这些兜底/验证语义迁到 Reader/Pipeline/Download。Mihon Injekt scope 同样由 plugin host 唯一拥有；`Application`、`NetworkHelper`、
+  `Json(ignoreUnknownKeys=true, explicitNulls=false)` 为当前稳定 host singleton 合同。
 - VeneraHttpCacheStore 维持 6h 有效期与 targeted force-miss 规约；Venera 阶段约束见 0169-venera-previous-request-plan-pressure-and-source-open-stages.md。

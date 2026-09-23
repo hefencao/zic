@@ -480,6 +480,13 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   来源 request plan显式 UA、browser-session UA或 source-owned client策略 MUST 优先；全局 fallback不得覆盖来源权威。
 - Android Mihon宿主 MUST 能执行 extension/source实际返回的 HTTP(S)媒体 URL；
   cleartext兼容能力 MUST 在统一宿主网络策略提供，MUST NOT按 WNACG等具体域名/插件维护静态白名单，也不得把 source返回的 HTTP URL擅自改写为 HTTPS。
+- Mihon 1.4/1.6 兼容 `NetworkHelper.client` MUST 保留上游可观察的默认网络 ABI：canonical
+  `UncaughtExceptionInterceptor` MUST 是 application interceptor 链第一项，canonical `UserAgentInterceptor` MUST 存在并只补缺失 UA，
+  canonical `CloudflareInterceptor` MUST 存在且挑战处理 MUST 委托统一 `network_bridge` owner；默认 client MUST NOT 注入 Brotli interceptor。
+  `UncaughtExceptionInterceptor` MUST 原样重抛 `IOException`，只把后续 interceptor/source client 抛出的其它 `Exception` 包装成 `IOException`；
+  不得在 Reader、Pipeline 或 Download 层模拟上述契约。
+- Mihon runtime MUST 在同一 host Injekt scope 注册 `Application`、`NetworkHelper` 与 `Json` singleton；`Json` MUST 与 Mihon app binding 对齐：
+  `ignoreUnknownKeys=true`、`explicitNulls=false`。缺失 host singleton MUST 在 plugin-host/runtime 边界修复，MUST NOT 由页面或媒体层兜底。
 - Reader页面物理下载 MUST 只有composition `DownloadTransferOwner`一个retry/terminal owner；
   `LiveCoordinator`只协调本Reader demand与decode/upload。
   runtime标记transient/retryable的失败 MUST投影为`ErrorCode.network`并受provider的有界RetryPolicy控制；
