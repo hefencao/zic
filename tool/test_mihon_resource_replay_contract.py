@@ -12,6 +12,9 @@ driver = read(
     'packages/plugin_host_bridge/android/src/main/kotlin/'
     'dev/zic/pluginhost/MihonRuntimeDriver.kt'
 )
+plugin_controller = read(
+    'packages/plugin_host_bridge/lib/src/external_plugin_controller.dart'
+)
 adapter = read('packages/plugin_host/lib/src/runtime_source_adapter.dart')
 transport = read('packages/downloads/lib/src/source_resource_transport.dart')
 compat = read('apps/app/lib/home_shell_source_compat.dart')
@@ -22,12 +25,23 @@ whole_comic = read('packages/downloads/lib/src/whole_comic_downloads.dart')
 check = read('tool/check.sh')
 
 for token in (
+    'bool mihonResourceLocatorHasReplayCoordinates(String value)',
+    'bool isLegacyMihonResourceLocator(String value)',
+    "json['retryChapterId']",
+    "json['retryPageIndex']",
+):
+    if token not in plugin_controller:
+        raise SystemExit(f'Mihon persisted locator compatibility missing: {token}')
+
+for token in (
     'MIHON_RUNTIME_TRANSFORM_REVISION_PREFIX =',
     'MIHON_RUNTIME_TRANSFORM_SCHEMA = "mihon-runtime-transform-v3"',
     'mihonResourceAuthorityRevision(payloadSha256)',
     '"retryResource" -> retryResource(',
     '.put("retryChapterId", retryChapterId)',
     '.put("retryPageIndex", index)',
+    '.put("directPlanReplay", true)',
+    'mihonResourceAllowsDirectPlanReplay(resource)',
     'val chapter = resolveMihonChapter(source, chapterId, encodedChapter, requestId)',
     'val pages = loadMihonPageModels(source, chapter, requestId)',
     '"request" to requestPlan',
@@ -63,6 +77,16 @@ if load_resource.index('val request = mihonRequestFromResource(source, resolvedR
     'client.invokeCompatible("newCall", listOf(request))'
 ):
     raise SystemExit('Mihon source client does not execute the selected replay/fresh request')
+call_registered = load_resource.index('calls[requestId] = call')
+execute_call = load_resource.index(
+    'response = call.invokeCompatible("execute", emptyList())',
+    call_registered,
+)
+cleanup_try = load_resource.rfind('try {', call_registered, execute_call)
+if cleanup_try < 0 or execute_call < cleanup_try:
+    raise SystemExit('Mihon Call execute is outside the cleanup try/finally')
+if load_resource.index('calls.remove(requestId)', execute_call) < execute_call:
+    raise SystemExit('Mihon Call cleanup is missing after execute')
 
 for token in (
     'ExternalPluginRuntimeOperation.retryResource,',
@@ -89,6 +113,7 @@ for token in (
         raise SystemExit(f'source-plan replay transport contract missing: {token}')
 
 for token in (
+    'isLegacyMihonResourceLocator(page.sourceId)',
     'bool _hasLegacyMihonRuntimeTransformLocators(ImportedChapterRecord chapter)',
     "chapter.sourceId.startsWith('mihon:')",
     "chapter.sourceRevision.endsWith(':mihon-runtime-transform-v1')",

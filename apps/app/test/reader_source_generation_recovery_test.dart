@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
@@ -101,6 +103,54 @@ void main() {
       ),
       isTrue,
       reason: 'plugin payload replacement invalidates persisted runtime carriers',
+    );
+  });
+
+  test('legacy direct Mihon resource locators require source refresh', () {
+    String locator({required bool replayCoordinates}) {
+      final payload = <String, Object?>{
+        'kind': 'resource',
+        'url': 'https://cdn.example/page.webp',
+        if (replayCoordinates) ...<String, Object?>{
+          'retryChapterId': 'mihon:chapter:fixture',
+          'retryPageIndex': 0,
+          'directPlanReplay': true,
+        },
+      };
+      final encoded =
+          base64UrlEncode(utf8.encode(jsonEncode(payload))).replaceAll('=', '');
+      return 'mihon:resource:' + encoded;
+    }
+
+    ImportedChapterRecord direct(String resourceLocator) =>
+        ImportedChapterRecord(
+          directoryId: 'fixture',
+          displayName: 'chapter',
+          sourceId: 'mihon:fixture',
+          comicId: 'comic',
+          chapterId: 'chapter',
+          sourceRevision: '/chapter:0',
+          pages: <ImportedPageRecord>[
+            ImportedPageRecord(
+              displayName: '0.webp',
+              sourceId: resourceLocator,
+              pageId: 'page-0',
+              contentKindHint: ContentKindHint.webp,
+            ),
+          ],
+        );
+
+    expect(
+      chapterRequiresSourceLocatorRefresh(
+        direct(locator(replayCoordinates: false)),
+      ),
+      isTrue,
+    );
+    expect(
+      chapterRequiresSourceLocatorRefresh(
+        direct(locator(replayCoordinates: true)),
+      ),
+      isFalse,
     );
   });
 

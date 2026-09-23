@@ -1288,28 +1288,69 @@ final class ReadingSettingsScreen extends StatelessWidget {
               value: preferences.readerStartsImmersive,
               onChanged: preferences.setReaderStartsImmersive,
             ),
-            SwitchListTile(
+            Padding(
               key: readingShowStatusBarKey,
-              title: const Text('显示系统状态栏'),
-              subtitle: const Text(
-                '与阅读控制栏独立；关闭后 Reader 隐藏顶部系统状态栏。',
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const Text('系统状态栏'),
+                  const SizedBox(height: 6),
+                  SegmentedButton<ReaderSystemStatusBarMode>(
+                    showSelectedIcon: false,
+                    segments:
+                        const <ButtonSegment<ReaderSystemStatusBarMode>>[
+                      ButtonSegment(
+                        value: ReaderSystemStatusBarMode.show,
+                        label: Text('显示'),
+                      ),
+                      ButtonSegment(
+                        value: ReaderSystemStatusBarMode.hide,
+                        label: Text('隐藏'),
+                      ),
+                      ButtonSegment(
+                        value: ReaderSystemStatusBarMode.followControls,
+                        label: Text('跟随控制栏'),
+                      ),
+                    ],
+                    selected: <ReaderSystemStatusBarMode>{
+                      preferences.systemStatusBarMode,
+                    },
+                    onSelectionChanged: (values) =>
+                        preferences.setSystemStatusBarMode(values.single),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '跟随控制栏时，点击页面呼出或收起 Reader 控制栏会同时显示或隐藏顶部状态栏。',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
               ),
-              value: preferences.showSystemStatusBar,
-              onChanged: preferences.setShowSystemStatusBar,
             ),
             const _SettingsSectionTitle('操作 · 双击放大'),
-            _readerScaleChoiceChips(
+            _readerScaleSlider(
               key: readingZoomStageFirstKey,
               title: '一级倍率',
               value: preferences.defaultZoomStageFirst,
-              values: const <double>[1.5, 2.0, 2.5, 3.0],
+              min: 1.25,
+              max: 4,
+              divisions: 11,
               onChanged: preferences.setDefaultZoomStageFirst,
             ),
-            _readerScaleChoiceChips(
+            _readerScaleSlider(
               key: readingZoomStageSecondKey,
               title: '二级倍率',
               value: preferences.defaultZoomStageSecond,
-              values: const <double>[2.0, 2.5, 3.0, 4.0, 5.0, 6.0],
+              min: preferences.defaultZoomStageFirst
+                  .clamp(1.25, 4)
+                  .toDouble(),
+              max: 8,
+              divisions: ((8 -
+                          preferences.defaultZoomStageFirst
+                              .clamp(1.25, 4)
+                              .toDouble()) *
+                      4)
+                  .round(),
               onChanged: preferences.setDefaultZoomStageSecond,
             ),
             Padding(
@@ -1482,35 +1523,27 @@ final class ReadingSettingsScreen extends StatelessWidget {
   }
 }
 
-Widget _readerScaleChoiceChips({
+Widget _readerScaleSlider({
   required Key key,
   required String title,
   required double value,
-  required List<double> values,
+  required double min,
+  required double max,
+  required int divisions,
   required ValueChanged<double> onChanged,
 }) =>
-    Padding(
+    ListTile(
       key: key,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[
-          Text(title),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: <Widget>[
-              for (final candidate in values)
-                ChoiceChip(
-                  label: Text('${candidate.toStringAsFixed(1)}x'),
-                  selected: value == candidate,
-                  onSelected: (_) => onChanged(candidate),
-                ),
-            ],
-          ),
-        ],
+      title: Text(title),
+      subtitle: Slider(
+        min: min,
+        max: max,
+        divisions: divisions,
+        label: '${value.toStringAsFixed(2)}x',
+        value: value.clamp(min, max).toDouble(),
+        onChanged: onChanged,
       ),
+      trailing: Text('${value.toStringAsFixed(2)}x'),
     );
 
 final class DownloadSettingsScreen extends StatelessWidget {

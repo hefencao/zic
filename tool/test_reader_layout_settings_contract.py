@@ -145,7 +145,8 @@ def main() -> None:
         "verticalStitchOverride",
         "adaptiveReaderEnabled",
         "readerPagedDirectionPreference",
-        "showSystemStatusBar",
+        "systemStatusBarMode",
+        "values['showSystemStatusBar']",
         "longPressZoomScale",
         "sourceAdaptiveWebtoonConfidences",
         "sourceAdaptiveWebtoonWeights",
@@ -158,7 +159,7 @@ def main() -> None:
         "sourceWebtoonConfidence: sourceAdaptiveWebtoonConfidenceFor(sourceId)",
         "pagedDirectionPreference: readerPagedDirectionPreference",
         "longPressZoomScale: longPressZoomScale",
-        "showSystemStatusBar: showSystemStatusBar",
+        "systemStatusBarMode: systemStatusBarMode",
     )
     require(
         "apps/app/lib/source_browser.dart",
@@ -166,6 +167,8 @@ def main() -> None:
         "sourcePropertiesEntryKey",
         "_openAppSourceSettings",
         "_openSourceProperties",
+        "retirePluginOverride:",
+        "installedOwner.sourceIds.isNotEmpty",
         "Icons.settings_outlined",
         "Icons.list_alt_outlined",
     )
@@ -212,7 +215,9 @@ def main() -> None:
         "resolvePagedDirection",
         "effectiveLongPressZoomFor",
         "effectiveLongPressZoomScale",
-        "showSystemStatusBar",
+        "ReaderSystemStatusBarMode",
+        "systemStatusBarMode",
+        "resolveSystemStatusBarVisible",
         "adaptive.direction != ReadingDirection.vertical",
     )
     require(
@@ -223,8 +228,9 @@ def main() -> None:
         "_settings.resolvePagedDirection(widget.chapter.readingDirection)",
         "_settings.effectiveLongPressZoomFor(reader.direction)",
         "longPressZoomScale: _settings.effectiveLongPressZoomScale",
+        "_settings.resolveSystemStatusBarVisible(_controlsVisible)",
         "_readerSystemUi.apply(",
-        "showStatusBar: _settings.showSystemStatusBar",
+        "showStatusBar:",
         "showNavigationBar: _controlsVisible",
         "_systemUiTransitionGate.applyNow();",
     )
@@ -260,9 +266,10 @@ def main() -> None:
         "key: readingPagedDirectionKey",
         "ReaderPagedDirectionPreference.ltr",
         "key: readingShowStatusBarKey",
+        "SegmentedButton<ReaderSystemStatusBarMode>",
         "key: readingLongPressZoomScaleKey",
-        "_readerScaleChoiceChips",
-        "ChoiceChip(",
+        "_readerScaleSlider",
+        "Slider(",
         "SegmentedButton<bool>",
         "key: readingVerticalStitchKey",
         "key: readingLongPressZoomKey",

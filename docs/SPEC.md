@@ -518,6 +518,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   来源 request plan显式 UA、browser-session UA或 source-owned client策略 MUST 优先；全局 fallback不得覆盖来源权威。
 - Android Mihon宿主 MUST 能执行 extension/source实际返回的 HTTP(S)媒体 URL；
   cleartext兼容能力 MUST 在统一宿主网络策略提供，MUST NOT按 WNACG等具体域名/插件维护静态白名单，也不得把 source返回的 HTTP URL擅自改写为 HTTPS。
+  Mihon/network bridge fallback DNS MUST 优先使用系统 DNS 的非空结果并保留系统地址顺序；不得强制 IPv4 前置，也不得用 public-only 过滤破坏 split-DNS/private host authority。
+  仅当系统解析失败或为空时 MAY 使用 public fallback，且 fallback MUST 同时支持 A 与 AAAA，不能把 IPv6 从恢复路径中删除。
 - Mihon 1.4/1.6 兼容 `NetworkHelper.client` MUST 保留上游可观察的默认网络 ABI：canonical
   `UncaughtExceptionInterceptor` MUST 是 application interceptor 链第一项，canonical `UserAgentInterceptor` MUST 存在并只补缺失 UA，
   canonical `CloudflareInterceptor` MUST 存在且挑战处理 MUST 委托统一 `network_bridge` owner；默认 client MUST NOT 注入 Brotli interceptor。
@@ -532,8 +534,9 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   MUST NOT因错误文本不包含`network/connect/timeout`等关键词而降级成`ErrorCode.source`，
   bridge/runtime也 MUST NOT为此自建第二retry loop。非retryable/source失败与网络重试耗尽 MUST在当前physical transfer demand内终止，
   source snapshot listener、Reader finally或Presentation MUST NOT另行无界重提。
-- Mihon runtime-owned page request 的 stale-plan 恢复 MUST 与 transport retry 分离：
-  只有带 stable chapter/page replay coordinate 的 current locator，且 `loadResource` 发生非网络、非 verification source failure 时，
+- Mihon stale page-plan 恢复 MUST 与 transport retry 分离。新生成的 opaque page locator MUST 携带 stable chapter/page replay coordinate；
+  host-direct request plan MAY 额外声明 `directPlanReplay`，使已有 `SourceResourceTransport` 在 direct transport failure 后一次性调用 `retryResource` 重读 page list，
+  但 MUST NOT 因此新建 Reader/Pipeline/network retry owner。runtime-owned `loadResource` 只有在发生非网络、非 verification source failure 时，
   MAY 标记 `sourceResourcePlanReplayEligible`。`SourceResourceTransport` MAY 在同一 logical open 内调用 `retryResource` **一次**，
   重新读取 chapter/page list 并生成 replacement request；普通 SSL/EOF MUST NOT触发该昂贵 replay，而继续归 DownloadJob network retry。
   若 source 无 replacement、replay RPC 发生 source failure，或 replacement 再次产生同类 replay-eligible failure，MUST NOT递归 replay，
@@ -543,6 +546,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   并在当前 runtime generation 内按 source+locator 有界保留 fresh source request authority；后续 resolve 与 runtime-owned load MUST 共用该 authority，MUST NOT退回旧 opaque request plan。
   same-attempt replay 返回 replacement request 后，紧随其后的 runtime load MUST 执行同一 fresh authority；完整 method/headers/body 与 source client/interceptor/cookie 语义 MUST 保留，MUST NOT降级成通用 HTTP 旁路。
   ordinary replay authority MUST one-shot 消费；fresh-generation authority MAY 在本 generation 内复用。当 source setting/state mutation 推进 resource transport generation 时，对应 source 的 retained fresh/replay state MUST 同步失效。
+  升级前持久化且缺 stable replay coordinate 的 `mihon:resource:` locator MUST 在既有 source-locator compatibility gate 判为 legacy，
+  并在 Reader/下载消费前强制 source refresh；MUST NOT 仅为 locator schema 升级改写 `sourceRevision`、制造版本或缓存 identity churn。
   旧 v1/v2 locator MUST 在 Reader/下载消费前强制 source refresh 到 v3；v3 transport revision MUST 绑定已验证 extension payload SHA-256。
   App MUST 以 durable installed-plugin payload authority 对比 persisted Mihon revision；payload 更新后旧 v3 carrier MUST refresh，Reader/Pipeline MUST NOT持有 Mihon replay state。
 - 新Reader消费已有committed/promoted physical `DownloadSession`时，
@@ -1143,7 +1148,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   详情页等待 Reader route返回后 MUST 使用 route-local final progress更新当前投影，不得为此重读整库。
   异常进程终止只能依靠持续 checkpoint降低损失窗口，不得宣称绝对 crash-safe。
 - UI 控件存在性 MUST 来自 capability，不得用静态/动画猜测下载或播放能力。
-- 双击缩放分级与长按放大 MUST 分开设置：双击循环 1x → 一级（默认 1.5x）→ 二级（默认 2.0x）→ 1x；长按放大倍率是独立值（默认 2.0x），MUST NOT 偷用双击一级/二级倍率。长按放大分页模式默认开启，连续模式默认关闭且可由 adaptive/漫画显式覆盖。
+- 双击缩放分级与长按放大 MUST 分开设置：双击循环 1x → 一级（默认 1.5x）→ 二级（默认 2.0x）→ 1x；一级/二级倍率 MUST 以 slider 调整并保留各自持久化值。长按放大倍率是独立值（默认 2.0x），MUST NOT 偷用双击一级/二级倍率。长按放大分页模式默认开启，连续模式默认关闭且可由 adaptive/漫画显式覆盖。
 - 分页模式长按放大释放行为 MUST 可设置，默认松手复原（松手后动画回到 1x 并恢复翻页滚动）；关闭后放大保持到双击退出或页面切换。连续模式长按放大 MUST 始终保持放大，不得松手自动复位。
 - 长按放大移动方式 MUST 可设置为拖动或聚焦。拖动模式内容位移 = 手指累计位移 × 拖动比率（默认 1.0，即按放大后分辨率 1:1 跟随；
   比率可设 0.25–4），聚焦模式保持手指下的内容点始终位于手指处（位移 = p·(1−s)）。拖动实现 MUST 以长按起点平移为基准应用一次累计位移，MUST NOT 逐帧重复累加导致失控。
@@ -1151,7 +1156,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   关闭后允许自由拖出视口。
 - 双击放大的结果位置 MUST 可设置：居中（以视口中心为原点）、吸附（按点击半侧把图片对应边缘贴齐视口边缘，覆盖不了的轴居中）、聚焦（保持点击位置不动）。默认居中。
 - 阅读设置 UI MUST 至少按“布局 / 界面 / 操作·双击放大 / 操作·长按放大”分区，双击倍率/锚点不得与长按倍率/释放/移动方式交错排列。
-- Reader 的“进入时隐藏阅读控制”只控制 Reader 上下控制与系统导航栏；系统状态栏可见性 MUST 是独立全局偏好，默认显示。Android 16 / targetSdk 36 及以后不得依赖被系统忽略的旧 Flutter 非 edge-to-edge `SystemUiMode` 隐藏状态栏，Android 实现 MUST 由 Reader platform owner 使用 `WindowInsetsController` show/hide status/navigation bars。Reader exit MUST 恢复系统栏；App resume 和控制栏显隐变化 MUST 重新投影当前 policy。
+- Reader 的“进入时隐藏阅读控制”只控制 Reader 上下控制与系统导航栏；系统状态栏 MUST 使用全局三态 `显示 / 隐藏 / 跟随控制栏`，默认显示。`显示/隐藏`独立于控制栏，`跟随控制栏` MUST 直接消费同一个 Reader controls visibility presentation fact，不得建立第二个可见性 owner。Android 16 / targetSdk 36 及以后不得依赖被系统忽略的旧 Flutter 非 edge-to-edge `SystemUiMode` 隐藏状态栏，Android 实现 MUST 由 Reader platform owner 使用 `WindowInsetsController` show/hide status/navigation bars。Reader exit MUST 恢复系统栏；App resume 和控制栏显隐变化 MUST 重新投影当前 policy。
 - 连续模式的缩放（双击分级、捏合与长按放大）MUST 作用于整条页面序列的统一变换：所有可见页一起缩放，接缝不得分裂。放大是视口空间的视觉层：
   列表滚动 MUST 保持可用（可在放大状态下继续滚动切页），跳页/滑动不得自动复位缩放；仅方向切换/换章节等结构性变更复位。
 - 连续模式放大后双指捏合松开 MUST 保持结果倍率与偏移，不得因倍率低于阈值自动弹回 1x。已在放大态时长按 MUST NOT 跳变倍率，仅按移动方式调整水平偏移并在松手后锁定。
@@ -1573,7 +1578,8 @@ external presentation 的“已启动”状态 MUST以非空 `externalPresentati
   原可配置来源设置/登录入口 MUST 作为“来源属性与登录”使用属性列表/属性页语义图标，不得与应用级源设置共用齿轮语义。
 - 历史缓存冲突信任 MUST 以 source tri-state（inherit/strict/trust）覆盖 application global default。
   旧 plugin-scoped override MAY 只作兼容读取；进入该插件任一源设置时，MUST 将旧值展开到当前全部已知 source IDs，
-  保留已有显式 source override，并在成功展开后退役 plugin override，使“跟随全局”不再被旧 plugin 值重新遮蔽。
+  保留已有显式 source override。只有 installed-plugin authority 能证明该插件 source 集完整时 MAY 退役 plugin override；
+  若 runtime discovery 仍可能存在未发现 source，则 MUST 保留 plugin fallback，直到完整 source 集可证明，避免未发现 source 丢失历史信任。
 - 插件管理 MUST 提供更新提醒：进入管理页时按每个已安装插件持久化的精确仓库索引检查更新（版本号优先、无版本号时版本串不同即视为可更新），发现更新时以对话框提醒一次并在已安装行保持可见徽标；
   更新索引 MUST 与 executable-plugin gate 的仓库 trust origin 分开持久化，MUST NOT 把只有 scheme/host 的 trust origin 当作 index 请求。旧记录缺少索引时，仅当 pinned payload URL 能无歧义证明属于宿主历史默认仓库时 MAY 迁移到对应当前默认索引；否则 MUST NOT 猜测。单个仓库不可达 MUST NOT 掩盖其它仓库的更新结果。设备导入且无真实仓库来源的 Mihon 扩展 MAY 跳过检查。
 - 已安装 Venera 插件 MUST 支持直接编辑其 JavaScript payload：

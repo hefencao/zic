@@ -143,6 +143,81 @@ void main() {
     expect(find.text('记录 Debug trace'), findsOneWidget);
   });
 
+  testWidgets('reading zoom stages use sliders and status bar exposes three modes',
+      (tester) async {
+    final preferences = AppPreferencesController();
+    addTearDown(preferences.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ReadingSettingsScreen(preferences: preferences),
+      ),
+    );
+
+    await tester.scrollUntilVisible(
+      find.byKey(readingShowStatusBarKey),
+      320,
+    );
+    final statusBarControl =
+        tester.widget<SegmentedButton<ReaderSystemStatusBarMode>>(
+      find.descendant(
+        of: find.byKey(readingShowStatusBarKey),
+        matching: find.byType(SegmentedButton<ReaderSystemStatusBarMode>),
+      ),
+    );
+    expect(statusBarControl.segments, hasLength(3));
+    expect(
+      statusBarControl.selected,
+      <ReaderSystemStatusBarMode>{ReaderSystemStatusBarMode.show},
+    );
+    statusBarControl.onSelectionChanged?.call(
+      <ReaderSystemStatusBarMode>{ReaderSystemStatusBarMode.followControls},
+    );
+    await tester.pump();
+    expect(
+      preferences.systemStatusBarMode,
+      ReaderSystemStatusBarMode.followControls,
+    );
+
+    await tester.scrollUntilVisible(
+      find.byKey(readingZoomStageFirstKey),
+      320,
+    );
+    final firstSlider = tester.widget<Slider>(
+      find.descendant(
+        of: find.byKey(readingZoomStageFirstKey),
+        matching: find.byType(Slider),
+      ),
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(readingZoomStageSecondKey),
+      320,
+    );
+    final secondSlider = tester.widget<Slider>(
+      find.descendant(
+        of: find.byKey(readingZoomStageSecondKey),
+        matching: find.byType(Slider),
+      ),
+    );
+    expect(firstSlider.min, 1.25);
+    expect(firstSlider.max, 4);
+    expect(secondSlider.min, 1.5);
+    expect(secondSlider.max, 8);
+    firstSlider.onChanged?.call(2.25);
+    await tester.pump();
+    final updatedSecondSlider = tester.widget<Slider>(
+      find.descendant(
+        of: find.byKey(readingZoomStageSecondKey),
+        matching: find.byType(Slider),
+      ),
+    );
+    expect(updatedSecondSlider.min, 2.25);
+    updatedSecondSlider.onChanged?.call(3.75);
+    await tester.pump();
+    expect(preferences.defaultZoomStageFirst, 2.25);
+    expect(preferences.defaultZoomStageSecond, 3.75);
+  });
+
   testWidgets('network prefetch budget updates without leaving the settings page', (
     tester,
   ) async {
@@ -413,7 +488,7 @@ void main() {
         'defaultReaderMode': 'continuous',
         'readerStartsImmersive': false,
         'readerPagedDirectionPreference': 'rtl',
-        'showSystemStatusBar': false,
+        'systemStatusBarMode': 'hide',
         'adaptiveReaderEnabled': true,
         'defaultVerticalStitch': true,
         'defaultZoomStage1': 3.0,
@@ -492,7 +567,7 @@ void main() {
       controller.readerPagedDirectionPreference,
       ReaderPagedDirectionPreference.rtl,
     );
-    expect(controller.showSystemStatusBar, isFalse);
+    expect(controller.systemStatusBarMode, ReaderSystemStatusBarMode.hide);
     expect(controller.adaptiveReaderEnabled, isTrue);
     expect(controller.defaultVerticalStitch, isTrue);
     expect(controller.defaultZoomStageFirst, 3.0);
@@ -563,8 +638,8 @@ void main() {
     expect(
       controller
           .readerSessionSettingsFor('venera:alpha', 'comic')
-          .showSystemStatusBar,
-      isFalse,
+          .systemStatusBarMode,
+      ReaderSystemStatusBarMode.hide,
     );
     expect(
       controller
@@ -611,7 +686,9 @@ void main() {
     controller.setReaderPagedDirectionPreference(
       ReaderPagedDirectionPreference.source,
     );
-    controller.setShowSystemStatusBar(true);
+    controller.setSystemStatusBarMode(
+      ReaderSystemStatusBarMode.followControls,
+    );
     controller.setLongPressZoomScale(3.25);
     controller.setLongPressZoomRestoreOnRelease(true);
     controller.setLongPressZoomMoveMode(ReaderLongPressMoveMode.drag);
@@ -641,7 +718,8 @@ void main() {
     expect(written?['shelfSortMode'], 'custom');
     expect(written?['version'], 8);
     expect(written?['readerPagedDirectionPreference'], 'source');
-    expect(written?['showSystemStatusBar'], isTrue);
+    expect(written?['systemStatusBarMode'], 'followControls');
+    expect(written?.containsKey('showSystemStatusBar'), isFalse);
     expect(written?['longPressZoomScale'], 3.25);
     expect(written?['detailsPreviewMaxItemsPerRow'], 4);
     expect(written?['networkUserAgent'], 'custom-network-agent');
@@ -713,7 +791,7 @@ void main() {
       controller.readerPagedDirectionPreference,
       ReaderPagedDirectionPreference.ltr,
     );
-    expect(controller.showSystemStatusBar, isTrue);
+    expect(controller.systemStatusBarMode, ReaderSystemStatusBarMode.show);
     expect(controller.defaultZoomStageFirst, 1.5);
     expect(controller.defaultZoomStageSecond, 2.0);
     expect(controller.longPressZoomScale, 2.0);
@@ -728,6 +806,25 @@ void main() {
     );
     expect(controller.longPressZoomPanRatio, 1.0);
     expect(controller.longPressZoomLimitToViewport, isTrue);
+  });
+
+  test('legacy status-bar boolean migrates to the three-state policy',
+      () async {
+    final hidden = AppPreferencesController();
+    addTearDown(hidden.dispose);
+    await hidden.attach(
+      read: () async => <String, Object?>{'showSystemStatusBar': false},
+      write: (_) async {},
+    );
+    expect(hidden.systemStatusBarMode, ReaderSystemStatusBarMode.hide);
+
+    final shown = AppPreferencesController();
+    addTearDown(shown.dispose);
+    await shown.attach(
+      read: () async => <String, Object?>{'showSystemStatusBar': true},
+      write: (_) async {},
+    );
+    expect(shown.systemStatusBarMode, ReaderSystemStatusBarMode.show);
   });
 
   test('historical cache conflict trust inherits global unless overridden',
@@ -818,6 +915,7 @@ void main() {
     controller.migratePluginTrustConflictingHistoricalCarriersToSources(
       'plugin-a',
       const <String>['source-a', 'source-b', 'source-explicit'],
+      retirePluginOverride: true,
     );
     expect(
       controller.conflictingHistoricalCarrierTrustOverrideForPlugin('plugin-a'),
@@ -861,6 +959,40 @@ void main() {
     expect(
       written?['pluginTrustConflictingHistoricalCarriers'],
       <String, bool>{},
+    );
+  });
+
+  test('partial source trust migration keeps legacy plugin fallback', () async {
+    final controller = AppPreferencesController();
+    addTearDown(controller.dispose);
+    await controller.attach(
+      read: () async => <String, Object?>{
+        'pluginTrustConflictingHistoricalCarriers': <String, Object?>{
+          'plugin-a': false,
+        },
+      },
+      write: (_) async {},
+    );
+
+    controller.migratePluginTrustConflictingHistoricalCarriersToSources(
+      'plugin-a',
+      const <String>['source-a'],
+    );
+
+    expect(
+      controller.conflictingHistoricalCarrierTrustOverrideForSource('source-a'),
+      isFalse,
+    );
+    expect(
+      controller.conflictingHistoricalCarrierTrustOverrideForPlugin('plugin-a'),
+      isFalse,
+    );
+    expect(
+      controller.trustConflictingHistoricalCarriersForSource(
+        'source-not-yet-discovered',
+        legacyPluginId: 'plugin-a',
+      ),
+      isFalse,
     );
   });
 

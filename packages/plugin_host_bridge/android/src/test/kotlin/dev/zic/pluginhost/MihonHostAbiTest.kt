@@ -188,6 +188,30 @@ class MihonHostAbiTest {
     }
 
     @Test
+    fun directHostPlanReplayRequiresExplicitMarkerAndStableCoordinates() {
+        assertTrue(
+            mihonResourceAllowsDirectPlanReplay(
+                JSONObject()
+                    .put("retryChapterId", "mihon:chapter:fixture")
+                    .put("retryPageIndex", 3)
+                    .put("directPlanReplay", true),
+            ),
+        )
+        assertFalse(
+            mihonResourceAllowsDirectPlanReplay(
+                JSONObject()
+                    .put("retryChapterId", "mihon:chapter:fixture")
+                    .put("retryPageIndex", 3),
+            ),
+        )
+        assertFalse(
+            mihonResourceAllowsDirectPlanReplay(
+                JSONObject().put("directPlanReplay", true),
+            ),
+        )
+    }
+
+    @Test
     fun replayLoadConsumesFreshRequestAuthorityInsteadOfOpaqueStaleRequest() {
         val key = "mihon:fixture\u0000mihon:resource:stale"
         val stale = JSONObject()

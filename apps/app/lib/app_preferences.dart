@@ -181,7 +181,8 @@ final class AppPreferencesController extends ChangeNotifier {
   bool _readerStartsImmersive = true;
   ReaderPagedDirectionPreference _readerPagedDirectionPreference =
       ReaderPagedDirectionPreference.ltr;
-  bool _showSystemStatusBar = true;
+  ReaderSystemStatusBarMode _systemStatusBarMode =
+      ReaderSystemStatusBarMode.show;
   bool _adaptiveReaderEnabled = false;
   bool _defaultVerticalStitch = false;
   double _defaultZoomStageFirst = 1.5;
@@ -246,7 +247,7 @@ final class AppPreferencesController extends ChangeNotifier {
   bool get readerStartsImmersive => _readerStartsImmersive;
   ReaderPagedDirectionPreference get readerPagedDirectionPreference =>
       _readerPagedDirectionPreference;
-  bool get showSystemStatusBar => _showSystemStatusBar;
+  ReaderSystemStatusBarMode get systemStatusBarMode => _systemStatusBarMode;
   bool get adaptiveReaderEnabled => _adaptiveReaderEnabled;
   bool get defaultVerticalStitch => _defaultVerticalStitch;
   double get defaultZoomStageFirst => _defaultZoomStageFirst;
@@ -417,8 +418,16 @@ final class AppPreferencesController extends ChangeNotifier {
       values['readerPagedDirectionPreference'],
       _readerPagedDirectionPreference,
     );
-    _showSystemStatusBar =
-        _boolValue(values['showSystemStatusBar'], _showSystemStatusBar);
+    final storedSystemStatusBarMode = values['systemStatusBarMode'];
+    _systemStatusBarMode = storedSystemStatusBarMode == null
+        ? (_boolValue(values['showSystemStatusBar'], true)
+            ? ReaderSystemStatusBarMode.show
+            : ReaderSystemStatusBarMode.hide)
+        : _enumByName(
+            ReaderSystemStatusBarMode.values,
+            storedSystemStatusBarMode,
+            _systemStatusBarMode,
+          );
     _adaptiveReaderEnabled =
         _boolValue(values['adaptiveReaderEnabled'], _adaptiveReaderEnabled);
     _defaultVerticalStitch = _boolValue(
@@ -616,9 +625,9 @@ final class AppPreferencesController extends ChangeNotifier {
     _changed();
   }
 
-  void setShowSystemStatusBar(bool value) {
-    if (_disposed || _showSystemStatusBar == value) return;
-    _showSystemStatusBar = value;
+  void setSystemStatusBarMode(ReaderSystemStatusBarMode value) {
+    if (_disposed || _systemStatusBarMode == value) return;
+    _systemStatusBarMode = value;
     _changed();
   }
 
@@ -801,11 +810,14 @@ final class AppPreferencesController extends ChangeNotifier {
   }
 
   /// Converts one historical plugin override into source overrides. Existing
-  /// source values win; retiring the plugin entry makes "follow global" real.
+  /// source values win. Retire the plugin fallback only when the caller has a
+  /// complete source set; partial runtime discovery must preserve it for
+  /// sources that have not been seen yet.
   void migratePluginTrustConflictingHistoricalCarriersToSources(
     String pluginId,
-    Iterable<String> sourceIds,
-  ) {
+    Iterable<String> sourceIds, {
+    bool retirePluginOverride = false,
+  }) {
     if (_disposed) return;
     final pluginKey = pluginId.trim();
     if (pluginKey.isEmpty) return;
@@ -819,11 +831,13 @@ final class AppPreferencesController extends ChangeNotifier {
       if (sourceId.isEmpty) continue;
       nextSources.putIfAbsent(sourceId, () => legacy);
     }
-    final nextPlugins = <String, bool>{
-      ..._pluginTrustConflictingHistoricalCarriers,
-    }..remove(pluginKey);
     _sourceTrustConflictingHistoricalCarriers = nextSources;
-    _pluginTrustConflictingHistoricalCarriers = nextPlugins;
+    if (retirePluginOverride) {
+      final nextPlugins = <String, bool>{
+        ..._pluginTrustConflictingHistoricalCarriers,
+      }..remove(pluginKey);
+      _pluginTrustConflictingHistoricalCarriers = nextPlugins;
+    }
     _changed();
   }
 
@@ -1039,7 +1053,7 @@ final class AppPreferencesController extends ChangeNotifier {
       'defaultReaderMode': _defaultReaderMode.name,
       'readerStartsImmersive': _readerStartsImmersive,
       'readerPagedDirectionPreference': _readerPagedDirectionPreference.name,
-      'showSystemStatusBar': _showSystemStatusBar,
+      'systemStatusBarMode': _systemStatusBarMode.name,
       'adaptiveReaderEnabled': _adaptiveReaderEnabled,
       'defaultVerticalStitch': _defaultVerticalStitch,
       'defaultZoomStage1': _defaultZoomStageFirst,

@@ -17,18 +17,14 @@ class FallbackDns : Dns {
     override fun lookup(hostname: String): List<InetAddress> {
         require(hostname.isNotBlank()) { "hostname is blank" }
         var systemFailure: Throwable? = null
-        var systemAddresses = emptyList<InetAddress>()
         try {
-            systemAddresses = Dns.SYSTEM.lookup(hostname)
-            if (systemAddresses.any { it.address.size == 4 }) {
-                return preferIpv4(systemAddresses)
-            }
+            val systemAddresses = distinctAddresses(Dns.SYSTEM.lookup(hostname))
+            if (systemAddresses.isNotEmpty()) return systemAddresses
         } catch (error: Throwable) {
             systemFailure = error
         }
         val fallback = resolvePublicAddresses(hostname)
-        if (fallback.isNotEmpty()) return preferIpv4(fallback + systemAddresses)
-        if (systemAddresses.isNotEmpty()) return preferIpv4(systemAddresses)
+        if (fallback.isNotEmpty()) return fallback
         throw UnknownHostException("No DNS answer for $hostname").apply {
             if (systemFailure != null) initCause(systemFailure)
         }
@@ -54,31 +50,24 @@ private fun resolvePublicAddresses(hostname: String): List<InetAddress> {
     }
     val dnsServers = listOf("223.5.5.5", "119.29.29.29", "1.1.1.1")
     dnsServers.forEach { server ->
-        val addresses = queryPublicDnsA(hostname, server)
+        val addresses = interleaveAddressFamilies(
+            queryPublicDns(hostname, server, 1),
+            queryPublicDns(hostname, server, 28),
+        )
         if (addresses.isNotEmpty()) {
             return cacheDnsAddresses(key, addresses)
         }
     }
     val encoded = URLEncoder.encode(hostname, "UTF-8")
     val endpoints = listOf(
-        "https://dns.alidns.com/resolve?name=$encoded&type=A",
-        "https://doh.pub/dns-query?name=$encoded&type=A",
+        "https://dns.alidns.com/resolve",
+        "https://doh.pub/dns-query",
     )
     endpoints.forEach { endpoint ->
-        val connection = URL(endpoint).openConnection() as HttpURLConnection
-        connection.connectTimeout = DOH_TIMEOUT_MILLIS
-        connection.readTimeout = DOH_TIMEOUT_MILLIS
-        connection.setRequestProperty("Accept", "application/dns-json")
-        val addresses = runCatching {
-            if (connection.responseCode !in 200..299) {
-                emptyList()
-            } else {
-                parseDnsJson(
-                    connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() },
-                )
-            }
-        }.getOrDefault(emptyList())
-        connection.disconnect()
+        val addresses = interleaveAddressFamilies(
+            queryDoh("$endpoint?name=$encoded&type=A"),
+            queryDoh("$endpoint?name=$encoded&type=AAAA"),
+        )
         if (addresses.isNotEmpty()) {
             return cacheDnsAddresses(key, addresses)
         }
@@ -87,7 +76,7 @@ private fun resolvePublicAddresses(hostname: String): List<InetAddress> {
 }
 
 private fun cacheDnsAddresses(key: String, addresses: List<InetAddress>): List<InetAddress> {
-    val ordered = preferIpv4(addresses)
+    val ordered = distinctAddresses(addresses)
     dnsCache[key] = DnsCacheEntry(
         ordered,
         System.nanoTime() + DNS_CACHE_NANOS,
@@ -95,9 +84,13 @@ private fun cacheDnsAddresses(key: String, addresses: List<InetAddress>): List<I
     return ordered
 }
 
-private fun queryPublicDnsA(hostname: String, server: String): List<InetAddress> {
+private fun queryPublicDns(
+    hostname: String,
+    server: String,
+    recordType: Int,
+): List<InetAddress> {
     val queryId = ThreadLocalRandom.current().nextInt(0x10000)
-    val query = buildDnsAQuery(hostname, queryId) ?: return emptyList()
+    val query = buildDnsQuery(hostname, queryId, recordType) ?: return emptyList()
     return runCatching {
         DatagramSocket().use { socket ->
             socket.soTimeout = PUBLIC_DNS_TIMEOUT_MILLIS
@@ -112,12 +105,17 @@ private fun queryPublicDnsA(hostname: String, server: String): List<InetAddress>
             val response = ByteArray(2048)
             val packet = DatagramPacket(response, response.size)
             socket.receive(packet)
-            parseDnsAResponse(response.copyOf(packet.length), queryId)
+            parseDnsResponse(response.copyOf(packet.length), queryId, recordType)
         }
     }.getOrDefault(emptyList())
 }
 
-private fun buildDnsAQuery(hostname: String, queryId: Int): ByteArray? {
+private fun buildDnsQuery(
+    hostname: String,
+    queryId: Int,
+    recordType: Int,
+): ByteArray? {
+    if (recordType != 1 && recordType != 28) return null
     val labels = hostname.trimEnd('.').split('.')
     if (labels.isEmpty() || labels.any { it.isEmpty() || it.length > 63 }) return null
     val query = ArrayList<Byte>(hostname.length + 18)
@@ -137,12 +135,16 @@ private fun buildDnsAQuery(hostname: String, queryId: Int): ByteArray? {
         query.addAll(bytes.toList())
     }
     query += 0
-    addShort(1)
+    addShort(recordType)
     addShort(1)
     return query.toByteArray()
 }
 
-private fun parseDnsAResponse(response: ByteArray, queryId: Int): List<InetAddress> {
+private fun parseDnsResponse(
+    response: ByteArray,
+    queryId: Int,
+    recordType: Int,
+): List<InetAddress> {
     if (response.size < 12 || readDnsShort(response, 0) != queryId) return emptyList()
     val flags = readDnsShort(response, 2)
     if (flags and 0x8000 == 0 || flags and 0x000f != 0) return emptyList()
@@ -163,10 +165,13 @@ private fun parseDnsAResponse(response: ByteArray, queryId: Int): List<InetAddre
         val length = readDnsShort(response, offset + 8)
         offset += 10
         if (offset + length > response.size) return addresses.values.toList()
-        if (type == 1 && dnsClass == 1 && length == 4) {
-            InetAddress.getByAddress(response.copyOfRange(offset, offset + 4))
+        val expectedLength = if (recordType == 1) 4 else 16
+        if (type == recordType && dnsClass == 1 && length == expectedLength) {
+            InetAddress.getByAddress(response.copyOfRange(offset, offset + length))
                 .takeIf(::isPublicAddress)
-                ?.let { addresses[it.hostAddress] = it }
+                ?.let { address ->
+                    address.hostAddress?.let { key -> addresses[key] = address }
+                }
         }
         offset += length
     }
@@ -201,14 +206,48 @@ private fun parseDnsJson(raw: String): List<InetAddress> {
         if (!looksLikeNumericAddress(value)) return@repeat
         runCatching { InetAddress.getByName(value) }.getOrNull()
             ?.takeIf(::isPublicAddress)
-            ?.let { result[it.hostAddress] = it }
+            ?.let { address ->
+                address.hostAddress?.let { key -> result[key] = address }
+            }
     }
     return result.values.toList()
 }
 
-private fun preferIpv4(addresses: List<InetAddress>): List<InetAddress> =
+private fun queryDoh(endpoint: String): List<InetAddress> {
+    val connection = URL(endpoint).openConnection() as HttpURLConnection
+    connection.connectTimeout = DOH_TIMEOUT_MILLIS
+    connection.readTimeout = DOH_TIMEOUT_MILLIS
+    connection.setRequestProperty("Accept", "application/dns-json")
+    return try {
+        if (connection.responseCode !in 200..299) {
+            emptyList()
+        } else {
+            parseDnsJson(
+                connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() },
+            )
+        }
+    } catch (_: Throwable) {
+        emptyList()
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private fun interleaveAddressFamilies(
+    ipv4: List<InetAddress>,
+    ipv6: List<InetAddress>,
+): List<InetAddress> {
+    val result = ArrayList<InetAddress>(ipv4.size + ipv6.size)
+    val count = maxOf(ipv4.size, ipv6.size)
+    repeat(count) { index ->
+        if (index < ipv4.size) result += ipv4[index]
+        if (index < ipv6.size) result += ipv6[index]
+    }
+    return distinctAddresses(result)
+}
+
+private fun distinctAddresses(addresses: List<InetAddress>): List<InetAddress> =
     addresses.distinctBy(InetAddress::getHostAddress)
-        .sortedBy { if (it.address.size == 4) 0 else 1 }
 
 private fun isPublicHostname(hostname: String): Boolean =
     hostname.contains('.') &&

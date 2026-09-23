@@ -31,12 +31,19 @@ bool _hasLegacyMihonRuntimeTransformLocators(ImportedChapterRecord chapter) =>
     (chapter.sourceRevision.endsWith(':mihon-runtime-transform-v1') ||
         chapter.sourceRevision.endsWith(':mihon-runtime-transform-v2'));
 
+bool _hasLegacyMihonResourceLocators(ImportedChapterRecord chapter) =>
+    chapter.sourceId.startsWith('mihon:') &&
+    chapter.pages.any(
+      (page) => isLegacyMihonResourceLocator(page.sourceId),
+    );
+
 bool chapterRequiresSourceLocatorRefresh(
   ImportedChapterRecord chapter, {
   String? currentMihonResourceAuthorityRevision,
 }) {
   if (_hasLegacyVeneraLocators(chapter) ||
       _hasLegacyMihonRuntimeTransformLocators(chapter) ||
+      _hasLegacyMihonResourceLocators(chapter) ||
       chapterHasHomeProjectionSnapshotPagePlaceholders(chapter)) {
     return true;
   }
@@ -52,7 +59,10 @@ bool _manifestRequiresSourceLocatorRefresh(ChapterManifest manifest) =>
       (page) => isLegacyVeneraRuntimeLocator(page.uri.toString()),
     ) ||
     (manifest.sourceId.startsWith('mihon:') &&
-        (manifest.chapter.sourceRevision
+        (manifest.pages.any(
+              (page) => isLegacyMihonResourceLocator(page.uri.toString()),
+            ) ||
+            manifest.chapter.sourceRevision
                 .endsWith(':mihon-runtime-transform-v1') ||
             manifest.chapter.sourceRevision
                 .endsWith(':mihon-runtime-transform-v2')));

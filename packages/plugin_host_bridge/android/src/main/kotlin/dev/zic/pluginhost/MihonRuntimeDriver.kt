@@ -635,7 +635,8 @@ internal class MihonRuntimeDriver private constructor(
                 source,
                 page,
                 index,
-                retryChapterId = chapterId.takeIf { transportRevision != null },
+                retryChapterId = chapterId,
+                directPlanReplay = transportRevision == null,
             )
             val uri = encodeOpaque(
                 "resource",
@@ -757,15 +758,20 @@ internal class MihonRuntimeDriver private constructor(
         freshGeneration: Boolean,
     ): Map<String, Any?> {
         val replayKey = mihonResourceReplayKey(sourceId, uri)
-        if (!uri.startsWith("mihon:resource:") ||
-            (!freshGeneration && !replayEligibleResourceUris.remove(replayKey))
+        if (!uri.startsWith("mihon:resource:")) {
+            return mapOf("available" to false)
+        }
+        val resource = decodeOpaque(uri, "resource")
+        val directPlanReplay = mihonResourceAllowsDirectPlanReplay(resource)
+        if (!freshGeneration &&
+            !directPlanReplay &&
+            !replayEligibleResourceUris.remove(replayKey)
         ) {
             return mapOf("available" to false)
         }
         if (freshGeneration) {
             replayEligibleResourceUris.remove(replayKey)
         }
-        val resource = decodeOpaque(uri, "resource")
         val chapterId = resource.optString("retryChapterId").trim()
         val pageIndex = resource.optInt("retryPageIndex", -1)
         if (chapterId.isEmpty() || pageIndex < 0) {
@@ -782,6 +788,7 @@ internal class MihonRuntimeDriver private constructor(
             pages[pageIndex],
             pageIndex,
             retryChapterId = chapterId,
+            directPlanReplay = directPlanReplay,
         )
         val requestPlan = resolveResourcePlan(sourceId, source, freshResource)
         if (freshGeneration) {
@@ -881,9 +888,10 @@ internal class MihonRuntimeDriver private constructor(
         val call = client.invokeCompatible("newCall", listOf(request))
             ?: error("Mihon client returned no call")
         calls[requestId] = call
-        val response = call.invokeCompatible("execute", emptyList())
-            ?: error("Mihon resource response is empty")
+        var response: Any? = null
         try {
+            response = call.invokeCompatible("execute", emptyList())
+                ?: error("Mihon resource response is empty")
             ensureNotCancelled(requestId)
             val successful = response.readBoolean("isSuccessful", "getIsSuccessful") ?: false
             val code = response.readLong("code", "getCode") ?: 0
@@ -898,7 +906,7 @@ internal class MihonRuntimeDriver private constructor(
             return bytes
         } finally {
             calls.remove(requestId)
-            runCatching { response.invokeOptional("close") }
+            response?.let { runCatching { it.invokeOptional("close") } }
         }
     }
 
@@ -1017,6 +1025,7 @@ internal class MihonRuntimeDriver private constructor(
         page: Any,
         index: Int,
         retryChapterId: String? = null,
+        directPlanReplay: Boolean = false,
     ): JSONObject {
         val imageUrl = page.readString("imageUrl", "getImageUrl")
         val resource = if (shouldDeferMihonPageImage(imageUrl)) {
@@ -1031,6 +1040,9 @@ internal class MihonRuntimeDriver private constructor(
             resource
                 .put("retryChapterId", retryChapterId)
                 .put("retryPageIndex", index)
+            if (directPlanReplay) {
+                resource.put("directPlanReplay", true)
+            }
         }
         return resource
     }
@@ -2331,6 +2343,10 @@ private fun mihonResourceReplayKey(sourceId: String, uri: String): String =
 internal fun mihonResourceHasReplayCoordinates(resource: JSONObject): Boolean =
     resource.optString("retryChapterId").isNotBlank() &&
         resource.optInt("retryPageIndex", -1) >= 0
+
+internal fun mihonResourceAllowsDirectPlanReplay(resource: JSONObject): Boolean =
+    resource.optBoolean("directPlanReplay", false) &&
+        mihonResourceHasReplayCoordinates(resource)
 
 private fun mihonResourceHasReplayCoordinates(uri: String): Boolean {
     if (!uri.startsWith("mihon:resource:")) return false

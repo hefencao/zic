@@ -189,6 +189,23 @@ for path in ROOT.rglob('*.kt'):
         if rel not in allowed_url_connection_kotlin:
             raise SystemExit(f'FAIL: unowned direct Kotlin URL connection: {rel}')
 
+for rel in (
+    'packages/network_bridge/android/src/runtime/kotlin/dev/zic/network/FallbackDns.kt',
+    'packages/plugin_host_bridge/android/src/mihonRuntimeCommon/kotlin/dev/zic/mihonruntime/FallbackDns.kt',
+):
+    fallback_dns = (ROOT / rel).read_text(encoding='utf-8')
+    for required in (
+        'distinctAddresses(Dns.SYSTEM.lookup(hostname))',
+        'queryPublicDns(hostname, server, 1)',
+        'queryPublicDns(hostname, server, 28)',
+        'type=AAAA',
+        'interleaveAddressFamilies(',
+    ):
+        if required not in fallback_dns:
+            raise SystemExit(f'FAIL: dual-stack fallback DNS contract missing in {rel}: {required}')
+    if 'preferIpv4(' in fallback_dns:
+        raise SystemExit(f'FAIL: fallback DNS still forces IPv4 ordering: {rel}')
+
 # The source-resource transport is a low-level owner, never an App service.
 for path in ROOT.rglob('*.dart'):
     rel = path.relative_to(ROOT).as_posix()

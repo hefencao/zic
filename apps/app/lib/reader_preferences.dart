@@ -28,7 +28,7 @@ extension ReaderPreferenceProjection on AppPreferencesController {
       longPressZoomLimitToViewport: longPressZoomLimitToViewport,
       doubleTapZoomOrigin: doubleTapZoomOrigin,
       zoomDecodeBoost: zoomDecodeBoostEnabled,
-      showSystemStatusBar: showSystemStatusBar,
+      systemStatusBarMode: systemStatusBarMode,
       invertPageOrderOverride: comic.invertPageOrder,
     );
   }

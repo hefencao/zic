@@ -39,7 +39,11 @@ App build：0.31.0+328
 - 真实肉漫屋扩展 APK 的 default-client guard 已核对：要求上述三类存在且 Brotli 不存在；对应 contract test 已进入 `tool/check.sh`。
 - 同一扩展 bytecode 的 Injekt 请求已核对为 `Application` + `Json`；host 现按 Mihon `AppBindings` 注入
   `Json { ignoreUnknownKeys=true; explicitNulls=false }`，并把 `Json` 纳入 common-runtime 完整性预检。
-- Mihon runtime-transform locator 已升级到 payload-bound v3：`mihon-runtime-transform-v3:<payload-sha256>` 同时携带稳定 chapter/page replay 坐标与 producer payload authority。
+- Mihon 新生成的 opaque page locator 现在统一携带稳定 chapter/page replay 坐标；host-direct plan 另带显式 `directPlanReplay`，
+  因此过期签名 URL/旧 page plan 可沿既有一次性 source recovery 重取 page list。runtime-transform locator 仍使用 payload-bound v3：
+  `mihon-runtime-transform-v3:<payload-sha256>` 并保留 producer payload authority。
+  升级前持久化但缺 replay 坐标的普通 `mihon:resource:` locator 会在 Home source-compat gate 判为 legacy 并先刷新 source page list，
+  不通过 sourceRevision 换代制造额外版本/缓存 identity。
   v1/v2 均视为 legacy；当前安装 payload 与 persisted v3 revision 不一致也会在 Reader/下载入口先强制 refresh。真实 trace 中旧 locator 的 runtime HTTP 404/source transform failure 会绕过 generic semantic recovery；
   当前修复将这类**非网络** source-owned failure typed 为 plan-replay eligible，而 SSL/EOF 仍由 DownloadJob 网络重试。
   无 replacement、replay source failure 或 replacement 再次同类失败统一收敛为 terminal source-generation handoff；
@@ -47,6 +51,7 @@ App build：0.31.0+328
 - 显式 Mihon resource generation refresh 使用 `freshGeneration=true` 重取 page list；runtime 现在按 source+locator 保留 fresh source request authority，而不只是给 Dart 的 plan 投影。
   ordinary replay 的 replacement authority 只供紧随其后的 runtime load 一次性消费，fresh generation authority 则供 resolve/re-resolve/load 共用；实际取图继续走 source client，完整 method/headers/body/interceptor/cookie 不降级。
   source setting mutation 会同步失效该 source 的 retained fresh/replay state；旧/跨 payload 持久 locator 由 Reader/下载入口强制刷新后再消费。
+  Android network/Mihon runtime 的 `FallbackDns` 不再强制 IPv4 优先；系统非空 DNS 结果保持原顺序，public fallback 仅在系统失败/空时启动，并同时查询 A/AAAA。
   terminal Reader refresh 仍只由当前失败页触发，但 fresh chapter 的 matched page carriers 现在按稳定 page identity 原子换代并保留旧 page order，
   不再把失败页单独 splice 后制造同一 `sourceRevision` 内的新旧 generation 混合。
 
@@ -59,11 +64,12 @@ App build：0.31.0+328
   adaptive 类型建议 > 模式默认解析（条漫默认关，页漫/动图默认开）。显式方向不再停止 profile 更新，
   为后续翻译等消费者保留同一结果，同时不改变 Pipeline/NetLane owner。
   来源级应用策略已统一收口到齿轮“源设置”：条漫置信、source-scoped 数据信任、来源独立下载目录；
+  旧 plugin-scoped 数据信任只在完整 source 集已由 installed-plugin authority 证明时退役；partial runtime discovery 会保留兼容 fallback。
   configurable source 自身设置/登录改为“来源属性与登录”。每漫画“使用自适应设置”独立于手动设置 master，
   阅读方向只保留跟随/LTR/RTL/纵向；“启用本漫画覆盖”只控制手动覆盖，清除覆盖不再清 adaptive policy/profile。
   全局分页方向为 LTR/RTL/跟随来源，默认 LTR；纵向拼接、长按放大等离散项使用互斥胶囊。
-  阅读设置已按布局、界面、双击操作、长按操作、缩放质量拆分；长按倍率独立于双击倍率，默认 2.0x。
-  系统状态栏可见性独立于 Reader 控制栏。Android 16 / targetSdk 36 使用 reader_runtime 原生 WindowInsetsController owner；Reader 退出恢复系统栏。
+  阅读设置已按布局、界面、双击操作、长按操作、缩放质量拆分；双击一级/二级倍率均使用 slider，长按倍率独立于双击倍率，默认 2.0x。
+  系统状态栏为 `显示 / 隐藏 / 跟随控制栏` 三态，默认显示；follow 模式复用同一 Reader controls visibility fact。Android 16 / targetSdk 36 使用 reader_runtime 原生 WindowInsetsController owner；Reader 退出恢复系统栏。
 - 页面几何：ValueListenable 提供 pageDimensions 驱动的 ratio live feed 投影。
 - 纵向模式：vertical模式只有extent真实变化 才能触发 anchor/geometry rebuild；vertical模式 保持布局稳定。
 - 视口与上传：vertical hidden-upload规则不变；明确区分 source-canvas 与 decoded raster 职责。

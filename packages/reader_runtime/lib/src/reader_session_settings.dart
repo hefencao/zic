@@ -10,6 +10,12 @@ enum ReaderPagedDirectionPreference {
   source,
 }
 
+enum ReaderSystemStatusBarMode {
+  show,
+  hide,
+  followControls,
+}
+
 @immutable
 final class ReaderSessionSettings {
   const ReaderSessionSettings({
@@ -32,7 +38,7 @@ final class ReaderSessionSettings {
     this.longPressZoomLimitToViewport = true,
     this.doubleTapZoomOrigin = ReaderDoubleTapZoomOrigin.center,
     this.zoomDecodeBoost = true,
-    this.showSystemStatusBar = true,
+    this.systemStatusBarMode = ReaderSystemStatusBarMode.show,
     this.invertPageOrderOverride,
   });
 
@@ -104,9 +110,11 @@ final class ReaderSessionSettings {
   /// pages so the visible region gains real pixels instead of upscaled ones.
   final bool zoomDecodeBoost;
 
-  /// Whether the Android/iOS system status bar remains visible in Reader.
-  /// Reader controls and system-bar visibility are intentionally independent.
-  final bool showSystemStatusBar;
+  /// Reader status-bar visibility policy. [ReaderSystemStatusBarMode.show]
+  /// and [ReaderSystemStatusBarMode.hide] stay independent from Reader
+  /// controls; [ReaderSystemStatusBarMode.followControls] mirrors the control
+  /// visibility state.
+  final ReaderSystemStatusBarMode systemStatusBarMode;
 
   bool get effectiveVerticalStitch => comicSpecificEnabled
       ? verticalStitchOverride ?? fallbackVerticalStitch
@@ -128,6 +136,13 @@ final class ReaderSessionSettings {
         ReaderPagedDirectionPreference.ltr => ReadingDirection.ltr,
         ReaderPagedDirectionPreference.rtl => ReadingDirection.rtl,
         ReaderPagedDirectionPreference.source => sourceDirection,
+      };
+
+  bool resolveSystemStatusBarVisible(bool controlsVisible) =>
+      switch (systemStatusBarMode) {
+        ReaderSystemStatusBarMode.show => true,
+        ReaderSystemStatusBarMode.hide => false,
+        ReaderSystemStatusBarMode.followControls => controlsVisible,
       };
 
   bool effectiveLongPressZoomFor(ReadingDirection direction) {
@@ -173,7 +188,7 @@ final class ReaderSessionSettings {
     bool? longPressZoomLimitToViewport,
     ReaderDoubleTapZoomOrigin? doubleTapZoomOrigin,
     bool? zoomDecodeBoost,
-    bool? showSystemStatusBar,
+    ReaderSystemStatusBarMode? systemStatusBarMode,
     Object? invertPageOrderOverride = _unset,
   }) =>
       ReaderSessionSettings(
@@ -214,7 +229,8 @@ final class ReaderSessionSettings {
             longPressZoomLimitToViewport ?? this.longPressZoomLimitToViewport,
         doubleTapZoomOrigin: doubleTapZoomOrigin ?? this.doubleTapZoomOrigin,
         zoomDecodeBoost: zoomDecodeBoost ?? this.zoomDecodeBoost,
-        showSystemStatusBar: showSystemStatusBar ?? this.showSystemStatusBar,
+        systemStatusBarMode:
+            systemStatusBarMode ?? this.systemStatusBarMode,
         invertPageOrderOverride: identical(invertPageOrderOverride, _unset)
             ? this.invertPageOrderOverride
             : invertPageOrderOverride as bool?,
@@ -243,7 +259,7 @@ final class ReaderSessionSettings {
           longPressZoomLimitToViewport == other.longPressZoomLimitToViewport &&
           doubleTapZoomOrigin == other.doubleTapZoomOrigin &&
           zoomDecodeBoost == other.zoomDecodeBoost &&
-          showSystemStatusBar == other.showSystemStatusBar &&
+          systemStatusBarMode == other.systemStatusBarMode &&
           invertPageOrderOverride == other.invertPageOrderOverride;
 
   @override
@@ -267,7 +283,7 @@ final class ReaderSessionSettings {
         longPressZoomLimitToViewport,
         doubleTapZoomOrigin,
         zoomDecodeBoost,
-        showSystemStatusBar,
+        systemStatusBarMode,
         invertPageOrderOverride,
       ]);
 

@@ -51,6 +51,35 @@ String mihonResourceAuthorityRevisionForPayloadSha256(String payloadSha256) {
   return 'mihon-runtime-transform-v3:$normalized';
 }
 
+bool mihonResourceLocatorHasReplayCoordinates(String value) {
+  const prefix = 'mihon:resource:';
+  if (!value.startsWith(prefix)) return false;
+  try {
+    final payload = value.substring(prefix.length);
+    final padding = (4 - payload.length % 4) % 4;
+    final normalized = payload.padRight(payload.length + padding, '=');
+    final decoded = utf8.decode(
+      base64Url.decode(normalized),
+    );
+    final json = jsonDecode(decoded);
+    if (json is! Map<String, dynamic> || json['kind'] != 'resource') {
+      return false;
+    }
+    final chapterId = json['retryChapterId'];
+    final pageIndex = json['retryPageIndex'];
+    return chapterId is String &&
+        chapterId.trim().isNotEmpty &&
+        pageIndex is int &&
+        pageIndex >= 0;
+  } on Object {
+    return false;
+  }
+}
+
+bool isLegacyMihonResourceLocator(String value) =>
+    value.startsWith('mihon:resource:') &&
+    !mihonResourceLocatorHasReplayCoordinates(value);
+
 final class InstalledExternalPlugin {
   const InstalledExternalPlugin({
     required this.plugin,

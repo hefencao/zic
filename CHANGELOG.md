@@ -1,12 +1,22 @@
 ## Unreleased — Reader settings model and Android system bars
 
+- Replace the double-tap level-1/level-2 preset chips with 0.25x-step sliders while preserving the existing `defaultZoomStage1/defaultZoomStage2` persisted values and stage ordering.
+- Replace the status-bar boolean with `显示 / 隐藏 / 跟随控制栏`. Legacy `showSystemStatusBar` persists as a read-only migration source; new writes use `systemStatusBarMode`, and follow-controls consumes the existing Reader controls visibility fact rather than creating another owner.
 - Rework the Reader settings taxonomy around ownership instead of gesture-type mixing: layout now owns default mode, paged direction, adaptive policy and vertical stitching; interface owns initial control visibility and status-bar visibility; double-tap and long-press zoom have separate sections; detail-preview density moves out of Reader settings into Appearance.
 - Add a global paged-direction preference with `LTR / RTL / 跟随来源`, defaulting to LTR. Per-comic explicit direction remains highest priority and high-confidence adaptive direction remains above the global fallback.
 - Make long-press magnification an independent global value (default 2.0x) instead of silently borrowing the double-tap zoom stages. The configured scale is consumed by both paged and continuous Reader presentation without changing Pipeline demand ownership.
 - Keep per-comic adaptive policy and manual overrides as independent axes. “使用自适应设置” remains visible after “启用本漫画覆盖”; clearing manual overrides no longer resets the adaptive switch/profile.
 - Fix Reader system-bar ownership. The old one-shot route-transition gate prevented later control toggles/resume from reapplying system UI. The gate now defers only the first apply and permits subsequent reapply.
-- Add a reader_runtime Android `WindowInsetsController` owner for status/navigation bars. This is required for Android 16 / targetSdk 36 where Flutter legacy non-edge-to-edge `SystemUiMode` calls are ignored. Status-bar visibility is independent from Reader controls; the navigation bar follows control visibility. Exiting Reader restores both system bars.
+- Add a reader_runtime Android `WindowInsetsController` owner for status/navigation bars. This is required for Android 16 / targetSdk 36 where Flutter legacy non-edge-to-edge `SystemUiMode` calls are ignored. Explicit show/hide stays independent from Reader controls, while the new follow-controls mode deliberately mirrors them; the navigation bar follows control visibility. Exiting Reader restores both system bars.
 - Device verification on Android 16 / targetSdk 36 confirmed status bars visible=true with the setting enabled, visible=false with it disabled, status remaining hidden when Reader controls are shown while navigationBars becomes visible, and both bars restoring on Reader exit.
+
+## Unreleased — Mihon page-plan replay and dual-stack fallback DNS
+
+- Give every newly generated Mihon opaque page locator stable chapter/page replay coordinates. Host-direct plans additionally carry an explicit `directPlanReplay` capability, so an expired direct URL can reuse the existing one-shot source recovery path to refetch the page list without adding a Reader/Pipeline retry loop.
+- Treat previously persisted `mihon:resource:` locators without replay coordinates as legacy at the existing App source-compatibility gate, forcing a source page-list refresh before Reader/download consumption without changing `sourceRevision` or creating a synthetic comic version.
+- Keep runtime-owned SSL/EOF semantics unchanged: only non-network, non-verification runtime source failures publish `sourceResourcePlanReplayEligible`; provider/network retries remain owned by DownloadJob.
+- Harden runtime-owned Mihon resource-call cleanup by placing `call.execute()` under the same local try/finally that removes `calls[requestId]`; the outer FutureTask lifecycle remains the final cleanup fence.
+- Stop forcing IPv4 to the front of system DNS results. Both network-bridge and Mihon-runtime fallback DNS now preserve non-empty system resolution order, use public fallback only after system failure/empty, and query both A and AAAA with interleaved fallback results. System answers are not public-filtered, preserving split-DNS/private-host authority.
 
 ## Unreleased — adaptive Reader behavior profile
 
@@ -19,7 +29,7 @@
 ## Unreleased — source settings ownership and comic layout policy
 
 - Consolidate application-owned per-source policies behind one gear “源设置” entry: adaptive webtoon confidence, historical cache conflict trust, and per-source download placement. The previous configurable-source gear is now an attributes-list “来源属性与登录” entry, while plugin management returns to plugin lifecycle concerns only.
-- Move historical carrier conflict trust from new plugin-scoped writes to `sourceTrustConflictingHistoricalCarriers[sourceId]`. Existing plugin overrides remain a runtime compatibility fallback until the first source-settings visit, which expands the old value to every currently known source of that plugin and retires the plugin override without overwriting explicit source values.
+- Move historical carrier conflict trust from new plugin-scoped writes to `sourceTrustConflictingHistoricalCarriers[sourceId]`. Existing plugin overrides remain a runtime compatibility fallback; source-settings visits expand the old value to known sources without overwriting explicit source values, and retire the plugin override only when the installed-plugin authority proves the source set is complete.
 - Move the download-directory UI from plugin rows to each source. Persistence and `DownloadRegistry.layoutResolver` were already source-scoped; the new UI therefore stops pretending that one plugin owns one directory. Existing durable bytes remain readable at indexed locators and are not migrated by this per-source setting.
 - An initial pass replaced the per-comic adaptive switch plus direction dropdown with one layout-only chip policy. That interpretation is superseded by the adaptive Reader behavior-profile section above; source-settings ownership from this section remains current.
 

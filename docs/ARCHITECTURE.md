@@ -884,13 +884,14 @@ Android texture lease prewarm 必须按 source canvas 等比 fit 后的实际 de
 DownloadSession 在 WebP 固定前缀解析出 source canvas 后立即触发 current/next/transition 的精确预热；
 同一 raster 尺寸的 deferred requests 按 current > transition > next 优先级每个 idle task 最多启动一个 platform create，
 idle+pending 总量仍受全局有界池限制；decoded frame 到达后的尺寸只作兜底，预热失败可重试且不得改变 demand/playback 语义。adaptive profile 不得借此改写 NetLane、download/decode window 或 prefetch owner。手势缩放是纯 presentation 行为：
-`ReaderView` 拥有 paged 单页 `InteractiveViewer`（双击分级默认 1.5/2.0 + 独立长按倍率默认 2.0）与 continuous 整条 strip 的统一 `Transform`（双击分级 + 捏合 + 长按放大，
+`ReaderView` 拥有 paged 单页 `InteractiveViewer`（双击分级默认 1.5/2.0，两个倍率均由独立 slider 调整 + 独立长按倍率默认 2.0）与 continuous 整条 strip 的统一 `Transform`（双击分级 + 捏合 + 长按放大，
 所有页面一起缩放）。长按放大的 global 值是无 adaptive 建议时的分页基线；高置信 adaptive profile 可按漫画类型给出手势默认，
 漫画级显式长按覆盖仍最高优先。长按放大支持松手复原/保持释放（仅分页；
 连续模式始终保持）、拖动/聚焦两种移动方式、可调拖动比率、双击位置模式（居中/吸附/聚焦）与"最大可视"边界约束——该约束按 contain 后的真实图片矩形计算而非页面控件矩形，
 留边轴保持图片居中（契约见 SPEC 2.3）；这些是 UI 设置，不改变 demand/prefetch/texture 所有权或 NetLane 调度。strip 缩放是视口空间视觉层：
-Reader 的系统栏 presentation 由 `reader_runtime` 单独拥有，不与 Pipeline/媒体生命周期耦合。`ReaderSessionSettings.showSystemStatusBar` 只读投影全局偏好；
-Reader 控制栏显隐只决定系统 navigation bar 是否跟随显示。Android targetSdk 36 使用 reader_runtime plugin 的 `WindowInsetsController` 作为真实 show/hide owner，
+Reader 的系统栏 presentation 由 `reader_runtime` 单独拥有，不与 Pipeline/媒体生命周期耦合。`ReaderSessionSettings.systemStatusBarMode` 只读投影全局三态偏好：
+`show / hide / followControls`。前两者独立于 Reader 控制栏；`followControls` 只复用 Reader 已有 `_controlsVisible` presentation fact，不新建可见性 owner。
+系统 navigation bar 仍跟随 Reader 控制栏显示。Android targetSdk 36 使用 reader_runtime plugin 的 `WindowInsetsController` 作为真实 show/hide owner，
 因为 Flutter 旧 `SystemUiMode.manual/immersiveSticky` 在 Android 16 已被系统忽略。route transition gate 只延迟首次 apply，之后控制栏切换/App resume 可重复 apply；Reader dispose 恢复 status/navigation bars。
 滚动在放大状态下保持可用且跳页不复位缩放，未锁定时普通单指水平滑动可平移整条 strip；
 双击第二下按住仅固定当前倍率与水平偏移，按住期间独占指针并禁用垂直翻页，锁定时水平滑动不改偏移，双指捏合松开保持结果不弹回，已放大时长按仅水平拖动不改倍率；锁定态再次普通双击仅退出锁定，解锁后的普通双击才继续阶段循环；
@@ -938,7 +939,9 @@ inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统�
   不得刷新未触达页，也不得让同一 locator 在一次 Retry 内反复 fresh。
   fresh generation 必须同时失效 host request-plan 与 Venera retained config/resolution，再重新执行初始 `onImageLoad`。
   Mihon source-owned resource replay 使用同一 transport owner、但采用更窄的一次性 contract：
-  当前 `mihon-runtime-transform-v3:<payload-sha256>` locator 携带稳定 `chapterId + pageIndex` replay 坐标，且 runtime-owned `loadResource`
+  新生成的 Mihon opaque page locator 都携带稳定 `chapterId + pageIndex` replay 坐标。host-direct request plan 另外携带显式 `directPlanReplay` capability，
+  因此过期签名 URL/旧 page plan 在 host transport 失败后可沿既有 `SourceResourceTransport.retryResource` 一次性重新读取 chapter/page list；
+  这不创建第二个网络 retry owner。runtime-transform locator 仍绑定 `mihon-runtime-transform-v3:<payload-sha256>`，且 runtime-owned `loadResource`
   发生**非网络、非 verification** source failure 时，driver 才发布 `sourceResourcePlanReplayEligible`，并允许一次 `retryResource`
   重新读取 chapter/page list。普通 SSL/EOF 不获得该资格，继续由 DownloadJob 的既有 network retry owner处理。
   若一次 replay 无 replacement plan、replay 本身发生 source failure，或 replacement 再次出现同类 replay-eligible failure，
@@ -948,6 +951,8 @@ inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统�
   重新读取 chapter/page list，并按 `sourceId + locator` 在当前 runtime generation 内有界保留 fresh **source request authority**，供后续 resolve/re-resolve 与 runtime-owned `loadResource` 共用。
   same-attempt replay 也必须把 fresh page/request authority 一次性传到紧随其后的 runtime load；不能只把 replacement `requestPlan` 返回给 Dart，随后又从原 opaque locator 重建旧请求。
   runtime load 仍由 source 自身 client 执行，method/headers/body/cookie/interceptor 语义不得降级到通用 HTTP client；ordinary replay authority 消费一次即清，fresh generation authority 则保留到 generation 失效。
+  升级前已经持久化且缺少 chapter/page replay 坐标的 `mihon:resource:` locator 必须在 App composition 的既有 source-locator compatibility gate
+  被识别为 legacy，并在 Reader/下载消费前强制 source refresh；不得为这次 locator-schema 补全而全局改写 `sourceRevision` 或制造额外漫画版本。
   source setting mutation 推进 transport generation 时，driver 必须同步失效该 source 的 retained fresh/replay state。
   旧 v1/v2 locator 在 Reader/下载入口必须先强制 source refresh 到 v3；v3 transport revision 绑定已验证 extension payload SHA-256，
   当前安装 payload 与 persisted revision 不一致时同样必须 refresh，不能让插件升级前的 opaque request plan 继续冒充 durable current authority。
@@ -1746,7 +1751,9 @@ Reader 页面变化产生的 `ReadingProgress` 由 `reader_runtime` 串行合并
   候选按 persistent logical query 的 `touched_us DESC` 稳定顺序选择。
   source override 只有在全局策略允许 historical reuse 时才生效，不能覆盖 `strictReload`。
   冲突信任另有 application-level 全局默认，当前默认开启；源设置以 tri-state（inherit/strict/trust）覆盖该默认。
-  历史 plugin-scoped override 只作读取兼容；首次进入该插件任一源设置时，一次性展开到全部已知 source IDs 后退役。
+  历史 plugin-scoped override 只作读取兼容；进入源设置时可把旧值展开到当前已知 source IDs。
+  只有 installed plugin authority 能证明 source 集完整（静态完整 descriptor，或成功 runtime activation 已持久化完整 `sourceIds`）时才退役 plugin fallback；
+  部分 runtime discovery 不得因为“当前只看见一个 source”就删除旧值，否则尚未发现的 sibling source 会丢失历史信任。
   该 resolver 只决定多个完整 READY signature 冲突时是否允许最近 historical carrier 进入 read routing，
   不建立 equivalence/canonical/current-exact authority。Reader 只上报 first-visible-frame，不拥有 URI/cache/source 信任策略。
   historical READY 一旦通过用户 read-routing 策略资格化，local-prepare owner 在 exact/partial/verified-equivalent authority 都未命中后应直接把该 sealed generation 的 range replay capability 绑定到同一 physical `DownloadSession`：
@@ -2044,6 +2051,8 @@ Presentation 不得自行构造 HTTP client。
 网络执行只有三类合法 owner：
 - **source-owned client**：Mihon/Venera 等来源的 CookieJar/interceptor/auth/DNS/TLS/session 语义；
   未知 client wrapper、重定向、`Set-Cookie` 或无法无状态平铺的响应必须留在这里执行；
+  Mihon/network bridge 的 `FallbackDns` 先完整尊重系统 DNS 的非空返回顺序（包括合法 split-DNS/private 地址），不得再强制 IPv4 前置；
+  仅当系统 DNS 失败或为空时才进入 public fallback，并同时查询 A/AAAA，以交错双栈结果返回，不得把 public-address 过滤反向施加到系统 DNS authority。
   Venera JavaScript `Network.*` 的 Cookie、manual redirect、
   `cache-time`、`prevent-parallel`、requestId grouping 与同步 JS contract 仍由 plugin-host source runtime拥有；
   其中 Venera source-requested resolver cache 属于runtime-network composition，

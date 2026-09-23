@@ -7,6 +7,35 @@ import 'package:plugin_host/plugin_host.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 
 void main() {
+  test('legacy Mihon resource locator detection follows replay coordinates', () {
+    String locator(Map<String, Object?> payload) {
+      final json = jsonEncode(<String, Object?>{
+        ...payload,
+        'kind': 'resource',
+      });
+      final encoded = base64UrlEncode(utf8.encode(json)).replaceAll('=', '');
+      return 'mihon:resource:' + encoded;
+    }
+
+    final current = locator(<String, Object?>{
+      'url': 'https://example.invalid/page.webp',
+      'retryChapterId': 'mihon:chapter:fixture',
+      'retryPageIndex': 2,
+    });
+    final legacy = locator(<String, Object?>{
+      'url': 'https://example.invalid/page.webp',
+    });
+
+    expect(mihonResourceLocatorHasReplayCoordinates(current), isTrue);
+    expect(isLegacyMihonResourceLocator(current), isFalse);
+    expect(mihonResourceLocatorHasReplayCoordinates(legacy), isFalse);
+    expect(isLegacyMihonResourceLocator(legacy), isTrue);
+    expect(
+      isLegacyMihonResourceLocator('https://example.invalid/page.webp'),
+      isFalse,
+    );
+  });
+
   test('controller close is joinable across concurrent callers', () async {
     final storage = await Directory.systemTemp.createTemp(
       'zic-external-plugin-joinable-close-',

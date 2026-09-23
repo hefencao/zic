@@ -37,18 +37,30 @@ void main() {
     );
   });
 
-  test('long-press scale and status-bar policy participate in settings identity',
+  test('long-press scale and status-bar mode participate in settings identity',
       () {
     const defaults = ReaderSessionSettings();
     expect(defaults.effectiveLongPressZoomScale, 2.0);
-    expect(defaults.showSystemStatusBar, isTrue);
+    expect(defaults.systemStatusBarMode, ReaderSystemStatusBarMode.show);
 
     final changed = defaults.copyWith(
       longPressZoomScale: 2.75,
-      showSystemStatusBar: false,
+      systemStatusBarMode: ReaderSystemStatusBarMode.followControls,
     );
     expect(changed.effectiveLongPressZoomScale, 2.75);
-    expect(changed.showSystemStatusBar, isFalse);
+    expect(
+      changed.systemStatusBarMode,
+      ReaderSystemStatusBarMode.followControls,
+    );
+    expect(changed.resolveSystemStatusBarVisible(false), isFalse);
+    expect(changed.resolveSystemStatusBarVisible(true), isTrue);
+    expect(
+      defaults
+          .copyWith(systemStatusBarMode: ReaderSystemStatusBarMode.hide)
+          .resolveSystemStatusBarVisible(true),
+      isFalse,
+    );
+    expect(defaults.resolveSystemStatusBarVisible(false), isTrue);
     expect(changed, isNot(defaults));
   });
 

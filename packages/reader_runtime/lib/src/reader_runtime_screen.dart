@@ -213,7 +213,8 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   void _applyReaderSystemUi() {
     unawaited(
       _readerSystemUi.apply(
-        showStatusBar: _settings.showSystemStatusBar,
+        showStatusBar:
+            _settings.resolveSystemStatusBarVisible(_controlsVisible),
         showNavigationBar: _controlsVisible,
       ),
     );
@@ -226,9 +227,9 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       _favorite = widget.initialFavorite;
     }
     if (oldWidget.initialSettings != widget.initialSettings) {
-      final statusBarVisibilityChanged =
-          oldWidget.initialSettings.showSystemStatusBar !=
-              widget.initialSettings.showSystemStatusBar;
+      final statusBarModeChanged =
+          oldWidget.initialSettings.systemStatusBarMode !=
+              widget.initialSettings.systemStatusBarMode;
       final sourceConfidenceChanged =
           oldWidget.initialSettings.sourceWebtoonConfidence !=
               widget.initialSettings.sourceWebtoonConfidence;
@@ -241,7 +242,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
         );
       }
       _adaptiveProfile = _initialAdaptiveProfile(_settings);
-      if (statusBarVisibilityChanged) {
+      if (statusBarModeChanged) {
         _systemUiTransitionGate.applyNow();
       }
     }

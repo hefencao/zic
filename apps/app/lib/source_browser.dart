@@ -3464,6 +3464,11 @@ final class _SourceManagementScreenState
     final externalPlugins = _externalPlugins;
     final pluginId = externalPlugins?.ownerOfSource(source.sourceId);
     if (pluginId != null && externalPlugins != null) {
+      final installedOwners = externalPlugins.installed
+          .where((installed) => installed.plugin.pluginId == pluginId)
+          .toList(growable: false);
+      final installedOwner =
+          installedOwners.length == 1 ? installedOwners.single : null;
       final knownSourceIds = <String>{
         source.sourceId,
         for (final candidate in _sources)
@@ -3484,6 +3489,9 @@ final class _SourceManagementScreenState
       preferences.migratePluginTrustConflictingHistoricalCarriersToSources(
         pluginId,
         knownSourceIds,
+        retirePluginOverride: installedOwner != null &&
+            (installedOwner.sourceIds.isNotEmpty ||
+                !installedOwner.plugin.requiresRuntimeDiscovery),
       );
     }
     await Navigator.of(context).push(
