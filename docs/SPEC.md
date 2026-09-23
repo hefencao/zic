@@ -494,6 +494,17 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   MUST NOT因错误文本不包含`network/connect/timeout`等关键词而降级成`ErrorCode.source`，
   bridge/runtime也 MUST NOT为此自建第二retry loop。非retryable/source失败与网络重试耗尽 MUST在当前physical transfer demand内终止，
   source snapshot listener、Reader finally或Presentation MUST NOT另行无界重提。
+- Mihon runtime-owned page request 的 stale-plan 恢复 MUST 与 transport retry 分离：
+  只有带 stable chapter/page replay coordinate 的 current locator，且 `loadResource` 发生非网络、非 verification source failure 时，
+  MAY 标记 `sourceResourcePlanReplayEligible`。`SourceResourceTransport` MAY 在同一 logical open 内调用 `retryResource` **一次**，
+  重新读取 chapter/page list 并生成 replacement request；普通 SSL/EOF MUST NOT触发该昂贵 replay，而继续归 DownloadJob network retry。
+  若 source 无 replacement、replay RPC 发生 source failure，或 replacement 再次产生同类 replay-eligible failure，MUST NOT递归 replay，
+  MUST 发布 terminal `sourceResourcePlanReplayUnavailable`，由已有 source-generation refresh handoff处理；网络/verification/cancel failure MUST 原样保留。
+  Reader 当前页、章节下载命令与 whole-comic queue MAY 在各自既有 owner 内各做一次整章 refresh，但 MUST NOT建立新的 Mihon retry loop。
+  显式 `refreshResource` MUST 代表新的 logical resource generation：Mihon runtime MAY 通过 `freshGeneration=true` 重取 page list，
+  并在当前 runtime generation 内按 source+locator 有界保留 fresh initial request plan；后续 resolve MUST NOT退回旧 opaque request plan。
+  当 source setting/state mutation 推进 resource transport generation 时，对应 source 的 retained fresh/replay state MUST 同步失效。
+  旧 `mihon-runtime-transform-v1` locator MUST 在 Reader/下载消费前强制 source refresh 到 v2；Reader/Pipeline MUST NOT持有 Mihon replay state。
 - 新Reader消费已有committed/promoted physical `DownloadSession`时，
   Reader-local native ingress MUST 以异步 synchronized projection join恢复；
   bounded replay queue MUST按已有numeric priority保护尚未取得source的更高rank demanded entry：

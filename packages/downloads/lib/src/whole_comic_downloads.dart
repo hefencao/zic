@@ -6,6 +6,7 @@ import 'package:domain/domain.dart';
 import 'package:storage/storage.dart';
 
 import 'chapter_downloads.dart';
+import 'source_resource_transport.dart';
 
 enum WholeComicQueuePhase {
   queued,
@@ -938,7 +939,8 @@ final class WholeComicDownloadQueue {
     ImportedLibraryEntry entry,
     Object error,
   ) async {
-    if (!error.toString().contains('must use a runtime token')) {
+    if (!sourceResourceGenerationRefreshEligible(error) &&
+        !error.toString().contains('must use a runtime token')) {
       return false;
     }
     if (refreshStaleChapter == null) {

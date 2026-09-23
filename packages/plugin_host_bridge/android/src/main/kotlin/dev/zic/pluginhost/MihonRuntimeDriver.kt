@@ -77,6 +77,8 @@ internal class MihonRuntimeDriver private constructor(
     private val completions = ConcurrentHashMap<String, CountDownLatch>()
     private val rateLimiters = ConcurrentHashMap<String, SourceRequestLimiter>()
     private val runtimeTransformBySource = ConcurrentHashMap<String, Boolean>()
+    private val replayEligibleResourceUris = ConcurrentHashMap.newKeySet<String>()
+    private val freshResourcePlans = ConcurrentHashMap<String, Map<String, Any?>>()
     private val closed = AtomicBoolean(false)
     private val sourcesClosed = AtomicBoolean(false)
     private val runtimeDeleted = AtomicBoolean(false)
@@ -100,10 +102,18 @@ internal class MihonRuntimeDriver private constructor(
         }
         val responded = AtomicBoolean(false)
         val task = object : FutureTask<Unit>(Callable {
+            var operation: String? = null
+            var resourceUri: String? = null
             try {
                 ensureNotCancelled(requestId)
                 val arguments = request["arguments"].stringMap("runtime request arguments")
-                val operation = request.requireString("operation")
+                operation = request.requireString("operation")
+                if (operation == "loadResource") {
+                    resourceUri = arguments.requireString("uri")
+                    replayEligibleResourceUris.remove(
+                        mihonResourceReplayKey(sourceId, resourceUri),
+                    )
+                }
                 if (operation in rateLimitedMihonOperations) {
                     enforceSourceRequestLimit(sourceId, source)
                 }
@@ -119,8 +129,16 @@ internal class MihonRuntimeDriver private constructor(
                         source,
                         arguments.requireString("uri"),
                     )
+                    "retryResource" -> retryResource(
+                        sourceId,
+                        source,
+                        arguments.requireString("uri"),
+                        requestId,
+                        freshGeneration = arguments["freshGeneration"] == true,
+                    )
                     "loadSourceSettings" -> loadSourceSettings(source)
                     "updateSourceSetting" -> updateSourceSetting(
+                        sourceId,
                         source,
                         arguments.requireString("key"),
                         arguments["value"],
@@ -139,6 +157,20 @@ internal class MihonRuntimeDriver private constructor(
                         error.sourceVerificationFailure()
                     }
                     val verificationRequired = verification != null
+                    val networkFailure = cause.isNetworkFailure()
+                    val replayUri = resourceUri
+                    val resourcePlanReplayEligible =
+                        !cancelledRequest &&
+                            !verificationRequired &&
+                            !networkFailure &&
+                            operation == "loadResource" &&
+                            replayUri != null &&
+                            mihonResourceHasReplayCoordinates(replayUri)
+                    if (resourcePlanReplayEligible) {
+                        replayEligibleResourceUris.add(
+                            mihonResourceReplayKey(sourceId, replayUri),
+                        )
+                    }
                     result.error(
                         when {
                             cancelledRequest -> "runtime-request-cancelled"
@@ -152,16 +184,19 @@ internal class MihonRuntimeDriver private constructor(
                         },
                         retryable = !cancelledRequest &&
                             !verificationRequired &&
-                            cause.isNetworkFailure(),
-                        details = if (verification == null) {
-                            emptyMap()
-                        } else {
-                            mapOf(
-                                "requestUrl" to verification.requestUrl,
-                                "statusCode" to verification.statusCode,
-                                "clearanceCookiePresent" to
+                            networkFailure,
+                        details = buildMap {
+                            if (verification != null) {
+                                put("requestUrl", verification.requestUrl)
+                                put("statusCode", verification.statusCode)
+                                put(
+                                    "clearanceCookiePresent",
                                     verification.clearanceCookiePresent,
-                            )
+                                )
+                            }
+                            if (resourcePlanReplayEligible) {
+                                put("sourceResourcePlanReplayEligible", true)
+                            }
                         },
                     )
                 }
@@ -585,8 +620,16 @@ internal class MihonRuntimeDriver private constructor(
         val chapter = resolveMihonChapter(source, chapterId, encoded, requestId)
         val pages = loadMihonPageModels(source, chapter, requestId)
         require(pages.isNotEmpty()) { "Mihon chapter contains no readable pages" }
+        val sourceId = source.readValue("id", "getId")?.toString()
+            ?: error("Mihon source id is missing")
+        val transportRevision = mihonTransportRevision(sourceId, source)
         val pageMessages = pages.mapIndexed { index, page ->
-            val resource = mihonPageResource(source, page, index)
+            val resource = mihonPageResource(
+                source,
+                page,
+                index,
+                retryChapterId = chapterId.takeIf { transportRevision != null },
+            )
             val uri = encodeOpaque(
                 "resource",
                 resource,
@@ -603,13 +646,11 @@ internal class MihonRuntimeDriver private constructor(
                 }
             }
         }
-        val sourceId = source.readValue("id", "getId")?.toString()
-            ?: error("Mihon source id is missing")
         val resolvedChapter = chapterMessage(
             chapter = chapter,
             comicId = comicId,
             sequence = encoded.optInt("sequence", 0),
-            transportRevision = mihonTransportRevision(sourceId, source),
+            transportRevision = transportRevision,
         ).toMutableMap().apply {
             put("chapterId", chapterId)
             put("pageCount", pageMessages.size)
@@ -648,6 +689,9 @@ internal class MihonRuntimeDriver private constructor(
         source: Any,
         uri: String,
     ): Map<String, Any?> {
+        freshResourcePlans[mihonResourceReplayKey(sourceId, uri)]?.let {
+            return it
+        }
         val resource = if (uri.startsWith("mihon:resource:")) {
             decodeOpaque(uri, "resource")
         } else {
@@ -656,6 +700,14 @@ internal class MihonRuntimeDriver private constructor(
             }
             JSONObject().put("url", uri)
         }
+        return resolveResourcePlan(sourceId, source, resource)
+    }
+
+    private fun resolveResourcePlan(
+        sourceId: String,
+        source: Any,
+        resource: JSONObject,
+    ): Map<String, Any?> {
         val resolvedResource = if (resource.optBoolean("deferredPage")) {
             enforceSourceRequestLimit(sourceId, source)
             resolveDeferredMihonPageResource(source, resource)
@@ -688,6 +740,71 @@ internal class MihonRuntimeDriver private constructor(
             "body" to body,
             "requiresRuntimeTransform" to (mihonTransportRevision(sourceId, source) != null),
         )
+    }
+
+    private fun retryResource(
+        sourceId: String,
+        source: Any,
+        uri: String,
+        requestId: String,
+        freshGeneration: Boolean,
+    ): Map<String, Any?> {
+        val replayKey = mihonResourceReplayKey(sourceId, uri)
+        if (!uri.startsWith("mihon:resource:") ||
+            (!freshGeneration && !replayEligibleResourceUris.remove(replayKey))
+        ) {
+            return mapOf("available" to false)
+        }
+        if (freshGeneration) {
+            replayEligibleResourceUris.remove(replayKey)
+        }
+        val resource = decodeOpaque(uri, "resource")
+        val chapterId = resource.optString("retryChapterId").trim()
+        val pageIndex = resource.optInt("retryPageIndex", -1)
+        if (chapterId.isEmpty() || pageIndex < 0) {
+            return mapOf("available" to false)
+        }
+        val encodedChapter = decodeOpaque(chapterId, "chapter")
+        val chapter = resolveMihonChapter(source, chapterId, encodedChapter, requestId)
+        val pages = loadMihonPageModels(source, chapter, requestId)
+        if (pageIndex >= pages.size) {
+            return mapOf("available" to false)
+        }
+        val freshResource = mihonPageResource(
+            source,
+            pages[pageIndex],
+            pageIndex,
+            retryChapterId = chapterId,
+        )
+        val requestPlan = resolveResourcePlan(sourceId, source, freshResource)
+        if (freshGeneration) {
+            rememberFreshResourcePlan(replayKey, requestPlan)
+        }
+        return mapOf(
+            "available" to true,
+            "request" to requestPlan,
+        )
+    }
+
+    private fun rememberFreshResourcePlan(
+        replayKey: String,
+        requestPlan: Map<String, Any?>,
+    ) {
+        freshResourcePlans[replayKey] = requestPlan
+        while (freshResourcePlans.size > MAX_FRESH_MIHON_RESOURCE_PLANS) {
+            val stale = freshResourcePlans.keys.firstOrNull { it != replayKey } ?: break
+            freshResourcePlans.remove(stale)
+        }
+    }
+
+    private fun invalidateMihonResourcePlans(sourceId: String) {
+        val prefix = "$sourceId\u0000"
+        replayEligibleResourceUris
+            .filter { key -> key.startsWith(prefix) }
+            .forEach(replayEligibleResourceUris::remove)
+        freshResourcePlans.keys
+            .filter { key -> key.startsWith(prefix) }
+            .forEach(freshResourcePlans::remove)
     }
 
     private fun loadResource(source: Any, uri: String, requestId: String): ByteArray {
@@ -784,7 +901,12 @@ internal class MihonRuntimeDriver private constructor(
         )
     }
 
-    private fun updateSourceSetting(source: Any, key: String, value: Any?): Map<String, Any?> {
+    private fun updateSourceSetting(
+        sourceId: String,
+        source: Any,
+        key: String,
+        value: Any?,
+    ): Map<String, Any?> {
         if (key == ZIC_REQUEST_LIMIT_KEY || key == ZIC_REQUEST_PERIOD_KEY) {
             val parsed = (value as? String)?.toIntOrNull()
                 ?: error("Mihon request limit preference requires an integer")
@@ -795,6 +917,7 @@ internal class MihonRuntimeDriver private constructor(
             }
             sourcePreferences(source).edit().putInt(key, parsed).apply()
             rateLimiters.remove(source.readValue("id", "getId").toString())
+            invalidateMihonResourcePlans(sourceId)
             return emptyMap()
         }
         val screen = createSourcePreferenceScreen(source)
@@ -827,6 +950,7 @@ internal class MihonRuntimeDriver private constructor(
             else -> error("Mihon source preference type is unsupported")
         }
         require(accepted) { "Mihon source rejected the preference value" }
+        invalidateMihonResourcePlans(sourceId)
         return emptyMap()
     }
 
@@ -858,15 +982,27 @@ internal class MihonRuntimeDriver private constructor(
             .acquire(permits.coerceAtMost(1000), periodMillis)
     }
 
-    private fun mihonPageResource(source: Any, page: Any, index: Int): JSONObject {
+    private fun mihonPageResource(
+        source: Any,
+        page: Any,
+        index: Int,
+        retryChapterId: String? = null,
+    ): JSONObject {
         val imageUrl = page.readString("imageUrl", "getImageUrl")
-        if (shouldDeferMihonPageImage(imageUrl)) {
-            return JSONObject()
+        val resource = if (shouldDeferMihonPageImage(imageUrl)) {
+            JSONObject()
                 .put("deferredPage", true)
                 .put("index", page.readLong("index", "getIndex")?.toInt() ?: index)
                 .put("pageUrl", page.readString("url", "getUrl").orEmpty())
+        } else {
+            resolvedMihonPageResource(source, page, requireNotNull(imageUrl))
         }
-        return resolvedMihonPageResource(source, page, requireNotNull(imageUrl))
+        if (retryChapterId != null) {
+            resource
+                .put("retryChapterId", retryChapterId)
+                .put("retryPageIndex", index)
+        }
+        return resource
     }
 
     private fun resolveDeferredMihonPageResource(source: Any, resource: JSONObject): JSONObject {
@@ -1440,7 +1576,8 @@ private const val MIHON_BROWSER_USER_AGENT =
     "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
         "(KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
 private const val MAX_CACHED_MIHON_CHAPTERS = 4096
-private const val MIHON_RUNTIME_TRANSFORM_REVISION = "mihon-runtime-transform-v1"
+private const val MAX_FRESH_MIHON_RESOURCE_PLANS = 256
+private const val MIHON_RUNTIME_TRANSFORM_REVISION = "mihon-runtime-transform-v2"
 
 internal fun mihonChapterMatches(chapter: Any, encoded: JSONObject): Boolean {
     val encodedUrl = encoded.optString("url").trim()
@@ -1471,6 +1608,7 @@ private val rateLimitedMihonOperations = setOf(
     "loadComic",
     "loadChapter",
     "loadResource",
+    "retryResource",
 )
 
 private class SourceRequestLimiter {
@@ -2109,6 +2247,20 @@ internal fun normalizedMihonSourceName(
     }
     val pluginName = pluginId.substringAfterLast('.').substringAfterLast(':').trim()
     return pluginName.takeIf { it.isNotEmpty() } ?: "Mihon"
+}
+
+private fun mihonResourceReplayKey(sourceId: String, uri: String): String =
+    "$sourceId\u0000$uri"
+
+internal fun mihonResourceHasReplayCoordinates(resource: JSONObject): Boolean =
+    resource.optString("retryChapterId").isNotBlank() &&
+        resource.optInt("retryPageIndex", -1) >= 0
+
+private fun mihonResourceHasReplayCoordinates(uri: String): Boolean {
+    if (!uri.startsWith("mihon:resource:")) return false
+    return runCatching {
+        mihonResourceHasReplayCoordinates(decodeOpaque(uri, "resource"))
+    }.getOrDefault(false)
 }
 
 internal fun mihonSourceRequiresRuntimeTransform(source: Any): Boolean {

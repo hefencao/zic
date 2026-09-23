@@ -34,4 +34,11 @@
   `UserAgentInterceptor`、以及委托 `network_bridge` 的 `CloudflareInterceptor`；默认 client 不加 Brotli。这是 plugin-host ABI 兼容边界，
   不得把这些兜底/验证语义迁到 Reader/Pipeline/Download。Mihon Injekt scope 同样由 plugin host 唯一拥有；`Application`、`NetworkHelper`、
   `Json(ignoreUnknownKeys=true, explicitNulls=false)` 为当前稳定 host singleton 合同。
+  Mihon `mihon-runtime-transform-v2` locator 的 chapter/page replay 坐标只授权一次 source-plan replacement；
+  非网络 source-owned `loadResource` failure 才可触发，SSL/EOF 继续归 DownloadJob。
+  v1 locator 必须在 Reader/下载入口强制 source refresh，不得恢复旧 opaque plan；replacement unavailable/replay source failure 只交给既有
+  terminal source-generation refresh handoff，Reader 当前页、章节下载命令与 whole-comic queue 各自在原 owner 内至多整章刷新一次；
+  不在 Reader/Pipeline 新建 Mihon retry owner。显式 `refreshResource` 用 `freshGeneration=true` 重取 page list，并由 runtime
+  在当前 generation 内按 source+locator 有界保留 fresh initial plan，后续 re-resolve 不得回退旧 opaque plan；source setting mutation
+  推进 transport generation 时必须同步失效该 source 的 retained fresh/replay state。
 - VeneraHttpCacheStore 维持 6h 有效期与 targeted force-miss 规约；Venera 阶段约束见 0169-venera-previous-request-plan-pressure-and-source-open-stages.md。

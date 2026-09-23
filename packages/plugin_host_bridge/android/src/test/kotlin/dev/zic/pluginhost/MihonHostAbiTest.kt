@@ -4,6 +4,7 @@ import android.app.Application
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.json.JSONObject
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -153,6 +154,27 @@ class MihonHostAbiTest {
         assertTrue(shouldDeferMihonPageImage(null))
         assertTrue(shouldDeferMihonPageImage(""))
         assertFalse(shouldDeferMihonPageImage("https://cdn.invalid/page.webp"))
+    }
+
+    @Test
+    fun resourceReplayRequiresStableChapterAndPageCoordinates() {
+        assertTrue(
+            mihonResourceHasReplayCoordinates(
+                JSONObject()
+                    .put("retryChapterId", "mihon:chapter:fixture")
+                    .put("retryPageIndex", 3),
+            ),
+        )
+        assertFalse(
+            mihonResourceHasReplayCoordinates(
+                JSONObject().put("retryChapterId", "mihon:chapter:fixture"),
+            ),
+        )
+        assertFalse(
+            mihonResourceHasReplayCoordinates(
+                JSONObject().put("retryPageIndex", 3),
+            ),
+        )
     }
 
     @Test

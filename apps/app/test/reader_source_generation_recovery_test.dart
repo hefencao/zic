@@ -1,5 +1,6 @@
 import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
+import 'package:downloads/downloads.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zic/demo_home.dart';
 
@@ -13,13 +14,14 @@ void main() {
   ImportedChapterRecord chapter(
     String host, {
     List<String>? pageIds,
+    String sourceId = 'venera:fixture',
     String sourceRevision = 'r1',
   }) {
     final ids = pageIds ?? const <String>['page-0', 'page-1'];
     return ImportedChapterRecord(
       directoryId: 'fixture',
       displayName: 'chapter',
-      sourceId: 'venera:fixture',
+      sourceId: sourceId,
       comicId: 'comic',
       chapterId: 'chapter',
       sourceRevision: sourceRevision,
@@ -58,6 +60,22 @@ void main() {
     expect(chapterRequiresSourceLocatorRefresh(usable), isFalse);
   });
 
+  test('legacy Mihon runtime transform revision requires source refresh', () {
+    final legacy = chapter(
+      'cdn.example',
+      sourceId: 'mihon:fixture',
+      sourceRevision: '/chapter:0:mihon-runtime-transform-v1',
+    );
+    final current = chapter(
+      'cdn.example',
+      sourceId: 'mihon:fixture',
+      sourceRevision: '/chapter:0:mihon-runtime-transform-v2',
+    );
+
+    expect(chapterRequiresSourceLocatorRefresh(legacy), isTrue);
+    expect(chapterRequiresSourceLocatorRefresh(current), isFalse);
+  });
+
   test('route refresh only owns terminal unavailable source generations', () {
     final terminal = failure(const <String, Object?>{
       'sourceMediaSemanticRejected': true,
@@ -65,10 +83,30 @@ void main() {
       'sourceSemanticAcceptedPlans': 0,
       'sourceSemanticRecoveryUnavailable': true,
     });
-    expect(readerSourceGenerationRefreshEligible(terminal), isTrue);
+    expect(sourceResourceGenerationRefreshEligible(terminal), isTrue);
+    expect(
+      sourceResourceGenerationRefreshEligible(
+        failure(const <String, Object?>{
+          'sourceResourcePlanReplayEligible': true,
+          'sourceResourcePlanReplayAttempted': true,
+          'sourceResourcePlanReplayUnavailable': true,
+        }),
+      ),
+      isTrue,
+      reason: 'terminal resource-plan replay hands off to generation refresh',
+    );
+    expect(
+      sourceResourceGenerationRefreshEligible(
+        failure(const <String, Object?>{
+          'sourceResourcePlanReplayEligible': true,
+        }),
+      ),
+      isFalse,
+      reason: 'replay eligibility alone stays below the Reader route',
+    );
 
     expect(
-      readerSourceGenerationRefreshEligible(
+      sourceResourceGenerationRefreshEligible(
         failure(const <String, Object?>{
           'sourceMediaSemanticRejected': true,
           'sourceSemanticRetryExhausted': true,
@@ -80,7 +118,7 @@ void main() {
       reason: 'a source-owned retry plan remains inside its generation',
     );
     expect(
-      readerSourceGenerationRefreshEligible(
+      sourceResourceGenerationRefreshEligible(
         failure(const <String, Object?>{
           'sourceMediaSemanticRejected': true,
           'sourceSemanticRetryExhausted': true,
@@ -92,7 +130,7 @@ void main() {
       reason: 'an exhausted source-owned chain is not an unavailable generation',
     );
     expect(
-      readerSourceGenerationRefreshEligible(
+      sourceResourceGenerationRefreshEligible(
         const Failure(
           code: ErrorCode.network,
           message: 'fixture network failure',

@@ -238,7 +238,10 @@ final class HomeDownloadCommands {
       }
     } on Object catch (error) {
       final message = error.toString();
-      if (message.contains('must use a runtime token') ||
+      final terminalSourceGeneration =
+          sourceResourceGenerationRefreshEligible(error);
+      if (terminalSourceGeneration ||
+          message.contains('must use a runtime token') ||
           message.contains('token expired')) {
         final refreshed = await refreshStaleChapter(current);
         if (refreshed == null) rethrow;

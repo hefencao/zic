@@ -29,6 +29,13 @@ App build：0.31.0+328
 - 真实肉漫屋扩展 APK 的 default-client guard 已核对：要求上述三类存在且 Brotli 不存在；对应 contract test 已进入 `tool/check.sh`。
 - 同一扩展 bytecode 的 Injekt 请求已核对为 `Application` + `Json`；host 现按 Mihon `AppBindings` 注入
   `Json { ignoreUnknownKeys=true; explicitNulls=false }`，并把 `Json` 纳入 common-runtime 完整性预检。
+- Mihon runtime-transform locator 已升级 v2：稳定 chapter/page replay 坐标只用于一次 source-plan replay。
+  真实 trace 中 v1 locator 的 runtime HTTP 404/source transform failure 会绕过 generic semantic recovery；
+  当前修复将这类**非网络** source-owned failure typed 为 plan-replay eligible，而 SSL/EOF 仍由 DownloadJob 网络重试。
+  无 replacement、replay source failure 或 replacement 再次同类失败统一收敛为 terminal source-generation handoff；
+  Reader 当前页、章节下载命令和 whole-comic queue 只在各自既有 owner 内做一次整章 refresh，网络/verification/cancel 不被误分类。
+- 显式 Mihon resource generation refresh 使用 `freshGeneration=true` 重取 page list，并由 runtime 按 source+locator 有界保留 fresh initial plan；
+  source setting mutation 会同步失效该 source 的 retained fresh/replay state；v1 持久 locator 由 Reader/下载入口强制刷新后再消费。
 
 ### 渲染与几何 (Pipeline & Reader View)
 - 页面几何：ValueListenable 提供 pageDimensions 驱动的 ratio live feed 投影。

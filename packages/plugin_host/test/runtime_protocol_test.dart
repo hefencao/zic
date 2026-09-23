@@ -154,11 +154,23 @@ void main() {
         uri: uri,
       ).toMessage(),
     );
+    final refreshed = ExternalPluginRuntimeRequest.fromMessage(
+      ExternalPluginRuntimeRequest.retryResource(
+        requestId: 'refresh-1',
+        externalSourceId: 'fixture',
+        uri: uri,
+        freshGeneration: true,
+      ).toMessage(),
+    );
 
     expect(resolved.operation, ExternalPluginRuntimeOperation.resolveResource);
     expect(retried.operation, ExternalPluginRuntimeOperation.retryResource);
+    expect(refreshed.operation, ExternalPluginRuntimeOperation.retryResource);
     expect(resolved.arguments['uri'], uri.toString());
     expect(retried.arguments['uri'], uri.toString());
+    expect(retried.arguments.containsKey('freshGeneration'), isFalse);
+    expect(refreshed.arguments['uri'], uri.toString());
+    expect(refreshed.arguments['freshGeneration'], isTrue);
   });
 
   test('source handshake round-trips ratings without runtime code', () {

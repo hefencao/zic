@@ -12,6 +12,7 @@ ImportedLibraryEntry _entry(
   int pageCount = 1,
   String comicId = 'queue-comic',
   String comicTitle = '队列漫画',
+  String? sourceRevision,
 }) =>
     ImportedLibraryEntry(
       chapter: ImportedChapterRecord(
@@ -23,7 +24,7 @@ ImportedLibraryEntry _entry(
         chapterId: comicId == 'queue-comic'
             ? 'queue-chapter-$chapter'
             : '$comicId-chapter-$chapter',
-        sourceRevision: 'queue-r$chapter',
+        sourceRevision: sourceRevision ?? 'queue-r$chapter',
         sequence: chapter,
         pages: <ImportedPageRecord>[
           for (var page = 1; page <= pageCount; page++)
@@ -101,6 +102,48 @@ void main() {
       chapters: <ImportedLibraryEntry>[_entry(1)],
     );
     expect(store.saveCount, greaterThan(0));
+  });
+
+  test('whole-comic self-heals terminal source generation once', () async {
+    var refreshes = 0;
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (entry, _) async {
+        if (entry.chapter.sourceRevision == 'queue-r1') {
+          throw const Failure(
+            code: ErrorCode.source,
+            message: 'source resource plan replay unavailable',
+            details: <String, Object?>{
+              'sourceResourcePlanReplayEligible': true,
+              'sourceResourcePlanReplayAttempted': true,
+              'sourceResourcePlanReplayUnavailable': true,
+            },
+          );
+        }
+        return Uint8List(1);
+      },
+    );
+    addTearDown(downloads.close);
+    final queue = WholeComicDownloadQueue(downloads: downloads)
+      ..refreshStaleChapter = (entry) async {
+        refreshes++;
+        return _entry(1, sourceRevision: 'queue-r1-fresh');
+      };
+    addTearDown(queue.close);
+
+    await queue.ready;
+    await queue.enqueue(
+      sourceId: 'queue-source',
+      comicId: 'queue-comic',
+      comicTitle: '队列漫画',
+      chapters: <ImportedLibraryEntry>[_entry(1)],
+    );
+
+    final complete = await _waitForJob(
+      queue,
+      (job) => job.phase == WholeComicQueuePhase.complete,
+    );
+    expect(complete.completedChapters, 1);
+    expect(refreshes, 1);
   });
 
   test('whole-comic queue enforces configured chapter concurrency', () async {

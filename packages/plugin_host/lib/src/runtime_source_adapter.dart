@@ -1059,12 +1059,6 @@ final class _RuntimeBrowsableComicSource
     Uri uri, {
     TaskControl? control,
   }) async {
-    if (_format == ExternalComicPluginFormat.mihonExtension) {
-      // A failed host-side stream can mean that a deferred Mihon page URL or
-      // source header has expired. Resolve a fresh request plan while keeping
-      // the image body on the shared host transport path.
-      return resolveResourceControlled(uri, control: control);
-    }
     final payload = await _invoke(
       ExternalPluginRuntimeOperation.retryResource,
       _externalId,
@@ -1096,7 +1090,18 @@ final class _RuntimeBrowsableComicSource
     TaskControl? control,
   }) async {
     if (_format == ExternalComicPluginFormat.mihonExtension) {
-      // Mihon resolveResource is already a fresh deferred page resolution.
+      // An explicit new generation may rebuild the initial Mihon request plan.
+      // The runtime keeps that plan source-private for the current generation;
+      // this is separate from same-attempt replay.
+      await _invoke(
+        ExternalPluginRuntimeOperation.retryResource,
+        _externalId,
+        <String, Object?>{
+          'uri': uri.toString(),
+          'freshGeneration': true,
+        },
+        control: control,
+      );
       return;
     }
     await _invoke(

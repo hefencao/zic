@@ -26,14 +26,22 @@ bool _hasLegacyVeneraLocators(ImportedChapterRecord chapter) =>
       (page) => isLegacyVeneraRuntimeLocator(page.sourceId),
     );
 
+bool _hasLegacyMihonRuntimeTransformLocators(ImportedChapterRecord chapter) =>
+    chapter.sourceId.startsWith('mihon:') &&
+    chapter.sourceRevision.endsWith(':mihon-runtime-transform-v1');
+
 bool chapterRequiresSourceLocatorRefresh(ImportedChapterRecord chapter) =>
     _hasLegacyVeneraLocators(chapter) ||
+    _hasLegacyMihonRuntimeTransformLocators(chapter) ||
     chapterHasHomeProjectionSnapshotPagePlaceholders(chapter);
 
-bool _manifestHasLegacyVeneraLocators(ChapterManifest manifest) =>
+bool _manifestRequiresSourceLocatorRefresh(ChapterManifest manifest) =>
     manifest.pages.any(
       (page) => isLegacyVeneraRuntimeLocator(page.uri.toString()),
-    );
+    ) ||
+    (manifest.sourceId.startsWith('mihon:') &&
+        manifest.chapter.sourceRevision
+            .endsWith(':mihon-runtime-transform-v1'));
 
 Future<ChapterManifest> _loadCompatibleSourceChapter(
   BrowsableComicSource source,
@@ -69,7 +77,7 @@ Future<ChapterManifest> _loadCompatibleSourceChapter(
             )
           : await source.loadChapter(chapterId);
   control?.throwIfCancelled();
-  if (!_manifestHasLegacyVeneraLocators(manifest)) {
+  if (!_manifestRequiresSourceLocatorRefresh(manifest)) {
     return manifest;
   }
   if ((controlledRefreshable != null || refreshable != null) &&
@@ -82,9 +90,9 @@ Future<ChapterManifest> _loadCompatibleSourceChapter(
         : await refreshable!.refreshChapter(chapterId);
     control?.throwIfCancelled();
   }
-  if (_manifestHasLegacyVeneraLocators(manifest)) {
+  if (_manifestRequiresSourceLocatorRefresh(manifest)) {
     throw StateError(
-      'Venera 章节仍返回仅当前运行时有效的资源定位符，请重新加载漫画源',
+      '章节仍返回仅旧运行时/旧转换版本可用的资源定位符，请重新加载漫画源',
     );
   }
   return manifest;

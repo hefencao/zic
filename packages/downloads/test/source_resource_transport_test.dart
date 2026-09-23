@@ -987,6 +987,210 @@ void main() {
     expect(hostLoads, 2);
   });
 
+  test('typed source plan failure replays one replacement inside current open',
+      () async {
+    final locator = Uri.parse('mihon:resource:replayable');
+    final request = ComicResourceRequest(
+      uri: Uri.parse('https://fixture/stale.webp'),
+      requiresRuntimeTransform: true,
+    );
+    final replacement = ComicResourceRequest(
+      uri: Uri.parse('https://fixture/fresh.webp'),
+      requiresRuntimeTransform: true,
+    );
+    final recovered = Uint8List.fromList(
+      <int>[0xff, 0xd8, 0xff, 9, 8, 7, 0xff, 0xd9],
+    );
+    final source = _FixtureSource(
+      request: request,
+      retryRequest: replacement,
+      runtimeResults: <Object>[
+        const Failure(
+          code: ErrorCode.source,
+          message: 'runtime-owned source plan failed',
+          details: <String, Object?>{
+            'sourceResourcePlanReplayEligible': true,
+          },
+        ),
+        recovered,
+      ],
+    );
+    final pool = ExternalPluginResourceTransportPool();
+    addTearDown(pool.close);
+
+    final response = await pool.loaderFor(source, locator)();
+
+    expect(await _collect(response.bytes), recovered);
+    expect(source.retryCalls, 1);
+    expect(source.loadCalls, 2);
+    expect(response.diagnostics['sourceOpenPath'], 'retry-runtime-transform');
+    expect(response.diagnostics['sourceRetryUsed'], isTrue);
+  });
+
+  test('unavailable typed source plan replay becomes terminal generation signal',
+      () async {
+    final locator = Uri.parse('mihon:resource:unavailable-replay');
+    final source = _FixtureSource(
+      request: ComicResourceRequest(
+        uri: Uri.parse('https://fixture/stale.webp'),
+        requiresRuntimeTransform: true,
+      ),
+      runtimeResults: const <Object>[
+        Failure(
+          code: ErrorCode.source,
+          message: 'runtime-owned source plan failed',
+          details: <String, Object?>{
+            'sourceResourcePlanReplayEligible': true,
+          },
+        ),
+      ],
+    );
+    final pool = ExternalPluginResourceTransportPool();
+    addTearDown(pool.close);
+
+    await expectLater(
+      pool.loaderFor(source, locator)(),
+      throwsA(
+        isA<Failure>()
+            .having(
+              (error) => error.details['sourceResourcePlanReplayAttempted'],
+              'replay attempted',
+              isTrue,
+            )
+            .having(
+              (error) => error.details['sourceResourcePlanReplayUnavailable'],
+              'replay unavailable',
+              isTrue,
+            ),
+      ),
+    );
+    expect(source.retryCalls, 1);
+    expect(source.loadCalls, 1);
+  });
+
+  test('typed replay source failure becomes terminal generation signal',
+      () async {
+    final locator = Uri.parse('mihon:resource:retry-source-failure');
+    final source = _FixtureSource(
+      request: ComicResourceRequest(
+        uri: Uri.parse('https://fixture/stale.webp'),
+        requiresRuntimeTransform: true,
+      ),
+      retryFailure: const Failure(
+        code: ErrorCode.source,
+        message: 'page list refresh failed',
+      ),
+      runtimeResults: const <Object>[
+        Failure(
+          code: ErrorCode.source,
+          message: 'runtime-owned source plan failed',
+          details: <String, Object?>{
+            'sourceResourcePlanReplayEligible': true,
+          },
+        ),
+      ],
+    );
+    final pool = ExternalPluginResourceTransportPool();
+    addTearDown(pool.close);
+
+    await expectLater(
+      pool.loaderFor(source, locator)(),
+      throwsA(
+        isA<Failure>()
+            .having(
+              sourceResourceGenerationRefreshEligible,
+              'terminal generation handoff',
+              isTrue,
+            )
+            .having(
+              (error) => error.details['sourceResourcePlanReplayUnavailable'],
+              'replay unavailable',
+              isTrue,
+            ),
+      ),
+    );
+    expect(source.retryCalls, 1);
+    expect(source.loadCalls, 1);
+  });
+
+  test('typed replacement failure does not recurse resource-plan replay',
+      () async {
+    final locator = Uri.parse('mihon:resource:replacement-failure');
+    final replayFailure = const Failure(
+      code: ErrorCode.source,
+      message: 'runtime-owned source plan failed',
+      details: <String, Object?>{
+        'sourceResourcePlanReplayEligible': true,
+      },
+    );
+    final source = _FixtureSource(
+      request: ComicResourceRequest(
+        uri: Uri.parse('https://fixture/stale.webp'),
+        requiresRuntimeTransform: true,
+      ),
+      retryRequest: ComicResourceRequest(
+        uri: Uri.parse('https://fixture/fresh.webp'),
+        requiresRuntimeTransform: true,
+      ),
+      runtimeResults: <Object>[replayFailure, replayFailure],
+    );
+    final pool = ExternalPluginResourceTransportPool();
+    addTearDown(pool.close);
+
+    await expectLater(
+      pool.loaderFor(source, locator)(),
+      throwsA(
+        isA<Failure>().having(
+          sourceResourceGenerationRefreshEligible,
+          'terminal generation handoff',
+          isTrue,
+        ),
+      ),
+    );
+    expect(source.retryCalls, 1);
+    expect(source.loadCalls, 2);
+  });
+
+  test('typed replay preserves network failure ownership', () async {
+    final locator = Uri.parse('mihon:resource:retry-network-failure');
+    final source = _FixtureSource(
+      request: ComicResourceRequest(
+        uri: Uri.parse('https://fixture/stale.webp'),
+        requiresRuntimeTransform: true,
+      ),
+      retryFailure: const Failure(
+        code: ErrorCode.network,
+        message: 'page list network failure',
+      ),
+      runtimeResults: const <Object>[
+        Failure(
+          code: ErrorCode.source,
+          message: 'runtime-owned source plan failed',
+          details: <String, Object?>{
+            'sourceResourcePlanReplayEligible': true,
+          },
+        ),
+      ],
+    );
+    final pool = ExternalPluginResourceTransportPool();
+    addTearDown(pool.close);
+
+    await expectLater(
+      pool.loaderFor(source, locator)(),
+      throwsA(
+        isA<Failure>()
+            .having((error) => error.code, 'code', ErrorCode.network)
+            .having(
+              sourceResourceGenerationRefreshEligible,
+              'generation refresh eligibility',
+              isFalse,
+            ),
+      ),
+    );
+    expect(source.retryCalls, 1);
+    expect(source.loadCalls, 1);
+  });
+
   test('replacement non-image follows the current source semantic retry chain',
       () async {
     final failed = Uri.parse('https://fixture/non-image');
@@ -1417,10 +1621,12 @@ class _FixtureSource
     this.resolveRequests,
     this.retryRequest,
     this.retryRequests,
+    this.retryFailure,
     this.refreshRequest,
     this.resolveGate,
     this.supportsTransform = false,
     this.transform,
+    this.runtimeResults,
     Object? resourceGenerationIdentity,
     Uint8List? runtimeBytes,
   })  : resourceTransportGenerationIdentity =
@@ -1431,11 +1637,13 @@ class _FixtureSource
   final List<ComicResourceRequest>? resolveRequests;
   final ComicResourceRequest? retryRequest;
   final List<ComicResourceRequest?>? retryRequests;
+  final Object? retryFailure;
   final ComicResourceRequest? refreshRequest;
   final Completer<ComicResourceRequest>? resolveGate;
   final Uint8List runtimeBytes;
   final bool supportsTransform;
   final Future<Uint8List> Function(Uint8List bytes)? transform;
+  final List<Object>? runtimeResults;
   @override
   final Object resourceTransportGenerationIdentity;
   int resolveCalls = 0;
@@ -1503,6 +1711,8 @@ class _FixtureSource
     TaskControl? control,
   }) async {
     retryCalls++;
+    final failure = retryFailure;
+    if (failure != null) throw failure;
     final retries = retryRequests;
     if (retries != null) {
       final index = retryCalls - 1;
@@ -1522,6 +1732,12 @@ class _FixtureSource
   }) async {
     loadCalls++;
     lastLoadControl = control;
+    final results = runtimeResults;
+    if (results != null && loadCalls <= results.length) {
+      final result = results[loadCalls - 1];
+      if (result is Uint8List) return result;
+      throw result;
+    }
     return runtimeBytes;
   }
 

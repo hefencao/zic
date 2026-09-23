@@ -895,6 +895,18 @@ inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统�
   则同一次显式 Retry 可先按旧 generation 运行到第一个重新确认的 source-terminal locator，立即只 fresh 该 locator，并允许该用户命令继续一次；
   不得刷新未触达页，也不得让同一 locator 在一次 Retry 内反复 fresh。
   fresh generation 必须同时失效 host request-plan 与 Venera retained config/resolution，再重新执行初始 `onImageLoad`。
+  Mihon source-owned resource replay 使用同一 transport owner、但采用更窄的一次性 contract：
+  只有 `mihon-runtime-transform-v2` locator 携带稳定 `chapterId + pageIndex` replay 坐标，且 runtime-owned `loadResource`
+  发生**非网络、非 verification** source failure 时，driver 才发布 `sourceResourcePlanReplayEligible`，并允许一次 `retryResource`
+  重新读取 chapter/page list。普通 SSL/EOF 不获得该资格，继续由 DownloadJob 的既有 network retry owner处理。
+  若一次 replay 无 replacement plan、replay 本身发生 source failure，或 replacement 再次出现同类 replay-eligible failure，
+  transport 不再递归 replay，而发布 `sourceResourcePlanReplayUnavailable`，再交给既有 terminal source-generation refresh handoff：
+  Reader 当前页、章节下载命令、whole-comic queue 只在各自 owner 内各做一次整章刷新；不得在 Reader/Pipeline 增加 Mihon-specific retry loop。
+  显式新 generation 的 `refreshResource` 与上述 same-attempt replay 分离：adapter 发送 `freshGeneration=true`，Mihon runtime
+  重新读取 chapter/page list，并按 `sourceId + locator` 在当前 runtime generation 内有界保留 fresh initial request plan，供后续 resolve/re-resolve 使用；
+  source setting mutation 推进 transport generation 时，driver 必须同步失效该 source 的 retained fresh/replay state。
+  旧 `mihon-runtime-transform-v1` 持久 locator 在 Reader/下载入口必须先强制 source refresh 到 v2，
+  不能继续把旧 opaque request plan 当 durable current authority。
   Download Manager 自动缓存消费 durable management projection，而非把 exact `CacheRec` 当唯一存在性 authority。
   compact Home projection 只提供 chapter identity/pageCount，
   management cache/snapshot 不得把 `zic-home-snapshot-page:*` placeholder 展开成 `DownloadId`；

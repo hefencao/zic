@@ -264,6 +264,60 @@ void main() {
     expect(snapshot.isComplete, isTrue);
     expect(snapshot.receivedBytes, 2);
   });
+
+  test('terminal source-plan replay refreshes chapter authority once', () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (entry, _) async {
+        if (entry.chapter.sourceRevision == 'r1') {
+          throw const Failure(
+            code: ErrorCode.source,
+            message: 'source resource plan replay unavailable',
+            details: <String, Object?>{
+              'sourceResourcePlanReplayEligible': true,
+              'sourceResourcePlanReplayAttempted': true,
+              'sourceResourcePlanReplayUnavailable': true,
+            },
+          );
+        }
+        return Uint8List.fromList(<int>[6, 5, 4]);
+      },
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    var staleRefreshes = 0;
+    final commands = HomeDownloadCommands(
+      session: session,
+      ensureDurableServices: () async {},
+      ensurePlatformEnvironment: () async {},
+      requiresSourceLocatorRefresh: (_) => false,
+      refreshRemoteEntry: (entry, {required forceSourceRefresh}) async => entry,
+      refreshStaleChapter: (_) async {
+        staleRefreshes++;
+        return _entry(revision: 'r2');
+      },
+    );
+    addTearDown(() async {
+      await session.close();
+      session.dispose();
+    });
+
+    await session.ready;
+    final snapshot = await commands.downloadChapter(_entry());
+
+    expect(staleRefreshes, 1);
+    expect(snapshot.sourceRevision, 'r2');
+    expect(snapshot.isComplete, isTrue);
+    expect(snapshot.receivedBytes, 3);
+  });
 }
 
 ImportedLibraryEntry _entry({String revision = 'r1'}) {

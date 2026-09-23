@@ -292,7 +292,12 @@ final class _SourceResourceTransport
     } on Failure catch (error, stackTrace) {
       if (error.code == ErrorCode.cancelled) rethrow;
       final semanticFailure = _isSourceMediaSemanticRejection(error);
-      if (!semanticFailure && error.code != ErrorCode.network) rethrow;
+      final planReplayFailure = _isSourceResourcePlanReplayEligible(error);
+      if (!semanticFailure &&
+          !planReplayFailure &&
+          error.code != ErrorCode.network) {
+        rethrow;
+      }
       if (semanticFailure &&
           error.details['sourceSemanticRetryExhausted'] == true) {
         Error.throwWithStackTrace(error, stackTrace);
@@ -300,20 +305,60 @@ final class _SourceResourceTransport
       _invalidate(uri);
       retryUsed = true;
       verifiedReuseIdentity = null;
-      try {
-        final retried = await _recoverSourceRequest(
-          uri,
-          initialRequestUri: request.uri,
-          range: range,
-          validators: validators,
-          control: control,
-          cause: error,
-          requireRetry: semanticFailure,
-        );
-        response = retried.response;
-        openPath = retried.openPath;
-      } on _NoSourceRecoveryAvailable {
-        Error.throwWithStackTrace(error, stackTrace);
+      if (planReplayFailure) {
+        final ComicResourceRequest? replacement;
+        try {
+          replacement = await _retry(uri, control: control);
+        } on Failure catch (retryError, retryStack) {
+          if (retryError.code != ErrorCode.source) {
+            Error.throwWithStackTrace(retryError, retryStack);
+          }
+          throw _sourceResourcePlanReplayUnavailableFailure(
+            uri,
+            cause: retryError,
+          );
+        }
+        if (replacement == null) {
+          throw _sourceResourcePlanReplayUnavailableFailure(
+            uri,
+            cause: error,
+          );
+        }
+        try {
+          final retried = await _openRetryPlan(
+            uri,
+            replacement,
+            range: range,
+            validators: validators,
+            control: control,
+          );
+          response = retried.response;
+          openPath = retried.openPath;
+        } on Failure catch (retryError, retryStack) {
+          if (!_isSourceResourcePlanReplayEligible(retryError)) {
+            Error.throwWithStackTrace(retryError, retryStack);
+          }
+          throw _sourceResourcePlanReplayUnavailableFailure(
+            uri,
+            cause: retryError,
+          );
+        }
+      } else {
+        try {
+          final retried = await _recoverSourceRequest(
+            uri,
+            initialRequestUri: request.uri,
+            range: range,
+            validators: validators,
+            control: control,
+            cause: error,
+            requireRetry: semanticFailure,
+          );
+          response = retried.response;
+          openPath = retried.openPath;
+        } on _NoSourceRecoveryAvailable {
+          Error.throwWithStackTrace(error, stackTrace);
+        }
       }
     } on IOException catch (error) {
         _throwIfTaskCancelled(control);
@@ -1072,8 +1117,26 @@ String? verifiedComicResourceIdentity(Uri uri) {
 
 
 
+bool sourceResourceGenerationRefreshEligible(Object error) {
+  if (error is! Failure || error.code != ErrorCode.source) return false;
+  final details = error.details;
+  final semanticRecoveryUnavailable =
+      details['sourceMediaSemanticRejected'] == true &&
+      details['sourceSemanticRetryExhausted'] == true &&
+      details['sourceSemanticRecoveryUnavailable'] == true &&
+      details['sourceSemanticAcceptedPlans'] == 0;
+  final resourcePlanReplayUnavailable =
+      details['sourceResourcePlanReplayEligible'] == true &&
+      details['sourceResourcePlanReplayAttempted'] == true &&
+      details['sourceResourcePlanReplayUnavailable'] == true;
+  return semanticRecoveryUnavailable || resourcePlanReplayUnavailable;
+}
+
 bool _isSourceMediaSemanticRejection(Failure error) =>
     error.details['sourceMediaSemanticRejected'] == true;
+
+bool _isSourceResourcePlanReplayEligible(Failure error) =>
+    error.details['sourceResourcePlanReplayEligible'] == true;
 
 bool _requiresSourceClientState(Failure error) =>
     error.details['sourceClientStateRequired'] == true;
@@ -1119,6 +1182,21 @@ Failure _sourceMediaSemanticFailure(
       },
     );
 
+
+Failure _sourceResourcePlanReplayUnavailableFailure(
+  Uri locator, {
+  Object? cause,
+}) =>
+    Failure(
+      code: ErrorCode.source,
+      message: 'source resource plan replay unavailable for $locator',
+      cause: cause,
+      details: const <String, Object?>{
+        'sourceResourcePlanReplayEligible': true,
+        'sourceResourcePlanReplayAttempted': true,
+        'sourceResourcePlanReplayUnavailable': true,
+      },
+    );
 
 Failure _taskCancelledFailure() => const Failure(
       code: ErrorCode.cancelled,

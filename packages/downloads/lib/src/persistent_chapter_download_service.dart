@@ -823,6 +823,9 @@ final class PersistentChapterDownloadService
           'sourceSemanticRuntimeTransformPlans',
           'sourceSemanticFreshResolvePlans',
           'sourceSemanticRecoveryUnavailable',
+          'sourceResourcePlanReplayEligible',
+          'sourceResourcePlanReplayAttempted',
+          'sourceResourcePlanReplayUnavailable',
         ])
           if (error.details.containsKey(key)) key: error.details[key],
       });

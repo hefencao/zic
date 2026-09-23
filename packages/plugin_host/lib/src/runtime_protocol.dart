@@ -272,12 +272,16 @@ final class ExternalPluginRuntimeRequest {
     required String requestId,
     required String externalSourceId,
     required Uri uri,
+    bool freshGeneration = false,
   }) =>
       ExternalPluginRuntimeRequest(
         requestId: requestId,
         operation: ExternalPluginRuntimeOperation.retryResource,
         externalSourceId: externalSourceId,
-        arguments: <String, Object?>{'uri': uri.toString()},
+        arguments: <String, Object?>{
+          'uri': uri.toString(),
+          if (freshGeneration) 'freshGeneration': true,
+        },
       );
 
   Map<String, Object?> toMessage() => <String, Object?>{
@@ -523,11 +527,25 @@ void _validateArguments(
       _expectOptionalFreshNetwork(arguments);
       return;
     case ExternalPluginRuntimeOperation.loadResource:
-    case ExternalPluginRuntimeOperation.retryResource:
       _expectSingleNonEmptyString(arguments, 'uri');
       final uri = Uri.tryParse(arguments['uri']! as String);
       if (uri == null || !uri.hasScheme) {
         throw const FormatException('resource URI is invalid');
+      }
+      return;
+    case ExternalPluginRuntimeOperation.retryResource:
+      _expectKeys(
+        arguments,
+        const <String>{'uri'},
+        optional: const <String>{'freshGeneration'},
+      );
+      _expectNonEmptyString(arguments, 'uri');
+      final freshGeneration = arguments['freshGeneration'];
+      final uri = Uri.tryParse(arguments['uri']! as String);
+      if (uri == null ||
+          !uri.hasScheme ||
+          (freshGeneration != null && freshGeneration is! bool)) {
+        throw const FormatException('resource retry arguments are invalid');
       }
       return;
     case ExternalPluginRuntimeOperation.transformResource:

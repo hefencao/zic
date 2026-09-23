@@ -8,15 +8,6 @@ typedef _ReaderPageGenerationRecovery = Future<bool> Function(
   required bool userInitiated,
 });
 
-bool readerSourceGenerationRefreshEligible(Object error) {
-  if (error is! Failure || error.code != ErrorCode.source) return false;
-  final details = error.details;
-  return details['sourceMediaSemanticRejected'] == true &&
-      details['sourceSemanticRetryExhausted'] == true &&
-      details['sourceSemanticRecoveryUnavailable'] == true &&
-      details['sourceSemanticAcceptedPlans'] == 0;
-}
-
 int? readerFreshPageIndexForRecovery(
   ImportedChapterRecord previous,
   ImportedChapterRecord refreshed,
@@ -338,7 +329,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
       Object error, {
       required bool userInitiated,
     }) async {
-      if (!readerSourceGenerationRefreshEligible(error)) return false;
+      if (!sourceResourceGenerationRefreshEligible(error)) return false;
       final previous = currentPrepared;
       if (previous == null ||
           rawPageIndex < 0 ||

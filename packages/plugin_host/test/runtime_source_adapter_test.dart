@@ -431,13 +431,35 @@ void main() {
       connection.operations,
       <ExternalPluginRuntimeOperation>[
         ExternalPluginRuntimeOperation.resolveResource,
-        ExternalPluginRuntimeOperation.resolveResource,
+        ExternalPluginRuntimeOperation.retryResource,
       ],
     );
     expect(
       connection.operations,
       isNot(contains(ExternalPluginRuntimeOperation.loadResource)),
     );
+  });
+
+  test('Mihon resource refresh requests a fresh source generation plan',
+      () async {
+    final connection = _FixtureConnection();
+    final session = ExternalPluginRuntimeSession(
+      plugin: _plugin(format: ExternalComicPluginFormat.mihonExtension),
+      connection: connection,
+      limits: const ExternalPluginRuntimeLimits(),
+    );
+    addTearDown(session.close);
+    final source = session.sources.single;
+    final locator = Uri.parse('mihon:resource:refresh-generation');
+
+    await (source as RefreshableComicResourceSource).refreshResource(locator);
+
+    expect(
+      connection.lastRequest?.operation,
+      ExternalPluginRuntimeOperation.retryResource,
+    );
+    expect(connection.lastRequest?.arguments['uri'], locator.toString());
+    expect(connection.lastRequest?.arguments['freshGeneration'], isTrue);
   });
 
   test('Venera resource refresh requests a fresh source generation', () async {
@@ -1692,7 +1714,18 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
         ExternalPluginRuntimeOperation.transformResource =>
           request.arguments['bytes']!,
         ExternalPluginRuntimeOperation.retryResource =>
-          const <String, Object?>{'available': false},
+          (request.arguments['uri'] as String).startsWith('mihon:resource:')
+              ? const <String, Object?>{
+                  'available': true,
+                  'request': <String, Object?>{
+                    'url': 'https://cdn.invalid/1.webp',
+                    'method': 'GET',
+                    'headers': <String, Object?>{},
+                    'body': null,
+                    'requiresRuntimeTransform': false,
+                  },
+                }
+              : const <String, Object?>{'available': false},
         ExternalPluginRuntimeOperation.loadSourceSettings =>
           const <Object?>[
             <String, Object?>{
