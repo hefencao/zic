@@ -11,12 +11,12 @@ def text(path: str) -> str:
 def require(body: str, marker: str, label: str) -> None:
     if marker not in body:
         raise SystemExit(
-            f"DemoHome version-reuse lifecycle boundary missing {label}: {marker}"
+            f"HomeShell version-reuse lifecycle boundary missing {label}: {marker}"
         )
 
 
-home = text("apps/app/lib/demo_home.dart")
-ui = text("apps/app/lib/demo_home_source_migration.dart")
+home = text("apps/app/lib/home_shell.dart")
+ui = text("apps/app/lib/home_shell_source_migration.dart")
 owner = text("apps/app/lib/home_version_reuse_lifecycle.dart")
 
 for marker, label in (
@@ -43,7 +43,7 @@ for forbidden in (
 ):
     if forbidden in home or forbidden in ui:
         raise SystemExit(
-            f"DemoHome re-acquired version-reuse lifecycle authority: {forbidden}"
+            f"HomeShell re-acquired version-reuse lifecycle authority: {forbidden}"
         )
 
 for marker, label in (
@@ -88,7 +88,7 @@ for forbidden in (
     "ScaffoldMessenger",
     "WidgetsBinding",
     "setState(",
-    "_DemoHomeState",
+    "_HomeShellState",
     "ComicSourceResourceGateway",
     "HomeServiceHandoff",
     "libraryGenerationChanges",
@@ -118,4 +118,4 @@ for marker, label in (
 ):
     require(ui if marker != "_versionViewReusePreparations" else home, marker, label)
 
-print("dev.332 DemoHome version reuse lifecycle boundary: OK")
+print("dev.332 HomeShell version reuse lifecycle boundary: OK")

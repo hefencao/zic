@@ -33,7 +33,7 @@ def main() -> int:
         'final ComicDetailsSourceWebViewOpener? onOpenSourceWebView;',
     )
     require(
-        'apps/app/lib/demo_home_source_compat.dart',
+        'apps/app/lib/home_shell_source_compat.dart',
         'builder: (_) => details.RemoteComicDetailsScreen(',
         'onOpenSourceWebView: ({Uri? verificationUri}) {',
     )
@@ -145,12 +145,12 @@ def main() -> int:
         'networkBridge: widget.networkBridge',
     )
     require(
-        'apps/app/lib/demo_home.dart',
+        'apps/app/lib/home_shell.dart',
         'final AndroidNetworkBridge networkBridge;',
         'networkBridge: widget.networkBridge',
     )
     require(
-        'apps/app/lib/demo_home_source_compat.dart',
+        'apps/app/lib/home_shell_source_compat.dart',
         'widget.networkBridge.openBrowser(',
     )
     require(

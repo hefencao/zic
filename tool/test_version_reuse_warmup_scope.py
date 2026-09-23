@@ -2,9 +2,9 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-migration = (ROOT / 'apps/app/lib/demo_home_source_migration.dart').read_text()
-reader = (ROOT / 'apps/app/lib/demo_home_reader_route.dart').read_text()
-compat = (ROOT / 'apps/app/lib/demo_home_source_compat.dart').read_text()
+migration = (ROOT / 'apps/app/lib/home_shell_source_migration.dart').read_text()
+reader = (ROOT / 'apps/app/lib/home_shell_reader_route.dart').read_text()
+compat = (ROOT / 'apps/app/lib/home_shell_source_compat.dart').read_text()
 
 # Merely rendering details must not prove page equivalence. Version discovery,
 # explicit version viewing and Reader entry are the three preparation owners.

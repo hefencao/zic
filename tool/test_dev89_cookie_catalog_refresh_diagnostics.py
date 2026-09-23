@@ -90,7 +90,7 @@ for abi in ("mihonRuntime14", "mihonRuntime16"):
     )
 
 require(
-    "apps/app/lib/demo_home_source_compat.dart",
+    "apps/app/lib/home_shell_source_compat.dart",
     "_sourceWebViewRequest",
     "userAgent: effectiveUserAgent",
     "widget.preferences.networkUserAgent",
@@ -101,7 +101,7 @@ require(
     "source-verification-browser-result",
 )
 forbid(
-    "apps/app/lib/demo_home_source_compat.dart",
+    "apps/app/lib/home_shell_source_compat.dart",
     "'cookies': snapshot?.cookies",
 )
 require(
@@ -170,11 +170,11 @@ forbid(
     "isCurrentSyntheticMihonChapterIdentity",
     "synthetic_revision'] == 3",
 )
-home_catalog = read("apps/app/lib/demo_home.dart") + read(
-    "apps/app/lib/demo_home_catalog_identity.dart"
+home_catalog = read("apps/app/lib/home_shell.dart") + read(
+    "apps/app/lib/home_shell_catalog_identity.dart"
 )
 home_catalog += read(
-    "apps/app/lib/demo_home_details.dart"
+    "apps/app/lib/home_shell_details.dart"
 )
 for token in (
     "_rejectCatalogRegression",

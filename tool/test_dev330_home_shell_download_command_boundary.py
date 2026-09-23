@@ -10,14 +10,14 @@ def text(path: str) -> str:
 
 def require(body: str, marker: str, label: str) -> None:
     if marker not in body:
-        raise SystemExit(f'DemoHome download-command boundary missing {label}: {marker}')
+        raise SystemExit(f'HomeShell download-command boundary missing {label}: {marker}')
 
 
-home = text('apps/app/lib/demo_home.dart')
-compat = text('apps/app/lib/demo_home_source_compat.dart')
+home = text('apps/app/lib/home_shell.dart')
+compat = text('apps/app/lib/home_shell_source_compat.dart')
 ui = '\n'.join(
     path.read_text(encoding='utf-8')
-    for path in sorted((ROOT / 'apps/app/lib').glob('demo_home*.dart'))
+    for path in sorted((ROOT / 'apps/app/lib').glob('home_shell*.dart'))
 )
 commands = text('apps/app/lib/home_download_commands.dart')
 
@@ -37,7 +37,7 @@ for marker, label in (
 ):
     require(commands, marker, label)
 
-for forbidden in ('BuildContext', 'Navigator', 'setState(', '_DemoHomeState'):
+for forbidden in ('BuildContext', 'Navigator', 'setState(', '_HomeShellState'):
     if forbidden in commands:
         raise SystemExit(
             f'HomeDownloadCommands acquired UI state/navigation authority: {forbidden}'
@@ -79,7 +79,7 @@ for redundant in (
 ):
     if redundant in compat:
         raise SystemExit(
-            f'DemoHome retained redundant download command pass-through: {redundant}'
+            f'HomeShell retained redundant download command pass-through: {redundant}'
         )
 
 for forbidden in (
@@ -97,7 +97,7 @@ for forbidden in (
 ):
     if forbidden in ui:
         raise SystemExit(
-            f'DemoHome UI re-acquired download command authority: {forbidden}'
+            f'HomeShell UI re-acquired download command authority: {forbidden}'
         )
 
 settings = text('apps/app/lib/app_settings_screen.dart')
@@ -140,4 +140,4 @@ for marker, label in (
 ):
     require(manager, marker, label)
 
-print('dev.330 DemoHome download command boundary: OK')
+print('dev.330 HomeShell download command boundary: OK')

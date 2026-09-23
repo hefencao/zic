@@ -72,7 +72,7 @@ for token in (
     reject(cached_source, token, 'obsolete app-update cover-key migration')
 
 home = (ROOT / 'apps/app/lib/home_widgets.dart').read_text(encoding='utf-8')
-views = (ROOT / 'apps/app/lib/demo_home_views.dart').read_text(encoding='utf-8')
+views = (ROOT / 'apps/app/lib/home_shell_views.dart').read_text(encoding='utf-8')
 for token in (
     'required this.coverIdentity',
     'cacheIdentity: coverIdentity',

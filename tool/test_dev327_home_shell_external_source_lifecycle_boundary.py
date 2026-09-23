@@ -10,16 +10,16 @@ def text(path: str) -> str:
 
 def require(body: str, marker: str, label: str) -> None:
     if marker not in body:
-        raise SystemExit(f"DemoHome external-source lifecycle boundary missing {label}: {marker}")
+        raise SystemExit(f"HomeShell external-source lifecycle boundary missing {label}: {marker}")
 
 
 lifecycle = text("apps/app/lib/home_external_source_lifecycle.dart")
 source_browser = text("apps/app/lib/source_browser.dart")
 home_files = [
-    "apps/app/lib/demo_home.dart",
-    "apps/app/lib/demo_home_service_handoff.dart",
-    "apps/app/lib/demo_home_source_compat.dart",
-    "apps/app/lib/demo_home_views.dart",
+    "apps/app/lib/home_shell.dart",
+    "apps/app/lib/home_shell_service_handoff.dart",
+    "apps/app/lib/home_shell_source_compat.dart",
+    "apps/app/lib/home_shell_views.dart",
 ]
 home = "\n".join(text(path) for path in home_files)
 
@@ -38,8 +38,8 @@ for marker, label in (
     require(lifecycle, marker, label)
 
 for forbidden in (
-    "part of 'demo_home.dart'",
-    "_DemoHomeState",
+    "part of 'home_shell.dart'",
+    "_HomeShellState",
     "BuildContext",
     "Navigator",
     "setState(",
@@ -62,7 +62,7 @@ require(
 )
 if "unawaited(_externalSources.close());" in home:
     raise SystemExit(
-        "DemoHome external-source lifecycle close must not race Home session close"
+        "HomeShell external-source lifecycle close must not race Home session close"
     )
 require(home, "externalPlugins: _externalSources.activeController", "source page projection")
 require(
@@ -122,7 +122,7 @@ for forbidden in (
 ):
     if forbidden in home:
         raise SystemExit(
-            f"DemoHome re-acquired external source lifecycle responsibility: {forbidden}"
+            f"HomeShell re-acquired external source lifecycle responsibility: {forbidden}"
         )
 
-print("dev.327 DemoHome external source lifecycle boundary: OK")
+print("dev.327 HomeShell external source lifecycle boundary: OK")

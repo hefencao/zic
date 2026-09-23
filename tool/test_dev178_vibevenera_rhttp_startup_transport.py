@@ -48,7 +48,7 @@ for token in (
 ):
     require(bridge, token, 'rhttp streaming transport invariant')
 
-home = read('apps/app/lib/demo_home.dart')
+home = read('apps/app/lib/home_shell.dart')
 require(home, 'directTransport: RhttpSourceResourceDirectTransport(',
         'production source transport injection')
 require(home, 'preparePlatform: prepareRhttpPlatform,',

@@ -1,6 +1,6 @@
-part of 'demo_home.dart';
+part of 'home_shell.dart';
 
-extension _DemoHomeCatalogIdentity on _DemoHomeState {
+extension _HomeShellCatalogIdentity on _HomeShellState {
   String? _sourceCanonicalComicId(String sourceId, String comicId) {
     final source = _sourceForId(sourceId);
     if (source is! CanonicalComicIdentitySource) {

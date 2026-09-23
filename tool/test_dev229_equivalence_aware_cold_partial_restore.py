@@ -34,8 +34,8 @@ for token in (
 runtime = read('packages/downloads/lib/src/composition_download_transfer_runtime.dart')
 require(runtime, 'equivalentCandidates: _verifiedEquivalentCandidates,', 'composition proof injection')
 
-migration = read('apps/app/lib/demo_home_source_migration.dart')
-home = read('apps/app/lib/demo_home.dart')
+migration = read('apps/app/lib/home_shell_source_migration.dart')
+home = read('apps/app/lib/home_shell.dart')
 reuse = read('packages/downloads/lib/src/artifact_cache_reuse.dart')
 forbid(migration, '_reuseSourceVersionDurablePartials', 'version-warmup partial copy')
 forbid(migration, "'stage': 'version-durable-partial-reused'", 'legacy partial-copy trace')

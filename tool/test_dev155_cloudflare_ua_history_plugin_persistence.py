@@ -35,11 +35,11 @@ for path in (
     require(runtime, 'cookieJar.browserSessionUserAgent(request.url)', 'Mihon browser UA adoption')
     require(runtime, '.header("User-Agent", browserUserAgent)', 'Mihon request UA replacement')
 
-source = read('apps/app/lib/demo_home_source_compat.dart')
+source = read('apps/app/lib/home_shell_source_compat.dart')
 require(source, 'await _pushComicDetails(local);', 'persisted source comic route')
 forbid(source, 'await _openComicDetails(local);', 'nested persisted comic route lock')
 
-home = read('apps/app/lib/demo_home.dart')
+home = read('apps/app/lib/home_shell.dart')
 # dev.156 generalizes dev.155 HTTP-only recovery to every non-local artwork
 # locator (including mihon:resource) and separates raw runtime locator from the
 # canonical durable cache identity.

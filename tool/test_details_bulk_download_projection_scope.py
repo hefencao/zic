@@ -2,7 +2,7 @@
 from pathlib import Path
 import re
 
-path = Path("apps/app/lib/demo_home_source_compat.dart")
+path = Path("apps/app/lib/home_shell_source_compat.dart")
 text = path.read_text()
 match = re.search(
     r"Future<Iterable<ChapterDownloadSnapshot>> _inspectChapterDownloads\(.*?\n  \}",

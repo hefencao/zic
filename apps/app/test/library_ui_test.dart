@@ -12,7 +12,7 @@ import 'package:storage/storage.dart';
 import 'package:telemetry/telemetry.dart';
 import 'package:zic/artwork_placeholder.dart';
 import 'package:zic/comic_details.dart' as details;
-import 'package:zic/demo_home.dart';
+import 'package:zic/home_shell.dart';
 import 'package:zic/download_manager.dart';
 import 'package:zic/library_diagnostics.dart';
 import 'package:zic/app.dart';

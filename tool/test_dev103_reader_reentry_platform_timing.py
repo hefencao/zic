@@ -24,7 +24,7 @@ require(
 )
 
 for relative in (
-    "apps/app/lib/demo_home.dart",
+    "apps/app/lib/home_shell.dart",
     "apps/app/lib/source_browser.dart",
     "apps/app/lib/comic_details.dart",
 ):

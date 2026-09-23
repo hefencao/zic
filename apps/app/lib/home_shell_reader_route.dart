@@ -1,4 +1,4 @@
-part of 'demo_home.dart';
+part of 'home_shell.dart';
 
 typedef _PreparedImportedChapter = HomeReaderPreparedChapter;
 
@@ -153,7 +153,7 @@ final class _ReaderComicVersionNoticeGateState
   Widget build(BuildContext context) => widget.child;
 }
 
-extension _DemoHomeReaderRouteComposition on _DemoHomeState {
+extension _HomeShellReaderRouteComposition on _HomeShellState {
   Widget _buildImportedChapterScreen(
     _PreparedImportedChapter prepared, {
     required Future<void> Function(ReadingProgress) onProgressChanged,

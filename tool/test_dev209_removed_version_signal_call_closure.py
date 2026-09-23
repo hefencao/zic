@@ -9,7 +9,7 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-migration = read("apps/app/lib/demo_home_source_migration.dart")
+migration = read("apps/app/lib/home_shell_source_migration.dart")
 version_lifecycle = read("apps/app/lib/home_version_reuse_lifecycle.dart")
 home_session = read("apps/app/lib/home_library_session.dart")
 if "_reconcileConfirmedSourceUpdateSignal" in migration:

@@ -103,13 +103,13 @@ mihon = read(
 )
 forbid(mihon, 'synthetic_revision', "removed synthetic chapter wire identity")
 forbid(mihon, 'createSyntheticMihonChapter', "removed synthetic chapter fallback")
-home = read("apps/app/lib/demo_home.dart")
+home = read("apps/app/lib/home_shell.dart")
 forbid(home, "isCurrentSyntheticMihonChapterIdentity", "App synthetic eviction ownership")
 
 cached = read("packages/catalog/lib/src/cached_comic_source.dart")
 require(cached, "ComicWebUriSource", "cached web URI capability")
 require(cached, "resolveComicWebUri", "cached web URI forwarding")
-compat = read("apps/app/lib/demo_home_source_compat.dart")
+compat = read("apps/app/lib/home_shell_source_compat.dart")
 for token in (
     "_sourceComicWebUri",
     "onOpenSourceWebView:",

@@ -97,7 +97,7 @@ def main() -> None:
         "comicDetailsRefreshKey",
     )
     require(
-        "apps/app/lib/demo_home_source_compat.dart",
+        "apps/app/lib/home_shell_source_compat.dart",
         "candidate is ComicWebUriSource",
         "webSource?.resolveComicWebUri(comicId)",
     )

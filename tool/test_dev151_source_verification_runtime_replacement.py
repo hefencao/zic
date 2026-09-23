@@ -13,7 +13,7 @@ def require(text: str, token: str, label: str) -> None:
 
 
 browser = read('apps/app/lib/source_browser.dart')
-views = read('apps/app/lib/demo_home_views.dart')
+views = read('apps/app/lib/home_shell_views.dart')
 tests = read('apps/app/test/source_browser_test.dart')
 check = read('tool/check.sh')
 

@@ -1,4 +1,4 @@
-part of 'demo_home.dart';
+part of 'home_shell.dart';
 
 
 Uri _sourceComicWebUri(
@@ -112,7 +112,7 @@ Future<ChapterManifest> _loadCompatibleSourceChapter(
   return manifest;
 }
 
-extension _DemoHomeSourceResourceActions on _DemoHomeState {
+extension _HomeShellSourceResourceActions on _HomeShellState {
   Future<ImportedLibraryEntry> _loadRemoteEntrySnapshot(
     ImportedLibraryEntry entry, {
     bool forceSourceRefresh = false,
@@ -860,7 +860,7 @@ extension _DemoHomeSourceResourceActions on _DemoHomeState {
               _librarySession.refreshDownloadCacheProjection(_libraryEntries),
           resolveServices: () async {
             await _serviceHandoff?.ensureCoreServices?.call();
-            await _adoptDurableServices();
+            await _serviceAdoption.adoptCurrent();
             return DownloadManagerServices(
               downloads: _chapterDownloads,
               wholeComicDownloads: _wholeComicDownloads,

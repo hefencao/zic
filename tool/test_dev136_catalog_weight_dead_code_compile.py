@@ -22,7 +22,7 @@ cold_test = read("apps/app/test/reader_artifact_cold_open_test.dart")
 local_models = read("packages/local_media_ui/lib/src/models_and_preview.dart")
 local_screens = read("packages/local_media_ui/lib/src/local_media_screens.dart")
 local_player = read("packages/local_media_ui/lib/src/native_webp_player.dart")
-demo_home = read("apps/app/lib/demo_home.dart")
+home_shell = read("apps/app/lib/home_shell.dart")
 check = read("tool/check.sh")
 app_pubspec = read("apps/app/pubspec.yaml")
 android_version = read("apps/app/android/zic-version.properties")
@@ -84,7 +84,7 @@ for forbidden in (
     "localWebpFolderImportKey",
     "localWebpFolderPickerProgressKey",
 ):
-    if forbidden in demo_home:
+    if forbidden in home_shell:
         raise SystemExit(f"dead App key alias remains: {forbidden}")
 if (ROOT / "apps/app/lib/local_webp_folder.dart").exists():
     raise SystemExit("dead App local_webp_folder facade remains")

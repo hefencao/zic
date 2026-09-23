@@ -26,7 +26,7 @@ final class HomeWholeComicDownloadStart {
 ///
 /// The current service generation is always read through [HomeLibrarySession];
 /// this object never caches chapter-download or whole-comic service instances.
-/// UI conflict dialogs, navigation and completion badges stay in DemoHome.
+/// UI conflict dialogs, navigation and completion badges stay in HomeShell.
 final class HomeDownloadCommands {
   HomeDownloadCommands({
     required this.session,

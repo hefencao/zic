@@ -17,12 +17,12 @@ def forbid(text: str, token: str, label: str) -> None:
 
 cache = read('packages/resource_cache/lib/src/resource_cache.dart')
 gateway = read('apps/app/lib/source_resource_gateway.dart')
-home = read('apps/app/lib/demo_home.dart')
-reader_route = read('apps/app/lib/demo_home_reader_route.dart')
+home = read('apps/app/lib/home_shell.dart')
+reader_route = read('apps/app/lib/home_shell_reader_route.dart')
 session = read('apps/app/lib/home_library_session.dart')
-source_compat = read('apps/app/lib/demo_home_source_compat.dart')
-source_migration = read('apps/app/lib/demo_home_source_migration.dart')
-catalog_identity = read('apps/app/lib/demo_home_catalog_identity.dart')
+source_compat = read('apps/app/lib/home_shell_source_compat.dart')
+source_migration = read('apps/app/lib/home_shell_source_migration.dart')
+catalog_identity = read('apps/app/lib/home_shell_catalog_identity.dart')
 
 require(cache, "const comicArtworkCacheSchemaRevision = 'artwork-v2';", 'single artwork schema revision')
 for token in (

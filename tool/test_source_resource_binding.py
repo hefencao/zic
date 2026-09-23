@@ -61,7 +61,7 @@ def main() -> None:
         "_transports.loaderFor(source, requestUri)",
     )
     require(
-        "apps/app/lib/demo_home.dart",
+        "apps/app/lib/home_shell.dart",
         "ComicSourceResourceGateway _sourceResources",
         "_sourceResources = ComicSourceResourceGateway(",
         "sourceForId: _sourceForId",
@@ -70,12 +70,12 @@ def main() -> None:
         "_sourceResources.close()",
     )
     require(
-        "apps/app/lib/demo_home.dart",
+        "apps/app/lib/home_shell.dart",
         "_sourceResources.loadArtworkBytes(",
         "_sourceResources.loadArtworkSource(",
     )
     reject(
-        "apps/app/lib/demo_home.dart",
+        "apps/app/lib/home_shell.dart",
         "ExternalPluginResourceTransportPool()",
         "setChapterResourceLoader(",
         "setChapterResourceTransport(",
@@ -95,12 +95,12 @@ def main() -> None:
         "source.loadResource(",
     )
     ordered(
-        "apps/app/lib/demo_home.dart",
+        "apps/app/lib/home_shell.dart",
         "await _librarySession.close();",
         "_sourceResources.close();",
     )
     reject(
-        "apps/app/lib/demo_home_source_compat.dart",
+        "apps/app/lib/home_shell_source_compat.dart",
         "_downloadCompatibleChapter(",
         "_downloadCompatibleComicEntries(",
     )

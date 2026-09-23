@@ -2,7 +2,7 @@ import 'package:catalog/catalog.dart';
 import 'package:domain/domain.dart';
 import 'package:downloads/downloads.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zic/demo_home.dart';
+import 'package:zic/home_shell.dart';
 
 void main() {
   Failure failure(Map<String, Object?> details) => Failure(

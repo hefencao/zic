@@ -217,7 +217,7 @@ def check_animated_demo() -> None:
         fail('Animated WebP assets are not declared in the app pubspec')
     home = '\n'.join(
         (app / 'lib' / name).read_text(encoding='utf-8')
-        for name in ('demo_home.dart', 'demo_home_views.dart')
+        for name in ('home_shell.dart', 'home_shell_views.dart')
     )
     for label in (
         '100 页静态章节',
@@ -697,7 +697,7 @@ def check_compile_regressions() -> None:
 
     home = '\n'.join(
         (ROOT / 'apps/app/lib' / name).read_text(encoding='utf-8')
-        for name in ('demo_home.dart', 'demo_home_views.dart', 'home_widgets.dart')
+        for name in ('home_shell.dart', 'home_shell_views.dart', 'home_widgets.dart')
     )
     for required in (
         'typedef WebpPicker = Future<PickedWebp?> Function()',
@@ -913,18 +913,18 @@ def check_compile_regressions() -> None:
     if 'getDirectoryPath' in local_media_kotlin or 'FileUtils.getPathFromUri' in local_media_kotlin:
         fail('Android scoped document tree bridge must not reconstruct raw filesystem paths')
 
-    demo_home = '\n'.join(
+    home_shell = '\n'.join(
         (ROOT / 'apps/app/lib' / name).read_text(encoding='utf-8')
         for name in (
-            'demo_home.dart',
-            'demo_home_views.dart',
-            'demo_home_reader_route.dart',
+            'home_shell.dart',
+            'home_shell_views.dart',
+            'home_shell_reader_route.dart',
             'home_widgets.dart',
             'home_library_session.dart',
         )
     )
-    if 'super.key,' not in demo_home:
-        fail('_DemoCard must accept and forward stable semantic keys')
+    if 'super.key,' not in home_shell:
+        fail('Home cards must accept and forward stable semantic keys')
     if "import 'package:bridge/bridge.dart' show parseWebpInfo;" not in contract_test:
         fail('WebP validation tests must import their public parser contract directly')
     for required in (
@@ -1357,7 +1357,7 @@ def check_compile_regressions() -> None:
         '_buildHorizontalComics(',
         'ComicCoverCard(',
     ):
-        if required not in demo_home:
+        if required not in home_shell:
             fail(f'imported library UI integration is incomplete: {required}')
     for forbidden in (
         '_buildImportedLibraryMaintenance',
@@ -1365,7 +1365,7 @@ def check_compile_regressions() -> None:
         'importedChapterRefreshKey',
         'importedChapterRemoveKey',
     ):
-        if forbidden in demo_home:
+        if forbidden in home_shell:
             fail(f'home still exposes local directory maintenance: {forbidden}')
     for required in (
         'this.initialProgress',
@@ -1543,7 +1543,7 @@ def check_compile_regressions() -> None:
     ):
         if required not in diagnostics:
             fail(f'library migration diagnostics are incomplete: {required}')
-    demo_home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(
+    home_shell = (ROOT / 'apps/app/lib/home_shell.dart').read_text(
         encoding='utf-8'
     )
     home_session = (
@@ -1553,9 +1553,9 @@ def check_compile_regressions() -> None:
         'readStore: () => _library,',
         'storeChanges: _librarySession.libraryGenerationChanges,',
     ):
-        if required not in demo_home:
+        if required not in home_shell:
             fail(f'library diagnostics generation route is incomplete: {required}')
-    if 'LibraryDiagnosticsScreen(store: _library)' in demo_home:
+    if 'LibraryDiagnosticsScreen(store: _library)' in home_shell:
         fail('library diagnostics must not freeze the route-open library store')
     for required in (
         'Listenable get libraryGenerationChanges => _libraryGenerationChanges;',
@@ -1579,8 +1579,8 @@ def check_compile_regressions() -> None:
     app_home = '\n'.join(
         path.read_text(encoding='utf-8')
         for path in (
-            ROOT / 'apps/app/lib/demo_home.dart',
-            ROOT / 'apps/app/lib/demo_home_source_migration.dart',
+            ROOT / 'apps/app/lib/home_shell.dart',
+            ROOT / 'apps/app/lib/home_shell_source_migration.dart',
             ROOT / 'apps/app/lib/home_source_migration_transaction.dart',
         )
     )
@@ -1649,7 +1649,7 @@ def check_compile_regressions() -> None:
         if required not in source_ui:
             fail(f'comic source UI is incomplete: {required}')
     home_source_compat = (
-        ROOT / 'apps/app/lib/demo_home_source_compat.dart'
+        ROOT / 'apps/app/lib/home_shell_source_compat.dart'
     ).read_text(encoding='utf-8')
     if 'builder: (_) => details.RemoteComicDetailsScreen(' not in home_source_compat:
         fail('Home source route must construct the canonical remote details screen directly')
@@ -1843,14 +1843,14 @@ def check_compile_regressions() -> None:
     ) + (ROOT / 'apps/app/lib/comic_details_interactions.dart').read_text(
         encoding='utf-8',
     )
-    demo_home = (ROOT / 'apps/app/lib/demo_home.dart').read_text(
+    home_shell = (ROOT / 'apps/app/lib/home_shell.dart').read_text(
         encoding='utf-8',
     )
     reader_navigation_test = (
         ROOT / 'packages/reader/test/reader_navigation_test.dart'
     ).read_text(encoding='utf-8')
-    if "import 'package:domain/domain.dart';" not in demo_home:
-        fail('demo_home.dart must import Comic and Chapter from domain')
+    if "import 'package:domain/domain.dart';" not in home_shell:
+        fail('home_shell.dart must import Comic and Chapter from domain')
     if 'tester.doubleTap(' in reader_navigation_test:
         fail('Reader gesture test must use SDK-compatible real tap events')
     reader_view = (ROOT / 'packages/reader/lib/src/reader_view.dart').read_text(
@@ -1957,29 +1957,35 @@ def check_compile_regressions() -> None:
         if required not in migration:
             fail(f'comic source migration contract is incomplete: {required}')
 
-    home_path = ROOT / 'apps/app/lib/demo_home.dart'
+    home_path = ROOT / 'apps/app/lib/home_shell.dart'
     home = '\n'.join(
         path.read_text(encoding='utf-8')
         for path in (
             home_path,
-            ROOT / 'apps/app/lib/demo_home_views.dart',
-            ROOT / 'apps/app/lib/demo_home_source_compat.dart',
-            ROOT / 'apps/app/lib/demo_home_source_migration.dart',
-            ROOT / 'apps/app/lib/demo_home_reader_route.dart',
+            ROOT / 'apps/app/lib/home_shell_views.dart',
+            ROOT / 'apps/app/lib/home_shell_source_compat.dart',
+            ROOT / 'apps/app/lib/home_shell_source_migration.dart',
+            ROOT / 'apps/app/lib/home_shell_reader_route.dart',
             ROOT / 'apps/app/lib/source_resource_gateway.dart',
             ROOT / 'apps/app/lib/home_widgets.dart',
             ROOT / 'apps/app/lib/home_library_session.dart',
             ROOT / 'apps/app/lib/home_source_projection.dart',
             ROOT / 'apps/app/lib/home_source_migration_transaction.dart',
+            ROOT / 'apps/app/lib/home_service_adoption.dart',
         )
     )
     if len(home_path.read_text(encoding='utf-8').splitlines()) > 1800:
-        fail('demo_home.dart exceeded the first-stage decomposition budget')
+        fail('home_shell.dart exceeded the first-stage decomposition budget')
+    if list((ROOT / 'apps/app/lib').glob('demo_home*.dart')):
+        fail('production Home shell must not retain demo_home source names')
+    if 'final class HomeShell extends StatefulWidget' not in home:
+        fail('Home production root must be named HomeShell')
     for required in (
-        "part 'demo_home_views.dart';",
-        "part 'demo_home_reader_route.dart';",
-        "part 'demo_home_source_migration.dart';",
+        "part 'home_shell_views.dart';",
+        "part 'home_shell_reader_route.dart';",
+        "part 'home_shell_source_migration.dart';",
         'HomeLibrarySession(',
+        'HomeServiceAdoptionCoordinator(',
         'ResourceCacheCoordinator',
         'CachedBrowsableComicSource',
     ):

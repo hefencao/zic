@@ -21,8 +21,8 @@ venera = read('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/plugi
 prefs = read('apps/app/lib/app_preferences.dart')
 settings = read('apps/app/lib/app_settings_screen.dart')
 preview = read('apps/app/lib/comic_details_extras.dart')
-home = read('apps/app/lib/demo_home_views.dart')
-details = read('apps/app/lib/demo_home_source_compat.dart')
+home = read('apps/app/lib/home_shell_views.dart')
+details = read('apps/app/lib/home_shell_source_compat.dart')
 check = read('tool/check.sh')
 
 for token in (

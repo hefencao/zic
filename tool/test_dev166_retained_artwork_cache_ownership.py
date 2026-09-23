@@ -23,7 +23,7 @@ cache = read('packages/resource_cache/lib/src/resource_cache.dart')
 maintenance = read('packages/resource_cache/lib/src/resource_cache_maintenance.dart')
 storage = read('packages/storage/lib/src/file_resource_cache_byte_store.dart')
 catalog = read('packages/catalog/lib/src/cached_comic_source.dart')
-home = read('apps/app/lib/demo_home.dart')
+home = read('apps/app/lib/home_shell.dart')
 details = read('apps/app/lib/comic_details.dart')
 
 # dev.165 accidentally deleted maintenance contracts together with the file

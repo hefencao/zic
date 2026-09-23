@@ -8,7 +8,7 @@ import 'package:domain/domain.dart';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zic/demo_home.dart';
+import 'package:zic/home_shell.dart';
 import 'package:zic/app.dart';
 import 'package:zic/reader_runtime.dart';
 import 'package:zic/static_demo.dart';

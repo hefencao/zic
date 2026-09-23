@@ -36,7 +36,7 @@ for token in (
 ):
     require(storage, token, 'SQLite mapping persistence/migration')
 
-migration = read('apps/app/lib/demo_home_source_migration.dart')
+migration = read('apps/app/lib/home_shell_source_migration.dart')
 version_lifecycle = read('apps/app/lib/home_version_reuse_lifecycle.dart')
 require(
     migration,
@@ -72,9 +72,9 @@ forbid(
 )
 
 home = (
-    read('apps/app/lib/demo_home.dart')
-    + read('apps/app/lib/demo_home_source_migration.dart')
-    + read('apps/app/lib/demo_home_reader_route.dart')
+    read('apps/app/lib/home_shell.dart')
+    + read('apps/app/lib/home_shell_source_migration.dart')
+    + read('apps/app/lib/home_shell_reader_route.dart')
 )
 reader_composition = read('apps/app/lib/home_reader_composition.dart')
 for token in (

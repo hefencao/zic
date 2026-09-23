@@ -97,7 +97,7 @@ forbid(approve, '_registry.deactivate(', 'deactivate-before-install')
 # settings and Venera browser-login mutation are in-place capabilities and must
 # not be forced through this replacement transaction.
 settings = read('apps/app/lib/source_browser.dart') + read('apps/app/lib/external_source_settings_screen.dart')
-source_compat = read('apps/app/lib/demo_home_source_compat.dart')
+source_compat = read('apps/app/lib/home_shell_source_compat.dart')
 forbid(settings, '应用并重启', 'settings restart UI')
 forbid(source_compat, 'restartSource(', 'generic browser/runtime restart')
 

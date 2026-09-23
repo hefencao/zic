@@ -45,7 +45,7 @@ def ordered_after(path: str, anchor: str, first: str, second: str) -> None:
 
 def main() -> None:
     require(
-        "apps/app/lib/demo_home_source_compat.dart",
+        "apps/app/lib/home_shell_source_compat.dart",
         "isLegacyVeneraRuntimeLocator",
         "bool forceRefresh = false",
         "TaskControl? control",
@@ -59,12 +59,12 @@ def main() -> None:
         "_loadSourcePageBytes(",
     )
     reject(
-        "apps/app/lib/demo_home_source_compat.dart",
+        "apps/app/lib/home_shell_source_compat.dart",
         "chapter.sourceId.startsWith('venera:')",
         "manifest.sourceId.startsWith('venera:')",
     )
     require(
-        "apps/app/lib/demo_home.dart",
+        "apps/app/lib/home_shell.dart",
         "requiresSourceLocatorRefresh: (chapter) =>",
         "currentMihonResourceAuthorityRevision:",
     )
@@ -83,7 +83,7 @@ def main() -> None:
         "final byteLoaders =",
     )
     require(
-        "apps/app/lib/demo_home_source_compat.dart",
+        "apps/app/lib/home_shell_source_compat.dart",
         "bool chapterRequiresSourceLocatorRefresh(",
         "ImportedChapterRecord chapter,",
         "_hasLegacyVeneraLocators(chapter)",

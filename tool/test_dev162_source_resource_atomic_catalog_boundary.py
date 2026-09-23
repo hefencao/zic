@@ -23,11 +23,11 @@ def forbid(path: str, *tokens: str) -> None:
 
 
 require(
-    'apps/app/lib/demo_home_source_compat.dart',
+    'apps/app/lib/home_shell_source_compat.dart',
     '_sourceResources.loadPageBytes(sourceId, uri)',
 )
 forbid(
-    'apps/app/lib/demo_home_source_compat.dart',
+    'apps/app/lib/home_shell_source_compat.dart',
     '_sourceResources.loadBytes(',
 )
 require(

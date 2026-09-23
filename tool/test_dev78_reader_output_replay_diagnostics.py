@@ -26,8 +26,8 @@ native_runtime = read('packages/pipeline_native/lib/src/native_pipeline_media_ru
 webp = read('native/media_core/src/webp.rs')
 webp_ffi = read('native/media_core/src/lib.rs')
 comic_details = read('apps/app/lib/comic_details.dart')
-demo_home = read('apps/app/lib/demo_home.dart')
-reader_route = read('apps/app/lib/demo_home_reader_route.dart')
+home_shell = read('apps/app/lib/home_shell.dart')
+reader_route = read('apps/app/lib/home_shell_reader_route.dart')
 reader_composition = read('apps/app/lib/home_reader_composition.dart')
 trace_log = read('apps/app/lib/debug_trace.dart')
 trace_screen = read('apps/app/lib/debug_trace_screen.dart')
@@ -91,9 +91,9 @@ for token in ('_pageCountPreflight', '_startPageCountPreflight', 'pageCountLoadi
 require(source_tests, 'pending page counts do not preflight chapter bodies', 'chapter preflight regression')
 require(source_tests, 'expect(source.chapterLoads, 0);', 'chapter preflight request count')
 forbid(reader_composition, '_markChapterRead', 'Reader preparation must not own read-state mutation')
-ensure_owner = demo_home.split('Future<ImportedLibraryEntry> _ensureSourceChapter(', 1)[1].split('Future<ImportedLibraryEntry> _refreshRemoteEntry(', 1)[0]
+ensure_owner = home_shell.split('Future<ImportedLibraryEntry> _ensureSourceChapter(', 1)[1].split('Future<ImportedLibraryEntry> _refreshRemoteEntry(', 1)[0]
 forbid(ensure_owner, 'await _reloadLibrary();', 'chapter manifest navigation reload')
-forbid(demo_home, '_markChapterReadForNavigation', 'Reader navigation read-state mutation')
+forbid(home_shell, '_markChapterReadForNavigation', 'Reader navigation read-state mutation')
 
 for token in (
     'this.maxExportEvents = 10000',

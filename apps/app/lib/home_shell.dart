@@ -35,20 +35,21 @@ import 'home_library_session.dart';
 import 'home_external_source_lifecycle.dart';
 import 'home_download_commands.dart';
 import 'home_reader_composition.dart';
+import 'home_service_adoption.dart';
 import 'home_service_cache_binding.dart';
 import 'home_source_migration_transaction.dart';
 import 'home_source_projection.dart';
 import 'home_version_reuse_lifecycle.dart';
 import 'home_widgets.dart';
 export 'home_widgets.dart' show ComicCoverCard, ComicDownloadProgress, ComicDownloadProgressKind;
-part 'demo_home_views.dart';
-part 'demo_home_source_compat.dart';
-part 'demo_home_details.dart';
-part 'demo_home_catalog_identity.dart';
-part 'demo_home_source_migration.dart';
-part 'demo_home_reader_route.dart';
-part 'demo_home_service_handoff.dart';
-part 'demo_home_local_cover.dart';
+part 'home_shell_views.dart';
+part 'home_shell_source_compat.dart';
+part 'home_shell_details.dart';
+part 'home_shell_catalog_identity.dart';
+part 'home_shell_source_migration.dart';
+part 'home_shell_reader_route.dart';
+part 'home_shell_service_handoff.dart';
+part 'home_shell_local_cover.dart';
 const homePageKey = ValueKey<String>('home-page');
 const bookshelfPageKey = ValueKey<String>('bookshelf-page');
 const homeUpdatesSectionKey = ValueKey<String>('home-updates-section');
@@ -130,8 +131,8 @@ String _librarySortLabel(LibrarySortMode mode) => switch (mode) {
       LibrarySortMode.pageCount => '页数',
       LibrarySortMode.custom => '自定义排序',
     };
-final class DemoHome extends StatefulWidget {
-  const DemoHome({
+final class HomeShell extends StatefulWidget {
+  const HomeShell({
     required this.picker,
     required this.folderPicker,
     this.folderRefresher = defaultImageFolderRefresher,
@@ -180,23 +181,22 @@ final class DemoHome extends StatefulWidget {
   final String? storageRoot;
   final HomeStartupTelemetry? startupTelemetry;
   @override
-  State<DemoHome> createState() => _DemoHomeState();
+  State<HomeShell> createState() => _HomeShellState();
 }
 
 enum _DownloadCompletionKind { chapter, wholeComic }
 
-final class _DemoHomeState extends State<DemoHome> {
+final class _HomeShellState extends State<HomeShell> {
   final MonoClock _traceClock = const SystemClock();
   late final ComicSourceResourceGateway _sourceResources;
   late final HomeReaderChapterComposition _readerChapterComposition;
   late final HomeSourceProjection _sourceProjection;
   late final HomeLibrarySession _librarySession;
-  late HomeServiceCacheBinding _serviceCache;
+  late final HomeServiceAdoptionCoordinator _serviceAdoption;
   late final HomeExternalSourceLifecycle _externalSources;
   late final HomeDownloadCommands _downloadCommands;
   late final HomeSourceMigrationTransaction _sourceMigrationTransaction;
   late final HomeVersionReuseLifecycle _versionReuseLifecycle;
-  Future<void>? _durableAdoption;
   Future<void>? _sourceMigrationRecovery;
   ChapterDownloadTransferRuntimeProvider? _localReadBackendPrewarmTarget;
   bool _suppressLibrarySessionRebuild = false;
@@ -235,9 +235,9 @@ final class _DemoHomeState extends State<DemoHome> {
   WholeComicDownloadQueue get _wholeComicDownloads =>
       _librarySession.wholeComicDownloads;
   ArtifactCacheManager? get _readerArtifactCache =>
-      _serviceCache.readerArtifactCache;
+      _serviceAdoption.readerArtifactCache;
   ResourceCacheCoordinator get _cacheCoordinator =>
-      _serviceCache.coordinator;
+      _serviceAdoption.cacheCoordinator;
 
   List<ImportedLibraryEntry> get _libraryEntries => _librarySession.entries;
   List<SavedComicRecord> get _savedComics => _librarySession.savedComics;
@@ -337,7 +337,7 @@ final class _DemoHomeState extends State<DemoHome> {
       _incomingDownloadComposition,
     );
     final suppliedCache = _incomingCacheCoordinator;
-    _serviceCache = HomeServiceCacheBinding.create(
+    final initialServiceCache = HomeServiceCacheBinding.create(
       chapterDownloads: chapterDownloads,
       downloadComposition: downloadComposition,
       suppliedCoordinator: suppliedCache,
@@ -349,7 +349,7 @@ final class _DemoHomeState extends State<DemoHome> {
           userAgentProvider: () => widget.preferences.networkUserAgent,
         ),
       ],
-      cache: _cacheCoordinator,
+      cache: initialServiceCache.coordinator,
       externalSources:
           _incomingExternalPlugins?.activeSources ??
           const <BrowsableComicSource>[],
@@ -368,7 +368,6 @@ final class _DemoHomeState extends State<DemoHome> {
           _sourceProjection.refreshExternalSources(controller.activeSources),
       reportError: (stage, error) => debugPrint('$stage failed: $error'),
     );
-    _syncCachedCarrierTrustMode();
     _sourceResources = ComicSourceResourceGateway(
       sourceForId: _sourceForId,
       waitForSource: (sourceId) => _externalSources.waitForSource(sourceId),
@@ -397,11 +396,34 @@ final class _DemoHomeState extends State<DemoHome> {
       waitForPrimaryFrame: () => WidgetsBinding.instance.endOfFrame,
       startupTelemetry: widget.startupTelemetry,
     )..addListener(_handleLibrarySessionChanged);
+    _serviceAdoption = HomeServiceAdoptionCoordinator(
+      session: _librarySession,
+      sourceResources: _sourceResources,
+      sourceProjection: _sourceProjection,
+      externalSources: _externalSources,
+      initialCacheBinding: initialServiceCache,
+      libraryProvider: () => _incomingLibraryStore,
+      chapterDownloadsProvider: () => _incomingChapterDownloads,
+      downloadCompositionProvider: () => _incomingDownloadComposition,
+      wholeComicDownloadsProvider: () => _incomingWholeComicDownloads,
+      cacheCoordinatorProvider: () => _incomingCacheCoordinator,
+      externalPluginsProvider: () => _incomingExternalPlugins,
+      externalPluginLoaderAvailable: () => _externalPluginLoader != null,
+      persistSnapshotProvider: () => _persistHomeProjectionSnapshot,
+      refreshStaleChapter: _refreshStaleQueueChapter,
+      onAdopted: () {
+        _scheduleLocalReadBackendPrewarm();
+        _syncCachedCarrierTrustMode();
+        unawaited(_recoverCommittedSourceMigrations());
+      },
+      reportError: (stage, error) => debugPrint('$stage: $error'),
+    );
+    _syncCachedCarrierTrustMode();
     _sourceMigrationTransaction = HomeSourceMigrationTransaction(
       session: _librarySession,
       ensureDurableLibrary: () async {
         await _serviceHandoff?.ensureCoreServices?.call();
-        await _adoptDurableServices();
+        await _serviceAdoption.adoptCurrent();
       },
       artifactCache: () => _readerArtifactCache,
       verifiedPageReuseIdentity: ({required sourceId, required locator}) =>
@@ -453,7 +475,7 @@ final class _DemoHomeState extends State<DemoHome> {
       session: _librarySession,
       ensureDurableServices: () async {
         await _serviceHandoff?.ensureCoreServices?.call();
-        await _adoptDurableServices();
+        await _serviceAdoption.adoptCurrent();
       },
       ensurePlatformEnvironment: _ensurePlatformEnvironment,
       requiresSourceLocatorRefresh: (chapter) => chapterRequiresSourceLocatorRefresh(
@@ -471,8 +493,8 @@ final class _DemoHomeState extends State<DemoHome> {
     _readerChapterComposition = HomeReaderChapterComposition(
       ensureDurableServices: () async {
         await _serviceHandoff?.ensureCoreServices?.call();
-        await _adoptDurableServices();
-        if (_needsDurableServiceAdoption()) {
+        await _serviceAdoption.adoptCurrent();
+        if (_serviceAdoption.needsCurrentAdoption()) {
           throw StateError('Reader durable service adoption did not complete');
         }
       },
@@ -512,7 +534,7 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   @override
-  void didUpdateWidget(covariant DemoHome oldWidget) {
+  void didUpdateWidget(covariant HomeShell oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.serviceHandoff, widget.serviceHandoff)) {
       oldWidget.serviceHandoff?.setHomeProjectionCheckpoint(null);
@@ -688,6 +710,7 @@ final class _DemoHomeState extends State<DemoHome> {
   @override
   void dispose() {
     widget.preferences.removeListener(_handleAppPreferencesChanged);
+    _serviceAdoption.beginClose();
     _serviceHandoff?.setHomeProjectionCheckpoint(null);
     _serviceHandoff?.removeListener(_handleServiceHandoffChanged);
     _librarySession.removeListener(_handleLibrarySessionChanged);
@@ -700,7 +723,7 @@ final class _DemoHomeState extends State<DemoHome> {
 
   Future<void> _closeHomeComposition() async {
     await _drainHomeCompositionTail(
-      _durableAdoption,
+      _serviceAdoption.activeAdoption,
       'durable service adoption',
     );
     await _drainHomeCompositionTail(
@@ -720,7 +743,7 @@ final class _DemoHomeState extends State<DemoHome> {
       _librarySession.dispose();
     }
     _sourceResources.close();
-    await _serviceCache.closeIfOwned();
+    await _serviceAdoption.closeCacheIfOwned();
   }
 
   Future<void> _drainHomeCompositionTail(
@@ -801,13 +824,13 @@ final class _DemoHomeState extends State<DemoHome> {
   }
 
   Future<ResourceCacheUsage> _inspectSettingsCache() async {
-    await _adoptDurableServices();
+    await _serviceAdoption.adoptCurrent();
     return _cacheCoordinator.inspect();
   }
 
   Future<DataSettingsCacheMutationResult> _clearSettingsCache() async {
     await _serviceHandoff?.ensureCoreServices?.call();
-    await _adoptDurableServices();
+    await _serviceAdoption.adoptCurrent();
     final coordinator = _cacheCoordinator;
     final report = await coordinator.clear();
     return DataSettingsCacheMutationResult(
@@ -820,7 +843,7 @@ final class _DemoHomeState extends State<DemoHome> {
     ResourceCacheMaintenancePolicy policy,
   ) async {
     await _serviceHandoff?.ensureCoreServices?.call();
-    await _adoptDurableServices();
+    await _serviceAdoption.adoptCurrent();
     final coordinator = _cacheCoordinator;
     coordinator.updateMaintenancePolicy(policy);
     final report = await coordinator.trim();

@@ -27,7 +27,7 @@ STARTUP = (
     (ROOT / 'apps/app/lib/main.dart').read_text()
     + (ROOT / 'apps/app/lib/app_runtime.dart').read_text()
 )
-LIBRARY = (ROOT / 'apps/app/lib/demo_home_views.dart').read_text()
+LIBRARY = (ROOT / 'apps/app/lib/home_shell_views.dart').read_text()
 
 for token in (
     'required this.pipeline',

@@ -37,7 +37,7 @@ require(
 )
 forbid('apps/app/lib/comic_details_extras.dart', '_ComicDetailsDecodedArtwork(\n            source: source')
 require(
-    'apps/app/lib/demo_home.dart',
+    'apps/app/lib/home_shell.dart',
     'required String resourceRole,',
     'resourceRole: resourceRole,',
     "resourceRole: 'cover',",

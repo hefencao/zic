@@ -15,7 +15,7 @@ venera = text('packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/plugi
 assert '__zicInstallComicInfoCache' not in venera
 assert 'async function __zicInvoke' in venera
 
-home = text('apps/app/lib/demo_home.dart')
+home = text('apps/app/lib/home_shell.dart')
 # dev.156 supersedes the old scheme-specific migration fallback: every
 # non-local artwork URI, including mihon:resource, uses the source gateway.
 assert home.count("if (sourceId != 'local-folder' && uri != null)") >= 2

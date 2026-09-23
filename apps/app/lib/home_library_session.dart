@@ -142,7 +142,7 @@ bool _sameOrphanedDownloadProjection(
 }
 
 /// Stable composition boundary between the bootstrap Home and durable app
-/// services. Updating this object does not rebuild MaterialApp or DemoHome;
+/// services. Updating this object does not rebuild MaterialApp or HomeShell;
 /// the existing Home session adopts the services in place.
 final class HomeServiceHandoff extends ChangeNotifier {
   ImportedLibraryStore? libraryStore;
@@ -285,7 +285,7 @@ final class HomeServiceHandoff extends ChangeNotifier {
 
 /// Owns the durable library projection and background download subscriptions
 /// used by the home shell. Navigation, dialogs and transient UI selection stay
-/// in DemoHome; storage loading and service lifecycle do not.
+/// in HomeShell; storage loading and service lifecycle do not.
 final class HomeLibrarySession extends ChangeNotifier {
   HomeLibrarySession({
     required this.library,
@@ -340,7 +340,7 @@ final class HomeLibrarySession extends ChangeNotifier {
   /// Missing source/comic preferences are projected from their defaults while
   /// the library is opening. The app disables persistence for the first Home
   /// projection because these writes are synchronous SQLite mutations on the
-  /// UI isolate; explicit user changes still persist through DemoHome.
+  /// UI isolate; explicit user changes still persist through HomeShell.
   final bool persistMissingPreferences;
   final Future<void> Function()? waitForPrimaryFrame;
   final HomeStartupTelemetry? startupTelemetry;

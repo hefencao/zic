@@ -1,4 +1,4 @@
-part of 'demo_home.dart';
+part of 'home_shell.dart';
 
 const _localFolderStaticCoverRevision =
     '$comicArtworkCacheSchemaRevision:local-thumb-512x768-v2';
@@ -6,7 +6,7 @@ const _localFolderAnimatedCoverRevision =
     '$comicArtworkCacheSchemaRevision:local-animated-original-v1';
 const _localFolderCoverPlaceholderRole = 'cover-placeholder';
 
-extension _DemoHomeLocalCover on _DemoHomeState {
+extension _HomeShellLocalCover on _HomeShellState {
   bool _localFolderCoverNeedsOriginal(
     ImportedChapterRecord? chapter,
     String sourceValue,

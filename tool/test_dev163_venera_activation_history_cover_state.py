@@ -59,7 +59,7 @@ require(
     'non-retry business-error test',
 )
 
-views = read('apps/app/lib/demo_home_views.dart')
+views = read('apps/app/lib/home_shell_views.dart')
 for token in (
     "final section = history ? 'home-history' : 'home-update';",
     'final presentationIdentities = <String>[',
@@ -73,7 +73,7 @@ for token in (
 forbid(views, "key: ValueKey<String>(\n                '${history ? 'home-history' : 'home-update'}:$coverIdentity'", 'nested-only cover list key')
 
 
-home = read('apps/app/lib/demo_home.dart')
+home = read('apps/app/lib/home_shell.dart')
 for token in (
     'bool _coverSourceAvailableForComic(LibraryComic comic)',
     "comic.sourceId == 'local-folder' || _sourceForId(comic.sourceId) != null",

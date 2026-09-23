@@ -1,6 +1,6 @@
-part of 'demo_home.dart';
+part of 'home_shell.dart';
 
-extension _DemoHomeViews on _DemoHomeState {
+extension _HomeShellViews on _HomeShellState {
   List<LibraryComic> _selectedManagedComics() => _libraryComics
       .where((comic) => _managedComicIdentities.contains(comic.identity))
       .toList(growable: false);

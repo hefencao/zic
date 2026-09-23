@@ -55,7 +55,7 @@ void main() {
     );
   });
 
-  test('home session owns durable projection outside DemoHome state', () async {
+  test('home session owns durable projection outside HomeShell state', () async {
     final library = MemoryImportedLibraryStore();
     final downloads = MemoryChapterDownloadService(
       pageLoader: (_, __) async => Uint8List(1),

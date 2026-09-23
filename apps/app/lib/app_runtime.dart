@@ -19,7 +19,7 @@ import 'app_preferences.dart';
 import 'chapter_download_directory.dart';
 import 'artifact_presentation_file_bridge.dart';
 import 'debug_trace.dart';
-import 'demo_home.dart';
+import 'home_shell.dart';
 import 'home_library_session.dart';
 import 'resettable_single_flight.dart';
 import 'saf_store.dart';
@@ -1649,7 +1649,7 @@ final class _AppState extends State<App> {
         ),
         themeMode: _preferences.themeMode,
         home: _RootBackExitGuard(
-          child: DemoHome(
+          child: HomeShell(
             key: widget.homeKey,
             picker: widget.picker,
             folderPicker: widget.folderPicker,

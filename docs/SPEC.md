@@ -81,7 +81,7 @@
   不能只等内部 store Future，也 MUST NOT 串行普通并发 hydration。
   随后才排 version/canonical/snapshot tails、发布 `_closed` 并关闭 owned store。
   whole-App snapshot checkpoint 属于 teardown barrier，MAY 在该 close 链内继续执行。
-  `DemoHome` composition teardown MUST 在关闭 external source lifecycle 或 `HomeLibrarySession` 前先 drain current durable-service adoption；
+  `HomeShell` composition teardown MUST 在关闭 external source lifecycle 或 `HomeLibrarySession` 前先 drain current durable-service adoption；
   若该 adoption 已启动 committed source-migration recovery，
   还 MUST drain composition-owned single-flight recovery tail。
   adoption/recovery 完成后 MUST 先 close `HomeReaderChapterComposition`：
@@ -113,7 +113,7 @@
   并在每次 signal 后通过 generation-following inspect capability 重读当前 projection。
   若 inspect 跨过新的 projection signal，其结果 MUST 丢弃；current-generation idle MUST 能覆盖旧-generation active。
   direct stream 仅可作为 standalone/test fallback。
-  `DemoHome` 对 comic/source preference 与 chapter read-state MUST NOT 直接执行 store `save*` 后手工 `replace*` projection；
+  `HomeShell` 对 comic/source preference 与 chapter read-state MUST NOT 直接执行 store `save*` 后手工 `replace*` projection；
   这些 write-through mutation MUST 由 `HomeLibrarySession` 在同一 owner 中完成。
   写入跨 library adoption 时 MUST 等 current service adoption 收口并重试 current store；
   persistence helper 返回的 concrete library identity MUST 在 projection publish 前同步重验。
@@ -334,7 +334,7 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   `HomeExternalSourceLifecycle.close()` MUST 同步 fence 新 refresh/adoption 且并发 close join 同一完成边界；
   已经进入 Home projection callback 的 refresh MUST drain 后 close 才返回，
   但 optional controller loader/ready 尚未进入 projection callback 时 MUST NOT 成为 teardown barrier。
-  DemoHome teardown MUST await lifecycle close 后才开始 `HomeLibrarySession.close()`，
+  HomeShell teardown MUST await lifecycle close 后才开始 `HomeLibrarySession.close()`，
   禁止 external refresh 与 session closing 并发。
   持续打开的 Source Management route MUST 跟随 current external controller/source projection：
   同一 controller 的后台 activation/source change 以及 controller identity handoff 都 MUST 触发窄 source-projection signal，
@@ -387,11 +387,15 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   library、chapter download、download composition 与 whole-comic queue 的当前 authority MUST 只由 `HomeLibrarySession` 持有，
   Widget State 不得保存平行 mutable service fields。
   cache generation MUST 以一个绑定同时携带 Reader artifact cache、`ResourceCacheCoordinator` 与 close ownership。
+  durable service adoption single-flight、该 cache binding 的 generation commit、source-resource rebind 与 source projection commit
+  MUST 由独立于 Widget State 的 `HomeServiceAdoptionCoordinator`（或等价非 presentation owner）顺序化；
+  `HomeShell` MUST NOT 自己保存 adoption Future/cache-generation mutable authority，只能触发、等待并在 teardown 时 drain 该 owner。
   durable service handoff MUST 把同一 `downloadComposition` 显式交给 session，
   先完成或确认 session adoption，再提交新的 resolver/cache projection；session 未采用候选时 MUST 回收 Home-owned candidate cache，
   session 已切换 authority 后不得因后续 reconcile 错误让 Home 回退旧 generation。
   same-service 的 source/cache projection 变化仍 MUST 发布到 session；
   handoff single-flight 完成后 MUST 重检最新 published generation 并继续 drain，不能丢失飞行期间发布的 service replacement。
+  Home teardown MUST 先 fence 新 service adoption，再等待 close 前已经接纳的 adoption 完成；不得以 Widget `mounted` 状态取消已接纳的 owner 工作。
   冷启动进入 Reader 或加载非 local-folder 章节前，MUST 等待对应外部来源就绪，
   不得在插件发布前构造空 responseLoaders 进入 Reader 或回退为本地文件/openLocalMediaResponse 读取。
   已持久化漫画已有本地详情投影时，详情 route MUST 先用该投影完成首帧，deferred external source activation MUST 从下一次 post-frame 后异步开始，

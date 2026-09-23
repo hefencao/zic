@@ -44,11 +44,11 @@ require(
     'userAgentProvider: () => preferences.networkUserAgent',
 )
 require(
-    'apps/app/lib/demo_home.dart',
+    'apps/app/lib/home_shell.dart',
     'userAgentProvider: () => widget.preferences.networkUserAgent',
     'defaultUserAgentProvider: () => widget.preferences.networkUserAgent',
 )
-reader_route = read('apps/app/lib/demo_home_reader_route.dart')
+reader_route = read('apps/app/lib/home_shell_reader_route.dart')
 reader_composition = read('apps/app/lib/home_reader_composition.dart')
 for seam in (
     'observedPageControlledResponseLoaderFor',
@@ -59,11 +59,11 @@ for seam in (
             'FAIL: apps/app/lib/home_reader_composition.dart missing '
             f'dev.161 controlled source seam: {seam}',
         )
-forbid('apps/app/lib/demo_home.dart', '_sourceResources.responseLoaderFor(')
-forbid('apps/app/lib/demo_home_reader_route.dart', '_sourceResources.responseLoaderFor(')
+forbid('apps/app/lib/home_shell.dart', '_sourceResources.responseLoaderFor(')
+forbid('apps/app/lib/home_shell_reader_route.dart', '_sourceResources.responseLoaderFor(')
 forbid('apps/app/lib/home_reader_composition.dart', '_sourceResources.responseLoaderFor(')
 require(
-    'apps/app/lib/demo_home_source_compat.dart',
+    'apps/app/lib/home_shell_source_compat.dart',
     'effectiveUserAgent = request.userAgent?.trim().isNotEmpty == true',
     'widget.preferences.networkUserAgent',
     'userAgent: effectiveUserAgent',
@@ -204,7 +204,7 @@ for path in ROOT.rglob('*.dart'):
         raise SystemExit(f'FAIL: App bypasses source resource gateway: {rel}')
     if any(token in text for token in ('.pageResponseLoaderFor(', '.pageControlledResponseLoaderFor(')) and rel not in {
         'apps/app/lib/source_resource_gateway.dart',
-        'apps/app/lib/demo_home.dart',
+        'apps/app/lib/home_shell.dart',
         'apps/app/lib/home_reader_composition.dart',
     }:
         raise SystemExit(f'FAIL: page-body transport escaped Reader/download composition: {rel}')

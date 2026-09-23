@@ -9,7 +9,7 @@ def read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8")
 
 
-route = read("apps/app/lib/demo_home_reader_route.dart")
+route = read("apps/app/lib/home_shell_reader_route.dart")
 pipeline = read("packages/pipeline_runtime/lib/src/pipeline_reader_session.dart")
 scheduler = read("packages/downloads/lib/src/artifact_cache_read_scheduler.dart")
 

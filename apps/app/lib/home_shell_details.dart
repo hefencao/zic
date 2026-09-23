@@ -1,6 +1,6 @@
-part of 'demo_home.dart';
+part of 'home_shell.dart';
 
-extension _DemoHomeDetailsActions on _DemoHomeState {
+extension _HomeShellDetailsActions on _HomeShellState {
   details.ComicDetailsLibrarySnapshot _detailsSnapshotForComic(
     String sourceId,
     String comicId, {

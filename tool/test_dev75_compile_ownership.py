@@ -19,7 +19,7 @@ def forbid(source: str, token: str, message: str) -> None:
 
 
 home_widgets = read('apps/app/lib/home_widgets.dart')
-demo_home = read('apps/app/lib/demo_home.dart')
+home_shell = read('apps/app/lib/home_shell.dart')
 library_ui_test = read('apps/app/test/library_ui_test.dart')
 misc_settings_test = read('apps/app/test/misc_settings_test.dart')
 source_gateway_test = read('apps/app/test/source_resource_gateway_test.dart')
@@ -38,9 +38,9 @@ forbid(
     'dead local-details compatibility wrapper must stay removed',
 )
 forbid(
-    demo_home,
+    home_shell,
     'ComicDetailsScreen,',
-    'DemoHome must not export the removed compatibility wrapper',
+    'HomeShell must not export the removed compatibility wrapper',
 )
 require(
     library_ui_test,

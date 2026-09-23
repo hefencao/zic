@@ -18,7 +18,7 @@ import 'package:zic/app_settings_screen.dart';
 import 'package:zic/debug_trace.dart';
 import 'package:zic/debug_trace_export.dart';
 import 'package:zic/debug_trace_screen.dart';
-import 'package:zic/demo_home.dart';
+import 'package:zic/home_shell.dart';
 import 'package:zic/library_backup.dart';
 import 'package:zic/app.dart';
 import 'package:zic/misc_page.dart';

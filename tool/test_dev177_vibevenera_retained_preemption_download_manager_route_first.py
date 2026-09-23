@@ -191,8 +191,8 @@ for token in (
     forbid(manager, token, 'pre-frame per-entry inspection')
 
 home = '\n'.join((
-    read('apps/app/lib/demo_home.dart'),
-    read('apps/app/lib/demo_home_source_compat.dart'),
+    read('apps/app/lib/home_shell.dart'),
+    read('apps/app/lib/home_shell_source_compat.dart'),
 ))
 for token in (
     'final initialProjection = readProjection();',
@@ -204,11 +204,11 @@ for token in (
     'refreshProjection: () =>',
     'resolveServices: () async {',
     'await _serviceHandoff?.ensureCoreServices?.call();',
-    'await _adoptDurableServices();',
+    'await _serviceAdoption.adoptCurrent();',
 ):
     require(home, token, 'Home download projection handoff')
 
-home_manager = read('apps/app/lib/demo_home_source_compat.dart')
+home_manager = read('apps/app/lib/home_shell_source_compat.dart')
 manager_open = home_manager[home_manager.index('Future<void> _openDownloadManager()'):]
 for token in (
     'loadAllEntries:',

@@ -75,14 +75,14 @@ def main() -> int:
     if 'widget.source.loadComic(widget.summary.comicId)' in details:
         raise SystemExit('remote details must consume the composition refresh result')
     forbid('apps/app/lib/comic_details.dart', 'isSyntheticMihonChapterIdentity')
-    forbid('apps/app/lib/demo_home.dart', 'reconcileComicDetailsChapterEntries')
+    forbid('apps/app/lib/home_shell.dart', 'reconcileComicDetailsChapterEntries')
     forbid(
         'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt',
         'deduplicateMihonStartReadingEntries(',
         'createSyntheticMihonChapter',
     )
     require(
-        'apps/app/lib/demo_home_source_compat.dart',
+        'apps/app/lib/home_shell_source_compat.dart',
         'widget.networkBridge.openBrowser(',
     )
 

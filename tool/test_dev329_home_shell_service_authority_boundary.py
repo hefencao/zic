@@ -11,15 +11,16 @@ def text(path: str) -> str:
 def require(body: str, marker: str, label: str) -> None:
     if marker not in body:
         raise SystemExit(
-            f"DemoHome service-authority boundary missing {label}: {marker}"
+            f"HomeShell service-authority boundary missing {label}: {marker}"
         )
 
 
-home = text("apps/app/lib/demo_home.dart")
-handoff = text("apps/app/lib/demo_home_service_handoff.dart")
-source_migration = text("apps/app/lib/demo_home_source_migration.dart")
+home = text("apps/app/lib/home_shell.dart")
+handoff = text("apps/app/lib/home_shell_service_handoff.dart")
+source_migration = text("apps/app/lib/home_shell_source_migration.dart")
 session = text("apps/app/lib/home_library_session.dart")
 service_cache = text("apps/app/lib/home_service_cache_binding.dart")
+adoption = text("apps/app/lib/home_service_adoption.dart")
 settings = text("apps/app/lib/app_settings_screen.dart")
 lazy_store = text("packages/storage/lib/src/lazy_imported_library_store.dart")
 
@@ -28,9 +29,9 @@ for marker, label in (
     ("_librarySession.chapterDownloads;", "chapter-download delegation"),
     ("_librarySession.downloadComposition;", "download-composition delegation"),
     ("_librarySession.wholeComicDownloads;", "whole-comic delegation"),
-    ("late HomeServiceCacheBinding _serviceCache;", "single cache binding"),
-    ("_serviceCache.readerArtifactCache;", "reader cache delegation"),
-    ("_serviceCache.coordinator;", "resource cache delegation"),
+    ("late final HomeServiceAdoptionCoordinator _serviceAdoption;", "service adoption owner"),
+    ("_serviceAdoption.readerArtifactCache;", "reader cache delegation"),
+    ("_serviceAdoption.cacheCoordinator;", "resource cache delegation"),
     ("downloadComposition: downloadComposition,", "initial session composition"),
 ):
     require(home, marker, label)
@@ -50,23 +51,38 @@ for forbidden in (
 ):
     if forbidden in home or forbidden in handoff:
         raise SystemExit(
-            f"DemoHome re-acquired duplicate service authority: {forbidden}"
+            f"HomeShell re-acquired duplicate service authority: {forbidden}"
         )
 
 for marker, label in (
-    ("bool _needsDurableServiceAdoption()", "latest service identity check"),
-    ("identical(downloadComposition, _downloadComposition)", "composition identity check"),
-    ("!identical(suppliedCache, _cacheCoordinator)", "cache identity check"),
-    ("if (mounted && (succeeded || superseded) &&", "bounded latest-generation drain"),
-    ("final superseded = !identical(library, _incomingLibraryStore)", "failed-generation replacement check"),
-    ("_adoptDurableServices().catchError", "background failure observation"),
+    ("final class HomeServiceAdoptionCoordinator", "standalone adoption owner"),
+    ("bool needsCurrentAdoption()", "latest service identity check"),
+    ("identical(downloadComposition, session.downloadComposition)", "composition identity check"),
+    ("!identical(suppliedCache, cacheCoordinator)", "cache identity check"),
+    ("if (!_closing &&", "bounded latest-generation drain"),
+    ("final superseded = !identical(library, libraryProvider())", "failed-generation replacement check"),
+    ("unawaited(adoptCurrent().catchError", "background failure observation"),
     ("Error.throwWithStackTrace(adoptionError, adoptionStack!)", "explicit handoff failure propagation"),
     ("downloadComposition: downloadComposition,", "handoff session composition"),
-    ("wholeComicDownloads.refreshStaleChapter = _refreshStaleQueueChapter;", "queue source refresher"),
-    ("identical(_librarySession.downloadComposition, downloadComposition)", "post-adoption authority proof"),
-    ("await candidateServiceCache.closeIfOwned();", "rejected candidate cache cleanup"),
-    ("_serviceCache = candidateServiceCache;", "cache binding commit"),
-    ("await previousServiceCache.closeIfSupersededBy(candidateServiceCache);", "superseded cache cleanup"),
+    ("wholeComicDownloads.refreshStaleChapter = refreshStaleChapter;", "queue source refresher"),
+    ("identical(session.downloadComposition, downloadComposition)", "post-adoption authority proof"),
+    ("await candidateCacheBinding.closeIfOwned();", "rejected candidate cache cleanup"),
+    ("_cacheBinding = candidateCacheBinding;", "cache binding commit"),
+    ("await previousCacheBinding.closeIfSupersededBy(candidateCacheBinding);", "superseded cache cleanup"),
+    ("externalPluginLoaderAvailable()", "deferred plugin loader handoff"),
+    ("void beginClose()", "close admission fence"),
+):
+    require(adoption, marker, label)
+
+for forbidden in ("BuildContext", "Navigator", "State<", "Widget", "mounted", "setState("):
+    if forbidden in adoption:
+        raise SystemExit(
+            f"HomeServiceAdoptionCoordinator acquired UI authority: {forbidden}"
+        )
+
+for marker, label in (
+    ("_serviceAdoption.startCurrentAdoption();", "handoff adoption trigger"),
+    ("_externalSources.adoptController(plugins);", "external controller handoff"),
 ):
     require(handoff, marker, label)
 
@@ -184,7 +200,7 @@ for marker, label in (
 for forbidden in ("_pendingReaderProgress", "_readerProgressForwarding"):
     if forbidden in home:
         raise SystemExit(
-            f"DemoHome acquired Lazy Reader checkpoint forwarding state: {forbidden}"
+            f"HomeShell acquired Lazy Reader checkpoint forwarding state: {forbidden}"
         )
 
 reader_progress_start = home.index("Future<void> _enqueueReaderProgress(ReadingProgress progress)")
@@ -217,7 +233,7 @@ for forbidden in (
 ):
     if forbidden in home:
         raise SystemExit(
-            f"DemoHome bypasses HomeLibrarySession library mutation owner: {forbidden}"
+            f"HomeShell bypasses HomeLibrarySession library mutation owner: {forbidden}"
         )
 
 
@@ -236,8 +252,8 @@ for marker, label in (
     require(session, marker, label)
 
 for body, path in (
-    (home, "apps/app/lib/demo_home.dart"),
-    (handoff, "apps/app/lib/demo_home_service_handoff.dart"),
+    (home, "apps/app/lib/home_shell.dart"),
+    (adoption, "apps/app/lib/home_service_adoption.dart"),
 ):
     for forbidden in (
         "chapterDownloads is ChapterDownloadTransferRuntimeProvider",
@@ -304,7 +320,7 @@ for body, label in (
     (trim_body, "settings cache trim"),
 ):
     require(body, "await _serviceHandoff?.ensureCoreServices?.call();", f"{label} durable handoff")
-    require(body, "await _adoptDurableServices();", f"{label} current-generation adoption")
+    require(body, "await _serviceAdoption.adoptCurrent();", f"{label} current-generation adoption")
     require(body, "final coordinator = _cacheCoordinator;", f"{label} one-generation capture")
 
 for marker, label in (
@@ -369,15 +385,16 @@ dispose_start = home.index('  @override\n  void dispose() {')
 close_composition_start = home.index('  Future<void> _closeHomeComposition() async {', dispose_start)
 dispose_body = home[dispose_start:close_composition_start]
 if '_librarySession.dispose();' in dispose_body:
-    raise SystemExit('DemoHome State.dispose must not synchronously dispose a closing Home session')
+    raise SystemExit('HomeShell State.dispose must not synchronously dispose a closing Home session')
+require(dispose_body, '_serviceAdoption.beginClose();', 'service adoption close fence')
 close_composition_body = home[close_composition_start:]
 for marker, label in (
-    ('Future<void>? _durableAdoption;', 'durable adoption composition tail'),
+    ('late final HomeServiceAdoptionCoordinator _serviceAdoption;', 'durable adoption collaborator'),
     ('Future<void>? _sourceMigrationRecovery;', 'source migration recovery tail'),
 ):
     require(home, marker, label)
 for marker, label in (
-    ('await _drainHomeCompositionTail(\n      _durableAdoption,', 'durable adoption teardown drain'),
+    ('await _drainHomeCompositionTail(\n      _serviceAdoption.activeAdoption,', 'durable adoption teardown drain'),
     ('await _drainHomeCompositionTail(\n      _sourceMigrationRecovery,', 'source migration teardown drain'),
     ('await _readerChapterComposition.close();', 'Reader chapter composition teardown drain'),
     ('await _versionReuseLifecycle.close();', 'version reuse lifecycle teardown drain'),
@@ -391,13 +408,13 @@ if close_composition_body.index('await _librarySession.close();') > close_compos
 ):
     raise SystemExit('Home session notifier disposal must follow async owner close')
 for earlier, later, label in (
-    ('_durableAdoption,', '_sourceMigrationRecovery,', 'durable adoption before migration recovery'),
+    ('_serviceAdoption.activeAdoption,', '_sourceMigrationRecovery,', 'durable adoption before migration recovery'),
     ('_sourceMigrationRecovery,', 'await _readerChapterComposition.close();', 'composition recovery before Reader composition close'),
     ('await _readerChapterComposition.close();', 'await _versionReuseLifecycle.close();', 'Reader composition before version lifecycle close'),
     ('await _versionReuseLifecycle.close();', 'await _externalSources.close();', 'version lifecycle before external close'),
     ('await _externalSources.close();', 'await _librarySession.close();', 'external lifecycle before session close'),
     ('await _librarySession.close();', '_sourceResources.close();', 'session close before source-resource close'),
-    ('_sourceResources.close();', 'await _serviceCache.closeIfOwned();', 'source-resource close before cache close'),
+    ('_sourceResources.close();', 'await _serviceAdoption.closeCacheIfOwned();', 'source-resource close before cache close'),
 ):
     if close_composition_body.index(earlier) > close_composition_body.index(later):
         raise SystemExit(f'Home composition teardown ordering regressed: {label}')
@@ -412,4 +429,4 @@ for marker, label in (
 ):
     require(source_migration, marker, label)
 
-print("dev.329 DemoHome service authority boundary: OK")
+print("dev.329 HomeShell service authority boundary: OK")

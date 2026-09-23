@@ -35,7 +35,7 @@ for token in (
 ):
     require(session, token, "Home relation projection owner")
 
-migration = read("apps/app/lib/demo_home_source_migration.dart")
+migration = read("apps/app/lib/home_shell_source_migration.dart")
 version_lifecycle = read("apps/app/lib/home_version_reuse_lifecycle.dart")
 for token in (
     "DateTime? _projectedConfirmedSourceUpdateAt(",
@@ -91,7 +91,7 @@ for token in (
 ):
     forbid(migration, token, "version relation mirrored into chapter update signal")
 
-views = read("apps/app/lib/demo_home_views.dart")
+views = read("apps/app/lib/home_shell_views.dart")
 require(views, "_sourceUpdateAtForComic(comic) != null", "Home version update projection")
 
 reuse = read("packages/downloads/lib/src/artifact_cache_reuse.dart")

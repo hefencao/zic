@@ -1,4 +1,4 @@
-part of 'demo_home.dart';
+part of 'home_shell.dart';
 
 ComicVersionSource? _sourceVersionCapability(BrowsableComicSource source) {
   final Object candidate = source;
@@ -66,7 +66,7 @@ List<String> _sourceMigrationResultSummaryMessages(
         '原来源与离线文件保留',
     ];
 
-extension _DemoHomeSourceMigration on _DemoHomeState {
+extension _HomeShellSourceMigration on _HomeShellState {
   Future<void> _recoverCommittedSourceMigrations() {
     final existing = _sourceMigrationRecovery;
     if (existing != null) return existing;

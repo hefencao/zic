@@ -21,10 +21,10 @@ def forbid(text: str, token: str, label: str) -> None:
 
 cache = read('packages/resource_cache/lib/src/resource_cache.dart')
 storage = read('packages/storage/lib/src/file_resource_cache_byte_store.dart')
-home = read('apps/app/lib/demo_home.dart')
-views = read('apps/app/lib/demo_home_views.dart')
-catalog_identity = read('apps/app/lib/demo_home_catalog_identity.dart')
-migration = read('apps/app/lib/demo_home_source_migration.dart')
+home = read('apps/app/lib/home_shell.dart')
+views = read('apps/app/lib/home_shell_views.dart')
+catalog_identity = read('apps/app/lib/home_shell_catalog_identity.dart')
+migration = read('apps/app/lib/home_shell_source_migration.dart')
 saved = read('packages/catalog/lib/src/saved_comic.dart')
 library_comic = read('packages/catalog/lib/src/library_comic.dart')
 

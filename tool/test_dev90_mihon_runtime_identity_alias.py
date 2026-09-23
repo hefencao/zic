@@ -86,25 +86,25 @@ require(
     'CanonicalComicIdentitySource',
 )
 require(
-    'apps/app/lib/demo_home.dart',
-    "part 'demo_home_catalog_identity.dart';",
+    'apps/app/lib/home_shell.dart',
+    "part 'home_shell_catalog_identity.dart';",
     'collapseCanonicalLibraryComics',
 )
 require(
-    'apps/app/lib/demo_home_catalog_identity.dart',
+    'apps/app/lib/home_shell_catalog_identity.dart',
     '_preferredSavedComicAlias',
     'collapsed-to-single-chapter',
     '_canonicalComicKey',
     'identityHash: _comicIdentityTraceHash',
 )
 require(
-    'apps/app/lib/demo_home_details.dart',
+    'apps/app/lib/home_shell_details.dart',
     'requestedComicIdLength',
     'identityHash: _comicIdentityTraceHash',
 )
-forbid('apps/app/lib/demo_home.dart', 'List<LibraryComic> _collapseComicAliases')
+forbid('apps/app/lib/home_shell.dart', 'List<LibraryComic> _collapseComicAliases')
 require(
-    'apps/app/lib/demo_home_source_compat.dart',
+    'apps/app/lib/home_shell_source_compat.dart',
     'comic-identity-alias-resolved',
     'sameComicIdentity:',
     '_canonicalComicKey(source.sourceId, left)',
@@ -122,7 +122,7 @@ require(
     'final ComicDetailsIdentityMatcher sameComicIdentity;',
 )
 require(
-    'apps/app/lib/demo_home_source_compat.dart',
+    'apps/app/lib/home_shell_source_compat.dart',
     'sameComicIdentity: resolveCanonicalAlias',
     '_canonicalComicKey(source.sourceId, left)',
 )

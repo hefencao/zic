@@ -30,14 +30,14 @@ for token in (
     require(browser, token, 'source-card shelf/update projection')
 forbid(browser, 'Icons.collections_bookmark,\n                            size: 16', 'bookmark-shaped shelf marker')
 
-views = read('apps/app/lib/demo_home_views.dart')
+views = read('apps/app/lib/home_shell_views.dart')
 for token in (
     'hasUpdate: _sourceComicHasUpdate',
     'onOpenUpdate: _openSourceUpdateForSummary',
 ):
     require(views, token, 'Home-owned update projection wiring')
 
-migration = read('apps/app/lib/demo_home_source_migration.dart')
+migration = read('apps/app/lib/home_shell_source_migration.dart')
 transaction = read('apps/app/lib/home_source_migration_transaction.dart')
 for token in (
     '_sourceComicHasUpdate(',
@@ -82,7 +82,7 @@ search_branch = migration.index('final page = await choice.source.browse', versi
 if search_branch <= version_branch:
     raise SystemExit('cross-source title search must follow confirmed same-source branch')
 
-compat = read('apps/app/lib/demo_home_source_compat.dart')
+compat = read('apps/app/lib/home_shell_source_compat.dart')
 for token in (
     'onMigrateSource: () {',
     'return _openSourceMigrationForSummary(active, comic);',

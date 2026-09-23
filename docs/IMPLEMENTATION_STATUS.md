@@ -23,6 +23,11 @@ App build：0.31.0+328
 - 资源会话：支持 media-empty 状态恢复，提供 residentBodyBacked 权威正文与 range hydrate256KiB 预热。
 - 元数据权威：由 physical source metadata 提供 generation-local metadataPrefix 保证。
 
+### Home 组合与服务代际
+- 生产根页面已收口为 `HomeShell` / `home_shell_*`；旧 `DemoHome` 命名只允许出现在历史 ADR/audit 记录，不能再作为当前生产入口或 owner 名称。
+- `HomeShell` 只持导航、route/presentation 与 composition wiring；library/download/queue 当前 authority 继续由 `HomeLibrarySession` 持有，Reader/source/download/version 等长期职责继续由各自 Home owner 承担。
+- durable service generation adoption 已从 Widget State 抽到 `HomeServiceAdoptionCoordinator`：single-flight adoption、同代 cache binding、source-resource rebind 与 source projection commit 在非 UI owner 中完成；dispose 先 fence 新 adoption，再 drain 已接纳工作。
+
 ### 外部插件运行时 (Mihon & Venera)
 - Mihon 1.4/1.6 versioned ABI asset 已共享 canonical `UncaughtExceptionInterceptor`、`UserAgentInterceptor`、`CloudflareInterceptor`；
   两套 `NetworkHelper.client` 保留 default-client 类型合同，同时 Cloudflare 行为继续委托 `network_bridge` 唯一 owner。

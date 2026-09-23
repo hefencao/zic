@@ -14,10 +14,10 @@ driver = read(
 )
 adapter = read('packages/plugin_host/lib/src/runtime_source_adapter.dart')
 transport = read('packages/downloads/lib/src/source_resource_transport.dart')
-compat = read('apps/app/lib/demo_home_source_compat.dart')
+compat = read('apps/app/lib/home_shell_source_compat.dart')
 reader_composition = read('apps/app/lib/home_reader_composition.dart')
 download_commands = read('apps/app/lib/home_download_commands.dart')
-reader_route = read('apps/app/lib/demo_home_reader_route.dart')
+reader_route = read('apps/app/lib/home_shell_reader_route.dart')
 whole_comic = read('packages/downloads/lib/src/whole_comic_downloads.dart')
 check = read('tool/check.sh')
 

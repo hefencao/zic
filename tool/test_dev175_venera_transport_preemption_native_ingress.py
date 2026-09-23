@@ -129,8 +129,8 @@ forbid(runtime, 'Queue<Completer<void>> _waiters', 'FIFO-only Venera waiter queu
 
 app_gateway = read('apps/app/lib/source_resource_gateway.dart')
 app_home = (
-    read('apps/app/lib/demo_home.dart')
-    + read('apps/app/lib/demo_home_reader_route.dart')
+    read('apps/app/lib/home_shell.dart')
+    + read('apps/app/lib/home_shell_reader_route.dart')
     + read('apps/app/lib/home_reader_composition.dart')
 )
 local_ui = read('packages/local_media_ui/lib/src/local_media_screens.dart')

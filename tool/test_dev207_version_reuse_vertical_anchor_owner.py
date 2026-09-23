@@ -15,7 +15,7 @@ def forbid(text: str, token: str, label: str) -> None:
     if token in text:
         raise SystemExit(f'superseded {label}: {token}')
 
-migration = read('apps/app/lib/demo_home_source_migration.dart')
+migration = read('apps/app/lib/home_shell_source_migration.dart')
 version_lifecycle = read('apps/app/lib/home_version_reuse_lifecycle.dart')
 for token in (
     'VerifiedArtifactReusePlan.matchResolvedRelatedIntervals(',
@@ -23,10 +23,10 @@ for token in (
     "'stage': 'version-page-mapping-warmed'",
 ):
     require(version_lifecycle, token, 'background confirmed-version reuse proof')
-demo_home = (
-    read('apps/app/lib/demo_home.dart')
-    + read('apps/app/lib/demo_home_source_migration.dart')
-    + read('apps/app/lib/demo_home_reader_route.dart')
+home_shell = (
+    read('apps/app/lib/home_shell.dart')
+    + read('apps/app/lib/home_shell_source_migration.dart')
+    + read('apps/app/lib/home_shell_reader_route.dart')
 )
 reader_composition = read('apps/app/lib/home_reader_composition.dart')
 for token in (
@@ -36,19 +36,19 @@ for token in (
     'onFirstPresentationFrame: versionSource == null',
     '_scheduleReaderMetadataVersionRefresh(',
 ):
-    require(demo_home, token, 'Reader persisted-map reuse composition')
+    require(home_shell, token, 'Reader persisted-map reuse composition')
 forbid(
     reader_composition,
     'scheduleReaderMetadataVersionRefresh(',
     'metadata/version discovery before Reader first presentation',
 )
 forbid(
-    demo_home,
+    home_shell,
     'await _prepareVersionReuseWarmup(versionSource, current);',
     'generic history warmup blocking ordinary Reader entry',
 )
 forbid(
-    demo_home,
+    home_shell,
     'await _prepareSourceVersionArtifactReuse(current);',
     'synchronous source-resolved Reader reuse preparation',
 )

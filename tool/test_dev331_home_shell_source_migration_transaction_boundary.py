@@ -11,12 +11,12 @@ def text(path: str) -> str:
 def require(body: str, marker: str, label: str) -> None:
     if marker not in body:
         raise SystemExit(
-            f"DemoHome source-migration transaction boundary missing {label}: {marker}"
+            f"HomeShell source-migration transaction boundary missing {label}: {marker}"
         )
 
 
-home = text("apps/app/lib/demo_home.dart")
-ui = text("apps/app/lib/demo_home_source_migration.dart")
+home = text("apps/app/lib/home_shell.dart")
+ui = text("apps/app/lib/home_shell_source_migration.dart")
 owner = text("apps/app/lib/home_source_migration_transaction.dart")
 
 for marker, label in (
@@ -25,7 +25,7 @@ for marker, label in (
     ("session: _librarySession,", "session authority"),
     ("ensureDurableLibrary: () async {", "durable library boundary"),
     ("await _serviceHandoff?.ensureCoreServices?.call();", "durable service open"),
-    ("await _adoptDurableServices();", "durable service adoption"),
+    ("await _serviceAdoption.adoptCurrent();", "durable service adoption"),
     ("artifactCache: () => _readerArtifactCache,", "generation cache capability"),
     ("verifiedPageReuseIdentity:", "narrow reuse capability"),
 ):
@@ -41,7 +41,7 @@ for forbidden in (
 ):
     if forbidden in home or forbidden in ui:
         raise SystemExit(
-            f"DemoHome re-acquired source-migration transaction authority: {forbidden}"
+            f"HomeShell re-acquired source-migration transaction authority: {forbidden}"
         )
 
 for marker, label in (
@@ -91,7 +91,7 @@ for forbidden in (
     "ScaffoldMessenger",
     "showDialog",
     "setState(",
-    "_DemoHomeState",
+    "_HomeShellState",
     "ComicSourceResourceGateway",
     "HomeServiceHandoff",
     "summaryMessages(",
@@ -102,4 +102,4 @@ for forbidden in (
             f"source-migration transaction owner leaked UI/broad composition dependency: {forbidden}"
         )
 
-print("dev.331 DemoHome source migration transaction boundary: OK")
+print("dev.331 HomeShell source migration transaction boundary: OK")

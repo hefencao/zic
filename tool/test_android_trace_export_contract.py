@@ -8,7 +8,7 @@ exporter = (ROOT / 'apps/app/lib/debug_trace_export.dart').read_text(encoding='u
 destination = (ROOT / 'apps/app/lib/debug_trace_export_destination.dart').read_text(encoding='utf-8')
 activity = (ROOT / 'apps/app/android/app/src/main/kotlin/dev/zic/zic/MainActivity.kt').read_text(encoding='utf-8')
 misc = (ROOT / 'apps/app/lib/misc_page.dart').read_text(encoding='utf-8')
-home = (ROOT / 'apps/app/lib/demo_home_views.dart').read_text(encoding='utf-8')
+home = (ROOT / 'apps/app/lib/home_shell_views.dart').read_text(encoding='utf-8')
 
 assert "package:file_selector/file_selector.dart" not in screen
 assert 'getSaveLocation(' not in screen

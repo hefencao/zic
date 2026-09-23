@@ -13,7 +13,7 @@ def require(text: str, token: str, owner: str) -> None:
 
 artwork = read('apps/app/lib/artwork_placeholder.dart')
 home = read('apps/app/lib/home_widgets.dart')
-demo = read('apps/app/lib/demo_home.dart')
+demo = read('apps/app/lib/home_shell.dart')
 gateway = read('apps/app/lib/source_resource_gateway.dart')
 cached = read('packages/catalog/lib/src/cached_comic_source.dart')
 details = read('apps/app/lib/comic_details.dart')

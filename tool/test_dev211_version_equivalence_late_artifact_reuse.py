@@ -44,7 +44,7 @@ if build >= 229:
 else:
     require(reuse, 'Future<int> applyDurablePartials(PartialDownloadStore store) async {', 'legacy verified partial copy')
 
-migration = read('apps/app/lib/demo_home_source_migration.dart')
+migration = read('apps/app/lib/home_shell_source_migration.dart')
 version_lifecycle = read('apps/app/lib/home_version_reuse_lifecycle.dart')
 require(
     migration,

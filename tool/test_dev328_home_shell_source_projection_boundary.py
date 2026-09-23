@@ -11,19 +11,20 @@ def text(path: str) -> str:
 def require(body: str, marker: str, label: str) -> None:
     if marker not in body:
         raise SystemExit(
-            f"DemoHome source-projection boundary missing {label}: {marker}"
+            f"HomeShell source-projection boundary missing {label}: {marker}"
         )
 
 
 projection = text("apps/app/lib/home_source_projection.dart")
+adoption = text("apps/app/lib/home_service_adoption.dart")
 home_files = [
-    "apps/app/lib/demo_home.dart",
-    "apps/app/lib/demo_home_service_handoff.dart",
-    "apps/app/lib/demo_home_catalog_identity.dart",
-    "apps/app/lib/demo_home_source_compat.dart",
-    "apps/app/lib/demo_home_source_migration.dart",
-    "apps/app/lib/demo_home_reader_route.dart",
-    "apps/app/lib/demo_home_views.dart",
+    "apps/app/lib/home_shell.dart",
+    "apps/app/lib/home_shell_service_handoff.dart",
+    "apps/app/lib/home_shell_catalog_identity.dart",
+    "apps/app/lib/home_shell_source_compat.dart",
+    "apps/app/lib/home_shell_source_migration.dart",
+    "apps/app/lib/home_shell_reader_route.dart",
+    "apps/app/lib/home_shell_views.dart",
 ]
 home = "\n".join(text(path) for path in home_files)
 
@@ -41,8 +42,8 @@ for marker, label in (
     require(projection, marker, label)
 
 for forbidden in (
-    "part of 'demo_home.dart'",
-    "_DemoHomeState",
+    "part of 'home_shell.dart'",
+    "_HomeShellState",
     "BuildContext",
     "Navigator",
     "setState(",
@@ -59,9 +60,9 @@ for forbidden in (
 
 require(home, "late final HomeSourceProjection _sourceProjection;", "Home projection binding")
 require(home, "sources: _sourceProjection.sources", "initial session source projection")
-require(home, "_sourceProjection.composeForServices(", "durable handoff candidate projection")
-require(home, "_sourceProjection.adoptServiceProjection(", "durable handoff projection commit")
-require(home, "externalSources: activeExternalSources,", "durable external identity handoff")
+require(adoption, "sourceProjection.composeForServices(", "durable handoff candidate projection")
+require(adoption, "sourceProjection.adoptServiceProjection(", "durable handoff projection commit")
+require(adoption, "externalSources: activeExternalSources,", "durable external identity handoff")
 require(home, "_sourceProjection.sourceForId(sourceId)", "source lookup delegation")
 require(
     home,
@@ -82,7 +83,7 @@ for forbidden in (
 ):
     if forbidden in home:
         raise SystemExit(
-            f"DemoHome re-acquired source projection responsibility: {forbidden}"
+            f"HomeShell re-acquired source projection responsibility: {forbidden}"
         )
 
 source_management = text("apps/app/lib/source_browser.dart")
@@ -111,4 +112,4 @@ for forbidden in ("startsWith('mihon:')", "startsWith('venera:')"):
             f"SourceManagementScreen inferred external ownership from sourceId prefix: {forbidden}"
         )
 
-print("dev.328 DemoHome source projection boundary: OK")
+print("dev.328 HomeShell source projection boundary: OK")

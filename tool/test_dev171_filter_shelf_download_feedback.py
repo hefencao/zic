@@ -67,7 +67,7 @@ for token in (
     require(browser, token, 'source presentation ownership')
 forbid(browser, 'return ActionChip(\n                            key: comicSourceFilterActionKey', 'non-selectable filter action')
 
-home = read('apps/app/lib/demo_home.dart')
+home = read('apps/app/lib/home_shell.dart')
 for token in (
     'enum _DownloadCompletionKind { chapter, wholeComic }',
     '_downloadCompletionBadges',
@@ -97,7 +97,7 @@ for token in (
     require(widgets, token, 'distinct completion badge presentation')
 forbid(widgets, 'ComicDownloadProgress.offline', 'cache-residency completion model')
 
-compat = read('apps/app/lib/demo_home_source_compat.dart')
+compat = read('apps/app/lib/home_shell_source_compat.dart')
 for token in (
     '_recordChapterDownloadCompletion(',
     '_trackWholeComicDownloadCompletion(',
@@ -106,7 +106,7 @@ for token in (
 ):
     require(compat, token, 'download command/detail-consumption path')
 
-views = read('apps/app/lib/demo_home_views.dart')
+views = read('apps/app/lib/home_shell_views.dart')
 require(views, 'isInShelf: (source, comic) => _mergedPreferenceFor(', 'canonical shelf projection')
 
 source_test = read('apps/app/test/source_browser_test.dart')

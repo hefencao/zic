@@ -16,7 +16,7 @@ def forbid(text: str, token: str, label: str) -> None:
         raise SystemExit(f'superseded {label}: {token}')
 
 source = read('apps/app/lib/source_browser.dart')
-home = read('apps/app/lib/demo_home.dart')
+home = read('apps/app/lib/home_shell.dart')
 catalog = read('packages/catalog/lib/src/source_catalog.dart')
 adapter = read('packages/plugin_host/lib/src/runtime_source_adapter.dart')
 source_test = read('apps/app/test/source_browser_test.dart')

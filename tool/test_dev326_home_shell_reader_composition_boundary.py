@@ -14,8 +14,8 @@ def require(body: str, marker: str, label: str) -> None:
 
 
 composition = text("apps/app/lib/home_reader_composition.dart")
-home = text("apps/app/lib/demo_home.dart")
-route = text("apps/app/lib/demo_home_reader_route.dart")
+home = text("apps/app/lib/home_shell.dart")
+route = text("apps/app/lib/home_shell_reader_route.dart")
 
 require(
     composition,
@@ -44,8 +44,8 @@ require(
 )
 
 for forbidden in (
-    "part of 'demo_home.dart'",
-    "_DemoHomeState",
+    "part of 'home_shell.dart'",
+    "_HomeShellState",
     "BuildContext",
     "Navigator",
     "setState(",
@@ -84,7 +84,7 @@ for forbidden in (
 ):
     if forbidden in route:
         raise SystemExit(
-            f"DemoHome route re-acquired chapter preparation responsibility: {forbidden}"
+            f"HomeShell route re-acquired chapter preparation responsibility: {forbidden}"
         )
 
 close_body = home[home.index("Future<void> _closeHomeComposition() async {"):]
@@ -96,4 +96,4 @@ for earlier, later, label in (
     if close_body.index(earlier) > close_body.index(later):
         raise SystemExit(f"Home Reader composition teardown ordering regressed: {label}")
 
-print("dev.326 DemoHome reader chapter composition boundary: OK")
+print("dev.326 HomeShell reader chapter composition boundary: OK")

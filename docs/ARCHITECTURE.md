@@ -191,7 +191,7 @@ cache invalidation、session reset 与 network re-admission 全部留在 Pipelin
 Home 的运行时绑定就绪与展示投影就绪是两个边界：`HomeServiceHandoff` 在核心服务到达后自动触发，`HomeLibrarySession.adoptServices()` 先完成权威读取、
 绑定替换和旧 owner 退役，再由 `ready`/`services-handoff-complete` 收口投影；Reader 只通过 composition 等待能力绑定，不拥有这条生命周期或网络准入。
 
-bootstrap 与 durable services 之间通过稳定 `HomeServiceHandoff` 原地交接现有 `DemoHome/HomeLibrarySession`；
+bootstrap 与 durable services 之间通过稳定 `HomeServiceHandoff` 原地交接现有 `HomeShell/HomeLibrarySession`；
 服务到达不会更换 `MaterialApp`、Home key 或导航状态。`_AppServices` 必须显式持有 `ownsLibraryStore`：
 独立打开的 durable library 由 service shell close，复用 bootstrap `LazyImportedLibraryStore.ensureDurable()` 的 SQLite 则继续只由 Lazy owner close；
 download-service rebuild/degraded shell 只继承 previous ownership bit，
@@ -211,7 +211,7 @@ chapter composition、artifact cache 和 whole-comic queue；强制打开或 ado
 lifecycle close 必须同步封闭新 refresh/adoption 并 join 并发 close；
 已经进入 Home projection callback 的 current refresh 必须完整返回后 close 才完成，
 但尚在 optional controller loader/ready 阶段且尚未进入 projection callback 的 work 不属于 teardown barrier。
-DemoHome composition teardown 必须先 await lifecycle close，
+HomeShell composition teardown 必须先 await lifecycle close，
 再进入 `HomeLibrarySession.close()`，避免旧 external refresh 撞上 session `_closing`。
 App runtime 的 `_AppServices` 只把 external plugin controller 视为独立于 library/download core generation 的可选 capability：
 bootstrap/deferred→durable、download-service rebuild 与 degraded fallback 都必须通过单一 ownership transfer 保持同一 controller identity；
@@ -257,8 +257,12 @@ session source publication与source-confirmed canonical comic-id持久化则由�
 它只接收普通 `BrowsableComicSource` 集合并显式追踪当前 external source identities，
 不依赖 plugin controller/runtime，也不得用 Mihon/Venera 前缀反推 external ownership。
 durable handoff先构造候选source projection并完成`HomeLibrarySession.adoptServices`；
-library、chapter download、download composition 与 whole-comic queue 的唯一当前authority由`HomeLibrarySession`持有，
-`DemoHome`只委托读取，不保存平行副本。comic/source preference 与 chapter read-state 的 durable write-through 也由 session 持有：
+library、chapter download、download composition 与 whole-comic queue 的唯一当前authority由`HomeLibrarySession`持有。
+`HomeServiceAdoptionCoordinator`只负责把`HomeServiceHandoff`发布的一代服务按 single-flight 顺序交给 session，
+并在 session 已确认 adoption 后原子切换同代 `HomeServiceCacheBinding`、source-resource binding 与 source projection；
+它不持有 Flutter presentation/navigation 状态，也不成为第二个 service authority。
+`HomeShell`只触发该 coordinator、读取 session/projection 并持有 route/presentation 状态，不保存平行 mutable service generation。
+comic/source preference 与 chapter read-state 的 durable write-through 也由 session 持有：
 捕获 concrete library identity 执行写入，跨 adoption 成功或失败均等待 current service adoption 后重试；
 helper 返回稳定写入的 library identity，caller 在无 await 的同步 continuation 再确认仍是 current 后才发布 projection。
 批量 comic preference（例如书架 reorder/alias neutralization）必须先完成同一 current store 的该批 durable writes，
@@ -291,11 +295,12 @@ reload 合成的缺失 source/comic preference 只是 baseline，不是用户更
 必须保留 factory epoch `updatedAt`，不得用 `DateTime.now()` 抬高 LWW 优先级；
 因此 stale missing-preference query 即使晚到，真实用户 preference 仍在 durable store 与 Home projection 两边获胜。
 cache侧由单一generation-bound `HomeServiceCacheBinding`同时绑定Reader artifact cache与`ResourceCacheCoordinator`及其close ownership；
-session未采用候选generation时回收Home-owned candidate cache，
-session已切换authority后即使后续reconcile报告错误，Home也必须跟随已采用generation而不能回到旧binding。
+该 binding 与 durable-adoption single-flight 均由 `HomeServiceAdoptionCoordinator` 持有。
+session未采用候选generation时 coordinator 回收 Home-owned candidate cache；
+session已切换authority后即使后续reconcile报告错误，也必须跟随已采用generation而不能回到旧binding。
 same-service但source/cache projection变化仍要更新session source list；
-handoff single-flight结束后重检最新published generation并继续drain，避免飞行期间的目录切换/service rebuild被吞掉。
-Home composition teardown 还必须先 drain 当前 durable-adoption 外层 continuation；
+handoff single-flight结束后 coordinator 重检最新published generation并继续drain，避免飞行期间的目录切换/service rebuild被吞掉。
+`HomeShell.dispose()`先 fence coordinator 的新 adoption，再由 composition teardown drain close 前已接纳的 adoption continuation；
 该 continuation 若启动 committed source-migration recovery，
 recovery 由 Widget composition 保持 single-flight tail 并在 teardown 中继续 drain。
 只有这两条 composition tail 都完成后，才进入 Home-owned Reader/version lifecycle teardown：
@@ -312,8 +317,8 @@ Reader 章节进入前的 preparation 由独立 `HomeReaderChapterComposition` �
 避免捕获随后退役的 bootstrap cache/download owner；失败由加载路由报告，不回退旧 owner。
 此等待不属于 Reader/UI 网络准入、不等待无关插件启动，trace 用 `serviceHandoffMs` 单独记录；
 它只接收显式 hydrate/source-gateway/transfer-runtime/version-authority/read-marker/trace capability，
-不持有 `BuildContext`、Navigator、Widget State 或任意 `_DemoHomeState` 字段。
-`demo_home_reader_route.dart` 只保留导航、route-local recovery 与 UI callback，
+不持有 `BuildContext`、Navigator、Widget State 或任意 `_HomeShellState` 字段。
+`home_shell_reader_route.dart` 只保留导航、route-local recovery 与 UI callback，
 不能重新实现章节 preparation 或直接取得 transport/cache/session owner。
 Home 的 chapter/whole-comic 下载命令由独立 `HomeDownloadCommands` 顺序化：
 它每次从 `HomeLibrarySession` 取得当前 chapter/queue generation，负责 durable handoff、hydrate/source-authority refresh、
@@ -400,7 +405,7 @@ projection/canonical publish、snapshot schedule）结束，admission 只计数/
 close 先等 `_ready` 与这些 admitted operations，再排 version/canonical/snapshot tails，
 最后才置 `_closed` 并关闭 owned SQLite/library；
 whole-App `checkpointSnapshot()` 是 teardown durability barrier，不属于普通新 mutation admission。
-`DemoHome.dispose()` 只启动异步 composition close，`ChangeNotifier.dispose()` 必须在该 close 完成后执行，不能抢先取消已接纳快照。
+`HomeShell.dispose()` 只启动异步 composition close，`ChangeNotifier.dispose()` 必须在该 close 完成后执行，不能抢先取消已接纳快照。
 
 `MainActivity` 显式创建关闭自动 `GeneratedPluginRegistrant` 的 `FlutterEngine`，并在 Activity 结束时销毁；
 仅覆盖 `configureFlutterEngine` 不能阻止 implicit engine 的构造期注册，feature bridge 只能通过 startup channel 按能力挂载。
@@ -462,7 +467,7 @@ Home 的“更新漫画”投影只取已在书架且具有 source-confirmed upd
 漫画标题，标题只在详情内容区出现。保存过阅读进度时，继续阅读命令直接调用既有
 `onOpenChapter` facade，按钮和阅读历史是两个独立的 UI 投影，并位于章节总数行上方；详情页不创建第二个阅读器或
 正文缓存。来源浏览、manifest/chapter 身份校验、状态迁移和 artifact 复用由
-`_DemoHomeSourceMigration` 组合 owner 完成。
+`_HomeShellSourceMigration` 组合 owner 完成。
 远程与本地详情共用同一章节 presentation：
 章节完成态优先由真实 `ReadingProgress` 与已知 pageCount 推导，到达最后一页或倒数第二页即视为已读并整体弱化，未完成进度保持正常亮度并显示“读到第 N 页”，进入章节本身不再写已读；
 用户右划的显式“标记已读/恢复未读”通过 `ChapterReadState.manualOverride` 保留为独立 durable override，
