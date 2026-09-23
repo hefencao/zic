@@ -276,6 +276,7 @@ python3 "$ROOT/tool/test_dev331_home_shell_source_migration_transaction_boundary
 python3 "$ROOT/tool/test_dev332_home_shell_version_reuse_lifecycle_boundary.py"
 python3 "$ROOT/tool/test_dev333_app_external_plugin_ownership_handoff.py"
 python3 "$ROOT/tool/test_dev334_reader_loading_authority_convergence.py"
+python3 "$ROOT/tool/test_dev335_home_shell_route_admission_boundary.py"
 python3 "$ROOT/tool/test_debug_trace_filter.py"
 python3 "$ROOT/tool/test_venera_network_cache_contract.py"
 python3 "$ROOT/tool/check_test_quarantine.py"

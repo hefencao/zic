@@ -390,6 +390,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   durable service adoption single-flight、该 cache binding 的 generation commit、source-resource rebind 与 source projection commit
   MUST 由独立于 Widget State 的 `HomeServiceAdoptionCoordinator`（或等价非 presentation owner）顺序化；
   `HomeShell` MUST NOT 自己保存 adoption Future/cache-generation mutable authority，只能触发、等待并在 teardown 时 drain 该 owner。
+  Home 的进程内 route admission（Reader 覆盖态、Download Manager 重复打开抑制、comic identity 重入锁）MUST 由独立纯状态 owner 持有；
+  该 owner MUST NOT 获取 `BuildContext`/Navigator、service/cache/source/download/version authority，真正 route 构造与 UI refresh 仍由 `HomeShell` presentation composition 负责。
   durable service handoff MUST 把同一 `downloadComposition` 显式交给 session，
   先完成或确认 session adoption，再提交新的 resolver/cache projection；session 未采用候选时 MUST 回收 Home-owned candidate cache，
   session 已切换 authority 后不得因后续 reconcile 错误让 Home 回退旧 generation。

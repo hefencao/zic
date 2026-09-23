@@ -345,7 +345,7 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
   }) async {
     final identity = openingIdentity ??
         comicLibraryIdentity(source.sourceId, comic.comicId);
-    if (!_openingComicIdentities.add(identity)) return;
+    if (!_routeAdmission.tryBeginComicRoute(identity)) return;
     _clearDownloadCompletionBadge(source.sourceId, comic.comicId);
     final shouldResolveCanonicalAlias = resolveCanonicalAlias &&
         !_sourceSupportsVersionEntry(source);
@@ -410,7 +410,7 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
         // silently drop every subsequent open after the comic was persisted.
         await _pushComicDetails(local);
       } finally {
-        _openingComicIdentities.remove(identity);
+        _routeAdmission.endComicRoute(identity);
       }
       return;
     }
@@ -557,7 +557,7 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
         ),
       );
     } finally {
-      _openingComicIdentities.remove(identity);
+      _routeAdmission.endComicRoute(identity);
     }
   }
 
@@ -794,10 +794,9 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
   }
 
   Future<void> _openDownloadManager() async {
-    if (_downloadManagerRouteOpen) {
+    if (!_routeAdmission.tryBeginDownloadManagerRoute()) {
       return;
     }
-    _downloadManagerRouteOpen = true;
     try {
       widget.debugTrace.record(
         TraceEvent(
@@ -885,7 +884,7 @@ extension _HomeShellSourceResourceActions on _HomeShellState {
     );
     unawaited(
       route.then((_) {
-        _downloadManagerRouteOpen = false;
+        _routeAdmission.endDownloadManagerRoute();
         try {
           widget.debugTrace.record(
             TraceEvent(

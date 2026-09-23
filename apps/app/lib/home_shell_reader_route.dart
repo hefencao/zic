@@ -502,7 +502,7 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
       ),
     );
 
-    _beginReaderRoute();
+    _routeAdmission.beginReaderRoute();
     routeActive = true;
     try {
       await Navigator.of(context).push(route);
@@ -539,7 +539,10 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
     } finally {
       routeActive = false;
       replacementPrepared.dispose();
-      _endReaderRoute();
+      final readerRouteClosed = _routeAdmission.endReaderRoute();
+      if (readerRouteClosed && mounted) {
+        _setState(() {});
+      }
     }
   }
 

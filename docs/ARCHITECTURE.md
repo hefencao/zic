@@ -261,7 +261,9 @@ library、chapter download、download composition 与 whole-comic queue 的唯�
 `HomeServiceAdoptionCoordinator`只负责把`HomeServiceHandoff`发布的一代服务按 single-flight 顺序交给 session，
 并在 session 已确认 adoption 后原子切换同代 `HomeServiceCacheBinding`、source-resource binding 与 source projection；
 它不持有 Flutter presentation/navigation 状态，也不成为第二个 service authority。
-`HomeShell`只触发该 coordinator、读取 session/projection 并持有 route/presentation 状态，不保存平行 mutable service generation。
+`HomeShell`只触发该 coordinator、读取 session/projection 并持有 Navigator push/pop 与直接 presentation 状态，不保存平行 mutable service generation。
+进程内的 route admission bookkeeping 由纯 Dart `HomeRouteAdmission` 持有：Reader 覆盖标记、Download Manager 单实例槽和 comic identity route lock 都从 Widget State 移出；
+它只决定“能否进入/是否覆盖”，不构造 route、不调用 Navigator、不读取 library/cache/source/download/version owner。
 comic/source preference 与 chapter read-state 的 durable write-through 也由 session 持有：
 捕获 concrete library identity 执行写入，跨 adoption 成功或失败均等待 current service adoption 后重试；
 helper 返回稳定写入的 library identity，caller 在无 await 的同步 continuation 再确认仍是 current 后才发布 projection。

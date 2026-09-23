@@ -2440,7 +2440,7 @@ def check_compile_regressions() -> None:
         '_DownloadWatermark',
         '_wholeComicDownloads',
         '_downloadComicEntries',
-        '_openingComicIdentities',
+        '_routeAdmission.tryBeginComicRoute(',
         '_CoverTitleGradient',
         'Future<EncodedResourceSource> _loadSource() async',
         'required this.coverIdentity',

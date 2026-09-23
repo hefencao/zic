@@ -35,6 +35,7 @@ import 'home_library_session.dart';
 import 'home_external_source_lifecycle.dart';
 import 'home_download_commands.dart';
 import 'home_reader_composition.dart';
+import 'home_route_admission.dart';
 import 'home_service_adoption.dart';
 import 'home_service_cache_binding.dart';
 import 'home_source_migration_transaction.dart';
@@ -190,6 +191,7 @@ final class _HomeShellState extends State<HomeShell> {
   final MonoClock _traceClock = const SystemClock();
   late final ComicSourceResourceGateway _sourceResources;
   late final HomeReaderChapterComposition _readerChapterComposition;
+  final HomeRouteAdmission _routeAdmission = HomeRouteAdmission();
   late final HomeSourceProjection _sourceProjection;
   late final HomeLibrarySession _librarySession;
   late final HomeServiceAdoptionCoordinator _serviceAdoption;
@@ -200,16 +202,12 @@ final class _HomeShellState extends State<HomeShell> {
   Future<void>? _sourceMigrationRecovery;
   ChapterDownloadTransferRuntimeProvider? _localReadBackendPrewarmTarget;
   bool _suppressLibrarySessionRebuild = false;
-  bool _readerRouteOpen = false;
-  bool _downloadManagerRouteOpen = false;
-
   bool _picking = false;
   bool _pickingFolder = false;
   bool _exportingHomeTrace = false;
   bool _manageShelf = false;
   bool _batchManagement = false;
   final Set<String> _managedComicIdentities = <String>{};
-  final Set<String> _openingComicIdentities = <String>{};
   final Map<String, ({String originComicId, Future<void> future})>
       _versionViewReusePreparations =
       <String, ({String originComicId, Future<void> future})>{};
@@ -604,21 +602,9 @@ final class _HomeShellState extends State<HomeShell> {
     }
   }
 
-  void _beginReaderRoute() {
-    _readerRouteOpen = true;
-  }
-
-  void _endReaderRoute() {
-    if (!_readerRouteOpen) return;
-    _readerRouteOpen = false;
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
   void _handleLibrarySessionChanged() {
     _syncWholeComicCompletionBadges();
-    if (_suppressLibrarySessionRebuild || _readerRouteOpen) {
+    if (_suppressLibrarySessionRebuild || _routeAdmission.readerRouteOpen) {
       return;
     }
     if (mounted) {
@@ -1461,13 +1447,13 @@ final class _HomeShellState extends State<HomeShell> {
     LibraryComic comic,
     Future<void> Function() open,
   ) async {
-    if (!_openingComicIdentities.add(comic.identity)) {
+    if (!_routeAdmission.tryBeginComicRoute(comic.identity)) {
       return;
     }
     try {
       await open();
     } finally {
-      _openingComicIdentities.remove(comic.identity);
+      _routeAdmission.endComicRoute(comic.identity);
     }
   }
 
