@@ -1,7 +1,9 @@
 # ADR 0318：源设置 ownership 与每漫画布局策略收口
 
 ## 状态
-Accepted。
+Superseded
+
+来源设置 ownership 决策仍保留为历史依据；每漫画 adaptive/layout 的第 7–9 项由 ADR 0319 取代。
 
 ## 问题
 来源管理此前把三类不同语义混在多个入口：

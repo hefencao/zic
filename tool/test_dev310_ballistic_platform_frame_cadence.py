@@ -89,7 +89,7 @@ for token in (
     'unawaited(probe.start());',
     'unawaited(probe.stop());',
     '_reader = created;\n    _syncPlatformFrameCadenceProbe();',
-    '_reader?.setDirection(candidate.direction);\n    _syncPlatformFrameCadenceProbe();',
+    'if (adaptsDirection) {\n      _reader?.setDirection(candidate.direction);\n      _syncPlatformFrameCadenceProbe();',
     '_reader?.setDirection(_resolveInitialDirection(_matchingInitialProgress()));\n    _syncPlatformFrameCadenceProbe();',
 ):
     require(runtime, token, 'vertical Reader probe lifecycle')

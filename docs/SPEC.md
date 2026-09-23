@@ -149,7 +149,8 @@
   MUST NOT 写入 `DateTime.now()` 或其它伪造 recency；LWW durability 必须保证任何真实用户 preference 更新压过 stale default。
 - **Reader 生命周期播放**：Reader 非 `resumed` 生命周期 MUST 临时暂停 Pipeline playback，同时 MUST 保留用户自己的 pause/speed 设置；
   恢复前台后按用户状态恢复。后台 MUST NOT 继续 Animated WebP decode/upload/present。
-- **自适应阅读布局**：漫画级显式方向 MUST 始终高于自动分类。自动分类 MAY 消费漫画元数据、至少两个非封面页面的宽高、
+- **自适应阅读**：adaptive profile MUST 是多个 Reader 行为共享的类型/证据结果，而不是布局 selector 的一个选项。
+  自动分类 MAY 消费漫画元数据、至少两个非封面页面的宽高、
   实测动画证据、来源声明的 typed adaptive reader hint，以及按 `sourceId` 保存的来源级条漫置信；Reader MUST NOT 拥有或持久化来源偏好。
   条漫置信 MUST 使用统一 0–1 语义：0 为强页漫先验、0.5 为中性/自动、1 为强条漫先验。
   非中性值 MUST 经 `ReaderSessionSettings` 只读投影进入分类器并参与 adaptive fingerprint；0.5 MUST 保持无来源先验语义。
@@ -163,9 +164,18 @@
   地域/语言相关标签 MAY 作为弱证据，但不得仅凭“韩国/韓國”等地域词硬切阅读模式。
   来源先验或 typed source metadata 变化 MUST 使与旧证据绑定的持久 adaptive profile 失效；
   实现不得为插件、来源页和 Reader 各建一份互相覆盖的设置 authority。
-  每漫画布局 override MUST 只有一个互斥策略轴：自适应、跟随来源/进度、LTR、RTL、纵向。
-  “启用本漫画设置” MUST 是全部漫画级 override 的总 gate；不得再用独立 adaptive switch 与方向 selector 交叉决定布局。
-  旧 `enabled=false && adaptiveEnabled=false` MUST 兼容迁移为启用的“跟随”策略，以保持历史停用本漫画自适应的实际行为。
+  全局 `adaptiveReaderEnabled` 与漫画级 `comicAdaptiveEnabled` MUST 独立于漫画手动 override master；
+  adaptive 生效条件为二者同时开启。旧 `enabled=false && adaptiveEnabled=false` MUST 继续表示
+  “没有开启手动漫画设置，但该漫画停用自适应”，不得强行迁移为启用的方向 override。
+  漫画级手动阅读方向 MUST 只有 `跟随 / LTR / RTL / 纵向` 一个互斥轴；显式方向 MUST 只覆盖方向，
+  MUST NOT 阻止 adaptive profile 更新或阻止手势、未来翻译等其它消费者读取 profile。
+  当前长按放大 MUST 按“漫画显式覆盖 > 高置信 adaptive profile > 模式默认”解析：
+  vertical/webtoon profile 默认关闭，paged/animated profile 默认开启；无 profile 时纵向默认关闭、分页使用 global baseline。
+  漫画手动 override master MUST 只 gate 方向、纵向拼接、长按放大、阅读顺序等手动覆盖，不得 gate `comicAdaptiveEnabled`。
+  纵向拼接、长按放大以及其它少量离散枚举型 Reader 设置 SHOULD 用直接互斥胶囊/segment 展示，
+  不应为三个以内的简单选择保留下拉框；数值范围仍可使用 slider。
+  adaptive profile MAY 继续增加翻译源语言、自动翻译等 typed 建议，但不得把翻译执行 ownership 或
+  Pipeline 的 NetLane/download/decode/prefetch ownership 搬进 Reader。
 - **动画能力**：`animatedHint`、后缀和来源声明 MUST NOT 直接显示播放专属控件。媒体能力 unknown 时控件 MUST 隐藏；
   两个实际帧可形成 animated 正证据，static 只在完整/codec 静态证据成立后确认。
   纵向 measured geometry 改变页面真实 extent 后，Reader MUST 在 layout 生效后无手势重发真实 visible coverage；

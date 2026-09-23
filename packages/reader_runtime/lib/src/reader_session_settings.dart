@@ -17,7 +17,7 @@ final class ReaderSessionSettings {
     this.adaptiveProfile,
     this.zoomStages = defaultZoomStages,
     this.defaultLongPressZoom = true,
-    this.verticalLongPressZoomOverride,
+    this.longPressZoomOverride,
     this.longPressZoomRestoreOnRelease = true,
     this.longPressZoomMoveMode = ReaderLongPressMoveMode.drag,
     this.longPressZoomPanRatio = 1.0,
@@ -56,9 +56,13 @@ final class ReaderSessionSettings {
   /// accident while dragging.
   final bool defaultLongPressZoom;
 
-  /// Per-comic tri-state for continuous long-press zoom. Null inherits the
-  /// disabled continuous default; true opts a vertical comic in.
-  final bool? verticalLongPressZoomOverride;
+  /// Per-comic tri-state for long-press zoom. Null leaves the behavior to the
+  /// adaptive profile (when enabled) and finally to the mode baseline.
+  ///
+  /// This is intentionally not vertical-only: adaptive classification is a
+  /// shared Reader behavior input, so a comic can explicitly override the
+  /// gesture without also overriding its reading direction.
+  final bool? longPressZoomOverride;
 
   /// True (default) restores 1x when a long-press zoom gesture ends. False
   /// keeps the magnification until double-tap or page change.
@@ -90,8 +94,7 @@ final class ReaderSessionSettings {
       ? verticalStitchOverride ?? fallbackVerticalStitch
       : fallbackVerticalStitch;
   bool get effectiveAdaptiveEnabled =>
-      globalAdaptiveEnabled &&
-      (!comicSpecificEnabled || comicAdaptiveEnabled);
+      globalAdaptiveEnabled && comicAdaptiveEnabled;
 
   double get zoomStageFirst =>
       zoomStages.length > 0 ? _clampStage(zoomStages[0], 1.1) : 1.5;
@@ -99,9 +102,23 @@ final class ReaderSessionSettings {
       ? _clampStage(zoomStages[1], zoomStageFirst)
       : math.max(2.0, zoomStageFirst * 2);
 
-  bool get effectiveLongPressZoomPaged => defaultLongPressZoom;
-  bool get effectiveLongPressZoomVertical =>
-      comicSpecificEnabled ? verticalLongPressZoomOverride ?? false : false;
+  bool effectiveLongPressZoomFor(ReadingDirection direction) {
+    if (comicSpecificEnabled && longPressZoomOverride != null) {
+      return longPressZoomOverride!;
+    }
+    final adaptive = adaptiveProfile;
+    if (effectiveAdaptiveEnabled &&
+        adaptive != null &&
+        adaptive.isCurrent &&
+        adaptive.confidence >= AdaptiveReaderProfile.applyConfidence) {
+      // Mirror the semantic split used by VibeVenera: strip/webtoon reading
+      // avoids a grab-style magnifier by default, while paged and animated
+      // material keeps it available. Other adaptive consumers can be added
+      // beside this one without turning "adaptive" back into a layout flag.
+      return adaptive.direction != ReadingDirection.vertical;
+    }
+    return direction == ReadingDirection.vertical ? false : defaultLongPressZoom;
+  }
 
   static double _clampStage(double value, double lowerBound) {
     if (!value.isFinite) return lowerBound <= 1 ? 2.0 : lowerBound;
@@ -119,7 +136,7 @@ final class ReaderSessionSettings {
     Object? adaptiveProfile = _unset,
     List<double>? zoomStages,
     bool? defaultLongPressZoom,
-    Object? verticalLongPressZoomOverride = _unset,
+    Object? longPressZoomOverride = _unset,
     bool? longPressZoomRestoreOnRelease,
     ReaderLongPressMoveMode? longPressZoomMoveMode,
     double? longPressZoomPanRatio,
@@ -150,10 +167,9 @@ final class ReaderSessionSettings {
             : adaptiveProfile as AdaptiveReaderProfile?,
         zoomStages: zoomStages ?? this.zoomStages,
         defaultLongPressZoom: defaultLongPressZoom ?? this.defaultLongPressZoom,
-        verticalLongPressZoomOverride:
-            identical(verticalLongPressZoomOverride, _unset)
-                ? this.verticalLongPressZoomOverride
-                : verticalLongPressZoomOverride as bool?,
+        longPressZoomOverride: identical(longPressZoomOverride, _unset)
+            ? this.longPressZoomOverride
+            : longPressZoomOverride as bool?,
         longPressZoomRestoreOnRelease:
             longPressZoomRestoreOnRelease ?? this.longPressZoomRestoreOnRelease,
         longPressZoomMoveMode:
@@ -183,8 +199,7 @@ final class ReaderSessionSettings {
           adaptiveProfile == other.adaptiveProfile &&
           _sameStages(zoomStages, other.zoomStages) &&
           defaultLongPressZoom == other.defaultLongPressZoom &&
-          verticalLongPressZoomOverride ==
-              other.verticalLongPressZoomOverride &&
+          longPressZoomOverride == other.longPressZoomOverride &&
           longPressZoomRestoreOnRelease == other.longPressZoomRestoreOnRelease &&
           longPressZoomMoveMode == other.longPressZoomMoveMode &&
           longPressZoomPanRatio == other.longPressZoomPanRatio &&
@@ -205,7 +220,7 @@ final class ReaderSessionSettings {
         adaptiveProfile,
         Object.hashAll(zoomStages),
         defaultLongPressZoom,
-        verticalLongPressZoomOverride,
+        longPressZoomOverride,
         longPressZoomRestoreOnRelease,
         longPressZoomMoveMode,
         longPressZoomPanRatio,

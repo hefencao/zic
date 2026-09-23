@@ -8,10 +8,9 @@ const readerComicSettingsEnabledKey =
     ValueKey<String>('reader-comic-settings-enabled');
 const readerAdaptiveSettingsKey = ValueKey<String>('reader-adaptive-settings');
 const readerVerticalStitchKey = ValueKey<String>('reader-vertical-stitch');
-const readerVerticalLongPressZoomKey =
-    ValueKey<String>('reader-vertical-long-press-zoom');
+const readerLongPressZoomKey = ValueKey<String>('reader-long-press-zoom');
 
-enum _ComicLayoutChoice { adaptive, follow, ltr, rtl, vertical }
+enum _ComicDirectionChoice { follow, ltr, rtl, vertical }
 
 Future<ReaderSessionSettings?> showReaderComicSettingsSheet(
   BuildContext context, {
@@ -45,21 +44,36 @@ Future<ReaderSessionSettings?> showReaderComicSettingsSheet(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('启用本漫画设置'),
                   subtitle: const Text(
-                    '启用后可单独选择布局、拼接、纵向缩放与阅读顺序。',
+                    '启用后可单独覆盖阅读方向、拼接、长按放大与阅读顺序。',
                   ),
                   value: draft.comicSpecificEnabled,
                   onChanged: (value) => setSheetState(
-                    () => draft = draft.copyWith(
-                      comicSpecificEnabled: value,
-                      comicAdaptiveEnabled:
-                          value ? draft.comicAdaptiveEnabled : true,
+                    () => draft = draft.copyWith(comicSpecificEnabled: value),
+                  ),
+                ),
+                SwitchListTile(
+                  key: readerAdaptiveSettingsKey,
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('使用自适应设置'),
+                  subtitle: Text(
+                    _adaptivePolicyDescription(
+                      draft,
+                      adaptiveProfile: adaptiveProfile,
                     ),
                   ),
+                  value: draft.comicAdaptiveEnabled,
+                  onChanged: draft.globalAdaptiveEnabled
+                      ? (value) => setSheetState(
+                            () => draft = draft.copyWith(
+                              comicAdaptiveEnabled: value,
+                            ),
+                          )
+                      : null,
                 ),
                 if (draft.comicSpecificEnabled) ...<Widget>[
                   const SizedBox(height: 8),
                   Text(
-                    '布局策略',
+                    '阅读方向',
                     style: Theme.of(context).textTheme.labelLarge,
                   ),
                   const SizedBox(height: 8),
@@ -67,30 +81,25 @@ Future<ReaderSessionSettings?> showReaderComicSettingsSheet(
                     spacing: 8,
                     runSpacing: 8,
                     children: <Widget>[
-                      for (final choice in _ComicLayoutChoice.values)
+                      for (final choice in _ComicDirectionChoice.values)
                         ChoiceChip(
-                          key: choice == _ComicLayoutChoice.adaptive
-                              ? readerAdaptiveSettingsKey
-                              : ValueKey<String>(
-                                  'reader-comic-layout-${choice.name}',
-                                ),
-                          label: Text(_layoutChoiceLabel(choice)),
-                          selected: _layoutChoice(draft) == choice,
-                          onSelected: choice == _ComicLayoutChoice.adaptive &&
-                                  !draft.globalAdaptiveEnabled
-                              ? null
-                              : (_) => setSheetState(
-                                    () => draft = _withLayoutChoice(
-                                      draft,
-                                      choice,
-                                    ),
-                                  ),
+                          key: ValueKey<String>(
+                            'reader-comic-direction-${choice.name}',
+                          ),
+                          label: Text(_directionChoiceLabel(choice)),
+                          selected: _directionChoice(draft) == choice,
+                          onSelected: (_) => setSheetState(
+                            () => draft = _withDirectionChoice(
+                              draft,
+                              choice,
+                            ),
+                          ),
                         ),
                     ],
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    _layoutChoiceDescription(
+                    _directionChoiceDescription(
                       draft,
                       adaptiveProfile: adaptiveProfile,
                     ),
@@ -106,12 +115,12 @@ Future<ReaderSessionSettings?> showReaderComicSettingsSheet(
                       ),
                     ),
                   ),
-                  readerVerticalLongPressZoomField(
-                    key: readerVerticalLongPressZoomKey,
-                    value: draft.verticalLongPressZoomOverride,
+                  readerLongPressZoomOverrideField(
+                    key: readerLongPressZoomKey,
+                    value: draft.longPressZoomOverride,
                     onChanged: (value) => setSheetState(
                       () => draft = draft.copyWith(
-                        verticalLongPressZoomOverride: value,
+                        longPressZoomOverride: value,
                       ),
                     ),
                   ),
@@ -161,89 +170,93 @@ ReaderSessionSettings _clearComicOverrides(ReaderSessionSettings settings) =>
       verticalStitchOverride: null,
       comicAdaptiveEnabled: true,
       adaptiveProfile: null,
-      verticalLongPressZoomOverride: null,
+      longPressZoomOverride: null,
       invertPageOrderOverride: null,
     );
 
-_ComicLayoutChoice _layoutChoice(ReaderSessionSettings settings) {
+_ComicDirectionChoice _directionChoice(ReaderSessionSettings settings) {
   final direction = settings.directionOverride;
   if (direction != null) {
     return switch (direction) {
-      ReadingDirection.ltr => _ComicLayoutChoice.ltr,
-      ReadingDirection.rtl => _ComicLayoutChoice.rtl,
-      ReadingDirection.vertical => _ComicLayoutChoice.vertical,
+      ReadingDirection.ltr => _ComicDirectionChoice.ltr,
+      ReadingDirection.rtl => _ComicDirectionChoice.rtl,
+      ReadingDirection.vertical => _ComicDirectionChoice.vertical,
     };
   }
-  // Layout policy is the comic's persisted intent. Global adaptive enablement
-  // only controls whether that policy can currently execute; it must not
-  // silently turn an Adaptive choice into Follow.
-  if (settings.comicAdaptiveEnabled) {
-    return _ComicLayoutChoice.adaptive;
-  }
-  return _ComicLayoutChoice.follow;
+  return _ComicDirectionChoice.follow;
 }
 
-ReaderSessionSettings _withLayoutChoice(
+ReaderSessionSettings _withDirectionChoice(
   ReaderSessionSettings settings,
-  _ComicLayoutChoice choice,
+  _ComicDirectionChoice choice,
 ) =>
     switch (choice) {
-      _ComicLayoutChoice.adaptive => settings.copyWith(
-          directionOverride: null,
-          comicAdaptiveEnabled: true,
-        ),
-      _ComicLayoutChoice.follow => settings.copyWith(
-          directionOverride: null,
-          comicAdaptiveEnabled: false,
-        ),
-      _ComicLayoutChoice.ltr => settings.copyWith(
+      _ComicDirectionChoice.follow => settings.copyWith(directionOverride: null),
+      _ComicDirectionChoice.ltr => settings.copyWith(
           directionOverride: ReadingDirection.ltr,
-          comicAdaptiveEnabled: false,
         ),
-      _ComicLayoutChoice.rtl => settings.copyWith(
+      _ComicDirectionChoice.rtl => settings.copyWith(
           directionOverride: ReadingDirection.rtl,
-          comicAdaptiveEnabled: false,
         ),
-      _ComicLayoutChoice.vertical => settings.copyWith(
+      _ComicDirectionChoice.vertical => settings.copyWith(
           directionOverride: ReadingDirection.vertical,
-          comicAdaptiveEnabled: false,
         ),
     };
 
-String _layoutChoiceLabel(_ComicLayoutChoice choice) => switch (choice) {
-      _ComicLayoutChoice.adaptive => '自适应',
-      _ComicLayoutChoice.follow => '跟随',
-      _ComicLayoutChoice.ltr => 'LTR',
-      _ComicLayoutChoice.rtl => 'RTL',
-      _ComicLayoutChoice.vertical => '纵向',
+String _directionChoiceLabel(_ComicDirectionChoice choice) => switch (choice) {
+      _ComicDirectionChoice.follow => '跟随',
+      _ComicDirectionChoice.ltr => 'LTR',
+      _ComicDirectionChoice.rtl => 'RTL',
+      _ComicDirectionChoice.vertical => '纵向',
     };
 
-String _layoutChoiceDescription(
+String _directionChoiceDescription(
   ReaderSessionSettings settings, {
   required AdaptiveReaderProfile? adaptiveProfile,
 }) {
-  final choice = _layoutChoice(settings);
-  if (choice == _ComicLayoutChoice.follow) {
-    return '不使用本漫画自适应结果，跟随来源方向或阅读进度。';
+  final choice = _directionChoice(settings);
+  if (choice == _ComicDirectionChoice.follow) {
+    if (settings.effectiveAdaptiveEnabled &&
+        adaptiveProfile != null &&
+        adaptiveProfile.confidence >= AdaptiveReaderProfile.applyConfidence) {
+      return '未固定方向；当前自适应可按识别结果选择'
+          '${_adaptiveTypeLabel(adaptiveProfile)}阅读方向。';
+    }
+    return '未固定方向；跟随来源方向或既有阅读进度。';
   }
-  if (choice != _ComicLayoutChoice.adaptive) {
-    return '本漫画使用固定阅读方向；自适应结果不参与方向选择。';
+  return '本漫画固定阅读方向；自适应仍可调整未被手动覆盖的其他行为。';
+}
+
+String _adaptivePolicyDescription(
+  ReaderSessionSettings settings, {
+  required AdaptiveReaderProfile? adaptiveProfile,
+}) {
+  if (!settings.globalAdaptiveEnabled) {
+    return '全局自适应未启用；保留本漫画选择但当前不执行。';
   }
-  if (!settings.globalAdaptiveEnabled) return '全局自适应未启用';
-  if (adaptiveProfile == null) return '暂无高置信度结果';
+  if (!settings.comicAdaptiveEnabled) {
+    return '本漫画不使用自适应结果；各项行为按手动设置或默认值。';
+  }
+  if (adaptiveProfile == null ||
+      adaptiveProfile.confidence < AdaptiveReaderProfile.applyConfidence) {
+    return '根据漫画类型与内容共同调整阅读方向、手势等行为；暂无高置信度结果。';
+  }
   final confidence = (adaptiveProfile.confidence * 100).round();
-  final kind = adaptiveProfile.animated
-      ? '动画分页'
-      : switch (adaptiveProfile.direction) {
-          ReadingDirection.ltr => 'LTR',
-          ReadingDirection.rtl => 'RTL',
-          ReadingDirection.vertical => '纵向',
-        };
   final basis = switch (adaptiveProfile.basis) {
     'animated-pages' => '动画页提示',
     'page-geometry' => '页面比例',
     'decoded-animation' || 'runtime-animation' => '实际动画页',
     _ => adaptiveProfile.basis,
   };
-  return '$kind · $confidence% · $basis';
+  final longPress = adaptiveProfile.direction == ReadingDirection.vertical
+      ? '长按放大默认关闭'
+      : '长按放大默认开启';
+  return '识别：${_adaptiveTypeLabel(adaptiveProfile)} · $confidence% · '
+      '$basis · $longPress';
 }
+
+String _adaptiveTypeLabel(AdaptiveReaderProfile profile) => profile.animated
+    ? '动图/分页'
+    : profile.direction == ReadingDirection.vertical
+        ? '条漫/纵向'
+        : '页漫/分页';

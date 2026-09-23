@@ -1205,20 +1205,39 @@ final class ReadingSettingsScreen extends StatelessWidget {
             ),
             SwitchListTile(
               key: readingAdaptiveKey,
-              title: const Text('自适应阅读布局'),
+              title: const Text('自适应阅读'),
               subtitle: const Text(
-                '依据来源元数据、页面比例与实测动画能力选择分页或纵向；'
-                '近方形切片保持低置信，来源可单独调整条漫置信。',
+                '依据来源元数据、页面比例与实测动画能力识别漫画类型，'
+                '并共同调整阅读方向、手势等行为；来源可单独调整条漫置信。',
               ),
               value: preferences.adaptiveReaderEnabled,
               onChanged: preferences.setAdaptiveReaderEnabled,
             ),
-            SwitchListTile(
-              key: readingVerticalStitchKey,
-              title: const Text('纵向拼接'),
-              subtitle: const Text('纵向连续模式移除页间距；不合并页面文件或缓存身份。'),
-              value: preferences.defaultVerticalStitch,
-              onChanged: preferences.setDefaultVerticalStitch,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const Text('纵向拼接'),
+                  const SizedBox(height: 6),
+                  SegmentedButton<bool>(
+                    key: readingVerticalStitchKey,
+                    showSelectedIcon: false,
+                    segments: const <ButtonSegment<bool>>[
+                      ButtonSegment(value: true, label: Text('拼接')),
+                      ButtonSegment(value: false, label: Text('保留间距')),
+                    ],
+                    selected: <bool>{preferences.defaultVerticalStitch},
+                    onSelectionChanged: (values) =>
+                        preferences.setDefaultVerticalStitch(values.single),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '纵向连续模式可移除页间距；不合并页面文件或缓存身份。',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
             ),
             const _SettingsSectionTitle('缩放'),
             Padding(
@@ -1273,42 +1292,70 @@ final class ReadingSettingsScreen extends StatelessWidget {
                 ],
               ),
             ),
-            SwitchListTile(
-              key: readingLongPressZoomKey,
-              title: const Text('长按放大（分页模式）'),
-              subtitle: const Text('长按后随手指拖动查看细节；连续模式需在本漫画设置中单独开启。'),
-              value: preferences.longPressZoomEnabled,
-              onChanged: preferences.setLongPressZoomEnabled,
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const Text('长按放大'),
+                  const SizedBox(height: 6),
+                  SegmentedButton<bool>(
+                    key: readingLongPressZoomKey,
+                    showSelectedIcon: false,
+                    segments: const <ButtonSegment<bool>>[
+                      ButtonSegment(value: true, label: Text('启用')),
+                      ButtonSegment(value: false, label: Text('停用')),
+                    ],
+                    selected: <bool>{preferences.longPressZoomEnabled},
+                    onSelectionChanged: (values) =>
+                        preferences.setLongPressZoomEnabled(values.single),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '作为默认值；开启自适应后，条漫默认关闭，页漫/动图默认开启，'
+                    '本漫画仍可显式覆盖。',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: DropdownButtonFormField<ReaderDoubleTapZoomOrigin>(
-                key: readingDoubleTapZoomOriginKey,
-                initialValue: preferences.doubleTapZoomOrigin,
-                decoration: const InputDecoration(
-                  labelText: '双击放大图片位置',
-                  helperText: '居中：以屏幕中心放大；吸附：按点击侧贴齐边缘；聚焦：以点击位置为中心。',
-                  border: OutlineInputBorder(),
-                ),
-                items: const <DropdownMenuItem<ReaderDoubleTapZoomOrigin>>[
-                  DropdownMenuItem(
-                    value: ReaderDoubleTapZoomOrigin.center,
-                    child: Text('居中'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const Text('双击放大图片位置'),
+                  const SizedBox(height: 6),
+                  SegmentedButton<ReaderDoubleTapZoomOrigin>(
+                    key: readingDoubleTapZoomOriginKey,
+                    showSelectedIcon: false,
+                    segments:
+                        const <ButtonSegment<ReaderDoubleTapZoomOrigin>>[
+                      ButtonSegment(
+                        value: ReaderDoubleTapZoomOrigin.center,
+                        label: Text('居中'),
+                      ),
+                      ButtonSegment(
+                        value: ReaderDoubleTapZoomOrigin.snap,
+                        label: Text('吸附'),
+                      ),
+                      ButtonSegment(
+                        value: ReaderDoubleTapZoomOrigin.focus,
+                        label: Text('聚焦'),
+                      ),
+                    ],
+                    selected: <ReaderDoubleTapZoomOrigin>{
+                      preferences.doubleTapZoomOrigin,
+                    },
+                    onSelectionChanged: (values) =>
+                        preferences.setDoubleTapZoomOrigin(values.single),
                   ),
-                  DropdownMenuItem(
-                    value: ReaderDoubleTapZoomOrigin.snap,
-                    child: Text('吸附'),
-                  ),
-                  DropdownMenuItem(
-                    value: ReaderDoubleTapZoomOrigin.focus,
-                    child: Text('聚焦'),
+                  const SizedBox(height: 4),
+                  Text(
+                    '居中：以屏幕中心放大；吸附：按点击侧贴齐边缘；聚焦：以点击位置为中心。',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
-                onChanged: (value) {
-                  if (value != null) {
-                    preferences.setDoubleTapZoomOrigin(value);
-                  }
-                },
               ),
             ),
             SwitchListTile(
@@ -1323,29 +1370,36 @@ final class ReadingSettingsScreen extends StatelessWidget {
             ),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: DropdownButtonFormField<ReaderLongPressMoveMode>(
-                key: readingLongPressZoomMoveModeKey,
-                initialValue: preferences.longPressZoomMoveMode,
-                decoration: const InputDecoration(
-                  labelText: '长按放大移动方式',
-                  helperText: '拖动：内容跟随手指移动；聚焦：手指作为放大镜位置。',
-                  border: OutlineInputBorder(),
-                ),
-                items: const <DropdownMenuItem<ReaderLongPressMoveMode>>[
-                  DropdownMenuItem(
-                    value: ReaderLongPressMoveMode.drag,
-                    child: Text('拖动'),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  const Text('长按放大移动方式'),
+                  const SizedBox(height: 6),
+                  SegmentedButton<ReaderLongPressMoveMode>(
+                    key: readingLongPressZoomMoveModeKey,
+                    showSelectedIcon: false,
+                    segments: const <ButtonSegment<ReaderLongPressMoveMode>>[
+                      ButtonSegment(
+                        value: ReaderLongPressMoveMode.drag,
+                        label: Text('拖动'),
+                      ),
+                      ButtonSegment(
+                        value: ReaderLongPressMoveMode.focus,
+                        label: Text('聚焦'),
+                      ),
+                    ],
+                    selected: <ReaderLongPressMoveMode>{
+                      preferences.longPressZoomMoveMode,
+                    },
+                    onSelectionChanged: (values) =>
+                        preferences.setLongPressZoomMoveMode(values.single),
                   ),
-                  DropdownMenuItem(
-                    value: ReaderLongPressMoveMode.focus,
-                    child: Text('聚焦'),
+                  const SizedBox(height: 4),
+                  Text(
+                    '拖动：内容跟随手指移动；聚焦：手指作为放大镜位置。',
+                    style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
-                onChanged: (value) {
-                  if (value != null) {
-                    preferences.setLongPressZoomMoveMode(value);
-                  }
-                },
               ),
             ),
             ListTile(

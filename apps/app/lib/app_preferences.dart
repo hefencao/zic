@@ -39,7 +39,7 @@ final class ComicReaderSettings {
     this.verticalStitchOverride,
     this.adaptiveEnabled = true,
     this.adaptiveProfile,
-    this.verticalLongPressZoom,
+    this.longPressZoomOverride,
     this.invertPageOrder,
   });
 
@@ -50,7 +50,7 @@ final class ComicReaderSettings {
   final bool? verticalStitchOverride;
   final bool adaptiveEnabled;
   final AdaptiveReaderProfile? adaptiveProfile;
-  final bool? verticalLongPressZoom;
+  final bool? longPressZoomOverride;
   final bool? invertPageOrder;
 
   ComicReaderSettings copyWith({
@@ -59,7 +59,7 @@ final class ComicReaderSettings {
     Object? verticalStitchOverride = _unset,
     bool? adaptiveEnabled,
     Object? adaptiveProfile = _unset,
-    Object? verticalLongPressZoom = _unset,
+    Object? longPressZoomOverride = _unset,
     Object? invertPageOrder = _unset,
   }) =>
       ComicReaderSettings(
@@ -74,9 +74,9 @@ final class ComicReaderSettings {
         adaptiveProfile: identical(adaptiveProfile, _unset)
             ? this.adaptiveProfile
             : adaptiveProfile as AdaptiveReaderProfile?,
-        verticalLongPressZoom: identical(verticalLongPressZoom, _unset)
-            ? this.verticalLongPressZoom
-            : verticalLongPressZoom as bool?,
+        longPressZoomOverride: identical(longPressZoomOverride, _unset)
+            ? this.longPressZoomOverride
+            : longPressZoomOverride as bool?,
         invertPageOrder: identical(invertPageOrder, _unset)
             ? this.invertPageOrder
             : invertPageOrder as bool?,
@@ -91,7 +91,7 @@ final class ComicReaderSettings {
           verticalStitchOverride == other.verticalStitchOverride &&
           adaptiveEnabled == other.adaptiveEnabled &&
           adaptiveProfile == other.adaptiveProfile &&
-          verticalLongPressZoom == other.verticalLongPressZoom &&
+          longPressZoomOverride == other.longPressZoomOverride &&
           invertPageOrder == other.invertPageOrder;
 
   @override
@@ -101,7 +101,7 @@ final class ComicReaderSettings {
         verticalStitchOverride,
         adaptiveEnabled,
         adaptiveProfile,
-        verticalLongPressZoom,
+        longPressZoomOverride,
         invertPageOrder,
       );
 
@@ -114,19 +114,15 @@ final class ComicReaderSettings {
         'adaptiveEnabled': adaptiveEnabled,
         if (adaptiveProfile != null)
           'adaptiveProfile': adaptiveProfile!.toJson(),
-        if (verticalLongPressZoom != null)
-          'verticalLongPressZoom': verticalLongPressZoom,
+        if (longPressZoomOverride != null)
+          'longPressZoomOverride': longPressZoomOverride,
         if (invertPageOrder != null)
           'invertPageOrder': invertPageOrder,
       };
 
   factory ComicReaderSettings.fromJson(Map<String, Object?> json) {
-    final adaptiveEnabled = _boolValue(json['adaptiveEnabled'], true);
-    final enabled = _boolValue(json['enabled'], false);
     return ComicReaderSettings(
-      // Legacy UI allowed "disable adaptive for this comic" while the
-      // per-comic master stayed off. Preserve that as the new Follow policy.
-      enabled: enabled || !adaptiveEnabled,
+      enabled: _boolValue(json['enabled'], false),
       directionOverride: _nullableEnumByName(
         ReadingDirection.values,
         json['directionOverride'],
@@ -136,10 +132,12 @@ final class ComicReaderSettings {
           : json['verticalStitch'] == true
               ? true
               : null,
-      adaptiveEnabled: adaptiveEnabled,
-      verticalLongPressZoom: json['verticalLongPressZoom'] is bool
-          ? json['verticalLongPressZoom'] as bool
-          : null,
+      adaptiveEnabled: _boolValue(json['adaptiveEnabled'], true),
+      longPressZoomOverride: json['longPressZoomOverride'] is bool
+          ? json['longPressZoomOverride'] as bool
+          : json['verticalLongPressZoom'] is bool
+              ? json['verticalLongPressZoom'] as bool
+              : null,
       invertPageOrder: json['invertPageOrder'] is bool
           ? json['invertPageOrder'] as bool
           : null,

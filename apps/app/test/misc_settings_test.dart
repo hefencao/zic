@@ -823,7 +823,8 @@ void main() {
     );
   });
 
-  test('legacy adaptive-off comic becomes enabled follow policy', () async {
+  test('legacy adaptive-off comic remains an independent adaptive override',
+      () async {
     final controller = AppPreferencesController();
     addTearDown(controller.dispose);
     await controller.attach(
@@ -840,12 +841,22 @@ void main() {
     );
 
     final comic = controller.comicReaderSettingsFor('source', 'comic');
-    expect(comic.enabled, isTrue);
+    expect(comic.enabled, isFalse);
     expect(comic.adaptiveEnabled, isFalse);
     final session = controller.readerSessionSettingsFor('source', 'comic');
-    expect(session.comicSpecificEnabled, isTrue);
+    expect(session.comicSpecificEnabled, isFalse);
     expect(session.effectiveAdaptiveEnabled, isFalse);
     expect(session.directionOverride, isNull);
+  });
+
+  test('legacy vertical long-press setting migrates to generic override', () {
+    final settings = ComicReaderSettings.fromJson(
+      <String, Object?>{'verticalLongPressZoom': true},
+    );
+
+    expect(settings.longPressZoomOverride, isTrue);
+    expect(settings.toJson()['longPressZoomOverride'], isTrue);
+    expect(settings.toJson().containsKey('verticalLongPressZoom'), isFalse);
   });
 
   test('legacy per-comic stitch false inherits the global setting', () async {

@@ -67,7 +67,7 @@ final class _SourceSettingsScreenState extends State<SourceSettingsScreen> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('自适应布局'),
+          title: const Text('自适应识别'),
           content: SizedBox(
             width: 380,
             child: Column(
@@ -76,7 +76,8 @@ final class _SourceSettingsScreenState extends State<SourceSettingsScreen> {
               children: <Widget>[
                 const Text(
                   '设置这个来源的条漫置信：0% 强页漫，50% 自动/中性，'
-                  '100% 强条漫。漫画自身明确标签和手动方向仍优先。',
+                  '100% 强条漫。这个先验用于共享的自适应类型判断；'
+                  '漫画自身明确标签与逐项手动设置仍优先。',
                 ),
                 const SizedBox(height: 12),
                 Slider(
@@ -242,10 +243,10 @@ final class _SourceSettingsScreenState extends State<SourceSettingsScreen> {
           final directory = _downloadDirectory;
           return ListView(
             children: <Widget>[
-              const _SourceSettingsSectionTitle('阅读布局'),
+              const _SourceSettingsSectionTitle('自适应阅读'),
               ListTile(
                 leading: const Icon(Icons.view_stream_outlined),
-                title: const Text('自适应布局'),
+                title: const Text('条漫置信'),
                 subtitle: Text(_confidenceLabel(confidence)),
                 trailing: const Icon(Icons.chevron_right),
                 onTap: _editLayoutConfidence,

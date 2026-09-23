@@ -51,12 +51,16 @@ App build：0.31.0+328
   不再把失败页单独 splice 后制造同一 `sourceRevision` 内的新旧 generation 混合。
 
 ### 渲染与几何 (Pipeline & Reader View)
-- 自适应布局：`reader_runtime` model v6 将近方形切片降为低信息，以距 1:1 的比例距离增强普通分页证据，并保留极长纵幅条漫证据。
+- 自适应阅读：`reader_runtime` model v6 将近方形切片降为低信息，以距 1:1 的比例距离增强普通分页证据，并保留极长纵幅条漫证据。
   `AppPreferencesController` 按 `sourceId` 唯一持久化 0–1 条漫置信（0=强页漫、0.5=中性、1=强条漫），
   经 `ReaderSessionSettings` 只读投影给分类器，非中性值参与 profile fingerprint；旧单向 weight 按 `0.5 + weight/2` 兼容迁移。
   Venera `comic.adaptiveType` 已由 typed source descriptor 接入 classifier，来源名/官网也由 App composition 投影。
+  adaptive profile 现在重新作为跨行为输入：无显式方向时可选择方向；长按放大按漫画显式覆盖 >
+  adaptive 类型建议 > 模式默认解析（条漫默认关，页漫/动图默认开）。显式方向不再停止 profile 更新，
+  为后续翻译等消费者保留同一结果，同时不改变 Pipeline/NetLane owner。
   来源级应用策略已统一收口到齿轮“源设置”：条漫置信、source-scoped 数据信任、来源独立下载目录；
-  configurable source 自身设置/登录改为“来源属性与登录”。每漫画布局改为自适应/跟随/LTR/RTL/纵向互斥胶囊。
+  configurable source 自身设置/登录改为“来源属性与登录”。每漫画“使用自适应设置”独立于手动设置 master，
+  阅读方向只保留跟随/LTR/RTL/纵向；纵向拼接、长按放大等离散项使用互斥胶囊。
 - 页面几何：ValueListenable 提供 pageDimensions 驱动的 ratio live feed 投影。
 - 纵向模式：vertical模式只有extent真实变化 才能触发 anchor/geometry rebuild；vertical模式 保持布局稳定。
 - 视口与上传：vertical hidden-upload规则不变；明确区分 source-canvas 与 decoded raster 职责。
@@ -72,7 +76,7 @@ App build：0.31.0+328
 |---|---|---|
 | repository / documentation / Dart 静态门禁 | Verified-static | 门禁与目录结构核对通过 |
 | 架构合同与生命周期 | Verified-static | Reader/Pipeline/Sessions 边界已验证 |
-| 自适应布局来源先验 | Verified-toolchain | model v6 比例回归、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影均有 focused contract；最终完整门禁见本轮 audit，具体线上来源尚未标记真机验证 |
+| 自适应阅读来源先验 | Verified-toolchain | model v6 比例回归、双向条漫置信迁移/持久化/UI、Venera adaptiveType runtime 投影及方向/长按分流均有 focused contract；具体线上来源尚未标记真机验证 |
 | 跨平台桥接与平台编译 | Verified-toolchain | Kotlin 与 Android 依赖通过 |
 | 设备性能与真机回归 | Verified-device | 基础链路真机采样验证通过 |
 | 未集成组件与缺省归档 | Unverified | 部分外部归档与端到端链路未覆盖 |

@@ -1,15 +1,23 @@
+## Unreleased — adaptive Reader behavior profile
+
+- Correct the prior layout-only interpretation of adaptive reading after re-auditing VibeVenera: the per-comic “使用自适应设置” switch is independent from manual comic overrides, while the direction axis is only `跟随 / LTR / RTL / 纵向`.
+- Keep adaptive profile learning active under a manual direction override. Direction overrides only direction; the same profile can still drive other Reader behavior and later typed consumers such as translation.
+- Add long-press zoom as the first non-layout adaptive consumer: explicit comic override wins, otherwise high-confidence vertical/webtoon profiles disable it and paged/animated profiles enable it, then mode/global defaults provide the fallback.
+- Generalize the old `verticalLongPressZoom` persistence into `longPressZoomOverride` with legacy read compatibility. Convert per-comic vertical stitching/long-press choices and the small global stitch/zoom enum choices to direct mutually exclusive pills instead of dropdowns.
+- Preserve ZIC Pipeline ownership: adaptive does not alter NetLane, download/decode windows, prefetch admission, or transport lifetime.
+
 ## Unreleased — source settings ownership and comic layout policy
 
 - Consolidate application-owned per-source policies behind one gear “源设置” entry: adaptive webtoon confidence, historical cache conflict trust, and per-source download placement. The previous configurable-source gear is now an attributes-list “来源属性与登录” entry, while plugin management returns to plugin lifecycle concerns only.
 - Move historical carrier conflict trust from new plugin-scoped writes to `sourceTrustConflictingHistoricalCarriers[sourceId]`. Existing plugin overrides remain a runtime compatibility fallback until the first source-settings visit, which expands the old value to every currently known source of that plugin and retires the plugin override without overwriting explicit source values.
 - Move the download-directory UI from plugin rows to each source. Persistence and `DownloadRegistry.layoutResolver` were already source-scoped; the new UI therefore stops pretending that one plugin owns one directory. Existing durable bytes remain readable at indexed locators and are not migrated by this per-source setting.
-- Replace the per-comic adaptive switch plus direction dropdown with one direct chip policy: `自适应 / 跟随 / LTR / RTL / 纵向`. “启用本漫画设置” gates every comic override. Legacy `enabled=false, adaptiveEnabled=false` data migrates to enabled “跟随” so the former “disable adaptive for this comic” behavior is preserved.
+- An initial pass replaced the per-comic adaptive switch plus direction dropdown with one layout-only chip policy. That interpretation is superseded by the adaptive Reader behavior-profile section above; source-settings ownership from this section remains current.
 
 ## Unreleased — bidirectional source webtoon confidence and VibeVenera parity
 
 - Replace the one-sided source “webtoon weight” with a bidirectional 0–100% “条漫置信”: 0% is a strong paged prior, 50% is neutral/automatic, and 100% is a strong webtoon prior. The classifier consumes the signed prior symmetrically, so paged-only sources are expressible without adding a second setting.
 - Read the previous `sourceAdaptiveWebtoonWeights=w` key as `sourceAdaptiveWebtoonConfidence=0.5 + 0.5*w`; this preserves the old vertical-vs-paged score difference exactly. Subsequent writes use only `sourceAdaptiveWebtoonConfidences`, with neutral 0.5 omitted.
-- Complete the relevant VibeVenera source-metadata path: Venera `comic.adaptiveType` is normalized to typed `paged/vertical/animated` metadata in the isolated runtime descriptor, while App composition now projects source name, website and adaptive type into `AdaptiveReaderMetadata`. Mihon remains unknown unless it exposes an equivalent capability. Translation adaptation and Vibe-specific zoom/preload side effects are intentionally not copied because ZIC either has no such feature or already has independent Reader/Pipeline owners.
+- Complete the relevant VibeVenera source-metadata path: Venera `comic.adaptiveType` is normalized to typed `paged/vertical/animated` metadata in the isolated runtime descriptor, while App composition now projects source name, website and adaptive type into `AdaptiveReaderMetadata`. Mihon remains unknown unless it exposes an equivalent capability. The shared profile now mirrors VibeVenera's type-sensitive long-press gesture semantic; translation remains a future typed consumer, while Vibe-specific preload behavior is not copied across ZIC's Pipeline ownership boundary.
 
 ## Unreleased — adaptive layout source prior and segmented-page geometry
 

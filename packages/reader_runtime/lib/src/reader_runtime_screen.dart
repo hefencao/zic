@@ -337,9 +337,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   void _applyAdaptiveProfile(AdaptiveReaderProfile? candidate) {
     if (candidate == null ||
         candidate.confidence < AdaptiveReaderProfile.applyConfidence ||
-        !_settings.effectiveAdaptiveEnabled ||
-        (_settings.comicSpecificEnabled &&
-            _settings.directionOverride != null)) {
+        !_settings.effectiveAdaptiveEnabled) {
       return;
     }
     final current = _adaptiveProfile;
@@ -350,10 +348,16 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       }
       if (current == candidate) return;
     }
-    _adaptiveProfile = candidate;
-    _settings = _settings.copyWith(adaptiveProfile: candidate);
-    _reader?.setDirection(candidate.direction);
-    _syncPlatformFrameCadenceProbe();
+    final adaptsDirection =
+        !(_settings.comicSpecificEnabled && _settings.directionOverride != null);
+    setState(() {
+      _adaptiveProfile = candidate;
+      _settings = _settings.copyWith(adaptiveProfile: candidate);
+    });
+    if (adaptsDirection) {
+      _reader?.setDirection(candidate.direction);
+      _syncPlatformFrameCadenceProbe();
+    }
     _persistSettings();
   }
 
@@ -684,9 +688,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   }
 
   bool _effectiveLongPressZoom(ReaderController reader) =>
-      reader.direction == ReadingDirection.vertical
-          ? _settings.effectiveLongPressZoomVertical
-          : _settings.effectiveLongPressZoomPaged;
+      _settings.effectiveLongPressZoomFor(reader.direction);
 
   Size get _mediaQuerySize => MediaQueryData.fromView(View.of(context)).size;
   double get _mediaQueryDevicePixelRatio =>

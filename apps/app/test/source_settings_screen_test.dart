@@ -4,7 +4,7 @@ import 'package:zic/app_preferences.dart';
 import 'package:zic/source_settings_screen.dart';
 
 void main() {
-  testWidgets('source settings own layout trust and download policy', (
+  testWidgets('source settings own adaptive trust and download policy', (
     tester,
   ) async {
     final preferences = AppPreferencesController();

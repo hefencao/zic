@@ -671,7 +671,8 @@ void main() {
     await _disposePipelineReader(tester);
   });
 
-  testWidgets('per-comic layout uses direct policy chips', (tester) async {
+  testWidgets('per-comic adaptive policy is separate from direction chips',
+      (tester) async {
     ReaderSessionSettings? saved;
     final chapter = _chapter();
     await tester.pumpWidget(
@@ -705,32 +706,45 @@ void main() {
     await tester.tap(find.byKey(readerComicSettingsKey));
     await tester.pumpAndSettle();
     expect(find.text('本漫画阅读设置'), findsOneWidget);
-    expect(find.byKey(readerAdaptiveSettingsKey), findsNothing);
+    expect(find.byKey(readerAdaptiveSettingsKey), findsOneWidget);
+    expect(
+      tester.widget<SwitchListTile>(find.byKey(readerAdaptiveSettingsKey)).value,
+      isTrue,
+    );
 
     await tester.tap(find.byKey(readerComicSettingsEnabledKey));
     await tester.pump();
-    expect(find.byKey(readerAdaptiveSettingsKey), findsOneWidget);
     expect(
-      find.byKey(const ValueKey<String>('reader-comic-layout-follow')),
+      find.byKey(const ValueKey<String>('reader-comic-direction-follow')),
       findsOneWidget,
     );
     expect(
-      find.byKey(const ValueKey<String>('reader-comic-layout-vertical')),
+      find.byKey(const ValueKey<String>('reader-comic-direction-vertical')),
       findsOneWidget,
     );
+    expect(find.byKey(readerVerticalStitchKey), findsOneWidget);
+    expect(find.byKey(readerLongPressZoomKey), findsOneWidget);
 
     await tester.tap(
-      find.byKey(const ValueKey<String>('reader-comic-layout-follow')),
+      find.byKey(const ValueKey<String>('reader-comic-direction-vertical')),
     );
     await tester.pump();
+    await tester.tap(find.text('保留间距'));
+    await tester.pump();
+    await tester.tap(find.text('停用').last);
+    await tester.pump();
+    await tester.ensureVisible(find.text('保存'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
 
     expect(saved, isNotNull);
     expect(saved!.comicSpecificEnabled, isTrue);
-    expect(saved!.comicAdaptiveEnabled, isFalse);
-    expect(saved!.directionOverride, isNull);
-    expect(saved!.effectiveAdaptiveEnabled, isFalse);
+    expect(saved!.comicAdaptiveEnabled, isTrue);
+    expect(saved!.directionOverride, ReadingDirection.vertical);
+    expect(saved!.verticalStitchOverride, isFalse);
+    expect(saved!.longPressZoomOverride, isFalse);
+    expect(saved!.effectiveAdaptiveEnabled, isTrue);
     await _disposePipelineReader(tester);
   });
 
@@ -769,12 +783,17 @@ void main() {
 
     await tester.tap(find.byKey(readerComicSettingsKey));
     await tester.pumpAndSettle();
-    final adaptive = tester.widget<ChoiceChip>(
+    final adaptive = tester.widget<SwitchListTile>(
       find.byKey(readerAdaptiveSettingsKey),
     );
-    expect(adaptive.selected, isTrue);
-    expect(adaptive.onSelected, isNull);
-    expect(find.text('全局自适应未启用'), findsOneWidget);
+    expect(adaptive.value, isTrue);
+    expect(adaptive.onChanged, isNull);
+    expect(
+      find.text('全局自适应未启用；保留本漫画选择但当前不执行。'),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(find.text('保存'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
     await _disposePipelineReader(tester);

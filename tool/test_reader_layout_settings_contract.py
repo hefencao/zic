@@ -176,11 +176,46 @@ def main() -> None:
     )
     require(
         "packages/reader_runtime/lib/src/reader_comic_settings_sheet.dart",
-        "enum _ComicLayoutChoice",
+        "enum _ComicDirectionChoice",
         "ChoiceChip(",
-        "_ComicLayoutChoice.adaptive",
-        "_ComicLayoutChoice.follow",
-        "reader-comic-layout-",
+        "title: const Text('使用自适应设置')",
+        "_ComicDirectionChoice.follow",
+        "reader-comic-direction-",
+        "readerLongPressZoomOverrideField",
+    )
+    require(
+        "packages/reader_runtime/lib/src/reader_settings_fields.dart",
+        "_ReaderOverrideChips",
+        "ChoiceChip(",
+        "title: '纵向拼接'",
+        "title: '长按放大'",
+    )
+    reject(
+        "packages/reader_runtime/lib/src/reader_settings_fields.dart",
+        "DropdownButtonFormField",
+    )
+    require(
+        "packages/reader_runtime/lib/src/reader_session_settings.dart",
+        "bool get effectiveAdaptiveEnabled",
+        "globalAdaptiveEnabled && comicAdaptiveEnabled",
+        "effectiveLongPressZoomFor",
+        "adaptive.direction != ReadingDirection.vertical",
+    )
+    require(
+        "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
+        "final adaptsDirection =",
+        "_settings = _settings.copyWith(adaptiveProfile: candidate)",
+        "if (adaptsDirection)",
+        "_settings.effectiveLongPressZoomFor(reader.direction)",
+    )
+    require(
+        "apps/app/lib/app_settings_screen.dart",
+        "title: const Text('自适应阅读')",
+        "SegmentedButton<bool>",
+        "key: readingVerticalStitchKey",
+        "key: readingLongPressZoomKey",
+        "SegmentedButton<ReaderDoubleTapZoomOrigin>",
+        "SegmentedButton<ReaderLongPressMoveMode>",
     )
     reject(
         "apps/app/lib/external_plugin_repository_screen.dart",

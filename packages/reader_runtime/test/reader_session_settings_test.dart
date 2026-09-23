@@ -1,3 +1,4 @@
+import 'package:domain/domain.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:reader_runtime/reader_runtime.dart';
 
@@ -30,25 +31,68 @@ void main() {
     );
   });
 
-  test('per-comic master gates adaptive override', () {
-    const inherited = ReaderSessionSettings(
-      globalAdaptiveEnabled: true,
-      comicAdaptiveEnabled: false,
-    );
-    expect(inherited.effectiveAdaptiveEnabled, isTrue);
-
-    const follow = ReaderSessionSettings(
-      comicSpecificEnabled: true,
-      globalAdaptiveEnabled: true,
-      comicAdaptiveEnabled: false,
-    );
-    expect(follow.effectiveAdaptiveEnabled, isFalse);
-
+  test('per-comic adaptive policy is independent from manual override master',
+      () {
     const adaptive = ReaderSessionSettings(
-      comicSpecificEnabled: true,
       globalAdaptiveEnabled: true,
-      comicAdaptiveEnabled: true,
     );
     expect(adaptive.effectiveAdaptiveEnabled, isTrue);
+
+    const disabled = ReaderSessionSettings(
+      globalAdaptiveEnabled: true,
+      comicAdaptiveEnabled: false,
+    );
+    expect(disabled.effectiveAdaptiveEnabled, isFalse);
+
+    const disabledWithManualOverrides = ReaderSessionSettings(
+      comicSpecificEnabled: true,
+      globalAdaptiveEnabled: true,
+      comicAdaptiveEnabled: false,
+    );
+    expect(disabledWithManualOverrides.effectiveAdaptiveEnabled, isFalse);
+  });
+
+  test('adaptive profile drives long-press zoom unless comic overrides it', () {
+    const vertical = ReaderSessionSettings(
+      globalAdaptiveEnabled: true,
+      adaptiveProfile: AdaptiveReaderProfile(
+        direction: ReadingDirection.vertical,
+        confidence: 0.9,
+        basis: 'test',
+      ),
+    );
+    expect(
+      vertical.effectiveLongPressZoomFor(ReadingDirection.vertical),
+      isFalse,
+    );
+    final fixedPagedDirection = vertical.copyWith(
+      comicSpecificEnabled: true,
+      directionOverride: ReadingDirection.rtl,
+    );
+    expect(
+      fixedPagedDirection.effectiveLongPressZoomFor(ReadingDirection.rtl),
+      isFalse,
+      reason: 'manual direction must not erase adaptive gesture semantics',
+    );
+
+    const paged = ReaderSessionSettings(
+      globalAdaptiveEnabled: true,
+      defaultLongPressZoom: false,
+      adaptiveProfile: AdaptiveReaderProfile(
+        direction: ReadingDirection.rtl,
+        confidence: 0.9,
+        basis: 'test',
+      ),
+    );
+    expect(paged.effectiveLongPressZoomFor(ReadingDirection.rtl), isTrue);
+
+    final explicit = vertical.copyWith(
+      comicSpecificEnabled: true,
+      longPressZoomOverride: true,
+    );
+    expect(
+      explicit.effectiveLongPressZoomFor(ReadingDirection.vertical),
+      isTrue,
+    );
   });
 }
