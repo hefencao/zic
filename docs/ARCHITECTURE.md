@@ -313,6 +313,10 @@ recovery 由 Widget composition 保持 single-flight tail 并在 teardown 中继
 Reader preparation 没有新增第二取消协议，只等待已接纳 prepare 自然完成，底层 source/network deadline 仍由既有 owner 管理。
 不能先关闭 reader/version/external/session owner 再让 adoption/recovery 或 admitted Reader prepare 尾段继续运行，
 也不能把 source/cache/projection continuation 下沉进 session close。成功后才原子切换projection/cache引用。
+Home 的书架“管理/批量选择”模式由纯 Dart `HomeShelfManagement` 持有：
+它只维护 managing、batch-selection 与 source-aware comic identity selection 的 UI 不变量，
+不读取 `LibraryComic`、library/download/source owner，也不拥有 Navigator/BuildContext/dialog；
+Widget State 继续负责渲染、确认框和实际 library mutation。
 Reader 章节进入前的 preparation 由独立 `HomeReaderChapterComposition` 持有；
 `DeferredReaderRoute` 先显示加载页，composition 在 load/hydrate、
 版本 authority、response 能力与 Pipeline 构造前 await core services + Home adoption，

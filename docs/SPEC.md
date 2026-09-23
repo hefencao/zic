@@ -458,6 +458,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   MUST NOT 在 Widget State/`part` 保存平行 `originComicId + Future` map，也不得把 token 升级为 durable authority。
   Source-management UI 在替换 controller active sources 时 MUST 显式追踪上一代与下一代 external source IDs；
   不得以 Mihon/Venera sourceId 前缀决定哪些旧 source 应被替换。用于图标、登录能力或格式特有 UI 的 family 判定不等价于 ownership 判定。
+- 书架 manage/batch-selection MUST 由单一纯 presentation state owner 维护 source-aware identity selection；
+  Widget State MUST NOT 平行持有 managing flag、batch flag 与 selected-identity set，也不得把该 owner 扩展为 library mutation、dialog 或 navigation owner。
 - 首页每张封面 MUST 独立完成请求和显示；一张封面变慢或 durable response 写入变慢，不得阻塞其它已经取得 encoded bytes 的封面。
   冷 miss MAY 先使用 memory source，持久化写入由统一 response cache 后台完成；durable hit MUST 先物化为调用方自持有的 encoded bytes。
   response cache 的文件路径 MUST NOT 暴露给 `FileImage` 或其它长生命周期 presentation 对象；

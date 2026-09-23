@@ -2,7 +2,7 @@ part of 'home_shell.dart';
 
 extension _HomeShellViews on _HomeShellState {
   List<LibraryComic> _selectedManagedComics() => _libraryComics
-      .where((comic) => _managedComicIdentities.contains(comic.identity))
+      .where((comic) => _shelfManagement.isSelected(comic.identity))
       .toList(growable: false);
 
   bool _matchesShelfFilter(LibraryComic comic) {
@@ -458,13 +458,8 @@ extension _HomeShellViews on _HomeShellState {
       return;
     }
     await _removeComic(comic, deleteFiles: deleteFiles);
-    if (mounted && _managedComicIdentities.contains(comic.identity)) {
-      _setState(() {
-        _managedComicIdentities.remove(comic.identity);
-        if (_managedComicIdentities.isEmpty) {
-          _batchManagement = false;
-        }
-      });
+    if (mounted && _shelfManagement.isSelected(comic.identity)) {
+      _setState(() => _shelfManagement.removeSelection(comic.identity));
     }
   }
 
@@ -798,8 +793,8 @@ extension _HomeShellViews on _HomeShellState {
   }
 
   void _handleShelfTap(LibraryComic comic) {
-    if (_manageShelf) {
-      if (_batchManagement) {
+    if (_shelfManagement.managing) {
+      if (_shelfManagement.batchSelecting) {
         _toggleBatchSelection(comic);
       }
       return;
@@ -868,7 +863,7 @@ extension _HomeShellViews on _HomeShellState {
   }
 
   Widget _buildGalleryTile(LibraryComic comic) {
-    final selected = _managedComicIdentities.contains(comic.identity);
+    final selected = _shelfManagement.isSelected(comic.identity);
     final coverIdentity = _canonicalComicKey(comic.sourceId, comic.comicId);
     final card = AnimatedBuilder(
       key: ValueKey<String>('library-cover:$coverIdentity'),
@@ -884,13 +879,13 @@ extension _HomeShellViews on _HomeShellState {
         downloadProgress: _downloadProgressForComic(comic),
         selected: selected,
         onTap: () => _handleShelfTap(comic),
-        onLongPress: _manageShelf
+        onLongPress: _shelfManagement.managing
             ? () => _startBatchSelection(comic)
             : () => unawaited(_openComicDetails(comic)),
       ),
     );
     Widget tile = card;
-    if (_manageShelf && !_batchManagement) {
+    if (_shelfManagement.managing && !_shelfManagement.batchSelecting) {
       tile = Stack(
         fit: StackFit.expand,
         children: <Widget>[
@@ -926,7 +921,7 @@ extension _HomeShellViews on _HomeShellState {
             bottom: 4,
             child: CoverActionSurface(child: _comicMovePopup(comic)),
           ),
-          if (_sortMode == LibrarySortMode.custom && !_batchManagement)
+          if (_sortMode == LibrarySortMode.custom && !_shelfManagement.batchSelecting)
             Positioned(
               top: 4,
               left: 4,
@@ -956,9 +951,9 @@ extension _HomeShellViews on _HomeShellState {
         ],
       );
     }
-    if (!_manageShelf ||
+    if (!_shelfManagement.managing ||
         _sortMode != LibrarySortMode.custom ||
-        _batchManagement) {
+        _shelfManagement.batchSelecting) {
       return tile;
     }
     return DragTarget<String>(
@@ -1022,12 +1017,12 @@ extension _HomeShellViews on _HomeShellState {
           sourceAvailable: _coverSourceAvailableForComic(comic),
           startupTelemetry: widget.startupTelemetry,
           downloadProgress: _downloadProgressForComic(comic),
-          selected: _managedComicIdentities.contains(comic.identity),
+          selected: _shelfManagement.isSelected(comic.identity),
           onTap: () => _handleShelfTap(comic),
-          onLongPress: _manageShelf
+          onLongPress: _shelfManagement.managing
               ? () => _startBatchSelection(comic)
               : () => unawaited(_openComicDetails(comic)),
-          trailing: _manageShelf && !_batchManagement
+          trailing: _shelfManagement.managing && !_shelfManagement.batchSelecting
               ? Row(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
@@ -1045,7 +1040,7 @@ extension _HomeShellViews on _HomeShellState {
                       icon: const Icon(Icons.delete_outline),
                     ),
                     if (_sortMode == LibrarySortMode.custom &&
-                        !_batchManagement)
+                        !_shelfManagement.batchSelecting)
                       ReorderableDragStartListener(
                         index: index,
                         child: const Padding(
@@ -1059,9 +1054,9 @@ extension _HomeShellViews on _HomeShellState {
         ),
       );
     }
-    if (_manageShelf &&
+    if (_shelfManagement.managing &&
         _sortMode == LibrarySortMode.custom &&
-        !_batchManagement) {
+        !_shelfManagement.batchSelecting) {
       return ReorderableListView.builder(
         buildDefaultDragHandles: false,
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
@@ -1141,14 +1136,12 @@ extension _HomeShellViews on _HomeShellState {
                   const SizedBox(width: 8),
                   TextButton.icon(
                     key: bookshelfManageKey,
-                    onPressed: () => _setState(() {
-                      _manageShelf = !_manageShelf;
-                      _clearManagedSelection();
-                    }),
+                    onPressed: () =>
+                        _setState(_shelfManagement.toggleManaging),
                     icon: Icon(
-                      _manageShelf ? Icons.done : Icons.edit_outlined,
+                      _shelfManagement.managing ? Icons.done : Icons.edit_outlined,
                     ),
-                    label: Text(_manageShelf ? '完成' : '管理'),
+                    label: Text(_shelfManagement.managing ? '完成' : '管理'),
                   ),
                 ],
               ),
@@ -1234,7 +1227,7 @@ extension _HomeShellViews on _HomeShellState {
               for (final category in _categories) ...<Widget>[
                 GestureDetector(
                   onLongPress:
-                      _manageShelf ? () => _deleteCategory(category) : null,
+                      _shelfManagement.managing ? () => _deleteCategory(category) : null,
                   child: ChoiceChip(
                     label: Text(category.name),
                     selected: _selectedCategoryId == category.categoryId,
@@ -1265,11 +1258,11 @@ extension _HomeShellViews on _HomeShellState {
             ],
           ),
         ),
-        if (_manageShelf &&
-            _batchManagement &&
-            _managedComicIdentities.isNotEmpty)
+        if (_shelfManagement.managing &&
+            _shelfManagement.batchSelecting &&
+            _shelfManagement.hasSelection)
           _buildBatchManagementBar(),
-        if (_manageShelf && _sortMode == LibrarySortMode.custom)
+        if (_shelfManagement.managing && _sortMode == LibrarySortMode.custom)
           const Padding(
             padding: EdgeInsets.fromLTRB(12, 2, 12, 4),
             child: Align(

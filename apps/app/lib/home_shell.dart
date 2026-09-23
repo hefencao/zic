@@ -36,6 +36,7 @@ import 'home_external_source_lifecycle.dart';
 import 'home_download_commands.dart';
 import 'home_reader_composition.dart';
 import 'home_route_admission.dart';
+import 'home_shelf_management.dart';
 import 'home_service_adoption.dart';
 import 'home_service_cache_binding.dart';
 import 'home_source_migration_transaction.dart';
@@ -205,9 +206,7 @@ final class _HomeShellState extends State<HomeShell> {
   bool _picking = false;
   bool _pickingFolder = false;
   bool _exportingHomeTrace = false;
-  bool _manageShelf = false;
-  bool _batchManagement = false;
-  final Set<String> _managedComicIdentities = <String>{};
+  final HomeShelfManagement _shelfManagement = HomeShelfManagement();
   final Map<String, _DownloadCompletionKind> _downloadCompletionBadges =
       <String, _DownloadCompletionKind>{};
   final Map<String, String> _pendingWholeComicCompletionBadges =
@@ -1609,30 +1608,17 @@ final class _HomeShellState extends State<HomeShell> {
     await _librarySession.persistPreferences(reorderedPreferences);
   }
 
-  void _clearManagedSelection() {
-    _managedComicIdentities.clear();
-    _batchManagement = false;
-  }
+  void _clearManagedSelection() => _shelfManagement.clearSelection();
 
   void _startBatchSelection(LibraryComic comic) {
-    setState(() {
-      _batchManagement = true;
-      _managedComicIdentities.add(comic.identity);
-    });
+    setState(() => _shelfManagement.startBatchSelection(comic.identity));
   }
 
   void _toggleBatchSelection(LibraryComic comic) {
-    if (!_batchManagement) {
+    if (!_shelfManagement.batchSelecting) {
       return;
     }
-    setState(() {
-      if (!_managedComicIdentities.add(comic.identity)) {
-        _managedComicIdentities.remove(comic.identity);
-      }
-      if (_managedComicIdentities.isEmpty) {
-        _batchManagement = false;
-      }
-    });
+    setState(() => _shelfManagement.toggleBatchSelection(comic.identity));
   }
 
   @override
