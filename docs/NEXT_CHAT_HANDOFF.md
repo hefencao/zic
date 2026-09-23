@@ -27,6 +27,7 @@
 - `tool/check.sh`
 
 ## 5. 不可改变的稳定边界
+- 自适应布局由 `reader_runtime` 单一分类器消费元数据/页面几何/实测动画与 `ReaderSessionSettings` 中只读的来源条漫先验；来源权重只由 `AppPreferencesController` 按 `sourceId` 持久化。model v6 中近1:1切片不得成为高置信分页证据，漫画级显式方向继续最高优先，Reader不得复制来源设置 authority。
 - 页面网络调度由共享 `NetLane` 唯一拥有，保持 normal 5 + current 高优先级保留槽 1（5个transport lease 与 current handoff）。
 - 逻辑与解码窗口固定为前 7 / 后 3（7/3）及解码前 2 / 后 1（2/1）。
 - Reader 仅消费不可变输出，不拥有 transport、session、cursor 或 texture。

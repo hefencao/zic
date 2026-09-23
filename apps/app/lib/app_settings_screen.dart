@@ -1207,8 +1207,8 @@ final class ReadingSettingsScreen extends StatelessWidget {
               key: readingAdaptiveKey,
               title: const Text('自适应阅读布局'),
               subtitle: const Text(
-                '依据来源方向、页面宽高与动画提示选择分页或纵向；'
-                '低置信度时保持既有默认。',
+                '依据来源元数据、页面比例与实测动画能力选择分页或纵向；'
+                '近方形切片保持低置信，来源可单独调整条漫权重。',
               ),
               value: preferences.adaptiveReaderEnabled,
               onChanged: preferences.setAdaptiveReaderEnabled,

@@ -54,6 +54,7 @@ def main() -> None:
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
         "ReaderSessionSettings",
         "AdaptiveReaderClassifier",
+        "sourceWebtoonWeight",
         "_initialAdaptiveProfile",
         "readerComicSettingsKey",
         "TextDirection.rtl",
@@ -141,6 +142,18 @@ def main() -> None:
         "defaultVerticalStitch",
         "verticalStitchOverride",
         "adaptiveReaderEnabled",
+        "sourceAdaptiveWebtoonWeights",
+        "setSourceAdaptiveWebtoonWeight",
+    )
+    require(
+        "apps/app/lib/reader_preferences.dart",
+        "sourceWebtoonWeight: sourceAdaptiveWebtoonWeightFor(sourceId)",
+    )
+    require(
+        "apps/app/lib/source_browser.dart",
+        "sourceAdaptiveWebtoonWeightKey",
+        "_changeSourceAdaptiveWebtoonWeight",
+        "条漫权重",
     )
     print("Reader layout settings contract: OK")
 

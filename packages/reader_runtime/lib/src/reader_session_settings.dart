@@ -13,6 +13,7 @@ final class ReaderSessionSettings {
     this.fallbackVerticalStitch = false,
     this.globalAdaptiveEnabled = false,
     this.comicAdaptiveEnabled = true,
+    this.sourceWebtoonWeight = 0,
     this.adaptiveProfile,
     this.zoomStages = defaultZoomStages,
     this.defaultLongPressZoom = true,
@@ -35,6 +36,7 @@ final class ReaderSessionSettings {
   final bool fallbackVerticalStitch;
   final bool globalAdaptiveEnabled;
   final bool comicAdaptiveEnabled;
+  final double sourceWebtoonWeight;
   final AdaptiveReaderProfile? adaptiveProfile;
   final bool? invertPageOrderOverride;
 
@@ -109,6 +111,7 @@ final class ReaderSessionSettings {
     bool? fallbackVerticalStitch,
     bool? globalAdaptiveEnabled,
     bool? comicAdaptiveEnabled,
+    double? sourceWebtoonWeight,
     Object? adaptiveProfile = _unset,
     List<double>? zoomStages,
     bool? defaultLongPressZoom,
@@ -136,6 +139,8 @@ final class ReaderSessionSettings {
             globalAdaptiveEnabled ?? this.globalAdaptiveEnabled,
         comicAdaptiveEnabled:
             comicAdaptiveEnabled ?? this.comicAdaptiveEnabled,
+        sourceWebtoonWeight:
+            sourceWebtoonWeight ?? this.sourceWebtoonWeight,
         adaptiveProfile: identical(adaptiveProfile, _unset)
             ? this.adaptiveProfile
             : adaptiveProfile as AdaptiveReaderProfile?,
@@ -170,6 +175,7 @@ final class ReaderSessionSettings {
           fallbackVerticalStitch == other.fallbackVerticalStitch &&
           globalAdaptiveEnabled == other.globalAdaptiveEnabled &&
           comicAdaptiveEnabled == other.comicAdaptiveEnabled &&
+          sourceWebtoonWeight == other.sourceWebtoonWeight &&
           adaptiveProfile == other.adaptiveProfile &&
           _sameStages(zoomStages, other.zoomStages) &&
           defaultLongPressZoom == other.defaultLongPressZoom &&
@@ -191,6 +197,7 @@ final class ReaderSessionSettings {
         fallbackVerticalStitch,
         globalAdaptiveEnabled,
         comicAdaptiveEnabled,
+        sourceWebtoonWeight,
         adaptiveProfile,
         Object.hashAll(zoomStages),
         defaultLongPressZoom,
@@ -272,7 +279,7 @@ final class AdaptiveReaderProfile {
     this.modelVersion = currentModelVersion,
   });
 
-  static const int currentModelVersion = 5;
+  static const int currentModelVersion = 6;
   static const double applyConfidence = 0.60;
   static const double stopConfidence = 0.80;
 
@@ -347,7 +354,14 @@ final class AdaptiveReaderClassifier {
   AdaptiveReaderClassifier(
     this.chapter, {
     this.metadata,
-  }) : _metadataFingerprint = metadata?.fingerprint ?? 0 {
+    double sourceWebtoonWeight = 0,
+  }) : sourceWebtoonWeight = sourceWebtoonWeight.clamp(0.0, 1.0).toDouble() {
+    _metadataFingerprint = this.sourceWebtoonWeight <= 0
+        ? metadata?.fingerprint ?? 0
+        : _stableFingerprint(
+            '${metadata?.fingerprint ?? 0}\u0000source-webtoon-weight:'
+            '${this.sourceWebtoonWeight.toStringAsFixed(3)}',
+          );
     for (final page in chapter.pages) {
       final width = page.width;
       final height = page.height;
@@ -359,7 +373,8 @@ final class AdaptiveReaderClassifier {
 
   final ChapterManifest chapter;
   final AdaptiveReaderMetadata? metadata;
-  final int _metadataFingerprint;
+  final double sourceWebtoonWeight;
+  late final int _metadataFingerprint;
   final Map<String, ({int width, int height})> _samples =
       <String, ({int width, int height})>{};
   final Set<String> _animatedSamples = <String>{};
@@ -368,7 +383,7 @@ final class AdaptiveReaderClassifier {
 
   AdaptiveReaderProfile? classifyMetadata() {
     final value = metadata;
-    if (value == null) return null;
+    if (value == null) return _sourceWebtoonProfile();
     var animatedTag = _match(value.tags, const <String>[
       'webp动图',
       'webp 動圖',
@@ -523,6 +538,8 @@ final class AdaptiveReaderClassifier {
         basis: 'source:$pagedSource',
       );
     }
+    final sourcePrior = _sourceWebtoonProfile();
+    if (sourcePrior != null) return sourcePrior;
     final category = _category(value.tags);
     if (category == 'manga') {
       return _metadataProfile(
@@ -633,13 +650,20 @@ final class AdaptiveReaderClassifier {
       final ratio = sample.height / sample.width;
       if (ratio >= 3) {
         vertical += 4;
-      } else if (ratio >= 2) {
+      } else if (ratio >= 2.2) {
         vertical += 2.4;
-      } else if (ratio >= 1.55) {
-        vertical += 0.6;
+      } else if (ratio >= 1.9) {
+        vertical += 0.8;
         paged += 0.7;
       } else {
-        paged += 1.5;
+        // A near-square page is weak evidence: long-strip sources commonly
+        // slice one canvas into square-ish transport pages. Paged confidence
+        // grows only as the shape moves away from 1:1 toward ordinary page
+        // or landscape proportions. log2 keeps portrait/landscape distance
+        // symmetric (16:9 and 9:16 carry equal paged shape evidence).
+        final squareDistance =
+            (math.log(ratio).abs() / math.ln2).clamp(0.0, 1.0).toDouble();
+        paged += 1.5 * squareDistance;
       }
     }
     final tags = metadata?.tags ?? const <String>[];
@@ -649,6 +673,9 @@ final class AdaptiveReaderClassifier {
         'webtoon',
         'manhwa',
         'korean',
+        'korea',
+        '韩国',
+        '韓國',
         '韩漫',
         '韓漫',
         '条漫',
@@ -684,6 +711,30 @@ final class AdaptiveReaderClassifier {
       ],
       1.2,
     );
+    vertical += sourceWebtoonWeight * 3.0;
+    return _scoredLayoutProfile(
+      vertical: vertical,
+      paged: paged,
+      basis: 'page-geometry',
+      samples: _samples.length,
+    );
+  }
+
+  AdaptiveReaderProfile? _sourceWebtoonProfile() {
+    if (sourceWebtoonWeight <= 0) return null;
+    return _scoredLayoutProfile(
+      vertical: sourceWebtoonWeight * 3.0,
+      paged: 0,
+      basis: 'source:webtoon-weight',
+    );
+  }
+
+  AdaptiveReaderProfile? _scoredLayoutProfile({
+    required double vertical,
+    required double paged,
+    required String basis,
+    int samples = 0,
+  }) {
     final mixed = math.min(vertical, paged) + 0.4;
     final maxScore = math.max(vertical, math.max(paged, mixed));
     final confidence = 1 /
@@ -699,8 +750,8 @@ final class AdaptiveReaderClassifier {
           ? ReadingDirection.vertical
           : _pagedDirection,
       confidence: confidence,
-      basis: 'page-geometry',
-      samples: _samples.length,
+      basis: basis,
+      samples: samples,
       metadataFingerprint: _metadataFingerprint,
     );
   }
@@ -896,10 +947,12 @@ final class AdaptiveReaderClassifier {
 AdaptiveReaderProfile? classifyAdaptiveReaderLayout(
   ChapterManifest chapter, {
   AdaptiveReaderMetadata? metadata,
+  double sourceWebtoonWeight = 0,
 }) =>
     AdaptiveReaderClassifier(
       chapter,
       metadata: metadata,
+      sourceWebtoonWeight: sourceWebtoonWeight,
     ).classifyManifest();
 
 int _stableFingerprint(String value) {

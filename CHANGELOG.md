@@ -1,3 +1,9 @@
+## Unreleased — adaptive layout source prior and segmented-page geometry
+
+- Rework adaptive page geometry so near-square source slices no longer become high-confidence paged evidence merely because width and height are close. Ordinary 16:9/9:16 shapes gain paged confidence by symmetric distance from 1:1, the 1.9–2.2 portrait band remains deliberately uncertain, and truly long vertical pages retain strong webtoon evidence.
+- Add a single per-source `sourceAdaptiveWebtoonWeights` preference (0–1) exposed as “条漫权重” in source management. The value is projected read-only through `ReaderSessionSettings`; Reader does not own or persist it. Non-zero weights participate in the adaptive-profile fingerprint, so changing a source prior invalidates stale per-comic automatic profiles without touching manual overrides.
+- Treat `韩国/韓國/korea` only as weak webtoon evidence during geometry scoring rather than a hard layout or language classification. Adaptive model version is now 6; focused Reader/App/source-management regressions cover square slices, ordinary aspect ratios, long vertical pages, source-prior persistence and UI editing.
+
 ## 0.31.0-dev.329 - long-press zoom interaction settings and fixes
 
 - Fix second-stage zoom bounds by resolving stage changes from the current

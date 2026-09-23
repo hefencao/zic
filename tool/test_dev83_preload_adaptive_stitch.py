@@ -89,7 +89,7 @@ def main() -> None:
     require(
         "packages/reader_runtime/lib/src/reader_session_settings.dart",
         "final class AdaptiveReaderMetadata",
-        "currentModelVersion = 5",
+        "currentModelVersion = 6",
         "applyConfidence = 0.60",
         "stopConfidence = 0.80",
         "metadataFingerprint",

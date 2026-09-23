@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:downloads/downloads.dart';
 import 'package:resource_cache/resource_cache.dart';
 import 'package:telemetry/telemetry.dart';
+import 'package:zic/app_preferences.dart';
 import 'package:zic/comic_details.dart' as details;
 import 'package:zic/home_shell.dart';
 import 'package:zic/debug_trace.dart';
@@ -232,6 +233,35 @@ void main() {
       find.byKey(ValueKey<String>('source-manager:${thirdExternal.sourceId}')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('source management persists adaptive webtoon weight',
+      (tester) async {
+    final source = _FixtureSource('mihon:webtoon-weight', '条漫来源');
+    final preferences = AppPreferencesController();
+    addTearDown(preferences.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SourceManagementScreen(
+          sources: <BrowsableComicSource>[source],
+          preferences: const <String, ComicSourcePreference>{},
+          onPreferenceChanged: (_) async {},
+          appPreferences: preferences,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(sourceAdaptiveWebtoonWeightKey(source.sourceId)));
+    await tester.pumpAndSettle();
+    expect(find.text('条漫权重 · 条漫来源'), findsOneWidget);
+    final slider = tester.widget<Slider>(find.byType(Slider));
+    slider.onChanged!(0.8);
+    await tester.pump();
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(preferences.sourceAdaptiveWebtoonWeightFor(source.sourceId), 0.8);
   });
 
   testWidgets('source cards project shelf membership without owning it',

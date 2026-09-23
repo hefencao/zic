@@ -173,7 +173,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
   bool _downloaded = false;
   bool _reportedFirstPresentationFrame = false;
   late ReaderSessionSettings _settings;
-  late final AdaptiveReaderClassifier _adaptiveClassifier;
+  late AdaptiveReaderClassifier _adaptiveClassifier;
   AdaptiveReaderProfile? _adaptiveProfile;
   FlutterReaderPlatformFrameCadenceProbe? _platformFrameCadenceProbe;
   DecodeTarget? _appliedZoomDecodeTarget;
@@ -193,6 +193,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     _adaptiveClassifier = AdaptiveReaderClassifier(
       widget.chapter,
       metadata: widget.adaptiveMetadata,
+      sourceWebtoonWeight: _settings.sourceWebtoonWeight,
     );
     _adaptiveProfile = _initialAdaptiveProfile(_settings);
     _pipeline.pageDimensions.addListener(_handlePipelinePageDimensions);
@@ -226,7 +227,17 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       _favorite = widget.initialFavorite;
     }
     if (oldWidget.initialSettings != widget.initialSettings) {
+      final sourceWeightChanged =
+          oldWidget.initialSettings.sourceWebtoonWeight !=
+              widget.initialSettings.sourceWebtoonWeight;
       _settings = widget.initialSettings;
+      if (sourceWeightChanged) {
+        _adaptiveClassifier = AdaptiveReaderClassifier(
+          widget.chapter,
+          metadata: widget.adaptiveMetadata,
+          sourceWebtoonWeight: _settings.sourceWebtoonWeight,
+        );
+      }
       _adaptiveProfile = _initialAdaptiveProfile(_settings);
     }
     if (oldWidget.adaptiveMetadata?.fingerprint !=

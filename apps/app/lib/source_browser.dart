@@ -69,6 +69,8 @@ Key comicSourceChoiceKey(String sourceId) =>
     ValueKey<String>('comic-source-choice:$sourceId');
 Key comicSourcePluginChoiceKey(String pluginId) =>
     ValueKey<String>('comic-source-plugin-choice:$pluginId');
+Key sourceAdaptiveWebtoonWeightKey(String sourceId) =>
+    ValueKey<String>('source-adaptive-webtoon-weight:$sourceId');
 Key comicSourceAggregatePluginKey(String pluginId) =>
     ValueKey<String>('comic-source-aggregate-plugin:$pluginId');
 Key comicSourceAggregateCategoryKey(String categoryId) =>
@@ -2949,8 +2951,8 @@ final class SourceManagementScreen extends StatefulWidget {
   final AndroidNetworkBridge networkBridge;
   final Future<void> Function()? onExternalSourcesChanged;
 
-  /// Application-level preferences owning the per-source download directory
-  /// map used by the plugin manager.
+  /// Application-level preferences owning per-source user choices such as
+  /// download roots and adaptive-layout priors.
   final AppPreferencesController? appPreferences;
 
   @override
@@ -3112,6 +3114,67 @@ final class _SourceManagementScreenState
     }
   }
 
+
+  Future<void> _changeSourceAdaptiveWebtoonWeight(
+    BrowsableComicSource source,
+  ) async {
+    final preferences = widget.appPreferences;
+    if (preferences == null) return;
+    var draft = preferences.sourceAdaptiveWebtoonWeightFor(source.sourceId);
+    final selected = await showDialog<double>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('条漫权重 · ${source.descriptor.name}'),
+          content: SizedBox(
+            width: 380,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                const Text(
+                  '作为这个来源的自适应布局先验。0% 只使用漫画元数据和页面比例；'
+                  '比例越高，切片页面越倾向按条漫处理。漫画级手动布局仍优先。',
+                ),
+                const SizedBox(height: 12),
+                Slider(
+                  value: draft,
+                  min: 0,
+                  max: 1,
+                  divisions: 10,
+                  label: '${(draft * 100).round()}%',
+                  onChanged: (value) =>
+                      setDialogState(() => draft = value),
+                ),
+                Text(
+                  draft <= 0
+                      ? '当前：自动（无来源先验）'
+                      : '当前：条漫倾向 ${(draft * 100).round()}%',
+                ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 0),
+              child: const Text('恢复自动'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, draft),
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || selected == null) return;
+    preferences.setSourceAdaptiveWebtoonWeight(source.sourceId, selected);
+    setState(() {});
+  }
 
   Future<void> _persistSourceOrder(
     List<BrowsableComicSource> ordered,
@@ -3334,6 +3397,9 @@ final class _SourceManagementScreenState
     ValueChanged<bool>? onToggleOverride,
   }) {
     final preference = _preference(source);
+    final sourceWebtoonWeight =
+        widget.appPreferences?.sourceAdaptiveWebtoonWeightFor(source.sourceId) ??
+            0;
     final originIcon = Icon(
       source.sourceId.startsWith('mihon:')
           ? Icons.extension_outlined
@@ -3372,6 +3438,22 @@ final class _SourceManagementScreenState
             )
           else
             originIcon,
+          if (widget.appPreferences != null)
+            IconButton(
+              key: sourceAdaptiveWebtoonWeightKey(source.sourceId),
+              tooltip: sourceWebtoonWeight <= 0
+                  ? '条漫权重：自动'
+                  : '条漫权重：${(sourceWebtoonWeight * 100).round()}%',
+              onPressed: () => unawaited(
+                _changeSourceAdaptiveWebtoonWeight(source),
+              ),
+              icon: Icon(
+                Icons.view_stream_outlined,
+                color: sourceWebtoonWeight > 0
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+              ),
+            ),
           if ((source.sourceId.startsWith('mihon:') ||
                   source.sourceId.startsWith('venera:')) &&
               sourceSupportsSettings(source))

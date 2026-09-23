@@ -439,6 +439,12 @@ void main() {
           'mihon:beta': 42, // invalid entries are dropped
           ' ': '/data/ignored', // blank keys are dropped
         },
+        'sourceAdaptiveWebtoonWeights': <String, Object?>{
+          'venera:alpha': 0.8,
+          'mihon:clamped': 2.0,
+          'bad': 'high',
+          ' ': 0.5,
+        },
         'sourceSearchHistory': <Object?>['Alpha', 'beta', 'alpha'],
         'comicReaderSettings': <String, Object?>{
           comicReaderSettingsIdentity('source-a', 'comic-a'):
@@ -514,6 +520,15 @@ void main() {
     );
     expect(controller.sourceDownloadDirectoryFor('mihon:beta'), isNull);
     expect(controller.sourceDownloadDirectoryFor('unknown'), isNull);
+    expect(controller.sourceAdaptiveWebtoonWeightFor('venera:alpha'), 0.8);
+    expect(controller.sourceAdaptiveWebtoonWeightFor('mihon:clamped'), 1.0);
+    expect(controller.sourceAdaptiveWebtoonWeightFor('unknown'), 0.0);
+    expect(
+      controller
+          .readerSessionSettingsFor('venera:alpha', 'comic')
+          .sourceWebtoonWeight,
+      0.8,
+    );
     expect(controller.sourceSearchHistory, <String>['Alpha', 'beta']);
     expect(
       controller.comicReaderSettingsFor('source-a', 'comic-a'),
@@ -549,6 +564,7 @@ void main() {
       true,
     );
     controller.setSourceDownloadDirectory('venera:gamma', '/data/gamma');
+    controller.setSourceAdaptiveWebtoonWeight('venera:gamma', 0.6);
     controller.setLongPressZoomRestoreOnRelease(true);
     controller.setLongPressZoomMoveMode(ReaderLongPressMoveMode.drag);
     controller.setLongPressZoomPanRatio(2.0);
@@ -604,6 +620,14 @@ void main() {
       <String, String>{
         'venera:alpha': '/data/downloads-alpha',
         'venera:gamma': '/data/gamma',
+      },
+    );
+    expect(
+      written?['sourceAdaptiveWebtoonWeights'],
+      <String, double>{
+        'venera:alpha': 0.8,
+        'mihon:clamped': 1.0,
+        'venera:gamma': 0.6,
       },
     );
     expect(written?['longPressZoomRestoreOnRelease'], true);

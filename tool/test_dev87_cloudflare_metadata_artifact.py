@@ -103,7 +103,7 @@ def main() -> None:
     )
     require(
         "packages/reader_runtime/lib/src/reader_session_settings.dart",
-        "currentModelVersion = 5",
+        "currentModelVersion = 6",
         "long strip",
         "vertical comic",
         "scroll comic",

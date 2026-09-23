@@ -149,6 +149,7 @@
   MUST NOT 写入 `DateTime.now()` 或其它伪造 recency；LWW durability 必须保证任何真实用户 preference 更新压过 stale default。
 - **Reader 生命周期播放**：Reader 非 `resumed` 生命周期 MUST 临时暂停 Pipeline playback，同时 MUST 保留用户自己的 pause/speed 设置；
   恢复前台后按用户状态恢复。后台 MUST NOT 继续 Animated WebP decode/upload/present。
+- **自适应阅读布局**：漫画级显式方向 MUST 始终高于自动分类。自动分类 MAY消费漫画元数据、至少两个非封面页面的宽高、实测动画证据与按 `sourceId` 保存的来源级条漫权重，但 Reader MUST NOT拥有或持久化该来源偏好；权重为0表示无来源先验，非零值 MUST 经 `ReaderSessionSettings` 只读投影进入分类器。近 1:1 页面 MUST被视为低信息切片，不能仅因宽高接近而形成高置信分页；普通页面比例的分页证据 SHOULD 随其偏离 1:1 增强，极长纵幅 MAY形成条漫正证据，二者之间必须保留低置信过渡区。地域/语言相关标签 MAY作为弱证据，但不得仅凭“韩国/韓國”等地域词硬切阅读模式。来源先验变化 MUST 使与旧先验绑定的持久 adaptive profile 失效；实现不得为插件、来源页和 Reader 各建一份互相覆盖的权重 authority。
 - **动画能力**：`animatedHint`、后缀和来源声明 MUST NOT 直接显示播放专属控件。媒体能力 unknown 时控件 MUST 隐藏；
   两个实际帧可形成 animated 正证据，static 只在完整/codec 静态证据成立后确认。
   纵向 measured geometry 改变页面真实 extent 后，Reader MUST 在 layout 生效后无手势重发真实 visible coverage；

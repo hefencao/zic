@@ -88,6 +88,99 @@ void main() {
     expect(profile?.samples, 2);
   });
 
+  test('near-square segmented pages stay low-confidence', () {
+    final chapter = manifest(
+      pages: const [
+        (width: 1000, height: 1000, animated: false),
+        (width: 1000, height: 1000, animated: false),
+        (width: 1000, height: 1000, animated: false),
+      ],
+    );
+
+    expect(classifyAdaptiveReaderLayout(chapter), isNull);
+  });
+
+  test('extreme tall geometry remains strong vertical evidence', () {
+    final chapter = manifest(
+      pages: const [
+        (width: 1000, height: 1000, animated: false),
+        (width: 800, height: 2800, animated: false),
+        (width: 800, height: 3200, animated: false),
+      ],
+    );
+
+    final profile = classifyAdaptiveReaderLayout(chapter);
+    expect(profile?.direction, ReadingDirection.vertical);
+    expect(profile?.basis, 'page-geometry');
+    expect(profile!.confidence, greaterThan(0.9));
+  });
+
+  test('ordinary 16:9 and 9:16 shapes remain strong paged evidence', () {
+    for (final shape in const <({int width, int height})>[
+      (width: 1920, height: 1080),
+      (width: 1080, height: 1920),
+    ]) {
+      final chapter = manifest(
+        pages: [
+          (width: shape.width, height: shape.height, animated: false),
+          (width: shape.width, height: shape.height, animated: false),
+          (width: shape.width, height: shape.height, animated: false),
+        ],
+      );
+
+      final profile = classifyAdaptiveReaderLayout(chapter);
+      expect(profile?.direction, ReadingDirection.ltr);
+      expect(profile?.basis, 'page-geometry');
+      expect(profile!.confidence, greaterThan(0.8));
+    }
+  });
+
+  test('Korea metadata can resolve square slices without becoming a hard tag', () {
+    final chapter = manifest(
+      pages: const [
+        (width: 1000, height: 1000, animated: false),
+        (width: 1000, height: 1000, animated: false),
+        (width: 1000, height: 1000, animated: false),
+      ],
+    );
+    final metadata = AdaptiveReaderMetadata(
+      sourceKey: 'mihon:fixture',
+      comicId: 'comic',
+      title: 'sample',
+      tags: const <String>['韩国'],
+    );
+
+    final profile = classifyAdaptiveReaderLayout(chapter, metadata: metadata);
+    expect(profile?.direction, ReadingDirection.vertical);
+    expect(profile?.basis, 'page-geometry');
+    expect(profile!.confidence, greaterThanOrEqualTo(0.60));
+    expect(profile.confidence, lessThan(AdaptiveReaderProfile.stopConfidence));
+  });
+
+  test('source webtoon weight is a prior and part of profile fingerprint', () {
+    final chapter = manifest(
+      pages: const [
+        (width: null, height: null, animated: false),
+        (width: null, height: null, animated: false),
+        (width: null, height: null, animated: false),
+      ],
+    );
+    final weaker = AdaptiveReaderClassifier(
+      chapter,
+      sourceWebtoonWeight: 0.4,
+    );
+    final stronger = AdaptiveReaderClassifier(
+      chapter,
+      sourceWebtoonWeight: 0.8,
+    );
+    final profile = stronger.classifyManifest();
+
+    expect(profile?.direction, ReadingDirection.vertical);
+    expect(profile?.basis, 'source:webtoon-weight');
+    expect(profile?.confidence, greaterThanOrEqualTo(0.60));
+    expect(stronger.metadataFingerprint, isNot(weaker.metadataFingerprint));
+  });
+
   test('decoded animation requires two non-cover pages', () {
     final chapter = manifest(
       sourceDirection: ReadingDirection.vertical,
@@ -171,7 +264,7 @@ void main() {
 
     expect(profile?.direction, ReadingDirection.vertical);
     expect(profile?.basis, 'tag:long strip');
-    expect(profile?.modelVersion, 5);
+    expect(profile?.modelVersion, AdaptiveReaderProfile.currentModelVersion);
   });
 
   test('persisted profile round-trips at the current model version', () {
