@@ -427,7 +427,11 @@ final class _DemoHomeState extends State<DemoHome> {
         locator: locator,
         control: control,
       ),
-      requiresSourceLocatorRefresh: chapterRequiresSourceLocatorRefresh,
+      requiresSourceLocatorRefresh: (chapter) => chapterRequiresSourceLocatorRefresh(
+        chapter,
+        currentMihonResourceAuthorityRevision: _externalSources.activeController
+            ?.resourceAuthorityRevisionForSource(chapter.sourceId),
+      ),
       scheduleMetadataTask: ({
         required key,
         required priority,
@@ -452,7 +456,11 @@ final class _DemoHomeState extends State<DemoHome> {
         await _adoptDurableServices();
       },
       ensurePlatformEnvironment: _ensurePlatformEnvironment,
-      requiresSourceLocatorRefresh: chapterRequiresSourceLocatorRefresh,
+      requiresSourceLocatorRefresh: (chapter) => chapterRequiresSourceLocatorRefresh(
+        chapter,
+        currentMihonResourceAuthorityRevision: _externalSources.activeController
+            ?.resourceAuthorityRevisionForSource(chapter.sourceId),
+      ),
       refreshRemoteEntry: (entry, {required forceSourceRefresh}) =>
           _refreshRemoteEntry(
         entry,
@@ -475,7 +483,11 @@ final class _DemoHomeState extends State<DemoHome> {
       ),
       sourceResources: _sourceResources,
       downloadComposition: () => _downloadComposition,
-      requiresSourceLocatorRefresh: chapterRequiresSourceLocatorRefresh,
+      requiresSourceLocatorRefresh: (chapter) => chapterRequiresSourceLocatorRefresh(
+        chapter,
+        currentMihonResourceAuthorityRevision: _externalSources.activeController
+            ?.resourceAuthorityRevisionForSource(chapter.sourceId),
+      ),
       refreshRemoteEntry: (entry, {required forceSourceRefresh}) =>
           _refreshRemoteEntry(
         entry,

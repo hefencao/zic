@@ -22,7 +22,9 @@ whole_comic = read('packages/downloads/lib/src/whole_comic_downloads.dart')
 check = read('tool/check.sh')
 
 for token in (
-    'MIHON_RUNTIME_TRANSFORM_REVISION = "mihon-runtime-transform-v2"',
+    'MIHON_RUNTIME_TRANSFORM_REVISION_PREFIX =',
+    'MIHON_RUNTIME_TRANSFORM_SCHEMA = "mihon-runtime-transform-v3"',
+    'mihonResourceAuthorityRevision(payloadSha256)',
     '"retryResource" -> retryResource(',
     '.put("retryChapterId", retryChapterId)',
     '.put("retryPageIndex", index)',
@@ -33,8 +35,11 @@ for token in (
     'mihonResourceReplayKey(sourceId, replayUri)',
     '!replayEligibleResourceUris.remove(replayKey)',
     'freshGeneration = arguments["freshGeneration"] == true',
-    'freshResourcePlans[mihonResourceReplayKey(sourceId, uri)]',
-    'rememberFreshResourcePlan(replayKey, requestPlan)',
+    'freshResourceAuthorities[mihonResourceReplayKey(sourceId, uri)]',
+    'rememberMihonResource(freshResourceAuthorities, replayKey, freshResource)',
+    'rememberMihonResource(pendingReplayResources, replayKey, freshResource)',
+    'selectMihonResourceForLoad(',
+    'mihonSerializedRequestFromResource(',
     'private fun invalidateMihonResourcePlans(sourceId: String)',
     'invalidateMihonResourcePlans(sourceId)',
     'put("sourceResourcePlanReplayEligible", true)',
@@ -46,6 +51,18 @@ if driver.index('"retryResource" -> retryResource(') > driver.index(
     'else -> error("unsupported Mihon runtime operation")'
 ):
     raise SystemExit('Mihon retryResource is outside runtime dispatch')
+
+load_resource = driver[
+    driver.index('private fun loadResource('):driver.index('private fun loadSourceSettings(')
+]
+if load_resource.index('selectMihonResourceForLoad(') > load_resource.index(
+    'val request = mihonRequestFromResource(source, resolvedResource)'
+):
+    raise SystemExit('Mihon loadResource rebuilds the stale opaque request before selecting replay authority')
+if load_resource.index('val request = mihonRequestFromResource(source, resolvedResource)') > load_resource.index(
+    'client.invokeCompatible("newCall", listOf(request))'
+):
+    raise SystemExit('Mihon source client does not execute the selected replay/fresh request')
 
 for token in (
     'ExternalPluginRuntimeOperation.retryResource,',
@@ -75,6 +92,8 @@ for token in (
     'bool _hasLegacyMihonRuntimeTransformLocators(ImportedChapterRecord chapter)',
     "chapter.sourceId.startsWith('mihon:')",
     "chapter.sourceRevision.endsWith(':mihon-runtime-transform-v1')",
+    "chapter.sourceRevision.endsWith(':mihon-runtime-transform-v2')",
+    'currentMihonResourceAuthorityRevision',
     '_manifestRequiresSourceLocatorRefresh(manifest)',
 ):
     if token not in compat:

@@ -28,20 +28,34 @@ bool _hasLegacyVeneraLocators(ImportedChapterRecord chapter) =>
 
 bool _hasLegacyMihonRuntimeTransformLocators(ImportedChapterRecord chapter) =>
     chapter.sourceId.startsWith('mihon:') &&
-    chapter.sourceRevision.endsWith(':mihon-runtime-transform-v1');
+    (chapter.sourceRevision.endsWith(':mihon-runtime-transform-v1') ||
+        chapter.sourceRevision.endsWith(':mihon-runtime-transform-v2'));
 
-bool chapterRequiresSourceLocatorRefresh(ImportedChapterRecord chapter) =>
-    _hasLegacyVeneraLocators(chapter) ||
-    _hasLegacyMihonRuntimeTransformLocators(chapter) ||
-    chapterHasHomeProjectionSnapshotPagePlaceholders(chapter);
+bool chapterRequiresSourceLocatorRefresh(
+  ImportedChapterRecord chapter, {
+  String? currentMihonResourceAuthorityRevision,
+}) {
+  if (_hasLegacyVeneraLocators(chapter) ||
+      _hasLegacyMihonRuntimeTransformLocators(chapter) ||
+      chapterHasHomeProjectionSnapshotPagePlaceholders(chapter)) {
+    return true;
+  }
+  final currentAuthority = currentMihonResourceAuthorityRevision?.trim();
+  return chapter.sourceId.startsWith('mihon:') &&
+      currentAuthority != null &&
+      currentAuthority.isNotEmpty &&
+      !chapter.sourceRevision.endsWith(':$currentAuthority');
+}
 
 bool _manifestRequiresSourceLocatorRefresh(ChapterManifest manifest) =>
     manifest.pages.any(
       (page) => isLegacyVeneraRuntimeLocator(page.uri.toString()),
     ) ||
     (manifest.sourceId.startsWith('mihon:') &&
-        manifest.chapter.sourceRevision
-            .endsWith(':mihon-runtime-transform-v1'));
+        (manifest.chapter.sourceRevision
+                .endsWith(':mihon-runtime-transform-v1') ||
+            manifest.chapter.sourceRevision
+                .endsWith(':mihon-runtime-transform-v2')));
 
 Future<ChapterManifest> _loadCompatibleSourceChapter(
   BrowsableComicSource source,

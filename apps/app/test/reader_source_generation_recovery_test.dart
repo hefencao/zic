@@ -60,20 +60,48 @@ void main() {
     expect(chapterRequiresSourceLocatorRefresh(usable), isFalse);
   });
 
-  test('legacy Mihon runtime transform revision requires source refresh', () {
-    final legacy = chapter(
+  test('legacy and payload-mismatched Mihon carriers require source refresh', () {
+    final v1 = chapter(
       'cdn.example',
       sourceId: 'mihon:fixture',
       sourceRevision: '/chapter:0:mihon-runtime-transform-v1',
     );
-    final current = chapter(
+    final v2 = chapter(
       'cdn.example',
       sourceId: 'mihon:fixture',
       sourceRevision: '/chapter:0:mihon-runtime-transform-v2',
     );
+    const currentAuthority =
+        'mihon-runtime-transform-v3:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    final current = chapter(
+      'cdn.example',
+      sourceId: 'mihon:fixture',
+      sourceRevision: '/chapter:0:$currentAuthority',
+    );
+    final previousPayload = chapter(
+      'cdn.example',
+      sourceId: 'mihon:fixture',
+      sourceRevision:
+          '/chapter:0:mihon-runtime-transform-v3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    );
 
-    expect(chapterRequiresSourceLocatorRefresh(legacy), isTrue);
-    expect(chapterRequiresSourceLocatorRefresh(current), isFalse);
+    expect(chapterRequiresSourceLocatorRefresh(v1), isTrue);
+    expect(chapterRequiresSourceLocatorRefresh(v2), isTrue);
+    expect(
+      chapterRequiresSourceLocatorRefresh(
+        current,
+        currentMihonResourceAuthorityRevision: currentAuthority,
+      ),
+      isFalse,
+    );
+    expect(
+      chapterRequiresSourceLocatorRefresh(
+        previousPayload,
+        currentMihonResourceAuthorityRevision: currentAuthority,
+      ),
+      isTrue,
+      reason: 'plugin payload replacement invalidates persisted runtime carriers',
+    );
   });
 
   test('route refresh only owns terminal unavailable source generations', () {
@@ -174,28 +202,67 @@ void main() {
     expect(readerPageAuthorityChanged(previous, refreshed, 1), isTrue);
   });
 
-  test('fresh recovery splices only the failed page carrier', () {
+  test('fresh recovery atomically replaces all matched page carriers', () {
     final previous = chapter('old.example');
     final refreshed = chapter('new.example');
 
-    final replacement = readerChapterWithFreshPageAuthority(
+    final replacement = readerChapterWithFreshPageAuthorities(
       previous,
       refreshed,
       1,
     );
 
     expect(replacement, isNotNull);
-    expect(replacement!.pages[0].sourceId, previous.pages[0].sourceId);
+    expect(replacement!.pages[0].sourceId, refreshed.pages[0].sourceId);
     expect(replacement.pages[1].sourceId, refreshed.pages[1].sourceId);
-    expect(replacement.pages[0].sourceId, isNot(refreshed.pages[0].sourceId));
+    expect(
+      replacement.pages.map((page) => page.pageId),
+      previous.pages.map((page) => page.pageId),
+      reason: 'carrier refresh must preserve the old logical page structure',
+    );
   });
 
-  test('fresh recovery does not turn a revision change into a page splice', () {
+  test('fresh carrier batch follows stable identities without adopting inserts', () {
+    final previous = chapter('old.example');
+    final refreshed = chapter(
+      'new.example',
+      pageIds: const <String>['inserted', 'page-0', 'page-1'],
+    );
+
+    final replacement = readerChapterWithFreshPageAuthorities(
+      previous,
+      refreshed,
+      1,
+    );
+
+    expect(replacement, isNotNull);
+    expect(
+      replacement!.pages.map((page) => page.pageId).toList(),
+      const <String?>['page-0', 'page-1'],
+    );
+    expect(replacement.pages[0].sourceId, refreshed.pages[1].sourceId);
+    expect(replacement.pages[1].sourceId, refreshed.pages[2].sourceId);
+  });
+
+  test('fresh carrier batch fails closed when any old identity disappears', () {
+    final previous = chapter('old.example');
+    final refreshed = chapter(
+      'new.example',
+      pageIds: const <String>['page-0', 'replacement'],
+    );
+
+    expect(
+      readerChapterWithFreshPageAuthorities(previous, refreshed, 0),
+      isNull,
+    );
+  });
+
+  test('fresh recovery does not turn a revision change into carrier migration', () {
     final previous = chapter('old.example');
     final refreshed = chapter('new.example', sourceRevision: 'r2');
 
     expect(
-      readerChapterWithFreshPageAuthority(previous, refreshed, 1),
+      readerChapterWithFreshPageAuthorities(previous, refreshed, 1),
       isNull,
     );
   });

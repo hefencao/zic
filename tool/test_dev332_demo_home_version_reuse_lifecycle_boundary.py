@@ -25,7 +25,7 @@ for marker, label in (
     ("session: _librarySession,", "session generation authority"),
     ("loadRemoteEntrySnapshot:", "fresh metadata capability"),
     ("verifiedPageReuseIdentity:", "verified page identity capability"),
-    ("requiresSourceLocatorRefresh: chapterRequiresSourceLocatorRefresh,", "shared locator-validity capability"),
+    ("requiresSourceLocatorRefresh: (chapter) =>", "shared locator-validity capability"),
     ("scheduleMetadataTask: ({", "composition-owned metadata scheduler injection"),
     ("cancelQueuedMetadataTask: (key) =>", "queued metadata task cancellation injection"),
     ("cancelMetadataTask: (key) =>", "active metadata task cancellation injection"),

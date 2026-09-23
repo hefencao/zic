@@ -157,6 +157,16 @@ class MihonHostAbiTest {
     }
 
     @Test
+    fun resourceAuthorityRevisionIsBoundToExactPluginPayload() {
+        val lower = "ab".repeat(32)
+        val upper = lower.uppercase()
+        assertEquals(
+            "mihon-runtime-transform-v3:$lower",
+            mihonResourceAuthorityRevision(upper),
+        )
+    }
+
+    @Test
     fun resourceReplayRequiresStableChapterAndPageCoordinates() {
         assertTrue(
             mihonResourceHasReplayCoordinates(
@@ -175,6 +185,73 @@ class MihonHostAbiTest {
                 JSONObject().put("retryPageIndex", 3),
             ),
         )
+    }
+
+    @Test
+    fun replayLoadConsumesFreshRequestAuthorityInsteadOfOpaqueStaleRequest() {
+        val key = "mihon:fixture\u0000mihon:resource:stale"
+        val stale = JSONObject()
+            .put("url", "https://old.invalid/page")
+            .put("method", "GET")
+        val fresh = JSONObject()
+            .put("url", "https://fresh.invalid/page")
+            .put("method", "POST")
+            .put(
+                "headers",
+                JSONObject()
+                    .put("X-Generation", "fresh")
+                    .put("Content-Type", "application/octet-stream"),
+            )
+            .put("bodyBase64", "BwgJ")
+        val pending = mutableMapOf(key to fresh)
+
+        val selected = selectMihonResourceForLoad(
+            key,
+            pending,
+            emptyMap(),
+        ) { stale }
+        assertEquals("BwgJ", selected.getString("bodyBase64"))
+        val requestWithoutBody = JSONObject(selected.toString()).apply {
+            remove("bodyBase64")
+        }
+        val request = mihonSerializedRequestFromResource(
+            requestWithoutBody,
+            mapOf("X-Fallback" to "stale"),
+        )
+
+        assertEquals("https://fresh.invalid/page", request.url)
+        assertEquals("POST", request.method)
+        assertEquals("fresh", request.headers["X-Generation"])
+        assertFalse(request.headers.containsKey("X-Fallback"))
+        assertEquals(null, request.body)
+        assertFalse(pending.containsKey(key))
+        assertEquals(
+            "https://old.invalid/page",
+            selectMihonResourceForLoad(key, pending, emptyMap()) { stale }
+                .getString("url"),
+        )
+    }
+
+    @Test
+    fun freshGenerationRequestAuthorityPersistsForResolveAndRuntimeLoad() {
+        val key = "mihon:fixture\u0000mihon:resource:stale"
+        val stale = JSONObject().put("url", "https://old.invalid/page")
+        val fresh = JSONObject()
+            .put("url", "https://fresh.invalid/page?token=2")
+            .put("method", "GET")
+            .put("headers", JSONObject().put("X-Generation", "2"))
+        val retained = mapOf(key to fresh)
+
+        repeat(2) {
+            val selected = selectMihonResourceForLoad(
+                key,
+                mutableMapOf(),
+                retained,
+            ) { stale }
+            val request = mihonSerializedRequestFromResource(selected, emptyMap())
+            assertEquals("https://fresh.invalid/page?token=2", request.url)
+            assertEquals("2", request.headers["X-Generation"])
+        }
     }
 
     @Test

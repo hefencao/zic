@@ -595,8 +595,8 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   设备 Mihon 扫描可与插件激活并行。漫画源页底部控件只投影已经产生活跃 source session 的插件；
   已安装但未启用/激活的 Mihon 或 Venera 只保留在管理页，不得作为 disabled 来源控件出现。typed denial/runtime code判定不可恢复时才回滚新记录并删除新 payload，
   可恢复失败保留记录和 payload并由管理页或仍有旧 session 的控件触发同一 pluginId 重试，replacement 失败继续保留旧 session；从漫画源管理页返回不得等待后台库重载。
-  插件管理页进入时按每个已安装插件的受信仓库来源执行 `ExternalPluginController.checkUpdates`（版本号优先比较，无版本号时版本串不同即可更新；
-  单个仓库不可达不掩盖其它仓库结果），发现更新以对话框提醒一次并在已安装行保留徽标，仓库行对已安装且可更新的条目显示"更新"。已安装 Venera 插件支持直接编辑 JS：
+  插件管理页进入时由 `ExternalPluginController.checkUpdates` 按安装时持久化的**精确仓库索引**检查更新（版本号优先比较，无版本号时版本串不同即可更新；
+  仓库索引与 executable-plugin gate 使用的 HTTPS trust origin 是两个独立事实，禁止把只有 scheme/host 的 trust origin 当 index 请求）。旧 manifest 未保存精确 index 时，仅对能够由 pinned payload URL 无歧义证明属于历史默认 Keiyoushi/Venera 仓库的记录迁移到当前默认 index；设备导入和无法证明来源的记录不猜测。单个仓库不可达不掩盖其它仓库结果，发现更新以对话框提醒一次并在已安装行保留徽标，仓库行对已安装且可更新的条目显示"更新"。已安装 Venera 插件支持直接编辑 JS：
   `readVeneraJavaScript/saveVeneraJavaScript` 把编辑内容写入新 revision payload、
   重新经过受限元数据检查并以新摘要固定后走与安装相同的 approveAndActivate 事务替换会话，检查或激活失败时旧 payload 保持权威。
   来源管理页是单一未分类的可拖动排序列表（`_buildManagementEntries/_managementList`）：
@@ -629,12 +629,13 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   `PipelinePageStream` may project a terminal typed `Failure`,
   and `LocalImagePlayer` may forward that opaque error through its existing presentation-recovery seam,
   but Venera/source-generation interpretation stays in App composition.
-  App may refresh the chapter/page authority only for a terminal semantic source failure with no source-owned replacement plan;
-  automatic refresh is limited to the currently visible raw page and once per logical page in that Reader route.
-  The old Reader remains mounted while the fresh chapter is prepared.
-  Replacement occurs only when the failed page can be matched safely and its request/presentation authority actually changes;
-  an explicit page id disappearing is fail-closed rather than index-substituted.
-  A no-change refresh returns to the existing exact-page recovery path instead of claiming success or creating another retry owner.
+  App may refresh chapter/page authority only for a terminal semantic source failure with no source-owned replacement plan;
+  only the currently visible raw page may automatically trigger that refresh, once per logical page in the Reader route.
+  The old Reader remains mounted while the fresh chapter is prepared. The resulting source generation is nevertheless chapter-scoped:
+  after the failed page proves a real carrier change, every old logical page must map one-to-one onto the same fresh list and the matched carriers
+  are rebound atomically while old page structure/order is preserved. Persisting only the failed page would mix two carrier generations under one
+  `sourceRevision` and leave sibling Pipeline tasks pinned to deterministic terminal failures. Missing/duplicate explicit page identity,
+  chapter/revision drift, or a no-change failed carrier is fail-closed instead of becoming a retry or content-migration owner.
   The post-first-frame metadata/version task may obtain a fresh source chapter snapshot for version/reuse analysis,
   but it is observation-only for `pages[]`:it must not persist or replace Reader transport carriers.
   Whole-chapter carrier mutation remains owned by explicit source refresh / legacy-locator migration.
@@ -896,17 +897,19 @@ inactive/paused/detached 继续主动入队最终 checkpoint，进程被系统�
   不得刷新未触达页，也不得让同一 locator 在一次 Retry 内反复 fresh。
   fresh generation 必须同时失效 host request-plan 与 Venera retained config/resolution，再重新执行初始 `onImageLoad`。
   Mihon source-owned resource replay 使用同一 transport owner、但采用更窄的一次性 contract：
-  只有 `mihon-runtime-transform-v2` locator 携带稳定 `chapterId + pageIndex` replay 坐标，且 runtime-owned `loadResource`
+  当前 `mihon-runtime-transform-v3:<payload-sha256>` locator 携带稳定 `chapterId + pageIndex` replay 坐标，且 runtime-owned `loadResource`
   发生**非网络、非 verification** source failure 时，driver 才发布 `sourceResourcePlanReplayEligible`，并允许一次 `retryResource`
   重新读取 chapter/page list。普通 SSL/EOF 不获得该资格，继续由 DownloadJob 的既有 network retry owner处理。
   若一次 replay 无 replacement plan、replay 本身发生 source failure，或 replacement 再次出现同类 replay-eligible failure，
   transport 不再递归 replay，而发布 `sourceResourcePlanReplayUnavailable`，再交给既有 terminal source-generation refresh handoff：
   Reader 当前页、章节下载命令、whole-comic queue 只在各自 owner 内各做一次整章刷新；不得在 Reader/Pipeline 增加 Mihon-specific retry loop。
   显式新 generation 的 `refreshResource` 与上述 same-attempt replay 分离：adapter 发送 `freshGeneration=true`，Mihon runtime
-  重新读取 chapter/page list，并按 `sourceId + locator` 在当前 runtime generation 内有界保留 fresh initial request plan，供后续 resolve/re-resolve 使用；
+  重新读取 chapter/page list，并按 `sourceId + locator` 在当前 runtime generation 内有界保留 fresh **source request authority**，供后续 resolve/re-resolve 与 runtime-owned `loadResource` 共用。
+  same-attempt replay 也必须把 fresh page/request authority 一次性传到紧随其后的 runtime load；不能只把 replacement `requestPlan` 返回给 Dart，随后又从原 opaque locator 重建旧请求。
+  runtime load 仍由 source 自身 client 执行，method/headers/body/cookie/interceptor 语义不得降级到通用 HTTP client；ordinary replay authority 消费一次即清，fresh generation authority 则保留到 generation 失效。
   source setting mutation 推进 transport generation 时，driver 必须同步失效该 source 的 retained fresh/replay state。
-  旧 `mihon-runtime-transform-v1` 持久 locator 在 Reader/下载入口必须先强制 source refresh 到 v2，
-  不能继续把旧 opaque request plan 当 durable current authority。
+  旧 v1/v2 locator 在 Reader/下载入口必须先强制 source refresh 到 v3；v3 transport revision 绑定已验证 extension payload SHA-256，
+  当前安装 payload 与 persisted revision 不一致时同样必须 refresh，不能让插件升级前的 opaque request plan 继续冒充 durable current authority。
   Download Manager 自动缓存消费 durable management projection，而非把 exact `CacheRec` 当唯一存在性 authority。
   compact Home projection 只提供 chapter identity/pageCount，
   management cache/snapshot 不得把 `zic-home-snapshot-page:*` placeholder 展开成 `DownloadId`；

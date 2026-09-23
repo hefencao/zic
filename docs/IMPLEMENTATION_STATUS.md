@@ -29,13 +29,16 @@ App build：0.31.0+328
 - 真实肉漫屋扩展 APK 的 default-client guard 已核对：要求上述三类存在且 Brotli 不存在；对应 contract test 已进入 `tool/check.sh`。
 - 同一扩展 bytecode 的 Injekt 请求已核对为 `Application` + `Json`；host 现按 Mihon `AppBindings` 注入
   `Json { ignoreUnknownKeys=true; explicitNulls=false }`，并把 `Json` 纳入 common-runtime 完整性预检。
-- Mihon runtime-transform locator 已升级 v2：稳定 chapter/page replay 坐标只用于一次 source-plan replay。
-  真实 trace 中 v1 locator 的 runtime HTTP 404/source transform failure 会绕过 generic semantic recovery；
+- Mihon runtime-transform locator 已升级到 payload-bound v3：`mihon-runtime-transform-v3:<payload-sha256>` 同时携带稳定 chapter/page replay 坐标与 producer payload authority。
+  v1/v2 均视为 legacy；当前安装 payload 与 persisted v3 revision 不一致也会在 Reader/下载入口先强制 refresh。真实 trace 中旧 locator 的 runtime HTTP 404/source transform failure 会绕过 generic semantic recovery；
   当前修复将这类**非网络** source-owned failure typed 为 plan-replay eligible，而 SSL/EOF 仍由 DownloadJob 网络重试。
   无 replacement、replay source failure 或 replacement 再次同类失败统一收敛为 terminal source-generation handoff；
   Reader 当前页、章节下载命令和 whole-comic queue 只在各自既有 owner 内做一次整章 refresh，网络/verification/cancel 不被误分类。
-- 显式 Mihon resource generation refresh 使用 `freshGeneration=true` 重取 page list，并由 runtime 按 source+locator 有界保留 fresh initial plan；
-  source setting mutation 会同步失效该 source 的 retained fresh/replay state；v1 持久 locator 由 Reader/下载入口强制刷新后再消费。
+- 显式 Mihon resource generation refresh 使用 `freshGeneration=true` 重取 page list；runtime 现在按 source+locator 保留 fresh source request authority，而不只是给 Dart 的 plan 投影。
+  ordinary replay 的 replacement authority 只供紧随其后的 runtime load 一次性消费，fresh generation authority 则供 resolve/re-resolve/load 共用；实际取图继续走 source client，完整 method/headers/body/interceptor/cookie 不降级。
+  source setting mutation 会同步失效该 source 的 retained fresh/replay state；旧/跨 payload 持久 locator 由 Reader/下载入口强制刷新后再消费。
+  terminal Reader refresh 仍只由当前失败页触发，但 fresh chapter 的 matched page carriers 现在按稳定 page identity 原子换代并保留旧 page order，
+  不再把失败页单独 splice 后制造同一 `sourceRevision` 内的新旧 generation 混合。
 
 ### 渲染与几何 (Pipeline & Reader View)
 - 页面几何：ValueListenable 提供 pageDimensions 驱动的 ratio live feed 投影。

@@ -50,10 +50,10 @@ bool readerPageAuthorityChanged(
       previousPage.animatedHint != refreshedPage.animatedHint;
 }
 
-ImportedChapterRecord? readerChapterWithFreshPageAuthority(
+ImportedChapterRecord? readerChapterWithFreshPageAuthorities(
   ImportedChapterRecord previous,
   ImportedChapterRecord refreshed,
-  int previousIndex,
+  int failedPageIndex,
 ) {
   if (previous.sourceId != refreshed.sourceId ||
       previous.comicId != refreshed.comicId ||
@@ -61,18 +61,37 @@ ImportedChapterRecord? readerChapterWithFreshPageAuthority(
       previous.sourceRevision != refreshed.sourceRevision) {
     return null;
   }
-  final refreshedIndex = readerFreshPageIndexForRecovery(
+  final failedFreshIndex = readerFreshPageIndexForRecovery(
     previous,
     refreshed,
-    previousIndex,
+    failedPageIndex,
   );
-  if (refreshedIndex == null ||
-      !readerPageAuthorityChanged(previous, refreshed, previousIndex)) {
+  if (failedFreshIndex == null ||
+      !readerPageAuthorityChanged(previous, refreshed, failedPageIndex)) {
     return null;
   }
-  final pages = previous.pages.toList(growable: false);
-  pages[previousIndex] = refreshed.pages[refreshedIndex];
-  return previous.copyWith(pages: pages);
+
+  // A fresh source generation is chapter-scoped even though only the current
+  // page is allowed to trigger it. Persisting just that page mixes carriers
+  // from two generations under one sourceRevision; sibling pages can then hit
+  // terminal failures that the shared Pipeline correctly remembers. Rebind
+  // every old logical page to its matching carrier from this one fresh list,
+  // while preserving the old structural page set/order. Any ambiguous or
+  // missing explicit page identity fails the whole carrier refresh closed.
+  final pages = <ImportedPageRecord>[];
+  final usedFreshIndexes = <int>{};
+  for (var index = 0; index < previous.pages.length; index++) {
+    final freshIndex = readerFreshPageIndexForRecovery(
+      previous,
+      refreshed,
+      index,
+    );
+    if (freshIndex == null || !usedFreshIndexes.add(freshIndex)) return null;
+    pages.add(refreshed.pages[freshIndex]);
+  }
+  return previous.copyWith(
+    pages: List<ImportedPageRecord>.unmodifiable(pages),
+  );
 }
 
 final class _ReaderComicVersionNoticeGate extends StatefulWidget {
@@ -375,7 +394,7 @@ extension _DemoHomeReaderRouteComposition on _DemoHomeState {
               'Venera 章节刷新后仍包含已失效的运行时资源定位符',
             );
           }
-          final replacementChapter = readerChapterWithFreshPageAuthority(
+          final replacementChapter = readerChapterWithFreshPageAuthorities(
             previous.entry.chapter,
             refreshedSnapshot.chapter,
             rawPageIndex,

@@ -65,7 +65,8 @@ def main() -> None:
     )
     require(
         "apps/app/lib/demo_home.dart",
-        "requiresSourceLocatorRefresh: chapterRequiresSourceLocatorRefresh,",
+        "requiresSourceLocatorRefresh: (chapter) =>",
+        "currentMihonResourceAuthorityRevision:",
     )
     require(
         "apps/app/lib/home_reader_composition.dart",
@@ -83,7 +84,8 @@ def main() -> None:
     )
     require(
         "apps/app/lib/demo_home_source_compat.dart",
-        "bool chapterRequiresSourceLocatorRefresh(ImportedChapterRecord chapter)",
+        "bool chapterRequiresSourceLocatorRefresh(",
+        "ImportedChapterRecord chapter,",
         "_hasLegacyVeneraLocators(chapter)",
         "chapterHasHomeProjectionSnapshotPagePlaceholders(chapter)",
     )

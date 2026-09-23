@@ -176,16 +176,16 @@
   presentation/Reader 层 MUST 保持 source-neutral，只能上传 typed/opaque failure 到 App composition，
   MUST NOT 直接调用 Venera `loadEp`、source runtime 或建立第二 retry owner。
   只有 source-owned semantic recovery 已明确 unavailable 且 accepted replacement plan 为0时，
-  App MAY 对当前可见页触发一次 fresh chapter/page authority refresh；旧 Reader 在 refresh 期间 MUST 保持挂载。
-  若显式 page identity 无法在 fresh list 中找到，MUST fail closed；
-  只有匹配页的 URI 或其它 session input authority 真变化时才可替换活跃 Reader。
-  fresh list 无变化 MUST 回落 existing exact-page retry，而不是把 metadata refresh 视为媒体恢复成功。
+  App MAY 由当前可见页触发一次 fresh chapter/page authority refresh；旧 Reader 在 refresh 期间 MUST 保持挂载。
+  触发资格仍是单页、每 route 有界，但 source generation 是 chapter-scoped carrier authority：fresh list 必须按旧 logical page identity
+  对全部既有页做一一匹配，并在同一 `sourceRevision` 下原子替换这批 transport carriers；不得只 splice 失败页后把两个 generation 的 locator
+  持久化在同一 chapter。任一旧显式 page identity 无法在 fresh list 中找到、映射重复、sourceRevision/identity 漂移时 MUST fail closed；
+  fresh list 的失败页 authority 无变化 MUST 回落 existing exact-page retry，而不是把 metadata refresh 视为媒体恢复成功。
+  carrier batch MUST 保留旧 chapter 的结构/page order，fresh list 新增但旧 revision 未声明的页不得借媒体恢复偷偷进入 chapter；
+  因此该操作仍是同一 logical chapter 的 carrier-generation rebind，而不是整章内容迁移。
   Reader 首帧后的 metadata/version refresh MAY 获取 fresh source chapter snapshot 用于版本/复用判断，
   但 MUST NOT 因该后台观察替换或持久化 `pages[]` transport carrier；
-  整章 carrier 更新只属于显式 source refresh / legacy-locator migration 等完整 chapter-authority 命令。
-  stale-carrier recovery 即使 source contract 只能整章 `loadEp/loadChapter`，
-  也 MUST 只把匹配失败 pageId 的 fresh page authority splice 回旧 chapter，保留其它 exact locator；
-  sourceRevision/identity 漂移必须 fail closed，不能把单页媒体恢复升级成整章迁移。
+  只有上述 terminal source-generation recovery、显式 source refresh / legacy-locator migration 等完整 chapter-authority 命令可改 carrier。
   `PipelineReaderSession` retention 的 coarse key 只能筛候选；
   恢复 retained session 前 MUST 再比较完整 `ChapterManifest` session input，carrier/metadata 任一变化都必须创建 fresh session。
   - **Venera source-read transient recovery**：
@@ -502,9 +502,11 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   MUST 发布 terminal `sourceResourcePlanReplayUnavailable`，由已有 source-generation refresh handoff处理；网络/verification/cancel failure MUST 原样保留。
   Reader 当前页、章节下载命令与 whole-comic queue MAY 在各自既有 owner 内各做一次整章 refresh，但 MUST NOT建立新的 Mihon retry loop。
   显式 `refreshResource` MUST 代表新的 logical resource generation：Mihon runtime MAY 通过 `freshGeneration=true` 重取 page list，
-  并在当前 runtime generation 内按 source+locator 有界保留 fresh initial request plan；后续 resolve MUST NOT退回旧 opaque request plan。
-  当 source setting/state mutation 推进 resource transport generation 时，对应 source 的 retained fresh/replay state MUST 同步失效。
-  旧 `mihon-runtime-transform-v1` locator MUST 在 Reader/下载消费前强制 source refresh 到 v2；Reader/Pipeline MUST NOT持有 Mihon replay state。
+  并在当前 runtime generation 内按 source+locator 有界保留 fresh source request authority；后续 resolve 与 runtime-owned load MUST 共用该 authority，MUST NOT退回旧 opaque request plan。
+  same-attempt replay 返回 replacement request 后，紧随其后的 runtime load MUST 执行同一 fresh authority；完整 method/headers/body 与 source client/interceptor/cookie 语义 MUST 保留，MUST NOT降级成通用 HTTP 旁路。
+  ordinary replay authority MUST one-shot 消费；fresh-generation authority MAY 在本 generation 内复用。当 source setting/state mutation 推进 resource transport generation 时，对应 source 的 retained fresh/replay state MUST 同步失效。
+  旧 v1/v2 locator MUST 在 Reader/下载消费前强制 source refresh 到 v3；v3 transport revision MUST 绑定已验证 extension payload SHA-256。
+  App MUST 以 durable installed-plugin payload authority 对比 persisted Mihon revision；payload 更新后旧 v3 carrier MUST refresh，Reader/Pipeline MUST NOT持有 Mihon replay state。
 - 新Reader消费已有committed/promoted physical `DownloadSession`时，
   Reader-local native ingress MUST 以异步 synchronized projection join恢复；
   bounded replay queue MUST按已有numeric priority保护尚未取得source的更高rank demanded entry：
@@ -1522,8 +1524,8 @@ external presentation 的“已启动”状态 MUST以非空 `externalPresentati
 - 插件管理 MUST 为每个已安装插件提供独立下载目录设置（默认跟随默认下载目录）：
   该设置作用于插件暴露的全部外部 source 身份（`venera:<key>` / `mihon:<id>`），只决定这些 source 新下载 artifact 的写入位置；
   既有文件 MUST 保留在原位置并通过索引绝对路径继续可读，per-source 切换不要求迁移。目录选择 MUST 复用默认下载目录的旧/新文件解析规则。
-- 插件管理 MUST 提供更新提醒：进入管理页时按每个已安装插件的受信仓库来源检查更新（版本号优先、无版本号时版本串不同即视为可更新），发现更新时以对话框提醒一次并在已安装行保持可见徽标；
-  单个仓库不可达 MUST NOT 掩盖其它仓库的更新结果。设备导入且无真实仓库来源的 Mihon 扩展 MAY 跳过检查。
+- 插件管理 MUST 提供更新提醒：进入管理页时按每个已安装插件持久化的精确仓库索引检查更新（版本号优先、无版本号时版本串不同即视为可更新），发现更新时以对话框提醒一次并在已安装行保持可见徽标；
+  更新索引 MUST 与 executable-plugin gate 的仓库 trust origin 分开持久化，MUST NOT 把只有 scheme/host 的 trust origin 当作 index 请求。旧记录缺少索引时，仅当 pinned payload URL 能无歧义证明属于宿主历史默认仓库时 MAY 迁移到对应当前默认索引；否则 MUST NOT 猜测。单个仓库不可达 MUST NOT 掩盖其它仓库的更新结果。设备导入且无真实仓库来源的 Mihon 扩展 MAY 跳过检查。
 - 已安装 Venera 插件 MUST 支持直接编辑其 JavaScript payload：
   保存属于用户显式信任，编辑内容 MUST 重新经过受限元数据检查（source key 与能力可能变化）并以新摘要重新固定后替换运行会话；
   任何检查或激活失败 MUST 保持旧 payload 权威且不得使来源静默下线。

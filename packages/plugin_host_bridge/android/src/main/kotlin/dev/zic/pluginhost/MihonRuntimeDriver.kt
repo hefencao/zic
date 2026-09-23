@@ -69,6 +69,7 @@ internal class MihonRuntimeDriver private constructor(
     private val payloadContext: Context,
     private val runtimeRoot: File,
     private val maxResponseBytes: Int,
+    private val resourceAuthorityRevision: String,
     override val sources: List<Map<String, Any?>>,
 ) : NativeExternalPluginDriver {
     private val cancelled = ConcurrentHashMap.newKeySet<String>()
@@ -78,7 +79,8 @@ internal class MihonRuntimeDriver private constructor(
     private val rateLimiters = ConcurrentHashMap<String, SourceRequestLimiter>()
     private val runtimeTransformBySource = ConcurrentHashMap<String, Boolean>()
     private val replayEligibleResourceUris = ConcurrentHashMap.newKeySet<String>()
-    private val freshResourcePlans = ConcurrentHashMap<String, Map<String, Any?>>()
+    private val pendingReplayResources = ConcurrentHashMap<String, JSONObject>()
+    private val freshResourceAuthorities = ConcurrentHashMap<String, JSONObject>()
     private val closed = AtomicBoolean(false)
     private val sourcesClosed = AtomicBoolean(false)
     private val runtimeDeleted = AtomicBoolean(false)
@@ -123,7 +125,12 @@ internal class MihonRuntimeDriver private constructor(
                     "browse" -> browse(source, arguments, requestId)
                     "loadComic" -> loadComic(source, arguments.requireString("comicId"), requestId)
                     "loadChapter" -> loadChapter(source, arguments.requireString("chapterId"), requestId)
-                    "loadResource" -> loadResource(source, arguments.requireString("uri"), requestId)
+                    "loadResource" -> loadResource(
+                        sourceId,
+                        source,
+                        arguments.requireString("uri"),
+                        requestId,
+                    )
                     "resolveResource" -> resolveResource(
                         sourceId,
                         source,
@@ -679,7 +686,7 @@ internal class MihonRuntimeDriver private constructor(
         if (runtimeTransformBySource.computeIfAbsent(sourceId) {
                 mihonSourceRequiresRuntimeTransform(source)
             }) {
-            MIHON_RUNTIME_TRANSFORM_REVISION
+            resourceAuthorityRevision
         } else {
             null
         }
@@ -689,8 +696,8 @@ internal class MihonRuntimeDriver private constructor(
         source: Any,
         uri: String,
     ): Map<String, Any?> {
-        freshResourcePlans[mihonResourceReplayKey(sourceId, uri)]?.let {
-            return it
+        freshResourceAuthorities[mihonResourceReplayKey(sourceId, uri)]?.let { resource ->
+            return resolveResourcePlan(sourceId, source, resource)
         }
         val resource = if (uri.startsWith("mihon:resource:")) {
             decodeOpaque(uri, "resource")
@@ -778,7 +785,14 @@ internal class MihonRuntimeDriver private constructor(
         )
         val requestPlan = resolveResourcePlan(sourceId, source, freshResource)
         if (freshGeneration) {
-            rememberFreshResourcePlan(replayKey, requestPlan)
+            rememberMihonResource(freshResourceAuthorities, replayKey, freshResource)
+            pendingReplayResources.remove(replayKey)
+        } else {
+            // Same-attempt replay is not a new logical generation. Keep the
+            // fresh source-owned request authority only until loadResource
+            // consumes it once; otherwise a cancelled retry could silently
+            // replace the original generation on a later unrelated attempt.
+            rememberMihonResource(pendingReplayResources, replayKey, freshResource)
         }
         return mapOf(
             "available" to true,
@@ -786,14 +800,15 @@ internal class MihonRuntimeDriver private constructor(
         )
     }
 
-    private fun rememberFreshResourcePlan(
+    private fun rememberMihonResource(
+        resources: ConcurrentHashMap<String, JSONObject>,
         replayKey: String,
-        requestPlan: Map<String, Any?>,
+        resource: JSONObject,
     ) {
-        freshResourcePlans[replayKey] = requestPlan
-        while (freshResourcePlans.size > MAX_FRESH_MIHON_RESOURCE_PLANS) {
-            val stale = freshResourcePlans.keys.firstOrNull { it != replayKey } ?: break
-            freshResourcePlans.remove(stale)
+        resources[replayKey] = resource
+        while (resources.size > MAX_FRESH_MIHON_RESOURCE_PLANS) {
+            val stale = resources.keys.firstOrNull { it != replayKey } ?: break
+            resources.remove(stale)
         }
     }
 
@@ -802,19 +817,34 @@ internal class MihonRuntimeDriver private constructor(
         replayEligibleResourceUris
             .filter { key -> key.startsWith(prefix) }
             .forEach(replayEligibleResourceUris::remove)
-        freshResourcePlans.keys
+        pendingReplayResources.keys
             .filter { key -> key.startsWith(prefix) }
-            .forEach(freshResourcePlans::remove)
+            .forEach(pendingReplayResources::remove)
+        freshResourceAuthorities.keys
+            .filter { key -> key.startsWith(prefix) }
+            .forEach(freshResourceAuthorities::remove)
     }
 
-    private fun loadResource(source: Any, uri: String, requestId: String): ByteArray {
-        val resource = if (uri.startsWith("mihon:resource:")) {
-            decodeOpaque(uri, "resource")
-        } else {
-            require(uri.startsWith("https://") || uri.startsWith("http://")) {
-                "Mihon resource URI must use a runtime token or HTTP(S)"
+    private fun loadResource(
+        sourceId: String,
+        source: Any,
+        uri: String,
+        requestId: String,
+    ): ByteArray {
+        val replayKey = mihonResourceReplayKey(sourceId, uri)
+        val resource = selectMihonResourceForLoad(
+            replayKey,
+            pendingReplayResources,
+            freshResourceAuthorities,
+        ) {
+            if (uri.startsWith("mihon:resource:")) {
+                decodeOpaque(uri, "resource")
+            } else {
+                require(uri.startsWith("https://") || uri.startsWith("http://")) {
+                    "Mihon resource URI must use a runtime token or HTTP(S)"
+                }
+                JSONObject().put("url", uri)
             }
-            JSONObject().put("url", uri)
         }
         val resolvedResource = if (resource.optBoolean("deferredPage")) {
             resolveDeferredMihonPageResource(source, resource)
@@ -1092,22 +1122,16 @@ internal class MihonRuntimeDriver private constructor(
     }
 
     private fun mihonRequestFromResource(source: Any, resource: JSONObject): Any {
-        val url = resource.getString("url")
-        val method = resource.optString("method", "GET")
-            .trim()
-            .uppercase(Locale.US)
-            .ifEmpty { "GET" }
-        val headers = resource.optJSONObject("headers").stringMap()
-            .ifEmpty { source.readValue("headers", "getHeaders").stringHeaders() }
-        val body = resource.optString("bodyBase64")
-            .takeIf(String::isNotBlank)
-            ?.let { Base64.decode(it, Base64.DEFAULT) }
+        val request = mihonSerializedRequestFromResource(
+            resource,
+            source.readValue("headers", "getHeaders").stringHeaders(),
+        )
         return buildMihonRequest(
             source.javaClass.classLoader,
-            url,
-            method,
-            headers,
-            body,
+            request.url,
+            request.method,
+            request.headers,
+            request.body,
         )
     }
 
@@ -1517,6 +1541,8 @@ internal class MihonRuntimeDriver private constructor(
                 // clears only its in-process handoff revisions and imports the
                 // latest same-site snapshot on the first real request.
                 AndroidCookieJar.resetBrowserSnapshotImports()
+                val resourceAuthorityRevision =
+                    mihonResourceAuthorityRevision(payloadSha256)
                 val descriptors = discovered.map { (id, source) ->
                     val baseUrl = source.readString("baseUrl", "getBaseUrl")
                         ?: runCatching { source.invokeOptional("getHomeUrl") as? String }.getOrNull()
@@ -1546,6 +1572,7 @@ internal class MihonRuntimeDriver private constructor(
                     payloadContext = extensionContext,
                     runtimeRoot = runtimeRoot,
                     maxResponseBytes = maxResponseBytes,
+                    resourceAuthorityRevision = resourceAuthorityRevision,
                     sources = descriptors,
                 )
             } catch (error: Throwable) {
@@ -1577,7 +1604,17 @@ private const val MIHON_BROWSER_USER_AGENT =
         "(KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
 private const val MAX_CACHED_MIHON_CHAPTERS = 4096
 private const val MAX_FRESH_MIHON_RESOURCE_PLANS = 256
-private const val MIHON_RUNTIME_TRANSFORM_REVISION = "mihon-runtime-transform-v2"
+private const val MIHON_RUNTIME_TRANSFORM_SCHEMA = "mihon-runtime-transform-v3"
+private const val MIHON_RUNTIME_TRANSFORM_REVISION_PREFIX =
+    "$MIHON_RUNTIME_TRANSFORM_SCHEMA:"
+
+internal fun mihonResourceAuthorityRevision(payloadSha256: String): String {
+    val normalized = payloadSha256.trim().lowercase(Locale.US)
+    require(normalized.matches(Regex("[0-9a-f]{64}"))) {
+        "Mihon payload digest must be a SHA-256 hex string"
+    }
+    return "$MIHON_RUNTIME_TRANSFORM_REVISION_PREFIX$normalized"
+}
 
 internal fun mihonChapterMatches(chapter: Any, encoded: JSONObject): Boolean {
     val encodedUrl = encoded.optString("url").trim()
@@ -2249,6 +2286,45 @@ internal fun normalizedMihonSourceName(
     return pluginName.takeIf { it.isNotEmpty() } ?: "Mihon"
 }
 
+internal data class MihonSerializedResourceRequest(
+    val url: String,
+    val method: String,
+    val headers: Map<String, String>,
+    val body: ByteArray?,
+)
+
+internal fun selectMihonResourceForLoad(
+    replayKey: String,
+    pendingReplayResources: MutableMap<String, JSONObject>,
+    freshResourceAuthorities: Map<String, JSONObject>,
+    fallback: () -> JSONObject,
+): JSONObject =
+    pendingReplayResources.remove(replayKey)
+        ?: freshResourceAuthorities[replayKey]
+        ?: fallback()
+
+internal fun mihonSerializedRequestFromResource(
+    resource: JSONObject,
+    fallbackHeaders: Map<String, String>,
+): MihonSerializedResourceRequest {
+    val url = resource.getString("url")
+    val method = resource.optString("method", "GET")
+        .trim()
+        .uppercase(Locale.US)
+        .ifEmpty { "GET" }
+    val headers = resource.optJSONObject("headers").stringMap()
+        .ifEmpty { fallbackHeaders }
+    val body = resource.optString("bodyBase64")
+        .takeIf(String::isNotBlank)
+        ?.let { Base64.decode(it, Base64.DEFAULT) }
+    return MihonSerializedResourceRequest(
+        url = url,
+        method = method,
+        headers = headers,
+        body = body,
+    )
+}
+
 private fun mihonResourceReplayKey(sourceId: String, uri: String): String =
     "$sourceId\u0000$uri"
 
@@ -2771,7 +2847,7 @@ internal fun mihonRuntimeArtifactsRoot(
     abi: String,
 ): File = File(
     codeCacheDir,
-    "mihon/artifacts/${safePath(MIHON_RUNTIME_TRANSFORM_REVISION)}/" +
+    "mihon/artifacts/${safePath(MIHON_RUNTIME_TRANSFORM_SCHEMA)}/" +
         "${safePath(pluginId)}/${safePath(version)}/" +
         "${safePath(payloadSha256)}/${safePath(mihonAbiAssetVersion(extensionLib))}/" +
         safePath(abi),

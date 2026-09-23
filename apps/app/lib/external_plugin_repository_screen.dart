@@ -52,9 +52,8 @@ final class _ExternalPluginRepositoryScreenState
   late final TextEditingController _url = TextEditingController(
     text: switch (widget.format) {
       ExternalComicPluginFormat.mihonExtension =>
-        'https://github.com/keiyoushi/extensions/raw/repo/index.pb',
-      ExternalComicPluginFormat.veneraJavaScript =>
-        'https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/index.json',
+        defaultMihonExtensionRepository,
+      ExternalComicPluginFormat.veneraJavaScript => defaultVeneraSourceRepository,
     },
   );
   List<ExternalComicPluginCatalogEntry> _entries =
@@ -271,7 +270,8 @@ final class _ExternalPluginRepositoryScreenState
   Future<void> _updateFromInstalled(InstalledExternalPlugin installed) async {
     final entry = _updates[installed.plugin.pluginId];
     if (entry == null) return;
-    final repository = Uri.tryParse(installed.repositoryOrigin);
+    final repository = externalPluginUpdateRepositoryIndex(installed) ??
+        Uri.tryParse(installed.repositoryOrigin);
     if (repository == null) return;
     await _install(entry, repository: repository);
   }

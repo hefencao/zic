@@ -224,6 +224,122 @@ class PreviewSource extends ComicSource {
     expect(await payload.exists(), isTrue);
   });
 
+  test(
+    'legacy Keiyoushi install discovers updates from current index',
+    () async {
+      final storage = await Directory.systemTemp.createTemp(
+        'zic-external-plugin-legacy-keiyoushi-update-',
+      );
+      addTearDown(() => storage.delete(recursive: true));
+      final pluginRoot = Directory('${storage.path}/external_plugins');
+      await pluginRoot.create(recursive: true);
+      final payload = await File(
+        '${pluginRoot.path}/wnacg.apk',
+      ).writeAsBytes(const <int>[0]);
+      await File('${pluginRoot.path}/installed.json').writeAsString(
+        jsonEncode(<String, Object?>{
+          'version': 1,
+          'plugins': <Object?>[
+            <String, Object?>{
+              'plugin': <String, Object?>{
+                'format': 'mihonExtension',
+                'pluginId': 'mihon:eu.kanade.tachiyomi.extension.zh.wnacg',
+                'name': 'WNACG',
+                'version': '1.4.23',
+                'entrypoint':
+                    'https://cdn.jsdelivr.net/gh/keiyoushi/extensions@repo/'
+                    'apk/tachiyomi-zh.wnacg-v1.4.23.apk',
+                'language': 'zh',
+                'versionCode': 23,
+                'adult': true,
+                'requiresRuntimeDiscovery': false,
+                'sources': <Object?>[
+                  <String, Object?>{
+                    'sourceId': 'mihon:6551136894818591762',
+                    'externalId': '6551136894818591762',
+                    'name': '紳士漫畫',
+                    'language': 'zh',
+                    'baseUri': 'https://www.wn07.cfd',
+                  },
+                ],
+              },
+              'payloadPath': payload.path,
+              'payloadSha256': List<String>.filled(64, '0').join(),
+              // Manifest v1 intentionally only has the trust origin.
+              'repositoryOrigin': 'https://github.com',
+              'packageName': 'eu.kanade.tachiyomi.extension.zh.wnacg',
+              'versionCode': 23,
+              'extensionLib': '1.4',
+              'entryClasses': <Object?>[
+                'eu.kanade.tachiyomi.extension.zh.wnacg.ExtensionGenerated',
+              ],
+              'sourceIds': <Object?>['mihon:6551136894818591762'],
+            },
+          ],
+        }),
+      );
+      final controller = await ExternalPluginController.openDeferred(
+        storage.path,
+        discoverDeviceMihonExtensions: false,
+        deferRuntimeActivation: true,
+      );
+      addTearDown(controller.close);
+
+      expect(
+        externalPluginUpdateRepositoryIndex(controller.installed.single),
+        Uri.parse(defaultMihonExtensionRepository),
+      );
+
+      expect(
+        controller.resourceAuthorityRevisionForSource(
+          'mihon:6551136894818591762',
+        ),
+        'mihon-runtime-transform-v3:${List<String>.filled(64, '0').join()}',
+      );
+
+      final repository = utf8.encode('''
+{
+  "name": "Keiyoushi",
+  "extensionList": {
+    "extensions": [
+      {
+        "name": "WNACG",
+        "packageName": "eu.kanade.tachiyomi.extension.zh.wnacg",
+        "resources": {
+          "apkUrl": "https://github.com/keiyoushi/extensions/releases/download/current/tachiyomi-zh.wnacg-v1.6.0.apk"
+        },
+        "extensionLib": "1.6",
+        "versionCode": "106000",
+        "versionName": "1.6.0",
+        "contentWarning": "CONTENT_WARNING_NSFW",
+        "sources": [
+          {
+            "id": "6551136894818591762",
+            "name": "紳士漫畫",
+            "language": "zh",
+            "homeUrl": "https://www.wn07.cfd"
+          }
+        ]
+      }
+    ]
+  }
+}
+''');
+      final updates = await HttpOverrides.runZoned(
+        () => controller.checkUpdates(
+          format: ExternalComicPluginFormat.mihonExtension,
+        ),
+        createHttpClient: (_) => _StaticHttpClient(repository),
+      );
+
+      final update = updates['mihon:eu.kanade.tachiyomi.extension.zh.wnacg'];
+      expect(update, isNotNull);
+      expect(update!.version, '1.6.0');
+      expect(update.versionCode, 106000);
+    },
+  );
+
+
   test('controller close cancels an active repository request', () async {
     final storage = await Directory.systemTemp.createTemp(
       'zic-external-plugin-network-close-',

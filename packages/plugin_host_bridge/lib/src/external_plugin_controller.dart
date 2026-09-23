@@ -34,12 +34,30 @@ final class _PendingPluginPayload {
   final Object claim;
 }
 
+const defaultMihonExtensionRepository =
+    'https://github.com/keiyoushi/extensions/raw/repo/index.pb';
+const defaultVeneraSourceRepository =
+    'https://cdn.jsdelivr.net/gh/venera-app/venera-configs@main/index.json';
+
+String mihonResourceAuthorityRevisionForPayloadSha256(String payloadSha256) {
+  final normalized = payloadSha256.trim().toLowerCase();
+  if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(normalized)) {
+    throw ArgumentError.value(
+      payloadSha256,
+      'payloadSha256',
+      'must be a SHA-256 hex string',
+    );
+  }
+  return 'mihon-runtime-transform-v3:$normalized';
+}
+
 final class InstalledExternalPlugin {
   const InstalledExternalPlugin({
     required this.plugin,
     required this.payloadPath,
     required this.payloadSha256,
     required this.repositoryOrigin,
+    this.repositoryIndex,
     this.packageName,
     this.signerSha256,
     this.versionCode,
@@ -52,7 +70,17 @@ final class InstalledExternalPlugin {
   final ExternalComicPluginCatalogEntry plugin;
   final String payloadPath;
   final String payloadSha256;
+
+  /// HTTPS trust origin used by the executable-plugin gate.
   final String repositoryOrigin;
+
+  /// Exact catalog endpoint used to discover updates for this installation.
+  ///
+  /// Older manifests only persisted [repositoryOrigin]. Those records are
+  /// upgraded lazily by [externalPluginUpdateRepositoryIndex] when their
+  /// payload URL proves they came from one of ZIC's historical default
+  /// repositories. Device-imported plugins intentionally keep this null.
+  final String? repositoryIndex;
   final String? packageName;
   final String? signerSha256;
   final int? versionCode;
@@ -271,6 +299,23 @@ final class ExternalPluginController {
   List<BrowsableComicSource> get activeSources => _registry.activeSources;
 
   String? ownerOfSource(String sourceId) => _registry.ownerOfSource(sourceId);
+
+  String? resourceAuthorityRevisionForSource(String sourceId) {
+    InstalledExternalPlugin? owner;
+    for (final record in _installed.values) {
+      if (record.plugin.format != ExternalComicPluginFormat.mihonExtension) {
+        continue;
+      }
+      final ownsSource = record.sourceIds.contains(sourceId) ||
+          record.plugin.sources.any((source) => source.sourceId == sourceId);
+      if (!ownsSource) continue;
+      if (owner != null) return null;
+      owner = record;
+    }
+    return owner == null
+        ? null
+        : mihonResourceAuthorityRevisionForPayloadSha256(owner.payloadSha256);
+  }
 
   Map<String, Object> get activationFailures =>
       Map<String, Object>.unmodifiable(_activationFailures);
@@ -602,6 +647,7 @@ final class ExternalPluginController {
       payloadPath: path,
       payloadSha256: preview.inspection.payloadSha256,
       repositoryOrigin: _origin(preview.repository),
+      repositoryIndex: _persistedRepositoryIndex(preview.repository),
       packageName: preview.inspection.packageName,
       signerSha256: preview.inspection.signerSha256,
       versionCode: preview.inspection.versionCode,
@@ -734,31 +780,28 @@ final class ExternalPluginController {
     }
   }
 
-  /// Checks each distinct trusted repository origin among installed plugins
+  /// Checks each distinct persisted repository index among installed plugins
   /// of [format] and returns newer catalog entries keyed by [pluginId].
   ///
-  /// One unreachable repository never hides updates from the others; its
-  /// plugins are simply absent from the result. Device-imported Mihon
-  /// extensions without a real repository origin are skipped.
+  /// Trust origin and update location are intentionally separate facts. Older
+  /// manifests stored only the former; official historical Keiyoushi/Venera
+  /// installs are mapped to their current default indexes from the pinned
+  /// payload URL. One unreachable repository never hides updates from the
+  /// others. Device-imported Mihon extensions remain skipped.
   Future<Map<String, ExternalComicPluginCatalogEntry>> checkUpdates({
     required ExternalComicPluginFormat format,
   }) async {
     _requireOpen();
-    final origins = <String, List<InstalledExternalPlugin>>{};
+    final repositories = <String, List<InstalledExternalPlugin>>{};
     for (final record in _installed.values) {
       if (record.plugin.format != format) continue;
-      final origin = Uri.tryParse(record.repositoryOrigin);
-      if (origin == null ||
-          origin.host == 'installed.mihon.invalid' ||
-          origin.host.isEmpty) {
-        continue;
-      }
-      origins.putIfAbsent(record.repositoryOrigin, () => []).add(record);
+      final index = externalPluginUpdateRepositoryIndex(record);
+      if (index == null) continue;
+      repositories.putIfAbsent(index.toString(), () => []).add(record);
     }
     final updates = <String, ExternalComicPluginCatalogEntry>{};
-    for (final entry in origins.entries) {
-      final index = Uri.tryParse(entry.key);
-      if (index == null) continue;
+    for (final entry in repositories.entries) {
+      final index = Uri.parse(entry.key);
       final List<ExternalComicPluginCatalogEntry> entries;
       try {
         entries = await loadRepository(format: format, index: index);
@@ -859,7 +902,8 @@ final class ExternalPluginController {
         pending.claim,
         plugin: record.plugin,
         inspection: inspection,
-        repository: Uri.parse(record.repositoryOrigin),
+        repository: externalPluginUpdateRepositoryIndex(record) ??
+            Uri.parse(record.repositoryOrigin),
       );
     } on Object catch (error) {
       if (identical(_pendingPayloads[pluginId], pending)) {
@@ -1478,6 +1522,64 @@ void _requireHttps(Uri uri) {
   }
 }
 
+/// Returns the exact repository endpoint that owns update discovery for
+/// [record], or null when no safe repository can be reconstructed.
+///
+/// Manifest v1 originally collapsed the repository URL to a trust origin. A
+/// root origin is not an index and must never be fetched as one. For records
+/// installed before `repositoryIndex` existed, only the two historical default
+/// ecosystems are recoverable without guessing: their pinned payload URL
+/// carries an unambiguous repository identity.
+Uri? externalPluginUpdateRepositoryIndex(InstalledExternalPlugin record) {
+  final persisted = record.repositoryIndex;
+  if (persisted != null) {
+    final index = Uri.tryParse(persisted);
+    if (_isAbsoluteHttps(index)) return index;
+    return null;
+  }
+
+  final legacy = Uri.tryParse(record.repositoryOrigin);
+  if (legacy != null &&
+      _isAbsoluteHttps(legacy) &&
+      legacy.pathSegments.isNotEmpty) {
+    return legacy;
+  }
+
+  final entrypoint = record.plugin.entrypoint;
+  switch (record.plugin.format) {
+    case ExternalComicPluginFormat.mihonExtension:
+      if (_isHistoricalKeiyoushiPayload(entrypoint)) {
+        return Uri.parse(defaultMihonExtensionRepository);
+      }
+      return null;
+    case ExternalComicPluginFormat.veneraJavaScript:
+      if (_isHistoricalVeneraPayload(entrypoint)) {
+        return Uri.parse(defaultVeneraSourceRepository);
+      }
+      return null;
+  }
+}
+
+String? _persistedRepositoryIndex(Uri repository) =>
+    repository.host == 'installed.mihon.invalid' ? null : repository.toString();
+
+bool _isAbsoluteHttps(Uri? uri) =>
+    uri != null && uri.scheme == 'https' && uri.host.isNotEmpty;
+
+bool _isHistoricalKeiyoushiPayload(Uri uri) {
+  if (uri.scheme != 'https') return false;
+  if (uri.host == 'cdn.jsdelivr.net') {
+    return uri.path.startsWith('/gh/keiyoushi/extensions@repo/apk/');
+  }
+  return uri.host == 'github.com' &&
+      uri.path.startsWith('/keiyoushi/extensions/releases/download/');
+}
+
+bool _isHistoricalVeneraPayload(Uri uri) =>
+    uri.scheme == 'https' &&
+    uri.host == 'cdn.jsdelivr.net' &&
+    uri.path.startsWith('/gh/venera-app/venera-configs@main/');
+
 /// Returns whether [candidate] should be offered to the user as an update
 /// over [installed].
 ///
@@ -1507,6 +1609,7 @@ Map<String, Object?> _recordToJson(InstalledExternalPlugin record) =>
       'payloadPath': record.payloadPath,
       'payloadSha256': record.payloadSha256,
       'repositoryOrigin': record.repositoryOrigin,
+      'repositoryIndex': record.repositoryIndex,
       'packageName': record.packageName,
       'signerSha256': record.signerSha256,
       'versionCode': record.versionCode,
@@ -1523,6 +1626,7 @@ InstalledExternalPlugin _recordFromJson(Object? raw) {
     payloadPath: _string(json, 'payloadPath'),
     payloadSha256: _string(json, 'payloadSha256'),
     repositoryOrigin: _string(json, 'repositoryOrigin'),
+    repositoryIndex: _optionalString(json['repositoryIndex']),
     packageName: _optionalString(json['packageName']),
     signerSha256: _optionalString(json['signerSha256']),
     versionCode: json['versionCode'] as int?,
@@ -1543,6 +1647,7 @@ InstalledExternalPlugin _withDiscoveredSourceIds(
       payloadPath: record.payloadPath,
       payloadSha256: record.payloadSha256,
       repositoryOrigin: record.repositoryOrigin,
+      repositoryIndex: record.repositoryIndex,
       packageName: record.packageName,
       signerSha256: record.signerSha256,
       versionCode: record.versionCode,
@@ -1658,6 +1763,7 @@ Future<InstalledExternalPlugin?> _restoreOwnedPayloadRecord(
     payloadPath: relocatedPath,
     payloadSha256: record.payloadSha256,
     repositoryOrigin: record.repositoryOrigin,
+    repositoryIndex: record.repositoryIndex,
     packageName: record.packageName,
     signerSha256: record.signerSha256,
     versionCode: record.versionCode,
