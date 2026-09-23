@@ -41,9 +41,10 @@ require(
 )
 require(
     'packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/MihonRuntimeDriver.kt',
-    '"requestUrl" to verification.requestUrl',
-    '"statusCode" to verification.statusCode',
-    '"clearanceCookiePresent" to',
+    'put("requestUrl", verification.requestUrl)',
+    'put("statusCode", verification.statusCode)',
+    '"clearanceCookiePresent",',
+    'verification.clearanceCookiePresent,',
 )
 for abi in ('mihonRuntime14', 'mihonRuntime16'):
     require(
