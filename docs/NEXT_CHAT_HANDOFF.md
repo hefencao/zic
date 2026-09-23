@@ -40,6 +40,8 @@
   `Json(ignoreUnknownKeys=true, explicitNulls=false)` 为当前稳定 host singleton 合同。
   Mihon `mihon-runtime-transform-v3:<payload-sha256>` locator 的 chapter/page replay 坐标只授权一次 source-plan replacement，并把持久 carrier 绑定到实际 extension payload；
   非网络 source-owned `loadResource` failure 才可触发，SSL/EOF 继续归 DownloadJob。
+  payload-bound revision 会让旧 exact automatic-cache generation 合法留存；Download Manager 必须把它视为 historical cache identity，
+  仅从当前同逻辑 chapter 复用 display metadata，禁止解析/展示 opaque Mihon id，也禁止把旧 revision 直接转成当前手动下载。
   v1/v2 或 payload SHA 不匹配的 v3 locator 必须在 Reader/下载入口强制 source refresh，不得恢复旧 opaque plan；replacement unavailable/replay source failure 只交给既有
   terminal source-generation refresh handoff，Reader 当前页、章节下载命令与 whole-comic queue 各自在原 owner 内至多整章刷新一次；
   不在 Reader/Pipeline 新建 Mihon retry owner。显式 `refreshResource` 用 `freshGeneration=true` 重取 page list，并由 runtime

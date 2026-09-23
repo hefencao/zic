@@ -263,6 +263,7 @@ final class ExactChapterCacheSnapshot {
     required this.readyPages,
     required this.partialPages,
     required this.receivedBytes,
+    this.historicalRevision = false,
   });
 
   final String sourceId;
@@ -274,6 +275,12 @@ final class ExactChapterCacheSnapshot {
   final int readyPages;
   final int partialPages;
   final int receivedBytes;
+
+  /// True when this exact cache belongs to an older source revision of a
+  /// logical chapter that is still present in the current library projection.
+  /// Exact identity remains revision-bound; this flag only qualifies how the
+  /// cache may be presented and whether it may become a manual download.
+  final bool historicalRevision;
 
   int get cachedPages => readyPages + partialPages;
   String get identity =>
@@ -1421,13 +1428,23 @@ final class _CanonicalChapterCacheSnapshotBuilder {
 }
 
 final class _ExactChapterCacheSnapshotBuilder {
-  _ExactChapterCacheSnapshotBuilder(ImportedLibraryEntry entry)
-      : sourceId = entry.chapter.sourceId,
+  _ExactChapterCacheSnapshotBuilder(
+    ImportedLibraryEntry entry, {
+    ImportedChapterRecord? displayMetadata,
+  })  : sourceId = entry.chapter.sourceId,
         comicId = entry.chapter.comicId,
-        comicTitle = entry.chapter.comicTitle,
+        comicTitle = displayMetadata?.comicTitle ??
+            (entry.chapter.directoryId.startsWith('orphaned:')
+                ? '未关联漫画'
+                : entry.chapter.comicTitle),
         chapterId = entry.chapter.chapterId,
         sourceRevision = entry.chapter.sourceRevision,
-        title = entry.chapter.displayName;
+        title = displayMetadata?.displayName ??
+            (entry.chapter.directoryId.startsWith('orphaned:')
+                ? '未关联章节缓存'
+                : entry.chapter.displayName),
+        historicalRevision = displayMetadata != null &&
+            displayMetadata.sourceRevision != entry.chapter.sourceRevision;
 
   final String sourceId;
   final String comicId;
@@ -1435,6 +1452,7 @@ final class _ExactChapterCacheSnapshotBuilder {
   final String chapterId;
   final String sourceRevision;
   final String title;
+  final bool historicalRevision;
   int readyPages = 0;
   int partialPages = 0;
   int receivedBytes = 0;
@@ -1462,6 +1480,7 @@ final class _ExactChapterCacheSnapshotBuilder {
         readyPages: readyPages,
         partialPages: partialPages,
         receivedBytes: receivedBytes,
+        historicalRevision: historicalRevision,
       );
 }
 

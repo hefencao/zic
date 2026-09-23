@@ -1099,7 +1099,7 @@ void main() {
       expect(cacheRefreshCalls, 0);
       await tester.tap(find.byKey(downloadManagerTabCacheKey));
       await tester.pump();
-      expect(find.text('正在读取 Canonical 缓存…'), findsOneWidget);
+      expect(find.text('正在读取自动缓存…'), findsOneWidget);
       for (final snapshot in snapshots) {
         expect(
           find.byKey(downloadManagerAutoCacheTaskKey(snapshot.identity)),
@@ -1116,7 +1116,7 @@ void main() {
         find.byKey(downloadManagerCanonicalCacheTaskKey(canonical.identity)),
         findsOneWidget,
       );
-      expect(find.text('正在读取 Canonical 缓存…'), findsNothing);
+      expect(find.text('正在读取自动缓存…'), findsNothing);
       final canonicalSliver = tester.widget<SliverList>(find.byType(SliverList));
       expect(
         canonicalSliver.delegate,
@@ -2075,6 +2075,78 @@ void main() {
 
 
   testWidgets(
+      'auto-cache exact row hides opaque identities and marks stale revision',
+      (tester) async {
+    final current = ImportedLibraryEntry(
+      chapter: ImportedChapterRecord(
+        directoryId: 'library:mihon-current',
+        displayName: '第1話',
+        sourceId: 'mihon:3647420805839021718',
+        comicId: 'mihon:manga:opaque-payload',
+        comicTitle: '要成為男子漢',
+        chapterId: 'mihon:chapter:opaque-payload',
+        sourceRevision: 'mihon-r2',
+        pages: const <ImportedPageRecord>[
+          ImportedPageRecord(
+            displayName: '001.webp',
+            sourceId: 'https://example.test/current.webp',
+            pageId: 'page-1',
+            contentKindHint: ContentKindHint.webp,
+          ),
+        ],
+      ),
+    );
+    final service = MemoryChapterDownloadService(
+      pageLoader: (_, __) async => Uint8List(4),
+    );
+    final currentSnapshot = ChapterDownloadSnapshot.idle(current);
+    final queue = WholeComicDownloadQueue(downloads: service);
+    await queue.ready;
+    const stale = ExactChapterCacheSnapshot(
+      sourceId: 'mihon:3647420805839021718',
+      comicId: 'mihon:manga:opaque-payload',
+      comicTitle: '要成為男子漢',
+      chapterId: 'mihon:chapter:opaque-payload',
+      sourceRevision: 'mihon-r1',
+      title: '第1話',
+      readyPages: 9,
+      partialPages: 0,
+      receivedBytes: 450560,
+      historicalRevision: true,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DownloadManagerScreen(
+          entries: <ImportedLibraryEntry>[current],
+          downloads: service,
+          wholeComicDownloads: queue,
+          initialSnapshots: <ChapterDownloadSnapshot>[currentSnapshot],
+          initialCacheProjection: ChapterCacheManagementProjection(
+            canonical: const <CanonicalChapterCacheSnapshot>[],
+            exact: const <ExactChapterCacheSnapshot>[stale],
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.byKey(downloadManagerTabCacheKey));
+    await tester.pump();
+
+    expect(find.text('第1話'), findsOneWidget);
+    expect(find.textContaining('要成為男子漢'), findsOneWidget);
+    expect(find.textContaining('旧版本页面缓存'), findsOneWidget);
+    expect(find.textContaining('mihon:3647420805839021718'), findsNothing);
+    expect(find.textContaining('mihon:manga:'), findsNothing);
+    expect(find.textContaining('mihon:chapter:'), findsNothing);
+    expect(find.textContaining('Exact 缓存'), findsNothing);
+    expect(find.byKey(downloadManagerConvertKey(stale.identity)), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    unawaited(queue.close());
+    unawaited(service.close());
+  });
+
+  testWidgets(
       'download manager renders one canonical cache row for version-family cache',
       (tester) async {
     final old = _versionedDownloadEntry(
@@ -2152,7 +2224,7 @@ void main() {
         findsNothing,
       );
     }
-    expect(find.textContaining('Canonical 缓存'), findsWidgets);
+    expect(find.textContaining('版本共享缓存'), findsWidgets);
     expect(find.textContaining('2 个版本共享'), findsOneWidget);
 
     await tester.tap(find.byKey(downloadManagerConvertKey(canonical.identity)));

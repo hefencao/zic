@@ -1086,7 +1086,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
   ) async {
     final target = _preferredCanonicalDownloadSnapshot(cache);
     if (target == null) {
-      _showError(StateError('Canonical 缓存没有可用的当前版本章节'));
+      _showError(StateError('版本共享缓存没有可用的当前版本章节'));
       return;
     }
     await _act(
@@ -1589,7 +1589,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
             key: downloadManagerTabCacheKey,
             icon: Icon(Icons.cached_outlined),
             selectedIcon: Icon(Icons.cached),
-            label: 'Canonical 缓存',
+            label: '自动缓存',
           ),
         ],
       ),
@@ -1705,7 +1705,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
         SizedBox(height: 72),
         Center(child: CircularProgressIndicator()),
         SizedBox(height: 16),
-        Center(child: Text('正在读取 Canonical 缓存…')),
+        Center(child: Text('正在读取自动缓存…')),
         SizedBox(height: 72),
       ]);
       return ListView(
@@ -1792,7 +1792,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
     if (canonical.isNotEmpty) {
       slivers.add(
         const SliverToBoxAdapter(
-          child: _DownloadSectionHeader(title: 'Canonical 页面缓存'),
+          child: _DownloadSectionHeader(title: '版本共享缓存'),
         ),
       );
       slivers.add(
@@ -1826,7 +1826,7 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
       }
       slivers.add(
         const SliverToBoxAdapter(
-          child: _DownloadSectionHeader(title: '未归入 Canonical 的页面缓存'),
+          child: _DownloadSectionHeader(title: '章节页面缓存'),
         ),
       );
       slivers.add(
@@ -1836,18 +1836,19 @@ final class _DownloadManagerScreenState extends State<DownloadManagerScreen> {
               if (index.isOdd) return const Divider(height: 1);
               final cache = exact[index ~/ 2];
               final snapshot = _snapshots[cache.identity];
-              final canMutate = snapshot != null &&
-                  !snapshot.isManualDownload &&
-                  _entryFor(snapshot) != null;
+              final canDelete = snapshot != null && !snapshot.isManualDownload;
+              final canConvert = canDelete &&
+                  !cache.historicalRevision &&
+                  _isLibraryEntry(snapshot);
               return _ExactCacheTaskTile(
                 key: downloadManagerAutoCacheTaskKey(cache.identity),
                 cache: cache,
-                isDeleting: canMutate &&
+                isDeleting: canDelete &&
                     _isActionBusy(cache.identity, 'delete'),
-                isConverting: canMutate &&
+                isConverting: canConvert &&
                     _isActionBusy(cache.identity, 'convert'),
-                onDelete: canMutate ? () => _delete(snapshot) : null,
-                onConvert: canMutate
+                onDelete: canDelete ? () => _delete(snapshot) : null,
+                onConvert: canConvert
                     ? () => _convertCacheToDownload(snapshot)
                     : null,
               );
@@ -2279,12 +2280,11 @@ final class _CanonicalCacheTaskTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final target = this.target;
-    final title = target?.title ?? 'Canonical 章节缓存';
-    final comicTitle = target?.comicTitle ?? '版本共享缓存';
-    final sourceId = target?.sourceId ?? cache.familyId.value;
+    final title = target?.title ?? '版本共享章节缓存';
+    final comicTitle = target?.comicTitle ?? '未关联漫画';
     final states = <String>[
       if (cache.readyPages > 0) '${cache.readyPages} 页完整',
-      if (cache.partialPages > 0) '${cache.partialPages} 页 partial',
+      if (cache.partialPages > 0) '${cache.partialPages} 页未完整',
       '${cache.memberVersionCount} 个版本共享',
       if (cache.manualReferencedPages > 0)
         '${cache.manualReferencedPages} 页被下载引用',
@@ -2305,7 +2305,7 @@ final class _CanonicalCacheTaskTile extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 Text(
-                  '$comicTitle · $sourceId · Canonical 缓存',
+                  '$comicTitle · 版本共享缓存',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 4),
@@ -2358,7 +2358,7 @@ final class _ExactCacheTaskTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final states = <String>[
       if (cache.readyPages > 0) '${cache.readyPages} 页完整',
-      if (cache.partialPages > 0) '${cache.partialPages} 页 partial',
+      if (cache.partialPages > 0) '${cache.partialPages} 页未完整',
       _formatBytes(cache.receivedBytes),
     ];
     return Padding(
@@ -2376,7 +2376,7 @@ final class _ExactCacheTaskTile extends StatelessWidget {
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 Text(
-                  '${cache.comicTitle} · ${cache.sourceId} · Exact 缓存',
+                  '${cache.comicTitle} · ${cache.historicalRevision ? '旧版本页面缓存' : '页面缓存'}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 4),
@@ -2414,7 +2414,7 @@ final class _ExactCacheTaskTile extends StatelessWidget {
           else if (onDelete != null)
             IconButton(
               key: downloadManagerClearCacheKey(cache.identity),
-              tooltip: '清除 Exact 缓存',
+              tooltip: '清除章节缓存',
               color: Theme.of(context).colorScheme.error,
               onPressed: onDelete,
               icon: const Icon(Icons.delete_outline),
@@ -2461,7 +2461,7 @@ final class _AutoCacheTaskTile extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     Text(
-                      '${snapshot.comicTitle} · ${snapshot.sourceId} · 页面自动缓存',
+                      '${snapshot.comicTitle} · 页面自动缓存',
                       style: Theme.of(context).textTheme.bodySmall,
                     ),
                   ],

@@ -431,6 +431,83 @@ void main() {
   );
 
   test(
+    'stale exact auto-cache revision reuses current chapter display metadata',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'zic-stale-exact-cache-labels-',
+      );
+      addTearDown(() => directory.delete(recursive: true));
+      final service = await PersistentChapterDownloadService.open(
+        directory.path,
+      );
+      addTearDown(service.close);
+      const content = ContentId(
+        sourceId: 'mihon:123456789',
+        comicId: 'mihon:manga:opaque-current-id',
+        chapterId: 'mihon:chapter:opaque-current-id',
+        pageId: 'page-1',
+      );
+      final oldId = DownloadId(
+        content: content,
+        sourceRevision: 'mihon-r1',
+        canonicalUri: Uri.parse('https://example.test/old.webp'),
+      );
+      final currentId = DownloadId(
+        content: content,
+        sourceRevision: 'mihon-r2',
+        canonicalUri: Uri.parse('https://example.test/current.webp'),
+      );
+      final bytes = Uint8List.fromList(<int>[1, 2, 3, 4]);
+      await service.storePromotedArtifact(id: oldId, bytes: bytes);
+      await service.storePromotedArtifact(id: currentId, bytes: bytes);
+      final current = ImportedLibraryEntry(
+        chapter: ImportedChapterRecord(
+          directoryId: 'library:mihon-current',
+          displayName: '第1話',
+          sourceId: content.sourceId,
+          comicId: content.comicId,
+          comicTitle: '要成為男子漢',
+          chapterId: content.chapterId,
+          sourceRevision: currentId.sourceRevision,
+          pages: <ImportedPageRecord>[
+            ImportedPageRecord(
+              displayName: '001.webp',
+              sourceId: currentId.canonicalUri.toString(),
+              pageId: content.pageId,
+              contentKindHint: ContentKindHint.webp,
+            ),
+          ],
+        ),
+      );
+
+      final projection = await service.inspectCacheManagement(
+        <ImportedLibraryEntry>[current],
+      );
+
+      expect(projection.exact, hasLength(2));
+      final historical = projection.exact.singleWhere(
+        (cache) => cache.sourceRevision == oldId.sourceRevision,
+      );
+      final active = projection.exact.singleWhere(
+        (cache) => cache.sourceRevision == currentId.sourceRevision,
+      );
+      expect(historical.title, '第1話');
+      expect(historical.comicTitle, '要成為男子漢');
+      expect(historical.historicalRevision, isTrue);
+      expect(active.title, '第1話');
+      expect(active.comicTitle, '要成為男子漢');
+      expect(active.historicalRevision, isFalse);
+      expect(
+        projection.exact.any(
+          (cache) => cache.title == content.chapterId ||
+              cache.comicTitle == content.comicId,
+        ),
+        isFalse,
+      );
+    },
+  );
+
+  test(
     'persistent partial artifact survives Reader service reopen without promotion',
     () async {
       final directory = await Directory.systemTemp.createTemp(

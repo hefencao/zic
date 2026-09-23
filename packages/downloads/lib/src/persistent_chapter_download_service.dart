@@ -1644,11 +1644,31 @@ final class PersistentChapterDownloadService
     return List<ImportedLibraryEntry>.unmodifiable(orphaned);
   }
 
+  String _logicalChapterManagementKey(
+    String sourceId,
+    String comicId,
+    String chapterId,
+  ) =>
+      '$sourceId\u0000$comicId\u0000$chapterId';
+
   ChapterCacheManagementProjection _buildCacheManagementProjection(
     Iterable<ImportedLibraryEntry> entries,
     Map<String, CacheRec> indexed,
     _DownloadManagementPhysicalState physicalState,
   ) {
+    final visibleEntries = entries.toList(growable: false);
+    final displayMetadataByLogicalChapter = <String, ImportedChapterRecord>{};
+    for (final entry in visibleEntries) {
+      if (entry.chapter.directoryId.startsWith('orphaned:')) continue;
+      displayMetadataByLogicalChapter.putIfAbsent(
+        _logicalChapterManagementKey(
+          entry.chapter.sourceId,
+          entry.chapter.comicId,
+          entry.chapter.chapterId,
+        ),
+        () => entry.chapter,
+      );
+    }
     final canonicalBuilders = physicalState.canonicalInventoryBuilders();
     final exactBuilders = <String, _ExactChapterCacheSnapshotBuilder>{};
     final exactRecordsByChapter = <String, List<CacheRec>>{};
@@ -1668,8 +1688,15 @@ final class PersistentChapterDownloadService
         if (record.id.kind == PhysicalMediaIdKind.canonical) record.artifactId,
     };
 
-    for (final entry in entries) {
+    for (final entry in visibleEntries) {
       final manifest = entry.chapter.toManifest();
+      final displayMetadata = displayMetadataByLogicalChapter[
+        _logicalChapterManagementKey(
+          entry.chapter.sourceId,
+          entry.chapter.comicId,
+          entry.chapter.chapterId,
+        )
+      ];
       final projection = physicalState.projectionFor(entry);
       final canonicalBuilder = projection == null
           ? null
@@ -1697,7 +1724,10 @@ final class PersistentChapterDownloadService
               canonicalArtifactIds.contains(record.artifactId)) {
             continue;
           }
-          exactBuilder ??= _ExactChapterCacheSnapshotBuilder(entry);
+          exactBuilder ??= _ExactChapterCacheSnapshotBuilder(
+            entry,
+            displayMetadata: displayMetadata,
+          );
           exactBuilder.addPage(ready: ready, bytes: record.bytes);
         }
         if (exactBuilder != null && exactBuilder.cachedPages > 0) {
@@ -1759,7 +1789,10 @@ final class PersistentChapterDownloadService
         // remainder contains only pages that still have no canonical media
         // coordinate and are not protected solely by an exact download.
         if (manualReferenced) continue;
-        exactBuilder ??= _ExactChapterCacheSnapshotBuilder(entry);
+        exactBuilder ??= _ExactChapterCacheSnapshotBuilder(
+          entry,
+          displayMetadata: displayMetadata,
+        );
         exactBuilder.addPage(ready: ready, bytes: bytes);
       }
       if (exactBuilder != null && exactBuilder.cachedPages > 0) {
