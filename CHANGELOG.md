@@ -1,3 +1,9 @@
+## Unreleased — bidirectional source webtoon confidence and VibeVenera parity
+
+- Replace the one-sided source “webtoon weight” with a bidirectional 0–100% “条漫置信”: 0% is a strong paged prior, 50% is neutral/automatic, and 100% is a strong webtoon prior. The classifier consumes the signed prior symmetrically, so paged-only sources are expressible without adding a second setting.
+- Read the previous `sourceAdaptiveWebtoonWeights=w` key as `sourceAdaptiveWebtoonConfidence=0.5 + 0.5*w`; this preserves the old vertical-vs-paged score difference exactly. Subsequent writes use only `sourceAdaptiveWebtoonConfidences`, with neutral 0.5 omitted.
+- Complete the relevant VibeVenera source-metadata path: Venera `comic.adaptiveType` is normalized to typed `paged/vertical/animated` metadata in the isolated runtime descriptor, while App composition now projects source name, website and adaptive type into `AdaptiveReaderMetadata`. Mihon remains unknown unless it exposes an equivalent capability. Translation adaptation and Vibe-specific zoom/preload side effects are intentionally not copied because ZIC either has no such feature or already has independent Reader/Pipeline owners.
+
 ## Unreleased — adaptive layout source prior and segmented-page geometry
 
 - Rework adaptive page geometry so near-square source slices no longer become high-confidence paged evidence merely because width and height are close. Ordinary 16:9/9:16 shapes gain paged confidence by symmetric distance from 1:1, the 1.9–2.2 portrait band remains deliberately uncertain, and truly long vertical pages retain strong webtoon evidence.

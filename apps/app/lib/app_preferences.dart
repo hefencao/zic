@@ -202,7 +202,7 @@ final class AppPreferencesController extends ChangeNotifier {
   Map<String, bool> _pluginTrustConflictingHistoricalCarriers =
       <String, bool>{};
   Map<String, String> _sourceDownloadDirectories = <String, String>{};
-  Map<String, double> _sourceAdaptiveWebtoonWeights = <String, double>{};
+  Map<String, double> _sourceAdaptiveWebtoonConfidences = <String, double>{};
   List<String> _sourceSearchHistory = <String>[];
   Set<String> _acknowledgedComicVersionNotices = <String>{};
   Map<String, ComicReaderSettings> _comicReaderSettings =
@@ -290,11 +290,11 @@ final class AppPreferencesController extends ChangeNotifier {
     if (directory == null || directory.trim().isEmpty) return null;
     return directory;
   }
-  Map<String, double> get sourceAdaptiveWebtoonWeights =>
-      Map<String, double>.unmodifiable(_sourceAdaptiveWebtoonWeights);
+  Map<String, double> get sourceAdaptiveWebtoonConfidences =>
+      Map<String, double>.unmodifiable(_sourceAdaptiveWebtoonConfidences);
 
-  double sourceAdaptiveWebtoonWeightFor(String sourceId) =>
-      _sourceAdaptiveWebtoonWeights[sourceId.trim()] ?? 0;
+  double sourceAdaptiveWebtoonConfidenceFor(String sourceId) =>
+      _sourceAdaptiveWebtoonConfidences[sourceId.trim()] ?? 0.5;
   List<String> get sourceSearchHistory =>
       List<String>.unmodifiable(_sourceSearchHistory);
   Set<String> get acknowledgedComicVersionNotices =>
@@ -472,8 +472,10 @@ final class AppPreferencesController extends ChangeNotifier {
     _sourceDownloadDirectories = _decodeDirectoryMap(
       values['sourceDownloadDirectories'],
     );
-    _sourceAdaptiveWebtoonWeights = _decodeUnitDoubleMap(
-      values['sourceAdaptiveWebtoonWeights'],
+    _sourceAdaptiveWebtoonConfidences =
+        _decodeSourceAdaptiveWebtoonConfidences(
+      values['sourceAdaptiveWebtoonConfidences'],
+      legacyWeights: values['sourceAdaptiveWebtoonWeights'],
     );
     _sourceSearchHistory = _decodeSearchHistory(
       values['sourceSearchHistory'],
@@ -751,24 +753,27 @@ final class AppPreferencesController extends ChangeNotifier {
     _changed();
   }
 
-  /// Source-level adaptive layout prior. Zero removes the override and leaves
-  /// classification entirely to comic metadata and measured page geometry.
-  void setSourceAdaptiveWebtoonWeight(String sourceId, double weight) {
+  /// Source-level webtoon confidence. 0 means strongly paged, 0.5 means
+  /// neutral/automatic, and 1 means strongly webtoon.
+  void setSourceAdaptiveWebtoonConfidence(
+    String sourceId,
+    double confidence,
+  ) {
     if (_disposed) return;
     final key = sourceId.trim();
-    if (key.isEmpty || !weight.isFinite) return;
-    final normalized = weight.clamp(0.0, 1.0).toDouble();
-    if (normalized <= 0) {
-      if (!_sourceAdaptiveWebtoonWeights.containsKey(key)) return;
-      _sourceAdaptiveWebtoonWeights = <String, double>{
-        ..._sourceAdaptiveWebtoonWeights,
+    if (key.isEmpty || !confidence.isFinite) return;
+    final normalized = confidence.clamp(0.0, 1.0).toDouble();
+    if (normalized == 0.5) {
+      if (!_sourceAdaptiveWebtoonConfidences.containsKey(key)) return;
+      _sourceAdaptiveWebtoonConfidences = <String, double>{
+        ..._sourceAdaptiveWebtoonConfidences,
       }..remove(key);
       _changed();
       return;
     }
-    if (_sourceAdaptiveWebtoonWeights[key] == normalized) return;
-    _sourceAdaptiveWebtoonWeights = <String, double>{
-      ..._sourceAdaptiveWebtoonWeights,
+    if (_sourceAdaptiveWebtoonConfidences[key] == normalized) return;
+    _sourceAdaptiveWebtoonConfidences = <String, double>{
+      ..._sourceAdaptiveWebtoonConfidences,
       key: normalized,
     };
     _changed();
@@ -930,7 +935,7 @@ final class AppPreferencesController extends ChangeNotifier {
       'pluginTrustConflictingHistoricalCarriers':
           _pluginTrustConflictingHistoricalCarriers,
       'sourceDownloadDirectories': _sourceDownloadDirectories,
-      'sourceAdaptiveWebtoonWeights': _sourceAdaptiveWebtoonWeights,
+      'sourceAdaptiveWebtoonConfidences': _sourceAdaptiveWebtoonConfidences,
       'sourceSearchHistory': _sourceSearchHistory,
       'acknowledgedComicVersionNotices':
           _acknowledgedComicVersionNotices.toList(growable: false),
@@ -1039,16 +1044,38 @@ Map<String, bool> _decodeBoolMap(Object? raw) {
   return result;
 }
 
-Map<String, double> _decodeUnitDoubleMap(Object? raw) {
-  if (raw is! Map) return <String, double>{};
+Map<String, double> _decodeSourceAdaptiveWebtoonConfidences(
+  Object? raw, {
+  Object? legacyWeights,
+}) {
   final result = <String, double>{};
-  for (final entry in raw.entries) {
-    final key = entry.key;
-    final rawValue = entry.value;
-    if (key is! String || key.trim().isEmpty || rawValue is! num) continue;
-    final value = rawValue.toDouble();
-    if (!value.isFinite || value <= 0) continue;
-    result[key.trim()] = value.clamp(0.0, 1.0).toDouble();
+  final currentKeys = <String>{};
+  if (raw is Map) {
+    for (final entry in raw.entries) {
+      final key = entry.key;
+      final rawValue = entry.value;
+      if (key is! String || key.trim().isEmpty || rawValue is! num) continue;
+      final value = rawValue.toDouble();
+      if (!value.isFinite) continue;
+      final normalized = value.clamp(0.0, 1.0).toDouble();
+      final normalizedKey = key.trim();
+      currentKeys.add(normalizedKey);
+      if (normalized != 0.5) result[normalizedKey] = normalized;
+    }
+  }
+  if (legacyWeights is Map) {
+    for (final entry in legacyWeights.entries) {
+      final key = entry.key;
+      final rawValue = entry.value;
+      if (key is! String || key.trim().isEmpty || rawValue is! num) continue;
+      final normalizedKey = key.trim();
+      if (currentKeys.contains(normalizedKey)) continue;
+      final value = rawValue.toDouble();
+      if (!value.isFinite) continue;
+      final legacyWeight = value.clamp(0.0, 1.0).toDouble();
+      final migrated = 0.5 + legacyWeight * 0.5;
+      if (migrated != 0.5) result[normalizedKey] = migrated;
+    }
   }
   return result;
 }

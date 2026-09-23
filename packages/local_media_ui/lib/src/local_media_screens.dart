@@ -122,6 +122,7 @@ final class LocalImageResponseSource {
 final class ImportedImageChapterScreen extends StatelessWidget {
   const ImportedImageChapterScreen({
     required this.record,
+    this.adaptiveMetadata,
     this.byteLoaders = const <String, LocalImageFileBytesLoader>{},
     this.responseSources = const <String, LocalImageResponseSource>{},
     this.onPreviewStateChanged,
@@ -142,6 +143,7 @@ final class ImportedImageChapterScreen extends StatelessWidget {
   });
 
   final ImportedChapterRecord record;
+  final AdaptiveReaderMetadata? adaptiveMetadata;
   final Map<String, LocalImageFileBytesLoader> byteLoaders;
   final Map<String, LocalImageResponseSource> responseSources;
   final ImagePreviewStateChanged? onPreviewStateChanged;
@@ -200,14 +202,15 @@ final class ImportedImageChapterScreen extends StatelessWidget {
         pipeline: pipeline,
         screenKey: imageFolderScreenKey,
         chapter: chapter,
-        adaptiveMetadata: AdaptiveReaderMetadata(
-          sourceKey: record.sourceId,
-          comicId: record.comicId,
-          title: record.comicTitle,
-          authors: record.comicAuthors,
-          tags: record.comicTags,
-          sourceUrl: record.pages.first.uri.toString(),
-        ),
+        adaptiveMetadata: adaptiveMetadata ??
+            AdaptiveReaderMetadata(
+              sourceKey: record.sourceId,
+              comicId: record.comicId,
+              title: record.comicTitle,
+              authors: record.comicAuthors,
+              tags: record.comicTags,
+              sourceUrl: record.pages.first.uri.toString(),
+            ),
         initialProgress: initialProgress,
         onProgressChanged: onProgressChanged,
         onProgressFlush: onProgressFlush,

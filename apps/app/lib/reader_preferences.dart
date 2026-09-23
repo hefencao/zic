@@ -15,7 +15,7 @@ extension ReaderPreferenceProjection on AppPreferencesController {
       fallbackVerticalStitch: defaultVerticalStitch,
       globalAdaptiveEnabled: adaptiveReaderEnabled,
       comicAdaptiveEnabled: comic.adaptiveEnabled,
-      sourceWebtoonWeight: sourceAdaptiveWebtoonWeightFor(sourceId),
+      sourceWebtoonConfidence: sourceAdaptiveWebtoonConfidenceFor(sourceId),
       adaptiveProfile: comic.adaptiveProfile,
       zoomStages: <double>[defaultZoomStageFirst, defaultZoomStageSecond],
       defaultLongPressZoom: longPressZoomEnabled,

@@ -235,9 +235,9 @@ void main() {
     );
   });
 
-  testWidgets('source management persists adaptive webtoon weight',
+  testWidgets('source management persists bidirectional webtoon confidence',
       (tester) async {
-    final source = _FixtureSource('mihon:webtoon-weight', '条漫来源');
+    final source = _FixtureSource('mihon:webtoon-confidence', '条漫来源');
     final preferences = AppPreferencesController();
     addTearDown(preferences.dispose);
 
@@ -252,16 +252,21 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byKey(sourceAdaptiveWebtoonWeightKey(source.sourceId)));
+    await tester.tap(
+      find.byKey(sourceAdaptiveWebtoonConfidenceKey(source.sourceId)),
+    );
     await tester.pumpAndSettle();
-    expect(find.text('条漫权重 · 条漫来源'), findsOneWidget);
+    expect(find.text('条漫置信 · 条漫来源'), findsOneWidget);
     final slider = tester.widget<Slider>(find.byType(Slider));
-    slider.onChanged!(0.8);
+    slider.onChanged!(0.2);
     await tester.pump();
     await tester.tap(find.text('保存'));
     await tester.pumpAndSettle();
 
-    expect(preferences.sourceAdaptiveWebtoonWeightFor(source.sourceId), 0.8);
+    expect(
+      preferences.sourceAdaptiveWebtoonConfidenceFor(source.sourceId),
+      0.2,
+    );
   });
 
   testWidgets('source cards project shelf membership without owning it',

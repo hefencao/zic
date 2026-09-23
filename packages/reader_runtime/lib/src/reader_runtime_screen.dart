@@ -193,7 +193,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     _adaptiveClassifier = AdaptiveReaderClassifier(
       widget.chapter,
       metadata: widget.adaptiveMetadata,
-      sourceWebtoonWeight: _settings.sourceWebtoonWeight,
+      sourceWebtoonConfidence: _settings.sourceWebtoonConfidence,
     );
     _adaptiveProfile = _initialAdaptiveProfile(_settings);
     _pipeline.pageDimensions.addListener(_handlePipelinePageDimensions);
@@ -227,15 +227,15 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       _favorite = widget.initialFavorite;
     }
     if (oldWidget.initialSettings != widget.initialSettings) {
-      final sourceWeightChanged =
-          oldWidget.initialSettings.sourceWebtoonWeight !=
-              widget.initialSettings.sourceWebtoonWeight;
+      final sourceConfidenceChanged =
+          oldWidget.initialSettings.sourceWebtoonConfidence !=
+              widget.initialSettings.sourceWebtoonConfidence;
       _settings = widget.initialSettings;
-      if (sourceWeightChanged) {
+      if (sourceConfidenceChanged) {
         _adaptiveClassifier = AdaptiveReaderClassifier(
           widget.chapter,
           metadata: widget.adaptiveMetadata,
-          sourceWebtoonWeight: _settings.sourceWebtoonWeight,
+          sourceWebtoonConfidence: _settings.sourceWebtoonConfidence,
         );
       }
       _adaptiveProfile = _initialAdaptiveProfile(_settings);

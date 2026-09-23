@@ -13,7 +13,7 @@ final class ReaderSessionSettings {
     this.fallbackVerticalStitch = false,
     this.globalAdaptiveEnabled = false,
     this.comicAdaptiveEnabled = true,
-    this.sourceWebtoonWeight = 0,
+    this.sourceWebtoonConfidence = 0.5,
     this.adaptiveProfile,
     this.zoomStages = defaultZoomStages,
     this.defaultLongPressZoom = true,
@@ -36,7 +36,10 @@ final class ReaderSessionSettings {
   final bool fallbackVerticalStitch;
   final bool globalAdaptiveEnabled;
   final bool comicAdaptiveEnabled;
-  final double sourceWebtoonWeight;
+
+  /// Source-level probability-like prior: 0 = strongly paged, 0.5 = neutral,
+  /// 1 = strongly webtoon. This is evidence, not a manual direction override.
+  final double sourceWebtoonConfidence;
   final AdaptiveReaderProfile? adaptiveProfile;
   final bool? invertPageOrderOverride;
 
@@ -111,7 +114,7 @@ final class ReaderSessionSettings {
     bool? fallbackVerticalStitch,
     bool? globalAdaptiveEnabled,
     bool? comicAdaptiveEnabled,
-    double? sourceWebtoonWeight,
+    double? sourceWebtoonConfidence,
     Object? adaptiveProfile = _unset,
     List<double>? zoomStages,
     bool? defaultLongPressZoom,
@@ -139,8 +142,8 @@ final class ReaderSessionSettings {
             globalAdaptiveEnabled ?? this.globalAdaptiveEnabled,
         comicAdaptiveEnabled:
             comicAdaptiveEnabled ?? this.comicAdaptiveEnabled,
-        sourceWebtoonWeight:
-            sourceWebtoonWeight ?? this.sourceWebtoonWeight,
+        sourceWebtoonConfidence:
+            sourceWebtoonConfidence ?? this.sourceWebtoonConfidence,
         adaptiveProfile: identical(adaptiveProfile, _unset)
             ? this.adaptiveProfile
             : adaptiveProfile as AdaptiveReaderProfile?,
@@ -175,7 +178,7 @@ final class ReaderSessionSettings {
           fallbackVerticalStitch == other.fallbackVerticalStitch &&
           globalAdaptiveEnabled == other.globalAdaptiveEnabled &&
           comicAdaptiveEnabled == other.comicAdaptiveEnabled &&
-          sourceWebtoonWeight == other.sourceWebtoonWeight &&
+          sourceWebtoonConfidence == other.sourceWebtoonConfidence &&
           adaptiveProfile == other.adaptiveProfile &&
           _sameStages(zoomStages, other.zoomStages) &&
           defaultLongPressZoom == other.defaultLongPressZoom &&
@@ -197,7 +200,7 @@ final class ReaderSessionSettings {
         fallbackVerticalStitch,
         globalAdaptiveEnabled,
         comicAdaptiveEnabled,
-        sourceWebtoonWeight,
+        sourceWebtoonConfidence,
         adaptiveProfile,
         Object.hashAll(zoomStages),
         defaultLongPressZoom,
@@ -354,13 +357,14 @@ final class AdaptiveReaderClassifier {
   AdaptiveReaderClassifier(
     this.chapter, {
     this.metadata,
-    double sourceWebtoonWeight = 0,
-  }) : sourceWebtoonWeight = sourceWebtoonWeight.clamp(0.0, 1.0).toDouble() {
-    _metadataFingerprint = this.sourceWebtoonWeight <= 0
+    double sourceWebtoonConfidence = 0.5,
+  }) : sourceWebtoonConfidence =
+            sourceWebtoonConfidence.clamp(0.0, 1.0).toDouble() {
+    _metadataFingerprint = this.sourceWebtoonConfidence == 0.5
         ? metadata?.fingerprint ?? 0
         : _stableFingerprint(
-            '${metadata?.fingerprint ?? 0}\u0000source-webtoon-weight:'
-            '${this.sourceWebtoonWeight.toStringAsFixed(3)}',
+            '${metadata?.fingerprint ?? 0}\u0000source-webtoon-confidence:'
+            '${this.sourceWebtoonConfidence.toStringAsFixed(3)}',
           );
     for (final page in chapter.pages) {
       final width = page.width;
@@ -373,7 +377,7 @@ final class AdaptiveReaderClassifier {
 
   final ChapterManifest chapter;
   final AdaptiveReaderMetadata? metadata;
-  final double sourceWebtoonWeight;
+  final double sourceWebtoonConfidence;
   late final int _metadataFingerprint;
   final Map<String, ({int width, int height})> _samples =
       <String, ({int width, int height})>{};
@@ -467,6 +471,11 @@ final class AdaptiveReaderClassifier {
       );
     }
 
+    // A sufficiently strong user source prior can correct a provider-level
+    // adaptive default, while comic-specific tags above still win.
+    final sourcePrior = _sourceWebtoonProfile();
+    if (sourcePrior != null) return sourcePrior;
+
     final configured = _configuredDirection(value.sourceType);
     if (configured != null) {
       return _metadataProfile(
@@ -538,8 +547,6 @@ final class AdaptiveReaderClassifier {
         basis: 'source:$pagedSource',
       );
     }
-    final sourcePrior = _sourceWebtoonProfile();
-    if (sourcePrior != null) return sourcePrior;
     final category = _category(value.tags);
     if (category == 'manga') {
       return _metadataProfile(
@@ -711,7 +718,9 @@ final class AdaptiveReaderClassifier {
       ],
       1.2,
     );
-    vertical += sourceWebtoonWeight * 3.0;
+    final sourceBias = _sourceWebtoonBias;
+    vertical += sourceBias * 1.5;
+    paged -= sourceBias * 1.5;
     return _scoredLayoutProfile(
       vertical: vertical,
       paged: paged,
@@ -721,13 +730,16 @@ final class AdaptiveReaderClassifier {
   }
 
   AdaptiveReaderProfile? _sourceWebtoonProfile() {
-    if (sourceWebtoonWeight <= 0) return null;
+    final sourceBias = _sourceWebtoonBias;
+    if (sourceBias == 0) return null;
     return _scoredLayoutProfile(
-      vertical: sourceWebtoonWeight * 3.0,
-      paged: 0,
-      basis: 'source:webtoon-weight',
+      vertical: sourceBias * 1.5,
+      paged: -sourceBias * 1.5,
+      basis: 'source:webtoon-confidence',
     );
   }
+
+  double get _sourceWebtoonBias => sourceWebtoonConfidence * 2 - 1;
 
   AdaptiveReaderProfile? _scoredLayoutProfile({
     required double vertical,
@@ -947,12 +959,12 @@ final class AdaptiveReaderClassifier {
 AdaptiveReaderProfile? classifyAdaptiveReaderLayout(
   ChapterManifest chapter, {
   AdaptiveReaderMetadata? metadata,
-  double sourceWebtoonWeight = 0,
+  double sourceWebtoonConfidence = 0.5,
 }) =>
     AdaptiveReaderClassifier(
       chapter,
       metadata: metadata,
-      sourceWebtoonWeight: sourceWebtoonWeight,
+      sourceWebtoonConfidence: sourceWebtoonConfidence,
     ).classifyManifest();
 
 int _stableFingerprint(String value) {

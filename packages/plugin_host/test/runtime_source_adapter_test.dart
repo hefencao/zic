@@ -207,6 +207,10 @@ void main() {
     expect(source.sourceId, 'venera:fixture');
     expect(source.descriptor.name, 'Fixture');
     expect(
+      source.descriptor.adaptiveReaderType,
+      SourceAdaptiveReaderType.vertical,
+    );
+    expect(
       (source as BoundedComicResourceSource).resourceOperationTimeout,
       const Duration(seconds: 15),
     );
@@ -1593,6 +1597,7 @@ final class _FixtureConnection implements ExternalPluginRuntimeConnection {
           website: Uri.parse('https://example.invalid'),
           supportsComicPreview: supportsComicPreview,
           supportsComicComments: supportsComicComments,
+          adaptiveReaderType: SourceAdaptiveReaderType.vertical,
         ),
       ];
 

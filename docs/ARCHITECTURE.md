@@ -861,7 +861,17 @@ manifest、已知 physical content kind 和明显非-WebP URI 后缀已确认的
 current 且无 listener 或尚无 resident surface 时仍立即预热，next/transition 在 Flutter frame 已提交或排队时延后到 scheduler idle task，
 动画/触摸回调未清空前不得启动 platform create，仍继续解码且不改变 playback/freeze 语义，
 host attach 后立即同步最新帧，vertical Reader 不启用该 detached prewarm。
-自适应阅读布局的分类 owner 保持在 `reader_runtime`：它只消费漫画元数据、非封面页面几何、实测动画证据，以及由 App preferences 按 `sourceId` 投影进 `ReaderSessionSettings.sourceWebtoonWeight` 的来源级条漫先验。来源权重的持久 authority 是 `AppPreferencesController.sourceAdaptiveWebtoonWeights`，Reader 不监听、不回写来源偏好，也不建立插件级第二份值。model v6 将近 1:1 页面视为低信息切片而非高置信分页证据，普通横/竖页面比例按其偏离 1:1 的程度形成分页证据，极长纵幅形成条漫证据；`韩国/韓國` 等地域标签只参与弱证据合成，不等同硬编码阅读模式。漫画级显式方向仍优先于自适应，来源权重非零时进入 adaptive profile fingerprint，使偏好变化后旧 profile 自动失效；权重为零保持原 metadata fingerprint 兼容语义。
+自适应阅读布局的分类 owner 保持在 `reader_runtime`。它消费漫画元数据、非封面页面几何、实测动画证据，
+以及 App preferences 按 `sourceId` 投影进 `ReaderSessionSettings.sourceWebtoonConfidence` 的来源级条漫置信。
+条漫置信的唯一持久 authority 是 `AppPreferencesController.sourceAdaptiveWebtoonConfidences`：
+0 表示强页漫先验、0.5 表示中性/自动、1 表示强条漫先验；Reader 不监听、不回写来源偏好，也不建立插件级第二份值。
+旧 `sourceAdaptiveWebtoonWeights=w` 只在读取时迁移为 `0.5 + 0.5*w`，保持旧评分差不变，后续写回只使用新 key。
+Venera source 可声明 `comic.adaptiveType=paged|vertical|animated`；该声明经 plugin runtime 的 typed `SourceAdaptiveReaderType`、
+App composition 与 `AdaptiveReaderMetadata.sourceType` 进入已有高置信 metadata 路径。
+来源名和官网也由 composition 投影给 classifier；Mihon 未声明等价能力时保持 null，不做猜测。
+model v6 继续将近 1:1 页面视为低信息切片，普通横/竖页面比例按其偏离 1:1 的程度形成分页证据，
+极长纵幅形成条漫证据；`韩国/韓國` 等地域标签只参与弱证据合成。
+漫画级显式方向始终最高优先；非中性来源置信进入 adaptive profile fingerprint，中性 0.5 保持原 metadata fingerprint。
 Android texture lease prewarm 必须按 source canvas 等比 fit 后的实际 decoded raster 尺寸建立；
 DownloadSession 在 WebP 固定前缀解析出 source canvas 后立即触发 current/next/transition 的精确预热；
 同一 raster 尺寸的 deferred requests 按 current > transition > next 优先级每个 idle task 最多启动一个 platform create，

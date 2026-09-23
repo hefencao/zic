@@ -39,6 +39,7 @@ final class ExternalPluginRuntimeSourceDescriptor {
     this.supportsComicPreview = false,
     this.supportsComicComments = false,
     this.browserUserAgent,
+    this.adaptiveReaderType,
     Iterable<SourceContentRating> contentRatings = const <SourceContentRating>{
       SourceContentRating.safe,
       SourceContentRating.suggestive,
@@ -64,6 +65,7 @@ final class ExternalPluginRuntimeSourceDescriptor {
   final bool supportsComicPreview;
   final bool supportsComicComments;
   final String? browserUserAgent;
+  final SourceAdaptiveReaderType? adaptiveReaderType;
   final Set<SourceContentRating> contentRatings;
 
   Map<String, Object?> toMessage() {
@@ -77,6 +79,8 @@ final class ExternalPluginRuntimeSourceDescriptor {
       'supportsComicPreview': supportsComicPreview,
       'supportsComicComments': supportsComicComments,
       if (browserUserAgent != null) 'browserUserAgent': browserUserAgent,
+      if (adaptiveReaderType != null)
+        'adaptiveReaderType': adaptiveReaderType!.name,
       'contentRatings': ratings,
     };
   }
@@ -113,8 +117,23 @@ final class ExternalPluginRuntimeSourceDescriptor {
             'source browserUserAgent must be a non-empty string',
           ),
       },
+      adaptiveReaderType: switch (message['adaptiveReaderType']) {
+        null => null,
+        final String value => _sourceAdaptiveReaderType(value),
+        _ => throw const FormatException(
+            'source adaptiveReaderType must be a string',
+          ),
+      },
       contentRatings: ratings,
     );
+  }
+}
+
+SourceAdaptiveReaderType _sourceAdaptiveReaderType(String value) {
+  try {
+    return SourceAdaptiveReaderType.values.byName(value);
+  } on ArgumentError {
+    throw FormatException('unknown source adaptiveReaderType: $value');
   }
 }
 

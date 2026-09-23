@@ -2,12 +2,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:reader_runtime/reader_runtime.dart';
 
 void main() {
-  test('source webtoon weight participates in settings identity and copy', () {
-    const baseline = ReaderSessionSettings(sourceWebtoonWeight: 0.25);
-    final changed = baseline.copyWith(sourceWebtoonWeight: 0.75);
+  test('source webtoon confidence participates in settings identity and copy',
+      () {
+    const baseline = ReaderSessionSettings(sourceWebtoonConfidence: 0.25);
+    final changed = baseline.copyWith(sourceWebtoonConfidence: 0.75);
 
-    expect(baseline.sourceWebtoonWeight, 0.25);
-    expect(changed.sourceWebtoonWeight, 0.75);
+    expect(baseline.sourceWebtoonConfidence, 0.25);
+    expect(changed.sourceWebtoonConfidence, 0.75);
     expect(changed, isNot(baseline));
   });
 

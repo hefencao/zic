@@ -54,7 +54,7 @@ def main() -> None:
         "packages/reader_runtime/lib/src/reader_runtime_screen.dart",
         "ReaderSessionSettings",
         "AdaptiveReaderClassifier",
-        "sourceWebtoonWeight",
+        "sourceWebtoonConfidence",
         "_initialAdaptiveProfile",
         "readerComicSettingsKey",
         "TextDirection.rtl",
@@ -142,18 +142,49 @@ def main() -> None:
         "defaultVerticalStitch",
         "verticalStitchOverride",
         "adaptiveReaderEnabled",
+        "sourceAdaptiveWebtoonConfidences",
         "sourceAdaptiveWebtoonWeights",
-        "setSourceAdaptiveWebtoonWeight",
+        "setSourceAdaptiveWebtoonConfidence",
     )
     require(
         "apps/app/lib/reader_preferences.dart",
-        "sourceWebtoonWeight: sourceAdaptiveWebtoonWeightFor(sourceId)",
+        "sourceWebtoonConfidence: sourceAdaptiveWebtoonConfidenceFor(sourceId)",
     )
     require(
         "apps/app/lib/source_browser.dart",
-        "sourceAdaptiveWebtoonWeightKey",
-        "_changeSourceAdaptiveWebtoonWeight",
-        "条漫权重",
+        "sourceAdaptiveWebtoonConfidenceKey",
+        "_changeSourceAdaptiveWebtoonConfidence",
+        "条漫置信",
+        "0% 强页漫",
+        "50% 自动/中性",
+        "100% 强条漫",
+    )
+    require(
+        "packages/catalog/lib/src/source_catalog.dart",
+        "enum SourceAdaptiveReaderType",
+        "adaptiveReaderType",
+    )
+    require(
+        "packages/plugin_host/lib/src/runtime_protocol.dart",
+        "adaptiveReaderType",
+        "SourceAdaptiveReaderType",
+    )
+    require(
+        "packages/plugin_host_bridge/android/src/main/kotlin/dev/zic/pluginhost/VeneraRuntimeDriver.kt",
+        "__zicSource.comic?.adaptiveType",
+        "normalizeVeneraAdaptiveReaderType",
+        '"adaptiveReaderType" to adaptiveReaderType',
+    )
+    require(
+        "apps/app/lib/home_shell_reader_route.dart",
+        "sourceName: versionSource.descriptor.name",
+        "sourceUrl: versionSource.descriptor.website.toString()",
+        "sourceType: versionSource.descriptor.adaptiveReaderType?.name",
+    )
+    require(
+        "packages/local_media_ui/lib/src/local_media_screens.dart",
+        "this.adaptiveMetadata",
+        "adaptiveMetadata: adaptiveMetadata ??",
     )
     print("Reader layout settings contract: OK")
 

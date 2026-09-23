@@ -173,7 +173,7 @@ void main() {
     expect(refreshed.arguments['freshGeneration'], isTrue);
   });
 
-  test('source handshake round-trips ratings without runtime code', () {
+  test('source handshake round-trips ratings and adaptive reader hint', () {
     final descriptor = ExternalPluginRuntimeSourceDescriptor(
       externalId: 'fixture',
       name: 'Fixture',
@@ -182,6 +182,7 @@ void main() {
       supportsComicPreview: true,
       supportsComicComments: true,
       browserUserAgent: 'fixture-browser-agent',
+      adaptiveReaderType: SourceAdaptiveReaderType.vertical,
       contentRatings: const <SourceContentRating>{
         SourceContentRating.safe,
         SourceContentRating.erotica,
@@ -197,6 +198,7 @@ void main() {
     expect(decoded.contentRatings, contains(SourceContentRating.erotica));
     expect(decoded.supportsComicPreview, isTrue);
     expect(decoded.supportsComicComments, isTrue);
+    expect(decoded.adaptiveReaderType, SourceAdaptiveReaderType.vertical);
   });
 
   test('detail preview and comment requests validate nullable cursors', () {

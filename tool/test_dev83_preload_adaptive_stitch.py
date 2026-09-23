@@ -122,7 +122,9 @@ def main() -> None:
     )
     require(
         "packages/local_media_ui/lib/src/local_media_screens.dart",
-        "adaptiveMetadata: AdaptiveReaderMetadata(",
+        "this.adaptiveMetadata",
+        "adaptiveMetadata: adaptiveMetadata ??",
+        "AdaptiveReaderMetadata(",
         "title: record.comicTitle",
         "authors: record.comicAuthors",
     )

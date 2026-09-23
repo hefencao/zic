@@ -440,8 +440,17 @@ void main() {
           ' ': '/data/ignored', // blank keys are dropped
         },
         'sourceAdaptiveWebtoonWeights': <String, Object?>{
-          'venera:alpha': 0.8,
+          'venera:legacy': 0.8,
           'mihon:clamped': 2.0,
+          'venera:neutral-legacy': 0.0,
+          'venera:override': 1.0,
+          'bad': 'high',
+          ' ': 0.5,
+        },
+        'sourceAdaptiveWebtoonConfidences': <String, Object?>{
+          'venera:alpha': 0.2,
+          'venera:zero': 0.0,
+          'venera:override': 0.25,
           'bad': 'high',
           ' ': 0.5,
         },
@@ -520,14 +529,21 @@ void main() {
     );
     expect(controller.sourceDownloadDirectoryFor('mihon:beta'), isNull);
     expect(controller.sourceDownloadDirectoryFor('unknown'), isNull);
-    expect(controller.sourceAdaptiveWebtoonWeightFor('venera:alpha'), 0.8);
-    expect(controller.sourceAdaptiveWebtoonWeightFor('mihon:clamped'), 1.0);
-    expect(controller.sourceAdaptiveWebtoonWeightFor('unknown'), 0.0);
+    expect(controller.sourceAdaptiveWebtoonConfidenceFor('venera:alpha'), 0.2);
+    expect(controller.sourceAdaptiveWebtoonConfidenceFor('venera:zero'), 0.0);
+    expect(controller.sourceAdaptiveWebtoonConfidenceFor('venera:legacy'), 0.9);
+    expect(controller.sourceAdaptiveWebtoonConfidenceFor('mihon:clamped'), 1.0);
+    expect(controller.sourceAdaptiveWebtoonConfidenceFor('venera:override'), 0.25);
+    expect(
+      controller.sourceAdaptiveWebtoonConfidenceFor('venera:neutral-legacy'),
+      0.5,
+    );
+    expect(controller.sourceAdaptiveWebtoonConfidenceFor('unknown'), 0.5);
     expect(
       controller
           .readerSessionSettingsFor('venera:alpha', 'comic')
-          .sourceWebtoonWeight,
-      0.8,
+          .sourceWebtoonConfidence,
+      0.2,
     );
     expect(controller.sourceSearchHistory, <String>['Alpha', 'beta']);
     expect(
@@ -564,7 +580,7 @@ void main() {
       true,
     );
     controller.setSourceDownloadDirectory('venera:gamma', '/data/gamma');
-    controller.setSourceAdaptiveWebtoonWeight('venera:gamma', 0.6);
+    controller.setSourceAdaptiveWebtoonConfidence('venera:gamma', 0.1);
     controller.setLongPressZoomRestoreOnRelease(true);
     controller.setLongPressZoomMoveMode(ReaderLongPressMoveMode.drag);
     controller.setLongPressZoomPanRatio(2.0);
@@ -623,13 +639,17 @@ void main() {
       },
     );
     expect(
-      written?['sourceAdaptiveWebtoonWeights'],
+      written?['sourceAdaptiveWebtoonConfidences'],
       <String, double>{
-        'venera:alpha': 0.8,
+        'venera:alpha': 0.2,
+        'venera:zero': 0.0,
+        'venera:legacy': 0.9,
         'mihon:clamped': 1.0,
-        'venera:gamma': 0.6,
+        'venera:override': 0.25,
+        'venera:gamma': 0.1,
       },
     );
+    expect(written?.containsKey('sourceAdaptiveWebtoonWeights'), isFalse);
     expect(written?['longPressZoomRestoreOnRelease'], true);
     expect(written?['longPressZoomMoveMode'], 'drag');
     expect(written?['longPressZoomPanRatio'], 2.0);

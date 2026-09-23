@@ -446,6 +446,7 @@ final class _RuntimeBrowsableComicSource
           language: descriptor.language,
           website: descriptor.website,
           supportsSearch: descriptor.supportsSearch,
+          adaptiveReaderType: descriptor.adaptiveReaderType,
           contentRatings: descriptor.contentRatings,
         );
 

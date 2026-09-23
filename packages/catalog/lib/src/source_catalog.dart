@@ -120,6 +120,8 @@ abstract interface class AuthenticatableComicSource {
   Future<void> logout();
 }
 
+enum SourceAdaptiveReaderType { paged, vertical, animated }
+
 final class ComicSourceDescriptor {
   const ComicSourceDescriptor({
     required this.sourceId,
@@ -127,6 +129,7 @@ final class ComicSourceDescriptor {
     required this.language,
     required this.website,
     this.supportsSearch = true,
+    this.adaptiveReaderType,
     this.contentRatings = const <SourceContentRating>{
       SourceContentRating.safe,
       SourceContentRating.suggestive,
@@ -141,6 +144,7 @@ final class ComicSourceDescriptor {
   final String language;
   final Uri website;
   final bool supportsSearch;
+  final SourceAdaptiveReaderType? adaptiveReaderType;
   final Set<SourceContentRating> contentRatings;
 }
 

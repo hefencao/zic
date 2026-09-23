@@ -214,6 +214,18 @@ extension _HomeShellReaderRouteComposition on _HomeShellState {
     final versionSource = _sourceForId(current.chapter.sourceId);
     final screen = ImportedImageChapterScreen(
       record: recordForReader,
+      adaptiveMetadata: versionSource == null
+          ? null
+          : AdaptiveReaderMetadata(
+              sourceKey: recordForReader.sourceId,
+              comicId: recordForReader.comicId,
+              title: recordForReader.comicTitle,
+              authors: recordForReader.comicAuthors,
+              tags: recordForReader.comicTags,
+              sourceName: versionSource.descriptor.name,
+              sourceUrl: versionSource.descriptor.website.toString(),
+              sourceType: versionSource.descriptor.adaptiveReaderType?.name,
+            ),
       byteLoaders: prepared.byteLoaders,
       responseSources: prepared.responseSources,
       initialProgress: initialProgress ??

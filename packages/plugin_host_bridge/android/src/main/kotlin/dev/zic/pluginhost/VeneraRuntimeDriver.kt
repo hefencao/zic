@@ -414,6 +414,9 @@ internal class VeneraRuntimeDriver private constructor(
                                 .takeIf { it.startsWith("https://") || it.startsWith("http://") }
                                 ?: "https://zic.runtime.invalid/"
                             val supportsSearch = envelope.optBoolean("supportsSearch", false)
+                            val adaptiveReaderType = normalizeVeneraAdaptiveReaderType(
+                                envelope.optString("adaptiveReaderType"),
+                            )
                             VeneraRuntimeDriver(
                                 context = context,
                                 driverId = driverId,
@@ -441,6 +444,7 @@ internal class VeneraRuntimeDriver private constructor(
                                             "supportsComicComments",
                                             false,
                                         ),
+                                        "adaptiveReaderType" to adaptiveReaderType,
                                         "browserUserAgent" to
                                             state.webView.settings.userAgentString.orEmpty(),
                                         "contentRatings" to listOf("safe", "suggestive"),
@@ -505,11 +509,20 @@ private data class VeneraActivation(
         append("name:String(__zicSource.name||''),url:String(__zicSource.url||''),")
         append("supportsBrowse:__browse,supportsSearch:__zicHasSearchCapability(__zicSource),")
         append("supportsComicPreview:typeof __zicSource.comic?.loadThumbnails==='function',")
-        append("supportsComicComments:typeof __zicSource.comic?.loadComments==='function'}));")
+        append("supportsComicComments:typeof __zicSource.comic?.loadComments==='function',")
+        append("adaptiveReaderType:String(__zicSource.comic?.adaptiveType||'')}));")
         append("}catch(e){__zicActivationOpen=false;ZicNative.activated(JSON.stringify({ok:false,")
         append("message:__zicErrorMessage(e,'activation')}));}})();")
     }
 }
+
+internal fun normalizeVeneraAdaptiveReaderType(raw: String?): String? =
+    when (raw?.trim()?.lowercase()) {
+        "paged", "manga", "japanese" -> "paged"
+        "vertical", "webtoon", "manhwa", "korean" -> "vertical"
+        "animated" -> "animated"
+        else -> null
+    }
 
 internal fun veneraBridgeFailureEnvelope(error: Throwable): JSONObject {
     val envelope = JSONObject()

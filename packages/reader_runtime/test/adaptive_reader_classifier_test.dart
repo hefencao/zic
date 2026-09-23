@@ -157,7 +157,33 @@ void main() {
     expect(profile.confidence, lessThan(AdaptiveReaderProfile.stopConfidence));
   });
 
-  test('source webtoon weight is a prior and part of profile fingerprint', () {
+  test('paged source confidence can counter square Korean source evidence', () {
+    final chapter = manifest(
+      pages: const [
+        (width: 1000, height: 1000, animated: false),
+        (width: 1000, height: 1000, animated: false),
+        (width: 1000, height: 1000, animated: false),
+      ],
+    );
+    final metadata = AdaptiveReaderMetadata(
+      sourceKey: 'mihon:paged-fixture',
+      comicId: 'comic',
+      title: 'sample',
+      tags: const <String>['韩国'],
+    );
+
+    final profile = classifyAdaptiveReaderLayout(
+      chapter,
+      metadata: metadata,
+      sourceWebtoonConfidence: 0,
+    );
+    expect(profile?.direction, ReadingDirection.ltr);
+    expect(profile?.basis, 'source:webtoon-confidence');
+    expect(profile!.confidence, greaterThan(0.8));
+  });
+
+  test('source webtoon confidence expresses paged, neutral and webtoon priors',
+      () {
     final chapter = manifest(
       pages: const [
         (width: null, height: null, animated: false),
@@ -165,20 +191,72 @@ void main() {
         (width: null, height: null, animated: false),
       ],
     );
-    final weaker = AdaptiveReaderClassifier(
+    final neutral = AdaptiveReaderClassifier(chapter);
+    final paged = AdaptiveReaderClassifier(
       chapter,
-      sourceWebtoonWeight: 0.4,
+      sourceWebtoonConfidence: 0,
     );
-    final stronger = AdaptiveReaderClassifier(
+    final webtoon = AdaptiveReaderClassifier(
       chapter,
-      sourceWebtoonWeight: 0.8,
+      sourceWebtoonConfidence: 1,
     );
-    final profile = stronger.classifyManifest();
+    final pagedProfile = paged.classifyManifest();
+    final webtoonProfile = webtoon.classifyManifest();
 
-    expect(profile?.direction, ReadingDirection.vertical);
-    expect(profile?.basis, 'source:webtoon-weight');
-    expect(profile?.confidence, greaterThanOrEqualTo(0.60));
-    expect(stronger.metadataFingerprint, isNot(weaker.metadataFingerprint));
+    expect(neutral.classifyManifest(), isNull);
+    expect(pagedProfile?.direction, ReadingDirection.ltr);
+    expect(pagedProfile?.basis, 'source:webtoon-confidence');
+    expect(pagedProfile!.confidence, greaterThan(0.8));
+    expect(webtoonProfile?.direction, ReadingDirection.vertical);
+    expect(webtoonProfile?.basis, 'source:webtoon-confidence');
+    expect(webtoonProfile!.confidence, greaterThan(0.8));
+    expect(paged.metadataFingerprint, isNot(neutral.metadataFingerprint));
+    expect(webtoon.metadataFingerprint, isNot(neutral.metadataFingerprint));
+  });
+
+  test('configured source adaptive type remains high-confidence metadata', () {
+    final chapter = manifest(
+      pages: const [
+        (width: null, height: null, animated: false),
+        (width: null, height: null, animated: false),
+        (width: null, height: null, animated: false),
+      ],
+    );
+    final metadata = AdaptiveReaderMetadata(
+      sourceKey: 'venera:fixture',
+      comicId: 'comic',
+      title: 'sample',
+      sourceType: 'paged',
+    );
+
+    final profile = classifyAdaptiveReaderLayout(chapter, metadata: metadata);
+    expect(profile?.direction, ReadingDirection.ltr);
+    expect(profile?.basis, 'source:configured');
+    expect(profile!.confidence, greaterThan(0.98));
+  });
+
+  test('strong user source confidence can correct provider adaptive type', () {
+    final chapter = manifest(
+      pages: const [
+        (width: null, height: null, animated: false),
+        (width: null, height: null, animated: false),
+        (width: null, height: null, animated: false),
+      ],
+    );
+    final metadata = AdaptiveReaderMetadata(
+      sourceKey: 'venera:fixture',
+      comicId: 'comic',
+      title: 'sample',
+      sourceType: 'vertical',
+    );
+
+    final profile = classifyAdaptiveReaderLayout(
+      chapter,
+      metadata: metadata,
+      sourceWebtoonConfidence: 0,
+    );
+    expect(profile?.direction, ReadingDirection.ltr);
+    expect(profile?.basis, 'source:webtoon-confidence');
   });
 
   test('decoded animation requires two non-cover pages', () {
