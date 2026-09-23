@@ -208,9 +208,6 @@ final class _HomeShellState extends State<HomeShell> {
   bool _manageShelf = false;
   bool _batchManagement = false;
   final Set<String> _managedComicIdentities = <String>{};
-  final Map<String, ({String originComicId, Future<void> future})>
-      _versionViewReusePreparations =
-      <String, ({String originComicId, Future<void> future})>{};
   final Map<String, _DownloadCompletionKind> _downloadCompletionBadges =
       <String, _DownloadCompletionKind>{};
   final Map<String, String> _pendingWholeComicCompletionBadges =

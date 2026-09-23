@@ -339,8 +339,11 @@ transaction 不再 direct save store + manual projection。
 避免 bootstrap journal 与 durable metadata split-brain；owner 不认识 `HomeServiceHandoff` 类型。
 其余只接收 current artifact-cache provider、verified-page-reuse identity 与 preference/canonical-id 等窄 capability；
 事务结果只携带结构化计数/状态，目标选择、版本浏览、比较确认与结果文案/提示均属于 UI，Widget State/`part` 不得重新持有 journal/metadata transaction authority。
-同源版本关系发现、page-reuse proof/warmup、Reader 首帧后的低优先级 metadata/version refresh 与 Reader version authority fingerprint 由独立 `HomeVersionReuseLifecycle` 持有；
-它每次通过 `HomeLibrarySession` 读取当前 library/chapter-download/relation generation。
+同源版本关系发现、page-reuse proof/warmup、显式“查看同源版本”的 selected-target preparation、
+Reader 首帧后的低优先级 metadata/version refresh 与 Reader version authority fingerprint 由独立 `HomeVersionReuseLifecycle` 持有；
+UI 只在版本 route push 前请求 preparation、在 route finally 释放 token，Reader 通过 lifecycle 查询目标 chapter 对应 preparation；
+`HomeShell` 不再保存 selected version 的 `originComicId + Future` 镜像状态。
+该 lifecycle 每次通过 `HomeLibrarySession` 读取当前 library/chapter-download/relation generation。
 stored successor/predecessor 必须在同一个 concrete `session.library` identity 上成组读取；
 任一 await 后 library identity 改变或旧 store 因 adoption 被关闭时整体重试，
 只有 current identity 自身 I/O 失败才向上抛出，禁止一次 Version State 混合两代 relation projection；

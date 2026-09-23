@@ -14,8 +14,9 @@
 5. `docs/IMPLEMENTATION_STATUS.md`：当前实现与验证矩阵。
 
 ## 3. 当前开放问题
-- Home shell 已继续抽出纯状态 `HomeRouteAdmission`（Reader 覆盖、Download Manager 单实例、comic identity route lock）。
-  后续若继续瘦身，应优先处理仍直接服务 UI 的 shelf/navigation presentation state，或把明确 route builder 变成显式 adapter；禁止新增跨 owner facade，也禁止把 service generation / route admission 镜像回 `HomeShell`。
+- Home shell 已继续抽出纯状态 `HomeRouteAdmission`（Reader 覆盖、Download Manager 单实例、comic identity route lock）；
+  selected version-view preparation 也已归并到 `HomeVersionReuseLifecycle`，`HomeShell` 不再持 version preparation map。
+  后续若继续瘦身，应优先处理仍直接服务 UI 的 shelf/navigation presentation state，或把明确 route builder 变成显式 adapter；禁止新增跨 owner facade，也禁止把 service generation / route admission / version preparation 镜像回 `HomeShell`。
 - 静态竖排浏览功耗偏高（HeuristicPolicy 静态爆发上传、逐页尺寸异步重绘颠簸、首屏 6 屏大 cacheExtent、KeepAlive 15 页常驻与 scheduleFrame 调度）。
 - 文档超长单行整理，严格保持 handoff/status 责任预算上限，杜绝单行堆砌历史。
 

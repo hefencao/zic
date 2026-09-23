@@ -42,8 +42,23 @@ final class HomeVersionState {
   bool get isEmpty => successors.isEmpty && predecessors.isEmpty;
 }
 
-/// Owns source-version relation discovery, page-reuse warmup and Reader
-/// background version refresh without acquiring Widget/navigation authority.
+/// Process-local handoff from an explicitly selected version route to Reader.
+///
+/// The route controls start/finish, while this lifecycle owns retention and
+/// the reuse-proof Future itself.
+final class HomeVersionViewPreparation {
+  const HomeVersionViewPreparation({
+    required this.originComicId,
+    required this.future,
+  });
+
+  final String originComicId;
+  final Future<void> future;
+}
+
+/// Owns source-version relation discovery, page-reuse warmup, selected-view
+/// preparation and Reader background refresh without acquiring
+/// Widget/navigation authority.
 ///
 /// All durable/library state is read through [session] on each operation, so a
 /// service handoff does not require rebuilding this lifecycle. The only
@@ -76,6 +91,8 @@ final class HomeVersionReuseLifecycle {
   final int Function() monotonicMicros;
 
   final Map<String, Future<void>> _warmups = <String, Future<void>>{};
+  final Map<String, HomeVersionViewPreparation> _viewPreparations =
+      <String, HomeVersionViewPreparation>{};
   final Map<String, Future<void>> _readerRefreshes = <String, Future<void>>{};
   final Map<String, String> _readerRefreshLaneKeys = <String, String>{};
   final Map<String, Completer<void>> _readerRefreshCompleters =
@@ -131,6 +148,7 @@ final class HomeVersionReuseLifecycle {
         }
       }
     }
+    _viewPreparations.clear();
   }
 
   ComicVersionRelationStore? _relationStore() {
@@ -498,6 +516,61 @@ final class HomeVersionReuseLifecycle {
         },
       ),
     );
+  }
+
+  String _viewPreparationKey(String sourceId, String comicId) =>
+      '$sourceId\u0000$comicId';
+
+  HomeVersionViewPreparation startViewPreparation(
+    BrowsableComicSource source,
+    String currentComicId,
+    String targetComicId,
+  ) {
+    if (_closed) {
+      return HomeVersionViewPreparation(
+        originComicId: currentComicId,
+        future: Future<void>.value(),
+      );
+    }
+    final key = _viewPreparationKey(source.sourceId, targetComicId);
+    final existing = _viewPreparations[key];
+    if (existing != null) return existing;
+    final current = _exactLibraryComicForSourceIdentity(
+      source.sourceId,
+      currentComicId,
+    );
+    final future = current != null && current.chapters.length == 1
+        ? prepareWarmup(
+            source,
+            current.chapters.single,
+            targetComicId: targetComicId,
+          )
+        : Future<void>.value();
+    final preparation = HomeVersionViewPreparation(
+      originComicId: currentComicId,
+      future: future,
+    );
+    _viewPreparations[key] = preparation;
+    return preparation;
+  }
+
+  HomeVersionViewPreparation? viewPreparationFor(ImportedLibraryEntry entry) =>
+      _viewPreparations[
+        _viewPreparationKey(
+          entry.chapter.sourceId,
+          entry.chapter.comicId,
+        )
+      ];
+
+  bool finishViewPreparation(
+    String sourceId,
+    String targetComicId,
+    HomeVersionViewPreparation preparation,
+  ) {
+    final key = _viewPreparationKey(sourceId, targetComicId);
+    if (!identical(_viewPreparations[key], preparation)) return false;
+    _viewPreparations.remove(key);
+    return true;
   }
 
   String _warmupKey(

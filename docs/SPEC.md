@@ -454,7 +454,8 @@ partial/resume/offline artifact、漫画源浏览与受控插件扩展，以及�
   MUST NOT 持有 Flutter UI/Widget State/ComicDetails DTO/整个 source gateway 或直接读取 app-global coordinator。
   Reader background refresh MUST 由 composition 注入的 scheduler 继续提交到应用共享 NetworkLane priority100；
   携带 `TaskControl` 的 refresh MUST NOT join 无 control 的 generic warmup。
-  route-local version-view preparation token MAY 留在 UI，但 MUST NOT 升级为 durable/version reuse authority。
+  selected version-view preparation token MUST 由 version-reuse lifecycle owner 持有；UI MAY 只在 route push/finally 调用 start/finish，
+  MUST NOT 在 Widget State/`part` 保存平行 `originComicId + Future` map，也不得把 token 升级为 durable authority。
   Source-management UI 在替换 controller active sources 时 MUST 显式追踪上一代与下一代 external source IDs；
   不得以 Mihon/Venera sourceId 前缀决定哪些旧 source 应被替换。用于图标、登录能力或格式特有 UI 的 family 判定不等价于 ownership 判定。
 - 首页每张封面 MUST 独立完成请求和显示；一张封面变慢或 durable response 写入变慢，不得阻塞其它已经取得 encoded bytes 的封面。
@@ -2028,8 +2029,8 @@ Android debug/release、Mihon/Venera/Android 合同、干净 ZIP 独立复验，
 - 同源版本媒体复用 MUST 将强identity/offset验证收敛为当前chapter的bounded preparation并持久化chapter mapping。
   详情/version-state发现relation后 SHOULD异步warm实际有缓存状态的当前chapter；
   普通Reader route只消费本地mapping并立即进入Pipeline，MUST NOT为generic历史relation同步做source proof。
-  用户显式“查看同源版本”时 MUST由目标详情route生命周期持有selected target context（`originComicId + reuse-preparation Future`），
-  不能在前置Future完成时提前清除；若用户随后进入目标Reader，Reader MUST在创建physical demand前先等待该Future，
+  用户显式“查看同源版本”时 MUST由 version-reuse lifecycle 持有selected target context（`originComicId + reuse-preparation Future`），
+  UI route 只负责在 push 前开始、在 finally 精确释放；不能因前置Future完成而提前清除。若用户随后进入目标Reader，Reader MUST在创建physical demand前先等待该Future，
   再以已经hydrate的目标chapter仅针对`origin ↔ target` direct relation做一次target-side bounded catch-up并发布canonical projection。
   该barrier只属于显式selected version，MUST NOT扩成generic Reader同步proof或同漫画全历史批量probe；
   目标版本独有/未验证页继续exact-only，只有verified projection区间可直接落到canonical physical owner。

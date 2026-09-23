@@ -172,6 +172,66 @@ void main() {
     await state.backgroundRefresh;
   });
 
+  test(
+      'version-view preparation is lifecycle-owned until route release',
+      () async {
+    final library = MemoryImportedLibraryStore();
+    final downloads = MemoryChapterDownloadService(
+      pageLoader: (_, _) async => Uint8List(1),
+    );
+    final queue = WholeComicDownloadQueue(downloads: downloads);
+    final session = HomeLibrarySession(
+      library: library,
+      chapterDownloads: downloads,
+      wholeComicDownloads: queue,
+      sources: const <BrowsableComicSource>[],
+      ownsLibrary: true,
+      ownsChapterDownloads: true,
+      ownsWholeComicDownloads: true,
+    );
+    final lifecycle = _lifecycle(session);
+    await session.ready;
+    await session.upsertChapter(_entry().chapter);
+    addTearDown(() async {
+      await lifecycle.close();
+      await session.close();
+      session.dispose();
+    });
+
+    final source = _VersionSource();
+    final first = lifecycle.startViewPreparation(
+      source,
+      'old-comic',
+      'new-comic',
+    );
+    final joined = lifecycle.startViewPreparation(
+      source,
+      'different-origin',
+      'new-comic',
+    );
+    final target = _entry(
+      comicId: 'new-comic',
+      chapterId: 'new-chapter',
+      pageId: 'new-page',
+    );
+
+    expect(identical(joined, first), isTrue);
+    expect(first.originComicId, 'old-comic');
+    expect(identical(lifecycle.viewPreparationFor(target), first), isTrue);
+    await first.future;
+    expect(identical(lifecycle.viewPreparationFor(target), first), isTrue);
+
+    expect(
+      lifecycle.finishViewPreparation('fixture', 'new-comic', first),
+      isTrue,
+    );
+    expect(lifecycle.viewPreparationFor(target), isNull);
+    expect(
+      lifecycle.finishViewPreparation('fixture', 'new-comic', first),
+      isFalse,
+    );
+  });
+
   test('close cancels queued Reader metadata refresh before it can start',
       () async {
     final library = MemoryImportedLibraryStore();
@@ -313,10 +373,12 @@ HomeVersionReuseLifecycle _lifecycle(HomeLibrarySession session) =>
       monotonicMicros: () => 0,
     );
 
-ImportedLibraryEntry _entry() {
+ImportedLibraryEntry _entry({
+  String comicId = 'old-comic',
+  String chapterId = 'fixture-chapter',
+  String pageId = 'fixture-page',
+}) {
   const sourceId = 'fixture';
-  const comicId = 'old-comic';
-  const chapterId = 'fixture-chapter';
   final comic = Comic(
     comicId: comicId,
     sourceId: sourceId,
@@ -342,7 +404,7 @@ ImportedLibraryEntry _entry() {
         readingDirection: ReadingDirection.ltr,
         pages: <PageAsset>[
           PageAsset(
-            pageId: 'fixture-page',
+            pageId: pageId,
             chapterId: chapterId,
             index: 0,
             uri: Uri.parse('https://example.invalid/page.webp'),

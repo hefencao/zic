@@ -27,6 +27,7 @@ App build：0.31.0+328
 - 生产根页面已收口为 `HomeShell` / `home_shell_*`；旧 `DemoHome` 命名只允许出现在历史 ADR/audit 记录，不能再作为当前生产入口或 owner 名称。
 - `HomeShell` 只持真正的 Navigator/presentation 与 composition wiring；library/download/queue 当前 authority 继续由 `HomeLibrarySession` 持有，Reader/source/download/version 等长期职责继续由各自 Home owner 承担。
 - Reader 覆盖态、Download Manager 单实例槽和 comic identity route lock 已进一步抽到纯 Dart `HomeRouteAdmission`；它不持 Navigator/UI 或任一 subsystem authority。
+- 显式同源版本查看使用的 `originComicId + reuse-preparation Future` 已从 `HomeShell` 移入 `HomeVersionReuseLifecycle`；UI 只负责 route 前 start / finally finish，Reader preparation 从同一 lifecycle 查询 selected target token。
 - durable service generation adoption 已从 Widget State 抽到 `HomeServiceAdoptionCoordinator`：single-flight adoption、同代 cache binding、source-resource rebind 与 source projection commit 在非 UI owner 中完成；dispose 先 fence 新 adoption，再 drain 已接纳工作。
 
 ### 外部插件运行时 (Mihon & Venera)

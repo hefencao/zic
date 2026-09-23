@@ -602,48 +602,21 @@ extension _HomeShellSourceMigration on _HomeShellState {
   }
 
 
-  String _versionViewReusePreparationKey(
-    String sourceId,
-    String comicId,
-  ) =>
-      '$sourceId\u0000$comicId';
-
-  ({String originComicId, Future<void> future})
-      _startVersionViewReusePreparation(
+  HomeVersionViewPreparation _startVersionViewReusePreparation(
     BrowsableComicSource source,
     String currentComicId,
     String targetComicId,
-  ) {
-    final key = _versionViewReusePreparationKey(source.sourceId, targetComicId);
-    final existing = _versionViewReusePreparations[key];
-    if (existing != null) return existing;
-    final current = _exactLibraryComicForSourceIdentity(
-      source.sourceId,
-      currentComicId,
-    );
-    final future = current != null && current.chapters.length == 1
-        ? _prepareVersionReuseWarmup(
-            source,
-            current.chapters.single,
-            targetComicId: targetComicId,
-          )
-        : Future<void>.value();
-    final preparation = (
-      originComicId: currentComicId,
-      future: future,
-    );
-    _versionViewReusePreparations[key] = preparation;
-    return preparation;
-  }
+  ) =>
+      _versionReuseLifecycle.startViewPreparation(
+        source,
+        currentComicId,
+        targetComicId,
+      );
 
-  ({String originComicId, Future<void> future})?
-      _versionViewReusePreparationFor(ImportedLibraryEntry entry) =>
-          _versionViewReusePreparations[
-            _versionViewReusePreparationKey(
-              entry.chapter.sourceId,
-              entry.chapter.comicId,
-            )
-          ];
+  HomeVersionViewPreparation? _versionViewReusePreparationFor(
+    ImportedLibraryEntry entry,
+  ) =>
+      _versionReuseLifecycle.viewPreparationFor(entry);
 
   Future<void> _viewSourceVersion(
     BrowsableComicSource source,
@@ -651,10 +624,6 @@ extension _HomeShellSourceMigration on _HomeShellState {
     SourceComicVersion version,
   ) async {
     if (version.sourceId != source.sourceId || version.comicId.isEmpty) return;
-    final key = _versionViewReusePreparationKey(
-      source.sourceId,
-      version.comicId,
-    );
     final preparation = _startVersionViewReusePreparation(
       source,
       currentComicId,
@@ -677,9 +646,11 @@ extension _HomeShellSourceMigration on _HomeShellState {
         ),
       );
     } finally {
-      if (identical(_versionViewReusePreparations[key], preparation)) {
-        _versionViewReusePreparations.remove(key);
-      }
+      _versionReuseLifecycle.finishViewPreparation(
+        source.sourceId,
+        version.comicId,
+        preparation,
+      );
     }
   }
 

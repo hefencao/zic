@@ -26,7 +26,7 @@ for marker, label in (
     ("loadRemoteEntrySnapshot:", "fresh metadata capability"),
     ("verifiedPageReuseIdentity:", "verified page identity capability"),
     ("requiresSourceLocatorRefresh: (chapter) =>", "shared locator-validity capability"),
-    ("scheduleMetadataTask: ({", "composition-owned metadata scheduler injection"),
+    ("scheduleMetadataTask:", "composition-owned metadata scheduler injection"),
     ("cancelQueuedMetadataTask: (key) =>", "queued metadata task cancellation injection"),
     ("cancelMetadataTask: (key) =>", "active metadata task cancellation injection"),
     ("await _versionReuseLifecycle.close();", "lifecycle teardown barrier"),
@@ -54,6 +54,10 @@ for marker, label in (
     ("final HomeVersionQueuedMetadataTaskCanceller cancelQueuedMetadataTask;", "queued task cancellation capability"),
     ("final HomeVersionMetadataTaskCanceller cancelMetadataTask;", "active task cancellation capability"),
     ("final Map<String, Future<void>> _warmups", "warmup coalescing state"),
+    ("final Map<String, HomeVersionViewPreparation> _viewPreparations", "selected version-view preparation state"),
+    ("HomeVersionViewPreparation startViewPreparation(", "selected version-view preparation admission"),
+    ("HomeVersionViewPreparation? viewPreparationFor(", "selected version-view Reader lookup"),
+    ("bool finishViewPreparation(", "selected version-view preparation release"),
     ("final Map<String, Future<void>> _readerRefreshes", "Reader refresh coalescing state"),
     ("final Set<Future<dynamic>> _activeOperations", "admitted operation drain"),
     ("Future<void> close()", "joinable lifecycle close"),
@@ -110,12 +114,23 @@ for forbidden in (
 
 for marker, label in (
     ("_versionReuseLifecycle.prepareWarmup(", "UI warmup delegation"),
+    ("_versionReuseLifecycle.startViewPreparation(", "selected view preparation delegation"),
+    ("_versionReuseLifecycle.viewPreparationFor(entry)", "Reader preparation lookup delegation"),
+    ("_versionReuseLifecycle.finishViewPreparation(", "selected view preparation release delegation"),
     ("_versionReuseLifecycle.scheduleReaderMetadataVersionRefresh(", "Reader refresh delegation"),
     ("_versionReuseLifecycle.ensureAuthority(current)", "Reader authority delegation"),
     ("_versionReuseLifecycle.loadVersionState(", "version-state delegation"),
     ("details.ComicDetailsVersionState _detailsVersionState(", "UI version-state adapter"),
-    ("_versionViewReusePreparations", "route-local view preparation stays in UI"),
 ):
-    require(ui if marker != "_versionViewReusePreparations" else home, marker, label)
+    require(ui, marker, label)
+
+for stale in (
+    "_versionViewReusePreparations",
+    "_versionViewReusePreparationKey(",
+):
+    if stale in home or stale in ui:
+        raise SystemExit(
+            f"HomeShell retained selected version-view preparation authority: {stale}"
+        )
 
 print("dev.332 HomeShell version reuse lifecycle boundary: OK")
