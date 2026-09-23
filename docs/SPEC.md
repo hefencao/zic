@@ -163,6 +163,9 @@
   地域/语言相关标签 MAY 作为弱证据，但不得仅凭“韩国/韓國”等地域词硬切阅读模式。
   来源先验或 typed source metadata 变化 MUST 使与旧证据绑定的持久 adaptive profile 失效；
   实现不得为插件、来源页和 Reader 各建一份互相覆盖的设置 authority。
+  每漫画布局 override MUST 只有一个互斥策略轴：自适应、跟随来源/进度、LTR、RTL、纵向。
+  “启用本漫画设置” MUST 是全部漫画级 override 的总 gate；不得再用独立 adaptive switch 与方向 selector 交叉决定布局。
+  旧 `enabled=false && adaptiveEnabled=false` MUST 兼容迁移为启用的“跟随”策略，以保持历史停用本漫画自适应的实际行为。
 - **动画能力**：`animatedHint`、后缀和来源声明 MUST NOT 直接显示播放专属控件。媒体能力 unknown 时控件 MUST 隐藏；
   两个实际帧可形成 animated 正证据，static 只在完整/codec 静态证据成立后确认。
   纵向 measured geometry 改变页面真实 extent 后，Reader MUST 在 layout 生效后无手势重发真实 visible coverage；
@@ -1549,9 +1552,14 @@ external presentation 的“已启动”状态 MUST以非空 `externalPresentati
   切换目录时用户 MAY 选择是否迁移：迁移 MUST 把 SQLite 索引与 `partial/final` 字节一起移动并把索引内记录路径重写到新前缀，MUST NOT 只修改字符串路径；
   不迁移时旧文件保留在原位置，但应用内章节显示为未下载。新、旧目录相同或存在嵌套关系时 MUST 拒绝迁移。意图（目标目录与迁移来源）MUST 先于移动持久化，中断的移动由下次启动幂等补完。
   有整本任务进行中或 Reader transfer consumer 未退出时 MUST 拒绝立即切换并保持现状。
-- 插件管理 MUST 为每个已安装插件提供独立下载目录设置（默认跟随默认下载目录）：
-  该设置作用于插件暴露的全部外部 source 身份（`venera:<key>` / `mihon:<id>`），只决定这些 source 新下载 artifact 的写入位置；
-  既有文件 MUST 保留在原位置并通过索引绝对路径继续可读，per-source 切换不要求迁移。目录选择 MUST 复用默认下载目录的旧/新文件解析规则。
+- 来源管理 MUST 为每个 source 提供齿轮“源设置”入口。应用级 source policy MUST 集中在该页，
+  当前包括条漫置信、历史缓存冲突数据信任与来源独立下载目录；这些设置不得重新挂回插件生命周期管理。
+  来源独立下载目录默认跟随全局目录，只决定该 source 新下载 artifact 的写入位置。
+  既有文件 MUST 保留在原位置并通过索引 locator 继续可读，per-source 切换不要求迁移。
+  原可配置来源设置/登录入口 MUST 作为“来源属性与登录”使用属性列表/属性页语义图标，不得与应用级源设置共用齿轮语义。
+- 历史缓存冲突信任 MUST 以 source tri-state（inherit/strict/trust）覆盖 application global default。
+  旧 plugin-scoped override MAY 只作兼容读取；进入该插件任一源设置时，MUST 将旧值展开到当前全部已知 source IDs，
+  保留已有显式 source override，并在成功展开后退役 plugin override，使“跟随全局”不再被旧 plugin 值重新遮蔽。
 - 插件管理 MUST 提供更新提醒：进入管理页时按每个已安装插件持久化的精确仓库索引检查更新（版本号优先、无版本号时版本串不同即视为可更新），发现更新时以对话框提醒一次并在已安装行保持可见徽标；
   更新索引 MUST 与 executable-plugin gate 的仓库 trust origin 分开持久化，MUST NOT 把只有 scheme/host 的 trust origin 当作 index 请求。旧记录缺少索引时，仅当 pinned payload URL 能无歧义证明属于宿主历史默认仓库时 MAY 迁移到对应当前默认索引；否则 MUST NOT 猜测。单个仓库不可达 MUST NOT 掩盖其它仓库的更新结果。设备导入且无真实仓库来源的 Mihon 扩展 MAY 跳过检查。
 - 已安装 Venera 插件 MUST 支持直接编辑其 JavaScript payload：

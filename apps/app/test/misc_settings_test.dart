@@ -742,6 +742,112 @@ void main() {
     );
   });
 
+  test('source trust supersedes and retires legacy plugin trust', () async {
+    Map<String, Object?>? written;
+    final controller = AppPreferencesController();
+    addTearDown(controller.dispose);
+    await controller.attach(
+      read: () async => <String, Object?>{
+        'trustConflictingHistoricalCarriersByDefault': true,
+        'pluginTrustConflictingHistoricalCarriers': <String, Object?>{
+          'plugin-a': false,
+        },
+        'sourceTrustConflictingHistoricalCarriers': <String, Object?>{
+          'source-explicit': true,
+        },
+      },
+      write: (values) async => written = Map<String, Object?>.from(values),
+    );
+
+    expect(
+      controller.trustConflictingHistoricalCarriersForSource(
+        'source-a',
+        legacyPluginId: 'plugin-a',
+      ),
+      isFalse,
+    );
+    expect(
+      controller.trustConflictingHistoricalCarriersForSource(
+        'source-explicit',
+        legacyPluginId: 'plugin-a',
+      ),
+      isTrue,
+    );
+
+    controller.migratePluginTrustConflictingHistoricalCarriersToSources(
+      'plugin-a',
+      const <String>['source-a', 'source-b', 'source-explicit'],
+    );
+    expect(
+      controller.conflictingHistoricalCarrierTrustOverrideForPlugin('plugin-a'),
+      isNull,
+    );
+    expect(
+      controller.conflictingHistoricalCarrierTrustOverrideForSource('source-a'),
+      isFalse,
+    );
+    expect(
+      controller.conflictingHistoricalCarrierTrustOverrideForSource(
+        'source-b',
+      ),
+      isFalse,
+    );
+    expect(
+      controller.conflictingHistoricalCarrierTrustOverrideForSource(
+        'source-explicit',
+      ),
+      isTrue,
+    );
+
+    controller.clearSourceTrustConflictingHistoricalCarriersOverride(
+      'source-a',
+    );
+    expect(
+      controller.trustConflictingHistoricalCarriersForSource(
+        'source-a',
+        legacyPluginId: 'plugin-a',
+      ),
+      isTrue,
+    );
+    await controller.flush();
+    expect(
+      written?['sourceTrustConflictingHistoricalCarriers'],
+      <String, bool>{
+        'source-explicit': true,
+        'source-b': false,
+      },
+    );
+    expect(
+      written?['pluginTrustConflictingHistoricalCarriers'],
+      <String, bool>{},
+    );
+  });
+
+  test('legacy adaptive-off comic becomes enabled follow policy', () async {
+    final controller = AppPreferencesController();
+    addTearDown(controller.dispose);
+    await controller.attach(
+      read: () async => <String, Object?>{
+        'adaptiveReaderEnabled': true,
+        'comicReaderSettings': <String, Object?>{
+          comicReaderSettingsIdentity('source', 'comic'): <String, Object?>{
+            'enabled': false,
+            'adaptiveEnabled': false,
+          },
+        },
+      },
+      write: (_) async {},
+    );
+
+    final comic = controller.comicReaderSettingsFor('source', 'comic');
+    expect(comic.enabled, isTrue);
+    expect(comic.adaptiveEnabled, isFalse);
+    final session = controller.readerSessionSettingsFor('source', 'comic');
+    expect(session.comicSpecificEnabled, isTrue);
+    expect(session.effectiveAdaptiveEnabled, isFalse);
+    expect(session.directionOverride, isNull);
+  });
+
   test('legacy per-comic stitch false inherits the global setting', () async {
     final controller = AppPreferencesController();
     addTearDown(controller.dispose);

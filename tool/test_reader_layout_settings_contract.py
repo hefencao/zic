@@ -145,6 +145,8 @@ def main() -> None:
         "sourceAdaptiveWebtoonConfidences",
         "sourceAdaptiveWebtoonWeights",
         "setSourceAdaptiveWebtoonConfidence",
+        "sourceTrustConflictingHistoricalCarriers",
+        "migratePluginTrustConflictingHistoricalCarriersToSources",
     )
     require(
         "apps/app/lib/reader_preferences.dart",
@@ -152,12 +154,39 @@ def main() -> None:
     )
     require(
         "apps/app/lib/source_browser.dart",
-        "sourceAdaptiveWebtoonConfidenceKey",
-        "_changeSourceAdaptiveWebtoonConfidence",
-        "条漫置信",
+        "sourceSettingsEntryKey",
+        "sourcePropertiesEntryKey",
+        "_openAppSourceSettings",
+        "_openSourceProperties",
+        "Icons.settings_outlined",
+        "Icons.list_alt_outlined",
+    )
+    require(
+        "apps/app/lib/source_settings_screen.dart",
+        "SourceSettingsScreen",
+        "sourceAdaptiveWebtoonConfidenceFor",
+        "setSourceAdaptiveWebtoonConfidence",
+        "trustConflictingHistoricalCarriersForSource",
+        "setSourceTrustConflictingHistoricalCarriers",
+        "sourceDownloadDirectoryFor",
+        "setSourceDownloadDirectory",
         "0% 强页漫",
         "50% 自动/中性",
         "100% 强条漫",
+    )
+    require(
+        "packages/reader_runtime/lib/src/reader_comic_settings_sheet.dart",
+        "enum _ComicLayoutChoice",
+        "ChoiceChip(",
+        "_ComicLayoutChoice.adaptive",
+        "_ComicLayoutChoice.follow",
+        "reader-comic-layout-",
+    )
+    reject(
+        "apps/app/lib/external_plugin_repository_screen.dart",
+        "sourceDownloadDirectoryFor",
+        "onChangeDownloadDirectory",
+        "HistoricalCarrierConflictTrust",
     )
     require(
         "packages/catalog/lib/src/source_catalog.dart",

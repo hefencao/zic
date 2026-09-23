@@ -120,33 +120,38 @@ final class ComicReaderSettings {
           'invertPageOrder': invertPageOrder,
       };
 
-  factory ComicReaderSettings.fromJson(Map<String, Object?> json) =>
-      ComicReaderSettings(
-        enabled: _boolValue(json['enabled'], false),
-        directionOverride: _nullableEnumByName(
-          ReadingDirection.values,
-          json['directionOverride'],
-        ),
-        verticalStitchOverride: json['verticalStitchOverride'] is bool
-            ? json['verticalStitchOverride'] as bool
-            : json['verticalStitch'] == true
-                ? true
-                : null,
-        adaptiveEnabled: _boolValue(json['adaptiveEnabled'], true),
-        verticalLongPressZoom: json['verticalLongPressZoom'] is bool
-            ? json['verticalLongPressZoom'] as bool
-            : null,
-        invertPageOrder: json['invertPageOrder'] is bool
-            ? json['invertPageOrder'] as bool
-            : null,
-        adaptiveProfile: json['adaptiveProfile'] is Map
-            ? AdaptiveReaderProfile.fromJson(
-                Map<String, Object?>.from(
-                  json['adaptiveProfile']! as Map,
-                ),
-              )
-            : null,
-      );
+  factory ComicReaderSettings.fromJson(Map<String, Object?> json) {
+    final adaptiveEnabled = _boolValue(json['adaptiveEnabled'], true);
+    final enabled = _boolValue(json['enabled'], false);
+    return ComicReaderSettings(
+      // Legacy UI allowed "disable adaptive for this comic" while the
+      // per-comic master stayed off. Preserve that as the new Follow policy.
+      enabled: enabled || !adaptiveEnabled,
+      directionOverride: _nullableEnumByName(
+        ReadingDirection.values,
+        json['directionOverride'],
+      ),
+      verticalStitchOverride: json['verticalStitchOverride'] is bool
+          ? json['verticalStitchOverride'] as bool
+          : json['verticalStitch'] == true
+              ? true
+              : null,
+      adaptiveEnabled: adaptiveEnabled,
+      verticalLongPressZoom: json['verticalLongPressZoom'] is bool
+          ? json['verticalLongPressZoom'] as bool
+          : null,
+      invertPageOrder: json['invertPageOrder'] is bool
+          ? json['invertPageOrder'] as bool
+          : null,
+      adaptiveProfile: json['adaptiveProfile'] is Map
+          ? AdaptiveReaderProfile.fromJson(
+              Map<String, Object?>.from(
+                json['adaptiveProfile']! as Map,
+              ),
+            )
+          : null,
+    );
+  }
 }
 
 String comicReaderSettingsIdentity(String sourceId, String comicId) =>
@@ -199,7 +204,10 @@ final class AppPreferencesController extends ChangeNotifier {
   CachedCarrierTrustMode _cachedCarrierTrustMode =
       CachedCarrierTrustMode.strictReload;
   bool _trustConflictingHistoricalCarriersByDefault = true;
+  // Legacy plugin overrides stay readable until source settings migrate them.
   Map<String, bool> _pluginTrustConflictingHistoricalCarriers =
+      <String, bool>{};
+  Map<String, bool> _sourceTrustConflictingHistoricalCarriers =
       <String, bool>{};
   Map<String, String> _sourceDownloadDirectories = <String, String>{};
   Map<String, double> _sourceAdaptiveWebtoonConfidences = <String, double>{};
@@ -275,6 +283,24 @@ final class AppPreferencesController extends ChangeNotifier {
 
   bool? conflictingHistoricalCarrierTrustOverrideForPlugin(String pluginId) =>
       _pluginTrustConflictingHistoricalCarriers[pluginId.trim()];
+
+  bool trustConflictingHistoricalCarriersForSource(
+    String sourceId, {
+    String? legacyPluginId,
+  }) {
+    final sourceOverride =
+        _sourceTrustConflictingHistoricalCarriers[sourceId.trim()];
+    if (sourceOverride != null) return sourceOverride;
+    final pluginId = legacyPluginId?.trim();
+    if (pluginId != null && pluginId.isNotEmpty) {
+      final legacyOverride = _pluginTrustConflictingHistoricalCarriers[pluginId];
+      if (legacyOverride != null) return legacyOverride;
+    }
+    return _trustConflictingHistoricalCarriersByDefault;
+  }
+
+  bool? conflictingHistoricalCarrierTrustOverrideForSource(String sourceId) =>
+      _sourceTrustConflictingHistoricalCarriers[sourceId.trim()];
 
   /// Per-source physical download roots chosen by the user, keyed by the
   /// external source identity (`venera:<key>` / `mihon:<id>`).
@@ -468,6 +494,9 @@ final class AppPreferencesController extends ChangeNotifier {
     );
     _pluginTrustConflictingHistoricalCarriers = _decodeBoolMap(
       values['pluginTrustConflictingHistoricalCarriers'],
+    );
+    _sourceTrustConflictingHistoricalCarriers = _decodeBoolMap(
+      values['sourceTrustConflictingHistoricalCarriers'],
     );
     _sourceDownloadDirectories = _decodeDirectoryMap(
       values['sourceDownloadDirectories'],
@@ -731,6 +760,65 @@ final class AppPreferencesController extends ChangeNotifier {
     _changed();
   }
 
+  /// Converts one historical plugin override into source overrides. Existing
+  /// source values win; retiring the plugin entry makes "follow global" real.
+  void migratePluginTrustConflictingHistoricalCarriersToSources(
+    String pluginId,
+    Iterable<String> sourceIds,
+  ) {
+    if (_disposed) return;
+    final pluginKey = pluginId.trim();
+    if (pluginKey.isEmpty) return;
+    final legacy = _pluginTrustConflictingHistoricalCarriers[pluginKey];
+    if (legacy == null) return;
+    final nextSources = <String, bool>{
+      ..._sourceTrustConflictingHistoricalCarriers,
+    };
+    for (final rawSourceId in sourceIds) {
+      final sourceId = rawSourceId.trim();
+      if (sourceId.isEmpty) continue;
+      nextSources.putIfAbsent(sourceId, () => legacy);
+    }
+    final nextPlugins = <String, bool>{
+      ..._pluginTrustConflictingHistoricalCarriers,
+    }..remove(pluginKey);
+    _sourceTrustConflictingHistoricalCarriers = nextSources;
+    _pluginTrustConflictingHistoricalCarriers = nextPlugins;
+    _changed();
+  }
+
+  void setSourceTrustConflictingHistoricalCarriers(
+    String sourceId,
+    bool value,
+  ) {
+    if (_disposed) return;
+    final key = sourceId.trim();
+    if (key.isEmpty ||
+        _sourceTrustConflictingHistoricalCarriers[key] == value) {
+      return;
+    }
+    _sourceTrustConflictingHistoricalCarriers = <String, bool>{
+      ..._sourceTrustConflictingHistoricalCarriers,
+      key: value,
+    };
+    _changed();
+  }
+
+  void clearSourceTrustConflictingHistoricalCarriersOverride(
+    String sourceId,
+  ) {
+    if (_disposed) return;
+    final key = sourceId.trim();
+    if (key.isEmpty ||
+        !_sourceTrustConflictingHistoricalCarriers.containsKey(key)) {
+      return;
+    }
+    _sourceTrustConflictingHistoricalCarriers = <String, bool>{
+      ..._sourceTrustConflictingHistoricalCarriers,
+    }..remove(key);
+    _changed();
+  }
+
   /// Sets or clears (null/empty) the physical download root of one source.
   void setSourceDownloadDirectory(String sourceId, String? directory) {
     if (_disposed) return;
@@ -934,6 +1022,8 @@ final class AppPreferencesController extends ChangeNotifier {
           _trustConflictingHistoricalCarriersByDefault,
       'pluginTrustConflictingHistoricalCarriers':
           _pluginTrustConflictingHistoricalCarriers,
+      'sourceTrustConflictingHistoricalCarriers':
+          _sourceTrustConflictingHistoricalCarriers,
       'sourceDownloadDirectories': _sourceDownloadDirectories,
       'sourceAdaptiveWebtoonConfidences': _sourceAdaptiveWebtoonConfidences,
       'sourceSearchHistory': _sourceSearchHistory,

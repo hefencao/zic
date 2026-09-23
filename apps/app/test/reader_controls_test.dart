@@ -671,6 +671,115 @@ void main() {
     await _disposePipelineReader(tester);
   });
 
+  testWidgets('per-comic layout uses direct policy chips', (tester) async {
+    ReaderSessionSettings? saved;
+    final chapter = _chapter();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _pipelineReader(
+          chapter: chapter,
+          build: (pipeline) => ReaderRuntimeScreen(
+            chapter: chapter,
+            pipeline: pipeline,
+            initiallyImmersive: false,
+            initialSettings: const ReaderSessionSettings(
+              globalAdaptiveEnabled: true,
+            ),
+            onSettingsChanged: (settings) => saved = settings,
+            artifactPageBuilder: (
+              context,
+              asset,
+              reportFirstFrame,
+              runtime,
+            ) =>
+                ColoredBox(
+              key: ValueKey<String>('reader-layout-page:${asset.index}'),
+              color: Colors.black,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(readerComicSettingsKey));
+    await tester.pumpAndSettle();
+    expect(find.text('本漫画阅读设置'), findsOneWidget);
+    expect(find.byKey(readerAdaptiveSettingsKey), findsNothing);
+
+    await tester.tap(find.byKey(readerComicSettingsEnabledKey));
+    await tester.pump();
+    expect(find.byKey(readerAdaptiveSettingsKey), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey<String>('reader-comic-layout-follow')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey<String>('reader-comic-layout-vertical')),
+      findsOneWidget,
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('reader-comic-layout-follow')),
+    );
+    await tester.pump();
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(saved, isNotNull);
+    expect(saved!.comicSpecificEnabled, isTrue);
+    expect(saved!.comicAdaptiveEnabled, isFalse);
+    expect(saved!.directionOverride, isNull);
+    expect(saved!.effectiveAdaptiveEnabled, isFalse);
+    await _disposePipelineReader(tester);
+  });
+
+  testWidgets('adaptive comic policy remains selected when globally unavailable',
+      (tester) async {
+    final chapter = _chapter();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _pipelineReader(
+          chapter: chapter,
+          build: (pipeline) => ReaderRuntimeScreen(
+            chapter: chapter,
+            pipeline: pipeline,
+            initiallyImmersive: false,
+            initialSettings: const ReaderSessionSettings(
+              comicSpecificEnabled: true,
+              globalAdaptiveEnabled: false,
+              comicAdaptiveEnabled: true,
+            ),
+            onSettingsChanged: (_) {},
+            artifactPageBuilder: (
+              context,
+              asset,
+              reportFirstFrame,
+              runtime,
+            ) =>
+                ColoredBox(
+              key: ValueKey<String>('reader-adaptive-policy-page:${asset.index}'),
+              color: Colors.black,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.byKey(readerComicSettingsKey));
+    await tester.pumpAndSettle();
+    final adaptive = tester.widget<ChoiceChip>(
+      find.byKey(readerAdaptiveSettingsKey),
+    );
+    expect(adaptive.selected, isTrue);
+    expect(adaptive.onSelected, isNull);
+    expect(find.text('全局自适应未启用'), findsOneWidget);
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    await _disposePipelineReader(tester);
+  });
+
   testWidgets('RTL reader mirrors slider direction and index labels',
       (tester) async {
     final chapter = _chapter(direction: ReadingDirection.rtl);

@@ -29,4 +29,26 @@ void main() {
       isFalse,
     );
   });
+
+  test('per-comic master gates adaptive override', () {
+    const inherited = ReaderSessionSettings(
+      globalAdaptiveEnabled: true,
+      comicAdaptiveEnabled: false,
+    );
+    expect(inherited.effectiveAdaptiveEnabled, isTrue);
+
+    const follow = ReaderSessionSettings(
+      comicSpecificEnabled: true,
+      globalAdaptiveEnabled: true,
+      comicAdaptiveEnabled: false,
+    );
+    expect(follow.effectiveAdaptiveEnabled, isFalse);
+
+    const adaptive = ReaderSessionSettings(
+      comicSpecificEnabled: true,
+      globalAdaptiveEnabled: true,
+      comicAdaptiveEnabled: true,
+    );
+    expect(adaptive.effectiveAdaptiveEnabled, isTrue);
+  });
 }

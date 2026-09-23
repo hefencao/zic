@@ -567,11 +567,10 @@ final class _HomeShellState extends State<HomeShell> {
     );
     cache.updateHistoricalCarrierSignatureConflictTrust((sourceId) {
       final pluginId = _externalSources.ownerOfSource(sourceId);
-      if (pluginId == null) {
-        return widget.preferences.trustConflictingHistoricalCarriersByDefault;
-      }
-      return widget.preferences
-          .trustConflictingHistoricalCarriersForPlugin(pluginId);
+      return widget.preferences.trustConflictingHistoricalCarriersForSource(
+        sourceId,
+        legacyPluginId: pluginId,
+      );
     });
   }
 

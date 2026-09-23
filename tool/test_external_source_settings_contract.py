@@ -47,7 +47,9 @@ required_browser = (
     "networkBridge.readBrowserSnapshot(url)",
     "networkBridge.openBrowser",
     "localStorage: snapshot.localStorage",
-    "tooltip: '插件设置与登录'",
+    "tooltip: '来源属性与登录'",
+    "sourcePropertiesEntryKey",
+    "Icons.list_alt_outlined",
 )
 missing = [token for token in required_browser if token not in browser]
 if missing:

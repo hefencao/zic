@@ -54,7 +54,9 @@ App build：0.31.0+328
 - 自适应布局：`reader_runtime` model v6 将近方形切片降为低信息，以距 1:1 的比例距离增强普通分页证据，并保留极长纵幅条漫证据。
   `AppPreferencesController` 按 `sourceId` 唯一持久化 0–1 条漫置信（0=强页漫、0.5=中性、1=强条漫），
   经 `ReaderSessionSettings` 只读投影给分类器，非中性值参与 profile fingerprint；旧单向 weight 按 `0.5 + weight/2` 兼容迁移。
-  Venera `comic.adaptiveType` 已由 typed source descriptor 接入 classifier，来源名/官网也由 App composition 投影；漫画级手动方向仍优先。
+  Venera `comic.adaptiveType` 已由 typed source descriptor 接入 classifier，来源名/官网也由 App composition 投影。
+  来源级应用策略已统一收口到齿轮“源设置”：条漫置信、source-scoped 数据信任、来源独立下载目录；
+  configurable source 自身设置/登录改为“来源属性与登录”。每漫画布局改为自适应/跟随/LTR/RTL/纵向互斥胶囊。
 - 页面几何：ValueListenable 提供 pageDimensions 驱动的 ratio live feed 投影。
 - 纵向模式：vertical模式只有extent真实变化 才能触发 anchor/geometry rebuild；vertical模式 保持布局稳定。
 - 视口与上传：vertical hidden-upload规则不变；明确区分 source-canvas 与 decoded raster 职责。

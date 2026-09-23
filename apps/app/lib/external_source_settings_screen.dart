@@ -479,7 +479,7 @@ final class _ExternalSourceSettingsScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('${widget.source.descriptor.name} 设置'),
+        title: Text('${widget.source.descriptor.name} 属性'),
         actions: <Widget>[
           TextButton(
             onPressed: _changed && !_working ? () => unawaited(_apply()) : null,

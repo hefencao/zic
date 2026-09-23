@@ -4,17 +4,13 @@ import 'package:catalog/catalog.dart';
 import 'package:flutter/material.dart';
 import 'package:plugin_host/plugin_host.dart';
 import 'package:plugin_host_bridge/plugin_host_bridge.dart';
-import 'package:storage_bridge/storage_bridge.dart';
 
 import 'dialog_actions.dart';
 import 'external_plugin_repository_model.dart';
-import 'app_preferences.dart';
-import 'directory_picker.dart';
 import 'diagnostic_error_ui.dart';
 import 'venera_plugin_editor_screen.dart';
 
 enum _ExternalPluginPage { installed, repository }
-enum _HistoricalCarrierConflictTrustChoice { inherit, strict, trust }
 
 const externalPluginInstalledLanguageBarKey =
     ValueKey<String>('external-plugin-installed-language-bar');
@@ -28,19 +24,12 @@ final class ExternalPluginRepositoryScreen extends StatefulWidget {
     required this.format,
     required this.controller,
     required this.onSourcesChanged,
-    this.preferences,
     super.key,
   });
 
   final ExternalComicPluginFormat format;
   final ExternalPluginController controller;
   final Future<void> Function() onSourcesChanged;
-
-  /// Application preferences owning the per-source download directory map.
-  ///
-  /// When absent, the per-plugin download directory row stays hidden and the
-  /// rest of the management screen keeps working (widget-only harnesses).
-  final AppPreferencesController? preferences;
 
   @override
   State<ExternalPluginRepositoryScreen> createState() =>
@@ -292,185 +281,6 @@ final class _ExternalPluginRepositoryScreenState
     }
   }
 
-  Set<String> _pluginSourceIds(InstalledExternalPlugin item) =>
-      <String>{
-        for (final source in item.plugin.sources) source.sourceId,
-        // Source identities discovered at the last successful activation.
-        // Device-imported Mihon extensions only expose them here and through
-        // the runtime, never through repository metadata.
-        ...item.sourceIds,
-        if (item.plugin.format == ExternalComicPluginFormat.veneraJavaScript &&
-            item.sourceKey != null &&
-            item.sourceKey!.trim().isNotEmpty)
-          'venera:${item.sourceKey}',
-      };
-
-  String? _pluginDownloadDirectory(InstalledExternalPlugin item) {
-    final preferences = widget.preferences;
-    if (preferences == null) return null;
-    for (final sourceId in _pluginSourceIds(item)) {
-      final directory = preferences.sourceDownloadDirectoryFor(sourceId);
-      if (directory != null) return directory;
-    }
-    return null;
-  }
-
-  bool _pluginTrustsConflictingHistoricalCarriers(
-    InstalledExternalPlugin item,
-  ) =>
-      widget.preferences?.trustConflictingHistoricalCarriersForPlugin(
-        item.plugin.pluginId,
-      ) ??
-      false;
-
-  Future<void> _changePluginHistoricalCarrierConflictTrust(
-    InstalledExternalPlugin item,
-  ) async {
-    final preferences = widget.preferences;
-    if (preferences == null) return;
-    final pluginId = item.plugin.pluginId;
-    final currentOverride =
-        preferences.conflictingHistoricalCarrierTrustOverrideForPlugin(
-      pluginId,
-    );
-    final selected = await showDialog<_HistoricalCarrierConflictTrustChoice>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('历史缓存冲突 · ${item.plugin.name}'),
-        content: Text(
-          '当同一 logical page 与同一 sourceRevision 下存在多个完整 READY '
-          '历史缓存，但 length/CRC 不一致时：\n\n'
-          '严格校验会拒绝这些历史缓存并重新请求来源；“完整文件也信任”会优先使用'
-          '最近的完整历史缓存。跟随全局当前为“'
-          '${preferences.trustConflictingHistoricalCarriersByDefault ? '完整文件也信任' : '严格校验'}”。'
-          '这个选择不会把不同正文登记成等价，也不会改写 current exact 缓存。',
-        ),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.pop(
-              dialogContext,
-              _HistoricalCarrierConflictTrustChoice.inherit,
-            ),
-            child: Text(currentOverride == null ? '跟随全局（当前）' : '跟随全局'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(
-              dialogContext,
-              _HistoricalCarrierConflictTrustChoice.strict,
-            ),
-            child: Text(currentOverride == false ? '严格校验（当前）' : '严格校验'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(
-              dialogContext,
-              _HistoricalCarrierConflictTrustChoice.trust,
-            ),
-            child: Text(
-              currentOverride == true
-                  ? '完整文件也信任（当前）'
-                  : '完整文件也信任',
-            ),
-          ),
-        ],
-      ),
-    );
-    if (!mounted || selected == null) return;
-    switch (selected) {
-      case _HistoricalCarrierConflictTrustChoice.inherit:
-        preferences.clearPluginTrustConflictingHistoricalCarriersOverride(
-          pluginId,
-        );
-        break;
-      case _HistoricalCarrierConflictTrustChoice.strict:
-        preferences.setPluginTrustConflictingHistoricalCarriers(
-          pluginId,
-          false,
-        );
-        break;
-      case _HistoricalCarrierConflictTrustChoice.trust:
-        preferences.setPluginTrustConflictingHistoricalCarriers(
-          pluginId,
-          true,
-        );
-        break;
-    }
-    setState(() {});
-  }
-
-  /// Per-plugin download directory: one row per plugin; the choice applies to
-  /// every external source the plugin exposes and only steers where NEW
-  /// downloads are written. Existing bytes stay at their recorded location.
-  Future<void> _changePluginDownloadDirectory(
-    InstalledExternalPlugin item,
-  ) async {
-    final preferences = widget.preferences;
-    if (preferences == null) return;
-    final sourceIds = _pluginSourceIds(item);
-    if (sourceIds.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            '该插件尚未成功加载来源，无法确定下载目录作用范围；'
-            '请先重新加载插件后再设置。',
-          ),
-        ),
-      );
-      return;
-    }
-    final current = _pluginDownloadDirectory(item);
-    final decision = await showDialog<_DownloadDirectoryDecision>(
-      context: context,
-      builder: (dialogContext) => _PluginDownloadDirectoryDialog(
-        pluginName: item.plugin.name,
-        currentDirectory: current,
-      ),
-    );
-    if (!mounted || decision == null) return;
-    String? target = decision.directory;
-    if (!decision.restoreDefault && target == null) return;
-    if (decision.restoreDefault) {
-      target = null;
-    } else {
-      if (target!.startsWith('saf://')) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('单插件独立目录仅支持本地文件夹；如需使用 SAF 请设置全局默认下载目录'),
-          ),
-        );
-        return;
-      }
-      try {
-        target = await resolveChapterDownloadDirectory(target);
-        // Same scoped-storage probe as the global setting: a directory
-        // that lists fine but rejects file writes must fail here, not
-        // silently degrade every download of this plugin later.
-        await probeChapterDownloadDirectoryWritable(target);
-      } on Object catch (error) {
-        debugPrint('download directory resolve failed: $error');
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          copyableDiagnosticSnackBar('无法使用所选目录：$error'),
-        );
-        return;
-      }
-    }
-    for (final sourceId in sourceIds) {
-      preferences.setSourceDownloadDirectory(sourceId, target);
-    }
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          decision.restoreDefault
-              ? '${item.plugin.name} 已恢复默认下载目录'
-              : '新下载将写入：$target',
-        ),
-      ),
-    );
-    setState(() {});
-  }
-
   Future<void> _remove(InstalledExternalPlugin installed) async {
     final plugin = installed.plugin;
     if (!_working.add(plugin.pluginId)) return;
@@ -646,20 +456,6 @@ final class _ExternalPluginRepositoryScreenState
                       unawaited(_updateFromInstalled(installed)),
                   onEditJavaScript: (installed) =>
                       unawaited(_editVeneraJavaScript(installed)),
-                  downloadDirectoryOf: _pluginDownloadDirectory,
-                  onChangeDownloadDirectory: (installed) => unawaited(
-                    _changePluginDownloadDirectory(installed),
-                  ),
-                  historicalCarrierConflictTrustOf:
-                      _pluginTrustsConflictingHistoricalCarriers,
-                  onChangeHistoricalCarrierConflictTrust:
-                      widget.preferences == null
-                          ? null
-                          : (installed) => unawaited(
-                                _changePluginHistoricalCarrierConflictTrust(
-                                  installed,
-                                ),
-                              ),
                 ),
               _ExternalPluginPage.repository => _RepositoryPane(
                   format: widget.format,
@@ -707,10 +503,6 @@ final class _InstalledPluginsPane extends StatelessWidget {
     required this.onRefreshDeviceMihon,
     required this.onUpdate,
     required this.onEditJavaScript,
-    required this.downloadDirectoryOf,
-    required this.onChangeDownloadDirectory,
-    required this.historicalCarrierConflictTrustOf,
-    required this.onChangeHistoricalCarrierConflictTrust,
   });
 
   final ExternalComicPluginFormat format;
@@ -734,11 +526,6 @@ final class _InstalledPluginsPane extends StatelessWidget {
   final VoidCallback onRefreshDeviceMihon;
   final ValueChanged<InstalledExternalPlugin> onUpdate;
   final ValueChanged<InstalledExternalPlugin> onEditJavaScript;
-  final String? Function(InstalledExternalPlugin) downloadDirectoryOf;
-  final ValueChanged<InstalledExternalPlugin> onChangeDownloadDirectory;
-  final bool Function(InstalledExternalPlugin) historicalCarrierConflictTrustOf;
-  final ValueChanged<InstalledExternalPlugin>?
-      onChangeHistoricalCarrierConflictTrust;
 
   @override
   Widget build(BuildContext context) {
@@ -834,12 +621,6 @@ final class _InstalledPluginsPane extends StatelessWidget {
                   format == ExternalComicPluginFormat.veneraJavaScript
                       ? onEditJavaScript
                       : null,
-              downloadDirectory: downloadDirectoryOf(item),
-              onChangeDownloadDirectory: onChangeDownloadDirectory,
-              trustConflictingHistoricalCarriers:
-                  historicalCarrierConflictTrustOf(item),
-              onChangeHistoricalCarrierConflictTrust:
-                  onChangeHistoricalCarrierConflictTrust,
             ),
             const Divider(height: 1),
           ],
@@ -860,10 +641,6 @@ final class _InstalledPluginTile extends StatelessWidget {
     required this.onRetry,
     required this.onUpdate,
     required this.onEditJavaScript,
-    required this.downloadDirectory,
-    required this.onChangeDownloadDirectory,
-    required this.trustConflictingHistoricalCarriers,
-    required this.onChangeHistoricalCarrierConflictTrust,
   });
 
   final InstalledExternalPlugin item;
@@ -875,11 +652,6 @@ final class _InstalledPluginTile extends StatelessWidget {
   final ValueChanged<InstalledExternalPlugin> onRetry;
   final ValueChanged<InstalledExternalPlugin> onUpdate;
   final ValueChanged<InstalledExternalPlugin>? onEditJavaScript;
-  final String? downloadDirectory;
-  final ValueChanged<InstalledExternalPlugin> onChangeDownloadDirectory;
-  final bool trustConflictingHistoricalCarriers;
-  final ValueChanged<InstalledExternalPlugin>?
-      onChangeHistoricalCarrierConflictTrust;
 
   @override
   Widget build(BuildContext context) {
@@ -930,36 +702,7 @@ final class _InstalledPluginTile extends StatelessWidget {
                     onPressed: () => onEditJavaScript!(item),
                     icon: const Icon(Icons.code_outlined),
                   ),
-                if (failure == null)
-                  IconButton(
-                    tooltip: downloadDirectory == null
-                        ? '下载目录（默认）'
-                        : '下载目录：$downloadDirectory',
-                    onPressed: () => onChangeDownloadDirectory(item),
-                    icon: Icon(
-                      Icons.folder_copy_outlined,
-                      color: downloadDirectory == null
-                          ? null
-                          : Theme.of(context).colorScheme.primary,
-                    ),
-                  ),
-                if (failure == null &&
-                    onChangeHistoricalCarrierConflictTrust != null)
-                  IconButton(
-                    tooltip: trustConflictingHistoricalCarriers
-                        ? '历史缓存冲突：完整文件也信任'
-                        : '历史缓存冲突：严格校验',
-                    onPressed: () =>
-                        onChangeHistoricalCarrierConflictTrust!(item),
-                    icon: Icon(
-                      trustConflictingHistoricalCarriers
-                          ? Icons.verified_user_outlined
-                          : Icons.shield_outlined,
-                      color: trustConflictingHistoricalCarriers
-                          ? Theme.of(context).colorScheme.primary
-                          : null,
-                    ),
-                  ),
+
                 if (canRetry)
                   IconButton(
                     tooltip: '重新加载',
@@ -1464,122 +1207,3 @@ final class _TrustDialog extends StatelessWidget {
 }
 
 /// User decision from the per-plugin download directory dialog.
-final class _DownloadDirectoryDecision {
-  const _DownloadDirectoryDecision({
-    required this.restoreDefault,
-    this.directory,
-  });
-
-  final bool restoreDefault;
-  final String? directory;
-}
-
-final class _PluginDownloadDirectoryDialog extends StatefulWidget {
-  const _PluginDownloadDirectoryDialog({
-    required this.pluginName,
-    required this.currentDirectory,
-  });
-
-  final String pluginName;
-  final String? currentDirectory;
-
-  @override
-  State<_PluginDownloadDirectoryDialog> createState() =>
-      _PluginDownloadDirectoryDialogState();
-}
-
-final class _PluginDownloadDirectoryDialogState
-    extends State<_PluginDownloadDirectoryDialog> {
-  String? _picked;
-  bool _picking = false;
-
-  Future<void> _pick() async {
-    if (_picking) return;
-    setState(() => _picking = true);
-    String? picked;
-    Object? failure;
-    try {
-      picked = await pickDirectory();
-    } on Object catch (error) {
-      debugPrint('directory picker failed: $error');
-      failure = error;
-    } finally {
-      if (mounted) setState(() => _picking = false);
-    }
-    if (!mounted) return;
-    if (failure != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        copyableDiagnosticSnackBar('无法打开目录选择器：$failure'),
-      );
-      return;
-    }
-    if (picked == null || picked.isEmpty) return;
-    setState(() => _picked = picked);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('下载目录 · ${widget.pluginName}'),
-      content: SizedBox(
-        width: 440,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            SelectableText(
-              '当前：${widget.currentDirectory ?? '默认下载目录'}',
-            ),
-            if (_picked != null) ...<Widget>[
-              const SizedBox(height: 8),
-              SelectableText('新目录：$_picked'),
-            ],
-            const SizedBox(height: 8),
-            const Text(
-              '该插件的来源新下载将写入所选目录；'
-              '已存在的文件保留原位置，不受影响。',
-            ),
-          ],
-        ),
-      ),
-      actions: <Widget>[
-        AppDialogActions(
-          onClose: () => Navigator.pop(context),
-          actions: <Widget>[
-            TextButton(
-              onPressed: _picking ? null : _pick,
-              child: _picking
-                  ? const SizedBox.square(
-                      dimension: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Text('选择目录'),
-            ),
-            if (widget.currentDirectory != null)
-              TextButton(
-                onPressed: () => Navigator.pop(
-                  context,
-                  const _DownloadDirectoryDecision(
-                    restoreDefault: true,
-                  ),
-                ),
-                child: const Text('恢复默认'),
-              ),
-            FilledButton(
-              onPressed: _picked == null
-                  ? null
-                  : () => Navigator.pop(
-                        context,
-                        _DownloadDirectoryDecision(
-                          restoreDefault: false,
-                          directory: _picked,
-                        ),
-                      ),
-              child: const Text('设置'),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}

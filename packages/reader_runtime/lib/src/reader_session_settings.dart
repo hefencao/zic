@@ -90,7 +90,8 @@ final class ReaderSessionSettings {
       ? verticalStitchOverride ?? fallbackVerticalStitch
       : fallbackVerticalStitch;
   bool get effectiveAdaptiveEnabled =>
-      globalAdaptiveEnabled && comicAdaptiveEnabled;
+      globalAdaptiveEnabled &&
+      (!comicSpecificEnabled || comicAdaptiveEnabled);
 
   double get zoomStageFirst =>
       zoomStages.length > 0 ? _clampStage(zoomStages[0], 1.1) : 1.5;

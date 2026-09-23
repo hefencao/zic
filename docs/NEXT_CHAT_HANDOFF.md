@@ -31,6 +31,9 @@
   以及 `ReaderSessionSettings` 中只读的来源条漫置信；来源置信只由 `AppPreferencesController` 按 `sourceId` 持久化，
   0/0.5/1 分别表示强页漫/中性/强条漫。Venera `comic.adaptiveType` 经 typed descriptor 投影，Mihon 无声明时保持 unknown。
   model v6 中近1:1切片不得成为高置信分页证据；漫画级显式方向继续最高优先，Reader不得复制来源设置 authority。
+- 来源管理中的齿轮只表示 ZIC “源设置”：条漫置信、source-scoped 历史缓存冲突信任、来源独立下载目录。
+  configurable source 自身属性/登录使用属性列表图标“来源属性与登录”；插件管理只负责插件生命周期，不再承载 source policy。
+  每漫画布局只有自适应/跟随/LTR/RTL/纵向一个互斥策略轴，“启用本漫画设置”是全部漫画 override 的总 gate。
 - 页面网络调度由共享 `NetLane` 唯一拥有，保持 normal 5 + current 高优先级保留槽 1（5个transport lease 与 current handoff）。
 - 逻辑与解码窗口固定为前 7 / 后 3（7/3）及解码前 2 / 后 1（2/1）。
 - Reader 仅消费不可变输出，不拥有 transport、session、cursor 或 texture。

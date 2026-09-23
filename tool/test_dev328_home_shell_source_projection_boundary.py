@@ -96,7 +96,7 @@ refresh_start = source_management.index(
     "  void _replaceExternalSources("
 )
 refresh_end = source_management.index(
-    "  Future<void> _openSourceSettings", refresh_start
+    "  Future<void> _openAppSourceSettings", refresh_start
 )
 refresh_body = source_management[refresh_start:refresh_end]
 for marker, label in (

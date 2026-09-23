@@ -1,3 +1,10 @@
+## Unreleased — source settings ownership and comic layout policy
+
+- Consolidate application-owned per-source policies behind one gear “源设置” entry: adaptive webtoon confidence, historical cache conflict trust, and per-source download placement. The previous configurable-source gear is now an attributes-list “来源属性与登录” entry, while plugin management returns to plugin lifecycle concerns only.
+- Move historical carrier conflict trust from new plugin-scoped writes to `sourceTrustConflictingHistoricalCarriers[sourceId]`. Existing plugin overrides remain a runtime compatibility fallback until the first source-settings visit, which expands the old value to every currently known source of that plugin and retires the plugin override without overwriting explicit source values.
+- Move the download-directory UI from plugin rows to each source. Persistence and `DownloadRegistry.layoutResolver` were already source-scoped; the new UI therefore stops pretending that one plugin owns one directory. Existing durable bytes remain readable at indexed locators and are not migrated by this per-source setting.
+- Replace the per-comic adaptive switch plus direction dropdown with one direct chip policy: `自适应 / 跟随 / LTR / RTL / 纵向`. “启用本漫画设置” gates every comic override. Legacy `enabled=false, adaptiveEnabled=false` data migrates to enabled “跟随” so the former “disable adaptive for this comic” behavior is preserved.
+
 ## Unreleased — bidirectional source webtoon confidence and VibeVenera parity
 
 - Replace the one-sided source “webtoon weight” with a bidirectional 0–100% “条漫置信”: 0% is a strong paged prior, 50% is neutral/automatic, and 100% is a strong webtoon prior. The classifier consumes the signed prior symmetrically, so paged-only sources are expressible without adding a second setting.

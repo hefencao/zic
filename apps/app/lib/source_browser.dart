@@ -17,6 +17,7 @@ import 'package:plugin_host_bridge/plugin_host_bridge.dart';
 import 'external_plugin_repository_model.dart';
 import 'external_plugin_repository_screen.dart';
 import 'external_source_settings_screen.dart';
+import 'source_settings_screen.dart';
 import 'startup_platform.dart';
 
 const comicSourcesPageKey = ValueKey<String>('comic-sources-page');
@@ -69,8 +70,10 @@ Key comicSourceChoiceKey(String sourceId) =>
     ValueKey<String>('comic-source-choice:$sourceId');
 Key comicSourcePluginChoiceKey(String pluginId) =>
     ValueKey<String>('comic-source-plugin-choice:$pluginId');
-Key sourceAdaptiveWebtoonConfidenceKey(String sourceId) =>
-    ValueKey<String>('source-adaptive-webtoon-confidence:$sourceId');
+Key sourceSettingsEntryKey(String sourceId) =>
+    ValueKey<String>('source-settings:$sourceId');
+Key sourcePropertiesEntryKey(String sourceId) =>
+    ValueKey<String>('source-properties:$sourceId');
 Key comicSourceAggregatePluginKey(String pluginId) =>
     ValueKey<String>('comic-source-aggregate-plugin:$pluginId');
 Key comicSourceAggregateCategoryKey(String categoryId) =>
@@ -3115,74 +3118,6 @@ final class _SourceManagementScreenState
   }
 
 
-  Future<void> _changeSourceAdaptiveWebtoonConfidence(
-    BrowsableComicSource source,
-  ) async {
-    final preferences = widget.appPreferences;
-    if (preferences == null) return;
-    var draft =
-        preferences.sourceAdaptiveWebtoonConfidenceFor(source.sourceId);
-    final selected = await showDialog<double>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text('条漫置信 · ${source.descriptor.name}'),
-          content: SizedBox(
-            width: 380,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                const Text(
-                  '作为这个来源的自适应布局先验：0% 强页漫，50% 自动/中性，'
-                  '100% 强条漫。漫画级手动方向仍优先。',
-                ),
-                const SizedBox(height: 12),
-                Slider(
-                  value: draft,
-                  min: 0,
-                  max: 1,
-                  divisions: 20,
-                  label: '${(draft * 100).round()}%',
-                  onChanged: (value) =>
-                      setDialogState(() => draft = value),
-                ),
-                Text(_sourceWebtoonConfidenceLabel(draft)),
-              ],
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, 0.5),
-              child: const Text('恢复自动'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, draft),
-              child: const Text('保存'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (!mounted || selected == null) return;
-    preferences.setSourceAdaptiveWebtoonConfidence(
-      source.sourceId,
-      selected,
-    );
-    setState(() {});
-  }
-
-  String _sourceWebtoonConfidenceLabel(double confidence) {
-    final percent = (confidence * 100).round();
-    if (confidence == 0.5) return '当前：自动/中性 · 条漫置信 50%';
-    if (confidence < 0.5) return '当前：偏页漫 · 条漫置信 $percent%';
-    return '当前：偏条漫 · 条漫置信 $percent%';
-  }
-
   Future<void> _persistSourceOrder(
     List<BrowsableComicSource> ordered,
   ) async {
@@ -3404,9 +3339,6 @@ final class _SourceManagementScreenState
     ValueChanged<bool>? onToggleOverride,
   }) {
     final preference = _preference(source);
-    final sourceWebtoonConfidence = widget.appPreferences
-            ?.sourceAdaptiveWebtoonConfidenceFor(source.sourceId) ??
-        0.5;
     final originIcon = Icon(
       source.sourceId.startsWith('mihon:')
           ? Icons.extension_outlined
@@ -3447,27 +3379,19 @@ final class _SourceManagementScreenState
             originIcon,
           if (widget.appPreferences != null)
             IconButton(
-              key: sourceAdaptiveWebtoonConfidenceKey(source.sourceId),
-              tooltip:
-                  _sourceWebtoonConfidenceLabel(sourceWebtoonConfidence),
-              onPressed: () => unawaited(
-                _changeSourceAdaptiveWebtoonConfidence(source),
-              ),
-              icon: Icon(
-                Icons.view_stream_outlined,
-                color: sourceWebtoonConfidence != 0.5
-                    ? Theme.of(context).colorScheme.primary
-                    : null,
-              ),
+              key: sourceSettingsEntryKey(source.sourceId),
+              tooltip: '源设置',
+              onPressed: () => unawaited(_openAppSourceSettings(source)),
+              icon: const Icon(Icons.settings_outlined),
             ),
           if ((source.sourceId.startsWith('mihon:') ||
                   source.sourceId.startsWith('venera:')) &&
               sourceSupportsSettings(source))
             IconButton(
-              key: ValueKey<String>('source-settings:${source.sourceId}'),
-              tooltip: '插件设置与登录',
-              onPressed: () => unawaited(_openSourceSettings(source)),
-              icon: const Icon(Icons.settings_outlined),
+              key: sourcePropertiesEntryKey(source.sourceId),
+              tooltip: '来源属性与登录',
+              onPressed: () => unawaited(_openSourceProperties(source)),
+              icon: const Icon(Icons.list_alt_outlined),
             ),
         ],
       ),
@@ -3490,7 +3414,6 @@ final class _SourceManagementScreenState
           format: format,
           controller: controller,
           onSourcesChanged: changed,
-          preferences: widget.appPreferences,
         ),
       ),
     );
@@ -3535,7 +3458,47 @@ final class _SourceManagementScreenState
     }
   }
 
-  Future<void> _openSourceSettings(BrowsableComicSource source) async {
+  Future<void> _openAppSourceSettings(BrowsableComicSource source) async {
+    final preferences = widget.appPreferences;
+    if (preferences == null) return;
+    final externalPlugins = _externalPlugins;
+    final pluginId = externalPlugins?.ownerOfSource(source.sourceId);
+    if (pluginId != null && externalPlugins != null) {
+      final knownSourceIds = <String>{
+        source.sourceId,
+        for (final candidate in _sources)
+          if (externalPlugins.ownerOfSource(candidate.sourceId) == pluginId)
+            candidate.sourceId,
+        for (final installed in externalPlugins.installed)
+          if (installed.plugin.pluginId == pluginId) ...<String>{
+            ...installed.sourceIds,
+            for (final descriptor in installed.plugin.sources)
+              descriptor.sourceId,
+            if (installed.plugin.format ==
+                    ExternalComicPluginFormat.veneraJavaScript &&
+                installed.sourceKey != null &&
+                installed.sourceKey!.trim().isNotEmpty)
+              'venera:${installed.sourceKey}',
+          },
+      };
+      preferences.migratePluginTrustConflictingHistoricalCarriersToSources(
+        pluginId,
+        knownSourceIds,
+      );
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SourceSettingsScreen(
+          sourceId: source.sourceId,
+          sourceName: source.descriptor.name,
+          preferences: preferences,
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _openSourceProperties(BrowsableComicSource source) async {
     await openComicSourceSettings(
       context,
       source: source,

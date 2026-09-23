@@ -1729,11 +1729,12 @@ Reader 页面变化产生的 `ReadingProgress` 由 `reader_runtime` 串行合并
   `trustCached` 只用历史 READY，不自动刷新。
   历史候选不得注册 `VersionPageAuthority`/equivalence、不得建立 canonical `PhysicalMediaId`、不得写成 current exact cache。
   若同一 logical page/revision 的 READY 候选出现多个 `(length, checksumAlgorithm, checksum)` signature，默认 fail closed；
-  App 可按 external **pluginId** 显式允许“完整文件也信任”，Downloads 只接收 `sourceId -> bool` capability resolver，
+  App 可按 **sourceId** 显式允许“完整文件也信任”，Downloads 只接收 `sourceId -> bool` capability resolver，
   不认识 Mihon/Venera/plugin。该 override 只放宽候选资格，仍要求 persistent READY 的完整 seal metadata；
   候选按 persistent logical query 的 `touched_us DESC` 稳定顺序选择。
-  插件 override 只有在全局策略允许 historical reuse 时才生效，不能覆盖 `strictReload`。冲突信任另有 application-level 全局默认，当前默认开启；
-  外部插件以 tri-state override（inherit/strict/trust）覆盖该默认，未归属插件的来源直接使用全局默认。
+  source override 只有在全局策略允许 historical reuse 时才生效，不能覆盖 `strictReload`。
+  冲突信任另有 application-level 全局默认，当前默认开启；源设置以 tri-state（inherit/strict/trust）覆盖该默认。
+  历史 plugin-scoped override 只作读取兼容；首次进入该插件任一源设置时，一次性展开到全部已知 source IDs 后退役。
   该 resolver 只决定多个完整 READY signature 冲突时是否允许最近 historical carrier 进入 read routing，
   不建立 equivalence/canonical/current-exact authority。Reader 只上报 first-visible-frame，不拥有 URI/cache/source 信任策略。
   historical READY 一旦通过用户 read-routing 策略资格化，local-prepare owner 在 exact/partial/verified-equivalent authority 都未命中后应直接把该 sealed generation 的 range replay capability 绑定到同一 physical `DownloadSession`：
@@ -1835,9 +1836,10 @@ private metadata 已存在时 `moveChapterDownloadStore(metadataDbPath: ...)` �
 private metadata 存在后不再仅凭 default 根有内容推断自动搬迁，SAF target 也不进入 POSIX default-store adoption。
 整本任务活跃或 transfer consumer 未退出时拒绝切换；
 `durableZicStateExists` 优先识别 App-private chapter metadata，同时仅为升级兼容探测 legacy 生效根 `cache.sqlite`。
-插件管理为每个已安装插件提供独立下载目录：偏好映射 `sourceDownloadDirectories` 按外部 source 身份（`venera:<key>`/`mihon:<id>`）记录物理根，
-`DownloadRegistry.layoutResolver` 只决定新 artifact/partial 写入哪个根，
-durable sealed 读取始终由索引中的 artifact/replica locator 裁决，因此旧位置字节保持可读且无需启动期重建历史 READY session；该 per-source 切换不做迁移。
+源设置为每个 source 提供独立下载目录：偏好映射 `sourceDownloadDirectories` 按稳定 source identity 记录物理根，
+`DownloadRegistry.layoutResolver` 只决定该 source 新 artifact/partial 写入哪个根。
+durable sealed 读取始终由索引中的 artifact/replica locator 裁决，因此旧位置字节保持可读且无需启动期重建历史 READY session；
+该 per-source 切换不做迁移。插件管理不再批量改写同一插件全部 source 的目录。
 持久store打开期间在cache root保留`.zic-cache-recovery-required`脏关闭标记；
 正常关闭删除，下一次仅在发现遗留标记时运行`StartupRecovery`的authority-aware local cleanup scan，普通冷启动不得支付全量扫描成本。
 该 scan 对 sealed READY 只保护 DB-authoritative locator并清理无authority orphan，不执行 READY registry restore；

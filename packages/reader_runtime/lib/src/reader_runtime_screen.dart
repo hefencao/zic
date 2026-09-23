@@ -12,11 +12,11 @@ import 'package:telemetry/telemetry.dart';
 
 import 'flutter_reader_frame_timing_source.dart';
 import 'flutter_reader_platform_frame_cadence.dart';
+import 'reader_comic_settings_sheet.dart';
 import 'reader_playback_controls.dart';
 import 'reader_route_transition_gate.dart';
 import 'reader_session_settings.dart';
 import 'reader_zoom_decode.dart';
-import 'reader_settings_fields.dart';
 import 'reader_transfer_progress_indicator.dart';
 
 SnackBar _copyableReaderErrorSnackBar(String message) => SnackBar(
@@ -39,14 +39,9 @@ const readerDownloadKey = ValueKey<String>('reader-download');
 const readerComicSettingsKey = ValueKey<String>('reader-comic-settings');
 const readerChapterTitleKey = ValueKey<String>('reader-chapter-title');
 const readerPageSubtitleKey = ValueKey<String>('reader-page-subtitle');
-const readerComicSettingsEnabledKey =
-    ValueKey<String>('reader-comic-settings-enabled');
-const readerAdaptiveSettingsKey = ValueKey<String>('reader-adaptive-settings');
-const readerVerticalStitchKey = ValueKey<String>('reader-vertical-stitch');
-const readerVerticalLongPressZoomKey =
-    ValueKey<String>('reader-vertical-long-press-zoom');
 const readerExistingProgressKey = ValueKey<String>('reader-existing-progress');
 const readerNetworkProgressKey = ValueKey<String>('reader-network-progress');
+
 typedef ReaderArtifactBytesLoader = PipelineArtifactBytesLoader;
 typedef ReaderPageBytesLoader = Future<Uint8List> Function(
   MediaLoadToken token,
@@ -856,169 +851,11 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     }
   }
 
-  String _directionLabel(ReadingDirection? direction) => switch (direction) {
-        ReadingDirection.ltr => 'LTR',
-        ReadingDirection.rtl => 'RTL',
-        ReadingDirection.vertical => '纵向',
-        null => '跟随来源/进度',
-      };
-
-  String _adaptiveProfileLabel(ReaderSessionSettings settings) {
-    final profile = _adaptiveProfile;
-    if (!settings.globalAdaptiveEnabled) return '全局自适应未启用';
-    if (!settings.comicAdaptiveEnabled) return '本漫画已停用自适应';
-    if (profile == null) return '暂无高置信度结果';
-    final confidence = (profile.confidence * 100).round();
-    final kind = profile.animated
-        ? '动画分页'
-        : _directionLabel(profile.direction);
-    final basis = switch (profile.basis) {
-      'animated-pages' => '动画页提示',
-      'page-geometry' => '页面比例',
-      'decoded-animation' => '实际动画页',
-      'runtime-animation' => '实际动画页',
-      _ => profile.basis,
-    };
-    return '$kind · $confidence% · $basis';
-  }
-
   Future<void> _editComicSettings() async {
-    var draft = _settings;
-    final saved = await showModalBottomSheet<ReaderSessionSettings>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setSheetState) => SafeArea(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                16,
-                12,
-                16,
-                16 + MediaQuery.viewInsetsOf(context).bottom,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  Text(
-                    '本漫画阅读设置',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  SwitchListTile(
-                    key: readerComicSettingsEnabledKey,
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('启用本漫画设置'),
-                    subtitle: const Text(
-                      '方向与拼接覆盖全局默认；关闭后仍可单独停用自适应。',
-                    ),
-                    value: draft.comicSpecificEnabled,
-                    onChanged: (value) => setSheetState(
-                      () => draft = draft.copyWith(
-                        comicSpecificEnabled: value,
-                      ),
-                    ),
-                  ),
-                  SwitchListTile(
-                    key: readerAdaptiveSettingsKey,
-                    contentPadding: EdgeInsets.zero,
-                    title: const Text('使用自适应设置'),
-                    subtitle: Text(_adaptiveProfileLabel(draft)),
-                    value: draft.comicAdaptiveEnabled,
-                    onChanged: draft.globalAdaptiveEnabled
-                        ? (value) => setSheetState(
-                              () => draft = draft.copyWith(
-                                comicAdaptiveEnabled: value,
-                              ),
-                            )
-                        : null,
-                  ),
-                  if (draft.comicSpecificEnabled) ...<Widget>[
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      value: draft.directionOverride?.name ?? 'follow',
-                      decoration: const InputDecoration(
-                        labelText: '阅读方向',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: <DropdownMenuItem<String>>[
-                        const DropdownMenuItem(
-                          value: 'follow',
-                          child: Text('跟随来源/进度或自适应'),
-                        ),
-                        for (final direction in ReadingDirection.values)
-                          DropdownMenuItem(
-                            value: direction.name,
-                            child: Text(_directionLabel(direction)),
-                          ),
-                      ],
-                      onChanged: (value) => setSheetState(
-                        () => draft = draft.copyWith(
-                          directionOverride: value == null || value == 'follow'
-                              ? null
-                              : ReadingDirection.values.byName(value),
-                        ),
-                      ),
-                    ),
-                    readerVerticalStitchOverrideField(
-                      key: readerVerticalStitchKey,
-                      value: draft.verticalStitchOverride,
-                      onChanged: (value) => setSheetState(
-                        () => draft = draft.copyWith(
-                          verticalStitchOverride: value,
-                        ),
-                      ),
-                    ),
-                    readerVerticalLongPressZoomField(
-                      key: readerVerticalLongPressZoomKey,
-                      value: draft.verticalLongPressZoomOverride,
-                      onChanged: (value) => setSheetState(
-                        () => draft = draft.copyWith(
-                          verticalLongPressZoomOverride: value,
-                        ),
-                      ),
-                    ),
-                    SwitchListTile(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('翻转阅读顺序'),
-                      subtitle: const Text('由旧到新正序阅读（末页作为第一话）'),
-                      value: draft.effectiveInvertPageOrder,
-                      onChanged: (value) => setSheetState(
-                        () => draft = draft.copyWith(
-                          invertPageOrderOverride: value,
-                        ),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  Row(
-                    children: <Widget>[
-                      TextButton(
-                        onPressed: () => Navigator.pop(
-                          context,
-                          ReaderSessionSettings(
-                            fallbackVerticalStitch:
-                                draft.fallbackVerticalStitch,
-                            globalAdaptiveEnabled:
-                                draft.globalAdaptiveEnabled,
-                          ),
-                        ),
-                        child: const Text('清除本漫画设置'),
-                      ),
-                      const Spacer(),
-                      FilledButton(
-                        onPressed: () => Navigator.pop(context, draft),
-                        child: const Text('保存'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
+    final saved = await showReaderComicSettingsSheet(
+      context,
+      initialSettings: _settings,
+      adaptiveProfile: _adaptiveProfile,
     );
     if (saved == null || !mounted) return;
     setState(() {

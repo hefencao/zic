@@ -252,11 +252,11 @@ void main() {
       ),
     );
 
-    await tester.tap(
-      find.byKey(sourceAdaptiveWebtoonConfidenceKey(source.sourceId)),
-    );
+    await tester.tap(find.byKey(sourceSettingsEntryKey(source.sourceId)));
     await tester.pumpAndSettle();
-    expect(find.text('条漫置信 · 条漫来源'), findsOneWidget);
+    expect(find.text('源设置 · 条漫来源'), findsOneWidget);
+    await tester.tap(find.text('自适应布局'));
+    await tester.pumpAndSettle();
     final slider = tester.widget<Slider>(find.byType(Slider));
     slider.onChanged!(0.2);
     await tester.pump();
