@@ -47,6 +47,14 @@ final class PipelineEncodedPresentationFileLease {
   final Future<void> Function() release;
 }
 
+/// Presentation geometry needed to derive the exact Flutter raster-cache key.
+///
+/// This is a presentation fact, not a scheduling policy. Pipeline still owns
+/// which page receives an external-presentation grant; the presentation
+/// adapter only uses this value to build the same raster identity whether it
+/// is mounted or detached.
+enum PipelineExternalPresentationFit { contain, fitWidth }
+
 /// One coordinator-authorized external static presentation warm request.
 ///
 /// The executor may decode only the supplied exact page capability. It does
@@ -63,6 +71,7 @@ final class PipelineExternalPresentationWarmRequest {
     required this.loadBytes,
     required this.maxPhysicalWidth,
     required this.maxPhysicalHeight,
+    required this.fit,
   });
 
   final PageAsset asset;
@@ -79,6 +88,7 @@ final class PipelineExternalPresentationWarmRequest {
   final Future<Uint8List> Function(MediaLoadToken token) loadBytes;
   final int maxPhysicalWidth;
   final int maxPhysicalHeight;
+  final PipelineExternalPresentationFit fit;
 }
 
 typedef PipelineExternalPresentationPrewarmer = Future<void> Function(
@@ -805,6 +815,8 @@ final class PipelineReaderSession {
   late final LiveCoordinator _coordinator;
   ReaderBinding? _binding;
   String? _readerSessionId;
+  PipelineExternalPresentationFit _externalPresentationFit =
+      PipelineExternalPresentationFit.contain;
   final Map<String, PipelinePageStream> _pageStreams =
       <String, PipelinePageStream>{};
   final Map<String, PipelinePageOutputStream> _pageOutputs =
@@ -868,8 +880,20 @@ final class PipelineReaderSession {
   int get revision => _binding?.revision ?? 0;
   RendererKind get renderer => _media.renderer;
 
-  void attach(DecodeTarget target) {
+  void attach(
+    DecodeTarget target, {
+    PipelineExternalPresentationFit externalPresentationFit =
+        PipelineExternalPresentationFit.contain,
+  }) {
     _requireOpen();
+    if (_externalPresentationFit != externalPresentationFit) {
+      // A retained Reader may reuse the same DecodeId dimensions while its
+      // presentation mode changes (for example contain -> stitched fitWidth).
+      // Existing Flutter ImageCache keys are fit-specific, so only that real
+      // presentation-generation change retires retained cache identities.
+      _externalPresentationCacheIdentities.clear();
+    }
+    _externalPresentationFit = externalPresentationFit;
     _invalidateObservationQueue();
     _lastAcceptedControlObservation = null;
     _lastControlCurrentDownload = null;
@@ -918,6 +942,42 @@ final class PipelineReaderSession {
     }
     binding.updateDecodeTarget(target);
     _observationControlDirty = true;
+  }
+
+  /// Updates only the external static presentation geometry.
+  ///
+  /// Decode/source identity is intentionally unchanged. The previous Flutter
+  /// presentation-cache proof is geometry-specific, so it is rotated and the
+  /// coordinator re-grants first-frame work through the existing staged policy.
+  void updateExternalPresentationFit(PipelineExternalPresentationFit fit) {
+    _requireOpen();
+    final binding = _binding;
+    if (binding == null) {
+      throw StateError('pipeline Reader session is not attached');
+    }
+    if (_externalPresentationFit == fit) return;
+    _externalPresentationFit = fit;
+    final identities = _coordinator.decodeDemands.keys.toList(growable: false);
+    for (final identity in identities) {
+      final pageIndex = _pageIndexByPageId[identity.download.content.pageId];
+      if (pageIndex == null ||
+          !binding.pipeline.isRuntimeExternalStaticPage(pageIndex)) {
+        continue;
+      }
+      _externalPresentationPrewarmTokens.remove(identity)?.cancel();
+      _externalPresentationCacheIdentities[identity] = Object();
+      _externalPresentationRequests.remove(identity);
+      _externalPresentationReady.remove(identity);
+      _externalPresentationPrewarmFailures.remove(identity);
+      _externalPresentationVisibleFrames.remove(identity);
+      _coordinator.invalidateExternalPresentation(sessionId, identity);
+      _coordinator.updateExternalPresentationAvailability(
+        sessionId,
+        identity,
+        available: _externalPresentationAvailable(identity),
+      );
+    }
+    _syncPageOutputs();
   }
 
   /// Enqueues the latest Reader viewport observation behind the UI/navigation
@@ -1405,7 +1465,11 @@ final class PipelineReaderSession {
       token.cancel();
     }
     _externalPresentationPrewarmTokens.clear();
-    _externalPresentationCacheIdentities.clear();
+    // Reader-route retention ends widget/output/decode lifetimes, but the
+    // composition-owned Flutter ImageCache may still retain exact fallback
+    // rasters. Keep their lightweight presentation-generation identities so
+    // re-entry can revalidate the same provider keys instead of forcing a new
+    // decode solely because the route disappeared.
     _externalPresentationRequests.clear();
     _externalPresentationReady.clear();
     _externalPresentationPrewarmFailures.clear();
@@ -2948,6 +3012,7 @@ final class PipelineReaderSession {
             loadBytes: (loadToken) => loadBytes(asset, loadToken),
             maxPhysicalWidth: target.physicalWidth,
             maxPhysicalHeight: target.physicalHeight,
+            fit: _externalPresentationFit,
           ),
         );
         token.throwIfCancelled();
@@ -3414,9 +3479,14 @@ final class PipelineReaderSession {
     _externalPresentationVisibleFrames.removeWhere(
       (id) => !_coordinator.decodeDemands.containsKey(id),
     );
-    _externalPresentationCacheIdentities.removeWhere(
-      (id, _) => !_coordinator.decodeDemands.containsKey(id),
-    );
+    // Keep the Flutter presentation cache identity across ordinary demand
+    // gaps. Decode/upload demand is only a scheduling window; it is not a
+    // presentation-generation boundary. Retaining this tiny per-DecodeId key
+    // lets a later staged prewarm revalidate the same ImageCache entry instead
+    // of manufacturing a new provider key and decoding an unchanged page
+    // again. Source/presentation recovery and fit changes rotate the identity
+    // explicitly at their real generation boundaries; session dispose owns
+    // final map retirement.
     for (final entry in
         _externalPresentationPrewarmTokens.entries.toList(growable: false)) {
       if (!_coordinator.decodeDemands.containsKey(entry.key) ||

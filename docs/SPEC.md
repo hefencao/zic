@@ -1348,7 +1348,18 @@ fallback/GIF在Reader-local ingress权威分类后 MUST把native decode分支终
 UI MUST只在Pipeline投影该exact external request后启动Flutter decode/presentation，
 `transferActive`、mounted host或文件存在本身均不得成为load资格。
 external presentation 的“已启动”状态 MUST以非空 `externalPresentationCacheIdentity` 的 exact generation 为键，
-而 MUST NOT以 `LocalImagePlayer`/widget 生命周期为键；
+而 MUST NOT以 `LocalImagePlayer`/widget 生命周期为键。
+Pipeline external presentation request MUST携带 typed presentation fit；`contain` MUST按 viewport physical width/height 双轴导出 raster key，
+纵向 stitched `fitWidth` MUST只按 physical width 约束，source aspect 派生的 long-page height MUST NOT被 viewport height 截断。
+mounted `MediaRasterImage` 与 detached prewarmer MUST共享同一 raster-key policy。
+DecodeDemand/UploadDemand 暂时离开 3/7 调度窗口 MUST仅视为 demand gap，而不是 presentation generation 边界：
+external first-frame satisfaction MAY在 demand 移除时清除并在重入时重新取得 staged grant，以重新验证真实 ImageCache residency，
+但 `externalPresentationCacheIdentity` MUST跨普通 demand gap 保持稳定，使重新验证命中同一个 Flutter ImageProvider key；
+source/recovery/force-reload 或 fit 变化才 MAY旋转该 identity。Reader route retention/reentry MUST NOT被视为 presentation generation 变化：
+retained `PipelineReaderSession` MAY释放 page host/PageOutput/native decode/upload working set，
+但 MUST保留 composition-owned Flutter ImageCache 对应的轻量 presentation cache identity；同 source/DecodeId target/fit 重入 MUST重新验证同一 key。
+fit 变化 MUST只失效/旋转 presentation cache generation 与 external first-frame proof，
+并经既有 staged refill 重新授予，MUST NOT改变 DecodeId/source/download identity 或产生第二 scheduling authority；
 同一 mounted widget 与同一 PageOutput 在 DecodeId/source generation rebind 后收到不同 opaque identity 时 MUST重新取得一次 load 资格，
 且每个 identity 至多消费一次。旧 identity 已启动、完成或失败 MUST NOT压制新 generation grant；
 该 adapter 状态 MUST NOT升级成 Reader retry、transport、cache 或 scheduling authority。

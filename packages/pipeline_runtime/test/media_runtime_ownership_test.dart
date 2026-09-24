@@ -1059,6 +1059,223 @@ void main() {
       reason:
           'a later page host must observe the already-prepared presentation cache state',
     );
+    expect(warmed.single.fit, PipelineExternalPresentationFit.contain);
+    final firstCacheIdentity = warmed.single.cacheIdentity;
+
+    session.updateExternalPresentationFit(
+      PipelineExternalPresentationFit.fitWidth,
+    );
+    final fitDeadline = DateTime.now().add(const Duration(seconds: 2));
+    while (warmed.length < 2) {
+      if (DateTime.now().isAfter(fitDeadline)) {
+        fail('presentation-fit change never re-granted detached warm');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(warmed.last.fit, PipelineExternalPresentationFit.fitWidth);
+    expect(
+      identical(firstCacheIdentity, warmed.last.cacheIdentity),
+      isFalse,
+      reason:
+          'presentation geometry is part of the Flutter raster generation even when DecodeId/source identity is unchanged',
+    );
+  });
+
+  test('external static cache identity survives an ordinary demand gap',
+      () async {
+    final pages = List<PageAsset>.generate(
+      12,
+      (index) => PageAsset(
+        pageId: 'static-$index',
+        chapterId: 'chapter',
+        index: index,
+        uri: Uri.parse('asset:///static-$index.jpg'),
+        width: 1080,
+        height: 3600,
+        contentKindHint: ContentKindHint.jpeg,
+      ),
+    );
+    final chapter = ChapterManifest(
+      sourceId: 'source',
+      comicId: 'comic',
+      chapter: const Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'chapter',
+        sequence: 1,
+        pageCount: 12,
+        sourceRevision: 'r1',
+      ),
+      pages: pages,
+      readingDirection: ReadingDirection.vertical,
+    );
+    final warmed = <PipelineExternalPresentationWarmRequest>[];
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(_Runtime()),
+      pageDownloadLane: NetLane(maxActive: 5),
+      externalPresentationPrewarmer: (request) async {
+        request.token.throwIfCancelled();
+        warmed.add(request);
+      },
+      loaderSources: <Uri, LoaderTransportSource>{
+        for (final page in pages)
+          page.uri: LoaderTransportSource(
+            revision: 'static-demand-gap-r1',
+            loadBytes: () async => Uint8List.fromList(const <int>[
+              0xff, 0xd8, 0xff, 0xe0,
+              0x00, 0x10, 0x4a, 0x46,
+              0x49, 0x46, 0x00, 0x01,
+            ]),
+          ),
+      },
+    ).create(
+      chapter: chapter,
+      sessionId: 'external-static-demand-gap-test',
+    );
+    addTearDown(session.dispose);
+    session.attach(
+      DecodeTarget(physicalWidth: 1080, physicalHeight: 2336),
+      externalPresentationFit: PipelineExternalPresentationFit.fitWidth,
+    );
+
+    ReaderObs observationAt(int index, int micros) => ReaderObs(
+          sessionId: 'reader',
+          currentIndex: index,
+          stableIndex: index,
+          interaction: Interaction.idle,
+          logicalPosition: index.toDouble(),
+          velocity: 0,
+          currentCoverage: Coverage(
+            pageIndex: index,
+            assetKey: pages[index].assetKey,
+            fraction: 1,
+          ),
+          direction: ReadingDirection.vertical,
+          timestamp: DateTime.utc(2026),
+          monotonicMicros: micros,
+        );
+
+    session.accept(observationAt(0, 1));
+    final firstDeadline = DateTime.now().add(const Duration(seconds: 2));
+    while (warmed.where((request) => request.asset.index == 0).isEmpty) {
+      if (DateTime.now().isAfter(firstDeadline)) {
+        fail('initial page never reached detached presentation warm');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    final first = warmed.firstWhere((request) => request.asset.index == 0);
+
+    // Moving farther than the encoded/continuity window removes page 0's
+    // DecodeDemand. That is a scheduling gap only, not a new source or
+    // presentation generation.
+    session.accept(observationAt(10, 2));
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    session.accept(observationAt(0, 3));
+
+    final secondDeadline = DateTime.now().add(const Duration(seconds: 2));
+    while (warmed.where((request) => request.asset.index == 0).length < 2) {
+      if (DateTime.now().isAfter(secondDeadline)) {
+        fail('returning page never revalidated detached presentation warm');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    final pageZeroWarms =
+        warmed.where((request) => request.asset.index == 0).toList();
+    expect(pageZeroWarms, hasLength(2));
+    expect(
+      identical(first.cacheIdentity, pageZeroWarms.last.cacheIdentity),
+      isTrue,
+      reason:
+          'ordinary demand-window churn must revalidate the same Flutter ImageCache generation instead of forcing a second raster key',
+    );
+  });
+
+  test('retained Reader reentry keeps external static cache generation',
+      () async {
+    final uri = Uri.parse('asset:///retained-external-static.jpg');
+    final warmed = <PipelineExternalPresentationWarmRequest>[];
+    final session = PipelineReaderSessionFactory(
+      mediaRuntimeFactory: _Factory(_Runtime()),
+      pageDownloadLane: NetLane(maxActive: 5),
+      externalPresentationPrewarmer: (request) async {
+        request.token.throwIfCancelled();
+        warmed.add(request);
+      },
+      loaderSources: <Uri, LoaderTransportSource>{
+        uri: LoaderTransportSource(
+          revision: 'retained-static-r1',
+          loadBytes: () async => Uint8List.fromList(const <int>[
+            0xff, 0xd8, 0xff, 0xe0,
+            0x00, 0x10, 0x4a, 0x46,
+            0x49, 0x46, 0x00, 0x01,
+          ]),
+        ),
+      },
+    ).create(
+      chapter: _chapter(
+        uri: uri,
+        contentKindHint: ContentKindHint.jpeg,
+      ),
+      sessionId: 'retained-external-static-test',
+    );
+    addTearDown(session.dispose);
+    final target = DecodeTarget(physicalWidth: 1080, physicalHeight: 2336);
+    session.attach(
+      target,
+      externalPresentationFit: PipelineExternalPresentationFit.fitWidth,
+    );
+    session.accept(_currentObservation(session.chapter));
+
+    final firstDeadline = DateTime.now().add(const Duration(seconds: 2));
+    while (warmed.isEmpty) {
+      if (DateTime.now().isAfter(firstDeadline)) {
+        fail('initial external-static warm did not complete');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    final firstIdentity = warmed.single.cacheIdentity;
+
+    session.retainReaderSession();
+    session.resumeRetainedReaderSession(retainedMicros: 1000);
+    session.attach(
+      target,
+      externalPresentationFit: PipelineExternalPresentationFit.fitWidth,
+    );
+    session.accept(_currentObservation(session.chapter));
+
+    final secondDeadline = DateTime.now().add(const Duration(seconds: 2));
+    while (warmed.length < 2) {
+      if (DateTime.now().isAfter(secondDeadline)) {
+        fail('retained Reader reentry did not revalidate external static warm');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(
+      identical(firstIdentity, warmed[1].cacheIdentity),
+      isTrue,
+      reason:
+          'route retention must not manufacture a new Flutter ImageCache generation when source, raster target and fit are unchanged',
+    );
+
+    session.retainReaderSession();
+    session.resumeRetainedReaderSession(retainedMicros: 1000);
+    session.attach(
+      target,
+      externalPresentationFit: PipelineExternalPresentationFit.contain,
+    );
+    session.accept(_currentObservation(session.chapter));
+    final fitDeadline = DateTime.now().add(const Duration(seconds: 2));
+    while (warmed.length < 3) {
+      if (DateTime.now().isAfter(fitDeadline)) {
+        fail('fit-changed Reader reentry did not warm external static');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(
+      identical(warmed[1].cacheIdentity, warmed[2].cacheIdentity),
+      isFalse,
+      reason: 'a real presentation-fit change must rotate the cache generation',
+    );
   });
 
   test('offscreen mounted static host still uses detached presentation warm',

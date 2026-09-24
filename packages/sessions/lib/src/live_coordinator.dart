@@ -1367,6 +1367,20 @@ final class LiveCoordinator implements Coordinator, PlaybackCoordinator {
   bool externalPresentationSatisfiedFor(DecodeId id) =>
       _externalPresentationSatisfied.contains(id) && _decodes.containsKey(id);
 
+  /// Invalidates presentation-cache readiness without changing media/source
+  /// identity. Presentation geometry (for example contain vs fit-width) is not
+  /// part of [DecodeId], so a layout change must retire only the external
+  /// first-frame proof and let the existing staged policy re-grant it.
+  void invalidateExternalPresentation(String sessionId, DecodeId id) {
+    if (!_decodes.containsKey(id)) return;
+    final releasedPending = _externalPresentationPending.remove(id);
+    final releasedSatisfied = _externalPresentationSatisfied.remove(id);
+    if (releasedPending || releasedSatisfied) {
+      _wakeNextDecodeRefill(sessionId, except: id);
+    }
+    refreshDecodeScheduling(sessionId, only: id);
+  }
+
   /// Updates the presentation-side ability to fulfill one external first
   /// frame without transferring scheduling ownership out of the coordinator.
   ///

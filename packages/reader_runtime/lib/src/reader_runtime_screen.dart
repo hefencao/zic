@@ -243,6 +243,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
         );
       }
       _adaptiveProfile = _initialAdaptiveProfile(_settings);
+      _syncExternalPresentationFit();
       if (statusBarModeChanged) {
         _systemUiTransitionGate.applyNow();
       }
@@ -297,7 +298,10 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
         .clamp(0, widget.chapter.pages.length - 1)
         .toInt();
     final direction = _resolveInitialDirection(initialProgress);
-    _pipeline.attach(target);
+    _pipeline.attach(
+      target,
+      externalPresentationFit: _externalPresentationFitFor(direction),
+    );
     final created = ReaderController(
       sessionId: _pipeline.sessionId,
       chapter: widget.chapter,
@@ -330,6 +334,21 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       return adaptive.direction;
     }
     return base;
+  }
+
+  PipelineExternalPresentationFit _externalPresentationFitFor(
+    ReadingDirection direction,
+  ) =>
+      direction == ReadingDirection.vertical && _settings.effectiveVerticalStitch
+          ? PipelineExternalPresentationFit.fitWidth
+          : PipelineExternalPresentationFit.contain;
+
+  void _syncExternalPresentationFit() {
+    final reader = _reader;
+    if (reader == null) return;
+    _pipeline.updateExternalPresentationFit(
+      _externalPresentationFitFor(reader.direction),
+    );
   }
 
   AdaptiveReaderProfile? _initialAdaptiveProfile(
@@ -368,6 +387,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
     });
     if (adaptsDirection) {
       _reader?.setDirection(candidate.direction);
+      _syncExternalPresentationFit();
       _syncPlatformFrameCadenceProbe();
     }
     _persistSettings();
@@ -882,6 +902,7 @@ final class _ReaderRuntimeScreenState extends State<ReaderRuntimeScreen>
       }
     });
     _reader?.setDirection(_resolveInitialDirection(_matchingInitialProgress()));
+    _syncExternalPresentationFit();
     _syncPlatformFrameCadenceProbe();
     final writer = widget.onSettingsChanged;
     if (writer != null) {

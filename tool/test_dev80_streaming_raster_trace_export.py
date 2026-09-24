@@ -12,6 +12,9 @@ raster = read('packages/pipeline/lib/src/aligned_raster_size.dart')
 target = read('packages/pipeline/lib/src/decode_target.dart')
 webp = read('native/media_core/src/webp.rs')
 local_player = read('packages/local_media_ui/lib/src/local_image_player.dart')
+external_prewarmer = read(
+    'packages/local_media_ui/lib/src/pipeline_external_static_prewarmer.dart'
+)
 ingress = read('packages/media/lib/src/ingress.dart')
 download = read('packages/sessions/lib/src/download_session.dart')
 ingress_projection = read(
@@ -45,9 +48,17 @@ for token in (
     'return SizedBox.expand(child: builder(fit));',
     '_streamingPrefixRequestedLength',
     'authoritative: false',
-    'AlignedRasterSize.fit(',
+    '_mediaRasterProviderForPresentation(',
 ):
     assert token in local_player
+for token in (
+    'ImageProvider<Object> _mediaRasterProviderForPresentation(',
+    'PipelineExternalPresentationFit.fitWidth',
+    'AlignedRasterSize.fit(',
+    'ResizeImage.resizeIfNeeded(',
+):
+    assert token in external_prewarmer
+assert '_mediaRasterProviderForPresentation(' in external_prewarmer
 assert 'surface.width, surface.height);' not in local_player
 
 for token in ('final int revision;', 'revision: _revision', '_revision++;'):

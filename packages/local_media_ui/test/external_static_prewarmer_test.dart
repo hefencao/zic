@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
-
 import 'package:domain/domain.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -141,6 +139,7 @@ void main() {
             loadBytes: (_) async => bytes,
             maxPhysicalWidth: 100,
             maxPhysicalHeight: 100,
+            fit: PipelineExternalPresentationFit.contain,
           ),
         ));
 
@@ -230,6 +229,7 @@ void main() {
             loadBytes: (_) async => bytes,
             maxPhysicalWidth: 100,
             maxPhysicalHeight: 100,
+            fit: PipelineExternalPresentationFit.contain,
           ),
         ));
 
@@ -259,16 +259,36 @@ void main() {
     expect(await frame.future, isTrue);
   });
 
-  testWidgets('prewarm declines a source that needs layout-specific resize',
+  testWidgets(
+      'fit-width long page prewarm matches the mounted presentation cache key',
       (tester) async {
-    final token = MediaLoadToken();
+    PaintingBinding.instance.imageCache
+      ..clear()
+      ..clearLiveImages();
+    final directory = Directory(
+      'build/external-static-fit-width-${DateTime.now().microsecondsSinceEpoch}',
+    );
+    await tester.runAsync(() => directory.create(recursive: true));
+    addTearDown(() async {
+      PaintingBinding.instance.imageCache
+        ..clear()
+        ..clearLiveImages();
+      if (await directory.exists()) await directory.delete(recursive: true);
+    });
+    final bytes = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    );
+    final file = File('${directory.path}/long.png');
+    await tester.runAsync(() => file.writeAsBytes(bytes, flush: true));
+
+    const cacheIdentity = ('long-fit-width-presentation', 1);
     final asset = PageAsset(
-      pageId: 'large',
+      pageId: 'long',
       chapterId: 'chapter',
       index: 0,
-      uri: Uri.parse('https://example.test/large.png'),
-      width: 1200,
-      height: 1800,
+      uri: Uri.file(file.path),
+      width: 1080,
+      height: 3600,
       contentKindHint: ContentKindHint.png,
     );
     final download = DownloadId(
@@ -276,7 +296,7 @@ void main() {
         sourceId: 'source',
         comicId: 'comic',
         chapterId: 'chapter',
-        pageId: 'large',
+        pageId: 'long',
       ),
       sourceRevision: 'r1',
       canonicalUri: asset.uri,
@@ -284,36 +304,84 @@ void main() {
     );
     final identity = DecodeId(
       download: download,
-      physicalWidth: 800,
-      physicalHeight: 1200,
+      physicalWidth: 1080,
+      physicalHeight: 2336,
       pixelFormat: PixelFormat.rgba8888,
       renderer: RendererKind.flutterImage,
     );
     var releases = 0;
 
-    await expectLater(
-      prewarmPipelineExternalStaticPresentation(
-        PipelineExternalPresentationWarmRequest(
-          asset: asset,
-          identity: identity,
-          cacheIdentity: const ('large-presentation', 1),
-          token: token,
-          openEncodedPresentationFile: (_) async =>
-              PipelineEncodedPresentationFileLease(
-            path: '/unused/large.png',
-            length: 1,
-            cacheIdentity: const ('large', 1),
-            width: 1200,
-            height: 1800,
-            release: () async => releases++,
+    await tester.runAsync(() => prewarmPipelineExternalStaticPresentation(
+          PipelineExternalPresentationWarmRequest(
+            asset: asset,
+            identity: identity,
+            cacheIdentity: cacheIdentity,
+            token: MediaLoadToken(),
+            openEncodedPresentationFile: (_) async =>
+                PipelineEncodedPresentationFileLease(
+              path: file.path,
+              length: bytes.length,
+              cacheIdentity: cacheIdentity,
+              width: 1080,
+              height: 3600,
+              release: () async => releases++,
+            ),
+            loadBytes: (_) async => bytes,
+            maxPhysicalWidth: 1080,
+            maxPhysicalHeight: 2336,
+            fit: PipelineExternalPresentationFit.fitWidth,
           ),
-          loadBytes: (_) async => Uint8List(0),
-          maxPhysicalWidth: 800,
-          maxPhysicalHeight: 1200,
+        ));
+
+    final provider = encodedResourceImageProvider(
+      FileEncodedResourceSource(
+        path: file.path,
+        lengthInBytes: bytes.length,
+        cacheIdentity: cacheIdentity,
+        origin: EncodedResourceOrigin.durableCacheFile,
+      ),
+    );
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(devicePixelRatio: 2.5),
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: SizedBox(
+            width: 432,
+            height: 934.4,
+            child: MediaRasterImage(
+              image: provider,
+              dimensions: const Size(1080, 3600),
+              fit: BoxFit.fitWidth,
+            ),
+          ),
         ),
       ),
-      throwsUnsupportedError,
     );
+
+    final image = tester.widget<Image>(find.byType(Image));
+    expect(
+      identical(image.image, provider),
+      isTrue,
+      reason:
+          'fit-width presentation is width-bound; viewport height must not invent a second ResizeImage identity',
+    );
+    final stream = provider.resolve(ImageConfiguration.empty);
+    final frame = Completer<bool>();
+    late final ImageStreamListener listener;
+    listener = ImageStreamListener(
+      (image, synchronouslyLoaded) {
+        image.dispose();
+        stream.removeListener(listener);
+        if (!frame.isCompleted) frame.complete(synchronouslyLoaded);
+      },
+      onError: (Object error, StackTrace? stackTrace) {
+        stream.removeListener(listener);
+        if (!frame.isCompleted) frame.completeError(error, stackTrace);
+      },
+    );
+    stream.addListener(listener);
+    expect(await frame.future, isTrue);
     expect(releases, 1);
   });
 }

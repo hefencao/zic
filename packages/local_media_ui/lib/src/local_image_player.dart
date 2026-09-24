@@ -1138,20 +1138,16 @@ final class MediaRasterImage extends StatelessWidget {
               math.max(8, (constraints.maxWidth * ratio).floor());
           final maxPhysicalHeight =
               math.max(8, (constraints.maxHeight * ratio).floor());
-          if (sourceWidth > maxPhysicalWidth ||
-              sourceHeight > maxPhysicalHeight) {
-            final raster = AlignedRasterSize.fit(
-              sourceWidth: sourceWidth,
-              sourceHeight: sourceHeight,
-              maxWidth: maxPhysicalWidth,
-              maxHeight: maxPhysicalHeight,
-            );
-            provider = ResizeImage.resizeIfNeeded(
-              raster.width < source.width ? raster.width : null,
-              raster.height < source.height ? raster.height : null,
-              image,
-            );
-          }
+          provider = _mediaRasterProviderForPresentation(
+            image: image,
+            sourceWidth: sourceWidth,
+            sourceHeight: sourceHeight,
+            maxPhysicalWidth: maxPhysicalWidth,
+            maxPhysicalHeight: maxPhysicalHeight,
+            fit: fit == BoxFit.fitWidth
+                ? PipelineExternalPresentationFit.fitWidth
+                : PipelineExternalPresentationFit.contain,
+          );
         }
         return MediaAspectViewport(
           dimensions: source,

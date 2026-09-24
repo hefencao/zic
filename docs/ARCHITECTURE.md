@@ -713,7 +713,18 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   `LocalImagePlayer` 不得因 mounted、`transferActive`、文件存在或 manifest hint 自行 `_load()`；
   只有收到该 exact request 后才启动 Flutter decode/presentation。
   该 load-once 资格必须绑定 `PipelinePageOutputStream.externalPresentationCacheIdentity` 所代表的 exact presentation generation，
-  而不能绑定 widget 生命周期：
+  而不能绑定 widget 生命周期。presentation raster identity 还必须显式包含由 Reader 上报、Pipeline 转交的 typed fit fact：
+  `contain` 受 viewport physical width/height 双轴约束；纵向 stitched `fitWidth` 只受 physical width 约束，
+  page host 的高度由 source aspect 决定，绝不能把 viewport height 误当成 long-page raster height 上限。
+  mounted `MediaRasterImage` 与 detached external prewarmer 必须调用同一 raster-key policy；
+  DecodeDemand/UploadDemand 离开 3/7 调度窗口只是 demand gap，不是 presentation generation 边界：
+  external first-frame satisfaction MAY 随 demand 移除并在重入时重新取得 staged grant，以重新验证真实 ImageCache residency，
+  但 `externalPresentationCacheIdentity` MUST 跨普通 demand gap 保持稳定，让这次验证命中同一个 Flutter ImageProvider key；
+  source/recovery/force-reload 或 fit 改变才可旋转该 identity。Reader route retention/reentry 同样不是 presentation generation 边界：
+  retained `PipelineReaderSession` 可以销毁 page host/PageOutput/native decode/upload 以释放 Reader-local working set，
+  但 MUST 保留 composition-owned Flutter ImageCache 对应的轻量 presentation cache identity；同 source/DecodeId target/fit 重入时重新验证同一 key，
+  fit 改变时才旋转 Flutter presentation cache identity / first-frame proof并经既有 staged policy 重授，
+  不得借此改变 DecodeId、source/download identity 或建立新的 scheduling owner：
   同一 `LocalImagePlayer`/`PipelinePageOutputStream` 在 DecodeId/source generation rebind 后若 opaque cache identity 改变，
   必须允许新 generation 再次启动一次 load；旧 generation 已开始/完成不能成为抑制新 grant 的证据。
   较新的 identity 可借既有 local load generation guard 淘汰旧 in-flight 结果，但不得因此产生新的 retry/transport/policy owner。

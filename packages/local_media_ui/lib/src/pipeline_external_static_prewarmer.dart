@@ -3,13 +3,9 @@ part of '../local_media_ui.dart';
 /// Decodes one coordinator-authorized external static page into Flutter's
 /// existing ImageCache without creating a hidden page/widget tree.
 ///
-/// This executor deliberately accepts only the case where the source raster
-/// already fits inside the Pipeline physical viewport. In that case the later
-/// visible [MediaRasterImage] resolves the exact same base ImageProvider key,
-/// so the cache hit is mechanically guaranteed. Larger sources may require a
-/// layout-specific ResizeImage key (fit-width vs contain); without that typed
-/// presentation geometry this optimization declines the request instead of
-/// warming a second, unusable raster.
+/// Mounted and detached presentation must derive the effective ImageProvider
+/// through the same raster policy. Pipeline supplies the typed presentation
+/// fit while this composition layer owns the Flutter cache/ResizeImage key.
 Future<void> prewarmPipelineExternalStaticPresentation(
   PipelineExternalPresentationWarmRequest request,
 ) async {
@@ -65,14 +61,14 @@ Future<void> prewarmPipelineExternalStaticPresentation(
         'external static prewarm requires intrinsic dimensions',
       );
     }
-    if (sourceWidth > request.maxPhysicalWidth ||
-        sourceHeight > request.maxPhysicalHeight) {
-      throw UnsupportedError(
-        'external static prewarm needs layout-specific resize identity: '
-        '${sourceWidth}x$sourceHeight > '
-        '${request.maxPhysicalWidth}x${request.maxPhysicalHeight}',
-      );
-    }
+    provider = _mediaRasterProviderForPresentation(
+      image: provider,
+      sourceWidth: sourceWidth,
+      sourceHeight: sourceHeight,
+      maxPhysicalWidth: request.maxPhysicalWidth,
+      maxPhysicalHeight: request.maxPhysicalHeight,
+      fit: request.fit,
+    );
 
     await _resolveFirstStaticImageFrame(provider, request.token);
   } finally {
@@ -81,6 +77,40 @@ Future<void> prewarmPipelineExternalStaticPresentation(
       await currentLease.release();
     }
   }
+}
+
+ImageProvider<Object> _mediaRasterProviderForPresentation({
+  required ImageProvider<Object> image,
+  required int sourceWidth,
+  required int sourceHeight,
+  required int maxPhysicalWidth,
+  required int maxPhysicalHeight,
+  required PipelineExternalPresentationFit fit,
+}) {
+  if (sourceWidth <= 0 || sourceHeight <= 0) return image;
+  if (maxPhysicalWidth <= 0 || maxPhysicalHeight <= 0) return image;
+
+  // fitWidth owns width only. The page host's physical height is derived from
+  // source aspect and may be much taller than the viewport; constraining it to
+  // viewport height would manufacture a different ResizeImage key and make
+  // detached warming unusable for long vertical pages.
+  final effectiveMaxHeight = fit == PipelineExternalPresentationFit.fitWidth
+      ? sourceHeight
+      : maxPhysicalHeight;
+  if (sourceWidth <= maxPhysicalWidth && sourceHeight <= effectiveMaxHeight) {
+    return image;
+  }
+  final raster = AlignedRasterSize.fit(
+    sourceWidth: sourceWidth,
+    sourceHeight: sourceHeight,
+    maxWidth: maxPhysicalWidth,
+    maxHeight: effectiveMaxHeight,
+  );
+  return ResizeImage.resizeIfNeeded(
+    raster.width < sourceWidth ? raster.width : null,
+    raster.height < sourceHeight ? raster.height : null,
+    image,
+  );
 }
 
 Future<void> _resolveFirstStaticImageFrame(
