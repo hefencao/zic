@@ -363,6 +363,7 @@ void main() {
         origin: EncodedResourceOrigin.durableCacheFile,
       ),
     );
+    bool? mountedSynchronouslyLoaded;
     await tester.pumpWidget(
       MediaQuery(
         data: const MediaQueryData(devicePixelRatio: 2.5),
@@ -375,25 +376,41 @@ void main() {
               image: provider,
               dimensions: const Size(1080, 3600),
               fit: BoxFit.fitWidth,
-                presentationIdentity: cacheIdentity,
+              presentationIdentity: cacheIdentity,
+              frameBuilder: (context, child, frame, synchronouslyLoaded) {
+                if (frame != null || synchronouslyLoaded) {
+                  mountedSynchronouslyLoaded = synchronouslyLoaded;
+                }
+                return child;
+              },
             ),
           ),
         ),
       ),
     );
-
-    final image = tester.widget<Image>(find.byType(Image));
-      final managed = pipelinePresentationRasterCache.providerFor(
-        provider: provider,
-        presentationIdentity: cacheIdentity,
-      );
+    for (var attempt = 0;
+        attempt < 20 && mountedSynchronouslyLoaded == null;
+        attempt++) {
+      await tester.pump(const Duration(milliseconds: 5));
+    }
     expect(
-        await image.image.obtainKey(ImageConfiguration.empty),
-        await managed.obtainKey(ImageConfiguration.empty),
+      mountedSynchronouslyLoaded,
+      isTrue,
       reason:
-            'fit-width presentation is width-bound; mounted and detached paths must resolve the same managed raster key',
+          'fit-width mounted presentation must attach synchronously to the exact raster already admitted by detached prewarm',
     );
-      final stream = managed.resolve(ImageConfiguration.empty);
+    expect(
+      pipelinePresentationRasterCache.inspectPresentationRasters().entries,
+      1,
+      reason:
+          'mounted attach must reuse the detached managed entry rather than replace it with a second key',
+    );
+
+    final managed = pipelinePresentationRasterCache.providerFor(
+      provider: provider,
+      presentationIdentity: cacheIdentity,
+    );
+    final stream = managed.resolve(ImageConfiguration.empty);
     final frame = Completer<bool>();
     late final ImageStreamListener listener;
     listener = ImageStreamListener(

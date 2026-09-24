@@ -97,6 +97,124 @@ void main() {
       );
     },
   );
+
+  testWidgets(
+    'mounted external static relinquishes raster across a presentation demand gap',
+    (tester) async {
+      pipelinePresentationRasterCache.clearPresentationRasters();
+      addTearDown(pipelinePresentationRasterCache.clearPresentationRasters);
+      final bytes = base64Decode(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC'
+        'AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      );
+      final chapter = _chapterWithPages(12);
+      final session = PipelineReaderSessionFactory(
+        mediaRuntimeFactory: const _RuntimeFactory(),
+        pageDownloadLane: NetLane(maxActive: 5),
+        presentationCacheAuthority: pipelinePresentationRasterCache,
+        loaderSources: <Uri, LoaderTransportSource>{
+          for (final page in chapter.pages)
+            page.uri: LoaderTransportSource(
+              revision: 'managed-static-r1',
+              loadBytes: () async => bytes,
+            ),
+        },
+      ).create(
+        chapter: chapter,
+        sessionId: 'external-demand-gap-widget-test',
+      );
+      addTearDown(session.dispose);
+      session.attach(DecodeTarget(physicalWidth: 320, physicalHeight: 480));
+
+      final asset = chapter.pages.first;
+      final output = session.pageOutput(asset);
+      final stream = session.pageStream(asset);
+      var loads = 0;
+      final image = PickedImage(
+        file: XFile('managed-static.png'),
+        format: LocalImageFormat.png,
+        displayName: 'managed-static.png',
+        sourceId: asset.uri.toString(),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: SizedBox(
+            width: 240,
+            height: 360,
+            child: LocalImagePlayer(
+              image: image,
+              tokenBytesLoader: (_, token) async {
+                token.throwIfCancelled();
+                loads++;
+                return Uint8List.fromList(bytes);
+              },
+              onFirstFrame: () =>
+                  session.reportPresentationFrameReady(asset),
+              pageStream: stream,
+              pageOutput: output,
+            ),
+          ),
+        ),
+      );
+
+      session.accept(_observationAt(chapter, 0, 1));
+      await _pumpUntil(
+        tester,
+        () => find.byKey(imageFolderFlutterPreviewKey).evaluate().isNotEmpty,
+      );
+      final identity = output.externalPresentationCacheIdentity;
+      expect(identity, isNotNull);
+      expect(loads, 1);
+
+      session.accept(_observationAt(chapter, 10, 2));
+      for (var attempt = 0; attempt < 20; attempt++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 5)),
+        );
+        await tester.pump();
+      }
+      // Keep these expectations split: if the first fails, the bug is still in
+      // Pipeline demand/output retirement; if only the second fails, the
+      // mounted presentation consumer is retaining raster ownership.
+      expect(
+        identical(identity, output.externalPresentationCacheIdentity),
+        isTrue,
+        reason:
+            'ordinary demand loss revokes residency permission without rotating immutable presentation generation',
+      );
+      expect(output.externalPresentationRequested, isFalse);
+      expect(output.externalPresentationReady, isFalse);
+      expect(find.byKey(imageFolderFlutterPreviewKey), findsNothing);
+      expect(find.byKey(imagePageLoadingIndicatorKey), findsOneWidget,
+          reason:
+              'a composed page outside Pipeline presentation demand must release its concrete raster consumer');
+
+      pipelinePresentationRasterCache.invalidatePresentationIdentity(identity!);
+      expect(
+        pipelinePresentationRasterCache.inspectPresentationRasters().entries,
+        0,
+        reason:
+            'after the mounted consumer relinquishes its ImageInfo, the cache owner can fully retire the residency entry',
+      );
+
+      session.accept(_observationAt(chapter, 0, 3));
+      await _pumpUntil(
+        tester,
+        () => find.byKey(imageFolderFlutterPreviewKey).evaluate().isNotEmpty,
+      );
+      expect(
+        identical(identity, output.externalPresentationCacheIdentity),
+        isTrue,
+        reason:
+            'ordinary residency/demand loss must not rotate immutable presentation generation',
+      );
+      expect(loads, 1,
+          reason:
+              'reacquiring residency must reuse the retained encoded provider instead of rereading bytes');
+      await session.dispose();
+      await tester.pump(const Duration(milliseconds: 150));
+    },
+  );
 }
 
 Future<void> _pumpUntil(
@@ -137,6 +255,32 @@ ChapterManifest _chapter(Uri uri) => ChapterManifest(
       readingDirection: ReadingDirection.ltr,
     );
 
+ChapterManifest _chapterWithPages(int count) => ChapterManifest(
+      sourceId: 'source',
+      comicId: 'comic',
+      chapter: Chapter(
+        chapterId: 'chapter',
+        comicId: 'comic',
+        title: 'chapter',
+        sequence: 1,
+        pageCount: count,
+        sourceRevision: 'r1',
+      ),
+      pages: List<PageAsset>.generate(
+        count,
+        (index) => PageAsset(
+          pageId: 'managed-page-$index',
+          chapterId: 'chapter',
+          index: index,
+          uri: Uri.parse('asset:///managed-page-$index.png'),
+          width: 1,
+          height: 1,
+          contentKindHint: ContentKindHint.png,
+        ),
+      ),
+      readingDirection: ReadingDirection.vertical,
+    );
+
 ReaderObs _observation(ChapterManifest chapter) => ReaderObs(
       sessionId: 'external-generation-widget-test',
       currentIndex: 0,
@@ -152,6 +296,28 @@ ReaderObs _observation(ChapterManifest chapter) => ReaderObs(
       direction: chapter.readingDirection,
       timestamp: DateTime.utc(2026),
       monotonicMicros: 1,
+    );
+
+ReaderObs _observationAt(
+  ChapterManifest chapter,
+  int index,
+  int monotonicMicros,
+) =>
+    ReaderObs(
+      sessionId: 'external-demand-gap-widget-test',
+      currentIndex: index,
+      stableIndex: index,
+      interaction: Interaction.idle,
+      logicalPosition: index.toDouble(),
+      velocity: 0,
+      currentCoverage: Coverage(
+        pageIndex: index,
+        assetKey: chapter.pages[index].assetKey,
+        fraction: 1,
+      ),
+      direction: chapter.readingDirection,
+      timestamp: DateTime.utc(2026),
+      monotonicMicros: monotonicMicros,
     );
 
 final class _RuntimeFactory implements PipelineMediaRuntimeFactory {

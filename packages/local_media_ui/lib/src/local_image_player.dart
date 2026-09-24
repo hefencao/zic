@@ -74,6 +74,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   PipelinePageStreamListener? _pageStreamingListener;
   PipelinePageOutputListener? _pageOutputListener;
   PipelinePageOutputSnapshot? _pageOutputSnapshot;
+  bool _externalPresentationAvailable = false;
   Object? _scheduledOutputPresentationIdentity;
   bool _streamingPrefixSyncing = false;
   int _streamingPrefixRequestedLength = 0;
@@ -167,6 +168,7 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
       }
       _pageOutputListener = null;
       _pageOutputSnapshot = null;
+      _externalPresentationAvailable = false;
       _scheduledOutputPresentationIdentity = null;
       _streamingPrefixSyncing = false;
       _streamingPrefixRequestedLength = 0;
@@ -312,21 +314,39 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           : nextSurface == null ||
               priorSurface.width != nextSurface.width ||
               priorSurface.height != nextSurface.height;
+      final nextExternalPresentationAvailable =
+          output.externalPresentationRequested || output.externalPresentationReady;
+      final externalPresentationChanged =
+          _externalPresentationAvailable != nextExternalPresentationAvailable;
+      final externalPresentationRevoked =
+          _externalPresentationAvailable && !nextExternalPresentationAvailable;
+      _externalPresentationAvailable = nextExternalPresentationAvailable;
       final visualChanged =
           prior == null ||
           prior.state != snapshot.state ||
           presentationChanged ||
           dimensionsChanged ||
+          externalPresentationChanged ||
           prior.replacing != snapshot.replacing ||
           !identical(prior.failure, snapshot.failure);
       _pageOutputSnapshot = snapshot;
       _maybeStartExternalPresentationLoad(output);
-      // Animation metadata can become more precise while a WebP prefix is
-      // being classified, but it does not change the native texture view.
-      // Keep reporting dimensions/capability and first-frame state below;
-      // only a surface/layout/state change needs a Flutter subtree rebuild.
+      // Pipeline owns external-static presentation residency. A cache-owner
+      // revocation must remove the mounted raster consumer as well; otherwise
+      // Flutter's Image widget can retain a live completer after the owner has
+      // declared the speculative raster evicted. Keep the encoded provider so
+      // a later exact grant reuses source bytes, but reopen the one-frame
+      // presentation lifecycle for trace/state projection.
       if (visualChanged && prior != null) {
-        setState(() {});
+        setState(() {
+          if (externalPresentationRevoked && !_detectedFormat.isWebp) {
+            _scheduledStaticFrameGeneration = -1;
+            _state = ImagePreviewState.loading(_detectedFormat);
+          }
+        });
+        if (externalPresentationRevoked && !_detectedFormat.isWebp) {
+          _notifyObserver(_state);
+        }
       }
       if (snapshot.hasSurface) {
         final surface = snapshot.surface!;
@@ -914,6 +934,12 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
   Widget build(BuildContext context) {
     final bytes = _bytes;
     final imageProvider = _imageProvider;
+    final usesManagedExternalStaticPresentation =
+        widget.pageOutput != null &&
+        _detectedFormat != LocalImageFormat.webp &&
+        _detectedFormat != LocalImageFormat.gif;
+    final externalPresentationBlocked =
+        usesManagedExternalStaticPresentation && !_externalPresentationAvailable;
     final Widget content;
     if (_state.phase == ImagePreviewPhase.invalid) {
       content = Center(
@@ -949,6 +975,8 @@ final class _LocalImagePlayerState extends State<LocalImagePlayer> {
           ],
         ),
       );
+    } else if (externalPresentationBlocked) {
+      content = _loadingIndicator();
     } else if (_detectedFormat.isWebp) {
       final output = widget.pageOutput;
       if (output != null) {
@@ -1130,20 +1158,183 @@ final class MediaRasterImage extends StatelessWidget {
         return MediaAspectViewport(
           dimensions: source,
           fit: fit,
-          builder: (innerFit) => Image(
-            image: provider,
-            key: imageKey,
-            width: double.infinity,
-            height: double.infinity,
-            fit: innerFit,
-            alignment: Alignment.center,
-            filterQuality: FilterQuality.medium,
-            frameBuilder: frameBuilder,
-            errorBuilder: errorBuilder,
-          ),
+          builder: (innerFit) => managedIdentity == null
+              ? Image(
+                  image: provider,
+                  key: imageKey,
+                  width: double.infinity,
+                  height: double.infinity,
+                  fit: innerFit,
+                  alignment: Alignment.center,
+                  filterQuality: FilterQuality.medium,
+                  frameBuilder: frameBuilder,
+                  errorBuilder: errorBuilder,
+                )
+              : _ManagedPresentationRasterImage(
+                  key: imageKey,
+                  image: provider,
+                  fit: innerFit,
+                  frameBuilder: frameBuilder,
+                  errorBuilder: errorBuilder,
+                ),
         );
       },
     );
+  }
+}
+
+/// Static Reader rasters admitted by [PipelinePresentationRasterCache] must not
+/// pass through Flutter's [Image] widget. [Image] always wraps providers in a
+/// [ScrollAwareImageProvider] and may defer resolution again during fast
+/// scrolling; it can also retain a private completer keepAlive while
+/// [TickerMode] is disabled. Both behaviors create a second scheduling/
+/// residency authority outside Pipeline.
+///
+/// This adapter resolves the already-managed provider directly, listens only
+/// until one static frame is acquired, then keeps the concrete [ImageInfo] as
+/// the mounted presentation reference. When Pipeline revokes external-static
+/// presentation permission, [LocalImagePlayer] removes this subtree and its
+/// [ImageInfo] is disposed, leaving the cache owner's handle as the sole
+/// offscreen residency owner.
+final class _ManagedPresentationRasterImage extends StatefulWidget {
+  const _ManagedPresentationRasterImage({
+    required this.image,
+    required this.fit,
+    this.frameBuilder,
+    this.errorBuilder,
+    super.key,
+  });
+
+  final ImageProvider<Object> image;
+  final BoxFit fit;
+  final ImageFrameBuilder? frameBuilder;
+  final ImageErrorWidgetBuilder? errorBuilder;
+
+  @override
+  State<_ManagedPresentationRasterImage> createState() =>
+      _ManagedPresentationRasterImageState();
+}
+
+final class _ManagedPresentationRasterImageState
+    extends State<_ManagedPresentationRasterImage> {
+  ImageStream? _stream;
+  ImageStreamListener? _listener;
+  ImageInfo? _imageInfo;
+  Object? _error;
+  StackTrace? _errorStack;
+  int? _frameNumber;
+  bool _wasSynchronouslyLoaded = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _resolve();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ManagedPresentationRasterImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.image != widget.image) {
+      _resolve();
+    }
+  }
+
+  void _resolve() {
+    final next = widget.image.resolve(createLocalImageConfiguration(context));
+    if (_stream?.key == next.key) return;
+    _stopListening();
+    _replaceImage(null);
+    _stream = next;
+    _frameNumber = null;
+    _wasSynchronouslyLoaded = false;
+    _error = null;
+    _errorStack = null;
+    late final ImageStreamListener listener;
+    listener = ImageStreamListener(
+      (info, synchronousCall) {
+        if (!mounted || !identical(_listener, listener)) {
+          info.dispose();
+          return;
+        }
+        final old = _imageInfo;
+        setState(() {
+          _imageInfo = info;
+          _frameNumber = _frameNumber == null ? 0 : _frameNumber! + 1;
+          _wasSynchronouslyLoaded =
+              _wasSynchronouslyLoaded || synchronousCall;
+          _error = null;
+          _errorStack = null;
+        });
+        if (old != null) {
+          WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+        }
+        // External-static is a one-frame contract. Keeping the stream listener
+        // after this point would recreate a second liveness authority.
+        _stopListening();
+      },
+      onError: (Object error, StackTrace? stackTrace) {
+        if (!mounted || !identical(_listener, listener)) return;
+        _stopListening();
+        setState(() {
+          _error = error;
+          _errorStack = stackTrace;
+        });
+      },
+    );
+    _listener = listener;
+    next.addListener(listener);
+  }
+
+  void _stopListening() {
+    final stream = _stream;
+    final listener = _listener;
+    if (stream != null && listener != null) {
+      stream.removeListener(listener);
+    }
+    _listener = null;
+  }
+
+  void _replaceImage(ImageInfo? next) {
+    final old = _imageInfo;
+    _imageInfo = next;
+    if (old != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+    }
+  }
+
+  @override
+  void dispose() {
+    _stopListening();
+    _imageInfo?.dispose();
+    _imageInfo = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final error = _error;
+    if (error != null && widget.errorBuilder != null) {
+      return widget.errorBuilder!(context, error, _errorStack);
+    }
+    Widget child = SizedBox.expand(
+      child: RawImage(
+        image: _imageInfo?.image,
+        scale: _imageInfo?.scale ?? 1,
+        fit: widget.fit,
+        alignment: Alignment.center,
+        filterQuality: FilterQuality.medium,
+      ),
+    );
+    final frameBuilder = widget.frameBuilder;
+    if (frameBuilder != null) {
+      child = frameBuilder(
+        context,
+        child,
+        _frameNumber,
+        _wasSynchronouslyLoaded,
+      );
+    }
+    return child;
   }
 }
 

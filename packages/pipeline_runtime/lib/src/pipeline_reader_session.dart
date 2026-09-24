@@ -118,6 +118,12 @@ abstract interface class PipelinePresentationCacheAuthority {
 
   void releasePresentationClaim(Object presentationIdentity);
 
+  /// Whether this residency owner currently permits a new raster admission for
+  /// [presentationIdentity]. A budget eviction may temporarily deny another
+  /// speculative warm for the same immutable generation until its claim is
+  /// promoted to deadline/protected.
+  bool allowsPresentationWarm(Object presentationIdentity);
+
   void invalidatePresentationIdentity(Object presentationIdentity);
 }
 
@@ -848,7 +854,6 @@ final class PipelineReaderSession {
   final Set<DecodeId> _externalPresentationRequests = <DecodeId>{};
   final Set<DecodeId> _externalPresentationReady = <DecodeId>{};
   final Set<DecodeId> _externalPresentationPrewarmFailures = <DecodeId>{};
-  final Set<DecodeId> _externalPresentationEvictedWhileFar = <DecodeId>{};
   final Map<DecodeId, MediaLoadToken> _externalPresentationPrewarmTokens =
       <DecodeId, MediaLoadToken>{};
   final Map<DecodeId, Object> _externalPresentationCacheIdentities =
@@ -1491,10 +1496,11 @@ final class PipelineReaderSession {
     }
     _externalPresentationPrewarmTokens.clear();
     // Reader-route retention ends widget/output/decode lifetimes, but the
-    // composition-owned Flutter ImageCache may still retain exact fallback
-    // rasters. Keep their lightweight presentation-generation identities so
-    // re-entry can revalidate the same provider keys instead of forcing a new
-    // decode solely because the route disappeared.
+    // composition-owned PipelinePresentationRasterCache may still retain exact
+    // fallback rasters under its own claim/budget authority. Keep only their
+    // lightweight presentation-generation identities so re-entry can reuse
+    // the same managed provider keys instead of manufacturing a new generation
+    // solely because the route disappeared.
     _externalPresentationRequests.clear();
     _externalPresentationReady.clear();
     _externalPresentationPrewarmFailures.clear();
@@ -1618,8 +1624,8 @@ final class PipelineReaderSession {
 
   /// Reports an actually presented first frame for an external/fallback
   /// renderer. Native Pipeline surfaces ignore this because their readiness is
-  /// already owned by UploadRegistry/PresentClaim. A detached ImageCache warm
-  /// may already have satisfied the staged watermark; the visible frame still
+  /// already owned by UploadRegistry/PresentClaim. A detached managed-raster
+  /// warm may already have satisfied the staged watermark; the visible frame still
   /// gets traced, but it does not manufacture a second coordinator completion.
   void reportPresentationFrameReady(PageAsset asset) {
     if (_disposed) return;
@@ -2849,18 +2855,18 @@ final class PipelineReaderSession {
         _externalPresentationPrewarmFailures.contains(id)) {
       return false;
     }
-    if (_externalPresentationEvictedWhileFar.contains(id)) {
-      final role = _coordinator.decodeDemands[id]?.role;
-      if (role == null || role == PageRole.far) {
-        return false;
-      }
-      _externalPresentationEvictedWhileFar.remove(id);
-    }
     final pageIndex = _pageIndexByPageId[id.download.content.pageId];
     final binding = _binding;
-    return pageIndex != null &&
-        binding != null &&
-        binding.pipeline.isRuntimeExternalStaticPage(pageIndex);
+    if (pageIndex == null ||
+        binding == null ||
+        !binding.pipeline.isRuntimeExternalStaticPage(pageIndex)) {
+      return false;
+    }
+    final authority = _presentationCacheAuthority;
+    if (authority == null) return true;
+    return authority.allowsPresentationWarm(
+      _externalPresentationCacheIdentityFor(id),
+    );
   }
 
   bool _externalPresentationAvailable(DecodeId id) =>
@@ -2957,22 +2963,20 @@ final class PipelineReaderSession {
     // key. Only source/recovery/fit changes rotate the identity.
 
     final demand = _coordinator.decodeDemands[invalidated];
-    final farEviction = demand?.role == PageRole.far;
-    if (farEviction) {
-      // Do not immediately warm the same far page again after the unified
-      // presentation-raster owner reclaimed it. That would turn the 3/7
-      // envelope into an endless eviction/redecode ring when its speculative
-      // decoded working set exceeds the presentation-memory budget. A later
-      // role promotion re-enables the original staged warm for the same
-      // immutable presentation generation.
-      _externalPresentationEvictedWhileFar.add(invalidated);
-    } else {
-      _externalPresentationEvictedWhileFar.remove(invalidated);
-    }
+    final presentationWarmAllowed =
+        _presentationCacheAuthority?.allowsPresentationWarm(
+          presentationIdentity,
+        ) ??
+        true;
+    // Residency/admission backpressure belongs to the cache authority that
+    // performed the eviction. Pipeline only invalidates its satisfaction proof;
+    // it must not maintain a second "evicted while far" tombstone. A budget
+    // victim stays asleep while the owner denies speculative admission and is
+    // woken naturally when claim promotion clears that denial.
     _coordinator.invalidateExternalPresentation(
       sessionId,
       invalidated,
-      wakeIdentity: !farEviction,
+      wakeIdentity: presentationWarmAllowed,
     );
 
     final output = _pageOutputs[invalidated.download.key];
@@ -2996,7 +3000,7 @@ final class PipelineReaderSession {
         payload: <String, Object?>{
           'stage': 'presentation-raster-cache-invalidated',
           'role': demand?.role.name,
-          'farWarmSuppressed': farEviction,
+          'presentationWarmAllowed': presentationWarmAllowed,
         },
       ),
     );
@@ -3049,8 +3053,9 @@ final class PipelineReaderSession {
       return false;
     }
     // The staged first-frame work has already completed in the composition's
-    // ImageCache. Do not make an already-mounted offscreen page wait until it
-    // becomes visible before attaching to that exact prepared cache entry.
+    // unified presentation-raster owner. Do not make an already-mounted
+    // offscreen page wait until it becomes visible before attaching to that
+    // exact prepared cache entry.
     // UploadDemand still bounds the presentation lifetime; this only exposes
     // completed readiness and never creates a new grant or decode operation.
     return _coordinator.uploadDemands.containsKey(id);

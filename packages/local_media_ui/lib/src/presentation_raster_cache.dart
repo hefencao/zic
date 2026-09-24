@@ -5,11 +5,12 @@ const int pipelinePresentationRasterMaximumEntries = 1000;
 
 /// Process-wide presentation-raster authority for Reader static pages.
 ///
-/// Flutter's [ImageCache] still owns the actual completer/raster objects. This
-/// authority owns only the reusable residency lease, exact provider key,
-/// weight/LRU metadata and presentation-generation invalidation. A keepAlive
-/// handle keeps an admitted raster usable even if Flutter's unrelated global
-/// ImageCache LRU drops its own keepAlive entry; no raster bytes are copied.
+/// Flutter supplies the [ImageStreamCompleter]/raster backend, but Reader
+/// residency authority lives here. This manager owns the reusable keepAlive
+/// lease, exact provider key, weight/LRU metadata, admission backpressure and
+/// presentation-generation invalidation. Mounted Reader static presentation
+/// must not add a second Flutter Image/TickerMode keepAlive owner; no raster
+/// bytes are copied.
 final class PipelinePresentationRasterCache
     implements
         PresentationRasterCacheMaintenance,
@@ -40,6 +41,7 @@ final class PipelinePresentationRasterCache
       <Object, PresentationRasterCacheKey>{};
   final Map<Object, PipelinePresentationCacheClaim> _claimsByIdentity =
       <Object, PipelinePresentationCacheClaim>{};
+  final Set<Object> _speculativeAdmissionDenied = <Object>{};
   final Set<PipelinePresentationCacheInvalidationListener> _listeners =
       <PipelinePresentationCacheInvalidationListener>{};
   int _bytes = 0;
@@ -75,6 +77,9 @@ final class PipelinePresentationRasterCache
     final previous = _claimsByIdentity[presentationIdentity];
     if (previous == claim) return;
     _claimsByIdentity[presentationIdentity] = claim;
+    if (claim != PipelinePresentationCacheClaim.speculative) {
+      _speculativeAdmissionDenied.remove(presentationIdentity);
+    }
     final key = _keysByIdentity[presentationIdentity];
     final entry = key == null ? null : _entries.remove(key);
     if (entry != null) {
@@ -96,8 +101,19 @@ final class PipelinePresentationRasterCache
   }
 
   @override
+  bool allowsPresentationWarm(Object presentationIdentity) {
+    if (!_speculativeAdmissionDenied.contains(presentationIdentity)) {
+      return true;
+    }
+    final claim = _claimsByIdentity[presentationIdentity];
+    return claim == PipelinePresentationCacheClaim.deadline ||
+        claim == PipelinePresentationCacheClaim.protected;
+  }
+
+  @override
   void invalidatePresentationIdentity(Object presentationIdentity) {
     _claimsByIdentity.remove(presentationIdentity);
+    _speculativeAdmissionDenied.remove(presentationIdentity);
     final key = _keysByIdentity[presentationIdentity];
     if (key == null) return;
     _evict(key, notify: true);
@@ -244,17 +260,23 @@ final class PipelinePresentationRasterCache
         }
       }
       if (victim == null) break;
-      _evict(victim, notify: true);
+      _evict(victim, notify: true, denySpeculativeRewarm: true);
     }
   }
 
-  void _evict(PresentationRasterCacheKey key, {required bool notify}) {
+  void _evict(
+    PresentationRasterCacheKey key, {
+    required bool notify,
+    bool denySpeculativeRewarm = false,
+  }) {
     final entry = _entries.remove(key);
     if (entry == null) return;
     if (_keysByIdentity[key.presentationIdentity] == key) {
       _keysByIdentity.remove(key.presentationIdentity);
     }
-    _claimsByIdentity.remove(key.presentationIdentity);
+    if (denySpeculativeRewarm) {
+      _speculativeAdmissionDenied.add(key.presentationIdentity);
+    }
     _bytes -= entry.sizeBytes;
     entry.handle.dispose();
     _imageCache.evict(entry.providerKey, includeLive: false);
@@ -292,11 +314,17 @@ final class PipelinePresentationRasterCache
         .map((key) => key.presentationIdentity)
         .toList(growable: false);
     for (final entry in _entries.values) {
+      if (entry.claim == PipelinePresentationCacheClaim.speculative) {
+        _speculativeAdmissionDenied.add(entry.key.presentationIdentity);
+      }
       entry.handle.dispose();
       _imageCache.evict(entry.providerKey, includeLive: false);
     }
     _entries.clear();
     _keysByIdentity.clear();
+    // A residency clear is not a demand-generation boundary. Preserve claims
+    // so current/deadline pages can legally refill, while speculative entries
+    // stay denied until their claim is promoted or the generation rotates.
     _bytes = 0;
     _syncGlobalImageCacheBudget();
     final listeners = _listeners.toList(growable: false);

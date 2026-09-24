@@ -1416,7 +1416,7 @@ void main() {
         reason: 'the outer far warm must be reclaimable cache slack',
       );
 
-      cacheAuthority.invalidatePresentationIdentity(first.cacheIdentity);
+      cacheAuthority.evictForBudget(first.cacheIdentity);
       await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(
         warmed.where((request) => request.asset.index == 7),
@@ -1431,7 +1431,7 @@ void main() {
               event.payload['stage'] ==
                   'presentation-raster-cache-invalidated' &&
               event.payload['role'] == 'far' &&
-              event.payload['farWarmSuppressed'] == true,
+              event.payload['presentationWarmAllowed'] == false,
         ),
         isTrue,
       );
@@ -2041,6 +2041,7 @@ final class _FakePresentationCacheAuthority
       <PipelinePresentationCacheInvalidationListener>{};
   final Map<Object, PipelinePresentationCacheClaim> claims =
       <Object, PipelinePresentationCacheClaim>{};
+  final Set<Object> speculativeAdmissionDenied = <Object>{};
 
   @override
   void addInvalidationListener(
@@ -2062,6 +2063,9 @@ final class _FakePresentationCacheAuthority
     PipelinePresentationCacheClaim claim,
   ) {
     claims[presentationIdentity] = claim;
+    if (claim != PipelinePresentationCacheClaim.speculative) {
+      speculativeAdmissionDenied.remove(presentationIdentity);
+    }
   }
 
   @override
@@ -2070,8 +2074,27 @@ final class _FakePresentationCacheAuthority
   }
 
   @override
+  bool allowsPresentationWarm(Object presentationIdentity) {
+    if (!speculativeAdmissionDenied.contains(presentationIdentity)) return true;
+    final claim = claims[presentationIdentity];
+    return claim == PipelinePresentationCacheClaim.deadline ||
+        claim == PipelinePresentationCacheClaim.protected;
+  }
+
+  void evictForBudget(Object presentationIdentity) {
+    if (claims[presentationIdentity] ==
+        PipelinePresentationCacheClaim.speculative) {
+      speculativeAdmissionDenied.add(presentationIdentity);
+    }
+    for (final listener in _listeners.toList(growable: false)) {
+      listener(presentationIdentity);
+    }
+  }
+
+  @override
   void invalidatePresentationIdentity(Object presentationIdentity) {
     claims.remove(presentationIdentity);
+    speculativeAdmissionDenied.remove(presentationIdentity);
     for (final listener in _listeners.toList(growable: false)) {
       listener(presentationIdentity);
     }

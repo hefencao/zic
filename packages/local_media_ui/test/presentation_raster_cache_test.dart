@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:flutter/painting.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_media_ui/local_media_ui.dart';
 import 'package:pipeline_runtime/pipeline_runtime.dart';
@@ -82,6 +82,16 @@ void main() {
       final usage = owner.inspectPresentationRasters();
       expect(usage.entries, 1);
       expect(invalidated, <Object>[speculativeIdentity]);
+      expect(owner.allowsPresentationWarm(speculativeIdentity), isFalse,
+          reason:
+              'the budget owner that evicted speculative residency must also own backpressure against immediate speculative re-admission');
+      owner.updatePresentationClaim(
+        speculativeIdentity,
+        PipelinePresentationCacheClaim.deadline,
+      );
+      expect(owner.allowsPresentationWarm(speculativeIdentity), isTrue,
+          reason:
+              'deadline promotion must clear the cache-owner admission denial without a Pipeline-side tombstone');
       expect(
         imageCache.maximumSize,
         owner.maximumEntries - usage.entries,
@@ -93,6 +103,134 @@ void main() {
         owner.maximumBytes - usage.bytes,
         reason:
             'managed Reader raster bytes must be reserved out of the generic Flutter ImageCache budget',
+      );
+    },
+  );
+
+  testWidgets(
+    'clear drops residency but preserves demand claims and speculative backpressure',
+    (tester) async {
+      final imageCache = PaintingBinding.instance.imageCache;
+      final oldMaximumSize = imageCache.maximumSize;
+      final oldMaximumSizeBytes = imageCache.maximumSizeBytes;
+      final owner = PipelinePresentationRasterCache(
+        maximumBytes: 2 * 1024 * 1024,
+        maximumEntries: 2,
+      );
+      addTearDown(() {
+        owner.clearPresentationRasters();
+        imageCache.maximumSize = oldMaximumSize;
+        imageCache.maximumSizeBytes = oldMaximumSizeBytes;
+        imageCache.clearLiveImages();
+      });
+      final protectedIdentity = Object();
+      final speculativeIdentity = Object();
+      owner.updatePresentationClaim(
+        protectedIdentity,
+        PipelinePresentationCacheClaim.protected,
+      );
+      owner.updatePresentationClaim(
+        speculativeIdentity,
+        PipelinePresentationCacheClaim.speculative,
+      );
+      ImageProvider<Object> managed(Object identity) => owner.providerFor(
+        provider: encodedResourceImageProvider(
+          MemoryEncodedResourceSource(_tinyPng(), cacheIdentity: identity),
+        ),
+        presentationIdentity: identity,
+      );
+      await tester.runAsync(
+        () => _resolveFirstFrame(managed(protectedIdentity)),
+      );
+      await tester.runAsync(
+        () => _resolveFirstFrame(managed(speculativeIdentity)),
+      );
+      expect(owner.inspectPresentationRasters().entries, 2);
+
+      owner.clearPresentationRasters();
+
+      expect(owner.inspectPresentationRasters().entries, 0);
+      expect(owner.allowsPresentationWarm(protectedIdentity), isTrue,
+          reason:
+              'memory-pressure/cache clear removes residency, not the current protected demand claim');
+      expect(owner.allowsPresentationWarm(speculativeIdentity), isFalse,
+          reason:
+              'a cleared speculative raster must not immediately refill from idle warm');
+      owner.updatePresentationClaim(
+        speculativeIdentity,
+        PipelinePresentationCacheClaim.deadline,
+      );
+      expect(owner.allowsPresentationWarm(speculativeIdentity), isTrue);
+    },
+  );
+
+  testWidgets(
+    'managed Reader raster bypasses Flutter live-completer residency',
+    (tester) async {
+      final imageCache = PaintingBinding.instance.imageCache;
+      final oldMaximumSize = imageCache.maximumSize;
+      final oldMaximumSizeBytes = imageCache.maximumSizeBytes;
+      pipelinePresentationRasterCache.clearPresentationRasters();
+      addTearDown(() {
+        pipelinePresentationRasterCache.clearPresentationRasters();
+        imageCache.maximumSize = oldMaximumSize;
+        imageCache.maximumSizeBytes = oldMaximumSizeBytes;
+        imageCache.clearLiveImages();
+      });
+      final identity = Object();
+      pipelinePresentationRasterCache.updatePresentationClaim(
+        identity,
+        PipelinePresentationCacheClaim.protected,
+      );
+      final baseProvider = encodedResourceImageProvider(
+        MemoryEncodedResourceSource(_tinyPng(), cacheIdentity: identity),
+      );
+      final providerKey = await baseProvider.obtainKey(ImageConfiguration.empty);
+      final prewarmed = pipelinePresentationRasterCache.providerFor(
+        provider: baseProvider,
+        presentationIdentity: identity,
+      );
+      await tester.runAsync(() => _resolveFirstFrame(prewarmed));
+      var frameReady = false;
+
+      await tester.pumpWidget(
+        TickerMode(
+          enabled: false,
+          child: SizedBox(
+            width: 32,
+            height: 32,
+            child: MediaRasterImage(
+              image: baseProvider,
+              dimensions: null,
+              fit: BoxFit.contain,
+              presentationIdentity: identity,
+              frameBuilder: (context, child, frame, synchronouslyLoaded) {
+                if (frame != null || synchronouslyLoaded) frameReady = true;
+                return child;
+              },
+            ),
+          ),
+        ),
+      );
+      final deadline = DateTime.now().add(const Duration(seconds: 2));
+      while (!frameReady) {
+        if (DateTime.now().isAfter(deadline)) {
+          fail('managed raster never produced a first frame');
+        }
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      await tester.pump();
+
+      final status = imageCache.statusForKey(providerKey);
+      expect(status.live, isFalse,
+          reason:
+              'managed static presentation must not leave Flutter Image/TickerMode as a second live-completer owner');
+      expect(status.keepAlive, isFalse,
+          reason:
+              'the generic Flutter ImageCache keepAlive must be removed after managed admission');
+      expect(
+        pipelinePresentationRasterCache.inspectPresentationRasters().entries,
+        1,
       );
     },
   );

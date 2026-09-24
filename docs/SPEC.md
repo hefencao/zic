@@ -1268,8 +1268,12 @@ pending creates MUST remain bounded and MUST NOT be replaced by an unbounded UI-
 native decoded/upload output 的实际驻留由 `FrameBudgeter` 保护。
 Reader external-static 的 FileImage/ResizeImage/MemoryImage raster residency MUST由 App composition 的 `PipelinePresentationRasterCache` 统一拥有；
 该 owner MUST复用同一个 `ImageStreamCompleter`/keepAlive handle，不得复制 RGBA，并 MUST通过 `ResourceCacheCoordinator.presentationRasters` 参加统一 inspect/trim/clear。
+mounted managed-static consumer MUST绕过 Flutter `Image` 的 `ScrollAwareImageProvider` 二次滚动调度，并且不得通过 `TickerMode`/ImageStream listener形成第二个offscreen completer keepAlive；
+consumer只可持有当前 `ImageInfo`，Pipeline撤销external presentation permission时 MUST立即释放该引用。
 Flutter generic `ImageCache` 仍可服务非 Reader 图片和 provider decode backend，但其可用 bytes/entries MUST扣除 managed Reader raster 的精确占用，
 两者共享当前100MiB/1000-entry presentation 总额度，MUST NOT成为两套独立 LRU authority。
+当统一owner因预算回收speculative raster后，MUST由该owner同时拒绝同identity的speculative re-admission，直到claim提升为deadline/protected；Pipeline MUST NOT另存far-eviction tombstone或被动revalidation状态。
+`clearPresentationRasters()` / memory pressure MUST只清residency而保留现有demand claim；被clear的speculative identity MUST进入同一owner-side admission denial，deadline/protected claim MAY按当前需求恢复。
 
 ## 3. Pipeline 与角色合同
 

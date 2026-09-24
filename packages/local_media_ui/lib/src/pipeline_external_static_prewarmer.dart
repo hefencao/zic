@@ -1,11 +1,12 @@
 part of '../local_media_ui.dart';
 
-/// Decodes one coordinator-authorized external static page into Flutter's
-/// existing ImageCache without creating a hidden page/widget tree.
+/// Decodes one coordinator-authorized external static page into the unified
+/// [PipelinePresentationRasterCache] without creating a hidden page/widget tree.
 ///
-/// Mounted and detached presentation must derive the effective ImageProvider
-/// through the same raster policy. Pipeline supplies the typed presentation
-/// fit while this composition layer owns the Flutter cache/ResizeImage key.
+/// Mounted and detached presentation derive the effective ImageProvider through
+/// the same raster policy. Pipeline supplies the typed presentation fit while
+/// this composition layer owns the managed provider/ResizeImage key and raster
+/// residency authority; Flutter ImageCache is only the decode backend.
 Future<void> prewarmPipelineExternalStaticPresentation(
   PipelineExternalPresentationWarmRequest request,
 ) async {

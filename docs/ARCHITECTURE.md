@@ -717,11 +717,15 @@ App-owned modal panel 的操作行由 `AppDialogActions` 统一投影：关闭�
   `contain` 受 viewport physical width/height 双轴约束；纵向 stitched `fitWidth` 只受 physical width 约束，
   page host 的高度由 source aspect 决定，绝不能把 viewport height 误当成 long-page raster height 上限。
   mounted `MediaRasterImage` 与 detached external prewarmer 必须调用同一 raster-key policy，并共同进入 composition-owned `PipelinePresentationRasterCache`；
-  它以同一个 `ImageStreamCompleter.keepAlive()` 持有已解码 raster，不复制 RGBA，并作为 Reader external-static 的唯一 residency/LRU authority。
+  它以同一个 `ImageStreamCompleter.keepAlive()` 持有已解码 raster，不复制 RGBA，并作为 Reader external-static 的唯一 residency/LRU/admission authority。
+  mounted managed-static consumer 只可持有当前 `ImageInfo` 作为屏幕呈现引用，不得再通过 Flutter `Image`/`ScrollAwareImageProvider` 建立第二套滚动调度或 `TickerMode` private keepAlive；
+  Pipeline撤销external presentation permission时，mounted consumer必须同步释放该`ImageInfo`，从而使cache owner的eviction真正完成。
   Flutter 全局 `ImageCache` 只是 provider decode/backend 与非 Reader 图片缓存：managed raster admission 后其 generic keepAlive key 必须移除，
   且 manager 已占用的精确 raster bytes/entries 必须从全局 ImageCache 可用额度中扣除，二者共享同一个 100MiB/1000-entry presentation envelope，禁止形成两套独立预算。
   Pipeline 只向该 owner 投影 cache claim：`far/detached` 为 `speculative`，`next2/next/previous/near/last` 为 `deadline`，
   real viewport/current/transition 为 `protected`；cache owner 只可在压力下回收 speculative entry，并在真实回收时主动发送 exact invalidation。
+  budget eviction后对同一identity的speculative re-admission backpressure也属于该cache owner；claim升为deadline/protected时才解除。
+  Pipeline不得再维护`evicted-while-far`等镜像tombstone去猜测owner何时允许重建。
   Pipeline 不得通过 `ImageProvider.obtainCacheStatus()` / `ImageCache.statusForKey()` 轮询 residency，也不得用角色提升做被动 cache revalidation。
   `externalPresentationSatisfied` 只是当前 manager residency proof；owner 的真实 eviction 会主动撤销它并让既有 staged refill 在需要时补帧。
   cache eviction 只改变 residency，不是 presentation generation 边界，MUST 保留原 `externalPresentationCacheIdentity`；

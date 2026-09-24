@@ -76,6 +76,9 @@ App build：0.31.0+328
 - 视口与上传：vertical active期间native static只继续defer `far/near` speculative upload；既有2/1 deadline窗口的`next/next2/previous`一帧允许提前UploadLane/present并retain。
   vertical real UploadDemand会在host mount前预绑定detached output consumer，避免ready output形成秒级`outputReadyToPresent`等待。source-canvas 与 decoded raster 职责仍严格分离；
   64B metadata ABI保持，JPEG另以最多64KiB的一次性dimension probe提前解析SOF用于纵排extent。
+- external-static presentation：统一 `PipelinePresentationRasterCache` 同时拥有 managed raster 的 residency、LRU 与 speculative re-admission backpressure；
+  mounted Reader static 绕过 Flutter `Image`/`ScrollAwareImageProvider`，只持当前 `ImageInfo`，撤销 presentation permission 时同步释放。
+  `_externalPresentationEvictedWhileFar` 已删除，budget eviction 不再由 Pipeline 镜像 tombstone；deadline/protected claim promotion 直接解除 cache-owner backpressure。
 - 原生纹理呈现：以 presentationIdentity 标识 resident surface，接入 Android SurfaceProducer。
 - 缓存与淘汰：promoted LRU=8 维护热尾淘汰，当前 current 拥有最高抢占权威。
 
